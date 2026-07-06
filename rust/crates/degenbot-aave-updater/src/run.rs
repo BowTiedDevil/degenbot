@@ -823,7 +823,7 @@ const BOOTSTRAP_WINDOW: u64 = 2_000;
 /// A per-chunk progress snapshot reported to [`ProgressSink`] at each chunk
 /// boundary (after a successful commit OR a rollback). Mirrors
 /// `degenbot-pool-updater::ChunkProgress`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct AaveChunkProgress {
     pub chain_id: i64,
     pub market_id: i64,
@@ -835,6 +835,14 @@ pub struct AaveChunkProgress {
     /// back (an error mid-chunk → the whole chunk reverted → restart will
     /// re-process).
     pub committed: bool,
+    /// The user addresses touched by ANY log in this chunk (topics[1]/[2]
+    /// extracted as addresses). Drives the JGQHBX drive harness's per-chunk
+    /// value-correctness gate via
+    /// [`crate::verify::verify_touched_positions_on_conn`]: the harness's
+    /// `progress_callback` receives this list + calls the verify fn against
+    /// cand.db after the commit (small-set per-position RPC verification —
+    /// multicall3 batching for the market-wide verify is BE474R-full).
+    pub touched_user_addresses: Vec<Address>,
 }
 
 /// The sink the chunk loop reports per-chunk progress to. Implementations:
@@ -1373,6 +1381,7 @@ pub fn run_aave_update(
                         chunk_end,
                         events_applied: 0,
                         committed: false,
+                        touched_user_addresses: Vec::new(),
                     });
                     return Err(e);
                 }
@@ -1386,6 +1395,10 @@ pub fn run_aave_update(
             chunk_end,
             events_applied: chunk_report.events_applied,
             committed: true,
+            touched_user_addresses: chunk_report
+                .touched_user_addresses
+                .into_iter()
+                .collect(),
         });
         report.chunks_committed += 1;
         report.total_events_applied += chunk_report.events_applied;
@@ -1441,10 +1454,21 @@ async fn process_chunk_on_conn(
     // restart-invariant (on rollback the stamp does NOT advance + the whole
     // chunk reverts).
     let mut events_applied_total: usize = 0;
+    let mut touched_user_addresses: HashSet<Address> = HashSet::new();
 
     for group in tx_groups {
         let block_number = group.block_number;
         let tx_hashes_refs: Vec<&Log> = group.logs.clone();
+
+        for log in &group.logs {
+            let topics = log.topics();
+            if let Some(t1) = topics.get(1) {
+                touched_user_addresses.insert(Address::from_slice(&t1.as_slice()[12..]));
+            }
+            if let Some(t2) = topics.get(2) {
+                touched_user_addresses.insert(Address::from_slice(&t2.as_slice()[12..]));
+            }
+        }
 
         // (a) Re-resolve the GHO vToken's revision from `conn` for THIS tx —
         //     sees the prior tx's in-chunk `Upgraded` write via
@@ -1524,14 +1548,22 @@ async fn process_chunk_on_conn(
 
     Ok(ChunkCoreReport {
         events_applied: events_applied_total,
+        touched_user_addresses,
     })
 }
 
 /// A small carrier for the per-chunk core's outcome (the event count + a hook
 /// for richer per-type accounting in a future revision).
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 struct ChunkCoreReport {
     events_applied: usize,
+    /// User addresses touched by ANY event in the chunk (topics[1]/[2] of every
+    /// log extracted as addresses — cheap `O(num_logs * 2)` scan). Drives the
+    /// JGQHBX drive harness's per-chunk value-correctness gate (the verify fn
+    /// accepts a touched-users filter; verifying only touched users per chunk
+    /// keeps the per-chunk RPC count bounded — multicall3 batching is the
+    /// market-wide extension, BE474R-full).
+    touched_user_addresses: HashSet<Address>,
 }
 
 #[cfg(test)]
