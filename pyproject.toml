@@ -150,6 +150,27 @@ logger-objects = [
 allow-star-arg-any = true
 
 [tool.ruff.lint.per-file-ignores]
+"scripts/aave_replay_diff.py" = [
+    "ANN401",   # the drive/compare JSON-report dicts are dict[str, Any]
+    "ARG001",   # CLI dispatchers take unused `args` for argparse's set_defaults
+    "D",        # docstring strictness (Returns:/Raises:/imperative) not enforced on the CLI
+    "DOC",      # pydoclint Returns:/Raises: sections not enforced on the CLI
+    "EM102",    # short f-string error messages are fine in a script
+    "PLC0415",  # lazy web3/ProviderAdapter imports avoid a hard dep at module load
+    "PLW0717",  # the drive fn's broad try/except is intentional (log+re-raise)
+    "PLR1702",  # the bisect loop nests deeply by design
+    "PTH",      # os.path + os.makedirs are fine for the bisect's file-copy logic
+    "PLW1514",  # the JSON-dump file writes use utf-8 implicitly
+    "RET504",   # unnecessary-assign for clarity in the drive fn
+    "S105",     # "DEGENBOT_RPC_HTTP_CHAINID_1" is an envvar NAME, not a password
+    "S110",     # the optional event-fetcher import's try/except/pass is intentional
+    "S608",     # the table-name is from a hardcoded _TABLE_ORDER list, not user input
+    "SIM",      # the compare dict-comprehensions are clarity over comprehension
+    "SLF001",   # sqlalchemy's `row._mapping` is the documented dict-access API
+    "TRY003",   # raise-vanilla-args on the SystemExit messages
+    "TRY301",   # re-raising the worker-thread error from within the try is intentional
+    "T201",     # the CLI prints its summary to stdout by design
+]
 "tests/*" = [
     "ANN",      # type annotations for tests are low priority
     "ARG",
