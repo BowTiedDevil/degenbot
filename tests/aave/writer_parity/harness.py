@@ -151,6 +151,50 @@ def make_reserve_used_as_collateral_log(
     )
 
 
+# ReserveDataUpdated(address indexed reserve, uint256 liquidityRate,
+# uint256 stableBorrowRate, uint256 variableBorrowRate, uint256 liquidityIndex,
+# uint256 variableBorrowIndex) — topic0 is the signature hash, topic1 is the
+# reserve. The data is 5 uint256 words (stableBorrowRate is decoded then
+# discarded — deprecated on Aave V3).
+_RESERVE_DATA_UPDATED_TOPIC = (
+    "0x804c9b842b2748a22bb64b345453a3de7ca54a6ca45ce00d415894979e22897a"
+)
+
+
+def make_reserve_data_updated_log(
+    *,
+    reserve_address: str,
+    liquidity_rate: int,
+    stable_borrow_rate: int,
+    variable_borrow_rate: int,
+    liquidity_index: int,
+    variable_borrow_index: int,
+    block: int = FIXTURE_BLOCK,
+    log_index: int = 0,
+) -> dict[str, Any]:
+    """Build a canned `eth_getLogs` entry for a ReserveDataUpdated event.
+
+    The data is the 5 non-indexed uint256 words concatenated (96 bytes).
+    `stable_borrow_rate` is included (the Python decodes all 5 then discards it;
+    the Rust skips the 2nd word).
+    """
+    words = [
+        liquidity_rate,
+        stable_borrow_rate,
+        variable_borrow_rate,
+        liquidity_index,
+        variable_borrow_index,
+    ]
+    data = "0x" + "".join(v.to_bytes(32, "big").hex() for v in words)
+    return _make_log(
+        address=POOL_ADDRESS.lower(),
+        topics=[_RESERVE_DATA_UPDATED_TOPIC, _pad_address(reserve_address)],
+        data=data,
+        block=block,
+        log_index=log_index,
+    )
+
+
 @dataclass
 class MockRpcRegistry:
     """Holds the canned RPC responses for the parity mock server.
@@ -411,3 +455,54 @@ def dump_collateral_config_rows(session: Session) -> list[dict[str, Any]]:
         )
     ).all()
     return [dict(row._mapping) for row in rows]
+
+
+def dump_asset_rows(session: Session) -> list[dict[str, Any]]:
+    """Dump the rate/index/block columns of ``aave_v3_assets`` as comparable dicts."""
+    rows = session.execute(
+        text(
+            "SELECT id, market_id, liquidity_index, liquidity_rate, "
+            "borrow_index, borrow_rate, last_update_block "
+            "FROM aave_v3_assets ORDER BY id"
+        )
+    ).all()
+    return [dict(row._mapping) for row in rows]
+
+
+# Corpus for the ReserveDataUpdated parity. Each entry is a tuple of
+# (label, liquidity_rate, stable_borrow_rate, variable_borrow_rate,
+# liquidity_index, variable_borrow_index). The stable_borrow_rate is
+# decoded-then-discarded (deprecated on Aave V3). The Ray-scale set exercises
+# the U256 path (the values exceed 2**64 -> the Rust stores `U256.to_string()`
+# + the Python stores the big int -> both must agree as decimal strings).
+_RAY = 10**27
+
+
+def create_resered_data_values() -> list[tuple[str, int, int, int, int, int]]:
+    """Return the parametrized value sets for the ReserveDataUpdated parity."""
+    return [
+        (
+            "small",
+            111,
+            222,
+            333,
+            444,
+            555,
+        ),
+        (
+            "zero",
+            0,
+            0,
+            0,
+            0,
+            0,
+        ),
+        (
+            "ray-scale",
+            100_000_000_000_000_000_000_000_000,  # 1e26
+            0,
+            200_000_000_000_000_000_000_000_000,  # 2e26
+            _RAY,  # 1e27 (exceeds 2**64)
+            _RAY + 100_000_000_000_000_000_000_000_000,  # 1.1e27
+        ),
+    ]
