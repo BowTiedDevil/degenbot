@@ -1412,11 +1412,13 @@ async fn process_chunk_on_conn(
         )
         .await?;
 
-        // (d) Apply THIS tx's config events to `conn` BEFORE the ops parser
-        //     runs — so `process_transaction` sees the tx's own config writes
-        //     (e.g. a `ReserveInitialized` creating the asset the ops parser
-        //     then operates on), matching Python's intra-tx apply order.
-        apply_chunk_events_on_conn(conn, market_id, &config_events)?;
+        // (d) The config events were applied INTRA-dispatch (I2RHGP Fix 2c:
+        //     `dispatch_config_events` applies each event to `conn` as it's
+        //     dispatched, so a later config event's dispatch sees an earlier
+        //     event's apply — e.g. `CollateralConfigurationChanged` sees the
+        //     asset `ReserveInitialized` just created). By here the tx's config
+        //     writes are already on `conn` (read-your-own-writes for the ops
+        //     parser below). Matches Python's per-event apply order.
         events_applied_total += config_events.len();
 
         // (e) C3's operations parser (sync, substrate lookups) — reads `conn`

@@ -63,7 +63,7 @@ use degenbot_decoders::aave_event_decoder::{decode_aave_log, DecodedAaveEvent};
 use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::Connection;
 
-use crate::run::AaveChunkEvent;
+use crate::run::{apply_chunk_events_on_conn, AaveChunkEvent};
 
 /// The GHO-discount deprecation revision (V4+). Mirrors the Python
 /// `GHO_DISCOUNT_DEPRECATION_REVISION = 4`. At vToken revision ≥ this value,
@@ -197,19 +197,27 @@ pub fn dispatch_asset_source_updated(
     market_id: i64,
     decoded: &degenbot_decoders::aave_event_decoder::AssetSourceUpdatedEvent,
     conn: &Connection,
-) -> Result<AaveChunkEvent, ConfigDispatchError> {
+) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
     let asset_str = checksum(&decoded.asset);
-    let asset =
+    let Some(asset) =
         DegenbotDb::lookup_asset_by_underlying_address_on_conn(conn, market_id, &asset_str)?
-            .ok_or_else(|| {
-                ConfigDispatchError::DecodeShape(format!(
-                    "AssetSourceUpdated: no asset for underlying {asset_str} in market {market_id}"
-                ))
-            })?;
-    Ok(AaveChunkEvent::AssetSourceUpdated {
+    else {
+        // I2RHGP Fix 2b (tolerance): on a fresh-market cold-boot, the
+        // `AssetSourceUpdated` for a not-yet-initialized reserve can precede
+        // its `ReserveInitialized` within the same tx (mainnet block
+        // 16496792: `AssetSourceUpdated` at logIdx 409, `ReserveInitialized`
+        // at logIdx 413). Skip the event — the later `ReserveInitialized`
+        // creates the asset + its `getSourceOfAsset(underlying)` RPC at
+        // `block_number` reads the on-chain current source (which this
+        // `AssetSourceUpdated` just set), recovering the `price_source`.
+        // No data loss: a later `AssetSourceUpdated` for an asset that by
+        // then exists dispatches normally (the unchanged path below).
+        return Ok(None);
+    };
+    Ok(Some(AaveChunkEvent::AssetSourceUpdated {
         asset_id: asset.id,
         source_address: checksum(&decoded.source),
-    })
+    }))
 }
 
 /// `EModeCategoryAdded(id, label, ltv, lt, bonus, oracle)` →
@@ -725,10 +733,44 @@ pub async fn dispatch_config_events(
         )
         .await?
         {
+            // I2RHGP Fix 2c (intra-dispatch apply): apply each config event
+            // to `conn` AS it's dispatched (in logIndex order), so a later
+            // config event's dispatch sees an earlier event's apply — e.g.
+            // `CollateralConfigurationChanged` (logIdx 419) sees the asset
+            // `ReserveInitialized` (logIdx 413) just created. Matches the
+            // Python's per-event apply (intra-tx read-your-own-writes). The
+            // chunk loop's batch apply (the former step (d)) is removed.
+            apply_chunk_events_on_conn(conn, market_id, std::slice::from_ref(&ev))?;
             events.push(ev);
         }
     }
     Ok(events)
+}
+
+/// Resolve the `PRICE_ORACLE` contract address for `ReserveInitialized`
+/// dispatch (I2RHGP Fix 1b). The spec's `cached` `oracle_address` is
+/// captured once before the chunk loop (`build_fetch_spec`) + can be `None`
+/// when the `PRICE_ORACLE` row is registered mid-loop via a
+/// `PriceOracleUpdated` event (mainnet: block 16291126, chunk 1) — AFTER
+/// `build_fetch_spec` ran. When `None`, look it up FRESH on `conn`
+/// (read-your-own-writes within the chunk + prior chunks' committed writes).
+/// The `PRICE_ORACLE` row, once registered, is durable across chunks; the
+/// stale spec cache is the only gap.
+fn resolve_reserve_oracle_address(
+    conn: &Connection,
+    market_id: i64,
+    cached: Option<Address>,
+) -> Result<Address, ConfigDispatchError> {
+    if let Some(o) = cached {
+        return Ok(o);
+    }
+    DegenbotDb::fetch_aave_oracle_address_on_conn(conn, market_id)?
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| {
+            ConfigDispatchError::DecodeShape(
+                "ReserveInitialized: no PRICE_ORACLE contract resolved".to_string(),
+            )
+        })
 }
 
 /// Dispatch a single decoded config event to its handler + return the emitted
@@ -769,7 +811,7 @@ async fn dispatch_single_config_event(
                 Some(dispatch_price_oracle_updated(market_id, ev)?)
             }
             DecodedAaveEvent::AssetSourceUpdated(ev) => {
-                Some(dispatch_asset_source_updated(market_id, ev, conn)?)
+                dispatch_asset_source_updated(market_id, ev, conn)?
             }
             DecodedAaveEvent::EModeCategoryAdded(ev) => {
                 Some(dispatch_e_mode_category_added(market_id, ev)?)
@@ -804,11 +846,7 @@ async fn dispatch_single_config_event(
                 .await?,
             ),
             DecodedAaveEvent::ReserveInitialized(ev) => {
-                let oracle = oracle_address.ok_or_else(|| {
-                    ConfigDispatchError::DecodeShape(
-                        "ReserveInitialized: no PRICE_ORACLE contract resolved".to_string(),
-                    )
-                })?;
+                let oracle = resolve_reserve_oracle_address(conn, market_id, oracle_address)?;
                 Some(
                     resolve_reserve_initialized(
                         provider,
@@ -1641,6 +1679,51 @@ mod tests {
             variable_borrow_index: U256::ZERO,
         };
         assert!(dispatch_reserve_data_updated(1, 100, &ev, &conn).is_err());
+    }
+
+    /// I2RHGP Fix 2b: a fresh-market cold-boot can see `AssetSourceUpdated`
+    /// for a not-yet-initialized reserve (it precedes `ReserveInitialized`
+    /// within the same tx on mainnet block 16496792). The handler must SKIP
+    /// (return `Ok(None)`) rather than error — the later `ReserveInitialized`
+    /// creates the asset + its `getSourceOfAsset` RPC recovers the source.
+    #[test]
+    fn dispatch_asset_source_updated_missing_asset_skips_returns_none() {
+        let (db, _) = db_seeded();
+        let conn = db.lock();
+        let ev = degenbot_decoders::aave_event_decoder::AssetSourceUpdatedEvent {
+            oracle_address: Address::repeat_byte(0x99),
+            asset: Address::repeat_byte(0xff), // no asset at this underlying.
+            source: Address::repeat_byte(0x81),
+        };
+        let out = dispatch_asset_source_updated(1, &ev, &conn).unwrap();
+        assert!(out.is_none(), "expected skip (None) for missing asset, got {out:?}");
+    }
+
+    /// The unchanged path: when the asset EXISTS, `AssetSourceUpdated`
+    /// dispatches normally (the later-update case). Guards against Fix 2b
+    /// over-skipping.
+    #[test]
+    fn dispatch_asset_source_updated_existing_asset_dispatches() {
+        let (db, _) = db_seeded();
+        let conn = db.lock();
+        let underlying =
+            Address::from([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+        let ev = degenbot_decoders::aave_event_decoder::AssetSourceUpdatedEvent {
+            oracle_address: Address::repeat_byte(0x99),
+            asset: underlying, // db_seeded's asset id 1.
+            source: Address::repeat_byte(0x81),
+        };
+        let out = dispatch_asset_source_updated(1, &ev, &conn).unwrap();
+        match out {
+            Some(AaveChunkEvent::AssetSourceUpdated {
+                asset_id,
+                source_address,
+            }) => {
+                assert_eq!(asset_id, 1);
+                assert!(source_address.starts_with("0x81"));
+            }
+            other => panic!("expected Some(AssetSourceUpdated), got {other:?}"),
+        }
     }
 
     #[test]
