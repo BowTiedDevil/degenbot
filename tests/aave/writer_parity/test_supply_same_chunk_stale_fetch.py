@@ -216,8 +216,18 @@ def test_supply_same_chunk_as_reserve_init_lands_collateral(tmp_path: Path) -> N
     # fix is the concern here; the on-chain-truth re-drive is the balance
     # validation). The load-bearing W2S3WH/7UFMZX checks are the user + a_token
     # identities below.
+    # The balance equals the supply amount — at liquidityIndex = RAY
+    # (= 1.0), the aToken scaled balance equals the underlying amount; the
+    # Mint credits exactly _SUPPLY_AMOUNT. Pre-NMWPI6 (the
+    # `extract_pool_amount_word0` bug), the credit was the user ADDRESS as a
+    # U256 (~10^48); the value assertion here locks down the corrected
+    # extraction (the W2S3WH test's existence-only gap that previously masked
+    # the ~10^69 oddity).
     assert pos["balance"] is not None, "collateral balance is NULL"
-    assert int(pos["balance"]) > 0, f"collateral balance {pos['balance']!r} not positive"
+    assert int(pos["balance"]) == _SUPPLY_AMOUNT, (
+        f"collateral balance {pos['balance']!r} ≠ supply amount {_SUPPLY_AMOUNT} "
+        f"(NMWPI6: extract_pool_amount_word1 for Supply)"
+    )
     # The asset's a_token == the ReserveInitialized's indexed aToken (topic[2])
     # == the Mint's emitter — confirming the (b) re-fetch found the right token.
     assert a_token_addr is not None, "no a_token resolved for the collateral position"
