@@ -2,7 +2,7 @@
 //!
 //! See the crate-level docs for the §3.4 atomicity invariant this file enforces.
 
-use alloy::primitives::U256;
+use alloy::primitives::{Address, U256};
 use degenbot_db::DegenbotDb;
 #[cfg(test)]
 use rusqlite::params;
@@ -693,6 +693,520 @@ pub fn apply_aave_chunk_writes_on_conn(
     report.stamped_block = Some(chunk_end_block);
 
     Ok(report)
+}
+
+// ── the outer chunk loop (RPC-bound; the §4.4 atomicity owner — 6SWY4R-3) ──
+
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+use alloy::rpc::types::Log;
+use degenbot_core::errors::ProviderError;
+use degenbot_db::aave::AaveGhoAsset;
+use degenbot_db::DbError;
+use degenbot_rpc::provider::{AlloyProvider, LogFetcher};
+
+use crate::aave_fetch::{fetch_aave_chunk_logs, AaveFetchSpec};
+use crate::config_dispatch::{
+    build_discount_snapshot, dispatch_config_events, ConfigDispatchError,
+};
+use crate::transaction_processor::{process_transaction, ProcessTxError};
+
+/// The max RPC retries for the owned runtime's `AlloyProvider` (mirrors
+/// `degenbot-pool-updater`'s `RPC_MAX_RETRIES`).
+const RPC_MAX_RETRIES: u32 = 5;
+
+/// A per-chunk progress snapshot reported to [`ProgressSink`] at each chunk
+/// boundary (after a successful commit OR a rollback). Mirrors
+/// `degenbot-pool-updater::ChunkProgress`.
+#[derive(Debug, Clone, Copy)]
+pub struct AaveChunkProgress {
+    pub chain_id: i64,
+    pub market_id: i64,
+    pub chunk_start: u64,
+    pub chunk_end: u64,
+    /// The total `AaveChunkEvent`s the apply fn wrote this chunk.
+    pub events_applied: usize,
+    /// `true` iff the chunk's transaction committed; `false` if it rolled
+    /// back (an error mid-chunk → the whole chunk reverted → restart will
+    /// re-process).
+    pub committed: bool,
+}
+
+/// The sink the chunk loop reports per-chunk progress to. Implementations:
+/// [`NoProgress`] (silent), a logging sink, or a `PyO3` callback sink (the
+/// 6SWY4R-B seam). `report_chunk` is synchronous (called between chunks, off
+/// the async path). Mirrors `degenbot-pool-updater::ProgressSink`.
+pub trait ProgressSink: Send + Sync {
+    fn report_chunk(&self, progress: &AaveChunkProgress);
+}
+
+/// A no-op [`ProgressSink`] — silent runs (the default when no sink is
+/// supplied). Mirrors `degenbot-pool-updater::NoProgress`.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NoProgress;
+
+impl ProgressSink for NoProgress {
+    fn report_chunk(&self, _progress: &AaveChunkProgress) {}
+}
+
+/// The final report from a [`run_aave_update`] run. Mirrors
+/// `degenbot-pool-updater::UpdateReport`.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct AaveUpdateReport {
+    pub chain_id: i64,
+    pub market_id: i64,
+    /// The first block processed (inclusive).
+    pub from_block: u64,
+    /// The last block the run advanced `last_update_block` to.
+    pub to_block: u64,
+    /// Total chunks committed.
+    pub chunks_committed: usize,
+    /// Total `AaveChunkEvent`s written across all chunks.
+    pub total_events_applied: usize,
+}
+
+/// An error from [`run_aave_update`]. Mirrors `degenbot-pool-updater::RunError`
+/// + adds the Aave dispatch/parse errors.
+#[derive(Debug, thiserror::Error)]
+pub enum RunError {
+    #[error("database error: {0}")]
+    Db(#[from] DbError),
+    #[error("rpc error: {0}")]
+    Provider(#[from] ProviderError),
+    #[error("config dispatch error: {0}")]
+    ConfigDispatch(#[from] ConfigDispatchError),
+    #[error("transaction parse error: {0}")]
+    ProcessTx(#[from] ProcessTxError),
+    #[error("runtime error: {0}")]
+    Runtime(#[from] std::io::Error),
+    #[error("cancelled by cancel flag at chunk boundary")]
+    Cancelled,
+    #[error("market {0} not found")]
+    MarketNotFound(i64),
+    #[error("market {0} has no last_update_block — bootstrap the stamp before the loop")]
+    NotBootstrapped(i64),
+}
+
+/// One transaction's grouped logs. Sorted by `(block_number, first log_index)`
+/// (the fetcher's `(block_number, log_index)` sort is preserved; the grouping
+/// is stable). Mirrors the Python `_build_transaction_contexts` (utils.py:82).
+#[derive(Debug)]
+struct TxGroup<'a> {
+    tx_hash: [u8; 32],
+    block_number: u64,
+    logs: Vec<&'a Log>,
+}
+
+/// Group a chunk's logs by `transactionHash`, preserving the
+/// `(block_number, log_index)` sort. Mirrors the Python
+/// `_build_transaction_contexts` (utils.py:82) — the events are pre-sorted,
+/// then bucketed by `tx_hash`; the groups are emitted in first-seen order
+/// (sorted by the group's first log's `(block_number, log_index)`, which the
+/// fetcher's sort guarantees).
+fn group_logs_by_tx(logs: &[Log]) -> Vec<TxGroup<'_>> {
+    // The fetcher already sorted by (block_number, log_index), so a stable
+    // insertion-order HashMap preserves chronological group order.
+    let mut order: Vec<[u8; 32]> = Vec::new();
+    let mut groups: HashMap<[u8; 32], TxGroup<'_>> = HashMap::new();
+    for log in logs {
+        let Some(tx_hash_b256) = log.transaction_hash else {
+            // A log with no tx_hash — shouldn't happen for fetched logs. Treat
+            // it as its own singleton group keyed by zero (mirrors the Python
+            // which would KeyError on `event["transactionHash"]`).
+            continue;
+        };
+        let tx_hash = tx_hash_b256.0;
+        let block_number = log.block_number.unwrap_or(0);
+        let entry = groups.entry(tx_hash).or_insert_with(|| {
+            order.push(tx_hash);
+            TxGroup {
+                tx_hash,
+                block_number,
+                logs: Vec::new(),
+            }
+        });
+        entry.logs.push(log);
+    }
+    order
+        .into_iter()
+        .map(|k| groups.remove(&k).expect("present in order"))
+        .collect()
+}
+
+/// Resolve the [`AaveFetchSpec`] for `market_id`: the `POOL`/
+/// `POOL_CONFIGURATOR` / `POOL_ADDRESS_PROVIDER` / `PRICE_ORACLE` contract
+/// addresses (from `aave_v3_contracts`), the chain's aToken+vToken addresses, + the GHO
+/// asset's stkAAVE address. Mirrors the Python `update_aave_market`'s contract
+/// + `known_scaled_token_addresses` resolution (commands.py:1008-1058).
+///
+/// Returns `(spec, gho_asset)` — the `gho_asset` is the chain's GHO token row
+/// (`None` for non-GHO markets); the orchestrator passes it to the discount
+/// pre-pass + `process_transaction`.
+#[allow(clippy::too_many_arguments)]
+fn build_fetch_spec(
+    db: &DegenbotDb,
+    market_id: i64,
+    chain_id: i64,
+) -> Result<(AaveFetchSpec, Option<AaveGhoAsset>), RunError> {
+    let contracts = db.fetch_aave_contracts(market_id)?;
+    // Index by name (the Python `get_contract(market, name)` shape).
+    let mut by_name: HashMap<&str, &degenbot_db::rows::AaveV3ContractRow> = HashMap::new();
+    for c in &contracts {
+        by_name.insert(c.name.as_str(), c);
+    }
+    let pool = by_name.get("POOL").ok_or_else(|| {
+        RunError::Db(DbError::MissingRow(
+            "POOL contract row not found for market {market_id}".to_string(),
+        ))
+    })?;
+    let configurator = by_name.get("POOL_CONFIGURATOR").ok_or_else(|| {
+        RunError::Db(DbError::MissingRow(
+            "POOL_CONFIGURATOR contract row not found".to_string(),
+        ))
+    })?;
+    let address_provider = by_name.get("POOL_ADDRESS_PROVIDER").ok_or_else(|| {
+        RunError::Db(DbError::MissingRow(
+            "POOL_ADDRESS_PROVIDER contract row not found".to_string(),
+        ))
+    })?;
+    let oracle_address = by_name.get("PRICE_ORACLE").map(|c| c.address);
+
+    let scaled_token_addresses: Vec<Address> = db
+        .fetch_aave_scaled_token_addresses(chain_id)?
+        .into_iter()
+        .filter_map(|s| s.parse::<Address>().ok())
+        .collect();
+
+    // The GHO asset (chain-unique) + the stkAAVE address.
+    let gho_asset = db.fetch_aave_gho_asset(chain_id)?;
+    let stk_aave_address = gho_asset
+        .as_ref()
+        .and_then(|g| g.v_gho_discount_token.as_deref())
+        .and_then(|s| s.parse::<Address>().ok());
+
+    let spec = AaveFetchSpec {
+        pool_address: pool.address,
+        configurator_address: configurator.address,
+        address_provider_address: address_provider.address,
+        oracle_address,
+        scaled_token_addresses,
+        stk_aave_address,
+    };
+    Ok((spec, gho_asset))
+}
+
+/// Run the Aave V3 chunk-update loop for `market_id`, advancing
+/// `aave_v3_markets.last_update_block` to `to_block` (or the chain tip if
+/// `to_block` is `None`). The §3.4 atomicity owner.
+///
+/// Per market per chunk:
+/// 1. `fetch_aave_chunk_logs` returns the raw `Vec<Log>` sorted by
+///    `(block_number, log_index)`.
+/// 2. `group_logs_by_tx` returns the per-tx groups (mirrors `_build_transaction_contexts`).
+/// 3. Open ONE `Transaction`. For each tx group, build the discount snapshot
+///    (RPC + the DB-cache path), dispatch the config events (RPC for revisions
+///    and metadata plus the substrate lookups), and run `process_transaction`
+///    (C3's operations parser, sync, substrate lookups). Collect all events.
+/// 4. `apply_aave_chunk_writes_on_conn(&tx, market_id, &events, chunk_end)`
+///    commits (or drops, rolling back). The stamp is the LAST write in the tx.
+///
+/// # The §3.4 atomicity invariant (LOAD-BEARING)
+///
+/// ONE `Transaction` per chunk. Failure mid-chunk → drop the tx → the whole
+/// chunk reverts → `last_update_block` unchanged → a restart re-processes the
+/// chunk clean (no skipped blocks, no partial commit). The Transaction is
+/// held open across the per-tx RPC (the discount pre-pass + the config dispatch
+/// do substrate lookups + writes via `get_or_create_*` that MUST be atomic with
+/// the chunk; the apply is the last step). The owned tokio runtime's
+/// `block_on` polls the future on the calling thread, so the `!Send`
+/// `&Transaction` borrow across `.await` is safe (single-thread poll).
+///
+/// # Owned runtime (D2)
+///
+/// MUST NOT be called from within an existing tokio runtime (panic on nested
+/// `block_on`). Mirror `degenbot-pool-updater`'s constraint.
+///
+/// # §4.2-parity notes (flagged)
+///
+/// - **`treasury_address` is `None`**: `process_transaction` accepts it but the
+///   current dispatch doesn't consume it (forward-compat). The Python resolves
+///   it via the Pool's `RESERVE_TREASURY_ADDRESS()` RPC — not wired here.
+/// - **`vtoken_revision` drift**: the discount pre-pass reads the GHO vToken's
+///   revision at chunk-start (the in-chunk `Upgraded` write is DEFERRED to
+///   Apply — §3.4). If an `Upgraded` event lands mid-chunk (the deprecation),
+///   txs AFTER it would see the OLD revision → a non-zero discount instead of
+///   0. In practice a vToken upgrade fires once per market lifetime, so the
+///   drift is rare; flagged for the orchestrator's §4.2 review.
+#[allow(
+    clippy::await_holding_lock,
+    clippy::missing_errors_doc,
+    clippy::needless_pass_by_value,
+    clippy::similar_names,
+    clippy::too_many_arguments,
+    clippy::too_many_lines
+)]
+pub fn run_aave_update(
+    database_path: &Path,
+    chain_id: i64,
+    market_id: i64,
+    to_block: Option<u64>,
+    chunk_size: u64,
+    rpc_url: &str,
+    cancel: Arc<AtomicBool>,
+    progress: Arc<dyn ProgressSink>,
+) -> Result<AaveUpdateReport, RunError> {
+    if chunk_size == 0 {
+        return Err(RunError::Provider(ProviderError::InvalidBlockRange {
+            from: 1,
+            to: 0,
+        }));
+    }
+
+    // Open ONE writeable handle for the whole run.
+    let (db, _schema_state) = DegenbotDb::open_for_writes(database_path)?;
+
+    // Resolve the market row (the `last_update_block` cursor).
+    let market = db
+        .fetch_aave_market_row(market_id)?
+        .ok_or(RunError::MarketNotFound(market_id))?;
+    if market.chain_id != chain_id {
+        return Err(RunError::Db(DbError::Decode(format!(
+            "market {market_id} chain_id {} != requested {chain_id}",
+            market.chain_id
+        ))));
+    }
+    let last_update_block = market
+        .last_update_block
+        .ok_or(RunError::NotBootstrapped(market_id))?;
+
+    // Build the fetch spec + the GHO asset (chain-unique).
+    let (spec, gho_asset) = build_fetch_spec(&db, market_id, chain_id)?;
+    let pool_address = spec.pool_address;
+    let oracle_address = spec.oracle_address;
+    let gho_token_address = gho_asset.as_ref().and_then(|g| g.gho_token_address.clone());
+    let gho_vtoken_address = gho_asset.as_ref().and_then(|g| g.v_token_address.clone());
+
+    // Owned tokio runtime (D2). The fetches + the per-tx RPC run on it; the DB
+    // writes are synchronous. MUST NOT be called from within an existing runtime.
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let provider = rt.block_on(AlloyProvider::new(rpc_url, RPC_MAX_RETRIES))?;
+    let provider = Arc::new(provider);
+    let fetcher = LogFetcher::new(provider.clone(), chunk_size);
+
+    // Resolve the chain tip if `to_block` is None.
+    let last_block = match to_block {
+        Some(n) => n,
+        None => rt.block_on(provider.get_block_number())?,
+    };
+
+    let from_block = u64::try_from(last_update_block).unwrap_or(0) + 1;
+    if from_block > last_block {
+        // Already up to date — nothing to do.
+        return Ok(AaveUpdateReport {
+            chain_id,
+            market_id,
+            from_block: last_block,
+            to_block: last_block,
+            ..Default::default()
+        });
+    }
+
+    let mut report = AaveUpdateReport {
+        chain_id,
+        market_id,
+        from_block,
+        to_block: last_block,
+        ..Default::default()
+    };
+
+    let mut working_start = from_block;
+    while working_start <= last_block {
+        // Cooperative cancel at the chunk boundary (the most recent committed
+        // chunk is durable; the next chunk's writes haven't started).
+        if cancel.load(Ordering::Acquire) {
+            return Err(RunError::Cancelled);
+        }
+
+        let chunk_end = last_block.min(working_start + chunk_size - 1);
+
+        // 1. RPC fetch the chunk's logs (GIL-free, async, sorted by
+        //    (block_number, log_index)).
+        let logs = rt.block_on(fetch_aave_chunk_logs(
+            &spec,
+            &fetcher,
+            working_start,
+            chunk_end,
+        ))?;
+        let tx_groups = group_logs_by_tx(&logs);
+
+        // 2. The single-transaction chunk write (§4.4 atomicity). The per-tx
+        //    processing (discount pre-pass + config dispatch + parse) borrows
+        //    the Transaction's `&Connection` for substrate lookups + writes —
+        //    they MUST be atomic with the chunk's apply.
+        let chunk_report = {
+            let mut guard = db.lock();
+            let tx = guard.transaction().map_err(DbError::from)?;
+            let result = rt.block_on(process_chunk_on_conn(
+                &tx,
+                &provider,
+                gho_asset.as_ref(),
+                market_id,
+                chain_id,
+                pool_address,
+                oracle_address,
+                gho_token_address.as_deref(),
+                gho_vtoken_address.as_deref(),
+                &tx_groups,
+                chunk_end,
+            ));
+            match result {
+                Ok(r) => {
+                    tx.commit().map_err(DbError::from)?;
+                    r
+                }
+                Err(e) => {
+                    // Drop `tx` (rollback) — the chunk's writes + the stamp
+                    // advance are reverted; the committed prior chunks stand.
+                    drop(tx);
+                    progress.report_chunk(&AaveChunkProgress {
+                        chain_id,
+                        market_id,
+                        chunk_start: working_start,
+                        chunk_end,
+                        events_applied: 0,
+                        committed: false,
+                    });
+                    return Err(e);
+                }
+            }
+        };
+
+        progress.report_chunk(&AaveChunkProgress {
+            chain_id,
+            market_id,
+            chunk_start: working_start,
+            chunk_end,
+            events_applied: chunk_report.events_applied,
+            committed: true,
+        });
+        report.chunks_committed += 1;
+        report.total_events_applied += chunk_report.events_applied;
+
+        working_start = chunk_end + 1;
+    }
+
+    Ok(report)
+}
+
+/// The per-chunk processing core (the Transaction-borrowed, RPC-interspersed
+/// body). Runs the discount pre-pass + the config-event dispatch + C3's
+/// `process_transaction` per tx group → collects `AaveChunkEvent`s → calls
+/// [`apply_aave_chunk_writes_on_conn`]. Held inside the caller's
+/// `Transaction`; on `Err` the caller drops the tx (rollback).
+///
+/// Extracted from [`run_aave_update`] to keep the loop fn readable + to
+/// localize the `await_holding_lock` allow (the `&Transaction` borrow across
+/// `.await` — safe under `block_on`'s single-thread poll).
+#[allow(
+    clippy::await_holding_lock,
+    clippy::too_many_arguments,
+    clippy::similar_names
+)]
+async fn process_chunk_on_conn(
+    conn: &Connection,
+    provider: &AlloyProvider,
+    gho_asset: Option<&AaveGhoAsset>,
+    market_id: i64,
+    chain_id: i64,
+    pool_address: Address,
+    oracle_address: Option<Address>,
+    gho_token_address: Option<&str>,
+    gho_vtoken_address: Option<&str>,
+    tx_groups: &[TxGroup<'_>],
+    chunk_end: u64,
+) -> Result<ChunkCoreReport, RunError> {
+    // Resolve the GHO vToken's revision at chunk-start (the discount pre-pass's
+    // `vtoken_revision`). §4.2-parity flag: the in-chunk `Upgraded` write is
+    // deferred to Apply, so this is the chunk-start value for ALL txs in the
+    // chunk.
+    let vtoken_revision: Option<u32> = match (gho_vtoken_address, gho_asset) {
+        (Some(addr_str), Some(_)) => {
+            DegenbotDb::lookup_asset_by_token_address_on_conn(conn, market_id, addr_str, "v_token")?
+                .map(|row| row.v_token_revision)
+        }
+        _ => None,
+    };
+
+    let mut all_events: Vec<AaveChunkEvent> = Vec::new();
+
+    for group in tx_groups {
+        let block_number = group.block_number;
+        let tx_hashes_refs: Vec<&Log> = group.logs.clone();
+
+        // (a) The discount pre-pass (RPC + the DB-cache path).
+        let discounts = build_discount_snapshot(
+            provider,
+            &tx_hashes_refs,
+            block_number,
+            gho_vtoken_address.and_then(|s| s.parse().ok()),
+            vtoken_revision,
+            market_id,
+            conn,
+        )
+        .await?;
+
+        // (b) The config-event dispatch (RPC + substrate lookups).
+        let config_events = dispatch_config_events(
+            provider,
+            &tx_hashes_refs,
+            market_id,
+            chain_id,
+            conn,
+            pool_address,
+            oracle_address,
+            gho_asset,
+            block_number,
+        )
+        .await?;
+        all_events.extend(config_events);
+
+        // (c) C3's operations parser (sync, substrate lookups).
+        let op_events = process_transaction(
+            market_id,
+            chain_id,
+            pool_address,
+            /* treasury_address */ None,
+            gho_token_address.and_then(|s| s.parse().ok()),
+            gho_vtoken_address.and_then(|s| s.parse().ok()),
+            conn,
+            &tx_hashes_refs,
+            group.tx_hash,
+            &discounts,
+        )?;
+        all_events.extend(op_events);
+    }
+
+    // (d) Apply ALL events under the ONE Transaction (the last write is the
+    //     stamp advance).
+    let write_report = apply_aave_chunk_writes_on_conn(conn, market_id, &all_events, chunk_end)?;
+    let events_applied_total = all_events.len();
+    let _ = write_report; // accounting (the report could be surfaced via ProgressSink).
+
+    Ok(ChunkCoreReport {
+        events_applied: events_applied_total,
+    })
+}
+
+/// A small carrier for the per-chunk core's outcome (the event count + a hook
+/// for richer per-type accounting in a future revision).
+#[derive(Debug, Clone, Copy, Default)]
+struct ChunkCoreReport {
+    events_applied: usize,
 }
 
 #[cfg(test)]
@@ -2089,5 +2603,91 @@ mod tests {
             .unwrap();
         assert_eq!(name, "POOL");
         assert_eq!(rev, Some(2));
+    }
+
+    // ── 6SWY4R-3: the `group_logs_by_tx` unit tests (the loop's pure
+    //    tx-grouping seam — mirrors the Python `_build_transaction_contexts`).
+
+    /// Build a minimal `alloy::rpc::types::Log` with the given tx hash,
+    /// block number, + log index (the grouping key).
+    fn make_tx_log(tx_hash: [u8; 32], block_number: u64, log_index: u64) -> Log {
+        use alloy::primitives::{Bytes, Log as AlloyLog, B256};
+        let inner = AlloyLog::new_unchecked(Address::ZERO, vec![], Bytes::new());
+        Log {
+            inner,
+            block_hash: None,
+            block_number: Some(block_number),
+            block_timestamp: None,
+            transaction_hash: Some(B256::from(tx_hash)),
+            transaction_index: None,
+            log_index: Some(log_index),
+            removed: false,
+        }
+    }
+
+    #[test]
+    fn group_logs_by_tx_empty_returns_empty() {
+        let logs: Vec<Log> = vec![];
+        let groups = group_logs_by_tx(&logs);
+        assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn group_logs_by_tx_single_tx_buckets_all_logs() {
+        let tx = [0xaa; 32];
+        let logs = vec![
+            make_tx_log(tx, 100, 0),
+            make_tx_log(tx, 100, 1),
+            make_tx_log(tx, 100, 2),
+        ];
+        let groups = group_logs_by_tx(&logs);
+        assert_eq!(groups.len(), 1, "one tx → one group");
+        assert_eq!(groups[0].tx_hash, tx);
+        assert_eq!(groups[0].logs.len(), 3);
+        assert_eq!(groups[0].block_number, 100);
+    }
+
+    #[test]
+    fn group_logs_by_tx_multi_tx_preserves_chronological_order() {
+        // The fetcher pre-sorts by (block_number, log_index); the grouping is
+        // stable → groups emitted in first-seen (chronological) order.
+        let tx_a = [0x11; 32];
+        let tx_b = [0x22; 32];
+        let tx_c = [0x33; 32];
+        let logs = vec![
+            // block 100: tx_a's two logs, then tx_b's one.
+            make_tx_log(tx_a, 100, 0),
+            make_tx_log(tx_a, 100, 1),
+            make_tx_log(tx_b, 100, 2),
+            // block 101: tx_c's one log.
+            make_tx_log(tx_c, 101, 0),
+        ];
+        let groups = group_logs_by_tx(&logs);
+        assert_eq!(groups.len(), 3);
+        // Chronological order: tx_a (block 100, log 0), tx_b (block 100, log 2),
+        // tx_c (block 101, log 0).
+        assert_eq!(groups[0].tx_hash, tx_a);
+        assert_eq!(groups[0].block_number, 100);
+        assert_eq!(groups[0].logs.len(), 2);
+        assert_eq!(groups[1].tx_hash, tx_b);
+        assert_eq!(groups[1].block_number, 100);
+        assert_eq!(groups[1].logs.len(), 1);
+        assert_eq!(groups[2].tx_hash, tx_c);
+        assert_eq!(groups[2].block_number, 101);
+    }
+
+    #[test]
+    fn group_logs_by_tx_skips_logs_without_tx_hash() {
+        // A log with no transaction_hash — shouldn't happen for fetched logs,
+        // but the grouping is defensive (mirrors the Python which would
+        // KeyError on `event["transactionHash"]`).
+        let tx = [0xaa; 32];
+        let log_with_tx = make_tx_log(tx, 100, 0);
+        let mut log_no_tx = make_tx_log([0x00; 32], 100, 1);
+        log_no_tx.transaction_hash = None;
+        let logs = vec![log_with_tx.clone(), log_no_tx, log_with_tx.clone()];
+        let groups = group_logs_by_tx(&logs);
+        assert_eq!(groups.len(), 1, "the no-tx-hash log is skipped");
+        assert_eq!(groups[0].logs.len(), 2);
     }
 }
