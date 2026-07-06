@@ -395,7 +395,8 @@ pub fn dispatch_stk_aave_transfer(
     }
     let from_str = checksum(&decoded.from);
     let from_user_id = DegenbotDb::get_or_create_user_on_conn(conn, market_id, &from_str, 0)?;
-    let to_user_id = DegenbotDb::get_or_create_user_on_conn(conn, market_id, &checksum(&decoded.to), 0)?;
+    let to_user_id =
+        DegenbotDb::get_or_create_user_on_conn(conn, market_id, &checksum(&decoded.to), 0)?;
     Ok(Some(AaveChunkEvent::StkAaveTransfer {
         from_user_id,
         to_user_id,
@@ -824,12 +825,12 @@ async fn dispatch_single_config_event(
             }
             // ── the 2 sync stkAAVE handlers (YMWN5V: wired the Staked/Redeem
             // arms — previously fell to `_` → `Ok(None)`) ──
-            DecodedAaveEvent::Staked(ev) => Some(
-                dispatch_stk_aave_staked(market_id, block_number, ev, conn)?,
-            ),
-            DecodedAaveEvent::Redeem(ev) => Some(
-                dispatch_stk_aave_redeem(market_id, block_number, ev, conn)?,
-            ),
+            DecodedAaveEvent::Staked(ev) => {
+                Some(dispatch_stk_aave_staked(market_id, block_number, ev, conn)?)
+            }
+            DecodedAaveEvent::Redeem(ev) => {
+                Some(dispatch_stk_aave_redeem(market_id, block_number, ev, conn)?)
+            }
             // ── S3X2I2: the stkAAVE `Transfer` arm (neither-zero; scoped to the
             // discount token; dedupe-skip the mint/burn legs). ──
             DecodedAaveEvent::Erc20Transfer(ev) => {
@@ -1090,10 +1091,10 @@ const POOL_CONFIGURATOR_PROXY_ID: [u8; 32] = {
 /// The result of matching a `ProxyCreated` event's id against the two known
 /// proxy ids — the resolved contract name + address (the proxy address) + the
 /// RPC-fetched revision.
-struct ProxyCreationResolution {
-    name: String,
-    address: String,
-    revision: i64,
+pub(crate) struct ProxyCreationResolution {
+    pub(crate) name: String,
+    pub(crate) address: String,
+    pub(crate) revision: i64,
 }
 
 /// Resolve an `Upgraded` event (the riskiest piece — 6SWY4R-2b). Port of
@@ -1196,7 +1197,7 @@ async fn resolve_contract_revision_updated(
 /// `ProxyCreationResolution` (the contract name + the proxy address + the
 /// revision). On no match → `Ok(None)` (the Python returns early when the id
 /// doesn't match the expected proxy_id).
-async fn match_proxy_id(
+pub(crate) async fn match_proxy_id(
     id: &alloy::primitives::B256,
     proxy_address: &Address,
     implementation_address: &Address,
