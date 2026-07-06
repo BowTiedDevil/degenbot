@@ -683,9 +683,81 @@ def make_asset_source_updated_log(
 SUPPLY_TOPIC = "0x2b627736bca15cd5381dcf80b0bf11fd197d01a037c52b927a881a10fb73ba61"
 BORROW_TOPIC = "0xb3d084820fb1a9decffb176436bd02558d15fac9b0ddfed8c465bc7359d7dce0"
 REPAY_TOPIC = "0xa534c8dbe71f871f9f3530e97a74601fea17b426cae02e1c5aee42c96c784051"
+WITHDRAW_TOPIC = "0x3115d1449a7b732c986cba18244e897a450f61e1bb8d589cd2e69e6c8924f9f7"
 MINT_TOPIC = "0x458f5fa412d0f69b08dd84872b0215675cc67bc1d5b6fd93300a1c3878b86196"
 BURN_TOPIC = "0x4cf25bc1d991c17529c25213d3cc0cda295eeaad5f13f361969b12ea48015f90"
 ERC20_TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+BALANCE_TRANSFER_TOPIC = "0x4beccb90f994c31aced7a23b5611020728a23d8ec5cddd1a3e9d97b96fda8666"
+
+
+def make_withdraw_log(
+    *,
+    reserve: str,
+    user: str,
+    to: str,
+    amount: int,
+    block: int = FIXTURE_BLOCK,
+    log_index: int = 0,
+    tx_hash: str | None = None,
+) -> dict[str, Any]:
+    """Build a canned `eth_getLogs` entry for a Pool `Withdraw` event.
+
+    Real Aave V3 Withdraw signature (verified on mainnet, block 16496928):
+        Withdraw(address indexed reserve, address indexed user,
+                 address indexed to, uint256 amount)
+    3 indexed params → 4 topics: [sig, reserve(1), user(2), to(3)]. Non-indexed
+    data: abi.encode(amount) = 1 word. The CollateralBurn debits `user`'s
+    position; `to` receives the underlying.
+    """
+    return _make_log(
+        address=POOL_ADDRESS.lower(),
+        topics=[
+            WITHDRAW_TOPIC,
+            _pad_address(reserve),
+            _pad_address(user),  # topic[2] = user (indexed)
+            _pad_address(to),  # topic[3] = to (indexed)
+        ],
+        data=_u256(amount),
+        block=block,
+        log_index=log_index,
+        tx_hash=tx_hash,
+    )
+
+
+def make_balance_transfer_log(
+    *,
+    token_address: str,
+    from_address: str,
+    to_address: str,
+    value: int,
+    index: int,
+    block: int = FIXTURE_BLOCK,
+    log_index: int = 0,
+    tx_hash: str | None = None,
+) -> dict[str, Any]:
+    """Build a canned `eth_getLogs` entry for an aToken `BalanceTransfer` event.
+
+    Aave V3 aToken `BalanceTransfer(address indexed from, address indexed to,
+    uint256 value, uint256 index)` — emitted alongside the plain ERC20
+    `Transfer` when aTokens move between users (the scaled-balance bookkeeping).
+    2 indexed params → 3 topics: [sig, from(1), to(2)]. Non-indexed data:
+    abi.encode(value, index) = 2 words. The standalone BalanceTransfer op
+    credits `to` + debits `from` (collateral moves between users — NOT a
+    Pool Supply/Withdraw).
+    """
+    words = [_u256(value)[2:], _u256(index)[2:]]
+    return _make_log(
+        address=token_address.lower(),
+        topics=[
+            BALANCE_TRANSFER_TOPIC,
+            _pad_address(from_address),
+            _pad_address(to_address),
+        ],
+        data="0x" + "".join(words),
+        block=block,
+        log_index=log_index,
+        tx_hash=tx_hash,
+    )
 
 
 def make_supply_log(

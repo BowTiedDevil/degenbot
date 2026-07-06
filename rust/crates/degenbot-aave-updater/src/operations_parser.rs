@@ -1344,10 +1344,19 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
             } else {
                 false
             };
-            local_assigned.insert(bt_ev.log_index);
-            // Cleanup early-return; no `?` since this returns Vec not Result.
+            // Only mark the bt_ev assigned when it was actually paired into
+            // a DeficitCoverage op. Unpaired transfers (no paired burn — the
+            // normal aToken-transfer case, NOT an Umbrella DeficitCoverage)
+            // must fall through to create_transfer_operations as standalone
+            // BalanceTransfer ops (YUPSIB: previously the unconditional
+            // `local_assigned.insert` stole them → the recipient's credit
+            // never landed → their Withdraw's Burn went negative).
+            //
+            // NB: the paired bt_ev is already directly inserted into
+            // `assigned_indices` above (so the extend below flushing the
+            // inner-loop BalanceTransfer companions suffices).
             if paired {
-                // already-built op; continue.
+                local_assigned.insert(bt_ev.log_index);
             }
         }
 
