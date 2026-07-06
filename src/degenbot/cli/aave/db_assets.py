@@ -3,6 +3,11 @@
 Functions for managing ERC20 tokens, Aave assets, contracts, and related lookups.
 """
 
+# UNROUTED — the `cli/aave aave_update` driver no longer calls this module
+# (AVS4DR, epic AZGJUN). Kept available for the U5YIBG §4.2 cross-check; delete
+# in CZM7TI after the cross-check passes GREEN. The Rust core
+# (`degenbot-aave-updater::run::run_aave_update`) now owns the per-event write
+# dispatch this module implemented.
 from eth_typing import ChecksumAddress
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload

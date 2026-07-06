@@ -1,7 +1,8 @@
 """CLI commands for Aave position analysis."""
 
-import sys
-from typing import TYPE_CHECKING, cast
+import signal
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import click
 import eth_abi.abi
@@ -47,6 +48,7 @@ from degenbot.cli.aave.verification import (
     verify_positions_for_users,
 )
 from degenbot.cli.utils import get_provider_from_config
+from degenbot.config import resolve_http_rpc_uri
 from degenbot.database.models.aave import (
     AaveGhoToken,
     AaveV3CollateralPosition,
@@ -56,6 +58,7 @@ from degenbot.database.models.aave import (
     AaveV3User,
 )
 from degenbot.database.operations import backup_sqlite_database
+from degenbot.degenbot_rs import CancelHandle, run_aave_update
 from degenbot.exceptions import DegenbotValueError
 from degenbot.logging import logger
 from degenbot.provider.block_helpers import get_number_for_block_identifier
@@ -82,6 +85,63 @@ __all__ = [
     "position_show",
     "update_aave_market",
 ]
+
+
+# Block tags the `--to-block` option accepts (mirrors `cli/pool.py` — the
+# pool-updater cutover, task QZHNZQ). A pure tag (no offset) resolves to
+# `None` -> the Rust core fetches the chain tip via `eth_blockNumber` itself
+# (no Python-side RPC round-trip). A tag with an offset (`latest:-64`,
+# `safe:128`) is resolved in Python to a concrete block number (the Rust core
+# takes `Option<u64>`, not a tag string).
+_BlockTag = Literal["latest", "earliest", "pending", "safe", "finalized"]
+
+_BLOCK_TAGS: frozenset[_BlockTag] = frozenset(
+    {"latest", "earliest", "pending", "safe", "finalized"},
+)
+
+
+def _resolve_to_block(to_block: str, *, chain_id: int, bot: Bot) -> int | None:
+    """Resolve the `--to-block` CLI string to `int | None`.
+
+    Mirrors `cli/pool.py::_resolve_to_block`. `None` means "advance to the chain
+    tip" — the Rust core (`run_aave_update`) fetches the tip via
+    `eth_blockNumber` itself (no Python-side round-trip). A pure block tag with
+    no offset maps to `None`; a tag with an offset or a concrete integer
+    resolves to a specific block number via the provider.
+
+    Returns:
+        `int` for a concrete block number; `None` to let the Rust core fetch
+        the chain tip.
+
+    Raises:
+        ValueError: For a malformed tag.
+
+    """
+    if to_block.isdigit():
+        return int(to_block)
+
+    if ":" in to_block:
+        parts = to_block.split(":", 1)
+        block_tag, offset = cast("tuple[BlockParams, str]", parts)
+        block_offset = int(offset.strip())
+    else:
+        block_tag = cast("BlockParams", to_block)
+        block_offset = 0
+
+    if block_tag not in _BLOCK_TAGS:
+        msg = f"Invalid block tag: {block_tag}"
+        raise ValueError(msg)
+
+    if block_offset == 0:
+        # Pure tag -> let the Rust core resolve the tip.
+        return None
+
+    provider = get_provider_from_config(chain_id=chain_id, config=bot.config)
+    resolved = get_number_for_block_identifier(
+        identifier=block_tag,
+        provider=provider,
+    )
+    return int(resolved) + block_offset
 
 
 @cli.group
@@ -322,7 +382,7 @@ def aave_update(
     enable_backup: bool,
     backup_interval: int,
 ) -> None:
-    """Update positions for active Aave markets.
+    r"""Update positions for active Aave markets.
 
     Processes blockchain events from the last updated block to the specified block,
     updating all user positions, interest rates, and indices in the database.
@@ -341,98 +401,122 @@ def aave_update(
         backup_interval: Number of blocks between database backups.
 
     Raises:
-        DegenbotValueError: See function documentation.
-        ValueError: See function documentation.
+        DegenbotValueError: If no active Aave markets are found.
+        RuntimeError: If the run is cancelled via ``cancel_handle`` (the
+            in-flight chunk completed atomically first; committed chunks stay
+            durable). Other ``RuntimeError``\ s + ``ValueError`` propagate
+            from the Rust core (DB/RPC/parse failures) + ``_resolve_to_block``
+            (a malformed ``--to-block``) — see their docstrings.
 
     """
-    with (  # noqa:PLR1702
-        logging_redirect_tqdm(
-            loggers=[logger],
-        ),
-    ):
-        with bot.db() as session:
-            active_chains = set(
-                session.scalars(
-                    select(AaveV3Market.chain_id).where(
-                        AaveV3Market.active,
-                        AaveV3Market.name.contains("aave"),
-                    ),
-                ).all(),
+    # AVS4DR (epic AZGJUN): the per-market chunk loop is delegated to the Rust
+    # core (`degenbot_rs.run_aave_update`, tasks 6SWY4R + 5XNTC5). Python is a
+    # driver shell — market selection (READ), `--to-block` resolution, SIGINT ->
+    # cancel flag, tqdm-on-callback, a per-market report echo, + post-run
+    # `--verify-all` hygiene. The chunk loop, the RPC fetches, the decode, the
+    # DB writes, + the per-chunk transaction all live in the Rust core. The
+    # Python writer pipeline (`update_aave_market` below + `db_*.py` +
+    # `event_handlers._process_*` + `transaction_processor`/
+    # `operations_parser`/`token_processor`) is UNROUTED — kept available for
+    # the U5YIBG §4.2 cross-check; deletion is gated on CZM7TI (post-GREEN).
+    #
+    # Behavior changes vs the pre-cutover Python loop (flagged for U5YIBG):
+    # - `--dry-run`: shell-level preview (skips the Rust call entirely). The
+    #   Rust core has no dry-run flag; a full write-preview needs one (RQXEKH).
+    # - `--verify-block`/`--verify-chunk`/`--one-chunk`: mid-loop options the
+    #   Rust core cannot honor (it owns chunking + exposes no per-block hook);
+    #   downgraded to a warning. Use `--verify-all` for post-run verification.
+    # - `--verify-all` + `--backup`: now POST-run per market (was interleaved at
+    #   `--backup-interval` boundaries mid-loop); the interleaving granularity
+    #   is lost (one verify/backup at the end of each market's run).
+    # - `last_update_block` stamp: owned by the Rust core (was Python).
+    # - Markets with `last_update_block is None` are SKIPPED (the Rust core
+    #   raises `NotBootstrapped`); bootstrap the stamp first.
+    if verify_block:
+        logger.warning(
+            "--verify-block is not supported by the Rust core; "
+            "mid-loop per-block verification is skipped.",
+        )
+    if verify_chunk:
+        logger.warning(
+            "--verify-chunk is not supported by the Rust core; "
+            "mid-loop per-chunk verification is skipped (use --verify-all).",
+        )
+    if stop_after_one_chunk:
+        logger.warning(
+            "--one-chunk is not supported by the Rust core; the run advances to --to-block.",
+        )
+    if enable_backup:
+        logger.warning(
+            "--backup-interval is not honored by the Rust core (was %s); "
+            "one backup runs at the end of each market's run.",
+            backup_interval,
+        )
+
+    handle = CancelHandle()
+    prior_int_handler = signal.getsignal(signal.SIGINT)
+
+    def _on_sigint(*_args: Any) -> None:
+        # Cooperative cancel: the Rust loop polls the flag between chunks (NOT
+        # mid-chunk) so a SIGINT never breaks chunk atomicity — the in-flight
+        # chunk completes (commit OR rollback) before the run returns
+        # (migration-guide §3.3 interrupt contract).
+        handle.cancel()
+
+    def _make_progress(
+        pbar: tqdm.tqdm, chunk_counter: list[int]
+    ) -> Callable[[dict[str, Any]], None]:
+        def _on_progress(progress: dict[str, Any]) -> None:
+            chunk_counter[0] += 1
+            if not progress["committed"]:
+                pbar.set_postfix_str(
+                    f"chunk {progress['chunk_start']}-{progress['chunk_end']} rolled back",
+                    refresh=True,
+                )
+                return
+            delta = progress["chunk_end"] - progress["chunk_start"] + 1
+            pbar.update(delta)
+            pbar.set_postfix_str(
+                f"+{progress['events_applied']} events (chunk {chunk_counter[0]})",
+                refresh=True,
             )
 
-        if not active_chains:
-            msg = "No active Aave markets found."
-            raise DegenbotValueError(message=msg)
+        return _on_progress
 
-        for chain_id in active_chains:
-            provider = get_provider_from_config(chain_id=chain_id)
-
+    cancelled = False
+    signal.signal(signal.SIGINT, _on_sigint)
+    try:  # noqa: PLR1702 — market loop nests under try/with/for/with/for/try/with
+        with logging_redirect_tqdm(loggers=[logger]):
+            # Active chains (READ — orchestration only; the Rust core owns the
+            # per-market write transaction).
             with bot.db() as session:
-                active_markets = session.scalars(
-                    select(AaveV3Market).where(
-                        AaveV3Market.active,
-                        AaveV3Market.chain_id == chain_id,
-                        AaveV3Market.name.contains("aave"),
-                    ),
-                ).all()
-
-                if not active_markets:
-                    click.echo(f"No active Aave markets on chain {chain_id}.")
-                    continue
-
-                initial_start_block = working_start_block = min(
-                    0 if market.last_update_block is None else market.last_update_block + 1
-                    for market in active_markets
+                active_chains = set(
+                    session.scalars(
+                        select(AaveV3Market.chain_id).where(
+                            AaveV3Market.active,
+                            AaveV3Market.name.contains("aave"),
+                        ),
+                    ).all(),
                 )
 
-            if to_block.isdigit():
-                last_block = int(to_block)
-            else:
-                if ":" in to_block:
-                    parts = to_block.split(":", 1)
-                    block_tag, offset = cast("tuple[BlockParams,str]", parts)
-                    block_offset = int(offset.strip())
-                else:
-                    block_tag = cast("BlockParams", to_block)
-                    block_offset = 0
+            if not active_chains:
+                msg = "No active Aave markets found."
+                raise DegenbotValueError(message=msg)
 
-                if block_tag not in {"latest", "earliest", "pending", "safe", "finalized"}:
-                    msg = f"Invalid block tag: {block_tag}"
-                    raise ValueError(msg)
+            database_path = str(bot.config.database.path)
 
-                last_block = (
-                    get_number_for_block_identifier(
-                        identifier=block_tag,
-                        provider=provider,
-                    )
-                    + block_offset
+            for chain_id in active_chains:
+                if handle.is_cancelled():
+                    break
+                rpc_url = resolve_http_rpc_uri(chain_id, config=bot.config)
+                resolved_to_block = _resolve_to_block(
+                    to_block,
+                    chain_id=chain_id,
+                    bot=bot,
                 )
+                provider = get_provider_from_config(chain_id=chain_id, config=bot.config)
 
-            current_block_number = get_number_for_block_identifier(
-                identifier="latest",
-                provider=provider,
-            )
-            if last_block > current_block_number:
-                msg = f"{to_block} is ahead of the current chain tip."
-                raise ValueError(msg)
-
-            if initial_start_block > last_block:
-                msg = (
-                    f"Chain {chain_id}: --to-block must be greater than the "
-                    f"market's last update block ({initial_start_block - 1})."
-                )
-                raise ValueError(msg)
-
-            block_pbar = tqdm.tqdm(
-                total=last_block - initial_start_block + 1,
-                bar_format="{desc} {percentage:3.1f}% |{bar}|",
-                leave=False,
-                disable=not show_progress,
-            )
-
-            block_pbar.n = working_start_block - initial_start_block
-
-            while True:
+                # Active markets for this chain (READ).
                 with bot.db() as session:
                     active_markets = session.scalars(
                         select(AaveV3Market).where(
@@ -442,100 +526,106 @@ def aave_update(
                         ),
                     ).all()
 
-                    # Cap the working end block at the lowest of:
-                    # - the safe block for the chain
-                    # - the end of the working chunk size
-                    # - all update blocks for active markets
-                    working_end_block = min(
-                        [last_block]
-                        + [working_start_block + chunk_size - 1]
-                        + [
-                            market.last_update_block
-                            for market in active_markets
-                            if market.last_update_block is not None
-                            if market.last_update_block > working_start_block
-                        ],
-                    )
-                    assert working_end_block >= working_start_block
+                if not active_markets:
+                    click.echo(f"No active Aave markets on chain {chain_id}.")
+                    continue
 
-                    block_pbar.set_description(
-                        f"Processing block range {working_start_block:,} -> {working_end_block:,}",
-                    )
-                    block_pbar.refresh()
-
-                    markets_to_update = {
-                        market
-                        for market in active_markets
-                        if (
-                            market.last_update_block is None
-                            or market.last_update_block + 1 == working_start_block
+                for market in active_markets:
+                    if handle.is_cancelled():
+                        cancelled = True
+                        break
+                    if market.last_update_block is None:
+                        click.echo(
+                            f"Chain {chain_id} market {market.id} ({market.name}): "
+                            "needs bootstrapping (last_update_block is None); "
+                            "skipping. Bootstrap the stamp before running.",
                         )
-                    }
+                        continue
 
-                    for market in markets_to_update:
-                        try:
-                            update_aave_market(
-                                provider=provider,
-                                start_block=working_start_block,
-                                end_block=working_end_block,
-                                market=market,
-                                session=session,
-                                verify_block=verify_block,
-                                verify_chunk=verify_chunk,
-                                show_progress=show_progress,
-                            )
-                        except Exception:  # noqa: BLE001
-                            logger.exception("")
-                            sys.exit(1)
+                    if dry_run:
+                        # Shell-level dry-run: skip the Rust call entirely (the
+                        # core has no dry-run flag — tracked for RQXEKH). This
+                        # is a shell-level preview, NOT a full write-preview.
+                        click.echo(
+                            f"Dry run: would advance chain {chain_id} market "
+                            f"{market.id} ({market.name}) from block "
+                            f"{market.last_update_block} to "
+                            f"{resolved_to_block!r} (no changes committed).",
+                        )
+                        continue
 
-                        if dry_run:
-                            session.rollback()
+                    pbar = tqdm.tqdm(
+                        desc=f"Market {market.id} ({market.name})",
+                        total=None,
+                        bar_format="{desc}: {n_fmt} blocks |{bar}| {postfix}",
+                        leave=False,
+                        disable=not show_progress,
+                    )
+                    chunk_counter = [0]
+                    try:
+                        report = run_aave_update(
+                            database_path=database_path,
+                            chain_id=chain_id,
+                            market_id=market.id,
+                            to_block=resolved_to_block,
+                            chunk_size=chunk_size,
+                            rpc_url=rpc_url,
+                            progress_callback=_make_progress(pbar, chunk_counter),
+                            cancel_handle=handle,
+                        )
+                    except RuntimeError as exc:
+                        # Cooperative cancel (RuntimeError per the .pyi): the
+                        # in-flight chunk completed atomically first; break the
+                        # market loop. Other RuntimeErrors re-raise.
+                        if "cancel" in str(exc).lower():
+                            cancelled = True
                             click.echo(
-                                f"Dry run: processed blocks {working_start_block:,} -> "
-                                f"{working_end_block:,} for {market.name} (no changes committed)",
+                                f"Chain {chain_id} market {market.id}: "
+                                "cancelled (committed chunks stay durable).",
                             )
-                            continue
+                            break
+                        raise
+                    finally:
+                        pbar.close()
 
-                        market.last_update_block = working_end_block
+                    click.echo(
+                        f"Chain {chain_id} market {market.id} ({market.name}): "
+                        f"advanced {report['from_block']}->{report['to_block']} "
+                        f"in {report['chunks_committed']} chunks "
+                        f"({report['total_events_applied']} events applied).",
+                    )
 
-                        if verify_all and (
-                            working_end_block // backup_interval
-                            != working_start_block // backup_interval
-                            or working_end_block % backup_interval == 0
-                        ):
+                    # Post-run verify hygiene (READ/verify — stays Python; runs
+                    # AFTER the Rust chunk transaction is committed, so no
+                    # two-writer hazard).
+                    if verify_all:
+                        with bot.db() as session:
                             verify_all_positions(
                                 provider=provider,
                                 market=market,
                                 session=session,
-                                block_number=working_end_block,
+                                block_number=report["to_block"],
                                 show_progress=show_progress,
                             )
                             cleanup_zero_balance_positions(
                                 session=session,
                                 market=market,
                             )
-
                             session.commit()
                             if enable_backup:
                                 backup_sqlite_database(
                                     session=session,
-                                    suffix=f"{working_end_block}",
+                                    suffix=f"{report['to_block']}",
                                     skip_confirmation=True,
                                 )
                                 logger.info(
-                                    f"Created database backup at block {working_end_block:,}",
+                                    f"Created database backup at block {report['to_block']:,}.",
                                 )
-                            bot.db.remove()
-                        else:
-                            session.commit()
 
-                    if working_end_block == last_block or stop_after_one_chunk:
-                        break
-                    working_start_block = working_end_block + 1
-
-                    block_pbar.n = working_end_block - initial_start_block
-
-            block_pbar.close()
+                if cancelled:
+                    break
+    finally:
+        signal.signal(signal.SIGINT, prior_int_handler)
 
 
 @aave.group()

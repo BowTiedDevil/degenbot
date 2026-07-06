@@ -1,5 +1,10 @@
 """Event processing handlers for Aave V3 configuration and contract updates."""
 
+# UNROUTED — the `cli/aave aave_update` driver no longer calls this module
+# (AVS4DR, epic AZGJUN). Kept available for the U5YIBG §4.2 cross-check; delete
+# in CZM7TI after the cross-check passes GREEN. The Rust core
+# (`degenbot-aave-updater::run::run_aave_update`) now owns the per-event write
+# dispatch this module implemented.
 from typing import Any
 
 import eth_abi.abi

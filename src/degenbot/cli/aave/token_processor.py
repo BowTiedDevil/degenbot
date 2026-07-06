@@ -5,6 +5,11 @@ updating user positions. It delegates to revision-specific processors for
 handling different token contract versions.
 """
 
+# UNROUTED — the `cli/aave aave_update` driver no longer calls this module
+# (AVS4DR, epic AZGJUN). Kept available for the U5YIBG §4.2 cross-check; delete
+# in CZM7TI after the cross-check passes GREEN. The Rust core
+# (`degenbot-aave-updater::run::run_aave_update`) now owns the per-event write
+# dispatch this module implemented.
 from typing import TYPE_CHECKING, assert_never
 
 import eth_abi.abi
