@@ -64,5 +64,8 @@ pub use processors::{
     ProcessorError, RayDivMode, RoundingStrategy, ScaledTokenBurnResult, ScaledTokenEventData,
     ScaledTokenMintResult, ScaledTokenProcessor,
 };
-pub use run::{apply_aave_chunk_writes_on_conn, AaveChunkEvent, AaveChunkWriteReport};
+pub use run::{
+    apply_aave_chunk_writes_on_conn, run_aave_update, AaveChunkEvent, AaveChunkProgress,
+    AaveChunkWriteReport, AaveUpdateReport, NoProgress, ProgressSink, RunError,
+};
 pub use transaction_processor::{process_transaction, ProcessTxError};
