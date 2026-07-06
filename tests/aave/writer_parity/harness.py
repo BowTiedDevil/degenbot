@@ -695,17 +695,26 @@ def make_borrow_log(
     user: str | None = None,
     interest_rate_mode: int = 2,
     borrow_rate: int = 0,
+    referral_code: int = 0,
     block: int = FIXTURE_BLOCK,
     log_index: int = 0,
     tx_hash: str | None = None,
 ) -> dict[str, Any]:
     """Build a canned `eth_getLogs` entry for a Pool `Borrow` event.
 
-    `Borrow(address indexed reserve, address user, address indexed onBehalfOf,
-    uint256 amount, uint8 interestRateMode, uint256 borrowRate,
-    uint16 indexed referralCode)` — emitted by the Pool. topics: [sig, reserve,
-    user, onBehalfOf]; data: abi.encode(user, amount, mode, rate) (4 words).
-    Both paths read reserve=topic1, onBehalfOf=topic3, amount=data word 1.
+    Real Aave V3 Borrow signature (verified on mainnet: block 16497464
+    referralCode=64, block 16498172 referralCode=6671):
+        Borrow(address indexed reserve, address user,
+               address indexed onBehalfOf, uint256 amount,
+               DataTypes.InterestRateMode interestRateMode, uint256 borrowRate,
+               uint16 indexed referralCode)
+    3 indexed params → 4 topics: [sig, reserve(1), onBehalfOf(2), referralCode(3)].
+    Non-indexed data: abi.encode(user, amount, mode, borrowRate) = 4 words.
+
+    `user` defaults to `on_behalf_of` (the common self-borrow case) but should
+    be set DISTINCT from `on_behalf_of` in tests that exercise the
+    topic-indexing decode path (the bug that masked byte-IDENTITY when
+    `user == on_behalf_of` made topic[2]==topic[3]) .
     """
     user = user or on_behalf_of
     words = [
@@ -719,8 +728,8 @@ def make_borrow_log(
         topics=[
             BORROW_TOPIC,
             _pad_address(reserve),
-            _pad_address(user),
-            _pad_address(on_behalf_of),
+            _pad_address(on_behalf_of),  # topic[2] = onBehalfOf (indexed)
+            _u256(referral_code),  # topic[3] = referralCode (indexed uint16)
         ],
         data="0x" + "".join(words),
         block=block,
