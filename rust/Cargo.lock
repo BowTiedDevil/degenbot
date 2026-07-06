@@ -1852,6 +1852,7 @@ dependencies = [
  "alloy",
  "ctor",
  "dashmap",
+ "degenbot-aave-updater",
  "degenbot-abi",
  "degenbot-balancer-math",
  "degenbot-bot",
