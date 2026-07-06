@@ -220,6 +220,9 @@ POOL_REVISION_SELECTOR = "0x0148170e"
 CONFIGURATOR_REVISION_SELECTOR = "0x7af635a6"
 ATOKEN_REVISION_SELECTOR = "0x0bd7ad3b"
 DEBT_TOKEN_REVISION_SELECTOR = "0xb9a7b622"  # noqa: S105
+# `getSourceOfAsset(address)` — the PriceOracle RPC the ReserveInitialized
+# handler calls to set the asset's initial price_source (keyed by selector).
+GET_SOURCE_OF_ASSET_SELECTOR = "0x92bf2be0"
 
 
 def make_collateral_configuration_changed_log(
@@ -478,6 +481,47 @@ def make_pool_configurator_updated_log(
             _pad_address(new_address),
         ],
         data="0x",
+        block=block,
+        log_index=log_index,
+    )
+
+
+# ReserveInitialized(address indexed asset, address indexed aToken,
+#   address stableDebtToken, address variableDebtToken,
+#   address interestRateStrategyAddress) — emitted by the PoolConfigurator.
+# Both paths create 3 erc20 rows (`asset`, `aToken`, `vToken`) + a new
+# `aave_v3_assets` row (a/v token revisions via EIP-1967 → ATOKEN_REVISION/
+# DEBT_TOKEN_REVISION eth_calls + price_source via getSourceOfAsset eth_call).
+# `stableDebtToken` + `interestRateStrategyAddress` are ignored by both paths.
+_RESERVE_INITIALIZED_TOPIC = (
+    "0x3a0ca721fc364424566385a1aa271ed508cc2c0949c2272575fb3013a163a45f"
+)
+
+
+def make_reserve_initialized_log(
+    *,
+    asset: str,
+    a_token: str,
+    v_token: str,
+    stable_debt_token: str = ZERO_ADDRESS,
+    interest_rate_strategy: str = ZERO_ADDRESS,
+    block: int = FIXTURE_BLOCK,
+    log_index: int = 0,
+) -> dict[str, Any]:
+    """Build a canned `eth_getLogs` entry for a ReserveInitialized event."""
+    data = "0x" + (
+        _pad_address(stable_debt_token)[2:]
+        + _pad_address(v_token)[2:]
+        + _pad_address(interest_rate_strategy)[2:]
+    )
+    return _make_log(
+        address=POOL_CONFIGURATOR_ADDRESS.lower(),
+        topics=[
+            _RESERVE_INITIALIZED_TOPIC,
+            _pad_address(asset),
+            _pad_address(a_token),
+        ],
+        data=data,
         block=block,
         log_index=log_index,
     )
