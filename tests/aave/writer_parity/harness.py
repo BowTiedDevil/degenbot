@@ -166,9 +166,7 @@ def make_reserve_used_as_collateral_log(
 # uint256 variableBorrowIndex) — topic0 is the signature hash, topic1 is the
 # reserve. The data is 5 uint256 words (stableBorrowRate is decoded then
 # discarded — deprecated on Aave V3).
-_RESERVE_DATA_UPDATED_TOPIC = (
-    "0x804c9b842b2748a22bb64b345453a3de7ca54a6ca45ce00d415894979e22897a"
-)
+_RESERVE_DATA_UPDATED_TOPIC = "0x804c9b842b2748a22bb64b345453a3de7ca54a6ca45ce00d415894979e22897a"
 
 
 def make_reserve_data_updated_log(
@@ -258,9 +256,7 @@ def make_collateral_configuration_changed_log(
 # — emitted by the Pool Configurator. The `oracle` data word + the dynamic
 # `string label` are abi-encoded (the string needs the offset+length+data
 # tail; `eth_abi.encode` builds it cleanly).
-_EMODE_CATEGORY_ADDED_TOPIC = (
-    "0x0acf8b4a3cace10779798a89a206a0ae73a71b63acdd3be2801d39c2ef7ab3cb"
-)
+_EMODE_CATEGORY_ADDED_TOPIC = "0x0acf8b4a3cace10779798a89a206a0ae73a71b63acdd3be2801d39c2ef7ab3cb"
 
 
 def make_e_mode_category_added_log(
@@ -277,10 +273,13 @@ def make_e_mode_category_added_log(
     """Build a canned `eth_getLogs` entry for an EModeCategoryAdded event."""
     import eth_abi
 
-    data = "0x" + eth_abi.abi.encode(
-        ["uint256", "uint256", "uint256", "address", "string"],
-        [ltv, liquidation_threshold, liquidation_bonus, oracle_address or ZERO_ADDRESS, label],
-    ).hex()
+    data = (
+        "0x"
+        + eth_abi.abi.encode(
+            ["uint256", "uint256", "uint256", "address", "string"],
+            [ltv, liquidation_threshold, liquidation_bonus, oracle_address or ZERO_ADDRESS, label],
+        ).hex()
+    )
     return _make_log(
         address=POOL_CONFIGURATOR_ADDRESS.lower(),
         topics=[_EMODE_CATEGORY_ADDED_TOPIC, _u256(category_id)],
@@ -309,7 +308,8 @@ def make_e_mode_asset_category_changed_log(
     return _make_log(
         address=POOL_CONFIGURATOR_ADDRESS.lower(),
         topics=[_EMODE_ASSET_CATEGORY_CHANGED_TOPIC, _pad_address(asset_address)],
-        data="0x" + old_category_id.to_bytes(32, "big").hex()
+        data="0x"
+        + old_category_id.to_bytes(32, "big").hex()
         + new_category_id.to_bytes(32, "big").hex(),
         block=block,
         log_index=log_index,
@@ -335,7 +335,8 @@ def make_asset_collateral_in_emode_changed_log(
     return _make_log(
         address=POOL_CONFIGURATOR_ADDRESS.lower(),
         topics=[_ASSET_COLLATERAL_IN_EMODE_CHANGED_TOPIC, _pad_address(asset_address)],
-        data="0x" + category_id.to_bytes(32, "big").hex()
+        data="0x"
+        + category_id.to_bytes(32, "big").hex()
         + (1 if is_collateral else 0).to_bytes(32, "big").hex(),
         block=block,
         log_index=log_index,
@@ -344,9 +345,7 @@ def make_asset_collateral_in_emode_changed_log(
 
 # PriceOracleUpdated(address indexed oldAddress, address indexed newAddress) —
 # emitted by the PoolAddressesProvider.
-_PRICE_ORACLE_UPDATED_TOPIC = (
-    "0x56b5f80d8cac1479698aa7d01605fd6111e90b15fc4d2b377417f46034876cbd"
-)
+_PRICE_ORACLE_UPDATED_TOPIC = "0x56b5f80d8cac1479698aa7d01605fd6111e90b15fc4d2b377417f46034876cbd"
 
 
 def make_price_oracle_updated_log(
@@ -373,9 +372,7 @@ def make_price_oracle_updated_log(
 # AddressSet(bytes32 indexed id, address indexed oldAddress, address indexed
 # newAddress) — emitted by the PoolAddressesProvider. `contract_id` is the
 # right-padded-ASCII bytes32 identifier (e.g. b"POOL_DATA_PROVIDER").
-_ADDRESS_SET_TOPIC = (
-    "0x9ef0e8c8e52743bb38b83b17d9429141d494b8041ca6d616a6c77cebae9cd8b7"
-)
+_ADDRESS_SET_TOPIC = "0x9ef0e8c8e52743bb38b83b17d9429141d494b8041ca6d616a6c77cebae9cd8b7"
 
 
 def make_address_set_log(
@@ -437,9 +434,7 @@ def make_pool_data_provider_updated_log(
 # emitted by the PoolAddressesProvider. Both paths RPC `POOL_REVISION()` on
 # the new address + UPDATE the `POOL` contract row's `revision` (NOT address —
 # the proxy address is stable).
-_POOL_UPDATED_TOPIC = (
-    "0x90affc163f1a2dfedcd36aa02ed992eeeba8100a4014f0b4cdc20ea265a66627"
-)
+_POOL_UPDATED_TOPIC = "0x90affc163f1a2dfedcd36aa02ed992eeeba8100a4014f0b4cdc20ea265a66627"
 
 
 def make_pool_updated_log(
@@ -499,9 +494,7 @@ def make_pool_configurator_updated_log(
 # `aave_v3_assets` row (a/v token revisions via EIP-1967 → ATOKEN_REVISION/
 # DEBT_TOKEN_REVISION eth_calls + price_source via getSourceOfAsset eth_call).
 # `stableDebtToken` + `interestRateStrategyAddress` are ignored by both paths.
-_RESERVE_INITIALIZED_TOPIC = (
-    "0x3a0ca721fc364424566385a1aa271ed508cc2c0949c2272575fb3013a163a45f"
-)
+_RESERVE_INITIALIZED_TOPIC = "0x3a0ca721fc364424566385a1aa271ed508cc2c0949c2272575fb3013a163a45f"
 
 
 def make_reserve_initialized_log(
@@ -541,9 +534,7 @@ def make_reserve_initialized_log(
 # concern). For the deprecation side effect the upgraded vToken must BE the GHO
 # vToken — the seeded asset's v_token is NOT, so `deprecated_gho_token_id` is
 # None + only the revision column updates.
-_UPGRADED_TOPIC = (
-    "0xbc7cd75a20ee27fd9adebab32041f755214dbc6bffa90cc0225b39da2e5c2d3b"
-)
+_UPGRADED_TOPIC = "0xbc7cd75a20ee27fd9adebab32041f755214dbc6bffa90cc0225b39da2e5c2d3b"
 
 
 def make_upgraded_log(
@@ -621,11 +612,43 @@ def make_discount_rate_strategy_updated_log(
     )
 
 
+# GHO `DiscountPercentUpdated(address indexed user, uint256 oldDiscountPercent,
+# uint256 indexed newDiscountPercent)` — emitted by the GHO vToken. The
+# `newDiscountPercent` is topic[2] (indexed); `oldDiscountPercent` is the
+# non-indexed data word. The Rust config path's `dispatch_discount_percent_updated`
+# builds a `GhoDiscountPercentUpdated` chunk event → `apply_gho_discount_percent_updated`
+# writes `aave_v3_users.gho_discount = newDiscountPercent` (the U5YIBG #5
+# Rust-written column the `verify_gho_discount_amounts` invariant reads).
+_DISCOUNT_PERCENT_UPDATED_TOPIC = (
+    "0x74ab9665e7c36c29ddb78ef88a3e2eac73d35b8b16de7bc573e313e320104956"
+)
+
+
+def make_discount_percent_updated_log(
+    *,
+    user_address: str,
+    new_discount_percent: int,
+    old_discount_percent: int = 0,
+    block: int = FIXTURE_BLOCK,
+    log_index: int = 0,
+) -> dict[str, Any]:
+    """Build a canned `eth_getLogs` entry for a GHO DiscountPercentUpdated event."""
+    return _make_log(
+        address=GHO_VTOKEN_ADDRESS.lower(),
+        topics=[
+            _DISCOUNT_PERCENT_UPDATED_TOPIC,
+            _pad_address(user_address),
+            "0x" + format(new_discount_percent, "064x"),
+        ],
+        data="0x" + format(old_discount_percent, "064x"),
+        block=block,
+        log_index=log_index,
+    )
+
+
 # AssetSourceUpdated(address indexed asset, address indexed source) — emitted
 # by the AaveOracle contract (the PRICE_ORACLE row's address).
-_ASSET_SOURCE_UPDATED_TOPIC = (
-    "0x22c5b7b2d8561d39f7f210b6b326a1aa69f15311163082308ac4877db6339dc1"
-)
+_ASSET_SOURCE_UPDATED_TOPIC = "0x22c5b7b2d8561d39f7f210b6b326a1aa69f15311163082308ac4877db6339dc1"
 
 
 def make_asset_source_updated_log(
@@ -975,9 +998,7 @@ class _MockRpcHandler(BaseHTTPRequestHandler):
         if isinstance(raw_addr, str):
             addresses.add(raw_addr.lower())
         elif isinstance(raw_addr, list):
-            addresses.update(
-                a.lower() for a in raw_addr if isinstance(a, str)
-            )
+            addresses.update(a.lower() for a in raw_addr if isinstance(a, str))
         topic0_group: set[str] = set()
         topics = filt.get("topics") or []
         if topics:
@@ -1087,10 +1108,7 @@ def seeded_db(
         # The GHO token erc20 row + the aave_gho_tokens row (the Python oracle
         # asserts gho_asset is not None; the Rust treats it as optional).
         session.execute(
-            text(
-                "INSERT INTO erc20_tokens (id, chain, address) "
-                "VALUES (1, :chain, :addr)"
-            ),
+            text("INSERT INTO erc20_tokens (id, chain, address) VALUES (1, :chain, :addr)"),
             {"chain": chain_id, "addr": GHO_TOKEN_ADDRESS},
         )
         session.execute(
@@ -1223,8 +1241,7 @@ def dump_contract_rows(session: Session) -> list[dict[str, Any]]:
     """Dump ``aave_v3_contracts`` rows as comparable dicts (name-ordered)."""
     rows = session.execute(
         text(
-            "SELECT id, market_id, name, address, revision "
-            "FROM aave_v3_contracts ORDER BY name, id"
+            "SELECT id, market_id, name, address, revision FROM aave_v3_contracts ORDER BY name, id"
         )
     ).all()
     return [dict(row._mapping) for row in rows]
