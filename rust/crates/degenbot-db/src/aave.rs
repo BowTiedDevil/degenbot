@@ -22,7 +22,7 @@
 use std::collections::HashMap;
 
 use alloy::primitives::U256;
-use rusqlite::params;
+use rusqlite::{params, Connection};
 
 use crate::connection::DegenbotDb;
 use crate::error::DbError;
@@ -344,6 +344,25 @@ impl DegenbotDb {
     /// Returns [`DbError`] on a `SQLite` query failure.
     pub fn fetch_aave_oracle_address(&self, market_id: i64) -> Result<Option<String>, DbError> {
         let conn = self.lock();
+        Self::fetch_aave_oracle_address_on_conn(&conn, market_id)
+    }
+
+    /// The `PRICE_ORACLE` contract address for `market_id`, read on a borrowed
+    /// [`Connection`] (the chunk loop's `Transaction`) — so it sees the
+    /// in-progress chunk's uncommitted writes (read-your-own-writes within the
+    /// chunk) + prior chunks' committed writes. Used by the Aave updater's
+    /// `ReserveInitialized` dispatch to resolve the oracle FRESH (the spec's
+    /// `oracle_address` is cached once before the loop + can be `None` when the
+    /// `PRICE_ORACLE` row is registered mid-loop via a `PriceOracleUpdated`
+    /// event — I2RHGP Fix 1b).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] on a `SQLite` query failure.
+    pub fn fetch_aave_oracle_address_on_conn(
+        conn: &Connection,
+        market_id: i64,
+    ) -> Result<Option<String>, DbError> {
         let res = conn.query_row(
             "SELECT address FROM aave_v3_contracts WHERE market_id = ?1 AND name = 'PRICE_ORACLE' LIMIT 1",
             params![market_id],
