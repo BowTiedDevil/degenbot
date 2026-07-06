@@ -31,28 +31,26 @@ from degenbot.cli.aave.event_handlers import _decode_reserve_configuration_bitma
 from degenbot.degenbot_rs import db_decode_reserve_configuration_bitmap
 
 # The full key set both decoders emit (the §4.2 parity contract — column-by-column).
-EXPECTED_KEYS = frozenset(
-    {
-        "ltv",
-        "liquidation_threshold",
-        "liquidation_bonus",
-        "decimals",
-        "is_active",
-        "is_frozen",
-        "borrowing_enabled",
-        "stable_rate_borrowing_enabled",
-        "reserve_factor",
-        "borrow_cap",
-        "supply_cap",
-        "debt_ceiling",
-        "liquidation_protocol_fee",
-        "unbacked_mint_cap",
-        "e_mode_category_id",
-        "flash_loan_enabled",
-        "isolation_mode",
-        "borrowable_in_isolation",
-    }
-)
+EXPECTED_KEYS = frozenset({
+    "ltv",
+    "liquidation_threshold",
+    "liquidation_bonus",
+    "decimals",
+    "is_active",
+    "is_frozen",
+    "borrowing_enabled",
+    "stable_rate_borrowing_enabled",
+    "reserve_factor",
+    "borrow_cap",
+    "supply_cap",
+    "debt_ceiling",
+    "liquidation_protocol_fee",
+    "unbacked_mint_cap",
+    "e_mode_category_id",
+    "flash_loan_enabled",
+    "isolation_mode",
+    "borrowable_in_isolation",
+})
 
 
 def _field(bitmap: int, shift: int, mask: int) -> int:
