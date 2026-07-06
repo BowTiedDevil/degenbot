@@ -82,11 +82,23 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "db")]
     crate::db::add_db_module(m)?;
 
-    // Pool-updater chunk-loop seam (feature = "pool") — `run_pool_update`
-    // + `CancelHandle`. Gates `db` + `rpc` (the chunk loop reads the DB + RPCs
-    // log fetches). Task QZHNZQ; epic 2SFL6I.
+    // `CancelHandle` — the cooperative cancel flag for the updater loops
+    // (`run_pool_update`, `run_aave_update`). Gated on either updater feature
+    // (whichever needs it); registered once, top-level. Lives in `cancel.rs`.
+    #[cfg(any(feature = "pool", feature = "aave-updater"))]
+    crate::cancel::register_cancel(m)?;
+
+    // Pool-updater chunk-loop seam (feature = "pool") — `run_pool_update`.
+    // Gates `db` + `rpc` (the chunk loop reads the DB + RPCs log fetches).
+    // Task QZHNZQ; epic 2SFL6I. `CancelHandle` is registered above (shared).
     #[cfg(feature = "pool")]
     crate::pool::add_pool_module(m)?;
+
+    // Aave-updater chunk-loop seam (feature = "aave-updater") —
+    // `run_aave_update`. Gates `db` + `rpc` (mirrors the pool seam). Epic
+    // AZGJUN, task 5XNTC5. `CancelHandle` is registered above (shared).
+    #[cfg(feature = "aave-updater")]
+    crate::aave_updater::add_aave_updater_module(m)?;
 
     // Typed database-schema-stale exception (`DbError::AlembicStale` →
     // `DatabaseSchemaStale`, a `ValueError` subclass). Exposed on the module

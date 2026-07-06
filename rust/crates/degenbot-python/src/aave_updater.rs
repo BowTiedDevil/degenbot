@@ -1,0 +1,344 @@
+//! `PyO3` seam for the `degenbot-aave-updater` chunk loop (epic `AZGJUN`,
+//! task `5XNTC5`).
+//!
+//! Thin `#[pyfunction]` wrapper over
+//! [`degenbot_aave_updater::run::run_aave_update`] (the 6SWY4R core). Arg
+//! extraction → GIL release (`py.detach`) → core call → result wrap. No
+//! business logic (three-layer architecture, ADR-005). The "Rust is the
+//! engine; Python is the cockpit" framing: Python threads the args + a
+//! progress callback + a cancel handle; Rust owns the loop, the RPC fetches,
+//! the decode, the DB writes, + the per-chunk transaction.
+//!
+//! # GIL discipline
+//!
+//! `py.detach(|| core::run_aave_update(...))` releases the GIL across the
+//! WHOLE run (long RPC polls hold NO GIL — `rust/AGENTS.md` §GIL). Only the
+//! per-chunk progress callback re-acquires the GIL, briefly, via
+//! [`Python::attach`] inside [`PyProgressSink::report_chunk`] (once per
+//! chunk, off the async path). A Python-side `KeyboardInterrupt` won't
+//! pre-empt mid-chunk (the GIL is released); the CLI signal handler calls
+//! [`crate::cancel::CancelHandle::cancel`] (the cooperative flag the loop
+//! polls between chunks).
+//!
+//! # Owned-runtime constraint (D2)
+//!
+//! [`degenbot_aave_updater::run::run_aave_update`] owns its
+//! `tokio::runtime::Runtime`. Calling it from within an existing tokio
+//! runtime panics ("Cannot start a runtime from within a runtime"). The CLI
+//! driver runs `run_aave_update` from a worker thread with NO ambient tokio
+//! runtime. See [`crate::pool`] for the same constraint.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use pyo3::prelude::*;
+use pyo3::types::PyDict;
+
+use degenbot_aave_updater::{
+    run_aave_update as core_run_aave_update, AaveChunkProgress, AaveUpdateReport, ProgressSink,
+    RunError,
+};
+
+use crate::cancel::CancelHandle;
+
+/// The Python callable signature the seam accepts: a single positional dict
+/// argument per chunk (see [`aave_progress_report_to_dict`]). Mirrors the pool
+/// seam's `ProgressCallable`.
+pub(crate) type ProgressCallable = Py<PyAny>;
+
+/// The bridge: a Rust struct holding a `Py<PyAny>` callable, implementing
+/// [`ProgressSink`]. Fires once per chunk (the chunk boundary, in
+/// [`run_aave_update`]'s sync section after `tx.commit()`/rollback).
+/// Re-acquires the GIL via [`Python::attach`] + invokes the callable with a
+/// `dict` snapshot of the [`AaveChunkProgress`].
+///
+/// Not exposed as a `#[pyclass]` — Python passes a raw `Callable`, + the
+/// seam wraps it. Mirrors the pool seam's `PyProgressSink`.
+struct PyProgressSink {
+    callback: ProgressCallable,
+}
+
+impl PyProgressSink {
+    fn new(callback: ProgressCallable) -> Self {
+        Self { callback }
+    }
+}
+
+impl ProgressSink for PyProgressSink {
+    fn report_chunk(&self, progress: &AaveChunkProgress) {
+        Python::attach(|py| {
+            let dict = match aave_progress_report_to_dict(py, progress) {
+                Ok(d) => d,
+                Err(e) => {
+                    log::error!("run_aave_update: failed to build progress dict: {e}");
+                    return;
+                }
+            };
+            if let Err(err) = self.callback.call1(py, (dict,)) {
+                log::warn!("run_aave_update: Python progress callback raised: {err}");
+            }
+        });
+    }
+}
+
+/// Build the per-chunk `dict` reported to the Python progress callback.
+///
+/// Shape: `{"chain_id": int, "market_id": int, "chunk_start": int,
+/// "chunk_end": int, "events_applied": int, "committed": bool}`.
+fn aave_progress_report_to_dict(py: Python<'_>, p: &AaveChunkProgress) -> PyResult<Py<PyDict>> {
+    let dict = PyDict::new(py);
+    dict.set_item("chain_id", p.chain_id)?;
+    dict.set_item("market_id", p.market_id)?;
+    dict.set_item("chunk_start", p.chunk_start)?;
+    dict.set_item("chunk_end", p.chunk_end)?;
+    dict.set_item("events_applied", p.events_applied)?;
+    dict.set_item("committed", p.committed)?;
+    Ok(dict.unbind())
+}
+
+/// Build the `AaveUpdateReport` return `dict` (matches the pool seam's
+/// `update_report_to_dict` idiom).
+///
+/// Shape: `{"chain_id": int, "market_id": int, "from_block": int,
+/// "to_block": int, "chunks_committed": int, "total_events_applied": int}`.
+fn aave_report_to_dict(py: Python<'_>, r: &AaveUpdateReport) -> PyResult<Py<PyDict>> {
+    let dict = PyDict::new(py);
+    dict.set_item("chain_id", r.chain_id)?;
+    dict.set_item("market_id", r.market_id)?;
+    dict.set_item("from_block", r.from_block)?;
+    dict.set_item("to_block", r.to_block)?;
+    dict.set_item("chunks_committed", r.chunks_committed)?;
+    dict.set_item("total_events_applied", r.total_events_applied)?;
+    Ok(dict.unbind())
+}
+
+/// `degenbot_rs.run_aave_update(database_path, chain_id, market_id, to_block,
+/// chunk_size, rpc_url, progress_callback, cancel_handle) -> dict`
+///
+/// Drive the Rust-owned Aave V3 updater chunk loop for `market_id`, advancing
+/// `aave_v3_markets.last_update_block` to `to_block` (or the chain tip if
+/// `to_block is None`). See
+/// [`degenbot_aave_updater::run::run_aave_update`] for the §3.4 atomicity
+/// invariant (one `Transaction` per chunk; failure mid-chunk → rollback →
+/// `last_update_block` unchanged → restart re-processes clean).
+///
+/// The GIL is released across the WHOLE run (`py.detach`) — only the
+/// `progress_callback` re-acquires it briefly, once per chunk (see
+/// [`PyProgressSink`]). A Python-side `KeyboardInterrupt` won't pre-empt
+/// mid-chunk; the SIGINT handler calls `cancel_handle.cancel()` (the
+/// cooperative flag the loop polls between chunks — §3.3 interrupt contract:
+/// SIGINT between chunks → honored immediately; SIGINT mid-chunk → the chunk
+/// completes atomically first).
+///
+/// # Args
+///
+/// - `database_path` — the writeable `DegenbotDb` path.
+/// - `chain_id` — the chain.
+/// - `market_id` — the `aave_v3_markets.id` to advance.
+/// - `to_block` — `int` to advance to a specific block; `None` for the tip.
+/// - `chunk_size` — blocks per chunk.
+/// - `rpc_url` — the HTTP RPC endpoint.
+/// - `progress_callback` — a Python callable invoked with a per-chunk `dict`
+///   `{chain_id, market_id, chunk_start, chunk_end, events_applied,
+///   committed}` once per chunk boundary.
+/// - `cancel_handle` — a [`CancelHandle`] (shared with `run_pool_update`);
+///   a `signal.SIGINT` handler calls `.cancel()`.
+///
+/// # Returns
+///
+/// A `dict` `{chain_id, market_id, from_block, to_block, chunks_committed,
+/// total_events_applied}`.
+///
+/// # Raises
+///
+/// `ValueError` on a DB / RPC / config-dispatch / parse failure (the in-flight
+/// chunk is rolled back before returning; committed chunks stay durable).
+/// `RuntimeError` if cancelled.
+///
+/// # Runtime nesting
+///
+/// Must NOT be called from within an existing `tokio` runtime (the core owns
+/// its runtime; nesting panics). See the module docs.
+#[pyfunction]
+#[pyo3(signature = (
+    database_path,
+    chain_id,
+    market_id,
+    to_block,
+    chunk_size,
+    rpc_url,
+    progress_callback,
+    cancel_handle,
+))]
+#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
+fn run_aave_update(
+    py: Python<'_>,
+    database_path: &str,
+    chain_id: i64,
+    market_id: i64,
+    to_block: Option<u64>,
+    chunk_size: u64,
+    rpc_url: &str,
+    progress_callback: ProgressCallable,
+    cancel_handle: &CancelHandle,
+) -> PyResult<Py<PyDict>> {
+    let path = PathBuf::from(database_path);
+    let cancel = cancel_handle.flag.clone();
+    let progress: Arc<dyn ProgressSink> = Arc::new(PyProgressSink::new(progress_callback));
+
+    // GIL released across the WHOLE run. `tokio::runtime::Runtime` is built
+    // + `block_on`'d inside the core (on this thread, GIL-free); only the
+    // progress callback re-enters via `Python::attach`.
+    let report = py
+        .detach(move || {
+            core_run_aave_update(
+                &path, chain_id, market_id, to_block, chunk_size, rpc_url, cancel, progress,
+            )
+        })
+        .map_err(run_err_to_py)?;
+
+    aave_report_to_dict(py, &report)
+}
+
+/// Map a [`RunError`] to a Python exception. Mirrors the pool seam's
+/// `run_err_to_py`: `RunError::Cancelled` → `RuntimeError` (so the driver
+/// distinguishes a cooperative cancel from a failure); everything else →
+/// `ValueError`.
+fn run_err_to_py(err: RunError) -> PyErr {
+    use pyo3::exceptions::{PyRuntimeError, PyValueError};
+    match err {
+        RunError::Cancelled => PyRuntimeError::new_err("run_aave_update cancelled by cancel flag"),
+        other => PyValueError::new_err(other.to_string()),
+    }
+}
+
+/// Register the aave-updater seam on `m` (feature = "aave-updater"). Mirrors
+/// `pool::add_pool_module`. `CancelHandle` is registered separately by
+/// `cancel::register_cancel` (shared).
+///
+/// # Errors
+///
+/// Returns a [`PyErr`] if the `add_function` call fails (a name collision);
+/// propagated unchanged to the `#[pymodule]` caller.
+pub fn add_aave_updater_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(run_aave_update, m)?)?;
+    Ok(())
+}
+
+#[cfg(all(test, feature = "auto-initialize"))]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    /// `aave_report_to_dict` produces the six-key report dict the `.pyi`
+    /// contract promises (the `run_aave_update` return shape).
+    #[test]
+    fn aave_report_dict_shape() {
+        Python::attach(|py| {
+            let r = AaveUpdateReport {
+                chain_id: 1,
+                market_id: 42,
+                from_block: 10,
+                to_block: 99,
+                chunks_committed: 3,
+                total_events_applied: 17,
+            };
+            let d = aave_report_to_dict(py, &r).unwrap();
+            let bound = d.bind(py);
+            for k in [
+                "chain_id",
+                "market_id",
+                "from_block",
+                "to_block",
+                "chunks_committed",
+                "total_events_applied",
+            ] {
+                assert!(bound.contains(k).unwrap(), "missing key {k}");
+            }
+            assert_eq!(
+                bound
+                    .get_item("market_id")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<i64>()
+                    .unwrap(),
+                42
+            );
+            assert_eq!(
+                bound
+                    .get_item("total_events_applied")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<usize>()
+                    .unwrap(),
+                17
+            );
+        });
+    }
+
+    /// `PyProgressSink` fires the Python callback ONCE per `report_chunk` call,
+    /// passing a dict whose 6 keys match the `AaveChunkProgress` snapshot. This
+    /// is the per-chunk GIL re-acquisition path — proving the bridge works
+    /// without a live RPC node (the full `run_aave_update` round-trip requires
+    /// one).
+    #[test]
+    fn aave_progress_sink_callback_fires_once_per_chunk() {
+        Python::attach(|py| {
+            let seen = pyo3::types::PyList::empty(py);
+            let globals = pyo3::types::PyDict::new(py);
+            globals.set_item("seen", seen.as_any()).unwrap();
+            py.run(c"def cb(d):\n    seen.append(d)", Some(&globals), None)
+                .unwrap();
+            let cb = globals.get_item("cb").unwrap().unwrap();
+            let sink = PyProgressSink::new(cb.unbind());
+
+            // Fire twice — the callback must see BOTH chunks + preserve order.
+            sink.report_chunk(&AaveChunkProgress {
+                chain_id: 1,
+                market_id: 42,
+                chunk_start: 10,
+                chunk_end: 19,
+                events_applied: 5,
+                committed: true,
+            });
+            sink.report_chunk(&AaveChunkProgress {
+                chain_id: 1,
+                market_id: 42,
+                chunk_start: 20,
+                chunk_end: 29,
+                events_applied: 0,
+                committed: false,
+            });
+
+            assert_eq!(seen.len(), 2, "callback should have fired once per chunk");
+            let first = seen.get_item(0).unwrap();
+            assert_eq!(
+                first
+                    .get_item("chunk_end")
+                    .unwrap()
+                    .extract::<u64>()
+                    .unwrap(),
+                19
+            );
+            assert!(first
+                .get_item("committed")
+                .unwrap()
+                .extract::<bool>()
+                .unwrap());
+            let second = seen.get_item(1).unwrap();
+            assert_eq!(
+                second
+                    .get_item("events_applied")
+                    .unwrap()
+                    .extract::<usize>()
+                    .unwrap(),
+                0
+            );
+            assert!(!second
+                .get_item("committed")
+                .unwrap()
+                .extract::<bool>()
+                .unwrap());
+        });
+    }
+}

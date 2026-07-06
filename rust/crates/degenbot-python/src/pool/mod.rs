@@ -32,7 +32,6 @@
 //! call in `tokio::task::spawn_blocking`.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use pyo3::prelude::*;
@@ -217,63 +216,10 @@ fn run_pool_update(
     update_report_to_dict(py, &report)
 }
 
-/// `degenbot_rs.CancelHandle` — the cooperative cancel flag for
-/// [`run_pool_update`].
-///
-/// Construct up front; pass to `run_pool_update`; a `signal.SIGINT` handler
-/// (installed by the Task 5 CLI driver) calls `.cancel()` to stop the run at
-/// the next chunk boundary. The loop polls the flag between chunks (NOT
-/// mid-chunk) so a cancel never breaks the chunk's atomicity — the in-flight
-/// chunk completes (commit or rollback) before the run returns, the
-/// committed chunks stay durable.
-///
-/// This is preferred over a module-level `set_cancel()` accessor (a
-/// `OnceLock<Arc<AtomicBool>>`): the handle is per-run (no global mutable
-/// state, no race between concurrent runs, no stale global stuck "set" after
-/// a run), + Python owns the lifetime (drop after the run). Mirrors the
-/// `Arc<AtomicBool>` the core's `run_pool_update` takes (Task `CKXCOB`).
-#[pyclass(name = "CancelHandle")]
-pub struct CancelHandle {
-    /// The shared flag the chunk loop polls between chunks. `Arc`-cloned into
-    /// the core call (the `run_pool_update` signature takes `Arc<AtomicBool>`).
-    flag: Arc<AtomicBool>,
-}
-
-#[pymethods]
-impl CancelHandle {
-    /// Construct a fresh cancel handle (flag initially `false`).
-    #[new]
-    fn new() -> Self {
-        Self {
-            flag: Arc::new(AtomicBool::new(false)),
-        }
-    }
-
-    /// Request cancellation. Honored at the next chunk boundary (after the
-    /// current chunk completes atomically). Idempotent.
-    fn cancel(&self) {
-        self.flag.store(true, Ordering::Release);
-    }
-
-    /// Whether cancellation was requested. Useful for tests + for a CLI
-    /// driver that wants to observe whether its own SIGINT handler fired.
-    fn is_cancelled(&self) -> bool {
-        self.flag.load(Ordering::Acquire)
-    }
-
-    /// Reset the flag to `false` (reuse the handle for a fresh run).
-    /// Not normally needed (construct a fresh handle per run), but offered
-    /// for the test harness + the "run, observe, re-run" CLI shell.
-    fn reset(&self) {
-        self.flag.store(false, Ordering::Release);
-    }
-}
-
-impl Default for CancelHandle {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// `CancelHandle` lives in `cancel.rs` (extracted) — shared with the Aave
+// updater seam. Re-exported here so `run_pool_update`'s `cancel_handle:
+// &CancelHandle` resolves + existing `pool::CancelHandle` references work.
+pub use crate::cancel::CancelHandle;
 
 /// Map a [`RunError`] to a Python exception.
 ///
@@ -298,7 +244,8 @@ fn run_err_to_py(err: RunError) -> PyErr {
 /// collision); propagated unchanged to the `#[pymodule]` caller.
 pub fn add_pool_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run_pool_update, m)?)?;
-    m.add_class::<CancelHandle>()?;
+    // `CancelHandle` is registered by `cancel::register_cancel` in `c_api`
+    // (shared with the Aave updater seam).
     Ok(())
 }
 
@@ -307,18 +254,6 @@ pub fn add_pool_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
 mod tests {
     use super::*;
     use degenbot_pool_updater::run::ChunkProgress;
-
-    /// A `CancelHandle` round-trips: fresh → not cancelled; after `cancel()` →
-    /// cancelled; after `reset()` → not. (No Python needed — pure Rust state.)
-    #[test]
-    fn cancel_handle_round_trip() {
-        let h = CancelHandle::new();
-        assert!(!h.is_cancelled());
-        h.cancel();
-        assert!(h.is_cancelled());
-        h.reset();
-        assert!(!h.is_cancelled());
-    }
 
     /// `update_report_to_dict` produces the six-key report dict the `.pyi`
     /// contract promises (the `run_pool_update` return shape).
