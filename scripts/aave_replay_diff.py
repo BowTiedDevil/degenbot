@@ -596,7 +596,7 @@ def drive(
             _run_python_writer(ref_path, REF_FROM_BLOCK, to_block, rpc, market_name=market_name)
             summary["ref_ok"] = True
             summary["ref_stamp"] = _read_stamp(ref_path)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             summary["ref_ok"] = False
             summary["ref_error"] = f"{type(exc).__name__}: {exc}"
             # Do NOT re-raise — the Python ref's fresh-market cold-boot is
