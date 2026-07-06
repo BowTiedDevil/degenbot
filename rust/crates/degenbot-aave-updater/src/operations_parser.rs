@@ -2419,12 +2419,13 @@ struct RepayPoolDecoded {
 }
 
 fn decode_supply_pool_event(log: &Log) -> Option<SupplyPoolDecoded> {
+    // Real Aave V3 Supply: 4 topics [sig, reserve, onBehalfOf, referralCode].
     let topics = log.topics();
-    if topics.len() < 5 {
+    if topics.len() < 4 {
         return None;
     }
     let reserve = Address::from_word(topics[1]);
-    let on_behalf_of = Address::from_word(topics[3]);
+    let on_behalf_of = Address::from_word(topics[2]);
     let data = log.data().data.as_ref();
     // data = abi.encode(address user, uint256 amount) — amount is word 1.
     if data.len() < 64 {
@@ -2462,12 +2463,13 @@ fn decode_withdraw_pool_event(log: &Log) -> Option<WithdrawPoolDecoded> {
 }
 
 fn decode_borrow_pool_event(log: &Log) -> Option<BorrowPoolDecoded> {
+    // Real Aave V3 Borrow: 4 topics [sig, reserve, onBehalfOf, referralCode].
     let topics = log.topics();
     if topics.len() < 4 {
         return None;
     }
     let reserve = Address::from_word(topics[1]);
-    let on_behalf_of = Address::from_word(topics[3]);
+    let on_behalf_of = Address::from_word(topics[2]);
     let data = log.data().data.as_ref();
     // data = abi.encode(address user, uint256 amount, uint8 mode, uint256 rate)
     if data.len() < 128 {

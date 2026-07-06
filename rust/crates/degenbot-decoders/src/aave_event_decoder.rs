@@ -830,17 +830,19 @@ pub enum DecodedAaveEvent {
 /// data < 64 bytes.
 #[must_use]
 pub fn decode_supply(log: &Log) -> Option<SupplyEvent> {
+    // Real Aave V3 Supply signature (verified on mainnet, block 16496817):
+    //   Supply(address indexed reserve, address user, address indexed onBehalfOf,
+    //          uint256 amount, uint16 indexed referralCode)
+    // 3 indexed params → 4 topics: [sig, reserve(topic1), onBehalfOf(topic2),
+    // referralCode(topic3)]. Non-indexed data: [user, amount] = 2 words = 64 bytes.
     let topics = log_topics(log)?;
     if topics.first()? != &SUPPLY_TOPIC {
         return None;
     }
     let reserve = topic_address(topics, 1)?;
-    let on_behalf_of = topic_address(topics, 3)?;
-    let referral_code = topic_u16(topics, 4).unwrap_or(0);
+    let on_behalf_of = topic_address(topics, 2)?;
+    let referral_code = topic_u16(topics, 3).unwrap_or(0);
     let data = log.data().data.as_ref();
-    // data = abi.encode(address user, uint256 amount, uint16 referralCode) —
-    // BUT `referralCode` is indexed (so it's NOT in data). The non-indexed
-    // data is `address user, uint256 amount` = 2 words = 64 bytes.
     if data.len() < 64 {
         return None;
     }
@@ -858,16 +860,22 @@ pub fn decode_supply(log: &Log) -> Option<SupplyEvent> {
 /// data < 128 bytes.
 #[must_use]
 pub fn decode_borrow(log: &Log) -> Option<BorrowEvent> {
+    // Real Aave V3 Borrow signature (verified on mainnet: block 16497464
+    // referralCode=64, block 16498172 referralCode=6671):
+    //   Borrow(address indexed reserve, address user, address indexed onBehalfOf,
+    //          uint256 amount, DataTypes.InterestRateMode interestRateMode,
+    //          uint256 borrowRate, uint16 indexed referralCode)
+    // 3 indexed params → 4 topics: [sig, reserve(topic1), onBehalfOf(topic2),
+    // referralCode(topic3)]. Non-indexed data: [user, amount, mode, borrowRate]
+    // = 4 words = 128 bytes.
     let topics = log_topics(log)?;
     if topics.first()? != &BORROW_TOPIC {
         return None;
     }
     let reserve = topic_address(topics, 1)?;
-    let on_behalf_of = topic_address(topics, 3)?;
-    let referral_code = topic_u16(topics, 4).unwrap_or(0);
+    let on_behalf_of = topic_address(topics, 2)?;
+    let referral_code = topic_u16(topics, 3).unwrap_or(0);
     let data = log.data().data.as_ref();
-    // data = abi.encode(address user, uint256 amount, uint8 interestRateMode,
-    // uint256 borrowRate) = 4 words = 128 bytes (referralCode is indexed).
     if data.len() < 128 {
         return None;
     }
@@ -1970,25 +1978,33 @@ mod tests {
 
     #[test]
     fn decode_valid_supply() {
+        // Real Aave V3 Supply signature (verified on mainnet, block 16496817):
+        //   Supply(address indexed reserve, address user,
+        //          address indexed onBehalfOf, uint256 amount,
+        //          uint16 indexed referralCode)
+        // 3 indexed params → 4 topics: [sig, reserve, onBehalfOf, referralCode].
+        // Non-indexed data: abi.encode(address user, uint256 amount) = 2 words.
+        // DISTINCT user ≠ onBehalfOf + non-zero referralCode — this is the
+        // shape that catches a topic-indexing bug (the prior fictional layout
+        // with `user` at topic[2] + `onBehalfOf` at topic[3] masked it).
         let pool = Address::from([0xa0; 20]);
         let reserve = Address::from([0xa1; 20]);
         let on_behalf_of = Address::from([0xa2; 20]);
+        let user = Address::from([0xab; 20]); // distinct from on_behalf_of
         let amount = U256::from(1_000_000u64);
         let referral = 0x1234u16;
 
-        // data = abi.encode(address user, uint256 amount) — referralCode is indexed.
         let mut data = vec![0u8; 64];
-        data[12..32].copy_from_slice(Address::from([0xab; 20]).as_slice()); // user (unused)
-        data[32..64].copy_from_slice(&u256_word(amount));
+        data[12..32].copy_from_slice(user.as_slice()); // data word 0 = user
+        data[32..64].copy_from_slice(&u256_word(amount)); // data word 1 = amount
 
         let log = make_log(
             pool,
             vec![
                 SUPPLY_TOPIC,
-                addr_word(reserve),
-                B256::ZERO, // user (non-indexed in data, topic[2] unused)
-                addr_word(on_behalf_of),
-                B256::new(u16_word(referral)),
+                addr_word(reserve),       // topic[1] = reserve
+                addr_word(on_behalf_of),  // topic[2] = onBehalfOf
+                B256::new(u16_word(referral)), // topic[3] = referralCode
             ],
             data,
         );
@@ -2014,11 +2030,20 @@ mod tests {
         let amount = U256::from(5_000u64);
         let rate_mode: u8 = 2; // variable
         let borrow_rate = U256::from(123_456_789u64);
-        let referral = 0u16;
+        let referral = 0x5678u16; // non-zero — catches the topic-indexing bug
 
-        // data = abi.encode(address user, uint256 amount, uint8 mode, uint256 borrowRate)
+        // Real Aave V3 Borrow signature (verified on mainnet, block 16497464
+        // referralCode=64, block 16498172 referralCode=6671):
+        //   Borrow(address indexed reserve, address user,
+        //          address indexed onBehalfOf, uint256 amount,
+        //          DataTypes.InterestRateMode interestRateMode, uint256 borrowRate,
+        //          uint16 indexed referralCode)
+        // 3 indexed params → 4 topics: [sig, reserve, onBehalfOf, referralCode].
+        // Non-indexed data: abi.encode(user, amount, mode, borrowRate) = 4 words.
+        // DISTINCT user ≠ onBehalfOf + non-zero referralCode — shape that
+        // catches a topic-indexing bug (the prior fictional layout masked it).
         let mut data = vec![0u8; 128];
-        data[12..32].copy_from_slice(Address::from([0xb3; 20]).as_slice()); // user (unused)
+        data[12..32].copy_from_slice(Address::from([0xb3; 20]).as_slice()); // data word 0 = user (distinct)
         data[32..64].copy_from_slice(&u256_word(amount));
         data[64..96].copy_from_slice(&u8_word(rate_mode));
         data[96..128].copy_from_slice(&u256_word(borrow_rate));
@@ -2027,10 +2052,9 @@ mod tests {
             pool,
             vec![
                 BORROW_TOPIC,
-                addr_word(reserve),
-                B256::ZERO,
-                addr_word(on_behalf_of),
-                B256::new(u16_word(referral)),
+                addr_word(reserve),       // topic[1] = reserve
+                addr_word(on_behalf_of),  // topic[2] = onBehalfOf
+                B256::new(u16_word(referral)), // topic[3] = referralCode
             ],
             data,
         );
