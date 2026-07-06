@@ -844,6 +844,68 @@ def make_erc20_transfer_log(
     )
 
 
+# stkAAVE `Staked(address indexed from, address indexed onBehalfOf, uint256 amount)`
+# + `Redeem(address indexed from, address indexed to, uint256 amount)` — emitted by
+# the stkAAVE token (the GHO asset's `v_gho_discount_token`). The Rust config
+# path processes the semantic Staked/Redeem events (the coinciding ERC20
+# Transfer is fetched but decodes to None → skipped); the Python
+# `transaction_processor` processes the coinciding ERC20 Transfer on the discount
+# token. For a stake, both increment `onBehalfOf`; for a redeem, both decrement
+# `from` (the redeemer). Topic hashes match the Rust decoder's STAKED_TOPIC /
+# REDEEM_TOPIC byte-exact (YMWN5V — wired the dispatch arms).
+STK_AAVE_ADDRESS = "0x" + "ee" * 20
+_STAKED_TOPIC = "0x6c86f3fd5118b3aa8bb4f389a617046de0a3d3d477de1a1673d227f802f616dc"
+_REDEEM_TOPIC = "0x3f693fff038bb8a046aa76d9516190ac7444f7d69cf952c4cbdc086fdef2d6fc"
+
+
+def make_staked_log(
+    *,
+    staker: str,
+    on_behalf_of: str,
+    amount: int,
+    block: int = FIXTURE_BLOCK,
+    log_index: int = 0,
+    tx_hash: str | None = None,
+) -> dict[str, Any]:
+    """Build a canned `eth_getLogs` entry for a stkAAVE `Staked` event."""
+    return _make_log(
+        address=STK_AAVE_ADDRESS.lower(),
+        topics=[
+            _STAKED_TOPIC,
+            _pad_address(staker),
+            _pad_address(on_behalf_of),
+        ],
+        data=_u256(amount),
+        block=block,
+        log_index=log_index,
+        tx_hash=tx_hash,
+    )
+
+
+def make_redeem_log(
+    *,
+    redeemer: str,
+    to: str,
+    amount: int,
+    block: int = FIXTURE_BLOCK,
+    log_index: int = 0,
+    tx_hash: str | None = None,
+) -> dict[str, Any]:
+    """Build a canned `eth_getLogs` entry for a stkAAVE `Redeem` event."""
+    return _make_log(
+        address=STK_AAVE_ADDRESS.lower(),
+        topics=[
+            _REDEEM_TOPIC,
+            _pad_address(redeemer),
+            _pad_address(to),
+        ],
+        data=_u256(amount),
+        block=block,
+        log_index=log_index,
+        tx_hash=tx_hash,
+    )
+
+
 def seed_gho_asset(
     session: Session,
     *,

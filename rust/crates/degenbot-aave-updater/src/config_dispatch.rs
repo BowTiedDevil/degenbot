@@ -304,6 +304,50 @@ pub fn dispatch_discount_percent_updated(
     })
 }
 
+/// `Staked(from, onBehalfOf, amount)` → [`AaveChunkEvent::StkAaveStaked`].
+/// Mirrors `stkaave.process_stk_aave_transfer_event` (the `to_user` path; the
+/// Python `Transfer(from=0, to=X)` mint arm — a `Staked` event coincides with
+/// a mint `Transfer`, so the Rust processes the semantic `Staked` eventwhile
+/// the Python processes the coinciding `Transfer`; both increment the
+/// recipient's balance by `amount`). The balance increments on `onBehalfOf`
+/// (the recipient — topic[2]). The fetch (`fetch_stk_aave_logs`) filters logs
+/// to `gho_asset.v_gho_discount_token`, so no emitter-validation guard is
+/// needed (mirrors `dispatch_discount_percent_updated`, which also skips it).
+pub fn dispatch_stk_aave_staked(
+    market_id: i64,
+    block_number: u64,
+    decoded: &degenbot_decoders::aave_event_decoder::StakedEvent,
+    conn: &Connection,
+) -> Result<AaveChunkEvent, ConfigDispatchError> {
+    let user_str = checksum(&decoded.on_behalf_of);
+    let user_id = DegenbotDb::get_or_create_user_on_conn(conn, market_id, &user_str, 0)?;
+    let _ = block_number;
+    Ok(AaveChunkEvent::StkAaveStaked {
+        user_id,
+        amount: decoded.amount,
+    })
+}
+
+/// `Redeem(from, to, amount)` → [`AaveChunkEvent::StkAaveRedeem`].
+/// Mirrors `stkaave.process_stk_aave_transfer_event` (the `from_user` path;
+/// the Python `Transfer(from=X, to=0)` burn arm — a `Redeem` event coincides
+/// with a burn `Transfer`). The balance decrements on `from` (the redeemer —
+/// topic[1]).
+pub fn dispatch_stk_aave_redeem(
+    market_id: i64,
+    block_number: u64,
+    decoded: &degenbot_decoders::aave_event_decoder::RedeemEvent,
+    conn: &Connection,
+) -> Result<AaveChunkEvent, ConfigDispatchError> {
+    let user_str = checksum(&decoded.from);
+    let user_id = DegenbotDb::get_or_create_user_on_conn(conn, market_id, &user_str, 0)?;
+    let _ = block_number;
+    Ok(AaveChunkEvent::StkAaveRedeem {
+        user_id,
+        amount: decoded.amount,
+    })
+}
+
 /// `DiscountTokenUpdated(old, new)` → [`AaveChunkEvent::GhoDiscountTokenUpdated`].
 /// Mirrors `_process_discount_token_updated_event`.
 ///
@@ -723,6 +767,14 @@ async fn dispatch_single_config_event(
                     .await?,
                 )
             }
+            // ── the 2 sync stkAAVE handlers (YMWN5V: wired the Staked/Redeem
+            // arms — previously fell to `_` → `Ok(None)`) ──
+            DecodedAaveEvent::Staked(ev) => Some(
+                dispatch_stk_aave_staked(market_id, block_number, ev, conn)?,
+            ),
+            DecodedAaveEvent::Redeem(ev) => Some(
+                dispatch_stk_aave_redeem(market_id, block_number, ev, conn)?,
+            ),
             // ── 6SWY4R-2b: the 6 missing-variant config events ──────────────────
             // Delegated to `resolve_missing_variant_event` to keep this fn under
             // the 100-line `clippy::too_many_lines` limit.
