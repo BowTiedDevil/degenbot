@@ -599,8 +599,13 @@ def drive(
         except Exception as exc:
             summary["ref_ok"] = False
             summary["ref_error"] = f"{type(exc).__name__}: {exc}"
+            # Do NOT re-raise — the Python ref's fresh-market cold-boot is
+            # known-broken past block 16496792 (its `assert oracle_contract is
+            # not None` PRICE_ORACLE gap, retiring in CZM7TI). Tolerate the
+            # ref crash + continue to the Rust cand (which advances past it via
+            # I2RHGP) so the harness captures the Rust-side GREEN + the compare
+            # reports the asymmetry (ref.db is partial up to the crash).
             _emit(summary)
-            raise
 
     # --- Rust writer (cand.db) — Python-bootstrapped, then Rust POST-bootstrap ---
     if not python_only:
