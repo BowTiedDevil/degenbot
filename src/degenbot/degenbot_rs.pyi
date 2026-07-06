@@ -710,13 +710,64 @@ def run_pool_update(
 
     """
 
-class CancelHandle:
-    """Cooperative cancel flag for ``run_pool_update``.
+def run_aave_update(
+    database_path: str,
+    chain_id: int,
+    market_id: int,
+    to_block: int | None,
+    chunk_size: int,
+    rpc_url: str,
+    progress_callback: Callable[..., None],
+    cancel_handle: CancelHandle,
+) -> dict[str, Any]:
+    """Drive the Rust-owned Aave V3 updater chunk loop (epic AZGJUN, 5XNTC5).
 
-    Construct up front; pass to ``run_pool_update``; a ``signal.SIGINT``
-    handler (installed by the CLI driver) calls ``.cancel()`` to stop the
-    run at the next chunk boundary. The loop polls the flag between chunks
-    (NOT mid-chunk) so a cancel never breaks chunk atomicity.
+    Advance ``aave_v3_markets.last_update_block`` for ``market_id`` to
+    ``to_block`` (or the chain tip if ``None``). Each chunk: RPC-fetch the 7
+    Aave event passes, group by transaction, run the per-tx discount
+    pre-pass + config dispatch + operations parser, write under ONE
+    ``Transaction`` (§3.4 atomicity), stamp ``last_update_block`` LAST
+    (restart-invariance). The GIL is released across the whole run; only
+    ``progress_callback`` re-acquires it briefly, once per chunk.
+
+    Args:
+        database_path: The writeable ``DegenbotDb`` path.
+        chain_id: The chain.
+        market_id: The ``aave_v3_markets.id`` to advance.
+        to_block: ``int`` to advance to a specific block; ``None`` for the
+            chain tip (``eth_blockNumber``).
+        chunk_size: Blocks per chunk.
+        rpc_url: The HTTP RPC endpoint.
+        progress_callback: A callable invoked with a per-chunk ``dict``
+            ``{chain_id, market_id, chunk_start, chunk_end, events_applied,
+            committed}`` once per chunk boundary.
+        cancel_handle: A ``CancelHandle`` (shared with ``run_pool_update``);
+            a SIGINT handler calls ``cancel_handle.cancel()``.
+
+    Returns:
+        ``dict {chain_id, market_id, from_block, to_block,
+        chunks_committed, total_events_applied}``.
+
+    Raises:
+        ValueError: For a DB / RPC / config-dispatch / parse failure
+            (in-flight chunk rolled back; committed chunks stay durable).
+        RuntimeError: If cancelled (committed chunks stay durable).
+        ValueError: If the market has no ``last_update_block`` (NotBootstrapped
+            — bootstrap the stamp first).
+
+    Note:
+        Must NOT be called from within an existing tokio runtime. The CLI
+        runs this from a worker thread with no ambient runtime.
+
+    """
+
+class CancelHandle:
+    """Cooperative cancel flag for the long-running updater loops.
+
+    Construct up front; pass to ``run_pool_update`` / ``run_aave_update``; a
+    ``signal.SIGINT`` handler (installed by the CLI driver) calls ``.cancel()``
+    to stop the run at the next chunk boundary. The loop polls the flag
+    between chunks (NOT mid-chunk) so a cancel never breaks chunk atomicity.
     """
 
     def __init__(self) -> None: ...
@@ -2996,6 +3047,7 @@ __all__ = [
     "pack_config",
     "pack_expected_balance",
     "run_pool_update",
+    "run_aave_update",
     "to_checksum_address",
     "v4_input_is_native",
     "v4_output_is_native",
