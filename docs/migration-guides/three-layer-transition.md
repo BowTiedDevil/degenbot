@@ -446,6 +446,64 @@ volatile pools and Camelot `stable_swap` pools — moved from the Python
   `arbitrage.solvers.solidly_stable.SolidlyStableSolver`" comment as
   historical port provenance (the Python source it now points to is removed).
 
+### Fork E — Aave V3 lending-market writers → Rust `degenbot-aave-updater` over `degenbot-db` (ergo `RQXEKH`, Epic `AZGJUN`)
+
+The **Aave V3 lending-market DB writers** moved to a new pyo3-free core crate
+`degenbot-aave-updater` (the decode→dispatch→apply→persist pipeline) over the
+`degenbot-db` substrate (task `RQXEKH` — the canonical port umbrella tracking
+Sub-step A; the AZGJUN epic sibling tasks completed Sub-steps B + C). Path (a):
+Rust owns the pipeline; Python `update_aave_market` shells decode + delegate.
+
+- **Rust apply core** (`degenbot-db/src/write.rs`): the per-event `_on_conn`
+  apply fns (reserves / e-mode / collateral-config / asset / config-contracts /
+  user-positions / GHO-discount / stkAAVE / price-oracle / contract-revision) +
+  the `get_or_create_*` upsert primitives (`get_or_create_e_mode_category_on_conn`,
+  `get_or_create_asset_config_on_conn`, `get_or_create_user_collateral_config_on_conn`,
+  `get_or_create_user_on_conn`, `get_or_create_collateral_position_on_conn` /
+  `_debt_position_on_conn`, `get_or_create_erc20_token_on_conn`). Zero `pyo3`
+  (core — enforced by `just check-no-pyo3-in-cores`).
+- **Rust dispatch + pipeline** (`degenbot-aave-updater`): `run_aave_update` (the
+  chunk fetch → group-by-tx → per-tx `process_chunk_on_conn` →
+  `dispatch_config_events` → `apply_aave_chunk_writes_on_conn`) +
+  `operations_parser` (the per-tx ops path mirroring `transaction_processor`).
+  The `_decode_reserve_configuration_bitmap` pure bit-decode ported to the
+  `degenbot-decoders` core.
+- **PyO3 seam:** `aave.run_aave_update` (the chunk driver); the Python
+  `cli/aave/*` handlers + `get_or_create_*` ORM bodies retired to delegating
+  shells (the write path is Rust-owned).
+
+**§4.2 parity gate (`U5YIBG`) — GREEN:** the byte-IDENTITY `writer_parity`
+suite (**75 cases** in `tests/aave/writer_parity/`) replays a fixture Aave event
+sequence against a fixture DB + asserts `dump_user_rows(rust) ==
+dump_user_rows(py)` for every event arm; both `db_verification.py` invariants
+(`verify_gho_discount_amounts`, `verify_stk_aave_balances`) PASS against
+Rust-written rows (the §4.2 reader-vs-writer split proven).
+
+**stkAAVE balance triad — wired + byte-IDENTITY:** `Staked` (task `YMWN5V`, the
+mint arm — increments `on_behalf_of`), `Redeem` (`YMWN5V`, the burn arm —
+decrements the redeemer), + user-to-user `Transfer` (`S3X2I2`, scoped to the
+discount token + a dedupe boundary that skips the mint/burn zero-legs). The
+config-bitmap oracle retirement is **FOLDED INTO `CZM7TI` per Option B** — the
+26-case `test_config_bitmap_parity.py` parity test stays GREEN as the §4.2
+proof until CZM7TI's sweep.
+
+⚠️ **Tracked gate on `CZM7TI` — the underflow divergence (`3XWBDN`):** the
+Python `process_stk_aave_transfer_event` only asserts `from.stk_aave_balance
+>= 0` before the decrement + allows the balance to go NEGATIVE; the Rust
+`apply_stk_aave_redeem_on_conn` (`YMWN5V`) + `apply_stk_aave_transfer_on_conn`
+from-leg (`S3X2I2`) use `checked_sub` → ERROR on underflow. This is an
+unexercised edge case (every parity test pre-seeds `balance >= amount`) — NOT a
+`U5YIBG` acceptance criterion (it's honestly GREEN) — recorded here as a
+known-uncovered edge case, not a hidden gap. `3XWBDN` is a HARD BLOCKER on the
+§4.3 retirement (`CZM7TI`); it is an architectural user-decision (A allow-signed
+balances vs C root-cause-no-drift) — the user decides, this port does not.
+
+**Resolved §4.2 divergences:** flag #1 (`GJQGKN` — deferred config-write DEFECT:
+per-tx chunk apply atomized within the connection), #2 (`ULDUAC` — GHO discount
+emitter), #8 (`2QGL6G` — `ReserveInitialized` GHO vToken FK), `RCDJPH`
+(ops-path user-checksum consistency), `YMWN5V` (Staked/Redeem dispatch wiring),
+`S3X2I2` (user-to-user Transfer dispatch wiring).
+
 ## 7. Anti-patterns to avoid
 
 - **Keeping a Python mirror of Rust-owned state** "for the tests." Rewrite the
