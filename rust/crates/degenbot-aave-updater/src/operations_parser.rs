@@ -69,6 +69,7 @@ use crate::operations::{
 };
 use alloy::primitives::{Address, U256};
 use alloy::rpc::types::Log;
+use degenbot_core::address_utils::address_to_checksum_string;
 use degenbot_db::DegenbotDb;
 use degenbot_decoders::aave_event_decoder::{
     self, DecodedAaveEvent, Erc20TransferEvent, ScaledTokenBalanceTransferEvent,
@@ -2302,13 +2303,15 @@ pub(crate) fn log_idx_value(log: &Log) -> u64 {
     log.log_index.map_or(0, |i| i)
 }
 
-/// Convert an alloy `Address` to the canonical lowercase hex string the
-/// `erc20_tokens.address` VARCHAR(42) column stores (mirror of the
-/// Python's `get_checksum_address` lowercase-storage convention).
+/// Convert an alloy `Address` to the EIP-55 checksummed hex string the
+/// `erc20_tokens.address` / `aave_v3_users.address` VARCHAR(42) columns
+/// store — mirrors the Python's `get_checksum_address` + the config path's
+/// `checksum()` (`config_dispatch.rs`). MUST be consistent across both
+/// paths: the `SQLite` columns use BINARY collation (case-sensitive), so a
+/// lowercase lookup against a checksummed-seeded row would miss + create a
+/// duplicate (the RCDJPH §4.2 byte-divergence — duplicate lowercase users).
 pub(crate) fn addr_to_hex(addr: Address) -> String {
-    // NB: alloy's Address::to_checksumtle produces lowercase without the 0x
-    // prefix on `to_string`; the SQLite column stores `0x...` lowercase.
-    format!("0x{}", alloy::hex::encode(addr.as_slice()))
+    address_to_checksum_string(&addr)
 }
 
 /// Parse a hex string (with or without `0x` prefix) to an alloy `Address`.
