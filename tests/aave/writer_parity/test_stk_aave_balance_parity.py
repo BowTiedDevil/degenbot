@@ -202,3 +202,92 @@ def test_redeem_rust_matches_python_oracle(tmp_path: Path, amount: int) -> None:
         f"Redeem(amount={amount}) divergence:\n  Rust: {rust_rows}\n  Python: {py_rows}"
     )
     assert rust_rows[0]["stk_aave_balance"] == "0", rust_rows
+
+
+# S3X2I2 — a second test user (id 2, balance '0'). Pre-seeded so neither path
+# get_or_creates it (avoids the new-user-default-divergence surface) + the
+# non-NULL balance means neither path RPCs `balanceOf` via `get_or_init`.
+RECIPIENT_ADDRESS = "0x" + "22" * 20
+
+
+def _seed_second_user(session: Session, *, address: str) -> None:
+    """Seed user id 2 with `stk_aave_balance = '0'` (non-NULL)."""
+    from degenbot.checksum_cache import get_checksum_address
+
+    session.execute(
+        text(
+            "INSERT INTO aave_v3_users (id, market_id, address, e_mode, "
+            "gho_discount, stk_aave_balance, isolation_mode_collateral_asset_id, "
+            "isolation_mode_debt) "
+            "VALUES (2, 1, :addr, 0, 0, '0', NULL, '0')"
+        ),
+        {"addr": get_checksum_address(address)},
+    )
+
+
+@pytest.mark.parametrize("amount", [5000, 123_456_789_012_345_678_901], ids=["small", "large"])
+def test_transfer_both_legs_rust_matches_python_oracle(
+    tmp_path: Path,
+    amount: int,
+) -> None:
+    """S3X2I2: user-to-user stkAAVE `Transfer(A→B)` (neither zero) → byte-IDENTITY
+    BOTH legs: `A.stk_aave_balance -= amount` AND `B.stk_aave_balance += amount`.
+
+    Drives BOTH `run_aave_update` (Rust, the new `Erc20Transfer` dispatch arm →
+    `apply_stk_aave_transfer_on_conn`) + `update_aave_market` (Python,
+    `process_stk_aave_transfer_event` the both-legs path) with a user-to-user
+    `Transfer(USER_ADDRESS→RECIPIENT_ADDRESS, amount)` + asserts
+    `dump_user_rows(rust) == dump_user_rows(py)` (both legs).
+
+    A's balance is pre-seeded to `amount` (non-NULL → neither path RPCs
+    `balanceOf` via `get_or_init`; sufficient so the from-leg decrement
+    doesn't underflow — sidesteps the latent `value > balance` divergence
+    where the Python allows negative + the Rust underflow-errors).
+    """
+    transfer_log = make_erc20_transfer_log(
+        token_address=STK_AAVE_ADDRESS,
+        from_address=USER_ADDRESS,
+        to_address=RECIPIENT_ADDRESS,
+        value=amount,
+        log_index=0,
+    )
+
+    with (
+        seeded_db(tmp_path, name="rust") as (rust_path, rust_session),
+        seeded_db(tmp_path, name="py") as (_py_path, py_session),
+        mock_rpc_server(
+            logs=[transfer_log],
+            block_number=FIXTURE_BLOCK,
+            eth_call_responses={_BALANCE_OF_SELECTOR: _UINT256_ZERO},
+        ) as rpc_url,
+    ):
+        seed_gho_asset(rust_session)
+        seed_gho_asset(py_session)
+        _seed_discount_token(rust_session)
+        _seed_discount_token(py_session)
+        _seed_second_user(rust_session, address=RECIPIENT_ADDRESS)
+        _seed_second_user(py_session, address=RECIPIENT_ADDRESS)
+        # Pre-seed A's balance = amount (sufficient for the from-leg decrement).
+        for s in (rust_session, py_session):
+            s.execute(
+                text("UPDATE aave_v3_users SET stk_aave_balance = :bal WHERE id = 1"),
+                {"bal": str(amount)},
+            )
+        rust_session.commit()
+        py_session.commit()
+        _run_both(rust_path, py_session, rpc_url)
+        py_session.commit()
+        rust_rows = dump_user_rows(rust_session)
+        py_rows = dump_user_rows(py_session)
+
+    assert rust_rows == py_rows, (
+        f"Transfer(amount={amount}) divergence:\n  Rust: {rust_rows}\n  Python: {py_rows}"
+    )
+    # Both legs: A (sender) - amount = 0; B (recipient) + amount = amount.
+    by_addr = {r["address"]: r for r in rust_rows}
+    from degenbot.checksum_cache import get_checksum_address
+
+    sender = by_addr[get_checksum_address(USER_ADDRESS)]
+    recipient = by_addr[get_checksum_address(RECIPIENT_ADDRESS)]
+    assert sender["stk_aave_balance"] == "0", rust_rows
+    assert recipient["stk_aave_balance"] == str(amount), rust_rows

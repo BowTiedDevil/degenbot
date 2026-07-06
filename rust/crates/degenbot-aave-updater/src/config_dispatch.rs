@@ -348,6 +348,61 @@ pub fn dispatch_stk_aave_redeem(
     })
 }
 
+/// Discount-token (stkAAVE) ERC20 `Transfer(from, to, value)` →
+/// [`AaveChunkEvent::StkAaveTransfer`] (the user-to-user, neither-zero case
+/// only). Mirrors `stkaave.process_stk_aave_transfer_event` (the both-legs
+/// path: `from -= value` AND `to += value`).
+///
+/// Scoping + dedupe boundary (S3X2I2):
+/// - Returns `None` if the emitter is NOT `gho_asset.v_gho_discount_token` —
+///   aToken/vToken/scaled-token Transfers are handled by the ops path
+///   (`process_transaction`); only the stkAAVE discount token is this fn's
+///   scope (matches the Python `assert contract_address == discount_token`).
+/// - Returns `None` if `from` OR `to` is the zero address: the mint
+///   (`Transfer(0→X)`) + burn (`Transfer(X→0)`) arms coincide with the
+///   `Staked`/`Redeem` semantic events (YMWN5V, [`dispatch_stk_aave_staked`]/
+///   [`dispatch_stk_aave_redeem`]); processing the zero-leg here would
+///   DOUBLE-COUNT.
+pub fn dispatch_stk_aave_transfer(
+    market_id: i64,
+    block_number: u64,
+    decoded: &degenbot_decoders::aave_event_decoder::Erc20TransferEvent,
+    gho_asset: Option<&AaveGhoAsset>,
+    conn: &Connection,
+) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
+    let _ = block_number;
+    // Scope: only the discount-token (stkAAVE) emitter.
+    let Some(g) = gho_asset else {
+        return Ok(None);
+    };
+    let Some(token_str) = g.v_gho_discount_token.as_deref() else {
+        return Ok(None);
+    };
+    let Ok(discount_token) = token_str.parse::<Address>() else {
+        return Ok(None);
+    };
+    if decoded.token_address != discount_token {
+        return Ok(None); // not a stkAAVE Transfer → the ops path handles it.
+    }
+    // Dedupe boundary: skip the mint (from=0) + burn (to=0) legs — they
+    // coincide with Staked/Redeem semantic events (YMWN5V).
+    if decoded.from == Address::ZERO || decoded.to == Address::ZERO {
+        return Ok(None);
+    }
+    // Matches the Python `if from_address == to_address: return`.
+    if decoded.from == decoded.to {
+        return Ok(None);
+    }
+    let from_str = checksum(&decoded.from);
+    let from_user_id = DegenbotDb::get_or_create_user_on_conn(conn, market_id, &from_str, 0)?;
+    let to_user_id = DegenbotDb::get_or_create_user_on_conn(conn, market_id, &checksum(&decoded.to), 0)?;
+    Ok(Some(AaveChunkEvent::StkAaveTransfer {
+        from_user_id,
+        to_user_id,
+        amount: decoded.value,
+    }))
+}
+
 /// `DiscountTokenUpdated(old, new)` → [`AaveChunkEvent::GhoDiscountTokenUpdated`].
 /// Mirrors `_process_discount_token_updated_event`.
 ///
@@ -775,6 +830,11 @@ async fn dispatch_single_config_event(
             DecodedAaveEvent::Redeem(ev) => Some(
                 dispatch_stk_aave_redeem(market_id, block_number, ev, conn)?,
             ),
+            // ── S3X2I2: the stkAAVE `Transfer` arm (neither-zero; scoped to the
+            // discount token; dedupe-skip the mint/burn legs). ──
+            DecodedAaveEvent::Erc20Transfer(ev) => {
+                dispatch_stk_aave_transfer(market_id, block_number, ev, gho_asset, conn)?
+            }
             // ── 6SWY4R-2b: the 6 missing-variant config events ──────────────────
             // Delegated to `resolve_missing_variant_event` to keep this fn under
             // the 100-line `clippy::too_many_lines` limit.

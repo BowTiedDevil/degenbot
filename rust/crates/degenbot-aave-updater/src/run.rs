@@ -220,6 +220,21 @@ pub enum AaveChunkEvent {
         /// The redeemed amount.
         amount: alloy::primitives::U256,
     },
+    /// stkAAVE user-to-user `Transfer(from, to, value)` (neither leg zero) —
+    /// atomically decrements `from.stk_aave_balance` by `value` AND increments
+    /// `to.stk_aave_balance` by `value`. Port of
+    /// `stkaave.process_stk_aave_transfer_event` (the both-legs path). S3X2I2: the
+    /// mint (`Transfer(0→X)`) + burn (`Transfer(X→0)`) arms coincide with the
+    /// `Staked`/`Redeem` semantic events (YMWN5V) — the dispatch arm skips the
+    /// zero-legs to avoid double-counting + processes ONLY the neither-zero case.
+    StkAaveTransfer {
+        /// Pre-resolved `aave_v3_users.id` (the sender; decremented).
+        from_user_id: i64,
+        /// Pre-resolved `aave_v3_users.id` (the recipient; incremented).
+        to_user_id: i64,
+        /// The transferred amount.
+        amount: alloy::primitives::U256,
+    },
     /// `RewardsController` `RewardsClaimed(user, reward, to, claimer,
     /// claimedAmount)` — **no-op apply**. Investigation (RYKCC4) confirmed the
     /// Python declares the event in `events.py` but has NO handler: rewards
@@ -345,6 +360,8 @@ pub struct AaveChunkWriteReport {
     pub gho_discount_token_updated: usize,
     pub stk_aave_staked: usize,
     pub stk_aave_redeem: usize,
+    /// S3X2I2 — user-to-user stkAAVE `Transfer` (neither leg zero).
+    pub stk_aave_transfer: usize,
     /// RYKCC4 no-op variant — the count is tracked for accounting even though
     /// the apply writes nothing.
     pub rewards_claimed: usize,
@@ -609,6 +626,19 @@ pub fn apply_chunk_events_on_conn(
             AaveChunkEvent::StkAaveRedeem { user_id, amount } => {
                 DegenbotDb::apply_stk_aave_redeem_on_conn(conn, *user_id, *amount)?;
                 report.stk_aave_redeem += 1;
+            }
+            AaveChunkEvent::StkAaveTransfer {
+                from_user_id,
+                to_user_id,
+                amount,
+            } => {
+                DegenbotDb::apply_stk_aave_transfer_on_conn(
+                    conn,
+                    *from_user_id,
+                    *to_user_id,
+                    *amount,
+                )?;
+                report.stk_aave_transfer += 1;
             }
             AaveChunkEvent::RewardsClaimed {
                 user_id,
@@ -2347,6 +2377,84 @@ mod tests {
             Some("100"),
             "balance untouched on error"
         );
+        assert_eq!(market_stamp(&db), None, "stamp untouched on rollback");
+    }
+
+    #[test]
+    fn apply_aave_chunk_writes_on_conn_dispatches_stk_aave_transfer_both_legs() {
+        let db = fresh_db();
+        seed_aave_v3_user(&db, 1);
+        seed_aave_v3_user(&db, 2);
+        // user 1 (sender): balance = 5000; user 2 (recipient): balance = 0.
+        {
+            let conn = db.lock();
+            conn.execute(
+                "UPDATE aave_v3_users SET stk_aave_balance = '5000' WHERE id = 1",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE aave_v3_users SET stk_aave_balance = '0' WHERE id = 2",
+                [],
+            )
+            .unwrap();
+        }
+
+        let amount = alloy::primitives::U256::from(3_000u64);
+        let events = vec![AaveChunkEvent::StkAaveTransfer {
+            from_user_id: 1,
+            to_user_id: 2,
+            amount,
+        }];
+        {
+            let mut guard = db.lock();
+            let tx = guard.transaction().unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 1_000).unwrap();
+            assert_eq!(report.stk_aave_transfer, 1);
+            tx.commit().unwrap();
+        }
+
+        let (_, from_balance) = user_gho_stk_state(&db, 1);
+        assert_eq!(from_balance.as_deref(), Some("2000"), "5000 - 3000 = 2000");
+        let (_, to_balance) = user_gho_stk_state(&db, 2);
+        assert_eq!(to_balance.as_deref(), Some("3000"), "0 + 3000 = 3000");
+    }
+
+    #[test]
+    fn apply_aave_chunk_writes_on_conn_stk_aave_transfer_from_leg_underflow_errors() {
+        let db = fresh_db();
+        seed_aave_v3_user(&db, 1);
+        seed_aave_v3_user(&db, 2);
+        // sender balance = 100; transfer 200 → from-leg underflow → error.
+        {
+            let conn = db.lock();
+            conn.execute(
+                "UPDATE aave_v3_users SET stk_aave_balance = '100' WHERE id = 1",
+                [],
+            )
+            .unwrap();
+        }
+
+        let events = vec![AaveChunkEvent::StkAaveTransfer {
+            from_user_id: 1,
+            to_user_id: 2,
+            amount: alloy::primitives::U256::from(200u64),
+        }];
+        {
+            let mut guard = db.lock();
+            let tx = guard.transaction().unwrap();
+            let result = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 1_000);
+            assert!(
+                result.is_err(),
+                "transfer from-leg underflow must error (mirrors Redeem)"
+            );
+        }
+
+        // Neither leg is mutated on error (the whole chunk rolls back).
+        let (_, from_balance) = user_gho_stk_state(&db, 1);
+        assert_eq!(from_balance.as_deref(), Some("100"), "balance untouched on error");
+        let (_, to_balance) = user_gho_stk_state(&db, 2);
+        assert_eq!(to_balance.as_deref(), None, "recipient balance untouched on error");
         assert_eq!(market_stamp(&db), None, "stamp untouched on rollback");
     }
 
