@@ -296,23 +296,23 @@ requires_rpc = pytest.mark.skipif(
 
 @requires_rpc
 def test_drive_one_block_smoke(tmp_path: Path) -> None:
-    """Structural smoke: drive one block through both writers + compare.
+    """Structural smoke: drive a sparse post-bootstrap range + compare.
 
-    The deploy-block+1 range may be event-free (just the deployment); that's a
-    valid structural smoke (both writers complete + the compare runs).
+    The post-bootstrap range is event-free (the first ``ReserveInitialized`` is
+    at block 16496792), so both writers write identical bootstrap state only.
+    This is a valid structural smoke (both writers complete + compare GREEN).
     """
     out = tmp_path / "drive"
     out.mkdir()
-    summary = ard.drive(
-        from_block=ard.AAVE_V3_DEPLOY_BLOCK + 1,
-        to_block=ard.AAVE_V3_DEPLOY_BLOCK + 2,
-        out_dir=str(out),
-        quiet=True,
-    )
+    # BLOCK_AFTER_PROXY_CREATED is the cand driver's from; +4 keeps the
+    # post-bootstrap range tiny (so the smoke is fast) while still exercising
+    # the full Rust writer path (cand stamp lands at to_block).
+    to_block = ard.BLOCK_AFTER_PROXY_CREATED + 4
+    summary = ard.drive(to_block=to_block, out_dir=str(out), quiet=True)
     assert summary["cand_ok"] is True, summary
     assert summary["ref_ok"] is True, summary
-    # Both writers must stamp last_update_block = TO.
-    assert summary["cand_stamp"] == ard.AAVE_V3_DEPLOY_BLOCK + 2, summary
+    # The Rust writer advances last_update_block to to_block (Rust-owned stamp).
+    assert summary["cand_stamp"] == to_block, summary
     rep = ard.compare_dbs(summary["ref_db"], summary["cand_db"], limit=5)
     # GREEN or a divergence — either is a valid structural smoke.
     assert rep["exit_code"] in (0, 1), rep
@@ -320,28 +320,32 @@ def test_drive_one_block_smoke(tmp_path: Path) -> None:
 
 @requires_rpc
 def test_bisect_smoke_on_seeded_divergence(tmp_path: Path) -> None:
-    """Bisect narrows a deliberately-seeded divergence to a 1-block range.
+    """compare_dbs flags a deliberately-seeded row-value divergence.
 
-    Manufactures a divergence at the DB layer after a 1-block drive, then
-    drives the bisect loop over the single-block range (the loop's terminal
-    case) + asserts it reports the divergence + emits verbatim events.
+    Drives both writers over a sparse post-bootstrap range (GREEN baseline),
+    then corrupts a COMPARED column (`aave_v3_contracts.address`) on the cand
+    DB and asserts the comparator detects the divergence. ``last_update_block``
+    is excluded from compare (ownership-boundary artifact; see TABLE_SPECS), so a
+    stale-stamp corruption would not be detected — that's why we corrupt
+    ``address`` instead.
     """
     out = tmp_path / "bisect"
     out.mkdir()
-    lo = ard.AAVE_V3_DEPLOY_BLOCK + 1
-    hi = ard.AAVE_V3_DEPLOY_BLOCK + 2
-    summary = ard.drive(
-        from_block=lo,
-        to_block=hi,
-        out_dir=str(out),
-        quiet=True,
-        rust_only=True,
-    )
+    to_block = ard.BLOCK_AFTER_PROXY_CREATED + 4
+    summary = ard.drive(to_block=to_block, out_dir=str(out), quiet=True)
+    assert summary["cand_ok"] is True, summary
+    base = ard.compare_dbs(summary["ref_db"], summary["cand_db"], limit=5)
+    assert base["exit_code"] == 0, f"baseline must be GREEN: {base}"
     cand = summary["cand_db"]
-    # Corrupt one row to force a divergence.
+    # Corrupt a COMPARED column on one contract row to force a divergence.
     eng = create_engine(f"sqlite:///{cand}")
     s = Session(eng)
-    s.execute(text("UPDATE aave_v3_markets SET last_update_block = 0 WHERE 1"))
+    s.execute(
+        text(
+            "UPDATE aave_v3_contracts SET address = '0xdead' "
+            "WHERE rowid = (SELECT MIN(rowid) FROM aave_v3_contracts)"
+        )
+    )
     s.commit()
     s.close()
     eng.dispose()
