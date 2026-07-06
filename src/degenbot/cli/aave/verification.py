@@ -166,6 +166,12 @@ def verify_scaled_token_positions(
 
     Raises:
         ValueError: See function documentation.
+        AssertionError: If any position balance or last_index diverges from
+            the on-chain `scaledBalanceOf` / `getPreviousIndex` value at
+            `block_number`. Aggregated — a single `AssertionError` is raised at
+            end of the loop listing every divergence (so GREEN shows all N
+            positions clearing simultaneously rather than aborting on the
+            first failed assertion).
 
     """
     stmt = (
@@ -183,6 +189,8 @@ def verify_scaled_token_positions(
         stmt = stmt.where(AaveV3User.address.in_(user_addresses))
 
     all_positions = session.scalars(stmt).all()
+
+    divergences: list[str] = []
 
     for position in tqdm.tqdm(
         all_positions,
@@ -219,11 +227,12 @@ def verify_scaled_token_positions(
         )
 
         position_type = "collateral" if position_table is AaveV3CollateralPosition else "debt"
-        assert actual_scaled_balance == position.balance, (
-            f"{position_type.capitalize()} balance verification failure for {position.asset}. "
-            f"User {position.user} scaled balance ({position.balance}) does not match contract "
-            f"balance ({actual_scaled_balance}) at block {block_number}"
-        )
+        if actual_scaled_balance != position.balance:
+            divergences.append(
+                f"{position_type.capitalize()} balance verification failure for {position.asset}. "
+                f"User {position.user} scaled balance ({position.balance}) does not match contract "
+                f"balance ({actual_scaled_balance}) at block {block_number}"
+            )
 
         (actual_last_index,) = raw_call(
             provider=provider,
@@ -236,8 +245,18 @@ def verify_scaled_token_positions(
             block_identifier=block_number,
         )
 
-        assert actual_last_index == position.last_index, (
-            f"{position_type.capitalize()} index verification failure for {position.asset}. "
-            f"User {position.user} last_index ({position.last_index}) does not match contract "
-            f"last_index ({actual_last_index}) at block {block_number}"
+        if actual_last_index != position.last_index:
+            divergences.append(
+                f"{position_type.capitalize()} index verification failure for {position.asset}. "
+                f"User {position.user} last_index ({position.last_index}) does not match contract "
+                f"last_index ({actual_last_index}) at block {block_number}"
+            )
+
+    if divergences:
+        msg = (
+            f"{len(divergences)} verification divergence(s) for "
+            f"{'collateral' if position_table is AaveV3CollateralPosition else 'debt'} "
+            f"positions at block {block_number}:\n"
+            + "\n".join(divergences)
         )
+        raise AssertionError(msg)
