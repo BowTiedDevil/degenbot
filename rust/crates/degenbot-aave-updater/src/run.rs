@@ -787,7 +787,7 @@ pub fn apply_aave_chunk_writes_on_conn(
 
 // ── the outer chunk loop (RPC-bound; the §4.4 atomicity owner — 6SWY4R-3) ──
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -798,7 +798,7 @@ use degenbot_db::aave::AaveGhoAsset;
 use degenbot_db::DbError;
 use degenbot_rpc::provider::{AlloyProvider, LogFetcher};
 
-use crate::aave_fetch::{fetch_aave_chunk_logs, AaveFetchSpec};
+use crate::aave_fetch::{fetch_aave_chunk_logs, fetch_scaled_token_logs, sort_logs_by_block_and_index, AaveFetchSpec};
 use crate::config_dispatch::{
     build_discount_snapshot, dispatch_config_events, match_proxy_id, ConfigDispatchError,
     ProxyCreationResolution,
@@ -1231,7 +1231,7 @@ pub fn run_aave_update(
     ))?;
 
     // Build the fetch spec + the GHO asset (chain-unique).
-    let (spec, gho_asset) = build_fetch_spec(&db, market_id, chain_id)?;
+    let (mut spec, gho_asset) = build_fetch_spec(&db, market_id, chain_id)?;
     let pool_address = spec.pool_address;
     let oracle_address = spec.oracle_address;
     let gho_token_address = gho_asset.as_ref().and_then(|g| g.gho_token_address.clone());
@@ -1257,12 +1257,84 @@ pub fn run_aave_update(
 
         // 1. RPC fetch the chunk's logs (GIL-free, async, sorted by
         //    (block_number, log_index)).
-        let logs = rt.block_on(fetch_aave_chunk_logs(
+        //
+        // (a) W2S3WH: refresh the scaled-token address set from the DB at the
+        //     START of each chunk — matches the Python's per-chunk
+        //     `_get_all_scaled_token_addresses` (commands.py:1153). The frozen
+        //     run-start set (build_fetch_spec above) misses assets created in
+        //     PRIOR chunks (cross-chunk + run-spanning staleness). Read BEFORE
+        //     the transaction (committed state — assets from prior chunks).
+        //     The remaining same-chunk case (asset created mid-chunk) is
+        //     handled by the (b) pre-scan below.
+        spec.scaled_token_addresses = db
+            .fetch_aave_scaled_token_addresses(chain_id)?
+            .into_iter()
+            .filter_map(|s| s.parse::<Address>().ok())
+            .collect();
+        let mut logs = rt.block_on(fetch_aave_chunk_logs(
             &spec,
             &fetcher,
             working_start,
             chunk_end,
         ))?;
+        // (b) W2S3WH same-chunk staleness: an asset created mid-chunk (a
+        //     `ReserveInitialized` in tx N + the first `Supply`/`Borrow` on
+        //     it in tx N+M, same chunk) has its aToken/vToken NOT in the
+        //     (just-refreshed) spec set — the asset doesn't exist until the
+        //     `ReserveInitialized` dispatches inside `process_chunk_on_conn`.
+        //     Pre-scan the frozen logs for `ReserveInitialized` events whose
+        //     aToken/vToken isn't in the known set, re-fetch those tokens'
+        //     scaled-token logs for the chunk range, + merge (de-dup by
+        //     (block_number, log_index)). `process_chunk_on_conn` is
+        //     UNCHANGED — the per-tx config-dispatch → ops interleave is
+        //     preserved, so the `v_token_revision` conn reads stay per-tx-
+        //     correct per I2RHGP Fix 2c (no rev-boundary regression — the
+        //     rejected Option A two-pass split would have made tx N's ops see
+        //     a later tx's `Upgraded`).
+        let known: HashSet<Address> =
+            spec.scaled_token_addresses.iter().copied().collect();
+        let mut new_tokens: Vec<Address> = Vec::new();
+        for log in &logs {
+            if let Some(ev) =
+                degenbot_decoders::aave_event_decoder::decode_reserve_initialized(log)
+            {
+                if !known.contains(&ev.a_token) {
+                    new_tokens.push(ev.a_token);
+                }
+                if !known.contains(&ev.variable_debt_token) {
+                    new_tokens.push(ev.variable_debt_token);
+                }
+            }
+        }
+        if !new_tokens.is_empty() {
+            new_tokens.sort_unstable();
+            new_tokens.dedup();
+            let mut extra = rt.block_on(fetch_scaled_token_logs(
+                &fetcher,
+                working_start,
+                chunk_end,
+                &new_tokens,
+            ))?;
+            // De-dup by (block_number, log_index) — the re-fetch may overlap
+            // the frozen fetch for tokens partially known (rare). Logs
+            // missing either field sort last (shouldn't happen for fetched
+            // logs — the fetcher fills both).
+            let existing: HashSet<(u64, u64)> = logs
+                .iter()
+                .filter_map(|l| Some((l.block_number?, l.log_index?)))
+                .collect();
+            extra.retain(|l| {
+                let key = (
+                    l.block_number.unwrap_or(u64::MAX),
+                    l.log_index.unwrap_or(u64::MAX),
+                );
+                !existing.contains(&key)
+            });
+            if !extra.is_empty() {
+                logs.extend(extra);
+                sort_logs_by_block_and_index(&mut logs);
+            }
+        }
         let tx_groups = group_logs_by_tx(&logs);
 
         // 2. The single-transaction chunk write (§4.4 atomicity). The per-tx

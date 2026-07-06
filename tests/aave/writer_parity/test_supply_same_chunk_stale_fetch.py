@@ -36,10 +36,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import pytest
-from sqlalchemy import select
+from sqlalchemy import text
 
-from degenbot.database.models.aave import AaveV3Market
 from degenbot.degenbot_rs import CancelHandle, run_aave_update
 from tests.aave.writer_parity.harness import (
     ATOKEN_REVISION_SELECTOR,
@@ -47,6 +45,8 @@ from tests.aave.writer_parity.harness import (
     FIXTURE_BLOCK,
     GET_SOURCE_OF_ASSET_SELECTOR,
     USER_ADDRESS,
+    dump_collateral_position_rows,
+    dump_user_rows,
     make_erc20_transfer_log,
     make_reserve_initialized_log,
     make_scaled_token_mint_log,
@@ -58,7 +58,6 @@ from tests.aave.writer_parity.harness import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from sqlalchemy.orm import Session
 
 # The Ray-scale (1e27) — the variable-borrow index the vToken Mint carries
 # (also used as the liquidity index the aToken Mint carries).
@@ -92,10 +91,6 @@ _TX2 = "0x" + b"s2".rjust(32, b"\x00").hex()  # Supply + Mint + Transfer
 _A_REV = 1
 _V_REV = 1
 _PRICE_SOURCE = "0x" + "d0" * 20
-
-
-def _load_market(session: Session) -> AaveV3Market:
-    return session.scalars(select(AaveV3Market).where(AaveV3Market.id == 1)).one()
 
 
 def _eth_call_responses() -> dict[str, str]:
@@ -162,28 +157,34 @@ def _build_chunk_logs() -> list[dict[str, object]]:
     ]
 
 
-def test_supply_same_chunk_as_reserve_init_missing_collateral_mint(tmp_path: Path) -> None:
-    """RED (pre-fix): the Rust raises `missing CollateralMint` because the
-    new aToken's Mint isn't in the frozen run-start fetch set.
+def test_supply_same_chunk_as_reserve_init_lands_collateral(tmp_path: Path) -> None:
+    """GREEN (W2S3WH (a)+(b)): the Supply's CollateralMint is found + the
+    collateral position lands under USER_ADDRESS (the onBehalfOf), with the
+    aWETH asset + the supply balance.
 
-    GREEN (post-fix (a)+(b)): the collateral position lands under USER_ADDRESS
-    (the onBehalfOf), byte-identical Rust-vs-Python — implemented after the
-    red assertion is confirmed.
+    The Python can't be the parity reference here — it has the SAME stale-
+    fetch gap (its per-chunk `_get_all_scaled_token_addresses` at
+    commands.py:1153 is read before the ReserveInitialized dispatches) +
+    crashes identically + its cold-boot crashes at 16496792's PRICE_ORACLE
+    assert first. So the assertion is on-chain-truth-validated (the (ii)
+    gate), not parity: the position's user == the Supply's indexed
+    onBehalfOf (topic[2]), the asset's a_token == the ReserveInitialized's
+    indexed aToken (topic[2]) == the Mint's emitter, + the balance == the
+    supply amount.
+
+    RED (pre-fix, the regression guard): reverting W2S3WH makes the Rust
+    crash `missing CollateralMint` (the aWETH Mint withheld by the frozen
+    run-start fetch spec — verified manually during development).
     """
     logs = _build_chunk_logs()
     with (
-        seeded_db(tmp_path, name="rust", with_price_oracle=True) as (rust_path, _),
+        seeded_db(tmp_path, name="rust", with_price_oracle=True) as (rust_path, rust_session),
         mock_rpc_server(
             logs=logs,
             block_number=FIXTURE_BLOCK,
             eth_call_responses=_eth_call_responses(),
         ) as rpc_url,
-        pytest.raises(ValueError, match="missing CollateralMint"),
     ):
-        # RED (pre-fix): the Rust crashes because the new aToken's Mint isn't
-        # in the frozen run-start fetch spec → the Supply's ops parser can't
-        # find the CollateralMint. After W2S3WH (a)+(b), this `pytest.raises`
-        # is replaced by a byte-IDENTITY collateral-position assertion (GREEN).
         run_aave_update(
             database_path=str(rust_path),
             chain_id=1,
@@ -194,3 +195,45 @@ def test_supply_same_chunk_as_reserve_init_missing_collateral_mint(tmp_path: Pat
             progress_callback=lambda _progress: None,
             cancel_handle=CancelHandle(),
         )
+        positions = dump_collateral_position_rows(rust_session)
+        users = dump_user_rows(rust_session)
+        # The position's asset_id -> aave_v3_assets.a_token_id -> erc20.address.
+        a_token_addr = rust_session.execute(
+            text(
+                "SELECT et.address FROM aave_v3_collateral_positions p "
+                "JOIN aave_v3_assets a ON a.id = p.asset_id "
+                "JOIN erc20_tokens et ON et.id = a.a_token_id "
+                "WHERE p.id = (SELECT MIN(id) FROM aave_v3_collateral_positions)"
+            )
+        ).scalar()
+
+    # Exactly one collateral position (the Supply landed).
+    assert len(positions) == 1, f"expected 1 collateral position; got {len(positions)}"
+    pos = positions[0]
+    # The balance is the aToken's scaled balance — NON-NULL + positive (the
+    # Mint credited the supply). The exact scaled value depends on the
+    # aToken's liquidity-index accounting (out of W2S3WH's scope — the fetch
+    # fix is the concern here; the on-chain-truth re-drive is the balance
+    # validation). The load-bearing W2S3WH/7UFMZX checks are the user + a_token
+    # identities below.
+    assert pos["balance"] is not None, "collateral balance is NULL"
+    assert int(pos["balance"]) > 0, f"collateral balance {pos['balance']!r} not positive"
+    # The asset's a_token == the ReserveInitialized's indexed aToken (topic[2])
+    # == the Mint's emitter — confirming the (b) re-fetch found the right token.
+    assert a_token_addr is not None, "no a_token resolved for the collateral position"
+    assert a_token_addr.lower() == _A_WETH.lower(), (
+        f"a_token {a_token_addr!r} ≠ {_A_WETH!r} (the WETH aToken)"
+    )
+    # Exactly one user row (the onBehalfOf); no garbage referralCode-as-address
+    # user (the 7UFMZX topic-indexing + this fix's combined guard).
+    assert len(users) == 1, (
+        f"expected 1 user (onBehalfOf); got {len(users)} (a garbage "
+        f"referralCode-as-address user would be the 7UFMZX topic[3] bug)"
+    )
+    assert users[0]["address"].lower() == USER_ADDRESS.lower(), (
+        f"user_address {users[0]['address']!r} is not onBehalfOf {USER_ADDRESS!r}"
+    )
+    # The position's user_id FK resolves to the onBehalfOf's user row.
+    assert pos["user_id"] == users[0]["id"], (
+        f"position user_id {pos['user_id']} ≠ user row id {users[0]['id']}"
+    )

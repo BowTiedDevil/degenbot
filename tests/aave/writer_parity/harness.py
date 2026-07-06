@@ -1034,6 +1034,18 @@ def dump_debt_position_rows(session: Session) -> list[dict[str, Any]]:
     return [dict(row._mapping) for row in rows]
 
 
+def dump_collateral_position_rows(session: Session) -> list[dict[str, Any]]:
+    """Dump `aave_v3_collateral_positions` rows as comparable dicts (the
+    balance + last_index the ops parser writes for a Supply)."""
+    rows = session.execute(
+        text(
+            "SELECT id, user_id, asset_id, balance, last_index "
+            "FROM aave_v3_collateral_positions ORDER BY id"
+        )
+    ).all()
+    return [dict(row._mapping) for row in rows]
+
+
 @dataclass
 class MockRpcRegistry:
     """Holds the canned RPC responses for the parity mock server.
