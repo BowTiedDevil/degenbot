@@ -22,7 +22,6 @@ import argparse
 import json
 import os
 import pathlib
-import shutil
 import sqlite3
 import sys
 import tempfile
@@ -44,8 +43,21 @@ if TYPE_CHECKING:
 
 # ── constants ───────────────────────────────────────────────────────────────
 
-AAVE_V3_DEPLOY_BLOCK = 16_291_070  # pool address provider deployed block; drives start +1
-DEFAULT_FROM = AAVE_V3_DEPLOY_BLOCK + 1
+AAVE_V3_DEPLOY_BLOCK = 16_291_070  # pool address provider deployed block; ref drives +1
+#: ref.db (Python oracle) drives the FULL range from the deploy — its Phase-1
+#: self-bootstraps POOL/POOL_CONFIGURATOR via ProxyCreated.
+REF_FROM_BLOCK = AAVE_V3_DEPLOY_BLOCK + 1  # 16291071
+#: cand.db (Rust) drives POST-bootstrap — the Rust's ``build_fetch_spec``
+#: hard-requires POOL/POOL_CONFIGURATOR pre-seeded (run.rs:1060, once before the
+#: loop). The harness pre-seeds them from RPC-fetched ProxyCreated + sets cand's
+#: stamp to ``BOOTSTRAP_END_BLOCK``, so cand drives ``[BLOCK_AFTER_PROXY_CREATED, TO]``
+#: + never re-sees the ProxyCreated events → no duplicate-row divergence.
+#:
+#: The ProxyCreated bootstrap events land at blocks 16291127 / 16291130 / 16291136
+#: (confirmed by RPC probe — NOT at the 16291071 address-provider deploy; the
+#: first ~56 blocks are event-free). BOOTSTRAP_END_BLOCK = 16291136.
+BOOTSTRAP_END_BLOCK = 16_291_136
+BLOCK_AFTER_PROXY_CREATED = BOOTSTRAP_END_BLOCK + 1  # 16291137 — cand's from
 DEFAULT_CHUNK_SIZE = 10_000
 DEFAULT_MAX_BISECT_RANGE = 50_000
 
@@ -79,7 +91,11 @@ _TABLE_SPECS: dict[str, dict[str, list[tuple[str, str]]]] = {
     },
     "aave_v3_markets": {
         "key": [("chain_id", "d"), ("name", "d")],
-        "compare": [("active", "d"), ("last_update_block", "d")],
+        # `last_update_block` is EXCLUDED — the Python ``update_aave_market`` no
+        # longer advances it (Rust-owned per commands.py:432 — "was Python");
+        # so ref.db keeps the seed stamp while cand.db (Rust) advances it. This
+        # is an ownership-boundary artifact, NOT a writer-state divergence.
+        "compare": [("active", "d")],
     },
     "aave_v3_contracts": {
         "key": [("market_id", "m"), ("name", "d")],
@@ -408,16 +424,80 @@ def _key_sort(k: tuple) -> tuple:
 # ── drive ───────────────────────────────────────────────────────────────────
 
 
-def _market_gho_token_row(session: Session, market_id: int) -> dict[str, Any] | None:
-    """Return the seeded GHO token info for a market (id, discount_token_addr)."""
-    from degenbot.aave.deployments import EthereumMainnetAaveV3
+#: The ``ProxyCreated`` event topic (keccak of ``ProxyCreated(bytes32,address,address)``).
+PROXY_CREATED_TOPIC = "0x4a465a9bd819d9662563c1e11ae958f8109e437e7f4bf1c6ef0b9a7b3f35d478"
+#: The right-padded ASCII bytes32 ids the PoolAddressProvider emits for POOL /
+#: POOL_CONFIGURATOR (NOT keccak — §4.2 finding).
+_POOL_PROXY_ID = b"POOL".ljust(32, b"\x00")
+_POOL_CONFIGURATOR_PROXY_ID = b"POOL_CONFIGURATOR".ljust(32, b"\x00")
 
-    gho_token_address = "0x40D16FC0246aD3160Ccc09B8D0D3A2cD28aE6C2f"
-    pool_ap = EthereumMainnetAaveV3.pool_address_provider
-    return {
-        "gho_token_address": gho_token_address,
-        "pool_address_provider": pool_ap,
-    }
+
+def _run_python_writer(
+    db_path: str, start_block: int, end_block: int, rpc_url: str, *, market_name: str
+) -> None:
+    """Drive the Python ``update_aave_market`` oracle on ``[start_block, end_block]``.
+
+    The market row (seeded by ``_seed_market_db``) must already exist. The
+    Python does NOT advance ``last_update_block`` (it's Rust-owned now —
+    commands.py:432); the caller bumps the stamp separately when resuming.
+    Used BOTH for the ref.db full-range drive AND for cand.db's bootstrap pass
+    (driving the Python on ``[REF_FROM_BLOCK, BOOTSTRAP_END_BLOCK]`` creates the
+    SAME contract rows the ref.db bootstrap produces → no bootstrap-contract
+    divergence + no fake duplicate). Mirrors the production ``aave activate``
+    bootstrap's contract-discovery (the Rust core itself CANNOT cold-boot a
+    fresh market — ``build_fetch_spec`` errors on a missing POOL row).
+    """
+    from sqlalchemy import select
+    from web3 import Web3
+    from web3.providers.rpc import HTTPProvider
+
+    from degenbot.cli.aave.commands import update_aave_market
+    from degenbot.database.models import AaveV3Market
+    from degenbot.provider.sync_adapter import ProviderAdapter
+
+    engine = create_engine(f"sqlite:///{db_path}")
+    session = Session(engine)
+    try:
+        market = session.scalar(select(AaveV3Market))
+        assert market is not None, "seeded market row missing"
+        w3 = Web3(HTTPProvider(rpc_url))
+        provider = ProviderAdapter.from_web3(w3)
+        update_aave_market(
+            provider=provider,
+            start_block=start_block,
+            end_block=end_block,
+            market=market,
+            session=session,
+            verify_block=False,
+            verify_chunk=False,
+            show_progress=False,
+        )
+        session.commit()
+    finally:
+        session.close()
+        engine.dispose()
+
+
+def _bump_stamp(db_path: str, stamp: int) -> None:
+    """Set the market row's ``last_update_block`` (the Rust's resume-from-stamp)."""
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "UPDATE aave_v3_markets SET last_update_block = ? WHERE 1",
+            (stamp,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _read_stamp(db_path: str) -> int | None:
+    """Read the market row's ``last_update_block`` (raw — bypasses ORM staleness)."""
+    conn = sqlite3.connect(db_path)
+    try:
+        return conn.execute("SELECT last_update_block FROM aave_v3_markets").fetchone()[0]
+    finally:
+        conn.close()
 
 
 # The GHO token address on Ethereum mainnet (seeded alongside the market —
@@ -477,7 +557,6 @@ def _seed_market_db(db_path: str, *, market_name: str, last_update_block: int) -
 
 def drive(
     *,
-    from_block: int = DEFAULT_FROM,
     to_block: int,
     rpc_url: str | None = None,
     out_dir: str | None = None,
@@ -488,10 +567,19 @@ def drive(
     quiet: bool = False,
     progress_callback: Callable[..., None] | None = None,
 ) -> dict[str, Any]:
-    """Replay mainnet blocks ``[from_block, to_block]`` through both writers.
+    """Replay mainnet blocks through both writers.
 
-    Writes ``ref.db`` (Python oracle) + ``cand.db`` (Rust) under ``out_dir``
-    (a mkdtemp if omitted). Returns a one-line JSON-serializable summary.
+    - ref.db (Python ``update_aave_market``) drives the FULL ``[REF_FROM_BLOCK, to_block]``
+      range — its Phase-1 self-bootstraps POOL/POOL_CONFIGURATOR via ProxyCreated.
+    - cand.db (Rust ``run_aave_update``) drives ``[BLOCK_AFTER_PROXY_CREATED, to_block]``
+      POST-bootstrap — the Rust's ``build_fetch_spec`` requires POOL/POOL_CONFIGURATOR
+      pre-seeded, so the harness ``_bootstrap_rust_contracts`` seeds them from
+      RPC-fetched ProxyCreated + sets cand's stamp to ``BOOTSTRAP_END_BLOCK``.
+
+    Both writers process IDENTICAL event streams after ``BOOTSTRAP_END_BLOCK``
+    (no duplicate-row divergence; the bootstrap range ``[16291071, 16291136]`` is
+    construction-only — just ProxyCreated contract-row inserts, no user math).
+    Returns a one-line JSON-serializable summary.
     """
     rpc = rpc_url or os.environ.get(RPC_ENVVAR)
     if not rpc:
@@ -502,11 +590,16 @@ def drive(
     ref_path = os.path.join(out_dir, "ref.db")
     cand_path = os.path.join(out_dir, "cand.db")
     if not quiet:
-        print(f"[*] out_dir={out_dir} rpc={rpc} range=[{from_block},{to_block}]", file=sys.stderr)
+        print(
+            f"[*] out_dir={out_dir} rpc={rpc} "
+            f"ref=[{REF_FROM_BLOCK},{to_block}] cand=[{BLOCK_AFTER_PROXY_CREATED},{to_block}]",
+            file=sys.stderr,
+        )
 
     summary: dict[str, Any] = {
         "mode": "drive",
-        "from": from_block,
+        "ref_from": REF_FROM_BLOCK,
+        "cand_from": BLOCK_AFTER_PROXY_CREATED,
         "to": to_block,
         "out_dir": out_dir,
         "cand_db": cand_path,
@@ -518,57 +611,38 @@ def drive(
         "ref_stamp": None,
     }
 
-    # --- Python oracle (ref.db) ---
+    # --- Python oracle (ref.db) — full range, self-bootstraps ---
     if not rust_only:
         try:
-            from web3 import Web3
-            from web3.providers.rpc import HTTPProvider
-
-            from degenbot.cli.aave.commands import update_aave_market
-            from degenbot.provider.sync_adapter import ProviderAdapter
-
-            _seed_market_db(ref_path, market_name=market_name, last_update_block=from_block - 1)
-            engine = create_engine(f"sqlite:///{ref_path}")
-            session = Session(engine)
-            try:
-                from sqlalchemy import select
-
-                from degenbot.database.models import AaveV3Market
-
-                market = session.scalar(select(AaveV3Market))
-                assert market is not None, "seeded market row missing"
-                w3 = Web3(HTTPProvider(rpc))
-                provider = ProviderAdapter.from_web3(w3)
-                update_aave_market(
-                    provider=provider,
-                    start_block=from_block,
-                    end_block=to_block,
-                    market=market,
-                    session=session,
-                    verify_block=False,
-                    verify_chunk=False,
-                    show_progress=False,
-                )
-                session.commit()
-                summary["ref_ok"] = True
-                summary["ref_stamp"] = market.last_update_block
-            finally:
-                session.close()
-                engine.dispose()
+            _seed_market_db(ref_path, market_name=market_name, last_update_block=REF_FROM_BLOCK - 1)
+            _run_python_writer(ref_path, REF_FROM_BLOCK, to_block, rpc, market_name=market_name)
+            summary["ref_ok"] = True
+            summary["ref_stamp"] = _read_stamp(ref_path)
         except Exception as exc:
             summary["ref_ok"] = False
             summary["ref_error"] = f"{type(exc).__name__}: {exc}"
             _emit(summary)
             raise
 
-    # --- Rust writer (cand.db) ---
+    # --- Rust writer (cand.db) — Python-bootstrapped, then Rust POST-bootstrap ---
     if not python_only:
         try:
             market_id = _seed_market_db(
-                cand_path, market_name=market_name, last_update_block=from_block - 1
+                cand_path,
+                market_name=market_name,
+                last_update_block=REF_FROM_BLOCK - 1,
             )
+            # Bootstrap cand.db with the SAME Python pass the ref.db bootstrap
+            # runs (ProxyCreated / PriceOracleUpdated / PoolDataProviderUpdated →
+            # identical contract rows → no bootstrap-contract divergence).
+            _run_python_writer(
+                cand_path, REF_FROM_BLOCK, BOOTSTRAP_END_BLOCK, rpc, market_name=market_name
+            )
+            # The Python doesn't stamp (Rust-owned); bump to BOOTSTRAP_END_BLOCK
+            # so the Rust resumes from BLOCK_AFTER_PROXY_CREATED.
+            _bump_stamp(cand_path, BOOTSTRAP_END_BLOCK)
             cancel = CancelHandle()
-            cb: Callable[..., None] = progress_callback or (lambda **_kw: None)
+            cb: Callable[..., None] = progress_callback or (lambda _progress=None, **_kw: None)
             report: dict[str, Any] = {}
             err: BaseException | None = None
 
@@ -622,41 +696,31 @@ def _emit(obj: dict[str, Any]) -> None:
 
 def bisect(
     *,
-    from_block: int = DEFAULT_FROM,
     to_block: int,
     rpc_url: str | None = None,
     out_dir: str | None = None,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     max_blocks: int = 1,
 ) -> dict[str, Any]:
-    """Narrow the EARLIEST divergence in ``[from_block, to_block]`` to a 1-block range.
+    """Narrow the EARLIEST divergence in ``[BLOCK_AFTER_PROXY_CREATED, to_block]``.
 
-    Uses checkpoint DB copy-resume: when ``[from, MID]`` is GREEN, snapshot
-    both DBs + resume the right half from ``MID+1``. Stops at ``max_blocks``
-    granularity. Prints verbatim per-tx events for the divergent range.
+    Binary-searches on ``hi``: ``drive(to=mid)`` is a FRESH from-seed drive (so
+    the GREEN prefix re-applies idempotently — no snapshot-resume needed for
+    correctness; the checkpoint-resume optimization is a TODO). When
+    ``drive(to=mid)`` is divergent → recurse ``hi=mid``; GREEN → recurse
+    ``lo=mid+1``. Stops at ``max_blocks`` granularity, then fetches the
+    verbatim per-tx events for the divergent range.
     """
     rpc = rpc_url or os.environ.get(RPC_ENVVAR)
     if not rpc:
         raise SystemExit(f"No RPC: set ${RPC_ENVVAR} or pass --rpc-url.")
     if out_dir is None:
         out_dir = tempfile.mkdtemp(prefix="aave-bisect-")
-    ckpt_dir = os.path.join(out_dir, "ckpt")
-    pathlib.Path(ckpt_dir).mkdir(exist_ok=True, parents=True)
 
-    def drive_range(lo: int, hi: int, seed_ref: str, seed_cand: str) -> dict[str, Any]:
-        """Drive [lo,hi] against the given (already-seeded) DB paths."""
-        rng_dir = os.path.join(out_dir, f"r{lo}_{hi}")
+    def drive_at(hi: int) -> dict[str, Any]:
+        rng_dir = os.path.join(out_dir, f"at_{hi}")
         pathlib.Path(rng_dir).mkdir(exist_ok=True, parents=True)
-        ref_path = os.path.join(rng_dir, "ref.db")
-        cand_path = os.path.join(rng_dir, "cand.db")
-        if seed_ref:
-            shutil.copyfile(seed_ref, ref_path)
-            _bump_stamp(ref_path, lo - 1)
-        if seed_cand:
-            shutil.copyfile(seed_cand, cand_path)
-            _bump_stamp(cand_path, lo - 1)
         return drive(
-            from_block=lo,
             to_block=hi,
             rpc_url=rpc,
             out_dir=rng_dir,
@@ -666,39 +730,33 @@ def bisect(
         )
 
     # Initial full-range drive.
-    s = drive_range(from_block, to_block, "", "")
+    s = drive_at(to_block)
     rep = compare_dbs(s["ref_db"], s["cand_db"])
     if rep["exit_code"] == 0:
         print(
             json.dumps(
-                {"mode": "bisect", "result": "GREEN", "range": [from_block, to_block]},
+                {
+                    "mode": "bisect",
+                    "result": "GREEN",
+                    "range": [BLOCK_AFTER_PROXY_CREATED, to_block],
+                },
                 default=_json_default,
             )
         )
-        return {"result": "GREEN", "range": [from_block, to_block]}
+        return {"result": "GREEN", "range": [BLOCK_AFTER_PROXY_CREATED, to_block]}
 
-    lo, hi = from_block, to_block
-    green_ref, green_cand = "", ""
-    # Snapshot the full-range run as the initial GREEN-prefix base only if GREEN.
-    # Otherwise we shrink from the right: drive [lo, MID]; if divergent recurse;
-    # else snapshot GREEN prefix + recurse right from MID+1.
+    lo, hi = BLOCK_AFTER_PROXY_CREATED, to_block
     while hi - lo + 1 > max_blocks:
         mid = (lo + hi) // 2
-        s = drive_range(lo, mid, green_ref, green_cand)
-        rep = compare_dbs(s["ref_db"], s["cand_db"])
-        if rep["exit_code"] != 0:
+        sm = drive_at(mid)
+        rm = compare_dbs(sm["ref_db"], sm["cand_db"])
+        if rm["exit_code"] != 0:
             hi = mid  # recurse left
         else:
-            # GREEN prefix snapshot + recurse right.
-            green_ref = os.path.join(ckpt_dir, f"ref_{mid}.db")
-            green_cand = os.path.join(ckpt_dir, f"cand_{mid}.db")
-            shutil.copyfile(s["ref_db"], green_ref)
-            shutil.copyfile(s["cand_db"], green_cand)
-            not green_ref.endswith(f"ref_{mid}.db")
-            lo = mid + 1
+            lo = mid + 1  # GREEN → earliest divergence is in (mid, hi]
 
     # Final divergent range [lo, hi].
-    final = drive_range(lo, hi, green_ref, green_cand)
+    final = drive_at(hi)
     final_rep = compare_dbs(final["ref_db"], final["cand_db"])
     events = _fetch_block_tx_events(lo, hi, rpc)
     result = {
@@ -708,23 +766,9 @@ def bisect(
         "divergence": final_rep.get("divergences", []),
         "cand_db": final["cand_db"],
         "ref_db": final["ref_db"],
-        "green_prefix_ref": green_ref,
-        "green_prefix_cand": green_cand,
     }
     print(json.dumps(result, default=_json_default))
     return result
-
-
-def _bump_stamp(db_path: str, stamp: int) -> None:
-    conn = sqlite3.connect(db_path)
-    try:
-        conn.execute(
-            "UPDATE aave_v3_markets SET last_update_block = ? WHERE 1",
-            (stamp,),
-        )
-        conn.commit()
-    finally:
-        conn.close()
 
 
 def _fetch_block_tx_events(lo: int, hi: int, rpc_url: str) -> list[dict[str, Any]]:
@@ -813,7 +857,6 @@ def _cli_compare(args: argparse.Namespace) -> int:
 
 def _cli_drive(args: argparse.Namespace) -> int:
     drive(
-        from_block=args.fr,
         to_block=args.to,
         rpc_url=args.rpc_url,
         out_dir=args.out_dir,
@@ -827,7 +870,6 @@ def _cli_drive(args: argparse.Namespace) -> int:
 
 def _cli_bisect(args: argparse.Namespace) -> int:
     res = bisect(
-        from_block=args.fr,
         to_block=args.to,
         rpc_url=args.rpc_url,
         out_dir=args.out_dir,
@@ -849,7 +891,6 @@ def build_parser() -> argparse.ArgumentParser:
     pc.set_defaults(func=_cli_compare)
 
     pd = sub.add_parser("drive", help="replay a block range through both writers")
-    pd.add_argument("--from", dest="fr", type=int, default=DEFAULT_FROM)
     pd.add_argument("--to", dest="to", type=int, required=True)
     pd.add_argument("--rpc-url")
     pd.add_argument("--out-dir")
@@ -860,8 +901,7 @@ def build_parser() -> argparse.ArgumentParser:
     pd.set_defaults(func=_cli_drive)
 
     pb = sub.add_parser("bisect", help="narrow the earliest divergence")
-    pb.add_argument("--from", dest="fr", type=int, default=DEFAULT_FROM)
-    pb.add_argument("--to", dest="to", type=int)
+    pb.add_argument("--to", dest="to", type=int, required=True)
     pb.add_argument("--rpc-url")
     pb.add_argument("--out-dir")
     pb.add_argument("--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE)
