@@ -35,8 +35,12 @@ if TYPE_CHECKING:
 POOL_ADDRESS = "0x" + "11" * 20
 POOL_CONFIGURATOR_ADDRESS = "0x" + "22" * 20
 POOL_ADDRESS_PROVIDER_ADDRESS = "0x" + "33" * 20
+POOL_DATA_PROVIDER_ADDRESS = "0x" + "73" * 20
 PRICE_ORACLE_ADDRESS = "0x" + "44" * 20
 GHO_TOKEN_ADDRESS = "0x" + "55" * 20
+GHO_VTOKEN_ADDRESS = "0x" + "95" * 20
+ZERO_ADDRESS = "0x" + "00" * 20
+
 # The seeded asset's erc20 parents (underlying/a_token/v_token) + the
 # pre-seeded user (the Python oracle `assert user is not None` requires the
 # user to pre-exist; the Rust `get_or_create_user` is a no-op on it).
@@ -209,6 +213,13 @@ _COLLATERAL_CONFIGURATION_CHANGED_TOPIC = (
 # mock's `eth_call_responses`). Hardcoded (keccak of the signature, first 4
 # bytes) to avoid computing at import time.
 GET_CONFIGURATION_SELECTOR = "0xc44b11f7"
+# The no-arg `*_REVISION()` eth_call selectors — both paths RPC these against
+# the PoolUpdated/PoolConfiguratorUpdated `newAddress` to read the contract
+# revision (keyed by selector in the mock's `eth_call_responses`).
+POOL_REVISION_SELECTOR = "0x0148170e"
+CONFIGURATOR_REVISION_SELECTOR = "0x7af635a6"
+ATOKEN_REVISION_SELECTOR = "0x0bd7ad3b"
+DEBT_TOKEN_REVISION_SELECTOR = "0xb9a7b622"  # noqa: S105
 
 
 def make_collateral_configuration_changed_log(
@@ -227,6 +238,360 @@ def make_collateral_configuration_changed_log(
         topics=[_COLLATERAL_CONFIGURATION_CHANGED_TOPIC, _pad_address(asset_address)],
         # 3 dummy words (ltv/lt/bonus) — ignored by both paths.
         data="0x" + (0).to_bytes(96, "big").hex(),
+        block=block,
+        log_index=log_index,
+    )
+
+
+# ── the 7 pure-decode config-event fixtures (no eth_call mock needed) ──────
+# EModeCategoryAdded(uint8 indexed categoryId, uint256 ltv, uint256
+# liquidationThreshold, uint256 liquidationBonus, address oracle, string label)
+# — emitted by the Pool Configurator. The `oracle` data word + the dynamic
+# `string label` are abi-encoded (the string needs the offset+length+data
+# tail; `eth_abi.encode` builds it cleanly).
+_EMODE_CATEGORY_ADDED_TOPIC = (
+    "0x0acf8b4a3cace10779798a89a206a0ae73a71b63acdd3be2801d39c2ef7ab3cb"
+)
+
+
+def make_e_mode_category_added_log(
+    *,
+    category_id: int,
+    ltv: int,
+    liquidation_threshold: int,
+    liquidation_bonus: int,
+    oracle_address: str | None,
+    label: str,
+    block: int = FIXTURE_BLOCK,
+    log_index: int = 0,
+) -> dict[str, Any]:
+    """Build a canned `eth_getLogs` entry for an EModeCategoryAdded event."""
+    import eth_abi
+
+    data = "0x" + eth_abi.abi.encode(
+        ["uint256", "uint256", "uint256", "address", "string"],
+        [ltv, liquidation_threshold, liquidation_bonus, oracle_address or ZERO_ADDRESS, label],
+    ).hex()
+    return _make_log(
+        address=POOL_CONFIGURATOR_ADDRESS.lower(),
+        topics=[_EMODE_CATEGORY_ADDED_TOPIC, _u256(category_id)],
+        data=data,
+        block=block,
+        log_index=log_index,
+    )
+
+
+# EModeAssetCategoryChanged(address indexed asset, uint8 oldCategoryId,
+# uint8 newCategoryId) — emitted by the Pool Configurator (older Aave).
+_EMODE_ASSET_CATEGORY_CHANGED_TOPIC = (
+    "0x5bb69795b6a2ea222d73a5f8939c23471a1f85a99c7ca43c207f1b71f10c6264"
+)
+
+
+def make_e_mode_asset_category_changed_log(
+    *,
+    asset_address: str,
+    new_category_id: int,
+    old_category_id: int = 0,
+    block: int = FIXTURE_BLOCK,
+    log_index: int = 0,
+) -> dict[str, Any]:
+    """Build a canned `eth_getLogs` entry for an EModeAssetCategoryChanged."""
+    return _make_log(
+        address=POOL_CONFIGURATOR_ADDRESS.lower(),
+        topics=[_EMODE_ASSET_CATEGORY_CHANGED_TOPIC, _pad_address(asset_address)],
+        data="0x" + old_category_id.to_bytes(32, "big").hex()
+        + new_category_id.to_bytes(32, "big").hex(),
+        block=block,
+        log_index=log_index,
+    )
+
+
+# AssetCollateralInEModeChanged(address indexed asset, uint8 categoryId,
+# bool collateral) — emitted by the Pool Configurator (newer Aave 3.4+).
+_ASSET_COLLATERAL_IN_EMODE_CHANGED_TOPIC = (
+    "0x79409190108b26fcb0e4570f8e240f627bf18fd01a55f751010224d5bd486098"
+)
+
+
+def make_asset_collateral_in_emode_changed_log(
+    *,
+    asset_address: str,
+    category_id: int,
+    is_collateral: bool,
+    block: int = FIXTURE_BLOCK,
+    log_index: int = 0,
+) -> dict[str, Any]:
+    """Build a canned `eth_getLogs` entry for an AssetCollateralInEModeChanged."""
+    return _make_log(
+        address=POOL_CONFIGURATOR_ADDRESS.lower(),
+        topics=[_ASSET_COLLATERAL_IN_EMODE_CHANGED_TOPIC, _pad_address(asset_address)],
+        data="0x" + category_id.to_bytes(32, "big").hex()
+        + (1 if is_collateral else 0).to_bytes(32, "big").hex(),
+        block=block,
+        log_index=log_index,
+    )
+
+
+# PriceOracleUpdated(address indexed oldAddress, address indexed newAddress) —
+# emitted by the PoolAddressesProvider.
+_PRICE_ORACLE_UPDATED_TOPIC = (
+    "0x56b5f80d8cac1479698aa7d01605fd6111e90b15fc4d2b377417f46034876cbd"
+)
+
+
+def make_price_oracle_updated_log(
+    *,
+    new_oracle_address: str,
+    old_oracle_address: str = ZERO_ADDRESS,
+    block: int = FIXTURE_BLOCK,
+    log_index: int = 0,
+) -> dict[str, Any]:
+    """Build a canned `eth_getLogs` entry for a PriceOracleUpdated event."""
+    return _make_log(
+        address=POOL_ADDRESS_PROVIDER_ADDRESS.lower(),
+        topics=[
+            _PRICE_ORACLE_UPDATED_TOPIC,
+            _pad_address(old_oracle_address),
+            _pad_address(new_oracle_address),
+        ],
+        data="0x",
+        block=block,
+        log_index=log_index,
+    )
+
+
+# AddressSet(bytes32 indexed id, address indexed oldAddress, address indexed
+# newAddress) — emitted by the PoolAddressesProvider. `contract_id` is the
+# right-padded-ASCII bytes32 identifier (e.g. b"POOL_DATA_PROVIDER").
+_ADDRESS_SET_TOPIC = (
+    "0x9ef0e8c8e52743bb38b83b17d9429141d494b8041ca6d616a6c77cebae9cd8b7"
+)
+
+
+def make_address_set_log(
+    *,
+    contract_id: str,
+    new_address: str,
+    old_address: str = ZERO_ADDRESS,
+    block: int = FIXTURE_BLOCK,
+    log_index: int = 0,
+) -> dict[str, Any]:
+    """Build a canned `eth_getLogs` entry for an AddressSet event.
+
+    `contract_id` is the ASCII identifier (right-padded to 32 bytes — both
+    paths strip the trailing NULs to recover the name).
+    """
+    return _make_log(
+        address=POOL_ADDRESS_PROVIDER_ADDRESS.lower(),
+        topics=[
+            _ADDRESS_SET_TOPIC,
+            "0x" + contract_id.encode("ascii").ljust(32, b"\x00").hex(),
+            _pad_address(old_address),
+            _pad_address(new_address),
+        ],
+        data="0x",
+        block=block,
+        log_index=log_index,
+    )
+
+
+# PoolDataProviderUpdated(address indexed oldAddress, address indexed
+# newAddress) — emitted by the PoolAddressesProvider.
+_POOL_DATA_PROVIDER_UPDATED_TOPIC = (
+    "0xc853974cfbf81487a14a23565917bee63f527853bcb5fa54f2ae1cdf8a38356d"
+)
+
+
+def make_pool_data_provider_updated_log(
+    *,
+    new_address: str,
+    old_address: str = ZERO_ADDRESS,
+    block: int = FIXTURE_BLOCK,
+    log_index: int = 0,
+) -> dict[str, Any]:
+    """Build a canned `eth_getLogs` entry for a PoolDataProviderUpdated event."""
+    return _make_log(
+        address=POOL_ADDRESS_PROVIDER_ADDRESS.lower(),
+        topics=[
+            _POOL_DATA_PROVIDER_UPDATED_TOPIC,
+            _pad_address(old_address),
+            _pad_address(new_address),
+        ],
+        data="0x",
+        block=block,
+        log_index=log_index,
+    )
+
+
+# PoolUpdated(address indexed oldAddress, address indexed newAddress) —
+# emitted by the PoolAddressesProvider. Both paths RPC `POOL_REVISION()` on
+# the new address + UPDATE the `POOL` contract row's `revision` (NOT address —
+# the proxy address is stable).
+_POOL_UPDATED_TOPIC = (
+    "0x90affc163f1a2dfedcd36aa02ed992eeeba8100a4014f0b4cdc20ea265a66627"
+)
+
+
+def make_pool_updated_log(
+    *,
+    new_address: str,
+    old_address: str = ZERO_ADDRESS,
+    block: int = FIXTURE_BLOCK,
+    log_index: int = 0,
+) -> dict[str, Any]:
+    """Build a canned `eth_getLogs` entry for a PoolUpdated event."""
+    return _make_log(
+        address=POOL_ADDRESS_PROVIDER_ADDRESS.lower(),
+        topics=[
+            _POOL_UPDATED_TOPIC,
+            _pad_address(old_address),
+            _pad_address(new_address),
+        ],
+        data="0x",
+        block=block,
+        log_index=log_index,
+    )
+
+
+# PoolConfiguratorUpdated(address indexed oldAddress, address indexed newAddress)
+# — emitted by the PoolAddressesProvider. RPC `CONFIGURATOR_REVISION()` on the
+# new address + UPDATE the `POOL_CONFIGURATOR` contract row's `revision`.
+_POOL_CONFIGURATOR_UPDATED_TOPIC = (
+    "0x8932892569eba59c8382a089d9b732d1f49272878775235761a2a6b0309cd465"
+)
+
+
+def make_pool_configurator_updated_log(
+    *,
+    new_address: str,
+    old_address: str = ZERO_ADDRESS,
+    block: int = FIXTURE_BLOCK,
+    log_index: int = 0,
+) -> dict[str, Any]:
+    """Build a canned `eth_getLogs` entry for a PoolConfiguratorUpdated event."""
+    return _make_log(
+        address=POOL_ADDRESS_PROVIDER_ADDRESS.lower(),
+        topics=[
+            _POOL_CONFIGURATOR_UPDATED_TOPIC,
+            _pad_address(old_address),
+            _pad_address(new_address),
+        ],
+        data="0x",
+        block=block,
+        log_index=log_index,
+    )
+
+
+# Upgraded(address indexed implementation) — emitted by an aToken/vToken proxy.
+# Both paths look up the asset by the proxy address (a_token first, then v_token)
+# + RPC `ATOKEN_REVISION()`/`DEBT_TOKEN_REVISION()` on the new implementation.
+# This is the ScaledTokenUpgrade config-row identity test (the v_token_revision
+# bump converges across paths; the ops-parser drift is flag #1, a separate
+# concern). For the deprecation side effect the upgraded vToken must BE the GHO
+# vToken — the seeded asset's v_token is NOT, so `deprecated_gho_token_id` is
+# None + only the revision column updates.
+_UPGRADED_TOPIC = (
+    "0xbc7cd75a20ee27fd9adebab32041f755214dbc6bffa90cc0225b39da2e5c2d3b"
+)
+
+
+def make_upgraded_log(
+    *,
+    proxy_address: str,
+    new_implementation: str,
+    block: int = FIXTURE_BLOCK,
+    log_index: int = 0,
+) -> dict[str, Any]:
+    """Build a canned `eth_getLogs` entry for an Upgraded event.
+
+    `proxy_address` is the aToken/vToken proxy (the emitter); `new_implementation`
+    is the indexed implementation (the RPC target for `*_REVISION()`).
+    """
+    return _make_log(
+        address=proxy_address.lower(),
+        topics=[_UPGRADED_TOPIC, _pad_address(new_implementation)],
+        data="0x",
+        block=block,
+        log_index=log_index,
+    )
+
+
+# newDiscountToken)` — emitted by the GHO variable-debt token. The Python
+# validates the emitter == the GHO vToken address; emit from GHO_VTOKEN_ADDRESS.
+_DISCOUNT_TOKEN_UPDATED_TOPIC = "0x6b489e1dbfbe36f55c511c098bcc9d92fec7f04f74ceb75018697ab68f7d3529"  # noqa: S105
+
+
+def make_discount_token_updated_log(
+    *,
+    new_discount_token: str,
+    old_discount_token: str = ZERO_ADDRESS,
+    block: int = FIXTURE_BLOCK,
+    log_index: int = 0,
+) -> dict[str, Any]:
+    return _make_log(
+        address=GHO_VTOKEN_ADDRESS.lower(),
+        topics=[
+            _DISCOUNT_TOKEN_UPDATED_TOPIC,
+            _pad_address(old_discount_token),
+            _pad_address(new_discount_token),
+        ],
+        data="0x",
+        block=block,
+        log_index=log_index,
+    )
+
+
+# GHO `DiscountRateStrategyUpdated(address indexed oldDiscountRateStrategy,
+# address indexed newDiscountRateStrategy)` — emitted by the GHO vToken.
+_DISCOUNT_RATE_STRATEGY_UPDATED_TOPIC = (
+    "0x194bd59f47b230edccccc2be58b92dde3a5dadd835751a621af59006928bccef"
+)
+
+
+def make_discount_rate_strategy_updated_log(
+    *,
+    new_strategy: str,
+    old_strategy: str = ZERO_ADDRESS,
+    block: int = FIXTURE_BLOCK,
+    log_index: int = 0,
+) -> dict[str, Any]:
+    return _make_log(
+        address=GHO_VTOKEN_ADDRESS.lower(),
+        topics=[
+            _DISCOUNT_RATE_STRATEGY_UPDATED_TOPIC,
+            _pad_address(old_strategy),
+            _pad_address(new_strategy),
+        ],
+        data="0x",
+        block=block,
+        log_index=log_index,
+    )
+
+
+# AssetSourceUpdated(address indexed asset, address indexed source) — emitted
+# by the AaveOracle contract (the PRICE_ORACLE row's address).
+_ASSET_SOURCE_UPDATED_TOPIC = (
+    "0x22c5b7b2d8561d39f7f210b6b326a1aa69f15311163082308ac4877db6339dc1"
+)
+
+
+def make_asset_source_updated_log(
+    *,
+    asset_address: str,
+    source_address: str,
+    block: int = FIXTURE_BLOCK,
+    log_index: int = 0,
+) -> dict[str, Any]:
+    """Build a canned `eth_getLogs` entry for an AssetSourceUpdated event."""
+    return _make_log(
+        address=PRICE_ORACLE_ADDRESS.lower(),
+        topics=[
+            _ASSET_SOURCE_UPDATED_TOPIC,
+            _pad_address(asset_address),
+            _pad_address(source_address),
+        ],
+        data="0x",
         block=block,
         log_index=log_index,
     )
@@ -314,8 +679,15 @@ class _MockRpcHandler(BaseHTTPRequestHandler):
             )
         topic0_group: set[str] = set()
         topics = filt.get("topics") or []
-        if topics and isinstance(topics[0], list):
-            topic0_group = {t.lower() for t in topics[0] if isinstance(t, str)}
+        if topics:
+            first = topics[0]
+            if isinstance(first, list):
+                # An OR-group: topic0 in {t0_a, t0_b, ...}.
+                topic0_group = {t.lower() for t in first if isinstance(t, str)}
+            elif isinstance(first, str):
+                # A single topic0 value (the fetcher flattens a 1-element
+                # OR-group to a bare hash). Treat it as a 1-element group.
+                topic0_group = {first.lower()}
         # Match canned logs by address (+ topic0 if a group was requested).
         out: list[dict[str, Any]] = []
         for log in self.registry.logs:
@@ -368,6 +740,7 @@ def seeded_db(
     market_id: int = 1,
     chain_id: int = 1,
     last_update_block: int = BOOTSTRAP_BLOCK,
+    with_price_oracle: bool = True,
 ) -> Generator[tuple[Path, Session], None, None]:
     """Create a temp SQLite DB with the Rust schema + a seeded Aave market.
 
@@ -408,7 +781,8 @@ def seeded_db(
             session, market_id, "POOL_CONFIGURATOR", POOL_CONFIGURATOR_ADDRESS, revision=1
         )
         _seed_contract(session, market_id, "POOL_ADDRESS_PROVIDER", POOL_ADDRESS_PROVIDER_ADDRESS)
-        _seed_contract(session, market_id, "PRICE_ORACLE", PRICE_ORACLE_ADDRESS)
+        if with_price_oracle:
+            _seed_contract(session, market_id, "PRICE_ORACLE", PRICE_ORACLE_ADDRESS)
         # The GHO token erc20 row + the aave_gho_tokens row (the Python oracle
         # asserts gho_asset is not None; the Rust treats it as optional).
         session.execute(
@@ -524,12 +898,66 @@ def dump_asset_rows(session: Session) -> list[dict[str, Any]]:
     """Dump the rate/index/block columns of ``aave_v3_assets`` as comparable dicts."""
     rows = session.execute(
         text(
-            "SELECT id, market_id, liquidity_index, liquidity_rate, "
+            "SELECT id, market_id, price_source, liquidity_index, liquidity_rate, "
             "borrow_index, borrow_rate, last_update_block "
             "FROM aave_v3_assets ORDER BY id"
         )
     ).all()
     return [dict(row._mapping) for row in rows]
+
+
+def dump_emode_category_rows(session: Session) -> list[dict[str, Any]]:
+    """Dump ``aave_v3_emode_categories`` rows as comparable dicts."""
+    rows = session.execute(
+        text(
+            "SELECT id, market_id, category_id, label, ltv, "
+            "liquidation_threshold, liquidation_bonus, price_source "
+            "FROM aave_v3_emode_categories ORDER BY category_id"
+        )
+    ).all()
+    return [dict(row._mapping) for row in rows]
+
+
+def dump_contract_rows(session: Session) -> list[dict[str, Any]]:
+    """Dump ``aave_v3_contracts`` rows as comparable dicts (name-ordered)."""
+    rows = session.execute(
+        text(
+            "SELECT id, market_id, name, address, revision "
+            "FROM aave_v3_contracts ORDER BY name, id"
+        )
+    ).all()
+    return [dict(row._mapping) for row in rows]
+
+
+def dump_gho_token_rows(session: Session) -> list[dict[str, Any]]:
+    """Dump ``aave_gho_tokens`` rows as comparable dicts."""
+    rows = session.execute(
+        text(
+            "SELECT id, token_id, v_token_id, v_gho_discount_rate_strategy, "
+            "v_gho_discount_token FROM aave_gho_tokens ORDER BY id"
+        )
+    ).all()
+    return [dict(row._mapping) for row in rows]
+
+
+def seed_gho_vtoken(session: Session, *, chain_id: int = 1) -> None:
+    """Seed the chain-unique GHO variable-debt token.
+
+    Adds an ``erc20_tokens`` row for the GHO vToken (id 5) + sets
+    ``aave_gho_tokens.v_token_id = 5`` so ``gho_asset.v_token`` resolves
+    (the Python ``_process_discount_*_updated_event`` emitter check + the Rust
+    ``AaveGhoAsset.v_token_address`` both need this non-NULL).
+    """
+    from degenbot.checksum_cache import get_checksum_address
+
+    session.execute(
+        text("INSERT INTO erc20_tokens (id, chain, address) VALUES (5, :c, :a)"),
+        {"c": chain_id, "a": get_checksum_address(GHO_VTOKEN_ADDRESS)},
+    )
+    session.execute(
+        text("UPDATE aave_gho_tokens SET v_token_id = 5 WHERE id = 1"),
+    )
+    session.flush()
 
 
 def dump_asset_config_rows(session: Session) -> list[dict[str, Any]]:
