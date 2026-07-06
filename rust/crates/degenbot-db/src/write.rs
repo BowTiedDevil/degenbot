@@ -1910,6 +1910,117 @@ impl DegenbotDb {
         Self::apply_stk_aave_redeem_on_conn(&conn, user_id, amount)
     }
 
+    /// Apply a user-to-user stkAAVE `Transfer(from, to, value)` (neither leg
+    /// zero): atomically decrement `from.stk_aave_balance` by `value` AND
+    /// increment `to.stk_aave_balance` by `value`. Port of
+    /// `stkaave.process_stk_aave_transfer_event` (the both-legs path). S3X2I2.
+    ///
+    /// The `from`-leg mirrors [`Self::apply_stk_aave_redeem_on_conn`] (underflow
+    /// guard — `value` > `from`'s balance errors, mirroring the stricter Rust
+    /// Redeem apply; the Python's `process_stk_aave_transfer_event` only asserts
+    /// `>= 0` before the decrement + allows negative, a latent divergence on
+    /// `value > balance` that §4.2 parity tests sidestep by seeding sufficient
+    /// balance). The `to`-leg mirrors [`Self::apply_stk_aave_staked_on_conn`]
+    /// (overflow guard). Both writes happen in the caller's `Transaction`
+    /// (atomic with the chunk).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure, [`DbError::MissingRow`]
+    /// if either user matches no row, or [`DbError::Decode`] if a persisted
+    /// string is malformed, the `from`-leg underflows, or the `to`-leg
+    /// overflows.
+    pub fn apply_stk_aave_transfer_on_conn(
+        conn: &rusqlite::Connection,
+        from_user_id: i64,
+        to_user_id: i64,
+        amount: alloy::primitives::U256,
+    ) -> Result<(), DbError> {
+        // Read + validate the from-leg (decrement).
+        let from_current: Option<Option<String>> = conn
+            .query_row(
+                "SELECT stk_aave_balance FROM aave_v3_users WHERE id = ?1",
+                [from_user_id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?;
+        let Some(from_str) = from_current else {
+            return Err(DbError::MissingRow(format!(
+                "aave_v3_users id={from_user_id} (StkAaveTransfer from-leg target)"
+            )));
+        };
+        let from_balance = from_str
+            .as_deref()
+            .map(parse_decimal_u256)
+            .transpose()?
+            .unwrap_or(alloy::primitives::U256::ZERO);
+        let new_from = from_balance.checked_sub(amount).ok_or_else(|| {
+            DbError::Decode(format!(
+                "stk_aave_balance underflow on Transfer from-leg: {from_balance} - {amount} (user_id={from_user_id})"
+            ))
+        })?;
+
+        // Read + validate the to-leg (increment).
+        let to_current: Option<Option<String>> = conn
+            .query_row(
+                "SELECT stk_aave_balance FROM aave_v3_users WHERE id = ?1",
+                [to_user_id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?;
+        let Some(to_str) = to_current else {
+            return Err(DbError::MissingRow(format!(
+                "aave_v3_users id={to_user_id} (StkAaveTransfer to-leg target)"
+            )));
+        };
+        let to_balance = to_str
+            .as_deref()
+            .map(parse_decimal_u256)
+            .transpose()?
+            .unwrap_or(alloy::primitives::U256::ZERO);
+        let new_to = to_balance.checked_add(amount).ok_or_else(|| {
+            DbError::Decode(format!(
+                "stk_aave_balance overflow on Transfer to-leg: {to_balance} + {amount} (user_id={to_user_id})"
+            ))
+        })?;
+
+        // Apply both writes (within the caller's Transaction).
+        let updated_from = conn.execute(
+            "UPDATE aave_v3_users SET stk_aave_balance = ?1 WHERE id = ?2",
+            params![new_from.to_string(), from_user_id],
+        )?;
+        if updated_from == 0 {
+            return Err(DbError::MissingRow(format!(
+                "aave_v3_users id={from_user_id} (StkAaveTransfer from-leg — row vanished mid-tx)"
+            )));
+        }
+        let updated_to = conn.execute(
+            "UPDATE aave_v3_users SET stk_aave_balance = ?1 WHERE id = ?2",
+            params![new_to.to_string(), to_user_id],
+        )?;
+        if updated_to == 0 {
+            return Err(DbError::MissingRow(format!(
+                "aave_v3_users id={to_user_id} (StkAaveTransfer to-leg — row vanished mid-tx)"
+            )));
+        }
+        Ok(())
+    }
+
+    /// `&self` wrapper for [`Self::apply_stk_aave_transfer_on_conn`].
+    ///
+    /// # Errors
+    ///
+    /// Same as the `_on_conn` variant.
+    pub fn apply_stk_aave_transfer(
+        &self,
+        from_user_id: i64,
+        to_user_id: i64,
+        amount: alloy::primitives::U256,
+    ) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        Self::apply_stk_aave_transfer_on_conn(&conn, from_user_id, to_user_id, amount)
+    }
+
     /// Apply a `RewardsController` `RewardsClaimed` event. **No-op** —
     /// investigation (RYKCC4, 2026-07-04) confirmed the Python `event_handlers.py`
     /// defines `AaveV3RewardsControllerEvent.REWARDS_CLAIMED` in
