@@ -1152,6 +1152,7 @@ impl DegenbotDb {
         v_token_id: i64,
         v_token_revision: i64,
         price_source: Option<&str>,
+        gho_link_token_id: Option<i64>,
     ) -> Result<i64, DbError> {
         let conn = self.conn.lock();
         Self::apply_reserve_initialized_on_conn(
@@ -1163,6 +1164,7 @@ impl DegenbotDb {
             v_token_id,
             v_token_revision,
             price_source,
+            gho_link_token_id,
         )
     }
 
@@ -1185,6 +1187,7 @@ impl DegenbotDb {
         v_token_id: i64,
         v_token_revision: i64,
         price_source: Option<&str>,
+        gho_link_token_id: Option<i64>,
     ) -> Result<i64, DbError> {
         if let Some(id) = existing_aave_v3_asset(conn, market_id, underlying_asset_id)? {
             // UPDATE the fields the Python `_process_asset_initialization_event`
@@ -1228,7 +1231,20 @@ impl DegenbotDb {
                 price_source,
             ],
         )?;
-        Ok(conn.last_insert_rowid())
+        let asset_id = conn.last_insert_rowid();
+        // 2QGL6G / divergence #8: mirror the Python's GHO-vToken-FK link
+        // (event_handlers.py:689-698) — when the new asset's underlying IS
+        // the GHO token, set `aave_gho_tokens.v_token_id` to the new vToken's
+        // erc20 id. The FK is the precondition for the ULDUAC emitter guard
+        // (resolved via `gho_asset.v_token_address`). `None` for a regular
+        // reserve (no link).
+        if let Some(gho_id) = gho_link_token_id {
+            conn.execute(
+                "UPDATE aave_gho_tokens SET v_token_id = ?1 WHERE id = ?2",
+                params![v_token_id, gho_id],
+            )?;
+        }
+        Ok(asset_id)
     }
 
     // ── 6SWY4R-2b: the 6 missing-variant config-event apply fns ──────────
@@ -3395,5 +3411,87 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, DbError::MissingRow(_)), "got {err:?}");
+    }
+
+    // ── 2QGL6G: ReserveInitialized GHO-vToken-FK link (divergence #8) ────
+    // When the new asset's underlying IS the GHO token, the apply links the
+    // GHO token row to the new vToken (`aave_gho_tokens.v_token_id`), mirroring
+    // the Python's `_process_reserve_initialized_event` (event_handlers.py:
+    // 689-698). `None` for a regular reserve → no link.
+    #[test]
+    fn apply_reserve_initialized_links_gho_vtoken_fk_when_set() {
+        let db = write_db_with_market();
+        // Seed the underlying erc20 (id 1) + the GHO token row referencing it.
+        let gho_token_row_id = {
+            let conn = db.conn.lock();
+            DegenbotDb::get_or_create_gho_token_on_conn(&conn, 1, "0xgho1").unwrap()
+        };
+        // The new asset's underlying erc20 + aToken + vToken (ids 2/3/4).
+        for (id, addr) in [(2_i64, "0xund"), (3, "0xa1"), (4, "0xv1")] {
+            let conn = db.conn.lock();
+            conn.execute(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES (?1, 1, ?2)",
+                params![id, addr],
+            )
+            .unwrap();
+        }
+        let v_token_id = 4_i64;
+        let conn = db.conn.lock();
+        DegenbotDb::apply_reserve_initialized_on_conn(
+            &conn,
+            1,
+            2,
+            3,
+            7,
+            v_token_id,
+            9,
+            None,
+            Some(gho_token_row_id),
+        )
+        .unwrap();
+        let fk: Option<i64> = conn
+            .query_row(
+                "SELECT v_token_id FROM aave_gho_tokens WHERE id = ?1",
+                params![gho_token_row_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            fk,
+            Some(v_token_id),
+            "the GHO token row's v_token_id FK should be linked to the new vToken"
+        );
+    }
+
+    #[test]
+    fn apply_reserve_initialized_leaves_gho_vtoken_fk_null_for_regular_reserve() {
+        let db = write_db_with_market();
+        // Seed a GHO token row with v_token_id = NULL — a regular-reserve
+        // ReserveInitialized must NOT touch it.
+        let gho_token_row_id = {
+            let conn = db.conn.lock();
+            DegenbotDb::get_or_create_gho_token_on_conn(&conn, 1, "0xgho1").unwrap()
+        };
+        for (id, addr) in [(2_i64, "0xund"), (3, "0xa1"), (4, "0xv1")] {
+            let conn = db.conn.lock();
+            conn.execute(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES (?1, 1, ?2)",
+                params![id, addr],
+            )
+            .unwrap();
+        }
+        let conn = db.conn.lock();
+        DegenbotDb::apply_reserve_initialized_on_conn(&conn, 1, 2, 3, 7, 4, 9, None, None).unwrap();
+        let fk: Option<i64> = conn
+            .query_row(
+                "SELECT v_token_id FROM aave_gho_tokens WHERE id = ?1",
+                params![gho_token_row_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            fk, None,
+            "a regular-reserve event must not touch the GHO FK"
+        );
     }
 }
