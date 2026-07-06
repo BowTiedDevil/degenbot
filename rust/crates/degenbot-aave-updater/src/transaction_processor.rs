@@ -537,8 +537,14 @@ fn build_scaled_event_chunk_event(
 }
 
 /// Dispatch a standalone `BalanceTransfer` operation (no Pool event). The
-/// scaled event's `amount` IS the scaled transfer amount (no enrichment
-/// needed — the `BalanceTransfer` carries the scaled value directly).
+/// scaled event in `op.scaled_events` is the ERC20 `Transfer` (no index).
+/// Paired `BalanceTransfer` event(s) on `op.balance_transfer_events` carry
+/// the SCALED balance being moved (+ the liquidity index) — those are the
+/// authoritative inputs for credit/debit + `last_index` advancement
+/// (mirrors Python's `_match_paired_balance_transfer` in transfers.py).
+/// Pre-fix this dispatched the ERC20's UNDERLYING amount with `transfer_index=0`
+/// — at `liquidity_index != 1` the underlying > the credited scaled balance
+/// → `balance would go negative`. Post-fix we use the BT's scaled amount + index.
 fn dispatch_balance_transfer(
     op: &Operation,
     market_id: i64,
@@ -548,10 +554,94 @@ fn dispatch_balance_transfer(
     let mut scaled: Vec<&ScaledTokenEvent> = op.scaled_events.iter().collect();
     scaled.sort_by_key(|e| e.log_index);
     for ev in &scaled {
-        let chunk_event = build_scaled_event_chunk_event(ev, op, ev.amount, market_id, conn)?;
+        // Find the paired BalanceTransfer event for this ERC20 transfer
+        // (matched by token address + from + to — mirrors
+        // `_match_paired_balance_transfer`). `create_transfer_operations` pairs
+        // at most one BT per ERC20, so the first match wins.
+        let bt_pair = op
+            .balance_transfer_events
+            .iter()
+            .find_map(|bt_log| match decode_balance_transfer_log(bt_log) {
+                Some((bt_from, bt_to, bt_token, bt_value, bt_index))
+                    if bt_token == ev.token_address
+                        && bt_from == ev.from_address.unwrap_or(ev.user_address)
+                        && bt_to == ev.target_address.unwrap_or_default() =>
+                {
+                    Some((bt_value, bt_index))
+                }
+                _ => None,
+            });
+        let raw_amount = ev.amount;
+        let transfer_index = match bt_pair {
+            Some((_, idx)) => idx,
+            None => ev.index.unwrap_or_default(),
+        };
+        let chunk_event = build_scaled_event_chunk_event(
+            ev,
+            op,
+            raw_amount,
+            market_id,
+            conn,
+        )?;
+        let chunk_event = override_transfer_with_paired_bt(chunk_event, bt_pair, raw_amount, transfer_index);
         events.push(chunk_event);
     }
     Ok(())
+}
+
+/// If `build_scaled_event_chunk_event` returned a `ScaledTokenTransfer` chunk
+/// event for the ERC20 `Transfer` event (carrying the ERC20's UNDERLYING amount
+/// as `scaled_amount`), override it with the paired `BalanceTransfer` event's
+/// scaled amount (the actual scaled balance moved). For Liquidation paths
+/// (handled by `dispatch_liquidation`, not here) the override is a no-op.
+fn override_transfer_with_paired_bt(
+    event: AaveChunkEvent,
+    bt_pair: Option<(U256, U256)>,
+    fallback_amount: U256,
+    fallback_index: U256,
+) -> AaveChunkEvent {
+    let AaveChunkEvent::ScaledTokenTransfer {
+        from_position_id,
+        to_position_id,
+        scaled_amount: _,
+        transfer_index: _,
+    } = event
+    else {
+        return event;
+    };
+    let (scaled_amount, transfer_index) = match bt_pair {
+        Some((value, index)) => (value, index),
+        None => (fallback_amount, fallback_index),
+    };
+    AaveChunkEvent::ScaledTokenTransfer {
+        from_position_id,
+        to_position_id,
+        scaled_amount,
+        transfer_index,
+    }
+}
+
+/// Decode an aToken `BalanceTransfer(address indexed from, address indexed to,
+/// uint256 value, uint256 index)` log into its raw fields.
+/// Returns `(from, to, token_address, value, index)`.
+fn decode_balance_transfer_log(log: &Log) -> Option<(Address, Address, Address, U256, U256)> {
+    let topics = log.topics();
+    if topics.len() < 3 {
+        return None;
+    }
+    let from = Address::from_slice(&topics[1].as_slice()[12..]);
+    let to = Address::from_slice(&topics[2].as_slice()[12..]);
+    let token = log.address();
+    let data = log.data().data.as_ref();
+    if data.len() < 64 {
+        return None;
+    }
+    let mut buf = [0u8; 32];
+    buf.copy_from_slice(&data[0..32]);
+    let value = U256::from_be_bytes::<32>(buf);
+    buf.copy_from_slice(&data[32..64]);
+    let index = U256::from_be_bytes::<32>(buf);
+    Some((from, to, token, value, index))
 }
 
 /// Dispatch an `InterestAccrual` operation (amount == `balance_increase` →

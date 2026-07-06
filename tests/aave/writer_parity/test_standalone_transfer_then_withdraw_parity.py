@@ -44,6 +44,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
 from sqlalchemy import select
 
 from degenbot.cli.aave.commands import update_aave_market
@@ -75,8 +76,15 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session
 
-_RAY = 10**27  # 1e27 — the liquidity index (steady-state).
+_RAY = 10**27  # 1e27 — the steady-state liquidity index default.
 _AMOUNT = 10**15  # 0.001 WETH (mirrors the on-chain-truth block 16496928).
+# The fixture parameterizes over `liquidity_index` to lock down the
+# standalone BalanceTransfer's paired-BT scaled_amount path (NMWPI6's
+# companion divergence). At `liquidity_index = RAY` the ERC20 underlying
+# equals the scaled balance moved (no divergence pre-fix); at
+# `liquidity_index = 2 * RAY` the standalone Transfer's underlying is twice
+# the position's scaled balance → pre-fix would crash (debits 2*_AMOUNT
+# against _AMOUNT balance) → post-fix uses the BT's scaled amount (_AMOUNT)
 
 # The new reserve (WETH) + its aToken/vToken — created by ReserveInitialized.
 _WETH = "0x" + "c0" * 20
@@ -104,9 +112,20 @@ def _eth_call_responses() -> dict[str, str]:
     }
 
 
-def _build_chunk_logs() -> list[dict[str, object]]:
-    """One chunk at FIXTURE_BLOCK: SENDER supplies → SENDER transfers aWETH to
-    USER (standalone; NO paired burn) → USER withdraws."""
+def _build_chunk_logs(*, liquidity_index: int) -> list[dict[str, object]]:
+    """One chunk at FIXTURE_BLOCK: SENDER supplies -> SENDER transfers aWETH
+    to USER (standalone; NO paired burn) -> USER withdraws.
+
+    `liquidity_index` is the index carried by the Mint/Burn/BalanceTransfer
+    events. The Supply + Withdraw pool-event amounts (and the standalone
+    Transfer's ERC20 value) are computed in UNDERLYING terms
+    (`_supply_underlying = _AMOUNT * liquidity_index // _RAY`), so the
+    Mint's credited scaled balance equals `_AMOUNT` regardless of
+    `liquidity_index`. The BT's value is the SCALED balance moved = `_AMOUNT`
+    (directly), matching the Python oracle.
+    """
+    supply_underlying = _AMOUNT * liquidity_index // _RAY  # scaled credit = _AMOUNT
+    withdraw_underlying = supply_underlying  # withdraw all of USER's balance
     li = 0
     logs: list[dict[str, object]] = []
 
@@ -116,14 +135,16 @@ def _build_chunk_logs() -> list[dict[str, object]]:
     )
     li += 1
 
-    # tx 2 (_TX_SUPPLY): SENDER supplies WETH — Pool Supply + aWETH Mint (from
-    # zero) + the mint-from-zero companion Transfer.
+    # tx 2 (_TX_SUPPLY): SENDER supplies WETH -> Pool Supply + aWETH Mint
+    # (value = `supply_underlying`, the Aave V3 Mint event's `amount` field —
+    # the UNDERLYING supply amount, matched by `amounts_match` against the
+    # pool event's decoded `amount`) + the mint-from-zero companion Transfer.
     logs.append(
         make_supply_log(
             reserve=_WETH,
             on_behalf_of=_SENDER,
             user=_SENDER,
-            amount=_AMOUNT,
+            amount=supply_underlying,
             log_index=li,
             block=FIXTURE_BLOCK,
             tx_hash=_TX_SUPPLY,
@@ -134,21 +155,21 @@ def _build_chunk_logs() -> list[dict[str, object]]:
         make_scaled_token_mint_log(
             token_address=_A_WETH,
             on_behalf_of=_SENDER,
-            value=_AMOUNT,
+            value=supply_underlying,  # Mint event `value` is in UNDERLYING units
             balance_increase=0,
-            index=_RAY,
+            index=liquidity_index,
             log_index=li,
             block=FIXTURE_BLOCK,
             tx_hash=_TX_SUPPLY,
         )
     )
     li += 1
-    logs.append(  # mint-from-zero companion (ERC20 Transfer 0x0→SENDER)
+    logs.append(  # mint-from-zero companion (ERC20 Transfer 0x0->SENDER)
         make_erc20_transfer_log(
             token_address=_A_WETH,
             from_address="0x" + "00" * 20,
             to_address=_SENDER,
-            value=_AMOUNT,
+            value=supply_underlying,
             log_index=li,
             block=FIXTURE_BLOCK,
             tx_hash=_TX_SUPPLY,
@@ -156,17 +177,18 @@ def _build_chunk_logs() -> list[dict[str, object]]:
     )
     li += 1
 
-    # tx 3 (_TX_XFER): standalone aToken Transfer SENDER→USER + its
-    # BalanceTransfer (the scaled bookkeeping — the standalone BalanceTransfer
-    # op pairs the ERC20 Transfer + the BalanceTransfer). NO paired burn —
-    # pre-fix, the deficit_coverage scavenger stole these (marks assigned
-    # without creating an op) → USER's credit never landed.
+    # tx 3 (_TX_XFER): standalone aToken Transfer SENDER->USER + its
+    # BalanceTransfer (the scaled bookkeeping — the standalone
+    # BalanceTransfer op pairs the ERC20 Transfer + the BalanceTransfer). NO
+    # paired burn. The BT's value is the SCALED balance moved = `_AMOUNT`
+    # (the full SENDER position); the ERC20 Transfer's value is the
+    # UNDERLYING = `supply_underlying` (scaled * index / RAY).
     logs.append(
         make_erc20_transfer_log(
             token_address=_A_WETH,
             from_address=_SENDER,
             to_address=USER_ADDRESS,
-            value=_AMOUNT,
+            value=supply_underlying,
             log_index=li,
             block=FIXTURE_BLOCK,
             tx_hash=_TX_XFER,
@@ -178,8 +200,8 @@ def _build_chunk_logs() -> list[dict[str, object]]:
             token_address=_A_WETH,
             from_address=_SENDER,
             to_address=USER_ADDRESS,
-            value=_AMOUNT,
-            index=_RAY,
+            value=_AMOUNT,  # the SCALED balance moved
+            index=liquidity_index,
             log_index=li,
             block=FIXTURE_BLOCK,
             tx_hash=_TX_XFER,
@@ -187,14 +209,15 @@ def _build_chunk_logs() -> list[dict[str, object]]:
     )
     li += 1
 
-    # tx 3 (continued): USER withdraws — Pool Withdraw + aWETH Burn
-    # (CollateralBurn, debits USER) + the outgoing Transfer-to-zero companion.
+    # tx 3 (continued): USER withdraws -> Pool Withdraw + aWETH Burn
+    # (CollateralBurn; value = _AMOUNT, the scaled balance burned) + the
+    # outgoing Transfer-to-zero companion (value = withdraw_underlying).
     logs.append(
         make_withdraw_log(
             reserve=_WETH,
             user=USER_ADDRESS,
             to=USER_ADDRESS,
-            amount=_AMOUNT,
+            amount=withdraw_underlying,
             log_index=li,
             block=FIXTURE_BLOCK,
             tx_hash=_TX_XFER,
@@ -206,9 +229,9 @@ def _build_chunk_logs() -> list[dict[str, object]]:
             token_address=_A_WETH,
             from_address=USER_ADDRESS,
             target=USER_ADDRESS,
-            value=_AMOUNT,
+            value=withdraw_underlying,  # Burn event `value` is in UNDERLYING units
             balance_increase=0,
-            index=_RAY,
+            index=liquidity_index,
             log_index=li,
             block=FIXTURE_BLOCK,
             tx_hash=_TX_XFER,
@@ -220,7 +243,7 @@ def _build_chunk_logs() -> list[dict[str, object]]:
             token_address=_A_WETH,
             from_address=USER_ADDRESS,
             to_address="0x" + "00" * 20,
-            value=_AMOUNT,
+            value=withdraw_underlying,
             log_index=li,
             block=FIXTURE_BLOCK,
             tx_hash=_TX_XFER,
@@ -233,23 +256,39 @@ def _load_market(session: Session) -> AaveV3Market:
     return session.scalars(select(AaveV3Market).where(AaveV3Market.id == 1)).one()
 
 
+@pytest.mark.parametrize(
+    "liquidity_index", [_RAY, 2 * _RAY], ids=["ray", "2x-ray"]
+)
 def test_standalone_transfer_then_withdraw_rust_matches_python_oracle(
     tmp_path: Path,
+    liquidity_index: int,
 ) -> None:
     """Both paths write byte-identical `aave_v3_collateral_positions` rows.
 
     The standalone Transfer-credit (USER) + the Withdraw-debit (USER) must
     balance to the SAME end-state in both paths: SENDER supplies + transfers
-    out → 0; USER receives + withdraws → 0. Pre-fix Rust crashed
+    out -> 0; USER receives + withdraws -> 0. Pre-fix Rust crashed
     (`balance would go negative`); post-fix (YUPSIB) it lands the same rows as
     the Python oracle.
 
     The parity assertion locks down the Python's at-line-2001 conditional
     (`local_assigned.add` inside `if paired_burn is not None:`). A future
     regression that re-introduces the unconditional scavenging would crash the
-    Rust path → assertion fires (Rust raises; Python succeeds → divergence).
+    Rust path -> assertion fires (Rust raises; Python succeeds -> divergence).
+
+    Parameterized over `liquidity_index`:
+    * `ray` (= _RAY): the divergence-free slice (scaled == underlying at
+      index=RAY). Passes both pre- and post-NMWPI6-companion-fix.
+    * `2x-ray` (= 2 * _RAY): locks down the paired-BalanceTransfer
+      scaled_amount path. Pre-companion-fix the standalone Transfer moved the
+      ERC20 underlying (=2*_AMOUNT) instead of the BT's scaled amount
+      (=_AMOUNT), debiting SENDER (who held _AMOUNT) -> negative crash.
+      Post-fix dispatch_balance_transfer decodes the paired BT log
+      (value=_AMOUNT, index=2*_RAY) via `decode_balance_transfer_log` +
+      overrides the chunk event's scaled_amount + transfer_index to match
+      the Python's `_match_paired_balance_transfer`.
     """
-    logs = _build_chunk_logs()
+    logs = _build_chunk_logs(liquidity_index=liquidity_index)
     with (
         seeded_db(tmp_path, name="rust", with_price_oracle=True) as (rust_path, rust_session),
         seeded_db(tmp_path, name="py", with_price_oracle=True) as (_py_path, py_session),
