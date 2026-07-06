@@ -28,10 +28,10 @@ from degenbot.provider.sync_adapter import ProviderAdapter
 from tests.aave.writer_parity.harness import (
     BOOTSTRAP_BLOCK,
     FIXTURE_BLOCK,
-    create_seeded_db,
     dump_user_rows,
     make_user_e_mode_set_log,
     mock_rpc_server,
+    seeded_db,
 )
 
 if TYPE_CHECKING:
@@ -58,13 +58,13 @@ def test_user_e_mode_set_rust_matches_python_oracle(
         category_id=category_id,
     )
 
-    # Two identically-seeded temp DBs (Rust-written + Python-written).
-    rust_path, rust_session = create_seeded_db(tmp_path, name="rust")
-    _py_path, py_session = create_seeded_db(tmp_path, name="py")
-    py_market = _load_market(py_session)
-
-    with mock_rpc_server(logs=[fixture_log], block_number=FIXTURE_BLOCK) as rpc_url:
+    with (
+        seeded_db(tmp_path, name="rust") as (rust_path, rust_session),
+        seeded_db(tmp_path, name="py") as (_py_path, py_session),
+        mock_rpc_server(logs=[fixture_log], block_number=FIXTURE_BLOCK) as rpc_url,
+    ):
         provider = ProviderAdapter.from_alloy(AlloyProvider(rpc_url, 0))
+        py_market = _load_market(py_session)
 
         # Rust path.
         handle = CancelHandle()
@@ -91,13 +91,13 @@ def test_user_e_mode_set_rust_matches_python_oracle(
             show_progress=False,
         )
 
-    # Commit the Python oracle's writes (mirroring the production caller's
-    # per-chunk `session.commit()` — `update_aave_market` itself does NOT
-    # commit; the old `aave_update` chunk loop did). The Rust path commits
-    # internally per chunk.
-    py_session.commit()
-    rust_users = dump_user_rows(rust_session)
-    py_users = dump_user_rows(py_session)
+        # Commit the Python oracle's writes (mirroring the production caller's
+        # per-chunk `session.commit()` — `update_aave_market` itself does NOT
+        # commit; the old `aave_update` chunk loop did). The Rust path commits
+        # internally per chunk.
+        py_session.commit()
+        rust_users = dump_user_rows(rust_session)
+        py_users = dump_user_rows(py_session)
 
     # Both created exactly one user for the fixture's user address.
     assert len(rust_users) == 1, f"Rust created {len(rust_users)} users"

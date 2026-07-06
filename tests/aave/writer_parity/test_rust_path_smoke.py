@@ -15,10 +15,10 @@ from degenbot.degenbot_rs import CancelHandle, run_aave_update
 from tests.aave.writer_parity.harness import (
     BOOTSTRAP_BLOCK,
     FIXTURE_BLOCK,
-    create_seeded_db,
     dump_user_rows,
     make_user_e_mode_set_log,
     mock_rpc_server,
+    seeded_db,
 )
 
 if TYPE_CHECKING:
@@ -31,12 +31,14 @@ _CATEGORY_ID = 2
 
 def test_run_aave_update_offline_drives_user_e_mode_set(tmp_path: Path) -> None:
     """The Rust path creates the user + sets e_mode from a fixture UserEModeSet event."""
-    db_path, session = create_seeded_db(tmp_path, name="rust")
     fixture_log = make_user_e_mode_set_log(
         user_address=_USER_ADDRESS,
         category_id=_CATEGORY_ID,
     )
-    with mock_rpc_server(logs=[fixture_log], block_number=FIXTURE_BLOCK) as rpc_url:
+    with (
+        seeded_db(tmp_path, name="rust") as (db_path, session),
+        mock_rpc_server(logs=[fixture_log], block_number=FIXTURE_BLOCK) as rpc_url,
+    ):
         handle = CancelHandle()
         report = run_aave_update(
             database_path=str(db_path),
@@ -48,11 +50,11 @@ def test_run_aave_update_offline_drives_user_e_mode_set(tmp_path: Path) -> None:
             progress_callback=lambda _progress: None,
             cancel_handle=handle,
         )
+        users = dump_user_rows(session)
     # The run advanced one chunk, one event applied.
     assert report["from_block"] == BOOTSTRAP_BLOCK + 1
     assert report["to_block"] == FIXTURE_BLOCK
     assert report["total_events_applied"] >= 1
-    users = dump_user_rows(session)
     assert len(users) == 1
     user = users[0]
     # Both paths store the EIP-55 checksummed address (a parity surface).
