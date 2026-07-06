@@ -1696,7 +1696,10 @@ mod tests {
             source: Address::repeat_byte(0x81),
         };
         let out = dispatch_asset_source_updated(1, &ev, &conn).unwrap();
-        assert!(out.is_none(), "expected skip (None) for missing asset, got {out:?}");
+        assert!(
+            out.is_none(),
+            "expected skip (None) for missing asset, got {out:?}"
+        );
     }
 
     /// The unchanged path: when the asset EXISTS, `AssetSourceUpdated`

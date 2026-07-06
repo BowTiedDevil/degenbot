@@ -882,6 +882,63 @@ def make_repay_log(
     )
 
 
+# Pool `LiquidationCall(address indexed collateralAsset, address indexed debtAsset,
+# address indexed user, uint256 debtToCover, uint256 liquidatedCollateralAmount,
+# address liquidator, bool receiveAToken)` — topic0 hash matches the Rust
+# decoder's LIQUIDATION_CALL_TOPIC byte-exact. The 3 indexed params map to
+# topics[1..3] (collateralAsset, debtAsset, user); non-indexed data is
+# abi.encode(debtToCover, liquidatedCollateralAmount, liquidator, receiveAToken)
+# = 4 words = 128 bytes.
+LIQUIDATION_CALL_TOPIC = "0xe413a321e8681d831f4dbccbca790d2952b56f977908e45be37335533e005286"
+
+
+def make_liquidation_call_log(
+    *,
+    collateral_asset: str,
+    debt_asset: str,
+    user: str,
+    debt_to_cover: int,
+    liquidated_collateral_amount: int,
+    liquidator: str,
+    receive_a_token: bool = True,
+    block: int = FIXTURE_BLOCK,
+    log_index: int = 0,
+    tx_hash: str | None = None,
+) -> dict[str, Any]:
+    """Build a canned `eth_getLogs` entry for a Pool `LiquidationCall` event.
+
+    Real Aave V3 LiquidationCall signature (verified on mainnet):
+        event LiquidationCall(
+            address indexed collateralAsset, address indexed debtAsset,
+            address indexed user, uint256 debtToCover,
+            uint256 liquidatedCollateralAmount, address liquidator,
+            bool receiveAToken)
+    3 indexed params → 4 topics. Non-indexed data: abi.encode(debtToCover,
+    liquidatedCollateralAmount, liquidator, receiveAToken) = 4 words.
+    The ops parser reads `debtToCover` (word 0) + `liquidatedCollateralAmount`
+    (word 1) — `extract_pool_amount_word0` / `word1` in the dispatch path.
+    """
+    words = [
+        _u256(debt_to_cover)[2:],
+        _u256(liquidated_collateral_amount)[2:],
+        _pad_address(liquidator)[2:],
+        _u256(1 if receive_a_token else 0)[2:],
+    ]
+    return _make_log(
+        address=POOL_ADDRESS.lower(),
+        topics=[
+            LIQUIDATION_CALL_TOPIC,
+            _pad_address(collateral_asset),
+            _pad_address(debt_asset),
+            _pad_address(user),
+        ],
+        data="0x" + "".join(words),
+        block=block,
+        log_index=log_index,
+        tx_hash=tx_hash,
+    )
+
+
 def make_scaled_token_mint_log(
     *,
     token_address: str,

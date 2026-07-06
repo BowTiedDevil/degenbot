@@ -315,12 +315,10 @@ fn extract_raw_amount_for_event(pool_event: &Log, ev: &ScaledTokenEvent, op: &Op
         // produced SENDER balances equal to the user ADDRESS interpreted as
         // a U256 (the "~10^69 oddity" — see task NMWPI6).
         match op.operation_type {
-            OperationType::Supply | OperationType::Borrow => {
-                extract_pool_amount_word1(pool_event)
+            OperationType::Supply | OperationType::Borrow => extract_pool_amount_word1(pool_event),
+            OperationType::Repay | OperationType::RepayWithAtokens | OperationType::Withdraw => {
+                extract_pool_amount_word0(pool_event)
             }
-            OperationType::Repay
-            | OperationType::RepayWithAtokens
-            | OperationType::Withdraw => extract_pool_amount_word0(pool_event),
             _ => extract_pool_amount_word0(pool_event),
         }
     }
@@ -558,32 +556,27 @@ fn dispatch_balance_transfer(
         // (matched by token address + from + to — mirrors
         // `_match_paired_balance_transfer`). `create_transfer_operations` pairs
         // at most one BT per ERC20, so the first match wins.
-        let bt_pair = op
-            .balance_transfer_events
-            .iter()
-            .find_map(|bt_log| match decode_balance_transfer_log(bt_log) {
-                Some((bt_from, bt_to, bt_token, bt_value, bt_index))
-                    if bt_token == ev.token_address
-                        && bt_from == ev.from_address.unwrap_or(ev.user_address)
-                        && bt_to == ev.target_address.unwrap_or_default() =>
-                {
-                    Some((bt_value, bt_index))
-                }
-                _ => None,
-            });
+        let bt_pair =
+            op.balance_transfer_events
+                .iter()
+                .find_map(|bt_log| match decode_balance_transfer_log(bt_log) {
+                    Some((bt_from, bt_to, bt_token, bt_value, bt_index))
+                        if bt_token == ev.token_address
+                            && bt_from == ev.from_address.unwrap_or(ev.user_address)
+                            && bt_to == ev.target_address.unwrap_or_default() =>
+                    {
+                        Some((bt_value, bt_index))
+                    }
+                    _ => None,
+                });
         let raw_amount = ev.amount;
         let transfer_index = match bt_pair {
             Some((_, idx)) => idx,
             None => ev.index.unwrap_or_default(),
         };
-        let chunk_event = build_scaled_event_chunk_event(
-            ev,
-            op,
-            raw_amount,
-            market_id,
-            conn,
-        )?;
-        let chunk_event = override_transfer_with_paired_bt(chunk_event, bt_pair, raw_amount, transfer_index);
+        let chunk_event = build_scaled_event_chunk_event(ev, op, raw_amount, market_id, conn)?;
+        let chunk_event =
+            override_transfer_with_paired_bt(chunk_event, bt_pair, raw_amount, transfer_index);
         events.push(chunk_event);
     }
     Ok(())

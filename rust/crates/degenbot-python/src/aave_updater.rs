@@ -303,32 +303,29 @@ fn verify_touched_positions_on_chain(
             //
             // The `AlloyProvider` is constructed inside the chosen runtime's
             // context to avoid its internals' runtime-handle binding.
-            match Handle::try_current() {
-                Ok(handle) => {
-                    let provider = handle.block_on(AlloyProvider::new(rpc_url, 5))?;
-                    let fut = verify_touched_positions_on_conn(
-                        &conn,
-                        &provider,
-                        market_id,
-                        block_number,
-                        touched_ref,
-                    );
-                    Ok(tokio::task::block_in_place(|| handle.block_on(fut))?)
-                }
-                Err(_) => {
-                    let rt = tokio::runtime::Builder::new_multi_thread()
-                        .enable_all()
-                        .build()?;
-                    let provider = rt.block_on(AlloyProvider::new(rpc_url, 5))?;
-                    let fut = verify_touched_positions_on_conn(
-                        &conn,
-                        &provider,
-                        market_id,
-                        block_number,
-                        touched_ref,
-                    );
-                    Ok(rt.block_on(fut)?)
-                }
+            if let Ok(handle) = Handle::try_current() {
+                let provider = handle.block_on(AlloyProvider::new(rpc_url, 5))?;
+                let fut = verify_touched_positions_on_conn(
+                    &conn,
+                    &provider,
+                    market_id,
+                    block_number,
+                    touched_ref,
+                );
+                Ok(tokio::task::block_in_place(|| handle.block_on(fut))?)
+            } else {
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()?;
+                let provider = rt.block_on(AlloyProvider::new(rpc_url, 5))?;
+                let fut = verify_touched_positions_on_conn(
+                    &conn,
+                    &provider,
+                    market_id,
+                    block_number,
+                    touched_ref,
+                );
+                Ok(rt.block_on(fut)?)
             }
         })
         .map_err(run_err_to_py)?;

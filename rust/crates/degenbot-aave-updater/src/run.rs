@@ -798,7 +798,9 @@ use degenbot_db::aave::AaveGhoAsset;
 use degenbot_db::DbError;
 use degenbot_rpc::provider::{AlloyProvider, LogFetcher};
 
-use crate::aave_fetch::{fetch_aave_chunk_logs, fetch_scaled_token_logs, sort_logs_by_block_and_index, AaveFetchSpec};
+use crate::aave_fetch::{
+    fetch_aave_chunk_logs, fetch_scaled_token_logs, sort_logs_by_block_and_index, AaveFetchSpec,
+};
 use crate::config_dispatch::{
     build_discount_snapshot, dispatch_config_events, match_proxy_id, ConfigDispatchError,
     ProxyCreationResolution,
@@ -1299,12 +1301,10 @@ pub fn run_aave_update(
         //     correct per I2RHGP Fix 2c (no rev-boundary regression — the
         //     rejected Option A two-pass split would have made tx N's ops see
         //     a later tx's `Upgraded`).
-        let known: HashSet<Address> =
-            spec.scaled_token_addresses.iter().copied().collect();
+        let known: HashSet<Address> = spec.scaled_token_addresses.iter().copied().collect();
         let mut new_tokens: Vec<Address> = Vec::new();
         for log in &logs {
-            if let Some(ev) =
-                degenbot_decoders::aave_event_decoder::decode_reserve_initialized(log)
+            if let Some(ev) = degenbot_decoders::aave_event_decoder::decode_reserve_initialized(log)
             {
                 if !known.contains(&ev.a_token) {
                     new_tokens.push(ev.a_token);
@@ -1395,10 +1395,7 @@ pub fn run_aave_update(
             chunk_end,
             events_applied: chunk_report.events_applied,
             committed: true,
-            touched_user_addresses: chunk_report
-                .touched_user_addresses
-                .into_iter()
-                .collect(),
+            touched_user_addresses: chunk_report.touched_user_addresses.into_iter().collect(),
         });
         report.chunks_committed += 1;
         report.total_events_applied += chunk_report.events_applied;

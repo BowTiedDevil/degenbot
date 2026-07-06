@@ -140,7 +140,10 @@ fn load_position_rows(
     // insensitive on the bind value — the DB stores erc20_tokens.address as
     // EIP-55 checksummed + lower-cased comparisons unify both sides).
     let user_addr_strs: Vec<String> = match user_addresses {
-        Some(addrs) if !addrs.is_empty() => addrs.iter().map(|a| format!("{a:?}").to_lowercase()).collect(),
+        Some(addrs) if !addrs.is_empty() => addrs
+            .iter()
+            .map(|a| format!("{a:?}").to_lowercase())
+            .collect(),
         _ => Vec::new(),
     };
     let mut bind_params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(1 + user_addr_strs.len());
@@ -154,14 +157,26 @@ fn load_position_rows(
         let token_addr_str: String = r.get(2)?;
         let balance_str: String = r.get(3)?;
         let last_index_str: Option<String> = r.get(4)?;
-        Ok((pid, user_addr_str, token_addr_str, balance_str, last_index_str))
+        Ok((
+            pid,
+            user_addr_str,
+            token_addr_str,
+            balance_str,
+            last_index_str,
+        ))
     })?;
     let mut rows: Vec<PositionRow> = Vec::new();
     for r in iter {
         let (pid, user_addr_str, token_addr_str, balance_str, last_index_str) = r?;
-        let Ok(user_address) = user_addr_str.parse() else { continue };
-        let Ok(token_address) = token_addr_str.parse() else { continue };
-        let Ok(balance) = parse_u256(&balance_str) else { continue };
+        let Ok(user_address) = user_addr_str.parse() else {
+            continue;
+        };
+        let Ok(token_address) = token_addr_str.parse() else {
+            continue;
+        };
+        let Ok(balance) = parse_u256(&balance_str) else {
+            continue;
+        };
         let last_index = last_index_str.as_deref().and_then(|s| parse_u256(s).ok());
         rows.push(PositionRow {
             position_id: pid,
@@ -178,9 +193,11 @@ fn load_position_rows(
 fn parse_u256(s: &str) -> Result<U256, DbError> {
     let s = s.trim();
     if let Some(rest) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-        U256::from_str_radix(rest, 16).map_err(|e| DbError::Decode(format!("bad hex U256 {s:?}: {e}")))
+        U256::from_str_radix(rest, 16)
+            .map_err(|e| DbError::Decode(format!("bad hex U256 {s:?}: {e}")))
     } else {
-        U256::from_str_radix(s, 10).map_err(|e| DbError::Decode(format!("bad decimal U256 {s:?}: {e}")))
+        U256::from_str_radix(s, 10)
+            .map_err(|e| DbError::Decode(format!("bad decimal U256 {s:?}: {e}")))
     }
 }
 
@@ -207,7 +224,8 @@ fn decode_uint256_return(bytes: &Bytes) -> Option<U256> {
     Some(U256::from_be_bytes::<32>(buf))
 }
 
-const DEAD_ADDRESS: Address = alloy::primitives::address!("0x000000000000000000000000000000000000dEaD");
+const DEAD_ADDRESS: Address =
+    alloy::primitives::address!("0x000000000000000000000000000000000000dEaD");
 const ZERO_ADDRESS: Address = Address::ZERO;
 
 /// Verify the on-chain scaled-token state matches the DB positions for
@@ -306,9 +324,9 @@ mod tests {
     use super::*;
     use rusqlite::Connection;
 
-    /// Seed an in-memory SQLite DB with the minimal aave schema + seed one
+    /// Seed an in-memory `SQLite` `DB` with the minimal aave schema + seed one
     /// collateral position for `(user_id, asset_id)` with the given balance +
-    /// last_index. Returns the open `Connection` (the `DegenbotDb` handle's
+    /// `last_index`. Returns the open `Connection` (the `DegenbotDb` handle's
     /// connection wrapper).
     fn seed_with_position(
         user_address: &str,
@@ -374,12 +392,14 @@ mod tests {
             "123456789",
             Some("1000000000000000000000000000"),
         );
-        let rows =
-            load_position_rows(&conn, 1, PositionKind::Collateral, None).unwrap();
+        let rows = load_position_rows(&conn, 1, PositionKind::Collateral, None).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].position_id, 1);
-        assert_eq!(rows[0].balance, U256::from(123456789u64));
-        assert_eq!(rows[0].last_index, Some(U256::from(10u64).pow(U256::from(27u64))));
+        assert_eq!(rows[0].balance, U256::from(123_456_789_u64));
+        assert_eq!(
+            rows[0].last_index,
+            Some(U256::from(10u64).pow(U256::from(27u64)))
+        );
         let token_addr: Address = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             .parse()
             .unwrap();
@@ -449,6 +469,9 @@ mod tests {
         let bytes = Bytes::copy_from_slice(&buf);
         assert_eq!(decode_uint256_return(&bytes), Some(U256::from(42u64)));
         // < 32 bytes → None.
-        assert_eq!(decode_uint256_return(&Bytes::copy_from_slice(&[0u8; 16])), None);
+        assert_eq!(
+            decode_uint256_return(&Bytes::copy_from_slice(&[0u8; 16])),
+            None
+        );
     }
 }
