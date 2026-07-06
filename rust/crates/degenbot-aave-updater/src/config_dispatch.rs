@@ -304,33 +304,49 @@ pub fn dispatch_discount_percent_updated(
     })
 }
 
-/// `DiscountTokenUpdated(old, new)` →
-/// [`AaveChunkEvent::GhoDiscountTokenUpdated`]. Mirrors
-/// `_process_discount_token_updated_event`. The `gho_token_id` is the
-/// chain-unique `aave_gho_tokens.id` (pre-resolved by the orchestrator via
-/// `fetch_aave_gho_asset(chain_id).id` — passed in to avoid a re-fetch per
-/// event).
+/// `DiscountTokenUpdated(old, new)` → [`AaveChunkEvent::GhoDiscountTokenUpdated`].
+/// Mirrors `_process_discount_token_updated_event`.
+///
+/// # Emitter-validation guard
+///
+/// `fetch_discount_config_logs` is chain-wide (no address filter — the events
+/// emit from any contract). The load-bearing Python guard
+/// `if gho_asset.v_token is None or gho_asset.v_token.address != event["address"]:
+/// return` filters spurious chain-wide discount events; this dispatch mirrors
+/// it: returns `Ok(None)` when the GHO vToken FK is missing OR the decoded
+/// emitter (`decoded.v_token_address` = `log.address()`) doesn't match
+/// `gho_asset.v_token_address`. The apply fn never sees the skip.
 pub fn dispatch_discount_token_updated(
-    gho_token_id: i64,
+    gho_asset: &AaveGhoAsset,
     decoded: &degenbot_decoders::aave_event_decoder::DiscountTokenUpdatedEvent,
-) -> Result<AaveChunkEvent, ConfigDispatchError> {
-    Ok(AaveChunkEvent::GhoDiscountTokenUpdated {
-        gho_token_id,
+) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
+    if gho_asset.v_token_address.as_deref() != Some(&checksum(&decoded.v_token_address)) {
+        return Ok(None);
+    }
+    Ok(Some(AaveChunkEvent::GhoDiscountTokenUpdated {
+        gho_token_id: gho_asset.id,
         new_discount_token: Some(checksum(&decoded.new_discount_token)),
-    })
+    }))
 }
 
 /// `DiscountRateStrategyUpdated(old, new)` →
 /// [`AaveChunkEvent::GhoDiscountRateStrategyUpdated`]. Mirrors
 /// `_process_discount_rate_strategy_updated_event`.
+///
+/// Same emitter-validation guard as [`dispatch_discount_token_updated`] — see
+/// its docs; the chain-wide fetch + the Python's `event["address"]` guard
+/// apply identically (ULDUAC / divergence #2).
 pub fn dispatch_discount_rate_strategy_updated(
-    gho_token_id: i64,
+    gho_asset: &AaveGhoAsset,
     decoded: &degenbot_decoders::aave_event_decoder::DiscountRateStrategyUpdatedEvent,
-) -> Result<AaveChunkEvent, ConfigDispatchError> {
-    Ok(AaveChunkEvent::GhoDiscountRateStrategyUpdated {
-        gho_token_id,
+) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
+    if gho_asset.v_token_address.as_deref() != Some(&checksum(&decoded.v_token_address)) {
+        return Ok(None);
+    }
+    Ok(Some(AaveChunkEvent::GhoDiscountRateStrategyUpdated {
+        gho_token_id: gho_asset.id,
         new_strategy: Some(checksum(&decoded.new_strategy)),
-    })
+    }))
 }
 
 // ── the 2 async RPC handlers ───────────────────────────────────────────────
@@ -621,7 +637,6 @@ async fn dispatch_single_config_event(
     gho_asset: Option<&AaveGhoAsset>,
     block_number: u64,
 ) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
-    let gho_token_id = gho_asset.map(|g| g.id);
     let ev =
         match decoded {
             // ── the 8 sync handlers (no RPC) ──
@@ -658,12 +673,14 @@ async fn dispatch_single_config_event(
             DecodedAaveEvent::DiscountPercentUpdated(ev) => Some(
                 dispatch_discount_percent_updated(market_id, block_number, ev, conn)?,
             ),
-            DecodedAaveEvent::DiscountTokenUpdated(ev) => gho_token_id
-                .map(|id| dispatch_discount_token_updated(id, ev))
-                .transpose()?,
-            DecodedAaveEvent::DiscountRateStrategyUpdated(ev) => gho_token_id
-                .map(|id| dispatch_discount_rate_strategy_updated(id, ev))
-                .transpose()?,
+            DecodedAaveEvent::DiscountTokenUpdated(ev) => match gho_asset {
+                Some(g) => dispatch_discount_token_updated(g, ev)?,
+                None => None,
+            },
+            DecodedAaveEvent::DiscountRateStrategyUpdated(ev) => match gho_asset {
+                Some(g) => dispatch_discount_rate_strategy_updated(g, ev)?,
+                None => None,
+            },
             // ── the 2 async RPC handlers ──
             DecodedAaveEvent::CollateralConfigurationChanged(ev) => Some(
                 resolve_collateral_configuration(
@@ -1200,6 +1217,9 @@ mod tests {
     use alloy::primitives::{Bytes, Log as AlloyLog, B256};
     use alloy::rpc::types::Log;
     use degenbot_db::connection::DegenbotDb;
+    use degenbot_decoders::aave_event_decoder::{
+        DiscountRateStrategyUpdatedEvent, DiscountTokenUpdatedEvent,
+    };
     use rusqlite::params;
     use std::path::Path;
 
@@ -1706,5 +1726,122 @@ mod tests {
         ret[31] = 0x20;
         ret[63] = 0xff; // length overruns the return.
         assert_eq!(decode_dynamic_string(&ret), None);
+    }
+
+    // ── ULDUAC: discount-event emitter-validation guard (divergence #2) ────────
+    // The dispatch returns Ok(None) when (a) the GHO asset has no vToken FK
+    // (the Python's `gho_asset.v_token is None` guard) or (b) the decoded
+    // emitter (log.address) doesn't match gho_asset.v_token_address (the
+    // Python's `v_token.address != event["address"]` guard). Only an emitting
+    // log from the matching vToken yields a chunk event.
+    fn sample_gho_asset(v_token_address: Option<&str>) -> AaveGhoAsset {
+        AaveGhoAsset {
+            id: 1,
+            token_id: 10,
+            v_token_id: Some(11),
+            gho_token_address: Some(checksum(&Address::ZERO)),
+            v_token_address: v_token_address.map(str::to_string),
+            v_gho_discount_rate_strategy: None,
+            v_gho_discount_token: None,
+        }
+    }
+
+    #[test]
+    fn dispatch_discount_token_updated_returns_none_when_emitter_mismatches() {
+        let gho_vtoken = Address::from([
+            0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0,
+            0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0,
+        ]);
+        let gho_asset = sample_gho_asset(Some(&checksum(&gho_vtoken)));
+        // An off-market emitter (any other contract) — the chain-wide fetch can
+        // surface these; the Python guard drops them.
+        let off_emitter = Address::from([
+            0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb,
+            0xb, 0xb, 0xb,
+        ]);
+        let ev = DiscountTokenUpdatedEvent {
+            v_token_address: off_emitter,
+            old_discount_token: Address::ZERO,
+            new_discount_token: Address::from([0xc; 20]),
+        };
+        assert!(dispatch_discount_token_updated(&gho_asset, &ev)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn dispatch_discount_token_updated_returns_none_when_vtoken_fk_missing() {
+        // gho_asset.v_token is None — the Python's first guard.
+        let gho_asset = sample_gho_asset(None);
+        let ev = DiscountTokenUpdatedEvent {
+            v_token_address: Address::from([0xa0; 20]),
+            old_discount_token: Address::ZERO,
+            new_discount_token: Address::from([0xc; 20]),
+        };
+        assert!(dispatch_discount_token_updated(&gho_asset, &ev)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn dispatch_discount_token_updated_emits_when_emitter_matches() {
+        let gho_vtoken = Address::from([0xa0; 20]);
+        let gho_asset = sample_gho_asset(Some(&checksum(&gho_vtoken)));
+        let new_tok = Address::from([0xc; 20]);
+        let ev = DiscountTokenUpdatedEvent {
+            v_token_address: gho_vtoken,
+            old_discount_token: Address::ZERO,
+            new_discount_token: new_tok,
+        };
+        match dispatch_discount_token_updated(&gho_asset, &ev).unwrap() {
+            Some(AaveChunkEvent::GhoDiscountTokenUpdated {
+                gho_token_id,
+                new_discount_token,
+            }) => {
+                assert_eq!(gho_token_id, 1);
+                assert_eq!(
+                    new_discount_token.as_deref(),
+                    Some(checksum(&new_tok).as_str())
+                );
+            }
+            other => panic!("expected Some(GhoDiscountTokenUpdated), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dispatch_discount_rate_strategy_updated_returns_none_when_emitter_mismatches() {
+        let gho_vtoken = Address::from([0xa0; 20]);
+        let gho_asset = sample_gho_asset(Some(&checksum(&gho_vtoken)));
+        let off_emitter = Address::from([0xb; 20]);
+        let ev = DiscountRateStrategyUpdatedEvent {
+            v_token_address: off_emitter,
+            old_strategy: Address::ZERO,
+            new_strategy: Address::from([0xd; 20]),
+        };
+        assert!(dispatch_discount_rate_strategy_updated(&gho_asset, &ev)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn dispatch_discount_rate_strategy_updated_emits_when_emitter_matches() {
+        let gho_vtoken = Address::from([0xa0; 20]);
+        let gho_asset = sample_gho_asset(Some(&checksum(&gho_vtoken)));
+        let new_strat = Address::from([0xd; 20]);
+        let ev = DiscountRateStrategyUpdatedEvent {
+            v_token_address: gho_vtoken,
+            old_strategy: Address::ZERO,
+            new_strategy: new_strat,
+        };
+        match dispatch_discount_rate_strategy_updated(&gho_asset, &ev).unwrap() {
+            Some(AaveChunkEvent::GhoDiscountRateStrategyUpdated {
+                gho_token_id,
+                new_strategy,
+            }) => {
+                assert_eq!(gho_token_id, 1);
+                assert_eq!(new_strategy.as_deref(), Some(checksum(&new_strat).as_str()));
+            }
+            other => panic!("expected Some(GhoDiscountRateStrategyUpdated), got {other:?}"),
+        }
     }
 }
