@@ -195,17 +195,58 @@ def make_reserve_data_updated_log(
     )
 
 
+# CollateralConfigurationChanged(address indexed asset, uint256 ltv,
+# uint256 liquidationThreshold, uint256 liquidationBonus) — emitted by the
+# Pool Configurator (so the fixture log's address is POOL_CONFIGURATOR).
+# Both paths IGNORE the event data (ltv/lt/bonus) + RPC-fetch the full bitmap
+# via `getConfiguration(address)` (the comment in dispatch says a pool upgrade
+# can emit stale event values).
+_COLLATERAL_CONFIGURATION_CHANGED_TOPIC = (
+    "0x637febbda9275aea2e85c0ff690444c8d87eb2e8339bbede9715abcc89cb0995"
+)
+# The `getConfiguration(address)` 4-byte selector — both paths issue this
+# `eth_call` against the Pool contract (keyed by the calldata selector in the
+# mock's `eth_call_responses`). Hardcoded (keccak of the signature, first 4
+# bytes) to avoid computing at import time.
+GET_CONFIGURATION_SELECTOR = "0xc44b11f7"
+
+
+def make_collateral_configuration_changed_log(
+    *,
+    asset_address: str,
+    block: int = FIXTURE_BLOCK,
+    log_index: int = 0,
+) -> dict[str, Any]:
+    """Build a canned `eth_getLogs` entry for a CollateralConfigurationChanged.
+
+    The event data (ltv/lt/bonus) is included for shape realism but ignored by
+    both paths (they RPC-fetch the full bitmap).
+    """
+    return _make_log(
+        address=POOL_CONFIGURATOR_ADDRESS.lower(),
+        topics=[_COLLATERAL_CONFIGURATION_CHANGED_TOPIC, _pad_address(asset_address)],
+        # 3 dummy words (ltv/lt/bonus) — ignored by both paths.
+        data="0x" + (0).to_bytes(96, "big").hex(),
+        block=block,
+        log_index=log_index,
+    )
+
+
 @dataclass
 class MockRpcRegistry:
     """Holds the canned RPC responses for the parity mock server.
 
     `logs` is the full list of canned `eth_getLogs` entries; the server filters
     by the requested `address` + `topics[0]` group. `block_number` is the tip
-    served for `eth_blockNumber`.
+    served for `eth_blockNumber`. `eth_call_responses` maps a calldata selector
+    (the first 4 bytes, e.g. `"0xc44b11f7"` for `getConfiguration(address)`)
+    to the canned 32-byte return value — the server dispatches `eth_call`s by
+    selector.
     """
 
     block_number: int
     logs: list[dict[str, Any]] = field(default_factory=list)
+    eth_call_responses: dict[str, str] = field(default_factory=dict)
 
 
 class _MockRpcHandler(BaseHTTPRequestHandler):
@@ -241,10 +282,22 @@ class _MockRpcHandler(BaseHTTPRequestHandler):
             return _hex(self.registry.block_number)
         if method == "eth_getLogs":
             return self._filtered_logs(req)
+        if method == "eth_call":
+            return self._eth_call_result(req)
         if method == "eth_chainId":
             return _hex(1)
         # Generic OK for any auxiliary method (eth_getBlockByNumber, etc.).
         return "0x0"
+
+    def _eth_call_result(self, req: dict[str, Any]) -> str:
+        # alloy/web3 send `eth_call` params as `[{to, data/input, ...}]`.
+        # alloy's TransactionRequest serializes the calldata under `input`
+        # (the newer field name); web3/legacy uses `data`. Handle both.
+        params = req.get("params", [])
+        filt = params[0] if params and isinstance(params[0], dict) else {}
+        calldata = filt.get("data") or filt.get("input") or "0x"
+        selector = calldata[:10].lower() if isinstance(calldata, str) else ""
+        return self.registry.eth_call_responses.get(selector, "0x")
 
     def _filtered_logs(self, req: dict[str, Any]) -> list[dict[str, Any]]:
         params = req.get("params", [])
@@ -282,9 +335,19 @@ def mock_rpc_server(
     *,
     logs: list[dict[str, Any]],
     block_number: int,
+    eth_call_responses: dict[str, str] | None = None,
 ) -> Generator[str, None, None]:
-    """Start a local mock JSON-RPC server; yield its URL."""
-    _MockRpcHandler.registry = MockRpcRegistry(block_number=block_number, logs=logs)
+    """Start a local mock JSON-RPC server; yield its URL.
+
+    `eth_call_responses` maps a calldata selector (e.g.
+    `GET_CONFIGURATION_SELECTOR`) to the canned 32-byte return value — the
+    server dispatches `eth_call`s by selector.
+    """
+    _MockRpcHandler.registry = MockRpcRegistry(
+        block_number=block_number,
+        logs=logs,
+        eth_call_responses=eth_call_responses or {},
+    )
     server = ThreadingHTTPServer(("127.0.0.1", 0), _MockRpcHandler)
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -464,6 +527,20 @@ def dump_asset_rows(session: Session) -> list[dict[str, Any]]:
             "SELECT id, market_id, liquidity_index, liquidity_rate, "
             "borrow_index, borrow_rate, last_update_block "
             "FROM aave_v3_assets ORDER BY id"
+        )
+    ).all()
+    return [dict(row._mapping) for row in rows]
+
+
+def dump_asset_config_rows(session: Session) -> list[dict[str, Any]]:
+    """Dump ``aave_v3_asset_configs`` rows as comparable dicts."""
+    rows = session.execute(
+        text(
+            "SELECT id, asset_id, ltv, liquidation_threshold, liquidation_bonus, "
+            "e_mode_category_id, borrowing_enabled, stable_borrowing_enabled, "
+            "flash_loan_enabled, isolation_mode, borrowable_in_isolation, "
+            "debt_ceiling "
+            "FROM aave_v3_asset_configs ORDER BY asset_id"
         )
     ).all()
     return [dict(row._mapping) for row in rows]
