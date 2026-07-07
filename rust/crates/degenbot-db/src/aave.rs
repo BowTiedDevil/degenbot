@@ -782,6 +782,95 @@ mod tests {
         assert!(db.fetch_aave_gho_asset(2).unwrap().is_none());
     }
 
+    /// Regression for the coldboot GHO-vToken staleness crash (block 17699253).
+    ///
+    /// At coldboot `16591070` the GHO reserve isn't initialized yet →
+    /// `aave_gho_tokens.v_token_id IS NULL` → `fetch_aave_gho_asset_on_conn`
+    /// returns `v_token_address = None`. Mid-drive (`17699249`) a
+    /// `ReserveInitialized` event for GHO links `v_token_id` to the new
+    /// vToken's erc20 row. The orchestrator's per-tx re-resolution
+    /// (`process_chunk_on_conn` step 0) re-calls `fetch_aave_gho_asset_on_conn`
+    /// on the SAME chunk `Transaction`'s `&Connection` and MUST see the
+    /// in-transaction write (read-your-own-writes) — otherwise the subsequent
+    /// GHO borrow's vToken `Mint` classifies as plain `DebtMint` (not
+    /// `GhoDebtMint`) → the borrow matcher finds no `DebtMint` → NoMatch crash.
+    ///
+    /// This test pins the substrate seam the fix relies on: a same-
+    /// `Connection` `apply_reserve_initialized_on_conn` write is visible to
+    /// the next `fetch_aave_gho_asset_on_conn` read.
+    #[test]
+    fn fetch_aave_gho_asset_on_conn_sees_intra_tx_v_token_link_write() {
+        let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
+        let gho_row_id = {
+            let conn = db.lock();
+            conn.execute(
+                "INSERT INTO aave_v3_markets (id, chain_id, name, active, last_update_block) \
+                 VALUES (1, 1, 'mainnet', 1, NULL)",
+                [],
+            )
+            .unwrap();
+            // The underlying GHO erc20 (id 1). NO vToken erc20 seeded yet
+            // (the GHO reserve is not initialized at coldboot).
+            conn.execute(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES (1, 1, '0xgho')",
+                [],
+            )
+            .unwrap();
+            // The GHO token row with v_token_id = NULL (coldboot state).
+            DegenbotDb::get_or_create_gho_token_on_conn(&conn, 1, "0xgho").unwrap()
+        };
+
+        // (1) Pre-init: the per-tx re-resolution sees v_token_address = None.
+        {
+            let conn = db.lock();
+            let gho = DegenbotDb::fetch_aave_gho_asset_on_conn(&conn, 1)
+                .unwrap()
+                .expect("GHO token row exists");
+            assert!(
+                gho.v_token_id.is_none(),
+                "coldboot: v_token_id must be NULL before ReserveInitialized"
+            );
+            assert!(
+                gho.v_token_address.is_none(),
+                "coldboot: v_token_address must resolve to None"
+            );
+        }
+
+        // (2) Mid-drive: ReserveInitialized links v_token_id to the new
+        //     vToken erc20 (id 2 = '0xvtoken') on the SAME connection.
+        {
+            let conn = db.lock();
+            conn.execute(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES (2, 1, '0xvtoken')",
+                [],
+            )
+            .unwrap();
+            DegenbotDb::apply_reserve_initialized_on_conn(
+                &conn, 1, /*underlying*/ 1, /*a_token*/ 1, 1, /*v_token*/ 2, 1,
+                /*price_source*/ None, /*gho_link*/ Some(gho_row_id),
+            )
+            .unwrap();
+        }
+
+        // (3) Post-init same-conn re-resolution: v_token_address = Some.
+        {
+            let conn = db.lock();
+            let gho = DegenbotDb::fetch_aave_gho_asset_on_conn(&conn, 1)
+                .unwrap()
+                .expect("GHO token row exists");
+            assert_eq!(
+                gho.v_token_id,
+                Some(2),
+                "the in-transaction ReserveInitialized write must be visible"
+            );
+            assert_eq!(
+                gho.v_token_address.as_deref(),
+                Some("0xvtoken"),
+                "the per-tx re-resolution must see the linked vToken address"
+            );
+        }
+    }
+
     #[test]
     fn fetch_aave_scaled_token_addresses_returns_atoken_and_vtoken() {
         let db = db_with_market_and_assets();

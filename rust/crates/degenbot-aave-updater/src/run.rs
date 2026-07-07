@@ -1241,11 +1241,9 @@ pub fn run_aave_update(
     ))?;
 
     // Build the fetch spec + the GHO asset (chain-unique).
-    let (mut spec, gho_asset) = build_fetch_spec(&db, market_id, chain_id)?;
+    let (mut spec, _gho_asset) = build_fetch_spec(&db, market_id, chain_id)?;
     let pool_address = spec.pool_address;
     let oracle_address = spec.oracle_address;
-    let gho_token_address = gho_asset.as_ref().and_then(|g| g.gho_token_address.clone());
-    let gho_vtoken_address = gho_asset.as_ref().and_then(|g| g.v_token_address.clone());
 
     let mut report = AaveUpdateReport {
         chain_id,
@@ -1355,13 +1353,10 @@ pub fn run_aave_update(
             let result = rt.block_on(process_chunk_on_conn(
                 &tx,
                 &provider,
-                gho_asset.as_ref(),
                 market_id,
                 chain_id,
                 pool_address,
                 oracle_address,
-                gho_token_address.as_deref(),
-                gho_vtoken_address.as_deref(),
                 &tx_groups,
                 chunk_end,
             ));
@@ -1427,13 +1422,10 @@ pub fn run_aave_update(
 async fn process_chunk_on_conn(
     conn: &Connection,
     provider: &AlloyProvider,
-    gho_asset: Option<&AaveGhoAsset>,
     market_id: i64,
     chain_id: i64,
     pool_address: Address,
     oracle_address: Option<Address>,
-    gho_token_address: Option<&str>,
-    gho_vtoken_address: Option<&str>,
     tx_groups: &[TxGroup<'_>],
     chunk_end: u64,
 ) -> Result<ChunkCoreReport, RunError> {
@@ -1467,10 +1459,28 @@ async fn process_chunk_on_conn(
             }
         }
 
+        // (0) Re-resolve the GHO asset from `conn` for THIS tx — sees the
+        //     prior tx's `ReserveInitialized` write that set
+        //     `aave_gho_tokens.v_token_id` (surface #3: the drive-startup
+        //     snapshot had `v_token_address=None` when the GHO reserve wasn't
+        //     yet initialized at coldboot, masking a mid-drive init + causing
+        //     the GHO vToken's `Mint` to classify as plain `DebtMint` instead of
+        //     `GhoDebtMint` → the borrow matcher found no DebtMint → NoMatch
+        //     crash). Mirrors Python's lazy `tx_context.gho_vtoken_address`
+        //     reload (re-reads the `v_token` relationship from the session on
+        //     each tx's `_process_transaction` entry — line 81). The
+        //     drive-startup `gho_asset`/addresses params are now only the
+        //     coldboot seed; this per-tx fetch is authoritative.
+        let gho_asset_tx = DegenbotDb::fetch_aave_gho_asset_on_conn(conn, chain_id)?;
+        let gho_token_address_tx: Option<&str> =
+            gho_asset_tx.as_ref().and_then(|g| g.gho_token_address.as_deref());
+        let gho_vtoken_address_tx: Option<&str> =
+            gho_asset_tx.as_ref().and_then(|g| g.v_token_address.as_deref());
+
         // (a) Re-resolve the GHO vToken's revision from `conn` for THIS tx —
         //     sees the prior tx's in-chunk `Upgraded` write via
         //     read-your-own-writes (surface #1).
-        let vtoken_revision: Option<u32> = match (gho_vtoken_address, gho_asset) {
+        let vtoken_revision: Option<u32> = match (gho_vtoken_address_tx, gho_asset_tx.as_ref()) {
             (Some(addr_str), Some(_)) => DegenbotDb::lookup_asset_by_token_address_on_conn(
                 conn, market_id, addr_str, "v_token",
             )?
@@ -1484,7 +1494,7 @@ async fn process_chunk_on_conn(
             provider,
             &tx_hashes_refs,
             block_number,
-            gho_vtoken_address.and_then(|s| s.parse().ok()),
+            gho_vtoken_address_tx.and_then(|s| s.parse().ok()),
             vtoken_revision,
             market_id,
             conn,
@@ -1500,7 +1510,7 @@ async fn process_chunk_on_conn(
             conn,
             pool_address,
             oracle_address,
-            gho_asset,
+            gho_asset_tx.as_ref(),
             block_number,
         )
         .await?;
@@ -1515,19 +1525,27 @@ async fn process_chunk_on_conn(
         events_applied_total += config_events.len();
 
         // (e) C3's operations parser (sync, substrate lookups) — reads `conn`
-        //     (sees this tx's config writes + prior txs' writes).
+        //     (sees this tx's config writes + prior txs' writes) + uses the
+        //     per-tx re-resolved GHO addresses (surface #3).
         let op_events = process_transaction(
             market_id,
             chain_id,
             pool_address,
             /* treasury_address */ None,
-            gho_token_address.and_then(|s| s.parse().ok()),
-            gho_vtoken_address.and_then(|s| s.parse().ok()),
+            gho_token_address_tx.and_then(|s| s.parse().ok()),
+            gho_vtoken_address_tx.and_then(|s| s.parse().ok()),
             conn,
             &tx_hashes_refs,
             group.tx_hash,
             &discounts,
-        )?;
+        )
+        .map_err(|e| {
+            eprintln!(
+                "AAVE-PARSE-FAIL block={block_number} tx=0x{} err={e}",
+                alloy::hex::encode(group.tx_hash)
+            );
+            e
+        })?;
 
         // (f) Apply THIS tx's op events to `conn` — so tx N+1 sees them via
         //     read-your-own-writes (surface #2: the `Upgraded` revision bump +
