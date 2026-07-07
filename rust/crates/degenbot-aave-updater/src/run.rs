@@ -1298,6 +1298,25 @@ pub fn run_aave_update(
             .into_iter()
             .filter_map(|s| s.parse::<Address>().ok())
             .collect();
+        // (a)' GJXURV: refresh `spec.stk_aave_address` from the DB at the
+        //     START of each chunk — the W2S3WH sibling of
+        //     `spec.scaled_token_addresses` above. The frozen run-start set
+        //     (`build_fetch_spec` above) captures `v_gho_discount_token` from
+        //     the cold-boot DB; on cold-boot states where `v_gho_discount_token
+        //     IS NULL` (the on-chain `DiscountTokenUpdated` event that fills it
+        //     fires mid-drive), the cached `None` short-circuits
+        //     `fetch_stk_aave_logs` to an empty Vec for EVERY subsequent
+        //     chunk — no stkAAVE Transfer events dispatched, no balance updates,
+        //     the (C) refresh's on-chain backfill is the sole writer. Reading
+        //     BEFORE the transaction sees committed state from prior chunks'
+        //     DiscountTokenUpdated applies. Mirrors Python's per-chunk
+        //     `_get_stk_aave_address` (would-be analog of
+        //     `_get_all_scaled_token_addresses`).
+        spec.stk_aave_address = db
+            .fetch_aave_gho_asset(chain_id)?
+            .as_ref()
+            .and_then(|g| g.v_gho_discount_token.as_deref())
+            .and_then(|s| s.parse().ok());
         let mut logs = rt.block_on(fetch_aave_chunk_logs(
             &spec,
             &fetcher,

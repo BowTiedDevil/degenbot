@@ -63,6 +63,7 @@ use degenbot_decoders::aave_event_decoder::{decode_aave_log, DecodedAaveEvent};
 use degenbot_evm_math::ray_mul;
 use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::Connection;
+use rusqlite::OptionalExtension as _;
 
 use crate::gho_processor::calculate_gho_discount_rate;
 use crate::run::{apply_chunk_events_on_conn, AaveChunkEvent};
@@ -413,6 +414,135 @@ pub fn dispatch_stk_aave_transfer(
         to_user_id,
         amount: decoded.value,
     }))
+}
+
+/// [`dispatch_stk_aave_transfer`] wrapper that re-resolves the GHO asset
+/// FRESH from `conn` AND pre-apply backfills each side's `stk_aave_balance`
+/// from on-chain `balanceOf(user)` at `block_number - 1` when the column is
+/// `NULL`. GJXURV (crash #4): the per-tx `gho_asset` snapshot is taken once
+/// before `dispatch_config_events`'s per-event loop; a same-tx
+/// `DiscountTokenUpdated` at an earlier logIndex bumps `v_gho_discount_token`
+/// AFTER the snapshot, so a stale `None` snapshot would make dispatch skip the
+/// matched transfer (the W2S3WH-sibling per-chunk refresh of
+/// `spec.stk_aave_address` handles cross-chunk staleness from the cold-boot
+/// `NULL`; this handles same-tx staleness). The pre-apply backfill mirrors
+/// Python's `get_or_init_stk_aave_balance` (stkaave.py:116-122): without it,
+/// `apply_stk_aave_transfer_on_conn` treats `NULL` as `U256::ZERO` and applies
+/// `0 ± amount`, omitting the pre-event on-chain balance. For the crash
+/// user's mint-then-burn pattern, `burn_value == on_chain_initial +
+/// mint_value` — without the `on_chain_initial` backfill, the burn apply
+/// underflows → chunk-rollback → wrong balance → GHO-burn overshoot crash
+/// (byte-exact magnitude). The backfill is a no-op when the column is already
+/// non-`NULL` (set by a prior same-tx Transfer or the (C) refresh).
+pub(crate) async fn dispatch_stk_aave_transfer_with_backfill(
+    provider: &AlloyProvider,
+    conn: &Connection,
+    market_id: i64,
+    chain_id: i64,
+    block_number: u64,
+    decoded: &degenbot_decoders::aave_event_decoder::Erc20TransferEvent,
+    gho_asset: Option<&AaveGhoAsset>,
+) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
+    // None-guard: no GHO market row at tx start — skip (a chain-wide fetch can
+    // surface events from chains without a seeded GHO market).
+    if gho_asset.is_none() {
+        return Ok(None);
+    }
+    // Re-resolve gho_asset FRESH from conn (read-your-own-writes — a same-tx
+    // DiscountTokenUpdated at an earlier logIndex bumps v_gho_discount_token
+    // AFTER the per-tx snapshot was taken). Mirrors
+    // `dispatch_discount_token_updated_with_fresh_resolution`.
+    let fresh = DegenbotDb::fetch_aave_gho_asset_on_conn(conn, chain_id)?;
+    let g = match fresh.as_ref() {
+        Some(g) => g,
+        None => return Ok(None),
+    };
+    // Re-use the sync dispatch fn for the emitter-validation guard +
+    // StkAaveTransfer emission (skip the re-resolution since we just did it).
+    let event = dispatch_stk_aave_transfer(market_id, block_number, decoded, Some(g), conn)?;
+    let Some(AaveChunkEvent::StkAaveTransfer {
+        from_user_id,
+        to_user_id,
+        amount: _,
+    }) = event
+    else {
+        return Ok(event);
+    };
+    // Pre-apply backfill of either side when the column is `NULL` — mirrors
+    // Python's `get_or_init_stk_aave_balance` at `block_number - 1`.
+    let discount_token: Address = match g
+        .v_gho_discount_token
+        .as_deref()
+        .and_then(|s| s.parse().ok())
+    {
+        Some(addr) => addr,
+        None => return Ok(Some(AaveChunkEvent::StkAaveTransfer {
+            from_user_id,
+            to_user_id,
+            amount: decoded.value,
+        })),
+    };
+    if let Some(uid) = from_user_id {
+        backfill_user_stk_aave_balance_if_none(provider, conn, uid, block_number, discount_token)
+            .await?;
+    }
+    if let Some(uid) = to_user_id {
+        backfill_user_stk_aave_balance_if_none(provider, conn, uid, block_number, discount_token)
+            .await?;
+    }
+    Ok(Some(AaveChunkEvent::StkAaveTransfer {
+        from_user_id,
+        to_user_id,
+        amount: decoded.value,
+    }))
+}
+
+/// RPC-fetch `balanceOf(user)` at `block_number - 1` and store via
+/// [`DegenbotDb::set_user_stk_aave_balance_on_conn`] when the user's
+/// `stk_aave_balance` column is `NULL`. Mirrors Python's
+/// `get_or_init_stk_aave_balance` (stkaave.py:24-39) — a `NULL` column means
+/// the user was created by an earlier event but never touched by a stkAAVE
+/// `Staked`/`Transfer` event YET; the on-chain value at the previous block is
+/// the authoritative balance before any current-block events. No-op when the
+/// column is already populated (the apply will mutate the cached value).
+pub(crate) async fn backfill_user_stk_aave_balance_if_none(
+    provider: &AlloyProvider,
+    conn: &Connection,
+    user_id: i64,
+    block_number: u64,
+    discount_token: Address,
+) -> Result<(), ConfigDispatchError> {
+    let row: Option<(String, Option<String>)> = conn
+        .query_row(
+            "SELECT address, stk_aave_balance FROM aave_v3_users WHERE id = ?1",
+            [user_id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
+        )
+        .optional()
+        .map_err(DbError::Sqlite)?;
+    let Some((addr_str, balance_str)) = row else {
+        return Err(ConfigDispatchError::DecodeShape(format!(
+            "aave_v3_users id={user_id} (backfill target — row vanished)"
+        )));
+    };
+    // Non-NULL → caller (apply_stk_aave_transfer_*) will use the cached value.
+    if balance_str.is_some() {
+        return Ok(());
+    }
+    let user_addr: Address = addr_str.parse().map_err(|_| {
+        ConfigDispatchError::DecodeShape(format!("bad user_address in backfill: {addr_str}"))
+    })?;
+    let calldata = encode_single_address_call("balanceOf(address)", &user_addr);
+    let ret = provider
+        .eth_call(
+            &discount_token,
+            calldata,
+            Some(block_number.saturating_sub(1)),
+        )
+        .await?;
+    let balance = word0_to_u256(&ret).unwrap_or(alloy::primitives::U256::ZERO);
+    DegenbotDb::set_user_stk_aave_balance_on_conn(conn, user_id, balance)?;
+    Ok(())
 }
 
 /// `DiscountTokenUpdated(old, new)` → [`AaveChunkEvent::GhoDiscountTokenUpdated`].
@@ -931,7 +1061,16 @@ async fn dispatch_single_config_event(
             // ── stkAAVE `Transfer` arm (covers the zero-leg arms + the
             // neither-zero case via Option<i64>; scoped to the discount token). ──
             DecodedAaveEvent::Erc20Transfer(ev) => {
-                dispatch_stk_aave_transfer(market_id, block_number, ev, gho_asset, conn)?
+                dispatch_stk_aave_transfer_with_backfill(
+                    provider,
+                    conn,
+                    market_id,
+                    chain_id,
+                    block_number,
+                    ev,
+                    gho_asset,
+                )
+                .await?
             }
             // ── 6SWY4R-2b: the 6 missing-variant config events ──────────────────
             // Delegated to `resolve_missing_variant_event` to keep this fn under
