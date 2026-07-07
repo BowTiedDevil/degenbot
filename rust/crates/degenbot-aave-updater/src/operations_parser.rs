@@ -3128,6 +3128,94 @@ mod tests {
         );
     }
 
+    /// TYS5MS regression guard — `collect_collateral_events` MUST skip
+    /// `Erc20CollateralTransfer` to a NON-ZERO recipient in LC ops (the
+    /// Aave V3 treasury protocol-fee Transfer shape). Aave V3 `LiquidationCall`
+    /// transfers the protocol-fee portion from the liquidated user to the
+    /// treasury via `transferOnLiquidation`, emitting BOTH:
+    ///   - `Transfer(user, treasury, fee_underlying)` (Erc20CollateralTransfer,
+    ///     index=None) — the standard ERC20 Transfer event
+    ///   - `BalanceTransfer(user, treasury, fee_scaled, liquidity_index)`
+    ///     (CollateralTransfer variant, index=non-None) — Aave V3's native
+    ///     scaled-balance move event
+    /// Python's apply-path filter `_should_skip_collateral_transfer` skips the
+    /// ERC20 variant in LC ops so the user is debited + treasury credited
+    /// ONCE via the BT event's `value`. Rust mirrors the filter at
+    /// collect-time here. RED-verified: stripping the skip-guard causes
+    /// the assertion to fail (Erc20 collected, ct.len() == 1).
+    #[test]
+    fn collect_collateral_events_skips_erc20_fee_transfer_to_treasury_in_liquidation() {
+        let user = Address::from([0xA0; 20]);
+        let a_token = Address::from([0xB0; 20]);
+        // The Aave V3 treasury (verified on mainnet as 0x464C71f6...e18c —
+        // recipient of all protocol-fee Transfers in LiquidationCall logs).
+        let treasury = Address::from([0xC0; 20]);
+        // Collateral Burn (user's full liquidation scaled amount minus fee).
+        let burn = scaled_event(
+            10,
+            ScaledTokenEventType::CollateralBurn,
+            user,
+            a_token,
+            U256::from(500_000),
+            Some(U256::from(1_000_500_000u64)),
+        );
+        // Standard ERC20 Transfer(user→treasury, fee_underlying) emitted
+        // alongside `LiquidationCall` by `transferOnLiquidation`. Without the
+        // TYS5MS skip-guard, this would be DOUBLE-APPLIED (once here as the
+        // fee_underlying amount, AND once via the paired BT.value below),
+        // over-debiting the user + over-crediting the treasury by exactly
+        // the fee_underlying amount.
+        let fee_underlying_amount = U256::from(5_815_314_991_815_639u64);
+        let erc20_fee_transfer = transfer_to_event(
+            11,
+            ScaledTokenEventType::Erc20CollateralTransfer,
+            user,
+            treasury,
+            a_token,
+            fee_underlying_amount,
+        );
+        // Paired Aave V3 BalanceTransfer(user→treasury, fee_scaled, index) —
+        // the SCALED-balance move that Python (and Rust post-TYS5MS) applies.
+        // value × index / RAY ≈ erc20_fee_transfer.amount (within tiny
+        // ray-floor rounding). Modeled here via the CollateralTransfer variant
+        // (index is non-None, indicating a BalanceTransfer event_type).
+        let fee_scaled_amount = U256::from(5_812_238_924_384_490u64);
+        let bt_fee_transfer = transfer_to_event(
+            12,
+            ScaledTokenEventType::CollateralTransfer,
+            user,
+            treasury,
+            a_token,
+            fee_scaled_amount,
+        );
+        let events = vec![burn, erc20_fee_transfer, bt_fee_transfer];
+        let mut assigned = HashSet::new();
+        let (cb, ct) = TransactionOperationsParser::collect_collateral_events(
+            user,
+            Some(a_token),
+            &events,
+            &mut assigned,
+        );
+        // Burn must be found.
+        assert_eq!(cb.unwrap().log_index, 10);
+        // ONLY the BT event is collected — the ERC20 fee Transfer is skipped.
+        assert_eq!(ct.len(), 1, "TYS5MS: only the BT fee transfer is collected; \
+            the Erc20CollateralTransfer(user→treasury, fee) is SKIPPED at \
+            collect-time (mirrors Python's `_should_skip_collateral_transfer`)");
+        assert_eq!(ct[0].log_index, 12, "the collected transfer is the BT event");
+        // The skipped ERC20 fee Transfer MUST be marked assigned so the
+        // standalone Step-4e Transfer path doesn't re-collect it (which
+        // would re-instate the double-application the TYS5MS fix prevents).
+        assert!(
+            assigned.contains(&11),
+            "TYS5MS: the skipped Erc20CollateralTransfer to treasury IS marked \
+             assigned so the standalone Step-4e Transfer path skips it; the \
+             paired BT event also IS marked assigned by being collected"
+        );
+        // The BT event is marked assigned by being collected into collateral_transfers
+        // (the caller writes assigned.insert for collected items elsewhere).
+    }
+
     /// `collect_collateral_events` EIWEPM filter (per the orchestrator's
     /// fix directive): a burn-side pair ERC20 Transfer-to-ZERO (the Burn
     /// event's operational companion) MUST be excluded from
