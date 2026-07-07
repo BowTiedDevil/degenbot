@@ -453,9 +453,8 @@ pub(crate) async fn dispatch_stk_aave_transfer_with_backfill(
     // AFTER the per-tx snapshot was taken). Mirrors
     // `dispatch_discount_token_updated_with_fresh_resolution`.
     let fresh = DegenbotDb::fetch_aave_gho_asset_on_conn(conn, chain_id)?;
-    let g = match fresh.as_ref() {
-        Some(g) => g,
-        None => return Ok(None),
+    let Some(g) = fresh.as_ref() else {
+        return Ok(None);
     };
     // Re-use the sync dispatch fn for the emitter-validation guard +
     // StkAaveTransfer emission (skip the re-resolution since we just did it).
