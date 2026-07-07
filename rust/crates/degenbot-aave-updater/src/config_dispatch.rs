@@ -234,11 +234,21 @@ pub fn dispatch_e_mode_category_added(
         ltv: decoded.ltv.to::<u64>(),
         liquidation_threshold: decoded.liquidation_threshold.to::<u64>(),
         liquidation_bonus: decoded.liquidation_bonus.to::<u64>(),
-        price_source: if decoded.oracle.is_zero() {
-            None
-        } else {
-            Some(checksum(&decoded.oracle))
-        },
+        // Parity match: Python's `_process_e_mode_category_added_event`
+        // (event_handlers.py:269,277) does
+        //   `price_source = get_checksum_address(oracle) if oracle else None`
+        // but web3.py decodes the indexed `oracle` event field as a non-empty
+        // HexAddress *string*, whose string-truthiness is ALWAYS true — even
+        // for the zero-address — so Python stores
+        // `get_checksum_address(Address::ZERO)` = the literal zero-address
+        // checksum string when the event emitted `oracle = Address::ZERO`.
+        // To honor byte-exact gold-parity on `aave_v3_emode_categories
+        // .price_source` (the 16591070 parity gate criterion), unconditionally
+        // checksum the decoded oracle (zero-oracle → the lowercase 42-char
+        // zero-address string). The DB write layer receives
+        // `Some("0x0000...0000")` and stores it as the column text — matching
+        // Python gold's stored representation.
+        price_source: Some(checksum(&decoded.oracle)),
         label: decoded.label.clone(),
     })
 }
@@ -1803,7 +1813,17 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_e_mode_category_added_zero_oracle_yields_none() {
+    fn dispatch_e_mode_category_added_zero_oracle_yields_zero_address_string() {
+        // Parity-directed behavior: when EModeCategoryAdded emits
+        // `oracle = Address::ZERO` (the canonical Aave V3 "no specific price
+        // oracle" sentinel), Rust MUST emit `price_source =
+        // Some("0x0000000000000000000000000000000000000000")` — matching Python's
+        // `_process_e_mode_category_added_event` (event_handlers.py:269,277)
+        // which, via web3's truthiness check on the decoded address string,
+        // stores `get_checksum_address(zero_address)`.
+        // Without this, Rust stores NULL — a 1-row byte-divergence vs Python
+        // gold on `aave_v3_emode_categories.price_source` (surfaced by the
+        // full-schema-diff at the 16591070 parity gate).
         let ev = degenbot_decoders::aave_event_decoder::EModeCategoryAddedEvent {
             pool_configurator_address: Address::ZERO,
             category_id: 1,
@@ -1816,7 +1836,11 @@ mod tests {
         let chunk_ev = dispatch_e_mode_category_added(1, &ev).unwrap();
         match chunk_ev {
             AaveChunkEvent::EModeCategoryAdded { price_source, .. } => {
-                assert!(price_source.is_none(), "zero oracle → None");
+                assert_eq!(
+                    price_source.as_deref(),
+                    Some("0x0000000000000000000000000000000000000000"),
+                    "zero oracle → Some(zero-address checksum string), matching Python gold"
+                );
             }
             other => panic!("expected EModeCategoryAdded, got {other:?}"),
         }
