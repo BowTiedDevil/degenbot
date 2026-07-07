@@ -74,6 +74,7 @@ if TYPE_CHECKING:
 __all__ = [
     "aave",
     "aave_update",
+    "aave_update_py",
     "activate",
     "activate_ethereum_aave_v3",
     "deactivate",
@@ -626,6 +627,228 @@ def aave_update(
                     break
     finally:
         signal.signal(signal.SIGINT, prior_int_handler)
+
+
+@aave.command(
+    "update-py",
+    help=(
+        "[LEGACY PYTHON WRITER] Drive the legacy Python "
+        "`update_aave_market` updater for cold-boot parity cross-checks "
+        "against the Rust core (`aave update`). Chunks externally and "
+        "invokes `update_aave_market(start, end, verify_chunk=True)` per "
+        "chunk, then runs a non-fatal aggregated `verify_all_positions` "
+        "at end."
+    ),
+)
+@click.option(
+    "--chunk",
+    "chunk_size",
+    default=10_000,
+    show_default=True,
+    type=int,
+    help="Maximum blocks per chunk before committing to the database.",
+    envvar="DEGENBOT_CHUNK_SIZE",
+    show_envvar=True,
+)
+@click.option(
+    "--to-block",
+    "to_block",
+    required=True,
+    help=(
+        "Target block. Accepts a concrete block number (e.g. '16591070') "
+        "or a block tag with an optional offset ('latest:-64', 'safe:128'). "
+        "Pure tags without offsets are resolved to the chain tip via an "
+        "extra RPC round-trip."
+    ),
+)
+@click.option(
+    "--verify-chunk/--no-verify-chunk",
+    "verify_chunk",
+    default=True,
+    show_default=True,
+    help="Verify positions at each chunk boundary (legacy per-chunk hard-assert).",
+)
+@click.option(
+    "--verify-all/--no-verify-all",
+    "verify_all",
+    default=True,
+    show_default=True,
+    help="Run non-fatal aggregated verify_all_positions at end of drive.",
+)
+@click.option(
+    "--progress-bar/--no-progress-bar",
+    "show_progress",
+    default=True,
+    show_default=True,
+    help="Show per-chunk progress bars.",
+    envvar="DEGENBOT_PROGRESS_BAR",
+    show_envvar=True,
+)
+@click.pass_obj
+def aave_update_py(
+    bot: Bot,
+    *,
+    chunk_size: int,
+    to_block: str,
+    verify_chunk: bool,
+    verify_all: bool,
+    show_progress: bool,
+) -> None:
+    """Drive the LEGACY Python writer to cold-boot Aave positions.
+
+    Unlike ``aave update`` (which delegates the per-market chunk loop to
+    the Rust core via ``run_aave_update``), this command invokes the
+    legacy Python ``update_aave_market`` directly. It is retained for
+    cross-check parity against the Rust writer (task U5YIBG §4.2) and
+    for restoring the cold-boot capability that ``6f574e07`` regressed.
+
+    The market row must already be bootstrapped::
+
+        degenbot database reset
+        degenbot aave activate ethereum_aave_v3
+        degenbot aave update-py --to-block 16591070 --verify-all
+
+    Chunking is external because ``update_aave_market`` runs the full
+    ``[start_block, end_block]`` range in one call; we loop chunks of
+    ``chunk_size`` from ``last_update_block + 1`` up to ``to_block`` and
+    commit + advance ``last_update_block`` after each chunk. With
+    ``--verify-chunk`` (default), the legacy per-chunk on-chain-truth
+    hard-assert (``verify_positions_for_users``) fires inside the writer
+    before commit; a divergence aborts the chunk and propagates as a
+    raised ``AssertionError`` from this command — STOP and report on the
+    first such abort. With ``--verify-all`` (default), the non-fatal
+    aggregated ``verify_all_positions`` runs at end of drive and reports
+    the FULL set of post-drive divergences (does not abort — see
+    verification.py and commit 0e31fde1).
+
+    Raises:
+        DegenbotValueError: If no active Aave markets are found.
+        AssertionError: If ``--verify-chunk`` finds a chunk-boundary
+            divergence (propagated from ``verify_positions_for_users``
+            inside ``update_aave_market``), or if ``--verify-all`` finds a
+            post-drive divergence (propagated from ``verify_all_positions``).
+
+    """
+    with bot.db() as session:
+        active_markets = session.scalars(
+            select(AaveV3Market).where(
+                AaveV3Market.active,
+                AaveV3Market.name.contains("aave"),
+            ),
+        ).all()
+        if not active_markets:
+            msg = "No active Aave markets found."
+            raise DegenbotValueError(message=msg)
+        # Snapshot chain/market IDs before the session closes; markets are
+        # re-fetched per chunk (SQLAlchemy detached-instance safety).
+        chain_market_pairs = [(m.chain_id, m.id) for m in active_markets]
+
+    for chain_id, market_id in chain_market_pairs:
+        provider = get_provider_from_config(chain_id=chain_id, config=bot.config)
+        resolved_to_block = _resolve_to_block(to_block, chain_id=chain_id, bot=bot)
+        if resolved_to_block is None:
+            # Pure tag (no offset) — the Rust core fetches the tip itself;
+            # the Python driver doesn't have that fallback, so resolve
+            # explicitly via an extra RPC round-trip.
+            resolved_to_block = get_number_for_block_identifier(
+                to_block,
+                provider=provider,
+            )
+        resolved_to_block = int(resolved_to_block)
+
+        with bot.db() as session:
+            market = session.scalar(
+                select(AaveV3Market).where(AaveV3Market.id == market_id),
+            )
+            assert market is not None
+            market_name = market.name  # snapshot before session close (DetachedInstanceError guard)
+            if market.last_update_block is None:
+                click.echo(
+                    f"Chain {chain_id} market {market_id} ({market_name}): "
+                    "needs bootstrapping (last_update_block is None); "
+                    "skipping. Run `degenbot aave activate` first.",
+                )
+                continue
+            start_block = market.last_update_block + 1
+
+        if start_block > resolved_to_block:
+            click.echo(
+                f"Chain {chain_id} market {market_id} ({market_name}): "
+                f"already at {start_block - 1}; nothing to do "
+                f"(--to-block={resolved_to_block}).",
+            )
+        else:
+            click.echo(
+                f"Chain {chain_id} market {market_id} ({market_name}): "
+                f"driving legacy Python writer {start_block:,}->{resolved_to_block:,} "
+                f"(chunk_size={chunk_size:,}, verify_chunk={verify_chunk}).",
+            )
+
+            current = start_block
+            chunk_no = 0
+            with logging_redirect_tqdm(loggers=[logger]):
+                while current <= resolved_to_block:
+                    chunk_end = min(current + chunk_size - 1, resolved_to_block)
+                    chunk_no += 1
+                    with bot.db() as session:
+                        market = session.scalar(
+                            select(AaveV3Market).where(AaveV3Market.id == market_id),
+                        )
+                        assert market is not None
+                        update_aave_market(
+                            provider=provider,
+                            start_block=current,
+                            end_block=chunk_end,
+                            market=market,
+                            session=session,
+                            verify_block=False,
+                            verify_chunk=verify_chunk,
+                            show_progress=show_progress,
+                        )
+                        market.last_update_block = chunk_end
+                        session.commit()
+                    click.echo(
+                        f"  chunk {chunk_no}: {current:,}-{chunk_end:,} committed.",
+                    )
+                    current = chunk_end + 1
+
+            click.echo(
+                f"Chain {chain_id} market {market_id} ({market_name}): "
+                f"legacy Python drive reached {resolved_to_block:,}.",
+            )
+
+        if verify_all:
+            click.echo(
+                f"Running non-fatal aggregate verify_all_positions at "
+                f"block {resolved_to_block:,}...",
+            )
+            with bot.db() as session:
+                market = session.scalar(
+                    select(AaveV3Market).where(AaveV3Market.id == market_id),
+                )
+                assert market is not None
+                try:
+                    verify_all_positions(
+                        provider=provider,
+                        market=market,
+                        session=session,
+                        block_number=resolved_to_block,
+                        show_progress=show_progress,
+                    )
+                except AssertionError as exc:
+                    click.echo(
+                        f"verify_all_positions reported divergences at block "
+                        f"{resolved_to_block:,} (non-fatal aggregated report); "
+                        "details below:",
+                        err=True,
+                    )
+                    click.echo(str(exc), err=True)
+                    raise
+                else:
+                    click.echo(
+                        f"verify_all_positions PASSED at block "
+                        f"{resolved_to_block:,} (Python DB == on-chain truth).",
+                    )
 
 
 @aave.group()
