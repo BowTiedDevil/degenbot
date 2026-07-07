@@ -43,7 +43,7 @@
 #![allow(clippy::doc_lazy_continuation)] // multi-line rustdoc phrasing
 
 use alloy::primitives::{I256, U256};
-use degenbot_evm_math::{percent_mul, ray_div, ray_mul, WadRayError};
+use degenbot_evm_math::{percent_mul, ray_div, ray_mul, wad_mul, WadRayError};
 
 use crate::processors::{RayDivMode, RoundingStrategy, ScaledTokenEventData};
 
@@ -603,6 +603,55 @@ fn to_signed_neg(v: U256) -> Result<I256, GhoProcessorError> {
     } else {
         Ok(-I256::try_from(v)
             .map_err(|_| GhoProcessorError::DeltaOverflow(format!("negate {v} overflow")))?)
+    }
+}
+
+// ── the GHO discount-rate formula (port of `GhoMath.calculate_discount_rate`) ─
+
+/// The GHO discount rate (basis points, 0-3000). Port of
+/// `GhoMath.calculate_discount_rate` (mirrors the `GhoDiscountRateStrategy`
+/// contract at mainnet `0x4C38Ec4D1D2068540DfC11DFa4de41F733DDF812`). The rate
+/// is the user's discount PERCENT, derived from the stkAAVE balance + the GHO
+/// debt: 0 below the minimums, capped at `DISCOUNT_RATE_BPS` (30%) when the
+/// discounted balance covers the debt, else proportional.
+///
+/// Called by the discount-refresh pass after a GHO borrow/accrual that signals
+/// `should_refresh_discount` — recomputes `aave_v3_users.gho_discount` from the
+/// post-operation debt balance + the user's stkAAVE balance (mirrors Python's
+/// `_refresh_discount_rate`: `debt_token_balance = ray_mul(scaled_balance,
+/// index)` then this fn).
+///
+/// # Errors
+///
+/// Returns [`WadRayError`] only if the internal `wad_mul` overflows (cannot
+/// happen for realistic balances — stkAAVE + GHO debt are ≪ 2^244).
+pub fn calculate_gho_discount_rate(
+    debt_balance: U256,
+    discount_token_balance: U256,
+) -> Result<U256, WadRayError> {
+    // 100 GHO discounted per 1 stkAAVE (100e18).
+    let gho_discounted_per_discount_token = U256::from(100_000_000_000_000_000_000u128);
+    // Max discount rate in basis points (3000 = 30.00%).
+    let discount_rate_bps = U256::from(3_000u64);
+    // Below this stkAAVE balance, no discount (1e15 = 0.001 stkAAVE).
+    let min_discount_token_balance = U256::from(1_000_000_000_000_000u64);
+    // Below this GHO debt, no discount (1e18 = 1 GHO).
+    let min_debt_token_balance = U256::from(1_000_000_000_000_000_000u64);
+
+    if discount_token_balance < min_discount_token_balance
+        || debt_balance < min_debt_token_balance
+    {
+        return Ok(U256::ZERO);
+    }
+    let discounted_balance = wad_mul(discount_token_balance, gho_discounted_per_discount_token)?;
+    if discounted_balance >= debt_balance {
+        Ok(discount_rate_bps)
+    } else {
+        // Proportional: (discounted * max_rate) // debt. Python uses integer
+        // `//` (floor). `discounted * 3000` cannot overflow for realistic
+        // balances (discounted < debt < 2^244); saturating_mul is exact when
+        // no overflow + safe if it ever did.
+        Ok(discounted_balance.saturating_mul(discount_rate_bps) / debt_balance)
     }
 }
 
@@ -1198,6 +1247,43 @@ mod tests {
             )
             .unwrap(),
             U256::from(250u64)
+        );
+    }
+
+    // ── calculate_gho_discount_rate (port of GhoMath.calculate_discount_rate) ─
+
+    fn e(n: u128) -> U256 {
+        U256::from(n)
+    }
+    fn e18(n: u64) -> U256 {
+        U256::from(n) * U256::from(10u64).pow(U256::from(18u64))
+    }
+
+    #[test]
+    fn calculate_gho_discount_rate_zero_below_minimums() {
+        // stkAAVE below 1e15 (0.001) → 0.
+        assert_eq!(calculate_gho_discount_rate(e18(5000), e(500)).unwrap(), U256::ZERO);
+        // debt below 1e18 (1 GHO) → 0.
+        assert_eq!(calculate_gho_discount_rate(e(500), e18(100)).unwrap(), U256::ZERO);
+    }
+
+    #[test]
+    fn calculate_gho_discount_rate_capped_at_max() {
+        // Python docstring example: 5000 GHO debt, 100 stkAAVE → 100*100e18
+        // = 10000e18 discounted >= 5000e18 debt → capped at 3000 bps.
+        assert_eq!(
+            calculate_gho_discount_rate(e18(5000), e18(100)).unwrap(),
+            U256::from(3000u64)
+        );
+    }
+
+    #[test]
+    fn calculate_gho_discount_rate_proportional() {
+        // discounted = wad_mul(10stk, 100e18) = 1000 GHO; debt = 2000 GHO →
+        // (1000e18 * 3000) // 2000e18 = 1500.
+        assert_eq!(
+            calculate_gho_discount_rate(e18(2000), e18(10)).unwrap(),
+            U256::from(1500u64)
         );
     }
 }
