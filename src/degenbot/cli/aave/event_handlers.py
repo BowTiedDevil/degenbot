@@ -1118,16 +1118,20 @@ def _process_price_oracle_updated_event(
             AaveV3Contract.name == "PRICE_ORACLE",
         ),
     )
-    assert existing_oracle is None
 
-    session.add(
-        AaveV3Contract(
-            market_id=market.id,
-            name="PRICE_ORACLE",
-            address=new_address,
-        ),
-    )
-    logger.info(f"Registered PRICE_ORACLE at {new_address} from PriceOracleUpdated event")
+    if existing_oracle is None:
+        session.add(
+            AaveV3Contract(
+                market_id=market.id,
+                name="PRICE_ORACLE",
+                address=new_address,
+            ),
+        )
+        logger.info(f"Registered PRICE_ORACLE at {new_address} from PriceOracleUpdated event")
+    elif existing_oracle.address != new_address:
+        # Update to the new oracle address
+        existing_oracle.address = new_address
+        logger.info(f"Updated PRICE_ORACLE: {existing_oracle.address} -> {new_address}")
 
 
 def _process_asset_source_updated_event(
