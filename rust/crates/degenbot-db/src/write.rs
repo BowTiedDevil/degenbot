@@ -427,6 +427,28 @@ impl DegenbotDb {
         decimals: Option<i64>,
     ) -> Result<i64, DbError> {
         if let Some(id) = existing_erc20_token(conn, chain, address)? {
+            // BOPQZ3: backfill any NULL metadata cells on the existing row
+            // with the freshly-passed values. Mirrors the Python
+            // `activate_ethereum_aave_v3` pre-pass (commands.py:213) which
+            // drives `get_or_create_erc20_token` on a freshly-seeded row →
+            // `_fetch_erc20_token_metadata` (RPC `name()`/`symbol()`/`decimals()`) +
+            // INSERT with metadata. Rust defers the equivalent to drive-time:
+            // when `resolve_reserve_initialized` fetches the metadata via
+            // `fetch_erc20_metadata` + resolves the token here, the existing
+            // row's NULL cells get backfilled. Pre-populated cells are NOT
+            // clobbered (defensive guard — the `WHERE name IS NULL` etc. on
+            // each COALESCE branch ensures only-null cells update).
+            if name.is_some() || symbol.is_some() || decimals.is_some() {
+                conn.execute(
+                    "UPDATE erc20_tokens SET \
+                     name = COALESCE(name, ?3), \
+                     symbol = COALESCE(symbol, ?4), \
+                     decimals = COALESCE(decimals, ?5) \
+                     WHERE id = ?2 AND \
+                     (name IS NULL OR symbol IS NULL OR decimals IS NULL)",
+                    params![chain, id, name, symbol, decimals],
+                )?;
+            }
             return Ok(id);
         }
         conn.execute(
@@ -3048,6 +3070,90 @@ mod tests {
         // second call returns existing row (metadata NOT overwritten)
         let id2 = db
             .get_or_create_erc20_token(1, "0xtoken", None, None, None)
+            .unwrap();
+        assert_eq!(id, id2);
+        let conn = db.conn.lock();
+        let (name, symbol, decimals): (Option<String>, Option<String>, Option<i64>) = conn
+            .query_row(
+                "SELECT name, symbol, decimals FROM erc20_tokens WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(name.as_deref(), Some("Weth"));
+        assert_eq!(symbol.as_deref(), Some("WETH"));
+        assert_eq!(decimals, Some(18));
+    }
+
+    /// BOPQZ3: when a row exists with NULL metadata (e.g. seeded by the
+    /// harness `_seed_market_db`) and a later ReserveInitialized dispatch
+    /// is resolved with freshly-RPC-fetched metadata, the existing row must
+    /// be UPDATED in place (mirrors the Python `activate_ethereum_aave_v3`
+    /// pre-pass that populates the GHO token metadata via `get_or_create_erc20_token`
+    /// → `_fetch_erc20_token_metadata`).
+    ///
+    /// This is the Rust-native equivalent: defer the writeback from activate-time
+    /// to ReserveInitialized dispatch time (Rust's drive IS its bootstrap — no
+    /// separate activate step).
+    #[test]
+    fn get_or_create_erc20_token_backfills_null_metadata_on_existing_row() {
+        let db = write_db_with_market();
+        // Seed an existing GHO-like row with NULL metadata (the harness seed
+        // path — `INSERT INTO erc20_tokens (chain, address) VALUES (...)`).
+        {
+            let conn = db.conn.lock();
+            conn.execute(
+                "INSERT INTO erc20_tokens (chain, address) VALUES (1, ?1)",
+                params!["0xgho"],
+            )
+            .unwrap();
+        }
+        // Resolve via `get_or_create` with freshly-fetched metadata.
+        let id2 = db
+            .get_or_create_erc20_token(
+                1,
+                "0xgho",
+                Some("Gho Token"),
+                Some("GHO"),
+                Some(18),
+            )
+            .unwrap();
+        let conn = db.conn.lock();
+        let (name, symbol, decimals): (Option<String>, Option<String>, Option<i64>) = conn
+            .query_row(
+                "SELECT name, symbol, decimals FROM erc20_tokens WHERE address = ?1",
+                params!["0xgho"],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        // The freshly-fetched metadata MUST have been written back.
+        assert_eq!(name.as_deref(), Some("Gho Token"));
+        assert_eq!(symbol.as_deref(), Some("GHO"));
+        assert_eq!(decimals, Some(18));
+        // idempotency: succeeded without PRIMARY KEY constraint violation.
+        assert!(id2 >= 1);
+    }
+
+    /// BOPQZ3 defensive guard: a pre-POPULATED row is NOT clobbered by a
+    /// later `get_or_create` call (e.g. an inner-logger retry passing None).
+    /// Only cells that ARE NULL get backfilled.
+    #[test]
+    fn get_or_create_erc20_token_does_not_overwrite_existing_metadata() {
+        let db = write_db_with_market();
+        let id = db
+            .get_or_create_erc20_token(1, "0xtoken2", Some("Weth"), Some("WETH"), Some(18))
+            .unwrap();
+        // a later call supplying contradictory/different metadata MUST NOT
+        // overwrite the existing populated cells (defensive — the BOPQZ3 fix
+        // only backfills NULL cells).
+        let id2 = db
+            .get_or_create_erc20_token(
+                1,
+                "0xtoken2",
+                Some("Other Name"),
+                Some("OTH"),
+                Some(6),
+            )
             .unwrap();
         assert_eq!(id, id2);
         let conn = db.conn.lock();
