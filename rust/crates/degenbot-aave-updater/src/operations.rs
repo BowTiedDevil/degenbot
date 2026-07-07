@@ -315,10 +315,14 @@ pub struct Operation<'a> {
     /// Supporting aToken `BalanceTransfer` events (raw logs; mirror of
     /// `Operation.balance_transfer_events`).
     pub balance_transfer_events: Vec<&'a Log>,
-    /// For `MintToTreasury` (Pool Revision 8 path): the `MintedToTreasury`
-    /// event's `amountMinted` field (in underlying units — DP3 v8-branch
-    /// applies `ray_div(amountMinted, liquidity_index)` to derive the
-    /// scaled amount; v9+ uses it directly).
+    /// For `MintToTreasury`: the `MintedToTreasury` event's `amountMinted` field
+    /// (raw UNDERLYING amount, regardless of `pool_revision`). Mirrors Python's
+    /// `operation.minted_to_treasury_amount` semantics — NOT pre-scaled.
+    /// The scaling conversion (`ray_div` / `ray_div_ceil` per `pool_revision`) happens
+    /// EXACTLY ONCE in `dispatch_mint_to_treasury` (mirrors Python's
+    /// `PoolMath::underlying_to_scaled_collateral` flow). Previously DP3
+    /// pre-converted for rev < 9 → dispatch would re-convert → SB3XJF
+    /// DOUBLE-conversion divergence.
     pub minted_to_treasury_amount: Option<U256>,
     /// For Liquidation: the `LiquidationCall` `debtToCover` field (surfaces
     /// the burn-amount's accuracy edge — the Burn `amount + balance_increase`

@@ -3309,4 +3309,283 @@ mod tests {
         };
         assert_eq!(separate.detect_pattern(), LiquidationPattern::SeparateBurns);
     }
+
+    // ── SB3XJF regression: MintToTreasury DP3 must NOT pre-scale ───────
+    //
+    // SB3XJF root cause: `create_mint_to_treasury_operations` previously
+    // pre-converted the MintedToTreasury `amount_minted` via `ray_div(.., HALF_UP)`
+    // for `pool_revision < 9`, then `dispatch_mint_to_treasury` re-applied the
+    // SAME `ray_div(.., HALF_UP)` on the pre-scaled value, DOUBLE-converting
+    // by a factor of `idx/RAY` (treasury 0x464C WETH divergence -8.04e12 was the
+    // SB3XJF diagnosis). The fix aligns Rust `op.minted_to_treasury_amount`
+    // semantics with Python's `operation.minted_to_treasury_amount` (= raw
+    // UNDERLYING amount, regardless of `pool_revision`) so the single
+    // conversion lives in `dispatch_mint_to_treasury` (mirroring Python's
+    // `PoolMath::underlying_to_scaled_collateral`).
+    //
+    // The WETH mainnet tuple below is the cold-boot block 16516952 evidence
+    // used to ROOT-CAUSE the divergence — asserted by hand-math before
+    // querying the DB:
+    //   amountMinted (raw underlying) = 64_746_517_106_584_784
+    //   liquidity_index at emit-time   = 1_000_124_218_031_532_223_928_748_283
+    //   expected SINGLE ray_div result = 64_738_475_420_603_639 (Python gold
+    //     = on-chain truth delta: treasury WETH scaledBalance went 0 →
+    //     64_738_475_420_603,639 across the block boundary)
+    //   buggy DOUBLE ray_div result    = 64_730_434_733_420_828 (= observed
+    //     pre-fix Rust DB value, 8_040_687_182_811 LESS than Python gold).
+    //
+    // The test creates an in-memory DB substrate + drives BOTH the DP3 builder
+    // (`create_mint_to_treasury_operations`) AND the apply dispatch
+    // (`dispatch_mint_to_treasury`), asserting the FINAL `balance_delta` ==
+    // Python gold's SINGLE conversion. RED on the unfixed version (the value
+    // would be the DOUBLE-conversion result); GREEN on the fixed version.
+    fn fresh_db_with_mint_to_treasury_asset() -> degenbot_db::DegenbotDb {
+        use degenbot_db::DegenbotDb;
+        let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
+        {
+            let conn = db.lock();
+            conn.execute(
+                "INSERT INTO aave_v3_markets (id, chain_id, name, active, last_update_block) \
+                 VALUES (1, 1, 'mainnet', 1, NULL)",
+                [],
+            )
+            .unwrap();
+            // Pool contract revision 8 (the SB3XJF-bug path — rev < 9).
+            conn.execute(
+                "INSERT INTO aave_v3_contracts (market_id, name, address, revision) \
+                 VALUES (1, 'POOL', '0xpool', 8)",
+                [],
+            )
+            .unwrap();
+            // ERC20 parent rows: underlying (id 1), aToken (id 2), vToken (id 3).
+            conn.execute(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES \
+                 (1, 1, '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'), \
+                 (2, 1, '0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8'), \
+                 (3, 1, '0xeA51d7853EEFb32b6ee06b1C12E6dcCA88Be0fFE')",
+                [],
+            )
+            .unwrap();
+            // a_token_revision 1 (rev < 9 pool / token pre-9 path).
+            conn.execute(
+                "INSERT INTO aave_v3_assets \
+                    (id, market_id, underlying_asset_id, a_token_id, a_token_revision, \
+                     v_token_id, v_token_revision, liquidity_index, liquidity_rate, \
+                     borrow_index, borrow_rate) \
+                 VALUES (1, 1, 1, 2, 1, 3, 1, \
+                         '1000124218031532223928748283', '0', \
+                         '1000000000000000000000000000', '0')",
+                [],
+            )
+            .unwrap();
+        }
+        db
+    }
+
+    /// Compose a synthetic `MintedToTreasury` Pool log: topics[0] = the
+    /// `MINTED_TO_TREASURY_TOPIC`, topics[1] = reserve (WETH mainnet);
+    /// data word 0 = `amountMinted` (the raw underlying amount).
+    fn make_minted_to_treasury_log(idx: u64, reserve: Address, amount_minted: U256) -> Log {
+        use alloy::primitives::{Bytes, Log as AlloyLog, B256};
+        let topics = vec![
+            aave_event_decoder::MINTED_TO_TREASURY_TOPIC,
+            B256::left_padding_from(reserve.as_slice()),
+        ];
+        let mut data = vec![0u8; 32];
+        amount_minted
+            .to_be_bytes::<32>()
+            .iter()
+            .enumerate()
+            .for_each(|(i, b)| {
+                data[i] = *b;
+            });
+        let inner = AlloyLog::new_unchecked(
+            // Pool contract address (the MintedToTreasury emitter).
+            Address::from([0x87, 0x87, 0x0B, 0xca, 0xF3, 0xfD, 0x63, 0x35, 0xC3, 0xF4,
+                          0xce, 0x83, 0x92, 0xD6, 0x93, 0x50, 0xB4, 0xfA, 0x4E, 0x2]),
+            topics,
+            Bytes::from(data),
+        );
+        Log {
+            inner,
+            block_hash: None,
+            block_number: Some(16516952),
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: Some(idx),
+            removed: false,
+        }
+    }
+
+    /// Construct a `CollateralMint` ScaledTokenEvent aux `caller_address` set to
+    /// the Pool contract (the MintToTreasury indicator that the DP3 builder
+    /// filters on). Mirrors how the chunk parser detects a Mint-to-treasury
+    /// (the aToken Mint event's caller == Pool).
+    fn mint_to_treasury_collateral_mint_event(
+        log_idx: u64,
+        pool_address: Address,
+        a_token_address: Address,
+        user: Address,
+        amount: U256,
+        index: U256,
+    ) -> ScaledTokenEvent<'static> {
+        let log = Box::leak(Box::new(test_log(
+            log_idx,
+            &aave_event_decoder::MINT_TOPIC,
+            &[],
+        )));
+        ScaledTokenEvent {
+            log,
+            decoded: ScaledTokenEventData::Mint {
+                caller: pool_address,
+                on_behalf_of: user,
+                value: amount,
+                balance_increase: U256::ZERO,
+                index,
+            },
+            event_type: ScaledTokenEventType::CollateralMint,
+            token_address: a_token_address,
+            user_address: user,
+            caller_address: Some(pool_address),
+            from_address: Some(pool_address),
+            target_address: Some(user),
+            amount,
+            balance_increase: Some(U256::ZERO),
+            index: Some(index),
+            log_index: log_idx,
+        }
+    }
+
+    /// SB3XJF regression — asserts the FULLY-FIXED pipeline (DP3 + dispatch)
+    /// produces the SINGLE ray_div result (= Python's
+    /// `PoolMath::underlying_to_scaled_collateral` value), NOT the
+    /// pre-fix DOUBLE-conversion result. Pre-fix, DP3 would pre-ray_div the
+    /// `amount_minted`, then `dispatch_mint_to_treasury` would re-ray_div it,
+    /// shrinking by `idx/RAY` (= the -8.04e12 divergence observed on the
+    /// treasury WETH residual).
+    #[test]
+    fn mint_to_treasury_dp3_does_not_pre_scale_then_dispatch_single_converts() {
+        let db = fresh_db_with_mint_to_treasury_asset();
+        let conn = db.lock();
+
+        // The Pool contract at 0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2.
+        let pool_address = Address::from([
+            0x87, 0x87, 0x0B, 0xca, 0xF3, 0xfD, 0x63, 0x35, 0xC3, 0xF4, 0xce, 0x83, 0x92, 0xD6,
+            0x93, 0x50, 0xB4, 0xfA, 0x4E, 0x2,
+        ]);
+        let a_token_address = Address::from([
+            0x4d, 0x5F, 0x47, 0xFA, 0x6A, 0x74, 0x75, 0x7f, 0x35, 0xC1, 0x4f, 0xD3, 0xa6, 0xEf,
+            0x8E, 0x3C, 0x9B, 0xC5, 0x14, 0xE8,
+        ]);
+        let reserve_weth = Address::from([
+            0xC0, 0x2a, 0xaA, 0x39, 0xb2, 0x23, 0xFE, 0x8D, 0x0A, 0x0e, 0x5C, 0x4F, 0x27, 0xEA,
+            0xD9, 0x08, 0x3C, 0x75, 0x6C, 0xc2,
+        ]);
+        // Treasury 0x464C71f6c2F760DdA6093dCB91C24c39e5d6e18c (the user that
+        // receives the minted-to-treasury aToken shares).
+        let treasury = Address::from([
+            0x46, 0x4C, 0x71, 0xf6, 0xc2, 0xF7, 0x60, 0xDD, 0xA6, 0x09, 0x3d, 0xCB, 0x91, 0xC2,
+            0x4c, 0x39, 0xe5, 0xd6, 0xe1, 0x8c,
+        ]);
+
+        // SB3XJF-relevant block 16516952 evidence tuple — the MintedToTreasury
+        // emission that mints accrued yield to the treasury 0x464C's WETH
+        // position.
+        let amount_minted_raw = U256::from(64_746_517_106_584_784u128);
+        let liquidity_index = U256::from(1_000_124_218_031_532_223_928_748_283u128);
+
+        // Pre-registered hand-math prediction:
+        //   Python gold / on-chain truth = ray_div_halfup(raw, idx) = 64_738_475_420_603_639
+        //   Pre-fix Rust (DOUBLE-conv)   = ray_div(ray_div(raw, idx), idx) = 64_730_434_733_420_828
+        //   Diff = Python gold - pre-fix Rust = 8_040_687_182_811 (= the observed divergence).
+        let python_gold_scaled = U256::from(64_738_475_420_603_639u128);
+        let buggy_double_conv_scaled = U256::from(64_730_434_733_420_828u128);
+
+        let mint_log = make_minted_to_treasury_log(737, reserve_weth, amount_minted_raw);
+        let minted_to_treasury_events: Vec<&Log> = vec![&mint_log];
+
+        let scaled_event = mint_to_treasury_collateral_mint_event(
+            736,
+            pool_address,
+            a_token_address,
+            treasury,
+            amount_minted_raw,
+            liquidity_index,
+        );
+        let scaled_events = vec![scaled_event];
+
+        // Crate the parser with the in-memory DB. The Pool contract revision 8
+        // is configured in `aave_v3_contracts` → `lookup_pool_revision_on_conn`
+        // returns 8 (= the SB3XJF bug path, `pool_revision < 9`).
+        let parser = TransactionOperationsParser::new(
+            1, // market_id
+            1, // chain_id
+            pool_address,
+            Some(treasury),
+            None,           // gho_token_address
+            None,           // gho_vtoken_address
+            &conn,
+        )
+        .unwrap();
+
+        // === DP3 STEP (the SB3XJF root-cause site) ===
+        let mut assigned_indices: HashSet<u64> = HashSet::new();
+        let mut next_op_id: u32 = 0;
+        let mut ops = parser.create_mint_to_treasury_operations(
+            &scaled_events,
+            &mut assigned_indices,
+            &mut next_op_id,
+            &minted_to_treasury_events,
+        );
+        assert_eq!(ops.len(), 1, "the synthetic Mint event should yield 1 MintToTreasury op");
+
+        // The fix: DP3 must store the RAW UNDERLYING amount (= amount_minted_raw),
+        // NOT pre-scaled via ray_div — that scaled conversion happens EXACTLY
+        // ONCE in `dispatch_mint_to_treasury`. Without the fix, this value would
+        // be `Some(python_gold_scaled)` (= `ray_div(raw, idx, HALF_UP)`), which
+        // the dispatch then re-ray_div's → DOUBLE conversion.
+        let op = ops.pop().unwrap();
+        assert_eq!(
+            op.minted_to_treasury_amount,
+            Some(amount_minted_raw),
+            "DP3 must store the raw underlying amountMinted (NOT pre-scaled); \
+             pre-fix would pre-scale to {} (= ray_div(raw, idx, HALF_UP)) which \
+             then DOUBLE-converts at dispatch",
+            python_gold_scaled,
+        );
+        assert_eq!(op.operation_type, OperationType::MintToTreasury);
+
+        // === DISPATCH STEP (the apply-time conversion) ===
+        // `dispatch_mint_to_treasury` does the single ray_div (`= Python's
+        // `PoolMath::underlying_to_scaled_collateral`). With the FIX in place,
+        // the final balance_delta == python_gold_scaled.
+        //
+        // Pre-fix, `op.minted_to_treasury_amount` was already the SCALED value,
+        // so dispatch's ray_div would produce the DOUBLE-conv result =
+        // buggy_double_conv_scaled.
+        let mut events: Vec<crate::run::AaveChunkEvent> = Vec::new();
+        crate::transaction_processor::dispatch_mint_to_treasury(
+            &op,
+            1, // market_id
+            &conn,
+            &mut events,
+        )
+        .unwrap();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            crate::run::AaveChunkEvent::ScaledTokenMint { balance_delta, .. } => {
+                assert_eq!(
+                    *balance_delta,
+                    alloy::primitives::I256::try_from(python_gold_scaled).unwrap(),
+                    "final balance_delta must equal Python gold's SINGLE ray_div result \
+                     (= on-chain truth); the pre-fix DOUBLE-conversion would have \
+                     produced {} ({} LESS than Python gold)",
+                    buggy_double_conv_scaled,
+                    python_gold_scaled - buggy_double_conv_scaled,
+                );
+            }
+            other => panic!("expected AaveChunkEvent::ScaledTokenMint, got {other:?}"),
+        }
+    }
 }
