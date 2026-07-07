@@ -1959,6 +1959,37 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
                 || ev.event_type == ScaledTokenEventType::Erc20CollateralTransfer)
                 && ev.user_address == user
             {
+                // TYS5MS: mirror Python's `_should_skip_collateral_transfer`
+                // (`transfers.py:25`) Liquidation-op filter — in Liquidation
+                // ops, ALL ERC20 CollateralTransfers (`Erc20CollateralTransfer`
+                // variant — index=None, the standard ERC20 Transfer event emitted
+                // by the aToken) are SKIPPED. The user's collateral debit is
+                // captured by the Burn event + the protocol-fee balance move by
+                // the paired BalanceTransfer (`CollateralTransfer` variant —
+                // index=non-None, preserved below). Without this guard the
+                // `Erc20CollateralTransfer(user→treasury, fee)` emitted alongside
+                // the LiquidationCall over-debits the user / over-credits the
+                // treasury by exactly the `liquidationProtocolFee × bonus /
+                // (1+bonus)` share — empirically verified on Rust-written
+                // 16591070 prod DB for users 0x23dB (id 134) + 0x87A6 (id 1018)
+                // WETH positions (residuals byte-match the on-chain ERC20
+                // Transfer amounts; ratio = 0.476% = 0.10×0.05/1.05).
+                //
+                // Context confirmation (per orchestrator reminder (a)):
+                // `collect_collateral_events` is LC-only — sole caller is
+                // `create_liquidation_operation`; the unconditional skip CANNOT
+                // over-filter non-LC ERC20 Transfers.
+                //
+                // Marked `assigned` so the standalone Step-4e Transfer path
+                // (`create_transfer_operations`) doesn't re-collect it — same
+                // write-back as the 1cf6578d `is_part_of_burn` / `is_part_of_mint`
+                // guards below. The 1cf6578d ZERO-address guards below remain
+                // ACTIVE for the `CollateralTransfer` (BalanceTransfer) variant
+                // (target/from == ZERO is degenerate for BT events but defensive).
+                if ev.event_type == ScaledTokenEventType::Erc20CollateralTransfer {
+                    assigned_indices.insert(ev.log_index);
+                    continue;
+                }
                 // EIWEPM: skip the burn-side pair ERC20 Transfer to ZERO (the
                 // Burn event itself is the sole operational debit), and the
                 // mint-side pair ERC20 Transfer from ZERO (the Mint event is
@@ -3039,7 +3070,17 @@ mod tests {
             U256::from(500),
             None,
         );
-        // The transfer to a non-ZERO liquidator (NOT the burn-side pair) — must be returned.
+        // The transfer to a non-ZERO liquidator (NOT the burn-side pair).
+        //
+        // TYS5MS: this Erc20CollateralTransfer is now SKIPPED by the new mirror
+        // of Python's `_should_skip_collateral_transfer` LC-op filter — in
+        // Liquidation ops, ALL ERC20 CollateralTransfers are filtered at
+        // collect-time (Python's filter has the same behavior: `index is None
+        // AND op=LC` → skip). The liquidator's net credit comes from the Mint
+        // event (when `receiveAToken=true`) or from a paired `CollateralTransfer`
+        // (BalanceTransfer variant — index=non-None) — NOT via the standard
+        // ERC20 Transfer event. Marked assigned so the standalone Step-4e
+        // Transfer path doesn't re-collect it.
         let transfer = transfer_to_event(
             11,
             ScaledTokenEventType::Erc20CollateralTransfer,
@@ -3072,10 +3113,19 @@ mod tests {
         assert_eq!(cb.unwrap().log_index, 10);
         assert_eq!(
             ct.len(),
-            1,
-            "collateral_transfers contains only the matching aToken transfer to liquidator"
+            0,
+            "TYS5MS: Erc20CollateralTransfer to liquidator is now SKIPPED at \
+             collect-time (mirrors Python's `_should_skip_collateral_transfer` \
+             LC-op filter — ERC20 Transfers in Liquidation ops are never applied; \
+             the liquidator's credit comes via the Mint event or via the \
+             `CollateralTransfer` BalanceTransfer variant, not via the standard \
+             ERC20 Transfer event)"
         );
-        assert_eq!(ct[0].log_index, 11);
+        assert!(
+            assigned.contains(&11),
+            "TYS5MS: filtered ERC20 transfer marked assigned so the standalone \
+             Step-4e Transfer path doesn't re-collect it"
+        );
     }
 
     /// `collect_collateral_events` EIWEPM filter (per the orchestrator's
