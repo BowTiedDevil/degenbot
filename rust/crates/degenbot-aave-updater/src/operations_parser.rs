@@ -75,7 +75,7 @@ use degenbot_decoders::aave_event_decoder::{
     self, DecodedAaveEvent, Erc20TransferEvent, ScaledTokenBalanceTransferEvent,
     ScaledTokenBurnEvent, ScaledTokenMintEvent,
 };
-use degenbot_evm_math::RayRounding;
+
 use rusqlite::OptionalExtension;
 use std::collections::{HashMap, HashSet};
 
@@ -1191,29 +1191,18 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
                 }
             }
 
-            // DP3: for pool_revision <= 8, ray_div the amountMinted by the
-            // event's index (the aToken's liquidity_index at emit-time).
-            // For pool_revision >= 9, the amountMinted is already in scaled units.
-            let resolved = if let Some(raw_amount) = minted_amount {
-                if self.pool_revision < SCALED_AMOUNT_POOL_REVISION {
-                    // Use the Mint event's index (the LiquidityIndex at emit-time).
-                    let idx = ev.index.unwrap_or(U256::ZERO);
-                    if idx.is_zero() {
-                        Some(raw_amount)
-                    } else {
-                        degenbot_evm_math::wad_ray_math::ray_div(
-                            raw_amount,
-                            idx,
-                            Some(RayRounding::HalfUp),
-                        )
-                        .ok()
-                    }
-                } else {
-                    Some(raw_amount)
-                }
-            } else {
-                None
-            };
+            // DP3: store the MintedToTreasury event's `amount_minted` as the
+            // raw UNDERLYING amount on the operation (regardless of pool
+            // revision). The scaling conversion (ray_div / ray_div_ceil per
+            // rev) happens EXACTLY ONCE in `dispatch_mint_to_treasury`
+            // (mirrors Python's `PoolMath::underlying_to_scaled_collateral`
+            // flow — single conversion at apply-time). Previously this DP3 arm
+            // pre-converted for rev < 9 → `dispatch_mint_to_treasury` would
+            // convert AGAIN → double-division by `idx`, shrinking the applied
+            // scaled_amount by a factor of `idx/RAY` (SB3XJF root cause:
+            // treasury 0x464C divergences across 4 aToken positions — WETH
+            // -8.04e12, wstETH -2.29e11, DAI -3.12e15, USDC -6415).
+            let resolved = minted_amount;
 
             assigned_indices.insert(ev.log_index);
             let op_id = *next_op_id;
