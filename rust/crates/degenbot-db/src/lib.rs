@@ -53,6 +53,7 @@ pub use aave::{
 pub use connection::DegenbotDb;
 pub use discovery::{V2PoolRowInput, V3PoolRowInput, V4PoolRowInput};
 pub use error::DbError;
+pub use write::DebtPositionRefreshContext;
 pub use heal::{heal_database, HealReport};
 pub use liquidity_updater::{BlockLog, LiquidityUpdateEvent, PoolUpdateState};
 pub use migrate::SchemaState;
