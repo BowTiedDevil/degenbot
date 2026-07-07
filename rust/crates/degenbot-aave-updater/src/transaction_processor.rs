@@ -199,7 +199,14 @@ fn dispatch_operation(
         // (only the index updates — the apply fn reconciles `last_index`).
         // The Operation carries the scaled events; pass them through as
         // zero-delta mints/burns so the position's `last_index` advances.
-        OperationType::InterestAccrual => dispatch_interest_accrual(op, market_id, conn, events),
+        OperationType::InterestAccrual => dispatch_interest_accrual(
+            op,
+            market_id,
+            conn,
+            gho_vtoken_address,
+            gho_ctx,
+            events,
+        ),
         OperationType::Liquidation => {
             dispatch_liquidation(op, market_id, conn, gho_vtoken_address, gho_ctx, events)
         }
@@ -645,11 +652,49 @@ fn dispatch_interest_accrual(
     op: &Operation,
     market_id: i64,
     conn: &Connection,
+    gho_vtoken_address: Option<Address>,
+    gho_ctx: &GhoDiscountContext,
     events: &mut Vec<AaveChunkEvent>,
 ) -> Result<(), ProcessTxError> {
+    // Python routes ALL GHO vToken Mints — including interest accrual + the
+    // discount "dust mints" — through the GHO discount processor
+    // (token_processor.py:540-595, `_process_debt_mint_with_match`'s GHO
+    // branch: `gho_processor.process_mint_event`). It does NOT branch on
+    // operation_type for the per-event dispatch (only on event_type). So a
+    // `GhoDebtMint` inside an `InterestAccrual` op takes the SAME path as one
+    // inside a `GhoBorrow` op.
     let mut scaled: Vec<&ScaledTokenEvent> = op.scaled_events.iter().collect();
     scaled.sort_by_key(|e| e.log_index);
     for ev in &scaled {
+        let is_gho = gho_vtoken_address.is_some_and(|addr| addr == ev.token_address)
+            || matches!(
+                ev.event_type,
+                ScaledTokenEventType::GhoDebtMint
+                    | ScaledTokenEventType::GhoDebtBurn
+                    | ScaledTokenEventType::GhoDebtTransfer
+            );
+        if is_gho {
+            // Python's interest-accrual enricher sets `scaled_amount = 0` for
+            // ALL events (enrichment/handlers/interest_accrual.py — "Interest
+            // accrual does not change scaled balance"). This matters for the
+            // BORROW branch of `process_gho_debt_mint` (hit by dust mints where
+            // `balance_increase == 0 < value`): V5+ uses `scaled_amount` there,
+            // so it MUST be 0 to match Python (NOT `ray_div(raw_amount, index)`
+            // which `build_gho_chunk_event` would compute for pool-event ops).
+            // The discount math (delta for V1-V3 / pure-interest-accrual) is
+            // verified byte-exact vs the Python gold at 18M.
+            let chunk_event = build_gho_chunk_event(
+                ev,
+                op,
+                op.pool_event,
+                Some(U256::ZERO),
+                gho_ctx,
+                market_id,
+                conn,
+            )?;
+            events.push(chunk_event);
+            continue;
+        }
         let token_addr_str = addr_to_hex(ev.token_address);
         let token_type = match ev.event_type {
             ScaledTokenEventType::CollateralMint | ScaledTokenEventType::CollateralBurn => {
@@ -911,7 +956,9 @@ fn dispatch_gho_standard(
             events.push(chunk_event);
             continue;
         }
-        let chunk_event = build_gho_chunk_event(ev, op, pool_event, gho_ctx, market_id, conn)?;
+        let chunk_event = build_gho_chunk_event(
+            ev, op, pool_event, None, gho_ctx, market_id, conn,
+        )?;
         events.push(chunk_event);
     }
     Ok(())
@@ -974,8 +1021,9 @@ fn dispatch_gho_liquidation(
                 });
                 continue;
             }
-            let chunk_event =
-                build_gho_chunk_event(ev, op, Some(pool_event), gho_ctx, market_id, conn)?;
+            let chunk_event = build_gho_chunk_event(
+                ev, op, Some(pool_event), None, gho_ctx, market_id, conn,
+            )?;
             events.push(chunk_event);
         } else {
             // The collateral leg → standard builder (aToken burn/transfer).
@@ -1000,6 +1048,7 @@ fn build_gho_chunk_event(
     ev: &ScaledTokenEvent,
     op: &Operation,
     pool_event: Option<&Log>,
+    scaled_amount_override: Option<U256>,
     gho_ctx: &GhoDiscountContext,
     market_id: i64,
     conn: &Connection,
@@ -1008,14 +1057,22 @@ fn build_gho_chunk_event(
     let processor = UnifiedGhoProcessor::new(asset.v_token_revision);
     let balance_increase = ev.balance_increase.unwrap_or_default();
     let index = ev.index.unwrap_or_default();
-    // The enricher's `scaled_amount` — `ray_div(raw_amount, index, strategy)`.
-    // The strategy is the per-revision GHO mint/burn rounding.
-    let raw_amount = pool_event.map_or(ev.amount, extract_pool_amount_word0);
-    let strat = crate::gho_processor::gho_strategy(asset.v_token_revision);
-    let scaled_amount = if ev.amount >= balance_increase {
-        Some(ray_div(raw_amount, index, strat.mint.into())?)
+    // The enricher's `scaled_amount`. For pool-event ops (Borrow/Repay/
+    // Liquidation) `None` → compute `ray_div(raw_amount, index, strategy)`
+    // (the strategy is the per-revision GHO mint/burn rounding). For
+    // interest-accrual ops the caller passes `Some(0)` — Python's
+    // interest-accrual enricher sets `scaled_amount = 0` always, + the BORROW
+    // branch (dust mints) uses it for V5+.
+    let scaled_amount = if let Some(s) = scaled_amount_override {
+        Some(s)
     } else {
-        Some(ray_div(raw_amount, index, strat.burn.into())?)
+        let raw_amount = pool_event.map_or(ev.amount, extract_pool_amount_word0);
+        let strat = crate::gho_processor::gho_strategy(asset.v_token_revision);
+        if ev.amount >= balance_increase {
+            Some(ray_div(raw_amount, index, strat.mint.into())?)
+        } else {
+            Some(ray_div(raw_amount, index, strat.burn.into())?)
+        }
     };
     let event_data = ScaledTokenEventData {
         value: ev.amount,
@@ -1644,5 +1701,140 @@ mod tests {
         let ctx = GhoDiscountContext::new(&logs, &discounts, Some(gho_vtoken));
         assert!(ctx.is_gho_vtoken(gho_vtoken));
         assert!(!ctx.is_gho_vtoken(Address::from([0xCD; 20])));
+    }
+
+    // ── WCRWL3: GHO interest-accrual dispatch (crash #2) ───────────────
+
+    /// Seed an in-memory DB with a market + a GHO debt asset (V4, no
+    /// discount) whose vToken erc20 is `0xvtoken`. Returns (db, vtoken_addr).
+    fn fresh_db_with_gho_debt_asset() -> (DegenbotDb, Address) {
+        use degenbot_core::address_utils::address_to_checksum_string;
+        use rusqlite::params;
+        let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
+        // A real 20-byte vToken address (stored as its EIP-55 checksum so
+        // `lookup_asset_by_token_address_on_conn` matches `addr_to_hex`).
+        let vtoken = Address::from([0xAB; 20]);
+        let vtoken_str = address_to_checksum_string(&vtoken);
+        {
+            let conn = db.lock();
+            conn.execute(
+                "INSERT INTO aave_v3_markets (id, chain_id, name, active, last_update_block) \
+                 VALUES (1, 1, 'mainnet', 1, NULL)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES \
+                 (1, 1, '0xgho'), (2, 1, ?1)",
+                params![vtoken_str],
+            )
+            .unwrap();
+            // GHO debt asset: underlying=1 (GHO), vToken=2, v_token_revision=4
+            // (V4 — no discount; exercises the no-discount interest-accrual
+            // branch of UnifiedGhoProcessor).
+            conn.execute(
+                "INSERT INTO aave_v3_assets \
+                    (id, market_id, underlying_asset_id, a_token_id, a_token_revision, \
+                     v_token_id, v_token_revision, liquidity_index, liquidity_rate, \
+                     borrow_index, borrow_rate) \
+                 VALUES (1, 1, 1, 2, 4, 2, 4, '0', '0', '0', '0')",
+                [],
+            )
+            .unwrap();
+        }
+        (db, vtoken)
+    }
+
+    /// Build a synthetic `GhoDebtMint` scaled event (the GHO vToken's `Mint`
+    /// for pure interest accrual: `value == balance_increase`).
+    fn make_gho_debt_mint_interest_event(
+        log_idx: u64,
+        vtoken: Address,
+        user: Address,
+        amount: U256,
+        index: U256,
+    ) -> ScaledTokenEvent<'static> {
+        // `decoded` is unread by dispatch_interest_accrual / build_gho_chunk_event
+        // (they consume the flat fields); pass a Mint variant for shape parity.
+        let decoded = crate::operations::ScaledTokenEventData::Mint {
+            caller: user,
+            on_behalf_of: user,
+            value: amount,
+            balance_increase: amount,
+            index,
+        };
+        let log = Box::leak(Box::new(make_log(
+            log_idx,
+            vtoken,
+            vec![
+                degenbot_decoders::aave_event_decoder::MINT_TOPIC,
+                B256::left_padding_from(user.as_slice()),
+                B256::left_padding_from(user.as_slice()),
+            ],
+            Bytes::default(),
+        )));
+        ScaledTokenEvent {
+            log,
+            decoded,
+            event_type: ScaledTokenEventType::GhoDebtMint,
+            token_address: vtoken,
+            user_address: user,
+            caller_address: Some(user),
+            from_address: None,
+            target_address: None,
+            amount,
+            balance_increase: Some(amount),
+            index: Some(index),
+            log_index: log_idx,
+        }
+    }
+
+    /// WCRWL3 RED→GREEN: `dispatch_interest_accrual` must route a `GhoDebtMint`
+    /// through the GHO discount processor (`build_gho_chunk_event` →
+    /// `process_gho_debt_mint`) instead of returning `Err(Deferred)`.
+    ///
+    /// Before the fix this returns `Err(Deferred("interest-accrual event_type
+    /// GhoDebtMint — C2"))` — the coldboot→18M drive crashed at block 17699521
+    /// on exactly this. The byte-exact GHO interest-accrual math (discount,
+    /// dust mints) is verified end-to-end vs the Python gold at 18M; this unit
+    /// test pins the DISPATCH routing (no deferral + a ScaledTokenMint chunk
+    /// event produced).
+    #[test]
+    fn dispatch_interest_accrual_routes_gho_debt_mint_through_gho_processor() {
+        let (db, vtoken) = fresh_db_with_gho_debt_asset();
+        let user = Address::from([0x42; 20]);
+        let amount = U256::from(1_000u64);
+        let index = U256::from(1_000_000_000u64); // a non-trivial borrow index
+        let ev = make_gho_debt_mint_interest_event(7, vtoken, user, amount, index);
+        let op = Operation {
+            operation_id: 1,
+            operation_type: OperationType::InterestAccrual,
+            pool_revision: 9,
+            pool_event: None,
+            scaled_events: vec![ev],
+            transfer_events: Vec::new(),
+            balance_transfer_events: Vec::new(),
+            minted_to_treasury_amount: None,
+            debt_to_cover: None,
+            validation_errors: Vec::new(),
+        };
+        let conn = db.lock();
+        let discounts = HashMap::new();
+        let logs: Vec<&Log> = Vec::new();
+        let gho_ctx = GhoDiscountContext::new(&logs, &discounts, Some(vtoken));
+        let mut events: Vec<AaveChunkEvent> = Vec::new();
+        dispatch_interest_accrual(&op, 1, &conn, Some(vtoken), &gho_ctx, &mut events)
+            .expect("GHO interest accrual must not defer (WCRWL3)");
+        assert_eq!(
+            events.len(),
+            1,
+            "the single GhoDebtMint must produce one chunk event"
+        );
+        match &events[0] {
+            AaveChunkEvent::ScaledTokenMint { position, .. } => {
+                assert_eq!(*position, ScaledTokenPosition::Debt, "GHO interest accrual → debt position");
+            }
+            other => panic!("expected ScaledTokenMint, got {other:?}"),
+        }
     }
 }
