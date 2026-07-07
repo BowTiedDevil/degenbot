@@ -177,6 +177,29 @@ fn bit(bitmap: U256, b: u32) -> bool {
 
 // ── the upsert substrate (`get_or_create_*`) ──────────────────────────────
 
+/// C3.3 (the (C) discount-refresh pass) — the post-apply context the refresh
+/// reads: the GHO debt position's `scaled_balance`/`last_index` (POST-apply —
+/// the `ScaledTokenMint`/`Burn` apply landed them) + the user's `address` +
+/// `stk_aave_balance`. Built by [`DegenbotDb::lookup_debt_position_refresh_context_on_conn`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DebtPositionRefreshContext {
+    /// `aave_v3_users.id` — the SET-stk-aave-balance + the
+    /// write-`gho_discount` target.
+    pub user_id: i64,
+    /// The user's checksummed address (`VARCHAR(42)`) — the `balanceOf`
+    /// `eth_call` argument.
+    pub user_address: String,
+    /// `aave_v3_debt_positions.balance` (POST-apply, scaled).
+    pub scaled_balance: U256,
+    /// `aave_v3_debt_positions.last_index` (POST-apply) — the `ray_mul`
+    /// multiplier. `None` falls back to the event's index (Python: the
+    /// position has no prior index).
+    pub last_index: Option<U256>,
+    /// `aave_v3_users.stk_aave_balance` — the `balanceOf` cache. `None`
+    /// triggers `get_or_init_stk_aave_balance`.
+    pub stk_aave_balance: Option<U256>,
+}
+
 impl DegenbotDb {
     /// Get-or-create an `aave_v3_emode_categories` row by `(market_id,
     /// category_id)`. Port of `db_market.py::get_or_create_e_mode_category`
@@ -2443,6 +2466,77 @@ impl DegenbotDb {
         let balance = parse_decimal_u256(&row.0)?;
         let last_index = row.1.as_deref().and_then(|s| parse_decimal_u256(s).ok());
         Ok((balance, last_index))
+    }
+
+    /// C3.3 (the (C) discount-refresh post-apply pass) — fetch a debt
+    /// position's refresh context (`user_id`, `user_address`, `scaled_balance`,
+    /// `last_index`, `stk_aave_balance`) in one joined read. The refresh reads the
+    /// post-apply `balance`/`last_index` (the `ScaledTokenMint`/`Burn` apply
+    /// landed them just before this call). Mirrors Python's
+    /// `_refresh_discount_rate` reading `debt_position.balance` / `.last_index`
+    /// + `user.address` / `.stk_aave_balance`.
+    #[allow(clippy::missing_errors_doc)]
+    pub fn lookup_debt_position_refresh_context_on_conn(
+        conn: &rusqlite::Connection,
+        position_id: i64,
+    ) -> Result<DebtPositionRefreshContext, DbError> {
+        let row: (
+            String,
+            Option<String>,
+            i64,
+            String,
+            Option<String>,
+        ) = conn
+            .query_row(
+                "SELECT dp.balance, dp.last_index, dp.user_id, u.address, \
+                 u.stk_aave_balance \
+                 FROM aave_v3_debt_positions dp \
+                 JOIN aave_v3_users u ON u.id = dp.user_id \
+                 WHERE dp.id = ?1",
+                rusqlite::params![position_id],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                    ))
+                },
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => DbError::MissingRow(format!(
+                    "aave_v3_debt_positions id={position_id}"
+                )),
+                e => DbError::Sqlite(e),
+            })?;
+        Ok(DebtPositionRefreshContext {
+            user_id: row.2,
+            user_address: row.3,
+            scaled_balance: parse_decimal_u256(&row.0)?,
+            last_index: row.1.as_deref().and_then(|s| parse_decimal_u256(s).ok()),
+            stk_aave_balance: row.4.as_deref().and_then(|s| parse_decimal_u256(s).ok()),
+        })
+    }
+
+    /// C3.3 (the (C) refresh) — SET (not increment) the user's
+    /// `stk_aave_balance` to the `balanceOf` RPC result. Used when
+    /// `stk_aave_balance` is None (the user was never touched by a stkAAVE
+    /// `Staked`/`Transfer` event yet — the 890 None + the 1042 missing —
+    /// `get_or_init_stk_aave_balance`). Mirrors Python's
+    /// `user.stk_aave_balance = balance`.
+    #[allow(clippy::missing_errors_doc)]
+    pub fn set_user_stk_aave_balance_on_conn(
+        conn: &rusqlite::Connection,
+        user_id: i64,
+        balance: alloy::primitives::U256,
+    ) -> Result<(), DbError> {
+        conn.execute(
+            "UPDATE aave_v3_users SET stk_aave_balance = ?1 WHERE id = ?2",
+            rusqlite::params![balance.to_string(), user_id],
+        )
+        .map_err(DbError::Sqlite)?;
+        Ok(())
     }
 
     /// Reset a debt position's balance to 0 + advance `last_index` (the

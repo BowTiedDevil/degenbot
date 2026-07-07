@@ -1504,6 +1504,15 @@ async fn process_chunk_on_conn(
             gho_asset_tx.as_ref().and_then(|g| g.gho_token_address.as_deref());
         let gho_vtoken_address_tx: Option<&str> =
             gho_asset_tx.as_ref().and_then(|g| g.v_token_address.as_deref());
+        // C3.3 (C refresh): the chain's GHO discount-token (stkAAVE) address,
+        //     re-resolved per-tx from `conn` (read-your-own-writes: a mid-run
+        //     `DiscountTokenUpdated` bumps `v_gho_discount_token` here — the
+        //     balanceOf must hit the NEW contract). `None` → the refresh is a
+        //     no-op (no discount token configured).
+        let discount_token_tx: Option<Address> = gho_asset_tx
+            .as_ref()
+            .and_then(|g| g.v_gho_discount_token.as_deref())
+            .and_then(|s| s.parse().ok());
 
         // (a) Re-resolve the GHO vToken's revision from `conn` for THIS tx —
         //     sees the prior tx's in-chunk `Upgraded` write via
@@ -1580,6 +1589,29 @@ async fn process_chunk_on_conn(
         //     scaled-token balance deltas land before the next tx's reads).
         apply_chunk_events_on_conn(conn, market_id, &op_events)?;
         events_applied_total += op_events.len();
+
+        // (f.5) C3.3 (C refresh): the async POST-APPLY discount-refresh pass.
+        //     For each `GhoRefreshDiscount` signal this tx emitted (V1-V3 GHO
+        //     mints/burns), recompute the user's `gho_discount` from the
+        //     POST-APPLY debt balance + the user's stkAAVE balance
+        //     (`balanceOf` `eth_call` at block-1 if `stk_aave_balance` is
+        //     None). The refresh reads the POST-APPLY values (the apply above
+        //     just landed them) + has the provider (this loop is async).
+        //     Mirrors Python's `_refresh_discount_rate` +
+        //     `get_or_init_stk_aave_balance` after a GHO borrow/accrual.
+        for ev in &op_events {
+            if let AaveChunkEvent::GhoRefreshDiscount { position_id } = ev {
+                crate::config_dispatch::refresh_gho_discount(
+                    provider,
+                    conn,
+                    market_id,
+                    *position_id,
+                    block_number,
+                    discount_token_tx,
+                )
+                .await?;
+            }
+        }
     }
 
     // (g) Stamp `last_update_block` as the LAST write (end-of-chunk). The
