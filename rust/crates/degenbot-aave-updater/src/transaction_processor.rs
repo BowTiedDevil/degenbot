@@ -1227,7 +1227,7 @@ fn dispatch_deficit_coverage(
 /// - rev <= 8: `ray_div(amountMinted, liquidity_index, HALF_UP)` (reverse of `ray_mul` half-up).
 ///   The `amountMinted` field is on `op.minted_to_treasury_amount` (A's DP3 field).
 #[allow(clippy::too_many_lines)]
-fn dispatch_mint_to_treasury(
+pub(crate) fn dispatch_mint_to_treasury(
     op: &Operation,
     market_id: i64,
     conn: &Connection,
