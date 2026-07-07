@@ -160,6 +160,24 @@ pub enum AaveChunkEvent {
         balance_delta: alloy::primitives::I256,
         new_index: alloy::primitives::U256,
     },
+    /// GHO discount-refresh signal (C3.3 — the (C) refresh wiring). Emitted by
+    /// `build_gho_chunk_event` ALONGSIDE the `ScaledTokenMint`/`ScaledTokenBurn`
+    /// when the GHO processor's `should_refresh_discount` is set (V1-V3 — the
+    /// discount mechanism is active). NOT applied synchronously — the chunk
+    /// loop's async POST-APPLY pass consumes it: `get_or_init_stk_aave_balance`
+    /// (`balanceOf` `eth_call` at `block - 1` if `aave_v3_users.stk_aave_balance` is
+    /// None) + `_refresh_discount_rate` (`debt_balance = ray_mul(scaled,
+    /// index)` + [`calculate_gho_discount_rate`] → write
+    /// `aave_v3_users.gho_discount`). `apply_chunk_events_on_conn` is a no-op for
+    /// this variant (it carries no synchronously-applicable state). Mirrors
+    /// Python's `token_processor._refresh_discount_rate` after a GHO
+    /// borrow/accrual.
+    GhoRefreshDiscount {
+        /// The GHO debt position (`aave_v3_debt_positions.id`) whose
+        /// `balance`/`last_index` were just updated — the refresh reads the
+        /// POST-APPLY values from `conn`.
+        position_id: i64,
+    },
     /// `BalanceTransfer(from, to, value)` — aToken transfer between users
     /// (5Z3QQ2). Carries the resolved `from_position_id` + `to_position_id`
     /// (both collateral — `BalanceTransfer` is aToken-only) + the scaled
@@ -358,6 +376,9 @@ pub struct AaveChunkWriteReport {
     pub gho_discount_percent_updated: usize,
     pub gho_discount_rate_strategy_updated: usize,
     pub gho_discount_token_updated: usize,
+    /// C3.3 (C refresh) — the GHO discount-refresh signals (the async
+    /// post-apply pass consumes them (`balanceOf` + recompute `gho_discount`).
+    pub gho_refresh_discount: usize,
     pub stk_aave_staked: usize,
     pub stk_aave_redeem: usize,
     /// S3X2I2 — user-to-user stkAAVE `Transfer` (neither leg zero).
@@ -570,6 +591,13 @@ pub fn apply_chunk_events_on_conn(
                     *new_index,
                 )?;
                 report.scaled_token_burn += 1;
+            }
+            // C3.3 (C refresh): no synchronous apply — the chunk loop's async
+            // post-apply pass consumes this (balanceOf + recompute
+            // gho_discount). Counted in `report.gho_refresh_discount` so the
+            // apply loop's exhaustiveness stays explicit.
+            AaveChunkEvent::GhoRefreshDiscount { .. } => {
+                report.gho_refresh_discount += 1;
             }
             AaveChunkEvent::ScaledTokenTransfer {
                 from_position_id,

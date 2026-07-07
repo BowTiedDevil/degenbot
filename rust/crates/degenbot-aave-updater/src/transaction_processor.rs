@@ -683,7 +683,7 @@ fn dispatch_interest_accrual(
             // which `build_gho_chunk_event` would compute for pool-event ops).
             // The discount math (delta for V1-V3 / pure-interest-accrual) is
             // verified byte-exact vs the Python gold at 18M.
-            let chunk_event = build_gho_chunk_event(
+            let (chunk_event, refresh) = build_gho_chunk_event(
                 ev,
                 op,
                 op.pool_event,
@@ -693,6 +693,7 @@ fn dispatch_interest_accrual(
                 conn,
             )?;
             events.push(chunk_event);
+            if let Some(refresh_ev) = refresh { events.push(refresh_ev); }
             continue;
         }
         let token_addr_str = addr_to_hex(ev.token_address);
@@ -956,10 +957,13 @@ fn dispatch_gho_standard(
             events.push(chunk_event);
             continue;
         }
-        let chunk_event = build_gho_chunk_event(
+        let (chunk_event, refresh) = build_gho_chunk_event(
             ev, op, pool_event, None, gho_ctx, market_id, conn,
         )?;
         events.push(chunk_event);
+        if let Some(refresh_ev) = refresh {
+            events.push(refresh_ev);
+        }
     }
     Ok(())
 }
@@ -1021,10 +1025,13 @@ fn dispatch_gho_liquidation(
                 });
                 continue;
             }
-            let chunk_event = build_gho_chunk_event(
+            let (chunk_event, refresh) = build_gho_chunk_event(
                 ev, op, Some(pool_event), None, gho_ctx, market_id, conn,
             )?;
             events.push(chunk_event);
+            if let Some(refresh_ev) = refresh {
+                events.push(refresh_ev);
+            }
         } else {
             // The collateral leg → standard builder (aToken burn/transfer).
             let ev_raw = extract_raw_amount_for_event(pool_event, ev, op);
@@ -1052,7 +1059,7 @@ fn build_gho_chunk_event(
     gho_ctx: &GhoDiscountContext,
     market_id: i64,
     conn: &Connection,
-) -> Result<AaveChunkEvent, ProcessTxError> {
+) -> Result<(AaveChunkEvent, Option<AaveChunkEvent>), ProcessTxError> {
     let asset = lookup_gho_debt_asset(ev, market_id, conn)?;
     let processor = UnifiedGhoProcessor::new(asset.v_token_revision);
     let balance_increase = ev.balance_increase.unwrap_or_default();
@@ -1117,12 +1124,18 @@ fn build_gho_chunk_event(
                 effective_discount,
                 actual_repay_amount,
             )?;
-            Ok(AaveChunkEvent::ScaledTokenMint {
-                position: ScaledTokenPosition::Debt,
-                position_id,
-                balance_delta: result.balance_delta,
-                new_index: result.new_index,
-            })
+            let refresh = result
+                .should_refresh_discount
+                .then_some(AaveChunkEvent::GhoRefreshDiscount { position_id });
+            Ok((
+                AaveChunkEvent::ScaledTokenMint {
+                    position: ScaledTokenPosition::Debt,
+                    position_id,
+                    balance_delta: result.balance_delta,
+                    new_index: result.new_index,
+                },
+                refresh,
+            ))
         }
         ScaledTokenEventType::GhoDebtBurn | ScaledTokenEventType::GhoDebtTransfer => {
             let result = processor.process_gho_debt_burn(
@@ -1131,12 +1144,18 @@ fn build_gho_chunk_event(
                 prev_index,
                 effective_discount,
             )?;
-            Ok(AaveChunkEvent::ScaledTokenBurn {
-                position: ScaledTokenPosition::Debt,
-                position_id,
-                balance_delta: result.balance_delta,
-                new_index: result.new_index,
-            })
+            let refresh = result
+                .should_refresh_discount
+                .then_some(AaveChunkEvent::GhoRefreshDiscount { position_id });
+            Ok((
+                AaveChunkEvent::ScaledTokenBurn {
+                    position: ScaledTokenPosition::Debt,
+                    position_id,
+                    balance_delta: result.balance_delta,
+                    new_index: result.new_index,
+                },
+                refresh,
+            ))
         }
         _ => Err(ProcessTxError::Deferred(format!(
             "GHO event_type {:?} not a GHO debt event — C3",
