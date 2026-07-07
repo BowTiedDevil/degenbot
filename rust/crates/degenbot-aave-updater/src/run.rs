@@ -217,39 +217,37 @@ pub enum AaveChunkEvent {
         gho_token_id: i64,
         new_discount_token: Option<String>,
     },
-    /// stkAAVE `Staked(staker, amount, totalRewards)` — increments the user's
-    /// `stk_aave_balance` by `amount`. Port of
-    /// `stkaave.process_stk_aave_transfer_event` (the `Transfer(from=0,
-    /// to=X)` arm — the Staked event coincides with a mint Transfer).
-    StkAaveStaked {
-        /// Pre-resolved `aave_v3_users.id` (the staker).
-        user_id: i64,
-        /// The staked amount (the `amount` field; `totalRewards` is a
-        /// diagnostics-only field + is NOT applied to any balance).
-        amount: alloy::primitives::U256,
-    },
-    /// stkAAVE `Redeem(redeemer, staker, amount)` — decrements the redeemer's
-    /// `stk_aave_balance` by `amount`. Port of
-    /// `stkaave.process_stk_aave_transfer_event` (the `Transfer(from=X,
-    /// to=0)` arm — the Redeem event coincides with a burn Transfer).
-    StkAaveRedeem {
-        /// Pre-resolved `aave_v3_users.id` (the redeemer).
-        user_id: i64,
-        /// The redeemed amount.
-        amount: alloy::primitives::U256,
-    },
-    /// stkAAVE user-to-user `Transfer(from, to, value)` (neither leg zero) —
-    /// atomically decrements `from.stk_aave_balance` by `value` AND increments
-    /// `to.stk_aave_balance` by `value`. Port of
-    /// `stkaave.process_stk_aave_transfer_event` (the both-legs path). S3X2I2: the
-    /// mint (`Transfer(0→X)`) + burn (`Transfer(X→0)`) arms coincide with the
-    /// `Staked`/`Redeem` semantic events (YMWN5V) — the dispatch arm skips the
-    /// zero-legs to avoid double-counting + processes ONLY the neither-zero case.
+    /// stkAAVE ERC20 `Transfer(from, to, value)`. The canonical + only
+    /// stkAAVE balance-mutation channel — Python's
+    /// `process_stk_aave_transfer_event` processes EVERY `Transfer` event on
+    /// `v_gho_discount_token`, including both zero-leg arms (the
+    /// `Transfer(0→X)` mint + `Transfer(X→0)` burn) — the `ZERO_ADDRESS` leg is
+    /// treated as a half-event (skip the zero side, always mutate the real
+    /// user). This variant mirrors that exactly: each side is `None` iff the
+    /// corresponding address is `ZERO_ADDRESS`, and the apply fn skips `None`
+    /// + mutates the other.
+    ///
+    /// YMWN5V retirement (crash #3): the prior design shipped separate
+    /// `StkAaveStaked`/`StkAaveRedeem` variants as proxies for the zero-leg
+    /// Transfers (and dedupe-skipped the zero legs here). That required a now
+    /// empirically-falsified invariant — every zero-leg Transfer must pair
+    /// with a `Staked`/`Redeem` semantic event. Some actions emit ONLY the
+    /// `Transfer(X→0)` event with no paired `Redeem` (verified via cast logs
+    /// across the 16.59M→18M range), leaving the sender's `stk_aave_balance`
+    /// stuck at its pre-burn cache value → wrong `calculate_gho_discount_rate`
+    /// → `(C)` refresh over-applies discount → GHO-burn delta overshoots
+    /// `prev_scaled_balance` → balance would go negative (the crash #3 byte-
+    /// exact match: overshoot == `discount_scaled`). Retired per AGENTS.md
+    /// (no backwards-compat shim for retired implementations).
     StkAaveTransfer {
-        /// Pre-resolved `aave_v3_users.id` (the sender; decremented).
-        from_user_id: i64,
-        /// Pre-resolved `aave_v3_users.id` (the recipient; incremented).
-        to_user_id: i64,
+        /// `aave_v3_users.id` of the sender (decremented by `amount`). `None`
+        /// iff `from == ZERO_ADDRESS` (the mint-from-zero leg) — apply skips
+        /// the from-leg entirely.
+        from_user_id: Option<i64>,
+        /// `aave_v3_users.id` of the recipient (incremented by `amount`).
+        /// `None` iff `to == ZERO_ADDRESS` (the burn-to-zero leg) — apply
+        /// skips the to-leg entirely.
+        to_user_id: Option<i64>,
         /// The transferred amount.
         amount: alloy::primitives::U256,
     },
@@ -379,9 +377,10 @@ pub struct AaveChunkWriteReport {
     /// C3.3 (C refresh) — the GHO discount-refresh signals (the async
     /// post-apply pass consumes them (`balanceOf` + recompute `gho_discount`).
     pub gho_refresh_discount: usize,
-    pub stk_aave_staked: usize,
-    pub stk_aave_redeem: usize,
-    /// S3X2I2 — user-to-user stkAAVE `Transfer` (neither leg zero).
+    /// stkAAVE `Transfer(from, to, value)` — the canonical balance-mutation
+    /// channel (YMWN5V retirement, crash #3): covers the zero-leg arms + the
+    /// neither-zero case. `Staked`/`Redeem` semantic dispatchers were retired
+    /// (their effect is now covered by the zero-leg Transfers).
     pub stk_aave_transfer: usize,
     /// RYKCC4 no-op variant — the count is tracked for accounting even though
     /// the apply writes nothing.
@@ -646,14 +645,6 @@ pub fn apply_chunk_events_on_conn(
                     new_discount_token.as_deref(),
                 )?;
                 report.gho_discount_token_updated += 1;
-            }
-            AaveChunkEvent::StkAaveStaked { user_id, amount } => {
-                DegenbotDb::apply_stk_aave_staked_on_conn(conn, *user_id, *amount)?;
-                report.stk_aave_staked += 1;
-            }
-            AaveChunkEvent::StkAaveRedeem { user_id, amount } => {
-                DegenbotDb::apply_stk_aave_redeem_on_conn(conn, *user_id, *amount)?;
-                report.stk_aave_redeem += 1;
             }
             AaveChunkEvent::StkAaveTransfer {
                 from_user_id,
@@ -2615,95 +2606,109 @@ mod tests {
         assert_eq!(discount_token, None, "discount token cleared to NULL");
     }
 
+    /// YMWN5V retirement — every zero-leg `Transfer(0→X)` mint + `Transfer(X→0)`
+    /// burn must be processed as a half-event (decrement `from` for the
+    /// burn, increment `to` for the mint), mirroring Python's
+    /// `process_stk_aave_transfer_event` (which only skips the `ZERO_ADDRESS`
+    /// side + always mutates the real user). The YMWN5V-era dispatch skipped
+    /// both legs and relied on a paired `Staked`/`Redeem` semantic event that
+    /// empirically does NOT always fire — leaving senders' `stk_aave_balance`
+    /// stuck at the pre-burn cache value. Crash #3 root cause.
     #[test]
-    fn apply_aave_chunk_writes_on_conn_dispatches_stk_aave_staked() {
+    fn apply_aave_chunk_writes_on_conn_stk_aave_transfer_to_zero_decrements_sender() {
         let db = fresh_db();
         seed_aave_v3_user(&db, 1);
-        // Pre-set stk_aave_balance = NULL (the CXRGX4 default).
+        // Pre-set stk_aave_balance = 9086 (the on-chain-stale cache value at
+        // the user's last GHO action — mirrors the crash #3 reproduction).
+        {
+            let conn = db.lock();
+            conn.execute(
+                "UPDATE aave_v3_users SET stk_aave_balance = '9086624312799369058615' \
+                 WHERE id = 1",
+                [],
+            )
+            .unwrap();
+        }
 
-        let amount = alloy::primitives::U256::from(1_000u64);
-        let events = vec![AaveChunkEvent::StkAaveStaked { user_id: 1, amount }];
+        // Transfer(user → 0x0) — the burn-to-zero leg. No paired Redeem fires
+        // for this user (verified via cast logs across the drive range).
+        let events = vec![AaveChunkEvent::StkAaveTransfer {
+            from_user_id: Some(1),
+            to_user_id: None, // ZERO_ADDRESS recipient — the burn leg.
+            amount: alloy::primitives::U256::from_str_radix(
+                "9086624312799369058615",
+                10,
+            )
+            .unwrap(),
+        }];
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 1_000).unwrap();
-            assert_eq!(report.stk_aave_staked, 1);
+            let report =
+                apply_aave_chunk_writes_on_conn(&tx, 1, &events, 17_859_255).unwrap();
+            assert_eq!(report.stk_aave_transfer, 1);
+            tx.commit().unwrap();
+        }
+
+        // The sender's balance is decremented to 0 (mirrors the on-chain
+        // post-burn reality verified via balanceOf at block 17859256).
+        let (_, stk_balance) = user_gho_stk_state(&db, 1);
+        assert_eq!(
+            stk_balance.as_deref(),
+            Some("0"),
+            "burn-to-zero Transfer must decrement the sender's balance to 0"
+        );
+    }
+
+    #[test]
+    fn apply_aave_chunk_writes_on_conn_stk_aave_transfer_from_zero_increments_recipient() {
+        let db = fresh_db();
+        seed_aave_v3_user(&db, 1);
+        // Pre-set stk_aave_balance = NULL (CXRGX4 default — a never-touched user).
+
+        // Transfer(0x0 → user) — the mint-from-zero leg (Staked pattern).
+        let events = vec![AaveChunkEvent::StkAaveTransfer {
+            from_user_id: None, // ZERO_ADDRESS sender — the mint leg.
+            to_user_id: Some(1),
+            amount: alloy::primitives::U256::from(1_234u64),
+        }];
+        {
+            let mut guard = db.lock();
+            let tx = guard.transaction().unwrap();
+            let report =
+                apply_aave_chunk_writes_on_conn(&tx, 1, &events, 1_000).unwrap();
+            assert_eq!(report.stk_aave_transfer, 1);
             tx.commit().unwrap();
         }
 
         let (_, stk_balance) = user_gho_stk_state(&db, 1);
         assert_eq!(
             stk_balance.as_deref(),
-            Some("1000"),
-            "NULL balance treated as 0, then += amount (1000)"
+            Some("1234"),
+            "mint-from-zero Transfer must increment the recipient's balance"
         );
     }
 
     #[test]
-    fn apply_aave_chunk_writes_on_conn_dispatches_stk_aave_redeem() {
+    fn apply_aave_chunk_writes_on_conn_stk_aave_transfer_both_zero_is_noop() {
         let db = fresh_db();
         seed_aave_v3_user(&db, 1);
-        // Pre-set stk_aave_balance = 5000.
-        {
-            let conn = db.lock();
-            conn.execute(
-                "UPDATE aave_v3_users SET stk_aave_balance = '5000' WHERE id = 1",
-                [],
-            )
-            .unwrap();
-        }
-
-        let events = vec![AaveChunkEvent::StkAaveRedeem {
-            user_id: 1,
-            amount: alloy::primitives::U256::from(3_000u64),
+        // Degenerate Transfer(0x0 → 0x0) — neither side mutated, no error.
+        let events = vec![AaveChunkEvent::StkAaveTransfer {
+            from_user_id: None,
+            to_user_id: None,
+            amount: alloy::primitives::U256::from(7u64),
         }];
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 1_000).unwrap();
-            assert_eq!(report.stk_aave_redeem, 1);
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 5_000).unwrap();
+            assert_eq!(report.stk_aave_transfer, 1, "the event still counts — no mutation only");
             tx.commit().unwrap();
         }
 
         let (_, stk_balance) = user_gho_stk_state(&db, 1);
-        assert_eq!(stk_balance.as_deref(), Some("2000"), "5000 - 3000 = 2000");
-    }
-
-    #[test]
-    fn apply_aave_chunk_writes_on_conn_stk_aave_redeem_underflow_errors() {
-        let db = fresh_db();
-        seed_aave_v3_user(&db, 1);
-        // stk_aave_balance = 100; Redeem 200 → underflow → error.
-        {
-            let conn = db.lock();
-            conn.execute(
-                "UPDATE aave_v3_users SET stk_aave_balance = '100' WHERE id = 1",
-                [],
-            )
-            .unwrap();
-        }
-
-        let events = vec![AaveChunkEvent::StkAaveRedeem {
-            user_id: 1,
-            amount: alloy::primitives::U256::from(200u64),
-        }];
-        {
-            let mut guard = db.lock();
-            let tx = guard.transaction().unwrap();
-            let result = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 1_000);
-            assert!(
-                result.is_err(),
-                "redeem underflow must error (Python asserts >=0)"
-            );
-        }
-
-        let (_, stk_balance) = user_gho_stk_state(&db, 1);
-        assert_eq!(
-            stk_balance.as_deref(),
-            Some("100"),
-            "balance untouched on error"
-        );
-        assert_eq!(market_stamp(&db), None, "stamp untouched on rollback");
+        assert_eq!(stk_balance, None, "both-zero Transfer touches nothing");
     }
 
     #[test]
@@ -2728,8 +2733,8 @@ mod tests {
 
         let amount = alloy::primitives::U256::from(3_000u64);
         let events = vec![AaveChunkEvent::StkAaveTransfer {
-            from_user_id: 1,
-            to_user_id: 2,
+            from_user_id: Some(1),
+            to_user_id: Some(2),
             amount,
         }];
         {
@@ -2762,8 +2767,8 @@ mod tests {
         }
 
         let events = vec![AaveChunkEvent::StkAaveTransfer {
-            from_user_id: 1,
-            to_user_id: 2,
+            from_user_id: Some(1),
+            to_user_id: Some(2),
             amount: alloy::primitives::U256::from(200u64),
         }];
         {
@@ -2826,9 +2831,14 @@ mod tests {
         seed_aave_v3_user(&db, 1);
         // Pre-set stk_aave_balance = NULL.
 
+        // Paired with a StkAaveTransfer (mint-from-zero leg — to_user_id=Some(1))
+        // to verify the rollback is all-or-nothing. The StkAaveStaked variant
+        // was retired in the YMWN5V retirement; the mint arm is now a zero-leg
+        // StkAaveTransfer with to_user_id=Some.
         let events = vec![
-            AaveChunkEvent::StkAaveStaked {
-                user_id: 1,
+            AaveChunkEvent::StkAaveTransfer {
+                from_user_id: None, // ZERO_ADDRESS sender (mint-from-zero).
+                to_user_id: Some(1),
                 amount: alloy::primitives::U256::from(500u64),
             },
             AaveChunkEvent::GhoDiscountPercentUpdated {
