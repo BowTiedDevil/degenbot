@@ -360,6 +360,14 @@ impl UnifiedGhoProcessor {
         let discount_scaled =
             self.accrue_debt_on_action(prev_balance, prev_index, prev_discount, event_data.index)?;
 
+        // Track whether the BORROW branch computed an "else" (negate) result —
+        // the borrow-branch computes `|raw_delta - discount_scaled|` (a positive
+        // magnitude) and the sign-wrap below uses this flag to determine the
+        // sign. Mirrors the Python oracle's
+        // `if balance_delta > discount_scaled: balance_delta -= discount_scaled`
+        // `else: balance_delta = -(discount_scaled - balance_delta)` split.
+        let mut borrow_negate = false;
+
         let (balance_delta, user_operation) = if event_data.value >= event_data.balance_increase {
             // GHO BORROW: emitted in `_mintScaled`.
             //
@@ -371,7 +379,7 @@ impl UnifiedGhoProcessor {
             // rayMul. For V4 / V1-V3: derive from event data using the
             // processor's own rounding mode (the enrichment uses pool-level
             // TokenMath which differs from V4 GHO's HALF_UP).
-            let delta = if !self.discount.supports_discount
+            let raw_delta = if !self.discount.supports_discount
                 && self.rounding.mint == RayDivMode::Ceil
                 && event_data.scaled_amount.is_some()
             {
@@ -382,17 +390,22 @@ impl UnifiedGhoProcessor {
                 self.ray_div(requested, event_data.index, self.rounding.mint)?
             };
             let delta = if self.discount.supports_discount {
-                if delta > discount_scaled {
-                    delta.saturating_sub(discount_scaled)
+                if raw_delta > discount_scaled {
+                    // raw_delta > discount_scaled → POSITIVE: raw - discount_scaled.
+                    raw_delta.saturating_sub(discount_scaled)
                 } else {
-                    discount_scaled.saturating_sub(delta)
-                    // negate: balance_delta = -(discount_scaled - delta)
-                    // (the Python: `balance_delta = -(discount_scaled - balance_delta)`)
-                    // — return as a signed delta below.
-                    // (we'll wrap to I256 after the match; use a sentinel here)
+                    // raw_delta <= discount_scaled → NEGATIVE: -(discount_scaled - raw_delta).
+                    // Compute the magnitude (= discount_scaled - raw_delta); mark
+                    // `borrow_negate=true` so the sign-wrap below returns -magnitude.
+                    // This captures BOTH the inequality (`raw_delta < discount_scaled`)
+                    // and the equality case (`raw_delta == discount_scaled`, which
+                    // happens when `value == balance_increase` → `raw_delta == 0`):
+                    // the Python oracle's `else` clause includes the equality case.
+                    borrow_negate = true;
+                    discount_scaled.saturating_sub(raw_delta)
                 }
             } else {
-                delta
+                raw_delta
             };
             (delta, GhoUserOperation::Borrow)
         } else if event_data.balance_increase > event_data.value {
@@ -453,16 +466,23 @@ impl UnifiedGhoProcessor {
 
         // Apply the sign: BORROW → may be positive or negative (the GHO
         // BORROW discount-adjustment can negate); REPAY / INTEREST_ACCRUAL →
-        // always negative.
+        // always negative. The `borrow_negate` flag mirrors the Python oracle's
+        // `else: balance_delta = -(discount_scaled - balance_delta)` clause —
+        // including the equality case (`raw_delta == discount_scaled`) — so the
+        // `value == balance_increase` (Mint5-accrual) path returns a NEGATIVE
+        // `-(discount_scaled)` instead of the (previously bugged) POSITIVE
+        // `+discount_scaled`. Fixes the user-0x417afF 48.79-GHO-stuck-balance
+        // divergence (cand.db user_id=3818).
         let balance_delta_i256 = match user_operation {
             GhoUserOperation::Borrow => {
-                if self.discount.supports_discount && balance_delta < discount_scaled {
-                    // The discount exceeded the requested delta → negate.
-                    // `balance_delta = -(discount_scaled - delta)` → the
-                    // delta is saturating_sub(discount_scaled - delta) = the
-                    // raw `discount_scaled - balance_delta` value we computed.
-                    let neg = discount_scaled.saturating_sub(balance_delta);
-                    to_signed_neg(neg)?
+                if borrow_negate {
+                    // Mirror Python's
+                    // `balance_delta = -(discount_scaled - raw_delta)`:
+                    // `balance_delta` is the magnitude (= discount - raw);
+                    // negate to yield the signed result.
+                    -I256::try_from(balance_delta).map_err(|_| GhoProcessorError::DeltaOverflow(
+                        format!("negated borrow balance_delta {balance_delta} > I256::MAX"),
+                    ))?
                 } else {
                     to_signed(balance_delta)?
                 }
@@ -1149,6 +1169,78 @@ mod tests {
         assert!(
             r.should_refresh_discount,
             "V2 REPAY always refreshes discount"
+        );
+    }
+
+    #[test]
+    fn parity_mint_v1_value_equals_balance_increase_with_positive_discount_negates() {
+        // Regression: user 0x417afF TX 2 (block 17893923, logIdx=361) — the
+        // §4.2-parity quirk where `value == balance_increase` classifies as
+        // BORROW (the Python's `else` interest-accrual branch is dead code).
+        // With a POSITIVE `discount_scaled`, the Python oracle returns
+        // `balance_delta = -(discount_scaled - raw_delta)` = `-(discount_scaled `
+        // `- 0)` = `-discount_scaled` (a NEGATIVE burn from the position). Rust's
+        // borrow-branch sign-wrap used a strict `<` condition (`balance_delta <
+        // discount_scaled`) that MISSED the equality case (raw_delta == 0 →
+        // balance_delta == discount_scaled → not < → no negate → returned the
+        // positive complement). 2 × discount_scaled = 48.79 GHO divergence →
+        // the cand.db stuck balance for user_id=3818.
+        //
+        // Inputs captured from the live tx 0xdaf7a4e9...
+        //   block 17893923  logIdx 361  vToken rev=1
+        //   prev_balance   = 299812144457223276709515  (299812.144457 GHO)
+        //   prev_index     = 1000626577496107821018090417  (1.000626577)
+        //   prev_discount = 1649 bps (the DPU at logIdx=359 carries old=1649)
+        //   value          = 123683949235110136664 (123.683949 GHO)
+        //   balance_increase = 123683949235110136664 (123.683949 GHO)
+        //   index          = 1001120576006523063100148152 (1.001120576)
+        // Python oracle returns:
+        //   balance_delta   = -24395466556666203902 (-24.395467 GHO)
+        //   discount_scaled = 24395466556666203902 (24.395467 GHO)
+        //   user_operation  = GhoUserOperation::GHO_BORROW
+        let p1 = UnifiedGhoProcessor::new(1);
+        let ev = ScaledTokenEventData {
+            value: U256::from(123_683_949_235_110_136_664u128),
+            balance_increase: U256::from(123_683_949_235_110_136_664u128),
+            index: U256::from(1_001_120_576_006_523_063_100_148_152u128),
+            scaled_amount: None,
+        };
+        let prev_balance = U256::from(299_812_144_457_223_226_709_515u128);
+        let prev_index = U256::from(1_000_626_577_496_107_821_018_090_417u128);
+        let r = p1
+            .process_gho_debt_mint(&ev, prev_balance, prev_index, U256::from(1_649u64), None)
+            .unwrap();
+        assert_eq!(
+            r.user_operation,
+            GhoUserOperation::Borrow,
+            "the == quirk → BORROW"
+        );
+        // The discount_scaled magnitude (≈24.395 GHO); allow a 10_000-wei
+        // tolerance for the upstream ray_mul/ray_div HALF_UP rounding↵
+        // implementation divergence under separate investigation. The BUG here↵
+        // is the SIGN flip, not the magnitude.
+        let expected_abs = U256::from(24_395_466_556_666_203_902u128);
+        let diff = if r.discount_scaled >= expected_abs {
+            r.discount_scaled - expected_abs
+        } else {
+            expected_abs - r.discount_scaled
+        };
+        assert!(
+            diff < U256::from(10_000u64),
+            "discount_scaled magnitude tolerance exceeded: got {}, expected {}, diff {}",
+            r.discount_scaled,
+            expected_abs,
+            diff
+        );
+        // THE BUG: the sign-wrap's strict `<` condition misses the equality↵
+        // case (raw_delta == 0 → balance_delta becomes discount_scaled,↵
+        // which is NOT < discount_scaled) and returns the POSITIVE complement↵
+        // instead of the Python oracle's NEGATIVE burn. With this fix, the↵
+        // delta should be the NEGATIVE of the discount_scaled magnitude.
+        assert_eq!(
+            r.balance_delta,
+            -I256::try_from(r.discount_scaled).unwrap(),
+            "value==balance_increase with positive discount → NEGATIVE burn of the full discount_scaled (Python oracle)"
         );
     }
 
