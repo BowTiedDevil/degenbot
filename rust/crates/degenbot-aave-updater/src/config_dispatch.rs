@@ -324,65 +324,31 @@ pub fn dispatch_discount_percent_updated(
     })
 }
 
-/// `Staked(from, onBehalfOf, amount)` → [`AaveChunkEvent::StkAaveStaked`].
-/// Mirrors `stkaave.process_stk_aave_transfer_event` (the `to_user` path; the
-/// Python `Transfer(from=0, to=X)` mint arm — a `Staked` event coincides with
-/// a mint `Transfer`, so the Rust processes the semantic `Staked` eventwhile
-/// the Python processes the coinciding `Transfer`; both increment the
-/// recipient's balance by `amount`). The balance increments on `onBehalfOf`
-/// (the recipient — topic[2]). The fetch (`fetch_stk_aave_logs`) filters logs
-/// to `gho_asset.v_gho_discount_token`, so no emitter-validation guard is
-/// needed (mirrors `dispatch_discount_percent_updated`, which also skips it).
-pub fn dispatch_stk_aave_staked(
-    market_id: i64,
-    block_number: u64,
-    decoded: &degenbot_decoders::aave_event_decoder::StakedEvent,
-    conn: &Connection,
-) -> Result<AaveChunkEvent, ConfigDispatchError> {
-    let user_str = checksum(&decoded.on_behalf_of);
-    let user_id = DegenbotDb::get_or_create_user_on_conn(conn, market_id, &user_str, 0)?;
-    let _ = block_number;
-    Ok(AaveChunkEvent::StkAaveStaked {
-        user_id,
-        amount: decoded.amount,
-    })
-}
-
-/// `Redeem(from, to, amount)` → [`AaveChunkEvent::StkAaveRedeem`].
-/// Mirrors `stkaave.process_stk_aave_transfer_event` (the `from_user` path;
-/// the Python `Transfer(from=X, to=0)` burn arm — a `Redeem` event coincides
-/// with a burn `Transfer`). The balance decrements on `from` (the redeemer —
-/// topic[1]).
-pub fn dispatch_stk_aave_redeem(
-    market_id: i64,
-    block_number: u64,
-    decoded: &degenbot_decoders::aave_event_decoder::RedeemEvent,
-    conn: &Connection,
-) -> Result<AaveChunkEvent, ConfigDispatchError> {
-    let user_str = checksum(&decoded.from);
-    let user_id = DegenbotDb::get_or_create_user_on_conn(conn, market_id, &user_str, 0)?;
-    let _ = block_number;
-    Ok(AaveChunkEvent::StkAaveRedeem {
-        user_id,
-        amount: decoded.amount,
-    })
-}
-
 /// Discount-token (stkAAVE) ERC20 `Transfer(from, to, value)` →
-/// [`AaveChunkEvent::StkAaveTransfer`] (the user-to-user, neither-zero case
-/// only). Mirrors `stkaave.process_stk_aave_transfer_event` (the both-legs
-/// path: `from -= value` AND `to += value`).
+/// [`AaveChunkEvent::StkAaveTransfer`] — the canonical + only stkAAVE
+/// balance-mutation channel. Mirrors `stkaave.process_stk_aave_transfer_event`
+/// EXACTLY: processes EVERY Transfer event (including both zero-leg arms),
+/// treating `from == ZERO_ADDRESS` / `to == ZERO_ADDRESS` as a half-event
+/// (skip the zero side, always mutate the real user) via `Option<i64>`
+/// user_ids that are `None` iff the corresponding address is `ZERO_ADDRESS`.
 ///
-/// Scoping + dedupe boundary (S3X2I2):
+/// Scoping:
 /// - Returns `None` if the emitter is NOT `gho_asset.v_gho_discount_token` —
 ///   aToken/vToken/scaled-token Transfers are handled by the ops path
 ///   (`process_transaction`); only the stkAAVE discount token is this fn's
 ///   scope (matches the Python `assert contract_address == discount_token`).
-/// - Returns `None` if `from` OR `to` is the zero address: the mint
-///   (`Transfer(0→X)`) + burn (`Transfer(X→0)`) arms coincide with the
-///   `Staked`/`Redeem` semantic events (YMWN5V, [`dispatch_stk_aave_staked`]/
-///   [`dispatch_stk_aave_redeem`]); processing the zero-leg here would
-///   DOUBLE-COUNT.
+///
+/// YMWN5V retirement (crash #3): the prior design dedupe-skipped the zero-leg
+/// here + processed the paired `Staked`/`Redeem` semantic events via separate
+/// dispatch fns. That required an empirically-falsified invariant — every
+/// zero-leg Transfer must pair with a semantic event. Some actions emit ONLY
+/// the `Transfer(X→0)` event with no paired `Redeem` (verified via cast logs
+/// across the 16.59M→18M range), leaving the sender's `stk_aave_balance`
+/// stuck at its pre-burn cache value → wrong `calculate_gho_discount_rate`
+/// → GHO-burn delta overshoots `prev_scaled_balance` → crashes. The dispatch
+/// handlers are now retired (the Python never processed Staked/Redeem for
+/// balance mutation — they're fetched only for classification in
+/// `fetch_stk_aave_events`); all balance mutation flows through this fn now.
 pub fn dispatch_stk_aave_transfer(
     market_id: i64,
     block_number: u64,
@@ -404,19 +370,44 @@ pub fn dispatch_stk_aave_transfer(
     if decoded.token_address != discount_token {
         return Ok(None); // not a stkAAVE Transfer → the ops path handles it.
     }
-    // Dedupe boundary: skip the mint (from=0) + burn (to=0) legs — they
-    // coincide with Staked/Redeem semantic events (YMWN5V).
-    if decoded.from == Address::ZERO || decoded.to == Address::ZERO {
-        return Ok(None);
-    }
     // Matches the Python `if from_address == to_address: return`.
     if decoded.from == decoded.to {
         return Ok(None);
     }
-    let from_str = checksum(&decoded.from);
-    let from_user_id = DegenbotDb::get_or_create_user_on_conn(conn, market_id, &from_str, 0)?;
-    let to_user_id =
-        DegenbotDb::get_or_create_user_on_conn(conn, market_id, &checksum(&decoded.to), 0)?;
+    // Half-event handling for the zero-leg (YMWN5V retirement): skip the
+    // ZERO_ADDRESS side, always resolve + mutate the real user. Mirrors
+    // `process_stk_aave_transfer_event` — the Python skips ZERO_ADDRESS
+    // entirely (`from_user=None`/`to_user=None` collapses to a no-op on that
+    // side). The prior design dedupe-skipped the zero-leg here + processed the
+    // paired Staked/Redeem semantic events (those dispatch fns are now
+    // retired); that required an empirically-falsified invariant — every
+    // zero-leg Transfer must pair with a semantic event. Some actions emit
+    // ONLY the `Transfer(X→0)` event with no paired `Redeem` (verified via
+    // cast logs across the 16.59M→18M range), leaving the sender's balance
+    // stuck at the pre-burn cache value → wrong `calculate_gho_discount_rate`
+    // → GHO-burn delta overshoots `prev_scaled_balance` → crash #3.
+    let from_user_id = if decoded.from == Address::ZERO {
+        None // the mint-from-zero leg — skipped at apply.
+    } else {
+        Some(DegenbotDb::get_or_create_user_on_conn(
+            conn,
+            market_id,
+            &checksum(&decoded.from),
+            0,
+        )?)
+    };
+    let to_user_id = if decoded.to == Address::ZERO {
+        None // the burn-to-zero leg — skipped at apply.
+    } else {
+        Some(DegenbotDb::get_or_create_user_on_conn(
+            conn,
+            market_id,
+            &checksum(&decoded.to),
+            0,
+        )?)
+    };
+    // The degenerate `Transfer(0x0 → 0x0)` lands both `None` (no real user) —
+    // still emitted (counts as processed) but the apply is a no-op.
     Ok(Some(AaveChunkEvent::StkAaveTransfer {
         from_user_id,
         to_user_id,
@@ -929,16 +920,16 @@ async fn dispatch_single_config_event(
                     .await?,
                 )
             }
-            // ── the 2 sync stkAAVE handlers (YMWN5V: wired the Staked/Redeem
-            // arms — previously fell to `_` → `Ok(None)`) ──
-            DecodedAaveEvent::Staked(ev) => {
-                Some(dispatch_stk_aave_staked(market_id, block_number, ev, conn)?)
-            }
-            DecodedAaveEvent::Redeem(ev) => {
-                Some(dispatch_stk_aave_redeem(market_id, block_number, ev, conn)?)
-            }
-            // ── S3X2I2: the stkAAVE `Transfer` arm (neither-zero; scoped to the
-            // discount token; dedupe-skip the mint/burn legs). ──
+            // ── stkAAVE Staked/Redeem semantic events: NO balance-mutation
+            // dispatch. YMWN5V-retired (crash #3): the prior design processed
+            // these as proxies for the zero-leg Transfers; the Python never
+            // did (Staked/Redeem are fetched only for classification in
+            // `fetch_stk_aave_events`). The decoders stay (harmless, available
+            // for future classification) — what goes is the balance-mutation
+            // proxy. Balance mutation flows through the Transfer arm below. ──
+            DecodedAaveEvent::Staked(_) | DecodedAaveEvent::Redeem(_) => None,
+            // ── stkAAVE `Transfer` arm (covers the zero-leg arms + the
+            // neither-zero case via Option<i64>; scoped to the discount token). ──
             DecodedAaveEvent::Erc20Transfer(ev) => {
                 dispatch_stk_aave_transfer(market_id, block_number, ev, gho_asset, conn)?
             }
