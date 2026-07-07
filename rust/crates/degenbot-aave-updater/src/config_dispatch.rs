@@ -467,6 +467,60 @@ pub fn dispatch_discount_rate_strategy_updated(
     }))
 }
 
+/// [`dispatch_discount_token_updated`] wrapper that re-resolves the GHO vToken
+/// address FRESH from `conn` before the emitter-validation guard
+/// (read-your-own-writes — a same-tx `ReserveInitialized` at an earlier
+/// logIndex links `v_token_id` AFTER the per-tx `gho_asset` snapshot was
+/// taken, so the snapshot's `v_token_address` is stale `None` → the guard
+/// would skip the INITIAL-set event where `old=None→stkAAVE`). Mirrors
+/// Python's live ORM (`gho_asset.v_token` lazy-loads the just-applied FK).
+/// The `gho_asset` param is the None-guard (no GHO market row at tx start
+/// = skip).
+fn dispatch_discount_token_updated_with_fresh_resolution(
+    gho_asset: Option<&AaveGhoAsset>,
+    ev: &degenbot_decoders::aave_event_decoder::DiscountTokenUpdatedEvent,
+    conn: &Connection,
+    chain_id: i64,
+) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
+    // None-guard: no GHO market row at tx start = skip (the chain-wide fetch
+    // can surface events from chains without a seeded GHO market).
+    if gho_asset.is_none() {
+        return Ok(None);
+    }
+    // Re-resolve FRESH from conn (read-your-own-writes — a same-tx
+    // `ReserveInitialized` at an earlier logIndex links `v_token_id` AFTER the
+    // per-tx snapshot was taken, so the snapshot's `v_token_address` is stale
+    // `None` → the guard would skip the INITIAL-set event where
+    // `old=None→stkAAVE`). Mirrors Python's live ORM (`gho_asset.v_token`
+    // lazy-loads the just-applied FK). The discount-config events are rare
+    // (a handful over the whole drive), so the per-event conn lookup is
+    // negligible.
+    let fresh = DegenbotDb::fetch_aave_gho_asset_on_conn(conn, chain_id)?;
+    match fresh.as_ref() {
+        Some(g) => dispatch_discount_token_updated(g, ev),
+        None => Ok(None),
+    }
+}
+
+/// [`dispatch_discount_rate_strategy_updated`] wrapper with the same
+/// read-your-own-writes re-resolution as
+/// [`dispatch_discount_token_updated_with_fresh_resolution`] — see its docs.
+fn dispatch_discount_rate_strategy_updated_with_fresh_resolution(
+    gho_asset: Option<&AaveGhoAsset>,
+    ev: &degenbot_decoders::aave_event_decoder::DiscountRateStrategyUpdatedEvent,
+    conn: &Connection,
+    chain_id: i64,
+) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
+    if gho_asset.is_none() {
+        return Ok(None);
+    }
+    let fresh = DegenbotDb::fetch_aave_gho_asset_on_conn(conn, chain_id)?;
+    match fresh.as_ref() {
+        Some(g) => dispatch_discount_rate_strategy_updated(g, ev),
+        None => Ok(None),
+    }
+}
+
 // ── the 2 async RPC handlers ───────────────────────────────────────────────
 
 /// `CollateralConfigurationChanged(asset)` →
@@ -835,14 +889,16 @@ async fn dispatch_single_config_event(
             DecodedAaveEvent::DiscountPercentUpdated(ev) => Some(
                 dispatch_discount_percent_updated(market_id, block_number, ev, conn)?,
             ),
-            DecodedAaveEvent::DiscountTokenUpdated(ev) => match gho_asset {
-                Some(g) => dispatch_discount_token_updated(g, ev)?,
-                None => None,
-            },
-            DecodedAaveEvent::DiscountRateStrategyUpdated(ev) => match gho_asset {
-                Some(g) => dispatch_discount_rate_strategy_updated(g, ev)?,
-                None => None,
-            },
+            DecodedAaveEvent::DiscountTokenUpdated(ev) => {
+                dispatch_discount_token_updated_with_fresh_resolution(
+                    gho_asset, ev, conn, chain_id,
+                )?
+            }
+            DecodedAaveEvent::DiscountRateStrategyUpdated(ev) => {
+                dispatch_discount_rate_strategy_updated_with_fresh_resolution(
+                    gho_asset, ev, conn, chain_id,
+                )?
+            }
             // ── the 2 async RPC handlers ──
             DecodedAaveEvent::CollateralConfigurationChanged(ev) => Some(
                 resolve_collateral_configuration(
@@ -1977,6 +2033,84 @@ mod tests {
             v_token_address: v_token_address.map(str::to_string),
             v_gho_discount_rate_strategy: None,
             v_gho_discount_token: None,
+        }
+    }
+
+    /// Discount-config gap (fork A, post-WCRWL3): the per-tx `gho_asset`
+    /// snapshot is taken BEFORE the same-tx `ReserveInitialized` (which links
+    /// `v_token_id`) applies. The `dispatch_discount_token_updated` guard
+    /// checks `v_token_address` (resolved from the FK) — with the stale
+    /// snapshot it's `None` → the INITIAL-set event (old=None→stkAAVE) is
+    /// SKIPPED. The `_with_fresh_resolution` wrapper re-resolves from `conn`
+    /// (read-your-own-writes, mirrors Python's live ORM) so the guard sees
+    /// the just-linked FK. On mainnet both events fire in tx 0xae8e542d… at
+    /// block 17699249 (ReserveInitialized logIdx 85, DiscountTokenUpdated
+    /// logIdx 91) — same tx, so the per-tx snapshot is necessarily stale.
+    #[test]
+    fn discount_token_updated_fresh_resolution_sees_intra_tx_v_token_link() {
+        let (db, _state) = DegenbotDb::open_for_writes(Path::new(":memory:")).unwrap();
+        let gho_vtoken = Address::from([0xa0; 20]);
+        let new_discount_token = Address::from([0xc; 20]);
+        let addr_str =
+            |a: Address| degenbot_core::address_utils::address_to_checksum_string(&a);
+        {
+            let conn = db.lock();
+            conn.execute(
+                "INSERT INTO aave_v3_markets (id, chain_id, name, active, last_update_block) \
+                 VALUES (1, 1, 'm', 1, NULL)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES \
+                 (10, 1, ?1), (11, 1, ?2)",
+                params![addr_str(Address::ZERO), addr_str(gho_vtoken)],
+            )
+            .unwrap();
+            // aave_gho_tokens row with v_token_id=NULL — the pre-
+            // ReserveInitialized coldboot state.
+            conn.execute(
+                "INSERT INTO aave_gho_tokens (id, token_id, v_token_id) VALUES (1, 10, NULL)",
+                [],
+            )
+            .unwrap();
+        }
+        // The STALE per-tx snapshot: resolved BEFORE ReserveInitialized
+        // applied → v_token_address is None (v_token_id is NULL).
+        let conn = db.lock();
+        let stale = DegenbotDb::fetch_aave_gho_asset_on_conn(&conn, 1)
+            .unwrap()
+            .expect("GHO asset row seeded");
+        assert_eq!(
+            stale.v_token_address,
+            None,
+            "pre-link snapshot: v_token_address None (v_token_id NULL)"
+        );
+        // Simulate the same-tx ReserveInitialized apply (links v_token_id=11).
+        conn.execute("UPDATE aave_gho_tokens SET v_token_id = 11 WHERE id = 1", [])
+            .unwrap();
+        let ev = DiscountTokenUpdatedEvent {
+            v_token_address: gho_vtoken, // the GHO vToken emitter
+            old_discount_token: Address::ZERO, // the INITIAL set (old=None)
+            new_discount_token,
+        };
+        // The wrapper re-resolves from conn → sees the link → guard passes.
+        let r = dispatch_discount_token_updated_with_fresh_resolution(
+            Some(&stale),
+            &ev,
+            &conn,
+            1,
+        )
+        .unwrap();
+        match r {
+            Some(AaveChunkEvent::GhoDiscountTokenUpdated {
+                gho_token_id,
+                new_discount_token: ndt,
+            }) => {
+                assert_eq!(gho_token_id, 1);
+                assert_eq!(ndt.as_deref(), Some(addr_str(new_discount_token).as_str()));
+            }
+            other => panic!("expected Some(GhoDiscountTokenUpdated), got {other:?}"),
         }
     }
 
