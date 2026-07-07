@@ -806,7 +806,7 @@ pub fn apply_aave_chunk_writes_on_conn(
 
 // ── the outer chunk loop (RPC-bound; the §4.4 atomicity owner — 6SWY4R-3) ──
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -818,7 +818,8 @@ use degenbot_db::DbError;
 use degenbot_rpc::provider::{AlloyProvider, LogFetcher};
 
 use crate::aave_fetch::{
-    fetch_aave_chunk_logs, fetch_scaled_token_logs, sort_logs_by_block_and_index, AaveFetchSpec,
+    fetch_aave_chunk_logs, fetch_discount_config_logs, fetch_reserve_init_logs,
+    fetch_scaled_token_logs, sort_logs_by_block_and_index, AaveFetchSpec,
 };
 use crate::config_dispatch::{
     build_discount_snapshot, dispatch_config_events, match_proxy_id, ConfigDispatchError,
@@ -1070,6 +1071,111 @@ async fn bootstrap_pool_contracts(
     Ok(())
 }
 
+/// Drive-start \"discount-config pre-pass\" — mirrors Python's
+/// `update_aave_market` Phase 2 (`fetch_reserve_initialization_events` +
+/// `_process_asset_initialization_event`) + Phase 3 pre-light
+/// (`for event in discount_config_events:\n    if topic == DISCOUNT_TOKEN_UPDATED:\n        _process_discount_token_updated_event(...)`).
+///
+/// The pre-pass fetches ALL `ReserveInitialized` events (from the configurator
+/// contract) + ALL `discount_config` events (chain-wide) over the drive range,
+/// dispatches them in `(block_number, log_index)` order in ONE transaction,
+/// commits. After the commit, the chunk loop's `build_fetch_spec` / per-chunk
+/// `spec.stk_aave_address` refresh (GJXURV) reads the populated
+/// `v_gho_discount_token` from DB → `fetch_stk_aave_logs` returns the chunk's
+/// actual stkAAVE Transfer events from chunk 1 (no more cold-boot-`None`
+/// short-circuit).
+///
+/// See the inline call-site in [`run_aave_update`] for the divergence
+/// analysis (Crash #5 / stale-snapshot-at-startup recurring pattern: crash #1
+/// + (A) + crash #4 GJXURV-bug-1 + this one).
+///
+/// `v_token_id` (linked by `ReserveInitialized`) MUST land before
+/// `DiscountTokenUpdated` because `dispatch_discount_token_updated_with_fresh_resolution`'s
+/// emitter-guard compares `gho_asset.v_token_address` to the event's emitter
+/// (and `v_token_address` is `None` until `v_token_id` is linked).
+/// `dispatch_config_events`'s intra-dispatch apply (I2RHGP Fix 2c) writes
+/// `v_token_id` to `conn` in the fsame transaction BEFORE the
+/// `DiscountTokenUpdated` event's dispatch reads it back — the same
+/// read-your-owns invariant holds in this pre-pass single-tx flow.
+#[allow(
+    clippy::await_holding_lock, // mirrors `process_chunk_on_conn`'s allow
+    clippy::too_many_arguments
+)]
+async fn prime_gho_discount_config(
+    db: &DegenbotDb,
+    provider: &AlloyProvider,
+    fetcher: &LogFetcher,
+    market_id: i64,
+    chain_id: i64,
+    pool_address: Address,
+    configurator_address: Address,
+    oracle_address: Option<Address>,
+    from_block: u64,
+    to_block: u64,
+) -> Result<(), RunError> {
+    use degenbot_decoders::aave_event_decoder::{
+        DISCOUNT_RATE_STRATEGY_UPDATED_TOPIC, DISCOUNT_TOKEN_UPDATED_TOPIC, RESERVE_INITIALIZED_TOPIC,
+    };
+    // 1. Fetch chain-wide ReserveInitialized (via the configurator) +
+    //    discount-config events for the full drive range.
+    let mut pre_logs =
+        fetch_reserve_init_logs(fetcher, from_block, to_block, configurator_address).await?;
+    pre_logs.extend(fetch_discount_config_logs(fetcher, from_block, to_block).await?);
+    // Retain ONLY the 3 event kinds the pre_pass needs (the dispatch path
+    // also handles `CollateralConfigurationChanged` / `EmodeCategoryAdded` /
+    // etc., but those don't affect `v_token_id` / `v_gho_discount_token` —
+    // processing them eagerly risks ordering races + doubles RPC / DB load).
+    pre_logs.retain(|log| {
+        let Some(t0) = log.topics().first() else { return false };
+        t0 == &RESERVE_INITIALIZED_TOPIC
+            || t0 == &DISCOUNT_TOKEN_UPDATED_TOPIC
+            || t0 == &DISCOUNT_RATE_STRATEGY_UPDATED_TOPIC
+    });
+    if pre_logs.is_empty() {
+        return Ok(());
+    }
+    sort_logs_by_block_and_index(&mut pre_logs);
+
+    // 2. Open ONE transaction; dispatch each event-group-by-block (the
+    //    `dispatch_config_events` block_number param is the RPC
+    //    `block_identifier`, so any indivisible block-group MUST use one
+    //    consistent block_number per call).
+    let mut guard = db.lock();
+    let tx = guard.transaction().map_err(DbError::from)?;
+
+    let mut block_to_logs: BTreeMap<u64, Vec<&Log>> = BTreeMap::new();
+    for log in &pre_logs {
+        let Some(bn) = log.block_number else {
+            continue;
+        };
+        block_to_logs.entry(bn).or_default().push(log);
+    }
+
+    for (block_number, logs) in &block_to_logs {
+        // `dispatch_config_events` already re-resolves `gho_asset` per-event
+        // (`dispatch_*_with_fresh_resolution` reads `conn`); passing the
+        // pre-call snapshot is for the `None` {}guard (skip dispatch if no
+        // GHO market row exists at all). The pre-call snapshot is fine even
+        // if the GHO asset is mutated within the transaction.
+        let gho_asset = DegenbotDb::fetch_aave_gho_asset_on_conn(&tx, chain_id)?;
+        dispatch_config_events(
+            provider,
+            logs,
+            market_id,
+            chain_id,
+            &tx,
+            pool_address,
+            oracle_address,
+            gho_asset.as_ref(),
+            *block_number,
+        )
+        .await?;
+    }
+
+    tx.commit().map_err(DbError::from)?;
+    Ok(())
+}
+
 /// Resolve the [`AaveFetchSpec`] for `market_id`: the `POOL`/
 /// `POOL_CONFIGURATOR` / `POOL_ADDRESS_PROVIDER` / `PRICE_ORACLE` contract
 /// addresses (from `aave_v3_contracts`), the chain's aToken+vToken addresses, + the GHO
@@ -1263,6 +1369,59 @@ pub fn run_aave_update(
     let (mut spec, _gho_asset) = build_fetch_spec(&db, market_id, chain_id)?;
     let pool_address = spec.pool_address;
     let oracle_address = spec.oracle_address;
+    let configurator_address = spec.configurator_address;
+
+    // ── Crash #5: discount-config pre-pass ────────────────────────────────
+    // Faithful port of Python's `update_aave_market` Phase 2 + Phase 3
+    // pre-light. Python's single-shot drive fetches ALL `discount_config`
+    // events + ALL `ReserveInitialized` events for the drive range, processes
+    // them in (block, log_index) order BEFOREHS fetching `stk_aave_events`
+    // (`gho_asset.v_gho_discount_token` is populated before the fetch so
+    // `fetch_stk_aave_events` returns the chunk's actual stkAAVE Transfers).
+    //
+    // Rust chunks by 10k blocks (ADR-008 atomicity). For chunks BEFORE the
+    // `DiscountTokenUpdated` event's block (mainnet: 17699249 — the GHO vToken
+    // deployment + initial discount config), `spec.stk_aave_address` (read by
+    // `build_fetch_spec` + the GJXURV per-chunk refresh) is `None` —
+    // `fetch_stk_aave_logs` short-circuits to an empty Vec → ~1,600 chunks x
+    // ~2 stkAAVE events per chunk = ~3,000 users' Staked-via-Transfer legs
+    // never fetched → user row NEVER created (the (C) refresh is the sole
+    // writer on `stk_aave_balance`, but it only fires for users with GHO
+    // debt mint/burn events — users whose first stkAAVE touch is a
+    // GHO-unrelated Staked@T are silently missed).
+    //
+    // Mirrors Python's exact ordering: apply ReserveInitialized events
+    // (which link `aave_gho_tokens.v_token_id` — the FK the discount-token
+    // dispatch's emitter-guard compares against) BEFORE DiscountTokenUpdated /
+    // DiscountRateStrategyUpdated events. `dispatch_config_events` intra-
+    // dispatches apply each event (I2RHGP Fix 2c), so the discount-token
+    // guard emits after `v_token_id` is set in the same pre-pass tx.
+    //
+    // Idempotency (preserved through the chunk loop's per-tx re-dispatch):
+    //   - `ReserveInitialized`: `get_or_create_erc20_token_on_conn` returns
+    //     the existing id; `upsert_aave_asset` UPDATE-keyed on
+    //     `(market_id, underlying_asset_id)` overwrites the same values.
+    //   - `DiscountTokenUpdated` / `DiscountRateStrategyUpdated`: the
+    //     `apply_*_on_conn` UPDATE overwrites the same new token/strategy.
+    rt.block_on(prime_gho_discount_config(
+        &db,
+        &provider,
+        &fetcher,
+        market_id,
+        chain_id,
+        pool_address,
+        configurator_address,
+        oracle_address,
+        from_block,
+        last_block,
+    ))?;
+    // Re-resolve pech spec after the pre-pass commit (sees v_token_id
+    // populated from pre-pass for the chunk loop's first chunk).`spec.stk_aave_address`
+    // is already refreshed per-chunk via GJXURV, so this isn't strictly needed
+    // — but it keeps the `build_fetch_spec` snapshot from being a stale
+    // no-op front-door for any future reader that trusts it.
+    let (spec2, _gho_asset2) = build_fetch_spec(&db, market_id, chain_id)?;
+    spec = spec2;
 
     let mut report = AaveUpdateReport {
         chain_id,
