@@ -1365,15 +1365,75 @@ fn dispatch_deficit_coverage(
 ) -> Result<(), ProcessTxError> {
     let mut scaled: Vec<&ScaledTokenEvent> = op.scaled_events.iter().collect();
     scaled.sort_by_key(|e| e.log_index);
-    // Two-pass: transfers first (credit), then burns (debit).
+    // Two-pass: transfers first (credit), then burns (debit). Mirrors
+    // Python's `_process_deficit_coverage_operation` — which calls
+    // `_process_collateral_transfer` for each transfer event. Python's
+    // `_process_collateral_transfer` runs `_should_skip_collateral_transfer`
+    // (the BT variant `CollateralTransfer` is in `op.balance_transfer_events`
+    // → Rule 1 skips it; only the unscaled ERC20 `Erc20CollateralTransfer` is
+    // processed) + `_match_paired_balance_transfer` (which resolves the
+    // ERC20 Transfer's paired `BalanceTransfer` log + uses the BT's SCALED
+    // value — NOT the unscaled ERC20 amount).
+    //
+    // Crash #9 root cause: pre-fix this dispatch processed BOTH transfer
+    // variants (`CollateralTransfer` (BT, scaled value) +
+    // `Erc20CollateralTransfer` (ERC20 Transfer, UNSCALED value)) with
+    // `scaled_amount = ev.amount`. The double-application applied
+    // `unscaled + scaled` deltas — when the unscaled amount exceeded the
+    // position's scaled balance, the uint128-negative guard fired (the
+    // balance is uint128 on-chain — see AToken.rev_1.sol:1714, linearity
+    // checked; this guard is CORRECT and must STAY).
+    //
+    // Fix (faithful-mirror parity, class (i)):
+    //   - SKIP the `CollateralTransfer` (BT) variant entirely (Python's
+    //     `Rule 1` — the BT log is also in `op.balance_transfer_events`,
+    //     paired with the ERC20 Transfer that handles the delta).
+    //   - For the `Erc20CollateralTransfer` event, pair with the BT log via
+    //     `op.balance_transfer_events` (mirrors `dispatch_balance_transfer`'s
+    //     `find_map` lookup — same matching `bt_token + bt_from + bt_to`),
+    //     then `override_transfer_with_paired_bt` to override scaled_amount
+    //     with the BT's scaled value + transfer_index with the BT's index.
+    //   - The deficit-coverage Burn still goes through the burn path below.
     for ev in &scaled {
         if matches!(
             ev.event_type,
             ScaledTokenEventType::CollateralTransfer
                 | ScaledTokenEventType::Erc20CollateralTransfer
         ) {
-            // The transfer's `amount` IS the scaled value (no enrichment).
-            let chunk_event = build_scaled_event_chunk_event(ev, op, ev.amount, market_id, conn)?;
+            // The `CollateralTransfer` (BT) variant — Python's
+            // `_should_skip_collateral_transfer` Rule 1: it's already in
+            // `op.balance_transfer_events` (the orchestrator's `create_deficit_coverage_operations`
+            // inserts `bt_events` exactly from the BT-variant events). The
+            // paired ERC20 Transfer handles the delta via the BT pair below.
+            if ev.event_type == ScaledTokenEventType::CollateralTransfer {
+                continue;
+            }
+            // The `Erc20CollateralTransfer` (ERC20 Transfer, unscaled) — pair
+            // with the BT log in `op.balance_transfer_events` (same matching
+            // as `dispatch_balance_transfer`'s `find_map` lookup — `bt_token +
+            // bt_from + bt_to`; the BT log is the DeficitCoverage's
+            // middle-inserted paired BT).
+            let bt_pair =
+                op.balance_transfer_events
+                    .iter()
+                    .find_map(|bt_log| match decode_balance_transfer_log(bt_log) {
+                        Some((bt_from, bt_to, bt_token, bt_value, bt_index))
+                            if bt_token == ev.token_address
+                                && bt_from == ev.from_address.unwrap_or(ev.user_address)
+                                && bt_to == ev.target_address.unwrap_or_default() =>
+                        {
+                            Some((bt_value, bt_index))
+                        }
+                        _ => None,
+                    });
+            let raw_amount = ev.amount;
+            let transfer_index = match bt_pair {
+                Some((_, idx)) => idx,
+                None => ev.index.unwrap_or_default(),
+            };
+            let chunk_event = build_scaled_event_chunk_event(ev, op, raw_amount, market_id, conn)?;
+            let chunk_event =
+                override_transfer_with_paired_bt(chunk_event, bt_pair, raw_amount, transfer_index);
             events.push(chunk_event);
         }
     }
@@ -1952,5 +2012,267 @@ mod tests {
             }
             other => panic!("expected ScaledTokenMint, got {other:?}"),
         }
+    }
+
+    /// Crash #9 RED→GREEN: `dispatch_deficit_coverage` must mirror Python's
+    /// `_process_deficit_coverage_operation` — the `CollateralTransfer` (BT
+    /// variant, with `.index` set) is SKIPPED (Python's
+    /// `_should_skip_collateral_transfer` Rule 1 — the BT log is in
+    /// `op.balance_transfer_events`, paired with the `Erc20CollateralTransfer`
+    /// that handles the delta), and the `Erc20CollateralTransfer` event is
+    /// paired with the BT log via `decode_balance_transfer_log` lookup
+    /// (mirrors `dispatch_balance_transfer`'s `find_map` +
+    /// `override_transfer_with_paired_bt`) — its `scaled_amount` is the BT's
+    /// SCALED value, NOT the unscaled ERC20 Transfer amount.
+    ///
+    /// Pre-fix this dispatched BOTH the `Erc20CollateralTransfer` (unscaled
+    /// `ev.amount`) AND the `CollateralTransfer` (BT, scaled `ev.amount`)
+    /// chunk_events — the unscaled amount `168401963` over-debited the
+    /// position's scaled balance `148831960` and the uint128-negative guard
+    /// fired (the guard STAYS — on-chain `UserState.balance` is uint128,
+    /// `AToken.rev_1.sol:1712`).
+    #[test]
+    fn dispatch_deficit_coverage_pairs_erc20_transfer_with_paired_balance_transfer() {
+        use degenbot_decoders::aave_event_decoder::BALANCE_TRANSFER_TOPIC;
+        use degenbot_core::address_utils::address_to_checksum_string;
+        use degenbot_evm_math::RAY;
+        use rusqlite::params;
+        let db = fresh_db_with_asset();
+        let a_token = Address::from([0x98; 20]);
+        let a_token_str = address_to_checksum_string(&a_token);
+        {
+            let conn = db.lock();
+            // Replace the seeded asset row (which has aToken at '0xatoken' —
+            // a non-hex placeholder) with a real 20-byte aToken address so
+            // `lookup_asset_by_token_address_on_conn` matches `addr_to_hex`.
+            conn.execute("DELETE FROM aave_v3_assets WHERE id=1", []).unwrap();
+            conn.execute(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES (4, 1, ?1)",
+                params![a_token_str],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO aave_v3_assets \
+                    (id, market_id, underlying_asset_id, a_token_id, a_token_revision, \
+                     v_token_id, v_token_revision, liquidity_index, liquidity_rate, \
+                     borrow_index, borrow_rate) \
+                 VALUES (1, 1, 1, 4, 1, 3, 1, ?1, '0', '0', '0')",
+                params![RAY.to_string()],
+            )
+            .unwrap();
+        }
+        let user = Address::from([0x53; 20]);
+        let recipient = Address::from([0xD4; 20]);
+        let index = U256::from(1_131_490_601_199_816u64) * RAY; // a real liquidity index
+        // The unscaled ERC20 Transfer amount (= the underlying deposit transfer).
+        // 168401963 / index ≈ 148831959 — the unscaled amount EXCEEDS the
+        // user's scaled balance (148831960) by the difference between the
+        // unscaled + the scaled: `168401963 - 148831959 = 19_570_004` → the
+        // uint128 guard fires pre-fix.
+        let unscaled_amount = U256::from(168_401_963u64);
+        let bt_scaled = U256::from(148_831_959u64);
+
+        // 1) Build the ERC20 Transfer event log (idx 214) — pre-fix this
+        // was the source of `ev.amount = unscaled_amount` for the crash.
+        // The Transfer log has 3 indexed topics + 32-byte data. (For the
+        // Erc20CollateralTransfer variant the parser does NOT read the
+        // topics' order precedence, but constructs the `ScaledTokenEvent`
+        // with the decoded fields.)
+        let transfer_log = Box::leak(Box::new(make_log(
+            214,
+            a_token,
+            vec![
+                B256::left_padding_from(user.as_slice()),
+                B256::left_padding_from(recipient.as_slice()),
+            ],
+            Bytes::from({
+                let mut d = vec![0u8; 32];
+                unscaled_amount.to_be_bytes::<32>()
+                    .iter()
+                    .enumerate()
+                    .for_each(|(i, b)| d[i] = *b);
+                d
+            }),
+        )));
+        let erc20_xfer = ScaledTokenEvent {
+            log: transfer_log,
+            decoded: crate::operations::ScaledTokenEventData::Transfer {
+                from: user,
+                to: recipient,
+                value: unscaled_amount,
+            },
+            event_type: ScaledTokenEventType::Erc20CollateralTransfer,
+            token_address: a_token,
+            user_address: user,
+            caller_address: None,
+            from_address: Some(user),
+            target_address: Some(recipient),
+            amount: unscaled_amount,
+            balance_increase: None,
+            index: None,
+            log_index: 214,
+        };
+
+        // 2) Build the BT event log (idx 216) — this is the
+        // `CollateralTransfer` BT-variant that holds the SCALED amount. It's
+        // also the log in `op.balance_transfer_events` (the orchestrator's
+        // `create_deficit_coverage_operations` inserts the BT-variant at
+        // `paired_events[1]` + pushes its `&Log` into `bt_events`).
+        let bt_value = bt_scaled;
+        let bt_log = Box::leak(Box::new(make_log(
+            216,
+            a_token,
+            vec![
+                BALANCE_TRANSFER_TOPIC,
+                B256::left_padding_from(user.as_slice()),
+                B256::left_padding_from(recipient.as_slice()),
+            ],
+            Bytes::from({
+                let mut d = vec![0u8; 64];
+                bt_value.to_be_bytes::<32>()
+                    .iter()
+                    .enumerate()
+                    .for_each(|(i, b)| d[i] = *b);
+                index.to_be_bytes::<32>()
+                    .iter()
+                    .enumerate()
+                    .for_each(|(i, b)| d[32 + i] = *b);
+                d
+            }),
+        )));
+        let bt_evt = ScaledTokenEvent {
+            log: bt_log,
+            decoded: crate::operations::ScaledTokenEventData::BalanceTransfer {
+                from: user,
+                to: recipient,
+                value: bt_value,
+                index,
+            },
+            event_type: ScaledTokenEventType::CollateralTransfer,
+            token_address: a_token,
+            user_address: user,
+            caller_address: None,
+            from_address: Some(user),
+            target_address: Some(recipient),
+            amount: bt_value,
+            balance_increase: Some(U256::ZERO),
+            index: Some(index),
+            log_index: 216,
+        };
+
+        // 3) Build the Burn event (deficit-coverage burn) — the second-pass
+        // burn handler produces a `ScaledTokenBurn` chunk_event (NOT a transfer),
+        // so it doesn't affect the crash #9 transfer-leg count assertion.
+        // we build a complete Burn log so `build_scaled_event_chunk_event`'s
+        // collateral-burn arm can compute a scaled amount (via `ray_div`).
+        use degenbot_decoders::aave_event_decoder::BURN_TOPIC;
+        let burn_amount = U256::from(100u64);
+        let burn_log = Box::leak(Box::new(make_log(
+            217,
+            a_token,
+            vec![
+                BURN_TOPIC,
+                B256::left_padding_from(user.as_slice()),
+                B256::left_padding_from(user.as_slice()),
+            ],
+            Bytes::from({
+                let mut d = vec![0u8; 96];
+                burn_amount.to_be_bytes::<32>()
+                    .iter()
+                    .enumerate()
+                    .for_each(|(i, b)| d[i] = *b);
+                U256::ZERO.to_be_bytes::<32>()
+                    .iter()
+                    .enumerate()
+                    .for_each(|(i, b)| d[32 + i] = *b);
+                index.to_be_bytes::<32>()
+                    .iter()
+                    .enumerate()
+                    .for_each(|(i, b)| d[64 + i] = *b);
+                d
+            }),
+        )));
+        let burn_evt = ScaledTokenEvent {
+            log: burn_log,
+            decoded: crate::operations::ScaledTokenEventData::Burn {
+                from: user,
+                target: user,
+                value: burn_amount,
+                balance_increase: U256::ZERO,
+                index,
+            },
+            event_type: ScaledTokenEventType::CollateralBurn,
+            token_address: a_token,
+            user_address: user,
+            caller_address: None,
+            from_address: Some(user),
+            target_address: Some(user),
+            amount: burn_amount,
+            balance_increase: Some(U256::ZERO),
+            index: Some(index),
+            log_index: 217,
+        };
+
+        // 4) Construct the DeficitCoverage op — mirrors the orchestrator's
+        // `create_deficit_coverage_operations` `paired_events = [erc20, BT, burn]`
+        // ordering + `balance_transfer_events = [BT log]`.
+        let op = Operation {
+            operation_id: 1,
+            operation_type: OperationType::DeficitCoverage,
+            pool_revision: 9,
+            pool_event: None,
+            scaled_events: vec![erc20_xfer, bt_evt, burn_evt],
+            transfer_events: Vec::new(),
+            balance_transfer_events: vec![bt_log],
+            minted_to_treasury_amount: None,
+            debt_to_cover: None,
+            validation_errors: Vec::new(),
+        };
+
+        let conn = db.lock();
+        let mut events: Vec<AaveChunkEvent> = Vec::new();
+        dispatch_deficit_coverage(&op, 1, &conn, &mut events)
+            .expect("DeficitCoverage dispatch must not defer");
+
+        // Expectation: exactly TWO chunk_events — ONE `ScaledTokenTransfer`
+        // (the ERC20 paired with the BT — the BT-supplied scaled amount),
+        // the other `ScaledTokenBurn` (the deficit-coverage burn). The
+        // `CollateralTransfer` (BT) VARIANT is SKIPPED (the BT log is in
+        // `op.balance_transfer_events`, paired with the ERC20 Transfer).
+        // Pre-fix would have emitted THREE events (= ERC20 + BT + Burn) —
+        // the BT chunk_event would double-bill the user.
+        assert_eq!(
+            events.len(),
+            2,
+            "DeficitCoverage must emit exactly 2 chunk_events (the ERC20 paired with the BT + the deficit burn) — pre-fix this was 3"
+        );
+
+        let transfer_chunk = events
+            .iter()
+            .find(|e| matches!(e, AaveChunkEvent::ScaledTokenTransfer { .. }))
+            .expect("a ScaledTokenTransfer chunk_event must be present");
+        match transfer_chunk {
+            AaveChunkEvent::ScaledTokenTransfer {
+                scaled_amount,
+                transfer_index,
+                ..
+            } => {
+                assert_eq!(
+                    *scaled_amount, bt_scaled,
+                    "the ERC20 Transfer must be paired with the BT — scaled_amount must be the BT's scaled value (148831959), not the unscaled ERC20 amount (168401963, crash #9 root cause)"
+                );
+                assert_eq!(
+                    *transfer_index, index,
+                    "transfer_index must be the BT's liquidity index (NOT zero — the pre-fix fallback ev.index.unwrap_or_default())"
+                );
+            }
+            other => panic!("expected ScaledTokenTransfer, got {other:?}"),
+        }
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AaveChunkEvent::ScaledTokenBurn { .. })),
+            "the deficit-coverage burn chunk_event must be present"
+        );
     }
 }
