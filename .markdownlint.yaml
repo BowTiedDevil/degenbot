@@ -11,13 +11,13 @@ MD033:
 # MD041/first-line-heading — many files start with context text, not a heading
 MD041: false
 
-# MD060/table-column-style — compact pipe tables are used throughout CONTEXT.md files
+# MD060/table-column-style
 MD060: false
 
-# MD032/blanks-around-lists — CONTEXT.md files place lists directly after headings
+# MD032/blanks-around-lists
 MD032: false
 
-# MD031/blanks-around-fences — CONTEXT.md files place code blocks after list items
+# MD031/blanks-around-fences
 MD031: false
 
 # MD037/no-space-in-emphasis — some files use underscore emphasis in table cells

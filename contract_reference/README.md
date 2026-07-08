@@ -99,7 +99,7 @@ Source: [Uniswap V4 Core](https://github.com/Uniswap/v4-core)
 
 ### Aave V3 (`aave/`)
 
-Aave contracts are organized by contract type with revision files for each deployed version. See `src/degenbot/aave/CONTEXT.md` for revision-to-deployment mapping.
+Aave contracts are organized by contract type with revision files for each deployed version.
 
 | Directory | Files | Description |
 |---|---|---|

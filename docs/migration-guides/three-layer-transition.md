@@ -32,8 +32,6 @@ later," which strands it across the future crate boundary. `DexIdentity` is
 the precedent: Rust-side at introduction, Python its first consumer.
 
 Canonical references:
-- `rust/AGENTS.md` — generic three-layer rule, the Nine Rules, GIL discipline, module-naming convention.
-- `rust/CONTEXT.md` — glossary; {Polars-Inspired Three-Layer Architecture}, {PyBot}, {PyLiquidityPool}, {PyErc20Token}, {degenbot-decoders}, {degenbot-uniswap}.
 - ADR-001 (I/O-free pools), ADR-003 (Bot as state owner), ADR-005 (FFI topology + crate-split target), ADR-006 (per-chain orchestrator), ADR-007 (unregister seam).
 - `docs/architecture/rust-owned-bot.md` — component map + pump/engine lifecycle.
 
@@ -245,7 +243,6 @@ just check-no-pyo3-in-cores  # cores + umbrella pyo3-free under default features
 just lint-python          # ruff + ty
 just format               # cargo fmt + ruff format (apply); --check variants for CI
 just lint-markdown        # if docs touched
-just lint-context-maps    # if CONTEXT.md touched
 just lint-commits         # commit-range commitlint
 ```
 
@@ -422,8 +419,7 @@ volatile pools and Camelot `stable_swap` pools — moved from the Python
   **parity oracle only** (`FEMZJC` cross-validates the engine against it and
   `BrentSolver` at `1e-6` / `1e-4` relative — SolidlyStableSolver is the
   integer-exact same-algorithm tight oracle; BrentSolver is the looser f64-outer
-  oracle). The Python solver package's `SolidlyStable` row in
-  `src/degenbot/arbitrage/CONTEXT.md` records the disposition.
+  oracle).
 - **Bugfix on the path.** `snapshot_aerodrome` was returning `(u64, u64, u64)`
   and panicked on overflow for reserves ≥18 tokens of 18-dec; matched
   `snapshot_v2`'s U256 return shape so the manual pool-walk parity oracle can

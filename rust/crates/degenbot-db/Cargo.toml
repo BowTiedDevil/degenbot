@@ -22,8 +22,8 @@ suspicious = "warn"
 # Pure-Rust persistence leaf: rusqlite (bundled libsqlite3-sys, no system
 # SQLite required) + alloy primitives for Address/U256/B256 decode at the row
 # boundary. NO pyo3, NO tokio, NO sqlx — the read fns are short synchronous
-# SQLite lookups (CONTEXT.md "degenbot-db substrate" decisions 1-3). Verified
-# pyo3-free under default features by `just check-no-pyo3-in-cores`.
+# SQLite lookups. Verified pyo3-free under default features by 
+# `just check-no-pyo3-in-cores`.
 [dependencies]
 alloy = { version = "^2.0" }
 # CL liquidity-mapping math — `apply_liquidity_mapping_update` drives the V3/V4

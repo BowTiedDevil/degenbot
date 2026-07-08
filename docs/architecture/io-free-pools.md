@@ -358,7 +358,6 @@ Pools participating in the Rust solver cache implement the `CacheablePool` proto
 
 ## References
 
-- `src/degenbot/curve/CONTEXT.md` — Curve domain terminology
 - `src/degenbot/curve/types.py` — CurveDataProvider protocol, DyCalculationInputs dataclass, DyCalculator protocol definitions
 - `src/degenbot/types/pool_protocols.py` — Pool simulation and cacheable protocols
 - `plans/completed/017-v2-v3-io-free-migration.md` — Plan to complete ADR-001 Phase 3 (complete)

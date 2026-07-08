@@ -133,8 +133,7 @@ impl BlockDelta for V2BlockDelta {
 /// (Mint/Burn V3, `ModifyLiquidity` V4) — those don't change the slot0 head
 /// scalars, so the journal carries no scalar priors for them and
 /// `restore_before_block` skips the scalar write-back (the current scalars are
-/// already correct). See `docs/adr/ADR-004-cl-tickmap-typed-boundary.md` and the
-/// {Slot0 Head / Tick Bookkeeping Map} term in `rust/CONTEXT.md`.
+/// already correct). See `docs/adr/ADR-004-cl-tickmap-typed-boundary.md`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ScalarPriors {
     /// Sqrt price X96 *before* this block's update.

@@ -18,8 +18,7 @@
 //! rejected — zero `slot0-only` consumers exist); only the verifier/apply
 //! **views** are typed-narrowed.
 //!
-//! See ADR-004 (`docs/adr/ADR-004-cl-tickmap-typed-boundary.md`) and the
-//! {Slot0 Head / Tick Bookkeeping Map} term in `rust/CONTEXT.md`.
+//! See ADR-004 (`docs/adr/ADR-004-cl-tickmap-typed-boundary.md`).
 
 use std::collections::HashMap;
 

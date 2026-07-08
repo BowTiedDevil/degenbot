@@ -383,7 +383,6 @@ this work.
 - **ADR-003** (BotCore as the state layer, peer to UniswapEngine) — the *peer-module*
   split and *engine-then-core* lock order are preserved; the
   engine-holds-its-own-`Arc<Mutex<Bot>>` arrangement is superseded by D1+D2.
-- **`rust/CONTEXT.md`** — {Bot}/{PyBot}/{Polars-Inspired Three-Layer Architecture} terms
   gain forward pointers to this ADR; a new {EventSink} term records the decided concept.
 - **Architecture review `/tmp/architecture-review-20260617-200733.html` candidate #1** —
   the candidate this grilling opened on.

@@ -213,8 +213,7 @@ impl UniswapEngine {
     /// WS connection. The pump passes its real `current_metadata` so that any
     /// batch emitted here carries genuine fees/gas/timestamp (previously this
     /// path sent `BlockMetadata::default()`, which would make the Python
-    /// consumer compute `base_fee_next = 0` and broadcast underpriced txs —
-    /// see `rust/CONTEXT.md` `ResultBatch` entry).
+    /// consumer compute `base_fee_next = 0` and broadcast underpriced txs.
     ///
     /// The `block > *last_solved_block` guard is load-bearing: the pump runs
     /// `solve_dirty` at the top of every loop iteration before awaiting the

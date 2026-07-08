@@ -504,7 +504,7 @@ pub struct UniswapEngine {
     /// (e.g. during cold-start / `solve_all_paths`), since Python has not yet
     /// received anything. Advancing it without a live channel would poison
     /// `fresh`/`expired` computation for the next real send — see
-    /// `solve_all_paths` (solve-only) and the `ResultBatch` CONTEXT.md note.
+    /// `solve_all_paths` (solve-only)
     /// [`deregister_path`] removes entries as paths are de-registered.
     delivered: HashMap<u64, SolvePathResult>,
     /// Path IDs that have been de-registered since the last batch.

@@ -26,8 +26,7 @@ Two kinds of error are possible:
    pools but wrong for any unlisted lending, metapool, or crypto pool.
 
 When debugging a swap mismatch for a specific pool, always verify the
-strategy enums against `cast source <address>`. See CONTEXT.md
-"Debugging swap mismatches" section for the workflow.
+strategy enums against `cast source <address>`.
 """
 
 from eth_typing import ChecksumAddress

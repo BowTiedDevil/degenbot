@@ -589,7 +589,7 @@ Eliminates ~95%+ of simulation failures from scam/tax/honeypot tokens.
 
 ### 13.1 Role
 
-`Bot` (in `rust/crates/degenbot-bot/src/bot_core/mod.rs`) is the single Rust owner of all runtime pool/token state — the state layer ADR-003 makes a peer to `UniswapEngine`. Under Plan 100 it holds V2/V3/V4 `PoolEntry` state, the reorg journal, per-pool swap math (`calculate_tokens_out`/`calculate_tokens_in` via `v3_simulate_swap`/`v4_simulate_swap`), and V2 swap encoding. The block engines (`V2BlockEngine`/`V3BlockEngine`/`V4BlockEngine`) are dissolved — `UniswapEngine` holds `core: Arc<Mutex<Bot>>` and reads/writes all pool state through it. See `rust/CONTEXT.md` {Bot} for the field inventory and **ADR-003** for the state-ownership decision.
+`Bot` (in `rust/crates/degenbot-bot/src/bot_core/mod.rs`) is the single Rust owner of all runtime pool/token state — the state layer ADR-003 makes a peer to `UniswapEngine`. Under Plan 100 it holds V2/V3/V4 `PoolEntry` state, the reorg journal, per-pool swap math (`calculate_tokens_out`/`calculate_tokens_in` via `v3_simulate_swap`/`v4_simulate_swap`), and V2 swap encoding. The block engines (`V2BlockEngine`/`V3BlockEngine`/`V4BlockEngine`) are dissolved — `UniswapEngine` holds `core: Arc<Mutex<Bot>>` and reads/writes all pool state through it. See **ADR-003** for the state-ownership decision.
 
 ### 13.2 FFI Topology — Polars-Inspired Three-Layer Architecture
 

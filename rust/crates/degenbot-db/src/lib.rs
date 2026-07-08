@@ -26,11 +26,9 @@
 //!
 //! # Design references
 //!
-//! See `rust/CONTEXT.md` "degenbot-db substrate (`SQLite` persistence core crate)"
-//! for the three resolved decisions (rusqlite/bundled, the custom
-//! Alembic-aware runner, the `VARCHAR(78)` ↔ `U256` mirror). Non-goal: writes
-//! (`write.rs` + `upsert_*`) are deferred to Epic AZGJUN (Phase 3) until the
-//! Rust writer is parity-tested; this crate ships read fns only.
+//! Non-goal: writes (`write.rs` + `upsert_*`) are deferred to Epic AZGJUN
+//! (Phase 3) until the Rust writer is parity-tested; this crate ships read
+//! fns only.
 
 pub mod aave;
 pub mod connection;

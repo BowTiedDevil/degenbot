@@ -226,7 +226,7 @@ unconditionally, with no `name=` override. This is the template for future wrapp
   with the session's state for their lifetime.
 - **The `RwLock` read/write split is now an invariant.** New stateful `#[pyclass]`
   wrappers in this tier must classify each method as read (`.read()`) or write
-  (`.write()`). The `rust/CONTEXT.md` {PyBot} term records the classification.
+  (`.write()`).
 - **Two locking disciplines coexist until unification** (see Deferred): `RwLock` on the
   Python-facing wrapper tier, `Mutex` on the engine-internal tier. A future slice
   collapses this.
@@ -255,7 +255,6 @@ unconditionally, with no `name=` override. This is the template for future wrapp
   `Arc<RwLock<Core>>`, the-wrapper-is-the-sharing-mechanism, Python session owns the
   wrapper, read/write guard split).
 - **`docs/architecture/rust-owned-bot.md` §13** — topology description and code mapping.
-- **`rust/CONTEXT.md`** — glossary term {Polars-Inspired Three-Layer Architecture};
   inline mentions in {Bot}/{PyBot}/{PyLiquidityPool}/{PyErc20Token} de-duplicated to point here.
 - **Plan 079** ("Rust-Owned Bot Core") — first articulated the "Polars model" goal
   ("Python is the cockpit, Rust is the engine"). This ADR records the FFI-topology

@@ -6,13 +6,13 @@
 //! verified here — it would always be stale. The map is only updated by
 //! Mint/Burn (V3) or `ModifyLiquidity` (V4) events, which is what we validate.
 //!
-//! This is the {Slot0 Head / Tick Bookkeeping Map} split (see `rust/CONTEXT.md`
-//! and ADR-004): the live variants (`verify_v3_pool` / `verify_v4_pool`) take
-//! `&V3PoolState` / `&V4PoolState` and recover the "don't read slot0" rule
-//! from this module doc; ADR-004 introduces a `TickMap` trait that narrows
-//! these to take `&impl TickMap`, carrying the rule in the type system. The
-//! snapshot-block variants (`verify_v3_liquidity_map` / `verify_v4_liquidity_map`)
-//! already take a typed `&HashMap<i32, TickInfo>` + `Address` + block — the
+//! This is the {Slot0 Head / Tick Bookkeeping Map} split (see ADR-004): the
+//! live variants (`verify_v3_pool` / `verify_v4_pool`) take `&V3PoolState` /
+//! `&V4PoolState` and recover the "don't read slot0" rule from this module
+//! doc; ADR-004 introduces a `TickMap` trait that narrows these to take
+//! `&impl TickMap`, carrying the rule in the type system. The snapshot-block
+//! variants (`verify_v3_liquidity_map` / `verify_v4_liquidity_map`) already
+//! take a typed `&HashMap<i32, TickInfo>` + `Address` + block — the
 //! typed-boundary precedent ADR-004 generalizes.
 //!
 //! - **V3**: `pool.tickBitmap(word)` discovers populated words,
