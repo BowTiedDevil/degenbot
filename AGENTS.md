@@ -1,7 +1,9 @@
 # AGENTS.md
 
+**Respond in English only**
+
 ## Coordinating With Other Agents
-When you begin a session, Read the 'pi-link-coordination' skill. Then use `link_list` to identify all agents working in this project. Send messages with `link_send` with `triggerTurn:true` to coordinate concurrent work and avoid making contradictory changes. Respond **directly** to other agents using `link_send` with `triggerTurn:true`.
+When you begin a session, Read the 'pi-link-coordination' skill. Then use `link_list` to identify all agents working in this project. Send messages with `link_send` with `triggerTurn:true` to coordinate concurrent work and avoid making contradictory changes. Respond **directly** to other agents.
 
 ## Architectural Vision
 
