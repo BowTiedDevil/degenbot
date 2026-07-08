@@ -157,7 +157,7 @@ pub struct RegisterBalancerStablePoolParams {
     /// BPT token index for `ComposableStablePools` (`Some(i)` where `i <
     /// tokens.len()`); `None` for `MetaStablePools`. Carried so the
     /// (future, 12e) Rust `StableMath` can drop the BPT before invariant
-    /// and swap calculations — the CONTEXT.md "BPT Index" ruling.
+    /// and swap calculations.
     pub bpt_idx: Option<usize>,
     /// `invariant_version` discriminator (1 = `INVARIANT_V1` always-
     /// roundDown `D_P` accumulation, used by most `ComposableStablePools`;

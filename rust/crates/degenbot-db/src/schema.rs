@@ -6,7 +6,6 @@
 //! exactly: big-int columns are `VARCHAR(78)` (the decimal string of an EVM
 //! value; mirrors Python's `IntMappedToString` `TypeDecorator`), addresses are
 //! `VARCHAR(42)` checksum strings, V4 `pool_hash` is `VARCHAR(66)` 0x-hex.
-//! See `rust/CONTEXT.md` "degenbot-db substrate" Decision 3.
 
 /// The Alembic `version_num` the Rust core treats as current.
 ///

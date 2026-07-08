@@ -1,9 +1,9 @@
 //! The owned read handle: [`DegenbotDb`].
 //!
 //! A thin `parking_lot::Mutex<rusqlite::Connection>` wrapper (the codebase
-//! standard lock discipline from `rust/CONTEXT.md` — no poisoning, direct
-//! guard return, sidesteps `clippy::expect_used`/`unwrap_used`). Construct via
-//! [`DegenbotDb::open`] (file) or [`DegenbotDb::open_in_memory`] (tests).
+//! standard lock discipline — no poisoning, direct guard return, sidesteps
+//! `clippy::expect_used`/`unwrap_used`). Construct via [`DegenbotDb::open`]
+//! (file) or [`DegenbotDb::open_in_memory`] (tests).
 //!
 //! # Open PRAGMA sequence (binding #2/#3)
 //!

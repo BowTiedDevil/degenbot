@@ -1436,22 +1436,6 @@ Verified Solidity source code for all supported protocols is in [`contract_refer
 
 These are the ground truth for matching on-chain behavior in Python. See [`contract_reference/README.md`](contract_reference/README.md) for the full index.
 
-### Domain Context Files
-
-Each module has a `CONTEXT.md` defining domain terminology:
-
-- [Pool Types & Trackers](src/degenbot/types/CONTEXT.md) — Pool, Pool State, Reserves, Tick, Fee representations
-- [Uniswap](src/degenbot/uniswap/CONTEXT.md) — V2/V3/V4 pools, Pool Tracker, Managed Pool, Pool ID
-- [Curve StableSwap](src/degenbot/curve/CONTEXT.md) — Metapools, lending pools, CurveDataProvider seam, DyCalculationInputs, DyCalculator, A coefficient
-- [Balancer V2](src/degenbot/balancer/CONTEXT.md) — Weighted pools, FixedPoint math, PowVersion detection, scaling helpers, MetaStablePool, ComposableStablePool with BPT index, StableMath V1/V2 invariant versions, CacheAwareRateProvider, BalancerRateProvider protocol
-- [Aave](src/degenbot/aave/CONTEXT.md) — Market, Asset, Reserve, Enrichment, Liquidation
-- [Arbitrage](src/degenbot/arbitrage/CONTEXT.md) — Arbitrage Cycle, Solver, Hop State
-- [Registries](src/degenbot/registry/CONTEXT.md) — Pool, Token, Managed Pool registries
-- [Connection](src/degenbot/connection/CONTEXT.md) — Provider management, RPC routing
-- [Chainlink](src/degenbot/chainlink/CONTEXT.md) — price feeds, aggregators, round data
-- [Builders](src/degenbot/builders/CONTEXT.md) — pool builders, PoolIO seam, BuilderContext, `@staticmethod` `update()` on PoolBuilder/AsyncPoolBuilder protocols (type-enforced I/O separation)
-- [Context Map](CONTEXT-MAP.md) — Cross-module relationships, ambiguity rulings, and module index (including contract reference index)
-
 ## Contributing
 
 Contributions are welcome! Please submit issues and pull requests to the [GitHub repository](https://github.com/BowTiedDevil/degenbot).

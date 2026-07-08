@@ -1,6 +1,6 @@
 # Curve StableSwap — Implementation Reference
 
-Operational details for Curve StableSwap pools that don't belong in the domain glossary (`src/degenbot/curve/CONTEXT.md`).
+Operational details for Curve StableSwap pools that don't belong in the domain glossary.
 
 ## Variant Enum Values
 

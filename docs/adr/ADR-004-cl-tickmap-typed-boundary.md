@@ -12,11 +12,6 @@ ADR-003 consolidated V2/V3/V4 state into `BotCore` as flat `pub`-field structs
 (`V3PoolState` / `V4PoolState`). It named a conceptual two-part split *within* each CL
 pool's state — the **slot0 head** (`sqrt_price_x96`, `tick`, active `liquidity` — high
 churn, every Swap) vs. the **tick bookkeeping map** (`tick_data: HashMap<i32, TickInfo>`
-— low churn, only Mint/Burn V3 / `ModifyLiquidity` V4) — and recorded it in
-`rust/CONTEXT.md` under the term {Slot0 Head / Tick Bookkeeping Map}, **held as a
-non-structural distinction** until "the first caller that needs to verify or restore
-*only* the map (or *only* the head) and resents passing the whole pool + recovering the
-rule from a comment."
 
 A clean-slate survey (`rg` over all of `rust/src/`, 148 V3 + 184 V4 field accesses → 22
 function-level surfaces) found that trigger condition is met today:
@@ -60,30 +55,11 @@ function-level surfaces) found that trigger condition is met today:
 ### Bonus structural findings (carry into the doc pass)
 
 The survey surfaced three stale-documentation issues, fixed in the same Slice 1
-context.md pass:
+context pass:
 
-- **S1 — `{LiquidityMap}` and `{PyBotCore}` CONTEXT.md terms describe a generic
-  `LiquidityMap<V3PoolState>`/`LiquidityMap<V4PoolState>` that was never extracted.**
-  ADR-003 and the `{BotCore}` term both say: *"The standalone `LiquidityMap` generic was
-  NOT extracted: the inline-`PoolEntry` + `BotCore::apply_*` pattern suited V2/V3/V4."*
-  But these two terms persisted unchanged. Reality: `BotCore` holds
-  `pools: HashMap<u64, PoolEntry>` with `PoolEntry::V3(V3PoolIdentity, V3PoolState)`
-  / `V4(V4PoolIdentity, V4PoolState)` (the ADR-005 identity/state split — see that
-  ADR's "Achieved invariant" section; under the split the `TickMap` trait is
-  impl'd on the `(identity, state)` tuple so it reads both immutable
-  `address`/`tick_spacing` AND mutable `tick`/`tick_data`), and verification is
-  the free functions in `liquidity_verifier.rs`.
+- **S1 — ADR-003 and the `{BotCore}` term both say: *"The standalone `LiquidityMap` generic was NOT extracted: the inline-`PoolEntry` + `BotCore::apply_*` pattern suited V2/V3/V4."* But these two terms persisted unchanged. Reality: `BotCore` holds `pools: HashMap<u64, PoolEntry>` with `PoolEntry::V3(V3PoolIdentity, V3PoolState)` / `V4(V4PoolIdentity, V4PoolState)` (the ADR-005 identity/state split — see that ADR's "Achieved invariant" section; under the split the `TickMap` trait is impl'd on the `(identity, state)` tuple so it reads both immutable `address`/`tick_spacing` AND mutable `tick`/`tick_data`), and verification is the free functions in `liquidity_verifier.rs`.
 
-- **S2 — `{PyPoolCache}` describes deleted code.** `rust/CONTEXT.md` still documents a
-  `parking_lot::Mutex<LruCache<u64, IntHopState>>` 10K-entry LRU keyed by pool ID, but
-  exhaustive `rg` returns zero matches. ADR-003 "Legacy solver path retirement: delete,
-  not migrate" explicitly deleted `RustPoolCache`/`RustIntHopState`/`RustArbResult` PyO3
-  classes. **The actual memoization seam is the per-pool
-  `cached_tick_ranges: parking_lot::Mutex<TickRangeCache>` field on
-  `V3PoolState`/`V4PoolState`**, consumed by `build_int_v3_sequence`/`build_int_v4_sequence`
-  and invalidated on every `apply_*`. `{PyPoolCache}` must be rewritten to name what
-  was removed (matching the {V2Snapshot} / {Dual-Orientation Registration} removed-term
-  pattern); `{IntHopState}` must drop the "stored in `PyPoolCache`" framing.
+- **S2 — `{PyPoolCache}` describes deleted code.** ADR-003 "Legacy solver path retirement: delete, not migrate" explicitly deleted `RustPoolCache`/`RustIntHopState`/`RustArbResult` PyO3 classes. **The actual memoization seam is the per-pool `cached_tick_ranges: parking_lot::Mutex<TickRangeCache>` field on `V3PoolState`/`V4PoolState`**, consumed by `build_int_v3_sequence`/`build_int_v4_sequence` and invalidated on every `apply_*`. `{PyPoolCache}` must be rewritten to name what was removed (matching the {V2Snapshot} / {Dual-Orientation Registration} removed-term pattern); `{IntHopState}` must drop the "stored in `PyPoolCache`" framing.
 
 - **S3 — reasoned-analysis re-anchoring.** The TODO-6177b602 framing's reasoned-analysis
   argument was anchored to deleted `PyPoolCache`. The real argument is below (see
@@ -147,12 +123,7 @@ back to candidate (γ) (see Alternatives) and revisit the trait conversion as a 
   reading the whole state by reference; the trait only narrows the verifier + apply
   views. The pool still owns its swap math; the engine still reads by reference.
 - **Optimizer-cache finding (resolves the Q6 deferral):** `PyPoolCache`/`RustPoolCache`
-  do not exist — deleted under ADR-003. The {PyPoolCache} CONTEXT.md term is stale and
-  must be rewritten to name what was removed (Slice 1 fixes this). The actual
-  memoization seam — the per-pool `cached_tick_ranges: parking_lot::Mutex<TickRangeCache>`
-  field — **survives unchanged.** It is not in scope for this ADR's code change; it lives
-  inside `V3PoolState`/`V4PoolState` and reads both halves (`tick_data` + `liquidity` +
-  `tick`), so it stays attached to the flat struct exactly as today.
+  do not exist — deleted under ADR-003. The actual memoization seam — the per-pool `cached_tick_ranges: parking_lot::Mutex<TickRangeCache>` field — **survives unchanged.** It is not in scope for this ADR's code change; it lives inside `V3PoolState`/`V4PoolState` and reads both halves (`tick_data` + `liquidity` + `tick`), so it stays attached to the flat struct exactly as today.
 - **Reasoned-analysis re-anchoring** (see below) replaces the deleted-`PyPoolCache`
   argument the survey found in the TODO-6177b602 framing.
 
@@ -212,12 +183,6 @@ take `&state.ticks` instead of `&state`, which is better than today but still co
 verifier to the full sub-struct). The `Slot0Head` half of the split is dead weight with
 no consumer.
 
-The CONTEXT.md hold reason ("`v3_simulate_swap` reads slot0 + tick_data in lockstep so
-they are one deep module, not two shallow ones") was correct as a *rejection of the
-full-split reading*. It was incorrect as a *rejection of any typed boundary* — the
-survey found the paying boundary is one-directional (tick-side only), and a typed
-boundary on that side does not rupture the lockstep simulator.
-
 ### (α-snapshot) `LiquidityMapSnapshot`-style frozen value threaded into `v3_simulate_swap` / `v4_simulate_swap` (Python's `_v3_swap` shape)
 
 **Rejected by survey evidence.** A snapshot is the wrong shape for the six paying sites:
@@ -229,15 +194,7 @@ trades one arg for three with no semantic gain. Rejected.
 ### (γ) Hold — strengthen the {Slot0 Head} term to a firm ruling; no code change
 
 **Demoted to fallback.** The survey found a paying consumer and a shipping precedent,
-so holding is no longer the neutral default the CONTEXT.md term framed it as — it is a
-positive decision to leave six `takes-whole-but-wants-one` sites recovering the rule
-from comments, when a 1-trait fix exists with a shipping precedent 200 lines away. Hold
-is only justifiable if the `V3BlockDelta` `Option<ScalarPriors>` refactor (see
-"Journal-shape alignment") is judged too risky for the per-pool seam before the
-migration; the argument against is that the refactor is independently desirable (shrinks
-Mint/Burn/`ModifyLiquidity` journals — currently redundant slot0 priors) and contained
-to `state_history.rs` + four call sites. Recorded as the fallback if a Slice-2
-implementation review finds the journal refactor spills beyond that.
+so holding is no longer a neutral default — it is a positive decision to leave six `takes-whole-but-wants-one` sites recovering the rule from comments, when a 1-trait fix exists with a shipping precedent 200 lines away. Hold is only justifiable if the `V3BlockDelta` `Option<ScalarPriors>` refactor (see "Journal-shape alignment") is judged too risky for the per-pool seam before the migration; the argument against is that the refactor is independently desirable (shrinks Mint/Burn/`ModifyLiquidity` journals — currently redundant slot0 priors) and contained to `state_history.rs` + four call sites. Recorded as the fallback if a Slice-2 implementation review finds the journal refactor spills beyond that.
 
 ## Python prior art (study only — not classified in the survey)
 
@@ -271,24 +228,8 @@ Inspected `src/degenbot/uniswap/v3_liquidity_pool.py`, `concentrated/liquidity_m
 
 ## Related
 
-- **ADR-003** (BotCore as state layer) — left the per-pool CL state struct flat; this
-  ADR resolves the seam it explicitly deferred (the {Slot0 Head / Tick Bookkeeping Map}
-  CONTEXT.md term). ADR-003's "Legacy solver path retirement: delete, not migrate"
-  deleted `PyPoolCache`/`RustPoolCache`; this ADR's doc pass cleans up the {PyPoolCache}
-  and {LiquidityMap}/{PyBotCore} stale CONTEXT.md terms that outlived that retirement.
-- **ADR-001** (I/O-free pools) — the `TickMap` trait is the Rust-core analogue of
-  Python's `_HasTickData` protocol; both carry the "this consumer only touches the tick
-  map" rule in types rather than comments.
-- `rust/CONTEXT.md` terms touched by the Slice 1 doc pass: {Slot0 Head / Tick Bookkeeping
-  Map} (flipped to "structural — see ADR-004"), {LiquidityMap} (corrected: generic
-  never extracted), {PyBotCore} (corrected: no `LiquidityMap::verify_against_onchain`),
-  {PyPoolCache} (rewritten as a removed-term entry matching {V2Snapshot}), {IntHopState}
-  (corrected: drops "stored in `PyPoolCache`"; actual cache is the per-pool
-  `cached_tick_ranges` field).
-- `rust/src/bot_core/liquidity_verifier.rs` module doc — updated in Slice 1 to reference
-  the named {Slot0 Head / Tick Bookkeeping Map} term and ADR-004 so the verbal rule and
-  the term stay linked (whether or not the code change lands yet).
-- Candidate (β) `TickMap` trait implementation (Slice 2+) lands TDD: V3 first
-  (`V3PoolState` + `verify_v3_pool` + `apply_v3_liquidity_update` + the `Option` journal
-  refinement in `state_history.rs`), then mirrored to V4 against `V4PoolState` /
-  `verify_v4_pool` / `apply_v4_liquidity_update`. V4 parity is mandatory.
+- **ADR-003** (BotCore as state layer) — left the per-pool CL state struct flat; this ADR resolves the seam it explicitly deferred (the {Slot0 Head / Tick Bookkeeping Map}). ADR-003's "Legacy solver path retirement: delete, not migrate" deleted `PyPoolCache`/`RustPoolCache`; this ADR's doc pass cleans up the {PyPoolCache} and {LiquidityMap}/{PyBotCore} stale terms that outlived that retirement.
+- **ADR-001** (I/O-free pools) — the `TickMap` trait is the Rust-core analogue of Python's `_HasTickData` protocol; both carry the "this consumer only touches the tick map" rule in types rather than comments.
+- Terms touched by the Slice 1 doc pass: {Slot0 Head / Tick Bookkeeping Map} (flipped to "structural — see ADR-004"), {LiquidityMap} (corrected: generic never extracted), {PyBotCore} (corrected: no `LiquidityMap::verify_against_onchain`), {PyPoolCache} (rewritten as a removed-term entry matching {V2Snapshot}), {IntHopState} (corrected: drops "stored in `PyPoolCache`"; actual cache is the per-pool `cached_tick_ranges` field).
+- `rust/src/bot_core/liquidity_verifier.rs` module doc — updated in Slice 1 to reference the named {Slot0 Head / Tick Bookkeeping Map} term and ADR-004 so the verbal rule and the term stay linked (whether or not the code change lands yet).
+- Candidate (β) `TickMap` trait implementation (Slice 2+) lands TDD: V3 first (`V3PoolState` + `verify_v3_pool` + `apply_v3_liquidity_update` + the `Option` journal refinement in `state_history.rs`), then mirrored to V4 against `V4PoolState` / `verify_v4_pool` / `apply_v4_liquidity_update`. V4 parity is mandatory.

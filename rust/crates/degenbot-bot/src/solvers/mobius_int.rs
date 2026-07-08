@@ -2,8 +2,7 @@
 //!
 //! This is the **single** Möbius recurrence module — the f64 recurrence
 //! (`mobius.rs`), the f64-seed-then-integer-refine path, and the f64 V3
-//! tick-range solvers have all been removed (see `rust/CONTEXT.md` ruling
-//! "f64 vs U512 Möbius solver stack"). Every path composes to
+//! tick-range solvers have all been removed. Every path composes to
 //! `l(x) = K·x / (M + N·x)` via the U512 2×2 matrix recurrence below, and the
 //! closed-form optimal input lives in [`crate::solvers::mobius_int_exact`].
 //!

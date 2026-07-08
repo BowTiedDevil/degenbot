@@ -205,5 +205,3 @@ The original decision stated pools are "I/O-free" without qualification. This wa
 ## References
 
 - [I/O-Free Architecture Doc](../architecture/io-free-pools.md)
-- [Curve CONTEXT.md](../../src/degenbot/curve/CONTEXT.md)
-- [Uniswap CONTEXT.md](../../src/degenbot/uniswap/CONTEXT.md)

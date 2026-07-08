@@ -77,7 +77,7 @@ pub use degenbot_rpc;
 
 /// `SQLite` persistence substrate — read handle + Alembic-aware schema gate +
 /// typed rows + read fns (pyo3-free leaf; `rusqlite` with the `bundled`
-/// feature; see `rust/CONTEXT.md` "degenbot-db substrate").
+/// feature).
 pub use degenbot_db;
 
 // ---------------------------------------------------------------------------
