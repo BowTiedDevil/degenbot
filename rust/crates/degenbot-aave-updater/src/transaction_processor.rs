@@ -536,7 +536,17 @@ fn build_scaled_event_chunk_event(
         ScaledTokenEventType::CollateralTransfer
         | ScaledTokenEventType::Erc20CollateralTransfer => {
             // The aToken BalanceTransfer (collateral moved between users).
-            // The `from` + `to` positions must both be resolved.
+            // The `from` position is always resolved — the SENDER side is
+            // written unconditionally (Python's `_process_collateral_transfer`
+            // doesn't guard `from == ZERO_ADDRESS`; this matches the 2
+            // pre-existing 0-address collateral rows on 0x83F2 / 0xD533 in
+            // both Python ref + Rust). The `to` position is resolved ONLY
+            // when `to_addr != ZERO_ADDRESS` (Python's `transforms.py` guard:
+            // `if scaled_event.target_address != ZERO_ADDRESS:` the recipient
+            // block in `_process_collateral_transfer`). Burn-to-zero legs
+            // (`Transfer(from=user, to=0x0, amount)` = dust from a direct
+            // aToken `transfer()` drop to the burn address) must NOT create
+            // a 0x0 collateral row — crash #8.
             let from_addr = ev.from_address.unwrap_or(ev.user_address);
             let to_addr = ev.target_address.unwrap_or_default();
             let from_position_id = resolve_position_id(
@@ -547,14 +557,18 @@ fn build_scaled_event_chunk_event(
                 asset.id,
                 &asset.underlying_token_address,
             )?;
-            let to_position_id = resolve_position_id(
-                conn,
-                market_id,
-                ScaledTokenPosition::Collateral,
-                to_addr,
-                asset.id,
-                &asset.underlying_token_address,
-            )?;
+            let to_position_id = if to_addr == Address::ZERO {
+                None
+            } else {
+                Some(resolve_position_id(
+                    conn,
+                    market_id,
+                    ScaledTokenPosition::Collateral,
+                    to_addr,
+                    asset.id,
+                    &asset.underlying_token_address,
+                )?)
+            };
             Ok(AaveChunkEvent::ScaledTokenTransfer {
                 from_position_id,
                 to_position_id,
