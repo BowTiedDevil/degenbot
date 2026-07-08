@@ -145,6 +145,12 @@ pub fn process_transaction(
     let mut sorted_ops: Vec<&Operation> = parsed.operations.iter().collect();
     sorted_ops.sort_by_key(|op| operation_sort_key(op));
 
+    // The per-tx running-state map for GHO debt positions (the crash #7
+    // stale-snapshot fix). Per-tx scope (the run-loop's
+    // `apply_chunk_events_on_conn` flushes the events Vec right after this
+    // fn returns, so the next tx's reads are fresh).
+    let mut gho_running_state: HashMap<i64, (U256, U256)> = HashMap::new();
+
     let mut events: Vec<AaveChunkEvent> = Vec::new();
     for op in &sorted_ops {
         dispatch_operation(
@@ -154,6 +160,7 @@ pub fn process_transaction(
             gho_vtoken_address,
             &gho_ctx,
             &mut events,
+            &mut gho_running_state,
         )?;
     }
     Ok(events)
@@ -187,6 +194,7 @@ fn dispatch_operation(
     gho_vtoken_address: Option<Address>,
     gho_ctx: &GhoDiscountContext,
     events: &mut Vec<AaveChunkEvent>,
+    gho_running_state: &mut HashMap<i64, (U256, U256)>,
 ) -> Result<(), ProcessTxError> {
     match op.operation_type {
         OperationType::Supply
@@ -206,15 +214,35 @@ fn dispatch_operation(
             gho_vtoken_address,
             gho_ctx,
             events,
+            gho_running_state,
         ),
-        OperationType::Liquidation => {
-            dispatch_liquidation(op, market_id, conn, gho_vtoken_address, gho_ctx, events)
-        }
-        OperationType::GhoLiquidation => {
-            dispatch_gho_liquidation(op, market_id, conn, gho_vtoken_address, gho_ctx, events)
-        }
+        OperationType::Liquidation => dispatch_liquidation(
+            op,
+            market_id,
+            conn,
+            gho_vtoken_address,
+            gho_ctx,
+            events,
+        ),
+        OperationType::GhoLiquidation => dispatch_gho_liquidation(
+            op,
+            market_id,
+            conn,
+            gho_vtoken_address,
+            gho_ctx,
+            events,
+            gho_running_state,
+        ),
         OperationType::GhoBorrow | OperationType::GhoRepay | OperationType::GhoFlashLoan => {
-            dispatch_gho_standard(op, market_id, conn, gho_vtoken_address, gho_ctx, events)
+            dispatch_gho_standard(
+                op,
+                market_id,
+                conn,
+                gho_vtoken_address,
+                gho_ctx,
+                events,
+                gho_running_state,
+            )
         }
         OperationType::DeficitCoverage => dispatch_deficit_coverage(op, market_id, conn, events),
         OperationType::MintToTreasury => dispatch_mint_to_treasury(op, market_id, conn, events),
@@ -655,6 +683,7 @@ fn dispatch_interest_accrual(
     gho_vtoken_address: Option<Address>,
     gho_ctx: &GhoDiscountContext,
     events: &mut Vec<AaveChunkEvent>,
+    gho_running_state: &mut HashMap<i64, (U256, U256)>,
 ) -> Result<(), ProcessTxError> {
     // Python routes ALL GHO vToken Mints — including interest accrual + the
     // discount "dust mints" — through the GHO discount processor
@@ -691,6 +720,7 @@ fn dispatch_interest_accrual(
                 gho_ctx,
                 market_id,
                 conn,
+                gho_running_state,
             )?;
             events.push(chunk_event);
             if let Some(refresh_ev) = refresh { events.push(refresh_ev); }
@@ -934,6 +964,7 @@ fn dispatch_gho_standard(
     gho_vtoken_address: Option<Address>,
     gho_ctx: &GhoDiscountContext,
     events: &mut Vec<AaveChunkEvent>,
+    gho_running_state: &mut HashMap<i64, (U256, U256)>,
 ) -> Result<(), ProcessTxError> {
     let pool_event = op.pool_event;
     let mut scaled: Vec<&ScaledTokenEvent> = op.scaled_events.iter().collect();
@@ -958,7 +989,7 @@ fn dispatch_gho_standard(
             continue;
         }
         let (chunk_event, refresh) = build_gho_chunk_event(
-            ev, op, pool_event, None, gho_ctx, market_id, conn,
+            ev, op, pool_event, None, gho_ctx, market_id, conn, gho_running_state,
         )?;
         events.push(chunk_event);
         if let Some(refresh_ev) = refresh {
@@ -985,6 +1016,7 @@ fn dispatch_gho_liquidation(
     gho_vtoken_address: Option<Address>,
     gho_ctx: &GhoDiscountContext,
     events: &mut Vec<AaveChunkEvent>,
+    gho_running_state: &mut HashMap<i64, (U256, U256)>,
 ) -> Result<(), ProcessTxError> {
     let pool_event = op.pool_event.ok_or_else(|| {
         ProcessTxError::Deferred(format!(
@@ -1019,14 +1051,19 @@ fn dispatch_gho_liquidation(
                     asset.id,
                     &asset.underlying_token_address,
                 )?;
+                let new_index = ev.index.unwrap_or_default();
                 events.push(AaveChunkEvent::DebtPositionReset {
                     position_id,
-                    new_index: ev.index.unwrap_or_default(),
+                    new_index,
                 });
+                // Sync the running-state map (the bad-debt reset zeros the
+                // balance + advances `last_index`); a subsequent event in
+                // the same tx must read zero, not the stale pre-tx balance.
+                gho_running_state.insert(position_id, (U256::ZERO, new_index));
                 continue;
             }
             let (chunk_event, refresh) = build_gho_chunk_event(
-                ev, op, Some(pool_event), None, gho_ctx, market_id, conn,
+                ev, op, Some(pool_event), None, gho_ctx, market_id, conn, gho_running_state,
             )?;
             events.push(chunk_event);
             if let Some(refresh_ev) = refresh {
@@ -1059,6 +1096,7 @@ fn build_gho_chunk_event(
     gho_ctx: &GhoDiscountContext,
     market_id: i64,
     conn: &Connection,
+    gho_running_state: &mut HashMap<i64, (U256, U256)>,
 ) -> Result<(AaveChunkEvent, Option<AaveChunkEvent>), ProcessTxError> {
     let asset = lookup_gho_debt_asset(ev, market_id, conn)?;
     let processor = UnifiedGhoProcessor::new(asset.v_token_revision);
@@ -1107,15 +1145,44 @@ fn build_gho_chunk_event(
     // them to compute the discount-scaled amount (the standard
     // `ScaledTokenProcessor` does not — GHO is the exception). Mirrors the
     // Python's read of `debt_position.balance` / `.last_index`.
-    let (prev_balance, prev_index_opt) = DegenbotDb::lookup_position_balance_index_on_conn(
-        conn,
-        ScaledTokenPosition::Debt,
-        position_id,
-    )?;
-    let prev_index = prev_index_opt.unwrap_or(index);
+    //
+    // THE PER-TX RUNNING-STATE FIX (crash #7 / `*_with_fresh_resolution`):
+    // when a single tx has multiple GHO events for the same position
+    // (e.g., borrow + accrued-interest Mint + zero-noop Mint in the same
+    // `process_transaction`), each event MUST thread the running
+    // `prev_balance` + `prev_index` — reading the DB pre-tx state on every
+    // event re-applies the `accrue_debt_on_action` `discount_scaled` burn
+    // multiple times (`balance_increase` appears non-zero each event
+    // because `prev_index` is stale pre-tx). This produced the exact 2×
+    // `discount_scaled` drift on chunk8 events (block 18076682 tx
+    // 0x1116737166520b7c, user 0x4bd5Eb24: drift = -0.833732 GHO = exactly
+    // 2 × discount_scaled of 0.416866 GHO). Mirrors Python's `position.
+    // balance += balance_delta` immediate SQLAlchemy-session write.
+    //
+    // The map is per-tx (the run-loop's `apply_chunk_events_on_conn` lands
+    // the buffer right after `process_transaction` returns, so the next tx's
+    // reads are fresh). The map subs ONLY for the GHO debt paths (the
+    // `build_gho_chunk_event` callers) — the standard `dispatch_standard`
+    // path uses `ScaledTokenProcessor` which does NOT consult `prev_balance`
+    // (no discount math); it has no per-tx staleness.
+    let (prev_balance, prev_index) = if let Some(&(balance, idx)) =
+        gho_running_state.get(&position_id)
+    {
+        (balance, idx)
+    } else {
+        let (balance, index_opt) = DegenbotDb::lookup_position_balance_index_on_conn(
+            conn,
+            ScaledTokenPosition::Debt,
+            position_id,
+        )?;
+        let idx = index_opt.unwrap_or(index);
+        gho_running_state.insert(position_id, (balance, idx));
+        (balance, idx)
+    };
     let effective_discount =
         gho_ctx.effective_discount(ev.user_address, ev.log_index, asset.v_token_revision);
-    match ev.event_type {
+
+    let (balance_delta, new_index, chunk_event, refresh) = match ev.event_type {
         ScaledTokenEventType::GhoDebtMint => {
             let result = processor.process_gho_debt_mint(
                 &event_data,
@@ -1127,15 +1194,13 @@ fn build_gho_chunk_event(
             let refresh = result
                 .should_refresh_discount
                 .then_some(AaveChunkEvent::GhoRefreshDiscount { position_id });
-            Ok((
-                AaveChunkEvent::ScaledTokenMint {
-                    position: ScaledTokenPosition::Debt,
-                    position_id,
-                    balance_delta: result.balance_delta,
-                    new_index: result.new_index,
-                },
-                refresh,
-            ))
+            let chunk_event = AaveChunkEvent::ScaledTokenMint {
+                position: ScaledTokenPosition::Debt,
+                position_id,
+                balance_delta: result.balance_delta,
+                new_index: result.new_index,
+            };
+            (result.balance_delta, result.new_index, chunk_event, refresh)
         }
         ScaledTokenEventType::GhoDebtBurn | ScaledTokenEventType::GhoDebtTransfer => {
             let result = processor.process_gho_debt_burn(
@@ -1147,21 +1212,36 @@ fn build_gho_chunk_event(
             let refresh = result
                 .should_refresh_discount
                 .then_some(AaveChunkEvent::GhoRefreshDiscount { position_id });
-            Ok((
-                AaveChunkEvent::ScaledTokenBurn {
-                    position: ScaledTokenPosition::Debt,
-                    position_id,
-                    balance_delta: result.balance_delta,
-                    new_index: result.new_index,
-                },
-                refresh,
-            ))
+            let chunk_event = AaveChunkEvent::ScaledTokenBurn {
+                position: ScaledTokenPosition::Debt,
+                position_id,
+                balance_delta: result.balance_delta,
+                new_index: result.new_index,
+            };
+            (result.balance_delta, result.new_index, chunk_event, refresh)
         }
-        _ => Err(ProcessTxError::Deferred(format!(
-            "GHO event_type {:?} not a GHO debt event — C3",
-            ev.event_type
-        ))),
-    }
+        _ => {
+            return Err(ProcessTxError::Deferred(format!(
+                "GHO event_type {:?} not a GHO debt event — C3",
+                ev.event_type
+            )));
+        }
+    };
+
+    // Update the per-tx running state (mirrors
+    // `apply_scaled_token_balance_delta_on_conn`); the I256-signed delta may
+    // be negative (a burn or a discount_scaled-burning BORROW edge case).
+    let new_balance = if balance_delta.is_negative() {
+        let abs = U256::try_from(-balance_delta).unwrap_or(U256::MAX);
+        prev_balance.saturating_sub(abs)
+    } else {
+        let abs = U256::try_from(balance_delta).unwrap_or(U256::MAX);
+        prev_balance.saturating_add(abs)
+    };
+    let new_index_for_map = new_index.max(prev_index);
+    gho_running_state.insert(position_id, (new_balance, new_index_for_map));
+
+    Ok((chunk_event, refresh))
 }
 
 /// Look up the GHO debt asset for a scaled event's emitter (the vToken).
@@ -1842,8 +1922,11 @@ mod tests {
         let logs: Vec<&Log> = Vec::new();
         let gho_ctx = GhoDiscountContext::new(&logs, &discounts, Some(vtoken));
         let mut events: Vec<AaveChunkEvent> = Vec::new();
-        dispatch_interest_accrual(&op, 1, &conn, Some(vtoken), &gho_ctx, &mut events)
-            .expect("GHO interest accrual must not defer (WCRWL3)");
+        let mut gho_running_state: HashMap<i64, (U256, U256)> = HashMap::new();
+        dispatch_interest_accrual(
+            &op, 1, &conn, Some(vtoken), &gho_ctx, &mut events, &mut gho_running_state,
+        )
+        .expect("GHO interest accrual must not defer (WCRWL3)");
         assert_eq!(
             events.len(),
             1,
