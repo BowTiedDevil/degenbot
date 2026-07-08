@@ -185,7 +185,7 @@ pub enum AaveChunkEvent {
     /// `to`, + reconciles both positions' `last_index`.
     ScaledTokenTransfer {
         from_position_id: i64,
-        to_position_id: i64,
+        to_position_id: Option<i64>,
         scaled_amount: alloy::primitives::U256,
         transfer_index: alloy::primitives::U256,
     },
@@ -2520,7 +2520,7 @@ mod tests {
 
         let events = vec![AaveChunkEvent::ScaledTokenTransfer {
             from_position_id: 1,
-            to_position_id: 2,
+            to_position_id: Some(2),
             scaled_amount: U256::from(2u8) * RAY,
             transfer_index: RAY,
         }];
@@ -2548,6 +2548,79 @@ mod tests {
             to_last_index,
             Some(RAY.to_string()),
             "recipient last_index set to the transfer's index"
+        );
+    }
+
+    /// Crash #8 (RED→GREEN): a `ScaledTokenTransfer` whose recipient
+    /// address is `ZERO_ADDRESS` (a burn-to-zero leg, the `Transfer(from=user,
+    /// to=0x0, amount)` shape) must NOT create a 0x0 collateral position. The
+    /// orchestrator's 19M→22M march diverged exactly here: Rust wrote BOTH
+    /// legs unconditionally, creating an extra `aave_v3_collateral_positions`
+    /// row for the 0-address user on rETH (balance=911746220 wei = dust) where
+    /// Python ref had zero 0-address rows for rETH.
+    ///
+    /// Python's mirror filter lives in `transfers.py:_process_collateral_transfer`
+    /// — the recipient block (`if scaled_event.target_address != ZERO_ADDRESS:`)
+    /// is skipped when `to == ZERO_ADDRESS`. The SENDER side is written
+    /// unconditionally (matches the 2 pre-existing 0-address rows on
+    /// 0x83F2 / 0xD533 in both Python ref + Rust). The Rust equivalent: the
+    /// dispatch path wraps `to_position_id: None` when `to_addr == ZERO_ADDRESS`,
+    /// and the apply fn skips the recipient write.
+    #[test]
+    fn apply_aave_chunk_writes_on_conn_skips_zero_address_recipient_leg() {
+        let db = fresh_db();
+        // Seed only the SENDER (id=1, balance=5 RAY). The recipient position
+        // is intentionally absent — the test asserts the apply path does NOT
+        // insert a row for it.
+        seed_collateral_position_with_balance(
+            &db,
+            1,
+            &(U256::from(5u8) * RAY).to_string(),
+            Some(&RAY.to_string()),
+        );
+
+        // The dispatch path passes `to_position_id: None` when
+        // `to_addr == ZERO_ADDRESS` — the apply path must skip the recipient
+        // write entirely (no INSERT into aave_v3_collateral_positions).
+        let events = vec![AaveChunkEvent::ScaledTokenTransfer {
+            from_position_id: 1,
+            to_position_id: None,
+            scaled_amount: U256::from(2u8) * RAY,
+            transfer_index: RAY,
+        }];
+        {
+            let mut guard = db.lock();
+            let tx = guard.transaction().unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 11_000).unwrap();
+            assert_eq!(report.scaled_token_transfer, 1);
+            tx.commit().unwrap();
+        }
+
+        // Sender side is unaffected — debited as normal.
+        let (from_balance, from_last_index) = position_state(&db, 1);
+        assert_eq!(
+            from_balance,
+            (U256::from(3u8) * RAY).to_string(),
+            "sender balance after transfer = 5 - 2 = 3 RAY (the zero-recipient skip is recipient-only)"
+        );
+        assert_eq!(
+            from_last_index,
+            Some(RAY.to_string()),
+            "sender last_index advances to the transfer's index"
+        );
+
+        // NO collateral position row was created for the 0-address recipient.
+        let zero_recipient_rows: i64 = db
+            .lock()
+            .query_row(
+                "SELECT COUNT(*) FROM aave_v3_collateral_positions WHERE id = 2",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            zero_recipient_rows, 0,
+            "apply must not create a row for the zero-address recipient"
         );
     }
 

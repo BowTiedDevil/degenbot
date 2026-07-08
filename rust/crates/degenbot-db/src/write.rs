@@ -1635,7 +1635,7 @@ impl DegenbotDb {
     pub fn apply_scaled_token_transfer_on_conn(
         conn: &rusqlite::Connection,
         from_position_id: i64,
-        to_position_id: i64,
+        to_position_id: Option<i64>,
         scaled_amount: alloy::primitives::U256,
         transfer_index: alloy::primitives::U256,
     ) -> Result<(), DbError> {
@@ -1650,26 +1650,37 @@ impl DegenbotDb {
                 .unwrap_or(alloy::primitives::I256::MIN),
             transfer_index,
         )?;
-        // Credit the recipient (positive delta). The Python sets
-        // `recipient_position.last_index = transfer_index` UNCONDITIONALLY
-        // (not max-with-prev) — the recipient's index becomes the transfer's
-        // index. Reuse the shared helper which does max-with-prev; the
-        // difference is benign because a fresh recipient position's
-        // `last_index` is NULL (treated as 0), so max(0, transfer_index) =
-        // transfer_index matches the unconditional set. For an existing
-        // recipient (a re-transfer into a non-empty position), max-with-prev
-        // is SAFER (avoids clobbering a higher index from a prior transfer);
-        // the Python's unconditional set is a latent bug only visible if a
-        // prior transfer into the same recipient had a higher index, which
-        // can't happen within a single chunk's monotonic block order.
-        apply_scaled_token_balance_delta_on_conn(
-            conn,
-            ScaledTokenPosition::Collateral,
-            to_position_id,
-            alloy::primitives::I256::try_from(scaled_amount)
-                .unwrap_or(alloy::primitives::I256::MAX),
-            transfer_index,
-        )?;
+        // Credit the recipient (positive delta) — SKIPPED when the recipient
+        // address is `ZERO_ADDRESS` (the `Transfer(from=user, to=0x0, amount)`
+        // burn-to-zero leg). Mirrors Python's `transfers.py:
+        // _process_collateral_transfer` recipient guard (`if
+        // scaled_event.target_address != ZERO_ADDRESS:` — the recipient
+        // block is gated on !=0x0; delete dial-back was landing
+        // extra 0-address collateral rows in Rust otherwise, surfacing as
+        // crash #8 on the 21.9M→22M march checkpoint). The dispatcher passes
+        // `None` for the position id when the recipient is 0x0.
+        if let Some(to_position_id) = to_position_id {
+            // The Python sets `recipient_position.last_index = transfer_index`
+            // UNCONDITIONALLY (not max-with-prev) — the recipient's index
+            // becomes the transfer's index. Reuse the shared helper which
+            // does max-with-prev; the difference is benign because a fresh
+            // recipient position's `last_index` is NULL (treated as 0), so
+            // max(0, transfer_index) = transfer_index matches the
+            // unconditional set. For an existing recipient (a re-transfer
+            // into a non-empty position), max-with-prev is SAFER (avoids
+            // clobbering a higher index from a prior transfer); the
+            // Python's unconditional set is a latent bug only visible if a
+            // prior transfer into the same recipient had a higher index,
+            // which can't happen within a single chunk's monotonic block order.
+            apply_scaled_token_balance_delta_on_conn(
+                conn,
+                ScaledTokenPosition::Collateral,
+                to_position_id,
+                alloy::primitives::I256::try_from(scaled_amount)
+                    .unwrap_or(alloy::primitives::I256::MAX),
+                transfer_index,
+            )?;
+        }
         Ok(())
     }
 
@@ -1727,7 +1738,7 @@ impl DegenbotDb {
     pub fn apply_scaled_token_transfer(
         &self,
         from_position_id: i64,
-        to_position_id: i64,
+        to_position_id: Option<i64>,
         scaled_amount: alloy::primitives::U256,
         transfer_index: alloy::primitives::U256,
     ) -> Result<(), DbError> {
