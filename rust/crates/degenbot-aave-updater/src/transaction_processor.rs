@@ -350,10 +350,13 @@ fn extract_raw_amount_for_event(pool_event: &Log, ev: &ScaledTokenEvent, op: &Op
         // produced SENDER balances equal to the user ADDRESS interpreted as
         // a U256 (the "~10^69 oddity" — see task NMWPI6).
         match op.operation_type {
-            OperationType::Supply | OperationType::Borrow => extract_pool_amount_word1(pool_event),
-            OperationType::Repay | OperationType::RepayWithAtokens | OperationType::Withdraw => {
-                extract_pool_amount_word0(pool_event)
+            OperationType::Supply | OperationType::Borrow | OperationType::GhoBorrow => {
+                extract_pool_amount_word1(pool_event)
             }
+            OperationType::Repay
+            | OperationType::RepayWithAtokens
+            | OperationType::Withdraw
+            | OperationType::GhoRepay => extract_pool_amount_word0(pool_event),
             _ => extract_pool_amount_word0(pool_event),
         }
     }
@@ -408,6 +411,25 @@ fn build_scaled_event_chunk_event(
     let balance_increase = ev.balance_increase.unwrap_or_default();
     let index = ev.index.unwrap_or_default();
 
+    // DEBUG: per-event trace (env-gated). Emits the dispatch inputs so the
+    // Mint-vs-Burn variant + the enriched `raw_amount` (+ `value`,
+    // `balance_increase`, `index`) can be audited per event — narrows the
+    // exact rounding/raw_amount site for a divergent position. Keys via
+    // `log_index` (cross-ref the per-tx balance trace).
+    if std::env::var("DEGENBOT_AAVE_EVTRACE").as_deref() == Ok("1") {
+        eprintln!(
+            "AAVE-EVTRACE {{\"li\":{},\"op\":\"{:?}\",\"ev\":\"{:?}\",\"user\":\"0x{}\",\"raw\":\"{}\",\"value\":\"{}\",\"balinc\":\"{}\",\"idx\":\"{}\"}}",
+            ev.log_index,
+            op.operation_type,
+            ev.event_type,
+            alloy::hex::encode(ev.user_address),
+            raw_amount,
+            ev.amount,
+            balance_increase,
+            index,
+        );
+    }
+
     // The enricher's `scaled_amount = ray_div(raw_amount, index, strategy)`.
     // The strategy is the per-revision + per-event-type rounding.
     let (position, processor, strategy_mode) = if token_type == "a_token" {
@@ -430,13 +452,73 @@ fn build_scaled_event_chunk_event(
         ScaledTokenEventType::CollateralMint
         | ScaledTokenEventType::DebtMint
         | ScaledTokenEventType::GhoDebtMint => {
-            // The interest-exceeds edge: WITHDRAW/REPAY_WITH_ATOKENS where
-            // `amount < balance_increase` — the Mint is emitted as an
-            // effective Burn (mirror of `_process_operation`'s special case).
-            let is_interest_exceeds_edge = (op.operation_type == OperationType::Withdraw
-                || op.operation_type == OperationType::RepayWithAtokens)
+            // DEBT-REPAY interest-exceeds edge: a `DebtMint` event inside a
+            // `Repay`/`RepayWithAtokens` op where accrued interest >
+            // repayAmount — the vToken contract emits a Mint whose NET effect
+            // is burning the scaled repayment amount (Aave V3 `_burnScaled`:
+            // the Mint-of-the-payed-interest falsifies the simple `value <
+            // balance_increase` reading). Python's `_process_debt_mint_with_match`
+            // (`token_processor.py:630-715`) does NOT dispatch this through
+            // `process_mint_event`: it decodes `repayAmount` from the Repay
+            // pool event, computes `actual_scaled_burn =
+            // get_debt_burn_scaled_amount(repayAmount, index)` (= `ray_div_floor`
+            // for V4/V5), and dispatches a `DebtBurnEvent(value=actual_scaled_burn,
+            // scaled_amount=actual_scaled_burn)`. Routing through
+            // `process_debt_mint`'s else arm instead recomputes
+            // `balance_increase - event.value` (= 9_999_999 for the smoking-gun
+            // `repayAmount=10M, balance_increase=461M, value=451M` tx @ block
+            // 23_093_579), which floor-divides to 8_437_165 — diverging by 1 wei
+            // from the pool-word floor division to 8_437_166. This was the root
+            // cause of the 438 non-GHO debt divergences @23.1M + the +1 signature
+            // on the residual 7 + crash #10's balance-would-go-negative at
+            // 23_093_579.
+            let is_debt_repay_mint_edge = token_type == "v_token"
+                && matches!(ev.event_type, ScaledTokenEventType::DebtMint)
+                && matches!(
+                    op.operation_type,
+                    OperationType::Repay | OperationType::RepayWithAtokens
+                )
                 && ev.amount < balance_increase;
-            if is_interest_exceeds_edge {
+            // The interest-exceeds edge for aToken: WITHDRAW/REPAY_WITH_ATOKENS
+            // where `amount < balance_increase` — the Mint is emitted as an
+            // effective Burn (mirror of `_process_operation`'s special case).
+            let is_collateral_interest_exceeds_edge = matches!(
+                op.operation_type,
+                OperationType::Withdraw | OperationType::RepayWithAtokens
+            ) && ev.amount < balance_increase;
+            if is_debt_repay_mint_edge {
+                // Treat the Mint as a DebtBurn: dispatch `process_debt_burn`
+                // with the enriched `scaled_amount = ray_div(raw_amount, index,
+                // BURN strategy)` (= `ray_div_floor(repayAmount, index)` for
+                // V4/V5) — mirrors Python's
+                // `DebtBurnEvent(value=actual_scaled_burn, scaled_amount=actual_scaled_burn)`.
+                // Pass it as the `scaled_delta` arg so `process_debt_burn`
+                // short-circuits to it (NOT its `value + balance_increase`
+                // fallback, which diverges by ±1 wei for the same reason as the
+                // standard non-GHO debt burn path).
+                let scaled_amount = ray_div(raw_amount, index, strategy_mode.burn.into())?;
+                let event_data = ScaledTokenEventData {
+                    value: scaled_amount,
+                    balance_increase,
+                    index,
+                    scaled_amount: Some(scaled_amount),
+                };
+                let result = processor.process_debt_burn(&event_data, Some(scaled_amount))?;
+                let position_id = resolve_position_id(
+                    conn,
+                    market_id,
+                    position,
+                    ev.user_address,
+                    asset.id,
+                    &asset.underlying_token_address,
+                )?;
+                Ok(AaveChunkEvent::ScaledTokenBurn {
+                    position,
+                    position_id,
+                    balance_delta: result.balance_delta,
+                    new_index: result.new_index,
+                })
+            } else if is_collateral_interest_exceeds_edge {
                 // Treat the Mint as a Burn: compute the scaled delta from
                 // `raw_amount` using the BURN strategy (the Python enricher
                 // still uses the raw_amount from the pool_event for the
@@ -504,8 +586,10 @@ fn build_scaled_event_chunk_event(
         | ScaledTokenEventType::GhoDebtBurn => {
             // For a vToken DebtBurn, dispatch to `process_debt_burn` (not
             // `process_collateral_burn` — the branch logic + ZERO-delta edge
-            // differ). The `scaled_delta` arg stays `None` (the enriched
-            // `scaled_amount` is on `event_data`).
+            // differ). Whether the enriched `scaled_amount` is passed as the
+            // processor's `scaled_delta` arg depends on the dispatch path,
+            // mirroring Python's split between the standard `DebtBurnEvent`
+            // arm and the liquidation `_process_debt_burn_with_match` path.
             let scaled_amount = ray_div(raw_amount, index, strategy_mode.burn.into())?;
             let event_data = ScaledTokenEventData {
                 value: ev.amount,
@@ -514,8 +598,60 @@ fn build_scaled_event_chunk_event(
                 scaled_amount: Some(scaled_amount),
             };
             let result = if token_type == "v_token" {
-                processor.process_debt_burn(&event_data, None)
+                // Pass the enriched `scaled_amount` as `scaled_delta` for the
+                // standard AND non-bad-debt liquidation debt-burn paths.
+                //
+                // Standard `Repay`/`RepayWithAtokens`: mirrors Python's
+                // `scaled_delta=event.scaled_amount` at `token_processor.py`
+                // :151 (the `DebtBurnEvent` arm). The `None` fallback
+                // recomputes `value + balance_increase` via `ray_div`, which
+                // diverges by ±1 wei from the enriched pool-word value whenever
+                // on-chain rounding makes the repay `word0` differ from `value
+                // + balance_increase` (root cause of the 438 non-GHO debt
+                // divergences @23.1M).
+                //
+                // `Liquidation`/`GhoLiquidation` (non-bad-debt): mirrors
+                // Python's `_process_debt_burn_with_match` SINGLE/SEPARATE_BURNS
+                // arms, which use `scaled_amount =
+                // get_debt_burn_scaled_amount(debtToCover, index)` =
+                // `ray_div_floor(debtToCover, index)` — i.e. exactly this
+                // enriched `scaled_amount` (the enrichment's `raw_amount` is
+                // the `LiquidationCall` word0 = `debtToCover`). The `None`
+                // fallback (`value + balance_increase`) diverges by ±1 wei from
+                // this for these positions (root cause of the residual 8).
+                //
+                // Bad-debt liquidation debt burns NEVER reach this arm —
+                // `dispatch_liquidation` and `dispatch_gho_liquidation` reset
+                // them to zero (`DebtPositionReset`, mirroring Python's
+                // `_is_bad_debt_liquidation` DEFICIT_CREATED zeroing) BEFORE
+                // calling `build_scaled_event_chunk_event`. So every
+                // liquidation debt burn that reaches here is non-bad-debt, and
+                // passing `Some` is safe (no catastrophic `debtToCover`-sentinel
+                // over-burn — that was the GhoLiquidation crash, now guarded at
+                // the dispatch seam).
+                //
+                // `None` is retained for the non-pool-word paths
+                // (`DeficitCoverage`/balance-transfer/interest-accrual/unknown)
+                // whose `raw_amount` semantics differ; the `None` recompute
+                // matches Python for those (currently 0 divergences).
+                let scaled_delta = if matches!(
+                    op.operation_type,
+                    OperationType::Repay
+                        | OperationType::RepayWithAtokens
+                        | OperationType::Liquidation
+                        | OperationType::GhoLiquidation
+                ) {
+                    Some(scaled_amount)
+                } else {
+                    None
+                };
+                processor.process_debt_burn(&event_data, scaled_delta)
             } else {
+                // aToken collateral burn: `process_collateral_burn` honors
+                // `event.scaled_amount` when `scaled_delta` is `None`, so
+                // passing `None` here is exact (mirrors Python's enriched
+                // value via the event-data fallback). Collateral is GREEN at
+                // scale under `None`.
                 processor.process_collateral_burn(&event_data, None)
             }?;
             let position_id = resolve_position_id(
@@ -1084,7 +1220,53 @@ fn dispatch_gho_liquidation(
                 events.push(refresh_ev);
             }
         } else {
-            // The collateral leg → standard builder (aToken burn/transfer).
+            // Non-GHO event within a GHO liquidation: either the aToken
+            // collateral leg, OR a stranded non-GHO vToken `DebtBurn` (the
+            // `is_gho` guard above excludes only the GHO vToken). Mirror
+            // `dispatch_liquidation`'s bad-debt seam: a stranded non-GHO
+            // debt burn whose user had a `DEFICIT_CREATED` in this tx is a
+            // bad-debt write-off → the contract burns the ENTIRE remaining
+            // debt; zero the position + advance `last_index` (Python's
+            // `_process_debt_burn_with_match` bad-debt override). This guard
+            // MUST precede `build_scaled_event_chunk_event` so the debt-burn
+            // BURN arm's `Some(scaled_delta)` (the enriched `debtToCover`)
+            // never reaches a bad-debt position — that sentinel `debtToCover`
+            // over-burn was the GhoLiquidation crash.
+            let is_debt = matches!(
+                ev.event_type,
+                ScaledTokenEventType::DebtBurn
+                    | ScaledTokenEventType::DebtTransfer
+                    | ScaledTokenEventType::Erc20DebtTransfer
+            );
+            if is_debt && gho_ctx.is_bad_debt(ev.user_address) {
+                let token_addr_str = addr_to_hex(ev.token_address);
+                let asset = DegenbotDb::lookup_asset_by_token_address_on_conn(
+                    conn,
+                    market_id,
+                    &token_addr_str,
+                    "v_token",
+                )?
+                .ok_or_else(|| {
+                    ProcessTxError::Substrate(degenbot_db::DbError::Decode(format!(
+                        "no vToken asset for token {token_addr_str} in market {market_id}"
+                    )))
+                })?;
+                let position_id = resolve_position_id(
+                    conn,
+                    market_id,
+                    ScaledTokenPosition::Debt,
+                    ev.user_address,
+                    asset.id,
+                    &asset.underlying_token_address,
+                )?;
+                events.push(AaveChunkEvent::DebtPositionReset {
+                    position_id,
+                    new_index: ev.index.unwrap_or_default(),
+                });
+                continue;
+            }
+            // The collateral leg (or a non-bad-debt stranded debt burn) →
+            // standard builder.
             let ev_raw = extract_raw_amount_for_event(pool_event, ev, op);
             let chunk_event = build_scaled_event_chunk_event(ev, op, ev_raw, market_id, conn)?;
             events.push(chunk_event);
@@ -1125,13 +1307,45 @@ fn build_gho_chunk_event(
     let scaled_amount = if let Some(s) = scaled_amount_override {
         Some(s)
     } else {
-        let raw_amount = pool_event.map_or(ev.amount, extract_pool_amount_word0);
+        let raw_amount =
+            pool_event.map_or(ev.amount, |pe| extract_raw_amount_for_event(pe, ev, op));
         let strat = crate::gho_processor::gho_strategy(asset.v_token_revision);
-        if ev.amount >= balance_increase {
-            Some(ray_div(raw_amount, index, strat.mint.into())?)
-        } else {
-            Some(ray_div(raw_amount, index, strat.burn.into())?)
-        }
+        // Mirror Python's per-op enrichment handler strategy
+        // (calculator.py + enrichment/handlers/{borrow,repay,liquidation}.py):
+        //
+        //   • `BorrowHandler.handle`   → `context.calculate(GHO_DEBT_MINT, ...)`  → MINT strategy (`get_debt_mint_scaled_amount`, CEIL for V5)
+        //   • `RepayHandler._handle_standard_burn` OR `._handle_interest_exceeds_repayment` →
+        //     `context.calculate(GHO_DEBT_BURN, ...)` → BURN strategy (`get_debt_burn_scaled_amount`, FLOOR for V5)
+        //   • `LiquidationHandler.handle`: the defaulting path through `_get_calculation_event_type`
+        //     (returns `event_type` as-is) → event-type-based (MINT for GhoDebtMint, BURN for GhoDebtBurn)
+        //
+        // Crash #10 root cause: pre-fix this compute used the magnitude heuristic
+        // `if ev.amount >= balance_increase { MINT } else { BURN }`. For GHO
+        // REPAY (GhoDebtBurn) events where `Burn.value > Burn.balanceIncrease`
+        // (typical when the user repays the principal, not just interest), the
+        // heuristic misclassified it as a MINT event → CEIL rounding + burned
+        // 1 wei MORE than Python's FLOOR per burn. Across the 5 GHO Burns in
+        // the 23M→23.1M chunk this accumulated to a 5-wei underflow at the
+        // final full-repay (= Python final balance 0; Rust final balance -5,
+        // blocked by the uint128-negative guard that STAYS).
+        //
+        // This dispatch fixes the heuristic per Python's handler-by-handler
+        // strategy selection. The deriving `ray_div` call uses the chosen
+        // per-op per-event rounding mode. Note the dispatch_gho_liquidation
+        // path already handles bad-debt via `DebtPositionReset` (before reaching
+        // this compute).
+        let rounding_mode = match op.operation_type {
+            OperationType::GhoBorrow => strat.mint,
+            OperationType::GhoRepay => strat.burn,
+            _ => {
+                if ev.event_type == ScaledTokenEventType::GhoDebtMint {
+                    strat.mint
+                } else {
+                    strat.burn
+                }
+            }
+        };
+        Some(ray_div(raw_amount, index, rounding_mode.into())?)
     };
     let event_data = ScaledTokenEventData {
         value: ev.amount,
@@ -1879,7 +2093,7 @@ mod tests {
     // ── WCRWL3: GHO interest-accrual dispatch (crash #2) ───────────────
 
     /// Seed an in-memory DB with a market + a GHO debt asset (V4, no
-    /// discount) whose vToken erc20 is `0xvtoken`. Returns (db, vtoken_addr).
+    /// discount) whose vToken erc20 is `0xvtoken`. Returns (db, `vtoken_addr`).
     fn fresh_db_with_gho_debt_asset() -> (DegenbotDb, Address) {
         use degenbot_core::address_utils::address_to_checksum_string;
         use rusqlite::params;
@@ -1970,7 +2184,7 @@ mod tests {
     /// GhoDebtMint — C2"))` — the coldboot→18M drive crashed at block 17699521
     /// on exactly this. The byte-exact GHO interest-accrual math (discount,
     /// dust mints) is verified end-to-end vs the Python gold at 18M; this unit
-    /// test pins the DISPATCH routing (no deferral + a ScaledTokenMint chunk
+    /// test pins the DISPATCH routing (no deferral + a `ScaledTokenMint` chunk
     /// event produced).
     #[test]
     fn dispatch_interest_accrual_routes_gho_debt_mint_through_gho_processor() {
@@ -2027,7 +2241,7 @@ mod tests {
     ///
     /// Pre-fix this dispatched BOTH the `Erc20CollateralTransfer` (unscaled
     /// `ev.amount`) AND the `CollateralTransfer` (BT, scaled `ev.amount`)
-    /// chunk_events — the unscaled amount `168401963` over-debited the
+    /// `chunk_events` — the unscaled amount `168401963` over-debited the
     /// position's scaled balance `148831960` and the uint128-negative guard
     /// fired (the guard STAYS — on-chain `UserState.balance` is uint128,
     /// `AToken.rev_1.sol:1712`).
