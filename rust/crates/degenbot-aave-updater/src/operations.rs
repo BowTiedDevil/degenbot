@@ -403,8 +403,12 @@ pub enum LiquidationPattern {
     SeparateBurns,
 }
 
-/// Mirrors `aave/pattern_types.py::LiquidationPatternContext` (stub — B
-/// owns the detection logic).
+/// Mirrors `aave/pattern_types.py::LiquidationPatternContext`.
+///
+/// Built per-tx by [`crate::transaction_processor::build_liquidation_patterns`]
+/// (the port of `detect_liquidation_patterns`); consumed by the liquidation
+/// dispatch (`dispatch_liquidation`) to apply the `COMBINED_BURN`
+/// aggregated-burn + Mint-skip behavior (Issue 0056).
 #[derive(Clone, Debug, Default)]
 #[allow(clippy::module_name_repetitions)]
 pub struct LiquidationPatternContext {
@@ -417,8 +421,38 @@ pub struct LiquidationPatternContext {
     pub processed: std::collections::HashSet<(Address, Address)>,
 }
 
-/// Mirrors `aave/pattern_types.py::LiquidationGroup` (stub — B owns the
-/// detection logic; the parser constructs empty groups for the orchestrator).
+impl LiquidationPatternContext {
+    /// Get the detected pattern for a `(user, debt_v_token)`. Mirrors
+    /// `LiquidationPatternContext.get_pattern`. `None` for a pair with no
+    /// liquidation group (the dispatch falls through to the per-op path).
+    #[must_use]
+    pub fn get_pattern(&self, user: Address, debt_v_token: Address) -> Option<LiquidationPattern> {
+        self.patterns.get(&(user, debt_v_token)).copied()
+    }
+
+    /// Get the liquidation group for a `(user, debt_v_token)`. Mirrors
+    /// `LiquidationPatternContext.get_group`.
+    #[must_use]
+    pub fn get_group(&self, user: Address, debt_v_token: Address) -> Option<&LiquidationGroup> {
+        self.groups.get(&(user, debt_v_token))
+    }
+
+    /// Whether a group has been fully processed (`COMBINED_BURN`
+    /// aggregated-burn has already fired). Mirrors
+    /// `LiquidationPatternContext.is_processed`.
+    #[must_use]
+    pub fn is_processed(&self, user: Address, debt_v_token: Address) -> bool {
+        self.processed.contains(&(user, debt_v_token))
+    }
+
+    /// Mark a group as fully processed (`COMBINED_BURN` handling). Mirrors
+    /// `LiquidationPatternContext.mark_processed`.
+    pub fn mark_processed(&mut self, user: Address, debt_v_token: Address) {
+        self.processed.insert((user, debt_v_token));
+    }
+}
+
+/// Mirrors `aave/pattern_types.py::LiquidationGroup`.
 #[derive(Clone, Debug, Default)]
 #[allow(clippy::module_name_repetitions)]
 pub struct LiquidationGroup {
