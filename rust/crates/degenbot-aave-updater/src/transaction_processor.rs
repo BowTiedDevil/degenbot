@@ -259,21 +259,31 @@ fn build_liquidation_patterns(
             log_idx_value(pool_event),
         ));
         // 2. Attach the matched debt burns carried by THIS op's
+        // 2. Attach the matched debt burns carried by THIS op's
         //    `scaled_events` (the parser already matched them via
         //    `collect_debt_burns`; the burn's vToken emitter IS the group's
-        //    `debt_v_token`). Dedup by log_index — Python iterates the
-        //    tx-wide `scaled_token_events` once; the per-op iteration can only
-        //    ever see each burn once (the parser attaches it to a single op —
+        //    `debt_v_token`). Mirrors Python's `detect_liquidation_patterns`
+        //    burn-association step: SKIP a burn whose `(user, v_token)` key is
+        //    NOT already an existing liquidation group (`if key not in groups:
+        //    continue`). This is critical: a standalone (non-liquidation) repay
+        //    burn, or a burn whose vToken doesn't match the LC's debt vToken,
+        //    must NOT create a spurious 0-liquidation group — such a group
+        //    classifies as `CombinedBurn` with `total_debt_to_cover() == 0`,
+        //    and `dispatch_liquidation`'s COMBINED_BURN override would size the
+        //    burn by 0 (Issue 0056 regression: chunk 22122071 GHO debt-burn
+        //    zeroing bug). Dedup by log_index — Python iterates the tx-wide
+        //    `scaled_token_events` once; the per-op iteration can only ever see
+        //    each burn once (the parser attaches it to a single op —
         //    `COMBINED_BURN` position 0).
         for ev in &op.scaled_events {
             if matches!(
                 ev.event_type,
                 ScaledTokenEventType::DebtBurn | ScaledTokenEventType::GhoDebtBurn
             ) {
-                let g = ctx
-                    .groups
-                    .entry((ev.user_address, ev.token_address))
-                    .or_default();
+                let burn_key = (ev.user_address, ev.token_address);
+                let Some(g) = ctx.groups.get_mut(&burn_key) else {
+                    continue;
+                };
                 if !g.burn_events.iter().any(|(li, _)| *li == ev.log_index) {
                     g.burn_events.push((ev.log_index, ev.amount));
                 }
@@ -1659,12 +1669,21 @@ fn lookup_gho_debt_asset(
 /// is NOT consulted). If bad-debt, the contract burns the ENTIRE remaining
 /// debt → set the position balance to 0 + advance `last_index`. Else, the
 /// per-event-type raw-amount extractor (debt → word 0, collateral → word 1).
+///
+/// The bad-debt reset applies to BOTH GHO and non-GHO debt burns (mirrors
+/// Python's "applies to both GHO and non-GHO tokens" note): a GHO debt burn
+/// attached to a non-GHO `LiquidationCall` (via `collect_debt_burns`'
+/// single-liquidation "collect all burns" branch) never reaches
+/// `dispatch_gho_liquidation`, so the reset here is the only zeroing path.
+/// `gho_vtoken_address` is retained as a parameter for signature parity with
+/// the other dispatch fns (the former GHO-exclusion guard was removed — it
+/// caused the chunk-22122071 GHO bad-debt write-off to be skipped).
 #[allow(clippy::too_many_arguments, clippy::similar_names)]
 fn dispatch_liquidation(
     op: &Operation,
     market_id: i64,
     conn: &Connection,
-    gho_vtoken_address: Option<Address>,
+    _gho_vtoken_address: Option<Address>,
     gho_ctx: &GhoDiscountContext,
     liq_patterns: &mut LiquidationPatternContext,
     events: &mut Vec<AaveChunkEvent>,
@@ -1694,19 +1713,28 @@ fn dispatch_liquidation(
         }
         // The bad-debt check applies only to debt events (the collateral leg
         // is unaffected — bad-debt writes off the DEBT, not the collateral).
+        // Mirrors Python's `_process_debt_burn_with_match`, whose bad-debt
+        // reset "applies to both GHO and non-GHO tokens" for ANY debt burn in a
+        // Liquidation/GhoLiquidation op. A GHO debt burn attached to a
+        // NON-GHO LiquidationCall (the parser's `collect_debt_burns`
+        // single-liquidation branch attaches ALL of the user's debt burns —
+        // Issue: chunk 22122071, the GHO bad-debt write-off zeroing bug) MUST
+        // be reset here: it never reaches `dispatch_gho_liquidation` (the op
+        // is `Liquidation`, not `GhoLiquidation`), so there is no GHO-path
+        // double-apply to guard against. The prior `is_gho` guard + the
+        // `GhoDebtBurn` omission from `is_debt` caused the GHO burn to fall
+        // through to `build_scaled_event_chunk_event` with `raw_amount` = the
+        // non-GHO LiquidationCall's `debtToCover` (a dust value) → a
+        // wrongly-sized burn that left the 1.28e15 GHO debt un-burnt.
         let is_debt = matches!(
             ev.event_type,
             ScaledTokenEventType::DebtBurn
                 | ScaledTokenEventType::DebtTransfer
                 | ScaledTokenEventType::Erc20DebtTransfer
+                | ScaledTokenEventType::GhoDebtBurn
+                | ScaledTokenEventType::GhoDebtTransfer
         );
-        if is_debt
-            && gho_ctx.is_bad_debt(ev.user_address)
-            // Only when this is NOT the GHO vToken (the GHO path handles its
-            // own bad-debt in `dispatch_gho_liquidation`). The `is_gho` guard
-            // avoids double-applying the reset if a GHO debt event reaches here.
-            && gho_vtoken_address.is_none_or(|a| a != ev.token_address)
-        {
+        if is_debt && gho_ctx.is_bad_debt(ev.user_address) {
             let token_addr_str = addr_to_hex(ev.token_address);
             let asset = DegenbotDb::lookup_asset_by_token_address_on_conn(
                 conn,
@@ -3019,5 +3047,269 @@ mod tests {
             }
             other => panic!("expected ScaledTokenBurn, got {other:?}"),
         }
+    }
+
+    // RED→GREEN (Issue 0056 regression): a debt burn whose vToken does NOT
+    // match any LiquidationCall's debt vToken — e.g. a cross-asset burn
+    // attached to a liquidation op, or a standalone (non-liquidation) repay —
+    // must NOT be classified as `COMBINED_BURN`. Pre-fix, the Rust
+    // `build_liquidation_patterns` step-2 used `entry().or_default()`, which
+    // created a spurious 0-liquidation + 1-burn group; `detect_pattern` then
+    // returned `CombinedBurn` with `total_debt_to_cover() == 0`, and
+    // `dispatch_liquidation`'s COMBINED_BURN override sized the burn by 0
+    // (chunk 22122071 GHO debt-burn zeroing bug: DB expected ~1.28e15,
+    // chain = 0). Mirrors Python's `detect_liquidation_patterns` guard
+    // `if key not in groups: continue`.
+    #[test]
+    fn build_liquidation_patterns_does_not_classify_standalone_burn_as_combined() {
+        use degenbot_core::address_utils::address_to_checksum_string;
+        use rusqlite::params;
+
+        let db = fresh_db_with_asset();
+        // WBTC underlying + vToken (the LC's debt asset) — group key A.
+        let wbtc_underlying = Address::from([0xA0; 20]);
+        let wbtc_vtoken = Address::from([0x72; 20]);
+        // GHO vToken (the cross-asset burn's emitter) — must NOT form a group.
+        let gho_vtoken = Address::from([0x99; 20]);
+        let user = Address::from([0x4A; 20]);
+        let index = U256::from(1_114_798_937_791u64).saturating_mul(U256::from(1_000_000_000u64));
+
+        // Seed BOTH vToken rows so `build_liquidation_patterns` can resolve
+        // the LC's debt vToken (1=underlying, 3=vToken already seeded by
+        // fresh_db_with_asset — rewrite them). Add a second asset (GHO) row
+        // so the GHO burn's emitter address is registered (parity with a real
+        // market; the step-2 lookup uses the in-memory map, but we keep the DB
+        // realistic).
+        {
+            let conn = db.lock();
+            conn.execute(
+                "UPDATE erc20_tokens SET address = ?1 WHERE id = 1",
+                params![address_to_checksum_string(&wbtc_underlying)],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE erc20_tokens SET address = ?1 WHERE id = 3",
+                params![address_to_checksum_string(&wbtc_vtoken)],
+            )
+            .unwrap();
+        }
+
+        let dtc = U256::from(47_005_978u64);
+        // WBTC-debt LiquidationCall (the real group).
+        let liq = Box::leak(Box::new(make_liquidation_call_log(
+            17,
+            Address::from([0xC0; 20]),
+            wbtc_underlying,
+            user,
+            dtc,
+        )));
+        // A cross-asset GHO debt burn riding in the same op (the parser's
+        // COMBINED_BURN position-0 assignment can attach a same-user burn of a
+        // different vToken). Its vToken (0x99..) != the LC's debt vToken
+        // (0x72..), so it must NOT create a (user, 0x99..) group.
+        let gho_burn = make_debt_burn_event(42, gho_vtoken, user, U256::from(1_000_000u64), index);
+        let op = Operation {
+            operation_id: 0,
+            operation_type: OperationType::Liquidation,
+            pool_revision: 9,
+            pool_event: Some(liq),
+            scaled_events: vec![gho_burn],
+            transfer_events: Vec::new(),
+            balance_transfer_events: Vec::new(),
+            minted_to_treasury_amount: None,
+            debt_to_cover: Some(dtc),
+            validation_errors: Vec::new(),
+        };
+        let conn = db.lock();
+        let liq_patterns = build_liquidation_patterns(&conn, 1, std::slice::from_ref(&op));
+        // The WBTC group exists (1 liquidation, 1 burn would be attached if it
+        // matched) — but the GHO burn must NOT have created a group.
+        assert_eq!(
+            liq_patterns.get_pattern(user, wbtc_vtoken),
+            Some(LiquidationPattern::Single),
+            "the WBTC-CALL group (1 liq, 0 burns) must detect Single",
+        );
+        assert_eq!(
+            liq_patterns.get_pattern(user, gho_vtoken),
+            None,
+            "a cross-asset burn with no matching LC must not create a pattern",
+        );
+        assert!(
+            liq_patterns.get_group(user, gho_vtoken).is_none(),
+            "a cross-asset burn must not create a (0-liq) group",
+        );
+    }
+
+    // ── Bad-debt reset for a GHO debt burn in a NON-GHO liquidation ─────
+    // Chunk 22122071-22132070: tx 0x0affc26f is a `batchLiquidate` (9
+    // LiquidationCalls, all debtAsset=WBTC). The parser's `collect_debt_burns`
+    // single-liquidation branch ("collect ALL debt burns, no asset filter")
+    // attaches user 0xfb27's GHO-debt vToken Burn (idx 661) to the WBTC-LC op
+    // (idx 665) because the user has exactly 1 liquidation. The GHO burn's
+    // real value is 1.28e15 (the FULL GHO debt — a bad-debt write-off: the
+    // contract emits DEFICIT_CREATED, on-chain scaledBalanceOf drops to 0).
+    //
+    // The Python `_process_debt_burn_with_match` applies the bad-debt reset
+    // FIRST (balance=0) — and its comment says "applies to both GHO and
+    // non-GHO tokens" — for ANY debt burn in a Liquidation/GhoLiquidation op
+    // when `_is_bad_debt_liquidation` is true.
+    //
+    // Pre-fix, the Rust `dispatch_liquidation` gated the reset on `is_debt`,
+    // which EXCLUDED `GhoDebtBurn` (the set was {DebtBurn, DebtTransfer,
+    // Erc20DebtTransfer}), AND excluded the GHO vToken via a `is_gho` guard
+    // (intended to defer to `dispatch_gho_liquidation` — but that path is
+    // NEVER reached for a GHO burn attached to a NON-GHO LC). So the GHO burn
+    // fell through to `build_scaled_event_chunk_event` with `raw_amount` = the
+    // WBTC LiquidationCall's word0 `debtToCover` (a dust value, 142 wei) →
+    // `ray_div(142, gho_index)` = 126 (the residual); the 1.28e15 GHO debt was
+    // never burned → DB expected ~1.28e15, on-chain 0.
+    #[test]
+    fn dispatch_liquidation_resets_gho_debt_burn_on_bad_debt() {
+        use degenbot_core::address_utils::address_to_checksum_string;
+        use degenbot_decoders::aave_event_decoder::DEFICIT_CREATED_TOPIC;
+        use rusqlite::params;
+
+        let db = fresh_db_with_asset();
+        // Asset 1 (seeded): rewrite to WBTC underlying (0xA0) / vToken (0x72).
+        let wbtc_underlying = Address::from([0xA0; 20]);
+        let wbtc_vtoken = Address::from([0x72; 20]);
+        // GHO asset: a NEW row (id 2) with underlying 0xA1 + vToken 0x99
+        // (the GHO debt vToken whose burn we test). erc20 ids 4 (GHO
+        // underlying) + 5 (GHO vToken) — fresh ids that don't collide with the
+        // seeded 1/2/3.
+        let gho_underlying = Address::from([0xA1; 20]);
+        let gho_vtoken = Address::from([0x99; 20]);
+        {
+            let conn = db.lock();
+            conn.execute(
+                "UPDATE erc20_tokens SET address = ?1 WHERE id = 1",
+                params![address_to_checksum_string(&wbtc_underlying)],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE erc20_tokens SET address = ?1 WHERE id = 3",
+                params![address_to_checksum_string(&wbtc_vtoken)],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES (4, 1, ?1), (5, 1, ?2), (6, 1, ?3)",
+                params![
+                    address_to_checksum_string(&gho_underlying),
+                    address_to_checksum_string(&gho_vtoken),
+                    address_to_checksum_string(&Address::from([0x77; 20])),
+                ],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO aave_v3_assets \
+                    (id, market_id, underlying_asset_id, a_token_id, a_token_revision, \
+                     v_token_id, v_token_revision, liquidity_index, liquidity_rate, \
+                     borrow_index, borrow_rate) \
+                 VALUES (2, 1, 4, 6, 1, 5, 1, '0', '0', '0', '0')",
+                [],
+            )
+            .unwrap();
+        }
+
+        let user = Address::from([0x4A; 20]);
+        let index = U256::from(1_122_921_836u64).saturating_mul(U256::from(1_000_000_000u64));
+        // The WBTC LiquidationCall (debtAsset=WBTC underlying, user). Its
+        // word0 = debtToCover = a dust value (142) — mirrors the real tx's
+        // LC which liquidated a near-zero WBTC debt.
+        let liq = Box::leak(Box::new(make_liquidation_call_log(
+            665,
+            Address::from([0xC0; 20]),
+            wbtc_underlying,
+            user,
+            U256::from(142u64),
+        )));
+        // The GHO debt burn attached to this op: real value 1.28e15 (the
+        // FULL GHO debt — a bad-debt write-off).
+        let gho_burn_value = U256::from(1_282_800_003_371_564u64);
+        let gho_burn = make_debt_burn_event(661, gho_vtoken, user, gho_burn_value, index);
+        // Mutate the event_type to GhoDebtBurn (make_debt_burn_event builds
+        // DebtBurn; the GHO vToken's burn is a GhoDebtBurn).
+        let mut gho_burn = gho_burn;
+        gho_burn.event_type = ScaledTokenEventType::GhoDebtBurn;
+
+        let op = Operation {
+            operation_id: 0,
+            operation_type: OperationType::Liquidation,
+            pool_revision: 9,
+            pool_event: Some(liq),
+            scaled_events: vec![gho_burn],
+            transfer_events: Vec::new(),
+            balance_transfer_events: Vec::new(),
+            minted_to_treasury_amount: None,
+            debt_to_cover: Some(U256::from(142u64)),
+            validation_errors: Vec::new(),
+        };
+
+        // Build a GhoDiscountContext that flags `user` as bad-debt via a
+        // DEFICIT_CREATED log (topic1 = user).
+        let deficit_log = make_log(
+            666,
+            Address::from([0xAB; 20]),
+            vec![
+                DEFICIT_CREATED_TOPIC,
+                B256::left_padding_from(user.as_slice()),
+            ],
+            Bytes::default(),
+        );
+        let logs: Vec<&Log> = vec![&deficit_log];
+        let discounts = HashMap::new();
+        let gho_ctx = GhoDiscountContext::new(&logs, &discounts, Some(gho_vtoken));
+        assert!(
+            gho_ctx.is_bad_debt(user),
+            "fixture: the DEFICIT_CREATED log must flag the user as bad-debt",
+        );
+
+        let conn = db.lock();
+        let mut liq_patterns = LiquidationPatternContext::default();
+        let mut events: Vec<AaveChunkEvent> = Vec::new();
+        dispatch_liquidation(
+            &op,
+            1,
+            &conn,
+            Some(gho_vtoken),
+            &gho_ctx,
+            &mut liq_patterns,
+            &mut events,
+        )
+        .expect("dispatch");
+
+        // GREEN: a DebtPositionReset must be emitted for the GHO debt
+        // position (the bad-debt write-off zeroes the balance). Pre-fix, the
+        // GHO burn was NOT reset (is_debt excluded GhoDebtBurn + the GHO
+        // vToken guard), so a wrongly-sized ScaledTokenBurn was emitted
+        // instead (delta = ray_div(142, index) = 126, leaving 1.28e15).
+        let reset = events.iter().find_map(|e| match e {
+            AaveChunkEvent::DebtPositionReset {
+                position_id,
+                new_index,
+            } => Some((*position_id, *new_index)),
+            _ => None,
+        });
+        let (reset_pid, reset_idx) =
+            reset.expect("the GHO debt burn must trigger a DebtPositionReset on bad-debt");
+        assert_eq!(
+            reset_idx, index,
+            "the reset must advance last_index to the burn's index"
+        );
+        // The reset's position_id must be the GHO vToken's debt position.
+        let gho_user_id =
+            DegenbotDb::get_or_create_user_on_conn(&conn, 1, &address_to_checksum_string(&user), 0)
+                .unwrap();
+        let gho_debt_pid =
+            DegenbotDb::get_or_create_debt_position_on_conn(&conn, gho_user_id, 2).unwrap();
+        assert_eq!(
+            reset_pid, gho_debt_pid,
+            "the reset must target the GHO vToken's debt position"
+        );
+        // And no wrongly-sized ScaledTokenBurn for the GHO position.
+        assert!(
+            !events.iter().any(|e| matches!(e, AaveChunkEvent::ScaledTokenBurn { position, .. } if *position == ScaledTokenPosition::Debt)),
+            "the GHO bad-debt burn must NOT also emit a ScaledTokenBurn (would double-apply)",
+        );
     }
 }
