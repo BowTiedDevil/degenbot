@@ -973,9 +973,10 @@ mod tests {
     #[test]
     fn burn_v4_no_discount_partial_repay() {
         // V4: no discount, HALF_UP burn.
+        // prev_balance=1000, prev_index=RAY. current_index=RAY (no change).
         // requested = value + balance_increase = 300 + 0 = 300.
         // amount_scaled = ray_div(300, RAY, HALF_UP) = 300.
-        // balance_before_burn = ray_mul(0, RAY) = 0. requested(300) != 0 → partial.
+        // balance_before_burn = ray_mul(1000, RAY) = 1000. requested(300) < 1000 → partial.
         // balance_delta = -300.
         let p = UnifiedGhoProcessor::new(4);
         let ev = ScaledTokenEventData {
@@ -985,7 +986,7 @@ mod tests {
             scaled_amount: None,
         };
         let r = p
-            .process_gho_debt_burn(&ev, U256::ZERO, RAY, U256::ZERO)
+            .process_gho_debt_burn(&ev, U256::from(1_000u64), RAY, U256::ZERO)
             .unwrap();
         assert_eq!(r.balance_delta, -I256::try_from(300u64).unwrap());
         assert!(!r.should_refresh_discount);
@@ -1014,6 +1015,7 @@ mod tests {
     #[test]
     fn burn_v5_uses_precomputed_scaled_amount() {
         // V5: no discount, FLOOR burn → use scaled_amount if provided.
+        // prev_balance=1000 so requested(300) < balance_before(1000) → partial.
         let p = UnifiedGhoProcessor::new(5);
         let ev = ScaledTokenEventData {
             value: U256::from(300u64),
@@ -1022,10 +1024,10 @@ mod tests {
             scaled_amount: Some(U256::from(301u64)), // the enrichment's pre-calculated value
         };
         let r = p
-            .process_gho_debt_burn(&ev, U256::ZERO, RAY, U256::ZERO)
+            .process_gho_debt_burn(&ev, U256::from(1_000u64), RAY, U256::ZERO)
             .unwrap();
         // amount_scaled = 301 (the pre-computed value).
-        // balance_before = ray_mul(0, RAY) = 0. requested = 300. 300 != 0 → partial.
+        // balance_before = ray_mul(1000, RAY) = 1000. requested = 300. 300 < 1000 → partial.
         // balance_delta = -301.
         assert_eq!(r.balance_delta, -I256::try_from(301u64).unwrap());
     }
@@ -1305,11 +1307,11 @@ mod tests {
             .unwrap();
         assert_eq!(r.balance_delta, -I256::try_from(300u64).unwrap());
         assert!(r.should_refresh_discount);
-        // rev=4 partial (prev=0): requested=300; balance_before=ray_mul(0,RAY)=0;
-        //   300 != 0 → partial → delta=-300; refresh=False.
+        // rev=4 partial (prev=1000): requested=300; balance_before=ray_mul(1000,RAY)=1000;
+        //   300 < 1000 → partial → delta=-300; refresh=False.
         let p4 = UnifiedGhoProcessor::new(4);
         let r = p4
-            .process_gho_debt_burn(&ev(300, 0, None), U256::ZERO, RAY, U256::ZERO)
+            .process_gho_debt_burn(&ev(300, 0, None), U256::from(1_000u64), RAY, U256::ZERO)
             .unwrap();
         assert_eq!(r.balance_delta, -I256::try_from(300u64).unwrap());
         assert!(!r.should_refresh_discount);
@@ -1319,10 +1321,10 @@ mod tests {
             .process_gho_debt_burn(&ev(1000, 0, None), U256::from(1000u64), RAY, U256::ZERO)
             .unwrap();
         assert_eq!(r.balance_delta, -I256::try_from(1000u64).unwrap());
-        // rev=5 (FLOOR → precomputed scaled_amount=400): delta=-400.
+        // rev=5 (FLOOR → precomputed scaled_amount=400): prev=1000 so partial. delta=-400.
         let p5 = UnifiedGhoProcessor::new(5);
         let r = p5
-            .process_gho_debt_burn(&ev(300, 0, Some(400)), U256::ZERO, RAY, U256::ZERO)
+            .process_gho_debt_burn(&ev(300, 0, Some(400)), U256::from(1_000u64), RAY, U256::ZERO)
             .unwrap();
         assert_eq!(r.balance_delta, -I256::try_from(400u64).unwrap());
         // rev=2 (discount, current==prev→discount_scaled=0): delta=-300.
