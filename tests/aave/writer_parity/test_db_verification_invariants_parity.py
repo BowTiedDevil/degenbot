@@ -45,8 +45,9 @@ from tests.aave.writer_parity.harness import (
     FIXTURE_BLOCK,
     STK_AAVE_ADDRESS,
     USER_ADDRESS,
+    ZERO_ADDRESS,
     make_discount_percent_updated_log,
-    make_staked_log,
+    make_erc20_transfer_log,
     mock_rpc_server,
     seed_gho_asset,
     seeded_db,
@@ -192,22 +193,23 @@ def _seed_discount_token(session: Session) -> None:
 def test_verify_stk_aave_balances_passes_against_rust_written_rows(
     tmp_path: Path,
 ) -> None:
-    """YMWN5V-closed: the stays-python stkAAVE-balance invariant reads +
-    validates Rust-written rows.
+    """The stays-python stkAAVE-balance invariant reads + validates Rust-written rows.
 
-    Drives ``run_aave_update`` with a ``Staked(user, amount)`` log → the Rust
-    config path (``dispatch_stk_aave_staked`` → ``apply_stk_aave_staked_on_conn``,
-    wired by YMWN5V) WRITES ``aave_v3_users.stk_aave_balance = amount`` (the
-    seeded value was NULL → 0 + amount). Then runs ``verify_stk_aave_balances``
-    (mocked ``balanceOf`` → the Rust-written amount) → PASSES (non-vacuous).
-    This proves the Python stays-python verification code correctly reads the
-    Rust-written ``stk_aave_balance`` row.
+    Drives ``run_aave_update`` with a ``Transfer(0x0 → user, amount)`` log (the
+    mint-from-zero leg — the canonical + only stkAAVE balance-mutation channel
+    after the YMWN5V retirement of the Staked/Redeem semantic variants) → the
+    Rust apply path writes ``aave_v3_users.stk_aave_balance = 0 + amount = amount``
+    (the seeded value was 0, non-NULL so the backfill is skipped). Then runs
+    ``verify_stk_aave_balances`` (mocked ``balanceOf`` → the Rust-written amount)
+    → PASSES (non-vacuous). This proves the Python stays-python verification
+    code correctly reads the Rust-written ``stk_aave_balance`` row.
     """
     amount = 5000
-    fixture_log = make_staked_log(
-        staker=USER_ADDRESS,
-        on_behalf_of=USER_ADDRESS,
-        amount=amount,
+    fixture_log = make_erc20_transfer_log(
+        token_address=STK_AAVE_ADDRESS,
+        from_address=ZERO_ADDRESS,
+        to_address=USER_ADDRESS,
+        value=amount,
     )
 
     with (
@@ -226,12 +228,18 @@ def test_verify_stk_aave_balances_passes_against_rust_written_rows(
             gho_discount_percent=1000,
         )
         _seed_discount_token(rust_session)
+        # Seed the user's stk_aave_balance = 0 (non-NULL) so the Rust
+        # backfill (balanceOf at block-1 if NULL) is skipped. The Transfer
+        # apply will increment it: 0 + amount = amount.
+        rust_session.execute(
+            text("UPDATE aave_v3_users SET stk_aave_balance = '0' WHERE id = 1"),
+        )
         rust_session.commit()
 
-        # Drive the Rust writer: Staked → apply_stk_aave_staked writes
-        # `stk_aave_balance = 0 + amount = amount` on the user. The Staked log
-        # is pure-decode (no RPC); the `balanceOf` mock response is ONLY
-        # consumed by the invariant below.
+        # Drive the Rust writer: Transfer(0x0 → user) → apply_stk_aave_transfer
+        # writes `stk_aave_balance = 0 + amount = amount` on the user. No RPC
+        # during the write (balance non-NULL → backfill skipped); the
+        # `balanceOf` mock response is ONLY consumed by the invariant below.
         handle = CancelHandle()
         run_aave_update(
             database_path=str(rust_path),
@@ -250,10 +258,10 @@ def test_verify_stk_aave_balances_passes_against_rust_written_rows(
         user = rust_session.scalars(select(AaveV3User).where(AaveV3User.id == 1)).one()
 
         # Explicit confirmation the row was Rust-WRITTEN: stk_aave_balance is
-        # `amount` (NULL → 0 + amount), NOT NULL (the seeded value).
+        # `amount` (0 + amount), NOT the seeded 0.
         assert user.stk_aave_balance == amount, (
             f"stk_aave_balance {user.stk_aave_balance} != Rust-written {amount} "
-            f"(the Staked event didn't write it)"
+            f"(the Transfer event didn't write it)"
         )
 
         # The stays-python invariant reads the Rust-written row + RPC-verifies
