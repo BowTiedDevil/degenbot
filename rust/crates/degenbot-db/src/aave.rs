@@ -793,7 +793,7 @@ mod tests {
     /// on the SAME chunk `Transaction`'s `&Connection` and MUST see the
     /// in-transaction write (read-your-own-writes) — otherwise the subsequent
     /// GHO borrow's vToken `Mint` classifies as plain `DebtMint` (not
-    /// `GhoDebtMint`) → the borrow matcher finds no `DebtMint` → NoMatch crash.
+    /// `GhoDebtMint`) → the borrow matcher finds no `DebtMint` → `NoMatch` crash.
     ///
     /// This test pins the substrate seam the fix relies on: a same-
     /// `Connection` `apply_reserve_initialized_on_conn` write is visible to

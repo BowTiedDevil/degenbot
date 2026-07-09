@@ -1,6 +1,38 @@
 #!/usr/bin/env python3
 """Real-RPC drive + compare + bisect harness for Aave V3 writer divergence hunting.
 
++---------------------------------------------------------------+
+| INVARIANT — INVOLATILE DATABASE COMMIT DISCIPLINE             |
+|                                                               |
+| The committed DB holds ONLY fully-verified values committed   |
+| at chunk boundaries. Debugging work MUST NEVER edit, patch,  |
+| coalesce, or hand-fix a value in a committed DB in place.     |
+|                                                               |
+| Why: any in-place edit breaks the chunk-boundary invariant;   |
+| every downstream compare becomes non-deterministic and the     |
+| baseline is silently poisoned for all future drives.          |
+|                                                               |
+| Rule: experiments run against a THROWAWAY temp DB. The         |
+| verified baseline is rebuilt ONLY by re-driving from genesis   |
+| (16291070) — never by mutating it.                            |
++---------------------------------------------------------------+
+
++---------------------------------------------------------------+
+| GREEN STANDARD — EXACT-MATCH, ZERO DIVERGENCE (inviolable)    |
+|                                                               |
+| Two databases are GREEN iff EVERY position, uniquely keyed by  |
+| (user, asset), has BYTE-IDENTICAL values in Rust vs Python —   |
+| every value column, zero divergence. Row IDs are irrelevant;    |
+| the position VALUES are the truth.                            |
+|                                                               |
+| There are NO carve-outs. Debt divergence is NOT allowed.       |
+| Collateral divergence is NOT allowed. ±few-wei is NOT noise —   |
+| it is RED. No "lower-priority" residual, no tolerance. GREEN    |
+| means exactly zero (user, asset)-keyed value mismatches,      |
+| every table, every column. The march does not pass a checkpoint |
+| until it is exact-zero.                                        |
++---------------------------------------------------------------+
+
 Three subcommands (see ``--help``):
 
 - ``compare <ref_db> <cand_db>``  — diff two SQLite DBs row-by-row column-by-
