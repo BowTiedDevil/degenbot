@@ -591,7 +591,11 @@ fn build_scaled_event_chunk_event(
                 && matches!(ev.event_type, ScaledTokenEventType::DebtMint)
                 && matches!(
                     op.operation_type,
-                    OperationType::Repay | OperationType::RepayWithAtokens
+                    OperationType::Repay
+                        | OperationType::RepayWithAtokens
+                        | OperationType::Liquidation
+                        | OperationType::GhoLiquidation
+                        | OperationType::GhoRepay
                 )
                 && ev.amount < balance_increase;
             // The interest-exceeds edge for aToken: WITHDRAW/REPAY_WITH_ATOKENS
@@ -3310,6 +3314,139 @@ mod tests {
         assert!(
             !events.iter().any(|e| matches!(e, AaveChunkEvent::ScaledTokenBurn { position, .. } if *position == ScaledTokenPosition::Debt)),
             "the GHO bad-debt burn must NOT also emit a ScaledTokenBurn (would double-apply)",
+        );
+    }
+
+    // ── DebtMint in a Liquidation (interest exceeds debtToCover) ─────────
+    // Chunk 24352071-24362070: two off-by-1 debt divergences (DB +1 too high
+    // on both). tx-shape: a `LiquidationCall` whose `_burnScaled` emits BOTH
+    // a `Mint` (value = balanceIncrease - debtToCover, when interest > the
+    // liquidated debt) AND a `Burn` (value = debtToCover). The Mint is a NET
+    // BURN (the on-chain `scaledBalanceOf` DROPS at the Mint's block) — Aave
+    // V3 `_burnScaled` mints the interest-remainder token then the actual
+    // burn subtracts the principal scaled amount.
+    //
+    // The Python `_process_debt_mint_with_match` treats a `DebtMint` in
+    // {LIQUIDATION, GHO_LIQUIDATION, REPAY, REPAY_WITH_ATOKENS, GHO_REPAY} as
+    // a burn sized by the Pool event's `debtToCover`/`repayAmount` (decoded
+    // from the Pool event word0), via `get_debt_burn_scaled_amount` (FLOOR for
+    // rev ≥4). The Rust `is_debt_repay_mint_edge` originally gated on
+    // `Repay | RepayWithAtokens` ONLY — so a `DebtMint` in a `Liquidation`
+    // bypassed the edge + fell to the standard-mint REPAY-arm, which derives
+    // the amount from `balance_increase - value` (= `bi - (bi - debtToCover)`
+    // = debtToCover on paper — but the on-chain Mint `value` field is rounded
+    // relative to debtToCover by ±1 wei). floor-dividing `bi - value`
+    // (= 496_463_174) instead of `debtToCover` (= 496_463_175) → a burn 1 wei
+    // too small → DB ends 1 wei too high (848_653_331 vs on-chain 848_653_330).
+    #[test]
+    fn dispatch_liquidation_treats_debt_mint_as_burn_via_debt_to_cover() {
+        use rusqlite::params;
+        let db = fresh_db_with_asset();
+        // Asset 1: vToken rev 5 (V5 ExplicitRoundingMath — mint=CEIL, burn=FLOOR).
+        let underlying = Address::from([0xA0; 20]);
+        let vtoken = Address::from([0x72; 20]);
+        let user = Address::from([0x4B; 20]);
+        {
+            let conn = db.lock();
+            conn.execute(
+                "UPDATE erc20_tokens SET address = ?1 WHERE id = 1",
+                params![degenbot_core::address_utils::address_to_checksum_string(
+                    &underlying
+                )],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE erc20_tokens SET address = ?1 WHERE id = 3",
+                params![degenbot_core::address_utils::address_to_checksum_string(
+                    &vtoken
+                )],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE aave_v3_assets SET v_token_revision = 5 WHERE id = 1",
+                [],
+            )
+            .unwrap();
+        }
+        // The smoking-gun values from chunk 24352071 (user 0xb9579e5c, USDC
+        // debt vToken rev 5): index + debtToCover chosen so that
+        // floor(debtToCover / idx) = 408_261_084 (the on-chain Mint effect)
+        // while floor((balance_increase - value) / idx) = 408_261_083 (the
+        // standard-mint REPAY-arm's under-burn by 1).
+        let index = U256::from_limbs([
+            0xd09b_1447_0cc7_39a4,
+            0x0000_0000_03ed_e331,
+            0x0000_0000_0000_0000,
+            0x0000_0000_0000_0000,
+        ]);
+        let debt_to_cover = U256::from(496_463_175u64);
+        let balance_increase = U256::from(666_026_406u64);
+        let mint_value = balance_increase - debt_to_cover + U256::from(1u64); // rounded +1 vs bi-debtToCover
+                                                                              // Mint (value < balance_increase → the interest-exceeds case).
+        let mint =
+            make_debt_mint_repay_event(661, vtoken, user, mint_value, balance_increase, index);
+        let collat = Address::from([0xC0; 20]);
+        let liq = Box::leak(Box::new(make_liquidation_call_log(
+            665,
+            collat,
+            underlying,
+            user,
+            debt_to_cover,
+        )));
+        let op = Operation {
+            operation_id: 0,
+            operation_type: OperationType::Liquidation,
+            pool_revision: 10,
+            pool_event: Some(liq),
+            scaled_events: vec![mint],
+            transfer_events: Vec::new(),
+            balance_transfer_events: Vec::new(),
+            minted_to_treasury_amount: None,
+            debt_to_cover: Some(debt_to_cover),
+            validation_errors: Vec::new(),
+        };
+        let conn = db.lock();
+        let mut liq_patterns = LiquidationPatternContext::default();
+        let mut events: Vec<AaveChunkEvent> = Vec::new();
+        dispatch_liquidation(
+            &op,
+            1,
+            &conn,
+            None,
+            &GhoDiscountContext::new(&[], &HashMap::new(), None),
+            &mut liq_patterns,
+            &mut events,
+        )
+        .expect("dispatch");
+        // The Mint must be dispatched as a BURN sized by debtToCover (= raw_amount
+        // = the LiquidationCall word0 = 496_463_175), floor-divided → 408_261_084.
+        // NOT the standard-mint path which would floor-divide (balance_increase -
+        // value) = 496_463_174 → 408_261_083 (1 too small → DB +1 too high).
+        let debt_burn = events.iter().find_map(|e| match e {
+            AaveChunkEvent::ScaledTokenBurn {
+                position,
+                balance_delta,
+                ..
+            } if *position == ScaledTokenPosition::Debt => Some(*balance_delta),
+            _ => None,
+        });
+        let burn_delta = debt_burn.expect("the liquidation DebtMint (value < balance_increase) must emit a ScaledTokenBurn sized by debtToCover");
+        // The burn delta must be -floor(debtToCover/idx) = -408_261_084,
+        // NOT the standard-mint -floor((bi-value)/idx) = -408_261_083.
+        assert!(
+            burn_delta.is_negative(),
+            "the Mint-as-burn delta must be negative"
+        );
+        let burn_magnitude = U256::try_from(-burn_delta).unwrap();
+        assert_eq!(
+            burn_magnitude,
+            U256::from(408_261_084u64),
+            "the burn magnitude must be floor(debtToCover/idx) = 408_261_084, NOT the standard-mint floor((bi-value)/idx) = 408_261_083",
+        );
+        // And it must NOT be a ScaledTokenMint (the standard borrow-mint path).
+        assert!(
+            !events.iter().any(|e| matches!(e, AaveChunkEvent::ScaledTokenMint { position, .. } if *position == ScaledTokenPosition::Debt)),
+            "the liquidation DebtMint must NOT be dispatched as a borrow-mint (ScaledTokenMint)",
         );
     }
 }
