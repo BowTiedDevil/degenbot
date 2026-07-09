@@ -778,6 +778,62 @@ class CancelHandle:
     def reset(self) -> None:
         """Reset the flag to ``False`` (reuse the handle)."""
 
+def verify_all_positions_on_chain(
+    database_path: str,
+    rpc_url: str,
+    market_id: int,
+    chain_id: int,
+    block_number: int,
+    touched_users: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Full on-chain-truth verification (Rust port of Python ``verify_all_positions``).
+
+    Runs all 4 checks:
+    1. Collateral scaled-token balance + last_index (``scaledBalanceOf`` +
+       ``getPreviousIndex`` on each aToken).
+    2. Debt scaled-token balance + last_index (same calls on each vToken).
+    3. stkAAVE balance (``balanceOf`` on the discount token).
+    4. GHO discount percent (``getDiscountPercent`` on the GHO vToken,
+       with a revision-based skip guard at revision >= 4).
+
+    Args:
+        database_path: The ``DegenbotDb`` path (opened read-only).
+        rpc_url: The HTTP RPC endpoint.
+        market_id: The ``aave_v3_markets.id`` to verify.
+        chain_id: The chain ID (needed to resolve the GHO asset row).
+        block_number: The block to verify against.
+        touched_users: ``None`` (default) verifies ALL positions/users;
+            a list of address strings verifies only those users.
+
+    Returns:
+        A list of divergence dicts (empty = GREEN). Each dict has a ``check``
+        field (``"scaled_token"``, ``"stk_aave_balance"``, or
+        ``"gho_discount"``) plus the relevant fields for that check type.
+
+    Raises:
+        ValueError: For a DB/RPC failure that prevents verification.
+
+    """
+
+def cleanup_zero_balance_positions(
+    database_path: str,
+    market_id: int,
+) -> None:
+    """Delete all zero-balance collateral + debt positions for ``market_id``.
+
+    Mirrors the Python ``cleanup_zero_balance_positions``. Opens the DB for
+    writes, deletes zero-balance rows, + commits. The GIL is released across
+    the call.
+
+    Args:
+        database_path: The writeable ``DegenbotDb`` path.
+        market_id: The ``aave_v3_markets.id`` to clean up.
+
+    Raises:
+        ValueError: For a DB failure.
+
+    """
+
 def db_heal_database(database_path: str) -> dict[str, Any]:
     """Out-of-place dump-and-restore heal (ADR-011).
 
@@ -3049,6 +3105,8 @@ __all__ = [
     "run_aave_update",
     "run_pool_update",
     "to_checksum_address",
+    "verify_all_positions_on_chain",
+    "cleanup_zero_balance_positions",
     "v4_input_is_native",
     "v4_output_is_native",
 ]

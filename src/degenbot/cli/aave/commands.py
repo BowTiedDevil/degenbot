@@ -43,7 +43,6 @@ from degenbot.cli.aave.extraction import extract_user_addresses_from_transaction
 from degenbot.cli.aave.transaction_processor import _process_transaction
 from degenbot.cli.aave.utils import _build_transaction_contexts, _get_all_scaled_token_addresses
 from degenbot.cli.aave.verification import (
-    cleanup_zero_balance_positions,
     verify_all_positions,
     verify_positions_for_users,
 )
@@ -58,7 +57,19 @@ from degenbot.database.models.aave import (
     AaveV3User,
 )
 from degenbot.database.operations import backup_sqlite_database
-from degenbot.degenbot_rs import CancelHandle, run_aave_update
+from degenbot.degenbot_rs import (
+    CancelHandle,
+    run_aave_update,
+)
+from degenbot.degenbot_rs import (
+    cleanup_zero_balance_positions as rs_cleanup_zero_balance_positions,
+)
+from degenbot.degenbot_rs import (
+    verify_all_positions_on_chain as rs_verify_all_positions_on_chain,
+)
+from degenbot.degenbot_rs import (
+    verify_touched_positions_on_chain as rs_verify_touched_positions_on_chain,
+)
 from degenbot.exceptions import DegenbotValueError
 from degenbot.logging import logger
 from degenbot.provider.block_helpers import get_number_for_block_identifier
@@ -383,7 +394,7 @@ def aave_update(
     enable_backup: bool,
     backup_interval: int,
 ) -> None:
-    r"""Update positions for active Aave markets.
+    """Update positions for active Aave markets.
 
     Processes blockchain events from the last updated block to the specified block,
     updating all user positions, interest rates, and indices in the database.
@@ -405,9 +416,11 @@ def aave_update(
         DegenbotValueError: If no active Aave markets are found.
         RuntimeError: If the run is cancelled via ``cancel_handle`` (the
             in-flight chunk completed atomically first; committed chunks stay
-            durable). Other ``RuntimeError``\ s + ``ValueError`` propagate
+            durable). Other ``RuntimeError``s + ``ValueError`` propagate
             from the Rust core (DB/RPC/parse failures) + ``_resolve_to_block``
             (a malformed ``--to-block``) — see their docstrings.
+        AssertionError: If ``--verify-chunk`` finds a divergence at a chunk
+            boundary (the run aborts; committed chunks stay durable).
 
     """
     # AVS4DR (epic AZGJUN): the per-market chunk loop is delegated to the Rust
@@ -424,10 +437,13 @@ def aave_update(
     # Behavior changes vs the pre-cutover Python loop (flagged for U5YIBG):
     # - `--dry-run`: shell-level preview (skips the Rust call entirely). The
     #   Rust core has no dry-run flag; a full write-preview needs one (RQXEKH).
-    # - `--verify-block`/`--verify-chunk`/`--one-chunk`: mid-loop options the
-    #   Rust core cannot honor (it owns chunking + exposes no per-block hook);
+    # - `--verify-block`/`--one-chunk`: mid-loop options the Rust core
+    #   cannot honor (it owns chunking + exposes no per-block hook);
     #   downgraded to a warning. Use `--verify-all` for post-run verification.
-    # - `--verify-all` + `--backup`: now POST-run per market (was interleaved at
+    #   `--verify-chunk` is now wired into the Rust core's per-chunk
+    #   `verify_touched_positions_on_chain` (checks 1+2: scaled-token
+    #   balance + index for touched users only).
+    # - `--verify-all` + `--backup`: POST-run per market (was interleaved at
     #   `--backup-interval` boundaries mid-loop); the interleaving granularity
     #   is lost (one verify/backup at the end of each market's run).
     # - `last_update_block` stamp: owned by the Rust core (was Python).
@@ -437,11 +453,6 @@ def aave_update(
         logger.warning(
             "--verify-block is not supported by the Rust core; "
             "mid-loop per-block verification is skipped.",
-        )
-    if verify_chunk:
-        logger.warning(
-            "--verify-chunk is not supported by the Rust core; "
-            "mid-loop per-chunk verification is skipped (use --verify-all).",
         )
     if stop_after_one_chunk:
         logger.warning(
@@ -465,7 +476,16 @@ def aave_update(
         handle.cancel()
 
     def _make_progress(
-        pbar: tqdm.tqdm, chunk_counter: list[int]
+        pbar: tqdm.tqdm,
+        chunk_counter: list[int],
+        *,
+        verify_chunk: bool = False,
+        database_path: str = "",
+        rpc_url: str = "",
+        market_id: int = 0,
+        chain_id: int = 0,
+        cancel_handle: CancelHandle | None = None,
+        verify_error: list[str] | None = None,
     ) -> Callable[[dict[str, Any]], None]:
         def _on_progress(progress: dict[str, Any]) -> None:
             chunk_counter[0] += 1
@@ -481,6 +501,33 @@ def aave_update(
                 f"+{progress['events_applied']} events (chunk {chunk_counter[0]})",
                 refresh=True,
             )
+
+            if verify_chunk:
+                touched = progress.get("touched_user_addresses", [])
+                if not touched:
+                    return
+                divergences = rs_verify_touched_positions_on_chain(
+                    database_path=database_path,
+                    rpc_url=rpc_url,
+                    market_id=market_id,
+                    chain_id=chain_id,
+                    block_number=progress["chunk_end"],
+                    touched_users=touched,
+                )
+                if divergences:
+                    lines = [
+                        f"{len(divergences)} divergence(s) at chunk "
+                        f"{progress['chunk_start']}-{progress['chunk_end']}:",
+                    ]
+                    lines.extend(
+                        f"  {d['kind']} {d['field']}: {d['user_address']} "
+                        f"expected={d['expected']} actual={d['actual']}"
+                        for d in divergences
+                    )
+                    err_list = verify_error if verify_error is not None else []
+                    err_list.append("\n".join(lines))
+                    if cancel_handle is not None:
+                        cancel_handle.cancel()
 
         return _on_progress
 
@@ -515,7 +562,6 @@ def aave_update(
                     chain_id=chain_id,
                     bot=bot,
                 )
-                provider = get_provider_from_config(chain_id=chain_id, config=bot.config)
 
                 # Active markets for this chain (READ).
                 with bot.db() as session:
@@ -563,6 +609,7 @@ def aave_update(
                         disable=not show_progress,
                     )
                     chunk_counter = [0]
+                    verify_error: list[str] = []
                     try:
                         report = run_aave_update(
                             database_path=database_path,
@@ -571,15 +618,31 @@ def aave_update(
                             to_block=resolved_to_block,
                             chunk_size=chunk_size,
                             rpc_url=rpc_url,
-                            progress_callback=_make_progress(pbar, chunk_counter),
+                            progress_callback=_make_progress(
+                                pbar,
+                                chunk_counter,
+                                verify_chunk=verify_chunk,
+                                database_path=database_path,
+                                rpc_url=rpc_url,
+                                market_id=market.id,
+                                chain_id=chain_id,
+                                cancel_handle=handle,
+                                verify_error=verify_error,
+                            ),
                             cancel_handle=handle,
                         )
                     except RuntimeError as exc:
-                        # Cooperative cancel (RuntimeError per the .pyi): the
-                        # in-flight chunk completed atomically first; break the
-                        # market loop. Other RuntimeErrors re-raise.
+                        # Cooperative cancel (RuntimeError per the .pyi):
+                        # either a user SIGINT or a `--verify-chunk`
+                        # divergence abort. The in-flight chunk completed
+                        # atomically first; committed chunks stay durable.
                         if "cancel" in str(exc).lower():
                             cancelled = True
+                            if verify_error:
+                                # `--verify-chunk` found a divergence;
+                                # re-raise as an assertion so the user sees
+                                # the details (the cancel was just the stop).
+                                raise AssertionError(verify_error[0]) from exc
                             click.echo(
                                 f"Chain {chain_id} market {market.id}: "
                                 "cancelled (committed chunks stay durable).",
@@ -596,32 +659,53 @@ def aave_update(
                         f"({report['total_events_applied']} events applied).",
                     )
 
-                    # Post-run verify hygiene (READ/verify — stays Python; runs
-                    # AFTER the Rust chunk transaction is committed, so no
-                    # two-writer hazard).
+                    # Post-run verify hygiene (Rust core — all 4 on-chain checks +
+                    # zero-balance cleanup). Runs AFTER the Rust chunk
+                    # transaction is committed, opening the DB on a separate
+                    # connection (read-only verify + a write for cleanup).
                     if verify_all:
-                        with bot.db() as session:
-                            verify_all_positions(
-                                provider=provider,
-                                market=market,
-                                session=session,
-                                block_number=report["to_block"],
-                                show_progress=show_progress,
-                            )
-                            cleanup_zero_balance_positions(
-                                session=session,
-                                market=market,
-                            )
-                            session.commit()
-                            if enable_backup:
+                        divergences = rs_verify_all_positions_on_chain(
+                            database_path=database_path,
+                            rpc_url=rpc_url,
+                            market_id=market.id,
+                            chain_id=chain_id,
+                            block_number=report["to_block"],
+                        )
+                        if divergences:
+                            lines = [
+                            f"{len(divergences)} verification divergence(s) "
+                            f"at block {report['to_block']}:",
+                        ]
+                            for d in divergences:
+                                check = d["check"]
+                                user = d.get("user_address", d.get("position_id", "?"))
+                                if check == "scaled_token":
+                                    lines.append(
+                                        f"  {d['kind']} {d['field']}: {user} "
+                                        f"expected={d['expected']} actual={d['actual']}"
+                                    )
+                                else:
+                                    lines.append(
+                                        f"  {check}: {user} "
+                                        f"expected={d['expected']} actual={d['actual']}"
+                                    )
+                            raise AssertionError("\n".join(lines))
+
+                        rs_cleanup_zero_balance_positions(
+                            database_path=database_path,
+                            market_id=market.id,
+                        )
+
+                        if enable_backup:
+                            with bot.db() as session:
                                 backup_sqlite_database(
                                     session=session,
                                     suffix=f"{report['to_block']}",
                                     skip_confirmation=True,
                                 )
-                                logger.info(
-                                    f"Created database backup at block {report['to_block']:,}.",
-                                )
+                            logger.info(
+                                f"Created database backup at block {report['to_block']:,}.",
+                            )
 
                 if cancelled:
                     break

@@ -1,24 +1,25 @@
-//! On-chain-truth position verification (the minimal slice of the Rust port
-//! of Python `verification.py::verify_scaled_token_positions`).
+//! On-chain-truth position verification (the Rust port of Python
+//! `verification.py` + `db_verification.py`).
 //!
-//! For each scaled-token position (collateral via aToken, debt via vToken) the
-//! DB holds a `balance` (scaled) + `last_index`; Aave V3's
-//! `scaledBalanceOf(user)` + `getPreviousIndex(user)` are the canonical
-//! on-chain truth at a block. This module loads the DB positions (filtered by
-//! `user_addresses` when `Some`, otherwise all) and compares each against the
-//! on-chain truth, returning a structured divergence list (mirror the Python's
-//! two assertions: `balance` + `last_index` equality).
+//! Four verification checks, mirroring Python's `verify_all_positions`:
+//! 1. Collateral scaled-token balance + `last_index` (`scaledBalanceOf` +
+//!    `getPreviousIndex` on each aToken).
+//! 2. Debt scaled-token balance + `last_index` (same calls on each vToken).
+//! 3. stkAAVE balance (`balanceOf` on the discount token).
+//! 4. GHO discount percent (`getDiscountPercent` on the GHO vToken, with a
+//!    revision-based skip guard — `v_token_revision >= 4` → skip).
 //!
-//! Mirrors `src/degenbot/cli/aave/verification.py:152`. The `DEAD_ADDRESS` /
-//! `ZERO_ADDRESS` skip is preserved. The Rust core fn is callable from BOTH the
-//! 6SWY4R drive harness (the per-chunk value-correctness gate) AND, in a
-//! follow-up, `run_aave_update` (production `verify_chunk` flag — NOT in this
-//! task). Uses `AlloyProvider::eth_call` (per-position calls) — multicall3
-//! batching for the market-wide verify is the natural extension
+//! Plus `cleanup_zero_balance_positions_on_conn` — DELETEs zero-balance
+//! collateral + debt rows (the Python `cleanup_zero_balance_positions`).
+//!
+//! Mirrors `src/degenbot/cli/aave/verification.py` +
+//! `src/degenbot/cli/aave/db_verification.py`. The `DEAD_ADDRESS` /
+//! `ZERO_ADDRESS` skip is preserved. Uses `AlloyProvider::eth_call`
+//! (per-position calls) — multicall3 batching is the natural extension
 //! (BE474R-full, post-HLYWI6).
 
 use alloy::primitives::{Address, Bytes, U256};
-use degenbot_db::DbError;
+use degenbot_db::{DegenbotDb, DbError};
 use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::Connection;
 
@@ -311,6 +312,329 @@ pub async fn verify_touched_positions_on_conn(
     }
 
     Ok(divergences)
+}
+
+// ── stkAAVE balance + GHO discount verification ─────────────────────────
+
+/// The GHO vToken revision at which the discount mechanism is deprecated
+/// (mirrors `cli/aave/constants.py::GHO_DISCOUNT_DEPRECATION_REVISION`).
+/// At revision ≥ 4, `getDiscountPercent` is removed; the verify skips.
+const GHO_DISCOUNT_DEPRECATION_REVISION: i64 = 4;
+
+/// keccak256("balanceOf(address)")[0..4] = `0x70a08231`.
+const BALANCE_OF_SELECTOR: [u8; 4] = [0x70, 0xa0, 0x82, 0x31];
+/// keccak256("getDiscountPercent(address)")[0..4] = `0x6c53272b`.
+const GET_DISCOUNT_PERCENT_SELECTOR: [u8; 4] = [0x6c, 0x53, 0x27, 0x2b];
+
+/// A unified divergence from any of the 4 verification checks. Returned by
+/// [`verify_all_positions_on_conn`].
+#[derive(Debug, Clone)]
+pub enum VerificationDivergence {
+    /// Scaled-token position (collateral or debt) balance/index mismatch
+    /// (checks 1 + 2 — the existing `verify_touched_positions_on_conn` output).
+    ScaledToken(PositionDivergence),
+    /// stkAAVE balance mismatch on `aave_v3_users.stk_aave_balance`
+    /// (check 3 — `balanceOf` on the discount token).
+    StkAaveBalance {
+        user_id: i64,
+        user_address: Address,
+        token_address: Address,
+        block_number: u64,
+        expected: U256,
+        actual: U256,
+    },
+    /// GHO discount percent mismatch on `aave_v3_users.gho_discount`
+    /// (check 4 — `getDiscountPercent` on the GHO vToken).
+    GhoDiscount {
+        user_id: i64,
+        user_address: Address,
+        token_address: Address,
+        block_number: u64,
+        expected: i64,
+        actual: i64,
+    },
+}
+
+
+
+/// Build the optional user-address WHERE clause + bind params.
+fn user_address_clause(user_addresses: Option<&[Address]>) -> (String, Vec<String>) {
+    match user_addresses {
+        Some(addrs) if !addrs.is_empty() => {
+            let placeholders = vec!["?"; addrs.len()].join(", ");
+            let strs: Vec<String> = addrs.iter().map(|a| format!("{a:?}").to_lowercase()).collect();
+            (
+                format!(" AND LOWER(u.address) IN ({placeholders})"),
+                strs,
+            )
+        }
+        _ => (String::new(), Vec::new()),
+    }
+}
+
+/// Verify that `aave_v3_users.stk_aave_balance` matches on-chain `balanceOf`
+/// for each user with a tracked stkAAVE balance. Mirrors Python's
+/// `verify_stk_aave_balances` (`db_verification.py:61`). No-op when the market
+/// has no `v_gho_discount_token` (the GHO asset row's discount token is
+/// `None`).
+///
+/// # Errors
+///
+/// Returns [`RunError`] on a DB or RPC failure that prevents verification.
+pub async fn verify_stk_aave_balances_on_conn(
+    conn: &Connection,
+    provider: &AlloyProvider,
+    market_id: i64,
+    chain_id: i64,
+    block_number: u64,
+    user_addresses: Option<&[Address]>,
+) -> Result<Vec<VerificationDivergence>, RunError> {
+    let gho_asset = DegenbotDb::fetch_aave_gho_asset_on_conn(conn, chain_id)?;
+    let Some(gho_asset) = gho_asset else {
+        return Ok(Vec::new());
+    };
+    let Some(discount_token_str) = &gho_asset.v_gho_discount_token else {
+        return Ok(Vec::new());
+    };
+    let Ok(token_address) = discount_token_str.parse::<Address>() else {
+        return Ok(Vec::new());
+    };
+
+    let (addr_clause, addr_strs) = user_address_clause(user_addresses);
+    let sql = format!(
+        "SELECT u.id, u.address, u.stk_aave_balance \
+         FROM aave_v3_users u \
+         WHERE u.market_id = ?1 AND u.stk_aave_balance IS NOT NULL{addr_clause}"
+    );
+    let mut stmt = conn.prepare(&sql).map_err(DbError::from)?;
+    let mut bind_params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(1 + addr_strs.len());
+    bind_params.push(&market_id);
+    for s in &addr_strs {
+        bind_params.push(s);
+    }
+    let iter = stmt.query_map(bind_params.as_slice(), |r| {
+        let id: i64 = r.get(0)?;
+        let addr: String = r.get(1)?;
+        let bal: Option<String> = r.get(2)?;
+        Ok((id, addr, bal))
+    }).map_err(DbError::from)?;
+
+    let mut divergences = Vec::new();
+    for row in iter {
+        let (user_id, user_addr_str, bal_str) = row.map_err(DbError::from)?;
+        let Ok(user_address) = user_addr_str.parse() else { continue };
+        let expected = bal_str.as_deref().and_then(|s| parse_u256(s).ok()).unwrap_or(U256::ZERO);
+
+        let calldata = build_call_data(BALANCE_OF_SELECTOR, user_address);
+        let actual = provider
+            .eth_call(&token_address, calldata, Some(block_number))
+            .await
+            .ok()
+            .and_then(|b| decode_uint256_return(&b))
+            .unwrap_or(U256::ZERO);
+
+        if actual != expected {
+            divergences.push(VerificationDivergence::StkAaveBalance {
+                user_id,
+                user_address,
+                token_address,
+                block_number,
+                expected,
+                actual,
+            });
+        }
+    }
+    Ok(divergences)
+}
+
+/// Verify that `aave_v3_users.gho_discount` matches the GHO vToken's
+/// `getDiscountPercent` for each user with GHO debt. Mirrors Python's
+/// `verify_gho_discount_amounts` (`db_verification.py:22`). Skips when the
+/// GHO vToken's revision is `None` or `>= GHO_DISCOUNT_DEPRECATION_REVISION` (4).
+///
+/// # Errors
+///
+/// Returns [`RunError`] on a DB or RPC failure that prevents verification.
+pub async fn verify_gho_discount_amounts_on_conn(
+    conn: &Connection,
+    provider: &AlloyProvider,
+    market_id: i64,
+    chain_id: i64,
+    block_number: u64,
+    user_addresses: Option<&[Address]>,
+) -> Result<Vec<VerificationDivergence>, RunError> {
+    let gho_asset = DegenbotDb::fetch_aave_gho_asset_on_conn(conn, chain_id)?;
+    let Some(gho_asset) = &gho_asset else {
+        return Ok(Vec::new());
+    };
+    let Some(v_token_id) = gho_asset.v_token_id else {
+        return Ok(Vec::new());
+    };
+    let Some(v_token_address_str) = &gho_asset.v_token_address else {
+        return Ok(Vec::new());
+    };
+    let Ok(v_token_address) = v_token_address_str.parse::<Address>() else {
+        return Ok(Vec::new());
+    };
+
+    // Resolve the vToken's revision; skip if >= deprecation revision.
+    let revision: Option<i64> = conn
+        .query_row(
+            "SELECT a.v_token_revision FROM aave_v3_assets a \
+             WHERE a.market_id = ?1 AND a.v_token_id = ?2",
+            rusqlite::params![market_id, v_token_id],
+            |r| r.get::<_, Option<i64>>(0),
+        )
+        .ok()
+        .flatten();
+    if revision.is_none_or(|r| r >= GHO_DISCOUNT_DEPRECATION_REVISION) {
+        return Ok(Vec::new());
+    }
+
+    // Load users with GHO debt positions.
+    let (addr_clause, addr_strs) = user_address_clause(user_addresses);
+    let sql = format!(
+        "SELECT DISTINCT u.id, u.address, u.gho_discount \
+         FROM aave_v3_users u \
+         JOIN aave_v3_debt_positions dp ON dp.user_id = u.id \
+         JOIN aave_v3_assets a ON a.id = dp.asset_id \
+         WHERE a.market_id = ?1 AND a.v_token_id = ?2{addr_clause}"
+    );
+    let mut stmt = conn.prepare(&sql).map_err(DbError::from)?;
+    let mut bind_params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(2 + addr_strs.len());
+    bind_params.push(&market_id);
+    bind_params.push(&v_token_id);
+    for s in &addr_strs {
+        bind_params.push(s);
+    }
+    let iter = stmt.query_map(bind_params.as_slice(), |r| {
+        let id: i64 = r.get(0)?;
+        let addr: String = r.get(1)?;
+        let discount: i64 = r.get(2)?;
+        Ok((id, addr, discount))
+    }).map_err(DbError::from)?;
+
+    let mut divergences = Vec::new();
+    for row in iter {
+        let (user_id, user_addr_str, expected) = row.map_err(DbError::from)?;
+        let Ok(user_address) = user_addr_str.parse() else { continue };
+
+        let calldata = build_call_data(GET_DISCOUNT_PERCENT_SELECTOR, user_address);
+        let actual_u256 = provider
+            .eth_call(&v_token_address, calldata, Some(block_number))
+            .await
+            .ok()
+            .and_then(|b| decode_uint256_return(&b))
+            .unwrap_or(U256::ZERO);
+        let actual: i64 = actual_u256.try_into().unwrap_or(i64::MAX);
+
+        if actual != expected {
+            divergences.push(VerificationDivergence::GhoDiscount {
+                user_id,
+                user_address,
+                token_address: v_token_address,
+                block_number,
+                expected,
+                actual,
+            });
+        }
+    }
+    Ok(divergences)
+}
+
+/// Run all 4 verification checks (scaled-token collateral + debt, stkAAVE
+/// balance, GHO discount) and return a unified divergence list. Mirrors
+/// the Python `verify_all_positions` (verification.py:110) +
+/// `verify_positions_for_users` (verification.py:44).
+///
+/// When `user_addresses` is `None`, verifies ALL positions/users in the market
+/// (the post-run `--verify-all` path). When `Some`, verifies only the
+/// specified users (the JGQHBX per-chunk path).
+///
+/// # Errors
+///
+/// Returns [`RunError`] on a DB or RPC failure that prevents verification.
+pub async fn verify_all_positions_on_conn(
+    conn: &Connection,
+    provider: &AlloyProvider,
+    market_id: i64,
+    chain_id: i64,
+    block_number: u64,
+    user_addresses: Option<&[Address]>,
+) -> Result<Vec<VerificationDivergence>, RunError> {
+    let mut divergences = Vec::new();
+
+    // Checks 1 + 2: scaled-token balance + last_index (collateral + debt).
+    let scaled = verify_touched_positions_on_conn(
+        conn,
+        provider,
+        market_id,
+        block_number,
+        user_addresses,
+    )
+    .await?;
+    for d in scaled {
+        divergences.push(VerificationDivergence::ScaledToken(d));
+    }
+
+    // Check 3: stkAAVE balance.
+    let stk = verify_stk_aave_balances_on_conn(
+        conn,
+        provider,
+        market_id,
+        chain_id,
+        block_number,
+        user_addresses,
+    )
+    .await?;
+    divergences.extend(stk);
+
+    // Check 4: GHO discount percent.
+    let gho = verify_gho_discount_amounts_on_conn(
+        conn,
+        provider,
+        market_id,
+        chain_id,
+        block_number,
+        user_addresses,
+    )
+    .await?;
+    divergences.extend(gho);
+
+    Ok(divergences)
+}
+
+/// Delete all zero-balance collateral + debt positions for `market_id`.
+/// Mirrors the Python `cleanup_zero_balance_positions`
+/// (verification.py:19). A WRITE operation — must be called on a writable
+/// connection; the caller commits.
+///
+/// # Errors
+///
+/// Returns [`DbError`] on any SQL failure.
+pub fn cleanup_zero_balance_positions_on_conn(
+    conn: &Connection,
+    market_id: i64,
+) -> Result<(), DbError> {
+    conn.execute(
+        "DELETE FROM aave_v3_collateral_positions \
+         WHERE id IN ( \
+             SELECT p.id FROM aave_v3_collateral_positions p \
+             JOIN aave_v3_users u ON u.id = p.user_id \
+             WHERE u.market_id = ?1 AND p.balance = '0' \
+         )",
+        rusqlite::params![market_id],
+    )?;
+    conn.execute(
+        "DELETE FROM aave_v3_debt_positions \
+         WHERE id IN ( \
+             SELECT p.id FROM aave_v3_debt_positions p \
+             JOIN aave_v3_users u ON u.id = p.user_id \
+             WHERE u.market_id = ?1 AND p.balance = '0' \
+         )",
+        rusqlite::params![market_id],
+    )?;
+    Ok(())
 }
 
 // Safety net: thiserror's `#[from]` on RunError::Db(#[from] DbError) +

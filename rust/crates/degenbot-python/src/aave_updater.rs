@@ -35,9 +35,12 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use degenbot_aave_updater::{
-    run_aave_update as core_run_aave_update, verify::verify_touched_positions_on_conn,
-    AaveChunkProgress, AaveUpdateReport, ProgressSink,
-    RunError,
+    run_aave_update as core_run_aave_update,
+    verify::{
+        cleanup_zero_balance_positions_on_conn, verify_all_positions_on_conn,
+        verify_touched_positions_on_conn,
+    },
+    AaveChunkProgress, AaveUpdateReport, ProgressSink, RunError,
 };
 
 use crate::cancel::CancelHandle;
@@ -359,6 +362,183 @@ fn verify_touched_positions_on_chain(
     Ok(out)
 }
 
+/// `degenbot_rs.verify_all_positions_on_chain(database_path, rpc_url,
+/// market_id, chain_id, block_number, touched_users=None) -> list[dict]`
+///
+/// Full on-chain-truth verification — the Rust port of Python's
+/// `verify_all_positions` (verification.py) + `verify_stk_aave_balances` +
+/// `verify_gho_discount_amounts` (`db_verification.py`). Runs all 4 checks:
+/// 1. Collateral scaled-token balance + `last_index`.
+/// 2. Debt scaled-token balance + `last_index`.
+/// 3. stkAAVE balance (`balanceOf` on the discount token).
+/// 4. GHO discount percent (`getDiscountPercent` on the GHO vToken,
+///    with the revision-based skip guard).
+///
+/// Returns a list of divergence dicts (empty = GREEN). Each dict has a
+/// `check` field (`"scaled_token"`, `"stk_aave_balance"`, or
+/// `"gho_discount"`) plus the relevant fields for that check type.
+///
+/// The GIL is released across the whole call. Zero SQL writes —
+/// [`cleanup_zero_balance_positions`] is the separate write companion.
+///
+/// # Args
+///
+/// - `database_path` — the `DegenbotDb` path (opened read-only).
+/// - `rpc_url` — the HTTP RPC endpoint.
+/// - `market_id` — the `aave_v3_markets.id` to verify.
+/// - `chain_id` — the chain ID (needed to resolve the GHO asset row).
+/// - `block_number` — the block to verify against.
+/// - `touched_users` — `None` (default) verifies ALL positions/users;
+///   `Some(["0x...", ...])` verifies only those users.
+#[pyfunction]
+#[pyo3(signature = (database_path, rpc_url, market_id, chain_id, block_number, touched_users=None))]
+#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments, clippy::too_many_lines)]
+fn verify_all_positions_on_chain(
+    py: Python<'_>,
+    database_path: &str,
+    rpc_url: &str,
+    market_id: i64,
+    chain_id: i64,
+    block_number: u64,
+    touched_users: Option<Vec<String>>,
+) -> PyResult<Vec<Py<PyDict>>> {
+    use degenbot_db::DegenbotDb;
+    use degenbot_rpc::provider::AlloyProvider;
+
+    let path = PathBuf::from(database_path);
+    let touched: Option<Vec<alloy::primitives::Address>> = touched_users
+        .map(|addrs| addrs.iter().filter_map(|s| s.parse().ok()).collect());
+
+    let divergences = py
+        .detach(move || {
+            use tokio::runtime::Handle;
+
+            let db = DegenbotDb::open(&path)?.0;
+            let conn = db.lock();
+            let touched_ref = touched.as_deref();
+
+            if let Ok(handle) = Handle::try_current() {
+                let provider = handle.block_on(AlloyProvider::new(rpc_url, 5))?;
+                let fut = verify_all_positions_on_conn(
+                    &conn,
+                    &provider,
+                    market_id,
+                    chain_id,
+                    block_number,
+                    touched_ref,
+                );
+                Ok(tokio::task::block_in_place(|| handle.block_on(fut))?)
+            } else {
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()?;
+                let provider = rt.block_on(AlloyProvider::new(rpc_url, 5))?;
+                let fut = verify_all_positions_on_conn(
+                    &conn,
+                    &provider,
+                    market_id,
+                    chain_id,
+                    block_number,
+                    touched_ref,
+                );
+                Ok(rt.block_on(fut)?)
+            }
+        })
+        .map_err(run_err_to_py)?;
+
+    let mut out: Vec<Py<PyDict>> = Vec::with_capacity(divergences.len());
+    for d in divergences {
+        let dict = PyDict::new(py);
+        match d {
+            degenbot_aave_updater::verify::VerificationDivergence::ScaledToken(p) => {
+                dict.set_item("check", "scaled_token")?;
+                dict.set_item(
+                    "kind",
+                    match p.kind {
+                        degenbot_aave_updater::verify::PositionKind::Collateral => "collateral",
+                        degenbot_aave_updater::verify::PositionKind::Debt => "debt",
+                    },
+                )?;
+                dict.set_item("position_id", p.position_id)?;
+                dict.set_item("user_address", format!("{:?}", p.user_address))?;
+                dict.set_item("token_address", format!("{:?}", p.token_address))?;
+                dict.set_item("block_number", p.block_number)?;
+                dict.set_item(
+                    "field",
+                    match p.field {
+                        degenbot_aave_updater::verify::DivergenceField::Balance => "balance",
+                        degenbot_aave_updater::verify::DivergenceField::LastIndex => "last_index",
+                    },
+                )?;
+                dict.set_item("expected", format!("{}", p.expected))?;
+                dict.set_item("actual", format!("{}", p.actual))?;
+            }
+            degenbot_aave_updater::verify::VerificationDivergence::StkAaveBalance {
+                user_id,
+                user_address,
+                token_address,
+                block_number,
+                expected,
+                actual,
+            } => {
+                dict.set_item("check", "stk_aave_balance")?;
+                dict.set_item("user_id", user_id)?;
+                dict.set_item("user_address", format!("{user_address:?}"))?;
+                dict.set_item("token_address", format!("{token_address:?}"))?;
+                dict.set_item("block_number", block_number)?;
+                dict.set_item("expected", format!("{expected}"))?;
+                dict.set_item("actual", format!("{actual}"))?;
+            }
+            degenbot_aave_updater::verify::VerificationDivergence::GhoDiscount {
+                user_id,
+                user_address,
+                token_address,
+                block_number,
+                expected,
+                actual,
+            } => {
+                dict.set_item("check", "gho_discount")?;
+                dict.set_item("user_id", user_id)?;
+                dict.set_item("user_address", format!("{user_address:?}"))?;
+                dict.set_item("token_address", format!("{token_address:?}"))?;
+                dict.set_item("block_number", block_number)?;
+                dict.set_item("expected", expected)?;
+                dict.set_item("actual", actual)?;
+            }
+        }
+        out.push(dict.unbind());
+    }
+    Ok(out)
+}
+
+/// `degenbot_rs.cleanup_zero_balance_positions(database_path, market_id)`
+///
+/// Delete all zero-balance collateral + debt positions for `market_id`.
+/// Mirrors the Python `cleanup_zero_balance_positions` (verification.py:19).
+/// Opens the DB for writes, deletes, + commits. The GIL is released across
+/// the call.
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+fn cleanup_zero_balance_positions(
+    py: Python<'_>,
+    database_path: &str,
+    market_id: i64,
+) -> PyResult<()> {
+    use degenbot_db::{DegenbotDb, DbError};
+    let path = PathBuf::from(database_path);
+    py.detach(move || -> Result<(), RunError> {
+        let (db, _state) = DegenbotDb::open_for_writes(&path)?;
+        {
+            let mut guard = db.lock();
+            let tx = guard.transaction().map_err(DbError::from)?;
+            cleanup_zero_balance_positions_on_conn(&tx, market_id)?;
+            tx.commit().map_err(DbError::from)?;
+        }
+        Ok(())
+    })
+    .map_err(run_err_to_py)
+}
+
 /// Register the aave-updater seam on `m` (feature = "aave-updater"). Mirrors
 /// `pool::add_pool_module`. `CancelHandle` is registered separately by
 /// `cancel::register_cancel` (shared).
@@ -370,6 +550,8 @@ fn verify_touched_positions_on_chain(
 pub fn add_aave_updater_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run_aave_update, m)?)?;
     m.add_function(wrap_pyfunction!(verify_touched_positions_on_chain, m)?)?;
+    m.add_function(wrap_pyfunction!(verify_all_positions_on_chain, m)?)?;
+    m.add_function(wrap_pyfunction!(cleanup_zero_balance_positions, m)?)?;
     Ok(())
 }
 
