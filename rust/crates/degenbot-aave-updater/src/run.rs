@@ -925,6 +925,16 @@ pub enum RunError {
          missing after the ProxyCreated fetch over the bootstrap window"
     )]
     BootstrapFailed(i64),
+    /// Pre-commit verification found divergences. The chunk's `Transaction`
+    /// was DROPPED (rolled back) — `last_update_block` did NOT advance, so
+    /// the next run re-processes the same chunk. Carries the divergence
+    /// details so the caller can format them.
+    #[error("verification failed at chunk {chunk_start}-{chunk_end}")]
+    Verification {
+        chunk_start: u64,
+        chunk_end: u64,
+        divergences: Vec<crate::verify::PositionDivergence>,
+    },
 }
 
 /// One transaction's grouped logs. Sorted by `(block_number, first log_index)`
@@ -1196,6 +1206,7 @@ pub fn run_aave_update(
     rpc_url: &str,
     cancel: Arc<AtomicBool>,
     progress: Arc<dyn ProgressSink>,
+    verify_chunk: bool,
 ) -> Result<AaveUpdateReport, RunError> {
     if chunk_size == 0 {
         return Err(RunError::Provider(ProviderError::InvalidBlockRange {
@@ -1404,9 +1415,7 @@ pub fn run_aave_update(
                 discount_token_from_event = Some(ev.new_discount_token);
             }
         }
-        if let Some(token) = discount_token_from_event
-            .filter(|_| spec.stk_aave_address.is_none())
-        {
+        if let Some(token) = discount_token_from_event.filter(|_| spec.stk_aave_address.is_none()) {
             let mut extra = rt.block_on(fetch_stk_aave_logs(
                 &fetcher,
                 working_start,
@@ -1451,6 +1460,52 @@ pub fn run_aave_update(
             ));
             match result {
                 Ok(r) => {
+                    // Pre-commit verification: if `verify_chunk` is set, run
+                    // `verify_touched_positions_on_conn` on the
+                    // (uncommitted) transaction. This catches divergences
+                    // BEFORE the commit — a divergence drops `tx` (rollback)
+                    // so `last_update_block` does NOT advance + the next run
+                    // re-processes the same chunk. Without this, the bad
+                    // commit would land first + the post-commit verify in
+                    // the progress callback would find it but too late
+                    // (the data is already durable).
+                    if verify_chunk {
+                        let touched: Vec<Address> =
+                            r.touched_user_addresses.iter().copied().collect();
+                        // Skip when no users were touched (matches the
+                        // Python's `if not touched: return` — an empty
+                        // chunk has nothing to verify). Passing `None`
+                        // would verify ALL positions rather than none.
+                        if !touched.is_empty() {
+                            let divergences =
+                                rt.block_on(crate::verify::verify_touched_positions_on_conn(
+                                    &tx,
+                                    &provider,
+                                    market_id,
+                                    chunk_end,
+                                    Some(&touched),
+                                ))?;
+                            if !divergences.is_empty() {
+                                // Drop `tx` (rollback) — the chunk's writes +
+                                // the stamp advance are reverted.
+                                drop(tx);
+                                progress.report_chunk(&AaveChunkProgress {
+                                    chain_id,
+                                    market_id,
+                                    chunk_start: working_start,
+                                    chunk_end,
+                                    events_applied: 0,
+                                    committed: false,
+                                    touched_user_addresses: Vec::new(),
+                                });
+                                return Err(RunError::Verification {
+                                    chunk_start: working_start,
+                                    chunk_end,
+                                    divergences,
+                                });
+                            }
+                        }
+                    }
                     tx.commit().map_err(DbError::from)?;
                     r
                 }

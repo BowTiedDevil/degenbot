@@ -19,7 +19,7 @@
 //! (BE474R-full, post-HLYWI6).
 
 use alloy::primitives::{Address, Bytes, U256};
-use degenbot_db::{DegenbotDb, DbError};
+use degenbot_db::{DbError, DegenbotDb};
 use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::Connection;
 
@@ -355,18 +355,16 @@ pub enum VerificationDivergence {
     },
 }
 
-
-
 /// Build the optional user-address WHERE clause + bind params.
 fn user_address_clause(user_addresses: Option<&[Address]>) -> (String, Vec<String>) {
     match user_addresses {
         Some(addrs) if !addrs.is_empty() => {
             let placeholders = vec!["?"; addrs.len()].join(", ");
-            let strs: Vec<String> = addrs.iter().map(|a| format!("{a:?}").to_lowercase()).collect();
-            (
-                format!(" AND LOWER(u.address) IN ({placeholders})"),
-                strs,
-            )
+            let strs: Vec<String> = addrs
+                .iter()
+                .map(|a| format!("{a:?}").to_lowercase())
+                .collect();
+            (format!(" AND LOWER(u.address) IN ({placeholders})"), strs)
         }
         _ => (String::new(), Vec::new()),
     }
@@ -412,18 +410,25 @@ pub async fn verify_stk_aave_balances_on_conn(
     for s in &addr_strs {
         bind_params.push(s);
     }
-    let iter = stmt.query_map(bind_params.as_slice(), |r| {
-        let id: i64 = r.get(0)?;
-        let addr: String = r.get(1)?;
-        let bal: Option<String> = r.get(2)?;
-        Ok((id, addr, bal))
-    }).map_err(DbError::from)?;
+    let iter = stmt
+        .query_map(bind_params.as_slice(), |r| {
+            let id: i64 = r.get(0)?;
+            let addr: String = r.get(1)?;
+            let bal: Option<String> = r.get(2)?;
+            Ok((id, addr, bal))
+        })
+        .map_err(DbError::from)?;
 
     let mut divergences = Vec::new();
     for row in iter {
         let (user_id, user_addr_str, bal_str) = row.map_err(DbError::from)?;
-        let Ok(user_address) = user_addr_str.parse() else { continue };
-        let expected = bal_str.as_deref().and_then(|s| parse_u256(s).ok()).unwrap_or(U256::ZERO);
+        let Ok(user_address) = user_addr_str.parse() else {
+            continue;
+        };
+        let expected = bal_str
+            .as_deref()
+            .and_then(|s| parse_u256(s).ok())
+            .unwrap_or(U256::ZERO);
 
         let calldata = build_call_data(BALANCE_OF_SELECTOR, user_address);
         let actual = provider
@@ -507,17 +512,21 @@ pub async fn verify_gho_discount_amounts_on_conn(
     for s in &addr_strs {
         bind_params.push(s);
     }
-    let iter = stmt.query_map(bind_params.as_slice(), |r| {
-        let id: i64 = r.get(0)?;
-        let addr: String = r.get(1)?;
-        let discount: i64 = r.get(2)?;
-        Ok((id, addr, discount))
-    }).map_err(DbError::from)?;
+    let iter = stmt
+        .query_map(bind_params.as_slice(), |r| {
+            let id: i64 = r.get(0)?;
+            let addr: String = r.get(1)?;
+            let discount: i64 = r.get(2)?;
+            Ok((id, addr, discount))
+        })
+        .map_err(DbError::from)?;
 
     let mut divergences = Vec::new();
     for row in iter {
         let (user_id, user_addr_str, expected) = row.map_err(DbError::from)?;
-        let Ok(user_address) = user_addr_str.parse() else { continue };
+        let Ok(user_address) = user_addr_str.parse() else {
+            continue;
+        };
 
         let calldata = build_call_data(GET_DISCOUNT_PERCENT_SELECTOR, user_address);
         let actual_u256 = provider
@@ -565,14 +574,9 @@ pub async fn verify_all_positions_on_conn(
     let mut divergences = Vec::new();
 
     // Checks 1 + 2: scaled-token balance + last_index (collateral + debt).
-    let scaled = verify_touched_positions_on_conn(
-        conn,
-        provider,
-        market_id,
-        block_number,
-        user_addresses,
-    )
-    .await?;
+    let scaled =
+        verify_touched_positions_on_conn(conn, provider, market_id, block_number, user_addresses)
+            .await?;
     for d in scaled {
         divergences.push(VerificationDivergence::ScaledToken(d));
     }

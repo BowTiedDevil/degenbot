@@ -127,7 +127,7 @@ fn aave_report_to_dict(py: Python<'_>, r: &AaveUpdateReport) -> PyResult<Py<PyDi
 }
 
 /// `degenbot_rs.run_aave_update(database_path, chain_id, market_id, to_block,
-/// chunk_size, rpc_url, progress_callback, cancel_handle) -> dict`
+/// chunk_size, rpc_url, progress_callback, cancel_handle, verify_chunk) -> dict`
 ///
 /// Drive the Rust-owned Aave V3 updater chunk loop for `market_id`, advancing
 /// `aave_v3_markets.last_update_block` to `to_block` (or the chain tip if
@@ -157,6 +157,12 @@ fn aave_report_to_dict(py: Python<'_>, r: &AaveUpdateReport) -> PyResult<Py<PyDi
 ///   committed}` once per chunk boundary.
 /// - `cancel_handle` — a [`CancelHandle`] (shared with `run_pool_update`);
 ///   a `signal.SIGINT` handler calls `.cancel()`.
+/// - `verify_chunk` — if `True`, run pre-commit verification on each chunk:
+///   Rust calls `verify_touched_positions_on_conn` on the uncommitted
+///   transaction BEFORE `tx.commit()`. A divergence drops the tx (rollback)
+///   so `last_update_block` does NOT advance + the next run re-processes the
+///   same chunk. If `False`, verification is skipped (chunks commit without
+///   checking).
 ///
 /// # Returns
 ///
@@ -168,6 +174,9 @@ fn aave_report_to_dict(py: Python<'_>, r: &AaveUpdateReport) -> PyResult<Py<PyDi
 /// `ValueError` on a DB / RPC / config-dispatch / parse failure (the in-flight
 /// chunk is rolled back before returning; committed chunks stay durable).
 /// `RuntimeError` if cancelled.
+/// `AssertionError` if `verify_chunk=True` and pre-commit verification found
+/// divergences (the in-flight chunk is rolled back — the chunk's data is NOT
+/// committed; `last_update_block` did NOT advance).
 ///
 /// # Runtime nesting
 ///
@@ -183,6 +192,7 @@ fn aave_report_to_dict(py: Python<'_>, r: &AaveUpdateReport) -> PyResult<Py<PyDi
     rpc_url,
     progress_callback,
     cancel_handle,
+    verify_chunk=false,
 ))]
 #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
 fn run_aave_update(
@@ -195,6 +205,7 @@ fn run_aave_update(
     rpc_url: &str,
     progress_callback: ProgressCallable,
     cancel_handle: &CancelHandle,
+    verify_chunk: bool,
 ) -> PyResult<Py<PyDict>> {
     let path = PathBuf::from(database_path);
     let cancel = cancel_handle.flag.clone();
@@ -206,7 +217,15 @@ fn run_aave_update(
     let report = py
         .detach(move || {
             core_run_aave_update(
-                &path, chain_id, market_id, to_block, chunk_size, rpc_url, cancel, progress,
+                &path,
+                chain_id,
+                market_id,
+                to_block,
+                chunk_size,
+                rpc_url,
+                cancel,
+                progress,
+                verify_chunk,
             )
         })
         .map_err(run_err_to_py)?;
@@ -216,12 +235,41 @@ fn run_aave_update(
 
 /// Map a [`RunError`] to a Python exception. Mirrors the pool seam's
 /// `run_err_to_py`: `RunError::Cancelled` → `RuntimeError` (so the driver
-/// distinguishes a cooperative cancel from a failure); everything else →
-/// `ValueError`.
+/// distinguishes a cooperative cancel from a failure);
+/// `RunError::Verification` → `AssertionError` (formatted with divergence
+/// details — the in-flight chunk was rolled back, `last_update_block` did
+/// NOT advance); everything else → `ValueError`.
 fn run_err_to_py(err: RunError) -> PyErr {
-    use pyo3::exceptions::{PyRuntimeError, PyValueError};
+    use pyo3::exceptions::{PyAssertionError, PyRuntimeError, PyValueError};
     match err {
         RunError::Cancelled => PyRuntimeError::new_err("run_aave_update cancelled by cancel flag"),
+        RunError::Verification {
+            chunk_start,
+            chunk_end,
+            divergences,
+        } => {
+            use std::fmt::Write as _;
+            let mut lines = format!(
+                "{} divergence(s) at chunk {chunk_start}-{chunk_end}:",
+                divergences.len()
+            );
+            for d in &divergences {
+                let kind = match d.kind {
+                    degenbot_aave_updater::verify::PositionKind::Collateral => "collateral",
+                    degenbot_aave_updater::verify::PositionKind::Debt => "debt",
+                };
+                let field = match d.field {
+                    degenbot_aave_updater::verify::DivergenceField::Balance => "balance",
+                    degenbot_aave_updater::verify::DivergenceField::LastIndex => "last_index",
+                };
+                let _ = write!(
+                    lines,
+                    "\n  {kind} {field}: {:?} expected={} actual={}",
+                    d.user_address, d.expected, d.actual
+                );
+            }
+            PyAssertionError::new_err(lines)
+        }
         other => PyValueError::new_err(other.to_string()),
     }
 }
@@ -283,8 +331,8 @@ fn verify_touched_positions_on_chain(
 
     let path = PathBuf::from(database_path);
     // Parse the optional touched_users filter into Addresses.
-    let touched: Option<Vec<alloy::primitives::Address>> = touched_users
-        .map(|addrs| addrs.iter().filter_map(|s| s.parse().ok()).collect());
+    let touched: Option<Vec<alloy::primitives::Address>> =
+        touched_users.map(|addrs| addrs.iter().filter_map(|s| s.parse().ok()).collect());
 
     let divergences = py
         .detach(move || {
@@ -392,7 +440,11 @@ fn verify_touched_positions_on_chain(
 ///   `Some(["0x...", ...])` verifies only those users.
 #[pyfunction]
 #[pyo3(signature = (database_path, rpc_url, market_id, chain_id, block_number, touched_users=None))]
-#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments, clippy::too_many_lines)]
+#[allow(
+    clippy::needless_pass_by_value,
+    clippy::too_many_arguments,
+    clippy::too_many_lines
+)]
 fn verify_all_positions_on_chain(
     py: Python<'_>,
     database_path: &str,
@@ -406,8 +458,8 @@ fn verify_all_positions_on_chain(
     use degenbot_rpc::provider::AlloyProvider;
 
     let path = PathBuf::from(database_path);
-    let touched: Option<Vec<alloy::primitives::Address>> = touched_users
-        .map(|addrs| addrs.iter().filter_map(|s| s.parse().ok()).collect());
+    let touched: Option<Vec<alloy::primitives::Address>> =
+        touched_users.map(|addrs| addrs.iter().filter_map(|s| s.parse().ok()).collect());
 
     let divergences = py
         .detach(move || {
@@ -524,7 +576,7 @@ fn cleanup_zero_balance_positions(
     database_path: &str,
     market_id: i64,
 ) -> PyResult<()> {
-    use degenbot_db::{DegenbotDb, DbError};
+    use degenbot_db::{DbError, DegenbotDb};
     let path = PathBuf::from(database_path);
     py.detach(move || -> Result<(), RunError> {
         let (db, _state) = DegenbotDb::open_for_writes(&path)?;

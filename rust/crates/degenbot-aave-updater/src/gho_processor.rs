@@ -481,9 +481,11 @@ impl UnifiedGhoProcessor {
                     // `balance_delta = -(discount_scaled - raw_delta)`:
                     // `balance_delta` is the magnitude (= discount - raw);
                     // negate to yield the signed result.
-                    -I256::try_from(balance_delta).map_err(|_| GhoProcessorError::DeltaOverflow(
-                        format!("negated borrow balance_delta {balance_delta} > I256::MAX"),
-                    ))?
+                    -I256::try_from(balance_delta).map_err(|_| {
+                        GhoProcessorError::DeltaOverflow(format!(
+                            "negated borrow balance_delta {balance_delta} > I256::MAX"
+                        ))
+                    })?
                 } else {
                     to_signed(balance_delta)?
                 }
@@ -676,8 +678,7 @@ pub fn calculate_gho_discount_rate(
     // Below this GHO debt, no discount (1e18 = 1 GHO).
     let min_debt_token_balance = U256::from(1_000_000_000_000_000_000u64);
 
-    if discount_token_balance < min_discount_token_balance
-        || debt_balance < min_debt_token_balance
+    if discount_token_balance < min_discount_token_balance || debt_balance < min_debt_token_balance
     {
         return Ok(U256::ZERO);
     }
@@ -1324,7 +1325,12 @@ mod tests {
         // rev=5 (FLOOR → precomputed scaled_amount=400): prev=1000 so partial. delta=-400.
         let p5 = UnifiedGhoProcessor::new(5);
         let r = p5
-            .process_gho_debt_burn(&ev(300, 0, Some(400)), U256::from(1_000u64), RAY, U256::ZERO)
+            .process_gho_debt_burn(
+                &ev(300, 0, Some(400)),
+                U256::from(1_000u64),
+                RAY,
+                U256::ZERO,
+            )
             .unwrap();
         assert_eq!(r.balance_delta, -I256::try_from(400u64).unwrap());
         // rev=2 (discount, current==prev→discount_scaled=0): delta=-300.
@@ -1374,9 +1380,15 @@ mod tests {
     #[test]
     fn calculate_gho_discount_rate_zero_below_minimums() {
         // stkAAVE below 1e15 (0.001) → 0.
-        assert_eq!(calculate_gho_discount_rate(e18(5000), e(500)).unwrap(), U256::ZERO);
+        assert_eq!(
+            calculate_gho_discount_rate(e18(5000), e(500)).unwrap(),
+            U256::ZERO
+        );
         // debt below 1e18 (1 GHO) → 0.
-        assert_eq!(calculate_gho_discount_rate(e(500), e18(100)).unwrap(), U256::ZERO);
+        assert_eq!(
+            calculate_gho_discount_rate(e(500), e18(100)).unwrap(),
+            U256::ZERO
+        );
     }
 
     #[test]

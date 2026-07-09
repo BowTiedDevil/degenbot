@@ -217,14 +217,9 @@ fn dispatch_operation(
             events,
             gho_running_state,
         ),
-        OperationType::Liquidation => dispatch_liquidation(
-            op,
-            market_id,
-            conn,
-            gho_vtoken_address,
-            gho_ctx,
-            events,
-        ),
+        OperationType::Liquidation => {
+            dispatch_liquidation(op, market_id, conn, gho_vtoken_address, gho_ctx, events)
+        }
         OperationType::GhoLiquidation => dispatch_gho_liquidation(
             op,
             market_id,
@@ -918,7 +913,9 @@ fn dispatch_interest_accrual(
                 gho_running_state,
             )?;
             events.push(chunk_event);
-            if let Some(refresh_ev) = refresh { events.push(refresh_ev); }
+            if let Some(refresh_ev) = refresh {
+                events.push(refresh_ev);
+            }
             continue;
         }
         let token_addr_str = addr_to_hex(ev.token_address);
@@ -1184,7 +1181,14 @@ fn dispatch_gho_standard(
             continue;
         }
         let (chunk_event, refresh) = build_gho_chunk_event(
-            ev, op, pool_event, None, gho_ctx, market_id, conn, gho_running_state,
+            ev,
+            op,
+            pool_event,
+            None,
+            gho_ctx,
+            market_id,
+            conn,
+            gho_running_state,
         )?;
         events.push(chunk_event);
         if let Some(refresh_ev) = refresh {
@@ -1258,7 +1262,14 @@ fn dispatch_gho_liquidation(
                 continue;
             }
             let (chunk_event, refresh) = build_gho_chunk_event(
-                ev, op, Some(pool_event), None, gho_ctx, market_id, conn, gho_running_state,
+                ev,
+                op,
+                Some(pool_event),
+                None,
+                gho_ctx,
+                market_id,
+                conn,
+                gho_running_state,
             )?;
             events.push(chunk_event);
             if let Some(refresh_ev) = refresh {
@@ -1438,20 +1449,19 @@ fn build_gho_chunk_event(
     // `build_gho_chunk_event` callers) — the standard `dispatch_standard`
     // path uses `ScaledTokenProcessor` which does NOT consult `prev_balance`
     // (no discount math); it has no per-tx staleness.
-    let (prev_balance, prev_index) = if let Some(&(balance, idx)) =
-        gho_running_state.get(&position_id)
-    {
-        (balance, idx)
-    } else {
-        let (balance, index_opt) = DegenbotDb::lookup_position_balance_index_on_conn(
-            conn,
-            ScaledTokenPosition::Debt,
-            position_id,
-        )?;
-        let idx = index_opt.unwrap_or(index);
-        gho_running_state.insert(position_id, (balance, idx));
-        (balance, idx)
-    };
+    let (prev_balance, prev_index) =
+        if let Some(&(balance, idx)) = gho_running_state.get(&position_id) {
+            (balance, idx)
+        } else {
+            let (balance, index_opt) = DegenbotDb::lookup_position_balance_index_on_conn(
+                conn,
+                ScaledTokenPosition::Debt,
+                position_id,
+            )?;
+            let idx = index_opt.unwrap_or(index);
+            gho_running_state.insert(position_id, (balance, idx));
+            (balance, idx)
+        };
     let effective_discount =
         gho_ctx.effective_discount(ev.user_address, ev.log_index, asset.v_token_revision);
 
@@ -1672,19 +1682,18 @@ fn dispatch_deficit_coverage(
             // as `dispatch_balance_transfer`'s `find_map` lookup — `bt_token +
             // bt_from + bt_to`; the BT log is the DeficitCoverage's
             // middle-inserted paired BT).
-            let bt_pair =
-                op.balance_transfer_events
-                    .iter()
-                    .find_map(|bt_log| match decode_balance_transfer_log(bt_log) {
-                        Some((bt_from, bt_to, bt_token, bt_value, bt_index))
-                            if bt_token == ev.token_address
-                                && bt_from == ev.from_address.unwrap_or(ev.user_address)
-                                && bt_to == ev.target_address.unwrap_or_default() =>
-                        {
-                            Some((bt_value, bt_index))
-                        }
-                        _ => None,
-                    });
+            let bt_pair = op.balance_transfer_events.iter().find_map(|bt_log| {
+                match decode_balance_transfer_log(bt_log) {
+                    Some((bt_from, bt_to, bt_token, bt_value, bt_index))
+                        if bt_token == ev.token_address
+                            && bt_from == ev.from_address.unwrap_or(ev.user_address)
+                            && bt_to == ev.target_address.unwrap_or_default() =>
+                    {
+                        Some((bt_value, bt_index))
+                    }
+                    _ => None,
+                }
+            });
             let raw_amount = ev.amount;
             let transfer_index = match bt_pair {
                 Some((_, idx)) => idx,
@@ -2257,7 +2266,13 @@ mod tests {
         let mut events: Vec<AaveChunkEvent> = Vec::new();
         let mut gho_running_state: HashMap<i64, (U256, U256)> = HashMap::new();
         dispatch_interest_accrual(
-            &op, 1, &conn, Some(vtoken), &gho_ctx, &mut events, &mut gho_running_state,
+            &op,
+            1,
+            &conn,
+            Some(vtoken),
+            &gho_ctx,
+            &mut events,
+            &mut gho_running_state,
         )
         .expect("GHO interest accrual must not defer (WCRWL3)");
         assert_eq!(
@@ -2267,7 +2282,11 @@ mod tests {
         );
         match &events[0] {
             AaveChunkEvent::ScaledTokenMint { position, .. } => {
-                assert_eq!(*position, ScaledTokenPosition::Debt, "GHO interest accrual → debt position");
+                assert_eq!(
+                    *position,
+                    ScaledTokenPosition::Debt,
+                    "GHO interest accrual → debt position"
+                );
             }
             other => panic!("expected ScaledTokenMint, got {other:?}"),
         }
@@ -2292,8 +2311,8 @@ mod tests {
     /// `AToken.rev_1.sol:1712`).
     #[test]
     fn dispatch_deficit_coverage_pairs_erc20_transfer_with_paired_balance_transfer() {
-        use degenbot_decoders::aave_event_decoder::BALANCE_TRANSFER_TOPIC;
         use degenbot_core::address_utils::address_to_checksum_string;
+        use degenbot_decoders::aave_event_decoder::BALANCE_TRANSFER_TOPIC;
         use degenbot_evm_math::RAY;
         use rusqlite::params;
         let db = fresh_db_with_asset();
@@ -2304,7 +2323,8 @@ mod tests {
             // Replace the seeded asset row (which has aToken at '0xatoken' —
             // a non-hex placeholder) with a real 20-byte aToken address so
             // `lookup_asset_by_token_address_on_conn` matches `addr_to_hex`.
-            conn.execute("DELETE FROM aave_v3_assets WHERE id=1", []).unwrap();
+            conn.execute("DELETE FROM aave_v3_assets WHERE id=1", [])
+                .unwrap();
             conn.execute(
                 "INSERT INTO erc20_tokens (id, chain, address) VALUES (4, 1, ?1)",
                 params![a_token_str],
@@ -2323,11 +2343,11 @@ mod tests {
         let user = Address::from([0x53; 20]);
         let recipient = Address::from([0xD4; 20]);
         let index = U256::from(1_131_490_601_199_816u64) * RAY; // a real liquidity index
-        // The unscaled ERC20 Transfer amount (= the underlying deposit transfer).
-        // 168401963 / index ≈ 148831959 — the unscaled amount EXCEEDS the
-        // user's scaled balance (148831960) by the difference between the
-        // unscaled + the scaled: `168401963 - 148831959 = 19_570_004` → the
-        // uint128 guard fires pre-fix.
+                                                                // The unscaled ERC20 Transfer amount (= the underlying deposit transfer).
+                                                                // 168401963 / index ≈ 148831959 — the unscaled amount EXCEEDS the
+                                                                // user's scaled balance (148831960) by the difference between the
+                                                                // unscaled + the scaled: `168401963 - 148831959 = 19_570_004` → the
+                                                                // uint128 guard fires pre-fix.
         let unscaled_amount = U256::from(168_401_963u64);
         let bt_scaled = U256::from(148_831_959u64);
 
@@ -2346,7 +2366,8 @@ mod tests {
             ],
             Bytes::from({
                 let mut d = vec![0u8; 32];
-                unscaled_amount.to_be_bytes::<32>()
+                unscaled_amount
+                    .to_be_bytes::<32>()
                     .iter()
                     .enumerate()
                     .for_each(|(i, b)| d[i] = *b);
@@ -2388,11 +2409,13 @@ mod tests {
             ],
             Bytes::from({
                 let mut d = vec![0u8; 64];
-                bt_value.to_be_bytes::<32>()
+                bt_value
+                    .to_be_bytes::<32>()
                     .iter()
                     .enumerate()
                     .for_each(|(i, b)| d[i] = *b);
-                index.to_be_bytes::<32>()
+                index
+                    .to_be_bytes::<32>()
                     .iter()
                     .enumerate()
                     .for_each(|(i, b)| d[32 + i] = *b);
@@ -2436,15 +2459,18 @@ mod tests {
             ],
             Bytes::from({
                 let mut d = vec![0u8; 96];
-                burn_amount.to_be_bytes::<32>()
+                burn_amount
+                    .to_be_bytes::<32>()
                     .iter()
                     .enumerate()
                     .for_each(|(i, b)| d[i] = *b);
-                U256::ZERO.to_be_bytes::<32>()
+                U256::ZERO
+                    .to_be_bytes::<32>()
                     .iter()
                     .enumerate()
                     .for_each(|(i, b)| d[32 + i] = *b);
-                index.to_be_bytes::<32>()
+                index
+                    .to_be_bytes::<32>()
                     .iter()
                     .enumerate()
                     .for_each(|(i, b)| d[64 + i] = *b);

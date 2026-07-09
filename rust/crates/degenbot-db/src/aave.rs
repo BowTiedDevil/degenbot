@@ -846,8 +846,15 @@ mod tests {
             )
             .unwrap();
             DegenbotDb::apply_reserve_initialized_on_conn(
-                &conn, 1, /*underlying*/ 1, /*a_token*/ 1, 1, /*v_token*/ 2, 1,
-                /*price_source*/ None, /*gho_link*/ Some(gho_row_id),
+                &conn,
+                1,
+                /*underlying*/ 1,
+                /*a_token*/ 1,
+                1,
+                /*v_token*/ 2,
+                1,
+                /*price_source*/ None,
+                /*gho_link*/ Some(gho_row_id),
             )
             .unwrap();
         }

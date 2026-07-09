@@ -58,7 +58,7 @@ use std::collections::HashMap;
 
 use alloy::primitives::{keccak256, Address, Bytes, U256};
 use degenbot_db::aave::AaveGhoAsset;
-use degenbot_db::{DbError, DegenbotDb, DebtPositionRefreshContext};
+use degenbot_db::{DbError, DebtPositionRefreshContext, DegenbotDb};
 use degenbot_decoders::aave_event_decoder::{decode_aave_log, DecodedAaveEvent};
 use degenbot_evm_math::ray_mul;
 use degenbot_rpc::provider::AlloyProvider;
@@ -475,11 +475,13 @@ pub(crate) async fn dispatch_stk_aave_transfer_with_backfill(
         .and_then(|s| s.parse().ok())
     {
         Some(addr) => addr,
-        None => return Ok(Some(AaveChunkEvent::StkAaveTransfer {
-            from_user_id,
-            to_user_id,
-            amount: decoded.value,
-        })),
+        None => {
+            return Ok(Some(AaveChunkEvent::StkAaveTransfer {
+                from_user_id,
+                to_user_id,
+                amount: decoded.value,
+            }))
+        }
     };
     if let Some(uid) = from_user_id {
         backfill_user_stk_aave_balance_if_none(provider, conn, uid, block_number, discount_token)
@@ -975,122 +977,122 @@ async fn dispatch_single_config_event(
     gho_asset: Option<&AaveGhoAsset>,
     block_number: u64,
 ) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
-    let ev =
-        match decoded {
-            // ── the 8 sync handlers (no RPC) ──
-            DecodedAaveEvent::ReserveDataUpdated(ev) => Some(dispatch_reserve_data_updated(
+    let ev = match decoded {
+        // ── the 8 sync handlers (no RPC) ──
+        DecodedAaveEvent::ReserveDataUpdated(ev) => Some(dispatch_reserve_data_updated(
+            market_id,
+            block_number,
+            ev,
+            conn,
+        )?),
+        DecodedAaveEvent::UserEModeSet(ev) => {
+            Some(dispatch_user_e_mode_set(market_id, block_number, ev, conn)?)
+        }
+        DecodedAaveEvent::ReserveUsedAsCollateralEnabled(ev) => Some(
+            dispatch_reserve_used_as_collateral(market_id, ev.reserve, ev.user, true, conn)?,
+        ),
+        DecodedAaveEvent::ReserveUsedAsCollateralDisabled(ev) => Some(
+            dispatch_reserve_used_as_collateral(market_id, ev.reserve, ev.user, false, conn)?,
+        ),
+        DecodedAaveEvent::PriceOracleUpdated(ev) => {
+            Some(dispatch_price_oracle_updated(market_id, ev)?)
+        }
+        DecodedAaveEvent::AssetSourceUpdated(ev) => {
+            dispatch_asset_source_updated(market_id, ev, conn)?
+        }
+        DecodedAaveEvent::EModeCategoryAdded(ev) => {
+            Some(dispatch_e_mode_category_added(market_id, ev)?)
+        }
+        DecodedAaveEvent::EModeAssetCategoryChanged(ev) => {
+            Some(dispatch_e_mode_asset_category_changed(market_id, ev, conn)?)
+        }
+        DecodedAaveEvent::AssetCollateralInEModeChanged(ev) => Some(
+            dispatch_asset_collateral_in_emode_changed(market_id, ev, conn)?,
+        ),
+        DecodedAaveEvent::DiscountPercentUpdated(ev) => Some(dispatch_discount_percent_updated(
+            market_id,
+            block_number,
+            ev,
+            conn,
+        )?),
+        DecodedAaveEvent::DiscountTokenUpdated(ev) => {
+            dispatch_discount_token_updated_with_fresh_resolution(gho_asset, ev, conn, chain_id)?
+        }
+        DecodedAaveEvent::DiscountRateStrategyUpdated(ev) => {
+            dispatch_discount_rate_strategy_updated_with_fresh_resolution(
+                gho_asset, ev, conn, chain_id,
+            )?
+        }
+        // ── the 2 async RPC handlers ──
+        DecodedAaveEvent::CollateralConfigurationChanged(ev) => Some(
+            resolve_collateral_configuration(
+                provider,
+                pool_address,
+                ev,
                 market_id,
                 block_number,
-                ev,
                 conn,
-            )?),
-            DecodedAaveEvent::UserEModeSet(ev) => {
-                Some(dispatch_user_e_mode_set(market_id, block_number, ev, conn)?)
-            }
-            DecodedAaveEvent::ReserveUsedAsCollateralEnabled(ev) => Some(
-                dispatch_reserve_used_as_collateral(market_id, ev.reserve, ev.user, true, conn)?,
-            ),
-            DecodedAaveEvent::ReserveUsedAsCollateralDisabled(ev) => Some(
-                dispatch_reserve_used_as_collateral(market_id, ev.reserve, ev.user, false, conn)?,
-            ),
-            DecodedAaveEvent::PriceOracleUpdated(ev) => {
-                Some(dispatch_price_oracle_updated(market_id, ev)?)
-            }
-            DecodedAaveEvent::AssetSourceUpdated(ev) => {
-                dispatch_asset_source_updated(market_id, ev, conn)?
-            }
-            DecodedAaveEvent::EModeCategoryAdded(ev) => {
-                Some(dispatch_e_mode_category_added(market_id, ev)?)
-            }
-            DecodedAaveEvent::EModeAssetCategoryChanged(ev) => {
-                Some(dispatch_e_mode_asset_category_changed(market_id, ev, conn)?)
-            }
-            DecodedAaveEvent::AssetCollateralInEModeChanged(ev) => Some(
-                dispatch_asset_collateral_in_emode_changed(market_id, ev, conn)?,
-            ),
-            DecodedAaveEvent::DiscountPercentUpdated(ev) => Some(
-                dispatch_discount_percent_updated(market_id, block_number, ev, conn)?,
-            ),
-            DecodedAaveEvent::DiscountTokenUpdated(ev) => {
-                dispatch_discount_token_updated_with_fresh_resolution(
-                    gho_asset, ev, conn, chain_id,
-                )?
-            }
-            DecodedAaveEvent::DiscountRateStrategyUpdated(ev) => {
-                dispatch_discount_rate_strategy_updated_with_fresh_resolution(
-                    gho_asset, ev, conn, chain_id,
-                )?
-            }
-            // ── the 2 async RPC handlers ──
-            DecodedAaveEvent::CollateralConfigurationChanged(ev) => Some(
-                resolve_collateral_configuration(
+            )
+            .await?,
+        ),
+        DecodedAaveEvent::ReserveInitialized(ev) => {
+            let oracle = resolve_reserve_oracle_address(conn, market_id, oracle_address)?;
+            Some(
+                resolve_reserve_initialized(
                     provider,
-                    pool_address,
                     ev,
                     market_id,
+                    chain_id,
+                    oracle,
+                    gho_asset,
                     block_number,
                     conn,
                 )
                 .await?,
-            ),
-            DecodedAaveEvent::ReserveInitialized(ev) => {
-                let oracle = resolve_reserve_oracle_address(conn, market_id, oracle_address)?;
-                Some(
-                    resolve_reserve_initialized(
-                        provider,
-                        ev,
-                        market_id,
-                        chain_id,
-                        oracle,
-                        gho_asset,
-                        block_number,
-                        conn,
-                    )
-                    .await?,
-                )
-            }
-            // ── stkAAVE Staked/Redeem semantic events: NO balance-mutation
-            // dispatch. YMWN5V-retired (crash #3): the prior design processed
-            // these as proxies for the zero-leg Transfers; the Python never
-            // did (Staked/Redeem are fetched only for classification in
-            // `fetch_stk_aave_events`). The decoders stay (harmless, available
-            // for future classification) — what goes is the balance-mutation
-            // proxy. Balance mutation flows through the Transfer arm below. ──
-            DecodedAaveEvent::Staked(_) | DecodedAaveEvent::Redeem(_) => None,
-            // ── stkAAVE `Transfer` arm (covers the zero-leg arms + the
-            // neither-zero case via Option<i64>; scoped to the discount token). ──
-            DecodedAaveEvent::Erc20Transfer(ev) => {
-                dispatch_stk_aave_transfer_with_backfill(
-                    provider,
-                    conn,
-                    market_id,
-                    chain_id,
-                    block_number,
-                    ev,
-                    gho_asset,
-                )
-                .await?
-            }
-            // ── 6SWY4R-2b: the 6 missing-variant config events ──────────────────
-            // Delegated to `resolve_missing_variant_event` to keep this fn under
-            // the 100-line `clippy::too_many_lines` limit.
-            //
-            // Operation events (Supply/Borrow/Mint/Burn/Transfer/...) + the
-            // 6 missing-variant events both fall through to the `_` arm. The
-            // `resolve_missing_variant_event` fn matches on the 6 missing-variant
-            // variants; for operation events it returns `Ok(None)`.
-            _ => {
-                resolve_missing_variant_event(
-                    decoded,
-                    provider,
-                    market_id,
-                    gho_asset,
-                    block_number,
-                    conn,
-                )
-                .await?
-            }
-        };
+            )
+        }
+        // ── stkAAVE Staked/Redeem semantic events: NO balance-mutation
+        // dispatch. YMWN5V-retired (crash #3): the prior design processed
+        // these as proxies for the zero-leg Transfers; the Python never
+        // did (Staked/Redeem are fetched only for classification in
+        // `fetch_stk_aave_events`). The decoders stay (harmless, available
+        // for future classification) — what goes is the balance-mutation
+        // proxy. Balance mutation flows through the Transfer arm below. ──
+        DecodedAaveEvent::Staked(_) | DecodedAaveEvent::Redeem(_) => None,
+        // ── stkAAVE `Transfer` arm (covers the zero-leg arms + the
+        // neither-zero case via Option<i64>; scoped to the discount token). ──
+        DecodedAaveEvent::Erc20Transfer(ev) => {
+            dispatch_stk_aave_transfer_with_backfill(
+                provider,
+                conn,
+                market_id,
+                chain_id,
+                block_number,
+                ev,
+                gho_asset,
+            )
+            .await?
+        }
+        // ── 6SWY4R-2b: the 6 missing-variant config events ──────────────────
+        // Delegated to `resolve_missing_variant_event` to keep this fn under
+        // the 100-line `clippy::too_many_lines` limit.
+        //
+        // Operation events (Supply/Borrow/Mint/Burn/Transfer/...) + the
+        // 6 missing-variant events both fall through to the `_` arm. The
+        // `resolve_missing_variant_event` fn matches on the 6 missing-variant
+        // variants; for operation events it returns `Ok(None)`.
+        _ => {
+            resolve_missing_variant_event(
+                decoded,
+                provider,
+                market_id,
+                gho_asset,
+                block_number,
+                conn,
+            )
+            .await?
+        }
+    };
     Ok(ev)
 }
 
@@ -1346,16 +1348,19 @@ pub async fn refresh_gho_discount(
     let stk_aave_balance = if let Some(b) = ctx.stk_aave_balance {
         b
     } else {
-        let user_addr: Address = ctx
-            .user_address
-            .parse()
-            .map_err(|_| ConfigDispatchError::DecodeShape(format!(
+        let user_addr: Address = ctx.user_address.parse().map_err(|_| {
+            ConfigDispatchError::DecodeShape(format!(
                 "bad user_address in refresh: {}",
                 ctx.user_address
-            )))?;
+            ))
+        })?;
         let calldata = encode_single_address_call("balanceOf(address)", &user_addr);
         let ret = provider
-            .eth_call(&discount_token, calldata, Some(block_number.saturating_sub(1)))
+            .eth_call(
+                &discount_token,
+                calldata,
+                Some(block_number.saturating_sub(1)),
+            )
             .await?;
         let balance = word0_to_u256(&ret).unwrap_or(U256::ZERO);
         DegenbotDb::set_user_stk_aave_balance_on_conn(conn, ctx.user_id, balance)?;
@@ -1370,7 +1375,11 @@ pub async fn refresh_gho_discount(
     let rate = calculate_gho_discount_rate(debt_balance, stk_aave_balance).map_err(|e| {
         ConfigDispatchError::DecodeShape(format!("calculate_gho_discount_rate: {e}"))
     })?;
-    DegenbotDb::apply_gho_discount_percent_updated_on_conn(conn, ctx.user_id, discount_to_i64(rate))?;
+    DegenbotDb::apply_gho_discount_percent_updated_on_conn(
+        conn,
+        ctx.user_id,
+        discount_to_i64(rate),
+    )?;
     Ok(())
 }
 
@@ -2259,8 +2268,7 @@ mod tests {
         let (db, _state) = DegenbotDb::open_for_writes(Path::new(":memory:")).unwrap();
         let gho_vtoken = Address::from([0xa0; 20]);
         let new_discount_token = Address::from([0xc; 20]);
-        let addr_str =
-            |a: Address| degenbot_core::address_utils::address_to_checksum_string(&a);
+        let addr_str = |a: Address| degenbot_core::address_utils::address_to_checksum_string(&a);
         {
             let conn = db.lock();
             conn.execute(
@@ -2290,26 +2298,23 @@ mod tests {
             .unwrap()
             .expect("GHO asset row seeded");
         assert_eq!(
-            stale.v_token_address,
-            None,
+            stale.v_token_address, None,
             "pre-link snapshot: v_token_address None (v_token_id NULL)"
         );
         // Simulate the same-tx ReserveInitialized apply (links v_token_id=11).
-        conn.execute("UPDATE aave_gho_tokens SET v_token_id = 11 WHERE id = 1", [])
-            .unwrap();
+        conn.execute(
+            "UPDATE aave_gho_tokens SET v_token_id = 11 WHERE id = 1",
+            [],
+        )
+        .unwrap();
         let ev = DiscountTokenUpdatedEvent {
-            v_token_address: gho_vtoken, // the GHO vToken emitter
+            v_token_address: gho_vtoken,       // the GHO vToken emitter
             old_discount_token: Address::ZERO, // the INITIAL set (old=None)
             new_discount_token,
         };
         // The wrapper re-resolves from conn → sees the link → guard passes.
-        let r = dispatch_discount_token_updated_with_fresh_resolution(
-            Some(&stale),
-            &ev,
-            &conn,
-            1,
-        )
-        .unwrap();
+        let r = dispatch_discount_token_updated_with_fresh_resolution(Some(&stale), &ev, &conn, 1)
+            .unwrap();
         match r {
             Some(AaveChunkEvent::GhoDiscountTokenUpdated {
                 gho_token_id,

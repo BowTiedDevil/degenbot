@@ -2002,8 +2002,8 @@ mod tests {
             pool,
             vec![
                 SUPPLY_TOPIC,
-                addr_word(reserve),       // topic[1] = reserve
-                addr_word(on_behalf_of),  // topic[2] = onBehalfOf
+                addr_word(reserve),            // topic[1] = reserve
+                addr_word(on_behalf_of),       // topic[2] = onBehalfOf
                 B256::new(u16_word(referral)), // topic[3] = referralCode
             ],
             data,
@@ -2052,8 +2052,8 @@ mod tests {
             pool,
             vec![
                 BORROW_TOPIC,
-                addr_word(reserve),       // topic[1] = reserve
-                addr_word(on_behalf_of),  // topic[2] = onBehalfOf
+                addr_word(reserve),            // topic[1] = reserve
+                addr_word(on_behalf_of),       // topic[2] = onBehalfOf
                 B256::new(u16_word(referral)), // topic[3] = referralCode
             ],
             data,
