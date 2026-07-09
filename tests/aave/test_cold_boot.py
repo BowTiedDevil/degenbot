@@ -212,5 +212,63 @@ def test_cold_boot_creates_pool_and_configurator_rows() -> None:
     assert _stamp(db_path) == 1002, _stamp(db_path)
 
 
+def test_max_chunks_caps_loop_at_n_committed_chunks() -> None:
+    """``max_chunks=1`` stops the Rust loop after committing ONE chunk.
+
+    The Rust core owns chunking; before the ``max_chunks`` cap the Python
+    ``--one-chunk`` flag was downgraded to a warning + the run advanced all
+    the way to ``to_block``. With ``max_chunks`` wired through, the loop breaks
+    after the Nth committed chunk + ``last_update_block`` is stamped to that
+    chunk's end (so the next run resumes from there).
+    """
+    import tempfile
+
+    tmp = Path(tempfile.mkdtemp(prefix="max-chunks-"))
+    db_path = tmp / "cand.db"
+    # from_block = 1001; to_block = 1009; chunk_size = 2 → would be
+    # chunks [1001-1002],[1003-1004],[1005-1006],[1007-1008],[1009] (5 chunks).
+    # max_chunks=1 → must stop after the FIRST committed chunk (1001-1002).
+    _seed_cold_boot_db(db_path, last_update_block=1000)
+    logs = [
+        _make_proxy_created_log(
+            proxy_id=_POOL_ID,
+            proxy_address=POOL_ADDRESS,
+            implementation_address=_POOL_IMPL,
+            block=1001,
+            log_index=0,
+        ),
+        _make_proxy_created_log(
+            proxy_id=_POOL_CONFIGURATOR_ID,
+            proxy_address=POOL_CONFIGURATOR_ADDRESS,
+            implementation_address=_CONFIGURATOR_IMPL,
+            block=1001,
+            log_index=1,
+        ),
+    ]
+    eth_calls = {
+        POOL_REVISION_SELECTOR: _u256(1),
+        CONFIGURATOR_REVISION_SELECTOR: _u256(1),
+    }
+    with mock_rpc_server(logs=logs, block_number=1009, eth_call_responses=eth_calls) as rpc_url:
+        report = run_aave_update(
+            database_path=str(db_path),
+            chain_id=1,
+            market_id=1,
+            to_block=1009,
+            chunk_size=2,
+            rpc_url=rpc_url,
+            progress_callback=lambda **_kw: None,
+            cancel_handle=CancelHandle(),
+            max_chunks=1,
+        )
+    # Exactly ONE chunk committed (the cap fired before the 2nd chunk).
+    assert report["chunks_committed"] == 1, report
+    # The stamp advanced to the FIRST chunk's end (1002), NOT to_block (1009).
+    assert _stamp(db_path) == 1002, ("max_chunks must cap the stamp at chunk_end", _stamp(db_path))
+    # The report's to_block must reflect where it actually stopped (the capped
+    # chunk's end), NOT the requested to_block.
+    assert report["to_block"] == 1002, ("to_block must reflect the cap", report)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

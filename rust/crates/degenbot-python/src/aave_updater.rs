@@ -127,7 +127,8 @@ fn aave_report_to_dict(py: Python<'_>, r: &AaveUpdateReport) -> PyResult<Py<PyDi
 }
 
 /// `degenbot_rs.run_aave_update(database_path, chain_id, market_id, to_block,
-/// chunk_size, rpc_url, progress_callback, cancel_handle, verify_chunk) -> dict`
+/// chunk_size, rpc_url, progress_callback, cancel_handle, verify_chunk,
+/// max_chunks) -> dict`
 ///
 /// Drive the Rust-owned Aave V3 updater chunk loop for `market_id`, advancing
 /// `aave_v3_markets.last_update_block` to `to_block` (or the chain tip if
@@ -163,6 +164,11 @@ fn aave_report_to_dict(py: Python<'_>, r: &AaveUpdateReport) -> PyResult<Py<PyDi
 ///   so `last_update_block` does NOT advance + the next run re-processes the
 ///   same chunk. If `False`, verification is skipped (chunks commit without
 ///   checking).
+/// - `max_chunks` — `None` to advance to `to_block`/tip; `Some(n)` to stop
+///   after committing `n` chunks (one-chunk mode). `last_update_block` is
+///   advanced to the last committed chunk's end, so the next run resumes
+///   from there. Previously the Python `--one-chunk` flag was downgraded to
+///   a warning by the cutover shell; this restores first-class support.
 ///
 /// # Returns
 ///
@@ -193,6 +199,7 @@ fn aave_report_to_dict(py: Python<'_>, r: &AaveUpdateReport) -> PyResult<Py<PyDi
     progress_callback,
     cancel_handle,
     verify_chunk=false,
+    max_chunks=None,
 ))]
 #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
 fn run_aave_update(
@@ -206,6 +213,7 @@ fn run_aave_update(
     progress_callback: ProgressCallable,
     cancel_handle: &CancelHandle,
     verify_chunk: bool,
+    max_chunks: Option<usize>,
 ) -> PyResult<Py<PyDict>> {
     let path = PathBuf::from(database_path);
     let cancel = cancel_handle.flag.clone();
@@ -226,6 +234,7 @@ fn run_aave_update(
                 cancel,
                 progress,
                 verify_chunk,
+                max_chunks,
             )
         })
         .map_err(run_err_to_py)?;

@@ -434,12 +434,14 @@ def aave_update(
     # Behavior changes vs the pre-cutover Python loop (flagged for U5YIBG):
     # - `--dry-run`: shell-level preview (skips the Rust call entirely). The
     #   Rust core has no dry-run flag; a full write-preview needs one (RQXEKH).
-    # - `--verify-block`/`--one-chunk`: mid-loop options the Rust core
-    #   cannot honor (it owns chunking + exposes no per-block hook);
-    #   downgraded to a warning. Use `--verify-all` for post-run verification.
+    # - `--verify-block`: a mid-loop per-block hook the Rust core cannot
+    #   honor (it owns chunking + exposes no per-block hook); downgraded to a
+    #   warning. Use `--verify-all` for post-run verification.
     #   `--verify-chunk` is now wired into the Rust core's per-chunk
     #   `verify_touched_positions_on_chain` (checks 1+2: scaled-token
     #   balance + index for touched users only).
+    # - `--one-chunk` is wired through the Rust core's `max_chunks` loop cap
+    #   (stops after committing one chunk);
     # - `--verify-all` + `--backup`: POST-run per market (was interleaved at
     #   `--backup-interval` boundaries mid-loop); the interleaving granularity
     #   is lost (one verify/backup at the end of each market's run).
@@ -452,9 +454,12 @@ def aave_update(
             "mid-loop per-block verification is skipped.",
         )
     if stop_after_one_chunk:
-        logger.warning(
-            "--one-chunk is not supported by the Rust core; the run advances to --to-block.",
-        )
+        # Restored first-class support: the Rust core's `max_chunks` loop
+        # cap (run.rs) stops after committing one chunk. Pre-cutover the
+        # Python loop honored this inline; the 0.6.x cutover shell downgraded
+        # it to a warning because the Rust core had no per-chunk hook; the
+        # `max_chunks` parameter restores it (HQF5NQ-gap).
+        pass
     if enable_backup:
         logger.warning(
             "--backup-interval is not honored by the Rust core (was %s); "
@@ -585,6 +590,7 @@ def aave_update(
                             ),
                             cancel_handle=handle,
                             verify_chunk=verify_chunk,
+                            max_chunks=1 if stop_after_one_chunk else None,
                         )
                     except RuntimeError as exc:
                         # Cooperative cancel (RuntimeError per the .pyi):

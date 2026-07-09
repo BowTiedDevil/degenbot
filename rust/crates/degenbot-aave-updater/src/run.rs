@@ -21,7 +21,7 @@ use rusqlite::Connection;
 ///
 /// | Variant                              | `_on_conn` fn                                    |
 /// |--------------------------------------|---------------------------------------------------|
-/// | [`CollateralConfigurationChanged`]  | [`apply_collateral_configuration_changed_on_conn`] |
+/// | [`CollateralConfigurationChanged`]   | [`apply_collateral_configuration_changed_on_conn`] |
 /// | [`EModeCategoryAdded`]               | [`apply_e_mode_category_added_on_conn`]            |
 /// | [`EModeAssetCategoryChanged`]        | [`apply_emode_asset_category_changed_on_conn`]     |
 /// | [`AssetCollateralInEModeChanged`]    | [`apply_asset_collateral_in_emode_changed_on_conn`] |
@@ -30,7 +30,7 @@ use rusqlite::Connection;
 /// | [`PriceOracleUpdated`]               | [`apply_price_oracle_updated_on_conn`]             |
 /// | [`AssetSourceUpdated`]               | [`apply_asset_source_updated_on_conn`]             |
 /// | [`ReserveDataUpdated`]               | [`apply_reserve_data_updated_on_conn`]             |
-/// | [`ReserveInitialized`]              | [`apply_reserve_initialized_on_conn`]              |
+/// | [`ReserveInitialized`]               | [`apply_reserve_initialized_on_conn`]              |
 ///
 /// [`apply_collateral_configuration_changed_on_conn`]: DegenbotDb::apply_collateral_configuration_changed_on_conn
 /// [`apply_e_mode_category_added_on_conn`]: DegenbotDb::apply_e_mode_category_added_on_conn
@@ -1207,6 +1207,7 @@ pub fn run_aave_update(
     cancel: Arc<AtomicBool>,
     progress: Arc<dyn ProgressSink>,
     verify_chunk: bool,
+    max_chunks: Option<usize>,
 ) -> Result<AaveUpdateReport, RunError> {
     if chunk_size == 0 {
         return Err(RunError::Provider(ProviderError::InvalidBlockRange {
@@ -1540,6 +1541,20 @@ pub fn run_aave_update(
         report.total_events_applied += chunk_report.events_applied;
 
         working_start = chunk_end + 1;
+
+        // `--one-chunk` cap: stop after committing `max_chunks` chunks (NOT
+        // mid-loop and NOT before the first chunk). `last_update_block` is
+        // advanced to the last committed chunk's `chunk_end` (the stamp write
+        // happened inside `apply_chunk_events_on_conn`'s commit), so the next
+        // run resumes from there. Mirrors the Python pre-cutover `stop_after_n`
+        // behavior (commands.py:454 pre-Rust-core — downgraded to a warning in
+        // the cutover; restored here as a first-class loop cap).
+        if let Some(limit) = max_chunks {
+            if report.chunks_committed >= limit {
+                report.to_block = chunk_end;
+                break;
+            }
+        }
     }
 
     Ok(report)

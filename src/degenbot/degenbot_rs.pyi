@@ -720,6 +720,7 @@ def run_aave_update(
     progress_callback: Callable[..., None],
     cancel_handle: CancelHandle,
     verify_chunk: bool = False,
+    max_chunks: int | None = None,
 ) -> dict[str, Any]:
     """Drive the Rust-owned Aave V3 updater chunk loop (epic AZGJUN, 5XNTC5).
 
@@ -750,6 +751,10 @@ def run_aave_update(
             (rollback) so ``last_update_block`` does NOT advance + the next
             run re-processes the same chunk. If ``False``, verification is
             skipped.
+        max_chunks: ``None`` to advance to ``to_block``/tip; ``int`` to stop
+            after committing that many chunks (one-chunk mode).
+            ``last_update_block`` is advanced to the last committed chunk's
+            end, so the next run resumes from there.
 
     Returns:
         ``dict {chain_id, market_id, from_block, to_block,
