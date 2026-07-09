@@ -818,7 +818,8 @@ use degenbot_db::DbError;
 use degenbot_rpc::provider::{AlloyProvider, LogFetcher};
 
 use crate::aave_fetch::{
-    fetch_aave_chunk_logs, fetch_scaled_token_logs, sort_logs_by_block_and_index, AaveFetchSpec,
+    fetch_aave_chunk_logs, fetch_scaled_token_logs, fetch_stk_aave_logs,
+    sort_logs_by_block_and_index, AaveFetchSpec,
 };
 use crate::config_dispatch::{
     build_discount_snapshot, dispatch_config_events, match_proxy_id, ConfigDispatchError,
@@ -1382,6 +1383,53 @@ pub fn run_aave_update(
                 sort_logs_by_block_and_index(&mut logs);
             }
         }
+        // (c) GJXURV same-chunk staleness for the discount token: a
+        //     `DiscountTokenUpdated` event in tx N sets the new
+        //     `v_gho_discount_token` mid-chunk — but `spec.stk_aave_address`
+        //     was resolved from committed DB state BEFORE the chunk's dispatch
+        //     (still `None` on a cold-boot where the event that first sets the
+        //     token fires mid-drive). Pre-scan the frozen logs for
+        //     `DiscountTokenUpdated`, re-resolve the new discount token, +
+        //     re-fetch the stkAAVE Transfer/Staked/Redeem logs for the chunk
+        //     range, merging with de-dup (same pattern as `(b)` above). The
+        //     `process_chunk_on_conn` dispatch is UNCHANGED — the per-tx
+        //     config-dispatch still applies `DiscountTokenUpdated` at its
+        //     correct logIndex, so read-your-own-writes within the transaction
+        //     is preserved.
+        let mut discount_token_from_event: Option<Address> = None;
+        for log in &logs {
+            if let Some(ev) =
+                degenbot_decoders::aave_event_decoder::decode_discount_token_updated(log)
+            {
+                discount_token_from_event = Some(ev.new_discount_token);
+            }
+        }
+        if let Some(token) = discount_token_from_event
+            .filter(|_| spec.stk_aave_address.is_none())
+        {
+            let mut extra = rt.block_on(fetch_stk_aave_logs(
+                &fetcher,
+                working_start,
+                chunk_end,
+                Some(token),
+            ))?;
+            let existing: HashSet<(u64, u64)> = logs
+                .iter()
+                .filter_map(|l| Some((l.block_number?, l.log_index?)))
+                .collect();
+            extra.retain(|l| {
+                let key = (
+                    l.block_number.unwrap_or(u64::MAX),
+                    l.log_index.unwrap_or(u64::MAX),
+                );
+                !existing.contains(&key)
+            });
+            if !extra.is_empty() {
+                logs.extend(extra);
+                sort_logs_by_block_and_index(&mut logs);
+            }
+        }
+
         let tx_groups = group_logs_by_tx(&logs);
 
         // 2. The single-transaction chunk write (§4.4 atomicity). The per-tx
