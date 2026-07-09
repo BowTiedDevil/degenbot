@@ -39,8 +39,13 @@
 //! split them into C2 sub-tasks without rushing the edge-branch verification.
 
 use crate::gho_processor::{GhoProcessorError, UnifiedGhoProcessor};
-use crate::operations::{Operation, OperationType, ScaledTokenEvent, ScaledTokenEventType};
-use crate::operations_parser::{addr_to_hex, log_idx_value, TransactionOperationsParser};
+use crate::operations::{
+    LiquidationPattern, LiquidationPatternContext, Operation, OperationType, ScaledTokenEvent,
+    ScaledTokenEventType,
+};
+use crate::operations_parser::{
+    addr_to_hex, log_idx_value, parse_address, TransactionOperationsParser,
+};
 use crate::processors::{
     enricher_collateral_burn, enricher_collateral_mint, enricher_debt_burn, enricher_debt_mint,
     ProcessorError, ScaledTokenEventData, ScaledTokenProcessor,
@@ -140,6 +145,12 @@ pub fn process_transaction(
     // `_is_bad_debt_liquidation`'s DEFICIT_CREATED scan.
     let gho_ctx = GhoDiscountContext::new(tx_logs, discounts, gho_vtoken_address);
 
+    // Build the per-tx liquidation-pattern context (the port of
+    // `_preprocess_liquidation_aggregates` → `detect_liquidation_patterns`).
+    // Drives the COMBINED_BURN aggregated-burn + Mint-skip behavior in
+    // `dispatch_liquidation` (Issue 0056 — N liquidations share 1 burn).
+    let mut liq_patterns = build_liquidation_patterns(conn, market_id, &parsed.operations);
+
     // Sort the parsed operations by pool_event logIndex (or minimum
     // scaled_event log_index for the no-pool-event operations — INTEREST_
     // ACCRUAL / MintToTreasury). Mirrors the Python `_get_operation_sort_key`.
@@ -160,6 +171,7 @@ pub fn process_transaction(
             conn,
             gho_vtoken_address,
             &gho_ctx,
+            &mut liq_patterns,
             &mut events,
             &mut gho_running_state,
         )?;
@@ -185,6 +197,96 @@ fn operation_sort_key(op: &Operation) -> u64 {
     }
 }
 
+/// Build the per-tx liquidation-pattern context. Mirrors Python's
+/// `detect_liquidation_patterns` (`aave/liquidation_patterns.py` + Python's
+/// `_preprocess_liquidation_aggregates`). Groups the tx's liquidation ops by
+/// `(user, debt_v_token)`, attaches the matched debt burns (by vToken emitter
+/// address), and computes the SINGLE / `COMBINED_BURN` / `SEPARATE_BURNS` pattern
+/// per group.
+///
+/// The `debt_v_token` for each `LiquidationCall` is resolved from the call's
+/// indexed `debtAsset` (topic 2) via the asset substrate (underlying → vToken
+/// — mirrors `_get_v_token_for_asset`). The matched burns' `debt_v_token` is
+/// their vToken emitter (`ev.token_address`), which equals the
+/// `LiquidationCall`'s resolved vToken — so burns attach to the same group.
+///
+/// Non-liquidation ops + liquidation ops with an unresolvable vToken are
+/// skipped (matches Python's `if debt_v_token is None: continue`). Infallible
+/// (a substrate miss degrades to `None` → no aggregation → the per-op path
+/// runs unchanged — matches the Python skip).
+fn build_liquidation_patterns(
+    conn: &Connection,
+    market_id: i64,
+    operations: &[Operation<'_>],
+) -> LiquidationPatternContext {
+    let mut ctx = LiquidationPatternContext::default();
+    // 1. Group liquidations by (user, debt_v_token); record each call's
+    //    `(operation_id, debt_to_cover, pool_event_log_index)`, mirrors the
+    //    `for op in operations` loop in `detect_liquidation_patterns`.
+    for op in operations {
+        if !matches!(
+            op.operation_type,
+            OperationType::Liquidation | OperationType::GhoLiquidation
+        ) {
+            continue;
+        }
+        let Some(pool_event) = op.pool_event else {
+            continue;
+        };
+        let topics = pool_event.topics();
+        if topics.len() < 4 {
+            continue;
+        }
+        let user = Address::from_word(topics[3]);
+        let debt_asset = Address::from_word(topics[2]);
+        let Some(row) = DegenbotDb::lookup_asset_by_underlying_address_on_conn(
+            conn,
+            market_id,
+            &addr_to_hex(debt_asset),
+        )
+        .ok()
+        .flatten() else {
+            continue;
+        };
+        let Some(v_token) = parse_address(&row.v_token_address) else {
+            continue;
+        };
+        let key = (user, v_token);
+        let group = ctx.groups.entry(key).or_default();
+        group.liquidations.push((
+            op.operation_id,
+            op.debt_to_cover.unwrap_or(U256::ZERO),
+            log_idx_value(pool_event),
+        ));
+        // 2. Attach the matched debt burns carried by THIS op's
+        //    `scaled_events` (the parser already matched them via
+        //    `collect_debt_burns`; the burn's vToken emitter IS the group's
+        //    `debt_v_token`). Dedup by log_index — Python iterates the
+        //    tx-wide `scaled_token_events` once; the per-op iteration can only
+        //    ever see each burn once (the parser attaches it to a single op —
+        //    `COMBINED_BURN` position 0).
+        for ev in &op.scaled_events {
+            if matches!(
+                ev.event_type,
+                ScaledTokenEventType::DebtBurn | ScaledTokenEventType::GhoDebtBurn
+            ) {
+                let g = ctx
+                    .groups
+                    .entry((ev.user_address, ev.token_address))
+                    .or_default();
+                if !g.burn_events.iter().any(|(li, _)| *li == ev.log_index) {
+                    g.burn_events.push((ev.log_index, ev.amount));
+                }
+            }
+        }
+    }
+    // 3. Detect the pattern per group (`LiquidationGroup::detect_pattern`).
+    for (key, group) in &ctx.groups {
+        ctx.patterns.insert(*key, group.detect_pattern());
+    }
+    ctx
+}
+
 /// Dispatch a single Operation's scaled-token events → [`AaveChunkEvent`]
 /// variants. Mirrors `_process_operation`'s per-event-type dispatch loop.
 #[allow(clippy::too_many_arguments, clippy::similar_names)]
@@ -194,6 +296,7 @@ fn dispatch_operation(
     conn: &Connection,
     gho_vtoken_address: Option<Address>,
     gho_ctx: &GhoDiscountContext,
+    liq_patterns: &mut LiquidationPatternContext,
     events: &mut Vec<AaveChunkEvent>,
     gho_running_state: &mut HashMap<i64, (U256, U256)>,
 ) -> Result<(), ProcessTxError> {
@@ -217,9 +320,15 @@ fn dispatch_operation(
             events,
             gho_running_state,
         ),
-        OperationType::Liquidation => {
-            dispatch_liquidation(op, market_id, conn, gho_vtoken_address, gho_ctx, events)
-        }
+        OperationType::Liquidation => dispatch_liquidation(
+            op,
+            market_id,
+            conn,
+            gho_vtoken_address,
+            gho_ctx,
+            liq_patterns,
+            events,
+        ),
         OperationType::GhoLiquidation => dispatch_gho_liquidation(
             op,
             market_id,
@@ -1557,6 +1666,7 @@ fn dispatch_liquidation(
     conn: &Connection,
     gho_vtoken_address: Option<Address>,
     gho_ctx: &GhoDiscountContext,
+    liq_patterns: &mut LiquidationPatternContext,
     events: &mut Vec<AaveChunkEvent>,
 ) -> Result<(), ProcessTxError> {
     let pool_event = op.pool_event.ok_or_else(|| {
@@ -1568,6 +1678,20 @@ fn dispatch_liquidation(
     let mut scaled: Vec<&ScaledTokenEvent> = op.scaled_events.iter().collect();
     scaled.sort_by_key(|e| e.log_index);
     for ev in &scaled {
+        // COMBINED_BURN (Issue 0056): N liquidations of the same
+        // `(user, debt_v_token)` share 1 burn. The aggregated burn — sized by
+        // the group's `total_debt_to_cover` (handled below for `DebtBurn`) —
+        // covers ALL debt reduction; the debt Mint events for this group are
+        // SKIPPED entirely. Mirrors `_process_debt_mint_with_match`'s
+        // `COMBINED_BURN` early-return (`token_processor.py:642-650`).
+        if matches!(
+            ev.event_type,
+            ScaledTokenEventType::DebtMint | ScaledTokenEventType::GhoDebtMint
+        ) && liq_patterns.get_pattern(ev.user_address, ev.token_address)
+            == Some(LiquidationPattern::CombinedBurn)
+        {
+            continue;
+        }
         // The bad-debt check applies only to debt events (the collateral leg
         // is unaffected — bad-debt writes off the DEBT, not the collateral).
         let is_debt = matches!(
@@ -1611,7 +1735,26 @@ fn dispatch_liquidation(
         }
         // The per-event-type raw-amount extractor resolves debt burn/transfer
         // → word 0, collateral burn/transfer → word 1.
-        let ev_raw = extract_raw_amount_for_event(pool_event, ev, op);
+        let mut ev_raw = extract_raw_amount_for_event(pool_event, ev, op);
+        // COMBINED_BURN aggregation (Issue 0056): size the single shared
+        // debt burn by the group's aggregate `debt_to_cover` across ALL its
+        // liquidations — NOT this single LiquidationCall's `debtToCover`.
+        // Mirrors `_process_debt_burn_with_match`'s COMBINED_BURN arm:
+        // `burn_value = get_debt_burn_scaled_amount(total_debt_to_cover, index)`.
+        // `mark_processed` guards double-application; the parser attached the
+        // shared burn to exactly one op (position 0), so it fires once.
+        if is_debt
+            && matches!(ev.event_type, ScaledTokenEventType::DebtBurn)
+            && liq_patterns.get_pattern(ev.user_address, ev.token_address)
+                == Some(LiquidationPattern::CombinedBurn)
+        {
+            if let Some(group) = liq_patterns.get_group(ev.user_address, ev.token_address) {
+                if !liq_patterns.is_processed(ev.user_address, ev.token_address) {
+                    ev_raw = group.total_debt_to_cover();
+                    liq_patterns.mark_processed(ev.user_address, ev.token_address);
+                }
+            }
+        }
         let chunk_event = build_scaled_event_chunk_event(ev, op, ev_raw, market_id, conn)?;
         events.push(chunk_event);
     }
@@ -2559,5 +2702,322 @@ mod tests {
                 .any(|e| matches!(e, AaveChunkEvent::ScaledTokenBurn { .. })),
             "the deficit-coverage burn chunk_event must be present"
         );
+    }
+
+    // ── Issue 0056: COMBINED_BURN (N liquidations share 1 burn) ──────────
+    // The failing chunk 20872071-20882070: a Balancer flash-loan liquidation
+    // (tx 0x75b41542...) with 2 LiquidationCalls on the same (user, USDC
+    // debt) + exactly 1 vUSDC DebtBurn (value = liq#2's debtToCover) + 1
+    // repay-path DebtMint (balInc > value). The Python detects
+    // `LiquidationPattern.COMBINED_BURN`, sizes the single burn by the group's
+    // `total_debt_to_cover` (sum), and skips the Mint entirely. Pre-fix the
+    // Rust port had NO pattern layer (`LiquidationPatternContext` was a
+    // stub — never built/consumed), so each op's LiquidationCall word0 sized
+    // the burn (under-burn) + the DebtMint was applied as a standard borrow
+    // (over-mint) → 262_371_189_504 divergence vs chain `scaledBalanceOf`.
+
+    /// Build a synthetic `LiquidationCall` log.
+    fn make_liquidation_call_log(
+        idx: u64,
+        collateral_asset: Address,
+        debt_asset: Address,
+        user: Address,
+        debt_to_cover: U256,
+    ) -> Log {
+        let mut data = vec![0u8; 128];
+        debt_to_cover
+            .to_be_bytes::<32>()
+            .iter()
+            .enumerate()
+            .for_each(|(i, b)| {
+                data[i] = *b;
+            });
+        make_log(
+            idx,
+            Address::from([0x99; 20]), // the Pool address (irrelevant here)
+            vec![
+                degenbot_decoders::aave_event_decoder::LIQUIDATION_CALL_TOPIC,
+                B256::left_padding_from(collateral_asset.as_slice()),
+                B256::left_padding_from(debt_asset.as_slice()),
+                B256::left_padding_from(user.as_slice()),
+            ],
+            Bytes::from(data),
+        )
+    }
+
+    /// Build a synthetic vToken `Burn` scaled event (the `COMBINED_BURN`'s
+    /// shared debt burn).
+    fn make_debt_burn_event(
+        log_idx: u64,
+        vtoken: Address,
+        user: Address,
+        amount: U256,
+        index: U256,
+    ) -> ScaledTokenEvent<'static> {
+        let decoded = crate::operations::ScaledTokenEventData::Burn {
+            from: user,
+            target: Address::ZERO,
+            value: amount,
+            balance_increase: U256::ZERO,
+            index,
+        };
+        let log = Box::leak(Box::new(make_log(
+            log_idx,
+            vtoken,
+            vec![
+                degenbot_decoders::aave_event_decoder::BURN_TOPIC,
+                B256::left_padding_from(user.as_slice()),
+                B256::left_padding_from(Address::ZERO.as_slice()),
+            ],
+            Bytes::default(),
+        )));
+        ScaledTokenEvent {
+            log,
+            decoded,
+            event_type: ScaledTokenEventType::DebtBurn,
+            token_address: vtoken,
+            user_address: user,
+            caller_address: None,
+            from_address: Some(user),
+            target_address: Some(Address::ZERO),
+            amount,
+            balance_increase: Some(U256::ZERO),
+            index: Some(index),
+            log_index: log_idx,
+        }
+    }
+
+    /// Build a synthetic vToken `Mint` scaled event (the repay-path mint:
+    /// `balance_increase > value` → on-chain `_burnScaled` truth).
+    fn make_debt_mint_repay_event(
+        log_idx: u64,
+        vtoken: Address,
+        user: Address,
+        value: U256,
+        balance_increase: U256,
+        index: U256,
+    ) -> ScaledTokenEvent<'static> {
+        let decoded = crate::operations::ScaledTokenEventData::Mint {
+            caller: user,
+            on_behalf_of: user,
+            value,
+            balance_increase,
+            index,
+        };
+        let log = Box::leak(Box::new(make_log(
+            log_idx,
+            vtoken,
+            vec![
+                degenbot_decoders::aave_event_decoder::MINT_TOPIC,
+                B256::left_padding_from(user.as_slice()),
+                B256::left_padding_from(user.as_slice()),
+            ],
+            Bytes::default(),
+        )));
+        ScaledTokenEvent {
+            log,
+            decoded,
+            event_type: ScaledTokenEventType::DebtMint,
+            token_address: vtoken,
+            user_address: user,
+            caller_address: Some(user),
+            from_address: None,
+            target_address: None,
+            amount: value,
+            balance_increase: Some(balance_increase),
+            index: Some(index),
+            log_index: log_idx,
+        }
+    }
+
+    /// RED→GREEN: `build_liquidation_patterns` detects `COMBINED_BURN` for the
+    /// 2-liquidations/1-burn group, and `dispatch_liquidation` (a) sizes the
+    /// single shared burn by the group's aggregate `total_debt_to_cover`, and
+    /// (b) skips the `DebtMint` entirely.
+    ///
+    /// Pre-fix: `build_liquidation_patterns` didn't exist + the pattern
+    /// layer was a stub → the burn was sized by liq#1's `debtToCover`
+    /// (`47_005_978`, ~42 scaled — vs the aggregate `292_585_135_322`) and the
+    /// `DebtMint` was applied twice (once per op) as a positive borrow delta →
+    /// the `262_371_189_504` divergence (`rayDiv(292_538_129_344, idx)`).
+    #[test]
+    fn dispatch_liquidation_combined_burn_aggregates_debt_and_skips_mint() {
+        use degenbot_core::address_utils::address_to_checksum_string;
+        use degenbot_evm_math::{ray_div, RayRounding};
+        use rusqlite::params;
+
+        let db = fresh_db_with_asset();
+        let vtoken = Address::from([0x72; 20]);
+        let vtoken_str = address_to_checksum_string(&vtoken);
+        let underlying = Address::from([0xA0; 20]);
+        let underlying_str = address_to_checksum_string(&underlying);
+        // Rewrite the seeded erc20 rows (id 1=underlying, id 3=vToken) to real
+        // hex addresses so the dispatch resolves the debt position by
+        // `lookup_asset_by_token_address_on_conn` + the pattern builder by
+        // `lookup_asset_by_underlying_address_on_conn`.
+        {
+            let conn = db.lock();
+            conn.execute(
+                "UPDATE erc20_tokens SET address = ?1 WHERE id = 1",
+                params![underlying_str],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE erc20_tokens SET address = ?1 WHERE id = 3",
+                params![vtoken_str],
+            )
+            .unwrap();
+        }
+
+        let user = Address::from([0x4A; 20]);
+        let index = U256::from(1_114_798_937_791u64).saturating_mul(U256::from(1_000_000_000u64));
+        let dtc1 = U256::from(47_005_978u64);
+        let dtc2 = U256::from(292_538_129_344u64);
+        let total = dtc1 + dtc2;
+
+        // Two LiquidationCall logs (collateral assets are irrelevant to the
+        // debt leg; debtAsset = the underlying, user = the liquidated user).
+        let liq1 = Box::leak(Box::new(make_liquidation_call_log(
+            17,
+            Address::from([0xC0; 20]),
+            underlying,
+            user,
+            dtc1,
+        )));
+        let liq2 = Box::leak(Box::new(make_liquidation_call_log(
+            30,
+            Address::from([0xC1; 20]),
+            underlying,
+            user,
+            dtc2,
+        )));
+
+        // The shared DebtBurn (idx 19) + the repay-path DebtMint (idx 6).
+        let burn = make_debt_burn_event(19, vtoken, user, dtc2, index);
+        let mint = make_debt_mint_repay_event(
+            6,
+            vtoken,
+            user,
+            U256::from(352_195_531u64),
+            U256::from(399_201_509u64),
+            index,
+        );
+
+        // Op #0 (liq#1) carries the shared burn (COMBINED_BURN position 0) +
+        // the mint; Op #1 (liq#2) carries only the mint — mirrors the parser's
+        // `collect_debt_burns` COMBINED_BURN assignment.
+        let op0 = Operation {
+            operation_id: 0,
+            operation_type: OperationType::Liquidation,
+            pool_revision: 9,
+            pool_event: Some(liq1),
+            scaled_events: vec![burn.clone(), mint.clone()],
+            transfer_events: Vec::new(),
+            balance_transfer_events: Vec::new(),
+            minted_to_treasury_amount: None,
+            debt_to_cover: Some(dtc1),
+            validation_errors: Vec::new(),
+        };
+        let op1 = Operation {
+            operation_id: 1,
+            operation_type: OperationType::Liquidation,
+            pool_revision: 9,
+            pool_event: Some(liq2),
+            scaled_events: vec![mint.clone()],
+            transfer_events: Vec::new(),
+            balance_transfer_events: Vec::new(),
+            minted_to_treasury_amount: None,
+            debt_to_cover: Some(dtc2),
+            validation_errors: Vec::new(),
+        };
+        let operations = vec![op0.clone(), op1.clone()];
+
+        // RED→GREEN #1: the pattern context detects COMBINED_BURN.
+        let conn = db.lock();
+        let mut liq_patterns = build_liquidation_patterns(&conn, 1, &operations);
+        assert_eq!(
+            liq_patterns.get_pattern(user, vtoken),
+            Some(LiquidationPattern::CombinedBurn),
+            "2 liquidations sharing 1 burn must detect COMBINED_BURN",
+        );
+        assert_eq!(
+            liq_patterns
+                .get_group(user, vtoken)
+                .unwrap()
+                .total_debt_to_cover(),
+            total,
+            "the group's total_debt_to_cover must be the sum of both debtToCovers",
+        );
+
+        // RED→GREEN #2: dispatch sizes the single burn by the aggregate +
+        // skips the mint (0 mints across both ops).
+        let discounts = HashMap::new();
+        let logs: Vec<&Log> = Vec::new();
+        let gho_ctx = GhoDiscountContext::new(&logs, &discounts, None);
+        let mut events: Vec<AaveChunkEvent> = Vec::new();
+        dispatch_liquidation(
+            &op0,
+            1,
+            &conn,
+            None,
+            &gho_ctx,
+            &mut liq_patterns,
+            &mut events,
+        )
+        .expect("op0 dispatch");
+        dispatch_liquidation(
+            &op1,
+            1,
+            &conn,
+            None,
+            &gho_ctx,
+            &mut liq_patterns,
+            &mut events,
+        )
+        .expect("op1 dispatch");
+
+        let debt_burns: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, AaveChunkEvent::ScaledTokenBurn { position, .. } if *position == ScaledTokenPosition::Debt))
+            .collect();
+        let debt_mints: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, AaveChunkEvent::ScaledTokenMint { position, .. } if *position == ScaledTokenPosition::Debt))
+            .collect();
+        assert_eq!(
+            debt_burns.len(),
+            1,
+            "the shared burn must fire exactly once"
+        );
+        assert_eq!(
+            debt_mints.len(),
+            0,
+            "the COMBINED_BURN Mint must be skipped"
+        );
+
+        // The burn's delta = -ray_div(total, index, HalfUp) — the aggregate
+        // (rev 1 → `enricher_debt_burn` = HalfUp).
+        let expected_scaled = ray_div(total, index, Some(RayRounding::HalfUp)).unwrap();
+        match debt_burns[0] {
+            AaveChunkEvent::ScaledTokenBurn {
+                balance_delta,
+                new_index,
+                ..
+            } => {
+                // balance_delta is negative I256; the magnitude equals the
+                // aggregate scaled burn (HalfUp for rev 1).
+                let actual_magnitude = if balance_delta.is_negative() {
+                    U256::try_from(-*balance_delta).unwrap()
+                } else {
+                    U256::try_from(*balance_delta).unwrap()
+                };
+                assert_eq!(
+                    actual_magnitude, expected_scaled,
+                    "the burn must be sized by total_debt_to_cover ({total}), not liq#1's debtToCover ({dtc1})",
+                );
+                assert_eq!(*new_index, index);
+            }
+            other => panic!("expected ScaledTokenBurn, got {other:?}"),
+        }
     }
 }
