@@ -418,17 +418,18 @@ impl UnifiedGhoProcessor {
                 self.ray_div(amount_repaid, event_data.index, self.rounding.burn)?;
             let delta =
                 if self.discount.supports_discount && self.discount.has_discounted_balance_method {
-                    // V2/V3: getDiscountedBalance. If `amount_repaid ==
+                    // V2/V3: getDiscountedBalance. If `amount_repaid >=
                     // balance_before_burn` → full repayment → burn all scaled
                     // balance. Else partial → burn (repayment_scaled +
-                    // discount_scaled).
+                    // discount_scaled). (See `process_gho_debt_burn`'s V2/V3
+                    // branch for the `>=` rationale — crash #11 fix.)
                     let balance_before = self.get_discounted_balance(
                         prev_balance,
                         prev_index,
                         event_data.index,
                         prev_discount,
                     )?;
-                    if amount_repaid == balance_before {
+                    if amount_repaid >= balance_before {
                         // Full repayment: burn all scaled balance.
                         prev_balance
                     } else {
@@ -549,15 +550,31 @@ impl UnifiedGhoProcessor {
 
         let balance_delta_abs =
             if self.discount.supports_discount && self.discount.has_discounted_balance_method {
-                // V2/V3: getDiscountedBalance. If `requested_amount ==
+                // V2/V3: getDiscountedBalance. If `requested_amount >=
                 // balance_before_burn` → full repayment → burn all scaled balance.
+                //
+                // Fix (crash #11): pre-fix used strict `==` equality. For user
+                // `0xfaC2…` at block 23_097_428 the contract's full-repay Burn
+                // had `requested_amount` (= Pool Repay event amount, Aave's
+                // capped `balanceBefore` on-chain) diverging from Rust's
+                // HALF_UP `ray_mul(prev_balance, idx)` estimate by 2 wei actual
+                // (because Rust's stored `prev_balance` was 1 wei lower than
+                // Python's, accumulated across earlier GHO burns that all took
+                // the else arm). The strict `==` missed the full-repay case →
+                // Rust applied `-amount_scaled` (= `ray_div_floor(requested,
+                // idx)` = `prev_balance + 1`) → balance went to -1 — the
+                // `balance would go negative` crash #11. Python uses the >=
+                // Aave-V3 `_burnScaled` semantics: when the contract caps the
+                // repay amount to the actual outstanding debt, the emitted
+                // Repay.amount (= requested_amount) is ALWAYS >= Rust's
+                // approximation of `balanceBefore`; using `>=` mirrors that.
                 let balance_before = self.get_discounted_balance(
                     prev_balance,
                     prev_index,
                     event_data.index,
                     prev_discount,
                 )?;
-                if requested_amount == balance_before {
+                if requested_amount >= balance_before {
                     // Full repayment: burn all scaled balance.
                     prev_balance
                 } else {
@@ -571,8 +588,9 @@ impl UnifiedGhoProcessor {
             } else {
                 // No discount (V4+): check for full repayment.
                 let balance_before = ray_mul(prev_balance, event_data.index, None)?;
-                if requested_amount == balance_before {
+                if requested_amount >= balance_before {
                     // Full repayment: burn all scaled balance.
+                    // (See the V2/V3 branch for the `>=` rationale.)
                     prev_balance
                 } else {
                     amount_scaled
