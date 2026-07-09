@@ -6,6 +6,16 @@
 //! **transactional core**: pure, synchronous, fixture-testable, NO RPC, NO
 //! `pyo3`, NO `database_path`, NO `open_for_writes`.
 //!
+//! # The chunk-boundary commit invariant (inviolable)
+//!
+//! The committed database holds ONLY fully-verified values committed at chunk
+//! boundaries. Debugging/diagnostic work MUST NEVER edit, patch, coalesce, or
+//! hand-fix a value in a committed DB in place — any such edit breaks the
+//! chunk-boundary invariant and silently poisons the baseline: every
+//! downstream compare becomes non-deterministic and all future drives are
+//! corrupted. Experiments run against a THROWAWAY temp DB; the verified
+//! baseline is rebuilt ONLY by re-driving from genesis, never by mutating it.
+//!
 //! # The §3.4 atomicity invariant (the whole point)
 //!
 //! ONE `rusqlite::Connection`, ONE `Transaction` per chunk. Every apply of a

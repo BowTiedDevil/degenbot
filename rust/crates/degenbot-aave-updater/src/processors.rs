@@ -111,6 +111,79 @@ pub const fn debt_strategy(revision: u32) -> RoundingStrategy {
     }
 }
 
+// ── the enricher math (ports `libraries/token_math.py`) ────────────────────
+//
+// These four functions mirror `TokenMathFactory.get_token_math_for_token_revision`
+// (`libraries/token_math.py:267-285`) — NOT the `RoundingStrategy` above. The
+// Python codebase keeps two separate sources for, in principle, the same
+// decision, and they **disagree on collateral mint for rev ≥4**:
+//
+//   - `strategies.py:COLLATERAL_STRATEGIES[4].mint_rounding = HALF_UP`
+//   - `token_math.py:ExplicitRoundingMath.get_collateral_mint_scaled_amount`
+//     returns `ray_div_floor` (FLOOR)
+//
+// The disagreement is invisible in Python because the processor's `None`
+// fallback (which uses `RoundingStrategy`) is dead code in practice: the
+// enricher always supplies `ScaledTokenEventData.scaled_amount`, routing
+// through `ScaledAmountCalculator` → `TokenMathFactory.get_token_math_for_token_revision`
+// (`enrichment/context.py:225-241` → `calculator.py:21,58`). Python's enricher
+// therefore computes the chain-side `rayDivFloor` for rev ≥4 collateral
+// mints, matching `Pool/rev_9.sol:executeSupply:9312`:
+//
+//   `scaledAmount = params.amount.getATokenMintScaledAmount(index) = rayDivFloor`
+//
+// The Rust port originally collapsed both sources into `collateral_strategy`/
+// `debt_strategy`, and the `build_scaled_event_chunk_event` enricher hooked
+// `strategy_mode.{mint,burn}` — i.e. the **processor-fallback** table. That yields
+// `ray_div_half_up(raw_amount, index)` for rev_4 collateral mints, which is
+// +1 wei above chain whenever `(raw_amount * RAY) % index > index // 2`
+// (root cause of the pos-173339 divergence @ block 23_089_231).
+//
+// The fix surfaces the `token_math.py` table as first-class in Rust so the
+// enricher can no longer accidentally reuse the processor fallback.
+
+/// Enricher rounding for a collateral `mint` (= the **supplied** side), by
+/// **`token_revision`** of the aToken. Port of
+/// `TokenMathFactory.get_token_math_for_token_revision` → `get_collateral_mint_scaled_amount`.
+/// rev ≥4 ⇒ FLOOR (`ExplicitRoundingMath`); rev ≤3 ⇒ `HALF_UP` (`HalfUpRoundingMath`).
+#[must_use]
+pub const fn enricher_collateral_mint(token_revision: u32) -> RayDivMode {
+    match token_revision {
+        0..=3 => RayDivMode::HalfUp,
+        _ => RayDivMode::Floor,
+    }
+}
+
+/// Enricher rounding for a collateral `burn`. Port of
+/// `ExplicitRoundingMath::get_collateral_burn_scaled_amount = ray_div_ceil`.
+#[must_use]
+pub const fn enricher_collateral_burn(token_revision: u32) -> RayDivMode {
+    match token_revision {
+        0..=3 => RayDivMode::HalfUp,
+        _ => RayDivMode::Ceil,
+    }
+}
+
+/// Enricher rounding for a debt `mint`. Port of
+/// `ExplicitRoundingMath::get_debt_mint_scaled_amount = ray_div_ceil`.
+#[must_use]
+pub const fn enricher_debt_mint(token_revision: u32) -> RayDivMode {
+    match token_revision {
+        0..=3 => RayDivMode::HalfUp,
+        _ => RayDivMode::Ceil,
+    }
+}
+
+/// Enricher rounding for a debt `burn`. Port of
+/// `ExplicitRoundingMath::get_debt_burn_scaled_amount = ray_div_floor`.
+#[must_use]
+pub const fn enricher_debt_burn(token_revision: u32) -> RayDivMode {
+    match token_revision {
+        0..=3 => RayDivMode::HalfUp,
+        _ => RayDivMode::Floor,
+    }
+}
+
 // ── the event data (ports `processors/base.py` event dataclasses) ──────────
 
 /// The decoded fields of a collateral (aToken) or debt (vToken) `Mint`/`Burn`

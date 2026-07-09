@@ -1614,6 +1614,7 @@ pub fn run_aave_update(
 #[allow(
     clippy::await_holding_lock,
     clippy::too_many_arguments,
+    clippy::too_many_lines,
     clippy::similar_names
 )]
 async fn process_chunk_on_conn(
@@ -1758,6 +1759,87 @@ async fn process_chunk_on_conn(
         //     scaled-token balance deltas land before the next tx's reads).
         apply_chunk_events_on_conn(conn, market_id, &op_events)?;
         events_applied_total += op_events.len();
+
+        // (f.4) DEBUG: per-tx touched-position trace (env-gated). When
+        //     `DEGENBOT_AAVE_TX_TRACE=1`, emit one JSONL line per touched
+        //     `position_id` to stderr, reading the POST-APPLY
+        //     `(balance, last_index)` from `conn`. The per-tx differential-
+        //     narrowing tool: a divergent (user, asset)'s trajectory pinpoints
+        //     the exact tx where Rust's value first takes its final divergent
+        //     value (e.g. the burn that should zero but leaves a ±1 residual).
+        //     `position_id` is a stable surrogate; map it to (user, asset) via
+        //     the final DB + the end-of-chunk compare's divergent list. This
+        //     is the per-tx sibling of the per-tx apply (step f) — narrowing
+        //     the comparison inside the chunk, one tx at a time, instead of
+        //     deferring it to end-of-chunk. The end-of-chunk GREEN compare
+        //     (exact-zero) remains the rigorous gate; this trace is the
+        //     narrowing tool, not the gate.
+        if std::env::var("DEGENBOT_AAVE_TX_TRACE").as_deref() == Ok("1") {
+            let mut seen: std::collections::HashSet<(bool, i64)> = std::collections::HashSet::new();
+            for ev in &op_events {
+                match ev {
+                    AaveChunkEvent::ScaledTokenMint { position, position_id, .. }
+                    | AaveChunkEvent::ScaledTokenBurn { position, position_id, .. } => {
+                        seen.insert((
+                            matches!(*position, degenbot_db::ScaledTokenPosition::Debt),
+                            *position_id,
+                        ));
+                    }
+                    AaveChunkEvent::DebtPositionReset { position_id, .. } => {
+                        seen.insert((true, *position_id));
+                    }
+                    AaveChunkEvent::ScaledTokenTransfer {
+                        from_position_id,
+                        to_position_id,
+                        ..
+                    } => {
+                        seen.insert((false, *from_position_id));
+                        if let Some(to) = to_position_id {
+                            seen.insert((false, *to));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let txhex = alloy::hex::encode(group.tx_hash);
+            let mut ordered: Vec<(bool, i64)> = seen.into_iter().collect();
+            ordered.sort_unstable();
+            for (is_debt, pid) in ordered {
+                let table = if is_debt {
+                    "aave_v3_debt_positions"
+                } else {
+                    "aave_v3_collateral_positions"
+                };
+                let q = match table {
+                    "aave_v3_debt_positions" => {
+                        "SELECT balance, last_index FROM aave_v3_debt_positions WHERE id = ?1"
+                    }
+                    "aave_v3_collateral_positions" => {
+                        "SELECT balance, last_index FROM aave_v3_collateral_positions WHERE id = ?1"
+                    }
+                    _ => continue,
+                };
+                let row: Option<(Option<String>, Option<String>)> = conn
+                    .query_row(q, rusqlite::params![pid], |r| {
+                        Ok((
+                            r.get::<_, Option<String>>(0)?,
+                            r.get::<_, Option<String>>(1)?,
+                        ))
+                    })
+                    .ok();
+                if let Some((bal, idx)) = row {
+                    eprintln!(
+                        "AAVE-TXTRACE {{\"block\":{},\"tx\":\"0x{}\",\"kind\":\"{}\",\"pos\":{},\"bal\":\"{}\",\"idx\":\"{}\"}}",
+                        block_number,
+                        txhex,
+                        table,
+                        pid,
+                        bal.unwrap_or_default(),
+                        idx.unwrap_or_default(),
+                    );
+                }
+            }
+        }
 
         // (f.5) C3.3 (C refresh): the async POST-APPLY discount-refresh pass.
         //     For each `GhoRefreshDiscount` signal this tx emitted (V1-V3 GHO

@@ -2602,16 +2602,43 @@ fn apply_scaled_token_balance_delta_on_conn(
     let current_balance_i =
         alloy::primitives::I256::try_from(current_balance).unwrap_or(alloy::primitives::I256::MAX);
     let new_balance_i = current_balance_i + balance_delta;
-    if new_balance_i < alloy::primitives::I256::ZERO {
-        return Err(DbError::Decode(format!(
-            "{table} id={position_id}: balance would go negative (current={current_balance}, delta={balance_delta})"
-        )));
-    }
-    let new_balance: alloy::primitives::U256 = new_balance_i.try_into().map_err(|_| {
-        DbError::Decode(format!(
-            "{table} id={position_id}: new balance overflows U256 (={new_balance_i})"
-        ))
-    })?;
+    // Aave V3 `_burnScaled` cap-to-scaledBalance clamp (crash #11 family).
+    // The on-chain `_burnScaled` computes `amountScaled =
+    // amountTotal.rayDiv(index)` then `if (amountScaled > scaledBalance)
+    // amountScaled = scaledBalance;` before burning — the contract NEVER
+    // decrements the position below zero. When Rust's `scaled_amount`
+    // (carried as the burn's `balance_delta`) exceeds the live `current_balance`
+    // (because of accumulated 1-2 wei drift between Rust's stored balance and
+    // the on-chain `scaledBalance`), the unguarded `current_balance_i +
+    // balance_delta` goes negative and would crash the chunk with
+    // `balance would go negative`. Mirroring the contract, clamp the new
+    // balance to ZERO instead of erroring. Symmetric with the GHO-side fix
+    // in `process_gho_debt_burn`'s `>=` branch (commit a419f87f — crash #11).
+    //
+    // NB: this is the ACTUAL on-chain rule for BOTH aToken collateral burns
+    // AND vToken debt burns (`_burnScaled` is defined on both). Applied
+    // here so it consults the live running balance inside the chunk's apply
+    // loop (NOT the build-time snapshot — chunk events are applied at
+    // end-of-tx, AFTER the per-event `process_*_burn` builder ran; the
+    // per-tx running state is at apply time, not at build time).
+    let new_balance = if new_balance_i < alloy::primitives::I256::ZERO && balance_delta.is_negative() {
+        // Clamp to zero (= Aave's `min(amountScaled, scaledBalance) == scaledBalance`)
+        // and emit a tracing::warn so the surge is auditable — the drift
+        // surface this masks is real (Rust's stored balance diverged from the
+        // chain) but it's preferable to crashing every chunk where a
+        // long-running position drifts by a single wei at full-withdraw.
+        eprintln!(
+            "AAVE-CLAMP table={table} pos={position_id} current={current_balance} delta={balance_delta} reason=aave-v3-_burnScaled-cap-to-scaledBalance"
+        );
+        alloy::primitives::U256::ZERO
+    } else {
+        let new_balance: alloy::primitives::U256 = new_balance_i.try_into().map_err(|_| {
+            DbError::Decode(format!(
+                "{table} id={position_id}: new balance overflows U256 (={new_balance_i})"
+            ))
+        })?;
+        new_balance
+    };
     // last_index reconciliation — max-with-prev (mirrors the Python guard).
     let new_last_index = match current_index {
         Some(cur) if new_index > cur => Some(new_index),
@@ -3097,14 +3124,14 @@ mod tests {
     }
 
     /// BOPQZ3: when a row exists with NULL metadata (e.g. seeded by the
-    /// harness `_seed_market_db`) and a later ReserveInitialized dispatch
+    /// harness `_seed_market_db`) and a later `ReserveInitialized` dispatch
     /// is resolved with freshly-RPC-fetched metadata, the existing row must
     /// be UPDATED in place (mirrors the Python `activate_ethereum_aave_v3`
     /// pre-pass that populates the GHO token metadata via `get_or_create_erc20_token`
     /// → `_fetch_erc20_token_metadata`).
     ///
     /// This is the Rust-native equivalent: defer the writeback from activate-time
-    /// to ReserveInitialized dispatch time (Rust's drive IS its bootstrap — no
+    /// to `ReserveInitialized` dispatch time (Rust's drive IS its bootstrap — no
     /// separate activate step).
     #[test]
     fn get_or_create_erc20_token_backfills_null_metadata_on_existing_row() {
@@ -3663,6 +3690,112 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, DbError::MissingRow(_)), "got {err:?}");
+    }
+
+    // ── crash #11 family: Aave V3 `_burnScaled` cap-to-scaledBalance ─────
+    // On-chain, `_burnScaled` clamps the burn amount to the position's
+    // `scaledBalance` before decrementing (the contract NEVER goes below
+    // zero). Rust's stored balance can drift by 1-2 wei vs the chain on
+    // long-running positions; a full-withdraw Burn whose `amountTotal` was
+    // computed against the on-chain (slightly higher) `scaledBalance` then
+    // produces a `balance_delta` whose magnitude exceeds the stored balance,
+    // and the unguarded `current + delta` would go negative and crash the
+    // chunk. The apply fn must mirror the contract: clamp to zero.
+    #[test]
+    fn apply_scaled_burn_clamps_to_zero_when_delta_exceeds_balance() {
+        let db = write_db_with_market();
+        // Stored balance = 1000; burn delta = -1500 (magnitude exceeds).
+        let pid = seed_debt_position_with_balance(&db, "1000", Some("123"));
+        let conn = db.conn.lock();
+        DegenbotDb::apply_scaled_token_burn_on_conn(
+            &conn,
+            ScaledTokenPosition::Debt,
+            pid,
+            alloy::primitives::I256::try_from(-1_500_i64).unwrap(),
+            alloy::primitives::U256::from(200u64),
+        )
+        .expect("clamp must not error");
+        let (balance, last_index) = DegenbotDb::lookup_position_balance_index_on_conn(
+            &conn,
+            ScaledTokenPosition::Debt,
+            pid,
+        )
+        .unwrap();
+        assert_eq!(
+            balance,
+            alloy::primitives::U256::ZERO,
+            "burn > balance clamps to zero (Aave V3 `_burnScaled` cap)"
+        );
+        assert_eq!(
+            last_index,
+            Some(alloy::primitives::U256::from(200u64)),
+            "last_index advances to new_index when new > prev"
+        );
+    }
+
+    /// Partial burn: delta magnitude is LESS than the stored balance → the
+    /// clamp must NOT fire; the remainder is written back unchanged.
+    #[test]
+    fn apply_scaled_burn_partial_does_not_clamp() {
+        let db = write_db_with_market();
+        // Stored balance = 1000; burn delta = -600 (partial).
+        let pid = seed_debt_position_with_balance(&db, "1000", Some("100"));
+        let conn = db.conn.lock();
+        DegenbotDb::apply_scaled_token_burn_on_conn(
+            &conn,
+            ScaledTokenPosition::Debt,
+            pid,
+            alloy::primitives::I256::try_from(-600_i64).unwrap(),
+            alloy::primitives::U256::from(200u64),
+        )
+        .unwrap();
+        let (balance, last_index) = DegenbotDb::lookup_position_balance_index_on_conn(
+            &conn,
+            ScaledTokenPosition::Debt,
+            pid,
+        )
+        .unwrap();
+        assert_eq!(
+            balance,
+            alloy::primitives::U256::from(400u64),
+            "partial burn leaves the remainder"
+        );
+        assert_eq!(
+            last_index,
+            Some(alloy::primitives::U256::from(200u64)),
+            "last_index advances"
+        );
+    }
+
+    /// Exact-match burn (delta magnitude == balance): the IF predicate is
+    /// `new_balance < 0 && delta.is_negative()`. At exactly zero, the
+    /// predicate is false, so we take the else branch — `0_i256` converts to
+    /// `U256::ZERO` cleanly. Verifies the boundary is `>= 0`, not `> 0`.
+    #[test]
+    fn apply_scaled_burn_exact_match_lands_on_zero() {
+        let db = write_db_with_market();
+        // Stored balance = 1000; burn delta = -1000 (exact full withdraw).
+        let pid = seed_debt_position_with_balance(&db, "1000", Some("100"));
+        let conn = db.conn.lock();
+        DegenbotDb::apply_scaled_token_burn_on_conn(
+            &conn,
+            ScaledTokenPosition::Debt,
+            pid,
+            alloy::primitives::I256::try_from(-1_000_i64).unwrap(),
+            alloy::primitives::U256::from(200u64),
+        )
+        .unwrap();
+        let (balance, _) = DegenbotDb::lookup_position_balance_index_on_conn(
+            &conn,
+            ScaledTokenPosition::Debt,
+            pid,
+        )
+        .unwrap();
+        assert_eq!(
+            balance,
+            alloy::primitives::U256::ZERO,
+            "exact-match burn lands on zero (no clamp, no error)"
+        );
     }
 
     // ── 2QGL6G: ReserveInitialized GHO-vToken-FK link (divergence #8) ────

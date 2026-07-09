@@ -3122,16 +3122,16 @@ mod tests {
     /// Aave V3 treasury protocol-fee Transfer shape). Aave V3 `LiquidationCall`
     /// transfers the protocol-fee portion from the liquidated user to the
     /// treasury via `transferOnLiquidation`, emitting BOTH:
-    ///   - `Transfer(user, treasury, fee_underlying)` (Erc20CollateralTransfer,
+    ///   - `Transfer(user, treasury, fee_underlying)` (`Erc20CollateralTransfer`,
     ///     index=None) — the standard ERC20 Transfer event
     ///   - `BalanceTransfer(user, treasury, fee_scaled, liquidity_index)`
-    ///     (CollateralTransfer variant, index=non-None) — Aave V3's native
+    ///     (`CollateralTransfer` variant, index=non-None) — Aave V3's native
     ///     scaled-balance move event
     /// Python's apply-path filter `_should_skip_collateral_transfer` skips the
     /// ERC20 variant in LC ops so the user is debited + treasury credited
     /// ONCE via the BT event's `value`. Rust mirrors the filter at
     /// collect-time here. RED-verified: stripping the skip-guard causes
-    /// the assertion to fail (Erc20 collected, ct.len() == 1).
+    /// the assertion to fail (Erc20 collected, `ct.len()` == 1).
     #[test]
     fn collect_collateral_events_skips_erc20_fee_transfer_to_treasury_in_liquidation() {
         let user = Address::from([0xA0; 20]);
@@ -3418,8 +3418,8 @@ mod tests {
         }
     }
 
-    /// Construct a `CollateralMint` ScaledTokenEvent aux `caller_address` set to
-    /// the Pool contract (the MintToTreasury indicator that the DP3 builder
+    /// Construct a `CollateralMint` `ScaledTokenEvent` aux `caller_address` set to
+    /// the Pool contract (the `MintToTreasury` indicator that the DP3 builder
     /// filters on). Mirrors how the chunk parser detects a Mint-to-treasury
     /// (the aToken Mint event's caller == Pool).
     fn mint_to_treasury_collateral_mint_event(
@@ -3458,7 +3458,7 @@ mod tests {
     }
 
     /// SB3XJF regression — asserts the FULLY-FIXED pipeline (DP3 + dispatch)
-    /// produces the SINGLE ray_div result (= Python's
+    /// produces the SINGLE `ray_div` result (= Python's
     /// `PoolMath::underlying_to_scaled_collateral` value), NOT the
     /// pre-fix DOUBLE-conversion result. Pre-fix, DP3 would pre-ray_div the
     /// `amount_minted`, then `dispatch_mint_to_treasury` would re-ray_div it,
@@ -3550,9 +3550,8 @@ mod tests {
             op.minted_to_treasury_amount,
             Some(amount_minted_raw),
             "DP3 must store the raw underlying amountMinted (NOT pre-scaled); \
-             pre-fix would pre-scale to {} (= ray_div(raw, idx, HALF_UP)) which \
+             pre-fix would pre-scale to {python_gold_scaled} (= ray_div(raw, idx, HALF_UP)) which \
              then DOUBLE-converts at dispatch",
-            python_gold_scaled,
         );
         assert_eq!(op.operation_type, OperationType::MintToTreasury);
 

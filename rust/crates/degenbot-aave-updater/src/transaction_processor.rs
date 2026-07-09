@@ -42,7 +42,8 @@ use crate::gho_processor::{GhoProcessorError, UnifiedGhoProcessor};
 use crate::operations::{Operation, OperationType, ScaledTokenEvent, ScaledTokenEventType};
 use crate::operations_parser::{addr_to_hex, log_idx_value, TransactionOperationsParser};
 use crate::processors::{
-    collateral_strategy, debt_strategy, ProcessorError, ScaledTokenEventData, ScaledTokenProcessor,
+    enricher_collateral_burn, enricher_collateral_mint, enricher_debt_burn, enricher_debt_mint,
+    ProcessorError, ScaledTokenEventData, ScaledTokenProcessor,
 };
 use crate::run::AaveChunkEvent;
 use alloy::primitives::{Address, U256};
@@ -430,21 +431,21 @@ fn build_scaled_event_chunk_event(
         );
     }
 
-    // The enricher's `scaled_amount = ray_div(raw_amount, index, strategy)`.
-    // The strategy is the per-revision + per-event-type rounding.
-    let (position, processor, strategy_mode) = if token_type == "a_token" {
-        let strat = collateral_strategy(asset.a_token_revision);
+    // The `ScaledTokenProcessor` constructed below carries its OWN
+    // `RoundingStrategy` (the post-decode None fallback path) — this is
+    // a SEPARATE concern from the enricher math, which `build_scaled_event_chunk_event`
+    // resolves directly via `enricher_collateral_mint` / `enricher_debt_mint`
+    // / `enricher_collateral_burn` / `enricher_debt_burn` further down (mirrors
+    // `token_math.py:TokenMathFactory`, NOT `strategies.py:COLLATERAL_STRATEGIES`).
+    let (position, processor) = if token_type == "a_token" {
         (
             ScaledTokenPosition::Collateral,
             ScaledTokenProcessor::collateral(asset.a_token_revision),
-            strat,
         )
     } else {
-        let strat = debt_strategy(asset.v_token_revision);
         (
             ScaledTokenPosition::Debt,
             ScaledTokenProcessor::debt(asset.v_token_revision),
-            strat,
         )
     };
 
@@ -496,7 +497,18 @@ fn build_scaled_event_chunk_event(
                 // short-circuits to it (NOT its `value + balance_increase`
                 // fallback, which diverges by ±1 wei for the same reason as the
                 // standard non-GHO debt burn path).
-                let scaled_amount = ray_div(raw_amount, index, strategy_mode.burn.into())?;
+                //
+                // `enricher_debt_burn(v_token_revision)` mirrors Python's
+                // `ExplicitRoundingMath.get_debt_burn_scaled_amount = ray_div_floor`
+                // (rev ≥4); for rev ≤3 it's `HalfUpRoundingMath`. Distinct from
+                // `strategy_mode.burn` (the processor-fallback `RoundingStrategy`)
+                // — they happen to agree for debt burn, but the enricher is the
+                // on-chain TokenMath contract here, not the post-decode fallback.
+                let scaled_amount = ray_div(
+                    raw_amount,
+                    index,
+                    enricher_debt_burn(asset.v_token_revision).into(),
+                )?;
                 let event_data = ScaledTokenEventData {
                     value: scaled_amount,
                     balance_increase,
@@ -520,12 +532,18 @@ fn build_scaled_event_chunk_event(
                 })
             } else if is_collateral_interest_exceeds_edge {
                 // Treat the Mint as a Burn: compute the scaled delta from
-                // `raw_amount` using the BURN strategy (the Python enricher
-                // still uses the raw_amount from the pool_event for the
+                // `raw_amount` using the COLLATERAL BURN enricher math (the Python
+                // enricher still uses the raw_amount from the pool_event for the
                 // scaled_amount; the processor's None path for burn uses
                 // `value + balance_increase`, so we MUST pass the enriched
-                // scaled_amount as `Some`).
-                let scaled_amount = ray_div(raw_amount, index, strategy_mode.burn.into())?;
+                // scaled_amount as `Some`). `enricher_collateral_burn` mirrors
+                // `ExplicitRoundingMath.get_collateral_burn_scaled_amount =
+                // ray_div_ceil` (rev ≥4).
+                let scaled_amount = ray_div(
+                    raw_amount,
+                    index,
+                    enricher_collateral_burn(asset.a_token_revision).into(),
+                )?;
                 let event_data = ScaledTokenEventData {
                     value: ev.amount,
                     balance_increase,
@@ -553,7 +571,22 @@ fn build_scaled_event_chunk_event(
                 // `process_collateral_mint`, vToken uses `process_debt_mint`.
                 // (A previous `.or_else` fallback called the wrong method for
                 // vToken events — fixed per C2 review.)
-                let scaled_amount = ray_div(raw_amount, index, strategy_mode.mint.into())?;
+                //
+                // ENRICHER math (NOT processor-fallback `strategy_mode.mint`) —
+                // the two DISAGREE for rev ≥4 collateral mint: `strategy_mode.mint`
+                // = `RayDivMode::HalfUp` (port of `COLLATERAL_STRATEGIES[4].mint_rounding`),
+                // while the on-chain Pool rev_9 `getATokenMintScaledAmount =
+                // rayDivFloor` (FLOOR). Python keeps them apart via
+                // `token_math.py:TokenMathFactory`; Rust mirrors that here via
+                // `enricher_collateral_mint` / `enricher_debt_mint`. Reusing
+                // `strategy_mode.mint` for the enriched collateral mint was the
+                // root cause of the pos-173339 +1 wei divergence @ block 23_089_231.
+                let enricher_mode = if token_type == "v_token" {
+                    enricher_debt_mint(asset.v_token_revision)
+                } else {
+                    enricher_collateral_mint(asset.a_token_revision)
+                };
+                let scaled_amount = ray_div(raw_amount, index, enricher_mode.into())?;
                 let event_data = ScaledTokenEventData {
                     value: ev.amount,
                     balance_increase,
@@ -590,7 +623,19 @@ fn build_scaled_event_chunk_event(
             // processor's `scaled_delta` arg depends on the dispatch path,
             // mirroring Python's split between the standard `DebtBurnEvent`
             // arm and the liquidation `_process_debt_burn_with_match` path.
-            let scaled_amount = ray_div(raw_amount, index, strategy_mode.burn.into())?;
+            //
+            // ENRICHER math (NOT processor-fallback `strategy_mode.burn`): the
+            // two agree for rev ≥4 collateral debt burn (both FLOOR for debt,
+            // CEIL for collateral), so the swap is order-preserving — but keep
+            // them separate here too, mirroring `enricher_*_mint` above, so the
+            // on-chain TokenMath table remains the only source of truth used by
+            // the enricher.
+            let enricher_mode = if token_type == "v_token" {
+                enricher_debt_burn(asset.v_token_revision)
+            } else {
+                enricher_collateral_burn(asset.a_token_revision)
+            };
+            let scaled_amount = ray_div(raw_amount, index, enricher_mode.into())?;
             let event_data = ScaledTokenEventData {
                 value: ev.amount,
                 balance_increase,
