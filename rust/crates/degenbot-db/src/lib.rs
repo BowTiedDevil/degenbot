@@ -51,7 +51,6 @@ pub use aave::{
 pub use connection::DegenbotDb;
 pub use discovery::{V2PoolRowInput, V3PoolRowInput, V4PoolRowInput};
 pub use error::DbError;
-pub use write::DebtPositionRefreshContext;
 pub use heal::{heal_database, HealReport};
 pub use liquidity_updater::{BlockLog, LiquidityUpdateEvent, PoolUpdateState};
 pub use migrate::SchemaState;
@@ -68,6 +67,7 @@ pub use rows::{
 };
 pub use schema::ALEMBIC_HEAD;
 pub use snapshot::{BitmapAtWord, LiquidityAtTick, LiquidityMap, PoolKey};
+pub use write::DebtPositionRefreshContext;
 pub use write::{
     decode_reserve_configuration_bitmap, AssetRow, ReserveConfiguration, ScaledTokenPosition,
 };

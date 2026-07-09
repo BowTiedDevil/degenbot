@@ -3188,10 +3188,17 @@ mod tests {
         // Burn must be found.
         assert_eq!(cb.unwrap().log_index, 10);
         // ONLY the BT event is collected — the ERC20 fee Transfer is skipped.
-        assert_eq!(ct.len(), 1, "TYS5MS: only the BT fee transfer is collected; \
+        assert_eq!(
+            ct.len(),
+            1,
+            "TYS5MS: only the BT fee transfer is collected; \
             the Erc20CollateralTransfer(user→treasury, fee) is SKIPPED at \
-            collect-time (mirrors Python's `_should_skip_collateral_transfer`)");
-        assert_eq!(ct[0].log_index, 12, "the collected transfer is the BT event");
+            collect-time (mirrors Python's `_should_skip_collateral_transfer`)"
+        );
+        assert_eq!(
+            ct[0].log_index, 12,
+            "the collected transfer is the BT event"
+        );
         // The skipped ERC20 fee Transfer MUST be marked assigned so the
         // standalone Step-4e Transfer path doesn't re-collect it (which
         // would re-instate the double-application the TYS5MS fix prevents).
@@ -3401,8 +3408,10 @@ mod tests {
             });
         let inner = AlloyLog::new_unchecked(
             // Pool contract address (the MintedToTreasury emitter).
-            Address::from([0x87, 0x87, 0x0B, 0xca, 0xF3, 0xfD, 0x63, 0x35, 0xC3, 0xF4,
-                          0xce, 0x83, 0x92, 0xD6, 0x93, 0x50, 0xB4, 0xfA, 0x4E, 0x2]),
+            Address::from([
+                0x87, 0x87, 0x0B, 0xca, 0xF3, 0xfD, 0x63, 0x35, 0xC3, 0xF4, 0xce, 0x83, 0x92, 0xD6,
+                0x93, 0x50, 0xB4, 0xfA, 0x4E, 0x2,
+            ]),
             topics,
             Bytes::from(data),
         );
@@ -3523,8 +3532,8 @@ mod tests {
             1, // chain_id
             pool_address,
             Some(treasury),
-            None,           // gho_token_address
-            None,           // gho_vtoken_address
+            None, // gho_token_address
+            None, // gho_vtoken_address
             &conn,
         )
         .unwrap();
@@ -3538,7 +3547,11 @@ mod tests {
             &mut next_op_id,
             &minted_to_treasury_events,
         );
-        assert_eq!(ops.len(), 1, "the synthetic Mint event should yield 1 MintToTreasury op");
+        assert_eq!(
+            ops.len(),
+            1,
+            "the synthetic Mint event should yield 1 MintToTreasury op"
+        );
 
         // The fix: DP3 must store the RAW UNDERLYING amount (= amount_minted_raw),
         // NOT pre-scaled via ray_div — that scaled conversion happens EXACTLY

@@ -2385,13 +2385,7 @@ impl DegenbotDb {
         conn: &rusqlite::Connection,
         position_id: i64,
     ) -> Result<DebtPositionRefreshContext, DbError> {
-        let row: (
-            String,
-            Option<String>,
-            i64,
-            String,
-            Option<String>,
-        ) = conn
+        let row: (String, Option<String>, i64, String, Option<String>) = conn
             .query_row(
                 "SELECT dp.balance, dp.last_index, dp.user_id, u.address, \
                  u.stk_aave_balance \
@@ -2399,20 +2393,12 @@ impl DegenbotDb {
                  JOIN aave_v3_users u ON u.id = dp.user_id \
                  WHERE dp.id = ?1",
                 rusqlite::params![position_id],
-                |r| {
-                    Ok((
-                        r.get(0)?,
-                        r.get(1)?,
-                        r.get(2)?,
-                        r.get(3)?,
-                        r.get(4)?,
-                    ))
-                },
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             )
             .map_err(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => DbError::MissingRow(format!(
-                    "aave_v3_debt_positions id={position_id}"
-                )),
+                rusqlite::Error::QueryReturnedNoRows => {
+                    DbError::MissingRow(format!("aave_v3_debt_positions id={position_id}"))
+                }
                 e => DbError::Sqlite(e),
             })?;
         Ok(DebtPositionRefreshContext {
@@ -2621,7 +2607,9 @@ fn apply_scaled_token_balance_delta_on_conn(
     // loop (NOT the build-time snapshot — chunk events are applied at
     // end-of-tx, AFTER the per-event `process_*_burn` builder ran; the
     // per-tx running state is at apply time, not at build time).
-    let new_balance = if new_balance_i < alloy::primitives::I256::ZERO && balance_delta.is_negative() {
+    let new_balance = if new_balance_i < alloy::primitives::I256::ZERO
+        && balance_delta.is_negative()
+    {
         // Clamp to zero (= Aave's `min(amountScaled, scaledBalance) == scaledBalance`)
         // and emit a tracing::warn so the surge is auditable — the drift
         // surface this masks is real (Rust's stored balance diverged from the
@@ -3148,13 +3136,7 @@ mod tests {
         }
         // Resolve via `get_or_create` with freshly-fetched metadata.
         let id2 = db
-            .get_or_create_erc20_token(
-                1,
-                "0xgho",
-                Some("Gho Token"),
-                Some("GHO"),
-                Some(18),
-            )
+            .get_or_create_erc20_token(1, "0xgho", Some("Gho Token"), Some("GHO"), Some(18))
             .unwrap();
         let conn = db.conn.lock();
         let (name, symbol, decimals): (Option<String>, Option<String>, Option<i64>) = conn
@@ -3185,13 +3167,7 @@ mod tests {
         // overwrite the existing populated cells (defensive — the BOPQZ3 fix
         // only backfills NULL cells).
         let id2 = db
-            .get_or_create_erc20_token(
-                1,
-                "0xtoken2",
-                Some("Other Name"),
-                Some("OTH"),
-                Some(6),
-            )
+            .get_or_create_erc20_token(1, "0xtoken2", Some("Other Name"), Some("OTH"), Some(6))
             .unwrap();
         assert_eq!(id, id2);
         let conn = db.conn.lock();

@@ -256,7 +256,6 @@ def verify_scaled_token_positions(
         msg = (
             f"{len(divergences)} verification divergence(s) for "
             f"{'collateral' if position_table is AaveV3CollateralPosition else 'debt'} "
-            f"positions at block {block_number}:\n"
-            + "\n".join(divergences)
+            f"positions at block {block_number}:\n" + "\n".join(divergences)
         )
         raise AssertionError(msg)

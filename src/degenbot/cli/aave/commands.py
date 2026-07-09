@@ -67,9 +67,6 @@ from degenbot.degenbot_rs import (
 from degenbot.degenbot_rs import (
     verify_all_positions_on_chain as rs_verify_all_positions_on_chain,
 )
-from degenbot.degenbot_rs import (
-    verify_touched_positions_on_chain as rs_verify_touched_positions_on_chain,
-)
 from degenbot.exceptions import DegenbotValueError
 from degenbot.logging import logger
 from degenbot.provider.block_helpers import get_number_for_block_identifier
@@ -478,14 +475,6 @@ def aave_update(
     def _make_progress(
         pbar: tqdm.tqdm,
         chunk_counter: list[int],
-        *,
-        verify_chunk: bool = False,
-        database_path: str = "",
-        rpc_url: str = "",
-        market_id: int = 0,
-        chain_id: int = 0,
-        cancel_handle: CancelHandle | None = None,
-        verify_error: list[str] | None = None,
     ) -> Callable[[dict[str, Any]], None]:
         def _on_progress(progress: dict[str, Any]) -> None:
             chunk_counter[0] += 1
@@ -501,33 +490,6 @@ def aave_update(
                 f"+{progress['events_applied']} events (chunk {chunk_counter[0]})",
                 refresh=True,
             )
-
-            if verify_chunk:
-                touched = progress.get("touched_user_addresses", [])
-                if not touched:
-                    return
-                divergences = rs_verify_touched_positions_on_chain(
-                    database_path=database_path,
-                    rpc_url=rpc_url,
-                    market_id=market_id,
-                    chain_id=chain_id,
-                    block_number=progress["chunk_end"],
-                    touched_users=touched,
-                )
-                if divergences:
-                    lines = [
-                        f"{len(divergences)} divergence(s) at chunk "
-                        f"{progress['chunk_start']}-{progress['chunk_end']}:",
-                    ]
-                    lines.extend(
-                        f"  {d['kind']} {d['field']}: {d['user_address']} "
-                        f"expected={d['expected']} actual={d['actual']}"
-                        for d in divergences
-                    )
-                    err_list = verify_error if verify_error is not None else []
-                    err_list.append("\n".join(lines))
-                    if cancel_handle is not None:
-                        cancel_handle.cancel()
 
         return _on_progress
 
@@ -609,7 +571,6 @@ def aave_update(
                         disable=not show_progress,
                     )
                     chunk_counter = [0]
-                    verify_error: list[str] = []
                     try:
                         report = run_aave_update(
                             database_path=database_path,
@@ -621,28 +582,20 @@ def aave_update(
                             progress_callback=_make_progress(
                                 pbar,
                                 chunk_counter,
-                                verify_chunk=verify_chunk,
-                                database_path=database_path,
-                                rpc_url=rpc_url,
-                                market_id=market.id,
-                                chain_id=chain_id,
-                                cancel_handle=handle,
-                                verify_error=verify_error,
                             ),
                             cancel_handle=handle,
+                            verify_chunk=verify_chunk,
                         )
                     except RuntimeError as exc:
                         # Cooperative cancel (RuntimeError per the .pyi):
-                        # either a user SIGINT or a `--verify-chunk`
-                        # divergence abort. The in-flight chunk completed
+                        # a user SIGINT. The in-flight chunk completed
                         # atomically first; committed chunks stay durable.
+                        # NOTE: a `--verify-chunk` divergence is raised as an
+                        # AssertionError (by the Rust core), NOT a
+                        # RuntimeError — the chunk is rolled back, so
+                        # `last_update_block` did NOT advance.
                         if "cancel" in str(exc).lower():
                             cancelled = True
-                            if verify_error:
-                                # `--verify-chunk` found a divergence;
-                                # re-raise as an assertion so the user sees
-                                # the details (the cancel was just the stop).
-                                raise AssertionError(verify_error[0]) from exc
                             click.echo(
                                 f"Chain {chain_id} market {market.id}: "
                                 "cancelled (committed chunks stay durable).",
@@ -673,9 +626,9 @@ def aave_update(
                         )
                         if divergences:
                             lines = [
-                            f"{len(divergences)} verification divergence(s) "
-                            f"at block {report['to_block']}:",
-                        ]
+                                f"{len(divergences)} verification divergence(s) "
+                                f"at block {report['to_block']}:",
+                            ]
                             for d in divergences:
                                 check = d["check"]
                                 user = d.get("user_address", d.get("position_id", "?"))

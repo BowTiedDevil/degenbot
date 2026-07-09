@@ -719,6 +719,7 @@ def run_aave_update(
     rpc_url: str,
     progress_callback: Callable[..., None],
     cancel_handle: CancelHandle,
+    verify_chunk: bool = False,
 ) -> dict[str, Any]:
     """Drive the Rust-owned Aave V3 updater chunk loop (epic AZGJUN, 5XNTC5).
 
@@ -743,6 +744,12 @@ def run_aave_update(
             committed}`` once per chunk boundary.
         cancel_handle: A ``CancelHandle`` (shared with ``run_pool_update``);
             a SIGINT handler calls ``cancel_handle.cancel()``.
+        verify_chunk: If ``True``, run pre-commit verification on each chunk
+            ("scaled-token balance + last_index" against the on-chain
+            truth at ``chunk_end``). A divergence drops the transaction
+            (rollback) so ``last_update_block`` does NOT advance + the next
+            run re-processes the same chunk. If ``False``, verification is
+            skipped.
 
     Returns:
         ``dict {chain_id, market_id, from_block, to_block,
@@ -752,6 +759,9 @@ def run_aave_update(
         ValueError: For a DB / RPC / config-dispatch / parse failure
             (in-flight chunk rolled back; committed chunks stay durable).
         RuntimeError: If cancelled (committed chunks stay durable).
+        AssertionError: If ``verify_chunk=True`` and pre-commit verification
+            found divergences (in-flight chunk rolled back;
+            ``last_update_block`` did NOT advance).
         ValueError: If the market has no ``last_update_block`` (NotBootstrapped
             — bootstrap the stamp first).
 
@@ -3043,6 +3053,7 @@ __all__ = [
     "cl_muldiv",
     "cl_muldiv_rounding_up",
     "cl_simple_mul_div",
+    "cleanup_zero_balance_positions",
     "compute_simulation_warmup_slots",
     "curve_stableswap_get_d",
     "curve_stableswap_get_y",
@@ -3105,8 +3116,7 @@ __all__ = [
     "run_aave_update",
     "run_pool_update",
     "to_checksum_address",
-    "verify_all_positions_on_chain",
-    "cleanup_zero_balance_positions",
     "v4_input_is_native",
     "v4_output_is_native",
+    "verify_all_positions_on_chain",
 ]
