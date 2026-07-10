@@ -40,7 +40,7 @@ class CacheableState(Protocol):
 
     @property
     def block(self) -> int | None:
-        """Return block."""
+        """Block."""
         ...
 
 

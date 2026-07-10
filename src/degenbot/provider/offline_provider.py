@@ -163,17 +163,17 @@ class OfflineProvider:
 
     @property
     def chain_id(self) -> int:
-        """Get the chain ID."""
+        """The chain ID."""
         return self._chain_id
 
     @property
     def block_number(self) -> int:
-        """Get the latest recorded block number."""
+        """The latest recorded block number."""
         return max(self._block_numbers)
 
     @property
     def block_numbers(self) -> list[int]:
-        """Get list of all recorded block numbers.
+        """List of all recorded block numbers.
 
         Returns:
             A copy of the list of recorded block numbers.

@@ -42,7 +42,7 @@ class SolveInput:
 
     @property
     def num_hops(self) -> int:
-        """Return num hops."""
+        """Number of hops."""
         return len(self.hops)
 
     @property

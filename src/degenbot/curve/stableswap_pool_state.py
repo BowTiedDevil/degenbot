@@ -72,17 +72,17 @@ class StableswapPoolState:
 
     @property
     def a_coefficient(self) -> int:
-        """Return a coefficient."""
+        """A coefficient."""
         return self._a_coefficient
 
     @property
     def fee(self) -> int:
-        """Return fee."""
+        """Fee."""
         return self._fee
 
     @property
     def admin_fee(self) -> int:
-        """Return admin fee."""
+        """Admin fee."""
         return self._admin_fee
 
     @property
@@ -117,52 +117,52 @@ class StableswapPoolState:
 
     @property
     def initial_a_coefficient(self) -> int | None:
-        """Return initial a coefficient."""
+        """Initial a coefficient."""
         return self._initial_a_coefficient
 
     @property
     def future_a_coefficient(self) -> int | None:
-        """Return future a coefficient."""
+        """Future a coefficient."""
         return self._future_a_coefficient
 
     @property
     def initial_a_coefficient_time(self) -> int | None:
-        """Return initial a coefficient time."""
+        """Initial a coefficient time."""
         return self._initial_a_coefficient_time
 
     @property
     def future_a_coefficient_time(self) -> int | None:
-        """Return future a coefficient time."""
+        """Future a coefficient time."""
         return self._future_a_coefficient_time
 
     @property
     def fee_gamma(self) -> int:
-        """Return fee gamma."""
+        """Fee gamma."""
         return self._fee_gamma
 
     @property
     def mid_fee(self) -> int:
-        """Return mid fee."""
+        """Mid fee."""
         return self._mid_fee
 
     @property
     def out_fee(self) -> int:
-        """Return out fee."""
+        """Out fee."""
         return self._out_fee
 
     @property
     def gamma(self) -> int:
-        """Return gamma."""
+        """Gamma."""
         return self._gamma
 
     @property
     def offpeg_fee_multiplier(self) -> int:
-        """Return offpeg fee multiplier."""
+        """Offpeg fee multiplier."""
         return self._offpeg_fee_multiplier
 
     @property
     def name(self) -> str:
-        """Return name."""
+        """Name."""
         return self._name
 
     # ── Mutable properties (state accessed through the mixin) ──

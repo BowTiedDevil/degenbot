@@ -140,17 +140,17 @@ class AlloyProvider:
 
     @property
     def rpc_url(self) -> str:
-        """Get the RPC URL."""
+        """The RPC URL."""
         return self._rpc_url
 
     @property
     def chain_id(self) -> int:
-        """Get the chain ID."""
+        """The chain ID."""
         return self._provider.get_chain_id()
 
     @property
     def block_number(self) -> int:
-        """Get the current block number."""
+        """The current block number."""
         return self._provider.get_block_number()
 
     # =========================================================================

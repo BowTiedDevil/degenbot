@@ -410,7 +410,7 @@ class AsyncProviderAdapter:
 
     @property
     def provider_type(self) -> Literal["web3", "alloy"]:
-        """Get the type of the underlying provider."""
+        """The type of the underlying provider."""
         return self._provider_type
 
     def as_web3(self) -> AsyncWeb3[Any] | None:

@@ -51,7 +51,7 @@ class BalancerMultiTokenState:
 
     @property
     def n_tokens(self) -> int:
-        """Return n tokens."""
+        """Number of tokens."""
         return len(self.reserves)
 
     def _scaling_factors(self) -> list[int]:

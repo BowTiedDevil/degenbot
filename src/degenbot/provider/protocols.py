@@ -30,12 +30,12 @@ class ProviderBackend(Protocol):
 
     @property
     def chain_id(self) -> int:
-        """Return chain id."""
+        """Chain id."""
         ...
 
     @property
     def block_number(self) -> int:
-        """Return block number."""
+        """Block number."""
         ...
 
     def get_block_number(self) -> int:

@@ -49,12 +49,12 @@ class V3PoolState:
 
     @property
     def fee(self) -> int:
-        """Return fee."""
+        """Fee."""
         return self._fee
 
     @property
     def tick_spacing(self) -> int:
-        """Return tick spacing."""
+        """Tick spacing."""
         return self._tick_spacing
 
     @property

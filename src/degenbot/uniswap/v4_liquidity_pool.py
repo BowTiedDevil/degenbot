@@ -611,7 +611,7 @@ class UniswapV4Pool(
 
     @property
     def liquidity(self) -> int:
-        """Return liquidity.
+        """Liquidity.
 
         Returns:
             The current active liquidity (from Rust via the handle).
@@ -641,7 +641,7 @@ class UniswapV4Pool(
 
     @property
     def sqrt_price_x96(self) -> int:
-        """Return sqrt price x96.
+        """Sqrt price x96.
 
         Returns:
             The current sqrt price as a Q64.96 value (from Rust).
@@ -680,7 +680,7 @@ class UniswapV4Pool(
 
     @property
     def tick(self) -> int:
-        """Return tick.
+        """Tick.
 
         Returns:
             The current tick (from Rust via the handle).
@@ -732,7 +732,7 @@ class UniswapV4Pool(
 
     @property
     def tick_spacing(self) -> int:
-        """Return tick spacing.
+        """Tick spacing.
 
         Returns:
             The tick spacing for the pool (Python-side identity).
@@ -742,7 +742,7 @@ class UniswapV4Pool(
 
     @property
     def fee(self) -> int:
-        """Return fee.
+        """Fee.
 
         Returns:
             The fee in pips (Python-side identity).

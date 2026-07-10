@@ -230,7 +230,7 @@ class BalancerMultiTokenHop:
 
     @property
     def n_tokens(self) -> int:
-        """Return n tokens."""
+        """Number of tokens."""
         return len(self.reserves)
 
     @property

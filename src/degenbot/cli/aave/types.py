@@ -84,7 +84,7 @@ class TransactionContext:
 
     @property
     def gho_vtoken_address(self) -> ChecksumAddress | None:
-        """Get the GHO vToken address if GHO asset exists."""
+        """The GHO vToken address if GHO asset exists."""
         if self.gho_asset is None or self.gho_asset.v_token is None:
             return None
         return self.gho_asset.v_token.address
