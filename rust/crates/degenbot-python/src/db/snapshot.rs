@@ -148,7 +148,7 @@ impl PyDatabaseSnapshot {
             .detach(|| self.db.fetch_v4_pool_hashes(self.chain_id))
             .map_err(|e| db_err_to_py(&e))?;
         let set = PySet::empty(py)?;
-        for h in hashes {
+        for (h, _addr) in hashes {
             set.add(PyString::new(py, &h))?;
         }
         Ok(set)
