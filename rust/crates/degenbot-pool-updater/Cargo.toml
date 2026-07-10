@@ -21,7 +21,6 @@ suspicious = "warn"
 
 [dependencies]
 alloy = { version = "^2.0" }
-hex = { version = "^0.4" }
 degenbot-db = { path = "../degenbot-db" }
 degenbot-decoders = { path = "../degenbot-decoders" }
 degenbot-core = { path = "../degenbot-core" }
@@ -30,7 +29,7 @@ tokio = { version = "^1.52", features = ["rt-multi-thread", "macros", "sync"] }
 thiserror = { version = "^2.0" }
 # Plain rusqlite (no `bundled`) — the bundled libsqlite3-sys link is owned
 # solely by degenbot-db; here we only need the Connection/Transaction types.
-rusqlite = { version = ">=0.31, <1.0" }
+rusqlite = { version = "^0.40" }
 
 [features]
 default = []
@@ -38,5 +37,4 @@ default = []
 [dev-dependencies]
 alloy = { version = "^2.0" }
 degenbot-rpc = { path = "../degenbot-rpc" }
-hex = { version = "^0.4" }
 tempfile = { version = "^3.0" }

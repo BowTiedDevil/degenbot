@@ -26,10 +26,8 @@ degenbot-db = { path = "../degenbot-db" }
 degenbot-decoders = { path = "../degenbot-decoders" }
 degenbot-evm-math = { path = "../degenbot-evm-math" }
 degenbot-rpc = { path = "../degenbot-rpc" }
-# Plain rusqlite (no `bundled`) — the bundled libsqlite3-sys link is owned
-# solely by degenbot-db; here we only need the Connection/Transaction types.
-rusqlite = { version = ">=0.31, <1.0" }
-thiserror = { version = "^1.0" }
+rusqlite = { version = "^0.40" }
+thiserror = { version = "^2.0" }
 tokio = { version = "^1.52", features = ["rt-multi-thread", "macros", "sync"] }
 
 [features]
