@@ -749,8 +749,8 @@ def aave_update_py(
     Unlike ``aave update`` (which delegates the per-market chunk loop to
     the Rust core via ``run_aave_update``), this command invokes the
     legacy Python ``update_aave_market`` directly. It is retained for
-    cross-check parity against the Rust writer (task U5YIBG §4.2) and
-    for restoring the cold-boot capability that ``6f574e07`` regressed.
+    cross-check parity against the Rust writer and for restoring the
+    cold-boot capability that ``6f574e07`` regressed.
 
     The market row must already be bootstrapped::
 

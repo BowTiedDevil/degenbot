@@ -373,7 +373,7 @@ def apply_v3_liquidity_updates(
 ) -> None:
     """Apply the V3 liquidity updates to the provided pool.
 
-    Moved here from ``cli/pool.py`` (task JJ232N) so the chunk loop's removal
+    Moved here from ``cli/pool.py`` so the chunk loop's removal
     leaves these decode shells with their topic constants. The chunk loop
     itself now lives in the Rust core (``run_pool_update``).
 
@@ -443,7 +443,7 @@ def apply_v4_liquidity_updates(
 ) -> None:
     """Apply the V4 liquidity updates to the provided pool.
 
-    Moved here from ``cli/pool.py`` (task JJ232N). V4 emits a single signed
+    Moved here from ``cli/pool.py``. V4 emits a single signed
     ``ModifyLiquidity`` event (no Burn/Mint split), so the decode unpacks
     ``(tick_lower, tick_upper, liquidity_delta, _)`` straight from ``data``.
 
