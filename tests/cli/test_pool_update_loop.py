@@ -182,3 +182,53 @@ def test_pool_update_handoff_calls_run_pool_update_once_per_chain(
     # The fake run_pool_update didn't write, so the stamp stays at its seeded
     # value (None). This proves the shell doesn't stamp -- only the core does.
     assert row[0] is None
+
+
+def test_pool_update_cancel_shows_friendly_message(
+    stub_bot: _StubBot,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A SIGINT-driven cancel surfaces a friendly one-line message, not a traceback.
+
+    Mirrors the Aave updater's interrupt contract (`aave update`'s
+    `except RuntimeError` cancel guard): when the Rust core raises the
+    cooperative-cancel ``RuntimeError`` (``"run_pool_update cancelled by
+    cancel flag"``), the CLI shell catches it, echoes a friendly
+    ``cancelled (committed chunks stay durable).`` line, + exits 0 -- no
+    traceback, no nonzero exit. Non-cancel ``RuntimeError``s still propagate
+    (untouched by the guard).
+    """
+    stub_bot  # noqa: B018 -- fixture seeds the DB + bot
+    cancel_error = RuntimeError("run_pool_update cancelled by cancel flag")
+
+    def _fake_run_pool_update(
+        *,
+        database_path: str,
+        chain_id: int,
+        to_block: int | None,
+        chunk_size: int,
+        rpc_url: str,
+        progress_callback: object,
+        cancel_handle: object,
+        verify: bool = False,
+    ) -> dict[str, object]:
+        raise cancel_error
+
+    monkeypatch.setattr(pool_mod, "run_pool_update", _fake_run_pool_update)
+    monkeypatch.setattr(pool_mod, "resolve_http_rpc_uri", lambda *a, **k: RPC_URL)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        pool_update,  # type: ignore[arg-type]
+        ["--to-block", "10000", "--chunk", "10000"],
+        obj=stub_bot,
+        # Let the command's own exception handling decide the exit code so
+        # the test reflects real CLI behavior (friendly-cancel = exit 0).
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0, result.output
+    assert "cancel" in result.output.lower()
+    assert "durab" in result.output.lower()
+    # No traceback leaked to the console.
+    assert "Traceback" not in result.output
+    assert "RuntimeError" not in result.output

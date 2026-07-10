@@ -108,6 +108,10 @@ def pool_update(bot: Bot, chunk_size: int, to_block: str, verify: bool) -> None:
         ValueError: For a malformed `--to-block` or an RPC/DB failure (the
             in-flight chunk is rolled back before returning; committed
             chunks stay durable).
+        RuntimeError: For a cooperative cancel (a user Ctrl+C). The
+            in-flight chunk completed atomically first (commit OR rollback);
+            the CLI echoes a friendly `cancelled` message instead of a
+            traceback (committed chunks stay durable).
 
     """
     chain_id = bot.config.default_chain_id
@@ -177,6 +181,20 @@ def pool_update(bot: Bot, chunk_size: int, to_block: str, verify: bool) -> None:
                 cancel_handle=handle,
                 verify=verify,
             )
+    except RuntimeError as exc:
+        # Cooperative cancel (RuntimeError per the .pyi): a user SIGINT. The
+        # in-flight chunk completed atomically first (commit OR rollback);
+        # committed chunks stay durable. Mirrors the Aave updater's interrupt
+        # contract (`aave update`'s cancel guard) so a Ctrl+C surfaces a
+        # friendly one-liner instead of a traceback. A non-cancel RuntimeError
+        # (a real core failure the .pyi didn't route through ValueError) still
+        # propagates untouched.
+        if "cancel" in str(exc).lower():
+            click.echo(
+                f"Chain {chain_id}: cancelled (committed chunks stay durable).",
+            )
+            return
+        raise
     finally:
         # Restore the prior SIGINT handler (or a default- disposition if there
         # wasn't one) so a subsequent Ctrl+C in the same shell behaves normally.
