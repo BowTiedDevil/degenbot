@@ -1,15 +1,14 @@
 """CLI commands for pool state queries.
 
-Task `JJ232N` (epic `2SFL6I`): `pool_update` is now a thin boot + hand-off
-to the Rust-owned chunk loop (`degenbot_rs.run_pool_update`, Task
-`QZHNZQ`). Python is a driver shell -- config bootstrap, SIGINT -> cancel
-flag, tqdm-on-callback, + a user-facing summary. The chunk loop, the RPC
-fetches, the decode, the DB writes, + the per-chunk transaction all live in
-the Rust core (`degenbot-pool-updater`, Task `CKXCOB`). The SQLAlchemy
-session-for-writes, the per-call `db_*` dispatch, the
+`pool_update` is a thin boot + hand-off to the Rust-owned chunk loop
+(`degenbot_rs.run_pool_update`). Python is a driver shell -- config
+bootstrap, SIGINT -> cancel flag, tqdm-on-callback, + a user-facing summary.
+The chunk loop, the RPC fetches, the decode, the DB writes, + the per-chunk
+transaction all live in the Rust core (`degenbot-pool-updater`). The
+SQLAlchemy session-for-writes, the per-call `db_*` dispatch, the
 `fresh_last_update_block` re-read workaround, + the per-event Python tqdm
-iteration are all retired (migration-guide `pool-updater-chunk-atomicity`
-section 3.1 + section 4 Task 5).
+iteration are all retired (migration-guide
+`pool-updater-chunk-atomicity` section 3.1 + section 4 Task 5).
 
 The standalone PyO3 seams (`db_apply_v*_liquidity_updates`,
 `db_upsert_v*_pools`, etc.) stay in `degenbot_rs` for ad-hoc/test uses
@@ -89,7 +88,7 @@ def pool() -> None:
         " verify for every pool touched this chunk) before each chunk's persist"
         " commits. A divergence rolls back the chunk + does NOT advance"
         " last_update_block (the corrupt state never lands). Catches the"
-        " 6SRJRL ghost-row class + other apply-math corruption before write."
+        " ghost-row class + other apply-math corruption before write."
     ),
 )
 @click.option(

@@ -4,9 +4,9 @@ These commands are thin delegating shells (the "cockpit"): they resolve the
 exchange row by `(chain_id, name)` + flip its `active` flag through the Rust
 core substrate (`degenbot_rs.db_upsert_exchange` /
 `db_set_exchange_active` / `db_fetch_exchange_by_name` /
-`db_upsert_pool_manager`), introduced in ergo tasks HYUYTN / NWU4KH /
-MXAEWD. No SQLAlchemy session, no ORM mutation — the Python here only
-orchestrates the user-facing messages; the Rust core owns the row state.
+`db_upsert_pool_manager`). No SQLAlchemy session, no ORM mutation — the
+Python here only orchestrates the user-facing messages; the Rust core owns
+the row state.
 
 `upsert_exchange` inserts new rows with `active=False` by substrate design,
 so the activate shell always calls `set_exchange_active(True)` after the
