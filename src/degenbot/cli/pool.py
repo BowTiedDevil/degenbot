@@ -80,20 +80,64 @@ def pool() -> None:
     ),
 )
 @click.option(
+    "--verify-chunk/--no-verify-chunk",
+    "verify_chunk",
+    default=True,
+    show_default=True,
+    help=(
+        "Run the pre-commit per-chunk on-chain-truth gate (full liquidity-map"
+        " verify for every pool touched this chunk) before each chunk's persist"
+        " commits. A divergence rolls back the chunk + does NOT advance"
+        " last_update_block (the corrupt state never lands). Catches the"
+        " 6SRJRL ghost-row class + other apply-math corruption before write."
+    ),
+)
+@click.option(
     "--verify/--no-verify",
-    "verify",
+    "verify_alias",
+    default=None,
+    hidden=True,
+    help=(
+        "[DEPRECATED alias for --verify-chunk/--no-verify-chunk] Kept so"
+        " existing scripts don't break; prefer --verify-chunk."
+    ),
+)
+@click.option(
+    "--verify-all/--no-verify-all",
+    "verify_all",
     default=False,
     show_default=True,
     help=(
-        "Run the pre-commit on-chain-truth gate (Full per-pool per-chunk "
-        "verification) before each chunk's liquidity persist commits. A "
-        "divergence rolls back the chunk + does NOT advance "
-        "last_update_block (the corrupt state never lands). Catches the "
-        "6SRJRL ghost-row class + other apply-math corruption before write."
+        "Run a pre-commit FULL (market-wide, all in-scope pools) verification"
+        " at the block boundary set by --verify-all-interval AND when the run"
+        " completes its last block. A divergence rolls back the chunk + does"
+        " NOT advance last_update_block. Off by default (operator opt-in)."
     ),
 )
+@click.option(
+    "--verify-all-interval",
+    "verify_all_interval",
+    default=1_000_000,
+    show_default=True,
+    type=int,
+    help=(
+        "Block interval for the --verify-all full-verification gate. A chunk"
+        " that crosses or lands-on a multiple of this interval triggers a"
+        " pre-commit market-wide verify. Ignored unless --verify-all is set."
+    ),
+    envvar="DEGENBOT_VERIFY_ALL_INTERVAL",
+    show_envvar=True,
+)
 @click.pass_obj
-def pool_update(bot: Bot, chunk_size: int, to_block: str, verify: bool) -> None:  # noqa: FBT001
+def pool_update(  # noqa: PLR0917
+    bot: Bot,
+    chunk_size: int,
+    to_block: str,
+    verify_chunk: bool,  # noqa: FBT001
+    verify_alias: bool | None,  # noqa: FBT001
+    verify_all: bool,  # noqa: FBT001
+    verify_all_interval: int,
+) -> None:
     """Update liquidity pool information for activated exchanges.
 
     Boot + hand-off: read the bot config, install a SIGINT -> cancel-flag
@@ -114,6 +158,12 @@ def pool_update(bot: Bot, chunk_size: int, to_block: str, verify: bool) -> None:
             traceback (committed chunks stay durable).
 
     """
+    # The deprecated `--verify` alias overrides `--verify-chunk` only when
+    # explicitly passed (None = not passed). Once the alias is removed,
+    # delete this block.
+    if verify_alias is not None:
+        verify_chunk = verify_alias
+
     chain_id = bot.config.default_chain_id
     if chain_id is None:
         msg = (
@@ -179,11 +229,9 @@ def pool_update(bot: Bot, chunk_size: int, to_block: str, verify: bool) -> None:
                 rpc_url=rpc_url,
                 progress_callback=_on_progress,
                 cancel_handle=handle,
-                verify_chunk=verify,
-                # verify_all_interval + verify_all_at_completion are
-                # keyword-only on the Rust seam; the CLI wires them in the
-                # VXWKWT refactor. Defaults: no interval gate, no completion
-                # full-verify.
+                verify_chunk=verify_chunk,
+                verify_all_interval=verify_all_interval if verify_all else None,
+                verify_all_at_completion=verify_all,
             )
     except RuntimeError as exc:
         # Cooperative cancel (RuntimeError per the .pyi): a user SIGINT. The

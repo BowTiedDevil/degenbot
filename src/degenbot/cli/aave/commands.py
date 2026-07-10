@@ -302,30 +302,45 @@ def deactivate_mainnet_aave_v3(
     ),
 )
 @click.option(
-    "--verify-block/--no-verify-block",
-    "verify_block",
-    default=False,
-    show_default=True,
-    help="Verify positions at each block boundary.",
-    envvar="DEGENBOT_VERIFY_BLOCK",
-    show_envvar=True,
-)
-@click.option(
     "--verify-chunk/--no-verify-chunk",
     "verify_chunk",
     default=True,
     show_default=True,
-    help="Verify positions at chunk boundaries.",
+    help=(
+        "Verify touched positions against on-chain truth pre-commit at each"
+        " chunk boundary (scaled-token balance + last_index for touched"
+        " users). A divergence rolls back the chunk + does NOT advance"
+        " last_update_block."
+    ),
     envvar="DEGENBOT_VERIFY_CHUNK",
     show_envvar=True,
 )
 @click.option(
     "--verify-all/--no-verify-all",
     "verify_all",
-    default=True,
+    default=False,
     show_default=True,
-    help="Verify all positions at full verification intervals.",
+    help=(
+        "Run a pre-commit FULL (market-wide, all-4-check) verification at the"
+        " block boundary set by --verify-all-interval AND when the run"
+        " completes its last block. A divergence rolls back the chunk + does"
+        " NOT advance last_update_block. Off by default (operator opt-in)."
+    ),
     envvar="DEGENBOT_VERIFY_ALL",
+    show_envvar=True,
+)
+@click.option(
+    "--verify-all-interval",
+    "verify_all_interval",
+    default=1_000_000,
+    show_default=True,
+    type=int,
+    help=(
+        "Block interval for the --verify-all full-verification gate. A chunk"
+        " that crosses or lands-on a multiple of this interval triggers a"
+        " pre-commit market-wide verify. Ignored unless --verify-all is set."
+    ),
+    envvar="DEGENBOT_VERIFY_ALL_INTERVAL",
     show_envvar=True,
 )
 @click.option(
@@ -362,18 +377,11 @@ def deactivate_mainnet_aave_v3(
     "enable_backup",
     default=False,
     show_default=True,
-    help="Enable or disable database backups at verification intervals.",
+    help=(
+        "Create a database backup after the completion verification runs"
+        " (once per market, at the end of the run)."
+    ),
     envvar="DEGENBOT_BACKUP",
-    show_envvar=True,
-)
-@click.option(
-    "--backup-interval",
-    "backup_interval",
-    default=500_000,
-    show_default=True,
-    type=int,
-    help="Number of blocks between database backups.",
-    envvar="DEGENBOT_BACKUP_INTERVAL",
     show_envvar=True,
 )
 @click.pass_obj
@@ -382,14 +390,13 @@ def aave_update(
     *,
     chunk_size: int,
     to_block: str,
-    verify_block: bool,
     verify_chunk: bool,
     verify_all: bool,
+    verify_all_interval: int,
     stop_after_one_chunk: bool,
     show_progress: bool,
     dry_run: bool,
     enable_backup: bool,
-    backup_interval: int,
 ) -> None:
     """Update positions for active Aave markets.
 
@@ -400,14 +407,16 @@ def aave_update(
         bot: Active Bot session for on-chain data access and database queries.
         chunk_size: Maximum number of blocks to process before committing changes.
         to_block: Target block identifier (e.g., 'latest', 'latest:-64', 'finalized:128').
-        verify_block: If True, verify positions at each block boundary.
-        verify_chunk: If True, verify positions at chunk boundaries.
-        verify_all: If True, verify all positions at full verification intervals.
+        verify_chunk: If True, verify touched positions pre-commit at chunk
+            boundaries.
+        verify_all: If True, run a pre-commit FULL verification at
+            --verify-all-interval block boundaries + at run completion.
+        verify_all_interval: Block interval for the --verify-all full gate.
         stop_after_one_chunk: If True, stop after processing the first chunk.
         show_progress: Toggle display of progress bars.
         dry_run: If True, preview changes without committing to the database.
-        enable_backup: If True, create database backups at verification intervals.
-        backup_interval: Number of blocks between database backups.
+        enable_backup: If True, create a database backup after the completion
+            verification runs.
 
     Raises:
         DegenbotValueError: If no active Aave markets are found.
@@ -431,28 +440,24 @@ def aave_update(
     # `operations_parser`/`token_processor`) is UNROUTED — kept available for
     # the U5YIBG §4.2 cross-check; deletion is gated on CZM7TI (post-GREEN).
     #
-    # Behavior changes vs the pre-cutover Python loop (flagged for U5YIBG):
+    # Behavior: verification policy is enforced by the Rust core.
+    # - `--verify-chunk` (default ON): pre-commit touched-position verify
+    #   per chunk (Rust `verify_touched_positions_on_conn`, checks 1+2).
+    # - `--verify-all` (default OFF, opt-in): pre-commit FULL market-wide
+    #   verify (all 4 checks) at `--verify-all-interval` block boundaries +
+    #   at run completion (Rust `verify_all_positions_on_conn`). A divergence
+    #   rolls back the chunk + does NOT advance `last_update_block`.
+    #   This restores the mid-loop interval verify the pre-cutover Python
+    #   loop lost (it interleaved verify+backup at `--backup-interval`
+    #   boundaries; backup is now completion-only — a mid-loop backup on a
+    #   possibly-rolled-back chunk is not useful).
     # - `--dry-run`: shell-level preview (skips the Rust call entirely). The
     #   Rust core has no dry-run flag; a full write-preview needs one (RQXEKH).
-    # - `--verify-block`: a mid-loop per-block hook the Rust core cannot
-    #   honor (it owns chunking + exposes no per-block hook); downgraded to a
-    #   warning. Use `--verify-all` for post-run verification.
-    #   `--verify-chunk` is now wired into the Rust core's per-chunk
-    #   `verify_touched_positions_on_chain` (checks 1+2: scaled-token
-    #   balance + index for touched users only).
     # - `--one-chunk` is wired through the Rust core's `max_chunks` loop cap
-    #   (stops after committing one chunk);
-    # - `--verify-all` + `--backup`: POST-run per market (was interleaved at
-    #   `--backup-interval` boundaries mid-loop); the interleaving granularity
-    #   is lost (one verify/backup at the end of each market's run).
+    #   (stops after committing one chunk).
     # - `last_update_block` stamp: owned by the Rust core (was Python).
     # - Markets with `last_update_block is None` are SKIPPED (the Rust core
     #   raises `NotBootstrapped`); bootstrap the stamp first.
-    if verify_block:
-        logger.warning(
-            "--verify-block is not supported by the Rust core; "
-            "mid-loop per-block verification is skipped.",
-        )
     if stop_after_one_chunk:
         # Restored first-class support: the Rust core's `max_chunks` loop
         # cap (run.rs) stops after committing one chunk. Pre-cutover the
@@ -460,12 +465,6 @@ def aave_update(
         # it to a warning because the Rust core had no per-chunk hook; the
         # `max_chunks` parameter restores it (HQF5NQ-gap).
         pass
-    if enable_backup:
-        logger.warning(
-            "--backup-interval is not honored by the Rust core (was %s); "
-            "one backup runs at the end of each market's run.",
-            backup_interval,
-        )
 
     handle = CancelHandle()
     prior_int_handler = signal.getsignal(signal.SIGINT)
@@ -591,6 +590,8 @@ def aave_update(
                             cancel_handle=handle,
                             verify_chunk=verify_chunk,
                             max_chunks=1 if stop_after_one_chunk else None,
+                            verify_all_interval=(verify_all_interval if verify_all else None),
+                            verify_all_at_completion=verify_all,
                         )
                     except RuntimeError as exc:
                         # Cooperative cancel (RuntimeError per the .pyi):
@@ -618,11 +619,17 @@ def aave_update(
                         f"({report['total_events_applied']} events applied).",
                     )
 
-                    # Post-run verify hygiene (Rust core — all 4 on-chain checks +
-                    # zero-balance cleanup). Runs AFTER the Rust chunk
-                    # transaction is committed, opening the DB on a separate
-                    # connection (read-only verify + a write for cleanup).
-                    if verify_all:
+                    # Post-run hygiene. When `--verify-all` is OFF, this on-chain full
+                    # verify (on a separate read-only connection) is the only
+                    # full-verify surface — a last-line-of-defense on committed
+                    # state (a divergence already rolled back its chunk if the
+                    # pre-commit gate is off; here it surfaces drift between
+                    # the committed chunk + the now-current chain tip). When
+                    # `--verify-all` is ON, the Rust core already ran the
+                    # pre-commit full verify at interval boundaries + at
+                    # completion; re-verifying committed state post-run is
+                    # redundant RPC, so the on-chain verify is skipped.
+                    if not verify_all:
                         divergences = rs_verify_all_positions_on_chain(
                             database_path=database_path,
                             rpc_url=rpc_url,
@@ -650,21 +657,21 @@ def aave_update(
                                     )
                             raise AssertionError("\n".join(lines))
 
-                        rs_cleanup_zero_balance_positions(
-                            database_path=database_path,
-                            market_id=market.id,
-                        )
+                    rs_cleanup_zero_balance_positions(
+                        database_path=database_path,
+                        market_id=market.id,
+                    )
 
-                        if enable_backup:
-                            with bot.db() as session:
-                                backup_sqlite_database(
-                                    session=session,
-                                    suffix=f"{report['to_block']}",
-                                    skip_confirmation=True,
-                                )
-                            logger.info(
-                                f"Created database backup at block {report['to_block']:,}.",
+                    if enable_backup:
+                        with bot.db() as session:
+                            backup_sqlite_database(
+                                session=session,
+                                suffix=f"{report['to_block']}",
+                                skip_confirmation=True,
                             )
+                        logger.info(
+                            f"Created database backup at block {report['to_block']:,}.",
+                        )
 
                 if cancelled:
                     break
