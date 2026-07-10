@@ -70,7 +70,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -107,7 +107,7 @@ dependencies = [
  "futures",
  "futures-util",
  "serde_json",
- "thiserror 2.0.18",
+ "thiserror",
  "tracing",
 ]
 
@@ -150,7 +150,7 @@ dependencies = [
  "alloy-rlp",
  "crc",
  "serde",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -176,7 +176,7 @@ dependencies = [
  "borsh",
  "k256",
  "serde",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -190,7 +190,7 @@ dependencies = [
  "borsh",
  "once_cell",
  "serde",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -227,7 +227,7 @@ dependencies = [
  "alloy-provider",
  "alloy-sol-types",
  "async-trait",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -268,7 +268,7 @@ dependencies = [
  "http",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
+ "thiserror",
  "tracing",
 ]
 
@@ -295,7 +295,7 @@ dependencies = [
  "futures-utils-wasm",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -378,7 +378,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
  "tracing",
  "url",
@@ -547,7 +547,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -561,7 +561,7 @@ dependencies = [
  "alloy-serde",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -599,7 +599,7 @@ dependencies = [
  "either",
  "elliptic-curve",
  "k256",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -615,7 +615,7 @@ dependencies = [
  "async-trait",
  "k256",
  "rand 0.8.6",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -707,7 +707,7 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
  "tower",
  "tracing",
@@ -782,7 +782,7 @@ dependencies = [
  "nybbles",
  "serde",
  "smallvec",
- "thiserror 2.0.18",
+ "thiserror",
  "tracing",
 ]
 
@@ -1699,7 +1699,7 @@ dependencies = [
  "degenbot-evm-math",
  "degenbot-rpc",
  "rusqlite",
- "thiserror 1.0.69",
+ "thiserror",
  "tokio",
 ]
 
@@ -1712,7 +1712,7 @@ dependencies = [
  "lru 0.18.1",
  "parking_lot",
  "proptest",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -1744,7 +1744,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
 ]
 
@@ -1756,7 +1756,7 @@ dependencies = [
  "degenbot-core",
  "proptest",
  "serde_json",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -1767,7 +1767,7 @@ dependencies = [
  "log",
  "proptest",
  "pyo3",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
 ]
 
@@ -1791,7 +1791,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -1807,7 +1807,7 @@ version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
  "proptest",
- "thiserror 1.0.69",
+ "thiserror",
 ]
 
 [[package]]
@@ -1818,7 +1818,7 @@ dependencies = [
  "degenbot-abi",
  "degenbot-core",
  "proptest",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -1834,10 +1834,9 @@ dependencies = [
  "degenbot-db",
  "degenbot-decoders",
  "degenbot-rpc",
- "hex",
  "rusqlite",
  "tempfile",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
 ]
 
@@ -1851,7 +1850,7 @@ dependencies = [
  "degenbot-rpc",
  "log",
  "pyo3",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -1868,7 +1867,7 @@ dependencies = [
  "rand 0.10.2",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
 ]
 
@@ -1885,7 +1884,7 @@ dependencies = [
  "degenbot-submission",
  "futures",
  "serde_json",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
 ]
 
@@ -1908,7 +1907,7 @@ dependencies = [
  "proptest",
  "pyo3",
  "serde_json",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
 ]
 
@@ -1958,7 +1957,7 @@ dependencies = [
  "rand 0.10.2",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
 ]
 
@@ -2902,7 +2901,7 @@ dependencies = [
  "jni-sys",
  "log",
  "simd_cesu8",
- "thiserror 2.0.18",
+ "thiserror",
  "walkdir",
  "windows-link",
 ]
@@ -3589,7 +3588,7 @@ dependencies = [
  "rustc-hash",
  "rustls",
  "socket2",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
  "tracing",
  "web-time",
@@ -3612,7 +3611,7 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "slab",
- "thiserror 2.0.18",
+ "thiserror",
  "tinyvec",
  "tracing",
  "web-time",
@@ -3913,7 +3912,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c51c9ae4df8a7fba42103df5c621fa3c37eccf3a3c650879e90fc48b11cc192c"
 dependencies = [
  "hashbrown 0.16.1",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -4606,31 +4605,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "1.0.69"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
-dependencies = [
- "thiserror-impl 1.0.69",
-]
-
-[[package]]
-name = "thiserror"
 version = "2.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4288b5bcbc7920c07a1149a35cf9590a2aa808e0bc1eafaade0b80947865fbc4"
 dependencies = [
- "thiserror-impl 2.0.18",
-]
-
-[[package]]
-name = "thiserror-impl"
-version = "1.0.69"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.118",
+ "thiserror-impl",
 ]
 
 [[package]]
@@ -4912,7 +4891,7 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "sha1",
- "thiserror 2.0.18",
+ "thiserror",
  "utf-8",
 ]
 
@@ -5384,7 +5363,7 @@ dependencies = [
  "pharos",
  "rustc_version 0.4.1",
  "send_wrapper",
- "thiserror 2.0.18",
+ "thiserror",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
