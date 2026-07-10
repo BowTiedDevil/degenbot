@@ -23,6 +23,7 @@ use degenbot_db::{DbError, DegenbotDb};
 use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::Connection;
 
+use crate::multicall3::{multicall3_batch, MulticallResult};
 use crate::RunError;
 
 /// The aToken / vToken scaled-token position kind (collateral / debt).
@@ -237,9 +238,11 @@ const ZERO_ADDRESS: Address = Address::ZERO;
 /// `getPreviousIndex(user)` on each aToken / vToken at `block_number`, asserts
 /// equality.
 ///
-/// Per-position `eth_call`s — acceptable for the touched-users-per-chunk case
-/// (small set). Multicall3 batching is the natural extension for the
-/// market-wide verify (BE474R-full, post-HLYWI6).
+/// Per-position `eth_call`s are batched through Multicall3 `aggregate3`
+/// (with `allowFailure = true` — a reverted sub-call surfaces as
+/// `success = false` + empty return, treated as `actual == 0`, preserving
+/// the prior per-call revert semantics). The market-wide `--verify-all` path
+/// is the win; the per-chunk touched-set path is a wash but harmless.
 ///
 /// Returns the divergence list (empty = GREEN). Each row carries the
 /// human-readable fields needed by the JGQHBX harness to emit a NAMED,
@@ -262,19 +265,31 @@ pub async fn verify_touched_positions_on_conn(
 
     for kind in [PositionKind::Collateral, PositionKind::Debt] {
         let rows = load_position_rows(conn, market_id, kind, user_addresses)?;
-        for row in rows {
-            // Skip the dead/zero addresses (mirror the Python skip).
-            if row.user_address == DEAD_ADDRESS || row.user_address == ZERO_ADDRESS {
-                continue;
-            }
-            // scaledBalanceOf(user) at block_number.
-            let calldata = build_call_data(SCALED_BALANCE_OF_SELECTOR, row.user_address);
-            let actual_balance = provider
-                .eth_call(&row.token_address, calldata, Some(block_number))
-                .await
-                .ok()
-                .and_then(|b| decode_uint256_return(&b))
-                .unwrap_or(U256::ZERO);
+        // Skip dead/zero-address users (mirror the Python skip) before
+        // batching so no calls are wasted on them.
+        let rows: Vec<&PositionRow> = rows
+            .iter()
+            .filter(|r| r.user_address != DEAD_ADDRESS && r.user_address != ZERO_ADDRESS)
+            .collect();
+        if rows.is_empty() {
+            continue;
+        }
+        // Flatten two calls per row — [scaledBalanceOf, getPreviousIndex] —
+        // into one Multicall3 batch, then map the results back in stride.
+        let mut calls: Vec<(Address, Bytes)> = Vec::with_capacity(rows.len() * 2);
+        for row in &rows {
+            calls.push((
+                row.token_address,
+                build_call_data(SCALED_BALANCE_OF_SELECTOR, row.user_address),
+            ));
+            calls.push((
+                row.token_address,
+                build_call_data(GET_PREVIOUS_INDEX_SELECTOR, row.user_address),
+            ));
+        }
+        let results = multicall3_batch(provider, &calls, block_number).await?;
+        for (row, chunk) in rows.iter().zip(results.chunks_exact(2)) {
+            let actual_balance = result_to_u256(&chunk[0]);
             if actual_balance != row.balance {
                 divergences.push(PositionDivergence {
                     kind,
@@ -287,14 +302,7 @@ pub async fn verify_touched_positions_on_conn(
                     actual: actual_balance,
                 });
             }
-            // getPreviousIndex(user) at block_number.
-            let calldata = build_call_data(GET_PREVIOUS_INDEX_SELECTOR, row.user_address);
-            let actual_index = provider
-                .eth_call(&row.token_address, calldata, Some(block_number))
-                .await
-                .ok()
-                .and_then(|b| decode_uint256_return(&b))
-                .unwrap_or(U256::ZERO);
+            let actual_index = result_to_u256(&chunk[1]);
             let expected_index = row.last_index.unwrap_or(U256::ZERO);
             if actual_index != expected_index {
                 divergences.push(PositionDivergence {
@@ -312,6 +320,18 @@ pub async fn verify_touched_positions_on_conn(
     }
 
     Ok(divergences)
+}
+
+/// Map a Multicall3 sub-call result to a U256: a successful call with a
+/// decodable 32-byte return decodes; anything else (revert, short return) is
+/// `U256::ZERO` — matching the prior per-call
+/// `eth_call().ok().and_then(decode).unwrap_or(ZERO)` semantics.
+fn result_to_u256(result: &MulticallResult) -> U256 {
+    if result.success {
+        decode_uint256_return(&result.return_data).unwrap_or(U256::ZERO)
+    } else {
+        U256::ZERO
+    }
 }
 
 // ── stkAAVE balance + GHO discount verification ─────────────────────────
@@ -420,6 +440,9 @@ pub async fn verify_stk_aave_balances_on_conn(
         .map_err(DbError::from)?;
 
     let mut divergences = Vec::new();
+    // Collect eligible rows first so the per-user `balanceOf` calls can be
+    // batched through one Multicall3 `aggregate3` instead of N serial eth_calls.
+    let mut eligible: Vec<(i64, Address, U256)> = Vec::new();
     for row in iter {
         let (user_id, user_addr_str, bal_str) = row.map_err(DbError::from)?;
         let Ok(user_address) = user_addr_str.parse() else {
@@ -429,24 +452,31 @@ pub async fn verify_stk_aave_balances_on_conn(
             .as_deref()
             .and_then(|s| parse_u256(s).ok())
             .unwrap_or(U256::ZERO);
-
-        let calldata = build_call_data(BALANCE_OF_SELECTOR, user_address);
-        let actual = provider
-            .eth_call(&token_address, calldata, Some(block_number))
-            .await
-            .ok()
-            .and_then(|b| decode_uint256_return(&b))
-            .unwrap_or(U256::ZERO);
-
-        if actual != expected {
-            divergences.push(VerificationDivergence::StkAaveBalance {
-                user_id,
-                user_address,
-                token_address,
-                block_number,
-                expected,
-                actual,
-            });
+        eligible.push((user_id, user_address, expected));
+    }
+    if !eligible.is_empty() {
+        let calls: Vec<(Address, Bytes)> = eligible
+            .iter()
+            .map(|(_, user_address, _)| {
+                (
+                    token_address,
+                    build_call_data(BALANCE_OF_SELECTOR, *user_address),
+                )
+            })
+            .collect();
+        let results = multicall3_batch(provider, &calls, block_number).await?;
+        for ((user_id, user_address, expected), result) in eligible.iter().zip(results.iter()) {
+            let actual = result_to_u256(result);
+            if actual != *expected {
+                divergences.push(VerificationDivergence::StkAaveBalance {
+                    user_id: *user_id,
+                    user_address: *user_address,
+                    token_address,
+                    block_number,
+                    expected: *expected,
+                    actual,
+                });
+            }
         }
     }
     Ok(divergences)
@@ -522,30 +552,40 @@ pub async fn verify_gho_discount_amounts_on_conn(
         .map_err(DbError::from)?;
 
     let mut divergences = Vec::new();
+    // Collect eligible users first so the per-user `getDiscountPercent` calls
+    // can be batched through one Multicall3 `aggregate3`.
+    let mut eligible: Vec<(i64, Address, i64)> = Vec::new();
     for row in iter {
         let (user_id, user_addr_str, expected) = row.map_err(DbError::from)?;
         let Ok(user_address) = user_addr_str.parse() else {
             continue;
         };
-
-        let calldata = build_call_data(GET_DISCOUNT_PERCENT_SELECTOR, user_address);
-        let actual_u256 = provider
-            .eth_call(&v_token_address, calldata, Some(block_number))
-            .await
-            .ok()
-            .and_then(|b| decode_uint256_return(&b))
-            .unwrap_or(U256::ZERO);
-        let actual: i64 = actual_u256.try_into().unwrap_or(i64::MAX);
-
-        if actual != expected {
-            divergences.push(VerificationDivergence::GhoDiscount {
-                user_id,
-                user_address,
-                token_address: v_token_address,
-                block_number,
-                expected,
-                actual,
-            });
+        eligible.push((user_id, user_address, expected));
+    }
+    if !eligible.is_empty() {
+        let calls: Vec<(Address, Bytes)> = eligible
+            .iter()
+            .map(|(_, user_address, _)| {
+                (
+                    v_token_address,
+                    build_call_data(GET_DISCOUNT_PERCENT_SELECTOR, *user_address),
+                )
+            })
+            .collect();
+        let results = multicall3_batch(provider, &calls, block_number).await?;
+        for ((user_id, user_address, expected), result) in eligible.iter().zip(results.iter()) {
+            let actual_u256 = result_to_u256(result);
+            let actual: i64 = actual_u256.try_into().unwrap_or(i64::MAX);
+            if actual != *expected {
+                divergences.push(VerificationDivergence::GhoDiscount {
+                    user_id: *user_id,
+                    user_address: *user_address,
+                    token_address: v_token_address,
+                    block_number,
+                    expected: *expected,
+                    actual,
+                });
+            }
         }
     }
     Ok(divergences)
