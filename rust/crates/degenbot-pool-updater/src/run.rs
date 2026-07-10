@@ -99,6 +99,11 @@ pub struct ChunkProgress {
     /// back (an error mid-chunk → the whole chunk reverted → restart will
     /// re-process).
     pub committed: bool,
+    /// `true` iff this is the run's final chunk (`chunk_end >= last_block`).
+    /// Reported POST-commit so it reflects a committed final chunk (the
+    /// Python shell uses it to fire the completion-time backup). The Rust
+    /// completion full-verify (YWEUIR) computes finality inline.
+    pub is_final: bool,
 }
 
 /// The sink the chunk loop reports per-chunk progress to. Implementations:
@@ -851,6 +856,7 @@ pub fn run_pool_update(
                         pools_written: 0,
                         liquidity_apply_count: 0,
                         committed: false,
+                        is_final: false,
                     });
                     return Err(e);
                 }
@@ -885,6 +891,7 @@ pub fn run_pool_update(
             pools_written: chunk_report.pools_written,
             liquidity_apply_count: chunk_report.liquidity_apply_count,
             committed: true,
+            is_final: working_end_block >= last_block,
         });
         report.chunks_committed += 1;
         report.total_pools_written += chunk_report.pools_written;

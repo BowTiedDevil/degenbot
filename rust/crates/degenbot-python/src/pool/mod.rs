@@ -51,7 +51,7 @@ pub(crate) type ProgressCallable = Py<PyAny>;
 /// [`run_pool_update`]'s sync section after `tx.commit()`/rollback).
 /// Re-acquires the GIL via [`Python::attach`] + invokes the callable with a
 /// `dict` snapshot of the [`ChunkProgress`] (`chain_id`, `chunk_start`,
-/// `chunk_end`, `pools_written`, `liquidity_apply_count`, `committed`).
+/// `chunk_end`, `pools_written`, `liquidity_apply_count`, `committed`, `is_final`).
 ///
 /// Not exposed as a `#[pyclass]` — Python passes a raw `Callable`, + the
 /// seam wraps it. This mirrors `PySubscriberAdapter` (a Rust-side adapter
@@ -93,7 +93,8 @@ impl ProgressSink for PyProgressSink {
 /// Build the per-chunk `dict` reported to the Python progress callback.
 ///
 /// Shape: `{"chain_id": int, "chunk_start": int, "chunk_end": int,
-/// "pools_written": int, "liquidity_apply_count": int, "committed": bool}`.
+/// "pools_written": int, "liquidity_apply_count": int, "committed": bool,
+/// "is_final": bool}`.
 /// The committed-chunk field lets tqdm distinguish forward ticks from the
 /// rare rolled-back chunk (a progress bar's "skipped" branch).
 fn progress_report_to_dict(py: Python<'_>, p: &ChunkProgress) -> PyResult<Py<PyDict>> {
@@ -104,6 +105,7 @@ fn progress_report_to_dict(py: Python<'_>, p: &ChunkProgress) -> PyResult<Py<PyD
     dict.set_item("pools_written", p.pools_written)?;
     dict.set_item("liquidity_apply_count", p.liquidity_apply_count)?;
     dict.set_item("committed", p.committed)?;
+    dict.set_item("is_final", p.is_final)?;
     Ok(dict.unbind())
 }
 
@@ -155,7 +157,7 @@ fn update_report_to_dict(py: Python<'_>, r: &UpdateReport) -> PyResult<Py<PyDict
 /// - `rpc_url` — the HTTP RPC endpoint.
 /// - `progress_callback` — a Python callable invoked with a per-chunk `dict`
 ///   `{chain_id, chunk_start, chunk_end, pools_written,
-///   liquidity_apply_count, committed}` once per chunk boundary.
+///   liquidity_apply_count, committed, is_final}` once per chunk boundary.
 /// - `cancel_handle` — a [`CancelHandle`] constructed up front; a
 ///   `signal.SIGINT` handler calls `.cancel()` on it to stop the run at the
 ///   next chunk boundary.
@@ -558,6 +560,7 @@ mod tests {
                 pools_written: 2,
                 liquidity_apply_count: 1,
                 committed: true,
+                is_final: true,
             });
             sink.report_chunk(&ChunkProgress {
                 chain_id: 1,
@@ -566,6 +569,7 @@ mod tests {
                 pools_written: 0,
                 liquidity_apply_count: 0,
                 committed: false,
+                is_final: false,
             });
 
             // `seen` now holds 2 dicts. Assert the count + a field from each.
@@ -595,6 +599,17 @@ mod tests {
             );
             assert!(!second
                 .get_item("committed")
+                .unwrap()
+                .extract::<bool>()
+                .unwrap());
+            // The `is_final` field round-trips through the PyO3 dict.
+            assert!(first
+                .get_item("is_final")
+                .unwrap()
+                .extract::<bool>()
+                .unwrap());
+            assert!(!second
+                .get_item("is_final")
                 .unwrap()
                 .extract::<bool>()
                 .unwrap());
