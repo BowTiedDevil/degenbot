@@ -93,16 +93,6 @@ def pool() -> None:
     ),
 )
 @click.option(
-    "--verify/--no-verify",
-    "verify_alias",
-    default=None,
-    hidden=True,
-    help=(
-        "[DEPRECATED alias for --verify-chunk/--no-verify-chunk] Kept so"
-        " existing scripts don't break; prefer --verify-chunk."
-    ),
-)
-@click.option(
     "--verify-all/--no-verify-all",
     "verify_all",
     default=False,
@@ -134,7 +124,6 @@ def pool_update(  # noqa: PLR0917
     chunk_size: int,
     to_block: str,
     verify_chunk: bool,  # noqa: FBT001
-    verify_alias: bool | None,  # noqa: FBT001
     verify_all: bool,  # noqa: FBT001
     verify_all_interval: int,
 ) -> None:
@@ -158,12 +147,6 @@ def pool_update(  # noqa: PLR0917
             traceback (committed chunks stay durable).
 
     """
-    # The deprecated `--verify` alias overrides `--verify-chunk` only when
-    # explicitly passed (None = not passed). Once the alias is removed,
-    # delete this block.
-    if verify_alias is not None:
-        verify_chunk = verify_alias
-
     chain_id = bot.config.default_chain_id
     if chain_id is None:
         msg = (
@@ -372,7 +355,7 @@ def pool_verify(  # noqa: PLR0917
     the chain, else the named divergence list (bisect-able triage).
 
     This is the ad-hoc / spot-check sibling of the pre-commit gate
-    (``pool update --verify``); the gate runs the SAME compare before the
+    (``pool update --verify-chunk``); the gate runs the SAME compare before the
     write commits, while this reads the already-committed state.
 
     Raises:
