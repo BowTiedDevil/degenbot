@@ -868,7 +868,6 @@ pub fn run_pool_update(
                             block_number: working_end_block,
                             chain_id,
                             pool_manager_chain: inputs.pool_manager_chain,
-                            v4_manager_addresses: &inputs.v4_manager_addresses,
                         };
                         if let Err(e) =
                             crate::verify::verify_all_pools_committed_on_conn(&tx, &full_ctx)

@@ -28,7 +28,6 @@ use degenbot_core::errors::ProviderError;
 use degenbot_db::{ApplyLiquidityAtTick, ComputedLiquidityUpdate};
 use degenbot_rpc::multicall3::{multicall3_batch, MulticallResult};
 use degenbot_rpc::provider::AlloyProvider;
-use std::collections::HashMap;
 use std::str::FromStr;
 
 use crate::run::RunError;
@@ -471,10 +470,6 @@ pub struct FullVerifyCtx<'a> {
     /// The V4 `pool_manager_chain` (the `chain` column the V4 pool lookup uses
     /// — mirrors `ChunkInputs::pool_manager_chain`).
     pub pool_manager_chain: i64,
-    /// V4 `pool_hash` hex → the `PoolManager` address (for `extsload`).
-    /// Must cover every V4 pool hash for this chain; a missing entry is a
-    /// hard error (the run's `ChunkInputs` already builds this map).
-    pub v4_manager_addresses: &'a HashMap<String, Address>,
 }
 
 /// Run the market-wide pre-commit verification: every in-scope V3 + V4 pool's
@@ -533,8 +528,12 @@ pub fn verify_all_pools_committed_on_conn(
     }
 
     // V4 — every in-scope V4 pool's committed map.
+    // The PoolManager address comes straight from the DB query (via the
+    // `managed_pools.manager_id` → `pool_managers.address` FK), NOT from a
+    // chunk-local in-memory map — so pools created in any earlier chunk (with a
+    // `pool_hash` row but no liquidity event in the current chunk) are covered.
     let v4_hashes = DegenbotDb::fetch_v4_pool_hashes_on_conn(conn, ctx.chain_id)?;
-    for pool_hash in &v4_hashes {
+    for (pool_hash, pool_manager_address) in &v4_hashes {
         let Some(state) = DegenbotDb::fetch_v4_pool_update_state_on_conn(
             conn,
             pool_hash,
@@ -552,17 +551,6 @@ pub fn verify_all_pools_committed_on_conn(
             tick_bitmap,
             last_event: None,
         };
-        let pool_manager_address = ctx
-            .v4_manager_addresses
-            .get(pool_hash)
-            .copied()
-            .ok_or_else(|| {
-                RunError::Provider(ProviderError::DecodingError {
-                    message: format!(
-                        "v4 full-verify: no PoolManager address for pool_hash {pool_hash:?}"
-                    ),
-                })
-            })?;
         let pool_id =
             B256::from_str(pool_hash.strip_prefix("0x").unwrap_or(pool_hash)).map_err(|e| {
                 ProviderError::DecodingError {
@@ -571,7 +559,7 @@ pub fn verify_all_pools_committed_on_conn(
             })?;
         let divergences = ctx.rt.block_on(verify_v4_liquidity_map_on_chain(
             ctx.provider,
-            pool_manager_address,
+            *pool_manager_address,
             pool_id,
             &computed,
             ctx.block_number,
@@ -1193,7 +1181,6 @@ mod tests {
     fn full_verify_ctx<'a>(
         provider: &'a AlloyProvider,
         rt: &'a tokio::runtime::Runtime,
-        v4_manager_addresses: &'a HashMap<String, Address>,
     ) -> FullVerifyCtx<'a> {
         FullVerifyCtx {
             provider,
@@ -1201,7 +1188,6 @@ mod tests {
             block_number: 100,
             chain_id: 1,
             pool_manager_chain: 1,
-            v4_manager_addresses,
         }
     }
 
@@ -1216,9 +1202,100 @@ mod tests {
         let provider = rt
             .block_on(AlloyProvider::new("http://127.0.0.1:9/", 5))
             .unwrap();
-        let v4: HashMap<String, Address> = HashMap::new();
-        let ctx = full_verify_ctx(&provider, &rt, &v4);
+        let ctx = full_verify_ctx(&provider, &rt);
         let conn = db.lock();
         assert!(verify_all_pools_committed_on_conn(&conn, &ctx).is_ok());
+    }
+
+    /// Reproduces the production crash: a V4 pool with a committed row but NO
+    /// liquidity event in the current chunk (so the chunk-local
+    /// `v4_manager_addresses` map does NOT contain it). The PoolManager address
+    /// must be resolved from the DB via the `manager_id` FK, NOT from the
+    /// chunk map. The pool has committed tick positions, so the verify reaches
+    /// the on-chain call — proving the address was resolved. The dummy
+    /// provider (127.0.0.1:9) will fail with a connection error, which is the
+    /// GREEN assertion: the error is an RPC failure, NOT the
+    /// "no PoolManager address" crash that masked the real bug.
+    #[test]
+    fn verify_v4_pool_manager_address_resolved_from_db_not_chunk_map() {
+        use degenbot_db::DegenbotDb;
+        use std::path::Path;
+
+        let (db, _state) = DegenbotDb::open_for_writes(Path::new(":memory:")).unwrap();
+        let conn = db.lock();
+        // FK enforcement is ON for test connections; the minimal V4 graph below
+        // intentionally omits the `erc20_tokens` / `pools` parent rows the FKs
+        // reference (production runs with FK off). Lift it for the fixture.
+        conn.execute_batch("PRAGMA foreign_keys=OFF;").unwrap();
+        // Insert a minimal V4 pool graph. `address` is the PoolManager. The
+        // chunk-local map (empty below) deliberately omits this pool_hash —
+        // the verify must read the address from `pool_managers.address` via
+        // the `managed_pools.manager_id` FK instead.
+        conn.execute(
+            "INSERT INTO exchanges (id, chain_id, name, active, factory) \
+             VALUES (1, 1, 'test-v4', 1, '0x0000000000000000000000000000000000000001')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO pool_managers (id, address, chain, kind, state_view, exchange_id) \
+             VALUES (1, '0x498581fF718922c3f8e6A244956aF099B2652b2b', 1, 'uniswap_v4', NULL, 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO managed_pools (id, kind, manager_id) VALUES (1, 'uniswap_v4', 1)",
+            [],
+        )
+        .unwrap();
+        // tick_spacing=1, committed markers set so `state` is `Some`.
+        conn.execute(
+            "INSERT INTO uniswap_v4_pools \
+             (managed_pool_id, pool_hash, hooks, currency0_id, currency1_id, \
+              fee_currency0, fee_currency1, fee_denominator, tick_spacing, \
+              liquidity_update_block, liquidity_update_log_index) \
+             VALUES (1, '0x96d4b53a38337a5733179751781178a2613306063c511b78cd02684739288c0a', \
+                     '0x0000000000000000000000000000000000000000', 0, 0, 0, 0, 0, 1, 100, 0)",
+            [],
+        )
+        .unwrap();
+        // A committed V4 tick position → the verify reaches the on-chain call
+        // (non-empty map), proving the PoolManager address was resolved + used.
+        // V4 uses its own `managed_pool_*` tables (not the V3 ones).
+        conn.execute(
+            "INSERT INTO managed_pool_liquidity_positions \
+             (id, managed_pool_id, tick, liquidity_net, liquidity_gross) \
+             VALUES (1, 1, 0, '0', '1')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO managed_pool_initialization_maps \
+             (id, managed_pool_id, word, bitmap) VALUES (1, 1, 0, '1')",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let provider = rt
+            .block_on(AlloyProvider::new("http://127.0.0.1:9/", 5))
+            .unwrap();
+        // The bug condition: the pool had NO liquidity event in the current
+        // chunk, so the chunk-local map would be empty. The verify must resolve
+        // the PoolManager address from the DB via the `manager_id` FK instead.
+        let ctx = full_verify_ctx(&provider, &rt);
+        let conn = db.lock();
+        let result = verify_all_pools_committed_on_conn(&conn, &ctx);
+        // GREEN: the address is resolved from the DB → the verify proceeds to
+        // the (dummy, connection-refused) RPC call. The error must be an RPC
+        // failure, NOT the "no PoolManager address" crash.
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            !msg.contains("no PoolManager address"),
+            "PoolManager address must be resolved from the DB via manager_id FK, \
+             not the chunk-local map. Got: {msg}"
+        );
     }
 }

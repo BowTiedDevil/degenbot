@@ -379,11 +379,39 @@ fn fetch_v3_pool_addresses_matches_python() {
 fn fetch_v4_pool_hashes_matches_python() {
     let (db, _state) = DegenbotDb::open(&fixture_db_path()).unwrap();
     let exp = fixture_expected();
-    let mut v4: Vec<String> = db.fetch_v4_pool_hashes(exp.chain_id).unwrap();
+    let mut v4: Vec<String> = db
+        .fetch_v4_pool_hashes(exp.chain_id)
+        .unwrap()
+        .into_iter()
+        .map(|(h, _addr)| h)
+        .collect();
     v4.sort();
     assert_eq!(
         v4, exp.v4_pools,
         "V4 pool hashes should match Python get_pools"
+    );
+}
+
+#[test]
+fn fetch_v4_pool_hashes_includes_pool_manager_address_via_fk() {
+    // The V4 full-verify resolves the PoolManager address from the DB via the
+    // `managed_pools.manager_id` → `pool_managers.address` FK (not a chunk-local
+    // in-memory map). This test pins that the DB reader returns the address
+    // alongside the hash, matching the committed PoolManager for the fixture's
+    // single V4 pool.
+    let (db, _state) = DegenbotDb::open(&fixture_db_path()).unwrap();
+    let exp = fixture_expected();
+    let rows = db.fetch_v4_pool_hashes(exp.chain_id).unwrap();
+    assert_eq!(rows.len(), 1, "fixture has exactly one V4 pool");
+    let (hash, addr) = &rows[0];
+    assert_eq!(
+        hash, &exp.v4_pool_hash,
+        "pool_hash should match the fixture"
+    );
+    assert_eq!(
+        addr,
+        &parse_addr(&exp.v4_pool_manager),
+        "PoolManager address should be resolved via the manager_id FK"
     );
 }
 

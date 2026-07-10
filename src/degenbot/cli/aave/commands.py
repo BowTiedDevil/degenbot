@@ -64,9 +64,6 @@ from degenbot.degenbot_rs import (
 from degenbot.degenbot_rs import (
     cleanup_zero_balance_positions as rs_cleanup_zero_balance_positions,
 )
-from degenbot.degenbot_rs import (
-    verify_all_positions_on_chain as rs_verify_all_positions_on_chain,
-)
 from degenbot.exceptions import DegenbotValueError
 from degenbot.logging import logger
 from degenbot.provider.block_helpers import get_number_for_block_identifier
@@ -425,32 +422,38 @@ def aave_update(
             durable). Other ``RuntimeError``s + ``ValueError`` propagate
             from the Rust core (DB/RPC/parse failures) + ``_resolve_to_block``
             (a malformed ``--to-block``) — see their docstrings.
-        AssertionError: If ``--verify-chunk`` finds a divergence at a chunk
-            boundary (the run aborts; committed chunks stay durable).
+
+    A ``--verify-chunk`` (default) or ``--verify-all`` pre-commit divergence
+    rolls back the chunk + surfaces as ``AssertionError`` (raised by the Rust
+    core, not this shell): ``last_update_block`` does NOT advance, so the
+    next run re-processes the same chunk; committed chunks stay durable.
 
     """
     # AVS4DR (epic AZGJUN): the per-market chunk loop is delegated to the Rust
-    # core (`degenbot_rs.run_aave_update`, tasks 6SWY4R + 5XNTC5). Python is a
-    # driver shell — market selection (READ), `--to-block` resolution, SIGINT ->
-    # cancel flag, tqdm-on-callback, a per-market report echo, + post-run
-    # `--verify-all` hygiene. The chunk loop, the RPC fetches, the decode, the
-    # DB writes, + the per-chunk transaction all live in the Rust core. The
-    # Python writer pipeline (`update_aave_market` below + `db_*.py` +
+    # core (`degenbot_rs.run_aave_update`). Python is a driver shell —
+    # market selection (READ), `--to-block` resolution, SIGINT -> cancel flag,
+    # tqdm-on-callback, a per-market report echo, + post-run cleanup/backup
+    # hygiene. The chunk loop, the RPC fetches, the decode, the DB writes, +
+    # the per-chunk transaction all live in the Rust core. The Python writer
+    # pipeline (`update_aave_market` below + `db_*.py` +
     # `event_handlers._process_*` + `transaction_processor`/
     # `operations_parser`/`token_processor`) is UNROUTED — kept available for
-    # the U5YIBG §4.2 cross-check; deletion is gated on CZM7TI (post-GREEN).
+    # the cross-check parity suite; deletion is gated on the Rust writer
+    # proving GREEN across the full historic replay.
     #
     # Behavior: verification policy is enforced by the Rust core.
     # - `--verify-chunk` (default ON): pre-commit touched-position verify
-    #   per chunk (Rust `verify_touched_positions_on_conn`, checks 1+2).
+    #   per chunk (Rust `verify_touched_positions_on_conn`).
     # - `--verify-all` (default OFF, opt-in): pre-commit FULL market-wide
     #   verify (all 4 checks) at `--verify-all-interval` block boundaries +
     #   at run completion (Rust `verify_all_positions_on_conn`). A divergence
     #   rolls back the chunk + does NOT advance `last_update_block`.
-    #   This restores the mid-loop interval verify the pre-cutover Python
-    #   loop lost (it interleaved verify+backup at `--backup-interval`
-    #   boundaries; backup is now completion-only — a mid-loop backup on a
-    #   possibly-rolled-back chunk is not useful).
+    # - With both off (default), `aave update` performs only the per-chunk
+    #   touched-user verify — no market-wide on-chain sweep, matching
+    #   `pool update`'s default. The old post-run full-market verify (serial
+    #   per-position `eth_call`s, O(all positions) RPC) is removed; the
+    #   pre-commit `--verify-all` gate supersedes it (stronger: pre-commit +
+    #   rolled-back-on-divergence).
     # - `--dry-run`: shell-level preview (skips the Rust call entirely). The
     #   Rust core has no dry-run flag; a full write-preview needs one (RQXEKH).
     # - `--one-chunk` is wired through the Rust core's `max_chunks` loop cap
@@ -619,44 +622,15 @@ def aave_update(
                         f"({report['total_events_applied']} events applied).",
                     )
 
-                    # Post-run hygiene. When `--verify-all` is OFF, this on-chain full
-                    # verify (on a separate read-only connection) is the only
-                    # full-verify surface — a last-line-of-defense on committed
-                    # state (a divergence already rolled back its chunk if the
-                    # pre-commit gate is off; here it surfaces drift between
-                    # the committed chunk + the now-current chain tip). When
-                    # `--verify-all` is ON, the Rust core already ran the
-                    # pre-commit full verify at interval boundaries + at
-                    # completion; re-verifying committed state post-run is
-                    # redundant RPC, so the on-chain verify is skipped.
-                    if not verify_all:
-                        divergences = rs_verify_all_positions_on_chain(
-                            database_path=database_path,
-                            rpc_url=rpc_url,
-                            market_id=market.id,
-                            chain_id=chain_id,
-                            block_number=report["to_block"],
-                        )
-                        if divergences:
-                            lines = [
-                                f"{len(divergences)} verification divergence(s) "
-                                f"at block {report['to_block']}:",
-                            ]
-                            for d in divergences:
-                                check = d["check"]
-                                user = d.get("user_address", d.get("position_id", "?"))
-                                if check == "scaled_token":
-                                    lines.append(
-                                        f"  {d['kind']} {d['field']}: {user} "
-                                        f"expected={d['expected']} actual={d['actual']}"
-                                    )
-                                else:
-                                    lines.append(
-                                        f"  {check}: {user} "
-                                        f"expected={d['expected']} actual={d['actual']}"
-                                    )
-                            raise AssertionError("\n".join(lines))
-
+                    # Post-run hygiene. The market-wide on-chain verify is owned by
+                    # the Rust core's pre-commit gate (`--verify-all` drives
+                    # `verify_all_at_completion`): it runs BEFORE the chunk
+                    # commits + rolls back on divergence — strictly stronger
+                    # than a post-commit re-read. With `--verify-all` off (the
+                    # default), `aave update` performs only the per-chunk
+                    # touched-user verify (matching `pool update`'s default —
+                    # no market-wide verify, fast). Cleanup + backup run
+                    # unconditionally / opt-in regardless.
                     rs_cleanup_zero_balance_positions(
                         database_path=database_path,
                         market_id=market.id,

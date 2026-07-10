@@ -397,20 +397,9 @@ impl DegenbotDb {
     /// # Errors
     ///
     /// Returns [`DbError::Sqlite`] on a query failure.
-    pub fn fetch_v4_pool_hashes(&self, chain_id: i64) -> Result<Vec<String>, DbError> {
+    pub fn fetch_v4_pool_hashes(&self, chain_id: i64) -> Result<Vec<(String, Address)>, DbError> {
         let conn = self.lock();
-        let mut stmt = conn.prepare(
-            "SELECT v4.pool_hash FROM uniswap_v4_pools v4 \
-             JOIN managed_pools mp ON mp.id = v4.managed_pool_id \
-             JOIN pool_managers pm ON pm.id = mp.manager_id \
-             WHERE pm.chain = ?1",
-        )?;
-        let rows = stmt.query_map(rusqlite::params![chain_id], |r| r.get::<_, String>(0))?;
-        let mut out = Vec::new();
-        for h in rows {
-            out.push(h?);
-        }
-        Ok(out)
+        Self::fetch_v4_pool_hashes_on_conn(&conn, chain_id)
     }
 
     /// Same as [`Self::fetch_v4_pool_hashes`] but runs on a caller-provided
@@ -422,17 +411,31 @@ impl DegenbotDb {
     pub fn fetch_v4_pool_hashes_on_conn(
         conn: &rusqlite::Connection,
         chain_id: i64,
-    ) -> Result<Vec<String>, DbError> {
+    ) -> Result<Vec<(String, Address)>, DbError> {
+        // SELECT the PoolManager `address` alongside the pool_hash — the V4
+        // full-verify needs it to call `extsload` on the right singleton, and
+        // it is cleanly retrievable via the `managed_pools.manager_id` →
+        // `pool_managers.address` FK already joined here. Resolving from the DB
+        // (not a chunk-local in-memory map) means pools created in any earlier
+        // chunk — which have a `pool_hash` row but no liquidity event in the
+        // current chunk — are covered. This was the root cause of the
+        // "v4 full-verify: no PoolManager address for pool_hash" crash.
         let mut stmt = conn.prepare(
-            "SELECT v4.pool_hash FROM uniswap_v4_pools v4 \
+            "SELECT v4.pool_hash, pm.address FROM uniswap_v4_pools v4 \
              JOIN managed_pools mp ON mp.id = v4.managed_pool_id \
              JOIN pool_managers pm ON pm.id = mp.manager_id \
              WHERE pm.chain = ?1",
         )?;
-        let rows = stmt.query_map(rusqlite::params![chain_id], |r| r.get::<_, String>(0))?;
+        let rows = stmt.query_map(rusqlite::params![chain_id], |r| {
+            let hash: String = r.get(0)?;
+            let addr_str: String = r.get(1)?;
+            let addr = decode_address(&addr_str)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            Ok((hash, addr))
+        })?;
         let mut out = Vec::new();
-        for h in rows {
-            out.push(h?);
+        for row in rows {
+            out.push(row?);
         }
         Ok(out)
     }
