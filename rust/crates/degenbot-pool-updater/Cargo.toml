@@ -21,6 +21,7 @@ suspicious = "warn"
 
 [dependencies]
 alloy = { version = "^2.0" }
+hex = { version = "^0.4" }
 degenbot-db = { path = "../degenbot-db" }
 degenbot-decoders = { path = "../degenbot-decoders" }
 degenbot-core = { path = "../degenbot-core" }
@@ -37,4 +38,5 @@ default = []
 [dev-dependencies]
 alloy = { version = "^2.0" }
 degenbot-rpc = { path = "../degenbot-rpc" }
+hex = { version = "^0.4" }
 tempfile = { version = "^3.0" }

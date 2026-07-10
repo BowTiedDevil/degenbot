@@ -111,6 +111,7 @@ fn chunk_inputs_with_v3_pool(exchange_id: i64, addr: Address) -> ChunkInputs {
         v3_liquidity: HashMap::new(),
         v4_liquidity: HashMap::new(),
         pool_manager_chain: CHAIN,
+        v4_manager_addresses: HashMap::new(),
     }
 }
 
@@ -139,7 +140,8 @@ fn chunk_interrupt_rolls_back_and_restart_is_clean() {
     {
         let mut guard = db.lock();
         let tx = guard.transaction().unwrap();
-        let report = apply_chunk_writes_on_conn(&tx, CHAIN, &specs, BLOCK_B, &inputs).unwrap();
+        let report =
+            apply_chunk_writes_on_conn(&tx, CHAIN, &specs, BLOCK_B, &inputs, None).unwrap();
         // The fn returned Ok (no injected failure) — the writes are staged in
         // the tx's buffer, visible to this connection, NOT yet durable.
         assert_eq!(
@@ -184,7 +186,8 @@ fn chunk_interrupt_rolls_back_and_restart_is_clean() {
     {
         let mut guard = db.lock();
         let tx = guard.transaction().unwrap();
-        let report = apply_chunk_writes_on_conn(&tx, CHAIN, &specs, BLOCK_B, &inputs).unwrap();
+        let report =
+            apply_chunk_writes_on_conn(&tx, CHAIN, &specs, BLOCK_B, &inputs, None).unwrap();
         assert_eq!(
             report.pools_written, 1,
             "restart re-processes the rolled-back chunk + the INSERT succeeds (no UNIQUE failure)",
@@ -225,7 +228,7 @@ fn chunk_interrupt_rolls_back_and_restart_is_clean() {
         let mut guard = db.lock();
         let tx = guard.transaction().unwrap();
         let report =
-            apply_chunk_writes_on_conn(&tx, CHAIN, &specs, BLOCK_C, &inputs_chunk2).unwrap();
+            apply_chunk_writes_on_conn(&tx, CHAIN, &specs, BLOCK_C, &inputs_chunk2, None).unwrap();
         assert_eq!(
             report.pools_written, 1,
             "the second chunk staged one new pool"

@@ -49,10 +49,20 @@ pub use aave::{
     AaveCollateralPositionRecord, AaveDebtPositionRecord, AaveGhoAsset, AaveUserRecord,
 };
 pub use connection::DegenbotDb;
+/// Re-export the cl-math in-memory liquidity types (`liquidity_gross: U128`,
+/// `liquidity_net: I256`, plus `bitmap: U256`) the liquidity updater applies
+/// against — aliased so they don't collide with the snapshot batch-read `U256`
+/// flavor above. These are the field types of `ComputedLiquidityUpdate` + the
+/// on-chain verifier's comparison inputs.
+pub use degenbot_cl_math::cl_lib::liquidity_mapping::{
+    BitmapAtWord as ApplyBitmapAtWord, LiquidityAtTick as ApplyLiquidityAtTick,
+};
 pub use discovery::{V2PoolRowInput, V3PoolRowInput, V4PoolRowInput};
 pub use error::DbError;
 pub use heal::{heal_database, HealReport};
-pub use liquidity_updater::{BlockLog, LiquidityUpdateEvent, PoolUpdateState};
+pub use liquidity_updater::{
+    BlockLog, ComputedLiquidityUpdate, LiquidityUpdateEvent, PoolUpdateState,
+};
 pub use migrate::SchemaState;
 pub use ops::{
     backup_database, compact_database, convert_alembic_to_rust_owned, create_new_database,

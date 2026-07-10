@@ -1,0 +1,913 @@
+//! On-chain-truth verification of a V3/V4 pool's in-memory liquidity map
+//! against on-chain truth at a block number — the pre-commit gate
+//! (`run_pool_update --verify`, Full per-pool per-chunk).
+//!
+//! **V3** reads `IUniswapV3Pool.ticks(int24)` + `tickBitmap(int16)` (selectors
+//! `0xf30dba93` / `0x5339c296`) via `multicall3_batch` — one call per in-memory
+//! tick/word.
+//!
+//! **V4** reads the singleton `PoolManager`'s tick/bitmap storage via
+//! `extsload(bytes32[])` (selector `0xdbd035ff`) — all tick + bitmap slots in a
+//! single `eth_call` round trip (cheaper than V3). See
+//! [`docs/architecture/v4_poolmanager_storage_layout.md`] for the slot layout.
+//!
+//! Pure encode/decode/compare helpers (`ticks_calldata`, `tick_bitmap_calldata`,
+//! `decode_ticks_return`, `decode_tick_bitmap_return`, `compare_tick`,
+//! `compare_bitmap_word`, `v4_*_slot`, `encode_extsload_call`,
+//! `decode_extsload_return`) are offline-unit-tested (no RPC): the reference
+//! return payloads + slot vectors are built with an INDEPENDENT encoder
+//! (`cast keccak` for slot math, alloy `DynSolValue` ABI encode for returns) so
+//! the decoder is checked against a different oracle than the one used to build
+//! the inputs.
+//!
+//! Zero `pyo3` (enforced by `just check-no-pyo3-in-cores`).
+
+use alloy::dyn_abi::{DynSolType, DynSolValue};
+use alloy::primitives::{keccak256, Address, Bytes, B256, I256, U128, U256};
+use degenbot_core::errors::ProviderError;
+use degenbot_db::{ApplyLiquidityAtTick, ComputedLiquidityUpdate};
+use degenbot_rpc::multicall3::{multicall3_batch, MulticallResult};
+use degenbot_rpc::provider::AlloyProvider;
+
+use crate::run::RunError;
+
+/// `keccak256("ticks(int24)")[0..4]` = `0xf30dba93`.
+const TICKS_SELECTOR: [u8; 4] = [0xf3, 0x0d, 0xba, 0x93];
+/// `keccak256("tickBitmap(int16)")[0..4]` = `0x5339c296`.
+const TICK_BITMAP_SELECTOR: [u8; 4] = [0x53, 0x39, 0xc2, 0x96];
+
+/// A named, bisect-able divergence between the in-memory map and on-chain
+/// truth. Empty list = GREEN.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LiquidityDivergence {
+    /// In-memory tick gross != on-chain `ticks().liquidityGross`. A `actual ==
+    /// U128::ZERO` with a non-zero `expected` is the ghost-row / stale-tick
+    /// class (a drained pool's undrained row — the 6SRJRL corruption shape).
+    TickGross {
+        tick: i32,
+        expected: U128,
+        actual: U128,
+    },
+    /// In-memory tick net != on-chain `ticks().liquidityNet`.
+    TickNet {
+        tick: i32,
+        expected: I256,
+        actual: I256,
+    },
+    /// In-memory bitmap word != on-chain `tickBitmap(word)`.
+    BitmapWord {
+        word: i32,
+        expected: U256,
+        actual: U256,
+    },
+    /// The multicall sub-call reverted (or returned < 64 bytes). Treated as
+    /// gross/net unknown — the in-memory tick's expected values are surfaced
+    /// for triage. (V3 `ticks()` never reverts — it returns zeros for an
+    /// uninitialized tick — so this fires only on a transport/node fault.)
+    TickCallReverted { tick: i32 },
+    /// The multicall sub-call for a bitmap word reverted / returned < 32 bytes.
+    BitmapCallReverted { word: i32 },
+}
+
+/// Build the 36-byte calldata `selector(4) + int24 sign-extended to 32 bytes`.
+fn ticks_calldata(tick: i32) -> Bytes {
+    int_selector_calldata(TICKS_SELECTOR, tick)
+}
+
+/// Build the 36-byte calldata `selector(4) + int16 sign-extended to 32 bytes`.
+fn tick_bitmap_calldata(word: i32) -> Bytes {
+    int_selector_calldata(TICK_BITMAP_SELECTOR, word)
+}
+
+/// `selector(4) + intX value sign-extended to a 32-byte word`. `key` is an
+/// `i32` holding an `int24`/`int16`; its 4-byte big-endian representation
+/// already carries the sign bit in the high byte, so filling `[4..32]` with
+/// `0xff` for negatives correctly sign-extends to `int256`.
+fn int_selector_calldata(selector: [u8; 4], key: i32) -> Bytes {
+    let mut buf = [0u8; 36];
+    buf[..4].copy_from_slice(&selector);
+    if key < 0 {
+        buf[4..32].fill(0xff);
+    }
+    buf[32..36].copy_from_slice(&key.to_be_bytes());
+    Bytes::copy_from_slice(&buf)
+}
+
+/// Decode a V3 `ticks(int24)` return into `(liquidityGross, liquidityNet)`.
+///
+/// The return is the tuple
+/// `(uint128, int128, uint256, uint256, int56, uint160, uint32, bool)`;
+/// `liquidityGross` is the low 128 bits of word 0, `liquidityNet` is word 1
+/// (int128 ABI-sign-extended to 256 bits). Returns `None` when the payload is
+/// shorter than 64 bytes (decode failure — caller treats it as a revert).
+fn decode_ticks_return(bytes: &[u8]) -> Option<(U128, I256)> {
+    if bytes.len() < 64 {
+        return None;
+    }
+    let mut gross_word = [0u8; 32];
+    gross_word.copy_from_slice(&bytes[0..32]);
+    let mut net_word = [0u8; 32];
+    net_word.copy_from_slice(&bytes[32..64]);
+    let gross_low: [u8; 16] = gross_word[16..32].try_into().expect("16 bytes");
+    let gross = U128::from_be_bytes(gross_low);
+    let net = I256::from_be_bytes::<32>(net_word);
+    Some((gross, net))
+}
+
+/// Decode a V3 `tickBitmap(int16)` return (`uint256`) into a `U256`. Returns
+/// `None` when shorter than 32 bytes.
+fn decode_tick_bitmap_return(bytes: &[u8]) -> Option<U256> {
+    if bytes.len() < 32 {
+        return None;
+    }
+    let mut word = [0u8; 32];
+    word.copy_from_slice(&bytes[0..32]);
+    Some(U256::from_be_bytes::<32>(word))
+}
+
+/// Decode a `MulticallResult` (ticks call) into `Some((gross, net))` or `None`
+/// on revert / short return.
+fn decode_ticks_result(r: &MulticallResult) -> Option<(U128, I256)> {
+    if r.success {
+        decode_ticks_return(r.return_data.as_ref())
+    } else {
+        None
+    }
+}
+
+/// Decode a `MulticallResult` (tickBitmap call) into `Some(word)` or `None`.
+fn decode_bitmap_result(r: &MulticallResult) -> Option<U256> {
+    if r.success {
+        decode_tick_bitmap_return(r.return_data.as_ref())
+    } else {
+        None
+    }
+}
+
+/// Compare one in-memory tick against the decoded on-chain `(gross, net)`.
+/// `None` chain values ⇒ the call reverted → `TickCallReverted`.
+fn compare_tick(
+    tick: i32,
+    expected: &ApplyLiquidityAtTick,
+    actual: Option<(U128, I256)>,
+) -> Vec<LiquidityDivergence> {
+    let Some((gross, net)) = actual else {
+        return vec![LiquidityDivergence::TickCallReverted { tick }];
+    };
+    let mut out = Vec::new();
+    if gross != expected.liquidity_gross {
+        out.push(LiquidityDivergence::TickGross {
+            tick,
+            expected: expected.liquidity_gross,
+            actual: gross,
+        });
+    }
+    if net != expected.liquidity_net {
+        out.push(LiquidityDivergence::TickNet {
+            tick,
+            expected: expected.liquidity_net,
+            actual: net,
+        });
+    }
+    out
+}
+
+/// Compare one in-memory bitmap word against the decoded on-chain `uint256`.
+fn compare_bitmap_word(
+    word: i32,
+    expected: U256,
+    actual: Option<U256>,
+) -> Vec<LiquidityDivergence> {
+    let Some(bitmap) = actual else {
+        return vec![LiquidityDivergence::BitmapCallReverted { word }];
+    };
+    if bitmap == expected {
+        Vec::new()
+    } else {
+        vec![LiquidityDivergence::BitmapWord {
+            word,
+            expected,
+            actual: bitmap,
+        }]
+    }
+}
+
+/// Verify a V3 pool's entire in-memory liquidity map against on-chain truth at
+/// `block_number` (Full per-pool verification). Issues one `ticks(int24)` call
+/// per in-memory tick + one `tickBitmap(int16)` call per in-memory bitmap
+/// word, batched through Multicall3. Returns the divergence list (empty =
+/// GREEN); a non-empty list from the chunk loop's pre-commit gate rolls back
+/// the chunk's transaction + does NOT advance the exchange's
+/// `last_update_block`.
+///
+/// # Errors
+///
+/// Returns [`RunError::Provider`] only if the Multicall3 batch + its
+/// sequential `eth_call` fallback BOTH fail (a transport/node fault — not a
+/// per-tick revert, which surfaces as a divergence, not an error).
+#[allow(clippy::missing_errors_doc)]
+pub async fn verify_v3_liquidity_map_on_chain(
+    provider: &AlloyProvider,
+    pool_address: Address,
+    computed: &ComputedLiquidityUpdate,
+    block_number: u64,
+) -> Result<Vec<LiquidityDivergence>, RunError> {
+    let mut divergences = Vec::new();
+
+    let ticks: Vec<i32> = computed.tick_data.keys().copied().collect();
+    let words: Vec<i32> = computed.tick_bitmap.keys().copied().collect();
+
+    let mut calls: Vec<(Address, Bytes)> = Vec::with_capacity(ticks.len() + words.len());
+    for &tick in &ticks {
+        calls.push((pool_address, ticks_calldata(tick)));
+    }
+    let tick_count = ticks.len();
+    for &word in &words {
+        calls.push((pool_address, tick_bitmap_calldata(word)));
+    }
+
+    let results = multicall3_batch(provider, &calls, Some(block_number)).await?;
+
+    for (i, &tick) in ticks.iter().enumerate() {
+        let expected = &computed.tick_data[&tick];
+        divergences.extend(compare_tick(
+            tick,
+            expected,
+            decode_ticks_result(&results[i]),
+        ));
+    }
+    for (j, &word) in words.iter().enumerate() {
+        let expected = computed.tick_bitmap[&word].bitmap;
+        divergences.extend(compare_bitmap_word(
+            word,
+            expected,
+            decode_bitmap_result(&results[tick_count + j]),
+        ));
+    }
+    Ok(divergences)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// V4 on-chain-truth verification via `PoolManager.extsload(bytes32[])`
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// V4 exposes no public `ticks()`/`tickBitmap()` view; tick state is internal
+// storage read via raw slot reads. The PoolManager's only per-tick/per-word
+// storage is the `ticks` + `tickBitmap` mappings nested INSIDE the
+// per-pool `Pool.State` struct value (`_pools[PoolId]` at top-level slot 6).
+// See `docs/architecture/v4_poolmanager_storage_layout.md` for the full
+// derivation (sourced from the verified vendored V4-core `PoolManager.sol` +
+// `forge inspect`).
+//
+// Slot math (all `abi.encode` = 32-byte words, keys sign-extended):
+//   S_state      = keccak256(poolId || uint256(6))
+//   ticks_base   = S_state + 4   (nested mapping base within Pool.State)
+//   bitmap_base  = S_state + 5
+//   TickInfo[t]  = keccak256(int256(t)  || ticks_base)
+//   BitmapWord[w]= keccak256(int256(w) || bitmap_base)
+// The TickInfo struct's first slot packs `liquidityGross`(low 128) +
+// `liquidityNet`(high 128, int128 sign-extended). A slot for an
+// uninitialized tick reads as `bytes32(0)` (gross=0, net=0) — the V4 analog
+// of V3's `ticks()`-returns-zeros, so the ghost-row catch works identically.
+
+/// Top-level base storage slot of `_pools: mapping(PoolId => Pool.State)`
+/// in the deployed V4 `PoolManager` (slot 6 — behind `Owned`/`ProtocolFees`/
+/// `ERC6909` ancestors; see the layout doc).
+const V4_POOLS_BASE_SLOT: u64 = 6;
+/// Relative slot offset of the `ticks` mapping within `Pool.State`.
+const V4_TICKS_MAPPING_OFFSET: u64 = 4;
+/// Relative slot offset of the `tickBitmap` mapping within `Pool.State`.
+const V4_BITMAP_MAPPING_OFFSET: u64 = 5;
+/// `keccak256("extsload(bytes32[])")[0..4]` = `0xdbd035ff`.
+const EXTSLOAD_BATCH_SELECTOR: [u8; 4] = [0xdb, 0xd0, 0x35, 0xff];
+
+/// Compute `S_state = keccak256(abi.encode(poolId, uint256(6)))` — the
+/// `Pool.State` value base for `pool_id` (the on-chain `PoolId` bytes32).
+#[allow(clippy::cast_possible_truncation)] // V4_POOLS_BASE_SLOT == 6, fits u8
+fn v4_state_base_slot(pool_id: B256) -> U256 {
+    let mut buf = [0u8; 64];
+    buf[0..32].copy_from_slice(pool_id.as_slice());
+    // uint256(V4_POOLS_BASE_SLOT) — 32 big-endian bytes.
+    buf[63] = V4_POOLS_BASE_SLOT as u8;
+    let hash = keccak256(buf);
+    U256::from_be_bytes(hash.0)
+}
+
+/// Compute a nested-mapping value slot:
+/// `keccak256(abi.encode(int256(key), uint256(base)))`. `key` (an `int24`/
+/// `int16` in `i32`) is two's-complement sign-extended to 32 bytes; `base` is
+/// the (already-computed) mapping base slot as a 32-byte big-endian word.
+fn nested_mapping_slot(key: i32, base: U256) -> B256 {
+    let mut buf = [0u8; 64];
+    // Sign-extend the int24/int16 key to int256 (32 bytes).
+    if key < 0 {
+        buf[0..28].fill(0xff);
+    }
+    buf[28..32].copy_from_slice(&key.to_be_bytes());
+    // `base` as 32 big-endian bytes.
+    buf[32..64].copy_from_slice(&base.to_be_bytes::<32>());
+    keccak256(buf)
+}
+
+/// Decode a V4 `TickInfo` storage slot (packed `liquidityGross` low-128 +
+/// `liquidityNet` high-128) into `(gross, net)`. Unlike V3's `ticks()` (which
+/// ABI-encodes gross + net as SEPARATE 32-byte words), V4 packs both into ONE
+/// storage slot: gross in the low 128 bits (bytes [16..32]), net in the high
+/// 128 bits (bytes [0..16]) as an `int128` that must be sign-extended to the
+/// `I256` the in-memory map carries.
+fn decode_tick_from_slot(word: B256) -> (U128, I256) {
+    let bytes: &[u8; 32] = word.as_ref();
+    // gross = low 128 bits (bytes [16..32]).
+    let gross_low: [u8; 16] = bytes[16..32].try_into().expect("16 bytes");
+    let gross = U128::from_be_bytes(gross_low);
+    // net = high 128 bits (bytes [0..16]) as an int128, sign-extended to I256.
+    let mut net_buf = [0u8; 32];
+    net_buf[16..32].copy_from_slice(&bytes[0..16]); // int128 value → low 128 of I256
+    if bytes[0] & 0x80 != 0 {
+        net_buf[0..16].fill(0xff); // sign-extend the high 128 bits
+    }
+    let net = I256::from_be_bytes::<32>(net_buf);
+    (gross, net)
+}
+
+/// Decode a V4 bitmap storage slot into its raw `uint256` word.
+fn decode_bitmap_from_slot(word: B256) -> U256 {
+    U256::from_be_bytes::<32>(word.0)
+}
+
+/// Encode `extsload(bytes32[] slots)` calldata: `selector(4) +
+/// abi_encode_params(bytes32[])`.
+fn encode_extsload_call(slots: &[B256]) -> Bytes {
+    let arr: Vec<DynSolValue> = slots
+        .iter()
+        .map(|s| DynSolValue::FixedBytes(*s, 32))
+        .collect();
+    let params = DynSolValue::Tuple(vec![DynSolValue::Array(arr)]);
+    let mut cd = Vec::with_capacity(4 + 64 + 32 * slots.len());
+    cd.extend_from_slice(&EXTSLOAD_BATCH_SELECTOR);
+    cd.extend_from_slice(&params.abi_encode_params());
+    Bytes::from(cd)
+}
+
+/// Decode an `extsload(bytes32[])` return (`bytes32[]`) into the slot-value
+/// list, in input order. Returns `None` on a malformed payload. An empty return
+/// for a non-empty call is a hard decode failure (not the revert case — a
+/// revert surfaces as an `eth_call` error from the provider).
+fn decode_extsload_return(data: &[u8], n: usize) -> Option<Vec<B256>> {
+    if n == 0 {
+        return Some(Vec::new());
+    }
+    let ty: DynSolType = "bytes32[]".parse().ok()?;
+    let decoded = ty.abi_decode(data).ok()?;
+    let DynSolValue::Array(arr) = decoded else {
+        return None;
+    };
+    Some(
+        arr.iter()
+            .filter_map(|v| match v {
+                DynSolValue::FixedBytes(b, 32) => Some(*b),
+                _ => None,
+            })
+            .collect(),
+    )
+}
+
+/// Decode an `eth_call`'s extsload return into the slot-value list, mapping a
+/// revert / decode failure into `RunError::Provider` (a V4 extsload revert is a
+/// transport/deployment fault, not a per-tick divergence — unlike V3, V4 reads
+/// ALL slots in one call, so a single revert blocks the whole pool's gate).
+fn decode_extsload_or_error(data: &Bytes, n: usize, pool_id: B256) -> Result<Vec<B256>, RunError> {
+    decode_extsload_return(data, n).ok_or_else(|| {
+        RunError::Provider(ProviderError::DecodingError {
+            message: format!("v4 extsload return decode failed for pool {pool_id} ({n} slots)"),
+        })
+    })
+}
+
+/// Verify a V4 pool's entire in-memory liquidity map against on-chain truth at
+/// `block_number` (Full per-pool verification). Issues ONE `extsload(bytes32[])`
+/// call covering every in-memory tick slot + bitmap-word slot (cheaper than the
+/// V3 per-tick path — a single round trip per pool). Returns the named
+/// divergence list (empty = GREEN); a non-empty list from the pre-commit gate
+/// rolls back the chunk's transaction + does NOT advance `last_update_block`.
+///
+/// `pool_id` is the on-chain `PoolId` (`bytes32`); `pool_manager_address` is the
+/// deployed V4 `PoolManager` singleton.
+///
+/// # Errors
+///
+/// Returns [`RunError::Provider`] if the `eth_call` fails or the extsload
+/// return is malformed (a deployment without the batched `extsload(bytes32[])`
+/// overload, or a transport fault). An uninitialized on-chain tick reads as
+/// `bytes32(0)` (NOT an error) — it surfaces as a divergence if the in-memory
+/// map has non-zero liquidity for that tick.
+#[allow(clippy::missing_errors_doc)]
+pub async fn verify_v4_liquidity_map_on_chain(
+    provider: &AlloyProvider,
+    pool_manager_address: Address,
+    pool_id: B256,
+    computed: &ComputedLiquidityUpdate,
+    block_number: u64,
+) -> Result<Vec<LiquidityDivergence>, RunError> {
+    let ticks: Vec<i32> = computed.tick_data.keys().copied().collect();
+    let words: Vec<i32> = computed.tick_bitmap.keys().copied().collect();
+
+    let state_base = v4_state_base_slot(pool_id);
+    let ticks_base = state_base + U256::from(V4_TICKS_MAPPING_OFFSET);
+    let bitmap_base = state_base + U256::from(V4_BITMAP_MAPPING_OFFSET);
+
+    let mut slots: Vec<B256> = Vec::with_capacity(ticks.len() + words.len());
+    for &tick in &ticks {
+        slots.push(nested_mapping_slot(tick, ticks_base));
+    }
+    for &word in &words {
+        slots.push(nested_mapping_slot(word, bitmap_base));
+    }
+
+    if slots.is_empty() {
+        return Ok(Vec::new()); // empty pool — nothing to verify
+    }
+
+    let calldata = encode_extsload_call(&slots);
+    let return_data = provider
+        .eth_call(&pool_manager_address, calldata, Some(block_number))
+        .await?;
+    let slot_values = decode_extsload_or_error(&return_data, slots.len(), pool_id)?;
+
+    let mut divergences = Vec::new();
+    for (i, &tick) in ticks.iter().enumerate() {
+        let (gross, net) = decode_tick_from_slot(slot_values[i]);
+        let expected = &computed.tick_data[&tick];
+        divergences.extend(compare_tick(tick, expected, Some((gross, net))));
+    }
+    for (j, &word) in words.iter().enumerate() {
+        let bitmap = decode_bitmap_from_slot(slot_values[ticks.len() + j]);
+        let expected = computed.tick_bitmap[&word].bitmap;
+        divergences.extend(compare_bitmap_word(word, expected, Some(bitmap)));
+    }
+    Ok(divergences)
+}
+
+// ─────────── internal ABI-encode reference for tests (independent of the
+// decoder under test) ───────────
+
+#[cfg(test)]
+/// Independently ABI-encode a V3 `ticks()` return tuple — built with a
+/// DIFFERENT encoder path (`DynSolValue::abi_encode`) than the byte-slicing
+/// `decode_ticks_return`, so the decoder's correctness is checked against a
+/// second encoder.
+#[cfg(test)]
+fn encode_ticks_return_ref(gross: u128, net: i128) -> Vec<u8> {
+    let val = DynSolValue::Tuple(vec![
+        DynSolValue::Uint(U256::from(gross), 128),
+        DynSolValue::Int(I256::try_from(net).unwrap(), 128),
+        DynSolValue::Uint(U256::ZERO, 256),
+        DynSolValue::Uint(U256::ZERO, 256),
+        DynSolValue::Int(I256::ZERO, 56),
+        DynSolValue::Uint(U256::ZERO, 160),
+        DynSolValue::Uint(U256::ZERO, 32),
+        DynSolValue::Bool(false),
+    ]);
+    val.abi_encode()
+}
+
+#[cfg(test)]
+fn encode_uint256_return_ref(word: U256) -> Vec<u8> {
+    DynSolValue::Uint(word, 256).abi_encode()
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use alloy::primitives::hex_literal::hex;
+    use alloy::primitives::{I256, U128, U256};
+    use degenbot_db::ApplyBitmapAtWord as BitmapAtWord;
+    use std::collections::HashMap;
+
+    // ── selectors (independently re-derived with cast: `ticks(int24)`
+    //    0xf30dba93, `tickBitmap(int16)` 0x5339c296) ──
+
+    #[test]
+    fn selectors_match_known_cast_values() {
+        assert_eq!(hex::encode(TICKS_SELECTOR), "f30dba93");
+        assert_eq!(hex::encode(TICK_BITMAP_SELECTOR), "5339c296");
+    }
+
+    // ── calldata sign-extension ──
+
+    #[test]
+    fn ticks_calldata_positive_tick() {
+        let cd = ticks_calldata(100);
+        assert_eq!(cd.len(), 36);
+        assert_eq!(&cd[..4], &TICKS_SELECTOR);
+        // arg = 0x00..00 00 00 00 64 (100)
+        assert!(cd[4..32].iter().all(|&b| b == 0));
+        assert_eq!(&cd[32..36], &[0, 0, 0, 100]);
+    }
+
+    #[test]
+    fn ticks_calldata_negative_tick_is_sign_extended() {
+        let cd = ticks_calldata(-100);
+        assert_eq!(&cd[..4], &TICKS_SELECTOR);
+        assert!(cd[4..32].iter().all(|&b| b == 0xff), "high bytes 0xff");
+        // low 4 bytes = -100 as i32 = 0xffffff9c
+        assert_eq!(&cd[32..36], &[0xff, 0xff, 0xff, 0x9c]);
+    }
+
+    #[test]
+    fn tick_bitmap_calldata_sign_extends_negative_word() {
+        let cd = tick_bitmap_calldata(-1);
+        assert_eq!(&cd[..4], &TICK_BITMAP_SELECTOR);
+        assert!(cd[4..32].iter().all(|&b| b == 0xff));
+        assert_eq!(
+            U256::from_be_bytes::<32>(cd[4..36].try_into().unwrap()),
+            U256::MAX
+        );
+    }
+
+    // ── decode against an independent alloy DynSolValue encoder ──
+
+    #[test]
+    fn decode_ticks_return_matches_ref_encoder() {
+        let payload = encode_ticks_return_ref(500, -100);
+        let (gross, net) = decode_ticks_return(&payload).expect("decode");
+        assert_eq!(gross, U128::from(500u64));
+        assert_eq!(net, I256::try_from(-100i64).unwrap());
+    }
+
+    #[test]
+    fn decode_ticks_return_drained_tick_is_zeros() {
+        // An uninitialized tick returns gross=0, net=0, initialized=false.
+        let payload = encode_ticks_return_ref(0, 0);
+        let (gross, net) = decode_ticks_return(&payload).expect("decode");
+        assert_eq!(gross, U128::ZERO);
+        assert_eq!(net, I256::ZERO);
+    }
+
+    #[test]
+    fn decode_ticks_return_too_short_is_none() {
+        assert!(decode_ticks_return(&[0u8; 10]).is_none());
+    }
+
+    #[test]
+    fn decode_tick_bitmap_return_matches_ref_encoder() {
+        let word = U256::from_be_bytes::<32>([0x01; 32]);
+        let payload = encode_uint256_return_ref(word);
+        let decoded = decode_tick_bitmap_return(&payload).expect("decode");
+        assert_eq!(decoded, word);
+    }
+
+    // ── compare: the divergence surface ──
+
+    fn tick(gross: u128, net: i128) -> ApplyLiquidityAtTick {
+        ApplyLiquidityAtTick {
+            liquidity_gross: U128::from(gross),
+            liquidity_net: I256::try_from(net).unwrap(),
+            block: 0,
+        }
+    }
+
+    #[test]
+    fn compare_tick_match_is_empty() {
+        let expected = tick(500, -100);
+        assert!(compare_tick(
+            7,
+            &expected,
+            Some((U128::from(500u64), I256::try_from(-100i64).unwrap()))
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn compare_tick_gross_differs_is_ghost_row_when_actual_zero() {
+        // The 6SRJRL corruption shape: in-memory gross 500, on-chain drained
+        // (gross 0) → TickGross with actual == 0.
+        let expected = tick(500, 0);
+        let d = compare_tick(12345, &expected, Some((U128::ZERO, I256::ZERO)));
+        assert_eq!(
+            d,
+            vec![LiquidityDivergence::TickGross {
+                tick: 12345,
+                expected: U128::from(500u64),
+                actual: U128::ZERO,
+            }]
+        );
+    }
+
+    #[test]
+    fn compare_tick_revert_emits_tickcallreverted() {
+        let expected = tick(100, 0);
+        let d = compare_tick(1, &expected, None);
+        assert_eq!(d, vec![LiquidityDivergence::TickCallReverted { tick: 1 }]);
+    }
+
+    #[test]
+    fn compare_bitmap_word_match_and_differ() {
+        let w = U256::from(0xdeadu64);
+        assert!(compare_bitmap_word(3, w, Some(w)).is_empty());
+        let d = compare_bitmap_word(3, w, Some(U256::from(0xbeefu64)));
+        assert_eq!(
+            d,
+            vec![LiquidityDivergence::BitmapWord {
+                word: 3,
+                expected: w,
+                actual: U256::from(0xbeefu64),
+            }]
+        );
+    }
+
+    // ── end-to-end over a fake MulticallResult vector (no RPC) ──
+
+    fn mult_result(payload: Vec<u8>) -> MulticallResult {
+        MulticallResult {
+            success: true,
+            return_data: Bytes::from(payload),
+        }
+    }
+
+    #[test]
+    fn compare_results_drained_pool_catches_ghost_row() {
+        // In-memory: one tick (12345, gross 500) + its bitmap word set.
+        let mut tick_data = HashMap::new();
+        tick_data.insert(12345, tick(500, 0));
+        let mut tick_bitmap = HashMap::new();
+        tick_bitmap.insert(
+            0,
+            BitmapAtWord {
+                bitmap: U256::from(1u64),
+                block: 0,
+            },
+        );
+        let computed = ComputedLiquidityUpdate {
+            pool_id: 1,
+            tick_spacing: 1,
+            tick_data,
+            tick_bitmap,
+            last_event: None,
+        };
+        // On-chain truth at chunk_end: tick 12345 drained (gross 0), bitmap
+        // word 0 = 0 (not initialized).
+        let results = [
+            mult_result(encode_ticks_return_ref(0, 0)),
+            mult_result(encode_uint256_return_ref(U256::ZERO)),
+        ];
+        // Re-run the compare path manually (mirrors verify_v3's loop).
+        let mut divs = Vec::new();
+        divs.extend(compare_tick(
+            12345,
+            &computed.tick_data[&12345],
+            decode_ticks_result(&results[0]),
+        ));
+        divs.extend(compare_bitmap_word(
+            0,
+            computed.tick_bitmap[&0].bitmap,
+            decode_bitmap_result(&results[1]),
+        ));
+        assert!(divs.contains(&LiquidityDivergence::TickGross {
+            tick: 12345,
+            expected: U128::from(500u64),
+            actual: U128::ZERO,
+        }));
+        assert!(divs.contains(&LiquidityDivergence::BitmapWord {
+            word: 0,
+            expected: U256::from(1u64),
+            actual: U256::ZERO,
+        }));
+    }
+
+    // ════════ V4 tests ════════
+    //
+    // The reference slot vectors below were computed with an INDEPENDENT
+    // `cast keccak` oracle (Python subshell) — a DIFFERENT keccak than this
+    // crate's alloy `keccak256`. They are the source of truth the slot-derive
+    // helpers must reproduce byte-for-byte. The pool_id = 0x00..01 sample
+    // matches `tests/fixtures/v4_slot_vectors.json`.
+
+    fn pool_id_one() -> B256 {
+        B256::with_last_byte(1)
+    }
+
+    #[test]
+    fn v4_state_base_slot_matches_cast_oracle() {
+        // S_state for pool_id=0x..01 = 0x3e5f...6a31 (cast keccak).
+        let expected = B256::from(hex!(
+            "3e5fec24aa4dc4e5aee2e025e51e1392c72a2500577559fae9665c6d52bd6a31"
+        ));
+        let got = v4_state_base_slot(pool_id_one());
+        assert_eq!(B256::from(got.to_be_bytes::<32>()), expected);
+    }
+
+    #[test]
+    fn v4_tick_slot_matches_cast_oracle_positive_negative_and_zero() {
+        let base = v4_state_base_slot(pool_id_one());
+        let ticks_base = base + U256::from(V4_TICKS_MAPPING_OFFSET);
+        // (tick, expected-slot) triplets from cast keccak.
+        let cases = [
+            (
+                -887_220i32,
+                "582bff295aa51422943b629229b543deed3e2a2f638aa846562d69521ecd2381",
+            ),
+            (
+                -100,
+                "0f335c0565e65bd65f7ae80502d13da8188bd2e85f79878450decf77501242af",
+            ),
+            (
+                -1,
+                "e144d190ab821ad2b3e01b2e5b215edb2324c5cd17330425e5274158d65ffe6e",
+            ),
+            (
+                0,
+                "071baefdc11a1a736f835256c2bc394c68d5ec5a0621b837dd5a1614ef57dbb2",
+            ),
+            (
+                1,
+                "deecf616af14ecf5af18296eeb4d0b420579c78910805f488c52af79ea8c286c",
+            ),
+            (
+                100,
+                "ea48cb33783a9d6f27628e3b906b0886c2cf1db3671b72db6ca71e543673be95",
+            ),
+            (
+                887_220,
+                "b28723db135d0772b80eb995ca4813d602baa17314fabbef5305aa54f792aeee",
+            ),
+        ];
+        for (tick, expected_hex) in cases {
+            let got = nested_mapping_slot(tick, ticks_base);
+            let expected = B256::from_slice(&hex::decode(expected_hex).unwrap());
+            assert_eq!(got, expected, "tick {tick}");
+        }
+    }
+
+    #[test]
+    fn v4_bitmap_word_slot_matches_cast_oracle() {
+        let base = v4_state_base_slot(pool_id_one());
+        let bitmap_base = base + U256::from(V4_BITMAP_MAPPING_OFFSET);
+        let cases = [
+            (
+                -2047i32,
+                "cb4199c2cdae663d28d9045a8c7947aaaef7f24e869f4646519b7fd0bb845750",
+            ),
+            (
+                -1,
+                "a9f531d32a7801e5fd7761efcdfabdd15b41ecb7a9d0fb9e79c7aa2304a844c8",
+            ),
+            (
+                0,
+                "6395bb2e70acf609fb69050da9fdfeb703963b9ae70f663b6a5d53a413ed6684",
+            ),
+            (
+                1,
+                "62806c3fa03ed76f2aa390bba57ea4df2426510079b444c05bb392b554bf4cee",
+            ),
+            (
+                5,
+                "5aeb90dcb24f09b6daf7ccac04db0e1f868602ca6deca7c5b13dd4bd40c58a92",
+            ),
+            (
+                2047,
+                "450cbb5a1ffffbb1130cffb3ff3ff3683f1cf1c7daaecf31c32e5c0738833166",
+            ),
+        ];
+        for (word, expected_hex) in cases {
+            let got = nested_mapping_slot(word, bitmap_base);
+            let expected = B256::from_slice(&hex::decode(expected_hex).unwrap());
+            assert_eq!(got, expected, "word {word}");
+        }
+    }
+
+    #[test]
+    fn extsload_selector_is_dbd035ff() {
+        assert_eq!(hex::encode(EXTSLOAD_BATCH_SELECTOR), "dbd035ff");
+    }
+
+    #[test]
+    fn encode_extsload_call_round_trips_through_decode() {
+        // Encode a 3-slot call; the decoder under test (`decode_extsload_return`)
+        // consumes the return format `length + elements`. Encode the same slots
+        // in return format independently + confirm the decoder reproduces them.
+        let slots = vec![
+            B256::from(hex!(
+                "071baefdc11a1a736f835256c2bc394c68d5ec5a0621b837dd5a1614ef57dbb2"
+            )),
+            B256::from(hex!(
+                "0f335c0565e65bd65f7ae80502d13da8188bd2e85f79878450decf77501242af"
+            )),
+            B256::from(hex!(
+                "6395bb2e70acf609fb69050da9fdfeb703963b9ae70f663b6a5d53a413ed6684"
+            )),
+        ];
+        let cd = encode_extsload_call(&slots);
+        assert_eq!(&cd[..4], &EXTSLOAD_BATCH_SELECTOR);
+        // Independently build the return-format payload + decode it.
+        let return_payload = DynSolValue::Array(
+            slots
+                .iter()
+                .map(|s| DynSolValue::FixedBytes(*s, 32))
+                .collect(),
+        )
+        .abi_encode();
+        let decoded = decode_extsload_return(&return_payload, 3).expect("decode");
+        assert_eq!(decoded, slots);
+    }
+
+    #[test]
+    fn decode_extsload_return_matches_ref_encoder() {
+        // Independently encode a bytes32[] return.
+        let vals = [
+            B256::repeat_byte(0xab),
+            B256::ZERO,
+            B256::with_last_byte(0xff),
+        ];
+        let encoded = DynSolValue::Array(
+            vals.iter()
+                .map(|b| DynSolValue::FixedBytes(*b, 32))
+                .collect(),
+        )
+        .abi_encode();
+        let decoded = decode_extsload_return(&encoded, 3).expect("decode");
+        assert_eq!(decoded, vals.to_vec());
+    }
+
+    #[test]
+    fn decode_extsload_return_empty_is_ok_short_is_none() {
+        assert!(decode_extsload_return(&[], 0).unwrap().is_empty());
+        assert!(decode_extsload_return(&[0u8; 5], 1).is_none());
+    }
+
+    #[test]
+    fn decode_tick_from_slot_packs_gross_low_net_high() {
+        // gross = 0x00..00_500 (low 128), net = 0xff..ff_9c (int128 -100, high
+        // 128, sign-extended).
+        let mut word_bytes = [0u8; 32];
+        // net high: bytes[0..16] — int128(-100) = 0xff..ff9c (16 bytes).
+        word_bytes[0..16].fill(0xff);
+        word_bytes[15] = 0x9c;
+        // gross low: bytes[16..32] — uint128(500) = 0x00..01F4.
+        word_bytes[31] = 0xf4;
+        word_bytes[30] = 0x01;
+        let word = B256::from(word_bytes);
+        let (gross, net) = decode_tick_from_slot(word);
+        assert_eq!(gross, U128::from(500u64));
+        assert_eq!(net, I256::try_from(-100i64).unwrap());
+    }
+
+    #[test]
+    fn decode_bitmap_from_slot_is_raw_uint256() {
+        // 0xdeadbeef in the LOW 4 bytes of a 32-byte big-endian word.
+        let mut word = [0u8; 32];
+        word[28..32].copy_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(
+            decode_bitmap_from_slot(B256::from(word)),
+            U256::from(0xdead_beef_u64)
+        );
+    }
+
+    #[test]
+    fn v4_compare_drained_pool_catches_ghost_row() {
+        // In-memory: one tick (12345, gross 500) + its bitmap word set.
+        let mut tick_data = HashMap::new();
+        tick_data.insert(12345, tick(500, 0));
+        let mut tick_bitmap = HashMap::new();
+        tick_bitmap.insert(
+            0,
+            BitmapAtWord {
+                bitmap: U256::from(1u64),
+                block: 0,
+            },
+        );
+        let computed = ComputedLiquidityUpdate {
+            pool_id: 1,
+            tick_spacing: 1,
+            tick_data,
+            tick_bitmap,
+            last_event: None,
+        };
+        // On-chain truth: tick slot = bytes32(0) (drained), bitmap slot = 0.
+        let slot_values = [B256::ZERO, B256::ZERO];
+        let mut divs = Vec::new();
+        let (gross, net) = decode_tick_from_slot(slot_values[0]);
+        divs.extend(compare_tick(
+            12345,
+            &computed.tick_data[&12345],
+            Some((gross, net)),
+        ));
+        let bitmap = decode_bitmap_from_slot(slot_values[1]);
+        divs.extend(compare_bitmap_word(
+            0,
+            computed.tick_bitmap[&0].bitmap,
+            Some(bitmap),
+        ));
+        assert!(divs.contains(&LiquidityDivergence::TickGross {
+            tick: 12345,
+            expected: U128::from(500u64),
+            actual: U128::ZERO,
+        }));
+        assert!(divs.contains(&LiquidityDivergence::BitmapWord {
+            word: 0,
+            expected: U256::from(1u64),
+            actual: U256::ZERO,
+        }));
+    }
+}

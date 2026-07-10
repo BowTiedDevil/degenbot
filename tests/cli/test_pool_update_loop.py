@@ -107,6 +107,7 @@ def test_pool_update_handoff_calls_run_pool_update_once_per_chain(
         rpc_url: str,
         progress_callback: object,
         cancel_handle: object,
+        verify: bool = False,
     ) -> dict[str, object]:
         captured.update(
             database_path=database_path,
@@ -116,19 +117,18 @@ def test_pool_update_handoff_calls_run_pool_update_once_per_chain(
             rpc_url=rpc_url,
             progress_callback=progress_callback,
             cancel_handle=cancel_handle,
+            verify=verify,
         )
         # Fire the progress callback once (proves tqdm-on-callback wiring).
         assert callable(progress_callback)
-        progress_callback(
-            {
-                "chain_id": chain_id,
-                "chunk_start": 1,
-                "chunk_end": 10_000,
-                "pools_written": 0,
-                "liquidity_apply_count": 0,
-                "committed": True,
-            }
-        )
+        progress_callback({
+            "chain_id": chain_id,
+            "chunk_start": 1,
+            "chunk_end": 10_000,
+            "pools_written": 0,
+            "liquidity_apply_count": 0,
+            "committed": True,
+        })
         return {
             "chain_id": chain_id,
             "from_block": 1,
@@ -168,6 +168,8 @@ def test_pool_update_handoff_calls_run_pool_update_once_per_chain(
     # (e) the report is echoed.
     assert "10000" in result.output
     assert "1 chunks" in result.output
+    # (f) the --verify flag (absent) defaults to False (backward-compat).
+    assert captured["verify"] is False
     # The exchange stamp is NOT set by the Python shell (the Rust core owns it);
     # the hand-off doesn't touch the DB directly.
     conn = sqlite3.connect(stub_bot.config.database.path)

@@ -30,7 +30,12 @@ from tqdm.contrib.logging import logging_redirect_tqdm
 from degenbot.cli import cli
 from degenbot.cli.utils import get_provider_from_config
 from degenbot.config import resolve_http_rpc_uri
-from degenbot.degenbot_rs import CancelHandle, run_pool_update
+from degenbot.degenbot_rs import (
+    CancelHandle,
+    run_pool_update,
+    verify_v3_liquidity_map,
+    verify_v4_liquidity_map,
+)
 from degenbot.logging import logger
 from degenbot.provider.block_helpers import get_number_for_block_identifier
 
@@ -74,8 +79,21 @@ def pool() -> None:
         "'safe:128' stops 128 blocks after the last 'safe' block."
     ),
 )
+@click.option(
+    "--verify/--no-verify",
+    "verify",
+    default=False,
+    show_default=True,
+    help=(
+        "Run the pre-commit on-chain-truth gate (Full per-pool per-chunk "
+        "verification) before each chunk's liquidity persist commits. A "
+        "divergence rolls back the chunk + does NOT advance "
+        "last_update_block (the corrupt state never lands). Catches the "
+        "6SRJRL ghost-row class + other apply-math corruption before write."
+    ),
+)
 @click.pass_obj
-def pool_update(bot: Bot, chunk_size: int, to_block: str) -> None:
+def pool_update(bot: Bot, chunk_size: int, to_block: str, verify: bool) -> None:  # noqa: FBT001
     """Update liquidity pool information for activated exchanges.
 
     Boot + hand-off: read the bot config, install a SIGINT -> cancel-flag
@@ -157,6 +175,7 @@ def pool_update(bot: Bot, chunk_size: int, to_block: str) -> None:
                 rpc_url=rpc_url,
                 progress_callback=_on_progress,
                 cancel_handle=handle,
+                verify=verify,
             )
     finally:
         # Restore the prior SIGINT handler (or a default- disposition if there
@@ -216,3 +235,118 @@ def _resolve_to_block(to_block: str, *, chain_id: int, bot: Bot) -> int | None:
         provider=provider,
     )
     return int(resolved) + block_offset
+
+
+@pool.command("verify")
+@click.option(
+    "--rpc-url",
+    "rpc_url",
+    required=True,
+    help="The HTTP RPC endpoint to read on-chain truth from.",
+)
+@click.option(
+    "--chain",
+    "chain_id",
+    type=int,
+    required=True,
+    help="The chain id the pool lives on.",
+)
+@click.option(
+    "--block",
+    "block_number",
+    required=True,
+    type=int,
+    help="The block number to read on-chain truth at.",
+)
+@click.option(
+    "--pool",
+    "pool",
+    required=True,
+    help=(
+        "The pool to verify. V3: the pool contract address. "
+        "V4: the PoolId (pool_hash, bytes32 hex 0x…)."
+    ),
+)
+@click.option(
+    "--family",
+    "family",
+    type=click.Choice(["v3", "v4"]),
+    required=True,
+    help="The pool family (selects ticks()/tickBitmap() vs PoolManager extsload).",
+)
+@click.option(
+    "--pool-manager",
+    "pool_manager",
+    default=None,
+    help=(
+        "(V4 only) The deployed V4 PoolManager singleton address (the V4 "
+        "exchange's factory). Required for --family v4."
+    ),
+)
+@click.pass_obj
+def pool_verify(  # noqa: PLR0917
+    bot: Bot,
+    rpc_url: str,
+    chain_id: int,
+    block_number: int,
+    pool: str,
+    family: str,
+    pool_manager: str | None,
+) -> None:
+    """Verify a pool's committed liquidity map against on-chain truth.
+
+    Stand-alone read-only check (no event apply, no SQL writes): opens the DB,
+    fetches the pool's committed tick + bitmap rows, and compares the FULL
+    map against on-chain truth (V3: ``ticks()``/``tickBitmap()``; V4:
+    ``PoolManager.extsload``) at ``--block``. Prints GREEN if the DB matches
+    the chain, else the named divergence list (bisect-able triage).
+
+    This is the ad-hoc / spot-check sibling of the pre-commit gate
+    (``pool update --verify``); the gate runs the SAME compare before the
+    write commits, while this reads the already-committed state.
+
+    Raises:
+        ValueError: For a DB or RPC failure, or a missing V4 pool-manager.
+
+    """
+    database_path = str(bot.config.database.path)
+    if family == "v3":
+        divergences = verify_v3_liquidity_map(
+            database_path=database_path,
+            rpc_url=rpc_url,
+            chain_id=chain_id,
+            pool_address=pool,
+            block_number=block_number,
+        )
+    else:
+        if pool_manager is None:
+            msg = "--pool-manager is required for --family v4 (the PoolManager singleton)."
+            raise ValueError(msg)
+        divergences = verify_v4_liquidity_map(
+            database_path=database_path,
+            rpc_url=rpc_url,
+            chain_id=chain_id,
+            pool_hash=pool,
+            pool_manager_address=pool_manager,
+            block_number=block_number,
+        )
+    if not divergences:
+        click.echo(f"GREEN: {family} pool {pool} matches on-chain truth at block {block_number}.")
+        return
+    click.echo(
+        f"RED: {len(divergences)} divergence(s) for {family} pool {pool} at block {block_number}:"
+    )
+    for d in divergences:
+        variant = d["variant"]
+        if variant in {"TickGross", "TickNet"}:
+            click.echo(
+                f"  tick {d['tick']}: {variant} expected={d['expected']} actual={d['actual']}"
+            )
+        elif variant == "BitmapWord":
+            click.echo(
+                f"  word {d['word']}: {variant} expected={d['expected']} actual={d['actual']}"
+            )
+        elif variant == "TickCallReverted":
+            click.echo(f"  tick {d['tick']}: {variant}")
+        elif variant == "BitmapCallReverted":
+            click.echo(f"  word {d['word']}: {variant}")
