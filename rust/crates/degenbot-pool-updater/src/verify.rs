@@ -490,8 +490,8 @@ mod tests {
 
     #[test]
     fn selectors_match_known_cast_values() {
-        assert_eq!(hex::encode(TICKS_SELECTOR), "f30dba93");
-        assert_eq!(hex::encode(TICK_BITMAP_SELECTOR), "5339c296");
+        assert_eq!(alloy::hex::encode(TICKS_SELECTOR), "f30dba93");
+        assert_eq!(alloy::hex::encode(TICK_BITMAP_SELECTOR), "5339c296");
     }
 
     // ── calldata sign-extension ──
@@ -735,7 +735,7 @@ mod tests {
         ];
         for (tick, expected_hex) in cases {
             let got = nested_mapping_slot(tick, ticks_base);
-            let expected = B256::from_slice(&hex::decode(expected_hex).unwrap());
+            let expected = B256::from_slice(&alloy::hex::decode(expected_hex).unwrap());
             assert_eq!(got, expected, "tick {tick}");
         }
     }
@@ -772,14 +772,14 @@ mod tests {
         ];
         for (word, expected_hex) in cases {
             let got = nested_mapping_slot(word, bitmap_base);
-            let expected = B256::from_slice(&hex::decode(expected_hex).unwrap());
+            let expected = B256::from_slice(&alloy::hex::decode(expected_hex).unwrap());
             assert_eq!(got, expected, "word {word}");
         }
     }
 
     #[test]
     fn extsload_selector_is_dbd035ff() {
-        assert_eq!(hex::encode(EXTSLOAD_BATCH_SELECTOR), "dbd035ff");
+        assert_eq!(alloy::hex::encode(EXTSLOAD_BATCH_SELECTOR), "dbd035ff");
     }
 
     #[test]
