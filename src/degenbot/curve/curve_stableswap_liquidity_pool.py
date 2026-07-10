@@ -376,14 +376,18 @@ class CurveStableswapPool(
         ul = tuple(py_pool.curve_use_lending)
         self._use_lending = ul or tuple(False for _ in self._tokens)
 
-        # A-ramping (all None ⇔ a plain non-ramping pool).
+        # A-ramping (all None ⇔ a plain non-ramping pool). Guard narrows the
+        # tuple[...] | None handle return (family asserted above, so never
+        # None in practice).
+        curve_a_ramp = py_pool.curve_a_ramp()
+        assert curve_a_ramp is not None  # pragma: no cover — curve family asserted
         (
             self._initial_a_coefficient,
             self._future_a_coefficient,
             self._initial_a_coefficient_time,
             self._future_a_coefficient_time,
             self._create_timestamp,
-        ) = py_pool.curve_a_ramp()
+        ) = curve_a_ramp
 
         # Data provider — the stored Rust trait object, read through a handle
         # adapter (mirrors the Balancer _HandleRateProviderAdapter).
