@@ -29,6 +29,7 @@
 pub mod fetch;
 pub mod run;
 pub mod spec;
+pub mod verify;
 
 pub use fetch::{
     decode_pool_created_log, decode_v3_liquidity_log, decode_v3_liquidity_log_with_pool,
@@ -42,3 +43,6 @@ pub use run::{
     UpdateReport,
 };
 pub use spec::{load_active_exchange_specs, ExchangeSpec, RpcFeeCall};
+pub use verify::{
+    verify_v3_liquidity_map_on_chain, verify_v4_liquidity_map_on_chain, LiquidityDivergence,
+};

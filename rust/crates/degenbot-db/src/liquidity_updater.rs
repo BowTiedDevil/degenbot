@@ -100,6 +100,32 @@ pub struct BlockLog {
     pub log_index: u64,
 }
 
+/// The post-apply, **pre-persist** in-memory liquidity state for one pool —
+/// the seam the on-chain-truth verifier inspects *before* `persist_*` commits.
+///
+/// Produced by [`DegenbotDb::compute_v3_liquidity_update_on_conn`] /
+/// [`DegenbotDb::compute_v4_liquidity_update_on_conn`] (reconstitute →
+/// `apply_event_loop`, NO persist). The caller may run the on-chain-truth gate
+/// over `tick_data` + `tick_bitmap` at `chunk_end`; on GREEN it calls
+/// [`DegenbotDb::persist_v3_liquidity_update_on_conn`] /
+/// [`DegenbotDb::persist_v4_liquidity_update_on_conn`]. The combined
+/// `apply_*_on_conn` helpers keep the no-gate path (compute → persist) for
+/// backward compatibility.
+#[derive(Debug, Clone)]
+pub struct ComputedLiquidityUpdate {
+    /// V3: `pools.id`; V4: `managed_pools.id`.
+    pub pool_id: i64,
+    /// The pool's tick spacing (passed to the on-chain bitmap word↔tick math).
+    pub tick_spacing: i32,
+    /// In-memory initialized ticks (gross + net) after the chunk's apply —
+    /// exactly the state about to be persisted.
+    pub tick_data: HashMap<i32, LiquidityAtTick>,
+    /// In-memory initialization-map words after the chunk's apply.
+    pub tick_bitmap: HashMap<i32, BitmapAtWord>,
+    /// The last-applied event's stamp (advanced by `persist_*`).
+    pub last_event: Option<BlockLog>,
+}
+
 const SQLITE_MAX_VARIABLES: usize = 32_766;
 /// `liquidity_positions` rows bind 4 vars each (`pool_id`, `tick`, `net`, `gross`).
 const POSITION_KEYS_PER_ROW: usize = 4;
@@ -422,27 +448,34 @@ impl DegenbotDb {
         Self::apply_v3_liquidity_updates_on_conn(&conn, chain_id, pool_address, events)
     }
 
-    /// The single-transaction-bound variant of [`Self::apply_v3_liquidity_updates`]
-    /// (CKXCOB 3a) — the chunk loop's per-pool liquidity apply, callable on the
-    /// chunk's `Transaction` so the apply's reads + writes run on the SAME
-    /// connection + commit atomically with the chunk's pool writes + the
-    /// `last_update_block` stamp (the §1 atomicity invariant).
+    /// The **compute** half of [`Self::apply_v3_liquidity_updates_on_conn`]:
+    /// reconstitute the pool's persisted base tick state, run `apply_event_loop`,
+    /// and return the in-memory result **without persisting** — the seam the
+    /// on-chain-truth verifier inspects *before* the commit. The caller runs the
+    /// gate over the returned `tick_data` + `tick_bitmap`, then calls
+    /// [`Self::persist_v3_liquidity_update_on_conn`] on GREEN (or drops the chunk's
+    /// transaction on RED, leaving the prior committed state intact).
+    ///
+    /// Returns `Ok(None)` when the pool row is absent (no-op, mirrors the
+    /// combined helper's `Ok(false)`).
+    ///
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
-    pub fn apply_v3_liquidity_updates_on_conn(
+    /// Returns [`DbError::Sqlite`] on any query failure or [`DbError::Decode`]
+    /// on a malformed column.
+    pub fn compute_v3_liquidity_update_on_conn(
         conn: &rusqlite::Connection,
         chain_id: i64,
         pool_address: &str,
         events: &[LiquidityUpdateEvent],
-    ) -> Result<bool, DbError> {
+    ) -> Result<Option<ComputedLiquidityUpdate>, DbError> {
         let Some(state) = Self::fetch_v3_pool_update_state_on_conn(conn, chain_id, pool_address)?
         else {
-            return Ok(false);
+            return Ok(None);
         };
-        let (mut tick_bitmap, mut tick_data) =
-            Self::fetch_v3_liquidity_map_on_conn(conn, state.pool_id)?;
+        let tick_spacing = state.tick_spacing;
         let pool_id = state.pool_id;
+        let (mut tick_bitmap, mut tick_data) = Self::fetch_v3_liquidity_map_on_conn(conn, pool_id)?;
 
         let mut current_liquidity = U128::ZERO;
         let last_event = apply_event_loop(
@@ -453,7 +486,50 @@ impl DegenbotDb {
             events,
         );
 
-        persist_v3(conn, pool_id, &tick_bitmap, &tick_data, last_event)?;
+        Ok(Some(ComputedLiquidityUpdate {
+            pool_id,
+            tick_spacing,
+            tick_data,
+            tick_bitmap,
+            last_event,
+        }))
+    }
+
+    /// The **persist** half: `delete_stale` + upsert + stamp the marker. Exposed
+    /// so a verifier-gated caller (compute → verify → persist) can commit only
+    /// after the on-chain-truth gate is GREEN. Delegates to the private
+    /// `persist_v3` (byte-identical behavior).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on any delete/upsert/stamp failure.
+    pub fn persist_v3_liquidity_update_on_conn(
+        conn: &rusqlite::Connection,
+        pool_id: i64,
+        tick_bitmap: &HashMap<i32, BitmapAtWord>,
+        tick_data: &HashMap<i32, LiquidityAtTick>,
+        last_event: Option<BlockLog>,
+    ) -> Result<(), DbError> {
+        persist_v3(conn, pool_id, tick_bitmap, tick_data, last_event)
+    }
+
+    /// The single-transaction-bound variant of [`Self::apply_v3_liquidity_updates`]
+    /// (CKXCOB 3a) — compute → persist with no on-chain gate (backward compat).
+    /// # Errors
+    ///
+    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    pub fn apply_v3_liquidity_updates_on_conn(
+        conn: &rusqlite::Connection,
+        chain_id: i64,
+        pool_address: &str,
+        events: &[LiquidityUpdateEvent],
+    ) -> Result<bool, DbError> {
+        let Some(c) =
+            Self::compute_v3_liquidity_update_on_conn(conn, chain_id, pool_address, events)?
+        else {
+            return Ok(false);
+        };
+        persist_v3(conn, c.pool_id, &c.tick_bitmap, &c.tick_data, c.last_event)?;
         Ok(true)
     }
 
@@ -482,25 +558,35 @@ impl DegenbotDb {
         Self::apply_v4_liquidity_updates_on_conn(&conn, pool_hash, pool_manager_chain, events)
     }
 
-    /// The single-transaction-bound variant of [`Self::apply_v4_liquidity_updates`]
-    /// (CKXCOB 3a). See [`Self::apply_v3_liquidity_updates_on_conn`].
+    /// The **compute** half of [`Self::apply_v4_liquidity_updates_on_conn`] (V4
+    /// mirror of [`Self::compute_v3_liquidity_update_on_conn`]): reconstitute the
+    /// V4 pool's base tick state + run `apply_event_loop`, returning the
+    /// in-memory map **without persisting** — the pre-commit verifier seam.
+    ///
+    /// Returns `Ok(None)` when the managed-pool row is absent.
+    ///
+    /// # Panics (debug builds only)
+    ///
+    /// Panics if an event violates the block/log-index ordering invariant.
+    ///
     /// # Errors
     ///
-    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
-    pub fn apply_v4_liquidity_updates_on_conn(
+    /// Returns [`DbError::Sqlite`] on any query failure or [`DbError::Decode`]
+    /// on a malformed column.
+    pub fn compute_v4_liquidity_update_on_conn(
         conn: &rusqlite::Connection,
         pool_hash: &str,
         pool_manager_chain: i64,
         events: &[LiquidityUpdateEvent],
-    ) -> Result<bool, DbError> {
+    ) -> Result<Option<ComputedLiquidityUpdate>, DbError> {
         let Some(state) =
             Self::fetch_v4_pool_update_state_on_conn(conn, pool_hash, pool_manager_chain)?
         else {
-            return Ok(false);
+            return Ok(None);
         };
-        let (mut tick_bitmap, mut tick_data) =
-            Self::fetch_v4_liquidity_map_on_conn(conn, state.pool_id)?;
+        let tick_spacing = state.tick_spacing;
         let pool_id = state.pool_id;
+        let (mut tick_bitmap, mut tick_data) = Self::fetch_v4_liquidity_map_on_conn(conn, pool_id)?;
 
         let mut current_liquidity = U128::ZERO;
         let last_event = apply_event_loop(
@@ -511,7 +597,49 @@ impl DegenbotDb {
             events,
         );
 
-        persist_v4(conn, pool_id, &tick_bitmap, &tick_data, last_event)?;
+        Ok(Some(ComputedLiquidityUpdate {
+            pool_id,
+            tick_spacing,
+            tick_data,
+            tick_bitmap,
+            last_event,
+        }))
+    }
+
+    /// The **persist** half (V4 mirror of
+    /// [`Self::persist_v3_liquidity_update_on_conn`]). Delegates to the private
+    /// `persist_v4` (byte-identical behavior).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on any delete/upsert/stamp failure.
+    pub fn persist_v4_liquidity_update_on_conn(
+        conn: &rusqlite::Connection,
+        managed_pool_id: i64,
+        tick_bitmap: &HashMap<i32, BitmapAtWord>,
+        tick_data: &HashMap<i32, LiquidityAtTick>,
+        last_event: Option<BlockLog>,
+    ) -> Result<(), DbError> {
+        persist_v4(conn, managed_pool_id, tick_bitmap, tick_data, last_event)
+    }
+
+    /// The single-transaction-bound variant of [`Self::apply_v4_liquidity_updates`]
+    /// (CKXCOB 3a) — compute → persist with no on-chain gate (backward compat).
+    /// # Errors
+    ///
+    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    pub fn apply_v4_liquidity_updates_on_conn(
+        conn: &rusqlite::Connection,
+        pool_hash: &str,
+        pool_manager_chain: i64,
+        events: &[LiquidityUpdateEvent],
+    ) -> Result<bool, DbError> {
+        let Some(c) =
+            Self::compute_v4_liquidity_update_on_conn(conn, pool_hash, pool_manager_chain, events)?
+        else {
+            return Ok(false);
+        };
+        persist_v4(conn, c.pool_id, &c.tick_bitmap, &c.tick_data, c.last_event)?;
         Ok(true)
     }
 
@@ -626,10 +754,9 @@ impl DegenbotDb {
     ) -> Result<(), DbError> {
         delete_stale_rows(
             conn,
-            &format!(
-                "DELETE FROM {LIQUIDITY_POSITIONS} WHERE pool_id = ?1 AND tick NOT IN ({placeholders})",
-                placeholders = sql_placeholders_for(live_ticks.len())
-            ),
+            LIQUIDITY_POSITIONS,
+            "pool_id",
+            "tick",
             pool_id,
             live_ticks,
         )
@@ -662,10 +789,9 @@ impl DegenbotDb {
     ) -> Result<(), DbError> {
         delete_stale_rows(
             conn,
-            &format!(
-                "DELETE FROM {INITIALIZATION_MAPS} WHERE pool_id = ?1 AND word NOT IN ({placeholders})",
-                placeholders = sql_placeholders_for(live_words.len())
-            ),
+            INITIALIZATION_MAPS,
+            "pool_id",
+            "word",
             pool_id,
             live_words,
         )
@@ -698,11 +824,9 @@ impl DegenbotDb {
     ) -> Result<(), DbError> {
         delete_stale_rows(
             conn,
-            &format!(
-                "DELETE FROM {MANAGED_POOL_LIQUIDITY_POSITIONS} WHERE managed_pool_id = ?1 \
-                 AND tick NOT IN ({placeholders})",
-                placeholders = sql_placeholders_for(live_ticks.len())
-            ),
+            MANAGED_POOL_LIQUIDITY_POSITIONS,
+            "managed_pool_id",
+            "tick",
             managed_pool_id,
             live_ticks,
         )
@@ -735,11 +859,9 @@ impl DegenbotDb {
     ) -> Result<(), DbError> {
         delete_stale_rows(
             conn,
-            &format!(
-                "DELETE FROM {MANAGED_POOL_INITIALIZATION_MAPS} WHERE managed_pool_id = ?1 \
-                 AND word NOT IN ({placeholders})",
-                placeholders = sql_placeholders_for(live_words.len())
-            ),
+            MANAGED_POOL_INITIALIZATION_MAPS,
+            "managed_pool_id",
+            "word",
             managed_pool_id,
             live_words,
         )
@@ -1108,33 +1230,47 @@ fn persist_v4(
     Ok(())
 }
 
-/// Shared `delete ... WHERE <id_col> = ?1 AND <key_col> NOT IN (live)` executor
-/// for the V3/V4 stale-row deletions. Binds `id_value` then the live keys.
-/// CKXCOB 3a: accepts a borrowed [`rusqlite::Connection`] (the chunk-loop
-/// `Transaction` derefs to one) so stale-row deletion runs on the chunk's
-/// single owned connection — no re-lock.
+/// Shared stale-row deleter for the V3/V4 liquidity positions + init-maps.
+/// Deletes every row for `id_value` whose `key_col` is NOT in `live_keys`
+/// (the ticks/words still present in the freshly-applied `tick_data`/
+/// `tick_bitmap`). Binds `id_value` then the live keys. CKXCOB 3a: accepts a
+/// borrowed [`rusqlite::Connection`] (the chunk-loop `Transaction` derefs to
+/// one) so the delete runs on the chunk's single owned connection — no re-lock.
+///
+/// Builds the SQL internally from the table + column identifiers so the
+/// `live_keys.is_empty()` branch (a fully-drained pool — every tick pruned)
+/// can issue the bare `DELETE FROM {table} WHERE {id_col} = ?1` (drop ALL rows),
+/// matching the Python `db_keys - helper_keys` complement-delete-all semantics
+/// (helper empty → drop all). The bare form avoids the SQL syntax error of an
+/// empty `NOT IN ()` placeholder list. (6SRJRL)
 fn delete_stale_rows(
     conn: &rusqlite::Connection,
-    sql: &str,
+    table: &str,
+    id_col: &str,
+    key_col: &str,
     id_value: i64,
     live_keys: &[i32],
 ) -> Result<(), DbError> {
     if live_keys.is_empty() {
-        // No live keys → delete ALL rows for this pool.
+        // Fully-drained pool → no live keys → delete ALL rows for this pool.
+        conn.execute(
+            &format!("DELETE FROM {table} WHERE {id_col} = ?1"),
+            rusqlite::params![id_value],
+        )?;
         return Ok(());
     }
     // Chunk the NOT IN list across SQLite's 32,766-var limit.
     let chunk_cap = SQLITE_MAX_VARIABLES.saturating_sub(1);
     for chunk in live_keys.chunks(chunk_cap) {
+        let placeholders = sql_placeholders_for(chunk.len());
+        let chunk_sql = format!(
+            "DELETE FROM {table} WHERE {id_col} = ?1 AND {key_col} NOT IN ({placeholders})"
+        );
         let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(chunk.len() + 1);
         params.push(&id_value);
         for k in chunk {
             params.push(k);
         }
-        // Rebuild the placeholders for THIS chunk (the SQL was pre-built for the
-        // full live_keys.len(); rebuild here to match the chunk).
-        let placeholders = sql_placeholders_for(chunk.len());
-        let chunk_sql = sql.replace(&sql_placeholders_for(live_keys.len()), &placeholders);
         conn.execute(&chunk_sql, rusqlite::params_from_iter(params))?;
     }
     Ok(())
@@ -1262,5 +1398,430 @@ mod tests {
         assert_eq!(sql_placeholders_for(0), "");
         assert_eq!(sql_placeholders_for(1), "?");
         assert_eq!(sql_placeholders_for(3), "?, ?, ?");
+    }
+
+    // ── 6SRJRL: full-drain deletes ALL rows on empty `live_keys` ────────
+    //
+    // A fully-drained pool (every position burned to gross=0 → every tick
+    // pruned from `tick_data`) produces `live_ticks = []` / `live_words = []`
+    // in `persist_v3`/`persist_v4`. The shared `delete_stale_rows` helper MUST
+    // then issue `DELETE FROM {table} WHERE {id_col} = ?1` (drop everything),
+    // matching the Python `db_ticks - helper_ticks` complement-delete-all
+    // semantics (helper empty → drop all). The pre-fix code early-returned
+    // `Ok(())` on the empty path, deleting nothing → ghost rows linger →
+    // compounding corruption on the next apply's reconstituted base.
+
+    use crate::discovery::{V3PoolRowInput, V4PoolRowInput};
+    use crate::migrate::SchemaState;
+    use alloy::primitives::address;
+
+    /// A fresh in-memory write-capable DB seeded with one V3 exchange + pool.
+    /// Returns `(db, pool_id, pool_address)`.
+    fn v3_db_with_pool() -> (DegenbotDb, i64, String) {
+        let (db, state) = DegenbotDb::open_in_memory_for_writes().unwrap();
+        assert!(matches!(state, SchemaState::FreshStandalone { .. }));
+        let factory = address!("0x1F98431c8aD98523631AE4a59f267346ea31F984");
+        db.upsert_exchange(1, "uniswap_v3", factory, None).unwrap();
+        let pool_address = address!("0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa");
+        db.upsert_v3_pools(
+            1,
+            "uniswap_v3",
+            1,
+            1_000_000,
+            &[V3PoolRowInput {
+                address: pool_address,
+                token0_address: address!("0x1111111111111111111111111111111111111111"),
+                token1_address: address!("0x2222222222222222222222222222222222222222"),
+                fee: 0,
+                tick_spacing: 10,
+            }],
+        )
+        .unwrap();
+        let addr_s = pool_address.to_checksum(None);
+        let pool_id: i64 = {
+            let conn = db.lock();
+            conn.query_row(
+                "SELECT id FROM pools WHERE address = ?1 AND chain = 1",
+                rusqlite::params![&addr_s],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        (db, pool_id, addr_s)
+    }
+
+    /// Seed a V3 position row directly (decimal `VARCHAR(78)` form, matching the
+    /// Python `IntMappedToString` bind + the Rust decode path).
+    fn seed_v3_position(db: &DegenbotDb, pool_id: i64, tick: i32, net: I256, gross: U128) {
+        let conn = db.lock();
+        conn.execute(
+            "INSERT INTO liquidity_positions (pool_id, tick, liquidity_net, liquidity_gross) \
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![
+                pool_id,
+                tick,
+                encode_i256(&net),
+                encode_u256(&u128_to_u256(gross))
+            ],
+        )
+        .unwrap();
+    }
+
+    fn seed_v3_init_map(db: &DegenbotDb, pool_id: i64, word: i32, bitmap: U256) {
+        let conn = db.lock();
+        conn.execute(
+            "INSERT INTO initialization_maps (pool_id, word, bitmap) \
+             VALUES (?1, ?2, ?3)",
+            rusqlite::params![pool_id, word, encode_u256(&bitmap)],
+        )
+        .unwrap();
+    }
+
+    fn count_rows(db: &DegenbotDb, table: &str, id_col: &str, id_val: i64) -> i64 {
+        let conn = db.lock();
+        conn.query_row(
+            &format!("SELECT COUNT(*) FROM {table} WHERE {id_col} = ?1"),
+            rusqlite::params![id_val],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    /// Direct unit repro: an empty `live_keys` slice MUST delete every row for
+    /// the pool (the "delete all" semantic). Pre-fix this early-returned and
+    /// deleted nothing → ghost rows.
+    #[test]
+    fn delete_stale_v3_empty_live_deletes_all_rows() {
+        let (db, pool_id, _addr) = v3_db_with_pool();
+        seed_v3_position(
+            &db,
+            pool_id,
+            -10,
+            I256::try_from(1_000_000).unwrap(),
+            U128::from(1_000_000u64),
+        );
+        seed_v3_position(
+            &db,
+            pool_id,
+            10,
+            I256::try_from(-1_000_000).unwrap(),
+            U128::from(1_000_000u64),
+        );
+        seed_v3_init_map(&db, pool_id, -1, U256::from(1u64) << 255);
+        seed_v3_init_map(&db, pool_id, 0, U256::from(1u64) << 1);
+        assert_eq!(
+            count_rows(&db, "liquidity_positions", "pool_id", pool_id),
+            2
+        );
+        assert_eq!(
+            count_rows(&db, "initialization_maps", "pool_id", pool_id),
+            2
+        );
+
+        {
+            let conn = db.lock();
+            DegenbotDb::delete_stale_v3_positions_on_conn(&conn, pool_id, &[]).unwrap();
+            DegenbotDb::delete_stale_v3_init_maps_on_conn(&conn, pool_id, &[]).unwrap();
+        }
+
+        assert_eq!(
+            count_rows(&db, "liquidity_positions", "pool_id", pool_id),
+            0,
+            "empty live set must drop ALL position rows (6SRJRL)"
+        );
+        assert_eq!(
+            count_rows(&db, "initialization_maps", "pool_id", pool_id),
+            0,
+            "empty live set must drop ALL init-map rows (6SRJRL)"
+        );
+    }
+
+    /// End-to-end repro through the public apply flow: a Mint grows the seeded
+    /// position + opens a second pair, then two Burns fully drain EVERY tick →
+    /// `live_ticks`/`live_words` empty → the drained pool's tables must be empty
+    /// + the marker stamped. Pre-fix, the seed rows lingered as ghosts (count 2).
+    #[test]
+    fn apply_v3_full_drain_empties_tables_and_stamps_marker() {
+        let (db, pool_id, addr) = v3_db_with_pool();
+        seed_v3_position(
+            &db,
+            pool_id,
+            -10,
+            I256::try_from(1_000_000).unwrap(),
+            U128::from(1_000_000u64),
+        );
+        seed_v3_position(
+            &db,
+            pool_id,
+            10,
+            I256::try_from(-1_000_000).unwrap(),
+            U128::from(1_000_000u64),
+        );
+        seed_v3_init_map(&db, pool_id, -1, U256::from(1u64) << 255);
+        seed_v3_init_map(&db, pool_id, 0, U256::from(1u64) << 1);
+
+        let pos = |n: i64| I256::try_from(n).unwrap();
+        let events = [
+            LiquidityUpdateEvent {
+                block_number: 100,
+                log_index: 0,
+                tick_lower: -10,
+                tick_upper: 10,
+                liquidity_delta: pos(500_000),
+            },
+            // A second pair (ticks 100/110) so the partial-drain NOT IN delete
+            // path is exercised before the final full drain.
+            LiquidityUpdateEvent {
+                block_number: 100,
+                log_index: 1,
+                tick_lower: 100,
+                tick_upper: 110,
+                liquidity_delta: pos(250_000),
+            },
+            // Burn the -10..10 pair back to gross=0 (pruned → dropped first).
+            LiquidityUpdateEvent {
+                block_number: 101,
+                log_index: 0,
+                tick_lower: -10,
+                tick_upper: 10,
+                liquidity_delta: pos(-1_500_000),
+            },
+            // Burn the 100..110 pair to gross=0 too → every tick pruned → empty.
+            LiquidityUpdateEvent {
+                block_number: 102,
+                log_index: 0,
+                tick_lower: 100,
+                tick_upper: 110,
+                liquidity_delta: pos(-250_000),
+            },
+        ];
+        db.apply_v3_liquidity_updates(1, &addr, &events).unwrap();
+
+        assert_eq!(
+            count_rows(&db, "liquidity_positions", "pool_id", pool_id),
+            0,
+            "fully-drained pool must have NO ghost position rows (6SRJRL)"
+        );
+        assert_eq!(
+            count_rows(&db, "initialization_maps", "pool_id", pool_id),
+            0,
+            "fully-drained pool must have NO ghost init-map rows (6SRJRL)"
+        );
+        // The marker is still stamped even on a full drain (last event wins).
+        let conn = db.lock();
+        let marker: (Option<i64>, Option<i64>) = conn
+            .query_row(
+                "SELECT liquidity_update_block, liquidity_update_log_index FROM uniswap_v3_pools WHERE pool_id = ?1",
+                rusqlite::params![pool_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            marker,
+            (Some(102), Some(0)),
+            "marker must stamp the last event"
+        );
+    }
+
+    // ── V4 mirror ───────────────────────────────────────────────────────
+
+    fn v4_db_with_pool() -> (DegenbotDb, i64, String) {
+        let (db, state) = DegenbotDb::open_in_memory_for_writes().unwrap();
+        assert!(matches!(state, SchemaState::FreshStandalone { .. }));
+        let manager = address!("0xbBbBbBbbBbBbBbbBbBBBBBBBBbbbBbBbBbbBbbBb");
+        db.upsert_exchange(1, "uniswap_v4", manager, None).unwrap();
+        db.upsert_pool_manager(manager, 1, "uniswap_v4", None, 1)
+            .unwrap();
+        let pool_hash = "0x".to_string() + &"c".repeat(64);
+        db.upsert_v4_pools(
+            1,
+            &manager.to_checksum(None),
+            1_000_000,
+            &[V4PoolRowInput {
+                pool_hash: pool_hash.clone(),
+                hooks: address!("0x0000000000000000000000000000000000000000"),
+                currency0_address: address!("0x1111111111111111111111111111111111111111"),
+                currency1_address: address!("0x2222222222222222222222222222222222222222"),
+                fee: 0,
+                tick_spacing: 10,
+            }],
+        )
+        .unwrap();
+        let managed_pool_id: i64 = {
+            let conn = db.lock();
+            conn.query_row(
+                "SELECT managed_pool_id FROM uniswap_v4_pools WHERE pool_hash = ?1",
+                rusqlite::params![&pool_hash],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        (db, managed_pool_id, pool_hash)
+    }
+
+    fn seed_v4_position(db: &DegenbotDb, managed_pool_id: i64, tick: i32, net: I256, gross: U128) {
+        let conn = db.lock();
+        conn.execute(
+            "INSERT INTO managed_pool_liquidity_positions (managed_pool_id, tick, liquidity_net, liquidity_gross) \
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![managed_pool_id, tick, encode_i256(&net), encode_u256(&u128_to_u256(gross))],
+        )
+        .unwrap();
+    }
+
+    fn seed_v4_init_map(db: &DegenbotDb, managed_pool_id: i64, word: i32, bitmap: U256) {
+        let conn = db.lock();
+        conn.execute(
+            "INSERT INTO managed_pool_initialization_maps (managed_pool_id, word, bitmap) \
+             VALUES (?1, ?2, ?3)",
+            rusqlite::params![managed_pool_id, word, encode_u256(&bitmap)],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn delete_stale_v4_empty_live_deletes_all_rows() {
+        let (db, managed_pool_id, _hash) = v4_db_with_pool();
+        seed_v4_position(
+            &db,
+            managed_pool_id,
+            -10,
+            I256::try_from(1_000_000).unwrap(),
+            U128::from(1_000_000u64),
+        );
+        seed_v4_position(
+            &db,
+            managed_pool_id,
+            10,
+            I256::try_from(-1_000_000).unwrap(),
+            U128::from(1_000_000u64),
+        );
+        seed_v4_init_map(&db, managed_pool_id, -1, U256::from(1u64) << 255);
+        seed_v4_init_map(&db, managed_pool_id, 0, U256::from(1u64) << 1);
+        assert_eq!(
+            count_rows(
+                &db,
+                "managed_pool_liquidity_positions",
+                "managed_pool_id",
+                managed_pool_id
+            ),
+            2
+        );
+        assert_eq!(
+            count_rows(
+                &db,
+                "managed_pool_initialization_maps",
+                "managed_pool_id",
+                managed_pool_id
+            ),
+            2
+        );
+
+        {
+            let conn = db.lock();
+            DegenbotDb::delete_stale_v4_positions_on_conn(&conn, managed_pool_id, &[]).unwrap();
+            DegenbotDb::delete_stale_v4_init_maps_on_conn(&conn, managed_pool_id, &[]).unwrap();
+        }
+
+        assert_eq!(
+            count_rows(
+                &db,
+                "managed_pool_liquidity_positions",
+                "managed_pool_id",
+                managed_pool_id
+            ),
+            0
+        );
+        assert_eq!(
+            count_rows(
+                &db,
+                "managed_pool_initialization_maps",
+                "managed_pool_id",
+                managed_pool_id
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn apply_v4_full_drain_empties_tables_and_stamps_marker() {
+        let (db, managed_pool_id, hash) = v4_db_with_pool();
+        seed_v4_position(
+            &db,
+            managed_pool_id,
+            -10,
+            I256::try_from(1_000_000).unwrap(),
+            U128::from(1_000_000u64),
+        );
+        seed_v4_position(
+            &db,
+            managed_pool_id,
+            10,
+            I256::try_from(-1_000_000).unwrap(),
+            U128::from(1_000_000u64),
+        );
+        seed_v4_init_map(&db, managed_pool_id, -1, U256::from(1u64) << 255);
+        seed_v4_init_map(&db, managed_pool_id, 0, U256::from(1u64) << 1);
+
+        let pos = |n: i64| I256::try_from(n).unwrap();
+        let events = [
+            LiquidityUpdateEvent {
+                block_number: 200,
+                log_index: 0,
+                tick_lower: -10,
+                tick_upper: 10,
+                liquidity_delta: pos(500_000),
+            },
+            LiquidityUpdateEvent {
+                block_number: 200,
+                log_index: 1,
+                tick_lower: 100,
+                tick_upper: 110,
+                liquidity_delta: pos(250_000),
+            },
+            LiquidityUpdateEvent {
+                block_number: 201,
+                log_index: 0,
+                tick_lower: -10,
+                tick_upper: 10,
+                liquidity_delta: pos(-1_500_000),
+            },
+            LiquidityUpdateEvent {
+                block_number: 202,
+                log_index: 0,
+                tick_lower: 100,
+                tick_upper: 110,
+                liquidity_delta: pos(-250_000),
+            },
+        ];
+        db.apply_v4_liquidity_updates(&hash, 1, &events).unwrap();
+
+        assert_eq!(
+            count_rows(
+                &db,
+                "managed_pool_liquidity_positions",
+                "managed_pool_id",
+                managed_pool_id
+            ),
+            0
+        );
+        assert_eq!(
+            count_rows(
+                &db,
+                "managed_pool_initialization_maps",
+                "managed_pool_id",
+                managed_pool_id
+            ),
+            0
+        );
+        let conn = db.lock();
+        let marker: (Option<i64>, Option<i64>) = conn
+            .query_row(
+                "SELECT liquidity_update_block, liquidity_update_log_index FROM uniswap_v4_pools WHERE managed_pool_id = ?1",
+                rusqlite::params![managed_pool_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(marker, (Some(202), Some(0)));
     }
 }

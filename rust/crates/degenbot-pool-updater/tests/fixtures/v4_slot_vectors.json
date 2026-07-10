@@ -1,0 +1,74 @@
+{
+  "pool_id": "0x0000000000000000000000000000000000000000000000000000000000000001",
+  "pools_base_slot": 6,
+  "state_base": "0x3e5fec24aa4dc4e5aee2e025e51e1392c72a2500577559fae9665c6d52bd6a31",
+  "ticks_mapping_offset": 4,
+  "tickbitmap_mapping_offset": 5,
+  "cases": [
+    {
+      "kind": "tick",
+      "tick": -887220,
+      "slot": "0x582bff295aa51422943b629229b543deed3e2a2f638aa846562d69521ecd2381"
+    },
+    {
+      "kind": "tick",
+      "tick": -100,
+      "slot": "0x0f335c0565e65bd65f7ae80502d13da8188bd2e85f79878450decf77501242af"
+    },
+    {
+      "kind": "tick",
+      "tick": -1,
+      "slot": "0xe144d190ab821ad2b3e01b2e5b215edb2324c5cd17330425e5274158d65ffe6e"
+    },
+    {
+      "kind": "tick",
+      "tick": 0,
+      "slot": "0x071baefdc11a1a736f835256c2bc394c68d5ec5a0621b837dd5a1614ef57dbb2"
+    },
+    {
+      "kind": "tick",
+      "tick": 1,
+      "slot": "0xdeecf616af14ecf5af18296eeb4d0b420579c78910805f488c52af79ea8c286c"
+    },
+    {
+      "kind": "tick",
+      "tick": 100,
+      "slot": "0xea48cb33783a9d6f27628e3b906b0886c2cf1db3671b72db6ca71e543673be95"
+    },
+    {
+      "kind": "tick",
+      "tick": 887220,
+      "slot": "0xb28723db135d0772b80eb995ca4813d602baa17314fabbef5305aa54f792aeee"
+    },
+    {
+      "kind": "bitmap",
+      "word": -2047,
+      "slot": "0xcb4199c2cdae663d28d9045a8c7947aaaef7f24e869f4646519b7fd0bb845750"
+    },
+    {
+      "kind": "bitmap",
+      "word": -1,
+      "slot": "0xa9f531d32a7801e5fd7761efcdfabdd15b41ecb7a9d0fb9e79c7aa2304a844c8"
+    },
+    {
+      "kind": "bitmap",
+      "word": 0,
+      "slot": "0x6395bb2e70acf609fb69050da9fdfeb703963b9ae70f663b6a5d53a413ed6684"
+    },
+    {
+      "kind": "bitmap",
+      "word": 1,
+      "slot": "0x62806c3fa03ed76f2aa390bba57ea4df2426510079b444c05bb392b554bf4cee"
+    },
+    {
+      "kind": "bitmap",
+      "word": 5,
+      "slot": "0x5aeb90dcb24f09b6daf7ccac04db0e1f868602ca6deca7c5b13dd4bd40c58a92"
+    },
+    {
+      "kind": "bitmap",
+      "word": 2047,
+      "slot": "0x450cbb5a1ffffbb1130cffb3ff3ff3683f1cf1c7daaecf31c32e5c0738833166"
+    }
+  ]
+}

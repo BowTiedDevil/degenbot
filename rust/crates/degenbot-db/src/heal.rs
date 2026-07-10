@@ -489,7 +489,7 @@ fn copy_table(
         while let Some(row) = rows.next()? {
             let mut values: Vec<Value> = Vec::with_capacity(select_cols.len());
             for i in 0..select_cols.len() {
-                values.push(Value::from(row.get_ref(i)?));
+                values.push(row.get::<_, Value>(i)?);
             }
             batch.push(values);
         }

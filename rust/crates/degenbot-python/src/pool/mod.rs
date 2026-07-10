@@ -186,6 +186,7 @@ fn update_report_to_dict(py: Python<'_>, r: &UpdateReport) -> PyResult<Py<PyDict
     rpc_url,
     progress_callback,
     cancel_handle,
+    verify = false,
 ))]
 #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
 fn run_pool_update(
@@ -197,6 +198,7 @@ fn run_pool_update(
     rpc_url: &str,
     progress_callback: ProgressCallable,
     cancel_handle: &CancelHandle,
+    verify: bool,
 ) -> PyResult<Py<PyDict>> {
     let path = PathBuf::from(database_path);
     let cancel = cancel_handle.flag.clone();
@@ -208,12 +210,242 @@ fn run_pool_update(
     let report = py
         .detach(move || {
             run::run_pool_update(
-                &path, chain_id, to_block, chunk_size, rpc_url, cancel, progress,
+                &path, chain_id, to_block, chunk_size, rpc_url, cancel, progress, verify,
             )
         })
         .map_err(run_err_to_py)?;
 
     update_report_to_dict(py, &report)
+}
+
+/// `degenbot_rs.verify_v3_liquidity_map(database_path, rpc_url, chain_id,
+/// pool_address, block_number) -> list[dict]`
+///
+/// Standalone on-chain-truth verification of a V3 pool's COMMITTED liquidity
+/// map (read-only — no SQL writes, no event apply). Opens the DB, fetches the
+/// pool's `liquidity_positions` + `initialization_maps` rows, builds the
+/// in-memory map, + compares EVERY tick + bitmap word against on-chain
+/// `IUniswapV3Pool.ticks(int24)` / `tickBitmap(int16)` at `block_number`, all
+/// batched through Multicall3. Returns the divergence list (empty = GREEN —
+/// the DB matches the chain at `block_number`).
+///
+/// This is the ad-hoc / spot-check sibling of the pre-commit gate
+/// (`run_pool_update(verify=True)`); the gate runs the SAME core verify
+/// BEFORE the write commits, while this reads the already-committed state.
+/// Per-position `eth_call`s are batched via Multicall3.
+///
+/// The GIL is released across the whole call (`py.detach`); the runtime +
+/// `AlloyProvider` are owned internally (mirrors the aave verify seam).
+#[pyfunction]
+#[pyo3(signature = (database_path, rpc_url, chain_id, pool_address, block_number))]
+#[allow(clippy::needless_pass_by_value)]
+fn verify_v3_liquidity_map(
+    py: Python<'_>,
+    database_path: &str,
+    rpc_url: &str,
+    chain_id: i64,
+    pool_address: &str,
+    block_number: u64,
+) -> PyResult<Vec<Py<PyDict>>> {
+    use degenbot_db::{ComputedLiquidityUpdate, DegenbotDb};
+    use degenbot_pool_updater::verify_v3_liquidity_map_on_chain;
+    use degenbot_rpc::provider::AlloyProvider;
+
+    let path = PathBuf::from(database_path);
+    let addr: alloy::primitives::Address = pool_address
+        .parse()
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("bad pool_address: {e}")))?;
+    let addr_str = addr.to_checksum(None);
+
+    let divergences = py
+        .detach(move || {
+            use tokio::runtime::Handle;
+            let db = DegenbotDb::open(&path).map_err(RunError::Db)?.0;
+            let conn = db.lock();
+            let state = DegenbotDb::fetch_v3_pool_update_state_on_conn(&conn, chain_id, &addr_str)
+                .map_err(RunError::Db)?
+                .ok_or_else(|| {
+                    RunError::Db(degenbot_db::DbError::Decode(format!(
+                        "v3 pool {addr_str} not found on chain {chain_id}"
+                    )))
+                })?;
+            let (tick_bitmap, tick_data) =
+                DegenbotDb::fetch_v3_liquidity_map_on_conn(&conn, state.pool_id)
+                    .map_err(RunError::Db)?;
+            let computed = ComputedLiquidityUpdate {
+                pool_id: state.pool_id,
+                tick_spacing: state.tick_spacing,
+                tick_data,
+                tick_bitmap,
+                last_event: None,
+            };
+            let res: Result<Vec<_>, RunError> = if let Ok(handle) = Handle::try_current() {
+                let provider = handle.block_on(AlloyProvider::new(rpc_url, 5))?;
+                let fut =
+                    verify_v3_liquidity_map_on_chain(&provider, addr, &computed, block_number);
+                Ok(tokio::task::block_in_place(|| handle.block_on(fut))?)
+            } else {
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()?;
+                let provider = rt.block_on(AlloyProvider::new(rpc_url, 5))?;
+                Ok(rt.block_on(verify_v3_liquidity_map_on_chain(
+                    &provider,
+                    addr,
+                    &computed,
+                    block_number,
+                ))?)
+            };
+            res
+        })
+        .map_err(run_err_to_py)?;
+
+    Ok(divergences_to_dicts(py, &divergences))
+}
+
+/// `degenbot_rs.verify_v4_liquidity_map(database_path, rpc_url, chain_id,
+/// pool_hash, pool_manager_address, block_number) -> list[dict]`
+///
+/// Standalone on-chain-truth verification of a V4 pool's COMMITTED liquidity
+/// map via the singleton `PoolManager.extsload(bytes32[])` at `block_number`
+/// (read-only — mirrors [`verify_v3_liquidity_map`]). `pool_hash` is the V4
+/// `PoolId` (bytes32 hex, `0x…`); `pool_manager_address` is the deployed V4
+/// `PoolManager` singleton (the chain has one — it's the V4 exchange's
+/// `factory`). Returns the divergence list (empty = GREEN).
+///
+/// The GIL is released across the whole call; the runtime + provider are
+/// owned internally.
+#[pyfunction]
+#[pyo3(signature = (database_path, rpc_url, chain_id, pool_hash, pool_manager_address, block_number))]
+#[allow(clippy::needless_pass_by_value)]
+fn verify_v4_liquidity_map(
+    py: Python<'_>,
+    database_path: &str,
+    rpc_url: &str,
+    chain_id: i64,
+    pool_hash: &str,
+    pool_manager_address: &str,
+    block_number: u64,
+) -> PyResult<Vec<Py<PyDict>>> {
+    use degenbot_db::{ComputedLiquidityUpdate, DegenbotDb};
+    use degenbot_pool_updater::verify_v4_liquidity_map_on_chain;
+    use degenbot_rpc::provider::AlloyProvider;
+    use std::str::FromStr;
+
+    let path = PathBuf::from(database_path);
+    let pool_manager: alloy::primitives::Address = pool_manager_address.parse().map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!("bad pool_manager_address: {e}"))
+    })?;
+    let pool_id =
+        alloy::primitives::B256::from_str(pool_hash.strip_prefix("0x").unwrap_or(pool_hash))
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("bad pool_hash: {e}")))?;
+
+    let divergences = py
+        .detach(move || {
+            use tokio::runtime::Handle;
+            let db = DegenbotDb::open(&path).map_err(RunError::Db)?.0;
+            let conn = db.lock();
+            let state = DegenbotDb::fetch_v4_pool_update_state_on_conn(&conn, pool_hash, chain_id)
+                .map_err(RunError::Db)?
+                .ok_or_else(|| {
+                    RunError::Db(degenbot_db::DbError::Decode(format!(
+                        "v4 pool {pool_hash} not found on chain {chain_id}"
+                    )))
+                })?;
+            let (tick_bitmap, tick_data) =
+                DegenbotDb::fetch_v4_liquidity_map_on_conn(&conn, state.pool_id)
+                    .map_err(RunError::Db)?;
+            let computed = ComputedLiquidityUpdate {
+                pool_id: state.pool_id,
+                tick_spacing: state.tick_spacing,
+                tick_data,
+                tick_bitmap,
+                last_event: None,
+            };
+            let res: Result<Vec<_>, RunError> = if let Ok(handle) = Handle::try_current() {
+                let provider = handle.block_on(AlloyProvider::new(rpc_url, 5))?;
+                let fut = verify_v4_liquidity_map_on_chain(
+                    &provider,
+                    pool_manager,
+                    pool_id,
+                    &computed,
+                    block_number,
+                );
+                Ok(tokio::task::block_in_place(|| handle.block_on(fut))?)
+            } else {
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()?;
+                let provider = rt.block_on(AlloyProvider::new(rpc_url, 5))?;
+                Ok(rt.block_on(verify_v4_liquidity_map_on_chain(
+                    &provider,
+                    pool_manager,
+                    pool_id,
+                    &computed,
+                    block_number,
+                ))?)
+            };
+            res
+        })
+        .map_err(run_err_to_py)?;
+
+    Ok(divergences_to_dicts(py, &divergences))
+}
+
+/// Encode a [`degenbot_pool_updater::LiquidityDivergence`] list as a list of
+/// dicts (empty = GREEN). Each dict carries `variant` + the named fields for
+/// bisect-able triage (the same shape the pre-commit gate surfaces).
+fn divergences_to_dicts(
+    py: Python<'_>,
+    divergences: &[degenbot_pool_updater::LiquidityDivergence],
+) -> Vec<Py<PyDict>> {
+    use degenbot_pool_updater::LiquidityDivergence;
+    let mut out = Vec::with_capacity(divergences.len());
+    for d in divergences {
+        let dict = PyDict::new(py);
+        match d {
+            LiquidityDivergence::TickGross {
+                tick,
+                expected,
+                actual,
+            } => {
+                dict.set_item("variant", "TickGross").unwrap();
+                dict.set_item("tick", tick).unwrap();
+                dict.set_item("expected", format!("{expected}")).unwrap();
+                dict.set_item("actual", format!("{actual}")).unwrap();
+            }
+            LiquidityDivergence::TickNet {
+                tick,
+                expected,
+                actual,
+            } => {
+                dict.set_item("variant", "TickNet").unwrap();
+                dict.set_item("tick", tick).unwrap();
+                dict.set_item("expected", format!("{expected}")).unwrap();
+                dict.set_item("actual", format!("{actual}")).unwrap();
+            }
+            LiquidityDivergence::BitmapWord {
+                word,
+                expected,
+                actual,
+            } => {
+                dict.set_item("variant", "BitmapWord").unwrap();
+                dict.set_item("word", word).unwrap();
+                dict.set_item("expected", format!("{expected}")).unwrap();
+                dict.set_item("actual", format!("{actual}")).unwrap();
+            }
+            LiquidityDivergence::TickCallReverted { tick } => {
+                dict.set_item("variant", "TickCallReverted").unwrap();
+                dict.set_item("tick", tick).unwrap();
+            }
+            LiquidityDivergence::BitmapCallReverted { word } => {
+                dict.set_item("variant", "BitmapCallReverted").unwrap();
+                dict.set_item("word", word).unwrap();
+            }
+        }
+        out.push(dict.unbind());
+    }
+    out
 }
 
 // `CancelHandle` lives in `cancel.rs` (extracted) — shared with the Aave
@@ -244,6 +476,8 @@ fn run_err_to_py(err: RunError) -> PyErr {
 /// collision); propagated unchanged to the `#[pymodule]` caller.
 pub fn add_pool_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run_pool_update, m)?)?;
+    m.add_function(wrap_pyfunction!(verify_v3_liquidity_map, m)?)?;
+    m.add_function(wrap_pyfunction!(verify_v4_liquidity_map, m)?)?;
     // `CancelHandle` is registered by `cancel::register_cancel` in `c_api`
     // (shared with the Aave updater seam).
     Ok(())

@@ -53,6 +53,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -63,6 +64,10 @@ use degenbot_db::{
 };
 use degenbot_rpc::provider::{AlloyProvider, LogFetcher};
 use rusqlite::Connection;
+
+use crate::verify::{
+    verify_v3_liquidity_map_on_chain, verify_v4_liquidity_map_on_chain, LiquidityDivergence,
+};
 
 use crate::fetch::{
     fetch_pool_created_logs_for_spec, fetch_v3_liquidity_logs_grouped,
@@ -155,10 +160,31 @@ pub struct ChunkInputs {
     pub v3_liquidity: HashMap<Address, Vec<LiquidityUpdateEvent>>,
     /// V4 liquidity events grouped by `pool_hash` hex (per-PoolManager scan).
     pub v4_liquidity: HashMap<String, Vec<LiquidityUpdateEvent>>,
+    /// `pool_hash` hex → the V4 `PoolManager` address that emitted each pool's
+    /// `ModifyLiquidity` events (collected during the per-PoolManager fetch
+    /// loop). The pre-commit on-chain gate needs this to call `extsload` on
+    /// the right singleton per pool.
+    pub v4_manager_addresses: HashMap<String, Address>,
     /// The `pool_manager_chain` for V4 applies (the chain of the
     /// PoolManager(s) whose `ModifyLiquidity` events were scanned — equals
     /// `chain_id` for the per-chain chunk loop).
     pub pool_manager_chain: i64,
+}
+
+/// The pre-commit on-chain-truth gate context — when `Some`, the chunk's
+/// per-pool liquidity applies run compute → verify(Full) → persist (the V3/V4
+/// `verify_*_liquidity_map_on_chain` gate); a divergence rolls back the chunk's
+/// transaction + does NOT advance `last_update_block`. `None` = the no-gate
+/// backward-compat path (fused compute→persist).
+pub struct VerifyCtx<'a> {
+    /// The HTTP RPC provider for on-chain `ticks()`/`tickBitmap()`/`extsload` reads.
+    pub provider: &'a AlloyProvider,
+    /// The runtime (built by `run_pool_update`) to `block_on` the async verify.
+    pub rt: &'a tokio::runtime::Runtime,
+    /// The block number to read on-chain truth at (= the chunk's `chunk_end`).
+    pub block_number: u64,
+    /// V4 `pool_hash` hex → the `PoolManager` address (for `extsload`).
+    pub v4_manager_addresses: &'a HashMap<String, Address>,
 }
 
 /// What [`apply_chunk_writes_on_conn`] wrote in the chunk.
@@ -294,15 +320,18 @@ pub fn map_pool_creation(
 /// # Errors
 ///
 /// Returns [`DbError`](degenbot_db::DbError) on any write/query failure — the
-/// caller drops the `Transaction` (rollback) on `Err`.
-#[allow(clippy::missing_errors_doc)]
+/// caller drops the `Transaction` (rollback) on `Err`. When `verify` is
+/// `Some`, a pre-commit on-chain-truth divergence surfaces as
+/// [`RunError::Verification`] (also a rollback — the stamp does NOT advance).
+#[allow(clippy::missing_errors_doc, clippy::too_many_lines)]
 pub fn apply_chunk_writes_on_conn(
     conn: &Connection,
     chain_id: i64,
     specs_to_update: &[ExchangeSpec],
     chunk_end: u64,
     inputs: &ChunkInputs,
-) -> Result<ChunkWriteReport, degenbot_db::DbError> {
+    verify: Option<&VerifyCtx>,
+) -> Result<ChunkWriteReport, RunError> {
     let mut report = ChunkWriteReport::default();
 
     // 1. Pool creations — group by (exchange_id, family) + upsert per batch.
@@ -317,6 +346,9 @@ pub fn apply_chunk_writes_on_conn(
     // 2. V3 liquidity — in-scope filter per pool, then per-pool apply.
     //    The whole-chain scan grouped by emitter; here we keep only pools whose
     //    `exchange_id` is in `specs_to_update` (the chunk's laggard subset).
+    //    With `verify` set: compute → verify the FULL in-memory map against
+    //    on-chain `ticks()`/`tickBitmap()` at `block_number` → persist only
+    //    on GREEN (divergence → `RunError::Verification`, the tx rolls back).
     for (pool_address, events) in &inputs.v3_liquidity {
         let pool = DegenbotDb::fetch_pool_by_address_on_conn(conn, *pool_address, chain_id)?;
         let in_scope = pool
@@ -326,27 +358,94 @@ pub fn apply_chunk_writes_on_conn(
         if !in_scope {
             continue; // pool belongs to an exchange not being updated this chunk
         }
-        if DegenbotDb::apply_v3_liquidity_updates_on_conn(
+        let Some(c) = DegenbotDb::compute_v3_liquidity_update_on_conn(
             conn,
             chain_id,
             &pool_address.to_checksum(None),
             events,
-        )? {
-            report.liquidity_apply_count += 1;
+        )?
+        else {
+            continue;
+        };
+        if let Some(vc) = verify {
+            let divergences = vc.rt.block_on(verify_v3_liquidity_map_on_chain(
+                vc.provider,
+                *pool_address,
+                &c,
+                vc.block_number,
+            ))?;
+            if !divergences.is_empty() {
+                return Err(RunError::Verification {
+                    pool: pool_address.to_checksum(None),
+                    block_number: vc.block_number,
+                    divergences,
+                });
+            }
         }
+        DegenbotDb::persist_v3_liquidity_update_on_conn(
+            conn,
+            c.pool_id,
+            &c.tick_bitmap,
+            &c.tick_data,
+            c.last_event,
+        )?;
+        report.liquidity_apply_count += 1;
     }
 
     // 3. V4 liquidity — per-pool apply. The V4 fetch is per-PoolManager
     //    (already per-exchange-scoped), so all fetched events are in-scope.
+    //    With `verify` set: compute → verify the FULL in-memory map against
+    //    on-chain tick/bitmap storage via `extsload(bytes32[])` at
+    //    `block_number` → persist only on GREEN.
     for (pool_hash, events) in &inputs.v4_liquidity {
-        if DegenbotDb::apply_v4_liquidity_updates_on_conn(
+        let Some(c) = DegenbotDb::compute_v4_liquidity_update_on_conn(
             conn,
             pool_hash,
             inputs.pool_manager_chain,
             events,
-        )? {
-            report.liquidity_apply_count += 1;
+        )?
+        else {
+            continue;
+        };
+        if let Some(vc) = verify {
+            let pool_manager_address =
+                vc.v4_manager_addresses
+                    .get(pool_hash)
+                    .copied()
+                    .ok_or_else(|| {
+                        RunError::Provider(ProviderError::DecodingError {
+                            message: format!(
+                                "v4 verify: no PoolManager address for pool_hash {pool_hash:?}"
+                            ),
+                        })
+                    })?;
+            let pool_id = B256::from_str(pool_hash.strip_prefix("0x").unwrap_or(pool_hash))
+                .map_err(|e| ProviderError::DecodingError {
+                    message: format!("v4 verify: bad pool_hash {pool_hash:?}: {e}"),
+                })?;
+            let divergences = vc.rt.block_on(verify_v4_liquidity_map_on_chain(
+                vc.provider,
+                pool_manager_address,
+                pool_id,
+                &c,
+                vc.block_number,
+            ))?;
+            if !divergences.is_empty() {
+                return Err(RunError::Verification {
+                    pool: pool_hash.clone(),
+                    block_number: vc.block_number,
+                    divergences,
+                });
+            }
         }
+        DegenbotDb::persist_v4_liquidity_update_on_conn(
+            conn,
+            c.pool_id,
+            &c.tick_bitmap,
+            &c.tick_data,
+            c.last_event,
+        )?;
+        report.liquidity_apply_count += 1;
     }
 
     // 4. Stamp `last_update_block` for each in-scope exchange — the LAST write
@@ -494,6 +593,23 @@ pub enum RunError {
     /// any) was rolled back before returning.
     #[error("cancelled by cancel flag at chunk boundary")]
     Cancelled,
+    /// The pre-commit on-chain-truth gate (Full per-pool verification) found
+    /// divergences: the chunk's transaction was rolled back + the exchange's
+    /// `last_update_block` was NOT advanced (the restart-invariant holds — the
+    /// next run re-processes the same chunk). Carries the diverging pool's
+    /// identifier + the verify-at block + the named divergence list (empty
+    /// would be GREEN). Mirrors the aave `RunError::Verification`.
+    #[error(
+        "verification failed for pool {pool:?} at block {block_number} — see divergences field"
+    )]
+    Verification {
+        /// The diverging pool's identifier — V3 checksummed address, V4 `pool_hash` hex.
+        pool: String,
+        /// The block number the on-chain truth was read at (= `chunk_end`).
+        block_number: u64,
+        /// The named, bisect-able divergences (empty = GREEN).
+        divergences: Vec<LiquidityDivergence>,
+    },
 }
 
 /// Run the pool-updater chunk loop for `chain_id`, advancing every active
@@ -515,6 +631,10 @@ pub enum RunError {
 /// - `rpc_url` — the HTTP RPC endpoint.
 /// - `cancel` — set to `true` to cooperatively stop at the next chunk boundary.
 /// - `progress` — the per-chunk progress sink (use [`NoProgress`] for silent).
+/// - `verify` — when `true`, run the pre-commit on-chain-truth gate (Full
+///   per-pool per-chunk verification) before each chunk's persist commits; a
+///   divergence rolls back the chunk + surfaces [`RunError::Verification`].
+///   `false` = the no-gate backward-compat path (fused compute→persist).
 ///
 /// # Errors
 ///
@@ -524,7 +644,8 @@ pub enum RunError {
 #[allow(
     clippy::missing_errors_doc,
     clippy::too_many_lines,
-    clippy::needless_pass_by_value
+    clippy::needless_pass_by_value,
+    clippy::too_many_arguments
 )]
 pub fn run_pool_update(
     database_path: &Path,
@@ -534,6 +655,7 @@ pub fn run_pool_update(
     rpc_url: &str,
     cancel: Arc<AtomicBool>,
     progress: Arc<dyn ProgressSink>,
+    verify: bool,
 ) -> Result<UpdateReport, RunError> {
     if chunk_size == 0 {
         return Err(RunError::Provider(ProviderError::InvalidBlockRange {
@@ -657,6 +779,7 @@ pub fn run_pool_update(
         // the PoolManager address). Merge across all V4 chunk-specs into one
         // grouped map (the apply is per-pool_hash, manager-chain-scoped).
         let mut v4_liquidity: HashMap<String, Vec<LiquidityUpdateEvent>> = HashMap::new();
+        let mut v4_manager_addresses: HashMap<String, Address> = HashMap::new();
         for spec in &chunk_specs {
             if matches!(spec.family, crate::fetch::PoolFamily::V4) {
                 let per_manager = rt.block_on(fetch_v4_liquidity_logs_grouped(
@@ -666,6 +789,9 @@ pub fn run_pool_update(
                     Some(spec.factory),
                 ))?;
                 for (hash, events) in per_manager {
+                    v4_manager_addresses
+                        .entry(hash.clone())
+                        .or_insert(spec.factory);
                     v4_liquidity.entry(hash).or_default().extend(events);
                 }
             }
@@ -674,7 +800,23 @@ pub fn run_pool_update(
             pool_creations,
             v3_liquidity,
             v4_liquidity,
+            v4_manager_addresses,
             pool_manager_chain: chain_id,
+        };
+
+        // The pre-commit on-chain-truth gate (Full per-pool verification):
+        // when `verify` is on, each pool's in-memory map is compared against
+        // on-chain truth at `working_end_block` before the persist commits — a
+        // divergence drops `tx` (rollback) + the stamp does NOT advance.
+        let verify_ctx = if verify {
+            Some(VerifyCtx {
+                provider: &provider,
+                rt: &rt,
+                block_number: working_end_block,
+                v4_manager_addresses: &inputs.v4_manager_addresses,
+            })
+        } else {
+            None
         };
 
         // The single-transaction chunk write (§1 atomicity). On ANY error the
@@ -683,8 +825,14 @@ pub fn run_pool_update(
         let chunk_report = {
             let mut guard = db.lock();
             let tx = guard.transaction().map_err(degenbot_db::DbError::from)?;
-            let result =
-                apply_chunk_writes_on_conn(&tx, chain_id, &chunk_specs, working_end_block, &inputs);
+            let result = apply_chunk_writes_on_conn(
+                &tx,
+                chain_id,
+                &chunk_specs,
+                working_end_block,
+                &inputs,
+                verify_ctx.as_ref(),
+            );
             match result {
                 Ok(r) => {
                     tx.commit().map_err(degenbot_db::DbError::from)?;
@@ -693,6 +841,8 @@ pub fn run_pool_update(
                 Err(e) => {
                     // Drop `tx` (rollback) — the chunk's writes + the stamp
                     // advance are reverted; the committed prior chunks stand.
+                    // `e` is already a `RunError` (Db, Provider, or
+                    // Verification — all rollback the chunk).
                     drop(tx);
                     progress.report_chunk(&ChunkProgress {
                         chain_id,
@@ -702,7 +852,7 @@ pub fn run_pool_update(
                         liquidity_apply_count: 0,
                         committed: false,
                     });
-                    return Err(RunError::Db(e));
+                    return Err(e);
                 }
             }
         };
@@ -784,6 +934,8 @@ async fn fetch_pool_creations(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::verify::LiquidityDivergence;
+    use alloy::primitives::U256 as U256P;
     use degenbot_db::DegenbotDb;
 
     /// An in-memory writeable DB with the head schema (the chunk-writer's
@@ -829,7 +981,7 @@ mod tests {
         // ONE transaction wraps the pool write + the stamp.
         let mut guard = db.lock();
         let tx = guard.transaction().unwrap();
-        let report = apply_chunk_writes_on_conn(&tx, 1, &specs, 100, &inputs).unwrap();
+        let report = apply_chunk_writes_on_conn(&tx, 1, &specs, 100, &inputs, None).unwrap();
         tx.commit().unwrap();
         drop(guard);
 
@@ -884,7 +1036,7 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            apply_chunk_writes_on_conn(&tx, 1, &specs, 100, &inputs_ok).unwrap();
+            apply_chunk_writes_on_conn(&tx, 1, &specs, 100, &inputs_ok, None).unwrap();
             tx.commit().unwrap();
         }
 
@@ -894,7 +1046,7 @@ mod tests {
         let err = {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let result = apply_chunk_writes_on_conn(&tx, 1, &specs, 200, &inputs_dup);
+            let result = apply_chunk_writes_on_conn(&tx, 1, &specs, 200, &inputs_dup, None);
             // The duplicate insert must surface as an error (UNIQUE constraint).
             assert!(result.is_err(), "duplicate pool insert must error");
             // Drop tx without commit → rollback (the inner fn's `?` already returned).
@@ -914,5 +1066,43 @@ mod tests {
         assert!(db.fetch_pool_by_address(pool.address, 1).unwrap().is_some());
         // (c) The error propagated (the caller would surface it).
         // (already asserted `result.is_err()` above)
+    }
+
+    /// `RunError::Verification` carries the diverging pool id + the named
+    /// divergences (the harness the pre-commit gate returns on a RED). This
+    /// is the shape the chunk loop propagates (testing that the error chain
+    /// conveys the divergence data the operator needs — no RPC).
+    #[test]
+    fn run_error_verification_carries_pool_and_divergences() {
+        let divergences = vec![
+            LiquidityDivergence::TickGross {
+                tick: 12345,
+                expected: alloy::primitives::U128::from(500u64),
+                actual: alloy::primitives::U128::ZERO,
+            },
+            LiquidityDivergence::BitmapWord {
+                word: 0,
+                expected: U256P::from(1u64),
+                actual: U256P::ZERO,
+            },
+        ];
+        let err = RunError::Verification {
+            pool: "0xdead..beef".to_string(),
+            block_number: 42,
+            divergences: divergences.clone(),
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("0xdead..beef"), "error names the pool: {msg}");
+        assert!(msg.contains("42"), "error names the block: {msg}");
+        match &err {
+            RunError::Verification {
+                pool: _,
+                block_number: _,
+                divergences: d,
+            } => {
+                assert_eq!(d, &divergences);
+            }
+            other => panic!("expected Verification, got {other:?}"),
+        }
     }
 }
