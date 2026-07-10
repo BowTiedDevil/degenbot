@@ -692,7 +692,7 @@ def run_pool_update(
         rpc_url: The HTTP RPC endpoint.
         progress_callback: A callable invoked with a per-chunk ``dict``
             ``{chain_id, chunk_start, chunk_end, pools_written,
-            liquidity_apply_count, committed}`` once per chunk boundary.
+            liquidity_apply_count, committed, is_final}`` once per chunk boundary.
         cancel_handle: A ``CancelHandle`` constructed up front; a SIGINT
             handler calls ``cancel_handle.cancel()`` to stop at the next
             chunk boundary.
@@ -818,7 +818,7 @@ def run_aave_update(
         rpc_url: The HTTP RPC endpoint.
         progress_callback: A callable invoked with a per-chunk ``dict``
             ``{chain_id, market_id, chunk_start, chunk_end, events_applied,
-            committed}`` once per chunk boundary.
+            committed, is_final}`` once per chunk boundary.
         cancel_handle: A ``CancelHandle`` (shared with ``run_pool_update``);
             a SIGINT handler calls ``cancel_handle.cancel()``.
         verify_chunk: If ``True``, run pre-commit verification on each chunk

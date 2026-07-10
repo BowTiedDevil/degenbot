@@ -857,6 +857,11 @@ pub struct AaveChunkProgress {
     /// back (an error mid-chunk → the whole chunk reverted → restart will
     /// re-process).
     pub committed: bool,
+    /// `true` iff this is the run's final chunk (`chunk_end >= last_block` or
+    /// `max_chunks` hit). Reported POST-commit; the Python shell uses it to
+    /// fire the completion-time backup. The Rust completion full-verify
+    /// (YWEUIR) computes finality inline.
+    pub is_final: bool,
     /// The user addresses touched by ANY log in this chunk (topics[1]/[2]
     /// extracted as addresses). Drives the JGQHBX drive harness's per-chunk
     /// value-correctness gate via
@@ -1498,6 +1503,7 @@ pub fn run_aave_update(
                                     events_applied: 0,
                                     committed: false,
                                     touched_user_addresses: Vec::new(),
+                                    is_final: false,
                                 });
                                 return Err(RunError::Verification {
                                     chunk_start: working_start,
@@ -1522,6 +1528,7 @@ pub fn run_aave_update(
                         events_applied: 0,
                         committed: false,
                         touched_user_addresses: Vec::new(),
+                        is_final: false,
                     });
                     return Err(e);
                 }
@@ -1536,6 +1543,8 @@ pub fn run_aave_update(
             events_applied: chunk_report.events_applied,
             committed: true,
             touched_user_addresses: chunk_report.touched_user_addresses.into_iter().collect(),
+            is_final: chunk_end >= last_block
+                || max_chunks.is_some_and(|limit| report.chunks_committed + 1 >= limit),
         });
         report.chunks_committed += 1;
         report.total_events_applied += chunk_report.events_applied;

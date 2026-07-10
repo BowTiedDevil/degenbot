@@ -88,7 +88,8 @@ impl ProgressSink for PyProgressSink {
 /// Build the per-chunk `dict` reported to the Python progress callback.
 ///
 /// Shape: `{"chain_id": int, "market_id": int, "chunk_start": int,
-/// "chunk_end": int, "events_applied": int, "committed": bool}`.
+/// "chunk_end": int, "events_applied": int, "committed": bool,
+/// "is_final": bool}`.
 fn aave_progress_report_to_dict(py: Python<'_>, p: &AaveChunkProgress) -> PyResult<Py<PyDict>> {
     let dict = PyDict::new(py);
     dict.set_item("chain_id", p.chain_id)?;
@@ -97,6 +98,7 @@ fn aave_progress_report_to_dict(py: Python<'_>, p: &AaveChunkProgress) -> PyResu
     dict.set_item("chunk_end", p.chunk_end)?;
     dict.set_item("events_applied", p.events_applied)?;
     dict.set_item("committed", p.committed)?;
+    dict.set_item("is_final", p.is_final)?;
     // The touched-user address list — checksummed (`to_checksum`), one entry
     // per touched user in the chunk. Drives the JGQHBX drive harness's per-
     // chunk value-correctness gate: the harness passes this list as the
@@ -692,6 +694,7 @@ mod tests {
                 events_applied: 5,
                 committed: true,
                 touched_user_addresses: Vec::new(),
+                is_final: true,
             });
             sink.report_chunk(&AaveChunkProgress {
                 chain_id: 1,
@@ -701,6 +704,7 @@ mod tests {
                 events_applied: 0,
                 committed: false,
                 touched_user_addresses: Vec::new(),
+                is_final: false,
             });
 
             assert_eq!(seen.len(), 2, "callback should have fired once per chunk");
@@ -729,6 +733,17 @@ mod tests {
             );
             assert!(!second
                 .get_item("committed")
+                .unwrap()
+                .extract::<bool>()
+                .unwrap());
+            // The `is_final` field round-trips through the PyO3 dict.
+            assert!(first
+                .get_item("is_final")
+                .unwrap()
+                .extract::<bool>()
+                .unwrap());
+            assert!(!second
+                .get_item("is_final")
                 .unwrap()
                 .extract::<bool>()
                 .unwrap());
