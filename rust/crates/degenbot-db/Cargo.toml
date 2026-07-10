@@ -32,7 +32,12 @@ alloy = { version = "^2.0" }
 degenbot-cl-math = { path = "../degenbot-cl-math" }
 degenbot-pathfinding = { path = "../degenbot-pathfinding" }
 parking_lot = { version = "^0.12" }
-rusqlite = { version = "^0.31", features = ["bundled", "backup"] }
+# Float upward across rusqlite's 0.x point releases (each minor is semver-
+# breaking) but cap below a future 1.0 cutover. The `bundled` feature lives
+# only here so libsqlite3-sys is compiled once for the whole workspace.
+# See ADR-010/ADR-011 before reining this in — the on-disk SQLite version
+# this ships is the one creating/reading the Alembic-era .db files.
+rusqlite = { version = ">=0.31, <1.0", features = ["bundled", "backup"] }
 thiserror = { version = "^2.0" }
 
 [dev-dependencies]
