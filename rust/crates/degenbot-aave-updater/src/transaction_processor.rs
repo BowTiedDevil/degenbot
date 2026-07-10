@@ -2488,6 +2488,7 @@ mod tests {
     fn dispatch_deficit_coverage_pairs_erc20_transfer_with_paired_balance_transfer() {
         use degenbot_core::address_utils::address_to_checksum_string;
         use degenbot_decoders::aave_event_decoder::BALANCE_TRANSFER_TOPIC;
+        use degenbot_decoders::aave_event_decoder::BURN_TOPIC;
         use degenbot_evm_math::RAY;
         use rusqlite::params;
         let db = fresh_db_with_asset();
@@ -2622,7 +2623,6 @@ mod tests {
         // so it doesn't affect the crash #9 transfer-leg count assertion.
         // we build a complete Burn log so `build_scaled_event_chunk_event`'s
         // collateral-burn arm can compute a scaled amount (via `ray_div`).
-        use degenbot_decoders::aave_event_decoder::BURN_TOPIC;
         let burn_amount = U256::from(100u64);
         let burn_log = Box::leak(Box::new(make_log(
             217,
