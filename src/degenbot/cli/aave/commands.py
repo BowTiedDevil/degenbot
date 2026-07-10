@@ -794,7 +794,7 @@ def aave_update_py(
             # the Python driver doesn't have that fallback, so resolve
             # explicitly via an extra RPC round-trip.
             resolved_to_block = get_number_for_block_identifier(
-                to_block,
+                cast("_BlockTag", to_block),
                 provider=provider,
             )
         resolved_to_block = int(resolved_to_block)
