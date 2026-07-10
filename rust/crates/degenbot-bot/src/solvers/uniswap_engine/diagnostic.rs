@@ -10,6 +10,7 @@ use alloy::primitives::{Address, Bytes, B256, I256, U256};
 use serde::{Deserialize, Serialize};
 
 use super::{HopType, MixedPoolRef, UniswapEngine};
+use degenbot_rpc::multicall3::MulticallResult;
 
 /// A single typed field-level divergence between the engine's view of a pool
 /// and the on-chain snapshot (PCG2M3). The string rendering is the single
@@ -750,12 +751,68 @@ impl DiagnosticPathState {
         provider: &degenbot_rpc::provider::AlloyProvider,
         state_view: Option<Address>,
     ) -> Result<(), degenbot_core::errors::ProviderError> {
+        use degenbot_rpc::multicall3::{multicall3_batch, MulticallResult};
         let block_number = self.solve_block;
         self.onchain_block = block_number;
 
-        for hop in &mut self.hops {
-            let result = fetch_hop_onchain(hop, provider, block_number, state_view).await;
-            match result {
+        // 1. Build ALL sub-calls across hops up-front (1 per V2 hop, 2 per
+        //    V3/V4 hop). A V4 hop without a StateView address is skipped (its
+        //    sub-calls are NOT added to the batch; it gets the legacy skip
+        //    message in the apply loop below).
+        let mut calls: Vec<(Address, Bytes)> = Vec::new();
+        // Per-hop fetch plan: `Some(start, n)` for hops included in the batch;
+        // `None` for skipped V4-without-StateView hops.
+        let mut plans: Vec<Option<HopFetch>> = Vec::with_capacity(self.hops.len());
+        for hop in &self.hops {
+            let plan = match &hop.engine_state {
+                DiagnosticPoolState::V2 { address, .. } => {
+                    let built = build_v2_calls(address)?;
+                    let start = calls.len();
+                    calls.extend(built);
+                    Some(HopFetch { start, n: 1 })
+                }
+                DiagnosticPoolState::V3 { address, .. } => {
+                    let built = build_v3_calls(address)?;
+                    let start = calls.len();
+                    calls.extend(built);
+                    Some(HopFetch { start, n: 2 })
+                }
+                DiagnosticPoolState::V4 { pool_id, .. } => match state_view {
+                    Some(sv) => {
+                        let built = build_v4_calls(sv, pool_id)?;
+                        let start = calls.len();
+                        calls.extend(built);
+                        Some(HopFetch { start, n: 2 })
+                    }
+                    None => None, // skip — no StateView
+                },
+            };
+            plans.push(plan);
+        }
+
+        // 2. ONE batch dispatch for the whole hop set (replacing up to 2N
+        //    serial `eth_call`s — 2 per hop — with one Multicall3 aggregate3
+        //    `eth_call`, chunked at 1024 sub-calls). `multicall3_batch` falls
+        //    back to sequential per-call `eth_call` if the batch itself errors,
+        //    so a transport failure degrades to the prior per-hop behavior.
+        let results: Vec<MulticallResult> = if calls.is_empty() {
+            Vec::new()
+        } else {
+            multicall3_batch(provider, &calls, block_number).await?
+        };
+
+        // 3. Decode each hop's slice + apply (same post-processing as before).
+        for (hop, plan) in self.hops.iter_mut().zip(&plans) {
+            let outcome = match plan {
+                None => Ok(FetchOutcome {
+                    onchain_state: None,
+                    messages: vec![
+                        "V4 on-chain fetch skipped: no StateView address provided".to_string()
+                    ],
+                }),
+                Some(f) => decode_hop_results(hop, &results[f.start..f.start + f.n]),
+            };
+            match outcome {
                 Ok(outcome) => {
                     let field_drifts = match &outcome.onchain_state {
                         Some(oc) => compute_field_diffs(&hop.engine_state, oc),
@@ -775,15 +832,37 @@ impl DiagnosticPathState {
     }
 }
 
-/// Dispatch a single hop's on-chain fetch by pool family (PCG2M3; extracted
-/// from `fetch_onchain` to keep that method under the clippy line budget).
-/// Returns the on-chain `FetchOutcome`; field drift is computed by the caller
-/// via `compute_field_diffs` (single source of truth).
-async fn fetch_hop_onchain(
+/// A hop's position within the cross-hop multicall3 batch: `calls[start..start+n]`
+/// are this hop's sub-calls.
+struct HopFetch {
+    start: usize,
+    n: usize,
+}
+
+/// Map a `Multicall3` sub-call result to its raw return data, or a hard
+/// `ProviderError` if the sub-call reverted (`allowFailure = true` batch still
+/// succeeded, but this individual call failed). Preserves the pre-multicall
+/// per-hop behavior: a failed fetch surfaces as "on-chain fetch failed: {e}"
+/// on the matching hop's `diff` (not silently masked).
+fn require_success<'a>(
+    result: &'a MulticallResult,
+    what: &str,
+) -> Result<&'a Bytes, degenbot_core::errors::ProviderError> {
+    if !result.success {
+        return Err(degenbot_core::errors::ProviderError::Other {
+            message: format!("{what} sub-call reverted"),
+        });
+    }
+    Ok(&result.return_data)
+}
+
+/// Decode a hop's slice of the cross-hop multicall3 batch results into a
+/// `FetchOutcome`. Dispatches by pool family (`address` etc. read from the
+/// hop's `engine_state`, so no context cloning). Replaces the old
+/// `fetch_hop_onchain` dispatcher.
+fn decode_hop_results(
     hop: &DiagnosticHop,
-    provider: &degenbot_rpc::provider::AlloyProvider,
-    block_number: Option<u64>,
-    state_view: Option<Address>,
+    results: &[MulticallResult],
 ) -> Result<FetchOutcome, degenbot_core::errors::ProviderError> {
     match &hop.engine_state {
         DiagnosticPoolState::V2 {
@@ -792,17 +871,13 @@ async fn fetch_hop_onchain(
             reserve_out: _,
             fee_denom,
             gamma_numer,
-        } => {
-            fetch_v2_onchain(
-                provider,
-                block_number,
-                hop.zero_for_one,
-                address,
-                fee_denom,
-                gamma_numer,
-            )
-            .await
-        }
+        } => decode_v2_results(
+            &results[0],
+            hop.zero_for_one,
+            address,
+            fee_denom,
+            gamma_numer,
+        ),
         DiagnosticPoolState::V3 {
             address,
             token0,
@@ -812,18 +887,15 @@ async fn fetch_hop_onchain(
             sqrt_price_x96: _,
             tick: _,
             liquidity: _,
-        } => {
-            fetch_v3_onchain(
-                provider,
-                block_number,
-                address,
-                token0,
-                token1,
-                *fee,
-                *tick_spacing,
-            )
-            .await
-        }
+        } => decode_v3_results(
+            &results[0],
+            &results[1],
+            address,
+            token0,
+            token1,
+            *fee,
+            *tick_spacing,
+        ),
         DiagnosticPoolState::V4 {
             pool_manager,
             pool_id,
@@ -836,31 +908,18 @@ async fn fetch_hop_onchain(
             sqrt_price_x96: _,
             tick: _,
             liquidity: _,
-        } => {
-            if let Some(sv) = state_view {
-                fetch_v4_onchain(
-                    provider,
-                    block_number,
-                    sv,
-                    pool_manager,
-                    pool_id,
-                    currency0,
-                    currency1,
-                    *fee,
-                    *tick_spacing,
-                    *hook_flags,
-                    hooks,
-                )
-                .await
-            } else {
-                Ok(FetchOutcome {
-                    onchain_state: None,
-                    messages: vec![
-                        "V4 on-chain fetch skipped: no StateView address provided".to_string()
-                    ],
-                })
-            }
-        }
+        } => decode_v4_results(
+            &results[0],
+            &results[1],
+            pool_manager,
+            pool_id,
+            currency0,
+            currency1,
+            *fee,
+            *tick_spacing,
+            *hook_flags,
+            hooks,
+        ),
     }
 }
 
@@ -926,44 +985,47 @@ fn int_value_to_i32(value: &DynSolValue, expected_bits: usize) -> Option<i32> {
 // ---------------------------------------------------------------------------
 
 #[allow(clippy::too_many_arguments)]
-async fn fetch_v2_onchain(
-    provider: &degenbot_rpc::provider::AlloyProvider,
-    block_number: Option<u64>,
-    zero_for_one: bool,
+/// Build the V2 sub-call(s) for the cross-hop multicall3 batch: 1 call,
+/// `getReserves()`.
+fn build_v2_calls(
     address: &str,
-    fee_denom: &str,
-    gamma_numer: &str,
-) -> Result<FetchOutcome, degenbot_core::errors::ProviderError> {
+) -> Result<Vec<(Address, Bytes)>, degenbot_core::errors::ProviderError> {
     let pool_address: Address =
         address
             .parse()
             .map_err(|e| degenbot_core::errors::ProviderError::Other {
                 message: format!("invalid V2 pool address {address}: {e}"),
             })?;
-
     let selector = fn_selector("getReserves()");
     let calldata = encode_call(selector, &[]);
-    let raw = provider
-        .eth_call(&pool_address, calldata, block_number)
-        .await?;
+    Ok(vec![(pool_address, calldata)])
+}
 
+/// Decode the V2 `getReserves()` sub-call result (from the cross-hop
+/// multicall3 batch) into a `FetchOutcome`.
+fn decode_v2_results(
+    result: &MulticallResult,
+    zero_for_one: bool,
+    address: &str,
+    fee_denom: &str,
+    gamma_numer: &str,
+) -> Result<FetchOutcome, degenbot_core::errors::ProviderError> {
+    let raw = require_success(result, "getReserves")?;
     let return_type = DynSolType::Tuple(vec![
         DynSolType::Uint(112),
         DynSolType::Uint(112),
         DynSolType::Uint(32),
     ]);
-    let decoded = return_type.abi_decode(&raw).map_err(|e| {
+    let decoded = return_type.abi_decode(raw).map_err(|e| {
         degenbot_core::errors::ProviderError::SerializationError {
             message: format!("failed to decode getReserves result: {e}"),
         }
     })?;
-
     let DynSolValue::Tuple(values) = decoded else {
         return Err(degenbot_core::errors::ProviderError::SerializationError {
             message: "getReserves result is not a tuple".to_string(),
         });
     };
-
     let reserve0 = uint_value(&values[0], 112).ok_or_else(|| {
         degenbot_core::errors::ProviderError::SerializationError {
             message: "getReserves reserve0 decode mismatch".to_string(),
@@ -974,13 +1036,11 @@ async fn fetch_v2_onchain(
             message: "getReserves reserve1 decode mismatch".to_string(),
         }
     })?;
-
     let (chain_reserve_in, chain_reserve_out) = if zero_for_one {
         (reserve0, reserve1)
     } else {
         (reserve1, reserve0)
     };
-
     let outcome = FetchOutcome::new(DiagnosticPoolState::V2 {
         address: address.to_string(),
         reserve_in: u256_to_hex(chain_reserve_in),
@@ -988,36 +1048,44 @@ async fn fetch_v2_onchain(
         fee_denom: fee_denom.to_string(),
         gamma_numer: gamma_numer.to_string(),
     });
-
     Ok(outcome)
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn fetch_v3_onchain(
-    provider: &degenbot_rpc::provider::AlloyProvider,
-    block_number: Option<u64>,
+/// Build the V3 sub-calls for the cross-hop multicall3 batch: 2 calls,
+/// `slot0()` + `liquidity()` (in that order — `decode_v3_results` reads them
+/// as `results[0]` and `results[1]`).
+fn build_v3_calls(
     address: &str,
-    token0: &str,
-    token1: &str,
-    fee: u32,
-    tick_spacing: i32,
-) -> Result<FetchOutcome, degenbot_core::errors::ProviderError> {
+) -> Result<Vec<(Address, Bytes)>, degenbot_core::errors::ProviderError> {
     let pool_address: Address =
         address
             .parse()
             .map_err(|e| degenbot_core::errors::ProviderError::Other {
                 message: format!("invalid V3 pool address {address}: {e}"),
             })?;
-
     // slot0() -> (sqrtPriceX96, tick, observationIndex, observationCardinality, observationCardinalityNext, feeProtocol, unlocked)
     let slot0_selector = fn_selector("slot0()");
-    let raw_slot0 = provider
-        .eth_call(
-            &pool_address,
-            encode_call(slot0_selector, &[]),
-            block_number,
-        )
-        .await?;
+    // liquidity() -> uint128
+    let liquidity_selector = fn_selector("liquidity()");
+    Ok(vec![
+        (pool_address, encode_call(slot0_selector, &[])),
+        (pool_address, encode_call(liquidity_selector, &[])),
+    ])
+}
+
+/// Decode the V3 `slot0()` + `liquidity()` sub-call results (from the cross-hop
+/// multicall3 batch) into a `FetchOutcome`.
+#[allow(clippy::too_many_arguments)]
+fn decode_v3_results(
+    slot0_result: &MulticallResult,
+    liquidity_result: &MulticallResult,
+    address: &str,
+    token0: &str,
+    token1: &str,
+    fee: u32,
+    tick_spacing: i32,
+) -> Result<FetchOutcome, degenbot_core::errors::ProviderError> {
+    let raw_slot0 = require_success(slot0_result, "slot0")?;
     let slot0_type = DynSolType::Tuple(vec![
         DynSolType::Uint(160),
         DynSolType::Int(24),
@@ -1027,7 +1095,7 @@ async fn fetch_v3_onchain(
         DynSolType::Uint(8),
         DynSolType::Bool,
     ]);
-    let decoded_slot0 = slot0_type.abi_decode(&raw_slot0).map_err(|e| {
+    let decoded_slot0 = slot0_type.abi_decode(raw_slot0).map_err(|e| {
         degenbot_core::errors::ProviderError::SerializationError {
             message: format!("failed to decode slot0 result: {e}"),
         }
@@ -1049,17 +1117,9 @@ async fn fetch_v3_onchain(
         }
     })?;
 
-    // liquidity() -> uint128
-    let liquidity_selector = fn_selector("liquidity()");
-    let raw_liquidity = provider
-        .eth_call(
-            &pool_address,
-            encode_call(liquidity_selector, &[]),
-            block_number,
-        )
-        .await?;
+    let raw_liquidity = require_success(liquidity_result, "liquidity")?;
     let liquidity_type = DynSolType::Uint(128);
-    let decoded_liquidity = liquidity_type.abi_decode(&raw_liquidity).map_err(|e| {
+    let decoded_liquidity = liquidity_type.abi_decode(raw_liquidity).map_err(|e| {
         degenbot_core::errors::ProviderError::SerializationError {
             message: format!("failed to decode liquidity result: {e}"),
         }
@@ -1087,10 +1147,41 @@ async fn fetch_v3_onchain(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn fetch_v4_onchain(
-    provider: &degenbot_rpc::provider::AlloyProvider,
-    block_number: Option<u64>,
+/// Build the V4 sub-calls for the cross-hop multicall3 batch: 2 calls,
+/// `StateView.getSlot0(poolId)` + `StateView.getLiquidity(poolId)` (in that
+/// order — `decode_v4_results` reads them as `results[0]` and `results[1]`).
+fn build_v4_calls(
     state_view: Address,
+    pool_id: &str,
+) -> Result<Vec<(Address, Bytes)>, degenbot_core::errors::ProviderError> {
+    let pool_id_bytes = degenbot_core::hex_utils::decode_32byte_hex(pool_id).map_err(|e| {
+        degenbot_core::errors::ProviderError::Other {
+            message: format!("invalid V4 pool_id {pool_id}: {e}"),
+        }
+    })?;
+    let pool_id_value = DynSolValue::FixedBytes(B256::from(pool_id_bytes), 32);
+    // StateView.getSlot0(bytes32 poolId) -> (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 swapFee)
+    let slot0_selector = fn_selector("getSlot0(bytes32)");
+    // StateView.getLiquidity(bytes32 poolId) -> uint128
+    let liquidity_selector = fn_selector("getLiquidity(bytes32)");
+    Ok(vec![
+        (
+            state_view,
+            encode_call(slot0_selector, std::slice::from_ref(&pool_id_value)),
+        ),
+        (
+            state_view,
+            encode_call(liquidity_selector, std::slice::from_ref(&pool_id_value)),
+        ),
+    ])
+}
+
+/// Decode the V4 `StateView.getSlot0` + `StateView.getLiquidity` sub-call
+/// results (from the cross-hop multicall3 batch) into a `FetchOutcome`.
+#[allow(clippy::too_many_arguments)]
+fn decode_v4_results(
+    slot0_result: &MulticallResult,
+    liquidity_result: &MulticallResult,
     pool_manager: &str,
     pool_id: &str,
     currency0: &str,
@@ -1100,30 +1191,14 @@ async fn fetch_v4_onchain(
     hook_flags: u16,
     hooks: &str,
 ) -> Result<FetchOutcome, degenbot_core::errors::ProviderError> {
-    let pool_id_bytes = degenbot_core::hex_utils::decode_32byte_hex(pool_id).map_err(|e| {
-        degenbot_core::errors::ProviderError::Other {
-            message: format!("invalid V4 pool_id {pool_id}: {e}"),
-        }
-    })?;
-
-    let pool_id_value = DynSolValue::FixedBytes(B256::from(pool_id_bytes), 32);
-
-    // StateView.getSlot0(bytes32 poolId) -> (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 swapFee)
-    let slot0_selector = fn_selector("getSlot0(bytes32)");
-    let raw_slot0 = provider
-        .eth_call(
-            &state_view,
-            encode_call(slot0_selector, std::slice::from_ref(&pool_id_value)),
-            block_number,
-        )
-        .await?;
+    let raw_slot0 = require_success(slot0_result, "StateView.getSlot0")?;
     let slot0_type = DynSolType::Tuple(vec![
         DynSolType::Uint(160),
         DynSolType::Int(24),
         DynSolType::Uint(24),
         DynSolType::Uint(24),
     ]);
-    let decoded_slot0 = slot0_type.abi_decode(&raw_slot0).map_err(|e| {
+    let decoded_slot0 = slot0_type.abi_decode(raw_slot0).map_err(|e| {
         degenbot_core::errors::ProviderError::SerializationError {
             message: format!("failed to decode StateView.getSlot0 result: {e}"),
         }
@@ -1145,17 +1220,9 @@ async fn fetch_v4_onchain(
         }
     })?;
 
-    // StateView.getLiquidity(bytes32 poolId) -> uint128
-    let liquidity_selector = fn_selector("getLiquidity(bytes32)");
-    let raw_liquidity = provider
-        .eth_call(
-            &state_view,
-            encode_call(liquidity_selector, &[pool_id_value]),
-            block_number,
-        )
-        .await?;
+    let raw_liquidity = require_success(liquidity_result, "StateView.getLiquidity")?;
     let liquidity_type = DynSolType::Uint(128);
-    let decoded_liquidity = liquidity_type.abi_decode(&raw_liquidity).map_err(|e| {
+    let decoded_liquidity = liquidity_type.abi_decode(raw_liquidity).map_err(|e| {
         degenbot_core::errors::ProviderError::SerializationError {
             message: format!("failed to decode StateView.getLiquidity result: {e}"),
         }
@@ -1438,8 +1505,10 @@ fn build_engine_pool_state(
 mod tests {
     use std::collections::HashMap;
 
+    use alloy::dyn_abi::DynSolValue;
     use alloy::primitives::{Address, U256};
 
+    use super::{DiagnosticHop, DiagnosticPoolState};
     use crate::bot_core::RegisterV3PoolParams as V3Params;
     use crate::bot_core::{RegisterV4PoolParams as V4Params, V4PoolKey};
     use crate::solvers::uniswap_engine::{
@@ -2452,6 +2521,189 @@ mod tests {
         assert!(
             out > U256::ZERO,
             "zfo swap of currency0 must yield currency1 > 0"
+        );
+    }
+
+    // --- fetch_onchain multicall3 batching integration test ---
+    //
+    // Pins the contract that `fetch_onchain` folds ALL hops' sub-calls (1 per
+    // V2 hop, 2 per V3/V4 hop) into ONE cross-hop Multicall3 `aggregate3`
+    // `eth_call`, instead of up to 2N serial round-trips. See task T6ZU5W.
+
+    /// Build a mock `AlloyProvider` whose `Asserter` queue is preloaded with
+    /// `responses` (one JSON `result` per expected `eth_call`, FIFO). Mirrors
+    /// the `liquidity_verifier` mock-transport harness.
+    fn mock_provider_for_fetch(
+        responses: Vec<String>,
+    ) -> (
+        degenbot_rpc::provider::AlloyProvider,
+        alloy::transports::mock::Asserter,
+    ) {
+        use alloy::network::Ethereum as NetEth;
+        use alloy::providers::{Provider, ProviderBuilder};
+        use alloy::rpc::client::ClientBuilder;
+        use alloy::transports::mock::{Asserter, MockTransport};
+        use std::sync::Arc;
+        let asserter = Asserter::new();
+        for resp in responses {
+            asserter.push_success(&resp);
+        }
+        let client = ClientBuilder::default().transport(MockTransport::new(asserter.clone()), true);
+        let dyn_provider = ProviderBuilder::new().connect_client(client).erased();
+        let provider = degenbot_rpc::provider::AlloyProvider::from_provider(
+            Arc::new(dyn_provider) as Arc<dyn alloy::providers::Provider<NetEth>>
+        );
+        (provider, asserter)
+    }
+
+    /// Encode a Multicall3 `aggregate3` return payload `(bool,bytes)[]` as a
+    /// `0x`-prefixed hex string (`eth_call` result shape).
+    fn mc3_return(results: &[(bool, Vec<u8>)]) -> String {
+        let arr = DynSolValue::Array(
+            results
+                .iter()
+                .map(|(ok, data)| {
+                    DynSolValue::Tuple(vec![
+                        DynSolValue::Bool(*ok),
+                        DynSolValue::Bytes(data.clone()),
+                    ])
+                })
+                .collect(),
+        );
+        format!("0x{}", alloy::primitives::hex::encode(arr.abi_encode()))
+    }
+
+    /// `bytes` are (byte-width, value): each value occupies the LAST `byte-width`
+    /// bytes of a 32-byte word (right-aligned — matches ABI uintN/intN
+    /// encoding). E.g. uint160 → 20 bytes, uint128 → 16, uint112 → 14,
+    /// int24/uint24 → 3, uint16 → 2, uint8 → 1, uint32 → 4.
+    fn abwords(values: &[(usize, u128)]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(32 * values.len());
+        for (width, val) in values {
+            assert!(*width <= 32, "byte-width must be <= 32");
+            let mut word = [0u8; 32];
+            let v = U256::from(*val);
+            let bytes = v.to_be_bytes::<32>();
+            word[32 - width..].copy_from_slice(&bytes[32 - width..]);
+            out.extend_from_slice(&word);
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn fetch_onchain_batches_all_hops_into_one_eth_call() {
+        // A path: V2 hop + V3 hop. Sub-calls across hops: getReserves (1) +
+        // slot0 (1) + liquidity (1) = 3 sub-calls. Preload EXACTLY 1 response
+        // (one cross-hop multicall3 batch). If fetch_onchain makes any 2nd
+        // eth_call, the asserter queue empties → transport error → fetch
+        // returns Err and the assertions fail.
+        let mut snapshot = DiagnosticPathState::new(1, Some(42));
+        // V2 hop. zero_for_one=true → reserve_in=reserve0, reserve_out=reserve1.
+        snapshot.hops.push(DiagnosticHop {
+            position: 0,
+            hop_type: "V2".to_string(),
+            zero_for_one: true,
+            engine_state: DiagnosticPoolState::V2 {
+                address: "0x".to_string() + &"11".repeat(20),
+                reserve_in: format!("0x{:x}", 111u64),
+                reserve_out: format!("0x{:x}", 222u64),
+                fee_denom: "1000".to_string(),
+                gamma_numer: "997".to_string(),
+            },
+            ..Default::default()
+        });
+        // V3 hop.
+        snapshot.hops.push(DiagnosticHop {
+            position: 1,
+            hop_type: "V3".to_string(),
+            zero_for_one: false,
+            engine_state: DiagnosticPoolState::V3 {
+                address: "0x".to_string() + &"22".repeat(20),
+                token0: "0xaaaa".to_string(),
+                token1: "0xbbbb".to_string(),
+                fee: 500,
+                tick_spacing: 10,
+                sqrt_price_x96: format!("0x{:x}", 500u64),
+                tick: 7,
+                liquidity: format!("0x{:x}", 999u64),
+            },
+            ..Default::default()
+        });
+
+        // On-chain values: getReserves → (reserve0=111, reserve1=222, ts=0);
+        // slot0 → (sqrtPriceX96=0x1f4 (500, uint160), tick=7 (int24), ...);
+        // liquidity → 999 (uint128).
+        let getreserves_return = abwords(&[(14, 111), (14, 222), (4, 0)]);
+        let slot0_return = abwords(&[(20, 500), (3, 7), (2, 0), (2, 0), (2, 0), (1, 0)]);
+        // slot0 is a 7-field tuple; adding the 7th bool field (unlocked=true) as
+        // a 32-byte word (0x01). We only read fields 0 + 1, but the tuple decode
+        // needs all 7.
+        let mut slot0_full = slot0_return;
+        slot0_full.extend(U256::from(1u64).to_be_bytes::<32>());
+        let liquidity_return = abwords(&[(16, 999)]);
+        let batch = mc3_return(&[
+            (true, getreserves_return),
+            (true, slot0_full),
+            (true, liquidity_return),
+        ]);
+        let (provider, asserter) = mock_provider_for_fetch(vec![batch]);
+
+        snapshot
+            .fetch_onchain(&provider, None)
+            .await
+            .expect("fetch must succeed");
+
+        assert!(
+            asserter.read_q().is_empty(),
+            "exactly 1 eth_call expected; leftovers: {}",
+            asserter.read_q().len()
+        );
+        // onchain_block updated.
+        assert_eq!(snapshot.onchain_block, Some(42));
+        // Both hops populated, no diff errors.
+        assert_eq!(snapshot.hops.len(), 2);
+        let v2 = snapshot.hops[0]
+            .onchain_state
+            .as_ref()
+            .expect("v2 onchain_state populated");
+        match v2 {
+            DiagnosticPoolState::V2 {
+                reserve_in,
+                reserve_out,
+                ..
+            } => {
+                // zero_for_one=true → reserve_in=reserve0=111, reserve_out=reserve1=222.
+                assert_eq!(*reserve_in, format!("0x{:x}", 111u64));
+                assert_eq!(*reserve_out, format!("0x{:x}", 222u64));
+            }
+            other => panic!("expected V2 onchain_state, got {other:?}"),
+        }
+        assert!(
+            snapshot.hops[0].diff.is_empty(),
+            "no diff: {:?}",
+            snapshot.hops[0].diff
+        );
+        let v3 = snapshot.hops[1]
+            .onchain_state
+            .as_ref()
+            .expect("v3 onchain_state populated");
+        match v3 {
+            DiagnosticPoolState::V3 {
+                sqrt_price_x96,
+                tick,
+                liquidity,
+                ..
+            } => {
+                assert_eq!(*sqrt_price_x96, format!("0x{:x}", 500u64));
+                assert_eq!(*tick, 7);
+                assert_eq!(*liquidity, format!("0x{:x}", 999u64));
+            }
+            other => panic!("expected V3 onchain_state, got {other:?}"),
+        }
+        assert!(
+            snapshot.hops[1].diff.is_empty(),
+            "no diff: {:?}",
+            snapshot.hops[1].diff
         );
     }
 }
