@@ -107,7 +107,9 @@ def test_pool_update_handoff_calls_run_pool_update_once_per_chain(
         rpc_url: str,
         progress_callback: object,
         cancel_handle: object,
-        verify: bool = False,
+        verify_chunk: bool = False,
+        verify_all_interval: int | None = None,
+        verify_all_at_completion: bool = False,
     ) -> dict[str, object]:
         captured.update(
             database_path=database_path,
@@ -117,7 +119,9 @@ def test_pool_update_handoff_calls_run_pool_update_once_per_chain(
             rpc_url=rpc_url,
             progress_callback=progress_callback,
             cancel_handle=cancel_handle,
-            verify=verify,
+            verify_chunk=verify_chunk,
+            verify_all_interval=verify_all_interval,
+            verify_all_at_completion=verify_all_at_completion,
         )
         # Fire the progress callback once (proves tqdm-on-callback wiring).
         assert callable(progress_callback)
@@ -168,8 +172,12 @@ def test_pool_update_handoff_calls_run_pool_update_once_per_chain(
     # (e) the report is echoed.
     assert "10000" in result.output
     assert "1 chunks" in result.output
-    # (f) the --verify flag (absent) defaults to False (backward-compat).
-    assert captured["verify"] is False
+    # (f) the --verify-chunk flag (absent) defaults to True (the pre-commit
+    # per-chunk gate is now the policy default).
+    assert captured["verify_chunk"] is True
+    # --verify-all absent → no interval gate, no completion full-verify.
+    assert captured["verify_all_interval"] is None
+    assert captured["verify_all_at_completion"] is False
     # The exchange stamp is NOT set by the Python shell (the Rust core owns it);
     # the hand-off doesn't touch the DB directly.
     conn = sqlite3.connect(stub_bot.config.database.path)
@@ -210,7 +218,9 @@ def test_pool_update_cancel_shows_friendly_message(
         rpc_url: str,
         progress_callback: object,
         cancel_handle: object,
-        verify: bool = False,
+        verify_chunk: bool = False,
+        verify_all_interval: int | None = None,
+        verify_all_at_completion: bool = False,
     ) -> dict[str, object]:
         raise cancel_error
 
