@@ -287,7 +287,7 @@ pub async fn verify_touched_positions_on_conn(
                 build_call_data(GET_PREVIOUS_INDEX_SELECTOR, row.user_address),
             ));
         }
-        let results = multicall3_batch(provider, &calls, block_number).await?;
+        let results = multicall3_batch(provider, &calls, Some(block_number)).await?;
         for (row, chunk) in rows.iter().zip(results.chunks_exact(2)) {
             let actual_balance = result_to_u256(&chunk[0]);
             if actual_balance != row.balance {
@@ -464,7 +464,7 @@ pub async fn verify_stk_aave_balances_on_conn(
                 )
             })
             .collect();
-        let results = multicall3_batch(provider, &calls, block_number).await?;
+        let results = multicall3_batch(provider, &calls, Some(block_number)).await?;
         for ((user_id, user_address, expected), result) in eligible.iter().zip(results.iter()) {
             let actual = result_to_u256(result);
             if actual != *expected {
@@ -572,7 +572,7 @@ pub async fn verify_gho_discount_amounts_on_conn(
                 )
             })
             .collect();
-        let results = multicall3_batch(provider, &calls, block_number).await?;
+        let results = multicall3_batch(provider, &calls, Some(block_number)).await?;
         for ((user_id, user_address, expected), result) in eligible.iter().zip(results.iter()) {
             let actual_u256 = result_to_u256(result);
             let actual: i64 = actual_u256.try_into().unwrap_or(i64::MAX);

@@ -133,11 +133,16 @@ pub fn decode_aggregate3_results(data: &Bytes, n: usize) -> ProviderResult<Vec<M
 /// Run a batch of read-only calls through one Multicall3 `aggregate3`
 /// `eth_call` (chunked into `MULTICALL3_BATCH_SIZE`-sized batches). Returns
 /// one [`MulticallResult`] per input call, in order. A reverted sub-call is
-/// `success = false` with empty `return_data` (it is NOT an error — the verify
-/// path treats revert ⇒ actual == zero).
+/// `success = false` with empty `return_data` (it is NOT an error — the caller
+/// decides how to treat a revert; the Aave verify path treats revert ⇒
+/// actual == zero, the V3/V4 liquidity verifier treats it as a hard RPC
+/// error).
+///
+/// `block_number` matches `AlloyProvider::eth_call`'s shape: `Some(b)` calls
+/// at block `b`; `None` calls at "pending" (latest).
 ///
 /// If the Multicall3 `eth_call` itself errors (e.g. Multicall3 is not deployed
-/// on the chain — never expected for Aave V3 chains), the batch falls back to
+/// on the chain — never expected for Aave V3 chains) the batch falls back to
 /// one sequential `eth_call` per call, preserving the exact pre-multicall
 /// behavior.
 ///
@@ -148,7 +153,7 @@ pub fn decode_aggregate3_results(data: &Bytes, n: usize) -> ProviderResult<Vec<M
 pub async fn multicall3_batch(
     provider: &AlloyProvider,
     calls: &[(Address, Bytes)],
-    block_number: u64,
+    block_number: Option<u64>,
 ) -> ProviderResult<Vec<MulticallResult>> {
     let mut results = Vec::with_capacity(calls.len());
     for chunk in calls.chunks(MULTICALL3_BATCH_SIZE) {
@@ -161,7 +166,7 @@ pub async fn multicall3_batch(
         match async {
             let calldata = encode_aggregate3(chunk)?;
             let data = provider
-                .eth_call(&MULTICALL3_ADDRESS, calldata, Some(block_number))
+                .eth_call(&MULTICALL3_ADDRESS, calldata, block_number)
                 .await?;
             decode_aggregate3_results(&data, chunk.len())
         }
@@ -174,10 +179,7 @@ pub async fn multicall3_batch(
                 // so verify keeps working (preserves the pre-multicall
                 // per-call behavior).
                 for (target, data) in chunk {
-                    match provider
-                        .eth_call(target, data.clone(), Some(block_number))
-                        .await
-                    {
+                    match provider.eth_call(target, data.clone(), block_number).await {
                         Ok(return_data) => results.push(MulticallResult {
                             success: true,
                             return_data,
