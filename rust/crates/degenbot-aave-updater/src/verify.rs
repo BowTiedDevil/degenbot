@@ -686,6 +686,47 @@ pub fn cleanup_zero_balance_positions_on_conn(
 // `?` operator on DbError / ProviderError values in the fns above resolves to
 // RunError::Db / RunError::Provider directly. No manual From impls here.
 
+// ── verification-policy predicates (pure logic, no RPC) ───────────────
+
+/// Whether a full (market-wide) verification should run at a block-number
+/// interval boundary for the chunk `[working_start, chunk_end]`.
+///
+/// Fires when `interval` is `Some(n)` and the chunk CROSSES or LANDS-ON a
+/// multiple of `n`: i.e. the multiple-of-`n` boundary in `[working_start,
+/// chunk_end]` — equivalently `floor((working_start - 1) / n) !=
+/// floor(chunk_end / n)`. A chunk larger than `n` (`chunk_size` > n) still
+/// fires because it spans a multiple. `interval = None` never fires.
+///
+/// Edge cases: `chunk_end == 0` → false (no block processed); `n == 0` is
+/// the caller's bug (the CLI/clamp it to >= 1) but is treated as never-fires
+/// to avoid a divide-by-zero panic.
+#[allow(dead_code)] // wired into the chunk loop in the YWEUIR task.
+pub(crate) fn should_run_full_verify_at_interval(
+    working_start: u64,
+    chunk_end: u64,
+    interval: Option<u64>,
+) -> bool {
+    let Some(n) = interval else {
+        return false;
+    };
+    if n == 0 {
+        return false;
+    }
+    if chunk_end == 0 {
+        return false;
+    }
+    let before = working_start.saturating_sub(1) / n;
+    let after = chunk_end / n;
+    before != after
+}
+
+/// Whether `chunk_end` is the run's final block: `chunk_end >= last_block`
+/// OR `max_chunks_hit` (the loop broke because `max_chunks` was reached).
+#[allow(dead_code)] // wired into the chunk loop in the YWEUIR task.
+pub(crate) fn is_final_chunk(chunk_end: u64, last_block: u64, max_chunks_hit: bool) -> bool {
+    max_chunks_hit || chunk_end >= last_block
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -841,5 +882,94 @@ mod tests {
             decode_uint256_return(&Bytes::copy_from_slice(&[0u8; 16])),
             None
         );
+    }
+
+    // ── verification-policy predicates ─────────────────────────────────
+
+    #[test]
+    fn interval_verify_none_interval_never_fires() {
+        assert!(!should_run_full_verify_at_interval(1, 999, None));
+        assert!(!should_run_full_verify_at_interval(1, 1_000_000, None));
+    }
+
+    #[test]
+    fn interval_verify_exact_multiple_lands() {
+        assert!(should_run_full_verify_at_interval(
+            1,
+            1_000_000,
+            Some(1_000_000)
+        ));
+        assert!(should_run_full_verify_at_interval(
+            990_001,
+            1_000_000,
+            Some(1_000_000)
+        ));
+    }
+
+    #[test]
+    fn interval_verify_chunk_crosses_multiple() {
+        assert!(should_run_full_verify_at_interval(
+            999_999,
+            1_000_001,
+            Some(1_000_000)
+        ));
+        assert!(should_run_full_verify_at_interval(
+            500_000,
+            1_500_000,
+            Some(1_000_000)
+        ));
+    }
+
+    #[test]
+    fn interval_verify_sub_interval_no_fire() {
+        assert!(!should_run_full_verify_at_interval(
+            1,
+            999_999,
+            Some(1_000_000)
+        ));
+        assert!(!should_run_full_verify_at_interval(
+            100,
+            200,
+            Some(1_000_000)
+        ));
+        assert!(!should_run_full_verify_at_interval(
+            1,
+            5_000,
+            Some(1_000_000)
+        ));
+    }
+
+    #[test]
+    fn interval_verify_n_one_fires_every_chunk() {
+        assert!(should_run_full_verify_at_interval(1, 1, Some(1)));
+        assert!(should_run_full_verify_at_interval(100, 200, Some(1)));
+    }
+
+    #[test]
+    fn interval_verify_chunk_end_zero_does_not_fire() {
+        assert!(!should_run_full_verify_at_interval(0, 0, Some(1_000_000)));
+        assert!(!should_run_full_verify_at_interval(1, 0, Some(1_000_000)));
+    }
+
+    #[test]
+    fn interval_verify_n_zero_does_not_panic() {
+        assert!(!should_run_full_verify_at_interval(1, 100, Some(0)));
+    }
+
+    #[test]
+    fn is_final_chunk_true_when_last_block_reached() {
+        assert!(is_final_chunk(1_000_000, 1_000_000, false));
+        assert!(is_final_chunk(1_000_005, 1_000_000, false));
+    }
+
+    #[test]
+    fn is_final_chunk_true_when_max_chunks_hit() {
+        assert!(is_final_chunk(50_000, 1_000_000, true));
+    }
+
+    #[test]
+    fn is_final_chunk_false_mid_run() {
+        assert!(!is_final_chunk(10_000, 1_000_000, false));
+        assert!(!is_final_chunk(990_000, 1_000_000, false));
     }
 }
