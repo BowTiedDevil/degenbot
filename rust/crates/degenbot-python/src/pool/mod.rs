@@ -188,7 +188,10 @@ fn update_report_to_dict(py: Python<'_>, r: &UpdateReport) -> PyResult<Py<PyDict
     rpc_url,
     progress_callback,
     cancel_handle,
-    verify = false,
+    verify_chunk = false,
+    *,
+    verify_all_interval = None,
+    verify_all_at_completion = false,
 ))]
 #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
 fn run_pool_update(
@@ -200,7 +203,9 @@ fn run_pool_update(
     rpc_url: &str,
     progress_callback: ProgressCallable,
     cancel_handle: &CancelHandle,
-    verify: bool,
+    verify_chunk: bool,
+    verify_all_interval: Option<u64>,
+    verify_all_at_completion: bool,
 ) -> PyResult<Py<PyDict>> {
     let path = PathBuf::from(database_path);
     let cancel = cancel_handle.flag.clone();
@@ -212,7 +217,16 @@ fn run_pool_update(
     let report = py
         .detach(move || {
             run::run_pool_update(
-                &path, chain_id, to_block, chunk_size, rpc_url, cancel, progress, verify,
+                &path,
+                chain_id,
+                to_block,
+                chunk_size,
+                rpc_url,
+                cancel,
+                progress,
+                verify_chunk,
+                verify_all_interval,
+                verify_all_at_completion,
             )
         })
         .map_err(run_err_to_py)?;

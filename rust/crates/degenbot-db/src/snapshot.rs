@@ -365,6 +365,29 @@ impl DegenbotDb {
         Ok(out)
     }
 
+    /// Same as [`Self::fetch_v3_pool_addresses`] but runs on a caller-provided
+    /// `Connection` — used by the pool-updater's pre-commit full verification,
+    /// which must read uncommitted writes inside the chunk's `Transaction`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure.
+    pub fn fetch_v3_pool_addresses_on_conn(
+        conn: &rusqlite::Connection,
+        chain_id: i64,
+    ) -> Result<Vec<alloy::primitives::Address>, DbError> {
+        let mut stmt = conn.prepare(
+            "SELECT address FROM pools WHERE chain = ?1 AND kind IN \
+             ('uniswap_v3', 'sushiswap_v3', 'pancakeswap_v3', 'aerodrome_v3')",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![chain_id], |r| r.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for addr_s in rows {
+            out.push(decode_address(&addr_s?)?);
+        }
+        Ok(out)
+    }
+
     /// All V4 `pool_hash` hex strings for a chain (mirrors Python
     /// `DatabaseSnapshot.get_pools` V4 — `select(UniswapV4PoolTable.pool_hash)`).
     ///
@@ -376,6 +399,30 @@ impl DegenbotDb {
     /// Returns [`DbError::Sqlite`] on a query failure.
     pub fn fetch_v4_pool_hashes(&self, chain_id: i64) -> Result<Vec<String>, DbError> {
         let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT v4.pool_hash FROM uniswap_v4_pools v4 \
+             JOIN managed_pools mp ON mp.id = v4.managed_pool_id \
+             JOIN pool_managers pm ON pm.id = mp.manager_id \
+             WHERE pm.chain = ?1",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![chain_id], |r| r.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for h in rows {
+            out.push(h?);
+        }
+        Ok(out)
+    }
+
+    /// Same as [`Self::fetch_v4_pool_hashes`] but runs on a caller-provided
+    /// `Connection` — used by the pool-updater's pre-commit full verification.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure.
+    pub fn fetch_v4_pool_hashes_on_conn(
+        conn: &rusqlite::Connection,
+        chain_id: i64,
+    ) -> Result<Vec<String>, DbError> {
         let mut stmt = conn.prepare(
             "SELECT v4.pool_hash FROM uniswap_v4_pools v4 \
              JOIN managed_pools mp ON mp.id = v4.managed_pool_id \

@@ -28,6 +28,8 @@ use degenbot_core::errors::ProviderError;
 use degenbot_db::{ApplyLiquidityAtTick, ComputedLiquidityUpdate};
 use degenbot_rpc::multicall3::{multicall3_batch, MulticallResult};
 use degenbot_rpc::provider::AlloyProvider;
+use std::collections::HashMap;
+use std::str::FromStr;
 
 use crate::run::RunError;
 
@@ -446,6 +448,144 @@ pub async fn verify_v4_liquidity_map_on_chain(
         divergences.extend(compare_bitmap_word(word, expected, Some(bitmap)));
     }
     Ok(divergences)
+}
+
+// ── market-wide pre-commit full verification ────────────────────────────
+
+/// The context the pre-commit FULL (market-wide) verification runs against.
+/// Unlike [`crate::run::VerifyCtx`] (which verifies a single chunk's
+/// computed deltas for touched pools), this loads ALL in-scope pools'
+/// COMMITTED liquidity maps from the transaction's view of the DB and
+/// compares each against on-chain truth at `block_number`.
+///
+/// Used at the interval-boundary crossing + run-completion gates.
+pub struct FullVerifyCtx<'a> {
+    /// The HTTP RPC provider for on-chain reads.
+    pub provider: &'a AlloyProvider,
+    /// The runtime to `block_on` the async verify calls.
+    pub rt: &'a tokio::runtime::Runtime,
+    /// The block number to read on-chain truth at (= the chunk's `chunk_end`).
+    pub block_number: u64,
+    /// The chain id the run targets (selects the in-scope V3+V4 pool set).
+    pub chain_id: i64,
+    /// The V4 `pool_manager_chain` (the `chain` column the V4 pool lookup uses
+    /// — mirrors `ChunkInputs::pool_manager_chain`).
+    pub pool_manager_chain: i64,
+    /// V4 `pool_hash` hex → the `PoolManager` address (for `extsload`).
+    /// Must cover every V4 pool hash for this chain; a missing entry is a
+    /// hard error (the run's `ChunkInputs` already builds this map).
+    pub v4_manager_addresses: &'a HashMap<String, Address>,
+}
+
+/// Run the market-wide pre-commit verification: every in-scope V3 + V4 pool's
+/// committed liquidity map is loaded from `conn` (the chunk's transaction,
+/// so uncommitted writes are visible) and compared against on-chain truth at
+/// `ctx.block_number`. The first diverging pool yields a
+/// [`RunError::Verification`] (the caller drops `tx` to roll back so
+/// `last_update_block` does NOT advance).
+///
+/// Returns `Ok(())` on GREEN (all pools match). Empty-pool chains are GREEN.
+///
+/// # Errors
+///
+/// Returns [`RunError::Db`] on a DB read failure, [`RunError::Provider`] on
+/// an RPC failure (incl. a missing V4 `PoolManager` address), or
+/// [`RunError::Verification`] on the first diverging pool.
+pub fn verify_all_pools_committed_on_conn(
+    conn: &rusqlite::Connection,
+    ctx: &FullVerifyCtx<'_>,
+) -> Result<(), RunError> {
+    use degenbot_db::DegenbotDb;
+
+    // V3 — every in-scope V3 pool's committed map.
+    let v3_addresses = DegenbotDb::fetch_v3_pool_addresses_on_conn(conn, ctx.chain_id)?;
+    for addr in &v3_addresses {
+        let addr_str = addr.to_checksum(None);
+        let Some(state) =
+            DegenbotDb::fetch_v3_pool_update_state_on_conn(conn, ctx.chain_id, &addr_str)?
+        else {
+            // A pool row with no V3 state yet (created but never applied) —
+            // nothing committed to verify against on-chain truth. Skip.
+            continue;
+        };
+        let (tick_bitmap, tick_data) =
+            DegenbotDb::fetch_v3_liquidity_map_on_conn(conn, state.pool_id)?;
+        let computed = ComputedLiquidityUpdate {
+            pool_id: state.pool_id,
+            tick_spacing: state.tick_spacing,
+            tick_data,
+            tick_bitmap,
+            last_event: None,
+        };
+        let divergences = ctx.rt.block_on(verify_v3_liquidity_map_on_chain(
+            ctx.provider,
+            *addr,
+            &computed,
+            ctx.block_number,
+        ))?;
+        if !divergences.is_empty() {
+            return Err(RunError::Verification {
+                pool: addr_str,
+                block_number: ctx.block_number,
+                divergences,
+            });
+        }
+    }
+
+    // V4 — every in-scope V4 pool's committed map.
+    let v4_hashes = DegenbotDb::fetch_v4_pool_hashes_on_conn(conn, ctx.chain_id)?;
+    for pool_hash in &v4_hashes {
+        let Some(state) = DegenbotDb::fetch_v4_pool_update_state_on_conn(
+            conn,
+            pool_hash,
+            ctx.pool_manager_chain,
+        )?
+        else {
+            continue;
+        };
+        let (tick_bitmap, tick_data) =
+            DegenbotDb::fetch_v4_liquidity_map_on_conn(conn, state.pool_id)?;
+        let computed = ComputedLiquidityUpdate {
+            pool_id: state.pool_id,
+            tick_spacing: state.tick_spacing,
+            tick_data,
+            tick_bitmap,
+            last_event: None,
+        };
+        let pool_manager_address = ctx
+            .v4_manager_addresses
+            .get(pool_hash)
+            .copied()
+            .ok_or_else(|| {
+                RunError::Provider(ProviderError::DecodingError {
+                    message: format!(
+                        "v4 full-verify: no PoolManager address for pool_hash {pool_hash:?}"
+                    ),
+                })
+            })?;
+        let pool_id =
+            B256::from_str(pool_hash.strip_prefix("0x").unwrap_or(pool_hash)).map_err(|e| {
+                ProviderError::DecodingError {
+                    message: format!("v4 full-verify: bad pool_hash {pool_hash:?}: {e}"),
+                }
+            })?;
+        let divergences = ctx.rt.block_on(verify_v4_liquidity_map_on_chain(
+            ctx.provider,
+            pool_manager_address,
+            pool_id,
+            &computed,
+            ctx.block_number,
+        ))?;
+        if !divergences.is_empty() {
+            return Err(RunError::Verification {
+                pool: pool_hash.clone(),
+                block_number: ctx.block_number,
+                divergences,
+            });
+        }
+    }
+
+    Ok(())
 }
 
 // ─────────── internal ABI-encode reference for tests (independent of the
@@ -1046,5 +1186,39 @@ mod tests {
     fn is_final_chunk_false_mid_run() {
         assert!(!is_final_chunk(10_000, 1_000_000, false));
         assert!(!is_final_chunk(990_000, 1_000_000, false));
+    }
+
+    // ── market-wide full verify: empty chain is GREEN (no RPC touched) ────
+
+    fn full_verify_ctx<'a>(
+        provider: &'a AlloyProvider,
+        rt: &'a tokio::runtime::Runtime,
+        v4_manager_addresses: &'a HashMap<String, Address>,
+    ) -> FullVerifyCtx<'a> {
+        FullVerifyCtx {
+            provider,
+            rt,
+            block_number: 100,
+            chain_id: 1,
+            pool_manager_chain: 1,
+            v4_manager_addresses,
+        }
+    }
+
+    #[test]
+    fn verify_all_pools_committed_on_conn_empty_chain_is_green() {
+        // An empty chain has no in-scope V3 or V4 pools → the full verify is
+        // trivially GREEN + must not touch the provider (no RPC at all).
+        use degenbot_db::DegenbotDb;
+        use std::path::Path;
+        let (db, _state) = DegenbotDb::open_for_writes(Path::new(":memory:")).unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let provider = rt
+            .block_on(AlloyProvider::new("http://127.0.0.1:9/", 5))
+            .unwrap();
+        let v4: HashMap<String, Address> = HashMap::new();
+        let ctx = full_verify_ctx(&provider, &rt, &v4);
+        let conn = db.lock();
+        assert!(verify_all_pools_committed_on_conn(&conn, &ctx).is_ok());
     }
 }

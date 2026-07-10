@@ -179,7 +179,11 @@ def pool_update(bot: Bot, chunk_size: int, to_block: str, verify: bool) -> None:
                 rpc_url=rpc_url,
                 progress_callback=_on_progress,
                 cancel_handle=handle,
-                verify=verify,
+                verify_chunk=verify,
+                # verify_all_interval + verify_all_at_completion are
+                # keyword-only on the Rust seam; the CLI wires them in the
+                # VXWKWT refactor. Defaults: no interval gate, no completion
+                # full-verify.
             )
     except RuntimeError as exc:
         # Cooperative cancel (RuntimeError per the .pyi): a user SIGINT. The
