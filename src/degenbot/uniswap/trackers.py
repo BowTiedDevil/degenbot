@@ -143,7 +143,7 @@ class UniswapV2PoolTracker(AbstractUniswapV2PoolTracker[UniswapV2Pool], pool_fac
 
     @property
     def pool_init_hash(self) -> str:
-        """Return pool init hash.
+        """Pool init hash.
 
         Returns:
             The pool init hash string.
@@ -298,7 +298,7 @@ class AbstractUniswapV3PoolTracker[Pool: UniswapV3Pool](AbstractPoolTracker[Pool
 
     @property
     def snapshot(self) -> UniswapV3LiquiditySnapshot | None:
-        """Return the snapshot, if loaded."""
+        """The snapshot, if loaded."""
         return self._snapshot
 
     def backfill_snapshot(self, current_block: int) -> None:  # noqa: ARG002

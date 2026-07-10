@@ -393,7 +393,7 @@ class UniswapV3LiquiditySnapshot:
 
     @property
     def chain_id(self) -> int:
-        """Return chain id."""
+        """Chain id."""
         return self._chain_id
 
     @property

@@ -37,17 +37,17 @@ class LiquidationGroup:
 
     @property
     def liquidation_count(self) -> int:
-        """Return liquidation count."""
+        """Liquidation count."""
         return len(self.liquidations)
 
     @property
     def burn_event_count(self) -> int:
-        """Return burn event count."""
+        """Burn event count."""
         return len(self.burn_events)
 
     @property
     def total_debt_to_cover(self) -> int:
-        """Return total debt to cover."""
+        """Total debt to cover."""
         return sum(debt for _, debt, _ in self.liquidations)
 
     def detect_pattern(self) -> LiquidationPattern:

@@ -181,17 +181,17 @@ class PositionAnalysisResult:
 
     @property
     def total_users(self) -> int:
-        """Return total users."""
+        """Total users."""
         return len(self.safe_users) + len(self.at_risk_users) + len(self.liquidatable_users)
 
     @property
     def at_risk_count(self) -> int:
-        """Return at risk count."""
+        """At risk count."""
         return len(self.at_risk_users)
 
     @property
     def liquidatable_count(self) -> int:
-        """Return liquidatable count."""
+        """Liquidatable count."""
         return len(self.liquidatable_users)
 
     def categorize(

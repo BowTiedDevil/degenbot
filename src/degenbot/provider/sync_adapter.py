@@ -429,12 +429,12 @@ class ProviderAdapter(SyncSubscriptionSupport):
 
     @property
     def provider_type(self) -> Literal["web3", "alloy", "offline"]:
-        """Get the type of the underlying provider."""
+        """The type of the underlying provider."""
         return self._provider_type
 
     @property
     def provider(self) -> AlloyProvider | OfflineProvider | Web3 | None:
-        """Get the underlying provider, or None if not set (e.g., after unpickling)."""
+        """The underlying provider, or None if not set (e.g., after unpickling)."""
         return self._raw_provider
 
     def as_web3(self) -> Web3 | None:
@@ -517,12 +517,12 @@ class ProviderAdapter(SyncSubscriptionSupport):
 
     @property
     def chain_id(self) -> int:
-        """Get the chain ID."""
+        """The chain ID."""
         return self._backend.chain_id
 
     @property
     def block_number(self) -> int:
-        """Get the current block number."""
+        """The current block number."""
         return self._backend.block_number
 
     # -------------------------------------------------------------------------

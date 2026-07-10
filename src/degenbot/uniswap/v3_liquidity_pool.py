@@ -284,7 +284,7 @@ class UniswapV3Pool(
 
     @property
     def liquidity(self) -> int:
-        """Return liquidity.
+        """Liquidity.
 
         Returns:
             The current active liquidity (from Rust via the handle).
@@ -294,7 +294,7 @@ class UniswapV3Pool(
 
     @property
     def sqrt_price_x96(self) -> int:
-        """Return sqrt price x96.
+        """Sqrt price x96.
 
         Returns:
             The current sqrt price as a Q64.96 value (from Rust).
@@ -333,7 +333,7 @@ class UniswapV3Pool(
 
     @property
     def tick(self) -> int:
-        """Return tick.
+        """Tick.
 
         Returns:
             The current tick (from Rust via the handle).

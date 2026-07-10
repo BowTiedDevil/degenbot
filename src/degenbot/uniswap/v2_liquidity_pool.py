@@ -232,7 +232,7 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
 
     @property
     def reserves_token0(self) -> int:
-        """Return reserves token0.
+        """Reserves token0.
 
         Returns:
             The reserve amount for token0 (from Rust).
@@ -242,7 +242,7 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
 
     @property
     def reserves_token1(self) -> int:
-        """Return reserves token1.
+        """Reserves token1.
 
         Returns:
             The reserve amount for token1 (from Rust).

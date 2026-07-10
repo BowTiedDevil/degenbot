@@ -184,12 +184,12 @@ class AnvilFork:
 
     @property
     def fork_url(self) -> str | None:
-        """Return fork url."""
+        """Fork URL."""
         return self._fork_url
 
     @property
     def http_url(self) -> str:
-        """Return http url."""
+        """HTTP URL."""
         return f"http://{self.localhost}:{self.port}"
 
     @property
@@ -209,7 +209,7 @@ class AnvilFork:
 
     @property
     def ws_url(self) -> str:
-        """Return ws url."""
+        """WebSocket URL."""
         return f"ws://{self.localhost}:{self.port}"
 
     @staticmethod

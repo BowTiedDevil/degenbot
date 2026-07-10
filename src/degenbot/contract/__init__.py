@@ -107,7 +107,7 @@ class Contract:
 
     @property
     def address(self) -> Address:
-        """Get the contract address."""
+        """The contract address."""
         return self._address
 
     def call(

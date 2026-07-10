@@ -160,12 +160,12 @@ class AerodromeV2Pool(
 
     @property
     def reserves_token0(self) -> int:
-        """Return reserves token0."""
+        """Reserves token0."""
         return self.state.reserves_token0
 
     @property
     def reserves_token1(self) -> int:
-        """Return reserves token1."""
+        """Reserves token1."""
         return self.state.reserves_token1
 
     @property

@@ -75,7 +75,7 @@ class ChainlinkPriceContract:
 
     @property
     def decimals(self) -> int:
-        """Return decimals.
+        """Decimals.
 
         Raises:
             ValueError: See function documentation.

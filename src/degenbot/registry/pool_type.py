@@ -392,7 +392,7 @@ class PoolTypeRegistry:
         tuple[ChainId, str],
         tuple[type[AbstractLiquidityPool], PoolTypeDescriptor, PoolDeploymentData],
     ]:
-        """Return a copy of all registrations."""
+        """A copy of all registrations."""
         return {
             key: (entry.pool_class, entry.descriptor, entry.deployment)
             for key, entry in self._entries.items()

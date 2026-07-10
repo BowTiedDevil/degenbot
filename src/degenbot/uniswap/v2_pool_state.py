@@ -63,7 +63,7 @@ class V2PoolState:
 
     @property
     def fee(self) -> tuple[Fraction, Fraction]:
-        """Return the pool fees as a tuple (fee_token0, fee_token1)."""
+        """The pool fees as a tuple (fee_token0, fee_token1)."""
         return (self._fee_token0, self._fee_token1)
 
     @property

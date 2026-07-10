@@ -92,7 +92,7 @@ class AbiAdapter:
 
     @property
     def backend(self) -> AbiBackend:
-        """Get the current backend."""
+        """The current backend."""
         return self._backend
 
     @backend.setter

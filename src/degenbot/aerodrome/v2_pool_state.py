@@ -50,12 +50,12 @@ class AerodromeV2PoolState:
 
     @property
     def fee_token0(self) -> Fraction:
-        """Return the fee for token0 → token1 swaps (same as fee_token1 for Aerodrome)."""
+        """The fee for token0 → token1 swaps (same as fee_token1 for Aerodrome)."""
         return self._fee
 
     @property
     def fee_token1(self) -> Fraction:
-        """Return the fee for token1 → token0 swaps (same as fee_token0 for Aerodrome)."""
+        """The fee for token1 → token0 swaps (same as fee_token0 for Aerodrome)."""
         return self._fee
 
     @property
