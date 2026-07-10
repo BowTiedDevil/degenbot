@@ -60,7 +60,6 @@
 pub mod aave_fetch;
 pub mod config_dispatch;
 pub mod gho_processor;
-pub mod multicall3;
 pub mod operations;
 pub mod operations_parser;
 pub mod processors;
