@@ -23,8 +23,8 @@ use degenbot_db::{DbError, DegenbotDb};
 use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::Connection;
 
-use crate::multicall3::{multicall3_batch, MulticallResult};
 use crate::RunError;
+use degenbot_rpc::multicall3::{multicall3_batch, MulticallResult};
 
 /// The aToken / vToken scaled-token position kind (collateral / debt).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

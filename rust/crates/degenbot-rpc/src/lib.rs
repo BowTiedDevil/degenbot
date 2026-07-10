@@ -15,5 +15,6 @@
 //!   and the `pump_*` subscription drivers.
 
 pub mod contract;
+pub mod multicall3;
 pub mod provider;
 pub mod subscription;

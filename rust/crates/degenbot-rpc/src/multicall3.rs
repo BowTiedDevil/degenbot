@@ -16,8 +16,8 @@
 use alloy::dyn_abi::{DynSolType, DynSolValue};
 use alloy::primitives::{address, Address, Bytes};
 
+use crate::provider::AlloyProvider;
 use degenbot_core::errors::{ProviderError, ProviderResult};
-use degenbot_rpc::provider::AlloyProvider;
 
 /// The canonical Multicall3 deployed address (same on every supported chain —
 /// pre-deployed via CREATE2 at the chain's first block). Hardcoding matches
