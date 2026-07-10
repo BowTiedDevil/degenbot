@@ -202,6 +202,9 @@ fn aave_report_to_dict(py: Python<'_>, r: &AaveUpdateReport) -> PyResult<Py<PyDi
     cancel_handle,
     verify_chunk=false,
     max_chunks=None,
+    *,
+    verify_all_interval=None,
+    verify_all_at_completion=false,
 ))]
 #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
 fn run_aave_update(
@@ -216,6 +219,8 @@ fn run_aave_update(
     cancel_handle: &CancelHandle,
     verify_chunk: bool,
     max_chunks: Option<usize>,
+    verify_all_interval: Option<u64>,
+    verify_all_at_completion: bool,
 ) -> PyResult<Py<PyDict>> {
     let path = PathBuf::from(database_path);
     let cancel = cancel_handle.flag.clone();
@@ -236,6 +241,8 @@ fn run_aave_update(
                 cancel,
                 progress,
                 verify_chunk,
+                verify_all_interval,
+                verify_all_at_completion,
                 max_chunks,
             )
         })

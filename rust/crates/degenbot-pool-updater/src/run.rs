@@ -660,7 +660,16 @@ pub fn run_pool_update(
     rpc_url: &str,
     cancel: Arc<AtomicBool>,
     progress: Arc<dyn ProgressSink>,
-    verify: bool,
+    verify_chunk: bool,
+    // When `Some(n)`, run a pre-commit FULL (market-wide, all in-scope
+    // pools) verification when a chunk crosses/lands-on a multiple of `n`
+    // blocks. A divergence rolls back the chunk + does NOT advance
+    // `last_update_block`. `None` = no interval gate.
+    verify_all_interval: Option<u64>,
+    // When `true`, run a pre-commit FULL verification on the run's final
+    // chunk (`working_end_block >= last_block`). A divergence rolls back
+    // the chunk + does NOT advance `last_update_block`.
+    verify_all_at_completion: bool,
 ) -> Result<UpdateReport, RunError> {
     if chunk_size == 0 {
         return Err(RunError::Provider(ProviderError::InvalidBlockRange {
@@ -813,7 +822,7 @@ pub fn run_pool_update(
         // when `verify` is on, each pool's in-memory map is compared against
         // on-chain truth at `working_end_block` before the persist commits — a
         // divergence drops `tx` (rollback) + the stamp does NOT advance.
-        let verify_ctx = if verify {
+        let verify_ctx = if verify_chunk {
             Some(VerifyCtx {
                 provider: &provider,
                 rt: &rt,
@@ -840,6 +849,43 @@ pub fn run_pool_update(
             );
             match result {
                 Ok(r) => {
+                    // Full (market-wide) verification gate: interval
+                    // boundary crossing + run completion. Loads ALL
+                    // in-scope pools' committed maps (visible in this `tx`)
+                    // and compares against on-chain truth pre-commit. A
+                    // divergence drops `tx` (rollback) so `last_update_block`
+                    // does NOT advance.
+                    let run_full = crate::verify::should_run_full_verify_at_interval(
+                        working_start_block,
+                        working_end_block,
+                        verify_all_interval,
+                    ) || (verify_all_at_completion
+                        && working_end_block >= last_block);
+                    if run_full {
+                        let full_ctx = crate::verify::FullVerifyCtx {
+                            provider: &provider,
+                            rt: &rt,
+                            block_number: working_end_block,
+                            chain_id,
+                            pool_manager_chain: inputs.pool_manager_chain,
+                            v4_manager_addresses: &inputs.v4_manager_addresses,
+                        };
+                        if let Err(e) =
+                            crate::verify::verify_all_pools_committed_on_conn(&tx, &full_ctx)
+                        {
+                            drop(tx);
+                            progress.report_chunk(&ChunkProgress {
+                                chain_id,
+                                chunk_start: working_start_block,
+                                chunk_end: working_end_block,
+                                pools_written: 0,
+                                liquidity_apply_count: 0,
+                                committed: false,
+                                is_final: false,
+                            });
+                            return Err(e);
+                        }
+                    }
                     tx.commit().map_err(degenbot_db::DbError::from)?;
                     r
                 }

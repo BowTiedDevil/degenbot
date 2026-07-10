@@ -671,7 +671,10 @@ def run_pool_update(
     rpc_url: str,
     progress_callback: Callable[..., None],
     cancel_handle: CancelHandle,
-    verify: bool = False,
+    verify_chunk: bool = False,
+    *,
+    verify_all_interval: int | None = None,
+    verify_all_at_completion: bool = False,
 ) -> dict[str, Any]:
     """Drive the Rust-owned pool-updater chunk loop (epic 2SFL6I).
 
@@ -696,10 +699,16 @@ def run_pool_update(
         cancel_handle: A ``CancelHandle`` constructed up front; a SIGINT
             handler calls ``cancel_handle.cancel()`` to stop at the next
             chunk boundary.
-        verify: When ``True``, run the pre-commit on-chain-truth gate (Full
-            per-pool per-chunk verification) before each chunk's persist
+        verify_chunk: When ``True``, run the pre-commit per-chunk on-chain-truth gate
+            (Full per-pool touched-pool verification) before each chunk's persist
             commits; a divergence rolls back the chunk + does NOT advance
             ``last_update_block``. ``False`` (default) = the no-gate path.
+        verify_all_interval: When set, run a pre-commit FULL (market-wide, all
+            in-scope pools) verification when a chunk crosses/lands-on a multiple
+            of this block interval. A divergence rolls back the chunk.
+        verify_all_at_completion: When ``True``, run a pre-commit FULL
+            verification on the run's final chunk. A divergence rolls back the
+            chunk.
 
     Returns:
         ``dict {chain_id, from_block, to_block, chunks_committed,
@@ -797,6 +806,9 @@ def run_aave_update(
     cancel_handle: CancelHandle,
     verify_chunk: bool = False,
     max_chunks: int | None = None,
+    *,
+    verify_all_interval: int | None = None,
+    verify_all_at_completion: bool = False,
 ) -> dict[str, Any]:
     """Drive the Rust-owned Aave V3 updater chunk loop (epic AZGJUN, 5XNTC5).
 
@@ -831,6 +843,13 @@ def run_aave_update(
             after committing that many chunks (one-chunk mode).
             ``last_update_block`` is advanced to the last committed chunk's
             end, so the next run resumes from there.
+        verify_all_interval: When set, run a pre-commit FULL (market-wide,
+            all 4-check) verification when a chunk crosses/lands-on a multiple
+            of this block interval. A divergence drops the transaction
+            (rollback) so ``last_update_block`` does NOT advance.
+        verify_all_at_completion: When ``True``, run a pre-commit FULL
+            verification on the run's final chunk. A divergence rolls back the
+            chunk (``last_update_block`` does NOT advance).
 
     Returns:
         ``dict {chain_id, market_id, from_block, to_block,

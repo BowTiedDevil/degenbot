@@ -940,6 +940,17 @@ pub enum RunError {
         chunk_end: u64,
         divergences: Vec<crate::verify::PositionDivergence>,
     },
+    /// Full (market-wide) pre-commit verification failed at the interval or
+    /// completion boundary. Same rollback contract as `Verification`: drop
+    /// `tx` so `last_update_block` does NOT advance; the next run re-processes
+    /// the same chunk. Carries the broader `VerificationDivergence` enum
+    /// (all 4 checks: scaled-token, stkAAVE, GHO discount).
+    #[error("full verification failed at chunk {chunk_start}-{chunk_end}")]
+    FullVerification {
+        chunk_start: u64,
+        chunk_end: u64,
+        divergences: Vec<crate::verify::VerificationDivergence>,
+    },
 }
 
 /// One transaction's grouped logs. Sorted by `(block_number, first log_index)`
@@ -1212,6 +1223,15 @@ pub fn run_aave_update(
     cancel: Arc<AtomicBool>,
     progress: Arc<dyn ProgressSink>,
     verify_chunk: bool,
+    // When `Some(n)`, run a pre-commit FULL (market-wide, all 4-check)
+    // verification when a chunk's `[working_start, chunk_end]` crosses or
+    // lands-on a multiple of `n` blocks. A divergence rolls back the chunk
+    // + does NOT advance `last_update_block`. `None` = no interval gate.
+    verify_all_interval: Option<u64>,
+    // When `true`, run a pre-commit FULL verification on the run's final
+    // chunk (`chunk_end >= last_block` or `max_chunks` hit). A divergence
+    // rolls back the chunk + does NOT advance `last_update_block`.
+    verify_all_at_completion: bool,
     max_chunks: Option<usize>,
 ) -> Result<AaveUpdateReport, RunError> {
     if chunk_size == 0 {
@@ -1511,6 +1531,45 @@ pub fn run_aave_update(
                                     divergences,
                                 });
                             }
+                        }
+                    }
+                    // Full (market-wide) verification gate: interval
+                    // boundary crossing + run completion. Runs on the
+                    // uncommitted `tx` BEFORE commit — catches corrupt
+                    // state before it lands. A divergence drops `tx`
+                    // (rollback) so `last_update_block` does NOT advance.
+                    let run_full = crate::verify::should_run_full_verify_at_interval(
+                        working_start,
+                        chunk_end,
+                        verify_all_interval,
+                    ) || (verify_all_at_completion
+                        && crate::verify::is_final_chunk(
+                            chunk_end,
+                            last_block,
+                            max_chunks.is_some_and(|limit| report.chunks_committed + 1 >= limit),
+                        ));
+                    if run_full {
+                        let divergences =
+                            rt.block_on(crate::verify::verify_all_positions_on_conn(
+                                &tx, &provider, market_id, chain_id, chunk_end, None,
+                            ))?;
+                        if !divergences.is_empty() {
+                            drop(tx);
+                            progress.report_chunk(&AaveChunkProgress {
+                                chain_id,
+                                market_id,
+                                chunk_start: working_start,
+                                chunk_end,
+                                events_applied: 0,
+                                committed: false,
+                                touched_user_addresses: Vec::new(),
+                                is_final: false,
+                            });
+                            return Err(RunError::FullVerification {
+                                chunk_start: working_start,
+                                chunk_end,
+                                divergences,
+                            });
                         }
                     }
                     tx.commit().map_err(DbError::from)?;
