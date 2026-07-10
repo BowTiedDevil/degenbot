@@ -1,7 +1,5 @@
 //! Tests for the out-of-place heal (ADR-011). See `heal.rs` for the contract.
 
-use std::collections::HashSet;
-
 use rusqlite::Connection;
 
 use super::*;
@@ -446,37 +444,43 @@ fn atomic_swap_keeps_bak() {
     assert!(has_table(&live, "_degenbot_db_schema_version"));
 }
 
-// ── bonus: FK order is derived + parents precede children ────────────────
-
+// ── 7. old DB left byte-identical during copy (no -wal/-shm sidecars) ────
+//
+// The rugpull-protection guarantee: heal reads the old DB read-only throughout
+// the copy (VFS-level `file:…?mode=ro` ATTACH) so it never creates
+// `-wal`/`-shm` sidecars or extends the old file. The old bytes survive
+// verbatim — relocated to `.bak` by the atomic swap. This pins the guarantee
+// that distinguishes the read-only-ATTACH transport from a naive read-write
+// attach (which would sidecar a WAL onto the old DB).
 #[test]
-fn fk_order_parents_before_children() {
+fn heal_leaves_old_db_byte_identical_no_sidecars() {
     let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("fk.db");
+    let db_path = dir.path().join("old.db");
     create_new_database(&db_path).unwrap();
-    let conn = Connection::open(&db_path).unwrap();
-    let order = super::fk_ordered_tables(&conn).unwrap();
-
-    // Core parents must precede their children.
-    let pos = |name: &str| order.iter().position(|t| t == name).unwrap();
-    assert!(
-        pos("erc20_tokens") < pos("pools"),
-        "erc20_tokens before pools"
-    );
-    assert!(pos("exchanges") < pos("pools"), "exchanges before pools");
-    assert!(
-        pos("pools") < pos("uniswap_v2_pools"),
-        "pools before v2 subclass"
-    );
-    assert!(pos("pools") < pos("liquidity_positions"));
-    assert!(pos("managed_pools") < pos("uniswap_v4_pools"));
-    assert!(pos("aave_v3_markets") < pos("aave_v3_users"));
-    assert!(pos("aave_v3_assets") < pos("aave_v3_asset_configs"));
-
-    // No table appears twice.
-    let mut seen = HashSet::new();
-    for t in &order {
-        assert!(seen.insert(t.as_str()), "{t} duplicated in FK order");
+    {
+        let conn = Connection::open(&db_path).unwrap();
+        populate_head_dataset(&conn);
     }
+    // Snapshot the old file's bytes BEFORE heal — the .bak must equal this
+    // exactly (proving the copy phase never wrote to or sidecar'd the old DB).
+    let old_bytes = std::fs::read(&db_path).unwrap();
+
+    let _ = heal_database(&db_path).unwrap();
+
+    // No `-wal`/`-shm` sidecars were created on the old path.
+    assert!(
+        !db_path.with_extension("db-wal").exists(),
+        "old -wal sidecar"
+    );
+    assert!(
+        !db_path.with_extension("db-shm").exists(),
+        "old -shm sidecar"
+    );
+
+    // The .bak is byte-for-byte the pre-heal old DB (the rename preserved it;
+    // the copy never touched it).
+    let bak_path = db_path.with_file_name("old.db.bak");
+    assert_eq!(std::fs::read(&bak_path).unwrap(), old_bytes);
 }
 
 fn report_bak_exists(db_path: &std::path::Path) -> bool {

@@ -24,38 +24,41 @@
 //!
 //! 1. Inspect old (read-only). `RustOwned` → no-op; `Unrecognized` →
 //!    refuse; `AlembicCurrent` / `AlembicStale` / `FreshStandalone` → proceed.
+//!    The old read-only handle is then dropped — step 3 re-attaches the old DB
+//!    inside the new connection.
 //! 2. Build a fresh DB at a sibling temp path via
 //!    [`create_new_database`][crate::ops::create_new_database] (the coherent
 //!    head DDL + Alembic-head stamp). Switch the new DB to `journal_mode=DELETE`
 //!    so no `-wal`/`-shm` side-files complicate the atomic rename.
-//! 3. Copy all rows old → new, table-by-table in **FK-dependency order**
-//!    (parents before children), preserving primary-key `id` values.
+//! 3. ATTACH the old DB read-only into the new connection (`file:…?mode=ro`)
+//!    and copy rows table-by-table via a native `INSERT INTO main.t (…) SELECT
+//!    … FROM old.t` — `SQLite` runs the row transport page-level inside its
+//!    engine (no Rust row buffer). FK enforcement is OFF on `main` during the
+//!    copy, so no parent-before-child ordering is needed; tables are iterated
+//!    alphabetically (deterministic).
 //! 4. Apply the per-table column mapping (auto-derived from
-//!    `PRAGMA table_info` old vs new; see [`RENAME_OVERRIDES`]). Three
-//!    classes: present-in-both (copy), added-after (omit; `SQLite` applies the
-//!    column default), dropped (skip the read).
-//! 5. Reset `sqlite_sequence` to the max copied `id` per table — **a no-op
-//!    for the current head schema**, which uses `INTEGER PRIMARY KEY`
-//!    (rowid aliasing) and not `AUTOINCREMENT` (so no `sqlite_sequence` table
-//!    exists). Defensive: if one ever appears, update it.
-//! 6. Stamp the new DB `RustOwned` directly — reuse
+//!    `PRAGMA old.table_info` vs `PRAGMA main.table_info`; see
+//!    [`RENAME_OVERRIDES`]). Three classes: present-in-both (copy),
+//!    added-after (omit; `SQLite` applies the column default), dropped
+//!    (skip the read).
+//! 5. Stamp the new DB `RustOwned` directly — reuse
 //!    [`migrate::convert_alembic_to_rust_owned`] (drops `alembic_version`,
 //!    stamps `_degenbot_db_schema_version`). **No** Alembic code runs on the
 //!    heal path.
-//! 7. Verify per-table row counts (old read-only `COUNT(*)` == new
+//! 6. Verify per-table row counts (old read-only `COUNT(*)` == new
 //!    `COUNT(*)`); on mismatch → [`DbError::HealVerificationFailed`], clean
 //!    up the temp file, leave the live DB untouched.
-//! 8. Atomic swap + `*.bak`: close both connections, `rename(old → .bak)`
+//! 7. Atomic swap + `*.bak`: close both connections, `rename(old → .bak)`
 //!    then `rename(tmp → old)` (siblings; atomic on the same filesystem),
 //!    relocating any `-wal`/`-shm` side-files of the old DB alongside the
 //!    backup so the `.bak` is a complete recoverable snapshot. On any failure
 //!    the live DB is untouched and the partial temp file is cleaned up.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use rusqlite::{types::Value, Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags};
 
 use crate::error::DbError;
 use crate::migrate::{
@@ -153,6 +156,10 @@ pub fn heal_database(old_path: &Path) -> Result<HealReport, DbError> {
     }
 
     let old_state_for_report = old_state.clone();
+    // The old DB is no longer needed as a separate handle: step 3 ATTACHes it
+    // read-only into the new connection. Dropping it here avoids two handles
+    // on the same file during the copy.
+    drop(old_conn);
 
     // ── Step 2: build a fresh head-schema DB at a sibling temp path. ──────
     // Sibling → same filesystem → the final `rename` is atomic.
@@ -168,8 +175,10 @@ pub fn heal_database(old_path: &Path) -> Result<HealReport, DbError> {
         return Err(e);
     }
 
-    // The copy happens in a scope so `new_conn` (and `old_conn`) drop BEFORE
-    // the atomic rename — file handles must be closed for `rename` to succeed.
+    // `new_conn` (and its ATTACHed `old` schema) is dropped at the end of this
+    // scope — before the atomic rename, which requires no open handle on the
+    // temp file.
+    let mut warnings: Vec<String> = Vec::new();
     let rows_copied = {
         let mut new_conn = match Connection::open(&tmp_path) {
             Ok(c) => c,
@@ -194,16 +203,33 @@ pub fn heal_database(old_path: &Path) -> Result<HealReport, DbError> {
                 DbError::Sqlite(e)
             })?;
 
-        // ── Step 3-4: copy rows in FK-dependency order (auto-derived). ──
-        let copy_order = fk_ordered_tables(&new_conn).map_err(|e| {
+        // ── Step 3-4: ATTACH the old DB read-only and copy each table via a
+        //    native `INSERT INTO main.t SELECT … FROM old.t`. This runs the
+        //    row transport inside SQLite's engine (page-level) instead of a
+        //    Rust `Vec<Vec<Value>>` buffer. `file:…?mode=ro` makes the attached
+        //    schema read-only at the VFS level, so the old DB is byte-identical
+        //    after heal — the rugpull-protection guarantee, with no second
+        //    read-only handle to juggle and no connection-wide write lock.
+        //
+        // FK ordering is unnecessary: `foreign_keys=OFF` above lifts the
+        //    parent-before-child constraint, so a plain alphabetical
+        //    `sqlite_master` scan (deterministic) suffices.
+        let old_uri = file_ro_uri(old_path);
+        new_conn
+            .execute_batch(&format!("ATTACH DATABASE '{old_uri}' AS old;"))
+            .map_err(|e| {
+                cleanup_temp(&tmp_path);
+                DbError::Sqlite(e)
+            })?;
+
+        let tables = content_tables(&new_conn).map_err(|e| {
             cleanup_temp(&tmp_path);
             DbError::Sqlite(e)
         })?;
 
         let mut rows_copied = HashMap::new();
-        let mut warnings = Vec::new();
-        for table in &copy_order {
-            let n = match copy_table(&old_conn, &mut new_conn, table, &mut warnings) {
+        for table in &tables {
+            let n = match copy_table(&mut new_conn, table, &mut warnings) {
                 Ok(n) => n,
                 Err(e) => {
                     cleanup_temp(&tmp_path);
@@ -213,11 +239,10 @@ pub fn heal_database(old_path: &Path) -> Result<HealReport, DbError> {
             rows_copied.insert(table.clone(), n);
         }
 
-        // ── Step 5: reset sqlite_sequence (no-op for the current head schema). ──
-        if let Err(e) = reset_sqlite_sequence(&new_conn, &copy_order) {
-            cleanup_temp(&tmp_path);
-            return Err(DbError::Sqlite(e));
-        }
+        // ── Step 5: (removed) — no `sqlite_sequence` reset. The head schema
+        //    uses `INTEGER PRIMARY KEY` (rowid aliasing), never `AUTOINCREMENT`,
+        //    so `sqlite_sequence` never exists; SQLite manages it itself if it
+        //    ever did.
 
         // ── Step 6: stamp RustOwned directly (drops alembic_version, skips Alembic). ──
         if let Err(e) = run_cutover_on_conn(&new_conn) {
@@ -227,9 +252,6 @@ pub fn heal_database(old_path: &Path) -> Result<HealReport, DbError> {
 
         rows_copied
     };
-    // Both old_conn and new_conn are still open here only if we didn't return;
-    // drop them before the rename so no handle holds either file.
-    drop(old_conn);
 
     // ── Step 7: verify per-table row counts (old read-only == new). ──────
     // Re-open both read-only for the count comparison (cheap; isolated).
@@ -250,7 +272,7 @@ pub fn heal_database(old_path: &Path) -> Result<HealReport, DbError> {
         new_state: SchemaState::RustOwned {
             schema_version: RUST_SCHEMA_VERSION,
         },
-        warnings: Vec::new(),
+        warnings,
     })
 }
 
@@ -288,12 +310,36 @@ fn perform_swap(old_path: &Path, bak_path: &Path, tmp_path: &Path) -> Result<(),
     Ok(())
 }
 
-/// Open `path` read-only (`:memory:` supported). Never creates or extends
-/// sidecar `-wal`/`-shm` files — the old DB is left byte-identical.
-fn open_readonly(path: &Path) -> Result<Connection, DbError> {
-    if path == Path::new(":memory:") {
-        return Connection::open_in_memory().map_err(Into::into);
+/// Build a `file:` read-only URI for [`Path`] `path`, percent-encoding the
+/// characters that are special in a URI or in a SQL string literal. Used as
+/// the `ATTACH DATABASE '<uri>' AS old` argument: `mode=ro` makes the attached
+/// old DB read-only at the VFS level (no `-wal`/`-shm` sidecars, no accidental
+/// writes), so [`heal_database`] need not hold a second read-only handle.
+fn file_ro_uri(path: &Path) -> String {
+    let mut s = String::from("file:");
+    for b in path.to_string_lossy().bytes() {
+        match b {
+            // Reserved/special in a `file:` URI or a SQL single-quoted string.
+            b' ' | b'%' | b'#' | b'?' | b'\'' => {
+                s.push('%');
+                // Percent-encode as two hex digits.
+                let hex = format!("{b:02X}");
+                s.push_str(&hex);
+            }
+            _ => s.push(b as char),
+        }
     }
+    s.push_str("?mode=ro");
+    s
+}
+
+/// Open `path` read-only. Never creates or extends sidecar `-wal`/`-shm`
+/// files — the old DB is left byte-identical (the rugpull-protection guarantee).
+///
+/// `:memory:` is not supported: [`heal_database`] attaches the old DB by file
+/// path into the new connection, and an in-memory DB has no path to attach.
+/// No caller heals an in-memory DB (it would vanish on close anyway).
+fn open_readonly(path: &Path) -> Result<Connection, DbError> {
     Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(Into::into)
 }
 
@@ -331,16 +377,18 @@ fn cleanup_temp(tmp_path: &Path) {
     remove_sidecar_if_present(tmp_path, "-journal");
 }
 
-/// Topologically sort the content tables so parents precede children.
+/// The content tables on the NEW DB's `main` schema, in alphabetical order
+/// (deterministic across runs). Excludes `alembic_version` (created by
+/// `create_new_database`, dropped by `run_cutover_on_conn` in step 6) and the
+/// private Rust stamp table (never carries user rows).
 ///
-/// **Auto-derived** from the NEW DB's own schema (`PRAGMA foreign_key_list`),
-/// not a hand-maintained constant — this survives future head-schema additions
-/// without updating `heal.rs`. The schema is its own source of truth. Ties are
-/// broken alphabetically for a deterministic order across runs.
-fn fk_ordered_tables(new_conn: &Connection) -> Result<Vec<String>, rusqlite::Error> {
-    // All user content tables. Exclude `alembic_version` (created by
-    // `create_new_database`; dropped by `run_cutover_on_conn` in step 6) and
-    // the private Rust stamp table (never has user rows to copy).
+/// No FK topological sort is required: [`heal_database`] sets
+/// `PRAGMA foreign_keys=OFF` on the new DB before copying, so `SQLite` imposes
+/// no parent-before-child ordering — a plain alphabetical scan is sufficient.
+/// (The copy preserves PK `id` values as-is, so FK references resolve once the
+/// full set is loaded; integrity is re-checked by [`verify_row_counts`] and the
+/// post-heal application's own invariants.)
+fn content_tables(new_conn: &Connection) -> Result<Vec<String>, rusqlite::Error> {
     let mut all: Vec<String> = new_conn
         .prepare(
             "SELECT name FROM sqlite_master \
@@ -350,53 +398,14 @@ fn fk_ordered_tables(new_conn: &Connection) -> Result<Vec<String>, rusqlite::Err
         .query_map([], |r| r.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;
     all.sort();
-
-    let table_set: HashSet<&str> = all.iter().map(String::as_str).collect();
-
-    // edges: child → set of parent tables (the FK targets present in our schema).
-    let mut deps: HashMap<String, HashSet<String>> = HashMap::new();
-    for table in &all {
-        let parents: HashSet<String> = new_conn
-            .prepare(&format!("PRAGMA foreign_key_list({table})"))?
-            .query_map([], |r| r.get::<_, String>(2))? // col 2 = referenced table
-            .filter_map(Result::ok)
-            .filter(|p| table_set.contains(p.as_str()))
-            .collect();
-        deps.insert(table.clone(), parents);
-    }
-
-    // Kahn's algorithm (deterministic: alphabetical among the ready set).
-    let mut ready: BTreeSet<String> = all
-        .iter()
-        .filter(|t| deps.get(*t).is_none_or(HashSet::is_empty))
-        .cloned()
-        .collect();
-    let mut order = Vec::with_capacity(all.len());
-    while let Some(node) = ready.iter().next().cloned() {
-        ready.remove(&node);
-        order.push(node.clone());
-        let mut newly_ready: Vec<String> = Vec::new();
-        for (child, parents) in &mut deps {
-            if parents.remove(&node) && parents.is_empty() {
-                newly_ready.push(child.clone());
-            }
-        }
-        for c in newly_ready {
-            ready.insert(c);
-        }
-    }
-    // Cycle / leftover guard: any table not yet ordered (shouldn't happen for
-    // our acyclic schema) is appended deterministically so nothing is dropped.
-    for t in &all {
-        if !order.contains(t) {
-            order.push(t.clone());
-        }
-    }
-    Ok(order)
+    Ok(all)
 }
 
-/// Copy all rows of `table` from `old` (read-only) into `new`, applying the
-/// auto-derived column mapping. Returns the number of rows copied.
+/// Copy all rows of `table` from the attached `old` schema into `main`, via a
+/// native `INSERT INTO main.t (…) SELECT … FROM old.t` — the row transport runs
+/// inside `SQLite`'s engine (page-level), with no Rust-side row buffer. The
+/// caller ([`heal_database`]) has already attached the old DB read-only
+/// (`file:…?mode=ro`) and disabled FK enforcement on `main`.
 ///
 /// Column mapping per ADR-011 §"Column-mapping auto-derivation":
 /// - present in both (after rename-override lookup) → copy the value;
@@ -405,14 +414,15 @@ fn fk_ordered_tables(new_conn: &Connection) -> Result<Vec<String>, rusqlite::Err
 /// - old column with no destination → dropped (skip the read), with a warning
 ///   (non-fatal — surfaces exotic pre-rename states where that column's data
 ///   is lost).
+///
+/// Returns the number of rows copied (from [`Connection::changes`]).
 fn copy_table(
-    old: &Connection,
     new: &mut Connection,
     table: &str,
     warnings: &mut Vec<String>,
 ) -> Result<u64, DbError> {
-    let old_cols = pragma_table_info(old, table)?;
-    let new_cols = pragma_table_info(new, table)?;
+    let old_cols = pragma_table_info_in(new, "old", table)?;
+    let new_cols = pragma_table_info_in(new, "main", table)?;
 
     // Set of old column names that ARE a source (direct or via override) — used
     // to detect genuinely-dropped old columns with no destination.
@@ -471,79 +481,21 @@ fn copy_table(
         .map(|c| quote_ident(c))
         .collect::<Vec<_>>()
         .join(", ");
-    let placeholders = insert_cols
-        .iter()
-        .map(|_| "?")
-        .collect::<Vec<_>>()
-        .join(", ");
 
-    // Read all rows from `old` into owned `Value`s, then insert into `new` in
-    // one transaction. (A single cross-connection INSERT...SELECT isn't
-    // possible across two separate Connections; reading into owned values
-    // first also untangles the borrows: the SELECT statement + rows iterator
-    // are dropped before the transaction opens.)
-    let mut batch: Vec<Vec<Value>> = Vec::new();
-    {
-        let mut select_stmt = old.prepare(&format!("SELECT {select_list} FROM {quoted_table}"))?;
-        let mut rows = select_stmt.query([])?;
-        while let Some(row) = rows.next()? {
-            let mut values: Vec<Value> = Vec::with_capacity(select_cols.len());
-            for i in 0..select_cols.len() {
-                values.push(row.get::<_, Value>(i)?);
-            }
-            batch.push(values);
-        }
-    }
-
+    // One statement, inside SQLite's engine: no Rust row materialization, no
+    // borrow untangling. `INSERT … SELECT` across the ATTACHed `old` schema
+    // reads from the read-only `old` schema (`file:…?mode=ro`), writes `main`.
     let tx = new.transaction()?;
-    {
-        let mut insert_stmt = tx.prepare(&format!(
-            "INSERT INTO {quoted_table} ({insert_list}) VALUES ({placeholders})"
-        ))?;
-        for row in &batch {
-            let params: Vec<&dyn rusqlite::ToSql> =
-                row.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
-            insert_stmt.execute(params.as_slice())?;
-        }
-    }
-    tx.commit()?;
-
-    let count: i64 = new.query_row(&format!("SELECT COUNT(*) FROM {quoted_table}"), [], |r| {
-        r.get(0)
-    })?;
-    Ok(u64::try_from(count).unwrap_or(0))
-}
-
-/// Reset `sqlite_sequence` to the max copied `id` per table — a **no-op for
-/// the current head schema**, which uses `INTEGER PRIMARY KEY` (rowid alias,
-/// next-id = max+1 automatic) and not `AUTOINCREMENT` (so no `sqlite_sequence`
-/// table exists). Defensive: if one appears, set seq = max(id) per table.
-fn reset_sqlite_sequence(new_conn: &Connection, tables: &[String]) -> Result<(), rusqlite::Error> {
-    let exists: i64 = new_conn.query_row(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sqlite_sequence'",
+    tx.execute(
+        &format!(
+            "INSERT INTO main.{quoted_table} ({insert_list}) \
+             SELECT {select_list} FROM old.{quoted_table}"
+        ),
         [],
-        |r| r.get(0),
     )?;
-    if exists == 0 {
-        return Ok(());
-    }
-    for table in tables {
-        let max_id: Option<i64> = new_conn
-            .query_row(
-                &format!("SELECT MAX(id) FROM {}", quote_ident(table)),
-                [],
-                |r| r.get(0),
-            )
-            .ok()
-            .flatten();
-        if let Some(max_id) = max_id {
-            new_conn.execute(
-                "INSERT OR REPLACE INTO sqlite_sequence (name, seq) VALUES (?1, ?2)",
-                rusqlite::params![table, max_id],
-            )?;
-        }
-    }
-    Ok(())
+    let copied = tx.changes();
+    tx.commit()?;
+    Ok(copied)
 }
 
 /// Per-table row-count verification: old (read-only) `COUNT(*)` must equal new
@@ -586,8 +538,15 @@ struct ColumnInfo {
     pk: i64,
 }
 
-fn pragma_table_info(conn: &Connection, table: &str) -> Result<Vec<ColumnInfo>, rusqlite::Error> {
-    let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", quote_ident(table)))?;
+fn pragma_table_info_in(
+    conn: &Connection,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<ColumnInfo>, rusqlite::Error> {
+    let mut stmt = conn.prepare(&format!(
+        "PRAGMA {schema}.table_info({})",
+        quote_ident(table)
+    ))?;
     let rows = stmt.query_map([], |r| {
         Ok(ColumnInfo {
             name: r.get::<_, String>(1)?,
