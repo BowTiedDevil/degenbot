@@ -28,9 +28,11 @@
 //! 2. **Resume phase** (`resume_from_subscribe()`): Begins normal processing —
 //!    logs applied eagerly, solved + sent on block boundaries / debounce.
 //!
-//! **Critical ordering**: Python must run backfill AFTER `subscribe()` returns
-//! but BEFORE `resume_from_subscribe()`. The `DrainSink`'s
-//! `last_processed_block()` is the backfill-start boundary.
+//! **Critical ordering**: backfill must run AFTER `subscribe()` returns but
+//! BEFORE `resume_from_subscribe()`. The `DrainSink`'s
+//! `last_processed_block()` is the backfill-start boundary. (Pre-epic-P73ER6
+//! Python orchestrated this manually; the epic relocates backfill into the
+//! core, driven automatically by `resume`.)
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
