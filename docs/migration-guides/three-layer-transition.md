@@ -448,7 +448,9 @@ The **Aave V3 lending-market DB writers** moved to a new pyo3-free core crate
 `degenbot-aave-updater` (the decode→dispatch→apply→persist pipeline) over the
 `degenbot-db` substrate (task `RQXEKH` — the canonical port umbrella tracking
 Sub-step A; the AZGJUN epic sibling tasks completed Sub-steps B + C). Path (a):
-Rust owns the pipeline; Python `update_aave_market` shells decode + delegate.
+Rust owns the pipeline; Python shells decode + delegate (the legacy
+`update_aave_market` Python writer was retired by the §4.2 cutover, task
+`CZM7TI`).
 
 - **Rust apply core** (`degenbot-db/src/write.rs`): the per-event `_on_conn`
   apply fns (reserves / e-mode / collateral-config / asset / config-contracts /
