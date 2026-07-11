@@ -411,76 +411,9 @@ The code supports multiple Aave V3 token revisions. The `WadRayMathLibrary` prot
 
 ⚠️ **Important**: GHO V4+ uses `ray_div_floor` for BORROW (mint), unlike standard vTokens V4+ which use `ray_div_ceil`.
 
-The `WadRayMathLibrary` protocol (defined in [`src/degenbot/cli/aave/constants.py`](../../src/degenbot/cli/aave/constants.py)) defines the interface for math operations, implemented via `token_processor.py`.
+## Writer implementation
 
-## Related Functions
-
-### `update_aave_market(w3, start_block, end_block, market, session)`
-
-Core update logic for a single market. Fetches and processes all events in the block range.
-
-**Location**: [`src/degenbot/cli/aave/commands.py`](../../src/degenbot/cli/aave/commands.py)
-
-### Event Processors
-
-Event processors are distributed across the Aave CLI package:
-
-**[`src/degenbot/cli/aave/event_handlers.py`](../../src/degenbot/cli/aave/event_handlers.py)**:
-- `_process_asset_initialization_event()` - New reserve assets
-- `_process_reserve_data_update_event()` - Rate/index updates
-- `_process_user_e_mode_set_event()` - User E-Mode changes
-- `_process_scaled_token_upgrade_event()` - Token implementation changes
-- `_process_discount_token_updated_event()` - GHO discount token updates
-- `_process_discount_rate_strategy_updated_event()` - GHO discount rate strategy updates
-- `_process_collateral_configuration_changed_event()` - Collateral config changes
-- `_process_e_mode_category_added_event()` - E-Mode category additions
-- `_process_emode_asset_category_changed_event()` - E-Mode asset category changes
-- `_process_reserve_used_as_collateral_enabled_event()` - Collateral usage enable
-- `_process_reserve_used_as_collateral_disabled_event()` - Collateral usage disable
-- `_process_proxy_creation_event()` - Proxy creation
-- `_process_pool_data_provider_updated_event()` - Data provider updates
-- `_process_price_oracle_updated_event()` - Oracle updates
-- `_process_asset_source_updated_event()` - Asset source updates
-- `_process_discount_percent_updated_event()` - Discount percent updates
-
-**[`src/degenbot/cli/aave/token_processor.py`](../../src/degenbot/cli/aave/token_processor.py)**:
-- `_process_scaled_token_operation()` - Determine balance delta and user operation for scaled token events
-- `_process_collateral_mint_with_match()` - Collateral mint with operation matching
-- `_process_collateral_burn_with_match()` - Collateral burn with operation matching
-- `_process_debt_mint_with_match()` - Debt mint with operation matching
-- `_process_debt_burn_with_match()` - Debt burn with operation matching
-- `_process_deficit_coverage_operation()` - Umbrella deficit coverage
-- `_process_deficit_coverage_burn()` - Deficit coverage burn
-- `calculate_gho_discount_rate()` - GHO discount rate calculation
-
-**[`src/degenbot/cli/aave/transfers.py`](../../src/degenbot/cli/aave/transfers.py)**:
-- `_process_collateral_transfer()` - Collateral transfer operations
-
-**[`src/degenbot/cli/aave/liquidation_processor.py`](../../src/degenbot/cli/aave/liquidation_processor.py)**:
-- `_process_deferred_debt_burns()` - Deferred debt burn processing for liquidations
-
-### GHO-Specific Functions
-
-- `calculate_gho_discount_rate()` - Calculate GHO discount rate (in [`token_processor.py`](../../src/degenbot/cli/aave/token_processor.py))
-- `_refresh_discount_rate()` - Refresh discount rate from on-chain strategy (in [`token_processor.py`](../../src/degenbot/cli/aave/token_processor.py))
-- `get_gho_vtoken_revision()` - Get GHO vToken revision from DB (in [`db_users.py`](../../src/degenbot/cli/aave/db_users.py))
-- `is_discount_supported()` - Check if discount is supported for revision (in [`db_users.py`](../../src/degenbot/cli/aave/db_users.py))
-
-### Helper Functions
-
-- `_get_all_scaled_token_addresses()` - Get all aToken and vToken addresses for a chain (in [`utils.py`](../../src/degenbot/cli/aave/utils.py))
-- `_update_contract_revision()` - Update contract revision in database (in [`event_handlers.py`](../../src/degenbot/cli/aave/event_handlers.py))
-- `_get_or_create_erc20_token()` - Get existing ERC20 token or create new one (in [`erc20_utils.py`](../../src/degenbot/cli/aave/erc20_utils.py))
-- `get_or_create_user()` - Get existing user or create new one (in [`db_users.py`](../../src/degenbot/cli/aave/db_users.py))
-- `get_or_create_collateral_position()` - Get existing collateral position or create new one (in [`db_positions.py`](../../src/degenbot/cli/aave/db_positions.py))
-- `get_or_create_debt_position()` - Get existing debt position or create new one (in [`db_positions.py`](../../src/degenbot/cli/aave/db_positions.py))
-
-### Verification Functions
-
-- `verify_positions_for_users()` - Verify positions for specific users (in [`verification.py`](../../src/degenbot/cli/aave/verification.py))
-- `verify_scaled_token_positions()` - Verify scaled token positions against on-chain state (in [`verification.py`](../../src/degenbot/cli/aave/verification.py))
-- `verify_all_positions()` - Verify all positions (in [`verification.py`](../../src/degenbot/cli/aave/verification.py))
-- `get_current_borrow_index_from_pool()` - Get current borrow index from Pool contract (in [`verification.py`](../../src/degenbot/cli/aave/verification.py))
+The Aave V3 writer is **Rust-owned** (`degenbot-aave-updater` core crate). The per-market chunk loop, RPC fetch+decode, DB writes, the per-chunk transaction, and the on-chain-truth verification all live in the Rust core, driven from `degenbot aave update` via the `run_aave_update` PyO3 seam (a thin driver shell). The former Python writer pipeline (`update_aave_market`, `event_handlers._process_*`, `transaction_processor`/`operations_parser`/`token_processor`, `db_*.py`, the `verify_*` Python invariants) was retired by the §4.2 cutover (task `CZM7TI`) after the Rust path was proven GREEN to the live chain tip with full verification. The `Event Processing Details` and `Algorithm Details` sections above describe domain behavior that remains accurate; the implementation now lives in `rust/crates/degenbot-aave-updater/`.
 
 ## Configuration
 
