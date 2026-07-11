@@ -35,7 +35,8 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use degenbot_aave_updater::{
-    run_aave_update as core_run_aave_update,
+    activate_aave_market as core_activate_aave_market,
+    deactivate_aave_market as core_deactivate_aave_market, run_aave_update as core_run_aave_update,
     verify::{
         cleanup_zero_balance_positions_on_conn, verify_all_positions_on_conn,
         verify_touched_positions_on_conn,
@@ -609,6 +610,77 @@ fn cleanup_zero_balance_positions(
     .map_err(run_err_to_py)
 }
 
+/// `degenbot_rs.activate_aave_market(database_path, chain_id,
+/// pool_address_provider, gho_token_address, rpc_url) -> dict`
+///
+/// Seed (or re-activate) an Aave V3 market — the ONE-TIME setup the chunk
+/// loop's `run_aave_update` bootstraps from. Rust-owned replacement for the
+/// Python `activate_ethereum_aave_v3` (commands.py) — the last ORM writer on
+/// the Aave path after the §4.2 retirement (CZM7TI). Activates the market,
+/// inserts the `POOL_ADDRESS_PROVIDER` contract row, + seeds the GHO
+/// `erc20_tokens` + `aave_gho_tokens` rows, all in ONE transaction.
+///
+/// The GIL is released across the WHOLE call (`py.detach`) — the core owns
+/// its tokio runtime + does the RPC fetches (`getMarketId()` + GHO metadata)
+/// + the DB writes internally.
+///
+/// # Returns
+///
+/// A `dict` `{market_id, market_name, created}` — `market_id` is the
+/// `aave_v3_markets.id` to pass to `run_aave_update`; `created` is `True` if
+/// the market was newly created, `False` if it pre-existed (re-activation).
+///
+/// # Raises
+///
+/// `ValueError` on a DB / RPC / address-parse failure.
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+fn activate_aave_market(
+    py: Python<'_>,
+    database_path: &str,
+    chain_id: i64,
+    pool_address_provider: &str,
+    gho_token_address: &str,
+    rpc_url: &str,
+) -> PyResult<Py<PyDict>> {
+    let path = PathBuf::from(database_path);
+    let result = py
+        .detach(move || {
+            core_activate_aave_market(
+                &path,
+                chain_id,
+                pool_address_provider,
+                gho_token_address,
+                rpc_url,
+            )
+        })
+        .map_err(run_err_to_py)?;
+
+    let dict = PyDict::new(py);
+    dict.set_item("market_id", result.market_id)?;
+    dict.set_item("market_name", result.market_name)?;
+    dict.set_item("created", result.created)?;
+    Ok(dict.unbind())
+}
+
+/// `degenbot_rs.deactivate_aave_market(database_path, market_id) -> None`
+///
+/// Set `active = False` for `market_id`. Rust-owned replacement for the
+/// Python `deactivate_mainnet_aave_v3` (commands.py). The GIL is released
+/// across the call.
+///
+/// # Raises
+///
+/// `ValueError` if `market_id` doesn't exist or on a DB failure.
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+fn deactivate_aave_market(py: Python<'_>, database_path: &str, market_id: i64) -> PyResult<()> {
+    let path = PathBuf::from(database_path);
+    py.detach(move || core_deactivate_aave_market(&path, market_id))
+        .map_err(run_err_to_py)?;
+    Ok(())
+}
+
 /// Register the aave-updater seam on `m` (feature = "aave-updater"). Mirrors
 /// `pool::add_pool_module`. `CancelHandle` is registered separately by
 /// `cancel::register_cancel` (shared).
@@ -622,6 +694,8 @@ pub fn add_aave_updater_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(verify_touched_positions_on_chain, m)?)?;
     m.add_function(wrap_pyfunction!(verify_all_positions_on_chain, m)?)?;
     m.add_function(wrap_pyfunction!(cleanup_zero_balance_positions, m)?)?;
+    m.add_function(wrap_pyfunction!(activate_aave_market, m)?)?;
+    m.add_function(wrap_pyfunction!(deactivate_aave_market, m)?)?;
     Ok(())
 }
 

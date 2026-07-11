@@ -1214,7 +1214,7 @@ fn encode_single_address_call(sig: &str, addr: &Address) -> Bytes {
 
 /// Encode a no-arg `eth_call`: 4-byte selector only. For
 /// `ATOKEN_REVISION()`, `DEBT_TOKEN_REVISION()`.
-fn encode_no_arg_call(sig: &str) -> Bytes {
+pub(crate) fn encode_no_arg_call(sig: &str) -> Bytes {
     Bytes::from(keccak256(sig.as_bytes())[..4].to_vec())
 }
 
@@ -1566,7 +1566,7 @@ fn strip_trailing_nulls_from_ascii(id: &alloy::primitives::B256) -> String {
 /// token. Port of `erc20_utils._fetch_erc20_token_metadata` (erc20_utils.py:85+).
 /// Each field is `None` when its fetch attempts fail (the Python's
 /// `contextlib.suppress(Exception)` per-field tolerance).
-async fn fetch_erc20_metadata(
+pub(crate) async fn fetch_erc20_metadata(
     provider: &AlloyProvider,
     token: &Address,
     block_number: u64,
@@ -1614,7 +1614,7 @@ async fn fetch_erc20_string_metadata(
 /// Mirrors `eth_abi.abi.decode(["string"], data)`. Returns `None` when the
 /// return is malformed (too short / the offset isn't 0x20 / the length
 /// overruns the return).
-fn decode_dynamic_string(ret: &[u8]) -> Option<String> {
+pub(crate) fn decode_dynamic_string(ret: &[u8]) -> Option<String> {
     if ret.len() < 64 {
         return None;
     }
