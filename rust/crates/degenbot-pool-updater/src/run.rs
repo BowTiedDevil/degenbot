@@ -562,6 +562,45 @@ fn exchange_id_of(creation: &PoolCreationToWrite) -> i64 {
     }
 }
 
+// ── chunk in-scope / per-exchange fetch-range decision ────────────────────
+
+/// Decide whether a spec is in-scope for the chunk `[working_start,
+/// working_end]` given its stored `last_update_block`, and return the
+/// per-exchange effective fetch start so a divergent-ahead spec does NOT
+/// re-fetch its already-committed range.
+///
+/// Returns `None` when the spec is already past this chunk's end (nothing to
+/// do); otherwise `Some(fetch_start)` where `fetch_start` is
+/// `max(marker + 1, working_start)` — the spec's own unprocessed cursor,
+/// clamped to the chunk's lower bound so a behind-spec still scans the whole
+/// chunk.
+///
+/// This replaces a strict `marker + 1 == working_start` equality filter that
+/// silently stranded any exchange whose marker diverged from the chunk grid
+/// (the ahead-exchange still has unprocessed work in the chunk's tail, but the
+/// equality test refused to admit it). See the V4 exclusion bug: V3 forks
+/// stalled at `M` while V2/V4 advanced to `M + k`; once V3 rooted the cursor at
+/// `M + 1`, V2/V4 (`marker + 1 = M + k + 1 ≠ M + 1`) were dropped from
+/// `chunk_specs` for every subsequent chunk, so their `ModifyLiquidity` /
+/// `PoolCreated` events in `[M + k + 1, tip]` were never fetched.
+fn in_scope_fetch_start(
+    spec_last_update: Option<i64>,
+    working_start: u64,
+    working_end: u64,
+) -> Option<u64> {
+    let marker = spec_last_update.map_or(0, |b| u64::try_from(b).unwrap_or(0));
+    if marker >= working_end {
+        return None;
+    }
+    // The spec has unprocessed work at or before `working_end`. Use its own
+    // marker + 1 as the fetch start (so a divergent-ahead spec does NOT
+    // re-fetch its committed range — re-applying its `ModifyLiquidity` /
+    // `Mint`/`Burn` events would double-count liquidity in release builds,
+    // where the per-pool event-order guard is a stripped `debug_assert!`).
+    // Clamp to `working_start` so a behind-spec scans only the chunk's range.
+    Some((marker + 1).max(working_start))
+}
+
 // ── the outer chunk loop (RPC-bound; integration-tested) ─────────────────
 
 /// The final report from a [`run_pool_update`] run.
@@ -755,22 +794,29 @@ pub fn run_pool_update(
 
         let working_end_block = last_block.min(working_start_block + chunk_size - 1);
 
-        // The in-scope subset for THIS chunk: exchanges whose
-        // `last_update_block == working_start_block - 1` (the laggards that
-        // should advance together this chunk). Exchanges already past this
-        // point (a prior chunk advanced them) are skipped.
-        let chunk_specs: Vec<ExchangeSpec> = specs_to_update
+        // The in-scope subset for THIS chunk + each spec's per-exchange fetch
+        // start. A spec is in-scope iff it still has unprocessed work at or
+        // before `working_end_block`; its fetch start is `max(marker + 1,
+        // working_start_block)` — its own unprocessed cursor clamped to the
+        // chunk's lower bound, so a divergent-ahead spec (advanced in earlier
+        // committed chunks while a laggard rooted the cursor) does NOT re-fetch
+        // its committed range (re-applying `ModifyLiquidity` / `Mint`/`Burn`
+        // events would double-count liquidity in release builds, where the
+        // per-pool event-order guard is a stripped `debug_assert!`).
+        let chunk_specs_with_start: Vec<(ExchangeSpec, u64)> = specs_to_update
             .iter()
-            .filter(|s| {
-                s.last_update_block
-                    .is_none_or(|b| u64::try_from(b).unwrap_or(0) + 1 == working_start_block)
+            .filter_map(|s| {
+                in_scope_fetch_start(s.last_update_block, working_start_block, working_end_block)
+                    .map(|start| (s.clone(), start))
             })
-            .cloned()
+            .collect();
+        let chunk_specs: Vec<ExchangeSpec> = chunk_specs_with_start
+            .iter()
+            .map(|(s, _)| s.clone())
             .collect();
         if chunk_specs.is_empty() {
-            // No lagging exchange for this start block — advance the cursor
-            // (shouldn't normally happen if all exchanges advance in lockstep,
-            // but guards against a sparse `last_update_block` distribution).
+            // No exchange has unprocessed work for this chunk — advance the
+            // cursor (guards against a sparse `last_update_block` distribution).
             working_start_block = working_end_block + 1;
             continue;
         }
@@ -779,10 +825,16 @@ pub fn run_pool_update(
         // the V3 whole-chain + V4 per-PoolManager liquidity scans for the range.
         let pool_creations = rt.block_on(fetch_pool_creations(
             &fetcher,
-            working_start_block,
             working_end_block,
-            &chunk_specs,
+            &chunk_specs_with_start,
         ))?;
+        // V3 `Mint`/`Burn` events can't be efficiently RPC-filtered by pool
+        // address, so this is a whole-chain scan over the chunk's range. The
+        // apply step (in `apply_chunk_writes_on_conn`) drops pools whose
+        // `exchange_id` is NOT in `chunk_specs`. (Limitation: if a V3 fork
+        // ever diverges AHEAD of the grid, this whole-chain range would re-fetch
+        // its committed events — currently all V3 forks advance in lockstep at
+        // the laggard marker, so the case does not arise.)
         let v3_liquidity = rt.block_on(fetch_v3_liquidity_logs_grouped(
             &fetcher,
             working_start_block,
@@ -790,15 +842,16 @@ pub fn run_pool_update(
             None, // whole-chain (V3 events can't be efficiently RPC-filtered)
         ))?;
         // V4 liquidity: fetch per PoolManager (the V4 exchange's `factory` is
-        // the PoolManager address). Merge across all V4 chunk-specs into one
-        // grouped map (the apply is per-pool_hash, manager-chain-scoped).
+        // the PoolManager address), scoped to each spec's per-exchange fetch
+        // start. Merge across all V4 chunk-specs into one grouped map (the
+        // apply is per-pool_hash, manager-chain-scoped).
         let mut v4_liquidity: HashMap<String, Vec<LiquidityUpdateEvent>> = HashMap::new();
         let mut v4_manager_addresses: HashMap<String, Address> = HashMap::new();
-        for spec in &chunk_specs {
+        for (spec, fetch_start) in &chunk_specs_with_start {
             if matches!(spec.family, crate::fetch::PoolFamily::V4) {
                 let per_manager = rt.block_on(fetch_v4_liquidity_logs_grouped(
                     &fetcher,
-                    working_start_block,
+                    *fetch_start,
                     working_end_block,
                     Some(spec.factory),
                 ))?;
@@ -950,18 +1003,21 @@ pub fn run_pool_update(
 
 /// Fetch + map the chunk's pool-creation events across all in-scope exchange
 /// specs (per-exchange `fetch_pool_created_logs_for_spec` +
-/// [`map_pool_creation`]). Aerodrome V2 pools whose per-pool `getFee` RPC
-/// hasn't been resolved are SKIPPED (the fee-RPC path is a follow-up; the
-/// canonical V2/V3/V4 + Aerodrome V3 paths are NOT affected).
+/// [`map_pool_creation`]). Each spec carries its own per-exchange fetch start
+/// (see [`in_scope_fetch_start`]) so a divergent-ahead spec does NOT re-fetch
+/// its committed `PoolCreated`/`Initialize` events. Aerodrome V2 pools whose
+/// per-pool `getFee` RPC hasn't been resolved are SKIPPED (the fee-RPC path
+/// is a follow-up; the canonical V2/V3/V4 + Aerodrome V3 paths are NOT
+/// affected).
 async fn fetch_pool_creations(
     fetcher: &LogFetcher,
-    from_block: u64,
     to_block: u64,
-    specs: &[ExchangeSpec],
+    specs_with_start: &[(ExchangeSpec, u64)],
 ) -> Result<Vec<PoolCreationToWrite>, ProviderError> {
     let mut out = Vec::new();
-    for spec in specs {
-        let decoded = fetch_pool_created_logs_for_spec(fetcher, from_block, to_block, spec).await?;
+    for (spec, from_block) in specs_with_start {
+        let decoded =
+            fetch_pool_created_logs_for_spec(fetcher, *from_block, to_block, spec).await?;
         for event in decoded {
             match map_pool_creation(spec, &event, /* aerodrome_fee */ None) {
                 Ok(row) => out.push(row),
@@ -1118,6 +1174,86 @@ mod tests {
         assert!(db.fetch_pool_by_address(pool.address, 1).unwrap().is_some());
         // (c) The error propagated (the caller would surface it).
         // (already asserted `result.is_err()` above)
+    }
+
+    /// The V4 exclusion bug: when exchange markers diverge (V3 forks stalled
+    /// at `M` while V2/V4 advanced to `M + k`), the strict equality filter
+    /// `marker + 1 == working_start` stranded every ahead-exchange — its
+    /// unprocessed work in the chunk's tail was never fetched. The fix admits
+    /// any spec that still has unprocessed work at or before `working_end`,
+    /// scoped to its own marker + 1 so it does NOT re-fetch committed blocks.
+    #[test]
+    fn in_scope_fetch_start_admits_divergent_ahead_spec() {
+        // V3 laggard at M (roots the chunk cursor at M + 1).
+        const M: u64 = 25_508_130;
+        // V4 ahead by k blocks (advanced in earlier committed chunks while
+        // V3 was stuck on a verify rollback).
+        const K: u64 = 2_593;
+        const TIP: u64 = 25_510_816;
+        let working_start = M + 1; // the min marker + 1 (V3 roots the cursor)
+        let working_end = TIP;
+
+        // 1. V3 laggard at the grid point — unchanged behavior.
+        let v3 = in_scope_fetch_start(Some(i64::try_from(M).unwrap()), working_start, working_end);
+        assert_eq!(
+            v3,
+            Some(working_start),
+            "laggard at the grid point fetches the whole chunk",
+        );
+
+        // 2. V4 ahead of the grid but still behind `working_end` — MUST be
+        //    in-scope, scoped to its own marker + 1 (NOT working_start, which
+        //    would re-fetch V4's already-committed [M+1, M+k] range and
+        //    double-apply liquidity in release builds where the per-pool
+        //    event guard is a stripped `debug_assert!`).
+        let v4_marker = M + K; // 25_510_723
+        let v4 = in_scope_fetch_start(
+            Some(i64::try_from(v4_marker).unwrap()),
+            working_start,
+            working_end,
+        );
+        assert_eq!(
+            v4,
+            Some(v4_marker + 1),
+            "divergent-ahead spec is in-scope, scoped to its own marker + 1 \
+             (no re-fetch of committed blocks, no double-apply)",
+        );
+
+        // 3. A spec already past this chunk's end is skipped (unchanged).
+        let past = in_scope_fetch_start(
+            Some(i64::try_from(working_end).unwrap()),
+            working_start,
+            working_end,
+        );
+        assert_eq!(
+            past, None,
+            "spec already at the chunk's end is skipped (nothing to do)",
+        );
+
+        // 4. A spec with `last_update_block = None` (never stamped) scans the
+        //    whole chunk (backfill / first run — unchanged).
+        let fresh = in_scope_fetch_start(None, working_start, working_end);
+        assert_eq!(
+            fresh,
+            Some(working_start),
+            "never-stamped spec scans the whole chunk",
+        );
+
+        // 5. A spec BEHIND the grid (divergent laggard — rarer, but the same
+        //    bug class): its own marker + 1 is the unprocessed cursor, but
+        //    clamped to `working_start` so it re-scans only the chunk's range,
+        //    not everything since its stale marker.
+        let behind_marker = M - 5_000; // a spec way behind the grid
+        let behind = in_scope_fetch_start(
+            Some(i64::try_from(behind_marker).unwrap()),
+            working_start,
+            working_end,
+        );
+        assert_eq!(
+            behind,
+            Some(working_start),
+            "behind-spec is in-scope but clamped to the chunk's lower bound",
+        );
     }
 
     /// `RunError::Verification` carries the diverging pool id + the named
