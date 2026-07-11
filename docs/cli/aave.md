@@ -5,25 +5,7 @@ tags:
   - state-management
   - liquidity
 related_files:
-  - ../../src/degenbot/cli/aave/__init__.py
-  - ../../src/degenbot/cli/aave/commands.py
-  - ../../src/degenbot/cli/aave/event_handlers.py
-  - ../../src/degenbot/cli/aave/event_fetchers.py
-  - ../../src/degenbot/cli/aave/token_processor.py
-  - ../../src/degenbot/cli/aave/transaction_processor.py
-  - ../../src/degenbot/cli/aave/transfers.py
-  - ../../src/degenbot/cli/aave/verification.py
-  - ../../src/degenbot/cli/aave/db_assets.py
-  - ../../src/degenbot/cli/aave/db_users.py
-  - ../../src/degenbot/cli/aave/db_positions.py
-  - ../../src/degenbot/cli/aave/db_verification.py
-  - ../../src/degenbot/cli/aave/db_market.py
-  - ../../src/degenbot/cli/aave/constants.py
-  - ../../src/degenbot/cli/aave/types.py
-  - ../../src/degenbot/cli/aave/utils.py
-  - ../../src/degenbot/cli/aave/erc20_utils.py
-  - ../../src/degenbot/cli/aave/liquidation_processor.py
-  - ../../src/degenbot/cli/aave/stkaave.py
+  - ../../src/degenbot/cli/aave.py
   - ../../src/degenbot/database/models/aave.py
   - ../../src/degenbot/aave/libraries/wad_ray_math.py
 complexity: complex
@@ -115,7 +97,7 @@ The `aave_update` command is designed to rebuild a complete database of collater
 
 ## Commands
 
-All CLI commands are implemented in [`src/degenbot/cli/aave/commands.py`](../../src/degenbot/cli/aave/commands.py).
+All CLI commands are implemented in [`src/degenbot/cli/aave.py`](../../src/degenbot/cli/aave.py).
 
 ### `degenbot aave update`
 
@@ -383,7 +365,7 @@ This ensures chronological processing within each block.
 
 ## Token Revision Libraries
 
-The code supports multiple Aave V3 token revisions. The `WadRayMathLibrary` protocol (in [`src/degenbot/cli/aave/constants.py`](../../src/degenbot/cli/aave/constants.py)) defines the interface for math operations, and `wad_ray_math.py` (in [`src/degenbot/aave/libraries/`](../../src/degenbot/aave/libraries/)) provides a unified implementation with `Rounding` enum support:
+The code supports multiple Aave V3 token revisions. The `WadRayMathLibrary` protocol (defined in [`src/degenbot/aave/libraries/wad_ray_math.py`](../../src/degenbot/aave/libraries/wad_ray_math.py)) defines the interface for math operations, with `Rounding` enum support:
 
 | Rounding Mode | Usage |
 |--------------|-------|
