@@ -30,7 +30,6 @@ Startup sequence:
 import argparse
 import asyncio
 import contextlib
-import dataclasses
 import datetime
 import gc
 import itertools
@@ -41,16 +40,13 @@ import pathlib
 import signal
 import time
 import traceback
-from collections import deque
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, cast
 
 import dotenv
 import eth_abi.abi
-import eth_account
 import web3
-from degenbot import degenbot_rs
 from eth_backrun_helpers import (
     BackrunConfig,
     classify_revert,
@@ -61,16 +57,10 @@ from eth_backrun_helpers import (
 from eth_typing import ChainId, ChecksumAddress
 from hexbytes import HexBytes
 from web3 import Web3
-from web3.exceptions import TransactionNotFound, Web3Exception
-from web3.types import (
-    HexStr,
-    Nonce,
-    StateOverride,
-    TxParams,
-    Wei,
-)
+from web3.exceptions import Web3Exception
+from web3.types import HexStr, Nonce, StateOverride, TxParams, Wei
 
-from degenbot import Bot, UniswapV2Pool, UniswapV3Pool, get_checksum_address
+from degenbot import Bot, UniswapV2Pool, UniswapV3Pool, degenbot_rs, get_checksum_address
 from degenbot.arbitrage.encoding import fits_int128
 from degenbot.arbitrage.engine_registry import EngineRegistry
 from degenbot.arbitrage.hop_info import HopInfo, V2HopInfo, V3HopInfo, V4HopInfo
@@ -1461,8 +1451,6 @@ def _compute_priority_fee(
     )
 
 
-
-
 async def dispatch_profitable_results(
     results: list[
         tuple[int, int, int, tuple[int, ...], tuple[int, ...], int]
@@ -1881,6 +1869,27 @@ async def dispatch_profitable_results(
             return None
 
         calls = sim[0]["calls"]
+
+        # eth_simulateV1 via make_request returns ``returnData`` as raw hex
+        # strings ("0x...") and ``gasUsed``/``status`` as hex QUANTITY strings
+        # per the raw-JSON-RPC contract, not HexBytes/int. Normalize once so
+        # both the revert path below and the success-path reads
+        # (``int.from_bytes`` on returnData, ``int.from_bytes``==float on
+        # gasUsed) see bytes/int (matches the bare ``eth_call`` convention at
+        # the V2/V3 state-dump sites).
+        for c in calls:  # noqa: PLR1702
+            _rd = c["returnData"]
+            if isinstance(_rd, str):
+                c["returnData"] = (
+                    bytes.fromhex(_rd.removeprefix("0x")) if _rd not in {"", "0x"} else b""
+                )
+            elif not isinstance(_rd, (bytes, bytearray)):
+                c["returnData"] = b""
+            _gu = c.get("gasUsed", 0)
+            if isinstance(_gu, str):
+                c["gasUsed"] = int(_gu, 16) if _gu not in {"", "0x"} else 0
+            elif not isinstance(_gu, int):
+                c["gasUsed"] = int(_gu)
 
         # Check all calls succeeded — log which call failed + revert data
         failed_call = None
