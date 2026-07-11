@@ -1,25 +1,4 @@
-"""Parameterized pool creation event updaters.
-
-Replaces 14 near-identical updater functions with 3 parameterized functions:
-- ``update_v2_pools``: V2-style events
-  (token0/token1 from topics, pool_address from data)
-- ``update_v3_pools``: V3-style events
-  (token0/token1/fee from topics, tick_spacing/pool_address from data)
-- ``update_v4_pools``: V4-style events
-  (pool_hash/currency0/currency1 from topics, fee/tick_spacing/hooks from data)
-
-Each accepts a configuration dataclass that captures the DEX-specific variations
-(event hash, fee values, optional RPC calls).
-
-WR7EA6 (split out of QJSCA5): the ``erc20_tokens`` get-or-create escalate +
-the polymorphic pool-row insert + the ``ExchangeTable.last_update_block``
-stamp are owned by the Rust core (``db_upsert_v2/v3/v4_pools`` +
-``db_set_exchange_last_update_block`` seams over ``degenbot-db``'s
-``discovery`` substrate). These shells decode the raw ``PoolCreated``
-``LogReceipt``s (topics/data → addresses/fee/tick-spacing) + do the RPC fee
-lookup, then build row-input lists + delegate — the event-scan driver loop +
-RPC event fetch stay Python (``stays-python``).
-"""
+"""Parameterized pool creation event updaters."""
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -130,15 +109,7 @@ def update_v2_pools(
     config: V2PoolUpdateConfig,
     get_events_fn: Callable[..., list[LogReceipt]],
 ) -> None:
-    """Process V2-style pool creation events for a DEX.
-
-    WR7EA6: the ``erc20_tokens`` get-or-create + the polymorphic pool-row
-    insert are owned by the Rust core (``db_upsert_v2_pools``); this shell
-    decodes the raw ``PoolCreated`` events + does the optional RPC fee
-    lookup, then builds row-input records + delegates. The event-scan
-    driver loop + RPC event fetch stay Python.
-
-    """
+    """Process V2-style pool creation events for a DEX."""
     new_pool_events = get_events_fn(
         provider=provider,
         start_block=start_block,
@@ -221,14 +192,7 @@ def update_v3_pools(
     config: V3PoolUpdateConfig,
     get_events_fn: Callable[..., list[LogReceipt]],
 ) -> None:
-    """Process V3-style pool creation events for a DEX.
-
-    WR7EA6: the ``erc20_tokens`` get-or-create + the polymorphic pool-row
-    insert are owned by the Rust core (``db_upsert_v3_pools``); this shell
-    decodes the raw ``PoolCreated`` events + does the optional RPC fee
-    override lookup (Aerodrome), then builds row-input records + delegates.
-
-    """
+    """Process V3-style pool creation events for a DEX."""
     new_pool_events = get_events_fn(
         provider=provider,
         start_block=start_block,
@@ -302,15 +266,7 @@ def update_v4_pools(
     config: V4PoolUpdateConfig,
     get_events_fn: Callable[..., list[LogReceipt]],
 ) -> None:
-    """Process V4-style pool creation events for a DEX.
-
-    WR7EA6: the ``PoolManagerTable`` lookup (by ``exchange.factory``) + the
-    ``erc20_tokens`` get-or-create + the ``managed_pools`` / ``uniswap_v4_pools``
-    insert are owned by the Rust core (``db_upsert_v4_pools``); this shell
-    decodes the raw ``PoolCreated`` events, then builds row-input records +
-    delegates.
-
-    """
+    """Process V4-style pool creation events for a DEX."""
     new_pool_events = get_events_fn(
         provider=provider,
         start_block=start_block,
@@ -371,22 +327,7 @@ def apply_v3_liquidity_updates(
     *,
     database_path: str,
 ) -> None:
-    """Apply the V3 liquidity updates to the provided pool.
-
-    Moved here from ``cli/pool.py`` so the chunk loop's removal
-    leaves these decode shells with their topic constants. The chunk loop
-    itself now lives in the Rust core (``run_pool_update``).
-
-    Assumes the liquidity updates are ordered by block number + log index,
-    ascending (the Rust apply enforces the ordering invariant).
-
-    QJSCA5 section 4.3: the reconstitute, apply-math, persist pipeline is
-    owned by the Rust core (``db_apply_v3_liquidity_updates``); this shell
-    decodes the raw ``LogReceipt``s into ``LiquidityUpdateEvent`` records +
-    delegates. The ``exchanges_in_scope`` precondition (a backfill
-    double-apply guard) reads the pool's ``exchange_id`` via the
-    ``db_fetch_pool_row`` seam.
-    """
+    """Apply the V3 liquidity updates to the provided pool."""
     in_scope_exchange_ids = {exchange.id for exchange in exchanges_in_scope}
     pool_row = db_fetch_pool_row(
         database_path=database_path,
@@ -443,8 +384,7 @@ def apply_v4_liquidity_updates(
 ) -> None:
     """Apply the V4 liquidity updates to the provided pool.
 
-    Moved here from ``cli/pool.py``. V4 emits a single signed
-    ``ModifyLiquidity`` event (no Burn/Mint split), so the decode unpacks
+    V4 emits a single signed ``ModifyLiquidity`` event (no Burn/Mint split), so the decode unpacks
     ``(tick_lower, tick_upper, liquidity_delta, _)`` straight from ``data``.
 
     Assumes the liquidity updates are ordered by block number + log index,

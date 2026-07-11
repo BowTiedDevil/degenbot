@@ -1,19 +1,7 @@
 """CLI commands for exchange activation/deactivation.
 
-These commands are thin delegating shells (the "cockpit"): they resolve the
-exchange row by `(chain_id, name)` + flip its `active` flag through the Rust
-core substrate (`degenbot_rs.db_upsert_exchange` /
-`db_set_exchange_active` / `db_fetch_exchange_by_name` /
-`db_upsert_pool_manager`). No SQLAlchemy session, no ORM mutation — the
-Python here only orchestrates the user-facing messages; the Rust core owns
-the row state.
-
-`upsert_exchange` inserts new rows with `active=False` by substrate design,
-so the activate shell always calls `set_exchange_active(True)` after the
-upsert (unless the row is already `active`). For V4, `db_upsert_pool_manager`
-is reasserted on every activate (an idempotent `ON CONFLICT DO UPDATE` —
-see the commit body); this produces identical DB state to the original
-"seed on first activation" trajectory.
+These commands are thin delegating shells. The Python here only orchestrates the user-facing
+messages; the Rust core owns the database state.
 """
 
 import click
