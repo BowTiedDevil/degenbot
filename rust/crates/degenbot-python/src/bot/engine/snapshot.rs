@@ -4,24 +4,64 @@
 //! mirroring `crates/degenbot-bot/src/solvers/uniswap_engine/`'s per-concern
 //! layout. `PyO3` allows multiple `#[pymethods] impl PyUniswapArbEngine { … }`
 //! blocks per type, so each concern file contributes one slice.
+//!
+//! RUQ637: the `SnapshotStore` fields were moved OFF `PyUniswapArbEngine` into
+//! core `BotState` (so the store is the single source of snapshot tick data,
+//! consumed at registration via `take`). These `#[pymethods]` still exist as
+//! the Python-facing ingestion surface (DB streaming + non-DB `load_*_from_py`),
+//! but they delegate to the core store through the shared
+//! `Arc<RwLock<BotState>>` (`engine.core`) — pure arg extraction + store write,
+//! no business logic. B3OROH's `Bot::load_snapshot_from_db` bypasses this
+//! surface entirely (writes the core store from Rust); B3 keeps these methods
+//! only where Python STILL drives ingestion (non-DB sources / interim).
 
 use super::{make_tick_info, Address, EnginePhase, HashMap, PyUniswapArbEngine};
 use crate::prelude::*;
 
 use super::verify::map_verify_err;
+use degenbot_bot::bot_core::snapshot_verify::SnapshotStore;
+
+impl PyUniswapArbEngine {
+    /// Acquire the engine + core write lock, returning a guard over the core
+    /// `SnapshotStore<Address>`. Held briefly under one engine-lock acquisition
+    /// so the pump cannot interleave a registration `take` mid-load.
+    fn with_v3_store<R>(
+        &self,
+        f: impl FnOnce(&degenbot_bot::bot_core::snapshot_verify::SnapshotStore<Address>) -> R,
+    ) -> R {
+        let engine = self.engine.lock();
+        let core = engine.core.write();
+        f(core.v3_snapshot_store())
+    }
+
+    /// V4 twin of [`Self::with_v3_store`].
+    fn with_v4_store<R>(
+        &self,
+        f: impl FnOnce(
+            &degenbot_bot::bot_core::snapshot_verify::SnapshotStore<(
+                Address,
+                degenbot_decoders::v4_swap_decoder::PoolId,
+            )>,
+        ) -> R,
+    ) -> R {
+        let engine = self.engine.lock();
+        let core = engine.core.write();
+        f(core.v4_snapshot_store())
+    }
+}
 
 #[pymethods]
 impl PyUniswapArbEngine {
     /// Drop the stored V3 snapshot, freeing memory.
     /// Idempotent — no-op if no V3 snapshot is loaded.
     fn clear_v3_snapshot(&self) {
-        self.v3_snapshot.clear();
+        self.with_v3_store(SnapshotStore::clear);
     }
 
     /// Drop the stored V4 snapshot, freeing memory.
     /// Idempotent — no-op if no V4 snapshot is loaded.
     fn clear_v4_snapshot(&self) {
-        self.v4_snapshot.clear();
+        self.with_v4_store(SnapshotStore::clear);
     }
 
     /// Begin streaming V3 snapshot data into the engine, one pool at a time.
@@ -37,11 +77,11 @@ impl PyUniswapArbEngine {
             .require_before(EnginePhase::Resumed, "begin_v3_snapshot_stream")
             .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
 
-        if self.v3_snapshot.is_loaded() {
+        if self.with_v3_store(SnapshotStore::is_loaded) {
             let msg = "Cannot begin V3 snapshot stream: snapshot already loaded.";
             return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
         }
-        self.v3_snapshot.begin_load();
+        self.with_v3_store(SnapshotStore::begin_load);
         Ok(())
     }
 
@@ -66,13 +106,13 @@ impl PyUniswapArbEngine {
             rust_tick_data.insert(tick_index, make_tick_info(values.0, values.1));
         }
 
-        map_verify_err(self.v3_snapshot.insert(addr, rust_tick_data))
+        map_verify_err(self.with_v3_store(|store| store.insert(addr, rust_tick_data)))
     }
 
     /// Finalize the V3 snapshot stream and transition to `SnapshotLoaded` phase.
     fn finish_v3_snapshot(&self) -> PyResult<()> {
         let phase = self.current_phase();
-        if !self.v3_snapshot.is_loaded() {
+        if !self.with_v3_store(SnapshotStore::is_loaded) {
             let msg = "No V3 snapshot stream in progress.";
             return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
         }
@@ -89,11 +129,11 @@ impl PyUniswapArbEngine {
             .require_before(EnginePhase::Resumed, "begin_v4_snapshot_stream")
             .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
 
-        if self.v4_snapshot.is_loaded() {
+        if self.with_v4_store(SnapshotStore::is_loaded) {
             let msg = "Cannot begin V4 snapshot stream: snapshot already loaded.";
             return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
         }
-        self.v4_snapshot.begin_load();
+        self.with_v4_store(SnapshotStore::begin_load);
         Ok(())
     }
 
@@ -122,13 +162,13 @@ impl PyUniswapArbEngine {
             rust_tick_data.insert(tick_index, make_tick_info(values.0, values.1));
         }
 
-        map_verify_err(self.v4_snapshot.insert((pm_addr, pool_id), rust_tick_data))
+        map_verify_err(self.with_v4_store(|store| store.insert((pm_addr, pool_id), rust_tick_data)))
     }
 
     /// Finalize the V4 snapshot stream and transition to `SnapshotLoaded` phase.
     fn finish_v4_snapshot(&self) -> PyResult<()> {
         let phase = self.current_phase();
-        if !self.v4_snapshot.is_loaded() {
+        if !self.with_v4_store(SnapshotStore::is_loaded) {
             let msg = "No V4 snapshot stream in progress.";
             return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
         }
@@ -151,7 +191,7 @@ impl PyUniswapArbEngine {
             .require_before(EnginePhase::Resumed, "load_v3_snapshot_from_py")
             .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
 
-        if self.v3_snapshot.is_loaded() {
+        if self.with_v3_store(SnapshotStore::is_loaded) {
             let msg = "Cannot load V3 snapshot: already loaded. Call clear_v3_snapshot() first.";
             return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
         }
@@ -176,7 +216,7 @@ impl PyUniswapArbEngine {
             result.insert(address, tick_data);
         }
 
-        self.v3_snapshot.load(result);
+        self.with_v3_store(|store| store.load(result));
         if phase < EnginePhase::SnapshotLoaded {
             self.set_phase(EnginePhase::SnapshotLoaded);
         }
@@ -194,7 +234,7 @@ impl PyUniswapArbEngine {
             .require_before(EnginePhase::Resumed, "load_v4_snapshot_from_py")
             .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
 
-        if self.v4_snapshot.is_loaded() {
+        if self.with_v4_store(SnapshotStore::is_loaded) {
             let msg = "Cannot load V4 snapshot: already loaded. Call clear_v4_snapshot() first.";
             return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
         }
@@ -231,7 +271,7 @@ impl PyUniswapArbEngine {
             }
         }
 
-        self.v4_snapshot.load(result);
+        self.with_v4_store(|store| store.load(result));
         if phase < EnginePhase::SnapshotLoaded {
             self.set_phase(EnginePhase::SnapshotLoaded);
         }

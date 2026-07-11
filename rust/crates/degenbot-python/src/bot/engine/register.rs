@@ -8,7 +8,7 @@
 use super::{
     mpsc, Arc, Bot, DynamicFeePoolRejectedError, EngineHandle, EngineSubscriber,
     HookedPoolRejectedError, PoolHop, PyBot, PyList, PyUniswapArbEngine, ReorgCoordinator,
-    SnapshotStore, SolveCoordinator, UniswapEngine,
+    SolveCoordinator, UniswapEngine,
 };
 use crate::prelude::*;
 
@@ -66,8 +66,6 @@ impl PyUniswapArbEngine {
             pump,
             result_rx: Arc::new(parking_lot::Mutex::new(Some(result_rx))),
             block_rx: Arc::new(parking_lot::Mutex::new(Some(block_rx))),
-            v3_snapshot: SnapshotStore::new(),
-            v4_snapshot: SnapshotStore::new(),
         }
     }
 

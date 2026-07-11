@@ -25,12 +25,6 @@ use crate::schema::table::is_v3_kind;
 /// read entry).
 type TickMap = HashMap<i32, (U256, U256)>;
 
-/// The V3 batch result: pool address → per-tick map.
-type V3Batch = HashMap<Address, TickMap>;
-
-/// The V4 batch key (pool-manager address, `pool_hash` hex string) for the result map.
-type V4Key = (String, String);
-
 /// The tick-initialization bitmap entry at one word (mirrors Python
 /// `BitmapAtWord`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -253,6 +247,35 @@ impl DegenbotDb {
         chain_id: i64,
         family: ExchangeFamily,
     ) -> Result<Vec<(PoolKey, TickMap)>, DbError> {
+        let mut out: Vec<(PoolKey, TickMap)> = Vec::new();
+        self.stream_liquidity_maps(chain_id, family, |key, ticks| {
+            out.push((key, ticks.clone()));
+        })?;
+        Ok(out)
+    }
+
+    /// Streaming variant of [`Self::fetch_all_liquidity_maps`]: invokes
+    /// `on_pool(key, ticks)` once per pool as rows are consumed, instead of
+    /// materializing one `Vec<(PoolKey, TickMap)>`. A single pass under one
+    /// `MutexGuard`; pools arrive in the SAME order as the materialized
+    /// version (V3: address order; V4: `(pm_address, pool_hash)` order). A
+    /// chain with no pools invokes the callback zero times.
+    ///
+    /// Used by the core `Bot::load_snapshot_from_db` to feed a
+    /// `SnapshotStore::insert` one pool at a time, mirroring Python's
+    /// `yield_per` streaming shape and avoiding transient ~2× peak RSS
+    /// (the materialized `Vec` + the engine `HashMap` coexisting).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure or [`DbError::Decode`]
+    /// on a malformed column.
+    pub fn stream_liquidity_maps(
+        &self,
+        chain_id: i64,
+        family: ExchangeFamily,
+        mut on_pool: impl FnMut(PoolKey, &TickMap),
+    ) -> Result<(), DbError> {
         let conn = self.lock();
         match family {
             ExchangeFamily::V3 => {
@@ -263,7 +286,6 @@ impl DegenbotDb {
                     WHERE p.chain = ?1 \
                       AND p.kind IN ('uniswap_v3', 'sushiswap_v3', 'pancakeswap_v3', 'aerodrome_v3') \
                     ORDER BY p.address, lp.tick";
-                let mut out: V3Batch = HashMap::new();
                 let mut stmt = conn.prepare(sql)?;
                 let rows = stmt.query_map(rusqlite::params![chain_id], |r| {
                     Ok((
@@ -273,20 +295,23 @@ impl DegenbotDb {
                         r.get::<_, String>(3)?,
                     ))
                 })?;
+                let mut current_addr: Option<Address> = None;
+                let mut current_ticks: TickMap = HashMap::new();
                 for r in rows {
                     let (addr_s, tick, gross, net) = r?;
                     let addr = decode_address(&addr_s)?;
-                    out.entry(addr)
-                        .or_default()
-                        .insert(tick, (decode_u256(&gross)?, decode_u256(&net)?));
+                    if current_addr.is_some() && current_addr != Some(addr) {
+                        if let Some(addr) = current_addr.take() {
+                            on_pool(PoolKey::V3(addr), &current_ticks);
+                            current_ticks.clear();
+                        }
+                    }
+                    current_addr = Some(addr);
+                    current_ticks.insert(tick, (decode_u256(&gross)?, decode_u256(&net)?));
                 }
-                // emit in address order to match Python's ORDER BY p.address
-                let mut keys: Vec<Address> = out.keys().copied().collect();
-                keys.sort_by_key(|a| a.to_checksum(None));
-                Ok(keys
-                    .into_iter()
-                    .map(|k| (PoolKey::V3(k), out.remove(&k).unwrap_or_default()))
-                    .collect())
+                if let Some(addr) = current_addr {
+                    on_pool(PoolKey::V3(addr), &current_ticks);
+                }
             }
             ExchangeFamily::V4 => {
                 let sql = "\
@@ -297,9 +322,6 @@ impl DegenbotDb {
                     JOIN managed_pool_liquidity_positions lp ON lp.managed_pool_id = mp.id \
                     WHERE pm.chain = ?1 AND mp.kind = 'uniswap_v4' \
                     ORDER BY pm.address, v4.pool_hash, lp.tick";
-                // key by (pm_address_string, pool_hash_string) so eq matches Python
-                let mut out: HashMap<V4Key, TickMap> = HashMap::new();
-                let mut key_order: Vec<(String, String)> = Vec::new();
                 let mut stmt = conn.prepare(sql)?;
                 let rows = stmt.query_map(rusqlite::params![chain_id], |r| {
                     Ok((
@@ -310,33 +332,40 @@ impl DegenbotDb {
                         r.get::<_, String>(4)?,
                     ))
                 })?;
+                let mut current: Option<(String, String)> = None;
+                let mut current_ticks: TickMap = HashMap::new();
                 for r in rows {
                     let (pm_s, hash_s, tick, gross, net) = r?;
                     let key = (pm_s, hash_s);
-                    if !out.contains_key(&key) {
-                        key_order.push(key.clone());
+                    if current.is_some() && current.as_ref() != Some(&key) {
+                        if let Some((pm_s, hash_s)) = current.take() {
+                            let pm = decode_address(&pm_s)?;
+                            on_pool(
+                                PoolKey::V4 {
+                                    pool_manager: pm,
+                                    pool_hash: hash_s,
+                                },
+                                &current_ticks,
+                            );
+                            current_ticks.clear();
+                        }
                     }
-                    out.entry(key)
-                        .or_default()
-                        .insert(tick, (decode_u256(&gross)?, decode_u256(&net)?));
+                    current = Some(key);
+                    current_ticks.insert(tick, (decode_u256(&gross)?, decode_u256(&net)?));
                 }
-                let mut result: Vec<(PoolKey, TickMap)> = Vec::new();
-                for (pm_s, hash_s) in key_order {
+                if let Some((pm_s, hash_s)) = current {
                     let pm = decode_address(&pm_s)?;
-                    let ticks = out
-                        .remove(&(pm_s.clone(), hash_s.clone()))
-                        .unwrap_or_default();
-                    result.push((
+                    on_pool(
                         PoolKey::V4 {
                             pool_manager: pm,
                             pool_hash: hash_s,
                         },
-                        ticks,
-                    ));
+                        &current_ticks,
+                    );
                 }
-                Ok(result)
             }
         }
+        Ok(())
     }
 
     /// All V3-family pool addresses for a chain (mirrors Python

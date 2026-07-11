@@ -25,6 +25,7 @@ dashmap = { version = "^6.1" }
 degenbot-abi = { path = "../degenbot-abi" }
 degenbot-cl-math = { path = "../degenbot-cl-math" }
 degenbot-core = { path = "../degenbot-core" }
+degenbot-db = { path = "../degenbot-db" }
 degenbot-decoders = { path = "../degenbot-decoders" }
 degenbot-rpc = { path = "../degenbot-rpc" }
 degenbot-solidly-math = { path = "../degenbot-solidly-math" }

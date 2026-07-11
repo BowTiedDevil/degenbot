@@ -1732,6 +1732,7 @@ dependencies = [
  "degenbot-abi",
  "degenbot-cl-math",
  "degenbot-core",
+ "degenbot-db",
  "degenbot-decoders",
  "degenbot-rpc",
  "degenbot-solidly-math",
