@@ -25,13 +25,19 @@ hooks = [
   # shared ruff config; the suppression must never be re-enabled per-line.
   { id = "forbid-noqa-PLC0415", name = "forbid noqa for PLC0415", language = "pygrep", entry = "noqa:.*PLC0415", types = ["python"], stages = ["pre-commit"] },
 
-  # Whole-crate lints (always_run, pass_filenames = false). Ordered fastest
-  # first so formatting drift fails early before the heavier clippy/ty passes.
+  # Whole-crate lints (pass_filenames = false). Ordered fastest first so
+  # formatting drift fails early before the heavier clippy/ty passes. The two
+  # instant fmt-checks and no-pyo3 run unconditionally (always_run) since they
+  # cost almost nothing; the compiling linters (rust-clippy, python-lint incl.
+  # ty) are gated by `files` and skipped entirely on commits that touch no
+  # relevant source — yet when they do run they still check the *whole crate*
+  # (no file-list passed), so a config/Cargo change can't slip a regression
+  # through that a per-file run would miss.
   { id = "rust-fmt-check",   name = "Rust fmt check",      language = "system", entry = "just fmt-check",                stages = ["pre-commit"], always_run = true, pass_filenames = false },
   { id = "python-fmt-check", name = "Python fmt check",   language = "system", entry = "just fmt-check-python",         stages = ["pre-commit"], always_run = true, pass_filenames = false },
   { id = "rust-no-pyo3",     name = "Rust no-pyo3 cores", language = "system", entry = "just check-no-pyo3-in-cores",   stages = ["pre-commit"], always_run = true, pass_filenames = false },
-  { id = "rust-clippy",      name = "Rust clippy",        language = "system", entry = "just lint-rust-check",         stages = ["pre-commit"], always_run = true, pass_filenames = false },
-  { id = "python-lint",      name = "Python lint",         language = "system", entry = "just lint-python-check",       stages = ["pre-commit"], always_run = true, pass_filenames = false },
+  { id = "rust-clippy",      name = "Rust clippy",        language = "system", entry = "just lint-rust-check",         stages = ["pre-commit"], pass_filenames = false, files = "\\.rs$|(^|/)Cargo\\.(toml|lock)$" },
+  { id = "python-lint",      name = "Python lint",         language = "system", entry = "just lint-python-check",       stages = ["pre-commit"], pass_filenames = false, files = "\\.pyi?$|^pyproject\\.toml$" },
 
   # --- commit-msg -----------------------------------------------------------
   # Validate the commit message against .commitlintrc.yml. prek appends the
