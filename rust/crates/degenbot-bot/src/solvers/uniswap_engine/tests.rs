@@ -9,8 +9,8 @@ mod tests {
     use crate::bot_core::RegisterV4PoolParams;
     use crate::solvers::uniswap_engine::ResolvedMixedPath;
     use crate::solvers::uniswap_engine::{
-        BlockMetadata, HopType, PoolHop, ResolvedHop, SolidlyHopState, SolvePathResult,
-        UniswapEngine, INT128_MAX,
+        BlockMetadata, EnginePhase, HopType, PoolHop, ResolvedHop, SolidlyHopState,
+        SolvePathResult, UniswapEngine, INT128_MAX,
     };
     use degenbot_uniswap::dex_identity::DexVariant;
 
@@ -3190,5 +3190,22 @@ mod tests {
         let resolved = engine.path_resolved.get(&path_id).expect("resolved");
         // Solidly + CL is out of scope (p): solve_path returns None.
         assert!(UniswapEngine::solve_path(resolved).is_none());
+    }
+    /// TJT63P: `allow_subscribe` accepts `Created` (legacy subscribe-first path)
+    /// AND `SnapshotLoaded` (construction-time-load path: load snapshot, then
+    /// subscribe). Rejects `Subscribed`/`Backfilled`/`Resumed`.
+    #[test]
+    fn allow_subscribe_accepts_created_and_snapshot_loaded() {
+        assert!(EnginePhase::Created.allow_subscribe("subscribe").is_ok());
+        assert!(EnginePhase::SnapshotLoaded
+            .allow_subscribe("subscribe")
+            .is_ok());
+        assert!(EnginePhase::Subscribed
+            .allow_subscribe("subscribe")
+            .is_err());
+        assert!(EnginePhase::Backfilled
+            .allow_subscribe("subscribe")
+            .is_err());
+        assert!(EnginePhase::Resumed.allow_subscribe("subscribe").is_err());
     }
 }

@@ -82,6 +82,10 @@ pub const INT128_MAX: U256 = U256::from_limbs([0xFFFF_FFFF_FFFF_FFFF, 0xFFFF_FFF
 /// Created ──subscribe()──► Subscribed ──load_snapshot()──► SnapshotLoaded
 ///                                                        ──backfill()──► Backfilled
 ///                                                        ──resume()──► Resumed
+///
+/// Construction-time-load path (RUQ637/TJT63P): snapshot loaded at `Bot`
+/// construction BEFORE subscribe:
+/// Created ──load_snapshot_from_db()──► SnapshotLoaded ──subscribe()──► Subscribed
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
@@ -145,6 +149,27 @@ impl EnginePhase {
             Err(format!(
                 "Cannot call {method_name}: engine is already in phase {self:?} (requires before {phase:?})"
             ))
+        }
+    }
+
+    /// Phase gate for `subscribe()`. Accepts `Created` (the legacy path:
+    /// subscribe first, then load snapshot) OR `SnapshotLoaded` (the
+    /// construction-time-load path: snapshot loaded at `Bot` construction,
+    /// then subscribe). Rejects `Subscribed`/`Backfilled`/`Resumed`.
+    ///
+    /// The numeric ordering cannot express this with `require`/`require_before`
+    /// alone (SnapshotLoaded=2 > Subscribed=1), so this is an explicit match.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(String)` when the phase is past the subscribe-allowed
+    /// window.
+    pub fn allow_subscribe(self, method_name: &str) -> Result<(), String> {
+        match self {
+            Self::Created | Self::SnapshotLoaded => Ok(()),
+            other => Err(format!(
+                "Cannot call {method_name}: engine is in phase {other:?}, but subscribe requires Created or SnapshotLoaded"
+            )),
         }
     }
 }

@@ -136,7 +136,7 @@ impl PumpState {
     pub(crate) fn subscribe(&self, rpc_url: &str) -> PyResult<u64> {
         let phase = self.current_phase();
         phase
-            .require(EnginePhase::Created, "subscribe")
+            .allow_subscribe("subscribe")
             .map_err(PyRuntimeError::new_err)?;
         if self.pump_handle.lock().is_some() {
             return Err(PyRuntimeError::new_err(
