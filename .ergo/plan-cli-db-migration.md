@@ -13,7 +13,7 @@ task here, executed in a later epic).
 ## Non-goals
 
 - **Aave CLI write path** (`aave extract`, activate, the `db_*` helpers in
-  `src/degenbot/cli/aave/`). Scoped to a separate epic — it needs new
+  `src/degenbot/cli/aave.py`). Scoped to a separate epic — it needs new
   Aave-row Rust substrate that does not exist yet.
 - **Aave CLI reads** (`position show` / `market show` / `risk`), which already
   delegate to the existing `PyDatabasePositionQuery` read seam, stay as-is.

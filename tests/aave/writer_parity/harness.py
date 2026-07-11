@@ -7,7 +7,7 @@ temp SQLite DB. The resulting ``aave_*`` rows are asserted against expectations
 (or compared against on-chain truth via the Rust ``verify_*`` seams).
 
 §4.2 retirement (CZM7TI): the Python oracle
-(``cli/aave/commands.py::update_aave_market``) + the byte-for-byte Rust-vs-
+(``cli/aave.py::update_aave_market``) + the byte-for-byte Rust-vs-
 Python parity tests that lived here have been DELETED — the Rust writer is
 proven GREEN to the live chain tip. The mock-RPC infrastructure survives
 to exercise the Rust path offline. The Rust ``#[cfg(test)]`` corpus in
