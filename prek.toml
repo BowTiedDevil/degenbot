@@ -10,13 +10,28 @@ default_install_hook_types = ["pre-commit", "commit-msg", "pre-push"]
 repo = "local"
 hooks = [
   # --- pre-commit -----------------------------------------------------------
-  # Lint staged Markdown files (excludes deletions, like the old .githooks
-  # script). Fix with `npx markdownlint-cli2 --fix <file>` if it fails.
+  # Fast, non-mutating checks that catch a bad commit the instant it is made
+  # instead of at push time. ALL are check-only (`*-check` just recipes, no
+  # `--fix`), so they can never dirty staged files. The whole-crate lints run
+  # over the full repo (always_run + pass_filenames = false); pre-commit stashes
+  # unstaged changes first, so a failure is always a real defect introduced by
+  # the commit being made, never by unrelated uncommitted work.
+
+  # File-scoped (run on staged files only). Fix with
+  # `npx markdownlint-cli2 --fix <file>` if it fails.
   { id = "markdownlint", name = "Markdown lint", language = "system", entry = "npx --yes markdownlint-cli2", types = ["markdown"], stages = ["pre-commit"] },
 
   # Forbid `# noqa: ...PLC0415`. This lint is suppressed project-wide by a
   # shared ruff config; the suppression must never be re-enabled per-line.
   { id = "forbid-noqa-PLC0415", name = "forbid noqa for PLC0415", language = "pygrep", entry = "noqa:.*PLC0415", types = ["python"], stages = ["pre-commit"] },
+
+  # Whole-crate lints (always_run, pass_filenames = false). Ordered fastest
+  # first so formatting drift fails early before the heavier clippy/ty passes.
+  { id = "rust-fmt-check",   name = "Rust fmt check",      language = "system", entry = "just fmt-check",                stages = ["pre-commit"], always_run = true, pass_filenames = false },
+  { id = "python-fmt-check", name = "Python fmt check",   language = "system", entry = "just fmt-check-python",         stages = ["pre-commit"], always_run = true, pass_filenames = false },
+  { id = "rust-no-pyo3",     name = "Rust no-pyo3 cores", language = "system", entry = "just check-no-pyo3-in-cores",   stages = ["pre-commit"], always_run = true, pass_filenames = false },
+  { id = "rust-clippy",      name = "Rust clippy",        language = "system", entry = "just lint-rust-check",         stages = ["pre-commit"], always_run = true, pass_filenames = false },
+  { id = "python-lint",      name = "Python lint",         language = "system", entry = "just lint-python-check",       stages = ["pre-commit"], always_run = true, pass_filenames = false },
 
   # --- commit-msg -----------------------------------------------------------
   # Validate the commit message against .commitlintrc.yml. prek appends the
@@ -24,36 +39,29 @@ hooks = [
   { id = "commitlint", name = "commitlint", language = "system", entry = "npx --yes @commitlint/cli --edit", stages = ["commit-msg"] },
 
   # --- pre-push -------------------------------------------------------------
-  # Two concerns run at push time so a failure is caught strictly earlier than
-  # GitHub Actions:
+  # Gate the push on the slower build + test suite plus a commit-message
+  # re-lint (safety net for `git commit --no-verify`). The faster lints already
+  # ran at commit time, so only the expensive work remains here.
   #
-  # 1. commit-message lint (commitlint-push) — safety net for `git commit
-  #    --no-verify`. prek's pre-push stage consumes git's push-line stdin and
-  #    does not forward it to hooks, so the range is computed from the upstream
-  #    tracking ref instead (mirrors `just lint-commits`).
+  # 1. commitlint-push — re-lint every commit message in the outgoing push
+  #    range. prek's pre-push stage consumes git's push-line stdin and does not
+  #    forward it to hooks, so the range is computed from the upstream tracking
+  #    ref instead (mirrors `just lint-commits`).
   #
-  # 2. CI mirror — every lint/build/test the `ci.yml` workflow runs, in the
-  #    same job order, on the full repo (pass_filenames = false,
-  #    always_run = true). The lint hooks use the check-only `*-check` just
-  #    recipes (no `--fix`), so they cannot dirty already-committed files and
-  #    are stricter than CI: anything CI would have auto-fixed fails here.
+  # 2. Build + test suite — mirrors ci.yml's rust-build/rust-test and Python
+  #    build/test jobs (always_run = true, pass_filenames = false). python-build
+  #    (maturin develop) produces the .so that python-test imports, so it must
+  #    precede python-test.
   #
-  # Bypass the lot with `git push --no-verify` (CI still runs), or re-run a
-  # subset manually with `prek run --hook-stage pre-push --skip rust-test` etc.
+  # Bypass with `git push --no-verify` (CI still runs), or re-run a subset
+  # manually with `prek run --hook-stage pre-push --skip rust-test` etc.
   { id = "commitlint-push", name = "commitlint (push range)", language = "system", entry = "scripts/hooks/commitlint-push.sh", stages = ["pre-push"], always_run = true, pass_filenames = false },
 
-  # Rust track (mirrors ci.yml: rust-check → rust-test → rust-build).
-  { id = "rust-fmt-check", name = "Rust fmt check",        language = "system", entry = "just fmt-check",                stages = ["pre-push"], always_run = true, pass_filenames = false },
-  { id = "rust-clippy",     name = "Rust clippy",           language = "system", entry = "just lint-rust-check",         stages = ["pre-push"], always_run = true, pass_filenames = false },
-  { id = "rust-no-pyo3",    name = "Rust no-pyo3 cores",    language = "system", entry = "just check-no-pyo3-in-cores", stages = ["pre-push"], always_run = true, pass_filenames = false },
-  { id = "rust-build",      name = "Rust build",            language = "system", entry = "just build-rust-extension",     stages = ["pre-push"], always_run = true, pass_filenames = false },
-  { id = "rust-test",       name = "Rust tests",            language = "system", entry = "just test-rust",               stages = ["pre-push"], always_run = true, pass_filenames = false },
-  { id = "markdownlint-all", name = "Markdown lint (all)", language = "system", entry = "just lint-markdown",           stages = ["pre-push"], always_run = true, pass_filenames = false },
+  # Rust track (mirrors ci.yml: rust-build, rust-test).
+  { id = "rust-build", name = "Rust build", language = "system", entry = "just build-rust-extension", stages = ["pre-push"], always_run = true, pass_filenames = false },
+  { id = "rust-test",  name = "Rust tests", language = "system", entry = "just test-rust",             stages = ["pre-push"], always_run = true, pass_filenames = false },
 
-  # Python track (mirrors ci.yml: python-lint → python-test). `just dev` builds
-  # the extension first, exactly as the python-lint job does.
-  { id = "python-build",     name = "Python build (maturin)", language = "system", entry = "just dev",                stages = ["pre-push"], always_run = true, pass_filenames = false },
-  { id = "python-fmt-check", name = "Python fmt check",      language = "system", entry = "just fmt-check-python",   stages = ["pre-push"], always_run = true, pass_filenames = false },
-  { id = "python-lint",       name = "Python lint",            language = "system", entry = "just lint-python-check",  stages = ["pre-push"], always_run = true, pass_filenames = false },
-  { id = "python-test",        name = "Python tests",           language = "system", entry = "just test-python",        stages = ["pre-push"], always_run = true, pass_filenames = false },
+  # Python track: build (maturin develop) then test.
+  { id = "python-build", name = "Python build (maturin)", language = "system", entry = "just dev",         stages = ["pre-push"], always_run = true, pass_filenames = false },
+  { id = "python-test",  name = "Python tests",            language = "system", entry = "just test-python", stages = ["pre-push"], always_run = true, pass_filenames = false },
 ]

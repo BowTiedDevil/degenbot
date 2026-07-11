@@ -66,11 +66,9 @@ Recovery: if the `.so` ever goes stale (e.g. a venv copied from another machine 
 ## Git Commits
 Commit messages must follow the project convention enforced by `commitlint`. Git hooks are managed by [`prek`](https://prek.j178.dev/) and declared in [`prek.toml`](prek.toml). Run `just setup-git-hooks` once after cloning to install the hooks and the editor template. The hooks are:
 
-- **`pre-commit`** — staged-file Markdown lint + `# noqa: PLC0415` guard (fast, file-scoped).
+- **`pre-commit`** — fast, non-mutating checks that catch a bad commit the instant it is made rather than at push time: the file-scoped Markdown lint and `# noqa: PLC0415` guard, plus the whole-crate linters (Rust fmt/clippy/no-pyo3, Python fmt/lint) run check-only over the staged tree. All use the `*-check` just recipes (no `--fix`), so staged files can never be dirtied; pre-commit stashes unstaged changes first, so a failure is always a real defect introduced by the commit being made.
 - **`commit-msg`** — commitlint against `.commitlintrc.yml`.
-- **`pre-push`** — two concerns, both running strictly earlier than GitHub Actions:
-  1. **commit-message re-lint** of the outgoing push range (safety net for `git commit --no-verify`); see `scripts/hooks/commitlint-push.sh`.
-  2. **CI mirror** — every lint, build, and test the `ci.yml` workflow runs, in the same job order, on the full repo. The lint hooks use the check-only `*-check` just recipes (no `--fix`) so they cannot dirty committed files and are stricter than CI. Bypass with `git push --no-verify` (CI still runs), or re-run a subset with `prek run --hook-stage pre-push --skip rust-test` etc.
+- **`pre-push`** — a **commit-message re-lint** of the outgoing push range (safety net for `git commit --no-verify`; see `scripts/hooks/commitlint-push.sh`) plus the **slower build + test suite** (Rust build/test, Python build/test) that gates the push. Push can no longer fail on a fast lint — those ran at commit time — so a push block is always a build or test failure, not a formatting/lint slip. Bypass with `git push --no-verify` (CI still runs), or re-run a subset with `prek run --hook-stage pre-push --skip rust-test` etc.
 
 Run hooks on demand with `uv run prek run` / `uv run prek run --all-files`. For manual commit-message range checks: `just lint-commits` (default: unpushed commits) or `just lint-commits main..HEAD`.
 
