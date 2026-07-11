@@ -79,6 +79,7 @@ from degenbot.database.models.pools import (
     UniswapV4PoolTableBase,
 )
 from degenbot.degenbot_rs import (
+    AlloyProvider,
     AsyncAlloyProvider,
     DynamicFeePoolRejectedError,
     HookedPoolRejectedError,
@@ -854,9 +855,16 @@ class BackrunSession:
     @staticmethod
     def _build_bot(cfg: BackrunConfig) -> Bot:
         config_obj = _make_backrun_config(cfg.node_http)
-        sync_w3 = web3.Web3(web3.HTTPProvider(cfg.node_http))
-        sync_w3.middleware_onion.clear()
-        return Bot(config_obj, provider=ProviderAdapter.from_web3(sync_w3))
+        # ADR-005: the Bot's build path (ERC20 + V2/V3/V4 pool construction)
+        # issues many `eth_call`s via `PyBotIo` → `provider.call`. A web3.py
+        # sync backend (`from_web3`) holds the GIL through every
+        # `requests.post` on the event-loop thread, starving the asyncio loop
+        # during `build_paths`. Use the Rust `AlloyProvider` instead —
+        # `PyAlloyProvider.call` releases the GIL (`py.detach`) and does HTTP
+        # in Rust, so the pump/consumer can proceed and RPC is faster. This
+        # is the sync web3.py ProviderAdapter being retired.
+        alloy = AlloyProvider(cfg.node_http)
+        return Bot(config_obj, provider=ProviderAdapter.from_alloy(alloy))
 
     @staticmethod
     async def _build_async_w3(cfg: BackrunConfig) -> AsyncProviderAdapter:
