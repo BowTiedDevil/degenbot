@@ -1209,13 +1209,13 @@ mod tests {
 
     /// Reproduces the production crash: a V4 pool with a committed row but NO
     /// liquidity event in the current chunk (so the chunk-local
-    /// `v4_manager_addresses` map does NOT contain it). The PoolManager address
+    /// `v4_manager_addresses` map does NOT contain it). The `PoolManager` address
     /// must be resolved from the DB via the `manager_id` FK, NOT from the
     /// chunk map. The pool has committed tick positions, so the verify reaches
     /// the on-chain call — proving the address was resolved. The dummy
     /// provider (127.0.0.1:9) will fail with a connection error, which is the
     /// GREEN assertion: the error is an RPC failure, NOT the
-    /// "no PoolManager address" crash that masked the real bug.
+    /// "no `PoolManager` address" crash that masked the real bug.
     #[test]
     fn verify_v4_pool_manager_address_resolved_from_db_not_chunk_map() {
         use degenbot_db::DegenbotDb;
