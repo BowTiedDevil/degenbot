@@ -18,13 +18,10 @@ from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli import cli
 from degenbot.cli.aave.constants import POSITION_RISK_DISPLAY_LIMIT
-from degenbot.cli.aave.db_assets import get_or_create_erc20_token
 from degenbot.cli.utils import get_provider_from_config
 from degenbot.config import resolve_http_rpc_uri
 from degenbot.database.models.aave import (
-    AaveGhoToken,
     AaveV3CollateralPosition,
-    AaveV3Contract,
     AaveV3DebtPosition,
     AaveV3Market,
     AaveV3User,
@@ -32,6 +29,8 @@ from degenbot.database.models.aave import (
 from degenbot.database.operations import backup_sqlite_database
 from degenbot.degenbot_rs import (
     CancelHandle,
+    activate_aave_market,
+    deactivate_aave_market,
     run_aave_update,
 )
 from degenbot.degenbot_rs import (
@@ -40,7 +39,6 @@ from degenbot.degenbot_rs import (
 from degenbot.exceptions import DegenbotValueError
 from degenbot.logging import logger
 from degenbot.provider.block_helpers import get_number_for_block_identifier
-from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 
 if TYPE_CHECKING:
     from eth_typing.evm import BlockParams
@@ -135,74 +133,29 @@ def activate() -> None:
 @click.pass_obj
 def activate_ethereum_aave_v3(bot: Bot, chain_id: ChainId = ChainId.ETH) -> None:
     """Activate Aave V3 on Ethereum mainnet."""
-    # GHO Token Address (Ethereum Mainnet) - only needed for market activation
+    # MPI6Q3: the ONE-TIME market-activation path (the last ORM writer on the
+    # Aave path after the §4.2 retirement, CZM7TI) is now Rust-owned. Python is a
+    # driver shell — it threads the chain + the two canonical addresses + the RPC
+    # URL; Rust owns the `getMarketId()` RPC, the GHO metadata fetch, the
+    # `aave_v3_markets` row, the `POOL_ADDRESS_PROVIDER` contract row, + the GHO
+    # `erc20_tokens` / `aave_gho_tokens` rows (all in ONE transaction).
     gho_token_address = get_checksum_address("0x40D16FC0246aD3160Ccc09B8D0D3A2cD28aE6C2f")
-
     pool_address_provider = EthereumMainnetAaveV3.pool_address_provider
+    rpc_url = resolve_http_rpc_uri(chain_id)
 
-    provider = get_provider_from_config(chain_id=chain_id)
-
-    (market_name,) = raw_call(
-        provider=provider,
-        address=pool_address_provider,
-        calldata=encode_function_calldata(
-            function_prototype="getMarketId()",
-            function_arguments=None,
-        ),
-        return_types=["string"],
+    result = activate_aave_market(
+        database_path=str(bot.config.database.path),
+        chain_id=chain_id,
+        pool_address_provider=pool_address_provider,
+        gho_token_address=gho_token_address,
+        rpc_url=rpc_url,
     )
 
-    with bot.db() as session:
-        market = session.scalar(
-            select(AaveV3Market).where(
-                AaveV3Market.chain_id == chain_id,
-                AaveV3Market.name == market_name,
-            ),
-        )
-
-        if market is not None:
-            market.active = True
-        else:
-            market = AaveV3Market(
-                chain_id=chain_id,
-                name=market_name,
-                active=True,
-                # The pool address provider was deployed on block 16,291,071 by TX
-                # 0x75fb6e6be55226712f896ae81bbfc86005b2521adb7555d28ce6fe8ab495ef73
-                last_update_block=16_291_070,
-            )
-            session.add(market)
-            session.flush()
-            session.add(
-                AaveV3Contract(
-                    market_id=market.id,
-                    name="POOL_ADDRESS_PROVIDER",
-                    address=EthereumMainnetAaveV3.pool_address_provider,
-                ),
-            )
-
-            # GHO tokens are chain-unique, so create a single entry that all markets on this chain
-            # will share.
-            gho_asset_token = get_or_create_erc20_token(
-                provider=provider,
-                session=session,
-                chain_id=market.chain_id,
-                token_address=gho_token_address,
-            )
-
-            if (
-                session.scalar(
-                    select(AaveGhoToken).where(
-                        AaveGhoToken.token_id == gho_asset_token.id,
-                    ),
-                )
-                is None
-            ):
-                session.add(AaveGhoToken(token_id=gho_asset_token.id))
-
-        session.commit()
-
     click.echo(f"Activated Aave V3 on Ethereum (chain ID {chain_id}).")
+    click.echo(
+        f"  Market: {result['market_name']} (id={result['market_id']}, "
+        f"created={result['created']}).",
+    )
 
 
 @aave.group
@@ -221,6 +174,10 @@ def deactivate_mainnet_aave_v3(
     market_name: str = "Aave Ethereum Market",
 ) -> None:
     """Deactivate the Aave V3 Ethereum mainnet market."""
+    # MPI6Q3: the deactivation write is Rust-owned. Python resolves the
+    # `market_id` via a READ (the `aave_v3_markets` lookup by chain + name),
+    # then hands off to the Rust seam which flips `active = False` in ONE
+    # transaction.
     with bot.db() as session:
         market = session.scalar(
             select(AaveV3Market).where(
@@ -235,8 +192,11 @@ def deactivate_mainnet_aave_v3(
 
         if not market.active:
             return
-        market.active = False
-        session.commit()
+
+    deactivate_aave_market(
+        database_path=str(bot.config.database.path),
+        market_id=market.id,
+    )
 
     click.echo(f"Deactivated Aave V3 on {chain_id.name} (chain ID {chain_id}).")
 

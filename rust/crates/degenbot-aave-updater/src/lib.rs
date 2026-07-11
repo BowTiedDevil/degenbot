@@ -76,7 +76,8 @@ pub use processors::{
     ScaledTokenMintResult, ScaledTokenProcessor,
 };
 pub use run::{
-    apply_aave_chunk_writes_on_conn, run_aave_update, AaveChunkEvent, AaveChunkProgress,
-    AaveChunkWriteReport, AaveUpdateReport, NoProgress, ProgressSink, RunError,
+    activate_aave_market, apply_aave_chunk_writes_on_conn, deactivate_aave_market, run_aave_update,
+    AaveChunkEvent, AaveChunkProgress, AaveChunkWriteReport, AaveUpdateReport, ActivatedMarket,
+    NoProgress, ProgressSink, RunError,
 };
 pub use transaction_processor::{process_transaction, ProcessTxError};

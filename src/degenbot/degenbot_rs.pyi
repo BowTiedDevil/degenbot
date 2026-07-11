@@ -944,6 +944,65 @@ def cleanup_zero_balance_positions(
 
     """
 
+def activate_aave_market(
+    database_path: str,
+    chain_id: int,
+    pool_address_provider: str,
+    gho_token_address: str,
+    rpc_url: str,
+) -> dict[str, Any]:
+    """Seed (or re-activate) an Aave V3 market (MPI6Q3).
+
+    The ONE-TIME setup the chunk loop's ``run_aave_update`` bootstraps from.
+    Rust-owned replacement for the Python ``activate_ethereum_aave_v3``
+    (commands.py) — the last ORM writer on the Aave path after the §4.2
+    retirement (CZM7TI). RPC-fetches ``getMarketId()`` on the pool address
+    provider + the GHO token's ``name()``/``symbol()``/``decimals()``, then
+    seeds — in ONE transaction — the ``aave_v3_markets`` row, the
+    ``POOL_ADDRESS_PROVIDER`` contract row, + the GHO ``erc20_tokens`` +
+    ``aave_gho_tokens`` rows. Idempotent: re-activating an existing market
+    sets ``active = True`` + inserts no duplicate rows.
+
+    The GIL is released across the whole call (the core owns its tokio
+    runtime + does the RPC fetches + DB writes internally).
+
+    Args:
+        database_path: The writeable ``DegenbotDb`` path.
+        chain_id: The chain.
+        pool_address_provider: The ``PoolAddressProvider`` contract address
+            (checksummed).
+        gho_token_address: The chain's GHO token address (checksummed).
+        rpc_url: The HTTP RPC endpoint.
+
+    Returns:
+        A ``dict`` ``{market_id, market_name, created}``. ``market_id`` is
+        the ``aave_v3_markets.id`` to pass to ``run_aave_update``. ``created``
+        is ``True`` if the market was newly created, ``False`` if it
+        pre-existed (re-activation).
+
+    Raises:
+        ValueError: For a DB / RPC / address-parse failure.
+
+    """
+
+def deactivate_aave_market(
+    database_path: str,
+    market_id: int,
+) -> None:
+    """Set ``active = False`` for ``market_id`` (MPI6Q3).
+
+    Rust-owned replacement for the Python ``deactivate_mainnet_aave_v3``
+    (commands.py). The GIL is released across the call.
+
+    Args:
+        database_path: The writeable ``DegenbotDb`` path.
+        market_id: The ``aave_v3_markets.id`` to deactivate.
+
+    Raises:
+        ValueError: If ``market_id`` doesn't exist or on a DB failure.
+
+    """
+
 def db_heal_database(database_path: str) -> dict[str, Any]:
     """Out-of-place dump-and-restore heal (ADR-011).
 
