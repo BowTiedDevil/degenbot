@@ -36,7 +36,7 @@ lint-rust:
     cargo clippy --fix --all-targets --all-features --fix --allow-dirty --manifest-path rust/Cargo.toml -- --deny warnings
 
 # Lint Rust (check-only; non-mutating). Mirrors the clippy gate CI runs,
-# minus `--fix`, so a pre-push run cannot dirty committed files. Stricter than
+# minus `--fix`, so a pre-commit run cannot dirty staged files. Stricter than
 # CI's `lint-rust`: fails on any warning `--fix` would have auto-applied.
 lint-rust-check:
     cargo clippy --all-targets --all-features --manifest-path rust/Cargo.toml -- --deny warnings
@@ -125,7 +125,7 @@ lint-python:
     uv run ty check --fix --no-progress src/
 
 # Lint Python (check-only; non-mutating). Mirrors the ruff+ty gate CI runs,
-# minus `--fix`, so a pre-push run cannot dirty committed files. Stricter than
+# minus `--fix`, so a pre-commit run cannot dirty staged files. Stricter than
 # CI's `lint-python`: fails on any issue `--fix` would have auto-applied.
 lint-python-check:
     uv run ruff check src/
@@ -199,10 +199,11 @@ setup-git-hooks:
     prek install
     echo "✓ prek hooks installed:"
     echo "    pre-commit : Markdown lint + PLC0415 noqa guard (staged files)"
+    echo "                + fast code lints (Rust fmt/clippy/no-pyo3,"
+    echo "                  Python fmt/lint), check-only over the staged tree"
     echo "    commit-msg : commitlint"
-    echo "    pre-push   : commitlint push-range re-lint + full CI mirror"
-    echo "                 (rust fmt/clippy/build/test, markdown lint,"
-    echo "                  python build/fmt/lint/test)"
+    echo "    pre-push   : commitlint push-range re-lint + build & test suite"
+    echo "                 (rust build/test, python build/test)"
     echo "    Bypass: git push --no-verify (CI still runs)."
     echo "✓ commit template configured."
 
