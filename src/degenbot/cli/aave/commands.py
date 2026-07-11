@@ -5,47 +5,20 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import click
-import eth_abi.abi
 import tqdm
-from eth_typing import ChainId, ChecksumAddress
+from eth_typing import ChainId
 from sqlalchemy import select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import joinedload
 from tqdm.contrib.logging import logging_redirect_tqdm
 
 from degenbot.aave.analysis.core import UserPositionSummary
 from degenbot.aave.analysis.orchestrator import analyze_positions_for_market
 from degenbot.aave.deployments import EthereumMainnetAaveV3
-from degenbot.aave.events import AaveV3GhoDebtTokenEvent, AaveV3PoolConfigEvent
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli import cli
 from degenbot.cli.aave.constants import POSITION_RISK_DISPLAY_LIMIT
-from degenbot.cli.aave.db_assets import get_contract, get_gho_asset, get_or_create_erc20_token
-from degenbot.cli.aave.event_fetchers import (
-    fetch_address_provider_events,
-    fetch_discount_config_events,
-    fetch_oracle_events,
-    fetch_pool_events,
-    fetch_reserve_initialization_events,
-    fetch_scaled_token_events,
-    fetch_stk_aave_events,
-)
-from degenbot.cli.aave.event_handlers import (
-    _process_asset_collateral_in_emode_changed_event,
-    _process_asset_initialization_event,
-    _process_collateral_configuration_changed_event,
-    _process_discount_token_updated_event,
-    _process_e_mode_category_added_event,
-    _process_emode_asset_category_changed_event,
-    _process_proxy_creation_event,
-)
-from degenbot.cli.aave.extraction import extract_user_addresses_from_transaction
-from degenbot.cli.aave.transaction_processor import _process_transaction
-from degenbot.cli.aave.utils import _build_transaction_contexts, _get_all_scaled_token_addresses
-from degenbot.cli.aave.verification import (
-    verify_all_positions,
-    verify_positions_for_users,
-)
+from degenbot.cli.aave.db_assets import get_or_create_erc20_token
 from degenbot.cli.utils import get_provider_from_config
 from degenbot.config import resolve_http_rpc_uri
 from degenbot.database.models.aave import (
@@ -68,18 +41,14 @@ from degenbot.exceptions import DegenbotValueError
 from degenbot.logging import logger
 from degenbot.provider.block_helpers import get_number_for_block_identifier
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
-from degenbot.provider.sync_adapter import ProviderAdapter
 
 if TYPE_CHECKING:
     from eth_typing.evm import BlockParams
-    from web3.types import LogReceipt
 
 
-# Forward imports from submodules - functions are defined in their respective modules
 __all__ = [
     "aave",
     "aave_update",
-    "aave_update_py",
     "activate",
     "activate_ethereum_aave_v3",
     "deactivate",
@@ -89,7 +58,6 @@ __all__ = [
     "position",
     "position_risk",
     "position_show",
-    "update_aave_market",
 ]
 
 
@@ -434,12 +402,15 @@ def aave_update(
     # market selection (READ), `--to-block` resolution, SIGINT -> cancel flag,
     # tqdm-on-callback, a per-market report echo, + post-run cleanup/backup
     # hygiene. The chunk loop, the RPC fetches, the decode, the DB writes, +
-    # the per-chunk transaction all live in the Rust core. The Python writer
-    # pipeline (`update_aave_market` below + `db_*.py` +
-    # `event_handlers._process_*` + `transaction_processor`/
-    # `operations_parser`/`token_processor`) is UNROUTED — kept available for
-    # the cross-check parity suite; deletion is gated on the Rust writer
-    # proving GREEN across the full historic replay.
+    # the per-chunk transaction all live in the Rust core.
+    #
+    # §4.2 retirement (CZM7TI): the Python writer pipeline (`update_aave_market`,
+    # `db_*.py`, `event_handlers._process_*`, `transaction_processor`/
+    # `operations_parser`/`token_processor`, the parity harness) is DELETED —
+    # the Rust writer is proven GREEN to the live chain tip with full
+    # verification, so the §4.2 cross-check oracle retired with it. The
+    # standalone `aave update-py` legacy command is gone (no Python writer left
+    # to drive).
     #
     # Behavior: verification policy is enforced by the Rust core.
     # - `--verify-chunk` (default ON): pre-commit touched-position verify
@@ -651,228 +622,6 @@ def aave_update(
                     break
     finally:
         signal.signal(signal.SIGINT, prior_int_handler)
-
-
-@aave.command(
-    "update-py",
-    help=(
-        "[LEGACY PYTHON WRITER] Drive the legacy Python "
-        "`update_aave_market` updater for cold-boot parity cross-checks "
-        "against the Rust core (`aave update`). Chunks externally and "
-        "invokes `update_aave_market(start, end, verify_chunk=True)` per "
-        "chunk, then runs a non-fatal aggregated `verify_all_positions` "
-        "at end."
-    ),
-)
-@click.option(
-    "--chunk",
-    "chunk_size",
-    default=10_000,
-    show_default=True,
-    type=int,
-    help="Maximum blocks per chunk before committing to the database.",
-    envvar="DEGENBOT_CHUNK_SIZE",
-    show_envvar=True,
-)
-@click.option(
-    "--to-block",
-    "to_block",
-    required=True,
-    help=(
-        "Target block. Accepts a concrete block number (e.g. '16591070') "
-        "or a block tag with an optional offset ('latest:-64', 'safe:128'). "
-        "Pure tags without offsets are resolved to the chain tip via an "
-        "extra RPC round-trip."
-    ),
-)
-@click.option(
-    "--verify-chunk/--no-verify-chunk",
-    "verify_chunk",
-    default=True,
-    show_default=True,
-    help="Verify positions at each chunk boundary (legacy per-chunk hard-assert).",
-)
-@click.option(
-    "--verify-all/--no-verify-all",
-    "verify_all",
-    default=True,
-    show_default=True,
-    help="Run non-fatal aggregated verify_all_positions at end of drive.",
-)
-@click.option(
-    "--progress-bar/--no-progress-bar",
-    "show_progress",
-    default=True,
-    show_default=True,
-    help="Show per-chunk progress bars.",
-    envvar="DEGENBOT_PROGRESS_BAR",
-    show_envvar=True,
-)
-@click.pass_obj
-def aave_update_py(
-    bot: Bot,
-    *,
-    chunk_size: int,
-    to_block: str,
-    verify_chunk: bool,
-    verify_all: bool,
-    show_progress: bool,
-) -> None:
-    """Drive the LEGACY Python writer to cold-boot Aave positions.
-
-    Unlike ``aave update`` (which delegates the per-market chunk loop to
-    the Rust core via ``run_aave_update``), this command invokes the
-    legacy Python ``update_aave_market`` directly. It is retained for
-    cross-check parity against the Rust writer and for restoring the
-    cold-boot capability that ``6f574e07`` regressed.
-
-    The market row must already be bootstrapped::
-
-        degenbot database reset
-        degenbot aave activate ethereum_aave_v3
-        degenbot aave update-py --to-block 16591070 --verify-all
-
-    Chunking is external because ``update_aave_market`` runs the full
-    ``[start_block, end_block]`` range in one call; we loop chunks of
-    ``chunk_size`` from ``last_update_block + 1`` up to ``to_block`` and
-    commit + advance ``last_update_block`` after each chunk. With
-    ``--verify-chunk`` (default), the legacy per-chunk on-chain-truth
-    hard-assert (``verify_positions_for_users``) fires inside the writer
-    before commit; a divergence aborts the chunk and propagates as a
-    raised ``AssertionError`` from this command — STOP and report on the
-    first such abort. With ``--verify-all`` (default), the non-fatal
-    aggregated ``verify_all_positions`` runs at end of drive and reports
-    the FULL set of post-drive divergences (does not abort — see
-    verification.py and commit 0e31fde1).
-
-    Raises:
-        DegenbotValueError: If no active Aave markets are found.
-        AssertionError: If ``--verify-chunk`` finds a chunk-boundary
-            divergence (propagated from ``verify_positions_for_users``
-            inside ``update_aave_market``), or if ``--verify-all`` finds a
-            post-drive divergence (propagated from ``verify_all_positions``).
-
-    """
-    with bot.db() as session:
-        active_markets = session.scalars(
-            select(AaveV3Market).where(
-                AaveV3Market.active,
-                AaveV3Market.name.contains("aave"),
-            ),
-        ).all()
-        if not active_markets:
-            msg = "No active Aave markets found."
-            raise DegenbotValueError(message=msg)
-        # Snapshot chain/market IDs before the session closes; markets are
-        # re-fetched per chunk (SQLAlchemy detached-instance safety).
-        chain_market_pairs = [(m.chain_id, m.id) for m in active_markets]
-
-    for chain_id, market_id in chain_market_pairs:
-        provider = get_provider_from_config(chain_id=chain_id, config=bot.config)
-        resolved_to_block = _resolve_to_block(to_block, chain_id=chain_id, bot=bot)
-        if resolved_to_block is None:
-            # Pure tag (no offset) — the Rust core fetches the tip itself;
-            # the Python driver doesn't have that fallback, so resolve
-            # explicitly via an extra RPC round-trip.
-            resolved_to_block = get_number_for_block_identifier(
-                cast("_BlockTag", to_block),
-                provider=provider,
-            )
-        resolved_to_block = int(resolved_to_block)
-
-        with bot.db() as session:
-            market = session.scalar(
-                select(AaveV3Market).where(AaveV3Market.id == market_id),
-            )
-            assert market is not None
-            market_name = market.name  # snapshot before session close (DetachedInstanceError guard)
-            if market.last_update_block is None:
-                click.echo(
-                    f"Chain {chain_id} market {market_id} ({market_name}): "
-                    "needs bootstrapping (last_update_block is None); "
-                    "skipping. Run `degenbot aave activate` first.",
-                )
-                continue
-            start_block = market.last_update_block + 1
-
-        if start_block > resolved_to_block:
-            click.echo(
-                f"Chain {chain_id} market {market_id} ({market_name}): "
-                f"already at {start_block - 1}; nothing to do "
-                f"(--to-block={resolved_to_block}).",
-            )
-        else:
-            click.echo(
-                f"Chain {chain_id} market {market_id} ({market_name}): "
-                f"driving legacy Python writer {start_block:,}->{resolved_to_block:,} "
-                f"(chunk_size={chunk_size:,}, verify_chunk={verify_chunk}).",
-            )
-
-            current = start_block
-            chunk_no = 0
-            with logging_redirect_tqdm(loggers=[logger]):
-                while current <= resolved_to_block:
-                    chunk_end = min(current + chunk_size - 1, resolved_to_block)
-                    chunk_no += 1
-                    with bot.db() as session:
-                        market = session.scalar(
-                            select(AaveV3Market).where(AaveV3Market.id == market_id),
-                        )
-                        assert market is not None
-                        update_aave_market(
-                            provider=provider,
-                            start_block=current,
-                            end_block=chunk_end,
-                            market=market,
-                            session=session,
-                            verify_block=False,
-                            verify_chunk=verify_chunk,
-                            show_progress=show_progress,
-                        )
-                        market.last_update_block = chunk_end
-                        session.commit()
-                    click.echo(
-                        f"  chunk {chunk_no}: {current:,}-{chunk_end:,} committed.",
-                    )
-                    current = chunk_end + 1
-
-            click.echo(
-                f"Chain {chain_id} market {market_id} ({market_name}): "
-                f"legacy Python drive reached {resolved_to_block:,}.",
-            )
-
-        if verify_all:
-            click.echo(
-                f"Running non-fatal aggregate verify_all_positions at "
-                f"block {resolved_to_block:,}...",
-            )
-            with bot.db() as session:
-                market = session.scalar(
-                    select(AaveV3Market).where(AaveV3Market.id == market_id),
-                )
-                assert market is not None
-                try:
-                    verify_all_positions(
-                        provider=provider,
-                        market=market,
-                        session=session,
-                        block_number=resolved_to_block,
-                        show_progress=show_progress,
-                    )
-                except AssertionError as exc:
-                    click.echo(
-                        f"verify_all_positions reported divergences at block "
-                        f"{resolved_to_block:,} (non-fatal aggregated report); "
-                        "details below:",
-                        err=True,
-                    )
-                    click.echo(str(exc), err=True)
-                    raise
-                else:
-                    click.echo(
-                        f"verify_all_positions PASSED at block "
-                        f"{resolved_to_block:,} (Python DB == on-chain truth).",
-                    )
 
 
 @aave.group()
@@ -1228,304 +977,3 @@ def market_show(bot: Bot, chain_id: int | None, name: str | None) -> None:
                         asset.underlying_token.symbol if asset.underlying_token else "Unknown"
                     )
                     click.echo(f"    - {token_symbol}")
-
-
-def update_aave_market(
-    *,
-    provider: ProviderAdapter,
-    start_block: int,
-    end_block: int,
-    market: AaveV3Market,
-    session: Session,
-    verify_block: bool,
-    verify_chunk: bool,
-    show_progress: bool,
-) -> None:
-    """Update the Aave V3 market.
-
-    Processes events in three phases:
-    1. Bootstrap: Fetch and process proxy creation events to discover Pool and PoolConfigurator
-       contracts.
-    2. Asset Discovery: Fetch all targeted events and build transaction contexts
-    3. User Event Processing: Process transactions with assertions that classifying events exist
-    """
-    logger.debug(
-        f"Updating {market.name} (chain {market.chain_id}): "
-        f"block range {start_block:,} - {end_block:,}",
-    )
-
-    # Phase 1: Collect proxy events and config events
-    # These events will be processed chronologically in Phase 3
-    proxy_events: list[LogReceipt] = []
-    config_events: list[LogReceipt] = []
-
-    pool_address_provider = get_contract(
-        session=session,
-        market=market,
-        contract_name="POOL_ADDRESS_PROVIDER",
-    )
-    assert pool_address_provider is not None
-
-    for event in fetch_address_provider_events(
-        provider=provider,
-        provider_address=get_checksum_address(pool_address_provider.address),
-        start_block=start_block,
-        end_block=end_block,
-    ):
-        topic = event["topics"][0]
-
-        if topic == AaveV3PoolConfigEvent.PROXY_CREATED.value:
-            _process_proxy_creation_event(
-                provider=provider,
-                market=market,
-                event=event,
-                proxy_name="POOL",
-                proxy_id=eth_abi.abi.encode(["bytes32"], [b"POOL"]),
-                revision_function_prototype="POOL_REVISION",
-            )
-            _process_proxy_creation_event(
-                provider=provider,
-                market=market,
-                event=event,
-                proxy_name="POOL_CONFIGURATOR",
-                proxy_id=eth_abi.abi.encode(["bytes32"], [b"POOL_CONFIGURATOR"]),
-                revision_function_prototype="CONFIGURATOR_REVISION",
-            )
-        elif topic in {
-            AaveV3PoolConfigEvent.POOL_UPDATED.value,
-            AaveV3PoolConfigEvent.POOL_CONFIGURATOR_UPDATED.value,
-        }:
-            # Save event for chronological processing in Phase 3. The revision will be updated when
-            # the event is processed chronologically
-            proxy_events.append(event)
-        elif topic in {
-            AaveV3PoolConfigEvent.POOL_DATA_PROVIDER_UPDATED.value,
-            AaveV3PoolConfigEvent.PRICE_ORACLE_UPDATED.value,
-            AaveV3PoolConfigEvent.ADDRESS_SET.value,
-        }:
-            # Save event for chronological processing in Phase 3
-            config_events.append(event)
-
-    # Phase 2
-    pool_configurator = get_contract(
-        session=session,
-        market=market,
-        contract_name="POOL_CONFIGURATOR",
-    )
-    if pool_configurator is not None:
-        for event in fetch_reserve_initialization_events(
-            provider=provider,
-            configurator_address=pool_configurator.address,
-            start_block=start_block,
-            end_block=end_block,
-        ):
-            topic = event["topics"][0]
-            if topic == AaveV3PoolConfigEvent.RESERVE_INITIALIZED.value:
-                _process_asset_initialization_event(
-                    provider=provider,
-                    event=event,
-                    market=market,
-                    session=session,
-                )
-            elif topic == AaveV3PoolConfigEvent.COLLATERAL_CONFIGURATION_CHANGED.value:
-                _process_collateral_configuration_changed_event(
-                    provider=provider,
-                    session=session,
-                    event=event,
-                    market=market,
-                )
-            elif topic == AaveV3PoolConfigEvent.EMODE_CATEGORY_ADDED.value:
-                _process_e_mode_category_added_event(
-                    session=session,
-                    event=event,
-                    market_id=market.id,
-                )
-            elif topic == AaveV3PoolConfigEvent.EMODE_ASSET_CATEGORY_CHANGED.value:
-                _process_emode_asset_category_changed_event(
-                    session=session,
-                    event=event,
-                    market_id=market.id,
-                )
-            elif topic == AaveV3PoolConfigEvent.ASSET_COLLATERAL_IN_EMODE_CHANGED.value:
-                _process_asset_collateral_in_emode_changed_event(
-                    session=session,
-                    event=event,
-                    market_id=market.id,
-                )
-
-    # Phase 3
-    all_events: list[LogReceipt] = []
-
-    # Include proxy upgrade events for chronological processing
-    all_events.extend(proxy_events)
-
-    # Include config events for chronological processing
-    all_events.extend(config_events)
-
-    pool = get_contract(
-        session=session,
-        market=market,
-        contract_name="POOL",
-    )
-    if pool is None:
-        # Pool not initialized yet, skip to next chunk
-        logger.warning(f"Pool not initialized for market {market.id}, skipping")
-        return
-
-    pool_events = fetch_pool_events(
-        provider=provider,
-        pool_address=pool.address,
-        start_block=start_block,
-        end_block=end_block,
-    )
-    all_events.extend(pool_events)
-
-    # Fetch oracle events - discover oracle from events if not yet known
-    oracle_contract = get_contract(
-        session=session,
-        market=market,
-        contract_name="PRICE_ORACLE",
-    )
-    oracle_address = (
-        get_checksum_address(oracle_contract.address) if oracle_contract is not None else None
-    )
-    oracle_events = fetch_oracle_events(
-        provider=provider,
-        oracle_address=oracle_address,
-        start_block=start_block,
-        end_block=end_block,
-    )
-    all_events.extend(oracle_events)
-
-    known_scaled_token_addresses = set(
-        _get_all_scaled_token_addresses(
-            session=session,
-            chain_id=provider.chain_id,
-        ),
-    )
-
-    scaled_token_events = fetch_scaled_token_events(
-        provider=provider,
-        token_addresses=list(known_scaled_token_addresses),
-        start_block=start_block,
-        end_block=end_block,
-    )
-    all_events.extend(scaled_token_events)
-
-    discount_config_events = fetch_discount_config_events(
-        provider=provider,
-        start_block=start_block,
-        end_block=end_block,
-    )
-    all_events.extend(discount_config_events)
-
-    gho_asset = get_gho_asset(session=session, market=market)
-    assert gho_asset is not None
-
-    for event in discount_config_events:
-        topic = event["topics"][0]
-        if topic == AaveV3GhoDebtTokenEvent.DISCOUNT_TOKEN_UPDATED.value:
-            _process_discount_token_updated_event(
-                event=event,
-                gho_asset=gho_asset,
-            )
-
-    all_events.extend(
-        fetch_stk_aave_events(
-            provider=provider,
-            discount_token=gho_asset.v_gho_discount_token,
-            start_block=start_block,
-            end_block=end_block,
-        ),
-    )
-
-    # Group the events into transaction bundles with a shared context
-    tx_contexts = _build_transaction_contexts(
-        events=all_events,
-        market=market,
-        session=session,
-        provider=provider,
-        gho_asset=gho_asset,
-        pool_contract=pool,
-    )
-
-    # Sort transaction contexts chronologically by (block_number, first_event_log_index)
-    sorted_tx_contexts = sorted(
-        tx_contexts.values(),
-        key=lambda ctx: (
-            (ctx.block_number, ctx.events[0]["logIndex"]) if ctx.events else (ctx.block_number, 0)
-        ),
-    )
-
-    # Collect users modified for verification
-    users_modified_this_block: set[ChecksumAddress] = set()
-    users_modified_this_chunk: set[ChecksumAddress] = set()
-
-    last_verified_block: int | None = None
-
-    # Process transactions chronologically
-    for tx_context in tqdm.tqdm(
-        sorted_tx_contexts,
-        desc="Processing transactions",
-        leave=False,
-        disable=not show_progress,
-    ):
-        if last_verified_block is None:
-            last_verified_block = tx_context.block_number
-
-        # Update last_block when transitioning to a new block
-        if last_verified_block < tx_context.block_number:
-            # Verify previous block before moving to new block
-            if verify_block and users_modified_this_block:
-                logger.debug(
-                    f"Verifying {len(users_modified_this_block)} users at "
-                    f"block {last_verified_block}",
-                )
-                verify_positions_for_users(
-                    provider=provider,
-                    market=market,
-                    session=session,
-                    gho_asset=gho_asset,
-                    block_number=last_verified_block,
-                    show_progress=show_progress,
-                    user_addresses=users_modified_this_block,
-                )
-                users_modified_this_block.clear()
-
-            last_verified_block = tx_context.block_number
-
-        # Track users modified in this transaction
-        users_in_transaction = extract_user_addresses_from_transaction(events=tx_context.events)
-        users_modified_this_block.update(users_in_transaction)
-        users_modified_this_chunk.update(users_in_transaction)
-
-        # Process entire transaction atomically with full context
-        _process_transaction(tx_context=tx_context)
-
-    if verify_block and users_modified_this_block:
-        assert last_verified_block is not None
-        logger.debug(
-            f"Verifying {len(users_modified_this_block)} users at block {last_verified_block}",
-        )
-        verify_positions_for_users(
-            provider=provider,
-            market=market,
-            session=session,
-            gho_asset=gho_asset,
-            block_number=last_verified_block,
-            show_progress=show_progress,
-            user_addresses=users_modified_this_block,
-        )
-
-    if verify_chunk and not verify_block and users_modified_this_chunk:
-        verify_positions_for_users(
-            provider=provider,
-            market=market,
-            session=session,
-            gho_asset=gho_asset,
-            block_number=end_block,
-            show_progress=show_progress,
-            user_addresses=users_modified_this_chunk,
-        )
-
-    logger.info(f"{market} successfully updated to block {end_block:,}")

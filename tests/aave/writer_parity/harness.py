@@ -1,14 +1,16 @@
-"""Shared harness for the Aave writer §4.2 parity tests (U5YIBG).
+"""Shared mock-RPC harness for the Aave Rust-writer tests.
 
-The offline mock-RPC live-vs-live harness (ADR-005 §4.2). Both the Rust driver
-(``degenbot_rs.run_aave_update``) + the Python oracle
-(``cli/aave/commands.py::update_aave_market``) are driven against the SAME mock
-JSON-RPC server serving canned ``eth_getLogs`` + ``eth_blockNumber`` responses,
-into two identically-seeded temp SQLite DBs. The resulting ``aave_*`` rows are
-compared byte-for-byte.
+The offline mock-RPC harness (ADR-005 §4.2). Drives the Rust writer
+(``degenbot_rs.run_aave_update``) against a mock JSON-RPC server serving
+canned ``eth_getLogs`` + ``eth_blockNumber`` + ``eth_call`` responses, into a
+temp SQLite DB. The resulting ``aave_*`` rows are asserted against expectations
+(or compared against on-chain truth via the Rust ``verify_*`` seams).
 
-Per §4.3, the parity tests here are TEMPORARY: once GREEN, CZM7TI retires the
-Python oracle + these tests together. The Rust ``#[cfg(test)]`` corpus in
+§4.2 retirement (CZM7TI): the Python oracle
+(``cli/aave/commands.py::update_aave_market``) + the byte-for-byte Rust-vs-
+Python parity tests that lived here have been DELETED — the Rust writer is
+proven GREEN to the live chain tip. The mock-RPC infrastructure survives
+to exercise the Rust path offline. The Rust ``#[cfg(test)]`` corpus in
 ``write.rs`` stays permanent.
 """
 
