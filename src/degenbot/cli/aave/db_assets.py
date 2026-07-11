@@ -1,20 +1,20 @@
 """Asset and token database operations for Aave V3.
 
-Functions for managing ERC20 tokens, Aave assets, contracts, and related lookups.
+Slimmed by the §4.2 writer retirement (CZM7TI): the per-event write dispatch
+(``get_contract``, ``get_gho_asset``, ``get_asset_by_token_type``,
+``get_asset_identifier``) is owned by the Rust core
+(``degenbot-aave-updater::run::run_aave_update``); those helpers + their ORM
+write paths were deleted with the Python writer pipeline. What remains is the
+ERC20-token get-or-create used by ``aave activate ethereum_aave_v3`` (the
+market-activation path — the last Python ORM writer on the Aave path; port
+to Rust tracked by task MPI6Q3).
 """
 
-# UNROUTED — the `cli/aave aave_update` driver no longer calls this module
-# (AVS4DR, epic AZGJUN). Kept available for the U5YIBG §4.2 cross-check; delete
-# in CZM7TI after the cross-check passes GREEN. The Rust core
-# (`degenbot-aave-updater::run::run_aave_update`) now owns the per-event write
-# dispatch this module implemented.
 from eth_typing import ChecksumAddress
 from sqlalchemy import select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
-from degenbot.aave.types import TokenType
 from degenbot.cli.aave.erc20_utils import _fetch_erc20_token_metadata
-from degenbot.database.models.aave import AaveGhoToken, AaveV3Asset, AaveV3Contract, AaveV3Market
 from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.logging import logger
 from degenbot.provider.sync_adapter import ProviderAdapter
@@ -68,111 +68,3 @@ def get_or_create_erc20_token(
             )
 
     return token
-
-
-def get_gho_asset(
-    session: Session,
-    market: AaveV3Market,
-) -> AaveGhoToken:
-    """Get GHO token asset for a given market.
-
-    Returns:
-        The computed value.
-
-    Raises:
-        ValueError: See function documentation.
-
-    """
-    # AaveGhoToken is a tiny table. Query it directly with eager-loaded
-    # relationships, then filter in Python to avoid the expensive JOIN
-    # through Erc20TokenTable (572K+ rows).
-    gho_assets = (
-        session
-        .scalars(
-            select(AaveGhoToken).options(
-                joinedload(AaveGhoToken.token),
-                joinedload(AaveGhoToken.v_token),
-            ),
-        )
-        .unique()
-        .all()
-    )
-
-    for gho in gho_assets:
-        if gho.token.chain == market.chain_id:
-            return gho
-
-    msg = f"No GHO token found for chain {market.chain_id}"
-    raise ValueError(msg)
-
-
-def get_contract(
-    session: Session,
-    market: AaveV3Market,
-    contract_name: str,
-) -> AaveV3Contract | None:
-    """Get contract by name for a given market.
-
-    Returns:
-        The computed value.
-
-    """
-    return session.scalar(
-        select(AaveV3Contract).where(
-            AaveV3Contract.market_id == market.id,
-            AaveV3Contract.name == contract_name,
-        ),
-    )
-
-
-def get_asset_by_token_type(
-    session: Session,
-    market: AaveV3Market,
-    token_address: ChecksumAddress,
-    token_type: TokenType,
-) -> AaveV3Asset | None:
-    """Get AaveV3 asset by aToken (collateral) or vToken (debt) address.
-
-    Returns:
-        The computed value.
-
-    Raises:
-        ValueError: See function documentation.
-
-    """
-    match token_type:
-        case TokenType.A_TOKEN:
-            return session.scalar(
-                select(AaveV3Asset)
-                .join(Erc20TokenTable, AaveV3Asset.a_token_id == Erc20TokenTable.id)
-                .where(
-                    AaveV3Asset.market_id == market.id,
-                    Erc20TokenTable.address == token_address,
-                )
-                .options(joinedload(AaveV3Asset.a_token)),
-            )
-        case TokenType.V_TOKEN:
-            return session.scalar(
-                select(AaveV3Asset)
-                .join(Erc20TokenTable, AaveV3Asset.v_token_id == Erc20TokenTable.id)
-                .where(
-                    AaveV3Asset.market_id == market.id,
-                    Erc20TokenTable.address == token_address,
-                )
-                .options(joinedload(AaveV3Asset.v_token)),
-            )
-        case _ as unreachable:
-            msg = f"Unexpected token type: {unreachable}"
-            raise ValueError(msg)
-
-
-def get_asset_identifier(asset: AaveV3Asset) -> str:
-    """Get a human-readable identifier for an asset.
-
-    This provides consistent asset identification in debug logs and error messages.
-
-    Returns:
-        The computed string value.
-
-    """
-    return asset.underlying_token.symbol or asset.underlying_token.address
