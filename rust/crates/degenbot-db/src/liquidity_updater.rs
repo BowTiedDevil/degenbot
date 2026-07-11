@@ -46,9 +46,10 @@ use degenbot_cl_math::cl_lib::liquidity_mapping::{
 use crate::connection::DegenbotDb;
 use crate::error::DbError;
 use crate::rows::decode::{decode_u256, encode_u256};
+use crate::schema::table::v2_v3_subclass_table;
 use crate::schema::table::{
     INITIALIZATION_MAPS, LIQUIDITY_POSITIONS, MANAGED_POOLS, MANAGED_POOL_INITIALIZATION_MAPS,
-    MANAGED_POOL_LIQUIDITY_POSITIONS, POOLS, POOL_MANAGERS, UNISWAP_V3_POOLS, UNISWAP_V4_POOLS,
+    MANAGED_POOL_LIQUIDITY_POSITIONS, POOLS, POOL_MANAGERS, UNISWAP_V4_POOLS,
 };
 
 /// The reconstituted liquidity map (tick bitmap + tick data) the apply loop
@@ -164,41 +165,65 @@ impl DegenbotDb {
         pool_address: &str,
     ) -> Result<Option<PoolUpdateState>, DbError> {
         // The V3 pool is polymorphic: `pools` holds the base columns (id,
-        // address, chain, kind, token*_id, exchange_id) + `uniswap_v3_pools`
-        // holds the V3-specific columns (tick_spacing, liquidity_update_block,
-        // liquidity_update_log_index, fee_*). JOIN both — `pools.id` is the
-        // `pool_id` for the positions/init-maps composite key.
-        let row: Option<(i64, i32, Option<i64>, Option<i64>)> = conn
+        // address, chain, kind, token*_id, exchange_id) + a per-DEX subclass
+        // table (`uniswap_v3_pools` / `pancakeswap_v3_pools` /
+        // `sushiswap_v3_pools` / `aerodrome_v3_pools`) holds the V3-specific
+        // columns (tick_spacing, liquidity_update_block, liquidity_update_log_index,
+        // fee_*). The subclass table is resolved at runtime from `pools.kind`;
+        // hardcoding `uniswap_v3_pools` would silently skip every fork pool.
+        //
+        // Two-step lookup: (1) fetch `pools.id` + `pools.kind` by (chain,
+        // address), (2) resolve the subclass table via
+        // `v2_v3_subclass_table(kind)` and read the V3-specific columns. Returns
+        // `Ok(None)` if the base row is absent or the kind is not a V3 family
+        // discriminator.
+        let base_row: Option<(i64, String)> = conn
             .query_row(
                 &format!(
-                    "SELECT {POOLS}.id, {UNISWAP_V3_POOLS}.tick_spacing, \
-                     {UNISWAP_V3_POOLS}.liquidity_update_block, \
-                     {UNISWAP_V3_POOLS}.liquidity_update_log_index \
-                     FROM {POOLS} JOIN {UNISWAP_V3_POOLS} \
-                     ON {UNISWAP_V3_POOLS}.pool_id = {POOLS}.id \
+                    "SELECT {POOLS}.id, {POOLS}.kind \
+                     FROM {POOLS} \
                      WHERE {POOLS}.chain = ?1 AND {POOLS}.address = ?2 LIMIT 1"
                 ),
                 rusqlite::params![chain_id, pool_address],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .map(Some)
             .or_else(|e| match e {
                 rusqlite::Error::QueryReturnedNoRows => Ok(None),
                 other => Err(other),
             })?;
-        Ok(
-            row.map(|(pool_id, tick_spacing, block, log_idx)| PoolUpdateState {
-                pool_id,
-                tick_spacing,
-                last_update: match (block, log_idx) {
-                    (Some(b), Some(l)) => Some(BlockLog {
-                        block: u64::try_from(b).unwrap_or(0),
-                        log_index: u64::try_from(l).unwrap_or(0),
-                    }),
-                    _ => None,
-                },
-            }),
-        )
+        let Some((pool_id, kind)) = base_row else {
+            return Ok(None);
+        };
+        let Some(subclass_table) = v2_v3_subclass_table(&kind) else {
+            return Ok(None);
+        };
+        let row: Option<(i32, Option<i64>, Option<i64>)> = conn
+            .query_row(
+                &format!(
+                    "SELECT tick_spacing, liquidity_update_block, \
+                     liquidity_update_log_index FROM {subclass_table} \
+                     WHERE pool_id = ?1 LIMIT 1"
+                ),
+                rusqlite::params![pool_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                other => Err(other),
+            })?;
+        Ok(row.map(|(tick_spacing, block, log_idx)| PoolUpdateState {
+            pool_id,
+            tick_spacing,
+            last_update: match (block, log_idx) {
+                (Some(b), Some(l)) => Some(BlockLog {
+                    block: u64::try_from(b).unwrap_or(0),
+                    log_index: u64::try_from(l).unwrap_or(0),
+                }),
+                _ => None,
+            },
+        }))
     }
 
     /// Load the V4 pool's updater state — `pool_id` (= `managed_pools.id`),
@@ -671,9 +696,23 @@ impl DegenbotDb {
         block: u64,
         log_index: u64,
     ) -> Result<(), DbError> {
+        // Resolve the per-DEX subclass table from `pools.kind` (the row was
+        // guaranteed V3-family by `fetch_v3_pool_update_state_on_conn` earlier
+        // in the compute→persist pipeline, but this fn is independently callable,
+        // so re-derive to avoid writing to the wrong table).
+        let kind: String = conn.query_row(
+            &format!("SELECT kind FROM {POOLS} WHERE id = ?1"),
+            rusqlite::params![pool_id],
+            |r| r.get(0),
+        )?;
+        let subclass_table = v2_v3_subclass_table(&kind).ok_or_else(|| {
+            DbError::Decode(format!(
+                "pool {pool_id} has kind {kind:?}, not a V3 family discriminator"
+            ))
+        })?;
         conn.execute(
             &format!(
-                "UPDATE {UNISWAP_V3_POOLS} SET liquidity_update_block = ?1, \
+                "UPDATE {subclass_table} SET liquidity_update_block = ?1, \
                  liquidity_update_log_index = ?2 WHERE pool_id = ?3"
             ),
             rusqlite::params![
