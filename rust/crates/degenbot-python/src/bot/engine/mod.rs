@@ -46,7 +46,7 @@ pub(crate) use degenbot_bot::bot_core::{
 pub(crate) use degenbot_bot::solvers::uniswap_engine::engine_handle::EngineHandle;
 pub(crate) use degenbot_bot::solvers::uniswap_engine::engine_subscriber::EngineSubscriber;
 
-pub(crate) use degenbot_bot::bot_core::snapshot_verify::{SnapshotStore, VerifyError};
+pub(crate) use degenbot_bot::bot_core::snapshot_verify::VerifyError;
 pub(crate) use degenbot_bot::solvers::uniswap_engine::{
     BlockMetadata, BlockNotification, EnginePhase, HopType, MixedPoolRef, PoolHop, ResultBatch,
     SolvePathResult, UniswapEngine,
@@ -77,12 +77,6 @@ pub struct PyUniswapArbEngine {
     /// Python consumes this as its block clock (not `ResultBatch::solve_block`).
     /// Consumed by `BlockStream::__anext__`; wrapped in Arc for the coroutine.
     block_rx: Arc<parking_lot::Mutex<Option<mpsc::UnboundedReceiver<BlockNotification>>>>,
-    /// V3 snapshot tick data, loaded via `load_v3_snapshot()` and consumed
-    /// at registration time. One-way transfer: `remove()` not `clone()`.
-    v3_snapshot: SnapshotStore<Address>,
-    /// V4 snapshot tick data, loaded via `load_v4_snapshot()` and consumed
-    /// at registration time. One-way transfer: `remove()` not `clone()`.
-    v4_snapshot: SnapshotStore<(Address, degenbot_decoders::v4_swap_decoder::PoolId)>,
 }
 
 impl PyUniswapArbEngine {

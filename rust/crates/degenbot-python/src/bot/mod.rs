@@ -721,6 +721,7 @@ impl PyBot {
                 tick_data: rust_tick_data,
                 update_block,
                 coverage: cov,
+                seed_from_store: false,
                 fetcher: tick_data_fetcher
                     .filter(|f| !f.is_none())
                     .map(|f| crate::bot::pool::make_tick_fetcher(f.clone().unbind())),
@@ -839,6 +840,7 @@ impl PyBot {
                 tick_data: rust_tick_data,
                 update_block: block,
                 coverage: cov,
+                seed_from_store: false,
                 fetcher: tick_data_fetcher
                     .filter(|f| !f.is_none())
                     .map(|f| crate::bot::pool::make_tick_fetcher(f.clone().unbind())),

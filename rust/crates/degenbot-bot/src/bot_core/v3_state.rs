@@ -97,6 +97,15 @@ pub struct RegisterV3PoolParams {
     /// snapshot coverage (`Sparse`). The buffer is always applied — the
     /// snapshot is always stale data from the DB.
     pub coverage: PoolTickCoverage,
+    /// When `true`, `register_v3_pool` consumes the V3 `SnapshotStore` via
+    /// `take(address)` to obtain `tick_data` + refine `coverage`, IGNORING
+    /// the params' `tick_data`/`coverage` fields. The store result decides:
+    /// a hit → `Tracked` + the store's ticks (and `snapshot_seed`); a miss →
+    /// `Sparse` (the snapshot didn't cover this pool). When `false`, the
+    /// params' `tick_data`/`coverage` are used directly (escape hatch:
+    /// tests, ad-hoc registration). The pyo3 layer sets this `true` when
+    /// Python passed `tick_data=None` and `coverage="tracked"`.
+    pub seed_from_store: bool,
     /// Sparse-tick backfill fetcher (stored on `V3PoolState` at
     /// registration; `None` for `Tracked` pools or when no Python fetcher
     /// was supplied). ADR-006 I/O trait object — pyo3-free trait, the
