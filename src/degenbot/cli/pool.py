@@ -27,7 +27,6 @@ import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
 from degenbot.cli import cli
-from degenbot.cli.utils import get_provider_from_config
 from degenbot.config import resolve_http_rpc_uri
 from degenbot.degenbot_rs import (
     CancelHandle,
@@ -37,6 +36,7 @@ from degenbot.degenbot_rs import (
 )
 from degenbot.logging import logger
 from degenbot.provider.block_helpers import get_number_for_block_identifier
+from degenbot.provider.factory import get_provider_from_config
 
 if TYPE_CHECKING:
     from degenbot.bot import Bot

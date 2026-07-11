@@ -1,11 +1,4 @@
-"""CLI commands for Aave V3 market management + position analysis.
-
-Consolidated from the former ``cli/aave/`` package (``commands.py`` +
-``constants.py``) into a single module — mirrors the sibling ``exchange.py`` /
-``pool.py`` / ``database.py`` layout. The ``POSITION_RISK_DISPLAY_LIMIT``
-constant (the sole surviving member of the retired ``constants.py`` — the
-rest was deleted by the §4.2 writer retirement, CZM7TI) is inlined below.
-"""
+"""CLI commands for Aave V3 market management + position analysis."""
 
 import signal
 from collections.abc import Callable
@@ -24,7 +17,6 @@ from degenbot.aave.deployments import EthereumMainnetAaveV3
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli import cli
-from degenbot.cli.utils import get_provider_from_config
 from degenbot.config import resolve_http_rpc_uri
 from degenbot.database.models.aave import (
     AaveV3CollateralPosition,
@@ -45,6 +37,7 @@ from degenbot.degenbot_rs import (
 from degenbot.exceptions import DegenbotValueError
 from degenbot.logging import logger
 from degenbot.provider.block_helpers import get_number_for_block_identifier
+from degenbot.provider.factory import get_provider_from_config
 
 if TYPE_CHECKING:
     from eth_typing.evm import BlockParams
