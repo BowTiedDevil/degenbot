@@ -251,7 +251,10 @@ fn json_to_py_inner<'py>(
             }
             // Then check for numeric fields
             if field_name.is_some_and(|name| NUMERIC_FIELDS.contains(name)) && is_hex_string(&s) {
-                let bytes = alloy::hex::decode(&s[2..]).map_err(|e| {
+                // Use the odd-length-tolerant decode_hex (JSON-RPC QUANTITY
+                // values routinely drop leading zeros, producing single-digit
+                // hex like "0x1"/"0x0" for e.g. eth_simulateV1 call `status`).
+                let bytes = decode_hex(&s).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Invalid hex number: {e}"))
                 })?;
                 // For values up to 32 bytes, use U256 conversion
@@ -711,4 +714,48 @@ pub fn block_to_py_dict<'py>(py: Python<'py>, block: &EthBlock) -> PyResult<Boun
     }
 
     Ok(dict)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use pyo3::types::PyAnyMethods;
+
+    /// Regression: JSON-RPC `QUANTITY` values may drop leading zeros,
+    /// producing odd-length hex strings like `"0x1"` / `"0x0"` for the
+    /// `status` field in an `eth_simulateV1` call result. The field-aware
+    /// converter must turn these into Python ints rather than raising
+    /// `ValueError: Invalid hex number: odd number of digits`.
+    #[test]
+    fn test_numeric_field_odd_length_hex_quantity() {
+        Python::attach(|py| {
+            // eth_simulateV1 result shape: {calls: [{status: "0x1", ...}]}
+            let value = serde_json::json!({
+                "calls": [
+                    {"status": "0x1", "gasUsed": "0x5208", "returnData": "0x"}
+                ]
+            });
+            let py_obj = json_to_py_with_hexbytes(py, value).unwrap();
+            let dict = py_obj.cast::<PyDict>().unwrap();
+            let calls = dict.get_item("calls").unwrap().unwrap();
+            let first = calls.get_item(0).unwrap();
+            let first = first.cast::<PyDict>().unwrap();
+            let status = first.get_item("status").unwrap().unwrap();
+            assert_eq!(status.extract::<i64>().unwrap(), 1);
+
+            // status "0x0" -> 0
+            let value = serde_json::json!({"status": "0x0"});
+            let py_obj = json_to_py_with_hexbytes(py, value).unwrap();
+            let d = py_obj.cast::<PyDict>().unwrap();
+            assert_eq!(
+                d.get_item("status")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<i64>()
+                    .unwrap(),
+                0
+            );
+        });
+    }
 }
