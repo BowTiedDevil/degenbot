@@ -77,6 +77,12 @@ const DEBOUNCE_MS: u64 = 50;
 /// `handle_timeout_eager` catch-up the no-activity path uses.
 const HEADER_STALENESS_SECS: u64 = 30;
 
+/// Default backfill chunk size (blocks per `eth_getLogs` request) for the
+/// snapshot→WS gap closed automatically inside `resume_from_subscribe`
+/// (J3FMDO). Mirrors the `pyo3` `backfill_from_snapshot` default (`chunk_size` = 2000):
+/// the per-chunk response size stays under `eth_getLogs` payload caps.
+const DEFAULT_BACKFILL_CHUNK_SIZE: u64 = 2000;
+
 /// Whether a log confirms that a tracked header block is "complete".
 ///
 /// A log confirms the header block only when its `block_number` is known
@@ -344,7 +350,21 @@ impl BlockPump {
         }
     }
 
-    /// Resume phase using the pump's own watch channel.
+    /// Resume the pump from a subscribe state — auto-backfilling the
+    /// snapshot→WS gap (J3FMDO) before the live loop begins.
+    ///
+    /// When the core `BotState` carries a snapshot seed `S` (set by
+    /// `Bot::load_snapshot_from_db` or `load_*_from_py`) strictly less than
+    /// the first observed WS block `W`, this method first awaits
+    /// [`backfill_from_snapshot`](Self::backfill_from_snapshot) with the
+    /// pump's own provider — applying `S+1..W-1` log state under
+    /// `BotState::process_backfill_logs` with zero result batches. The Python
+    /// `engine_registry.start()` no longer calls the pyo3
+    /// `backfill_from_snapshot`; one Python `resume()` invocation drives both.
+    ///
+    /// When `S` is `None` (cold start) or `S >= W` (snapshot already at/after
+    /// the live head), the backfill step is skipped — the live loop anchors
+    /// on `W` directly.
     ///
     /// # Panics
     ///
@@ -354,9 +374,27 @@ impl BlockPump {
         let combined = subscribe_state
             .combined_stream
             .expect("resume() called without WS stream — did you call subscribe() first?");
-
-        self.run_with_stream(combined, subscribe_state.first_block)
-            .await;
+        let first_block = subscribe_state.first_block;
+        // J3FMDO: auto-backfill the snapshot→WS gap before the live loop. The
+        // backfill only buffers state into BotState (no solve, no on_send);
+        // result batches therefore do not flow pre-resume.
+        let s = self.bot.state_arc().read().snapshot_seed_block();
+        if let Some(seed) = s {
+            if seed > 0 && first_block > 0 && seed < first_block {
+                log::info!(
+                    "BlockPump: auto-backfill from snapshot block {seed} to WS block {first_block} before resume"
+                );
+                if let Err(e) = self
+                    .backfill_from_snapshot(first_block, DEFAULT_BACKFILL_CHUNK_SIZE)
+                    .await
+                {
+                    log::error!(
+                        "BlockPump: auto-backfill failed — starting live loop from {first_block} (gap not closed): {e}"
+                    );
+                }
+            }
+        }
+        self.run_with_stream(combined, first_block).await;
     }
 
     /// Run the main pump loop with an existing WS stream.
@@ -380,14 +418,34 @@ impl BlockPump {
 
         let relevant_topic_set: HashSet<B256> = RELEVANT_TOPICS.into_iter().collect();
 
-        // Read the last block processed by Python backfill.
+        // Read the last block processed by the engine (the post-backfill
+        // cursor when the snapshot→WS gap was closed inside resume; cold-start
+        // otherwise). J3FMDO: the core `BlockPump::backfill_from_snapshot`
+        // applies state via `BotState::process_backfill_logs`, which advances
+        // neither the sink's drain cursor (only `on_drain`/`finalize_block`
+        // do) nor the engine's `last_processed_block`. Hence on the
+        // post-backfill resume path the sink's `last_processed_block` is still
+        // `None` and the branch below re-anchors on `first_observed_block`.
         let mut current_block: u64 = self.sink.last_processed_block().unwrap_or(0);
 
+        let snapshot_seed = self.bot.state_arc().read().snapshot_seed_block();
         if current_block == 0 && first_observed_block > 0 {
             current_block = first_observed_block;
-            log::info!("BlockPump: cold start from block {first_observed_block}");
+            if let Some(seed) = snapshot_seed {
+                if seed > 0 && seed < first_observed_block {
+                    log::info!(
+                        "BlockPump: resuming from block {first_observed_block} (backfilled snapshot gap {start}–{end})",
+                        start = seed + 1,
+                        end = first_observed_block - 1
+                    );
+                } else {
+                    log::info!("BlockPump: cold start from block {first_observed_block}");
+                }
+            } else {
+                log::info!("BlockPump: cold start from block {first_observed_block}");
+            }
         } else {
-            log::info!("BlockPump: starting from block {current_block} (Python backfill)");
+            log::info!("BlockPump: starting from block {current_block}");
         }
 
         // Track the last block we've solved for. Used to detect block
@@ -1891,5 +1949,121 @@ mod tests {
         }
         let n = pump.backfill_from_snapshot(100, 10).await.unwrap();
         assert_eq!(n, 0, "S = 0 → skip (degenerate)");
+    }
+
+    /// JUCFCB/J3FMDO helper: build a `pump_for_test_with_bot` variant that
+    /// also returns the `Asserter` so a test can push `eth_getLogs`
+    /// responses and observe whether the auto-backfill path drains them.
+    fn pump_for_test_with_asserter(
+        bot: Arc<Bot>,
+        last_processed: Option<u64>,
+    ) -> (
+        BlockPump,
+        Arc<FakeDrainSink>,
+        Arc<AtomicBool>,
+        alloy::transports::mock::Asserter,
+    ) {
+        use alloy::network::Ethereum as NetEth;
+        use alloy::providers::{Provider, ProviderBuilder};
+        use alloy::rpc::client::ClientBuilder;
+        use alloy::transports::mock::{Asserter, MockTransport};
+
+        let asserter = Asserter::new();
+        let client = ClientBuilder::default().transport(MockTransport::new(asserter.clone()), true);
+        let dyn_provider = ProviderBuilder::new().connect_client(client).erased();
+        let provider = Arc::new(AlloyProvider::from_provider(
+            Arc::new(dyn_provider) as Arc<dyn alloy::providers::Provider<NetEth>>
+        ));
+        let reorg = Arc::new(crate::bot_core::reorg_coordinator::ReorgCoordinator::new(
+            Arc::clone(&bot),
+        ));
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let sink = Arc::new(FakeDrainSink::new(last_processed));
+        let pump = BlockPump::for_test(bot, sink.clone(), reorg, provider, Arc::clone(&shutdown));
+        (pump, sink, shutdown, asserter)
+    }
+
+    /// J3FMDO: `resume_from_subscribe` auto-backfills the snapshot→WS gap
+    /// (S < W) before the live loop begins — proving the core path closes the
+    /// gap with zero Python orchestration. The Asserter queue drains by exactly
+    /// one `eth_getLogs` response (S+1..W-1 fits in a single default-size chunk).
+    #[tokio::test]
+    async fn auto_backfill_runs_inside_resume_when_s_lt_w() {
+        let bot = Arc::new(Bot::new(1));
+        bot.state_arc()
+            .write()
+            .set_snapshot_seed_block_for_test(Some(85));
+        let (mut pump, _sink, _shutdown, asserter) = pump_for_test_with_asserter(bot, None);
+
+        // The single eth_getLogs chunk (blocks 86..99, ≤ DEFAULT_BACKFILL_CHUNK_SIZE)
+        // returns an empty log array — the pump's provider drains this response.
+        asserter.push_success(&Vec::<Log>::new());
+
+        let combined = stream::iter(Vec::<WsEvent>::new()).boxed();
+        let state = SubscribeState {
+            first_block: 100,
+            first_timestamp: 0,
+            combined_stream: Some(combined),
+        };
+        pump.resume_from_subscribe(state).await;
+
+        assert_eq!(
+            asserter.read_q().len(),
+            0,
+            "auto-backfill inside resume popped exactly one eth_getLogs response; queue must be empty"
+        );
+    }
+
+    /// J3FMDO: `resume_from_subscribe` skips the auto-backfill entirely when no
+    /// snapshot seed is present (`S = None`, cold start). The Asserter queue is
+    /// left untouched (the pump never calls `eth_getLogs`) and the live loop
+    /// anchors on `first_observed_block` directly. An empty queue under a live
+    /// `eth_getLogs` request would error; we assert the queue stays empty AND
+    /// the resume returns without a provider error.
+    #[tokio::test]
+    async fn auto_backfill_skipped_when_s_none_in_resume() {
+        let bot = Arc::new(Bot::new(1));
+        // Fresh Bot: snapshot_seed_block is None — no gap to backfill.
+        let (mut pump, _sink, _shutdown, asserter) = pump_for_test_with_asserter(bot, None);
+
+        let combined = stream::iter(Vec::<WsEvent>::new()).boxed();
+        let state = SubscribeState {
+            first_block: 100,
+            first_timestamp: 0,
+            combined_stream: Some(combined),
+        };
+        pump.resume_from_subscribe(state).await;
+
+        assert_eq!(
+            asserter.read_q().len(),
+            0,
+            "cold-start resume never calls eth_getLogs (auto-backfill gated on S<W)"
+        );
+    }
+
+    /// J3FMDO: `resume_from_subscribe` skips the auto-backfill when the
+    /// snapshot is already at/after the WS block (`S >= W` — catch-up snapshot
+    /// with no gap to backfill).
+    #[tokio::test]
+    async fn auto_backfill_skipped_when_s_ge_w_in_resume() {
+        let bot = Arc::new(Bot::new(1));
+        bot.state_arc()
+            .write()
+            .set_snapshot_seed_block_for_test(Some(100));
+        let (mut pump, _sink, _shutdown, asserter) = pump_for_test_with_asserter(bot, None);
+
+        let combined = stream::iter(Vec::<WsEvent>::new()).boxed();
+        let state = SubscribeState {
+            first_block: 100,
+            first_timestamp: 0,
+            combined_stream: Some(combined),
+        };
+        pump.resume_from_subscribe(state).await;
+
+        assert_eq!(
+            asserter.read_q().len(),
+            0,
+            "S >= W → no auto-backfill, no eth_getLogs call"
+        );
     }
 }

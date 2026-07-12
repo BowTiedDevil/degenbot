@@ -116,40 +116,50 @@ class EngineRegistry:
     ) -> int:
         """Run the pre-pump startup ritual and stop BEFORE resume().
 
-        Sequences: subscribe(ws) → load snapshots → backfill → verify config.
-        Stops at EnginePhase::Backfilled so the caller can attach its result
+        Sequences: subscribe(ws) → load snapshots → verify config.
+        Stops at the snapshot-loaded phase so the caller can attach its result
         consumer before batches begin to flow (`resume()` is the single gate
         after which the pump emits one ResultBatch per block into the
         fire-and-forget channel — attaching the consumer after resume risks
-        unbounded backlog and stale-batch dispatch).
+        unbounded backlog and stale-batch dispatch; `resume()` also runs the
+        auto-backfill that closes the snapshot→WS gap, J3FMDO).
 
         DB snapshot (JUCFCB, Shape 2): the V3+V4 DB snapshot is eagerly loaded
         into the core ``BotState`` at ``Bot.__init__`` time via
         ``PyBot.load_snapshot_from_db`` — so the DB path needs NO snapshot
-        kwargs here. This method reads ``snapshot_seed_block`` from the engine
-        (the shared ``BotState``) and calls ``backfill_from_snapshot`` to close
-        the S→WS gap.
+        kwargs here. The snapshot seed block ``S`` stays on the shared
+        ``BotState``; the per-pool two-step verify (step-1) reads the stashed
+        ``_verify_snapshot_block`` (set below from the same source), and the
+        snapshot→WS backfill runs automatically inside ``resume()``
+        (`BlockPump::resume_from_subscribe`) using the pump's own HTTP provider.
 
         Non-DB snapshots (file/memory): pass ``v3_snapshot``/``v4_snapshot``
-        kwargs; they're loaded via ``load_*_from_py`` (which feed the core
-        store), then ``snapshot_block = min(s.newest_block)`` drives the
-        backfill. These two kwargs are non-DB-only — the DB path constructs the
-        Bot with ``config.database.path`` and passes no snapshots here.
+        kwargs; they are loaded via ``load_*_from_py`` (which feed the core
+        store), then ``snapshot_block = min(s.newest_block)`` stashes the
+        per-pool step-1 verify seed. These two kwargs are non-DB-only — the DB
+        path constructs the Bot with ``config.database.path`` and passes no
+        snapshots here.
 
         Returns:
-            The backfill target (first observed WS block) from ``subscribe``.
+            The first observed WS block from ``subscribe`` (the resume live-loop
+            anchor).
 
         """
         backfill_target = self.engine.subscribe(node_ws)
 
-        # Load snapshots + backfill the snapshot→WS gap. Zero batches are
-        # emitted here — the pump isn't running until resume().
+        # Stash the snapshot seed block S for the per-pool two-step verify
+        # (step-1 compares the pinned seed against on-chain@S; step-2 captures
+        # its OWN block atomically with the drain — see `register_v3_pool`).
+        # The snapshot→WS gap itself is closed inside `resume()` (J3FMDO) by the
+        # core `BlockPump::resume_from_subscribe` — this method no longer calls
+        # `backfill_from_snapshot` (the pyo3 backfill is retired for the DB
+        # path by 2SM4Y7; for the non-DB path the snapshot_seed_block stashed
+        # via `load_*_from_py` is what drives the core auto-backfill).
         if v3_snapshot is not None or v4_snapshot is not None:
             # Non-DB (file/memory) path — stream_*_to_engine falls back to
-            # engine.load_*_from_py for non-DB sources, feeding the core store.
-            # (The DB-source branch inside stream_*_to_engine is now dead: the
-            # DB path eagerly loads at Bot.__init__ via load_snapshot_from_db,
-            # so DB-backed snapshots are never passed here.)
+            # engine.load_*_from_py for non-DB sources, feeding the core store
+            # (the DB-source branch inside stream_*_to_engine is now dead:
+            # the DB path eagerly loads at Bot.__init__ via load_snapshot_from_db).
             if v3_snapshot is not None:
                 stream_v3_snapshot_to_engine(v3_snapshot, self.engine)
             if v4_snapshot is not None:
@@ -158,22 +168,12 @@ class EngineRegistry:
                 s.newest_block for s in (v3_snapshot, v4_snapshot) if s is not None
             )
         else:
-            # DB path (Shape 2): the snapshot was loaded at Bot construction;
+            # DB path (Shape 2): snapshot already loaded at Bot construction;
             # read S from the core BotState via the engine getter.
             snapshot_block = self.engine.snapshot_seed_block
 
-        if snapshot_block is not None:
-            self.engine.backfill_from_snapshot(node_http, snapshot_block)
-            # T1: stash the snapshot seed block for the per-pool two-step verify
-            # (T6). step-1 compares the pinned seed against on-chain@this
-            # block. step-2 captures its OWN block atomically with the drain
-            # (the post-drain pin carries `(tick_data, update_block)`), so the
-            # registry stashes no backfill-block constant for step-2 (removed
-            # 2026-06-29: pre-fix it stashed `backfill_target` and passed it to
-            # step-2, fabricating a mismatch on active pools during a slow
-            # `build_paths`). Only set when a snapshot was supplied (else
-            # there's no seed).
-            self._verify_snapshot_block = snapshot_block
+        # Only set when a snapshot was supplied (else there's no seed).
+        self._verify_snapshot_block = snapshot_block
 
         # Verify config (consumer-safe: nothing emits yet).
         self.engine.set_verify_rpc_url(node_http)
