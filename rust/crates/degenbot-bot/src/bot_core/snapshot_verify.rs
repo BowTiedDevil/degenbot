@@ -35,6 +35,24 @@ use parking_lot::Mutex;
 
 use crate::bot_core::{PoolTickCoverage, TickInfo, V3PoolState, V4PoolState};
 
+/// Error from `Bot::load_snapshot_from_db` / non-DB snapshot-load paths
+/// (B3OROH) — wraps the DB read failure or the per-pool hex/tick decode
+/// failure. The pyo3 seam maps this to `PyRuntimeError`.
+#[derive(Debug, thiserror::Error)]
+pub enum SnapshotLoadError {
+    /// A DB read failed (`fetch_*` / `stream_liquidity_maps`).
+    #[error("snapshot DB read failed: {0}")]
+    Db(#[from] degenbot_db::error::DbError),
+    /// A V4 `pool_hash` hex failed to decode to a 32-byte pool id.
+    #[error("snapshot pool-hash decode failed: {0}")]
+    Hex(#[from] degenbot_core::hex_utils::HexError),
+    /// A liquidity value exceeded the `U128`/`I256` range (the DB stores
+    /// `VARCHAR(78)`: valid on-chain liquidity always fits; this fires on
+    /// corrupt data).
+    #[error("snapshot liquidity value out of range: {0}")]
+    Range(String),
+}
+
 /// A verify-pipeline error — the non-pyo3 analogue of `PyRuntimeError`.
 ///
 /// `py_binding.rs` maps this to typed Python exceptions at the seam
