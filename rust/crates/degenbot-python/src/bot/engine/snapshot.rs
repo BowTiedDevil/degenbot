@@ -7,18 +7,23 @@
 //!
 //! RUQ637: the `SnapshotStore` fields were moved OFF `PyUniswapArbEngine` into
 //! core `BotState` (so the store is the single source of snapshot tick data,
-//! consumed at registration via `take`). These `#[pymethods]` still exist as
-//! the Python-facing ingestion surface (DB streaming + non-DB `load_*_from_py`),
-//! but they delegate to the core store through the shared
-//! `Arc<RwLock<BotState>>` (`engine.core`) — pure arg extraction + store write,
-//! no business logic. B3OROH's `Bot::load_snapshot_from_db` bypasses this
-//! surface entirely (writes the core store from Rust); B3 keeps these methods
-//! only where Python STILL drives ingestion (non-DB sources / interim).
+//! consumed at registration via `take`). These `#[pymethods]` are the thin
+//! Python-facing ingestion surface — `load_*_from_py` crosses `PyO3` ONCE per
+//! family with the whole dict (the non-DB path), delegating to the core store
+//! through the shared `Arc<RwLock<BotState>>` (`engine.core`) — pure arg
+//! extraction + store write, no business logic. B3OROH's
+//! `Bot::load_snapshot_from_db` bypasses this surface entirely (writes the
+//! core store from Rust at `PyBot` construction — zero tick dicts cross `PyO3`).
+//!
+//! DADWUP: the per-pool ingestion surface (`begin_*_snapshot_stream` /
+//! `insert_*_pool_snapshot` / `finish_*_snapshot`) + the `SQLAlchemy` `yield_per`
+//! loops that drove it (`stream_*_to_engine`) are retired — the DB path is
+//! Rust-owned, the non-DB path crosses once with the whole dict. No per-pool
+//! crossings remain.
 
 use super::{make_tick_info, Address, EnginePhase, HashMap, PyUniswapArbEngine};
 use crate::prelude::*;
 
-use super::verify::map_verify_err;
 use degenbot_bot::bot_core::snapshot_verify::SnapshotStore;
 
 impl PyUniswapArbEngine {
@@ -50,6 +55,14 @@ impl PyUniswapArbEngine {
     }
 }
 
+// DADWUP: the per-pool ingestion surface (begin_v3_snapshot_stream /
+// insert_v3_pool_snapshot / finish_v3_snapshot + the V4 twins) is retired.
+// The DB path loads the whole snapshot inside `Bot::load_snapshot_from_db`
+// (B3OROH) at `PyBot` construction — zero tick dicts cross PyO3. The non-DB
+// path crosses ONCE per family via `load_v3_snapshot_from_py` /
+// `load_v4_snapshot_from_py` with the whole dict. No per-pool crossings
+// remain on the Python-facing surface.
+
 #[pymethods]
 impl PyUniswapArbEngine {
     /// Drop the stored V3 snapshot, freeing memory.
@@ -62,120 +75,6 @@ impl PyUniswapArbEngine {
     /// Idempotent — no-op if no V4 snapshot is loaded.
     fn clear_v4_snapshot(&self) {
         self.with_v4_store(SnapshotStore::clear);
-    }
-
-    /// Begin streaming V3 snapshot data into the engine, one pool at a time.
-    ///
-    /// Call `insert_v3_pool_snapshot` for each pool, then `finish_v3_snapshot`
-    /// to finalize. This avoids building the entire snapshot dict in memory.
-    ///
-    /// Can be called in Created or Subscribed phase. Idempotent — calling again
-    /// while a stream is in progress is a no-op.
-    fn begin_v3_snapshot_stream(&self) -> PyResult<()> {
-        let phase = self.current_phase();
-        phase
-            .require_before(EnginePhase::Resumed, "begin_v3_snapshot_stream")
-            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
-
-        if self.with_v3_store(SnapshotStore::is_loaded) {
-            let msg = "Cannot begin V3 snapshot stream: snapshot already loaded.";
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
-        }
-        self.with_v3_store(SnapshotStore::begin_load);
-        Ok(())
-    }
-
-    /// Insert a single V3 pool's tick data into the in-progress snapshot stream.
-    ///
-    /// Args:
-    ///     `pool_address`: Hex string of the pool address.
-    ///     `tick_data`: Dict mapping `tick_index` (int) → (`liquidity_gross`, `liquidity_net`) tuple.
-    fn insert_v3_pool_snapshot(
-        &self,
-        pool_address: &str,
-        tick_data: &Bound<'_, pyo3::types::PyDict>,
-    ) -> PyResult<()> {
-        let addr = pool_address.parse::<Address>().map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
-        })?;
-
-        let mut rust_tick_data = HashMap::new();
-        for (py_tick, py_values) in tick_data.iter() {
-            let tick_index: i32 = py_tick.extract()?;
-            let values: (u128, i128) = py_values.extract()?;
-            rust_tick_data.insert(tick_index, make_tick_info(values.0, values.1));
-        }
-
-        map_verify_err(self.with_v3_store(|store| store.insert(addr, rust_tick_data)))
-    }
-
-    /// Finalize the V3 snapshot stream and transition to `SnapshotLoaded` phase.
-    fn finish_v3_snapshot(&self) -> PyResult<()> {
-        let phase = self.current_phase();
-        if !self.with_v3_store(SnapshotStore::is_loaded) {
-            let msg = "No V3 snapshot stream in progress.";
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
-        }
-        if phase < EnginePhase::SnapshotLoaded {
-            self.set_phase(EnginePhase::SnapshotLoaded);
-        }
-        Ok(())
-    }
-
-    /// Begin streaming V4 snapshot data into the engine, one pool at a time.
-    fn begin_v4_snapshot_stream(&self) -> PyResult<()> {
-        let phase = self.current_phase();
-        phase
-            .require_before(EnginePhase::Resumed, "begin_v4_snapshot_stream")
-            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
-
-        if self.with_v4_store(SnapshotStore::is_loaded) {
-            let msg = "Cannot begin V4 snapshot stream: snapshot already loaded.";
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
-        }
-        self.with_v4_store(SnapshotStore::begin_load);
-        Ok(())
-    }
-
-    /// Insert a single V4 pool's tick data into the in-progress snapshot stream.
-    ///
-    /// Args:
-    ///     `pool_manager`: Hex string of the pool manager address.
-    ///     `pool_id_hex`: Hex string of the 32-byte pool ID.
-    ///     `tick_data`: Dict mapping `tick_index` (int) → (`liquidity_gross`, `liquidity_net`) tuple.
-    fn insert_v4_pool_snapshot(
-        &self,
-        pool_manager: &str,
-        pool_id_hex: &str,
-        tick_data: &Bound<'_, pyo3::types::PyDict>,
-    ) -> PyResult<()> {
-        let pm_addr = pool_manager.parse::<Address>().map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_manager address: {e}"))
-        })?;
-        let pool_id = degenbot_core::hex_utils::decode_32byte_hex(pool_id_hex)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-
-        let mut rust_tick_data = HashMap::new();
-        for (py_tick, py_values) in tick_data.iter() {
-            let tick_index: i32 = py_tick.extract()?;
-            let values: (u128, i128) = py_values.extract()?;
-            rust_tick_data.insert(tick_index, make_tick_info(values.0, values.1));
-        }
-
-        map_verify_err(self.with_v4_store(|store| store.insert((pm_addr, pool_id), rust_tick_data)))
-    }
-
-    /// Finalize the V4 snapshot stream and transition to `SnapshotLoaded` phase.
-    fn finish_v4_snapshot(&self) -> PyResult<()> {
-        let phase = self.current_phase();
-        if !self.with_v4_store(SnapshotStore::is_loaded) {
-            let msg = "No V4 snapshot stream in progress.";
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
-        }
-        if phase < EnginePhase::SnapshotLoaded {
-            self.set_phase(EnginePhase::SnapshotLoaded);
-        }
-        Ok(())
     }
 
     /// Load a V3 liquidity snapshot from a Python dict.

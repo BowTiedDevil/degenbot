@@ -1399,10 +1399,12 @@ def get_snapshots(
 
     Historically the snapshot also fed `engine_registry.start()` via
     `stream_v3_snapshot_to_engine`/`stream_v4_snapshot_to_engine` SQLAlchemy
-    forwarding — that path is retired (JUCFCB/2SM4Y7: the engine's DB snapshot
-    is loaded eagerly at `PyBot` construction by `Bot::load_snapshot_from_db`,
-    and the snapshot→WS gap is closed automatically inside
-    `BlockPump::resume_from_subscribe` — J3FMDO).
+    forwarding — that path is retired (JUCFCB/2SM4Y7/DADWUP: the engine's DB
+    snapshot is loaded eagerly at `PyBot` construction by
+    `Bot::load_snapshot_from_db`, and the snapshot→WS gap is closed
+    automatically inside `BlockPump::resume_from_subscribe` — J3FMDO; the
+    per-pool `insert_*_pool_snapshot` pyo3 surface + the SQLAlchemy
+    `yield_per` loops are removed).
 
     Returns (v3_snapshot, v4_snapshot, v3_snapshot_block, v4_snapshot_block).
     """
