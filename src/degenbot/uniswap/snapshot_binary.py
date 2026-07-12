@@ -1,14 +1,19 @@
-"""Streaming snapshot loaders for V3/V4 liquidity snapshots.
+"""Snapshot → Python-dict converters for the non-DB path.
 
-Streams tick data from the database into the Rust engine one pool at a time,
-avoiding the need to materialize the entire snapshot as a Python dict.
+The DB→ ``SnapshotStore`` transfer is Rust-owned: the DB snapshot is loaded
+inside ``Bot::load_snapshot_from_db`` (task B3OROH) at ``PyBot`` construction
+— zero tick-data dicts cross PyO3. The DB-source branch that used to live
+here (SQLAlchemy ``yield_per`` loops calling ``engine.insert_*_pool_snapshot``
+per pool) is retired (DADWUP): the per-pool PyO3 ingestion surface
+(``begin_*_snapshot_stream`` / ``insert_*_pool_snapshot`` / ``finish_*_snapshot``)
+is gone.
 
-For DatabaseSnapshot sources, uses SQLAlchemy yield_per() to stream rows
-from the DB, grouping by pool without loading the full result set. Each pool
-is inserted via engine.insert_v3_pool_snapshot() / insert_v4_pool_snapshot().
-
-For non-DatabaseSnapshot sources, falls back to batch loading via
-engine.load_v3_snapshot_from_py() / load_v4_snapshot_from_py().
+What remains here is the **non-DB path**: converters that walk an in-memory /
+file-backed ``UniswapV3LiquiditySnapshot`` / ``UniswapV4LiquiditySnapshot`` and
+build a single Python dict, which the caller hands to the engine via
+``engine.load_v3_snapshot_from_py(...)`` / ``load_v4_snapshot_from_py(...)`` —
+ONE PyO3 crossing per family with the whole snapshot. ``engine_registry.start``
+uses these for the non-DB ``v3_snapshot`` / ``v4_snapshot`` kwargs.
 """
 
 from __future__ import annotations
@@ -16,13 +21,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from hexbytes import HexBytes
-from sqlalchemy import text as sa_text
 
 from degenbot.uniswap.v3_snapshot import DatabaseSnapshot as V3DatabaseSnapshot
 from degenbot.uniswap.v4_snapshot import DatabaseSnapshot as V4DatabaseSnapshot
 
 if TYPE_CHECKING:
-    from degenbot.degenbot_rs import UniswapArbEngine
     from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
     from degenbot.uniswap.v4_snapshot import ManagedPoolIdentifier, UniswapV4LiquiditySnapshot
 
@@ -69,10 +72,14 @@ def _normalize_v4_pool_id(pool_id: str | bytes) -> str:
 def _v3_snapshot_to_py_dict(
     snapshot: UniswapV3LiquiditySnapshot,
 ) -> dict[str, dict[int, tuple[int, int]]]:
-    """Convert a V3 snapshot to a dict suitable for load_v3_snapshot_from_py().
+    """Convert a V3 snapshot to a dict suitable for ``load_v3_snapshot_from_py()``.
 
-    Returns {pool_address_hex: {tick_index: (liquidity_gross, liquidity_net)}}
-    with no Pydantic model overhead.
+    For a ``DatabaseSnapshot`` source, returns the raw-SQL batch dict directly
+    (``{addr: {tick: (lg, ln)}}``). For in-memory sources, primes the lazy
+    snapshot dict and converts the Pydantic models.
+
+    The returned dict crosses PyO3 ONCE (no per-pool crossings). Feed it to
+    ``engine.load_v3_snapshot_from_py(...)``.
 
     Returns:
         A dict mapping pool addresses to tick data dicts.
@@ -103,12 +110,16 @@ def _v3_snapshot_to_py_dict(
 
 def _v4_snapshot_to_py_dict(
     snapshot: UniswapV4LiquiditySnapshot,
-    managed_pools: set[ManagedPoolIdentifier],
+    managed_pools: set[ManagedPoolIdentifier] | None = None,
 ) -> dict[str, dict[str, dict[int, tuple[int, int]]]]:
-    """Convert a V4 snapshot to a dict suitable for load_v4_snapshot_from_py().
+    """Convert a V4 snapshot to a dict suitable for ``load_v4_snapshot_from_py()``.
 
-    Returns {pool_manager_hex: {pool_id_hex: {tick_index: (lg, ln)}}}
-    with no Pydantic model overhead.
+    For a ``DatabaseSnapshot`` source, returns the raw-SQL batch dict directly.
+    For in-memory sources, primes the lazy snapshot dict and converts the
+    Pydantic models.
+
+    The returned dict crosses PyO3 ONCE (no per-pool crossings). Feed it to
+    ``engine.load_v4_snapshot_from_py(...)``.
 
     Returns:
         A dict mapping pool manager addresses to pool ID dicts.
@@ -125,7 +136,7 @@ def _v4_snapshot_to_py_dict(
         return result
 
     # Fallback: prime the lazy dict and convert from Pydantic models
-    _prime_v4_snapshot(snapshot, managed_pools)
+    _prime_v4_snapshot(snapshot, managed_pools if managed_pools is not None else snapshot.pools)
     liquidity_snapshot = snapshot._liquidity_snapshot  # noqa: SLF001
 
     result: dict[str, dict[str, dict[int, tuple[int, int]]]] = {}
@@ -144,112 +155,3 @@ def _v4_snapshot_to_py_dict(
             )
         result[pm_addr][pool_id_hex] = tick_data
     return result
-
-
-def stream_v3_snapshot_to_engine(
-    snapshot: UniswapV3LiquiditySnapshot,
-    engine: UniswapArbEngine,
-) -> None:
-    """Stream V3 tick data from the DB into the Rust engine, one pool at a time.
-
-    Uses SQLAlchemy yield_per() to stream rows from the DB, grouping by pool
-    address without materializing the entire result set. Each pool is inserted
-    via engine.insert_v3_pool_snapshot() — no giant Python dict is ever held.
-
-    Falls back to load_v3_snapshot_from_py() for non-DatabaseSnapshot sources.
-    """
-    if not isinstance(snapshot._source, V3DatabaseSnapshot):  # noqa: SLF001
-        # Non-DB source — fall back to batch method
-        engine.load_v3_snapshot_from_py(_v3_snapshot_to_py_dict(snapshot))
-        return
-
-    engine.begin_v3_snapshot_stream()
-
-    session = snapshot._source.session  # noqa: SLF001
-    current_addr: str | None = None
-    current_ticks: dict[int, tuple[int, int]] = {}
-
-    rows = session.execute(
-        sa_text(
-            """
-            SELECT p.address, lp.tick, lp.liquidity_gross, lp.liquidity_net
-            FROM pools p
-            JOIN liquidity_positions lp ON lp.pool_id = p.id
-            WHERE p.chain = :chain_id
-              AND p.kind IN ('uniswap_v3', 'sushiswap_v3', 'pancakeswap_v3', 'aerodrome_v3')
-            ORDER BY p.address, lp.tick
-            """,
-        ),
-        {"chain_id": snapshot.chain_id},
-    ).yield_per(10_000)
-
-    for pool_address, tick, liquidity_gross, liquidity_net in rows:
-        if pool_address != current_addr:
-            # Flush previous pool
-            if current_addr is not None and current_ticks:
-                engine.insert_v3_pool_snapshot(current_addr, current_ticks)
-            current_addr = pool_address
-            current_ticks = {}
-        current_ticks[int(tick)] = (int(liquidity_gross), int(liquidity_net))
-
-    # Flush last pool
-    if current_addr is not None and current_ticks:
-        engine.insert_v3_pool_snapshot(current_addr, current_ticks)
-
-    engine.finish_v3_snapshot()
-
-
-def stream_v4_snapshot_to_engine(
-    snapshot: UniswapV4LiquiditySnapshot,
-    engine: UniswapArbEngine,
-) -> None:
-    """Stream V4 tick data from the DB into the Rust engine, one pool at a time.
-
-    Uses SQLAlchemy yield_per() to stream rows from the DB, grouping by
-    (pool_manager, pool_id) without materializing the entire result set.
-
-    Falls back to load_v4_snapshot_from_py() for non-DatabaseSnapshot sources.
-    """
-    if not isinstance(snapshot._source, V4DatabaseSnapshot):  # noqa: SLF001
-        # Non-DB source — fall back to batch method
-        engine.load_v4_snapshot_from_py(
-            _v4_snapshot_to_py_dict(snapshot, managed_pools=snapshot.pools),
-        )
-        return
-
-    engine.begin_v4_snapshot_stream()
-
-    session = snapshot._source.session  # noqa: SLF001
-    current_key: tuple[str, str] | None = None
-    current_ticks: dict[int, tuple[int, int]] = {}
-
-    rows = session.execute(
-        sa_text(
-            """
-            SELECT pm.address, v4.pool_hash, lp.tick, lp.liquidity_gross, lp.liquidity_net
-            FROM pool_managers pm
-            JOIN managed_pools mp ON mp.manager_id = pm.id
-            JOIN uniswap_v4_pools v4 ON v4.managed_pool_id = mp.id
-            JOIN managed_pool_liquidity_positions lp ON lp.managed_pool_id = mp.id
-            WHERE pm.chain = :chain_id AND mp.kind = 'uniswap_v4'
-            ORDER BY pm.address, v4.pool_hash, lp.tick
-            """,
-        ),
-        {"chain_id": snapshot.chain_id},
-    ).yield_per(10_000)
-
-    for pm_address, pool_hash, tick, liquidity_gross, liquidity_net in rows:
-        key = (pm_address, pool_hash)
-        if key != current_key:
-            # Flush previous pool
-            if current_key is not None and current_ticks:
-                engine.insert_v4_pool_snapshot(current_key[0], current_key[1], current_ticks)
-            current_key = key
-            current_ticks = {}
-        current_ticks[int(tick)] = (int(liquidity_gross), int(liquidity_net))
-
-    # Flush last pool
-    if current_key is not None and current_ticks:
-        engine.insert_v4_pool_snapshot(current_key[0], current_key[1], current_ticks)
-
-    engine.finish_v4_snapshot()

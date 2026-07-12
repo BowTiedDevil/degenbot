@@ -21,8 +21,8 @@ from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.degenbot_rs import UniswapArbEngine
 from degenbot.logging import logger as bot_logger
 from degenbot.uniswap.snapshot_binary import (
-    stream_v3_snapshot_to_engine,
-    stream_v4_snapshot_to_engine,
+    _v3_snapshot_to_py_dict,
+    _v4_snapshot_to_py_dict,
 )
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
@@ -134,11 +134,13 @@ class EngineRegistry:
         (`BlockPump::resume_from_subscribe`) using the pump's own HTTP provider.
 
         Non-DB snapshots (file/memory): pass ``v3_snapshot``/``v4_snapshot``
-        kwargs; they are loaded via ``load_*_from_py`` (which feed the core
-        store), then ``snapshot_block = min(s.newest_block)`` stashes the
-        per-pool step-1 verify seed. These two kwargs are non-DB-only — the DB
-        path constructs the Bot with ``config.database.path`` and passes no
-        snapshots here.
+        kwargs; each is converted to a single Python dict and handed to the
+        engine via ``load_v3_snapshot_from_py`` / ``load_v4_snapshot_from_py``
+        (ONE PyO3 crossing per family — DADWUP retired the per-pool
+        ``insert_*_pool_snapshot`` crossings), then
+        ``snapshot_block = min(s.newest_block)`` stashes the per-pool step-1
+        verify seed. These two kwargs are non-DB-only — the DB path constructs
+        the Bot with ``config.database.path`` and passes no snapshots here.
 
         Returns:
             The first observed WS block from ``subscribe`` (the resume live-loop
@@ -156,14 +158,20 @@ class EngineRegistry:
         # path by 2SM4Y7; for the non-DB path the snapshot_seed_block stashed
         # via `load_*_from_py` is what drives the core auto-backfill).
         if v3_snapshot is not None or v4_snapshot is not None:
-            # Non-DB (file/memory) path — stream_*_to_engine falls back to
-            # engine.load_*_from_py for non-DB sources, feeding the core store
-            # (the DB-source branch inside stream_*_to_engine is now dead:
-            # the DB path eagerly loads at Bot.__init__ via load_snapshot_from_db).
+            # Non-DB (file/memory) path — convert each snapshot to ONE Python
+            # dict and cross PyO3 a single time per family via load_*_from_py,
+            # which feeds the core SnapshotStore (DADWUP: the per-pool
+            # insert_*_pool_snapshot SQLAlchemy yield_per loops + the
+            # begin/insert/finish pyo3 surface are retired; the DB path loads
+            # eagerly at Bot.__init__ via load_snapshot_from_db).
             if v3_snapshot is not None:
-                stream_v3_snapshot_to_engine(v3_snapshot, self.engine)
+                self.engine.load_v3_snapshot_from_py(
+                    _v3_snapshot_to_py_dict(v3_snapshot),
+                )
             if v4_snapshot is not None:
-                stream_v4_snapshot_to_engine(v4_snapshot, self.engine)
+                self.engine.load_v4_snapshot_from_py(
+                    _v4_snapshot_to_py_dict(v4_snapshot),
+                )
             snapshot_block = min(
                 s.newest_block for s in (v3_snapshot, v4_snapshot) if s is not None
             )
@@ -423,8 +431,9 @@ class EngineRegistry:
         """Register a V3 pool with the Rust engine.
 
         Tick data is resolved automatically by the Rust engine from
-        the streamed snapshot (loaded via stream_v3_snapshot_to_engine).
-        The engine applies buffered events on top of stale snapshot data.
+        the loaded snapshot (fed via load_v3_snapshot_from_py or the DB
+        path's load_snapshot_from_db). The engine applies buffered events on
+        top of stale snapshot data.
 
         Returns:
             The registered pool's engine ``pool_id``.
@@ -494,8 +503,9 @@ class EngineRegistry:
         """Register a V4 pool with the Rust engine.
 
         Tick data is resolved automatically by the Rust engine from
-        the streamed snapshot (loaded via stream_v4_snapshot_to_engine).
-        The engine applies buffered events on top of stale snapshot data.
+        the loaded snapshot (fed via load_v4_snapshot_from_py or the DB
+        path's load_snapshot_from_db). The engine applies buffered events on
+        top of stale snapshot data.
 
         Pool admission (amount-modifying hooks / dynamic fees) is enforced
         by the Rust core as a *correctness floor* — the solver's V3-CL math

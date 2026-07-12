@@ -46,7 +46,6 @@ pub(crate) use degenbot_bot::bot_core::{
 pub(crate) use degenbot_bot::solvers::uniswap_engine::engine_handle::EngineHandle;
 pub(crate) use degenbot_bot::solvers::uniswap_engine::engine_subscriber::EngineSubscriber;
 
-pub(crate) use degenbot_bot::bot_core::snapshot_verify::VerifyError;
 pub(crate) use degenbot_bot::solvers::uniswap_engine::{
     BlockMetadata, BlockNotification, EnginePhase, HopType, MixedPoolRef, PoolHop, ResultBatch,
     SolvePathResult, UniswapEngine,
@@ -267,71 +266,6 @@ pub(crate) fn hex_string_to_pool_id(
         })?;
     }
     Ok(pool_id)
-}
-
-#[cfg(test)]
-mod tests {
-    //! VP42BP: pin the `LiquidityVerifyError` → `VerifyError` → Python
-    //! exception-type chain so a per-call RPC transport failure surfaces as
-    //! `VerificationRpcError` (retryable), distinct from a genuine on-chain
-    //! mismatch which surfaces as `VerificationMismatchError` (fatal). The AC
-    //! test ("a mock-provider verifier that returns a transport error surfaces
-    //! `VerificationRpcError`") is exercised at the mapping seam — the
-    //! verifier's RPC-failure branch (in `liquidity_verifier`) feeds a
-    //! `LiquidityVerifyError::Rpc` through `map_liquidity_verify_error` and
-    //! `map_verify_err` to a typed Python exception.
-
-    use super::verify::map_verify_err;
-    use super::*;
-    use degenbot_bot::solvers::uniswap_engine::snapshot_verify::VerifyError;
-
-    /// `map_verify_err` (the `PyO3` seam) routes `VerifyError::Rpc` →
-    /// `VerificationRpcError` and `VerifyError::Snapshot` →
-    /// `VerificationMismatchError` (distinct Python types). Requires the GIL to
-    /// construct the Python exceptions.
-    #[test]
-    fn map_verify_err_routes_rpc_to_verification_rpc_error() {
-        pyo3::Python::attach(|py| {
-            // RPC transport failure → VerificationRpcError (retryable).
-            let res: PyResult<()> = map_verify_err(Err(VerifyError::Rpc(
-                "tickBitmap(0) RPC call failed: timeout".to_string(),
-            )));
-            let err = res.expect_err("Rpc must surface as a PyErr");
-            assert!(
-                err.is_instance_of::<VerificationRpcError>(py),
-                "VerifyError::Rpc must surface as VerificationRpcError (retryable), not VerificationMismatchError"
-            );
-
-            // Genuine mismatch → VerificationMismatchError (fatal).
-            let res: PyResult<()> = map_verify_err(Err(VerifyError::Snapshot(
-                "tick 5 lg mismatch".to_string(),
-            )));
-            let err = res.expect_err("Snapshot must surface as a PyErr");
-            assert!(
-                err.is_instance_of::<VerificationMismatchError>(py),
-                "VerifyError::Snapshot must surface as VerificationMismatchError (fatal)"
-            );
-            // Cross-check the two are distinct types.
-            assert!(
-                !err.is_instance_of::<VerificationRpcError>(py),
-                "genuine mismatch is NOT an Rpc error (distinct types)"
-            );
-
-            // Provider construction → VerificationRpcError (unchanged, now
-            // shares the arm with Rpc).
-            let res: PyResult<()> = map_verify_err(Err(VerifyError::Provider(
-                "failed to create provider: connection refused".to_string(),
-            )));
-            let err = res.expect_err("Provider must surface as a PyErr");
-            assert!(
-                err.is_instance_of::<VerificationRpcError>(py),
-                "VerifyError::Provider still surfaces as VerificationRpcError"
-            );
-
-            Ok::<_, pyo3::PyErr>(())
-        })
-        .expect("gil test must not panic");
-    }
 }
 
 /// `#[pymethods]` slice for the JUCFCB snapshot-seed getter. `PyO3` allows

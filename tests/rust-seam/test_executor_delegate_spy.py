@@ -18,6 +18,7 @@ encode path confirms the call traverses Rust.
 
 from __future__ import annotations
 
+import ast
 import sys
 from pathlib import Path
 
@@ -118,9 +119,25 @@ class TestExampleRoutesThroughRust:
         return (EXAMPLES_DIR / "eth_backrun_v2_v3_v4_rust.py").read_text()
 
     def test_imports_degenbot_rs(self) -> None:
-        """The example imports `degenbot_rs` from the `degenbot` package."""
+        """The example imports `degenbot_rs` from the `degenbot` package.
+
+        Accepts either `from degenbot import ...degenbot_rs...` (line 63) or
+        `from degenbot.degenbot_rs import (...)` (the FFI submodule form)
+        — both reach the Rust seam through the `degenbot` package.
+        """
         src = self._example_source()
-        assert "from degenbot import degenbot_rs" in src, (
+        tree = ast.parse(src)
+        found = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                # `from degenbot import ...degenbot_rs...` (any aliased position)
+                # OR `from degenbot.degenbot_rs import (...)` (the submodule).
+                names = [a.name for a in node.names]
+                if (node.module == "degenbot" and "degenbot_rs" in names) or \
+                   node.module == "degenbot.degenbot_rs":
+                    found = True
+                    break
+        assert found, (
             "example must import degenbot_rs (the Rust seam)"
         )
 

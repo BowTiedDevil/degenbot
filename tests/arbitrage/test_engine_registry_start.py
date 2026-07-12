@@ -143,16 +143,14 @@ def test_start_derives_snapshot_block_as_min_newest_block(monkeypatch) -> None:
     fake = FakeEngine()
     registry = runner.EngineRegistry(bot=None, engine=fake)
 
-    def record_v3_stream(snapshot, engine) -> None:
-        assert engine is fake
-        fake.calls.append("stream_v3")
+    def record_v3_stream(snapshot) -> dict:
+        return {}
 
-    def record_v4_stream(snapshot, engine) -> None:
-        assert engine is fake
-        fake.calls.append("stream_v4")
+    def record_v4_stream(snapshot, *, managed_pools=None) -> dict:
+        return {}
 
-    monkeypatch.setattr(runner, "stream_v3_snapshot_to_engine", record_v3_stream)
-    monkeypatch.setattr(runner, "stream_v4_snapshot_to_engine", record_v4_stream)
+    monkeypatch.setattr(runner, "_v3_snapshot_to_py_dict", record_v3_stream)
+    monkeypatch.setattr(runner, "_v4_snapshot_to_py_dict", record_v4_stream)
 
     v3_snap = _FakeSnapshot(newest_block=18_000_100)
     v4_snap = _FakeSnapshot(newest_block=18_000_050)
@@ -247,13 +245,15 @@ def test_pybot_exposes_pump_lifecycle_methods_after_engine_attach() -> None:
     for method in ("subscribe", "resume"):
         assert hasattr(bot, method), f"PyBot must expose {method} after engine attach"
     # 2SM4Y7: backfill_from_snapshot is retired.
-    assert not hasattr(bot, "backfill_from_snapshot"), \
+    assert not hasattr(bot, "backfill_from_snapshot"), (
         "PyBot::backfill_from_snapshot retired (2SM4Y7)"
+    )
     # The engine still exposes subscribe/resume too (reads the same shared state).
     for method in ("subscribe", "resume"):
         assert hasattr(engine, method)
-    assert not hasattr(engine, "backfill_from_snapshot"), \
+    assert not hasattr(engine, "backfill_from_snapshot"), (
         "UniswapArbEngine::backfill_from_snapshot retired (2SM4Y7)"
+    )
     # The non-DB path uses the snapshot_seed_block setter.
     assert hasattr(engine, "snapshot_seed_block")  # getter+setter (2SM4Y7)
 
@@ -268,11 +268,11 @@ def test_start_stashes_snapshot_and_backfill_blocks_for_two_step_verify(monkeypa
     fake = FakeEngine()
     registry = runner.EngineRegistry(bot=None, engine=fake)
 
-    def _noop(snapshot, engine) -> None:
-        pass
+    def _noop(*args, **kwargs) -> dict:
+        return {}
 
-    monkeypatch.setattr(runner, "stream_v3_snapshot_to_engine", _noop)
-    monkeypatch.setattr(runner, "stream_v4_snapshot_to_engine", _noop)
+    monkeypatch.setattr(runner, "_v3_snapshot_to_py_dict", _noop)
+    monkeypatch.setattr(runner, "_v4_snapshot_to_py_dict", _noop)
 
     v3_snap = _FakeSnapshot(newest_block=18_000_100)
     v4_snap = _FakeSnapshot(newest_block=18_000_050)

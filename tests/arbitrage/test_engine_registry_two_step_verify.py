@@ -53,6 +53,16 @@ class _RecordingVerifyEngine:
         self.calls.append("backfill")
         return 0
 
+    # DADWUP: start() now calls load_*_from_py directly (the per-pool
+    # insert_*/begin_*/finish_* pyo3 surface retired). The non-DB dict is
+    # supplied by the patched _v3/_v4_snapshot_to_py_dict helpers; the engine
+    # stub records the call to keep start()'s orchestration observable.
+    def load_v3_snapshot_from_py(self, py_data: object) -> None:
+        self.calls.append("load_v3_snapshot_from_py")
+
+    def load_v4_snapshot_from_py(self, py_data: object) -> None:
+        self.calls.append("load_v4_snapshot_from_py")
+
     def set_verify_rpc_url(self, rpc: str) -> None:
         self.calls.append("set_verify_rpc_url")
 
@@ -88,9 +98,7 @@ class _RecordingVerifyEngine:
         if self.fail_next == "v3":
             raise VerificationMismatchError("synthetic V3 seed tick mismatch")
 
-    async def verify_v3_post_drain_snapshot(
-        self, address: str, rpc_url: str
-    ) -> None:
+    async def verify_v3_post_drain_snapshot(self, address: str, rpc_url: str) -> None:
         self.verify_calls.append({
             "phase": "v3",
             "block": None,
@@ -195,8 +203,8 @@ def _registry_started_with_snapshots(
     registry = runner.EngineRegistry(bot=None, engine=fake)
     # Stub the stream fns (same as the start tests) — they need a full DB-backed
     # snapshot; here we only exercise start()'s orchestration + drain/verify.
-    monkeypatch.setattr(runner, "stream_v3_snapshot_to_engine", lambda *a, **k: None)
-    monkeypatch.setattr(runner, "stream_v4_snapshot_to_engine", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "_v3_snapshot_to_py_dict", lambda *a, **k: {})
+    monkeypatch.setattr(runner, "_v4_snapshot_to_py_dict", lambda *a, **k: {})
     registry.start(
         "http://localhost:8545",
         "ws://localhost:8546",
