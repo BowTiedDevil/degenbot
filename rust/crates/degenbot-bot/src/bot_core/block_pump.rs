@@ -923,6 +923,87 @@ impl BlockPump {
             );
         }
     }
+
+    /// Backfill the snapshot→WS gap `S+1..W-1` using the NO-SOLVE path
+    /// (FD7NFG, epic P73ER6). Reads `S` from `BotState::snapshot_seed_block`
+    /// (set by `Bot::load_snapshot_from_db`) and `W` from the `ws_block` param
+    /// (the block the WS subscription landed on — `SubscribeState::first_block`,
+    /// passed by the pyo3 caller or J3FMDO's auto-backfill before `resume`).
+    /// Fetches logs via the pump's own `AlloyProvider` (no `rpc_url` from
+    /// Python) in `chunk_size` chunks via `build_backfill_filter`, applying
+    /// each chunk via `BotState::process_backfill_logs` (the relocated engine
+    /// loop). No `solve_dirty` / no batches — the `Backfilled` phase invariant
+    /// is "state advanced, no dispatch".
+    ///
+    /// Returns the count of blocks backfilled (`W-1 - (S+1) + 1 = W-1-S`), or
+    /// `Ok(0)` for a no-op (cold start / S≥W). The post-backfill boundary is
+    /// `W-1`; the pump's resume anchors on `first_observed_block = W` regardless
+    /// (the WS anchor, NOT `last_processed_block`), so this method does NOT stamp
+    /// the sink's cursor.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(String)` on a `get_logs` RPC failure.
+    pub async fn backfill_from_snapshot(
+        &self,
+        ws_block: u64,
+        chunk_size: u64,
+    ) -> Result<u64, String> {
+        let w = ws_block;
+        let s = {
+            let arc = self.bot.state_arc();
+            let state = arc.read();
+            state.snapshot_seed_block()
+        };
+        let Some(s) = s else {
+            log::info!(
+                "BlockPump::backfill_from_snapshot: no snapshot loaded (S=None), cold-start path"
+            );
+            return Ok(0);
+        };
+        if s == 0 {
+            log::warn!("BlockPump::backfill_from_snapshot: snapshot block S=0, skipping");
+            return Ok(0);
+        }
+        if s >= w {
+            log::info!(
+                "BlockPump::backfill_from_snapshot: snapshot at {s} ≥ WS block {w}, nothing to backfill"
+            );
+            return Ok(0);
+        }
+        let from_block = s + 1;
+        let to_block = w - 1;
+        let total_blocks = to_block - from_block + 1;
+        log::info!(
+            "BlockPump::backfill_from_snapshot: fetching events {from_block}–{to_block} ({total_blocks} blocks, chunk_size={chunk_size})"
+        );
+        let provider = self.provider.provider_arc();
+        let mut total_logs = 0usize;
+        let mut chunk_start = from_block;
+        while chunk_start <= to_block {
+            let chunk_end = (chunk_start + chunk_size - 1).min(to_block);
+            let filter = build_backfill_filter(chunk_start, chunk_end);
+            let logs = provider.get_logs(&filter).await.map_err(|e| {
+                format!("eth_getLogs failed for blocks {chunk_start}-{chunk_end}: {e}")
+            })?;
+            let n = logs.len();
+            total_logs += n;
+            // Hold the write guard across the chunk so the apply + buffer-expire
+            // (which advance `last_processed_block`) stay atomic per chunk.
+            self.bot
+                .state_arc()
+                .write()
+                .process_backfill_logs(&logs, chunk_end);
+            log::info!(
+                "BlockPump::backfill_from_snapshot: blocks {chunk_start}-{chunk_end}: {n} logs applied"
+            );
+            chunk_start = chunk_end + 1;
+        }
+        log::info!(
+            "BlockPump::backfill_from_snapshot: complete — {total_logs} logs across {total_blocks} blocks"
+        );
+        Ok(total_blocks)
+    }
 }
 
 #[cfg(test)]
@@ -949,6 +1030,13 @@ impl BlockPump {
             shutdown,
             header_staleness: Duration::from_secs(HEADER_STALENESS_SECS),
         }
+    }
+
+    /// Test-only access to the shared `Bot` arc (FD7NFG tests inject
+    /// `snapshot_seed_block` to drive the `S≥W` / `S=0` no-op branches).
+    #[must_use]
+    pub fn bot_arc_for_test(&self) -> Arc<Bot> {
+        Arc::clone(&self.bot)
     }
 
     /// Drive the resume loop with a synthetic `WsEvent` stream. Test-only
@@ -1763,5 +1851,45 @@ mod tests {
              gate (got {} sends)",
             sent.len()
         );
+    }
+    /// FD7NFG: `backfill_from_snapshot` no-op when no snapshot loaded (cold
+    /// start — `snapshot_seed_block = None`). Default fresh `Bot` has S=None.
+    #[tokio::test]
+    async fn backfill_from_snapshot_cold_start_is_noop() {
+        let (pump, _sink) = pump_for_test(None);
+        // Fresh Bot: snapshot_seed_block is None → no-op, no provider call.
+        let n = pump.backfill_from_snapshot(100, 10).await.unwrap();
+        assert_eq!(n, 0, "cold start (S=None) → no blocks backfilled");
+    }
+
+    /// FD7NFG: `backfill_from_snapshot` no-op when `S >= W` (snapshot at/after
+    /// the WS block — nothing to backfill).
+    #[tokio::test]
+    async fn backfill_from_snapshot_s_ge_w_is_noop() {
+        let (pump, _sink) = pump_for_test(None);
+        // Inject S = W (snapshot caught up to the WS block).
+        {
+            let bot = pump.bot_arc_for_test();
+            bot.state_arc()
+                .write()
+                .set_snapshot_seed_block_for_test(Some(100));
+        }
+        let n = pump.backfill_from_snapshot(100, 10).await.unwrap();
+        assert_eq!(n, 0, "S >= W → nothing to backfill");
+    }
+
+    /// FD7NFG: `backfill_from_snapshot` no-op when `S = 0` (degenerate
+    /// snapshot block — guarded to avoid a `from_block=1` unbounded fetch).
+    #[tokio::test]
+    async fn backfill_from_snapshot_s_zero_is_noop() {
+        let (pump, _sink) = pump_for_test(None);
+        {
+            let bot = pump.bot_arc_for_test();
+            bot.state_arc()
+                .write()
+                .set_snapshot_seed_block_for_test(Some(0));
+        }
+        let n = pump.backfill_from_snapshot(100, 10).await.unwrap();
+        assert_eq!(n, 0, "S = 0 → skip (degenerate)");
     }
 }

@@ -367,103 +367,13 @@ impl UniswapEngine {
     /// replacement collapsed the whole chunk into one journal delta and a
     /// mid-chunk reorg couldn't restore a per-block landed-at state.
     pub fn process_backfill_logs(&mut self, logs: &[Log], chunk_end: u64) {
-        use degenbot_decoders::v3_mint_burn_decoder::{decode_v3_burn_log, decode_v3_mint_log};
-        use degenbot_decoders::v3_swap_decoder::decode_v3_swap_log;
-        use degenbot_decoders::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log;
-        use degenbot_decoders::v4_swap_decoder::decode_v4_swap_log;
-
-        let mut v3_touched = false;
-        let mut v4_touched = false;
-
-        for log in logs {
-            // Stamp this log with its own block number. A backfill log should
-            // always carry `block_number`; fall back to `chunk_end` only for a
-            // malformed log so apply never sees block 0.
-            let log_block = log.block_number.unwrap_or(chunk_end);
-
-            let Some(topic0) = log.topic0() else {
-                continue;
-            };
-
-            if *topic0 == degenbot_decoders::v3_swap_decoder::V3_SWAP_TOPIC {
-                if let Some(event) = decode_v3_swap_log(log) {
-                    self.core.write().apply_v3_swap(
-                        event.pool_address,
-                        event.sqrt_price_x96,
-                        event.liquidity.to::<u128>(),
-                        event.tick,
-                        log_block,
-                        &[],
-                    );
-                    v3_touched = true;
-                }
-            } else if *topic0 == degenbot_decoders::v3_mint_burn_decoder::V3_MINT_TOPIC {
-                if let Some(event) = decode_v3_mint_log(log) {
-                    self.core.write().buffer_backfill_v3_liquidity_update(
-                        event.pool_address,
-                        event.tick_lower,
-                        event.tick_upper,
-                        event.amount.cast_signed(),
-                        log_block,
-                    );
-                    v3_touched = true;
-                }
-            } else if *topic0 == degenbot_decoders::v3_mint_burn_decoder::V3_BURN_TOPIC {
-                if let Some(event) = decode_v3_burn_log(log) {
-                    self.core.write().buffer_backfill_v3_liquidity_update(
-                        event.pool_address,
-                        event.tick_lower,
-                        event.tick_upper,
-                        -(event.amount.cast_signed()),
-                        log_block,
-                    );
-                    v3_touched = true;
-                }
-            } else if *topic0 == degenbot_decoders::v4_swap_decoder::V4_SWAP_TOPIC {
-                if let Some(event) = decode_v4_swap_log(log) {
-                    self.core.write().apply_v4_swap(
-                        &V4SwapUpdate {
-                            pool_manager: log.address(),
-                            pool_id: event.pool_id,
-                            sqrt_price_x96: event.sqrt_price_x96,
-                            liquidity: event.liquidity.to::<u128>(),
-                            tick: event.tick,
-                            tick_priors: vec![],
-                        },
-                        log_block,
-                    );
-                    v4_touched = true;
-                }
-            } else if *topic0
-                == degenbot_decoders::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC
-            {
-                if let Some(event) = decode_v4_modify_liquidity_log(log) {
-                    self.core.write().buffer_backfill_v4_liquidity_update(
-                        log.address(),
-                        event.pool_id,
-                        event.tick_lower,
-                        event.tick_upper,
-                        event.liquidity_delta,
-                        log_block,
-                    );
-                    v4_touched = true;
-                }
-            }
-        }
-
-        if v3_touched {
-            self.core.write().expire_v3_buffered(chunk_end);
-        }
-        if v4_touched {
-            self.core.write().expire_v4_buffered(chunk_end);
-            // NOTE: the orphan `rebuild_and_solve` that previously solved
-            // V4-engine-local paths here is removed (ADR-003 S3). The
-            // unified engine re-derives affected paths on the next
-            // `solve_dirty`; V4-engine-local paths/results are deleted as
-            // duplicate dead code (the unified `register_path`/`solve_path`
-            // handles V4 paths via `HopType::V4`).
-        }
-
+        // ADR-003: state lives on BotState. The loop body was relocated to
+        // `BotState::process_backfill_logs` so the core `BlockPump::
+        // backfill_from_snapshot` (no `UniswapEngine` in scope) reaches it via
+        // `self.bot`. This delegator preserves the engine's `last_processed_block`
+        // stamp (mirrors `SolveCoordinator::last_drained_block`) for diagnostic /
+        // snapshot readers (`engine_handle::last_processed_block`, diagnostic snapshot).
+        self.core.write().process_backfill_logs(logs, chunk_end);
         self.last_processed_block = Some(chunk_end);
     }
 }
