@@ -4453,15 +4453,12 @@ impl Bot {
 /// `block` is `0` — the DB snapshot is state at `S`, with no per-tick block
 /// provenance carried (diagnostic only — the seed's `block` is unused by the
 /// solver math).
-fn convert_tick_map(
-    ticks: &degenbot_db::snapshot::TickMap,
-) -> Result<HashMap<i32, TickInfo>, SnapshotLoadError> {
+fn convert_tick_map(ticks: &degenbot_db::snapshot::TickMap) -> HashMap<i32, TickInfo> {
     let mut out = HashMap::with_capacity(ticks.len());
     for (&tick, (gross, net)) in ticks {
         let liquidity_gross = gross.to::<alloy::primitives::U128>();
-        let liquidity_net = alloy::primitives::I256::try_from(*net).map_err(|_| {
-            SnapshotLoadError::Range(format!("liquidity_net {net} at tick {tick} exceeds I256"))
-        })?;
+        // The DB stores `liquidity_net` as a signed `I256` (decode_i256) already.
+        let liquidity_net = *net;
         out.insert(
             tick,
             TickInfo {
@@ -4471,7 +4468,7 @@ fn convert_tick_map(
             },
         );
     }
-    Ok(out)
+    out
 }
 
 /// Load all V3 pools from the DB into the V3 `SnapshotStore` (one pool at a
@@ -4492,8 +4489,7 @@ fn load_v3_family(
                 // a Result without a side channel); collect via `store.insert`
                 // which returns `VerifyError` but for valid DB data is always Ok.
                 // The tick conversion is infallible for valid on-chain ranges.
-                let converted = convert_tick_map(ticks)
-                    .expect("DB liquidity values must fit in U128/I256; corrupt data is a DB bug");
+                let converted = convert_tick_map(ticks);
                 store
                     .insert(addr, converted)
                     .expect("begin_load issued; insert into a live stream must succeed");
@@ -4540,13 +4536,7 @@ fn load_v4_family(
                     return;
                 }
             };
-            let converted = match convert_tick_map(ticks) {
-                Ok(c) => c,
-                Err(e) => {
-                    error = Some(e);
-                    return;
-                }
-            };
+            let converted = convert_tick_map(ticks);
             if store.insert((pool_manager, pool_id), converted).is_err() {
                 // insert fails only on no-stream — shouldn't happen post begin_load.
                 error = Some(SnapshotLoadError::Range(

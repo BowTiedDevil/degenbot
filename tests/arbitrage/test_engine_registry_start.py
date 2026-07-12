@@ -32,6 +32,14 @@ class FakeEngine:
         self.backfill_args: list[tuple[str, int]] = []
         self.verify_args: dict | None = None
         self._last_processed_block: int | None = 18_000_042
+        # JUCFCB: the DB path reads `snapshot_seed_block` from the engine.
+        # FakeEngine defaults to None (cold-start → no backfill) unless a test
+        # sets it.
+        self._snapshot_seed_block: int | None = None
+
+    @property
+    def snapshot_seed_block(self) -> int | None:
+        return self._snapshot_seed_block
 
     def subscribe(self, ws: str) -> int:
         self.calls.append("subscribe")
@@ -227,7 +235,7 @@ def test_start_stashes_snapshot_and_backfill_blocks_for_two_step_verify(monkeypa
     fake = FakeEngine()
     registry = runner.EngineRegistry(bot=None, engine=fake)
 
-    def _noop(snapshot, engine) -> None:  # noqa: ARG001
+    def _noop(snapshot, engine) -> None:
         pass
 
     monkeypatch.setattr(runner, "stream_v3_snapshot_to_engine", _noop)

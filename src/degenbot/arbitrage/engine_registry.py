@@ -116,17 +116,25 @@ class EngineRegistry:
     ) -> int:
         """Run the pre-pump startup ritual and stop BEFORE resume().
 
-        Sequences: subscribe(ws) → stream snapshots → backfill → verify config.
+        Sequences: subscribe(ws) → load snapshots → backfill → verify config.
         Stops at EnginePhase::Backfilled so the caller can attach its result
         consumer before batches begin to flow (`resume()` is the single gate
         after which the pump emits one ResultBatch per block into the
         fire-and-forget channel — attaching the consumer after resume risks
         unbounded backlog and stale-batch dispatch).
 
-        `snapshot_block` is derived internally from min(snap.newest_block)
-        across the supplied snapshots — the caller never passes a block.
-        Snapshots are a first-class degenbot feature, so the registry owns this
-        coupling rather than exposing it.
+        DB snapshot (JUCFCB, Shape 2): the V3+V4 DB snapshot is eagerly loaded
+        into the core ``BotState`` at ``Bot.__init__`` time via
+        ``PyBot.load_snapshot_from_db`` — so the DB path needs NO snapshot
+        kwargs here. This method reads ``snapshot_seed_block`` from the engine
+        (the shared ``BotState``) and calls ``backfill_from_snapshot`` to close
+        the S→WS gap.
+
+        Non-DB snapshots (file/memory): pass ``v3_snapshot``/``v4_snapshot``
+        kwargs; they're loaded via ``load_*_from_py`` (which feed the core
+        store), then ``snapshot_block = min(s.newest_block)`` drives the
+        backfill. These two kwargs are non-DB-only — the DB path constructs the
+        Bot with ``config.database.path`` and passes no snapshots here.
 
         Returns:
             The backfill target (first observed WS block) from ``subscribe``.
@@ -134,15 +142,27 @@ class EngineRegistry:
         """
         backfill_target = self.engine.subscribe(node_ws)
 
-        # Stream snapshots and backfill the snapshot→WS gap. Zero batches are
+        # Load snapshots + backfill the snapshot→WS gap. Zero batches are
         # emitted here — the pump isn't running until resume().
-        snapshots = [s for s in (v3_snapshot, v4_snapshot) if s is not None]
-        if snapshots:
+        if v3_snapshot is not None or v4_snapshot is not None:
+            # Non-DB (file/memory) path — stream_*_to_engine falls back to
+            # engine.load_*_from_py for non-DB sources, feeding the core store.
+            # (The DB-source branch inside stream_*_to_engine is now dead: the
+            # DB path eagerly loads at Bot.__init__ via load_snapshot_from_db,
+            # so DB-backed snapshots are never passed here.)
             if v3_snapshot is not None:
                 stream_v3_snapshot_to_engine(v3_snapshot, self.engine)
             if v4_snapshot is not None:
                 stream_v4_snapshot_to_engine(v4_snapshot, self.engine)
-            snapshot_block = min(s.newest_block for s in snapshots)
+            snapshot_block = min(
+                s.newest_block for s in (v3_snapshot, v4_snapshot) if s is not None
+            )
+        else:
+            # DB path (Shape 2): the snapshot was loaded at Bot construction;
+            # read S from the core BotState via the engine getter.
+            snapshot_block = self.engine.snapshot_seed_block
+
+        if snapshot_block is not None:
             self.engine.backfill_from_snapshot(node_http, snapshot_block)
             # T1: stash the snapshot seed block for the per-pool two-step verify
             # (T6). step-1 compares the pinned seed against on-chain@this

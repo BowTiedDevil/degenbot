@@ -333,3 +333,16 @@ mod tests {
         .expect("gil test must not panic");
     }
 }
+
+/// `#[pymethods]` slice for the JUCFCB snapshot-seed getter. `PyO3` allows
+/// multiple `#[pymethods] impl PyUniswapArbEngine { ... }` blocks; this is the
+/// snapshot-seed surface (the phase / startup ritual lives in `pump.rs`/`solve.rs`).
+#[pymethods]
+impl PyUniswapArbEngine {
+    /// The snapshot seed block `S` (JUCFCB) — set at `Bot.__init__` time by
+    /// `Bot::load_snapshot_from_db`. `None` = cold-start (no DB snapshot loaded).
+    #[getter]
+    fn snapshot_seed_block(&self) -> Option<u64> {
+        self.engine.lock().core.read().snapshot_seed_block()
+    }
+}

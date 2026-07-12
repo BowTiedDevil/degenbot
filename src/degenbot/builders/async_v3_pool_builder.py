@@ -336,6 +336,13 @@ class AsyncV3PoolBuilder:
                     int(info[2]) if len(info) > 2 else 0,  # noqa: PLR2004
                 )
         state_block_int = int(state_block) if state_block is not None else 0
+        # JUCFCB (epic P73ER6): when the DB snapshot was loaded at Bot.__init__
+        # (db_snapshot_loaded), the core SnapshotStore already holds the tick
+        # data. Pass tick_data=None + coverage="tracked" — the pyo3 layer infers
+        # seed_from_store=True (Tracked + empty inline data) and register_v3_pool
+        # consumes the store via take(). Skip the redundant rust_rows conversion
+        # (the builder no longer sources tick_data independently for the DB path).
+        register_tick_data = None if db_snapshot_loaded else (rust_rows or None)
         pool_id = self._py_bot.register_v3_pool(
             address=pool_address,
             token0=token0_address,
@@ -346,7 +353,7 @@ class AsyncV3PoolBuilder:
             sqrt_price_x96=int(sqrt_price_x96),
             liquidity=int(liquidity),
             tick=int(tick),
-            tick_data=rust_rows or None,
+            tick_data=register_tick_data,
             update_block=state_block_int,
             coverage="tracked" if db_snapshot_loaded else "sparse",
             tick_data_fetcher=self._make_tick_data_fetcher(pool_address, chain_id, io=io),

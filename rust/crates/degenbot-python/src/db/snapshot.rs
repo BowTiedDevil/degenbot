@@ -23,7 +23,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PySet, PyString, PyTuple};
 use std::str::FromStr;
 
-use crate::conversion::alloy::u256_to_py;
+use crate::conversion::alloy::{i256_to_py, u256_to_py};
 use crate::db::db_err_to_py;
 use degenbot_db::snapshot::{LiquidityMap, PoolKey};
 use degenbot_db::{DegenbotDb, ExchangeFamily};
@@ -192,7 +192,7 @@ fn build_liquidity_map_py<'py>(
     for (tick, entry) in &map.tick_data {
         let inner = PyDict::new(py);
         inner.set_item("liquidity_gross", u256_to_py(py, &entry.liquidity_gross)?)?;
-        inner.set_item("liquidity_net", u256_to_py(py, &entry.liquidity_net)?)?;
+        inner.set_item("liquidity_net", i256_to_py(py, &entry.liquidity_net)?)?;
         data.set_item(*tick, inner)?;
     }
     out.set_item("tick_data", data)?;
@@ -203,14 +203,14 @@ fn build_liquidity_map_py<'py>(
 /// Build the flat `get_all_liquidity_maps` Python dict — V3 keyed by address
 /// string, V4 keyed by `(address, pool_hash)` tuple (dispatched on the
 /// [`PoolKey`] variant inside each row).
-type TickRows = Vec<(PoolKey, HashMap<i32, (U256, U256)>)>;
+type TickRows = Vec<(PoolKey, HashMap<i32, (U256, alloy::primitives::I256)>)>;
 
 fn build_all_liquidity_maps_py(py: Python<'_>, rows: TickRows) -> PyResult<Bound<'_, PyDict>> {
     let out = PyDict::new(py);
     for (key, ticks) in rows {
         let tick_dict = PyDict::new(py);
         for (tick, (gross, net)) in ticks {
-            let pair = PyTuple::new(py, [u256_to_py(py, &gross)?, u256_to_py(py, &net)?])?;
+            let pair = PyTuple::new(py, [u256_to_py(py, &gross)?, i256_to_py(py, &net)?])?;
             tick_dict.set_item(tick, pair)?;
         }
         match key {

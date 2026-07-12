@@ -29,7 +29,7 @@ use degenbot_db::{DegenbotDb, ExchangeFamily, SchemaState};
 
 /// Local alias for the streamed result accumulator (mirrors the private
 /// `TickMap`). Keeps clippy's `type_complexity` lint quiet in the parity tests.
-type StreamedMap = std::collections::HashMap<i32, (U256, U256)>;
+type StreamedMap = std::collections::HashMap<i32, (U256, alloy::primitives::I256)>;
 
 const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
 
@@ -95,6 +95,10 @@ fn parse_addr(s: &str) -> Address {
 
 fn parse_u256(s: &str) -> U256 {
     U256::from_str_radix(s, 10).unwrap_or_else(|e| panic!("u256 parse {s}: {e}"))
+}
+
+fn parse_i256(s: &str) -> alloy::primitives::I256 {
+    alloy::primitives::I256::from_dec_str(s).unwrap_or_else(|e| panic!("i256 parse {s}: {e}"))
 }
 
 fn parse_tick(s: &str) -> i32 {
@@ -195,11 +199,11 @@ fn fetch_liquidity_map_v3_matches_python_oracle() {
     }
 
     // tick_data
-    let mut rd: HashMap<i32, (U256, U256)> = HashMap::new();
+    let mut rd: HashMap<i32, (U256, alloy::primitives::I256)> = HashMap::new();
     for (ts, v) in &expected.tick_data {
         rd.insert(
             parse_tick(ts),
-            (parse_u256(&v.liquidity_gross), parse_u256(&v.liquidity_net)),
+            (parse_u256(&v.liquidity_gross), parse_i256(&v.liquidity_net)),
         );
     }
     assert_eq!(map.tick_data.len(), rd.len(), "tick_data lengths");
@@ -235,11 +239,11 @@ fn fetch_liquidity_map_v4_matches_python_oracle() {
         );
     }
 
-    let mut rd: HashMap<i32, (U256, U256)> = HashMap::new();
+    let mut rd: HashMap<i32, (U256, alloy::primitives::I256)> = HashMap::new();
     for (ts, v) in &expected.tick_data {
         rd.insert(
             parse_tick(ts),
-            (parse_u256(&v.liquidity_gross), parse_u256(&v.liquidity_net)),
+            (parse_u256(&v.liquidity_gross), parse_i256(&v.liquidity_net)),
         );
     }
     assert_eq!(map.tick_data.len(), rd.len(), "V4 tick_data lengths");
@@ -278,7 +282,7 @@ fn fetch_all_liquidity_maps_v3_matches_python_oracle() {
                 .get(&tick.to_string())
                 .unwrap_or_else(|| panic!("tick {tick} for {addr}"));
             assert_eq!(*gross, parse_u256(&want_pair[0]), "gross {addr}/{tick}");
-            assert_eq!(*net, parse_u256(&want_pair[1]), "net {addr}/{tick}");
+            assert_eq!(*net, parse_i256(&want_pair[1]), "net {addr}/{tick}");
         }
     }
 }
@@ -324,7 +328,7 @@ fn fetch_all_liquidity_maps_v4_matches_python_oracle() {
                 parse_u256(&want_pair[0]),
                 "V4 gross {pm}/{hash}/{tick}"
             );
-            assert_eq!(*net, parse_u256(&want_pair[1]), "V4 net {pm}/{hash}/{tick}");
+            assert_eq!(*net, parse_i256(&want_pair[1]), "V4 net {pm}/{hash}/{tick}");
         }
     }
 }
