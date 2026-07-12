@@ -160,7 +160,20 @@ impl PumpState {
                 .combined_stream
                 .expect("subscribe() always returns a stream"),
         });
-        self.set_phase(EnginePhase::Subscribed);
+        // J3FMDO regression fix: reflect whether the core already has a
+        // snapshot loaded (the construction-time-load path —
+        // `Bot::load_snapshot_from_db` at `Bot` construction writes the
+        // snapshot into the shared core `BotState` but never advances the
+        // engine phase). An unconditional `set_phase(Subscribed)` left the
+        // phase at `Subscribed` (1) and `resume()`'s `require(SnapshotLoaded)`
+        // guard crashed the production backrun bot:
+        //   RuntimeError: Cannot call resume: engine is in phase Subscribed,
+        //                 but requires SnapshotLoaded
+        // `after_subscribe` lands at `SnapshotLoaded` when the core has a
+        // snapshot (so `resume()` is reachable) and `Subscribed` otherwise
+        // (the legacy path that loads the snapshot after subscribe).
+        let core_has_snapshot = self.bot.state_arc().read().snapshot_seed_block().is_some();
+        self.set_phase(EnginePhase::after_subscribe(phase, core_has_snapshot));
         Ok(state.first_block)
     }
 
