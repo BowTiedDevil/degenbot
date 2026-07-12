@@ -36,10 +36,20 @@ class FakeEngine:
         # FakeEngine defaults to None (cold-start → no backfill) unless a test
         # sets it.
         self._snapshot_seed_block: int | None = None
+        # 2SM4Y7: the non-DB path now records S via `set_snapshot_seed_block`
+        # (the pyo3 `backfill_from_snapshot` retired); the FakeEngine records
+        # the call so tests can assert the non-DB path drives the seed-set.
+        self.seed_args: list[int | None] = []
 
     @property
     def snapshot_seed_block(self) -> int | None:
         return self._snapshot_seed_block
+
+    @snapshot_seed_block.setter
+    def snapshot_seed_block(self, value: int | None) -> None:
+        self.calls.append("set_snapshot_seed_block")
+        self.seed_args.append(value)
+        self._snapshot_seed_block = value
 
     def subscribe(self, ws: str) -> int:
         self.calls.append("subscribe")
@@ -157,15 +167,19 @@ def test_start_derives_snapshot_block_as_min_newest_block(monkeypatch) -> None:
     # J3FMDO: start() no longer calls backfill_from_snapshot — resume() drives
     # it via the core auto-backfill. So backfill_args stays empty.
     assert fake.backfill_args == []
-    # Streams ran for both snapshots, in order, then verify-config (no backfill).
+    # Streams ran for both snapshots, in order, then the non-DB seed-set (so
+    # the core auto-backfill inside resume picks up S=min(newest_block)), then
+    # verify-config.
     assert fake.calls == [
         "subscribe",
         "stream_v3",
         "stream_v4",
+        "set_snapshot_seed_block",
         "set_verify_rpc_url",
     ]
-    # The derived block (the min of the two newest_blocks) is stashed as the
-    # step-1 verify seed.
+    # The derived block (the min of the two newest_blocks) is set on the
+    # engine's snapshot_seed_block + stashed as the step-1 verify seed.
+    assert fake.seed_args == [18_000_050]
     assert registry._verify_snapshot_block == 18_000_050
     assert "resume" not in fake.calls
 
@@ -215,21 +229,33 @@ def test_pybot_exposes_verify_methods_after_engine_attach() -> None:
 
 
 def test_pybot_exposes_pump_lifecycle_methods_after_engine_attach() -> None:
-    """T3 (ADR-006 D4): PyBot exposes subscribe/backfill_from_snapshot/resume
-    as delegating entry points once a UniswapArbEngine is constructed against
-    it (which attaches the shared PumpState). The Bot is the D4 pump owner;
-    these methods drive the SAME PumpState the engine reads. Before T3 only
-    the engine had them."""
+    """T3 (ADR-006 D4): PyBot exposes subscribe/resume as delegating entry
+    points once a UniswapArbEngine is constructed against it (which attaches
+    the shared PumpState). The Bot is the D4 pump owner; these methods drive
+    the SAME PumpState the engine reads.
+
+    2SM4Y7: `backfill_from_snapshot` is retired — the snapshot→WS gap is
+    closed automatically inside the core `BlockPump::resume_from_subscribe`
+    (J3FMDO). The non-DB path uses the `snapshot_seed_block` setter to record
+    `S` so the core auto-backfill picks it up.
+    """
     from degenbot.degenbot_rs import PyBot, UniswapArbEngine
 
     bot = PyBot()
     # Constructing the engine against the bot attaches the shared PumpState.
     engine = UniswapArbEngine(py_bot=bot)
-    for method in ("subscribe", "backfill_from_snapshot", "resume"):
+    for method in ("subscribe", "resume"):
         assert hasattr(bot, method), f"PyBot must expose {method} after engine attach"
-    # The engine still exposes them too (reads the same shared state).
-    for method in ("subscribe", "backfill_from_snapshot", "resume"):
+    # 2SM4Y7: backfill_from_snapshot is retired.
+    assert not hasattr(bot, "backfill_from_snapshot"), \
+        "PyBot::backfill_from_snapshot retired (2SM4Y7)"
+    # The engine still exposes subscribe/resume too (reads the same shared state).
+    for method in ("subscribe", "resume"):
         assert hasattr(engine, method)
+    assert not hasattr(engine, "backfill_from_snapshot"), \
+        "UniswapArbEngine::backfill_from_snapshot retired (2SM4Y7)"
+    # The non-DB path uses the snapshot_seed_block setter.
+    assert hasattr(engine, "snapshot_seed_block")  # getter+setter (2SM4Y7)
 
 
 def test_start_stashes_snapshot_and_backfill_blocks_for_two_step_verify(monkeypatch) -> None:

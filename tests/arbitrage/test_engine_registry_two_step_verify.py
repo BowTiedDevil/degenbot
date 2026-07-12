@@ -39,6 +39,11 @@ class _RecordingVerifyEngine:
     def snapshot_seed_block(self) -> int | None:
         return self._snapshot_seed_block
 
+    @snapshot_seed_block.setter
+    def snapshot_seed_block(self, value: int | None) -> None:
+        self.calls.append("set_snapshot_seed_block")
+        self._snapshot_seed_block = value
+
     # lifecycle (subscribe/backfill) — minimal, record-only
     def subscribe(self, ws: str) -> int:
         self.calls.append("subscribe")

@@ -24,7 +24,7 @@ def test_start_is_not_exposed() -> None:
     assert not hasattr(UniswapArbEngine, "start"), (
         "UniswapArbEngine.start still exists — the dead one-shot "
         "(PyUniswapArbEngine::start / BlockPump::spawn) must be deleted "
-        "(Plan 102, Slice 1). The canonical startup is subscribe→backfill→resume."
+        "(Plan 102, Slice 1). The canonical startup is subscribe→resume."
     )
 
 
@@ -32,7 +32,6 @@ def test_start_is_not_exposed() -> None:
     "method",
     [
         "subscribe",
-        "backfill_from_snapshot",
         "resume",
     ],
 )
@@ -40,9 +39,10 @@ def test_canonical_phase_methods_remain(method: str) -> None:
     """The two-phase surface every operator uses must stay intact.
 
     The pump lifecycle ends via the engine's ``__pyo3::traverse``/drop or by
-    dropping the handle; there is no ``stop`` method on the Python surface,
-    only the three phase entry points: ``subscribe`` observes, ``backfill``'
-    closes the gap, ``resume`` begins normal processing.
+    dropping the handle; the phase entry points are ``subscribe`` (observe)
+    and ``resume`` (begin normal processing + auto-backfill, J3FMDO). The
+    ``backfill_from_snapshot`` method is retired (2SM4Y7) — the snapshot→WS
+    gap is closed automatically inside ``BlockPump::resume_from_subscribe``.
     """
     assert hasattr(UniswapArbEngine, method), (
         f"UniswapArbEngine.{method} missing — Slice 1 deletes only start(); "

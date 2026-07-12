@@ -2671,6 +2671,18 @@ class PyBot:
         Python reads this in ``engine_registry.start()`` to stash
         ``_verify_snapshot_block``.
         """
+
+    @snapshot_seed_block.setter
+    def snapshot_seed_block(self, block: int | None) -> None:
+        """Set the snapshot seed block `S` (non-DB path, 2SM4Y7).
+
+        Called by ``engine_registry.start()`` after ``load_*_from_py`` when a
+        non-DB (file/memory) snapshot is supplied — records ``S =
+        min(newest_block)`` so the core auto-backfill inside
+        ``BlockPump::resume_from_subscribe`` closes the snapshot→WS gap (J3FMDO).
+        The DB path's ``load_snapshot_from_db`` already sets `S` itself.
+        """
+
     def register_v2_pool(
         self,
         address: str,
@@ -2755,12 +2767,6 @@ class PyBot:
     # ADR-006 D4 (T3+T4): pump lifecycle + verify plumbing drive the shared
     # PumpState attached when a UniswapArbEngine(py_bot=...) is constructed.
     def subscribe(self, rpc_url: str) -> int: ...
-    def backfill_from_snapshot(
-        self,
-        rpc_url: str,
-        snapshot_block: int,
-        chunk_size: int = 2000,
-    ) -> int: ...
     def resume(self) -> None: ...
     def stop(self) -> None: ...
     def set_verify_rpc_url(self, rpc_url: str) -> None: ...
@@ -2955,14 +2961,12 @@ class UniswapArbEngine:
         the snapshot→WS backfill + stash `_verify_snapshot_block`.
         """
 
+    @snapshot_seed_block.setter
+    def snapshot_seed_block(self, block: int | None) -> None:
+        """Set the snapshot seed block `S` (non-DB path, 2SM4Y7)."""
+
     # ── Phase / startup ritual (Plan 102: the canonical two-phase flow). ──
     def subscribe(self, rpc_url: str) -> int: ...
-    def backfill_from_snapshot(
-        self,
-        rpc_url: str,
-        snapshot_block: int,
-        chunk_size: int = 2000,
-    ) -> int: ...
     def resume(self) -> None: ...
     def stop(self) -> None: ...
     def last_processed_block(self) -> int | None: ...

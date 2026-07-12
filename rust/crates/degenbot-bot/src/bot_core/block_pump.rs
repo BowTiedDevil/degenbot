@@ -1928,9 +1928,7 @@ mod tests {
         // Inject S = W (snapshot caught up to the WS block).
         {
             let bot = pump.bot_arc_for_test();
-            bot.state_arc()
-                .write()
-                .set_snapshot_seed_block_for_test(Some(100));
+            bot.state_arc().write().set_snapshot_seed_block(Some(100));
         }
         let n = pump.backfill_from_snapshot(100, 10).await.unwrap();
         assert_eq!(n, 0, "S >= W → nothing to backfill");
@@ -1943,9 +1941,7 @@ mod tests {
         let (pump, _sink) = pump_for_test(None);
         {
             let bot = pump.bot_arc_for_test();
-            bot.state_arc()
-                .write()
-                .set_snapshot_seed_block_for_test(Some(0));
+            bot.state_arc().write().set_snapshot_seed_block(Some(0));
         }
         let n = pump.backfill_from_snapshot(100, 10).await.unwrap();
         assert_eq!(n, 0, "S = 0 → skip (degenerate)");
@@ -1990,9 +1986,7 @@ mod tests {
     #[tokio::test]
     async fn auto_backfill_runs_inside_resume_when_s_lt_w() {
         let bot = Arc::new(Bot::new(1));
-        bot.state_arc()
-            .write()
-            .set_snapshot_seed_block_for_test(Some(85));
+        bot.state_arc().write().set_snapshot_seed_block(Some(85));
         let (mut pump, _sink, _shutdown, asserter) = pump_for_test_with_asserter(bot, None);
 
         // The single eth_getLogs chunk (blocks 86..99, ≤ DEFAULT_BACKFILL_CHUNK_SIZE)
@@ -2047,9 +2041,7 @@ mod tests {
     #[tokio::test]
     async fn auto_backfill_skipped_when_s_ge_w_in_resume() {
         let bot = Arc::new(Bot::new(1));
-        bot.state_arc()
-            .write()
-            .set_snapshot_seed_block_for_test(Some(100));
+        bot.state_arc().write().set_snapshot_seed_block(Some(100));
         let (mut pump, _sink, _shutdown, asserter) = pump_for_test_with_asserter(bot, None);
 
         let combined = stream::iter(Vec::<WsEvent>::new()).boxed();

@@ -224,21 +224,12 @@ impl PyBot {
         self.pump_state()?.subscribe(rpc_url)
     }
 
-    /// Backfill Mint/Burn/ModifyLiquidity events from the snapshot block to the
-    /// first WS block (ADR-006 D4 T3). Delegates to the shared `PumpState`.
-    #[pyo3(signature = (rpc_url, snapshot_block, chunk_size=2000))]
-    fn backfill_from_snapshot(
-        &self,
-        rpc_url: &str,
-        snapshot_block: u64,
-        chunk_size: u64,
-    ) -> PyResult<u64> {
-        self.pump_state()?
-            .backfill_from_snapshot(rpc_url, snapshot_block, chunk_size)
-    }
-
     /// Resume the pump — begin normal WS processing (ADR-006 D4 T3).
-    /// Delegates to the shared `PumpState`.
+    ///
+    /// The snapshot→WS gap is closed automatically inside the core
+    /// `BlockPump::resume_from_subscribe` (J3FMDO); the pyo3
+    /// `backfill_from_snapshot` method is retired (2SM4Y7). Delegates to the
+    /// shared `PumpState`.
     fn resume(&self, _py: Python<'_>) -> PyResult<()> {
         self.pump_state()?.resume()
     }

@@ -340,9 +340,36 @@ mod tests {
 #[pymethods]
 impl PyUniswapArbEngine {
     /// The snapshot seed block `S` (JUCFCB) — set at `Bot.__init__` time by
-    /// `Bot::load_snapshot_from_db`. `None` = cold-start (no DB snapshot loaded).
+    /// `Bot::load_snapshot_from_db` for the DB path, OR via
+    /// [`set_snapshot_seed_block`](Self::set_snapshot_seed_block) for the
+    /// non-DB (file/memory) path (2SM4Y7 — the pyo3 `backfill_from_snapshot`
+    /// is retired; the core auto-backfill inside `BlockPump::resume_from_subscribe`
+    /// reads `S` from the shared `BotState`). `None` = cold-start (no snapshot
+    /// loaded).
     #[getter]
     fn snapshot_seed_block(&self) -> Option<u64> {
         self.engine.lock().core.read().snapshot_seed_block()
+    }
+
+    /// Set the snapshot seed block `S` on the shared `BotState` for the
+    /// non-DB (file/memory) snapshot path (2SM4Y7).
+    ///
+    /// The DB path (`Bot::load_snapshot_from_db`) sets `S` itself; the
+    /// non-DB path calls this once after `load_v3_snapshot_from_py` /
+    /// `load_v4_snapshot_from_py` so the shared `BotState` carries `S =
+    /// min(newest_block_v3, newest_block_v4)` — the seed the core
+    /// auto-backfill (J3FMDO) closes the snapshot→WS gap from.
+    ///
+    /// `None` clears the seed (cold-start resume); `Some(b)` overrides the
+    /// stored seed (used only when no snapshot has set it yet — the DB path's
+    /// already-set seed takes precedence on the production path because the
+    /// non-DB path does not call this setter).
+    #[setter]
+    fn set_snapshot_seed_block(&self, block: Option<u64>) {
+        self.engine
+            .lock()
+            .core
+            .write()
+            .set_snapshot_seed_block(block);
     }
 }
