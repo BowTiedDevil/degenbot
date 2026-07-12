@@ -710,24 +710,43 @@ class BackrunSession:
         # ── Coordination state ──
         self.dispatcher = PyDispatcher.for_block(self.current_block)
 
-        # ── Snapshots (injected or from the DB via get_snapshots) ──
+        # ── Snapshots (V3 pool tracker pre-population only; the engine's DB
+        # snapshot is loaded eagerly at PyBot construction via
+        # `Bot::load_snapshot_from_db` — JUCFCB, Shape 2 — and the
+        # snapshot→WS gap closes in `resume_from_subscribe` — J3FMDO).
+        # `engine_registry.start()` takes `v3_snapshot`/`v4_snapshot` kwargs
+        # ONLY when the snapshots are non-DB (file/memory) — the `_injected`
+        # fast path. The production DB path reads the snapshot at
+        # construction and `start()` takes no snapshot kwargs (the retired
+        # DB-snapshot `stream_*_to_engine` SQLAlchemy forwarding is gone —
+        # JUCFCB/2SM4Y7).
+        v3_snap: Any = None
+        v4_snap: Any = None
+        start_v3 = None  # snapshots passed to `start()` (non-DB only)
+        start_v4 = None
         if self._injected_snapshots is not None:
             v3_snap, v4_snap, _v3_blk, _v4_blk = self._injected_snapshots
+            start_v3, start_v4 = v3_snap, v4_snap
         else:
+            # Production DB path: snapshot for the V3 pool tracker only
+            # (engine feeds from the core store, set at Bot construction).
             v3_snap, v4_snap, _v3_blk, _v4_blk = get_snapshots(self.bot)
         self.v3_snapshot = v3_snap
         self.v4_snapshot = v4_snap
 
-        # ── Engine pre-resume ritual (subscribe → stream → backfill → verify) ──
-        # Two-step verify_on_register=True: detect snapshot/backfill drift at
-        # the moment a pool is registered (fail-fast), rather than only at the
-        # end-of-discovery batch verify — shortens time-to-first-failure if the
-        # engine/builder has a state bug.
+        # ── Engine pre-resume ritual (subscribe → verify) ──
+        # J3FMDO: the snapshot→WS gap is closed automatically inside
+        # `BlockPump::resume_from_subscribe` at resume. `start()` only
+        # subscribes + sets up verify config; resume drives both the backfill
+        # and the live loop. Non-DB snapshots flow through `load_*_from_py`
+        # in `start()`; the DB path takes no kwargs (snapshot loaded at
+        # construction; `snapshot_seed_block` is read from the core
+        # `BotState` by `start()` via the `snapshot_seed_block` getter).
         backfill_target = self.engine_registry.start(
             cfg.node_http,
             cfg.node_ws,
-            v3_snapshot=v3_snap,
-            v4_snapshot=v4_snap,
+            v3_snapshot=start_v3,
+            v4_snapshot=start_v4,
             verify_state_view=EthereumMainnetUniswapV4.state_view.address,
         )
         if backfill_target > self.current_block:
@@ -1050,13 +1069,14 @@ async def build_paths(
     as typed HookedPoolRejectedError / DynamicFeePoolRejectedError.
 
     Tick data for V3/V4 engine registration is resolved automatically from
-    the stored binary snapshots (already streamed via
-    stream_v3_snapshot_to_engine/stream_v4_snapshot_to_engine
-    in main() before backfill). The Rust engine applies buffered events on top
-    of stale snapshot data to bring it current. Verification is handled internally
-    by the engine (verify_on_register) — the tick data snapshot is taken while the
-    engine lock is held, eliminating the race that existed with Python-side async
-    verification.
+    the core `SnapshotStore` (the DB snapshot loaded eagerly at `PyBot`
+    construction via `Bot::load_snapshot_from_db`; `register_v3_pool`
+    consumes it via `seed_from_store=True` when `coverage="tracked"` + no
+    inline `tick_data`). The Rust engine applies buffered events on top of
+    stale snapshot data to bring it current. Verification is handled
+    internally by the engine (verify_on_register) — the tick data snapshot is
+    taken while the engine lock is held, eliminating the race that existed
+    with Python-side async verification.
 
     VP42BP AC item 4: each ``register_vN_pool`` call is wrapped in
     ``retry_verification_call`` with a bounded retry-with-backoff policy
@@ -1374,11 +1394,15 @@ def get_snapshots(
     int | None,
     int | None,
 ]:
-    """Load V3 and V4 liquidity snapshots from the database.
+    """Load V3 and V4 liquidity snapshots from the database for the V3 pool
+    tracker pre-population.
 
-    Snapshots provide tick_data for Python pool builds via trackers.
-    The Rust engine backfills events from the snapshot block to the
-    current chain head via backfill_from_snapshot().
+    Historically the snapshot also fed `engine_registry.start()` via
+    `stream_v3_snapshot_to_engine`/`stream_v4_snapshot_to_engine` SQLAlchemy
+    forwarding — that path is retired (JUCFCB/2SM4Y7: the engine's DB snapshot
+    is loaded eagerly at `PyBot` construction by `Bot::load_snapshot_from_db`,
+    and the snapshot→WS gap is closed automatically inside
+    `BlockPump::resume_from_subscribe` — J3FMDO).
 
     Returns (v3_snapshot, v4_snapshot, v3_snapshot_block, v4_snapshot_block).
     """
