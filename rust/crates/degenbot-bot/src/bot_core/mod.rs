@@ -1598,12 +1598,19 @@ impl BotState {
         self.snapshot_seed_block
     }
 
-    /// Test-only setter for the snapshot seed block `S` (FD7NFG tests).
-    /// Production sets `S` only via [`Bot::load_snapshot_from_db`] /
-    /// `load_snapshot_from_py`; tests need to drive the `S≥W` / `S=0` no-op
-    /// branches of [`BlockPump::backfill_from_snapshot`] without a DB.
-    #[cfg(test)]
-    pub fn set_snapshot_seed_block_for_test(&mut self, s: Option<u64>) {
+    /// Snapshot seed block `S` setter — the single source of truth for `S`.
+    ///
+    /// Production paths set `S` here in three ways:
+    /// - DB path: `Bot::load_snapshot_from_db` sets `S = min(newest_update_block_v3, v4)`.
+    /// - Non-DB path: the `PyUniswapArbEngine::set_snapshot_seed_block` setter
+    ///   (called by `engine_registry.start()` after `load_*_from_py`) records
+    ///   `S = min(newest_block)` from the file/memory snapshot (2SM4Y7).
+    /// - Tests: inject `S` directly to drive the `S≥W` / `S=0` no-op branches
+    ///   of `BlockPump::backfill_from_snapshot` without a DB (FD7NFG).
+    ///
+    /// `None` clears the seed (cold-start resume — `BlockPump::resume_from_subscribe`
+    /// skips the auto-backfill).
+    pub fn set_snapshot_seed_block(&mut self, s: Option<u64>) {
         self.snapshot_seed_block = s;
     }
 

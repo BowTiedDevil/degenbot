@@ -174,6 +174,13 @@ class EngineRegistry:
 
         # Only set when a snapshot was supplied (else there's no seed).
         self._verify_snapshot_block = snapshot_block
+        # 2SM4Y7: record S on the shared BotState so the core auto-backfill
+        # inside `resume()` (J3FMDO) closes the snapshot→WS gap for the non-DB
+        # path too (the pyo3 `backfill_from_snapshot` retired; the non-DB path
+        # sets S via the `snapshot_seed_block` property setter — the DB path's
+        # `load_snapshot_from_db` already set S).
+        if snapshot_block is not None:
+            self.engine.snapshot_seed_block = snapshot_block
 
         # Verify config (consumer-safe: nothing emits yet).
         self.engine.set_verify_rpc_url(node_http)

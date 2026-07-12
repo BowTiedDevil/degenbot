@@ -185,37 +185,6 @@ impl PyUniswapArbEngine {
         self.pump.subscribe(&rpc_url)
     }
 
-    /// Backfill Mint/Burn/ModifyLiquidity events from the last DB snapshot
-    /// block to the first WS block observed during `subscribe()`.
-    ///
-    /// Must be called after `subscribe()`, before `resume()`. Uses
-    /// `eth_getLogs` to fetch events for the gap between the DB snapshot
-    /// and the live WS connection, then applies them to the V3/V4 engines
-    /// via `backfill_logs()`.
-    ///
-    /// This ensures that when pools are registered (with `tick_data` from the
-    /// DB snapshot), any liquidity changes between the snapshot block and
-    /// the current chain head are reflected in the Rust engine's state.
-    ///
-    /// Args:
-    ///     `rpc_url`: HTTP RPC endpoint for `eth_getLogs` requests
-    ///     `chunk_size`: Number of blocks per `eth_getLogs` request (default 2000)
-    ///
-    /// Returns the number of blocks backfilled (0 if snapshot is current).
-    #[pyo3(signature = (rpc_url, snapshot_block, chunk_size=2000))]
-    fn backfill_from_snapshot(
-        &self,
-        rpc_url: &str,
-        snapshot_block: u64,
-        chunk_size: u64,
-    ) -> PyResult<u64> {
-        // ADR-006 D4 (T3): delegates to the shared `PumpState` — the
-        // Bot-owned entry point. Kept on the engine for the engine-only test
-        // seam; production routes through PyBot::backfill_from_snapshot.
-        self.pump
-            .backfill_from_snapshot(rpc_url, snapshot_block, chunk_size)
-    }
-
     /// Resume phase: begin normal pump processing.
     ///
     /// Must be called after `subscribe()`. Takes the WS stream from the

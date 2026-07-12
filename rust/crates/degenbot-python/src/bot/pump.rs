@@ -78,10 +78,6 @@ pub(crate) struct PumpState {
     pub(crate) verify_provider: Mutex<Option<degenbot_rpc::provider::AlloyProvider>>,
     /// Optional `StateView` contract address for V4 verification.
     pub(crate) verify_state_view: Mutex<Option<alloy::primitives::Address>>,
-    /// The snapshot block — set by `backfill_from_snapshot`.
-    pub(crate) verify_snapshot_block: Mutex<Option<u64>>,
-    /// The backfill block — set by `backfill_from_snapshot`.
-    pub(crate) verify_backfill_block: Mutex<Option<u64>>,
 }
 
 impl PumpState {
@@ -105,8 +101,6 @@ impl PumpState {
             verify_rpc_url: Mutex::new(None),
             verify_provider: Mutex::new(None),
             verify_state_view: Mutex::new(None),
-            verify_snapshot_block: Mutex::new(None),
-            verify_backfill_block: Mutex::new(None),
         }
     }
 
@@ -168,97 +162,6 @@ impl PumpState {
         });
         self.set_phase(EnginePhase::Subscribed);
         Ok(state.first_block)
-    }
-
-    /// Backfill Mint/Burn/ModifyLiquidity events from the DB snapshot block to
-    /// the first WS block (ADR-006 D4 T3 — relocated onto the shared pump state
-    /// so `PyBot::backfill_from_snapshot` delegates here).
-    ///
-    /// # Errors
-    /// `PyRuntimeError` if the phase is wrong, subscribe wasn't called, or an
-    /// `eth_getLogs` request fails.
-    pub(crate) fn backfill_from_snapshot(
-        &self,
-        rpc_url: &str,
-        snapshot_block: u64,
-        chunk_size: u64,
-    ) -> PyResult<u64> {
-        let phase = self.current_phase();
-        phase
-            .require(EnginePhase::SnapshotLoaded, "backfill_from_snapshot")
-            .map_err(PyRuntimeError::new_err)?;
-        phase
-            .require_before(EnginePhase::Backfilled, "backfill_from_snapshot")
-            .map_err(PyRuntimeError::new_err)?;
-        let first_ws_block = {
-            let state_lock = self.subscribe_state.lock();
-            if let Some(s) = state_lock.as_ref() {
-                s.first_block
-            } else {
-                return Err(PyRuntimeError::new_err(
-                    "Cannot backfill: subscribe() has not been called. Call subscribe() first.",
-                ));
-            }
-        };
-        if snapshot_block == 0 {
-            log::warn!("backfill_from_snapshot: snapshot_block is 0, skipping");
-            return Ok(0);
-        }
-        if snapshot_block >= first_ws_block {
-            log::info!(
-                "backfill_from_snapshot: snapshot at {snapshot_block} >= WS block {first_ws_block}, nothing to backfill"
-            );
-            return Ok(0);
-        }
-        let from_block = snapshot_block + 1;
-        let to_block = first_ws_block - 1;
-        let total_blocks = to_block - from_block + 1;
-        log::info!(
-            "backfill_from_snapshot: fetching events from block {from_block} to {to_block} ({total_blocks} blocks, chunk_size={chunk_size})"
-        );
-        let runtime = degenbot_core::runtime::get_runtime();
-        let provider = runtime.block_on(async {
-            degenbot_rpc::provider::AlloyProvider::new(rpc_url, 3)
-                .await
-                .map_err(|e| PyRuntimeError::new_err(format!("Failed to create provider: {e}")))
-        })?;
-        let provider_arc = provider.provider_arc();
-        let mut total_logs = 0usize;
-        let mut chunk_start = from_block;
-        while chunk_start <= to_block {
-            let chunk_end = (chunk_start + chunk_size - 1).min(to_block);
-            let filter =
-                degenbot_bot::bot_core::block_pump::build_backfill_filter(chunk_start, chunk_end);
-            let logs = runtime.block_on(async {
-                provider_arc.get_logs(&filter).await.map_err(|e| {
-                    PyRuntimeError::new_err(format!(
-                        "eth_getLogs failed for blocks {chunk_start}-{chunk_end}: {e}"
-                    ))
-                })
-            })?;
-            let chunk_log_count = logs.len();
-            total_logs += chunk_log_count;
-            {
-                let mut engine = self.engine.lock();
-                engine.process_backfill_logs(&logs, chunk_end);
-            }
-            log::info!(
-                "backfill_from_snapshot: blocks {chunk_start}-{chunk_end}: {chunk_log_count} logs applied"
-            );
-            chunk_start = chunk_end + 1;
-        }
-        log::info!(
-            "backfill_from_snapshot: complete — {total_logs} total logs applied across {total_blocks} blocks"
-        );
-        *self.verify_snapshot_block.lock() = Some(snapshot_block);
-        let backfill_block = self
-            .engine
-            .lock()
-            .last_processed_block()
-            .unwrap_or(to_block);
-        *self.verify_backfill_block.lock() = Some(backfill_block);
-        self.set_phase(EnginePhase::Backfilled);
-        Ok(total_blocks)
     }
 
     /// Resume the pump — begin normal WS processing (ADR-006 D4 T3).
