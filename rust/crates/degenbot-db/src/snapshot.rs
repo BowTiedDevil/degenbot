@@ -23,7 +23,7 @@ use crate::schema::table::is_v3_kind;
 
 /// Per-tick (`liquidity_gross`, `liquidity_net`) pair (the value type of a batch
 /// read entry).
-type TickMap = HashMap<i32, (U256, U256)>;
+pub type TickMap = HashMap<i32, (U256, U256)>;
 
 /// The tick-initialization bitmap entry at one word (mirrors Python
 /// `BitmapAtWord`).
