@@ -3208,4 +3208,52 @@ mod tests {
             .is_err());
         assert!(EnginePhase::Resumed.allow_subscribe("subscribe").is_err());
     }
+
+    /// J3FMDO regression: `subscribe()` must not regress the phase below
+    /// `SnapshotLoaded` when the core already has a snapshot loaded (the
+    /// construction-time-load path: `load_snapshot_from_db` at `Bot`
+    /// construction → `subscribe`). The snapshot is loaded into the shared
+    /// core `BotState` and never advances the engine phase, so an
+    /// unconditional `set_phase(Subscribed)` after subscribe left the phase
+    /// at `Subscribed` (1) and `resume()`'s `require(SnapshotLoaded)` guard
+    /// (needs `>= 2`) crashed the production backrun bot:
+    ///
+    ///   `RuntimeError`: Cannot call resume: engine is in phase Subscribed,
+    ///                 but requires `SnapshotLoaded`
+    ///
+    /// `after_subscribe(current, core_has_snapshot)` computes the correct
+    /// post-subscribe phase so `resume()` is reachable from BOTH paths.
+    #[test]
+    fn after_subscribe_advances_to_snapshot_loaded_when_core_has_snapshot() {
+        // Legacy path (no core snapshot; snapshot loaded AFTER subscribe via
+        // `load_*_snapshot_from_py`): Created → subscribe → Subscribed.
+        assert_eq!(
+            EnginePhase::after_subscribe(EnginePhase::Created, false),
+            EnginePhase::Subscribed,
+            "legacy path: no core snapshot → Subscribed after subscribe"
+        );
+        // Construction-time-load path: core has a snapshot (loaded at `Bot`
+        // construction via `load_snapshot_from_db`). subscribe from Created →
+        // SnapshotLoaded (NOT Subscribed — that was the crash).
+        assert_eq!(
+            EnginePhase::after_subscribe(EnginePhase::Created, true),
+            EnginePhase::SnapshotLoaded,
+            "construction-load path: core has snapshot → SnapshotLoaded after subscribe"
+        );
+        // Legacy pre-subscribe load: snapshot already loaded into the engine
+        // (phase == SnapshotLoaded) BEFORE subscribe. subscribe must NOT
+        // regress the phase back to Subscribed (the old `set_phase(Subscribed)`
+        // was a regression here too).
+        assert_eq!(
+            EnginePhase::after_subscribe(EnginePhase::SnapshotLoaded, false),
+            EnginePhase::SnapshotLoaded,
+            "pre-subscribe load: subscribe must not regress SnapshotLoaded → Subscribed"
+        );
+        // Pre-subscribe load AND core has snapshot — still SnapshotLoaded.
+        assert_eq!(
+            EnginePhase::after_subscribe(EnginePhase::SnapshotLoaded, true),
+            EnginePhase::SnapshotLoaded,
+            "SnapshotLoaded + core snapshot → SnapshotLoaded (no regression)"
+        );
+    }
 }

@@ -84,8 +84,13 @@ pub const INT128_MAX: U256 = U256::from_limbs([0xFFFF_FFFF_FFFF_FFFF, 0xFFFF_FFF
 ///                                                        ──resume()──► Resumed
 ///
 /// Construction-time-load path (RUQ637/TJT63P): snapshot loaded at `Bot`
-/// construction BEFORE subscribe:
-/// Created ──load_snapshot_from_db()──► SnapshotLoaded ──subscribe()──► Subscribed
+/// construction BEFORE subscribe. The snapshot lives in the shared core
+/// `BotState` and never advances the engine phase, so `subscribe()` uses
+/// `EnginePhase::after_subscribe(current, core_has_snapshot)` to reflect
+/// reality — landing at `SnapshotLoaded` (not `Subscribed`) so `resume()`
+/// (which requires `>= SnapshotLoaded`) is reachable:
+/// Created ──load_snapshot_from_db()──[core has snapshot]──► subscribe()
+///        ──► SnapshotLoaded ──resume()──► Resumed
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
@@ -170,6 +175,49 @@ impl EnginePhase {
             other => Err(format!(
                 "Cannot call {method_name}: engine is in phase {other:?}, but subscribe requires Created or SnapshotLoaded"
             )),
+        }
+    }
+
+    /// Compute the phase AFTER `subscribe()` completes (J3FMDO regression
+    /// fix for the construction-time-load path).
+    ///
+    /// `PumpState::subscribe` used to unconditionally `set_phase(Subscribed)`,
+    /// which is correct for the legacy path (`Created → subscribe →
+    /// Subscribed → load_*_snapshot_from_py → SnapshotLoaded → resume`) but
+    /// crashes the construction-time-load path (RUQ637/TJT63P): the snapshot
+    /// is loaded into the shared core `BotState` at `Bot` construction —
+    /// BEFORE subscribe — and never advances the engine phase. After
+    /// subscribe, the phase was `Subscribed` (1), and `resume()`'s
+    /// `require(SnapshotLoaded)` guard (needs `>= 2`) crashed the production
+    /// backrun bot:
+    ///
+    /// ```text
+    /// RuntimeError: Cannot call resume: engine is in phase Subscribed,
+    ///               but requires SnapshotLoaded
+    /// ```
+    ///
+    /// This helper reflects reality: if the engine phase is ALREADY at
+    /// `SnapshotLoaded` (the legacy pre-subscribe load via
+    /// `load_*_snapshot_from_py`) OR the core has a snapshot loaded
+    /// (`core_has_snapshot` — the construction-time-load path), the phase
+    /// after subscribe is `SnapshotLoaded`. Otherwise `Subscribed` (the
+    /// legacy path that loads the snapshot AFTER subscribe).
+    ///
+    /// `allow_subscribe` guarantees `current ∈ {Created, SnapshotLoaded}` at
+    /// call time (subscribe rejects `Subscribed`/`Backfilled`/`Resumed`), but
+    /// the `SnapshotLoaded` arm is preserved for completeness so a future
+    /// caller that reaches `after_subscribe` with a higher phase does not
+    /// regress.
+    #[must_use]
+    pub fn after_subscribe(current: Self, core_has_snapshot: bool) -> Self {
+        match current {
+            // Already at or past SnapshotLoaded — subscribe must NOT regress
+            // the phase (the legacy pre-subscribe load + any future path).
+            Self::SnapshotLoaded | Self::Backfilled | Self::Resumed => current,
+            // Created — advance based on whether the core already has a
+            // snapshot (construction-time-load path) or not (legacy path).
+            Self::Created if core_has_snapshot => Self::SnapshotLoaded,
+            Self::Created | Self::Subscribed => Self::Subscribed,
         }
     }
 }
