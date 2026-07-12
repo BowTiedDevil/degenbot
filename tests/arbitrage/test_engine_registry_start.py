@@ -119,12 +119,16 @@ class _FakeSnapshot:
 
 def test_start_derives_snapshot_block_as_min_newest_block(monkeypatch) -> None:
     """start() derives snapshot_block = min(snap.newest_block) across supplied
-    snapshots and passes it to backfill_from_snapshot — never a user param.
+    snapshots and stashes it for the per-pool verify, never passing it to
+    a backfill call (J3FMDO: the snapshot→WS gap closes automatically inside
+    `resume()` via the core `BlockPump::resume_from_subscribe`, not from
+    `start()`).
 
     The module-level stream functions are patched with recorders (the real fns
     need a full DB-backed snapshot); the engine is a real Fake. This verifies
-    start()'s ORCHESTRATION — that it calls stream then backfill with the
-    derived block in the documented order — not the stream fns themselves.
+    start()'s ORCHESTRATION — that it streams, stashes the derived block as
+    `_verify_snapshot_block`, and configures verify in the documented order —
+    not the stream fns themselves.
     """
     fake = FakeEngine()
     registry = runner.EngineRegistry(bot=None, engine=fake)
@@ -150,16 +154,19 @@ def test_start_derives_snapshot_block_as_min_newest_block(monkeypatch) -> None:
         v4_snapshot=v4_snap,
     )
 
-    # The derived block is the min of the two newest_blocks.
-    assert fake.backfill_args == [("http://localhost:8545", 18_000_050)]
-    # Streams ran for both snapshots, in order, then backfill, then verify.
+    # J3FMDO: start() no longer calls backfill_from_snapshot — resume() drives
+    # it via the core auto-backfill. So backfill_args stays empty.
+    assert fake.backfill_args == []
+    # Streams ran for both snapshots, in order, then verify-config (no backfill).
     assert fake.calls == [
         "subscribe",
         "stream_v3",
         "stream_v4",
-        "backfill",
         "set_verify_rpc_url",
     ]
+    # The derived block (the min of the two newest_blocks) is stashed as the
+    # step-1 verify seed.
+    assert registry._verify_snapshot_block == 18_000_050
     assert "resume" not in fake.calls
 
 
