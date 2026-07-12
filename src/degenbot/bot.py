@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 
 from alembic.runtime.migration import MigrationContext
@@ -128,6 +129,30 @@ class Bot:
         # ADR-006 slice 8b: the facade is single-chain, so the configured
         # ``default_chain_id`` is wired into the Rust ``Bot`` here (D4).
         self._py_bot = PyBot(self._chain_id)
+
+        # JUCFCB (epic P73ER6): eagerly load the V3+V4 DB snapshot into the
+        # core ``BotState`` at construction time (Shape 2). This makes the DB
+        # a construction-time property of the Bot — correct use is structural:
+        # the Bot is born with its snapshot or born cold-start, nothing in
+        # between. The core ``Bot::load_snapshot_from_db`` streams V3+V4 into
+        # the core ``SnapshotStore`` + records ``S = min(newest_update_block)``.
+        # ``None``/cold-start (no pools) is NOT an error. The file/memory
+        # snapshot path stays non-DB-only (loaded at ``engine_registry.start``
+        # via ``load_*_from_py``).
+        if config.database.path is not None:
+            db_path = config.database.path
+            # The DB file may not exist yet (SQLAlchemy creates it lazily on
+            # the first write). A missing file is a cold-start: no snapshot
+            # pools to load, `S = None`. The store stays empty; pool
+            # registration falls back to sparse. The file will be created by
+            # the first write, at which point a `Bot` restart will load it.
+            if Path(db_path).exists():
+                self._py_bot.load_snapshot_from_db(str(db_path), self._chain_id)
+            else:
+                logger.debug(
+                    "DB file %s does not exist; cold-start (no snapshot loaded).",
+                    db_path,
+                )
 
         self.db = DatabaseSessionManager(
             get_scoped_sqlite_session(database_path=config.database.path),

@@ -2650,6 +2650,27 @@ class PyBot:
         The default ``chain_id = 0`` keeps the bare ``PyBot()`` test fixtures
         (which only exercise the Rust core) working without a chain invariant.
         """
+    def load_snapshot_from_db(self, db_path: str, chain_id: int) -> None:
+        """Load V3+V4 DB snapshot into the core `BotState` at construction time.
+
+        Called from Python ``Bot.__init__`` when ``config.database.path`` exists.
+        Opens a read-only ``DegenbotDb`` handle from ``db_path`` and calls the
+        core ``Bot::load_snapshot_from_db`` — streams V3+V4 pools into the core
+        ``SnapshotStore`` via ``stream_liquidity_maps`` (one pool at a time, no
+        materialized ``Vec``) + records ``S = min(fetch_newest_update_block(V3), V4)``.
+        After this, pool registration auto-seeds from the store via ``take()``;
+        the Python builder passes ``tick_data=None, coverage="tracked"``.
+
+        ``None``/cold-start (no pools) is NOT an error — the pump anchors on
+        ``first_observed_block`` at resume.
+        """
+    @property
+    def snapshot_seed_block(self) -> int | None:
+        """The snapshot seed block `S` (or ``None`` cold-start).
+
+        Python reads this in ``engine_registry.start()`` to stash
+        ``_verify_snapshot_block``.
+        """
     def register_v2_pool(
         self,
         address: str,
@@ -2926,6 +2947,13 @@ class UniswapArbEngine:
         tick_data: dict[int, tuple[int, int]],
     ) -> None: ...
     def finish_v4_snapshot(self) -> None: ...
+    @property
+    def snapshot_seed_block(self) -> int | None:
+        """The snapshot seed block `S` (set at `Bot.__init__` by `load_snapshot_from_db`).
+
+        ``None`` = cold-start. `engine_registry.start()` reads this to drive
+        the snapshot→WS backfill + stash `_verify_snapshot_block`.
+        """
 
     # ── Phase / startup ritual (Plan 102: the canonical two-phase flow). ──
     def subscribe(self, rpc_url: str) -> int: ...

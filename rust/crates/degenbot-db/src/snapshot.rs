@@ -18,12 +18,13 @@ use alloy::primitives::{Address, B256, U256};
 use crate::connection::DegenbotDb;
 use crate::error::DbError;
 use crate::read::ExchangeFamily;
-use crate::rows::decode::{decode_address, decode_u256};
+use crate::rows::decode::{decode_address, decode_i256, decode_u256};
 use crate::schema::table::is_v3_kind;
 
 /// Per-tick (`liquidity_gross`, `liquidity_net`) pair (the value type of a batch
-/// read entry).
-pub type TickMap = HashMap<i32, (U256, U256)>;
+/// read entry). `liquidity_net` is `I256` — the DB stores it as a signed
+/// decimal string (`VARCHAR(78)` with a leading `-` for upper ticks).
+pub type TickMap = HashMap<i32, (U256, alloy::primitives::I256)>;
 
 /// The tick-initialization bitmap entry at one word (mirrors Python
 /// `BitmapAtWord`).
@@ -36,7 +37,7 @@ pub struct BitmapAtWord {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiquidityAtTick {
     pub liquidity_gross: U256,
-    pub liquidity_net: U256,
+    pub liquidity_net: alloy::primitives::I256,
 }
 
 /// The liquidity map for one pool — `tick_bitmap` + `tick_data` (mirrors
@@ -137,7 +138,7 @@ impl DegenbotDb {
                     tick,
                     LiquidityAtTick {
                         liquidity_gross: decode_u256(&gross)?,
-                        liquidity_net: decode_u256(&net)?,
+                        liquidity_net: decode_i256(&net)?,
                     },
                 );
             }
@@ -222,7 +223,7 @@ impl DegenbotDb {
                     tick,
                     LiquidityAtTick {
                         liquidity_gross: decode_u256(&gross)?,
-                        liquidity_net: decode_u256(&net)?,
+                        liquidity_net: decode_i256(&net)?,
                     },
                 );
             }
@@ -307,7 +308,7 @@ impl DegenbotDb {
                         }
                     }
                     current_addr = Some(addr);
-                    current_ticks.insert(tick, (decode_u256(&gross)?, decode_u256(&net)?));
+                    current_ticks.insert(tick, (decode_u256(&gross)?, decode_i256(&net)?));
                 }
                 if let Some(addr) = current_addr {
                     on_pool(PoolKey::V3(addr), &current_ticks);
@@ -351,7 +352,7 @@ impl DegenbotDb {
                         }
                     }
                     current = Some(key);
-                    current_ticks.insert(tick, (decode_u256(&gross)?, decode_u256(&net)?));
+                    current_ticks.insert(tick, (decode_u256(&gross)?, decode_i256(&net)?));
                 }
                 if let Some((pm_s, hash_s)) = current {
                     let pm = decode_address(&pm_s)?;

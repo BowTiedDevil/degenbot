@@ -32,6 +32,12 @@ class _RecordingVerifyEngine:
         self.verify_calls: list[dict] = []
         self.fail_next: str | None = None
         self._last_processed_block: int | None = 18_000_042
+        # JUCFCB: the DB path reads `snapshot_seed_block` from the engine.
+        self._snapshot_seed_block: int | None = None
+
+    @property
+    def snapshot_seed_block(self) -> int | None:
+        return self._snapshot_seed_block
 
     # lifecycle (subscribe/backfill) — minimal, record-only
     def subscribe(self, ws: str) -> int:

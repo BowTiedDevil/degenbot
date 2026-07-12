@@ -371,6 +371,11 @@ class AsyncV4PoolBuilder:
                         int(info[1]),
                         int(info[2]) if len(info) > 2 else 0,  # noqa: PLR2004
                     )
+        # JUCFCB: when the DB snapshot was loaded at Bot.__init__, the core
+        # SnapshotStore holds the tick data. Pass tick_data=None + coverage=
+        # "tracked" — the pyo3 layer infers seed_from_store and register_v4_pool
+        # consumes the store via take().
+        register_tick_data = None if db_snapshot_loaded else register_rows
         pool_handle_pool_id = self._py_bot.register_v4_pool(
             pool_manager=pool_manager_address,
             pool_id_hex=pool_id_bytes.to_0x_hex(),
@@ -383,7 +388,7 @@ class AsyncV4PoolBuilder:
             liquidity=int(liquidity_val),
             tick=slot0_data.tick,
             block=state_block,
-            tick_data=register_rows,
+            tick_data=register_tick_data,
             coverage=coverage,
             tick_data_fetcher=self._make_tick_data_fetcher(
                 pool_id_bytes,

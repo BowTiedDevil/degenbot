@@ -18,6 +18,15 @@ pub(crate) fn decode_u256(s: &str) -> Result<U256, DbError> {
         .map_err(|e| DbError::Decode(format!("u256 parse of {s:?}: {e}")))
 }
 
+/// Decode a signed `VARCHAR(78)` column value to [`I256`]. Used for
+/// `liquidity_net` (upper ticks carry a negative net). The DB stores it as a
+/// signed decimal string (Python `str(int)`), so `U256::from_str_radix`
+/// rejects the leading `-`; `I256::from_dec_str` accepts it.
+pub(crate) fn decode_i256(s: &str) -> Result<alloy::primitives::I256, DbError> {
+    alloy::primitives::I256::from_dec_str(s.trim())
+        .map_err(|e| DbError::Decode(format!("i256 parse of {s:?}: {e}")))
+}
+
 /// Decode a nullable `VARCHAR(78)` column value to `Option<U256>`.
 ///
 /// # Errors

@@ -171,6 +171,44 @@ impl PyBot {
         }
     }
 
+    /// Load the V3 + V4 DB snapshot into the core `BotState` (B3OROH, JUCFCB).
+    ///
+    /// Called at Python `Bot.__init__` time when a DB path is configured
+    /// (Shape 2: eager construction-time load). Opens a read-only
+    /// `DegenbotDb` handle from `db_path`, then calls the core
+    /// `Bot::load_snapshot_from_db` — the single Rust entry point that
+    /// `stream_liquidity_maps`-loads V3+V4 pools into the core `SnapshotStore`s
+    /// + records `S = min(fetch_newest_update_block(V3), V4)`. After this,
+    /// pool registration consumes the store via `take()` (RUQ637) — the
+    /// Python builder passes `tick_data=None, coverage=Tracked` and lets the
+    /// store decide Tracked-vs-Sparse per pool.
+    ///
+    /// `None`/cold-start (no pools) is NOT an error — the pump anchors on
+    /// `first_observed_block` at resume. Idempotent across the two families,
+    /// but a second call after a successful load will `begin_load` a store
+    /// that's already loaded (panics) — call exactly once at construction.
+    ///
+    /// # Errors
+    /// `PyRuntimeError` on a DB open/read failure or a liquidity value
+    /// out of range.
+    #[pyo3(signature = (db_path, chain_id))]
+    fn load_snapshot_from_db(&self, db_path: &str, chain_id: u64) -> PyResult<()> {
+        let db = degenbot_db::connection::DegenbotDb::open(&std::path::PathBuf::from(db_path))
+            .map_err(|e| crate::db::db_err_to_py(&e))?
+            .0;
+        self.bot.load_snapshot_from_db(&db, chain_id).map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("load_snapshot_from_db failed: {e}"))
+        })
+    }
+
+    /// The snapshot seed block `S` (or `None` when no DB snapshot was loaded —
+    /// the cold-start path). Python reads this in `engine_registry.start()`
+    /// to stash `_verify_snapshot_block` for the per-pool two-step verify.
+    #[getter]
+    fn snapshot_seed_block(&self) -> Option<u64> {
+        self.bot.state_arc().read().snapshot_seed_block()
+    }
+
     /// Subscribe to the WS `newHeads` + logs streams (ADR-006 D4 T3).
     ///
     /// The Bot-owned pump entry point — delegates to the shared `PumpState`
@@ -701,6 +739,11 @@ impl PyBot {
         let chain_id = self.bot.chain_id();
         let deployer = degenbot_uniswap::deployments::resolve_deployer(chain_id, fac);
         let init_hash_b256 = degenbot_uniswap::deployments::resolve_v3_init_hash(chain_id, fac);
+        // seed_from_store: when coverage is Tracked but no inline tick_data was
+        // passed, the core SnapshotStore must be the source (the DB snapshot
+        // loaded at Bot.__init__ feeds the store; register_v3_pool consumes it
+        // via `take()`). Inline tick_data (test fixtures / file snapshots) wins.
+        let seed_from_store = cov == PoolTickCoverage::Tracked && rust_tick_data.is_empty();
 
         Ok(self
             .bot
@@ -721,7 +764,7 @@ impl PyBot {
                 tick_data: rust_tick_data,
                 update_block,
                 coverage: cov,
-                seed_from_store: false,
+                seed_from_store,
                 fetcher: tick_data_fetcher
                     .filter(|f| !f.is_none())
                     .map(|f| crate::bot::pool::make_tick_fetcher(f.clone().unbind())),
@@ -820,6 +863,9 @@ impl PyBot {
                 )));
             }
         };
+        // seed_from_store: Tracked coverage + no inline tick_data → the core
+        // SnapshotStore is the source (DB snapshot loaded at Bot.__init__).
+        let seed_from_store = cov == PoolTickCoverage::Tracked && rust_tick_data.is_empty();
         self.bot
             .state_arc()
             .write()
@@ -840,7 +886,7 @@ impl PyBot {
                 tick_data: rust_tick_data,
                 update_block: block,
                 coverage: cov,
-                seed_from_store: false,
+                seed_from_store,
                 fetcher: tick_data_fetcher
                     .filter(|f| !f.is_none())
                     .map(|f| crate::bot::pool::make_tick_fetcher(f.clone().unbind())),
