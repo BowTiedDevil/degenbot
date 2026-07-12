@@ -753,3 +753,6 @@
 {"type":"state","ts":"2026-07-12T20:30:31.538424838Z","data":{"id":"YHQBHK","state":"done","ts":"2026-07-12T20:30:31.538424838Z"}}
 {"type":"claim","ts":"2026-07-12T20:56:32.348566657Z","data":{"id":"DADWUP","agent_id":"dev","ts":"2026-07-12T20:56:32.348566657Z"}}
 {"type":"state","ts":"2026-07-12T20:56:32.348566657Z","data":{"id":"DADWUP","state":"doing","ts":"2026-07-12T20:56:32.348566657Z"}}
+{"type":"state","ts":"2026-07-12T22:18:17.436702494Z","data":{"id":"DADWUP","state":"done","ts":"2026-07-12T22:18:17.436702494Z"}}
+{"type":"result","ts":"2026-07-12T22:50:37.825409246Z","data":{"task_id":"JLLE57","summary":"docs/ergo-results/jlle57_result.md","path":"docs/ergo-results/jlle57_result.md","sha256_at_attach":"120238f44066b06b99d89c22e8d46e63ca065b11dc24c74a9fb7c5122ed2361f","mtime_at_attach":"2026-07-12T22:50:37.797390137Z","git_commit_at_attach":"fbae7eb2be6bb804bc574febf38be4581ee8b333","ts":"2026-07-12T22:50:37.825409246Z"}}
+{"type":"state","ts":"2026-07-12T22:50:37.825409246Z","data":{"id":"JLLE57","state":"done","ts":"2026-07-12T22:50:37.825409246Z"}}

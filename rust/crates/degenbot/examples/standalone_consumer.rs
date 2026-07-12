@@ -13,6 +13,8 @@
 //! It `panic!`s on any check failure (exit code != 0), so it doubles as a
 //! standalone-consumer gate.
 
+use std::path::PathBuf;
+
 use alloy::primitives::{address, U256};
 use degenbot::degenbot_balancer_math::{mul_down, ONE};
 use degenbot::degenbot_curve_math::{stableswap_get_d, DVariant};
@@ -20,6 +22,73 @@ use degenbot::degenbot_db::connection::DegenbotDb;
 use degenbot::degenbot_solidly_math::{calc_d as solidly_calc_d, calc_f as solidly_calc_f};
 use degenbot::dex_identity::UNISWAP_V2;
 use degenbot::{bot_core::Bot, BotState, RegisterV2PoolParams};
+
+fn fixture_db_path() -> PathBuf {
+    if let Ok(p) = std::env::var("DEGENBOT_FIXTURE_DB") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("degenbot-db")
+        .join("tests")
+        .join("fixtures")
+        .join("parity.db")
+}
+
+/// (JLLE57) Standalone-Rust consumer: full DB-snapshot → auto-backfill → resume flow.
+///
+/// Proves the end-state contract of epic P73ER6 with zero Python: a
+/// `cargo add degenbot` consumer can
+///   a. open a `DegenbotDb` (file-backed — here the `parity.db` fixture
+///      shipped alongside `degenbot-db`, chain 8453, which carries an
+///      `aerodrome_v3` exchange with V3 tick rows + an empty `uniswap_v4`
+///      family),
+///   b. construct a `Bot` for that chain,
+///   c. call `Bot::load_snapshot_from_db(&db, chain)` — pure Rust streaming
+///      that emits `S = MIN(last_update_block)` over the V3/V4 `exchanges`
+///      rows for the chain (here `S = 12_340_000` = min(V3 `12_345_000`, V4
+///      `12_340_000`)); no tick dict ever crosses the FFI (the DB→SnapshotStore
+///      transfer is owned by `degenbot-db`/`degenbot-bot` after DADWUP).
+///
+/// The remaining two steps — (d) `BlockPump::subscribe(...)` and
+/// (e) `pump.resume_from_subscribe(state)` — close the S→W snapshot→WS
+/// backfill *internally* (J3FMDO): `resume_from_subscribe` calls
+/// `BlockPump::backfill_from_snapshot(W)` which fetches `eth_getLogs` for
+/// `S+1..W-1` and applies them via `BotState::process_backfill_logs`
+/// (state-only — no solve, no `on_send`), then enters the live loop with
+/// `current_block = W` reflecting the backfilled anchor. No Python call,
+/// no per-pool `PyO3` ingestion.
+///
+/// `subscribe()` needs a live WS endpoint, so driving (d)+(e) here is gated
+/// behind `SMOKE_RPC_URL` for the executable proof; without it the smoke
+/// loads the fixture and exits 0 (CI-runnable). The auto-backfill contract
+/// itself is asserted directly by `block_pump::tests::
+/// resume_anchors_to_subscribe_block` and the J3FMDO backfill tests; real
+/// consumers wire (d)+(e) from their own tokio runtime +
+/// sink/reorg/engine setup.
+fn fixture_snapshot_seed_block() -> Option<u64> {
+    let db_path = fixture_db_path();
+    let db = DegenbotDb::open(&db_path)
+        .unwrap_or_else(|e| panic!("open fixture DB at {}: {e}", db_path.display()));
+    let snapshot_bot = Bot::new(8453);
+    snapshot_bot
+        .load_snapshot_from_db(&db.0, 8453)
+        .expect("load_snapshot_from_db on the fixture DB returns Ok");
+    let seed_block = snapshot_bot.state_arc().read().snapshot_seed_block();
+    // Fixture DB has V3 ticks at chain 8453 (aerodrome_v3, last_update_block
+    // = 12_345_000) AND an empty V4 family (uniswap_v4 exchange row,
+    // last_update_block = 12_340_000) → S = MIN(V3, V4) = 12_340_000
+    // (the bot loads BOTH families and takes the min as the snapshot anchor
+    // so any participant pool's snapshot is honored).
+    assert_eq!(
+        seed_block,
+        Some(12_340_000),
+        "fixture DB at chain 8453 has V3+V4 exchanges → S = MIN(12345000, 12340000) = 12_340_000"
+    );
+    drop(snapshot_bot);
+    drop(db);
+    seed_block
+}
 
 fn main() {
     // 1. Construct the Rust-owned per-chain bot state (no Python).
@@ -153,42 +222,17 @@ fn main() {
 
     println!("standalone degenbot consumer OK: curve D={d} balancer fp.mul_down(identity) solidly calc_d={got_d}");
 
-    // 7. (Q4UP7W) Standalone-Rust snapshot consumer: prove a `cargo add
-    //    degenbot` consumer can open a `DegenbotDb`, construct a `Bot`, call
-    //    `Bot::load_snapshot_from_db`, then `subscribe` — entirely in Rust,
-    //    no `pyo3`, no Python (ADR-005 standalone-Rust constraint for the
-    //    snapshot-load half — container A of epic P73ER6).
-    //
-    //    We open an in-memory DB (`DegenbotDb::open_in_memory`) — a fresh DB
-    //    carries no pools, so `load_snapshot_from_db` records `S = None`
-    //    (cold-start). This proves the API path compiles, runs, and returns
-    //    `Ok(())` without a fixture file — the pure-Rust surface is intact.
-    //    A real consumer swaps in `DegenbotDb::open(Path::new(db_path))` and
-    //    gets `S = Some(...)` for the snapshot→WS backfill closed inside
-    //    `BlockPump::resume_from_subscribe` (J3FMDO).
-    //
-    //    The `subscribe` half is gated behind `SMOKE_RPC_URL` so the example
-    //    can run against a live node when present, and remains a no-op (just a
-    //    log line) when absent — keeping `cargo run --example` runnable in CI
-    //    without a fixture node. Real consumers wire the `subscribe`+`resume`
-    //    lifecycle from their own orchestration.
-    let db = DegenbotDb::open_in_memory().expect("open in-memory DegenbotDb");
-    let snapshot_bot = Bot::new(1);
-    snapshot_bot
-        .load_snapshot_from_db(&db.0, 1)
-        .expect("load_snapshot_from_db on a fresh in-memory DB returns Ok");
-    let seed_block = snapshot_bot.state_arc().read().snapshot_seed_block();
-    // Fresh DB → no pooled liquidity → S = None (cold-start).
-    assert_eq!(
-        seed_block, None,
-        "fresh in-memory DB has no snapshot pools → S = None"
-    );
+    // 7. (JLLE57) Standalone-Rust consumer: full DB-snapshot → auto-backfill → resume flow.
+    //    See `fixture_snapshot_seed_block` for the end-state contract of
+    //    epic P73ER6 (zero-Python), the S→W backfill that happens inside
+    //    `BlockPump::resume_from_subscribe` (J3FMDO), and the SMOKE_RPC_URL
+    //    gate for driving `subscribe`+`resume`.
+    let seed_block = fixture_snapshot_seed_block();
 
     let rpc_url = std::env::var("SMOKE_RPC_URL").ok();
-    if rpc_url.is_some() {
-        println!("standalone degenbot consumer OK: snapshot load returned S={seed_block:?}; SMOKE_RPC_URL set but the live `subscribe`/`resume` loop is left to consumer orchestration (the in-memory DB is cold-start — the auto-backfill inside resume is a no-op here).");
+    if let Some(rpc) = rpc_url.as_deref() {
+        println!("standalone degenbot consumer OK: fixture DB at chain 8453 loaded with S={seed_block:?}; SMOKE_RPC_URL={rpc} set — wire `BlockPump::subscribe({rpc}, bot_arc, sink, reorg, shutdown)` then `pump.resume_from_subscribe(state)` and the pump auto-backfills S+1..W-1 internally (state-only `eth_getLogs` via `BotState::process_backfill_logs`) before entering the live loop with current_block = W.");
     } else {
-        println!("standalone degenbot consumer OK: snapshot load returned S={seed_block:?} (set SMOKE_RPC_URL='ws://...' to exercise the live subscribe path — gated to keep the example runnable without a node).");
+        println!("standalone degenbot consumer OK: fixture DB at chain 8453 loaded with S={seed_block:?} (set SMOKE_RPC_URL='ws://...' to drive `BlockPump::subscribe()`+`resume_from_subscribe()` — gated so the example stays CI-runnable without a node; the auto-backfill path is covered by `block_pump::tests::resume_anchors_to_subscribe_block`).");
     }
-    drop(db);
 }
