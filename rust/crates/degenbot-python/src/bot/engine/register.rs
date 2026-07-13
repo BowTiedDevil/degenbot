@@ -216,19 +216,72 @@ impl PyUniswapArbEngine {
     }
 }
 
-// --- V4 registration error mapping (free helper) ---
-/// Map a [`RegisterV4PoolError`] to a typed Python exception (Plan 102).
+// --- Pool-registration error mapping (free helpers, F2EVV6) ---
+/// Map a [`RegisterV2PoolError`] to a typed Python exception under the
+/// `PoolRegistrationError` hierarchy.
 ///
-/// - `HookedPool` → [`HookedPoolRejectedError`]
-/// - `DynamicFee` → [`DynamicFeePoolRejectedError`]
-/// - `AlreadyRegistered` → `PyValueError` (a wiring/programming error, not an
-///   admission category)
+/// - `AlreadyRegistered` → [`PoolAlreadyRegisteredError`]
+/// - `SpecViolation` → [`SpecViolationError`] (the message names the
+///   offending field, its value, and the bound it violates, mirroring
+///   `spec_bounds::SpecViolation`'s `Display`)
 ///
-/// The message text is byte-for-byte unchanged from the legacy `Err(String)`
-/// formatting so `build_paths`'s classification (now `isinstance`, was
-/// substring) matches the same diagnostics.
+/// These are subclasses of `PoolRegistrationError`, which is itself a
+/// subclass of `ValueError`, so a broad `except ValueError:` (or
+/// `except PoolRegistrationError:` to scope just admission refusals) keeps
+/// working.
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn map_register_v2_err(err: degenbot_bot::bot_core::RegisterV2PoolError) -> pyo3::PyErr {
+    use crate::bot::engine::{PoolAlreadyRegisteredError, SpecViolationError};
+    match err {
+        degenbot_bot::bot_core::RegisterV2PoolError::AlreadyRegistered { address } => {
+            PoolAlreadyRegisteredError::new_err(format!(
+                "V2 pool already registered: address={address}"
+            ))
+        }
+        degenbot_bot::bot_core::RegisterV2PoolError::SpecViolation(v) => {
+            SpecViolationError::new_err(format!("V2 pool registration failed: {v}"))
+        }
+    }
+}
+
+/// Map a [`RegisterV3PoolError`] to a typed Python exception under the
+/// `PoolRegistrationError` hierarchy. Mirrors [`map_register_v2_err`].
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn map_register_v3_err(err: degenbot_bot::bot_core::RegisterV3PoolError) -> pyo3::PyErr {
+    use crate::bot::engine::{PoolAlreadyRegisteredError, SpecViolationError};
+    match err {
+        degenbot_bot::bot_core::RegisterV3PoolError::AlreadyRegistered { address } => {
+            PoolAlreadyRegisteredError::new_err(format!(
+                "V3 pool already registered: address={address}"
+            ))
+        }
+        degenbot_bot::bot_core::RegisterV3PoolError::SpecViolation(v) => {
+            SpecViolationError::new_err(format!("V3 pool registration failed: {v}"))
+        }
+    }
+}
+
+/// Map a [`RegisterV4PoolError`] to a typed Python exception (Plan 102 +
+/// F2EVV6 unified hierarchy).
+///
+/// - `HookedPool` → [`HookedPoolRejectedError`] (V4 amount-modifying-hook
+///   admission floor — the solver's CL math assumes no hook intervention).
+/// - `DynamicFee` → [`DynamicFeePoolRejectedError`] (V4 dynamic-fee
+///   admission floor — the solver assumes a fixed fee).
+/// - `AlreadyRegistered` → [`PoolAlreadyRegisteredError`] (duplicate
+///   `(pool_manager, pool_id)` registration — a wiring/programming error
+///   surfaced at admission time, now unified with the V2/V3 twins under
+///   `PoolRegistrationError`, F2EVV6).
+/// - `SpecViolation` → [`SpecViolationError`] (out-of-spec
+///   sqrtPriceX96/tick/fee/tickSpacing, K3IICB stop-gap upgraded to a typed
+///   exception in F2EVV6).
+///
+/// The message text for the V4-specific variants is byte-for-byte unchanged
+/// from the legacy `Err(String)` formatting so `build_paths`'s classification
+/// (now `isinstance`, was substring) matches the same diagnostics.
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn map_register_v4_err(err: degenbot_bot::bot_core::RegisterV4PoolError) -> pyo3::PyErr {
+    use crate::bot::engine::{PoolAlreadyRegisteredError, SpecViolationError};
     match err {
         degenbot_bot::bot_core::RegisterV4PoolError::HookedPool { hook_flags } => {
             HookedPoolRejectedError::new_err(format!(
@@ -244,20 +297,12 @@ pub(crate) fn map_register_v4_err(err: degenbot_bot::bot_core::RegisterV4PoolErr
         degenbot_bot::bot_core::RegisterV4PoolError::AlreadyRegistered {
             pool_manager,
             pool_id,
-        } => pyo3::exceptions::PyValueError::new_err(format!(
+        } => PoolAlreadyRegisteredError::new_err(format!(
             "V4 pool already registered: pool_manager={pool_manager}, pool_id=0x{}",
             alloy::hex::encode(pool_id),
         )),
-        // Stop-gap mapper for the K3IICB spec-bound admission—the typed
-        // `PoolRegistrationError` Python exception hierarchy lands in F2EVV6
-        // (it bumps this fn + the V2/V3 twins together so all three wrappers
-        // reach a typed `SpecViolationError` in lockstep). Message mirrors
-        // `SpecViolation`'s `Display`: `field <name> value <val> out of bounds:
-        // <bound>` so the rejected field is surfaced up front.
         degenbot_bot::bot_core::RegisterV4PoolError::SpecViolation(v) => {
-            pyo3::exceptions::PyValueError::new_err(format!(
-                "V4 pool registration failed: spec violation — {v}"
-            ))
+            SpecViolationError::new_err(format!("V4 pool registration failed: {v}"))
         }
     }
 }

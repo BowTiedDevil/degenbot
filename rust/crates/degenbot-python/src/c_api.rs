@@ -156,9 +156,19 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
             .get_type::<crate::bot::engine::VerificationRpcError>(),
     )?;
 
-    // Typed V4 pool-admission exceptions (Plan 102, slice 2): distinct
-    // `ValueError` subclasses so `build_paths` can classify pool rejections
-    // by type instead of fragile string matching. (feature = "bot")
+    // Typed pool-admission exceptions (Plan 102, F2EVV6): a unified
+    // `PoolRegistrationError` hierarchy so `build_paths` can classify
+    // V2/V3/V4 admission refusals by type instead of fragile string
+    // matching. The V4-specific `HookedPoolRejectedError` /
+    // `DynamicFeePoolRejectedError` reparent under `PoolRegistrationError`;
+    // `PoolAlreadyRegisteredError` + `SpecViolationError` are the unified
+    // admission categories shared by V2/V3/V4. (feature = "bot")
+    #[cfg(feature = "bot")]
+    m.add(
+        "PoolRegistrationError",
+        m.py()
+            .get_type::<crate::bot::engine::PoolRegistrationError>(),
+    )?;
     #[cfg(feature = "bot")]
     m.add(
         "HookedPoolRejectedError",
@@ -170,6 +180,17 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         "DynamicFeePoolRejectedError",
         m.py()
             .get_type::<crate::bot::engine::DynamicFeePoolRejectedError>(),
+    )?;
+    #[cfg(feature = "bot")]
+    m.add(
+        "PoolAlreadyRegisteredError",
+        m.py()
+            .get_type::<crate::bot::engine::PoolAlreadyRegisteredError>(),
+    )?;
+    #[cfg(feature = "bot")]
+    m.add(
+        "SpecViolationError",
+        m.py().get_type::<crate::bot::engine::SpecViolationError>(),
     )?;
 
     // Bot — Rust-owned state (feature = "bot")

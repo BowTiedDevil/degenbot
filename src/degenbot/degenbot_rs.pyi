@@ -3122,27 +3122,72 @@ class VerificationRpcError(RuntimeError):
     retry/backoff vs abort. Subclasses ``RuntimeError``.
     """
 
-class HookedPoolRejectedError(ValueError):
+class PoolRegistrationError(ValueError):
+    """Pool registration was refused at admission time.
+
+    The unified base of the F2EVV6 hierarchy — a pool was rejected at
+    ``register_vx_pool`` for one of four reasons (duplicate address, out-of-spec
+    field, V4 amount-modifying hook, or V4 dynamic fee) and the specific reason
+    is conveyed by the subclass:
+
+    - :class:`PoolAlreadyRegisteredError` — V2/V3/V4 duplicate address.
+    - :class:`SpecViolationError` — V2/V3/V4 out-of-spec field.
+    - :class:`HookedPoolRejectedError` — V4 amount-modifying hook.
+    - :class:`DynamicFeePoolRejectedError` — V4 dynamic fee.
+
+    Subclasses ``ValueError`` so broad ``except ValueError:`` handlers (which
+    skip one rejected pool at a time in ``build_paths``) keep working; scope
+    admission refusals specifically with ``except PoolRegistrationError:``.
+    """
+
+class PoolAlreadyRegisteredError(PoolRegistrationError):
+    """A pool at this address is already registered.
+
+    Raised by the Rust seam (``RegisterV{2,3}PoolError::AlreadyRegistered``
+    / ``RegisterV4PoolError::AlreadyRegistered``) when ``register_vx_pool``
+    sees a duplicate address. Replaces the previous ``assert!`` panic on V2
+    (MSTAT2) and V3 (24KNGF), and replaces the plain ``ValueError`` that
+    ``register_v4_pool`` previously raised for duplicates (F2EVV6). Subclasses
+    :class:`PoolRegistrationError` so a broad admission catch covers all four
+    admission categories together.
+    """
+
+class SpecViolationError(PoolRegistrationError):
+    """A field on the pool registration params violates its on-chain bound.
+
+    Raised by the Rust seam when ``register_vx_pool`` sees an out-of-spec
+    field — e.g. V2 ``reserve{0,1} > uint112(-1)``, V3/V4 ``sqrtPriceX96``
+    outside ``[MIN_SQRT_RATIO, MAX_SQRT_RATIO)``, V3/V4 ``tick`` outside
+    ``[MIN_TICK, MAX_TICK]``, V3/V4 ``fee`` above the family bound
+    (V3 ``< 1_000_000``; V4 static-fee ``< 1 << 24``), or V3/V4
+    ``tickSpacing`` outside ``[1, 32_767]``. The message names the offending
+    field, its value, and the bound it violates. Replaces the
+    ``PyValueError("Vx pool registration failed: …")`` stop-gap mappers
+    (MSTAT2 / 24KNGF / K3IICB) with a typed exception in F2EVV6.
+    """
+
+class HookedPoolRejectedError(PoolRegistrationError):
     """A V4 pool with an amount-modifying hook was rejected at registration.
 
     Raised by the Rust seam (`RegisterV4PoolError::HookedPool`) when
     ``register_v4_pool`` sees ``hook_flags & 0xCC != 0``. The solver's V3-CL
     math assumes no hook intervention, so a hooked pool would produce phantom
     profits — admission is a *correctness floor* (enforced in the Rust core
-    so a standalone Rust consumer is protected, per ADR-005). Subclasses
-    ``ValueError`` so broad ``except ValueError`` handlers (which skip one
-    rejected pool at a time) keep working; classify by ``isinstance``.
+    so a standalone Rust consumer is protected, per ADR-005). Reparented
+    under :class:`PoolRegistrationError` in F2EVV6 (was directly under
+    ``ValueError`` in Plan 102); a broad ``except ValueError:`` still catches
+    it; classify by ``isinstance``.
     """
 
-class DynamicFeePoolRejectedError(ValueError):
+class DynamicFeePoolRejectedError(PoolRegistrationError):
     """A V4 pool with a dynamic fee was rejected at registration.
 
     Raised by the Rust seam (`RegisterV4PoolError::DynamicFee`) when
     ``register_v4_pool`` sees ``fee == 0x100000``. The solver assumes a fixed
     fee, so a dynamic-fee pool cannot be priced. Like
     :class:`HookedPoolRejectedError`, a correctness floor enforced in the
-    Rust core (ADR-005) and surfaced as a typed ``ValueError`` subclass so
-    ``build_paths`` classifies by type, not string matching.
+    Rust core (ADR-005) and reparented under :class:`PoolRegistrationError`
+    in F2EVV6.
     """
 
 class DatabaseSchemaStale(ValueError):
