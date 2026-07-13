@@ -131,7 +131,21 @@ impl IntHopState {
 
     /// Simulate a swap through this hop using EVM-exact integer arithmetic.
     ///
-    /// Returns `0` if the calculation would overflow or divide by zero.
+    /// Returns `0` if the denominator (sum of `fee_denom * reserve_in` and
+    /// `gamma_numer * x`) is zero — the constant-product formula is undefined
+    /// there, but the swap output is well-defined as zero (no positive `x`
+    /// can extract anything from a pool whose `reserve_in`=0 or whose fee
+    /// convention degenerates).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the quotient overflows `U256` — i.e. if the input violates
+    /// the spec-bound pool invariants (`reserve_out > uint112::MAX` for V2,
+    /// or non-V2 family pools passed in). Real V2/Solidly-volatile state
+    /// satisfies `reserve_out ≤ uint112::MAX`, and the swap output is bounded
+    /// by `reserve_out` (you can't extract more than the pool holds), so
+    /// this is unreachable for state ingested from on-chain `Sync` events.
+    /// See `u512_to_u256_internal` for the underlying narrowing contract.
     #[must_use]
     pub fn swap(&self, x: U256) -> U256 {
         // y = gamma_numer * reserve_out * x / (fee_denom * reserve_in + gamma_numer * x)
@@ -151,12 +165,18 @@ impl IntHopState {
         // Floor division (EVM semantics)
         let result_u512 = numerator / denom;
 
-        // Truncate to U256
-        let bytes: [u8; 64] = result_u512.to_be_bytes();
-        // U512 is 64 bytes, U256 is 32 bytes — take last 32 bytes
-        let mut result_bytes = [0u8; 32];
-        result_bytes.copy_from_slice(&bytes[32..64]);
-        U256::from_be_bytes(result_bytes)
+        // Narrow U512 → U256. Bounded by `reserve_out` (an output swap can
+        // never extract more than the pool holds): `result ≤ γ·reserve_out·x /
+        // (γ·x) = reserve_out ≤ uint112::MAX` for spec-bound V2 state — so this
+        // is unreachable for real pools. The pre-check documents the
+        // invariant and panics on corrupt/synthetic registration; proper fix
+        // is enforcing spec widths at `register_*_pool`.
+        assert!(
+            result_u512 <= U512::from(U256::MAX),
+            "U512 → U256 narrowing overflow (corrupt/synthetic input; \
+             spec-bound pool state is unreachable)",
+        );
+        result_u512.to::<U256>()
     }
 }
 

@@ -1898,9 +1898,13 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "U512 \u{2192} U256 narrowing overflow")]
     fn test_u512_to_u256_overflow() {
+        // Spec-bound V3 state (u128 liquidity, sqrtPrice ≤ MAX_SQRT_RATIO)
+        // never reaches this; `expect` documents the invariant and panics on
+        // corrupt/synthetic input. Fix-forward: enforce spec at registration.
         let v = U512::from(U256::MAX) + U512::from(1u64);
-        assert_eq!(u512_to_u256(v), U256::MAX); // Capped
+        let _ = u512_to_u256(v);
     }
 
     // --- Slice 13: compute_crossing tests ---
