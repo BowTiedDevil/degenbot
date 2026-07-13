@@ -5,9 +5,9 @@ import dataclasses
 import eth_abi.abi
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
-from web3 import Web3
 
 from degenbot.arbitrage.encoding import EncodedCall
+from degenbot.crypto import function_selector
 from degenbot.erc20 import Erc20Token
 from degenbot.types.aliases import BlockNumber
 
@@ -103,9 +103,9 @@ class CurveStableSwapPoolSwapAmounts(AbstractSwapAmounts):
 
         """
         if self.underlying:
-            selector = Web3.keccak(text="exchange_underlying(int128,int128,uint256,uint256)")[:4]
+            selector = function_selector("exchange_underlying(int128,int128,uint256,uint256)")
         else:
-            selector = Web3.keccak(text="exchange(int128,int128,uint256,uint256)")[:4]
+            selector = function_selector("exchange(int128,int128,uint256,uint256)")
         data = selector + eth_abi.abi.encode(
             types=["int128", "int128", "uint256", "uint256"],
             args=[
@@ -159,7 +159,7 @@ class UniswapV2PoolSwapAmounts(AbstractSwapAmounts):
             The computed value.
 
         """
-        selector = Web3.keccak(text="swap(uint256,uint256,address,bytes)")[:4]
+        selector = function_selector("swap(uint256,uint256,address,bytes)")
         data = selector + eth_abi.abi.encode(
             types=["uint256", "uint256", "address", "bytes"],
             args=[*self.amounts_out, recipient, b""],
@@ -208,7 +208,7 @@ class UniswapV3PoolSwapAmounts(AbstractSwapAmounts):
             The computed value.
 
         """
-        selector = Web3.keccak(text="swap(address,bool,int256,uint160,bytes)")[:4]
+        selector = function_selector("swap(address,bool,int256,uint160,bytes)")
         data = selector + eth_abi.abi.encode(
             types=["address", "bool", "int256", "uint160", "bytes"],
             args=[

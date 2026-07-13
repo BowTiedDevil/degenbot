@@ -6,10 +6,10 @@ import dataclasses
 from typing import TYPE_CHECKING
 
 import eth_abi.abi
-from web3 import Web3
 
 from degenbot.arbitrage.encoding import EncodedCall
 from degenbot.constants import ZERO_ADDRESS
+from degenbot.crypto import function_selector
 from degenbot.exceptions import DegenbotValueError
 
 if TYPE_CHECKING:
@@ -93,7 +93,7 @@ class BalancerV2SwapAmounts:
             "swap((bytes32,uint8,address,address,uint256,bytes),"
             "(address,bool,address,bool),uint256,uint256)"
         )
-        selector = Web3.keccak(text=swap_signature)[:4]
+        selector = function_selector(swap_signature)
         single_swap_type = "(bytes32,uint8,address,address,uint256,bytes)"
         fund_management_type = "(address,bool,address,bool)"
         data = selector + eth_abi.abi.encode(

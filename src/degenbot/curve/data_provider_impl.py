@@ -14,9 +14,9 @@ from typing import TYPE_CHECKING, Any, cast
 
 import eth_abi.abi
 from hexbytes import HexBytes
-from web3 import Web3
 
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.crypto import function_selector
 from degenbot.curve.types import LendingRateStyle
 from degenbot.exceptions import ContractLogicError, EVMRevertError
 from degenbot.provider.call_helpers import encode_function_calldata
@@ -77,7 +77,7 @@ class CurveDataProviderImpl:
 
         """
         data = self._io.call_raw(
-            {"to": to, "data": Web3.keccak(text=method_sig)[:4]},
+            {"to": to, "data": function_selector(method_sig)},
             block=block_number,
         )
         return eth_abi.abi.decode(types=return_types, data=data)
@@ -260,7 +260,7 @@ class CurveDataProviderImpl:
         """
         price_scale = [0] * (self._n_coins - 1)
         for token_index in range(self._n_coins - 1):
-            data = Web3.keccak(text="price_scale(uint256)")[:4] + eth_abi.abi.encode(
+            data = function_selector("price_scale(uint256)") + eth_abi.abi.encode(
                 types=["uint256"],
                 args=[token_index],
             )
