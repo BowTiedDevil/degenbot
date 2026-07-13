@@ -9,12 +9,11 @@ from typing import TYPE_CHECKING
 
 import eth_abi.abi
 from eth_abi.exceptions import DecodingError
-from web3.exceptions import Web3Exception
 
 from degenbot.balancer.deployments import BALANCER_V2_VAULT_ADDRESS
 from degenbot.balancer.libraries.constants import ONE, PowVersion
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.exceptions import DegenbotValueError
+from degenbot.exceptions import DegenbotValueError, RpcError
 from degenbot.provider.call_helpers import encode_function_calldata
 
 if TYPE_CHECKING:
@@ -233,14 +232,14 @@ class BalancerBuilderBase:
         if fetcher is not None:
             try:
                 return list(fetcher(address, block=block))
-            except (Web3Exception, DecodingError):
+            except (RpcError, DecodingError):
                 return []
         try:
             data = encode_function_calldata("getRateProviders()", None)
             result = io.call(to=address, data=data, block=block)
             decoded = eth_abi.abi.decode(["address[]"], result)
             return list(decoded[0])
-        except (Web3Exception, DecodingError):
+        except (RpcError, DecodingError):
             # WeightedPool2Tokens and MetaStablePools may not have getRateProviders
             return []
 
@@ -306,24 +305,24 @@ class BalancerBuilderBase:
 
         try:
             data = encode_function_calldata("getNormalizedWeights()", None)
-        except (Web3Exception, DecodingError):
+        except (RpcError, DecodingError):
             pass
         else:
             try:
                 io.call(to=address, data=data, block=block)
-            except Web3Exception:
+            except RpcError:
                 pass
             else:
                 return _BalancerPoolType.WEIGHTED
 
         try:
             data = encode_function_calldata("getAmplificationParameter()", None)
-        except (Web3Exception, DecodingError):
+        except (RpcError, DecodingError):
             pass
         else:
             try:
                 io.call(to=address, data=data, block=block)
-            except Web3Exception:
+            except RpcError:
                 pass
             else:
                 return _BalancerPoolType.STABLE

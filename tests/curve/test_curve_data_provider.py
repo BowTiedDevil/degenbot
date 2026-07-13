@@ -7,12 +7,12 @@ and correctly delegates to the underlying ProviderAdapter.
 import eth_abi.abi
 from hexbytes import HexBytes
 from web3 import Web3
-from web3.exceptions import ContractLogicError
 
 from degenbot.builders.pool_io import SyncPoolIO
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.data_provider_impl import CurveDataProviderImpl
 from degenbot.curve.types import CurveDataProvider, LendingRateStyle
+from degenbot.exceptions import ContractLogicError
 from degenbot.exceptions.pool import EVMRevertError
 from degenbot.provider.sync_adapter import ProviderAdapter
 

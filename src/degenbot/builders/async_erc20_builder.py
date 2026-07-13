@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 import eth_abi.abi
 import sqlalchemy.exc
 from eth_abi.exceptions import DecodingError
-from web3.exceptions import Web3Exception
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import EtherPlaceholder
@@ -19,6 +18,7 @@ from degenbot.erc20.erc20 import (
     Erc20Token,
     get_token_from_database,
 )
+from degenbot.exceptions import RpcError
 from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata
 
@@ -130,7 +130,7 @@ class AsyncErc20Builder:
                     fetched_symbol,
                     fetched_decimals,
                 ) = await self._fetch_name_symbol_decimals_batched(address=address, io=io)
-            except (Web3Exception, DecodingError):
+            except (RpcError, DecodingError):
                 # Fallback: try individual calls with alternate prototypes
                 fetched_name = await self._fetch_with_fallback(
                     address,
@@ -230,7 +230,7 @@ class AsyncErc20Builder:
                 )
                 (value,) = eth_abi.abi.decode(types=["string"], data=result)
                 return value  # noqa: TRY300
-            except (Web3Exception, DecodingError):
+            except (RpcError, DecodingError):
                 continue
         return default
 
@@ -255,7 +255,7 @@ class AsyncErc20Builder:
                 )
                 (value,) = eth_abi.abi.decode(types=["uint8"], data=result)
                 return value  # noqa: TRY300
-            except (Web3Exception, DecodingError):
+            except (RpcError, DecodingError):
                 continue
         return default
 

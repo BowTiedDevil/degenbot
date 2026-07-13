@@ -15,11 +15,10 @@ from typing import TYPE_CHECKING, Any, cast
 import eth_abi.abi
 from hexbytes import HexBytes
 from web3 import Web3
-from web3.exceptions import ContractLogicError
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.types import LendingRateStyle
-from degenbot.exceptions.pool import EVMRevertError
+from degenbot.exceptions import ContractLogicError, EVMRevertError
 from degenbot.provider.call_helpers import encode_function_calldata
 
 if TYPE_CHECKING:

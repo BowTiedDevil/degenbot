@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, cast
 import eth_abi.abi
 from eth_abi.exceptions import DecodingError
 from web3 import Web3
-from web3.exceptions import Web3Exception
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import EtherPlaceholder
@@ -18,6 +17,7 @@ from degenbot.erc20.erc20 import (
     UNKNOWN_SYMBOL,
     Erc20Token,
 )
+from degenbot.exceptions import RpcError
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata
@@ -141,7 +141,7 @@ class Erc20Builder:
                 fetched_name, fetched_symbol, fetched_decimals = (
                     _fetch_name_symbol_decimals_batched(address=address, io=io)
                 )
-            except (Web3Exception, DecodingError):
+            except (RpcError, DecodingError):
                 # Fallback: try individual calls with alternate prototypes
                 for func_prototype in ("name()", "NAME()"):
                     try:
@@ -151,7 +151,7 @@ class Erc20Builder:
                             func_prototype=func_prototype,
                         )
                         break
-                    except (Web3Exception, DecodingError):
+                    except (RpcError, DecodingError):
                         continue
                 else:
                     fetched_name = UNKNOWN_NAME
@@ -164,7 +164,7 @@ class Erc20Builder:
                             func_prototype=func_prototype,
                         )
                         break
-                    except (Web3Exception, DecodingError):
+                    except (RpcError, DecodingError):
                         continue
                 else:
                     fetched_symbol = UNKNOWN_SYMBOL
@@ -177,7 +177,7 @@ class Erc20Builder:
                             func_prototype=func_prototype,
                         )
                         break
-                    except (Web3Exception, DecodingError):
+                    except (RpcError, DecodingError):
                         continue
                 else:
                     fetched_decimals = UNKNOWN_DECIMALS
@@ -398,7 +398,7 @@ def _fetch_name_symbol_decimals_batched(*, address: str, io: PoolIO) -> tuple[st
     still exercise the Python implementation below -- a behavior-preserving
     parity gate against the Rust impl. Returns `None` from the Rust impl on
     provider error / decode failure (mirrors the caller's `except
-    (Web3Exception, DecodingError)` fallback contract); a Python-raised error
+    (RpcError, DecodingError)` fallback contract); a Python-raised error
     from the fallback path is surfaced untouched.
 
     Returns:
@@ -407,7 +407,7 @@ def _fetch_name_symbol_decimals_batched(*, address: str, io: PoolIO) -> tuple[st
     Raises:
         DecodingError: If the Rust batched path failed (provider revert or
             decode failure) -- re-raised so the caller's `except
-            (Web3Exception, DecodingError)` fallback kicks in identically.
+            (RpcError, DecodingError)` fallback kicks in identically.
 
     """
     # ADR-005 slice 14c: route through PyBotIo when available -- the

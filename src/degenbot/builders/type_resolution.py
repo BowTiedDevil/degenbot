@@ -28,11 +28,11 @@ from typing import TYPE_CHECKING, cast
 import eth_abi.abi
 from eth_abi.exceptions import DecodingError
 from sqlalchemy import select
-from web3.exceptions import Web3Exception
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.database.models.pools import LiquidityPoolTable
+from degenbot.exceptions import RpcError
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.registry.pool_type import pool_type_registry
@@ -236,7 +236,7 @@ def fetch_factory_from_chain(
         )
         (factory_raw,) = eth_abi.abi.decode(types=["address"], data=factory_result)
         return get_checksum_address(factory_raw)
-    except (Web3Exception, DecodingError):
+    except (RpcError, DecodingError):
         return None
 
 
@@ -259,7 +259,7 @@ async def fetch_factory_from_chain_async(
         )
         (factory_raw,) = eth_abi.abi.decode(types=["address"], data=factory_result)
         return get_checksum_address(factory_raw)
-    except (Web3Exception, DecodingError):
+    except (RpcError, DecodingError):
         return None
 
 
@@ -325,7 +325,7 @@ def resolve_pool_type_by_probing(
             to=address,
             data=encode_function_calldata("slot0()", None),
         )
-    except Web3Exception:
+    except RpcError:
         pass
     else:
         return _descriptor_from_probing_result(
@@ -340,7 +340,7 @@ def resolve_pool_type_by_probing(
             to=address,
             data=encode_function_calldata("getReserves()", None),
         )
-    except Web3Exception:
+    except RpcError:
         pass
     else:
         return _descriptor_from_probing_result(
@@ -355,7 +355,7 @@ def resolve_pool_type_by_probing(
             to=address,
             data=encode_function_calldata("getPoolId()", None),
         )
-    except Web3Exception:
+    except RpcError:
         pass
     else:
         # Balancer pool detected — determine weighted vs stable
@@ -366,7 +366,7 @@ def resolve_pool_type_by_probing(
             )
             variant = "balancer_weighted"
             family = PoolFamily.WEIGHTED
-        except Web3Exception:
+        except RpcError:
             variant = "balancer_stable"
             family = PoolFamily.STABLESWAP
 
@@ -404,7 +404,7 @@ async def resolve_pool_type_by_probing_async(
             to=address,
             data=encode_function_calldata("slot0()", None),
         )
-    except Web3Exception:
+    except RpcError:
         pass
     else:
         return _descriptor_from_probing_result(
@@ -419,7 +419,7 @@ async def resolve_pool_type_by_probing_async(
             to=address,
             data=encode_function_calldata("getReserves()", None),
         )
-    except Web3Exception:
+    except RpcError:
         pass
     else:
         return _descriptor_from_probing_result(
@@ -434,7 +434,7 @@ async def resolve_pool_type_by_probing_async(
             to=address,
             data=encode_function_calldata("getPoolId()", None),
         )
-    except Web3Exception:
+    except RpcError:
         pass
     else:
         # Balancer pool detected — determine weighted vs stable
@@ -445,7 +445,7 @@ async def resolve_pool_type_by_probing_async(
             )
             variant = "balancer_weighted"
             family = PoolFamily.WEIGHTED
-        except Web3Exception:
+        except RpcError:
             variant = "balancer_stable"
             family = PoolFamily.STABLESWAP
 

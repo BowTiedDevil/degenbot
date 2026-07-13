@@ -1,10 +1,10 @@
 """Tests for Curve pool coin discovery."""
 
 import eth_abi.abi
-from web3.exceptions import Web3Exception
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.detection.coin_discovery import discover_coins
+from degenbot.exceptions import ContractLogicError
 from degenbot.provider.call_helpers import encode_function_calldata
 from tests.curve.detection.fake_provider import make_fake_pool_io
 
@@ -126,7 +126,7 @@ class TestDiscoverCoinsInt128:
         def handle_coins_uint256(to: str, data: bytes, block: int) -> bytes:
             call_count["uint256_tries"] += 1
             msg = "revert"
-            raise Web3Exception(msg)
+            raise ContractLogicError(msg)
 
         def handle_coins_int128(to: str, data: bytes, block: int) -> bytes:
             (idx,) = eth_abi.abi.decode(["int128"], data[4:])
@@ -181,7 +181,7 @@ class TestDiscoverCoinsEdgeCases:
             (idx,) = eth_abi.abi.decode(["uint256"], data[4:])
             if idx >= len(coins):
                 msg = "revert"
-                raise Web3Exception(msg)
+                raise ContractLogicError(msg)
             return _encode_addr(coins[idx])
 
         def handle_balances_uint256(to: str, data: bytes, block: int) -> bytes:
@@ -223,7 +223,7 @@ class TestDiscoverCoinsEdgeCases:
             balance_calls["count"] += 1
             if balance_calls["count"] > 1:
                 msg = "balance revert"
-                raise Web3Exception(msg)
+                raise ContractLogicError(msg)
             return _encode_uint256(100)
 
         io = make_fake_pool_io({
