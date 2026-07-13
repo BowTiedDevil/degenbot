@@ -16,10 +16,10 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from hexbytes import HexBytes
-    from web3.types import BlockData, BlockIdentifier, TxParams
 
     from degenbot.provider.async_adapter import AsyncProviderAdapter
     from degenbot.provider.sync_adapter import ProviderAdapter
+    from degenbot.types.rpc_types import BlockData, BlockIdentifier, TxParams
 
 
 @runtime_checkable

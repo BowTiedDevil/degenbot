@@ -10,10 +10,10 @@ from typing import Any
 import eth_abi.abi
 from eth_typing import ChecksumAddress
 from eth_utils.crypto import keccak
-from web3.types import BlockIdentifier
 
 from degenbot.provider import ProviderAdapter
 from degenbot.provider.async_adapter import AsyncProviderAdapter
+from degenbot.types.rpc_types import BlockIdentifier
 
 
 def encode_function_calldata(

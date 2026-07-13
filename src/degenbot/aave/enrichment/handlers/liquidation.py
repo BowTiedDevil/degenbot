@@ -16,13 +16,13 @@ Special cases:
 from typing import TYPE_CHECKING, ClassVar
 
 from eth_typing import ChecksumAddress
-from web3.types import LogReceipt
 
 from degenbot.aave.events import AaveV3PoolEvent, ScaledTokenEventType
 from degenbot.aave.extraction import RawAmountExtractor
 from degenbot.aave.models import EnrichmentError
 from degenbot.aave.operation_types import OperationType
 from degenbot.logging import logger
+from degenbot.types.rpc_types import LogReceipt
 
 if TYPE_CHECKING:
     from degenbot.aave.enrichment.context import EnrichmentContext

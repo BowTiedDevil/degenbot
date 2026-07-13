@@ -55,12 +55,12 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from eth_typing import ChecksumAddress
-    from web3.types import BlockIdentifier
 
     from degenbot.builders.protocol import PoolBuilder
     from degenbot.erc20.erc20 import Erc20Token
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.abstract.pool_tracker import AbstractPoolTracker
+    from degenbot.types.rpc_types import BlockIdentifier
 
 from degenbot.types.aliases import ChainId  # noqa: TC001
 

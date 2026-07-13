@@ -24,13 +24,13 @@ from degenbot.provider.call_helpers import encode_function_calldata
 
 if TYPE_CHECKING:
     from hexbytes import HexBytes
-    from web3.types import BlockIdentifier
 
     from degenbot.builders.pool_io import PoolIO
     from degenbot.database.session_manager import DatabaseSessionManager
     from degenbot.degenbot_rs import PyBot
     from degenbot.registry import TokenRegistry
     from degenbot.types.aliases import ChainId
+    from degenbot.types.rpc_types import BlockIdentifier
 
 
 class Erc20Builder:

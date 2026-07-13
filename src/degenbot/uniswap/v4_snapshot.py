@@ -13,7 +13,6 @@ from eth_typing import ChecksumAddress, HexAddress, HexStr
 from hexbytes import HexBytes
 from sqlalchemy.orm import Session, scoped_session
 from web3 import Web3
-from web3.types import LogReceipt
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.operations import get_scoped_sqlite_session
@@ -26,6 +25,7 @@ from degenbot.provider.log_fetching import fetch_logs_retrying, fetch_logs_retry
 from degenbot.provider.sync_adapter import ProviderAdapter
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import KeyedDefaultDict
+from degenbot.types.rpc_types import LogReceipt
 from degenbot.uniswap.abi import UNISWAP_V4_POOL_MANAGER_ABI
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v4_types import (

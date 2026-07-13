@@ -13,10 +13,10 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from eth_typing import ChecksumAddress, HexAddress
-    from web3.types import BlockIdentifier
 
     from degenbot.erc20 import Erc20Token
     from degenbot.types.aliases import BlockNumber
+    from degenbot.types.rpc_types import BlockIdentifier
 
 
 # ── Variant Enums ──

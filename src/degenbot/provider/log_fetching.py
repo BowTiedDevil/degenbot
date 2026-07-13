@@ -16,13 +16,13 @@ from tenacity import (
 )
 from web3._utils.threads import Timeout  # noqa: PLC2701
 from web3.exceptions import Web3Exception
-from web3.types import LogReceipt
 
 from degenbot.exceptions.infrastructure import LogFetchingTimeout
 from degenbot.logging import logger
 from degenbot.provider import ProviderAdapter
 from degenbot.provider.async_adapter import AsyncProviderAdapter
 from degenbot.types.aliases import BlockNumber
+from degenbot.types.rpc_types import LogReceipt
 
 
 def _build_topics_list(

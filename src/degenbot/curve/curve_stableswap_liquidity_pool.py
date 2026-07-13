@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any, Self
 from weakref import WeakSet
 
 from eth_typing import ChecksumAddress
-from web3.types import BlockIdentifier
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.per_block_cache import PerBlockCache
@@ -54,6 +53,7 @@ from degenbot.types.concrete import (
 )
 from degenbot.types.hop_types import CurveStableswapHop, HopType, PoolInvariant
 from degenbot.types.pool_protocols import SimulationResult
+from degenbot.types.rpc_types import BlockIdentifier
 
 
 def _compute_rate_and_precision_multipliers(

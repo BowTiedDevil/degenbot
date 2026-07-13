@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 
 import tqdm
 from hexbytes import HexBytes
-from web3.types import LogReceipt
 
 from degenbot import abi_decode
 from degenbot.checksum_cache import get_checksum_address
@@ -25,6 +24,7 @@ from degenbot.degenbot_rs import (
 )
 from degenbot.provider import ProviderAdapter
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
+from degenbot.types.rpc_types import LogReceipt
 
 # V3 liquidity event topic0 hashes (Mint/Burn). Used by the V3 decode shell
 # (`apply_v3_liquidity_updates`) to recognize the Burn signature + negate the

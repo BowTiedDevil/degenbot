@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING, Any
 
 from eth_typing import ChecksumAddress
 from sqlalchemy.orm import Session
-from web3.types import LogReceipt
 
 from degenbot.aave.calculator import ScaledAmountCalculator
 from degenbot.aave.events import AaveV3PoolEvent, ScaledTokenEventType
@@ -16,6 +15,7 @@ from degenbot.aave.models import (
 from degenbot.aave.operation_types import OperationType
 from degenbot.database.models.aave import AaveV3Asset
 from degenbot.database.models.erc20 import Erc20TokenTable
+from degenbot.types.rpc_types import LogReceipt
 
 if TYPE_CHECKING:
     from degenbot.aave.operations import Operation, ScaledTokenEvent

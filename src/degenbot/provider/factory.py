@@ -26,7 +26,7 @@ from degenbot.provider.async_adapter import AsyncProviderAdapter
 from degenbot.provider.sync_adapter import ProviderAdapter
 
 if TYPE_CHECKING:
-    from web3.types import RPCResponse
+    from degenbot.types.rpc_types import RPCResponse
 
 
 def _fast_decode_rpc_response(raw_response: bytes) -> RPCResponse:
