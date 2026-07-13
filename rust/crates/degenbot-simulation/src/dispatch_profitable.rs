@@ -822,6 +822,69 @@ mod tests {
         );
     }
 
+    /// A6 golden-fixture parity: pin the EXACT gross/net/gas/priority-fee
+    /// figures on a gas-profitable survivor. The categorizes test (above)
+    /// asserts the profitable SUBSET + a net comparison; this test pins the
+    /// absolute ints so a drift in the fee arithmetic
+    /// (`compute_priority_fee` / `gas_fee` / `net`) is caught as a figure
+    /// change, not just a category flip. The fixture mirrors the deleted
+    /// Python `_compute_priority_fee` + net arithmetic (the §4.2 parity: the
+    /// Rust port reproduces the Python oracle's `int(...)` truncation of the
+    /// f64 priority-fee path — pins the exact `int` the Python would have
+    /// produced for this gross/gas/fee block).
+    #[tokio::test]
+    async fn dispatch_pins_exact_profitable_figures() {
+        // Path: gross 2 ETH, gas 200_000, base_fee_next 1 gwei, p10=0.5 gwei,
+        // p50=2 gwei, age 0 (solve_block == current_block == 100).
+        let asserter = Asserter::new();
+        push_profitable(
+            &asserter,
+            U256::from(2_000_000_000_000_000_000u128),
+            200_000,
+        );
+        let provider = mock_provider(&asserter);
+        let suppression = Arc::new(Mutex::new(PathSuppression::new()));
+
+        let cands = vec![candidate(
+            10,
+            1_000_000_000_000_000_000u128,
+            2_000_000_000_000_000_000u128,
+        )];
+        let outcome = dispatch_profitable_results(
+            cands,
+            &ctx(&provider),
+            &suppression,
+            100,
+            MIN_PROFIT_NET,
+            0,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            outcome.gas_profitable.len(),
+            1,
+            "buckets: {:?}",
+            outcome.fail_buckets.buckets()
+        );
+        let r = &outcome.gas_profitable[0];
+        assert_eq!(r.path_id, 10);
+        assert_eq!(r.gross_profit, U256::from(2_000_000_000_000_000_000u128));
+        assert_eq!(r.gas_used, 200_000);
+        assert_eq!(r.base_fee_next, 1_000_000_000);
+        // priority_fee: target = (gross/1.25 - gas*base)/gas is huge (~8e15);
+        // age 0 keeps target unchanged (age_factor=1.0). Market ceiling is
+        // max = p50+1 = 2_000_000_001, so the final clamp pins the priority fee
+        // directly to that ceiling. The §4.2 parity is on the `int(...)`
+        // truncation semantics — the f64 path is lossy by design.
+        assert_eq!(r.priority_fee, 2_000_000_001);
+        // net = gross - gas*(base + priority)
+        //     = 2e18 - 200_000*(1e9 + 2_000_000_001)
+        //     = 2e18 - 600_000_000_200_000
+        //     = 1_999_399_999_999_800_000.
+        assert_eq!(r.net_profit, U256::from(1_999_399_999_999_800_000u128));
+    }
+
     #[tokio::test]
     async fn dispatch_tolerates_sim_failures_as_fail_count_not_exception() {
         // `simulate_one` swallows ALL sim failures (revert/no-profit/rpc-failed/
