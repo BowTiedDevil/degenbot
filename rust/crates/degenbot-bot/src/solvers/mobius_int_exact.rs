@@ -321,21 +321,24 @@ pub fn isqrt_u512(n: U512) -> U512 {
 /// `uint112::MAX`). The prior implementation silently saturated to
 /// `U256::MAX`, which would propagate garbage through downstream Möbius /
 /// CL computations; panicking here makes the contract invariant explicit.
-/// The proper fix is enforcing the spec widths at `register_*_pool`.
+/// The spec widths are enforced at `register_v2_pool` /
+/// `register_v3_pool` / `register_v4_pool` (see `spec_bounds.rs` and
+/// ADR-012), so on-chain-sourced pool state cannot reach this branch.
 pub fn u512_to_u256_internal(v: U512) -> U256 {
     // Narrowing U512 → U256. For pool state sourced from on-chain events
     // (V2 `Sync(uint112,uint112)`, V3/V4 `Swap`) the underlying uint112
     // reserves, uint128 liquidity, and TickMath-bounded sqrt prices keep
     // every quotient well within U256 — so this is unreachable under
-    // spec-bound state. The explicit pre-check makes that invariant visible
-    // and lets synthetic / corrupt registration fail loudly instead of
-    // silently degrading to `U256::MAX` (the prior sat-cap would then
-    // propagate garbage through downstream Möbius / CL computations).
-    // Proper fix: enforce the on-chain spec widths at `register_*_pool`.
+    // spec-bound state. The spec widths are now enforced at
+    // `register_v2_pool` / `register_v3_pool` / `register_v4_pool`
+    // (see `bot_core/spec_bounds.rs` and ADR-012), so on-chain-sourced
+    // pool state cannot reach this panic. The explicit pre-check makes
+    // that invariant visible and lets synthetic / corrupt registration
+    // fail loudly instead of silently degrading to `U256::MAX`.
     assert!(
         v <= U512::from(U256::MAX),
         "U512 → U256 narrowing overflow (corrupt/synthetic input; \
-         spec-bound pool state is unreachable)",
+         spec-bound pool state is unreachable — enforced at register_*_pool)",
     );
     v.to::<U256>()
 }
@@ -554,9 +557,10 @@ mod tests {
     fn test_u512_to_u256_overflow() {
         // U256::MAX + 1 overflows U256 — a real pool's reserves/liquidity/
         // sqrtPrice are spec-bound (uint112 / uint128 / MAX_SQRT_RATIO), so
-        // this fires only on corrupt/synthetic state. `expect` makes the
-        // invariant explicit; the proper fix is enforcing spec widths at
-        // `register_*_pool`.
+        // this fires only on corrupt/synthetic state. The spec widths are
+        // now enforced at `register_v2_pool` / `register_v3_pool` /
+        // `register_v4_pool` (see `bot_core/spec_bounds.rs` and ADR-012);
+        // on-chain-sourced pool state cannot reach this panic.
         let v = U512::from(U256::MAX) + U512::from(1u64);
         let _ = u512_to_u256_internal(v);
     }

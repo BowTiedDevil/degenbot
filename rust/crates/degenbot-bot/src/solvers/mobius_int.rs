@@ -145,7 +145,9 @@ impl IntHopState {
     /// satisfies `reserve_out ≤ uint112::MAX`, and the swap output is bounded
     /// by `reserve_out` (you can't extract more than the pool holds), so
     /// this is unreachable for state ingested from on-chain `Sync` events.
-    /// See `u512_to_u256_internal` for the underlying narrowing contract.
+    /// The spec widths are enforced at `register_v2_pool` /
+    /// `register_v3_pool` / `register_v4_pool` (see `bot_core/spec_bounds.rs`
+    /// and ADR-012); see `u512_to_u256_internal` for the narrowing contract.
     #[must_use]
     pub fn swap(&self, x: U256) -> U256 {
         // y = gamma_numer * reserve_out * x / (fee_denom * reserve_in + gamma_numer * x)
@@ -168,13 +170,14 @@ impl IntHopState {
         // Narrow U512 → U256. Bounded by `reserve_out` (an output swap can
         // never extract more than the pool holds): `result ≤ γ·reserve_out·x /
         // (γ·x) = reserve_out ≤ uint112::MAX` for spec-bound V2 state — so this
-        // is unreachable for real pools. The pre-check documents the
-        // invariant and panics on corrupt/synthetic registration; proper fix
-        // is enforcing spec widths at `register_*_pool`.
+        // is unreachable for real pools. The spec widths are now enforced at
+        // `register_v2_pool` / `register_v3_pool` / `register_v4_pool`
+        // (see `bot_core/spec_bounds.rs` and ADR-012); on-chain-sourced
+        // pool state cannot reach this panic.
         assert!(
             result_u512 <= U512::from(U256::MAX),
             "U512 → U256 narrowing overflow (corrupt/synthetic input; \
-             spec-bound pool state is unreachable)",
+             spec-bound pool state is unreachable — enforced at register_*_pool)",
         );
         result_u512.to::<U256>()
     }
