@@ -385,17 +385,32 @@ impl AlloyProvider {
                 // / `16 MiB`) to `None` (unlimited). A single WS connection is
                 // used for BOTH subscriptions (`newHeads`/logs — tiny messages)
                 // AND batch `eth_getLogs` (the snapshot→WS backfill issues a
-                // 6-topic OR filter over up to 2000 blocks → ~100k logs, well
-                // over 64 MiB). With the default caps the oversized
-                // `eth_getLogs` response stalls the read loop indefinitely
-                // (tungstenite neither completes the message reassembly nor
-                // surfaces an error — a true stall, not a retryable failure).
-                // Removing the caps lets the same transport satisfy both
-                // workloads; this matches HTTP transport behaviour (no body
-                // cap) and the degenbot threat model (the RPC endpoint is the
-                // user's own node, not an untrusted server). See the
-                // `ws_getlogs_large_filter_diagnostic` test in
-                // `degenbot_bot::bot_core::block_pump` (2026-07-12).
+                // 6-topic OR filter over up to 2000 blocks → ~100k logs, ~90 MB
+                // — well over both default caps).
+                //
+                // Failure mode WITHOUT the raise (confirmed via
+                // `ws_getlogs_large_filter_diagnostic` + tracing, 2026-07-12):
+                // tungstenite correctly returns `Error::Capacity(MessageTooLong)`
+                // when the oversized response arrives, but `alloy-pubsub`'s
+                // `WsBackend` converts that to `TransportErrorKind::backend_gone()`
+                // (a *retryable* error) at the backend→service boundary — losing
+                // the Capacity specificity. The pubsub service then enters an
+                // INFINITE reconnect→redispatch loop: `reconnect()` succeeds on
+                // the first attempt (the WS handshake is fine; only the response
+                // is too big), `max_retries` is never consumed, and the pending
+                // in-flight `eth_getLogs` is re-dispatched each cycle
+                // (`service.rs: Reissuing pending requests count=1`). The
+                // caller's `get_logs` future never resolves — small concurrent
+                // calls (`get_block_number`) keep succeeding on the same
+                // provider, so the transport isn't stalled, just the one
+                // oversized request. This is the "overly-broad catch": the
+                // `is_non_retryable()` gate treats every backend death as
+                // retryable, so a structurally-oversized request hangs forever.
+                //
+                // Raising the caps removes the trigger entirely; this matches
+                // HTTP transport behaviour (no body cap) and the degenbot
+                // threat model (the RPC endpoint is the user's own node, not
+                // an untrusted server that would DoS via oversized messages).
                 let ws_connect = WsConnect::new(rpc_url.to_string()).with_config(
                     WebSocketConfig::default()
                         .max_message_size(None)
