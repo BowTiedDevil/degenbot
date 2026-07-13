@@ -8,16 +8,17 @@ from collections.abc import Callable, Coroutine
 from typing import Any, Literal, overload
 
 from hexbytes import HexBytes
-from web3.types import BlockData as Web3BlockData
-from web3.types import BlockIdentifier, TxParams
 
 from degenbot.builders.pool_io import PoolIO
 from degenbot.types.rpc_types import (
     BlockData,
+    BlockIdentifier,
     LogData,
     TransactionData,
     TransactionReceiptData,
+    TxParams,
 )
+from degenbot.types.rpc_types import BlockData as Web3BlockData
 
 # ------------------------------------------------------------------
 # ABI encoding / decoding

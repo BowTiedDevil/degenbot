@@ -28,13 +28,12 @@ from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from web3.types import BlockIdentifier
-
     from degenbot.builders.async_context import AsyncBuilderContext
     from degenbot.builders.pool_io import AsyncPoolIO
     from degenbot.builders.request import BuildRequest
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
+    from degenbot.types.rpc_types import BlockIdentifier
 
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import UniswapV3PoolExternalUpdate

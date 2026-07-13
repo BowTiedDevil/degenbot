@@ -16,9 +16,9 @@ if TYPE_CHECKING:
 
     from eth_typing import BlockIdentifier
     from hexbytes import HexBytes
-    from web3.types import BlockData, LogReceipt, TxParams
 
     from degenbot.provider.subscription import Subscription
+    from degenbot.types.rpc_types import BlockData, LogReceipt, TxParams
 
 
 @runtime_checkable

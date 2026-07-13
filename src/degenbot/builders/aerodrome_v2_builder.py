@@ -15,13 +15,12 @@ from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.registry.pool_type import pool_type_registry
 
 if TYPE_CHECKING:
-    from web3.types import BlockIdentifier
-
     from degenbot.builders.context import BuilderContext
     from degenbot.builders.pool_io import PoolIO
     from degenbot.builders.request import BuildRequest
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
+    from degenbot.types.rpc_types import BlockIdentifier
 
 
 class AerodromeV2Builder(V2BuilderBase):

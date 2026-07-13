@@ -48,12 +48,12 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from eth_typing import ChecksumAddress
-    from web3.types import BlockIdentifier
 
     from degenbot.builders.protocol import AsyncPoolBuilder
     from degenbot.erc20.erc20 import Erc20Token
     from degenbot.provider.async_adapter import AsyncProviderAdapter
     from degenbot.types.aliases import ChainId
+    from degenbot.types.rpc_types import BlockIdentifier
 
 
 class AsyncBot:

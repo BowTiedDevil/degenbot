@@ -2,12 +2,11 @@
 
 from typing import TYPE_CHECKING, cast
 
-from web3.types import BlockIdentifier
-
 from degenbot.exceptions import DegenbotValueError
 from degenbot.provider import ProviderAdapter
 from degenbot.provider.async_adapter import AsyncProviderAdapter
 from degenbot.types.aliases import BlockNumber
+from degenbot.types.rpc_types import BlockIdentifier
 
 
 def get_number_for_block_identifier(

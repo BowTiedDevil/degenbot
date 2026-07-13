@@ -10,7 +10,6 @@ from dataclasses import dataclass, field
 
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
-from web3.types import LogReceipt
 
 from degenbot.aave.events import (
     AaveV3PoolEvent,
@@ -20,6 +19,7 @@ from degenbot.aave.events import (
 )
 from degenbot.aave.operation_types import OperationType
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.types.rpc_types import LogReceipt
 
 # Token amount matching tolerance for ray math rounding differences
 # Pool revision 9+ uses flooring ray division which can introduce ±2 wei variance

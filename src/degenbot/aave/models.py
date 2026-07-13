@@ -15,10 +15,10 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from web3.types import LogReceipt
 
 from degenbot.aave.events import ScaledTokenEventType
 from degenbot.aave.libraries.token_math import TokenMathFactory
+from degenbot.types.rpc_types import LogReceipt
 
 # Custom type that accepts LogReceipt (containing HexBytes) without validation
 LogReceiptField = Annotated[LogReceipt, PlainValidator(lambda x: x)]

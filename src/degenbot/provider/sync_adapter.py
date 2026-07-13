@@ -21,9 +21,9 @@ from degenbot.provider.offline_provider import OfflineProvider
 if TYPE_CHECKING:
     from eth_typing import BlockIdentifier
     from hexbytes import HexBytes
-    from web3.types import BlockData, FilterParams, LogReceipt, TxParams
 
     from degenbot.provider.protocols import ProviderBackend
+    from degenbot.types.rpc_types import BlockData, FilterParams, LogReceipt, TxParams
 
 # ============================================================================
 # Subscription support mixin
@@ -149,7 +149,7 @@ class _Web3Adapter(SyncSubscriptionSupport):
         return self._w3.eth.get_block_number()
 
     def get_block(self, block_identifier: int | str) -> BlockData | None:
-        return self._w3.eth.get_block(block_identifier)  # ty:ignore[invalid-argument-type]
+        return self._w3.eth.get_block(block_identifier)  # ty: ignore[invalid-argument-type, invalid-return-type]
 
     def get_logs(
         self,
@@ -160,17 +160,17 @@ class _Web3Adapter(SyncSubscriptionSupport):
     ) -> list[LogReceipt]:
         filter_param: FilterParams = {"fromBlock": from_block, "toBlock": to_block}
         if addresses:
-            filter_param["address"] = addresses  # ty:ignore[invalid-assignment]
+            filter_param["address"] = addresses
         if topics:
             filter_param["topics"] = topics
-        return self._w3.eth.get_logs(filter_param)
+        return self._w3.eth.get_logs(filter_param)  # ty: ignore[invalid-argument-type, invalid-return-type]
 
     def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
         tx: TxParams = {"to": to, "data": data}
-        return self._w3.eth.call(tx, block)
+        return self._w3.eth.call(tx, block)  # ty: ignore[invalid-argument-type]
 
     def call_raw(self, tx: TxParams, block: BlockIdentifier | None = None) -> HexBytes:
-        return self._w3.eth.call(tx, block)
+        return self._w3.eth.call(tx, block)  # ty: ignore[invalid-argument-type]
 
     def get_code(self, address: str, block: int | None = None) -> HexBytes:
         return self._w3.eth.get_code(address, block)  # ty:ignore[invalid-argument-type]
@@ -224,7 +224,7 @@ class _AlloyAdapter(SyncSubscriptionSupport):
                 block_identifier = 0
             elif block_identifier == "pending":
                 block_identifier = self._alloy.get_block_number() + 1
-        return self._alloy.get_block(block_identifier)  # ty:ignore[invalid-argument-type, invalid-return-type]
+        return self._alloy.get_block(block_identifier)  # ty:ignore[invalid-argument-type]
 
     def get_logs(
         self,
@@ -238,7 +238,7 @@ class _AlloyAdapter(SyncSubscriptionSupport):
             to_block=to_block,
             addresses=addresses,
             topics=topics,
-        )  # ty:ignore[invalid-return-type]
+        )  # ty: ignore[invalid-return-type]
 
     def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
         try:

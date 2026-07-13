@@ -20,9 +20,9 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from hexbytes import HexBytes
-    from web3.types import BlockData, FilterParams, LogReceipt, TxParams
 
     from degenbot.provider.protocols import AsyncProviderBackend
+    from degenbot.types.rpc_types import BlockData, FilterParams, LogReceipt, TxParams
 
 # ============================================================================
 # Subscription support mixin
@@ -139,7 +139,7 @@ class _AsyncWeb3Adapter(AsyncSubscriptionSupport):
         return await self._w3.eth.chain_id
 
     async def get_block(self, block_identifier: int | str) -> BlockData | None:
-        return await self._w3.eth.get_block(block_identifier)  # ty:ignore[invalid-argument-type]
+        return await self._w3.eth.get_block(block_identifier)  # ty: ignore[invalid-argument-type, invalid-return-type]
 
     async def get_logs(
         self,
@@ -150,14 +150,14 @@ class _AsyncWeb3Adapter(AsyncSubscriptionSupport):
     ) -> list[LogReceipt]:
         filter_param: FilterParams = {"fromBlock": from_block, "toBlock": to_block}
         if addresses:
-            filter_param["address"] = addresses  # ty:ignore[invalid-assignment]
+            filter_param["address"] = addresses
         if topics:
             filter_param["topics"] = topics
-        return await self._w3.eth.get_logs(filter_param)
+        return await self._w3.eth.get_logs(filter_param)  # ty: ignore[invalid-argument-type, invalid-return-type]
 
     async def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
         tx: TxParams = {"to": to, "data": data}
-        return await self._w3.eth.call(tx, block)
+        return await self._w3.eth.call(tx, block)  # ty: ignore[invalid-argument-type]
 
     async def get_code(self, address: str, block: int | None = None) -> HexBytes:
         return await self._w3.eth.get_code(address, block)  # ty:ignore[invalid-argument-type]
@@ -217,7 +217,7 @@ class _AsyncAlloyAdapter:
                 block_identifier = 0
             elif block_identifier == "pending":
                 block_identifier = await self._alloy.get_block_number() + 1
-        return await self._alloy.get_block(block_identifier)  # ty:ignore[invalid-argument-type, invalid-return-type]
+        return await self._alloy.get_block(block_identifier)  # ty:ignore[invalid-argument-type]
 
     async def get_logs(
         self,
@@ -231,7 +231,7 @@ class _AsyncAlloyAdapter:
             to_block=to_block,
             addresses=addresses,
             topics=topics,
-        )  # ty:ignore[invalid-return-type]
+        )  # ty: ignore[invalid-return-type]
 
     async def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
         try:

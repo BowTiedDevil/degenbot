@@ -29,13 +29,12 @@ from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from web3.types import BlockIdentifier
-
     from degenbot.builders.context import BuilderContext
     from degenbot.builders.pool_io import PoolIO
     from degenbot.builders.request import BuildRequest
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
+    from degenbot.types.rpc_types import BlockIdentifier
 
 
 class V3PoolBuilder(V3BuilderBase):

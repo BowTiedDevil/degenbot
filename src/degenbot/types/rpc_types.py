@@ -6,11 +6,88 @@ ints.
 
 Key naming: Block/transaction dicts use snake_case (produced by the typed Rust converters). Log
 dicts use camelCase (matching the web3.py convention, as produced by ``log_to_py_dict``).
+
+C1 (YMDOZL): the ``web3.types`` imports (``BlockIdentifier``, ``BlockData``, ``FilterParams``,
+``LogReceipt``, ``RPCEndpoint``, ``RPCResponse``, ``TxParams``) are reproduced here natively
+so the codebase carries zero ``from web3.types import`` references. The shapes are deliberately
+loose (``total=False`` TypedDicts with the fields actually produced/consumed) so they survive the
+full web3py retirement epic (Pass C) without type-check churn.
 """
 
-from typing import TypedDict
+from typing import Any, TypedDict
 
+from eth_typing import ChecksumAddress, HexStr
 from hexbytes import HexBytes
+
+# ── RPC primitive aliases (C1 — replaces ``web3.types`` primitives) ───────
+
+#: Block identifier: a number, hex hash, or one of the canonical tags.
+#: Matches every call site (``block_identifier: BlockIdentifier | None = None``);
+#: web3's ``Union[int, Literal["earliest", "latest", "pending"], Hash32]`` is.
+#: subsumed by the ``str`` arm.
+BlockIdentifier = int | str
+
+#: JSON-RPC method name (``eth_blockNumber``, ``evm_mine`` …) — was
+#: ``web3.types.RPCEndpoint = NewType("RPCEndpoint", str)``; the newtype adds
+#: no runtime semantics + the degenbot call sites pass plain ``str`` literals,
+#: so the alias flattens to ``str``.
+RPCEndpoint = str
+
+
+class RPCResponse(TypedDict, total=False):
+    """Loose JSON-RPC response envelope — matches ``web3.types.RPCResponse``.
+
+    The ``result`` payload is ``Any`` (it is method-dependent): the typed
+    converters in ``degenbot-rpc`` decode per-method into the
+    ``TransactionData`` / ``BlockData`` / ``LogData`` shapes below.
+    """
+
+    jsonrpc: str
+    id: int | str
+    method: str
+    params: Any
+    error: Any
+    result: Any
+
+
+class FilterParams(TypedDict, total=False):
+    """``eth_getLogs`` filter params — was ``web3.types.FilterParams``.
+
+    ``fromBlock``/``toBlock`` are ``BlockIdentifier`` (int or tag).
+    """
+
+    fromBlock: BlockIdentifier
+    toBlock: BlockIdentifier
+    address: str | list[str]
+    topics: list[Any] | None
+
+
+#: Transaction params for ``eth_call`` / ``eth_sendTransaction`` — was ``web3.types.TxParams``.
+#:
+#: The degenbot call sites construct ``{"to": addr, "data": bytes}`` and
+#: sometimes ``{"to": addr, "data": bytes, "from": addr}``; the full param
+#: set (gas/value/nonce/etc.) lives in ``TransactionData`` for typed receipts.
+#: Uses the functional ``TypedDict`` form because ``from`` is a Python keyword
+#: (same pattern as ``TransactionData`` below).
+TxParams = TypedDict(
+    "TxParams",
+    {
+        "from": ChecksumAddress | str,
+        "to": ChecksumAddress | str,
+        "gas": int,
+        "gasPrice": int,
+        "maxFeePerGas": int,
+        "maxPriorityFeePerGas": int,
+        "value": int,
+        "data": bytes | HexStr | HexBytes,
+        "nonce": int,
+        "chainId": int,
+        "accessList": list[Any],
+        "input": bytes | HexStr | HexBytes,
+        "type": int,
+    },
+    total=False,
+)
 
 
 class _AccessListEntry(TypedDict, total=True):
@@ -142,9 +219,10 @@ TransactionReceiptData = TypedDict(
 
 
 class LogData(TypedDict, total=False):
-    """Log entry data returned by ``get_logs()`` and embedded in receipts.
+    """Loose log entry data — ``eth_getLogs`` / subscription stream entries.
 
-    Uses camelCase keys matching the web3.py convention.
+    Some fields may be ``None`` for pending (un-mined) entries. Uses
+    camelCase keys matching the web3.py convention.
     """
 
     address: str
@@ -153,4 +231,26 @@ class LogData(TypedDict, total=False):
     blockNumber: int | None
     blockHash: HexBytes | None
     transactionHash: HexBytes | None
+    transactionIndex: int | None
     logIndex: int | None
+    removed: bool
+
+
+class LogReceipt(TypedDict, total=True):
+    """Confirmed-log entry shape — was ``web3.types.LogReceipt``.
+
+    Strict TypedDict (all fields required) for log entries consumed from
+    confirmed blocks: consumers expect plain ``int`` (not ``int | None``),
+    matching web3's exact shape without the looseness the pending-aware
+    ``LogData`` carries.
+    """
+
+    address: ChecksumAddress
+    blockHash: HexBytes
+    blockNumber: int
+    data: HexBytes
+    logIndex: int
+    removed: bool
+    topics: list[HexBytes]
+    transactionHash: HexBytes
+    transactionIndex: int

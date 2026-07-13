@@ -29,8 +29,6 @@ from degenbot.provider.call_helpers import encode_function_calldata
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from web3.types import BlockIdentifier
-
     from degenbot.builders.context import BuilderContext
     from degenbot.builders.pool_io import PoolIO
     from degenbot.curve.detection.types import MetapoolDetectionResult
@@ -39,6 +37,7 @@ if TYPE_CHECKING:
     from degenbot.erc20 import Erc20Token
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
+    from degenbot.types.rpc_types import BlockIdentifier
 
 
 _REGISTRY_ADDRESSES = (CURVE_V1_REGISTRY_ADDRESS, CURVE_V1_FACTORY_ADDRESS)

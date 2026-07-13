@@ -7,7 +7,6 @@ from eth_abi.exceptions import DecodingError
 from eth_typing import ChecksumAddress
 from sqlalchemy import select
 from sqlalchemy.orm import Session, scoped_session
-from web3.types import BlockIdentifier
 
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.checksum_cache import get_checksum_address
@@ -19,6 +18,7 @@ from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.types.abstract import AbstractErc20Token
 from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import BoundedCache
+from degenbot.types.rpc_types import BlockIdentifier
 
 if TYPE_CHECKING:
     from hexbytes import HexBytes
