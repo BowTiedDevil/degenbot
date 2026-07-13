@@ -107,7 +107,7 @@ class TestV3RegistrationVerify:
             fee=500,
             tick_spacing=10,
             factory=UNISWAP_V3_FACTORY,
-            sqrt_price_x96=1,
+            sqrt_price_x96=1 << 96,
             liquidity=0,
             tick=0,
         )
@@ -123,7 +123,7 @@ class TestV3RegistrationVerify:
             fee=500,
             tick_spacing=10,
             factory=PANCAKESWAP_V3_FACTORY,
-            sqrt_price_x96=1,
+            sqrt_price_x96=1 << 96,
             liquidity=0,
             tick=0,
         )
@@ -145,7 +145,7 @@ class TestV3RegistrationVerify:
                 fee=500,
                 tick_spacing=10,
                 factory=PANCAKESWAP_V3_FACTORY,
-                sqrt_price_x96=1,
+                sqrt_price_x96=1 << 96,
                 liquidity=0,
                 tick=0,
             )
@@ -161,7 +161,7 @@ class TestV3RegistrationVerify:
                 fee=500,
                 tick_spacing=10,
                 factory=UNISWAP_V3_FACTORY,
-                sqrt_price_x96=1,
+                sqrt_price_x96=1 << 96,
                 liquidity=0,
                 tick=0,
             )
@@ -176,7 +176,7 @@ class TestV3RegistrationVerify:
             fee=500,
             tick_spacing=10,
             factory=ad_hoc_factory,
-            sqrt_price_x96=1,
+            sqrt_price_x96=1 << 96,
             liquidity=0,
             tick=0,
         )

@@ -248,5 +248,16 @@ pub(crate) fn map_register_v4_err(err: degenbot_bot::bot_core::RegisterV4PoolErr
             "V4 pool already registered: pool_manager={pool_manager}, pool_id=0x{}",
             alloy::hex::encode(pool_id),
         )),
+        // Stop-gap mapper for the K3IICB spec-bound admission—the typed
+        // `PoolRegistrationError` Python exception hierarchy lands in F2EVV6
+        // (it bumps this fn + the V2/V3 twins together so all three wrappers
+        // reach a typed `SpecViolationError` in lockstep). Message mirrors
+        // `SpecViolation`'s `Display`: `field <name> value <val> out of bounds:
+        // <bound>` so the rejected field is surfaced up front.
+        degenbot_bot::bot_core::RegisterV4PoolError::SpecViolation(v) => {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "V4 pool registration failed: spec violation — {v}"
+            ))
+        }
     }
 }

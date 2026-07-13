@@ -138,6 +138,20 @@ pub enum RegisterV4PoolError {
         pool_manager: Address,
         pool_id: PoolId,
     },
+    /// An out-of-spec field (`sqrt_price_x96` / `tick` / V4 `fee` /
+    /// `tick_spacing`) — wraps a [`spec_bounds::SpecViolation`] from the
+    /// validator helpers (`validate_sqrt_price` / `validate_tick` /
+    /// `validate_v4_fee` / `validate_tick_spacing`); the four V4 spec checks
+    /// fire together ahead of the hooked / dynamic-fee rejections. Mirrors
+    /// the V2 (`RegisterV2PoolError::SpecViolation`, MSTAT2) and V3
+    /// (`RegisterV3PoolError::SpecViolation`, 24KNGF) twins.
+    SpecViolation(crate::bot_core::spec_bounds::SpecViolation),
+}
+
+impl From<crate::bot_core::spec_bounds::SpecViolation> for RegisterV4PoolError {
+    fn from(v: crate::bot_core::spec_bounds::SpecViolation) -> Self {
+        Self::SpecViolation(v)
+    }
 }
 
 /// Full V4 state overwrite applied by [`crate::bot_core::BotState::sync_v4_pool_state`].
