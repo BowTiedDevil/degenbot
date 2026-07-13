@@ -53,6 +53,7 @@ pub(crate) struct HopTypes {
     v2: Py<PyType>,
     v3: Py<PyType>,
     v4: Py<PyType>,
+    path_info: Py<PyType>,
 }
 
 impl HopTypes {
@@ -62,6 +63,7 @@ impl HopTypes {
             v2: module.getattr("V2HopInfo")?.extract()?,
             v3: module.getattr("V3HopInfo")?.extract()?,
             v4: module.getattr("V4HopInfo")?.extract()?,
+            path_info: module.getattr("PathInfo")?.extract()?,
         })
     }
 }
@@ -169,6 +171,74 @@ pub(crate) fn extract_path_info(
         hops.push(extract_hop(&hop?, types)?);
     }
     Ok(PathInfo::new(hops))
+}
+
+/// Build a Python `V2HopInfo`/`V3HopInfo`/`V4HopInfo` dataclass instance from
+/// a Rust [`HopInfo`] — the reverse of [`extract_hop`]. The address fields
+/// are emitted as EIP-55 checksummed strings (alloy `Address::Display`),
+/// matching the Python cockpit's `h.pool_address` form.
+///
+/// `pub(crate)` so the simulation seam's `PyDispatchOutcome.path_infos`
+/// getter (Decision 1=B, A5) can reconstruct `PathInfo` for the `[profit]`
+/// hop-detail log without the cockpit threading a separate map.
+pub(crate) fn hop_to_py<'py>(
+    py: Python<'py>,
+    hop: &HopInfo,
+    types: &HopTypes,
+) -> PyResult<Bound<'py, PyAny>> {
+    Ok(match hop {
+        HopInfo::V2(v2) => types
+            .v2
+            .bind(py)
+            .call1((
+                format!("{}", v2.pool_address),
+                format!("{}", v2.token0_address),
+                format!("{}", v2.token1_address),
+                v2.fee,
+                v2.zfo,
+            ))?
+            .into_any(),
+        HopInfo::V3(v3) => types
+            .v3
+            .bind(py)
+            .call1((
+                format!("{}", v3.pool_address),
+                format!("{}", v3.token0_address),
+                format!("{}", v3.token1_address),
+                v3.fee,
+                v3.zfo,
+            ))?
+            .into_any(),
+        HopInfo::V4(v4) => types
+            .v4
+            .bind(py)
+            .call1((
+                format!("{}", v4.pool_manager_address),
+                v4.pool_id_hex.clone(),
+                format!("{}", v4.currency0_address),
+                format!("{}", v4.currency1_address),
+                v4.fee,
+                v4.tick_spacing,
+                format!("{}", v4.hook_address),
+                v4.zfo,
+            ))?
+            .into_any(),
+    })
+}
+
+/// Build a Python `PathInfo` dataclass from a Rust [`PathInfo`] — the reverse
+/// of [`extract_path_info`]. Iterates the hops via [`hop_to_py`], collects them
+/// into a Python list, and constructs `PathInfo(hops=...)`.
+pub(crate) fn path_info_to_py<'py>(
+    py: Python<'py>,
+    path: &PathInfo,
+    types: &HopTypes,
+) -> PyResult<Bound<'py, PyAny>> {
+    let hops_list = pyo3::types::PyList::empty(py);
+    for hop in &path.hops {
+        hops_list.append(hop_to_py(py, hop, types)?)?;
+    }
+    types.path_info.bind(py).call1((hops_list,))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
