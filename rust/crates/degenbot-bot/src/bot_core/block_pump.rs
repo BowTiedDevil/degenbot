@@ -139,8 +139,18 @@ pub struct BlockPump {
     /// routed through the `DrainSink` — reorg is a `Bot` concern, parallel
     /// to `dispatch_log`).
     reorg_coordinator: Arc<crate::bot_core::reorg_coordinator::ReorgCoordinator>,
-    /// The Alloy provider (created from the RPC URL)
+    /// The Alloy provider (created from the RPC URL — typically WS so the
+    /// `newHeads`/logs subscriptions work)
     provider: Arc<AlloyProvider>,
+    /// Optional HTTP provider for `eth_getLogs`-heavy paths (backfill + the
+    /// header-stall recovery fetch). WS providers commonly hang or refuse
+    /// large multi-topic `eth_getLogs` responses (tungstenite's default
+    /// `max_message_size`/`max_frame_size` caps byte sizes that a 2000-block
+    /// V2+V3+V4 OR filter easily exceeds), so prefer HTTP whenever the caller
+    /// supplies one. Mirrors the `AlloyProvider::new` discipline on the
+    /// `AlloyProvider` (same provider trait object). When `None` the WS
+    /// provider is reused (cold-start / non-backfill paths never touch it).
+    http_provider: Option<Arc<AlloyProvider>>,
     /// Shutdown flag — set by `stop()` or by a too-deep reorg (graceful exit)
     shutdown: Arc<AtomicBool>,
     /// If no header arrives within this window, poll `eth_blockNumber` and
@@ -181,6 +191,7 @@ impl BlockPump {
     #[allow(clippy::missing_errors_doc)]
     pub async fn subscribe(
         rpc_url: &str,
+        http_provider: Option<Arc<AlloyProvider>>,
         bot: Arc<Bot>,
         sink: Arc<dyn DrainSink>,
         reorg_coordinator: Arc<crate::bot_core::reorg_coordinator::ReorgCoordinator>,
@@ -214,6 +225,7 @@ impl BlockPump {
             sink,
             reorg_coordinator,
             provider: Arc::new(provider),
+            http_provider,
             shutdown,
             header_staleness: Duration::from_secs(HEADER_STALENESS_SECS),
         };
@@ -378,23 +390,44 @@ impl BlockPump {
         // J3FMDO: auto-backfill the snapshot→WS gap before the live loop. The
         // backfill only buffers state into BotState (no solve, no on_send);
         // result batches therefore do not flow pre-resume.
-        let s = self.bot.state_arc().read().snapshot_seed_block();
-        if let Some(seed) = s {
-            if seed > 0 && first_block > 0 && seed < first_block {
-                log::info!(
-                    "BlockPump: auto-backfill from snapshot block {seed} to WS block {first_block} before resume"
-                );
-                if let Err(e) = self
-                    .backfill_from_snapshot(first_block, DEFAULT_BACKFILL_CHUNK_SIZE)
-                    .await
-                {
-                    log::error!(
-                        "BlockPump: auto-backfill failed — starting live loop from {first_block} (gap not closed): {e}"
-                    );
-                }
-            }
+        if let Err(e) = self.backfill_to_ws_block(first_block).await {
+            log::error!(
+                "BlockPump: auto-backfill failed — starting live loop from {first_block} (gap not closed): {e}"
+            );
         }
         self.run_with_stream(combined, first_block).await;
+    }
+
+    /// Close the snapshot→WS gap by buffering `eth_getLogs(S+1..W-1)` into the
+    /// core `BotState`'s per-pool backfill buffer (no solve, no `on_send`).
+    ///
+    /// This is the SYNCHRONOUSLY-awaitable half of `resume_from_subscribe` —
+    /// `PumpState::resume` `block_on`s it BEFORE spawning the live loop so
+    /// Python's `build_paths` (which drains the per-pool backfill buffer via
+    /// `apply_backfill_buffer_v3`) cannot race the backfill. Pre-fix the
+    /// backfill ran inside the spawned `resume_from_subscribe` task and
+    /// `resume` returned immediately, so an active pool's burn was not yet
+    /// buffered when `build_paths` drained → `VerificationMismatchError` at
+    /// post-drain verify (2026-07-12 backrun crash).
+    ///
+    /// No-op when `S` is unset (cold start), `S >= W` (catch-up snapshot), or
+    /// `S == 0`. Errors log + return (the live loop still starts from `W`).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(String)` if a chunk's `eth_getLogs` call fails (message
+    /// includes the offending block range + provider error).
+    pub async fn backfill_to_ws_block(&self, ws_block: u64) -> Result<u64, String> {
+        let s = self.bot.state_arc().read().snapshot_seed_block();
+        let Some(seed) = s else { return Ok(0) };
+        if seed == 0 || ws_block == 0 || seed >= ws_block {
+            return Ok(0);
+        }
+        log::info!(
+            "BlockPump: auto-backfill from snapshot block {seed} to WS block {ws_block} before resume"
+        );
+        self.backfill_from_snapshot(ws_block, DEFAULT_BACKFILL_CHUNK_SIZE)
+            .await
     }
 
     /// Run the main pump loop with an existing WS stream.
@@ -404,7 +437,7 @@ impl BlockPump {
     /// waiting for a block header. Block headers provide metadata
     /// (timestamp, fees) and handle empty-block detection.
     #[allow(unused_assignments, clippy::too_many_lines)]
-    async fn run_with_stream(
+    pub async fn run_with_stream(
         &mut self,
         mut combined: stream::BoxStream<'static, WsEvent>,
         first_observed_block: u64,
@@ -843,7 +876,14 @@ impl BlockPump {
         publish_pending: &mut bool,
     ) {
         log::warn!("BlockPump: no activity for {BACKFILL_TIMEOUT_SECS}s — attempting backfill");
-        let latest_block = match self.provider.provider_arc().get_block_number().await {
+        let latest_block = match self
+            .http_provider
+            .as_ref()
+            .unwrap_or(&self.provider)
+            .provider_arc()
+            .get_block_number()
+            .await
+        {
             Ok(n) => n,
             Err(e) => {
                 log::error!("BlockPump: backfill failed — can't get block number: {e}");
@@ -893,7 +933,14 @@ impl BlockPump {
         log::info!("BlockPump: backfilling blocks {from_block} to {to_block}");
 
         let filter = build_backfill_filter(from_block, to_block);
-        let logs = match self.provider.provider_arc().get_logs(&filter).await {
+        let logs = match self
+            .http_provider
+            .as_ref()
+            .unwrap_or(&self.provider)
+            .provider_arc()
+            .get_logs(&filter)
+            .await
+        {
             Ok(logs) => logs,
             Err(e) => {
                 log::error!("BlockPump: backfill eth_getLogs failed: {e}");
@@ -1035,16 +1082,28 @@ impl BlockPump {
         log::info!(
             "BlockPump::backfill_from_snapshot: fetching events {from_block}–{to_block} ({total_blocks} blocks, chunk_size={chunk_size})"
         );
-        let provider = self.provider.provider_arc();
+        let provider = self
+            .http_provider
+            .as_ref()
+            .unwrap_or(&self.provider)
+            .provider_arc();
         let mut total_logs = 0usize;
         let mut chunk_start = from_block;
         while chunk_start <= to_block {
             let chunk_end = (chunk_start + chunk_size - 1).min(to_block);
             let filter = build_backfill_filter(chunk_start, chunk_end);
+            log::info!(
+                "BlockPump::backfill_from_snapshot: fetching chunk {chunk_start}-{chunk_end}"
+            );
+            let t0 = std::time::Instant::now();
             let logs = provider.get_logs(&filter).await.map_err(|e| {
                 format!("eth_getLogs failed for blocks {chunk_start}-{chunk_end}: {e}")
             })?;
             let n = logs.len();
+            let fetch_ms = t0.elapsed().as_millis();
+            log::info!(
+                "BlockPump::backfill_from_snapshot: chunk {chunk_start}-{chunk_end} fetched {n} logs in {fetch_ms}ms"
+            );
             total_logs += n;
             // Hold the write guard across the chunk so the apply + buffer-expire
             // (which advance `last_processed_block`) stay atomic per chunk.
@@ -1085,6 +1144,7 @@ impl BlockPump {
             sink,
             reorg_coordinator,
             provider,
+            http_provider: None,
             shutdown,
             header_staleness: Duration::from_secs(HEADER_STALENESS_SECS),
         }
@@ -1625,6 +1685,49 @@ mod tests {
         }
     }
 
+    /// Build a V3 `Burn` log with `block_number` set (for backfill tests).
+    /// data = abi.encode(uint128 amount, uint256 amount0, uint256 amount1).
+    fn make_v3_burn_log_with_block(
+        pool_address: Address,
+        tick_lower: i32,
+        tick_upper: i32,
+        amount: u128,
+        block_number: u64,
+    ) -> Log {
+        use alloy::primitives::{I256, U128};
+        let tick_to_topic = |tick: i32| {
+            let i = I256::try_from(i128::from(tick)).unwrap_or(I256::ZERO);
+            alloy::primitives::B256::from(i.to_be_bytes::<32>())
+        };
+        let mut amount_word = [0u8; 32];
+        amount_word[16..32].copy_from_slice(&U128::from(amount).to_be_bytes::<16>());
+        let mut data = Vec::with_capacity(96);
+        data.extend_from_slice(&amount_word);
+        data.extend_from_slice(&alloy::primitives::U256::ZERO.to_be_bytes::<32>());
+        data.extend_from_slice(&alloy::primitives::U256::ZERO.to_be_bytes::<32>());
+        let owner = alloy::primitives::Address::from([0xccu8; 20]);
+        let inner = alloy::primitives::Log::new_unchecked(
+            pool_address,
+            vec![
+                V3_BURN_TOPIC,
+                owner.into_word(),
+                tick_to_topic(tick_lower),
+                tick_to_topic(tick_upper),
+            ],
+            Bytes::from(data),
+        );
+        Log {
+            inner,
+            block_hash: None,
+            block_number: Some(block_number),
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: None,
+            removed: false,
+        }
+    }
+
     /// Counting subscriber — records `on_pool_state_updated` invocations so a
     /// pump-level reorg test can assert the restore fired the SAME notify
     /// path as a forward `dispatch_log`. `Fake` prefix per AGENTS.md.
@@ -2005,6 +2108,44 @@ mod tests {
             asserter.read_q().len(),
             0,
             "auto-backfill inside resume popped exactly one eth_getLogs response; queue must be empty"
+        );
+    }
+
+    /// J3FMDO race regression: `backfill_to_ws_block` is the
+    /// synchronously-awaitable backfill that `PumpState::resume` `block_on`s
+    /// BEFORE spawning the live loop. Pre-fix the backfill ran INSIDE the
+    /// spawned `resume_from_subscribe` task, so `PumpState::resume` returned
+    /// immediately and Python's `build_paths` drained an EMPTY backfill buffer
+    /// (the burn for an active pool was not yet buffered) → the post-drain
+    /// verify mismatched on-chain and crashed the backrun bot with
+    /// `VerificationMismatchError`. This pins the contract: after
+    /// `backfill_to_ws_block` returns, the V3 backfill buffer is populated —
+    /// the event did NOT require the live loop to run first.
+    #[tokio::test]
+    async fn backfill_to_ws_block_populates_buffer_before_return() {
+        let pool_addr = alloy::primitives::Address::from([0xc2u8; 20]);
+        let bot = Arc::new(Bot::new(1));
+        bot.state_arc().write().set_snapshot_seed_block(Some(85));
+        let (pump, _sink, _shutdown, asserter) =
+            pump_for_test_with_asserter(Arc::clone(&bot), None);
+
+        // A V3 Burn log at block 90 (in the backfill range 86..99).
+        asserter.push_success(&vec![make_v3_burn_log_with_block(
+            pool_addr, -100, 100, 500, 90,
+        )]);
+
+        // backfill_to_ws_block must fully buffer the burn BEFORE returning.
+        pump.backfill_to_ws_block(100)
+            .await
+            .expect("backfill_to_ws_block completes against the mock");
+
+        // The burn was buffered (not applied — pool unregistered → buffer
+        // branch). Pre-fix: this method did not exist and `resume` returned
+        // before the spawned task buffered → count 0 → race.
+        assert_eq!(
+            bot.state_arc().read().buffered_v3_event_count(&pool_addr),
+            1,
+            "backfill_to_ws_block must buffer the V3 burn before returning (race regression)"
         );
     }
 

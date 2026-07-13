@@ -320,6 +320,16 @@ impl PyUniswapArbEngine {
         self.pump.set_verify_rpc_url(rpc_url);
     }
 
+    /// Set the HTTP RPC URL the core `BlockPump` will use for backfill
+    /// `eth_getLogs` (J3FMDO). Must be called BEFORE `subscribe()`. WS
+    /// providers commonly hang on the multi-topic 2000-block OR `eth_getLogs`
+    /// that the snapshot→WS backfill issues; this supplies an HTTP provider so
+    /// the backfill completes in seconds instead of hanging indefinitely.
+    #[pyo3(signature = (rpc_url))]
+    fn set_backfill_http_rpc_url(&self, rpc_url: &str) {
+        self.pump.set_backfill_http_rpc_url(rpc_url);
+    }
+
     /// Set the `StateView` contract address for V4 verification during registration.
     ///
     /// Must be called before any V4 pools are registered with verification enabled.
