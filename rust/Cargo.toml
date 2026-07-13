@@ -40,6 +40,7 @@ members = [
     "crates/degenbot-simulation",
     "crates/degenbot-abi",
     "crates/degenbot-rpc",
+    "crates/degenbot-fork",
     "crates/degenbot-bot",
     "crates/degenbot-decoders",
     "crates/degenbot-uniswap",
@@ -88,6 +89,8 @@ codegen-units = 16
 [profile.release.package.degenbot-abi]
 codegen-units = 16
 [profile.release.package.degenbot-rpc]
+codegen-units = 16
+[profile.release.package.degenbot-fork]
 codegen-units = 16
 [profile.release.package.degenbot-bot]
 codegen-units = 16
