@@ -2169,11 +2169,27 @@ mod tests {
         );
     }
 
-    /// Diagnostic for the 2026-07-12 WS `eth_getLogs` hang. Builds a RAW
-    /// alloy WS provider (no `retry_with_backoff`) so we see the exact
-    /// underlying behaviour of the transport on a 6-topic 2000-block filter
-    /// (~80k logs, >64 MiB). Two variants: default tungstenite config (the
-    /// production hang) and raised `max_message_size`/`max_frame_size`.
+    /// Diagnostic for the 2026-07-12 WS `eth_getLogs` hang.
+    ///
+    /// Root cause (confirmed here with tracing + a concurrent
+    /// `get_block_number` probe): tungstenite correctly returns
+    /// `Error::Capacity(MessageTooLong)` for a response larger than the
+    /// default `max_frame_size` (16 MiB) / `max_message_size` (64 MiB), but
+    /// `alloy-pubsub`'s `WsBackend` converts that to
+    /// `TransportErrorKind::backend_gone()` (a *retryable* error) at the
+    /// backend→service boundary — losing the Capacity specificity. The pubsub
+    /// service then enters an INFINITE reconnect→redispatch loop: `reconnect()`
+    /// succeeds on the first attempt (the WS handshake is fine; only the
+    /// response is too big), `max_retries` is never consumed, and the pending
+    /// in-flight `eth_getLogs` is re-dispatched each cycle. The caller's
+    /// `get_logs` future never resolves; small concurrent calls keep working.
+    ///
+    /// Three variants:
+    /// A — default tungstenite caps: demonstrates the infinite cycle (HUNG,
+    ///     `get_block_number` probe still succeeding concurrently);
+    /// B — raised caps via raw `WsConnect::with_config`: WS handles it;
+    /// C — production `AlloyProvider::new` path (= the `build_provider` fix):
+    ///     regression sentinel.
     ///
     /// Run with:
     /// `cargo test -p degenbot-bot --manifest-path rust/Cargo.toml \
@@ -2182,11 +2198,13 @@ mod tests {
     /// Requires `DEGENBOT_RPC_WS_CHAINID_1` (a mainnet WS endpoint).
     #[tokio::test]
     #[ignore = "requires a live mainnet WS endpoint (DEGENBOT_RPC_WS_CHAINID_1)"]
+    #[allow(clippy::too_many_lines)]
     async fn ws_getlogs_large_filter_diagnostic() {
         use alloy::network::Ethereum;
         use alloy::providers::{Provider, ProviderBuilder, WebSocketConfig, WsConnect};
         use std::time::Duration;
         use tokio::time::timeout;
+        use tracing_subscriber::util::SubscriberInitExt;
         type Erased = std::sync::Arc<dyn Provider<Ethereum>>;
 
         let Ok(ws_url) = std::env::var("DEGENBOT_RPC_WS_CHAINID_1") else {
@@ -2214,6 +2232,19 @@ mod tests {
         eprintln!("filter range {from}–{to} (latest={latest})");
 
         // --- Variant A: DEFAULT tungstenite config (max_message_size=64MiB) ---
+        // Install a tracing subscriber so alloy's reconnect-cycle `error!`/
+        // `warn!` logs surface (without one they're silently dropped — which is
+        // why the earlier run showed "no error surfaced"). Also poll
+        // `get_block_number` concurrently: if it keeps succeeding while
+        // `get_logs` is pending, the WS service is alive and silently
+        // reconnecting (proving the oversized-response cycle), NOT truly
+        // stalled in tungstenite.
+        let _guard = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::new(
+                "alloy_pubsub=debug,alloy_transport_ws=debug,tungstenite=info",
+            ))
+            .with_test_writer()
+            .set_default();
         let p: Erased = {
             let mid = ProviderBuilder::default()
                 .connect_ws(WsConnect::new(ws_url.clone()))
@@ -2222,8 +2253,21 @@ mod tests {
                 .erased();
             Arc::new(mid)
         };
+        // Concurrent block-number probe on the SAME provider.
+        let probe_p = Arc::clone(&p);
+        let probe = tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(2));
+            tick.tick().await; // skip immediate
+            for i in 1..=15_u32 {
+                tick.tick().await;
+                match probe_p.get_block_number().await {
+                    Ok(n) => eprintln!("A probe #{i}: get_block_number OK = {n}"),
+                    Err(e) => eprintln!("A probe #{i}: get_block_number ERR = {e}"),
+                }
+            }
+        });
         let t0 = std::time::Instant::now();
-        let res = timeout(Duration::from_mins(1), p.get_logs(&filter)).await;
+        let res = timeout(Duration::from_secs(30), p.get_logs(&filter)).await;
         let elapsed = t0.elapsed();
         match res {
             Ok(Ok(logs)) => eprintln!(
@@ -2235,8 +2279,12 @@ mod tests {
                 "A DEFAULT   : ERR after {:.2}s — `{e}`",
                 elapsed.as_secs_f64()
             ),
-            Err(_) => eprintln!("A DEFAULT   : HUNG (60s timeout, no error surfaced) — true stall"),
+            Err(_) => {
+                eprintln!("A DEFAULT   : HUNG (30s timeout, no error surfaced to the caller)");
+            }
         }
+        // Let the probe finish printing so we see the concurrent-call verdict.
+        let _ = timeout(Duration::from_secs(35), probe).await;
 
         // --- Variant B: RAISED config (no size cap) ---
         let cfg = WebSocketConfig::default()

@@ -45,3 +45,6 @@ proptest = "^1.10"
 # Test-only constructors (e.g. AlloyProvider::from_provider) used by the
 # bot_core block-pump tests.
 degenbot-rpc = { path = "../degenbot-rpc", features = ["test-utils"] }
+# Captures alloy/tungstenite tracing for the `ws_getlogs_large_filter_diagnostic`
+# ignored test (reconnect-cycle investigation, 2026-07-12).
+tracing-subscriber = { version = "^0.3", default-features = false, features = ["std", "fmt", "env-filter"] }
