@@ -238,17 +238,38 @@ pub fn isqrt_u512(n: U512) -> U512 {
 /// Convert U512 to U256, returning U256::ZERO if the value overflows.
 ///
 /// This is `pub` so that `mobius_v3_int` can use it too.
+/// Narrow a `U512` to a `U256`.
+///
+/// For pool state sourced from on-chain events (V2 `Sync(uint112,uint112)`,
+/// V3/V4 `Swap`), the inputs are spec-bound: `uint112` V2 reserves,
+/// `uint128` V3/V4 liquidity, and TickMath-bounded `sqrtPriceX96` — all kept
+/// well within `U256` by their contract-storage types. The narrowing is
+/// therefore unreachable for real pool state.
+///
+/// # Panics
+///
+/// Panics if `v > U256::MAX`, i.e. on synthetic / corrupt registration
+/// (e.g. a programmatically-instantiated V2 pool carrying reserves beyond
+/// `uint112::MAX`). The prior implementation silently saturated to
+/// `U256::MAX`, which would propagate garbage through downstream Möbius /
+/// CL computations; panicking here makes the contract invariant explicit.
+/// The proper fix is enforcing the spec widths at `register_*_pool`.
 pub fn u512_to_u256_internal(v: U512) -> U256 {
-    let bytes: [u8; 64] = v.to_be_bytes();
-    // Check if the top 32 bytes are all zero (value fits in U256)
-    let top_all_zero = bytes[..32].iter().all(|&b| b == 0);
-    if !top_all_zero {
-        // Overflow — value is larger than U256::MAX
-        return U256::MAX;
-    }
-    let mut result_bytes = [0u8; 32];
-    result_bytes.copy_from_slice(&bytes[32..64]);
-    U256::from_be_bytes(result_bytes)
+    // Narrowing U512 → U256. For pool state sourced from on-chain events
+    // (V2 `Sync(uint112,uint112)`, V3/V4 `Swap`) the underlying uint112
+    // reserves, uint128 liquidity, and TickMath-bounded sqrt prices keep
+    // every quotient well within U256 — so this is unreachable under
+    // spec-bound state. The explicit pre-check makes that invariant visible
+    // and lets synthetic / corrupt registration fail loudly instead of
+    // silently degrading to `U256::MAX` (the prior sat-cap would then
+    // propagate garbage through downstream Möbius / CL computations).
+    // Proper fix: enforce the on-chain spec widths at `register_*_pool`.
+    assert!(
+        v <= U512::from(U256::MAX),
+        "U512 → U256 narrowing overflow (corrupt/synthetic input; \
+         spec-bound pool state is unreachable)",
+    );
+    v.to::<U256>()
 }
 
 #[cfg(test)]
@@ -461,10 +482,15 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "U512 \u{2192} U256 narrowing overflow")]
     fn test_u512_to_u256_overflow() {
-        // U256::MAX + 1 overflows U256
+        // U256::MAX + 1 overflows U256 — a real pool's reserves/liquidity/
+        // sqrtPrice are spec-bound (uint112 / uint128 / MAX_SQRT_RATIO), so
+        // this fires only on corrupt/synthetic state. `expect` makes the
+        // invariant explicit; the proper fix is enforcing spec widths at
+        // `register_*_pool`.
         let v = U512::from(U256::MAX) + U512::from(1u64);
-        assert_eq!(u512_to_u256_internal(v), U256::MAX); // Capped
+        let _ = u512_to_u256_internal(v);
     }
 
     // ── Boundary tests ───────────────────────────────────────────
