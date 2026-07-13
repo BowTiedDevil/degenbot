@@ -5,7 +5,7 @@
 //! chunked log fetching. Also supports IPC endpoints for local node connections.
 
 use alloy::consensus::{Header as ConsensusHeader, TxEnvelope};
-use alloy::eips::BlockNumberOrTag;
+use alloy::eips::{BlockId, BlockNumberOrTag};
 use alloy::network::Ethereum;
 use alloy::primitives::{Address, Bytes, B256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
@@ -840,7 +840,9 @@ impl AlloyProvider {
     /// profit pattern, state override construction, revert decoding) is the
     /// Simulation epic — this fn only performs the typed RPC round-trip.
     ///
-    /// `block_number` selects the base state; `None` defaults to "latest".
+    /// `block_id` selects the base state (`BlockId::Number(Tag::Pending)` for
+    /// the simulate-v1 `block_identifier="pending"` parity, `BlockId::Number(Tag::Latest)`
+    /// to default to the head block, or `BlockId::Hash(..)` for a specific hash).
     ///
     /// # Errors
     ///
@@ -848,15 +850,15 @@ impl AlloyProvider {
     pub async fn eth_simulate_v1(
         &self,
         payload: &SimulatePayload,
-        block_number: Option<u64>,
+        block_id: BlockId,
     ) -> ProviderResult<Vec<SimulatedBlock<EthBlock>>> {
         self.retry_with_backoff(|| async {
-            let result = if let Some(block) = block_number {
-                self.inner.simulate(payload).block_id(block.into()).await
-            } else {
-                self.inner.simulate(payload).await
-            }
-            .map_err(|e| e.into_provider_error("eth_simulateV1 failed"))?;
+            let result = self
+                .inner
+                .simulate(payload)
+                .block_id(block_id)
+                .await
+                .map_err(|e| e.into_provider_error("eth_simulateV1 failed"))?;
             Ok(result)
         })
         .await
@@ -891,7 +893,8 @@ impl AlloyProvider {
     /// Returns `{accessList, gasUsed}` (plus an optional `error` field if the
     /// transaction would revert).
     ///
-    /// `block_number` selects the base state; `None` defaults to "latest".
+    /// `block_id` selects the base state; `BlockId::Number(Tag::Latest)` is the
+    /// default-of-defaults (the previous `None` semantics).
     ///
     /// # Errors
     ///
@@ -899,18 +902,15 @@ impl AlloyProvider {
     pub async fn eth_create_access_list(
         &self,
         request: &TransactionRequest,
-        block_number: Option<u64>,
+        block_id: BlockId,
     ) -> ProviderResult<AccessListResult> {
         self.retry_with_backoff(|| async {
-            let result = if let Some(block) = block_number {
-                self.inner
-                    .create_access_list(request)
-                    .block_id(block.into())
-                    .await
-            } else {
-                self.inner.create_access_list(request).await
-            }
-            .map_err(|e| e.into_provider_error("eth_createAccessList failed"))?;
+            let result = self
+                .inner
+                .create_access_list(request)
+                .block_id(block_id)
+                .await
+                .map_err(|e| e.into_provider_error("eth_createAccessList failed"))?;
             Ok(result)
         })
         .await
