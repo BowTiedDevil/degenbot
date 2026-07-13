@@ -1981,6 +1981,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "degenbot-v2-math"
+version = "0.6.0-alpha.3"
+dependencies = [
+ "alloy",
+]
+
+[[package]]
 name = "degenbot_rs"
 version = "0.6.0-alpha.3"
 dependencies = [
