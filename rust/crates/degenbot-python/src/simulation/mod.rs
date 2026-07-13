@@ -36,6 +36,7 @@ use pyo3::prelude::*;
 
 pub mod candidate;
 pub mod context;
+pub mod dispatch;
 pub mod outcome;
 
 pub use candidate::PyDispatchCandidate;
@@ -54,5 +55,9 @@ pub fn add_simulation_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySimulateContext>()?;
     m.add_class::<PyDispatchCandidate>()?;
     m.add_class::<PyDispatchOutcome>()?;
+    m.add_function(wrap_pyfunction!(
+        crate::simulation::dispatch::dispatch_profitable_py,
+        m
+    )?)?;
     Ok(())
 }

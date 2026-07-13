@@ -3325,6 +3325,15 @@ class PyDispatchOutcome:
     @property
     def fail_buckets(self) -> dict[str, int]: ...
 
+def dispatch_profitable_py(
+    candidates: list[PyDispatchCandidate],
+    context: PySimulateContext,
+    dispatcher: PyDispatcher,
+    base_fee_next: int,
+    current_block: int,
+    min_profit_net: int,
+    min_profit_margin_bps: int,
+) -> Coroutine[Any, Any, PyDispatchOutcome]: ...
 def dispatch_and_submit_py(
     candidates: list[PySubmitCandidate],
     dispatcher: PyDispatcher,
@@ -3474,6 +3483,7 @@ __all__ = [
     "decode_single",
     "dex_identity",
     "dispatch_and_submit_py",
+    "dispatch_profitable_py",
     "encode",
     "encode_cmd_stream",
     "encode_function_call",
