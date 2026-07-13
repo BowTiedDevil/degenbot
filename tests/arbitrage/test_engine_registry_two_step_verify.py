@@ -66,9 +66,6 @@ class _RecordingVerifyEngine:
     def set_verify_rpc_url(self, rpc: str) -> None:
         self.calls.append("set_verify_rpc_url")
 
-    def set_backfill_http_rpc_url(self, rpc: str) -> None:
-        self.calls.append("set_backfill_http_rpc_url")
-
     def set_verify_state_view(self, addr: str) -> None:
         self.calls.append("set_verify_state_view")
 

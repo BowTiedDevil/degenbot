@@ -78,13 +78,6 @@ pub(crate) struct PumpState {
     pub(crate) verify_provider: Mutex<Option<degenbot_rpc::provider::AlloyProvider>>,
     /// Optional `StateView` contract address for V4 verification.
     pub(crate) verify_state_view: Mutex<Option<alloy::primitives::Address>>,
-    /// Optional HTTP provider used by the core `BlockPump` for backfill
-    /// `eth_getLogs` (J3FMDO). WS providers commonly hang on the multi-topic
-    /// 2000-block OR fetch that the snapshot→WS backfill issues, while the
-    /// same RPC over HTTP returns ~80k logs in seconds. The caller (typically
-    /// `engine_registry.start()` via `node_http`) sets this before `subscribe`
-    /// so `PumpState::subscribe` can hand the provider to `BlockPump::subscribe`.
-    pub(crate) backfill_http_provider: Mutex<Option<degenbot_rpc::provider::AlloyProvider>>,
 }
 
 impl PumpState {
@@ -108,7 +101,6 @@ impl PumpState {
             verify_rpc_url: Mutex::new(None),
             verify_provider: Mutex::new(None),
             verify_state_view: Mutex::new(None),
-            backfill_http_provider: Mutex::new(None),
         }
     }
 
@@ -154,30 +146,10 @@ impl PumpState {
         let sink: Arc<dyn DrainSink> = self.coordinator.clone();
         let reorg_coordinator = Arc::clone(&self.reorg_coordinator);
         let shutdown = Arc::clone(&self.shutdown);
-        // J3FMDO + backfill-RPC fix (2026-07-12): the core `BlockPump`'s
-        // `backfill_from_snapshot` issues a multi-topic 2000-block `eth_getLogs`
-        // that a WS-based provider commonly hangs on (tungstenite's default
-        // `max_message_size`/`max_frame_size` cap the WS path). Hand the
-        // caller-supplied HTTP provider (set via `set_backfill_http_rpc_url`)
-        // to `BlockPump::subscribe` so backfill routes over HTTP regardless of
-        // which scheme `rpc_url` (the WS one) used for subscriptions.
-        let backfill_http_provider = self
-            .backfill_http_provider
-            .lock()
-            .as_ref()
-            .map(|p| Arc::new(p.clone()));
         let runtime = degenbot_core::runtime::get_runtime();
         let subscribe_result = runtime
             .block_on(async {
-                BlockPump::subscribe(
-                    rpc_url,
-                    backfill_http_provider,
-                    bot,
-                    sink,
-                    reorg_coordinator,
-                    shutdown,
-                )
-                .await
+                BlockPump::subscribe(rpc_url, bot, sink, reorg_coordinator, shutdown).await
             })
             .map_err(PyRuntimeError::new_err)?;
         let (pump, state) = subscribe_result;
@@ -311,26 +283,6 @@ impl PumpState {
     // The engine keeps thin delegating wrappers so existing
     // `engine.verify_liquidity_maps` calls keep resolving until T8 rewires them
     // to PyBot. `set_verify_on_register` is excluded (deleted in T5).
-
-    /// Set the HTTP RPC URL used for backfill `eth_getLogs` (J3FMDO + 2026-07-12
-    /// WS capacity bug). When set, `subscribe()` builds the core `BlockPump`
-    /// with an HTTP provider that `backfill_from_snapshot` (and the
-    /// header-stall recovery path) prefer over the WS `rpc_url` provider for
-    /// `eth_getLogs` calls — WS providers commonly hang on the multi-topic
-    /// 2000-block OR fetch that the snapshot→WS gap backfill issues. Must be
-    /// called BEFORE `subscribe()`. Mirrors `set_verify_rpc_url`'s
-    /// `block_on(AlloyProvider::new(...))` discipline.
-    pub(crate) fn set_backfill_http_rpc_url(&self, rpc_url: &str) {
-        let runtime = degenbot_core::runtime::get_runtime();
-        match runtime.block_on(degenbot_rpc::provider::AlloyProvider::new(rpc_url, 3)) {
-            Ok(provider) => {
-                *self.backfill_http_provider.lock() = Some(provider);
-            }
-            Err(e) => {
-                eprintln!("[warn] Failed to create backfill HTTP provider: {e}");
-            }
-        }
-    }
 
     /// Set the HTTP RPC URL used for verification (ADR-006 D4 T4).
     pub(crate) fn set_verify_rpc_url(&self, rpc_url: &str) {

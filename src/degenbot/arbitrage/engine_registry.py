@@ -147,14 +147,6 @@ class EngineRegistry:
             anchor).
 
         """
-        # J3FMDO + 2026-07-12 WS capacity fix: hand the core `BlockPump` an HTTP
-        # provider so its snapshot→WS backfill `eth_getLogs` (a multi-topic OR
-        # over ~2000-block chunks) completes in seconds instead of hanging on
-        # the WS provider's tungstenite message-size caps. Must be set BEFORE
-        # `subscribe()` — `PumpState::subscribe` reads the cached HTTP provider
-        # at pump-construction time and threads it through to
-        # `BlockPump::subscribe`.
-        self.engine.set_backfill_http_rpc_url(node_http)
         backfill_target = self.engine.subscribe(node_ws)
 
         # Stash the snapshot seed block S for the per-pool two-step verify

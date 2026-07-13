@@ -255,16 +255,6 @@ impl PyBot {
         }
     }
 
-    /// Set the HTTP RPC URL the core `BlockPump` uses for backfill
-    /// `eth_getLogs` (J3FMDO). Must be called BEFORE `subscribe()`. Delegates
-    /// to the shared `PumpState`.
-    #[pyo3(signature = (rpc_url))]
-    fn set_backfill_http_rpc_url(&self, rpc_url: &str) {
-        if let Ok(pump) = self.pump_state() {
-            pump.set_backfill_http_rpc_url(rpc_url);
-        }
-    }
-
     /// Set the `StateView` contract address for V4 verification (ADR-006 D4 T4).
     #[pyo3(signature = (state_view_address))]
     fn set_verify_state_view(&self, state_view_address: &str) {

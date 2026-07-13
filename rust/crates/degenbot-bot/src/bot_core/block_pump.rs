@@ -139,18 +139,8 @@ pub struct BlockPump {
     /// routed through the `DrainSink` — reorg is a `Bot` concern, parallel
     /// to `dispatch_log`).
     reorg_coordinator: Arc<crate::bot_core::reorg_coordinator::ReorgCoordinator>,
-    /// The Alloy provider (created from the RPC URL — typically WS so the
-    /// `newHeads`/logs subscriptions work)
+    /// The Alloy provider (created from the RPC URL)
     provider: Arc<AlloyProvider>,
-    /// Optional HTTP provider for `eth_getLogs`-heavy paths (backfill + the
-    /// header-stall recovery fetch). WS providers commonly hang or refuse
-    /// large multi-topic `eth_getLogs` responses (tungstenite's default
-    /// `max_message_size`/`max_frame_size` caps byte sizes that a 2000-block
-    /// V2+V3+V4 OR filter easily exceeds), so prefer HTTP whenever the caller
-    /// supplies one. Mirrors the `AlloyProvider::new` discipline on the
-    /// `AlloyProvider` (same provider trait object). When `None` the WS
-    /// provider is reused (cold-start / non-backfill paths never touch it).
-    http_provider: Option<Arc<AlloyProvider>>,
     /// Shutdown flag — set by `stop()` or by a too-deep reorg (graceful exit)
     shutdown: Arc<AtomicBool>,
     /// If no header arrives within this window, poll `eth_blockNumber` and
@@ -191,7 +181,6 @@ impl BlockPump {
     #[allow(clippy::missing_errors_doc)]
     pub async fn subscribe(
         rpc_url: &str,
-        http_provider: Option<Arc<AlloyProvider>>,
         bot: Arc<Bot>,
         sink: Arc<dyn DrainSink>,
         reorg_coordinator: Arc<crate::bot_core::reorg_coordinator::ReorgCoordinator>,
@@ -225,7 +214,6 @@ impl BlockPump {
             sink,
             reorg_coordinator,
             provider: Arc::new(provider),
-            http_provider,
             shutdown,
             header_staleness: Duration::from_secs(HEADER_STALENESS_SECS),
         };
@@ -876,14 +864,7 @@ impl BlockPump {
         publish_pending: &mut bool,
     ) {
         log::warn!("BlockPump: no activity for {BACKFILL_TIMEOUT_SECS}s — attempting backfill");
-        let latest_block = match self
-            .http_provider
-            .as_ref()
-            .unwrap_or(&self.provider)
-            .provider_arc()
-            .get_block_number()
-            .await
-        {
+        let latest_block = match self.provider.provider_arc().get_block_number().await {
             Ok(n) => n,
             Err(e) => {
                 log::error!("BlockPump: backfill failed — can't get block number: {e}");
@@ -933,14 +914,7 @@ impl BlockPump {
         log::info!("BlockPump: backfilling blocks {from_block} to {to_block}");
 
         let filter = build_backfill_filter(from_block, to_block);
-        let logs = match self
-            .http_provider
-            .as_ref()
-            .unwrap_or(&self.provider)
-            .provider_arc()
-            .get_logs(&filter)
-            .await
-        {
+        let logs = match self.provider.provider_arc().get_logs(&filter).await {
             Ok(logs) => logs,
             Err(e) => {
                 log::error!("BlockPump: backfill eth_getLogs failed: {e}");
@@ -1082,11 +1056,7 @@ impl BlockPump {
         log::info!(
             "BlockPump::backfill_from_snapshot: fetching events {from_block}–{to_block} ({total_blocks} blocks, chunk_size={chunk_size})"
         );
-        let provider = self
-            .http_provider
-            .as_ref()
-            .unwrap_or(&self.provider)
-            .provider_arc();
+        let provider = self.provider.provider_arc();
         let mut total_logs = 0usize;
         let mut chunk_start = from_block;
         while chunk_start <= to_block {
@@ -1144,7 +1114,6 @@ impl BlockPump {
             sink,
             reorg_coordinator,
             provider,
-            http_provider: None,
             shutdown,
             header_staleness: Duration::from_secs(HEADER_STALENESS_SECS),
         }
@@ -2196,7 +2165,132 @@ mod tests {
         assert_eq!(
             asserter.read_q().len(),
             0,
-            "S >= W → no auto-backfill, no eth_getLogs call"
+            "S ≥ W → no auto-backfill, no eth_getLogs call"
         );
+    }
+
+    /// Diagnostic for the 2026-07-12 WS `eth_getLogs` hang. Builds a RAW
+    /// alloy WS provider (no `retry_with_backoff`) so we see the exact
+    /// underlying behaviour of the transport on a 6-topic 2000-block filter
+    /// (~80k logs, >64 MiB). Two variants: default tungstenite config (the
+    /// production hang) and raised `max_message_size`/`max_frame_size`.
+    ///
+    /// Run with:
+    /// `cargo test -p degenbot-bot --manifest-path rust/Cargo.toml \
+    ///   -- --ignored --nocapture ws_getlogs_large_filter_diagnostic`
+    ///
+    /// Requires `DEGENBOT_RPC_WS_CHAINID_1` (a mainnet WS endpoint).
+    #[tokio::test]
+    #[ignore = "requires a live mainnet WS endpoint (DEGENBOT_RPC_WS_CHAINID_1)"]
+    async fn ws_getlogs_large_filter_diagnostic() {
+        use alloy::network::Ethereum;
+        use alloy::providers::{Provider, ProviderBuilder, WebSocketConfig, WsConnect};
+        use std::time::Duration;
+        use tokio::time::timeout;
+        type Erased = std::sync::Arc<dyn Provider<Ethereum>>;
+
+        let Ok(ws_url) = std::env::var("DEGENBOT_RPC_WS_CHAINID_1") else {
+            eprintln!("skip: DEGENBOT_RPC_WS_CHAINID_1 not set");
+            return;
+        };
+
+        // Fetch a recent block number (small call — works over default WS).
+        let anchor_provider: Erased = {
+            let mid = ProviderBuilder::default()
+                .connect_ws(WsConnect::new(ws_url.clone()))
+                .await
+                .expect("ws connect (anchor)")
+                .erased();
+            Arc::new(mid)
+        };
+        let latest = anchor_provider
+            .get_block_number()
+            .await
+            .expect("block number");
+        // Leave a few blocks of margin so the range is settled.
+        let to = latest - 5;
+        let from = to - 1_999;
+        let filter = build_backfill_filter(from, to);
+        eprintln!("filter range {from}–{to} (latest={latest})");
+
+        // --- Variant A: DEFAULT tungstenite config (max_message_size=64MiB) ---
+        let p: Erased = {
+            let mid = ProviderBuilder::default()
+                .connect_ws(WsConnect::new(ws_url.clone()))
+                .await
+                .expect("ws connect (A)")
+                .erased();
+            Arc::new(mid)
+        };
+        let t0 = std::time::Instant::now();
+        let res = timeout(Duration::from_mins(1), p.get_logs(&filter)).await;
+        let elapsed = t0.elapsed();
+        match res {
+            Ok(Ok(logs)) => eprintln!(
+                "A DEFAULT   : OK  {} logs in {:.2}s (under the 64MiB cap this run)",
+                logs.len(),
+                elapsed.as_secs_f64()
+            ),
+            Ok(Err(e)) => eprintln!(
+                "A DEFAULT   : ERR after {:.2}s — `{e}`",
+                elapsed.as_secs_f64()
+            ),
+            Err(_) => eprintln!("A DEFAULT   : HUNG (60s timeout, no error surfaced) — true stall"),
+        }
+
+        // --- Variant B: RAISED config (no size cap) ---
+        let cfg = WebSocketConfig::default()
+            .max_message_size(None)
+            .max_frame_size(None);
+        let p: Erased = {
+            let mid = ProviderBuilder::default()
+                .connect_ws(WsConnect::new(ws_url.clone()).with_config(cfg))
+                .await
+                .expect("ws connect (B)")
+                .erased();
+            Arc::new(mid)
+        };
+        let t0 = std::time::Instant::now();
+        let res = timeout(Duration::from_mins(1), p.get_logs(&filter)).await;
+        let elapsed = t0.elapsed();
+        match res {
+            Ok(Ok(logs)) => eprintln!(
+                "B RAISED    : OK  {} logs in {:.2}s",
+                logs.len(),
+                elapsed.as_secs_f64()
+            ),
+            Ok(Err(e)) => eprintln!(
+                "B RAISED    : ERR after {:.2}s — `{e}`",
+                elapsed.as_secs_f64()
+            ),
+            Err(_) => eprintln!("B RAISED    : HUNG (60s timeout)"),
+        }
+
+        // --- Variant C: production path (`AlloyProvider::new` → ---
+        // `build_provider`), which now raises the tungstenite caps in
+        // `degenbot_rpc::provider::build_provider`. This is the regression
+        // sentinel: if a future change drops the raised-config in
+        // `build_provider`, this variant hangs and the test suite surfaces it.
+        let alloy_provider = degenbot_rpc::provider::AlloyProvider::new(&ws_url, 3)
+            .await
+            .expect("AlloyProvider::new");
+        let p = alloy_provider.provider_arc();
+        let t0 = std::time::Instant::now();
+        let res = timeout(Duration::from_mins(1), p.get_logs(&filter)).await;
+        let elapsed = t0.elapsed();
+        match res {
+            Ok(Ok(logs)) => eprintln!(
+                "C PRODUCTION: OK  {} logs in {:.2}s",
+                logs.len(),
+                elapsed.as_secs_f64()
+            ),
+            Ok(Err(e)) => eprintln!(
+                "C PRODUCTION: ERR after {:.2}s — `{e}`",
+                elapsed.as_secs_f64()
+            ),
+            Err(_) => {
+                eprintln!("C PRODUCTION: HUNG (60s timeout) — `build_provider` config regression");
+            }
+        }
     }
 }
