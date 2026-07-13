@@ -76,17 +76,34 @@ class TestFromEnvFull:
 
 
 class TestDryRunDefaults:
-    def test_dry_run_missing_operator_defaults_to_zero_and_dummy_key(
+    _DRY_RUN_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+    _DRY_RUN_ADDR = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+
+    def test_dry_run_missing_operator_defaults_to_valid_dummy_key(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # Regression: the dry-run placeholder private key must be a VALID
+        # secp256k1 scalar. `dispatch_profitable_results` constructs a
+        # `PyTxSigner(key=cfg.operator_private_key)` unconditionally — the
+        # former all-zero placeholder (0x00..00) is rejected by the curve (zero
+        # is not a valid scalar), raising `ValueError: signature error` and
+        # killing the result-consumer task on the very first result batch. The
+        # Anvil account-0 key is a well-known valid throwaway that never signs
+        # (the Rust submit leaf's `dry_run` guard skips `sign_eip1559`).
+        from degenbot.degenbot_rs import PyTxSigner
+
         _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
         env = _full_env() | {"OPERATOR_ADDRESS": "", "OPERATOR_PRIVATE_KEY": ""}
         cfg = BackrunConfig.from_env(env, live=False, permutation=None)
 
-        # dry-run: operator resolves to ZERO_ADDRESS, private_key to 0x00..00
         assert cfg.dry_run is True
-        assert cfg.operator_address == "0x" + "0" * 40
-        assert cfg.operator_private_key == "0x" + "0" * 64
+        assert cfg.operator_address == self._DRY_RUN_ADDR
+        assert cfg.operator_private_key == self._DRY_RUN_KEY
+        # The placeholder must actually load as a signer (the crash surface).
+        # `PyTxSigner.address` renders lowercase (not EIP-55), so compare
+        # case-insensitively against the config's checksummed address.
+        signer = PyTxSigner(key=cfg.operator_private_key, chain_id=1)
+        assert signer.address.lower() == cfg.operator_address.lower()
 
 
 class TestLiveModeRequiresOperator:
