@@ -33,6 +33,7 @@ pub mod rate_provider;
 pub mod reorg_coordinator;
 pub mod snapshot_verify;
 pub mod solve_coordinator;
+pub mod spec_bounds;
 pub mod state_history;
 pub mod tick_bitmap;
 pub mod tick_fetch;
@@ -58,9 +59,11 @@ pub use curve_state::{
     CurveBlockDelta, CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams,
 };
 pub use rate_provider::{BalancerRateProvider, RateProviderError, StaticRateProvider};
+pub use spec_bounds::{SpecValue, SpecViolation, UINT112_MAX};
 pub use v3_state::{
-    v3_simulate_swap, BufferedV3LiquidityUpdate, PoolTickCoverage, RegisterV3PoolParams,
-    SimulateSwapError, V3PoolIdentity, V3PoolState, V3SwapOutcome, V3SwapUpdate,
+    v3_simulate_swap, BufferedV3LiquidityUpdate, PoolTickCoverage, RegisterV3PoolError,
+    RegisterV3PoolParams, SimulateSwapError, V3PoolIdentity, V3PoolState, V3SwapOutcome,
+    V3SwapUpdate,
 };
 pub use v4_state::RegisterV4PoolError;
 pub use v4_state::{
@@ -259,6 +262,29 @@ pub struct RegisterV2PoolParams {
     pub stable_swap: bool,
     /// Camelot integer fee scaling (the solidly-stable math's denominator).
     pub fee_denominator: Option<u64>,
+}
+
+/// Typed rejection from [`BotState::register_v2_pool`] (the spec-bound +
+/// duplicate-address admission contract — see [`spec_bounds`]).
+///
+/// Mirrors [`RegisterV4PoolError`]: `#[derive(Clone, Debug, PartialEq, Eq)]`,
+/// no `Display`/`Error` impl (the `PyO3` mapper pattern-matches the variants
+/// directly and constructs Python exceptions via `format!`).
+///
+/// Variants:
+/// - [`AlreadyRegistered`](Self::AlreadyRegistered) — replaces the prior
+///   `assert!` duplicate-check panic (`assert!(!pool_addresses.contains_key(..))`).
+/// - [`SpecViolation`](Self::SpecViolation) — wraps a
+///   [`spec_bounds::SpecViolation`] from the validator helpers
+///   (`validate_v2_reserve`); fires on `reserve{0,1} > uint112::MAX` (only
+///   reachable for synthetic / corrupt registration — `Sync(uint112,uint112)`
+///   events are structurally spec-bound).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RegisterV2PoolError {
+    /// A pool at this contract address is already registered.
+    AlreadyRegistered { address: Address },
+    /// An out-of-spec field (e.g. `reserve0 > uint112::MAX`).
+    SpecViolation(crate::bot_core::spec_bounds::SpecViolation),
 }
 
 // ---------------------------------------------------------------------------

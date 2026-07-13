@@ -127,6 +127,28 @@ pub struct RegisterV3PoolParams {
     pub init_hash: B256,
 }
 
+/// Typed rejection from [`crate::bot_core::BotState::register_v3_pool`] (the
+/// spec-bound + duplicate-address admission contract — see
+/// [`crate::bot_core::spec_bounds`]). Mirrors `RegisterV4PoolError` (and the
+/// V2 twin `RegisterV2PoolError`):
+/// `#[derive(Clone, Debug, PartialEq, Eq)]`, no `Display`/`Error` impl (the
+/// `PyO3` mapper pattern-matches the variants directly).
+///
+/// Variants:
+/// - [`AlreadyRegistered`](Self::AlreadyRegistered) — replaces the prior
+///   `assert!` duplicate-check panic on V3.
+/// - [`SpecViolation`](Self::SpecViolation) — wraps a
+///   `spec_bounds::SpecViolation` from the validator helpers
+///   (`validate_sqrt_price` / `validate_tick` / `validate_v3_fee` /
+///   `validate_tick_spacing`); the four V3 spec checks fire together.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RegisterV3PoolError {
+    /// A pool at this contract address is already registered.
+    AlreadyRegistered { address: Address },
+    /// An out-of-spec field (e.g. `sqrt_price_x96 >= MAX_SQRT_RATIO`).
+    SpecViolation(crate::bot_core::spec_bounds::SpecViolation),
+}
+
 /// A pre-decoded V3 Swap update for testing without log decoding.
 #[derive(Clone, Debug)]
 pub struct V3SwapUpdate {
