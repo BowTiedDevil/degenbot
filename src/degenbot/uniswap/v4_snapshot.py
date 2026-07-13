@@ -12,9 +12,9 @@ from eth_abi.abi import decode as abi_decode
 from eth_typing import ChecksumAddress, HexAddress, HexStr
 from hexbytes import HexBytes
 from sqlalchemy.orm import Session, scoped_session
-from web3 import Web3
 
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.crypto import event_topic
 from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.degenbot_rs import PyDatabaseSnapshot
@@ -299,8 +299,12 @@ class DatabaseSnapshot:
 class UniswapV4LiquiditySnapshot:
     """Retrieve and maintain liquidity positions for Uniswap V4 pools."""
 
-    UNISWAP_V4_MODIFYLIQUIDITY_EVENT_HASH = HexBytes(
-        Web3().eth.contract(abi=UNISWAP_V4_POOL_MANAGER_ABI).events.ModifyLiquidity().topic,
+    UNISWAP_V4_MODIFYLIQUIDITY_EVENT_HASH = event_topic(
+        next(
+            e
+            for e in UNISWAP_V4_POOL_MANAGER_ABI
+            if e.get("name") == "ModifyLiquidity" and e.get("type") == "event"
+        )
     )
 
     def __init__(self, source: UniswapV4LiquiditySnapshotSource) -> None:

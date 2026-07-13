@@ -10,11 +10,10 @@ import tqdm
 import tqdm.asyncio
 from eth_abi.abi import decode as abi_decode
 from eth_typing import ChecksumAddress, HexAddress
-from hexbytes import HexBytes
 from sqlalchemy.orm import Session, scoped_session
-from web3 import Web3
 
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.crypto import event_topic
 from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.degenbot_rs import PyDatabaseSnapshot
@@ -360,11 +359,11 @@ class DatabaseSnapshot:
 class UniswapV3LiquiditySnapshot:
     """Retrieve and maintain liquidity positions for Uniswap V3 pools."""
 
-    UNISWAP_V3_MINT_EVENT_HASH = HexBytes(
-        Web3().eth.contract(abi=UNISWAP_V3_POOL_ABI).events.Mint().topic,
+    UNISWAP_V3_MINT_EVENT_HASH = event_topic(
+        next(e for e in UNISWAP_V3_POOL_ABI if e.get("name") == "Mint" and e.get("type") == "event")
     )
-    UNISWAP_V3_BURN_EVENT_HASH = HexBytes(
-        Web3().eth.contract(abi=UNISWAP_V3_POOL_ABI).events.Burn().topic,
+    UNISWAP_V3_BURN_EVENT_HASH = event_topic(
+        next(e for e in UNISWAP_V3_POOL_ABI if e.get("name") == "Burn" and e.get("type") == "event")
     )
 
     def __init__(self, source: UniswapV3LiquiditySnapshotSource) -> None:
