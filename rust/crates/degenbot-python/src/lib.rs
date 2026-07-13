@@ -55,6 +55,8 @@ pub mod prelude;
 pub mod price;
 #[cfg(feature = "rpc")]
 pub mod rpc;
+#[cfg(feature = "simulation")]
+pub mod simulation;
 pub mod solady;
 #[cfg(feature = "solidly-math")]
 pub mod solidly_math;

@@ -1954,6 +1954,7 @@ dependencies = [
  "degenbot-pool-updater",
  "degenbot-price",
  "degenbot-rpc",
+ "degenbot-simulation",
  "degenbot-solidly-math",
  "degenbot-submission",
  "degenbot-uniswap",
