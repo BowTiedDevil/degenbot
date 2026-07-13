@@ -11,6 +11,14 @@
 //! block-clock reader all see one state. The Python wrapper holds the SAME
 //! `Arc` the Rust leaves lock — no Python-side mirror.
 //!
+//! `PathSuppression` is **not** composed into [`Dispatcher`] (ergo `LITQFF`):
+//! it lives behind its own `Arc<Mutex<PathSuppression>>`, held here alongside
+//! the `Dispatcher` arc, so the simulation seam (`dispatch_profitable_py`)
+//! can lock suppression WITHOUT locking the `Dispatcher` (which the
+//! submission monitor tasks contend for). The `Dispatcher` never touches
+//! suppression; the 5 suppression accessors below delegate to the suppression
+//! arc.
+//!
 //! # GIL discipline
 //!
 //! Every method is a short synchronous coordination op (nonce/pool bookkeeping,
@@ -20,7 +28,7 @@
 //! DOES release the GIL across RPC is `dispatch_and_submit_py` (separate file).
 
 use crate::prelude::*;
-use degenbot_submission::{CommittedTx, Dispatcher, PoolKey};
+use degenbot_submission::{CommittedTx, Dispatcher, PathSuppression, PoolKey};
 use pyo3::types::PyTuple;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -30,8 +38,10 @@ use std::sync::{Arc, Mutex};
 /// Bundles the mutable containers `consume_result_batches` /
 /// `dispatch_profitable_results` / `monitor_pending_transaction` previously
 /// held as a Python mirror: pending nonces/pools, in-flight task count, the
-/// current-block reference, the block-time ring, per-block priority fees, and
-/// (composed) the [`PathSuppression`] retry/suppress state.
+/// current-block reference, the block-time ring, per-block priority fees.
+/// `PathSuppression` is **not** composed (ergo `LITQFF`); it lives behind its
+/// own `Arc<Mutex<PathSuppression>>` on `PyDispatcher` so the simulation seam
+/// locks it directly, never the `Dispatcher`.
 ///
 /// Construct via [`PyDispatcher::for_block`]. The held [`Dispatcher`] is owned
 /// by Rust; Python drives it through the `PyO3` seam (the Rust leaves
@@ -40,17 +50,30 @@ use std::sync::{Arc, Mutex};
 #[pyclass(name = "PyDispatcher", skip_from_py_object)]
 pub struct PyDispatcher {
     pub(crate) inner: Arc<Mutex<Dispatcher>>,
+    /// The standalone path-suppression tracker (LITQFF) — held alongside the
+    /// `Dispatcher` arc so the simulation seam (`dispatch_profitable_py`)
+    /// can lock suppression WITHOUT locking the `Dispatcher` (the submission
+    /// monitor tasks contend for the `Dispatcher` lock; suppression is
+    /// touched only at the sim fan-out bookends, dormant across the RPC
+    /// `.await`s, and uncontended during the fan-out).
+    pub(crate) suppression: Arc<Mutex<PathSuppression>>,
 }
 
 impl PyDispatcher {
     /// Borrow the shared `Arc<Mutex<Dispatcher>>` (for the submit/fee/monitor
     /// leaves that take it by reference).
-    ///
-    /// Unused until the `dispatch_and_submit_py` / `fetch_fee_history_py`
-    /// wrappers land in the sibling file (they take the dispatcher by `Arc`).
-    #[allow(dead_code)]
     pub(crate) fn inner_arc(&self) -> Arc<Mutex<Dispatcher>> {
         Arc::clone(&self.inner)
+    }
+
+    /// Borrow the shared `Arc<Mutex<PathSuppression>>` (for the simulation
+    /// seam's `dispatch_profitable_py` — A4/QQFTB4 — which locks suppression
+    /// for the `dispatch_profitable_results` call; the `Dispatcher` arc is
+    /// NOT touched, so monitor-task contention on the `Dispatcher` is
+    /// unaffected).
+    #[allow(dead_code)]
+    pub(crate) fn suppression_arc(&self) -> Arc<Mutex<PathSuppression>> {
+        Arc::clone(&self.suppression)
     }
 }
 
@@ -64,6 +87,7 @@ impl PyDispatcher {
     fn for_block(current_block: u64) -> Self {
         Self {
             inner: Arc::new(Mutex::new(Dispatcher::for_block(current_block))),
+            suppression: Arc::new(Mutex::new(PathSuppression::new())),
         }
     }
 
@@ -253,46 +277,49 @@ impl PyDispatcher {
     }
 
     // ── PathSuppression delegation ────────────────────────────────
+    // Delegated to the standalone `Arc<Mutex<PathSuppression>>` (LITQFF), NOT
+    // the `Dispatcher` arc — the sim seam locks the same arc directly, and the
+    // `Dispatcher` lock stays uncontended by suppression bookkeeping.
     /// Record a successful simulation for `path_id` (clears its fail streak).
     fn record_success(&self, path_id: u64) {
-        self.inner
+        self.suppression
             .lock()
-            .expect("dispatcher mutex poisoned")
+            .expect("suppression mutex poisoned")
             .record_success(path_id);
     }
 
     /// Record a failed simulation for `path_id` (bumps its fail streak;
     /// suppresses after `PATH_SUPPRESS_THRESHOLD` consecutive failures).
     fn record_failure(&self, path_id: u64) {
-        self.inner
+        self.suppression
             .lock()
-            .expect("dispatcher mutex poisoned")
+            .expect("suppression mutex poisoned")
             .record_failure(path_id);
     }
 
     /// True iff `path_id` is currently suppressed (retried every
     /// `PATH_SUPPRESS_RETRY_INTERVAL` blocks).
     fn is_suppressed(&self, path_id: u64, current_block: u64) -> bool {
-        self.inner
+        self.suppression
             .lock()
-            .expect("dispatcher mutex poisoned")
+            .expect("suppression mutex poisoned")
             .is_suppressed(path_id, current_block)
     }
 
     /// Count of paths currently in the suppressed set.
     fn total_suppressed(&self) -> u64 {
-        self.inner
+        self.suppression
             .lock()
-            .expect("dispatcher mutex poisoned")
+            .expect("suppression mutex poisoned")
             .total_suppressed()
     }
 
     /// Discard a path from suppression tracking (the result-batch `removed` set).
     fn discard_path(&self, path_id: u64) {
-        self.inner
+        self.suppression
             .lock()
-            .expect("dispatcher mutex poisoned")
-            .discard_path(path_id);
+            .expect("suppression mutex poisoned")
+            .discard(path_id);
     }
 
     // ── introspection (the [dispatch]/[sim] summary reads) ────────
