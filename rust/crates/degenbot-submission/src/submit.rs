@@ -38,6 +38,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
 
+use alloy::eips::{BlockId, BlockNumberOrTag};
 use alloy::primitives::{Address, Bytes, B256, U256};
 use alloy::rpc::types::TransactionRequest;
 use degenbot_rpc::provider::AlloyProvider;
@@ -338,7 +339,10 @@ pub async fn dispatch_and_submit(
         //     TransactionRequest from the finalized TxParams. Lock-free — the
         //     RPC is a pure provider call.
         let request = build_transaction_request(&tx_params);
-        match provider.eth_create_access_list(&request, None).await {
+        match provider
+            .eth_create_access_list(&request, BlockId::Number(BlockNumberOrTag::Latest))
+            .await
+        {
             Ok(al_result) => {
                 tx_params.access_list = al_result.access_list;
             }

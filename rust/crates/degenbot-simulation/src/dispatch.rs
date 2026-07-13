@@ -20,7 +20,7 @@
 // returnData, gasUsed, status, etc.) are ubiquitous here.
 #![allow(clippy::doc_markdown)]
 
-use alloy::eips::BlockNumberOrTag;
+use alloy::eips::{BlockId, BlockNumberOrTag};
 use alloy::primitives::{Bytes, U256};
 use alloy::rpc::types::eth::simulate::{SimulateError, SimulatedBlock};
 use alloy::rpc::types::eth::{AccessListResult, FeeHistory, TransactionRequest};
@@ -35,6 +35,17 @@ use crate::payload::{build_simulate_payload, SimulationParams};
 /// calls both default to pending so the simulation reflects the mempool-aware
 /// pending state (the same block the eventual submission would land in).
 pub const SIMULATE_BLOCK: BlockNumberOrTag = BlockNumberOrTag::Pending;
+
+/// The typed [`BlockId`] the dispatch sends on the wire for `eth_simulateV1` +
+/// `eth_createAccessList` (the second params entry). `SIMULATE_BLOCK` is the
+/// `Pending` tag (L2048 parity); this const forwards it through the
+/// `BlockId::Number(..)` shape alloy's `simulate().block_id(..)` takes, so the
+/// `"pending"` string survives to the JSON-RPC wire — the previously-used
+/// `SIMULATE_BLOCK.as_number().unwrap_or(0)` flattened `Pending` → `0` (the
+/// genesis block), which the RPC rejects for non-trivial simulations
+/// (simulate-v1 aggregates gas-usage against the parent block's gas limit;
+/// genesis's accounting rejects every non-trivial simulate).
+pub const SIMULATE_BLOCK_ID: BlockId = BlockId::Number(SIMULATE_BLOCK);
 
 /// The fee-history percentiles the Python oracle polls
 /// (`FEE_PERCENTILES = (10, 50)` — L146). Indexed 0/1 in the
@@ -112,7 +123,7 @@ pub async fn simulate_v1(
 ) -> ProviderResult<SimulationResult> {
     let payload = build_simulate_payload(params, state_overrides);
     let blocks = provider
-        .eth_simulate_v1(&payload, Some(SIMULATE_BLOCK.as_number().unwrap_or(0)))
+        .eth_simulate_v1(&payload, SIMULATE_BLOCK_ID)
         .await?;
     let Some(block) = blocks.into_iter().next() else {
         return Err(ProviderError::RpcError {
@@ -139,7 +150,7 @@ pub async fn create_access_list(
     request: &TransactionRequest,
 ) -> ProviderResult<AccessListResult> {
     provider
-        .eth_create_access_list(request, Some(SIMULATE_BLOCK.as_number().unwrap_or(0)))
+        .eth_create_access_list(request, SIMULATE_BLOCK_ID)
         .await
 }
 
@@ -463,6 +474,33 @@ mod tests {
     fn simulate_block_is_pending() {
         // block_identifier="pending" — L2048.
         assert_eq!(SIMULATE_BLOCK, BlockNumberOrTag::Pending);
+    }
+
+    #[test]
+    fn simulate_block_id_is_pending_tag_not_genesis_zero() {
+        // eth_simulateV1 against the genesis block ("0x0") is REJECTED by the
+        // geth/erigon RPC layer with code -38015 ("Block gas limit exceeded by
+        // the block's transactions") — simulate-v1 aggregates the simulated
+        // block's gas usage against the parent (genesis) block's gas limit, and
+        // genesis has a non-standard gas accounting that rejects every
+        // non-trivial simulation. Tools experimenting with bug-finding fit the
+        // genesis probe here: "All-sim failed with rpc-failed" in dry-run
+        // integration runs.
+        //
+        // The deleted Python oracle (L2048) used the tag `"pending"`; the Rust
+        // port must preserve that tag AT THE WIRE — NOT flatten it via
+        // `SIMULATE_BLOCK.as_number().unwrap_or(0)` (which turns `Pending` →
+        // `0`, i.e. `BlockId::Number(0)` = genesis). The BlockId reaches the
+        // wire as the second params entry: alloy serializes
+        // `BlockId::Number(BlockNumberOrTag::Pending)` as the string
+        // `"pending"` (NOT `"0x0"`), matching the parity intent. This const
+        // pins the wire shape: any change that reintroduces the flattening-
+        // to-genesis bug breaks this assertion at COMPILE time (the type
+        // wouldn't unify) or at RUN time (the const comparison flips).
+        assert_eq!(
+            SIMULATE_BLOCK_ID,
+            alloy::eips::BlockId::Number(BlockNumberOrTag::Pending)
+        );
     }
 
     #[test]
