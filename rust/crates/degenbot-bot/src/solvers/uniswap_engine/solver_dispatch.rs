@@ -318,7 +318,7 @@ impl UniswapEngine {
             .iter()
             .map(|h| matches!(h, ResolvedHop::V2 { .. }))
             .collect();
-        let v2_hops: Vec<Option<crate::solvers::mobius_int::IntHopState>> = resolved
+        let v2_hops: Vec<Option<degenbot_v2_math::IntHopState>> = resolved
             .hops
             .iter()
             .map(|h| h.as_v2_state().cloned())
@@ -363,8 +363,9 @@ impl UniswapEngine {
     /// (the `_solve_golden_section` branch with `swap_fn` set). The Möbius
     /// precheck early-outs unprofitable paths before the expensive search.
     fn solve_solidly_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
-        use crate::solvers::mobius_int::{compute_int_mobius_coefficients, IntHopState};
+        use crate::solvers::mobius_int::compute_int_mobius_coefficients;
         use crate::solvers::mobius_int_exact::compute_mobius_model_optimal_input;
+        use degenbot_v2_math::IntHopState;
 
         let hops = &resolved.hops;
         if hops.len() < 2 {
@@ -502,8 +503,8 @@ impl UniswapEngine {
     /// (fee fraction → retained fraction); V2 hops pass through unchanged.
     /// Returns `None` for any non-V2/non-Solidly hop or when the Solidly fee
     /// pair overflows `u64` (the path is then unsolvable here).
-    fn solidly_hop_v2_equiv(hop: &ResolvedHop) -> Option<crate::solvers::mobius_int::IntHopState> {
-        use crate::solvers::mobius_int::IntHopState;
+    fn solidly_hop_v2_equiv(hop: &ResolvedHop) -> Option<degenbot_v2_math::IntHopState> {
+        use degenbot_v2_math::IntHopState;
         match hop {
             ResolvedHop::V2 { state } => Some(state.clone()),
             ResolvedHop::SolidlyStable { state } => {
@@ -662,7 +663,7 @@ impl UniswapEngine {
                             identity.fee_token1.1,
                         )
                     };
-                    let hop_state = crate::solvers::mobius_int::IntHopState::new(
+                    let hop_state = degenbot_v2_math::IntHopState::new(
                         reserve_in,
                         reserve_out,
                         gamma_numer,

@@ -137,7 +137,7 @@ pub fn compute_field_diffs(
 }
 
 /// Recompute a V2 hop's output from its diagnostic state + `amount_in`
-/// (NL2YY3). Reuses the solver's `IntHopState::swap` primitive — no parallel
+/// (NL2YY3). Reuses `IntHopState::swap` (now in `degenbot-v2-math`) — no parallel
 /// math — so a recompute that agrees with `solver_out` confirms the
 /// reserves/fee the solver saw + the canonical `getAmountOut`, independent of
 /// the solver's path construction. The `DiagnosticPoolState::V2` reserves are
@@ -169,7 +169,7 @@ pub fn recompute_v2_amount_out(state: &DiagnosticPoolState, amount_in: U256) -> 
     else {
         return U256::ZERO;
     };
-    crate::solvers::mobius_int::IntHopState::new(ri, ro, gamma_numer, fee_denom).swap(amount_in)
+    degenbot_v2_math::IntHopState::new(ri, ro, gamma_numer, fee_denom).swap(amount_in)
 }
 
 /// Recompute a V3 hop's output from its engine `V3PoolState` + `amount_in`
@@ -1877,7 +1877,7 @@ mod tests {
     /// `getAmountOut` from a `DiagnosticPoolState::V2` + `amount_in`. Reserves
     /// and fee fields are stored as hex strings in the diagnostic state, so the
     /// recompute must parse them to `U256`/`u64` and feed the same
-    /// `IntHopState::swap` primitive the solver ran (no parallel math).
+    /// `IntHopState::swap` (now in `degenbot-v2-math`) — no parallel math.
     #[test]
     fn recompute_v2_amount_out_matches_reference_getamountout() {
         // Uniswap V2 0.3% pool: reserve_in = 1_000_000 USDC (1e6*scale),

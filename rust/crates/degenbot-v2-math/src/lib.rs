@@ -40,8 +40,10 @@
 //!
 //! ## Contents (added incrementally)
 //!
-//! The primitive surface — `IntHopState` (+ `new` / `swap`), `SimulationResult`,
-//! and `int_simulate_path` — is moved in from `degenbot-bot`'s solver module by
-//! a follow-on task. This scaffold intentionally ships an empty library so the
-//! workspace registration, the no-pyo3 invariant, and the release-profile
-//! override can be verified green in isolation before any code moves.
+//! ## Contents
+//!
+//! The primitive surface lives in the [`hop_state`] submodule: [`IntHopState`]
+//! (+ `new` / `swap`), [`SimulationResult`], and [`int_simulate_path`].
+
+pub mod hop_state;
+pub use hop_state::{int_simulate_path, IntHopState, SimulationResult};

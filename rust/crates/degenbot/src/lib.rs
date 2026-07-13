@@ -67,6 +67,7 @@ pub use degenbot_simulation;
 
 /// Concentrated-liquidity math (`cl_lib`, `tick_math`).
 pub use degenbot_cl_math;
+pub use degenbot_v2_math;
 
 /// ABI encode/decode (`abi_decoder`, `abi_encoder`).
 pub use degenbot_abi;
