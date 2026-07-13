@@ -7,9 +7,9 @@ from typing import TYPE_CHECKING, cast
 
 import eth_abi.abi
 from eth_abi.exceptions import DecodingError
-from web3 import Web3
 
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.crypto import function_selector
 from degenbot.erc20 import EtherPlaceholder
 from degenbot.erc20.erc20 import (
     UNKNOWN_DECIMALS,
@@ -255,7 +255,7 @@ class Erc20Builder:
                 types=["uint256"],
                 data=io.call(
                     to=token.address,
-                    data=Web3.keccak(text="balanceOf(address)")[:4]
+                    data=function_selector("balanceOf(address)")
                     + eth_abi.abi.encode(types=["address"], args=[address]),
                     block=block_number,
                 ),
@@ -299,7 +299,7 @@ class Erc20Builder:
                 types=["uint256"],
                 data=io.call(
                     to=token.address,
-                    data=Web3.keccak(text="allowance(address,address)")[:4]
+                    data=function_selector("allowance(address,address)")
                     + eth_abi.abi.encode(types=["address", "address"], args=[owner, spender]),
                     block=block_number,
                 ),
@@ -339,7 +339,7 @@ class Erc20Builder:
                 types=["uint256"],
                 data=io.call(
                     to=token.address,
-                    data=Web3.keccak(text="totalSupply()")[:4],
+                    data=function_selector("totalSupply()"),
                     block=block_number,
                 ),
             )

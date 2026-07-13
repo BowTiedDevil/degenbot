@@ -34,11 +34,11 @@ from weakref import WeakSet
 import eth_abi.abi
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
-from web3 import Web3
 
 from degenbot.arbitrage.types import UniswapV4PoolSwapAmounts, V4PoolKey
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
+from degenbot.crypto import keccak256
 from degenbot.degenbot_rs import PyLiquidityPool, cl_get_tick_word_and_bit_position
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
@@ -301,7 +301,7 @@ class UniswapV4Pool(
 
         # Verify pool ID — the handle's pool_id is authoritative (Rust-stored).
         assert self.pool_id == (
-            calculated_id := Web3.keccak(
+            calculated_id := keccak256(
                 eth_abi.abi.encode(
                     types=["address", "address", "uint24", "int24", "address"],
                     args=[
