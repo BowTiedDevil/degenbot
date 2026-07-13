@@ -71,6 +71,8 @@
 
 pub mod curve_data_provider;
 pub mod rate_provider;
+pub mod spec_bounds;
+pub mod tick_bitmap;
 pub mod tick_fetch;
 
 // Re-export the seam traits + their value-only error/return types at the crate
@@ -79,6 +81,8 @@ pub mod tick_fetch;
 // flat surface.
 pub use curve_data_provider::{CurveDataProvider, CurveDataProviderError};
 pub use rate_provider::{BalancerRateProvider, RateProviderError, StaticRateProvider};
+pub use spec_bounds::{SpecValue, SpecViolation};
+pub use tick_bitmap::V3TickRangeForSolver;
 pub use tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
 
 /// Liquidity data at an initialized tick.
