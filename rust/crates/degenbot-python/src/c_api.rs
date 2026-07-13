@@ -211,6 +211,13 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "submission")]
     crate::submission::add_submission_module(m)?;
 
+    // Simulation seam (feature = "simulation") — the PyO3 binding over
+    // `degenbot-simulation` (per-block profitability pipeline: simulate_one
+    // + dispatch_profitable_results). Skeleton for now; the pyclasses +
+    // `dispatch_profitable_py` pyfunction land in A2/A4.
+    #[cfg(feature = "simulation")]
+    crate::simulation::add_simulation_module(m)?;
+
     // Pub/sub seam: register a Python callback as a `PoolStateSubscriber`
     // against the Rust `LogDispatcher` fan-out (ZBD4MS) (feature = "bot")
     #[cfg(feature = "bot")]
