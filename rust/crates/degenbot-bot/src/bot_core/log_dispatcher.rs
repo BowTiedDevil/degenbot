@@ -632,23 +632,26 @@ mod tests {
         );
 
         let state = Arc::new(parking_lot::RwLock::new(BotState::new()));
-        let pool_id = state.write().register_v3_pool(&RegisterV3PoolParams {
-            address: pool_addr,
-            token0: Address::ZERO,
-            token1: Address::ZERO,
-            fee: 500,
-            tick_spacing: 10,
-            factory: Address::ZERO,
-            sqrt_price_x96: U256::from(1u128) << 96,
-            liquidity: 1_000_000_000,
-            tick: 201_020,
-            tick_data,
-            update_block: 0,
-            coverage: PoolTickCoverage::Tracked,
-            seed_from_store: false,
-            fetcher: None,
-            ..Default::default()
-        });
+        let pool_id = state
+            .write()
+            .register_v3_pool(&RegisterV3PoolParams {
+                address: pool_addr,
+                token0: Address::ZERO,
+                token1: Address::ZERO,
+                fee: 500,
+                tick_spacing: 10,
+                factory: Address::ZERO,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 1_000_000_000,
+                tick: 201_020,
+                tick_data,
+                update_block: 0,
+                coverage: PoolTickCoverage::Tracked,
+                seed_from_store: false,
+                fetcher: None,
+                ..Default::default()
+            })
+            .expect("test setup: V3 registration");
 
         // The exact Mint log emitted at block 25390812 (decoded from cast).
         // topics[1]=owner, topics[2]=tickLower=0x03113c=201020,

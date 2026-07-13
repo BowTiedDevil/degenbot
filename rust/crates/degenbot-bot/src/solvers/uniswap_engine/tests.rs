@@ -3176,19 +3176,22 @@ mod tests {
             });
         // Register a minimal V3 pool for the second hop using the same
         // ..Default::default() pattern as the existing V3 tests.
-        let v3_id = core.write().register_v3_pool(&RegisterV3PoolParams {
-            address: Address::from([0xc1u8; 20]),
-            token0: Address::from([0x02u8; 20]),
-            token1: Address::from([0x01u8; 20]),
-            fee: 500,
-            tick_spacing: 10,
-            sqrt_price_x96: U256::from(1u64) << 96,
-            tick: 0,
-            liquidity: 1_000_000,
-            tick_data: HashMap::new(),
-            update_block: 0,
-            ..Default::default()
-        });
+        let v3_id = core
+            .write()
+            .register_v3_pool(&RegisterV3PoolParams {
+                address: Address::from([0xc1u8; 20]),
+                token0: Address::from([0x02u8; 20]),
+                token1: Address::from([0x01u8; 20]),
+                fee: 500,
+                tick_spacing: 10,
+                sqrt_price_x96: U256::from(1u64) << 96,
+                tick: 0,
+                liquidity: 1_000_000,
+                tick_data: HashMap::new(),
+                update_block: 0,
+                ..Default::default()
+            })
+            .expect("test setup: V3 registration");
         let mut engine = UniswapEngine::with_core(Arc::clone(&core));
         let path_id = engine
             .register_path(vec![
