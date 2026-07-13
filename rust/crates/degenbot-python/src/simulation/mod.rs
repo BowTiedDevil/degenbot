@@ -8,12 +8,6 @@
 //! leaf (3660 lines, six modules) that ports the Python `dispatch_profitable`
 //! → `simulate_one` chain wholesale.
 //!
-//! This module is the **A1 skeleton** (ergo `7P4AKF`): the Cargo dependency +
-//! module registration land here, with no symbols yet. The pyclasses
-//! (`PySimulateContext` / `PyDispatchCandidate` / `PyDispatchOutcome` /
-//! internal `PySimResult`) land in A2 (`TCZ47Z`), and the
-//! `dispatch_profitable_py` pyfunction lands in A4 (`QQFTB4`).
-//!
 //! ## Layering (ADR-005)
 //!
 //! - **Core** (`degenbot-simulation`): the typed pipeline — `simulate_one`,
@@ -30,27 +24,35 @@
 //! each surviving `SimResult` → `PySubmitCandidate` at result-wrap time, so the
 //! cockpit chains simulate → submit with no field reshuffling.
 //!
-//! # Errors
+//! ## A2 scope (`TCZ47Z`)
 //!
-//! `add_simulation_module` is a no-op registration stub until A2/A4 land.
-//! Returns `Ok(())` unconditionally.
+//! Three pyclasses land here: [`PySimulateContext`] (the session-static config
+//! bag), [`PyDispatchCandidate`] (the per-path builder), and
+//! [`PyDispatchOutcome`] (the read-only result). The
+//! `dispatch_profitable_py` pyfunction (A4, `QQFTB4`) is not yet registered —
+//! it depends on the A3 `PathSuppression` extraction.
 
 use pyo3::prelude::*;
 
-/// Register the simulation pyclasses + `dispatch_profitable_py` pyfunction on
-/// the module.
+pub mod candidate;
+pub mod context;
+pub mod outcome;
+
+pub use candidate::PyDispatchCandidate;
+pub use context::PySimulateContext;
+pub use outcome::PyDispatchOutcome;
+
+/// Register the simulation pyclasses on the module.
 ///
-/// **A1 skeleton** — no symbols to register yet. The body fills in as A2
-/// (pyclasses) and A4 (`dispatch_profitable_py`) land. Keeping the function
-/// in place now lets `c_api::register` wire the module behind the
-/// `simulation` feature gate without waiting on the seam implementation.
+/// A2 registers the three pyclasses. A4 (`QQFTB4`) will additionally register
+/// the `dispatch_profitable_py` pyfunction.
 ///
 /// # Errors
 ///
-/// Returns `PyErr` once symbols are added (none today).
-#[allow(clippy::unnecessary_wraps)]
-pub fn add_simulation_module(_m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // A2 registers: PySimulateContext, PyDispatchCandidate, PyDispatchOutcome.
-    // A4 registers: dispatch_profitable_py.
+/// Returns `PyErr` if a class fails to register on the module.
+pub fn add_simulation_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PySimulateContext>()?;
+    m.add_class::<PyDispatchCandidate>()?;
+    m.add_class::<PyDispatchOutcome>()?;
     Ok(())
 }
