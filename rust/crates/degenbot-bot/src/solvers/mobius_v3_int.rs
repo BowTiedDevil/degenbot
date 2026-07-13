@@ -1292,8 +1292,7 @@ pub fn exact_solve_mixed_v2_v3_sequence(
         }
 
         // Closed-form optimal input for the remaining (post-crossing) swap
-        let x_piece =
-            crate::solvers::mobius_int_exact::compute_exact_optimal_input_from_coeffs(&coeffs);
+        let x_piece = crate::solvers::mobius_int_exact::compute_mobius_model_optimal_input(&coeffs);
 
         if x_piece.is_zero() {
             continue;

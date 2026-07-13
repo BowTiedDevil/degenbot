@@ -5,11 +5,43 @@
 //!
 //! The key mathematical insight: the Möbius recurrence produces rational
 //! coefficients K, M, N that are products of integer reserve × gamma values.
-//! The closed-form optimal input `x_opt = (√(K·M) - M) / N` uses only
+//! The closed-form model-optimal input `x* = (√(K·M) - M) / N` uses only
 //! integer square root (available via U512) and integer division.
 //!
 //! This avoids the precision loss from f64↔integer conversions that caused
 //! false positives in mixed V3-V2 paths.
+//!
+//! ## Two layers of "exact"
+//!
+//! The module has a deliberate two-layer discipline so each candidate name
+//! self-documents what it is exact *at*:
+//!
+//! - [`compute_mobius_model_optimal_input`] is exact at the **Möbius-model
+//!   layer** — it returns the analytic argmax of the smooth rational envelope
+//!   `l(x) = K·x / (M + N·x)` as `x* = (√(K·M) - M) / N`, computed in `U512`
+//!   with floor-`isqrt` and floor-division. The model envelope treats each
+//!   per-hop swap `y = γ·s·x / (D·r + γ·x)` as if its floor division were
+//!   mathematical division.
+//! - [`exact_mobius_solve`] is exact at the **discrete EVM-simulation
+//!   layer** — the actual on-chain chain applies floor (`EVM DIV`) at every
+//!   hop, producing a piecewise-linear staircase that *approximates* that
+//!   rational envelope. The discrete optimum can sit at `x* + δ` for small
+//!   `|δ|` because the staircase is locally sub-constant-slope near `x*`.
+//!   [`exact_mobius_solve`] calls [`compute_mobius_model_optimal_input`] for
+//!   the model-optimum anchor, then runs `int_simulate_path` at `x*` and
+//!   `x* ± 2` (the floor-exact swap chain) to find the discrete argmax of
+//!   `int_simulate_path(x) - x` — the true on-chain profit optimum.
+//!
+//! The closed form and the ±2 search compose into a single EVM-exact result:
+//! the closed form narrows the search to a tight neighborhood; the ±2 sweep
+//! patches the staircase jog that the rational envelope smooths over.
+//!
+//! Module-level qualifier: the "exact" in *this module's name*
+//! (`mobius_int_exact`) is a discipline label distinguishing the integer
+//! pathway (no floats — pure `U512` + `isqrt_u512` + floor-division; contrast
+//! with the now-deleted f64 recurrence module). The per-function rename above
+//! keeps that discipline label while making the layer of exactness explicit
+//! at each per-candidate symbol.
 
 #![allow(non_snake_case)]
 #![allow(clippy::must_use_candidate)]
@@ -32,15 +64,19 @@ use crate::solvers::mobius_int::{
     compute_int_mobius_coefficients, int_simulate_path, IntHopState, IntMobiusCoefficients,
 };
 
-/// Integer-exact Möbius coefficients extended with the closed-form optimal input.
+/// Result of [`exact_mobius_solve`] — the discrete-EVM-sim-exact optimum of
+/// the on-chain swap chain (NOT the closed-form Möbius-model optimum).
 ///
-/// Derives `x_opt` from K, M, N entirely in U512 arithmetic:
+/// The discrete optimum is found by anchoring at the model-optimum `x* =
+/// (√(K·M) - M) / N` (see [`compute_mobius_model_optimal_input`]) and
+/// sweeping the floor-exact swap chain `int_simulate_path` at `x*` and `x* ±
+/// 2`. The model envelope smooths over the per-hop floor-division staircase
+/// jog; the ±2 sweep patches it. See the module-level doc for the two-layer
+/// discipline ("model layer" vs "discrete-EVM-sim layer").
 ///
-/// ```text
-/// x_opt = (isqrt(K * M) - M) / N
-/// ```
-///
-/// When K ≤ M, the path is not profitable and `x_opt = 0`.
+/// `optimal_input` is the discrete argmax of `int_simulate_path(x) - x`;
+/// `profit` is the corresponding on-chain profit. Both are `U256` (zero when
+/// unprofitable).
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct ExactMobiusResult {
@@ -58,17 +94,28 @@ pub struct ExactMobiusResult {
     pub hop_outputs: Vec<U256>,
 }
 
-/// Solve for optimal arbitrage input using integer-exact Möbius coefficients.
+/// Solve for the optimal arbitrage input using integer-exact Möbius coefficients.
 ///
 /// # Algorithm
 ///
-/// 1. Compute K, M, N as U512 integers via `compute_int_mobius_coefficients`
-/// 2. Check K > M for profitability
-/// 3. Compute `x_opt = (isqrt(K * M) - M) / N` — pure integer arithmetic
-/// 4. EVM-simulate at x_opt and nearby points (±2) to handle floor-division rounding
-/// 5. Return best result
+/// 1. Compute K, M, N as U512 integers via `compute_int_mobius_coefficients`.
+/// 2. Check K > M for profitability (the path is profitable iff the rational
+///    envelope `l(x) = K·x / (M + N·x)` is monotone-increasing at `x = 0`,
+///    i.e. `K > M`).
+/// 3. Compute the **model-optimum anchor** `x* = (isqrt(K * M) - M) / N` —
+///    the analytic argmax of the rational envelope, via
+///    [`compute_mobius_model_optimal_input`]. This is the Möbius-model
+///    optimum (exact over the reals), NOT the discrete EVM-sim optimum.
+/// 4. EVM-simulate at `x*` and nearby points (±2) via `int_simulate_path`
+///    to find the discrete argmax of `int_simulate_path(x) - x` — the true
+///    on-chain profit optimum (the model envelope smooths over per-hop
+///    floor-division staircase jog; the ±2 sweep patches that jog).
+/// 5. Return best result.
 ///
-/// This produces **EVM-exact** results with zero float conversions.
+/// This produces **discrete-EVM-sim-exact** results with zero float
+/// conversions: the closed form narrows the search to a tight neighborhood
+/// of the model-optimum anchor; the ±2 sweep picks the discrete optimum
+/// the staircase actually attains.
 ///
 /// # Errors
 ///
@@ -86,10 +133,10 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
         });
     }
 
-    let x_approx = compute_exact_optimal_input_from_coeffs(&coeffs);
+    let x_approx = compute_mobius_model_optimal_input(&coeffs);
 
     if x_approx.is_zero() {
-        // Even though K > M, the integer square root may give x_opt = 0
+        // Even though K > M, the integer square root may give x* = 0
         // when the profit is vanishingly small (K/M ≈ 1).
         // Try a small input to detect micro-profits.
         let sim = int_simulate_path(U256::from(1u64), hops);
@@ -148,18 +195,39 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
     })
 }
 
-/// Compute the exact optimal input from integer Möbius coefficients.
+/// Compute the closed-form optimal input for the smooth Möbius model
+/// `l(x) = K·x / (M + N·x)`.
 ///
 /// ```text
-/// x_opt = (isqrt(K * M) - M) / N
+/// x* = (isqrt(K * M) - M) / N
 /// ```
 ///
-/// All arithmetic is in U512. The integer square root is exact.
-/// Floor division matches EVM semantics.
+/// This is the **analytic argmax of the Möbius model envelope** over the
+/// reals — NOT the discrete optimum of the actual swap chain. The model
+/// envelope treats the per-hop swap `y = γ·s·x / (D·r + γ·x)` as if its
+/// floor division were mathematical division; the actual on-chain chain
+/// applies floor (`EVM DIV`) at each hop, producing a piecewise-linear
+/// staircase that *approximates* this rational envelope. The discrete
+/// optimum can sit at `x* + δ` for small `|δ|` because the staircase is
+/// locally sub-constant-slope near `x*`.
+///
+/// [`exact_mobius_solve`] bridges the two layers: it calls this fn for the
+/// model-optimum anchor, then runs the **floor-exact EVM-simulation sweep**
+/// `int_simulate_path(x*)` at `x*` and `x* ± 2` to find the discrete argmax
+/// of `int_simulate_path(x) - x` — the true on-chain profit optimum.
+///
+/// # Arithmetic discipline
+///
+/// All arithmetic is `U512`. The integer square root is exact floor
+/// `isqrt_u512`. Floor division matches `EVM DIV` semantics.
 ///
 /// This function is also used by the mixed V2-V3 integer solver
-/// (`mobius_v3_int::exact_solve_mixed_v2_v3_sequence`).
-pub fn compute_exact_optimal_input_from_coeffs(coeffs: &IntMobiusCoefficients) -> U256 {
+/// (`mobius_v3_int::exact_solve_mixed_v2_v3_sequence`) and the
+/// Solidly-bracketed dispatcher
+/// (`uniswap_engine::solver_dispatch::solve_solidly`), each of which uses the
+/// model-optimum output as an anchor for its own discrete search
+/// (golden-section for the latter, ±[1,N] EVM-sim sweep for the mixed path).
+pub fn compute_mobius_model_optimal_input(coeffs: &IntMobiusCoefficients) -> U256 {
     // K * M fits in U512 (each is at most U512)
     let km = coeffs.K * coeffs.M;
 

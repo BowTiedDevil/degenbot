@@ -364,7 +364,7 @@ impl UniswapEngine {
     /// precheck early-outs unprofitable paths before the expensive search.
     fn solve_solidly_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
         use crate::solvers::mobius_int::{compute_int_mobius_coefficients, IntHopState};
-        use crate::solvers::mobius_int_exact::compute_exact_optimal_input_from_coeffs;
+        use crate::solvers::mobius_int_exact::compute_mobius_model_optimal_input;
 
         let hops = &resolved.hops;
         if hops.len() < 2 {
@@ -386,7 +386,7 @@ impl UniswapEngine {
         if !coeffs.is_profitable {
             return None;
         }
-        let x_mobius = compute_exact_optimal_input_from_coeffs(&coeffs);
+        let x_mobius = compute_mobius_model_optimal_input(&coeffs);
 
         // --- Bracket: [1, max_reserve], narrowed around the Möbius optimum ---
         let one = U256::from(1u64);
