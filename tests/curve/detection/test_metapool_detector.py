@@ -1,10 +1,10 @@
 """Tests for Curve pool metapool detection."""
 
 import eth_abi.abi
-from web3.exceptions import Web3Exception
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.detection.metapool_detector import detect_metapool
+from degenbot.exceptions import ContractLogicError
 from degenbot.provider.call_helpers import encode_function_calldata
 from tests.curve.detection.fake_provider import make_fake_pool_io
 
@@ -76,7 +76,7 @@ class TestDetectMetapool:
             if selector == GET_UNDERLYING_COINS:
                 return _encode_address_array8(underlying_coins)
             msg = f"Unexpected selector: {selector.hex()}"
-            raise Web3Exception(msg)
+            raise ContractLogicError(msg)
 
         io = make_fake_pool_io({
             IS_META: handle_call,
@@ -107,13 +107,13 @@ class TestDetectMetapool:
                 return _encode_bool(value=True)
             if selector == BASE_POOL:
                 msg = "base_pool() not supported"
-                raise Web3Exception(msg)
+                raise ContractLogicError(msg)
             if selector == GET_BASE_POOL:
                 return _encode_address(base_pool_addr)
             if selector == GET_UNDERLYING_COINS:
                 return _encode_address_array8(underlying_coins)
             msg = f"Unexpected selector: {selector.hex()}"
-            raise Web3Exception(msg)
+            raise ContractLogicError(msg)
 
         io = make_fake_pool_io({
             IS_META: handle_call,
@@ -142,11 +142,11 @@ class TestDetectMetapool:
                 return _encode_bool(value=True)
             if selector in {BASE_POOL, GET_BASE_POOL}:
                 msg = "revert"
-                raise Web3Exception(msg)
+                raise ContractLogicError(msg)
             if selector == GET_UNDERLYING_COINS:
                 return _encode_address_array8(underlying_coins)
             msg = f"Unexpected selector: {selector.hex()}"
-            raise Web3Exception(msg)
+            raise ContractLogicError(msg)
 
         io = make_fake_pool_io({
             IS_META: handle_call,
@@ -176,7 +176,7 @@ class TestDetectMetapool:
                 if to == CURVE_V1_REGISTRY_ADDRESS:
                     first_registry_tried["value"] = True
                     msg = "revert"
-                    raise Web3Exception(msg)
+                    raise ContractLogicError(msg)
                 # Second registry says yes
                 return _encode_bool(value=True)
             if selector == BASE_POOL:
@@ -184,7 +184,7 @@ class TestDetectMetapool:
             if selector == GET_UNDERLYING_COINS:
                 return _encode_address_array8([DAI, USDC, USDT])
             msg = f"Unexpected selector: {selector.hex()}"
-            raise Web3Exception(msg)
+            raise ContractLogicError(msg)
 
         io = make_fake_pool_io({
             IS_META: handle_call,

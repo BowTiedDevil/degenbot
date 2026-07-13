@@ -61,6 +61,11 @@ from degenbot.exceptions.pool import (
     UnknownPool,
     UnknownPoolId,
 )
+from degenbot.exceptions.rpc import (
+    ContractLogicError,
+    RpcError,
+    TransactionNotFound,
+)
 
 __all__ = (
     "AddressMismatch",
@@ -71,6 +76,7 @@ __all__ = (
     "BlockFetchingTimeout",
     "BrokenPool",
     "ConnectionTimeout",
+    "ContractLogicError",
     "CurveError",
     "DegenbotConnectionError",
     "DegenbotError",
@@ -109,6 +115,7 @@ __all__ = (
     "RateOfExchangeBelowMinimum",
     "RegistryAlreadyInitialized",
     "RegistryError",
+    "RpcError",
     "StaleRateResult",
     "SubscriptionDisconnected",
     "SubscriptionError",
@@ -116,6 +123,7 @@ __all__ = (
     "TokenDenylistedError",
     "TrackerAlreadyInitialized",
     "TrackerError",
+    "TransactionNotFound",
     "UnknownPool",
     "UnknownPoolId",
     "Unprofitable",

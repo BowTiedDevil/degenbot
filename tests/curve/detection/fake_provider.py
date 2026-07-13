@@ -9,9 +9,9 @@ from __future__ import annotations
 from typing import Any
 
 from hexbytes import HexBytes
-from web3.exceptions import Web3Exception
 
 from degenbot.builders.pool_io import SyncPoolIO
+from degenbot.exceptions import ContractLogicError
 from degenbot.provider.sync_adapter import ProviderAdapter
 
 
@@ -60,7 +60,7 @@ class FakeCurveBackend:
         handler = self._call_responses.get(selector)
         if handler is None:
             msg = f"No handler for selector {selector.hex()}"
-            raise Web3Exception(msg)
+            raise ContractLogicError(msg)
         if callable(handler):
             return HexBytes(handler(tx.get("to", ""), data, block))
         return HexBytes(handler)

@@ -4,10 +4,10 @@ from dataclasses import dataclass
 from itertools import starmap
 
 import eth_abi.abi
-from web3.exceptions import Web3Exception
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.detection.lending_detector import detect_lending_tokens
+from degenbot.exceptions import ContractLogicError
 from degenbot.provider.call_helpers import encode_function_calldata
 from tests.curve.detection.fake_provider import make_fake_pool_io
 
@@ -155,7 +155,7 @@ class TestDetectLendingTokens:
         def handle_is_ctoken(to: str, data: bytes, block: int) -> bytes:
             # yTokens don't respond to isCToken()
             msg = "revert"
-            raise Web3Exception(msg)
+            raise ContractLogicError(msg)
 
         def handle_token(to: str, data: bytes, block: int) -> bytes:
             if to == YDAI:
@@ -186,7 +186,7 @@ class TestDetectLendingTokens:
 
         def handle_is_ctoken(to: str, data: bytes, block: int) -> bytes:
             msg = "revert"
-            raise Web3Exception(msg)
+            raise ContractLogicError(msg)
 
         def handle_token(to: str, data: bytes, block: int) -> bytes:
             # Returns zero address — not a yToken

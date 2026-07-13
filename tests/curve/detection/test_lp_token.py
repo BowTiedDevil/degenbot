@@ -1,10 +1,10 @@
 """Tests for Curve pool LP token discovery."""
 
 import eth_abi.abi
-from web3.exceptions import Web3Exception
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.detection.lp_token import find_lp_token
+from degenbot.exceptions import ContractLogicError
 from degenbot.provider.call_helpers import encode_function_calldata
 from tests.curve.detection.fake_provider import make_fake_pool_io
 
@@ -82,7 +82,7 @@ class TestFindLpToken:
         def handle_get_lp_token(to: str, data: bytes, block: int) -> bytes:
             if to == CURVE_V1_REGISTRY_ADDRESS:
                 msg = "revert"
-                raise Web3Exception(msg)
+                raise ContractLogicError(msg)
             return _encode_address(THREE_CRV_LP)
 
         io = make_fake_pool_io({

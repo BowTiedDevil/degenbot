@@ -11,8 +11,9 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from web3.exceptions import ContractLogicError, Web3Exception
+from web3.exceptions import ContractLogicError as _Web3ContractLogicError
 
+from degenbot.exceptions import ContractLogicError, RpcError
 from degenbot.provider.async_adapter import _AsyncAlloyAdapter, _AsyncWeb3Adapter
 from degenbot.provider.sync_adapter import (
     ProviderAdapter,
@@ -90,6 +91,33 @@ class TestWeb3AdapterCallRaw:
         adapter = _Web3Adapter(FakeW3())
         result = adapter.call_raw({"to": WETH_ADDRESS, "data": b"\x01"}, 18_000_000)
         assert result == TEST_CALL_RESULT
+
+    def test_call_raw_translates_web3_revert_to_degenbot_contract_logic_error(self) -> None:
+        """The web3 backend's ContractLogicError is re-raised as the degenbot type.
+
+        C2 unifies both backends on the degenbot-owned
+        :exc:`~degenbot.exceptions.ContractLogicError`: the web3 adapter seam
+        catches web3's native ``ContractLogicError`` and re-raises the
+        degenbot type so probe sites catching :exc:`RpcError` work uniformly.
+        Without this conversion a sync-web3 revert would slip past the probes.
+        """
+        w3 = MagicMock()
+        w3.eth.call.side_effect = _Web3ContractLogicError("execution reverted")
+        adapter = _Web3Adapter(w3)
+        with pytest.raises(ContractLogicError) as exc_info:
+            adapter.call_raw({"to": WETH_ADDRESS, "data": b"\x01"}, 18_000_000)
+        # The raised exception is the degenbot type, not the web3 type.
+        assert not isinstance(exc_info.value, _Web3ContractLogicError)
+        assert isinstance(exc_info.value, RpcError)
+        assert "execution reverted" in str(exc_info.value)
+
+    def test_call_delegates_to_call_raw_conversion(self) -> None:
+        """`call` delegates to `call_raw` so the seam conversion applies to both."""
+        w3 = MagicMock()
+        w3.eth.call.side_effect = _Web3ContractLogicError("execution reverted")
+        adapter = _Web3Adapter(w3)
+        with pytest.raises(ContractLogicError):
+            adapter.call(to=WETH_ADDRESS, data=b"\x01")
 
 
 class TestWeb3Adapter:
@@ -271,13 +299,15 @@ class TestAlloyAdapter:
         ],
     )
     def test_call_translates_revert_to_contract_logic_error(self, message: str) -> None:
-        """An alloy eth_call revert must raise ContractLogicError.
+        """An alloy eth_call revert must raise the degenbot ContractLogicError.
 
-        The web3 backend raises ContractLogicError (a Web3Exception subclass)
-        on execution reverts. Probing code throughout the codebase (type
-        resolution, Curve detection, Aave analysis) catches Web3Exception to
-        mean "this method is not implemented by the contract." The alloy
-        backend must mirror that contract so probes behave identically.
+        The web3 backend raises ``ContractLogicError`` (historically a
+        ``Web3Exception`` subclass) on execution reverts; the adapter seam
+        now raises the degenbot-owned :exc:`ContractLogicError` (an
+        :exc:`RpcError` subclass) so probing code throughout the codebase
+        (type resolution, Curve detection, Aave analysis) catches one type —
+        :exc:`RpcError` — across both backends. The alloy backend must mirror
+        that contract so probes behave identically.
         """
         alloy = self._make_alloy()
         alloy.call.side_effect = RuntimeError(message)
@@ -285,11 +315,17 @@ class TestAlloyAdapter:
         with pytest.raises(ContractLogicError):
             adapter.call(to=WETH_ADDRESS, data=b"\x01")
 
-    def test_call_translated_revert_is_web3_exception(self) -> None:
+    def test_call_translated_revert_is_rpc_error(self) -> None:
+        """The translated revert is catchable as the degenbot RpcError base.
+
+        Probe sites catch :exc:`RpcError` (the broad provider-layer base,
+        replacing the old ``except Web3Exception``); the translated revert
+        must therefore be a subclass of :exc:`RpcError`.
+        """
         alloy = self._make_alloy()
         alloy.call.side_effect = RuntimeError("Provider error: ... execution reverted")
         adapter = _AlloyAdapter(alloy)
-        with pytest.raises(Web3Exception):
+        with pytest.raises(RpcError):
             adapter.call(to=WETH_ADDRESS, data=b"\x01")
 
     def test_call_propagates_non_revert_runtime_error(self) -> None:

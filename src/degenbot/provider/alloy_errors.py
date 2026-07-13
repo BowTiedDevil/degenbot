@@ -1,24 +1,26 @@
-"""Translate Alloy (Rust) provider errors into web3-compatible exceptions.
+"""Translate Alloy (Rust) provider errors into degenbot-owned exceptions.
 
 The Rust :class:`AlloyProvider` flattens every non-timeout, non-connection RPC
 error into a ``RuntimeError("Provider error: ...")`` — see the
 ``ProviderError`` → ``PyErr`` conversion in ``rust/src/errors.rs``, which loses
 the structured JSON-RPC error ``data`` and keeps only ``code`` + a formatted
-string. The web3 backend, by contrast, raises
-:class:`web3.exceptions.ContractLogicError` (a :class:`Web3Exception`
-subclass) on ``eth_call`` execution reverts.
+string. An alloy ``eth_call`` revert is therefore surfaced as a bare
+``RuntimeError``.
 
 That asymmetry is a real bug: probing code throughout the codebase
 (:mod:`degenbot.builders.type_resolution`, :mod:`degenbot.curve.detection`,
-:mod:`degenbot.aave.analysis`) catches ``Web3Exception`` to mean "this method
-is not implemented by the contract." Under the alloy backend a reverted probe
-(e.g. ``factory()`` on a Curve pool, which has no such method) propagated the
-bare ``RuntimeError`` and broke pool construction before the Curve fallback
-in :meth:`Bot.build_pool` could trigger.
+:mod:`degenbot.aave.analysis`) catches the provider-layer revert type to mean
+"this method is not implemented by the contract." Under the alloy backend a
+reverted probe (e.g. ``factory()`` on a Curve pool, which has no such method)
+propagated the bare ``RuntimeError`` and broke pool construction before the
+Curve fallback in :meth:`Bot.build_pool` could trigger.
 
 This module restores parity at the adapter seam: an alloy ``eth_call`` revert
-is re-raised as ``ContractLogicError`` so the existing ``except Web3Exception``
-probes behave identically across both backends.
+is re-raised as the degenbot-owned :exc:`~degenbot.exceptions.ContractLogicError`
+(an :exc:`~degenbot.exceptions.RpcError` subclass) so probe sites that catch
+``RpcError`` behave identically across the Alloy and web3 backends. The web3
+adapter performs the symmetric conversion at its own ``call``/``call_raw``
+seam (catching web3's ``ContractLogicError`` and re-raising the degenbot type).
 
 .. note::
 
@@ -34,7 +36,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from web3.exceptions import ContractLogicError
+from degenbot.exceptions import ContractLogicError
 
 if TYPE_CHECKING:
     from eth_typing import Address
@@ -73,15 +75,16 @@ def alloy_revert_error(
     *,
     to: Address | str,
 ) -> ContractLogicError:
-    """Build a ``ContractLogicError`` mirroring an Alloy ``eth_call`` revert.
+    """Build a degenbot :exc:`ContractLogicError` mirroring an Alloy revert.
 
-    Raising ``ContractLogicError`` (rather than a degenbot-owned type) is
-    deliberate: it matches the web3 backend's contract so the existing
-    ``except Web3Exception`` / ``except ContractLogicError`` probe sites work
-    uniformly across both backends without per-site changes.
+    Raises the degenbot-owned :exc:`~degenbot.exceptions.ContractLogicError`
+    (an :exc:`~degenbot.exceptions.RpcError` subclass) so the existing probe
+    sites — which now catch :exc:`RpcError` rather than ``Web3Exception`` —
+    behave identically across the Alloy and web3 backends. The web3 adapter
+    performs the symmetric conversion at its own ``call``/``call_raw`` seam.
 
     Returns:
-        A ``ContractLogicError`` whose message embeds the original alloy
+        A :exc:`ContractLogicError` whose message embeds the original alloy
         revert text, suitable for raising at the adapter seam.
 
     """

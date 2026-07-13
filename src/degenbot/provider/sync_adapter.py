@@ -12,9 +12,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Literal, Self
 
 from web3 import Web3
+from web3.exceptions import (
+    ContractLogicError as _Web3ContractLogicError,  # boundary: deferred to B4
+)
 
 from degenbot.degenbot_rs import AlloyProvider
-from degenbot.exceptions import SubscriptionNotSupported
+from degenbot.exceptions import ContractLogicError, SubscriptionNotSupported
 from degenbot.provider.alloy_errors import alloy_revert_error, is_alloy_revert
 from degenbot.provider.offline_provider import OfflineProvider
 
@@ -167,10 +170,17 @@ class _Web3Adapter(SyncSubscriptionSupport):
 
     def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
         tx: TxParams = {"to": to, "data": data}
-        return self._w3.eth.call(tx, block)  # ty: ignore[invalid-argument-type]
+        return self.call_raw(tx, block)
 
     def call_raw(self, tx: TxParams, block: BlockIdentifier | None = None) -> HexBytes:
-        return self._w3.eth.call(tx, block)  # ty: ignore[invalid-argument-type]
+        try:
+            return self._w3.eth.call(tx, block)  # ty: ignore[invalid-argument-type]
+        except _Web3ContractLogicError as exc:
+            # Seam conversion (C2): unify with the Alloy backend, which raises
+            # the degenbot-owned ContractLogicError via alloy_revert_error.
+            # Probe sites catch degenbot.exceptions.RpcError; without this
+            # conversion the web3 backend's reverts would slip past them.
+            raise ContractLogicError(str(exc)) from exc
 
     def get_code(self, address: str, block: int | None = None) -> HexBytes:
         return self._w3.eth.get_code(address, block)  # ty:ignore[invalid-argument-type]

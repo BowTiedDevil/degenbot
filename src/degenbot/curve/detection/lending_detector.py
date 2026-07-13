@@ -11,10 +11,10 @@ from typing import TYPE_CHECKING
 
 import eth_abi.abi
 from eth_abi.exceptions import DecodingError
-from web3.exceptions import Web3Exception
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.detection.types import LendingDetectionResult
+from degenbot.exceptions import RpcError
 from degenbot.provider.call_helpers import encode_function_calldata
 
 if TYPE_CHECKING:
@@ -100,11 +100,11 @@ def detect_lending_tokens(
                         )
                         # Override precision_multiplier to use underlying decimals
                         precision_multiplier_overrides[idx] = 10 ** (18 - underlying_dec)
-                    except (Web3Exception, DecodingError, ValueError):
+                    except (RpcError, DecodingError, ValueError):
                         pass
-                except (Web3Exception, DecodingError, ValueError):
+                except (RpcError, DecodingError, ValueError):
                     pass
-        except (Web3Exception, DecodingError, ValueError):
+        except (RpcError, DecodingError, ValueError):
             pass
 
         # Check if token is a yToken (has token() method returning underlying)
@@ -125,7 +125,7 @@ def detect_lending_tokens(
                 if int(underlying_addr, 16) != 0:
                     is_lending = True
                     # yToken: typically has same decimals as underlying, no override needed
-            except (Web3Exception, DecodingError, ValueError):
+            except (RpcError, DecodingError, ValueError):
                 pass
 
         use_lending.append(is_lending)

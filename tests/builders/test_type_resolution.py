@@ -15,7 +15,6 @@ from unittest.mock import MagicMock
 import eth_abi.abi
 import pytest
 from hexbytes import HexBytes
-from web3.exceptions import Web3Exception
 
 from degenbot.builders.pool_io import AsyncPoolIO, SyncPoolIO
 from degenbot.builders.type_resolution import (
@@ -27,6 +26,7 @@ from degenbot.builders.type_resolution import (
     resolve_pool_type_by_probing,
     resolve_pool_type_by_probing_async,
 )
+from degenbot.exceptions import ContractLogicError
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.types.pool_type import PoolFamily, PoolTypeDescriptor
@@ -103,7 +103,7 @@ class FakeSyncProvider:
         if key in self._responses:
             return self._responses[key]
         msg = "No mock response"
-        raise Web3Exception(msg)
+        raise ContractLogicError(msg)
 
     def call_raw(self, tx: TxParams, block: object = None) -> HexBytes:
         return HexBytes(b"\x00" * 32)
@@ -131,7 +131,7 @@ class FakeAsyncProvider:
         if key in self._responses:
             return self._responses[key]
         msg = "No mock response"
-        raise Web3Exception(msg)
+        raise ContractLogicError(msg)
 
     async def call_raw(self, tx: TxParams, block: object = None) -> HexBytes:
         return HexBytes(b"\x00" * 32)
