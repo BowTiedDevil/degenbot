@@ -68,3 +68,37 @@
 //!   `TokenEntry` + `Register*Pool{Params,Error}`
 //! - **stateless swap sims** (`v3_simulate_swap`, `v4_simulate_swap`,
 //!   `SimulateSwapError`, `V3SwapOutcome`, the V2/Curve/Balancer dispatch)
+
+pub mod curve_data_provider;
+pub mod rate_provider;
+pub mod tick_fetch;
+
+// Re-export the seam traits + their value-only error/return types at the crate
+// root, so `degenbot-bot`'s transient shim modules can write
+// `::degenbot_pools::{TickWordFetcher, …}` and so standalone consumers get a
+// flat surface.
+pub use curve_data_provider::{CurveDataProvider, CurveDataProviderError};
+pub use rate_provider::{BalancerRateProvider, RateProviderError, StaticRateProvider};
+pub use tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
+
+/// Liquidity data at an initialized tick.
+///
+/// Mirrors the Python `LiquidityAtTick` from `concentrated/types.py`. Used by
+/// the V3/V4 pool-state structs and by [`tick_fetch::FetchedTickWord`]. Pulled
+/// into this crate ahead of the full state-struct move (USPN7M/LTZ3TP)
+/// because the `TickWordFetcher` seam returns `HashMap<i32, TickInfo>`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TickInfo {
+    /// The total liquidity that references this tick.
+    pub liquidity_gross: alloy::primitives::U128,
+    /// The liquidity delta for ticks entered from left to right.
+    /// Positive for lower ticks, negative for upper ticks.
+    pub liquidity_net: alloy::primitives::I256,
+    /// The block at which this tick was last mutated (Mint/Burn event block,
+    /// or the pool's registration block for genesis-seeded ticks). Mirrors the
+    /// Python ``LiquidityAtTick.block`` field; preserved through the FFI
+    /// round-trip (``update_tick_data`` writes it, ``tick_data_snapshot``
+    /// reads it). The simulation math does NOT read this — it's diagnostic
+    /// metadata + the snapshot round-trip's per-tick block contract.
+    pub block: u64,
+}

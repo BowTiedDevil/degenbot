@@ -293,28 +293,20 @@ impl From<crate::bot_core::spec_bounds::SpecViolation> for RegisterV2PoolError {
     }
 }
 
-// ---------------------------------------------------------------------------
-// V3 pool state — defined in [`v3_state`] (merged engine + journal types).
-// ---------------------------------------------------------------------------
-
 /// Liquidity data at an initialized tick.
 ///
 /// Mirrors the Python `LiquidityAtTick` from `concentrated/types.py`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TickInfo {
-    /// The total liquidity that references this tick.
-    pub liquidity_gross: alloy::primitives::U128,
-    /// The liquidity delta for ticks entered from left to right.
-    /// Positive for lower ticks, negative for upper ticks.
-    pub liquidity_net: alloy::primitives::I256,
-    /// The block at which this tick was last mutated (Mint/Burn event block,
-    /// or the pool's registration block for genesis-seeded ticks). Mirrors the
-    /// Python ``LiquidityAtTick.block`` field; preserved through the FFI
-    /// round-trip (``update_tick_data`` writes it, ``tick_data_snapshot``
-    /// reads it). The simulation math does NOT read this — it's diagnostic
-    /// metadata + the snapshot round-trip's per-tick block contract.
-    pub block: u64,
-}
+///
+/// **Relocated** to `degenbot-pools` (the value struct is needed there by
+/// the `TickWordFetcher` seam it now defines). Re-exported here at the
+/// historical `bot_core::TickInfo` path so the bot's consumers resolve
+/// unchanged. Transient re-export — repointed at `degenbot_pools::TickInfo`
+/// natively by USPN7M/P2CKRL.
+pub use ::degenbot_pools::TickInfo;
+
+// ---------------------------------------------------------------------------
+// V3 pool state — defined in [`v3_state`] (merged engine + journal types).
+// ---------------------------------------------------------------------------
 
 // `RegisterV3PoolParams` lives in [`v3_state`] (re-exported above).
 
