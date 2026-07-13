@@ -1781,6 +1781,7 @@ dependencies = [
  "degenbot-core",
  "degenbot-db",
  "degenbot-decoders",
+ "degenbot-pools",
  "degenbot-rpc",
  "degenbot-solidly-math",
  "degenbot-uniswap",
@@ -1898,6 +1899,20 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "degenbot-pools"
+version = "0.6.0-alpha.3"
+dependencies = [
+ "alloy",
+ "degenbot-balancer-math",
+ "degenbot-cl-math",
+ "degenbot-curve-math",
+ "degenbot-solidly-math",
+ "degenbot-uniswap",
+ "degenbot-v2-math",
+ "thiserror",
 ]
 
 [[package]]
