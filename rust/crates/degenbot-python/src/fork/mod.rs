@@ -253,8 +253,8 @@ impl PyAnvilFork {
     ///
     /// # Errors
     /// `RuntimeError` if the RPC call fails.
-    fn revert(&self, py: Python<'_>, id: &Bound<'_, PyAny>) -> PyResult<bool> {
-        let id = extract_python_u256(id)?;
+    fn revert(&self, py: Python<'_>, snapshot_id: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let id = extract_python_u256(snapshot_id)?;
         let fork = std::sync::Arc::clone(&self.fork);
         py.detach(|| get_runtime().block_on(async move { fork.revert(id).await }))
             .map_err(map_fork_err)

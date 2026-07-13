@@ -1732,7 +1732,6 @@ dependencies = [
  "degenbot-solidly-math",
  "degenbot-submission",
  "degenbot-uniswap",
- "degenbot-v2-math",
 ]
 
 [[package]]
@@ -1784,7 +1783,6 @@ dependencies = [
  "degenbot-rpc",
  "degenbot-solidly-math",
  "degenbot-uniswap",
- "degenbot-v2-math",
  "futures-util",
  "log",
  "parking_lot",
