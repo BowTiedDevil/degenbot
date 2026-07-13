@@ -129,8 +129,8 @@ fn main() {
         .expect("standalone: register V2");
     assert_eq!(pool_id, 1, "first registered pool gets id 1");
 
-    // 3. Run a swap calc through the Rust core (the Möbius `IntHopState`
-    //    constant-product path). The same code path the PyO3 binding ships to
+    // 3. Run a swap calc through the Rust core (the `degenbot-v2-math`
+    //    `IntHopState` constant-product path). The same code path the PyO3 binding ships to
     //    Python — but here reached without a single `pyo3` import.
     let amount_in = U256::from(1_000_000_000_u64); // 1000 USDC in
     let amount_out = bot.calculate_tokens_out(pool_id, true, amount_in);
@@ -157,7 +157,7 @@ fn main() {
     //      numerator       = amountInWithFee * reserve_out
     //      denominator     = reserve_in * 1000 + amountInWithFee
     //    — byte-identical to the core's EVM-exact integer path
-    //    (`mobius_int::IntHopState::swap`).
+    //    (`degenbot_v2_math::IntHopState::swap`).
     let amount_in_with_fee = amount_in * U256::from(997_u64);
     let numer = amount_in_with_fee * reserve1;
     let denom = reserve0 * U256::from(1000_u64) + amount_in_with_fee;

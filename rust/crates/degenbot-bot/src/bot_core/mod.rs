@@ -14,9 +14,9 @@ use crate::bot_core::state_history::{
     JournalError, ReorgJournal, ScalarPriors, TickBefore, V2BlockDelta, V3BlockDelta,
     V3RestoreResult,
 };
-use crate::solvers::mobius_int::IntHopState;
 use degenbot_uniswap::dex_identity::DexVariant;
 use degenbot_uniswap::v2_encoding::{encode_v2_swap, EncodedCall};
+use degenbot_v2_math::IntHopState;
 
 pub mod aerodrome_v2_state;
 pub mod balancer_stable_state;

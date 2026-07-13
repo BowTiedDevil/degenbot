@@ -59,10 +59,10 @@
 
 use alloy::primitives::{U256, U512};
 
-use crate::solvers::mobius_int::MobiusError;
 use crate::solvers::mobius_int::{
-    compute_int_mobius_coefficients, int_simulate_path, IntHopState, IntMobiusCoefficients,
+    compute_int_mobius_coefficients, IntMobiusCoefficients, MobiusError,
 };
+use degenbot_v2_math::{int_simulate_path, IntHopState};
 
 /// Result of [`exact_mobius_solve`] — the discrete-EVM-sim-exact optimum of
 /// the on-chain swap chain (NOT the closed-form Möbius-model optimum).

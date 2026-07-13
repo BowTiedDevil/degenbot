@@ -362,7 +362,7 @@ pub struct SolidlyHopState {
 pub enum ResolvedHop {
     /// V2 constant-product hop
     V2 {
-        state: crate::solvers::mobius_int::IntHopState,
+        state: degenbot_v2_math::IntHopState,
     },
     /// V3 concentrated-liquidity hop
     V3 {
@@ -393,7 +393,7 @@ impl ResolvedHop {
 
     /// The V2 `IntHopState`, if this is a V2 hop.
     #[must_use]
-    pub const fn as_v2_state(&self) -> Option<&crate::solvers::mobius_int::IntHopState> {
+    pub const fn as_v2_state(&self) -> Option<&degenbot_v2_math::IntHopState> {
         match self {
             Self::V2 { state, .. } => Some(state),
             _ => None,

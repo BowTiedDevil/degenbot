@@ -39,7 +39,8 @@
 
 use alloy::primitives::{U256, U512};
 
-use crate::solvers::mobius_int::{IntHopState, IntMobiusCoefficients, SimulationResult};
+use crate::solvers::mobius_int::IntMobiusCoefficients;
+use degenbot_v2_math::{IntHopState, SimulationResult};
 
 // ---------------------------------------------------------------------------
 // Integer V3 Tick Range Hop
@@ -1227,8 +1228,8 @@ fn int_simulate_v2_hops(amount_in: U256, v2_hops: &[IntHopState]) -> U256 {
         if current.is_zero() {
             return U256::ZERO;
         }
-        current = crate::solvers::mobius_int::int_simulate_path(current, std::slice::from_ref(hop))
-            .final_output;
+        current =
+            degenbot_v2_math::int_simulate_path(current, std::slice::from_ref(hop)).final_output;
     }
     current
 }
