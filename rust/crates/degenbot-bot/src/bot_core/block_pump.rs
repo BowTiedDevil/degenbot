@@ -1718,21 +1718,25 @@ mod tests {
         update_block: u64,
     ) -> (Arc<Bot>, u64, Arc<FakeCountingSubscriber>) {
         let bot = Arc::new(Bot::new(1));
-        let pool_id = bot.state.write().register_v2_pool(&RegisterV2PoolParams {
-            address: pool_addr,
-            token0: Address::from([0xa0u8; 20]),
-            token1: Address::from([0xa1u8; 20]),
-            reserve0: U256::from(1_000),
-            reserve1: U256::from(2_000),
-            fee_token0: (997, 1000),
-            fee_token1: (997, 1000),
-            factory: Address::from([0xf0u8; 20]),
-            update_block,
-            variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
-            stable_swap: false,
-            fee_denominator: None,
-            ..Default::default()
-        });
+        let pool_id = bot
+            .state
+            .write()
+            .register_v2_pool(&RegisterV2PoolParams {
+                address: pool_addr,
+                token0: Address::from([0xa0u8; 20]),
+                token1: Address::from([0xa1u8; 20]),
+                reserve0: U256::from(1_000),
+                reserve1: U256::from(2_000),
+                fee_token0: (997, 1000),
+                fee_token1: (997, 1000),
+                factory: Address::from([0xf0u8; 20]),
+                update_block,
+                variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+                stable_swap: false,
+                fee_denominator: None,
+                ..Default::default()
+            })
+            .expect("test setup: V2 registration");
         let counting = Arc::new(FakeCountingSubscriber {
             notifies: Mutex::new(0),
         });

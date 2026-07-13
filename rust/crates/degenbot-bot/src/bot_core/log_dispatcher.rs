@@ -508,7 +508,8 @@ mod tests {
                 stable_swap: false,
                 fee_denominator: None,
                 ..Default::default()
-            });
+            })
+            .expect("test setup: V2 registration");
 
         let mut dispatcher = LogDispatcher::new();
         dispatcher.register_decoder(Box::new(FakeDecoder { pool_address }));
@@ -555,7 +556,8 @@ mod tests {
                 stable_swap: false,
                 fee_denominator: None,
                 ..Default::default()
-            });
+            })
+            .expect("test setup: V2 registration");
 
         let mut dispatcher = LogDispatcher::new();
         dispatcher.register_decoder(Box::new(FakeDecoder { pool_address }));

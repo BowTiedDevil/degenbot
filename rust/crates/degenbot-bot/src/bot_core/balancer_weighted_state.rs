@@ -297,21 +297,23 @@ mod tests {
     fn apply_balance_update_is_silent_noop_on_v2_pool() {
         let mut core = BotState::new();
         // Register a V2 pool at pool_id 1, then try the Balancer apply path.
-        let v2 = core.register_v2_pool(&crate::bot_core::RegisterV2PoolParams {
-            address: Address::repeat_byte(0x22),
-            token0: Address::repeat_byte(0x01),
-            token1: Address::repeat_byte(0x02),
-            reserve0: U256::from(1_000),
-            reserve1: U256::from(2_000),
-            fee_token0: (997, 1000),
-            fee_token1: (997, 1000),
-            factory: Address::repeat_byte(0xff),
-            update_block: 0,
-            variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
-            stable_swap: false,
-            fee_denominator: None,
-            ..Default::default()
-        });
+        let v2 = core
+            .register_v2_pool(&crate::bot_core::RegisterV2PoolParams {
+                address: Address::repeat_byte(0x22),
+                token0: Address::repeat_byte(0x01),
+                token1: Address::repeat_byte(0x02),
+                reserve0: U256::from(1_000),
+                reserve1: U256::from(2_000),
+                fee_token0: (997, 1000),
+                fee_token1: (997, 1000),
+                factory: Address::repeat_byte(0xff),
+                update_block: 0,
+                variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+                stable_swap: false,
+                fee_denominator: None,
+                ..Default::default()
+            })
+            .expect("test setup: V2 registration");
         let affected =
             core.apply_balancer_weighted_balance_update_by_pool_id(v2, vec![U256::from(1_500)], 5);
         assert!(
