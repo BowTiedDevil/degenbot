@@ -287,6 +287,12 @@ pub enum RegisterV2PoolError {
     SpecViolation(crate::bot_core::spec_bounds::SpecViolation),
 }
 
+impl From<crate::bot_core::spec_bounds::SpecViolation> for RegisterV2PoolError {
+    fn from(v: crate::bot_core::spec_bounds::SpecViolation) -> Self {
+        Self::SpecViolation(v)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // V3 pool state — defined in [`v3_state`] (merged engine + journal types).
 // ---------------------------------------------------------------------------
@@ -420,15 +426,31 @@ impl BotState {
     ///
     /// Returns the auto-assigned pool ID.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the pool address is already registered.
-    pub fn register_v2_pool(&mut self, params: &RegisterV2PoolParams) -> u64 {
-        assert!(
-            !self.pool_addresses.contains_key(&params.address),
-            "pool already registered: {}",
-            params.address
-        );
+    /// Returns [`RegisterV2PoolError::AlreadyRegistered`] if a pool at this
+    /// address is already registered (replaces the prior `assert!` panic).
+    /// Returns [`RegisterV2PoolError::SpecViolation`] when `reserve0` or
+    /// `reserve1` exceed `uint112::MAX` — the on-chain `uint112` storage width
+    /// v2-core asserts at `UniswapV2Pair._update`. Living pool state from
+    /// `Sync(uint112,uint112)` events is structurally spec-bound, so spec
+    /// checks fire only on synthetic / corrupt registration.
+    pub fn register_v2_pool(
+        &mut self,
+        params: &RegisterV2PoolParams,
+    ) -> Result<u64, RegisterV2PoolError> {
+        // Spec-bound admission (epic WOYYS2 / MSTAT2): reject up-front rather
+        // than propagating overlarge reserves into `V2PoolState` (where the
+        // downstream swap-math U512→U256 narrowing would silently degrade to
+        // `U256::MAX` under the prior sat-cap, or panic — see the helper's
+        // `# Panics` section committed in `19218a2c`).
+        crate::bot_core::spec_bounds::validate_v2_reserve(params.reserve0, "reserve0")?;
+        crate::bot_core::spec_bounds::validate_v2_reserve(params.reserve1, "reserve1")?;
+        if self.pool_addresses.contains_key(&params.address) {
+            return Err(RegisterV2PoolError::AlreadyRegistered {
+                address: params.address,
+            });
+        }
 
         let pool_id = self.next_pool_id;
         self.next_pool_id += 1;
@@ -491,7 +513,7 @@ impl BotState {
         );
         self.pool_addresses.insert(address, pool_id);
 
-        pool_id
+        Ok(pool_id)
     }
 
     /// Register a V3 pool by contract address.
@@ -4589,6 +4611,7 @@ fn load_v4_family(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy::primitives::uint;
 
     const FEE_03: (u64, u64) = (997, 1000);
 
@@ -4626,7 +4649,9 @@ mod tests {
     #[test]
     fn register_v2_pool_and_calculate_tokens_out() {
         let mut core = BotState::new();
-        let pool_id = core.register_v2_pool(&make_params(U256::from(1000), U256::from(2000)));
+        let pool_id = core
+            .register_v2_pool(&make_params(U256::from(1000), U256::from(2000)))
+            .expect("test setup: V2 registration");
 
         // Python reference: constant_product_calc_exact_in(100, 1000, 2000, 3/1000) = 181
         let amount_out = core.calculate_tokens_out(pool_id, true, U256::from(100));
@@ -4640,7 +4665,9 @@ mod tests {
         // get_v2_identity. Identity is pure immutable registration data
         // (mirrors TokenEntry), distinct from the mutable V2PoolState.
         let mut core = BotState::new();
-        let pool_id = core.register_v2_pool(&make_params(U256::from(1000), U256::from(2000)));
+        let pool_id = core
+            .register_v2_pool(&make_params(U256::from(1000), U256::from(2000)))
+            .expect("test setup: V2 registration");
         let id = core
             .get_v2_identity(pool_id)
             .expect("registered V2 pool has an identity");
@@ -4665,7 +4692,9 @@ mod tests {
         // primitive every `_from_py_pool` seam asserts against (replacing the
         // V2-only `variant` getter). Tracer bullet: V2 + unregistered.
         let mut core = BotState::new();
-        let pool_id = core.register_v2_pool(&make_params(U256::from(1000), U256::from(2000)));
+        let pool_id = core
+            .register_v2_pool(&make_params(U256::from(1000), U256::from(2000)))
+            .expect("test setup: V2 registration");
         assert_eq!(core.pool_family(pool_id), "v2");
         assert_eq!(core.pool_family(999_999), "");
     }
@@ -4875,7 +4904,9 @@ mod tests {
         assert_eq!(state.update_block, 10);
 
         // A non-Aerodrome pool_id is a silent no-op for apply + restore.
-        let v2_id = core.register_v2_pool(&make_params(U256::from(100), U256::from(200)));
+        let v2_id = core
+            .register_v2_pool(&make_params(U256::from(100), U256::from(200)))
+            .expect("test setup: V2 registration");
         assert_eq!(
             core.apply_aerodrome_sync_by_pool_id(v2_id, U256::ZERO, U256::ZERO, 99),
             None
@@ -4886,7 +4917,9 @@ mod tests {
     #[test]
     fn calculate_tokens_out_reverse_direction() {
         let mut core = BotState::new();
-        let pool_id = core.register_v2_pool(&make_params(U256::from(2000), U256::from(1000)));
+        let pool_id = core
+            .register_v2_pool(&make_params(U256::from(2000), U256::from(1000)))
+            .expect("test setup: V2 registration");
 
         // Python reference: constant_product_calc_exact_in(100, 1000, 2000, 3/1000) = 181
         let amount_out = core.calculate_tokens_out(pool_id, false, U256::from(100));
@@ -4896,7 +4929,9 @@ mod tests {
     #[test]
     fn update_v2_pool_changes_calculation_result() {
         let mut core = BotState::new();
-        let pool_id = core.register_v2_pool(&make_params(U256::from(1000), U256::from(2000)));
+        let pool_id = core
+            .register_v2_pool(&make_params(U256::from(1000), U256::from(2000)))
+            .expect("test setup: V2 registration");
 
         // Before update: swap 100 token0 → 181 token1
         let before = core.calculate_tokens_out(pool_id, true, U256::from(100));
@@ -4913,7 +4948,9 @@ mod tests {
     #[test]
     fn calculate_tokens_in_for_v2_pool() {
         let mut core = BotState::new();
-        let pool_id = core.register_v2_pool(&make_params(U256::from(1000), U256::from(2000)));
+        let pool_id = core
+            .register_v2_pool(&make_params(U256::from(1000), U256::from(2000)))
+            .expect("test setup: V2 registration");
 
         // Python: constant_product_calc_exact_out(50, 1000, 2000, 3/1000) = 26
         let amount_in = core.calculate_tokens_in(pool_id, true, U256::from(50));
@@ -4947,7 +4984,9 @@ mod tests {
             fee_denominator: None,
             ..Default::default()
         };
-        let pool_id = core.register_v2_pool(&params);
+        let pool_id = core
+            .register_v2_pool(&params)
+            .expect("test setup: V2 registration");
 
         // Swap 1000 USDC for WETH
         // Python reference: 531380142665175213
@@ -4989,7 +5028,10 @@ mod tests {
             fee_denominator: None,
             ..Default::default()
         };
-        state.write().register_v2_pool(&params);
+        state
+            .write()
+            .register_v2_pool(&params)
+            .expect("test setup: V2 registration");
 
         let state2 = bot.state_arc();
         assert_eq!(
@@ -5947,7 +5989,9 @@ mod tests {
     fn unregister_v2_pool_returns_true_then_re_register_allocates_fresh_id() {
         let mut core = BotState::new();
         let params = make_params(U256::from(1000), U256::from(2000));
-        let first_id = core.register_v2_pool(&params);
+        let first_id = core
+            .register_v2_pool(&params)
+            .expect("test setup: V2 registration");
         assert_eq!(core.pool_count(), 1);
 
         // Unregister the V2 pool.
@@ -5962,7 +6006,9 @@ mod tests {
 
         // Re-register: must succeed (no panic) and allocate a fresh id
         // (retired ids are NOT reused — ADR-007 U3).
-        let second_id = core.register_v2_pool(&params);
+        let second_id = core
+            .register_v2_pool(&params)
+            .expect("test setup: V2 registration");
         assert_ne!(
             second_id, first_id,
             "re-register must allocate a fresh id (retired, not reused)",
@@ -5974,13 +6020,71 @@ mod tests {
     fn unregister_pool_on_unknown_address_returns_false_silently() {
         let mut core = BotState::new();
         // Register one pool at make_pool_addr().
-        let _ = core.register_v2_pool(&make_params(U256::from(1000), U256::from(2000)));
+        let _ = core
+            .register_v2_pool(&make_params(U256::from(1000), U256::from(2000)))
+            .expect("test setup: V2 registration");
         let unknown = Address::from([0x99u8; 20]);
 
         let removed = core.unregister_pool(unknown, None);
         assert!(!removed, "unregister on an unknown address returns false");
         // No mutation occurred.
         assert_eq!(core.pool_count(), 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Spec-bound admission (epic WOYYS2 / task MSTAT2).
+    // `register_v2_pool` is a typed `Result` that rejects (a) duplicate
+    // address and (b) out-of-spec `uint112` reserves, rather than panicking
+    // on (a) and silently degrading to `U256::MAX` on (b).
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn register_v2_pool_rejects_duplicate_address_as_already_registered() {
+        let mut core = BotState::new();
+        let params = make_params(U256::from(1000), U256::from(2000));
+        let _ok = core.register_v2_pool(&params).expect("first registration");
+        // Second registration at the same address: prior impl `assert!`-panicked;
+        // now returns `Err(AlreadyRegistered { address })`.
+        assert!(
+            matches! {
+                core.register_v2_pool(&params),
+                Err(RegisterV2PoolError::AlreadyRegistered { address }) if address == params.address,
+            },
+            "duplicate-address registration surfaces a typed Err, not a panic"
+        );
+    }
+
+    #[test]
+    fn register_v2_pool_rejects_overlarge_reserve0_as_spec_violation() {
+        let mut core = BotState::new();
+        let overlarge = crate::bot_core::spec_bounds::UINT112_MAX + uint!(1_U256);
+        let mut params = make_params(U256::from(1000), U256::from(2000));
+        params.reserve0 = overlarge;
+        // Prior impl silently propagated the overlarge reserve into V2PoolState
+        // (downstream swap math could then narrow to a `U256::MAX` sat-cap).
+        // Now the admission contract rejects up-front with a typed `SpecViolation`.
+        assert!(
+            matches! {
+                core.register_v2_pool(&params),
+                Err(RegisterV2PoolError::SpecViolation(v)) if v.field == "reserve0",
+            },
+            "reserve0 > uint112::MAX surfaces a typed SpecViolation"
+        );
+    }
+
+    #[test]
+    fn register_v2_pool_rejects_overlarge_reserve1_as_spec_violation() {
+        let mut core = BotState::new();
+        let overlarge = crate::bot_core::spec_bounds::UINT112_MAX + uint!(1_U256);
+        let mut params = make_params(U256::from(1000), U256::from(2000));
+        params.reserve1 = overlarge;
+        assert!(
+            matches! {
+                core.register_v2_pool(&params),
+                Err(RegisterV2PoolError::SpecViolation(v)) if v.field == "reserve1",
+            },
+            "reserve1 > uint112::MAX surfaces a typed SpecViolation"
+        );
     }
 
     #[test]

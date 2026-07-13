@@ -124,7 +124,9 @@ fn main() {
         fee_denominator: None,
         ..Default::default()
     };
-    let pool_id = bot.register_v2_pool(&params);
+    let pool_id = bot
+        .register_v2_pool(&params)
+        .expect("standalone: register V2");
     assert_eq!(pool_id, 1, "first registered pool gets id 1");
 
     // 3. Run a swap calc through the Rust core (the Möbius `IntHopState`

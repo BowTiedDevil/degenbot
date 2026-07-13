@@ -676,6 +676,13 @@ impl UniswapEngine {
 #[cfg(test)]
 impl UniswapEngine {
     /// Register a V2 pool into the engine's `BotState` and return its `pool_id`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the underlying `BotState::register_v2_pool` rejects the
+    /// params (duplicate address, or spec-violating reserve). This is a test
+    /// convenience — production code goes through `PyBot::register_v2_pool`,
+    /// which surfaces the rejection as a typed Python exception.
     #[must_use]
     pub fn register_v2_pool(
         &self,
@@ -700,7 +707,10 @@ impl UniswapEngine {
             fee_denominator: None,
             ..Default::default()
         };
-        self.core.write().register_v2_pool(&params)
+        self.core
+            .write()
+            .register_v2_pool(&params)
+            .expect("test setup: V2 registration")
     }
 
     /// Register a V3 pool into the engine's `BotState` and return its `pool_id`.

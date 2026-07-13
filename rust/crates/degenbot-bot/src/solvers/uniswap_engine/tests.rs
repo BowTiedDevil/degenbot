@@ -1956,7 +1956,10 @@ mod tests {
             fee_denominator: None,
             ..Default::default()
         };
-        let _pool_id = core.write().register_v2_pool(&params);
+        let _pool_id = core
+            .write()
+            .register_v2_pool(&params)
+            .expect("test setup: V2 registration");
 
         // Engine adopts the SAME `Arc<RwLock<BotState>>` — NOT its own `BotState`.
         let engine = UniswapEngine::with_core(Arc::clone(&core));
@@ -1981,21 +1984,24 @@ mod tests {
 
         let core = Arc::new(parking_lot::RwLock::new(BotState::new()));
         // Register one real V2 pool so the engine has *some* valid id.
-        let real_pool_id = core.write().register_v2_pool(&RegisterV2PoolParams {
-            address: Address::from([0x11u8; 20]),
-            token0: Address::from([0x01u8; 20]),
-            token1: Address::from([0x02u8; 20]),
-            reserve0: U256::from(1000),
-            reserve1: U256::from(2000),
-            fee_token0: (997, 1000),
-            fee_token1: (997, 1000),
-            factory: Address::from([0x33u8; 20]),
-            update_block: 0,
-            variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
-            stable_swap: false,
-            fee_denominator: None,
-            ..Default::default()
-        });
+        let real_pool_id = core
+            .write()
+            .register_v2_pool(&RegisterV2PoolParams {
+                address: Address::from([0x11u8; 20]),
+                token0: Address::from([0x01u8; 20]),
+                token1: Address::from([0x02u8; 20]),
+                reserve0: U256::from(1000),
+                reserve1: U256::from(2000),
+                fee_token0: (997, 1000),
+                fee_token1: (997, 1000),
+                factory: Address::from([0x33u8; 20]),
+                update_block: 0,
+                variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+                stable_swap: false,
+                fee_denominator: None,
+                ..Default::default()
+            })
+            .expect("test setup: V2 registration");
 
         let mut engine = UniswapEngine::with_core(Arc::clone(&core));
 
@@ -2750,36 +2756,42 @@ mod tests {
         );
 
         // Camelot stable_swap pool: gamma=9970 of 10000 retained (0.3% fee).
-        let camelot_id = core.write().register_v2_pool(&RegisterV2PoolParams {
-            address: Address::from([0xc1u8; 20]),
-            token0: Address::from([0x01u8; 20]),
-            token1: Address::from([0x02u8; 20]),
-            reserve0: U256::from(1_000_000u64),
-            reserve1: U256::from(2_000_000u64),
-            fee_token0: (9970, 10000),
-            fee_token1: (9970, 10000),
-            factory: Address::from([0xfau8; 20]),
-            update_block: 0,
-            variant: degenbot_uniswap::dex_identity::DexVariant::CamelotV2Stable,
-            stable_swap: true,
-            fee_denominator: Some(10000),
-            ..Default::default()
-        });
-        let camelot_id2 = core.write().register_v2_pool(&RegisterV2PoolParams {
-            address: Address::from([0xc2u8; 20]),
-            token0: Address::from([0x01u8; 20]),
-            token1: Address::from([0x02u8; 20]),
-            reserve0: U256::from(1_100_000u64),
-            reserve1: U256::from(1_900_000u64),
-            fee_token0: (9970, 10000),
-            fee_token1: (9970, 10000),
-            factory: Address::from([0xfau8; 20]),
-            update_block: 0,
-            variant: degenbot_uniswap::dex_identity::DexVariant::CamelotV2Stable,
-            stable_swap: true,
-            fee_denominator: Some(10000),
-            ..Default::default()
-        });
+        let camelot_id = core
+            .write()
+            .register_v2_pool(&RegisterV2PoolParams {
+                address: Address::from([0xc1u8; 20]),
+                token0: Address::from([0x01u8; 20]),
+                token1: Address::from([0x02u8; 20]),
+                reserve0: U256::from(1_000_000u64),
+                reserve1: U256::from(2_000_000u64),
+                fee_token0: (9970, 10000),
+                fee_token1: (9970, 10000),
+                factory: Address::from([0xfau8; 20]),
+                update_block: 0,
+                variant: degenbot_uniswap::dex_identity::DexVariant::CamelotV2Stable,
+                stable_swap: true,
+                fee_denominator: Some(10000),
+                ..Default::default()
+            })
+            .expect("test setup: V2 registration");
+        let camelot_id2 = core
+            .write()
+            .register_v2_pool(&RegisterV2PoolParams {
+                address: Address::from([0xc2u8; 20]),
+                token0: Address::from([0x01u8; 20]),
+                token1: Address::from([0x02u8; 20]),
+                reserve0: U256::from(1_100_000u64),
+                reserve1: U256::from(1_900_000u64),
+                fee_token0: (9970, 10000),
+                fee_token1: (9970, 10000),
+                factory: Address::from([0xfau8; 20]),
+                update_block: 0,
+                variant: degenbot_uniswap::dex_identity::DexVariant::CamelotV2Stable,
+                stable_swap: true,
+                fee_denominator: Some(10000),
+                ..Default::default()
+            })
+            .expect("test setup: V2 registration");
 
         let mut engine = UniswapEngine::with_core(Arc::clone(&core));
         let path_id = engine
@@ -3046,21 +3058,24 @@ mod tests {
                 reserve1: tokens(100),
                 update_block: 0,
             });
-        let v2_id = core.write().register_v2_pool(&RegisterV2PoolParams {
-            address: Address::from([0xb2u8; 20]),
-            token0: Address::from([0x01u8; 20]),
-            token1: Address::from([0x02u8; 20]),
-            reserve0: tokens(2000),
-            reserve1: tokens(100),
-            fee_token0: (997, 1000),
-            fee_token1: (997, 1000),
-            factory: Address::from([0xfbu8; 20]),
-            update_block: 0,
-            variant: DexVariant::UniswapV2,
-            stable_swap: false,
-            fee_denominator: None,
-            ..Default::default()
-        });
+        let v2_id = core
+            .write()
+            .register_v2_pool(&RegisterV2PoolParams {
+                address: Address::from([0xb2u8; 20]),
+                token0: Address::from([0x01u8; 20]),
+                token1: Address::from([0x02u8; 20]),
+                reserve0: tokens(2000),
+                reserve1: tokens(100),
+                fee_token0: (997, 1000),
+                fee_token1: (997, 1000),
+                factory: Address::from([0xfbu8; 20]),
+                update_block: 0,
+                variant: DexVariant::UniswapV2,
+                stable_swap: false,
+                fee_denominator: None,
+                ..Default::default()
+            })
+            .expect("test setup: V2 registration");
         let mut engine = UniswapEngine::with_core(Arc::clone(&core));
         let path_id = engine
             .register_path(vec![

@@ -436,8 +436,7 @@ impl PyBot {
         let deployer = degenbot_uniswap::deployments::resolve_deployer(chain_id, fac);
         let init_hash_b256 = degenbot_uniswap::deployments::resolve_v2_init_hash(chain_id, fac);
 
-        Ok(self
-            .bot
+        self.bot
             .state_arc()
             .write()
             .register_v2_pool(&RegisterV2PoolParams {
@@ -455,7 +454,16 @@ impl PyBot {
                 variant: variant_enum,
                 stable_swap,
                 fee_denominator,
-            }))
+            })
+            // Stop-gap mapper (will be replaced by the typed
+            // `map_register_v2_err` in F2EVV6, which introduces a typed
+            // `PoolRegistrationError` Python exception hierarchy mirroring
+            // `map_register_v4_err`).
+            .map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "V2 pool registration failed: {e:?}"
+                ))
+            })
     }
 
     /// Update a V2 pool's reserves from a Sync event.
