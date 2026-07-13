@@ -3364,6 +3364,12 @@ impl BotState {
     ///
     /// # Errors
     ///
+    /// Returns [`RegisterV4PoolError::SpecViolation`] when `sqrt_price_x96`,
+    /// `tick`, V4 `fee`, or `tick_spacing` violates its Solidity-bounded
+    /// on-chain invariant (see [`spec_bounds`]). These checks fire *first* —
+    /// before the hooked / dynamic-fee / already-registered rejections — so an
+    /// impossible-CL-config rejection surfaces the primitive at fault.
+    ///
     /// Returns `Err` if the pool has amount-modifying hooks
     /// (`hook_flags & 0xCC != 0`), uses a dynamic fee (`fee == 0x100000`),
     /// or a pool with the same `(pool_manager, pool_id)` is already registered.
@@ -3371,6 +3377,14 @@ impl BotState {
         &mut self,
         params: &RegisterV4PoolParams,
     ) -> Result<u64, RegisterV4PoolError> {
+        use crate::bot_core::spec_bounds as sb;
+        sb::validate_sqrt_price(params.sqrt_price_x96)
+            .map_err(RegisterV4PoolError::SpecViolation)?;
+        sb::validate_tick(params.tick).map_err(RegisterV4PoolError::SpecViolation)?;
+        sb::validate_v4_fee(params.pool_key.fee).map_err(RegisterV4PoolError::SpecViolation)?;
+        sb::validate_tick_spacing(params.pool_key.tick_spacing)
+            .map_err(RegisterV4PoolError::SpecViolation)?;
+
         if (params.hook_flags & AMOUNT_MODIFYING_HOOK_MASK) != 0 {
             return Err(RegisterV4PoolError::HookedPool {
                 hook_flags: params.hook_flags,
@@ -5549,6 +5563,149 @@ mod tests {
             },
             "duplicate-registration refusal returns the typed AlreadyRegistered variant"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Spec-bound admission (epic WOYYS2 / task K3IICB).
+    // Mirrors the V2/V3 spec-bound tests: `register_v4_pool` now rejects
+    // out-of-solidity-bounds `sqrt_price_x96` / `tick` / V4 `fee` /
+    // `tick_spacing` with a typed `RegisterV4PoolError::SpecViolation`, ahead
+    // of the existing `HookedPool` / `DynamicFee` / `AlreadyRegistered`
+    // rejections. The four V4 spec validators (`validate_sqrt_price` /
+    // `validate_tick` / `validate_v4_fee` / `validate_tick_spacing`) are the
+    // same family-agnostic CL validators V3 uses (V4 shares TickMath); only
+    // `validate_v4_fee` is V4-specific (the `0x800000` high bit flags a
+    // dynamic-fee pool, which `DynamicFee` rejects upstream as a more specific
+    // typed variant).
+    // -----------------------------------------------------------------------
+
+    /// Baseline in-spec V4 params at tick 0, srqt=1<<96, fee=500,
+    /// `tick_spacing=10`. Each spec-violation test below derives a
+    /// broken-on-one-field copy.
+    fn make_v4_params_in_spec() -> crate::bot_core::RegisterV4PoolParams {
+        use crate::bot_core::{RegisterV4PoolParams, V4PoolKey};
+        use crate::solvers::uniswap_engine::PoolTickCoverage;
+        use std::collections::HashMap;
+        RegisterV4PoolParams {
+            pool_manager: Address::from([0x44u8; 20]),
+            pool_id: [0xeeu8; 32],
+            pool_key: V4PoolKey {
+                currency0: Address::ZERO,
+                currency1: Address::from([1u8; 20]),
+                fee: 500,
+                tick_spacing: 10,
+                hooks: Address::ZERO,
+            },
+            hook_flags: 0,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data: HashMap::new(),
+            update_block: 0,
+            coverage: PoolTickCoverage::Sparse,
+            seed_from_store: false,
+            fetcher: None,
+        }
+    }
+
+    #[test]
+    fn register_v4_pool_rejects_sqrt_price_at_max_as_spec_violation() {
+        use crate::bot_core::RegisterV4PoolError;
+        let mut core = BotState::new();
+        let mut params = make_v4_params_in_spec();
+        // Distinct pool_id so the duplicate-registered guard never fires if the
+        // previous test's params linger in core (defensive; core is fresh here).
+        params.pool_id = [0xe1u8; 32];
+        params.sqrt_price_x96 = U256::from(degenbot_cl_math::cl_lib::tick_math::MAX_SQRT_RATIO);
+        assert!(
+            matches! {
+                core.register_v4_pool(&params),
+                Err(RegisterV4PoolError::SpecViolation(v)) if v.field == "sqrtPriceX96",
+            },
+            "sqrtPriceX96 == MAX_SQRT_RATIO surfaces a V4 typed SpecViolation"
+        );
+    }
+
+    #[test]
+    fn register_v4_pool_rejects_sqrt_price_below_min_as_spec_violation() {
+        use crate::bot_core::RegisterV4PoolError;
+        let mut core = BotState::new();
+        let mut params = make_v4_params_in_spec();
+        params.pool_id = [0xe2u8; 32];
+        params.sqrt_price_x96 =
+            U256::from(degenbot_cl_math::cl_lib::tick_math::MIN_SQRT_RATIO) - uint!(1_U256);
+        assert!(
+            matches! {
+                core.register_v4_pool(&params),
+                Err(RegisterV4PoolError::SpecViolation(v)) if v.field == "sqrtPriceX96",
+            },
+            "sqrtPriceX96 < MIN_SQRT_RATIO surfaces a V4 typed SpecViolation"
+        );
+    }
+
+    #[test]
+    fn register_v4_pool_rejects_tick_below_min_as_spec_violation() {
+        use crate::bot_core::RegisterV4PoolError;
+        let mut core = BotState::new();
+        let mut params = make_v4_params_in_spec();
+        params.pool_id = [0xe3u8; 32];
+        params.tick = degenbot_cl_math::cl_lib::tick_math::MIN_TICK - 1;
+        assert!(
+            matches! {
+                core.register_v4_pool(&params),
+                Err(RegisterV4PoolError::SpecViolation(v)) if v.field == "tick",
+            },
+            "tick < MIN_TICK surfaces a V4 typed SpecViolation"
+        );
+    }
+
+    #[test]
+    fn register_v4_pool_rejects_fee_at_v4_max_as_spec_violation() {
+        // The V4 fee bound is `< 1 << 24` (uint24 width; the `0x800000` high
+        // bit is the dynamic-fee flag, separately rejected as `DynamicFee`).
+        // A fee of `1 << 24` itself is out-of-spec for V4 — distinct from a
+        // dynamic-fee flag, and surfaces as a `SpecViolation`, not `DynamicFee`.
+        use crate::bot_core::RegisterV4PoolError;
+        let mut core = BotState::new();
+        let mut params = make_v4_params_in_spec();
+        params.pool_id = [0xe4u8; 32];
+        params.pool_key.fee = crate::bot_core::spec_bounds::V4_FEE_MAX;
+        assert!(
+            matches! {
+                core.register_v4_pool(&params),
+                Err(RegisterV4PoolError::SpecViolation(v)) if v.field == "fee",
+            },
+            "V4 fee >= 1 << 24 surfaces a V4 typed SpecViolation (not DynamicFee)"
+        );
+    }
+
+    #[test]
+    fn register_v4_pool_rejects_tick_spacing_out_of_range_as_spec_violation() {
+        use crate::bot_core::RegisterV4PoolError;
+        let mut core = BotState::new();
+        let mut params = make_v4_params_in_spec();
+        params.pool_id = [0xe5u8; 32];
+        params.pool_key.tick_spacing = crate::bot_core::spec_bounds::MAX_TICK_SPACING + 1;
+        assert!(
+            matches! {
+                core.register_v4_pool(&params),
+                Err(RegisterV4PoolError::SpecViolation(v)) if v.field == "tickSpacing",
+            },
+            "tickSpacing > MAX_TICK_SPACING surfaces a V4 typed SpecViolation"
+        );
+    }
+
+    #[test]
+    fn register_v4_pool_accepts_in_spec_params() {
+        // Green companion for the V4 reject tests above: baseline
+        // in-spec V4 params must register OK (and reach the
+        // `AlreadyRegistered` guard cleanly past the spec validators).
+        let mut core = BotState::new();
+        let params = make_v4_params_in_spec();
+        let pool_id = core
+            .register_v4_pool(&params)
+            .expect("in-spec V4 params must register");
+        assert!(pool_id > 0, "registration returns a non-zero pool_id");
     }
 
     /// Regression (RAJ3PP): `PyLiquidityPool.apply_swap` routed V4 pools into
