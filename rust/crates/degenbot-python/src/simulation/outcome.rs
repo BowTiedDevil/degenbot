@@ -22,12 +22,15 @@
 //! `PySubmitCandidate`), it is **not** a pyclass — A4 uses the core `SimResult`
 //! directly. No type is exposed that the cockpit doesn't read.
 
+use crate::executor::{path_info_to_py, HopTypes};
 use crate::prelude::*;
 use crate::submission::submit::PySubmitCandidate;
+use degenbot_executor::composers::PathInfo;
 use degenbot_simulation::dispatch_profitable::DispatchOutcome;
 use degenbot_simulation::FailBuckets;
 use degenbot_submission::SubmitCandidate;
 use pyo3::types::{PyDict, PyList};
+use std::collections::HashMap;
 
 /// The read-only outcome of a block's profitable-dispatch fan-out.
 ///
@@ -46,6 +49,13 @@ pub struct PyDispatchOutcome {
     pub(crate) suppressed_count: usize,
     pub(crate) thin_dropped: usize,
     pub(crate) fail_buckets: FailBuckets,
+    /// The input candidates' `PathInfo`, keyed by `path_id` — the join map
+    /// A4 snapshots before the core consumes the batch. Populated from the
+    /// INPUT batch (every candidate passed in), NOT filtered to survivors: the
+    /// `[profit]` hop-detail log looks up `path_infos[cand.path_id]` per
+    /// survivor, so the map must cover whatever `path_ids` the cockpit iterates
+    /// (Decision 1=B, A5).
+    pub(crate) path_info_by_id: HashMap<u64, PathInfo>,
 }
 
 impl PyDispatchOutcome {
@@ -55,10 +65,12 @@ impl PyDispatchOutcome {
     #[allow(dead_code)]
     pub(crate) fn from_join(
         gas_profitable: Vec<SubmitCandidate>,
+        path_info_by_id: HashMap<u64, PathInfo>,
         outcome: &DispatchOutcome,
     ) -> Self {
         Self {
             gas_profitable,
+            path_info_by_id,
             gas_unprofitable_count: outcome.gas_unprofitable.len(),
             exception_count: outcome.exception_count,
             fail_count: outcome.fail_count,
@@ -129,6 +141,24 @@ impl PyDispatchOutcome {
         let dict = PyDict::new(py);
         for (bucket, count) in self.fail_buckets.buckets() {
             dict.set_item(bucket, *count)?;
+        }
+        Ok(dict)
+    }
+
+    /// The input candidates' `PathInfo` keyed by `path_id` — `{path_id:
+    /// PathInfo}`. Populated from the INPUT batch (every candidate passed in,
+    /// not filtered to survivors). The `[profit]` hop-detail log looks up
+    /// `path_infos[cand.path_id]` per survivor; preserved here (Decision 1=B,
+    /// A5) so the cockpit doesn't thread a separate map.
+    ///
+    /// Lazily converts each Rust `PathInfo` to the Python `PathInfo` dataclass
+    /// on access (the converter is the reverse of `extract_path_info`).
+    #[getter]
+    fn path_infos<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let dict = PyDict::new(py);
+        let types = HopTypes::load(py)?;
+        for (pid, path) in &self.path_info_by_id {
+            dict.set_item(*pid, path_info_to_py(py, path, &types)?)?;
         }
         Ok(dict)
     }

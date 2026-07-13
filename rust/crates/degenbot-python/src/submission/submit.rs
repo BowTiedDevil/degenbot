@@ -129,6 +129,33 @@ impl PySubmitCandidate {
         };
         Ok(Self { inner })
     }
+
+    // ── read-only getters (the rewired `[dispatch]` per-path log reads these
+    //    from each survivor — A5). --------------------------------------------
+    #[getter]
+    fn path_id(&self) -> u64 {
+        self.inner.path_id
+    }
+
+    #[getter]
+    fn gross_profit<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        alloy_py::u256_to_py(py, &self.inner.gross_profit)
+    }
+
+    #[getter]
+    fn net_profit<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        alloy_py::u256_to_py(py, &self.inner.net_profit)
+    }
+
+    #[getter]
+    fn gas_used(&self) -> u64 {
+        self.inner.gas_used
+    }
+
+    #[getter]
+    fn priority_fee(&self) -> u128 {
+        self.inner.priority_fee
+    }
 }
 
 /// The local `ReceiptProbe` impl — polls `Provider::get_transaction_receipt`.

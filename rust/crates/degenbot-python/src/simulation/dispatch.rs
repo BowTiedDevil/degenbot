@@ -186,7 +186,11 @@ pub fn dispatch_profitable_py<'py>(
             .map(|r| join_sim_result(r, &path_info_by_id, executor_address))
             .collect();
 
-        Ok(PyDispatchOutcome::from_join(joined, &outcome))
+        Ok(PyDispatchOutcome::from_join(
+            joined,
+            path_info_by_id,
+            &outcome,
+        ))
     })
 }
 

@@ -24,9 +24,10 @@ from degenbot.degenbot_rs import (
     AlloyProvider,
     AsyncAlloyProvider,
     PyDispatchCandidate,
-    PyDispatchOutcome,
     PyDispatcher,
+    PyDispatchOutcome,
     PySimulateContext,
+    PySubmitCandidate,
     dispatch_profitable_py,
 )
 
@@ -48,7 +49,7 @@ def _make_async_provider() -> AsyncAlloyProvider:
     return AsyncAlloyProvider(sync)
 
 
-def _make_ctx(inject_code: bool = False) -> PySimulateContext:
+def _make_ctx(*, inject_code: bool = False) -> PySimulateContext:
     return PySimulateContext(
         provider=_make_async_provider(),
         executor_owner=OWNER,
@@ -200,6 +201,30 @@ class TestDispatchJoinShape:
         assert isinstance(outcome.gas_profitable, list)
 
 
+class TestPySubmitCandidateGetters:
+    """Read-only getters on ``PySubmitCandidate`` — the rewired ``[dispatch]``
+    per-path log reads ``path_id``/``gross_profit``/``net_profit``/
+    ``gas_used``/``priority_fee`` from each survivor, so the pyclass must
+    expose them (it previously exposed only ``#[new]``)."""
+
+    def test_money_and_gas_getters_round_trip(self) -> None:
+        cand = PySubmitCandidate(
+            path_id=42,
+            gross_profit=2_000_000_000_000_000_000,
+            net_profit=1_500_000_000_000_000_000,
+            gas_used=200_000,
+            priority_fee=2_000_000_000,
+            base_fee_next=1_000_000_000,
+            execute_calldata=b"\xde\xad",
+            executor_address=EXECUTOR,
+        )
+        assert cand.path_id == 42
+        assert cand.gross_profit == 2_000_000_000_000_000_000
+        assert cand.net_profit == 1_500_000_000_000_000_000
+        assert cand.gas_used == 200_000
+        assert cand.priority_fee == 2_000_000_000
+
+
 class TestDispatchWithCandidateButNoRpc:
     """A candidate that's pre-filtered (suppressed) never dispatches an RPC —
     the dead-URL provider never dials. Exercises the suppression pre-filter
@@ -238,3 +263,20 @@ class TestDispatchWithCandidateButNoRpc:
         assert outcome.candidate_count == 0
         assert outcome.gas_profitable == []
         assert outcome.gas_unprofitable_count == 0
+        # The path_info join map carries the INPUT candidate's PathInfo (keyed
+        # by path_id) even though the path was suppressed pre-sim — the
+        # `[profit]` hop-detail log looks up `path_infos[cand.path_id]` per
+        # survivor, so the map is populated from the input batch, not filtered
+        # to survivors. Exercises the Rust->Python PathInfo converter (Rust
+        # V2HopInfo -> Python V2HopInfo) end-to-end WITHOUT an RPC.
+        assert isinstance(outcome.path_infos, dict)
+        assert set(outcome.path_infos.keys()) == {7}
+        pi = outcome.path_infos[7]
+        assert len(pi.hops) == 1
+        hop = pi.hops[0]
+        assert isinstance(hop, V2HopInfo)
+        # EIP-55 checksummed (alloy Address Display) — matches the Python
+        # cockpit's `h.pool_address` form.
+        assert hop.pool_address == "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc"
+        assert hop.zfo is False
+        assert hop.fee == 30
