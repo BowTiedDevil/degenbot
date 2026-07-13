@@ -50,7 +50,6 @@ import web3
 from eth_backrun_helpers import (
     BackrunConfig,
     classify_revert,
-    filter_thin_margin_results,
     format_failure_breakdown,
     format_sim_diag_line,
 )
@@ -83,12 +82,16 @@ from degenbot.degenbot_rs import (
     AsyncAlloyProvider,
     DynamicFeePoolRejectedError,
     HookedPoolRejectedError,
+    PyDispatchCandidate,
+    PyDispatchOutcome,
     PyDispatcher,
+    PySimulateContext,
     PySubmitCandidate,
     PyTxSigner,
     VerificationMismatchError,
     VerificationRpcError,
     dispatch_and_submit_py,
+    dispatch_profitable_py,
     fetch_fee_history_py,
 )
 from degenbot.logging import logger as bot_logger
@@ -663,6 +666,7 @@ class BackrunSession:
         self.engine_registry: EngineRegistry | None = None
         self.async_w3: AsyncProviderAdapter | None = None
         self.dispatcher: PyDispatcher | None = None
+        self._sim_ctx: PySimulateContext | None = None
         self.v3_snapshot: Any = None
         self.v4_snapshot: Any = None
         self.current_block: int = 0
@@ -709,6 +713,30 @@ class BackrunSession:
 
         # ── Coordination state ──
         self.dispatcher = PyDispatcher.for_block(self.current_block)
+
+        # ── Simulation seam context (A5) — one PySimulateContext per session,
+        # held alongside the dispatcher. The runtime-bytecode file-load stays
+        # Python (A2 disposition `stays-python`); the bytes cross here. The
+        # AsyncAlloyProvider handle is taken from the session's adapter so
+        # `dispatch_profitable_py` shares one provider with the rest of the
+        # pipeline.
+        async_alloy = self.async_w3.as_async_alloy()
+        if async_alloy is None:
+            raise RuntimeError(
+                "async_w3 is not Alloy-backed; cannot build PySimulateContext",
+            )
+        runtime_code = _load_executor_runtime_bytecode()
+        self._sim_ctx = PySimulateContext(
+            provider=async_alloy,
+            executor_owner=cfg.operator_address,
+            executor_address=cfg.executor_address,
+            weth_address=WETH_ADDRESS,
+            pool_manager_address=UNISWAP_V4_POOL_MANAGER_ADDRESS,
+            multicall3_address=MULTICALL3_ADDRESS,
+            inject_code=INJECT_EXECUTOR_CODE,
+            executor_runtime_bytecode=bytes.fromhex(runtime_code[2:]),
+            injected_address=INJECTED_EXECUTOR_ADDRESS if INJECT_EXECUTOR_CODE else None,
+        )
 
         # ── Snapshots (V3 pool tracker pre-population only; the engine's DB
         # snapshot is loaded eagerly at PyBot construction via
@@ -792,6 +820,7 @@ class BackrunSession:
             consumer(
                 engine_registry=self.engine_registry,
                 async_w3=self.async_w3,
+                sim_ctx=self._sim_ctx,
                 executor_address=cfg.executor_address,
                 operator_address=cfg.operator_address,
                 operator_private_key=cfg.operator_private_key,
@@ -1698,7 +1727,7 @@ async def dispatch_profitable_results(
         path_id: int,
         optimal_input: int,
         engine_profit: int,
-        hop_outputs: tuple[int, ...],
+        hop_outputs: list[int],
         consumed_inputs: tuple[int, ...],
         solve_block: int,
     ) -> tuple[int, int, int, int, TxParams, Any] | None:
@@ -2330,16 +2359,6 @@ async def dispatch_profitable_results(
             f"[dispatch] {suppressed_count}/{pre_filter_count} results filtered by suppression",
         )
 
-    # T3 (GTOD23-IKJRGO): drop razor-thin arb that can't survive 1-block drift.
-    # S1 found the dominant IIA reverts are sub-0.2-bps-margin arb the chain
-    # has already arbitraged away. Filter pre-sim to save RPC + revert budget.
-    # 0 disables (backwards-compatible default).
-    results, thin_dropped = filter_thin_margin_results(results, MIN_PROFIT_MARGIN_BPS)
-    if thin_dropped > 0:
-        bot_logger.info(
-            f"[filter] dropped {thin_dropped} thin-margin (<{MIN_PROFIT_MARGIN_BPS} bps) candidates",
-        )
-
     candidates = results[:MAX_SIMULATE_CONCURRENT]
     # Log candidate summary for observability
     cand_types = {}
@@ -2550,9 +2569,178 @@ async def dispatch_profitable_results(
             bot_logger.debug(f"Send failed: {record.get('detail', '')}")
 
 
+async def _dispatch_profitable(
+    *,
+    results: list[tuple[int, int, int, tuple[int, ...], tuple[int, ...], int]],
+    engine_registry: EngineRegistry,
+    async_w3: AsyncProviderAdapter,
+    sim_ctx: PySimulateContext,
+    operator_private_key: str,
+    operator_nonce: int,
+    dispatcher: PyDispatcher,
+    current_block: int,
+    base_fee_next: int,
+    dry_run: bool,
+) -> None:
+    """Encode → simulate → submit a batch of profitable results via the Rust seam.
+
+    The A5 cutover: this replaces the Python ``dispatch_profitable_results`` +
+    ``simulate_one`` chain with ``dispatch_profitable_py`` (simulate) →
+    ``dispatch_and_submit_py`` (submit). The sim fan-out, the gross/net profit
+    arithmetic, the market-aware priority fee, the path suppression, and the
+    thin-margin pre-filter all run in the Rust core; Python only builds the
+    candidate list, renders the ``[sim]``/``[profit]`` summaries, and chains to
+    the submit seam.
+    """
+    candidates: list[PyDispatchCandidate] = []
+    for pid, inp, prof, ho, _ci, sb in results:
+        path_info = engine_registry.paths.get(pid)
+        if path_info is None:
+            bot_logger.debug(f"[sim-none] path={pid}: path_info missing")
+            continue
+        if len(ho) != len(path_info.hops):
+            bot_logger.debug(
+                f"[dispatch] skip path={pid}: hop_outputs length "
+                f"({len(ho)}) != hops ({len(path_info.hops)})",
+            )
+            continue
+        candidates.append(
+            PyDispatchCandidate(
+                path_id=pid,
+                optimal_input=inp,
+                engine_profit=prof,
+                hop_outputs=list(ho),
+                solve_block=sb,
+                path_info=path_info,
+            ),
+        )
+
+    if not candidates:
+        return
+
+    outcome = await dispatch_profitable_py(
+        candidates=candidates,
+        context=sim_ctx,
+        dispatcher=dispatcher,
+        base_fee_next=base_fee_next,
+        current_block=current_block,
+        min_profit_net=MIN_PROFIT_NET,
+        min_profit_margin_bps=MIN_PROFIT_MARGIN_BPS,
+    )
+    _render_sim_summary(outcome)
+    _render_profit_logs(outcome)
+
+    # ── Submit gas-profitable via the Rust submit leaf ───
+    async_alloy = async_w3.as_async_alloy()
+    if async_alloy is None:
+        bot_logger.error("[dispatch] async_w3 is not an Alloy-backed adapter; cannot submit")
+        return
+    signer = PyTxSigner(key=operator_private_key, chain_id=1)
+    records = await dispatch_and_submit_py(
+        candidates=outcome.gas_profitable,
+        dispatcher=dispatcher,
+        provider=async_alloy,
+        signer=signer,
+        operator_nonce=operator_nonce,
+        current_block=current_block,
+        dry_run=dry_run,
+        inject_code=INJECT_EXECUTOR_CODE,
+    )
+    for record in records:
+        if record["kind"] == "submitted":
+            bot_logger.info(
+                f"Submitted path {record['path_id']} "
+                f"hash={record['tx_hash']} nonce={record['nonce']}",
+            )
+        elif record["reason"] == "pools_claimed":
+            bot_logger.debug(f"[dispatch] skip path={record['path_id']}: pools claimed after sim")
+        elif record["reason"] == "dry_run":
+            pass  # dry_run skip already logged above
+        elif record["reason"] == "inject_code":
+            bot_logger.warning(
+                f"[dispatch] path={record['path_id']}: skipping submission — "
+                "INJECT_EXECUTOR_CODE is active",
+            )
+        elif record["reason"] == "broadcast_failed":
+            bot_logger.debug(f"Send failed: {record.get('detail', '')}")
+
+
+def _render_sim_summary(outcome: PyDispatchOutcome) -> None:
+    """Render the ``[sim]`` line from ``PyDispatchOutcome`` fields (D4 stay-Python).
+
+    Ports the prior ``[sim] N candidates: X ok (Y profitable, Z below
+    threshold), W failed, V exceptions …`` summary (the only rendering the A5
+    acceptance criterion requires). Appends the suppressed/thin drops when
+    non-zero (more informative than the prior line, which folded them in
+    opaquely). The ``[profit]``/``[sim-ok]`` per-path logs are rendered by
+    :func:`_render_profit_logs`.
+    """
+    profitable = outcome.gas_profitable
+    best_net = max((c.net_profit for c in profitable), default=0)
+    breakdown = format_failure_breakdown(outcome.fail_buckets)
+    sim_ok = len(profitable) + outcome.gas_unprofitable_count
+    extra = ""
+    if outcome.suppressed_count or outcome.thin_dropped:
+        extra = (
+            f" — suppressed={outcome.suppressed_count}, thin={outcome.thin_dropped}"
+        )
+    bot_logger.info(
+        f"[sim] {outcome.candidate_count} candidates: "
+        f"{sim_ok} ok ({len(profitable)} profitable, "
+        f"{outcome.gas_unprofitable_count} below threshold), "
+        f"{outcome.fail_count} failed, {outcome.exception_count} exceptions"
+        f"{f' — best net={best_net // 10**9}gwei' if profitable else ''}"
+        f"{f' — by reason: {breakdown}' if breakdown else ''}"
+        f"{extra}",
+    )
+
+
+def _render_profit_logs(outcome: PyDispatchOutcome) -> None:
+    """Render the ``[profit]`` per-path hop-detail log (D4 stay-Python).
+
+    The prior ``[sim-ok]`` gas-unprofitable per-path log is NOT reproduced:
+    ``PyDispatchOutcome`` collapses gas-unprofitable to a count by design (A2 —
+    the cockpit only logs these as a tally; they're valid sims below the net
+    threshold, not submitted). The ``[profit]`` log iterates the survivors +
+    looks up each path's ``PathInfo`` via ``outcome.path_infos`` (Decision 1=B).
+    """
+    for cand in outcome.gas_profitable:
+        path_info = outcome.path_infos.get(cand.path_id)
+        hop_details = []
+        if path_info is not None:
+            for i, h in enumerate(path_info.hops):
+                if isinstance(h, V2HopInfo):
+                    hop_details.append(
+                        f"  hop[{i}] V2 addr={h.pool_address} "
+                        f"t0={h.token0_address} t1={h.token1_address} "
+                        f"fee={h.fee} zfo={h.zfo}",
+                    )
+                elif isinstance(h, V3HopInfo):
+                    hop_details.append(
+                        f"  hop[{i}] V3 addr={h.pool_address} "
+                        f"t0={h.token0_address} t1={h.token1_address} "
+                        f"fee={h.fee} zfo={h.zfo}",
+                    )
+                elif isinstance(h, V4HopInfo):
+                    hop_details.append(
+                        f"  hop[{i}] V4 pm={h.pool_manager_address} "
+                        f"pid={h.pool_id_hex} "
+                        f"c0={h.currency0_address} c1={h.currency1_address} "
+                        f"fee={h.fee} ts={h.tick_spacing} zfo={h.zfo}",
+                    )
+        hops_str = "\n".join(hop_details)
+        bot_logger.info(
+            f"[profit] path={cand.path_id} {path_info.path_type if path_info else '?'} "
+            f"gross={cand.gross_profit / 1e18:.6f}ETH ({cand.gross_profit // 10**9}gwei) "
+            f"net={cand.net_profit / 1e18:.6f}ETH ({cand.net_profit // 10**9}gwei) "
+            f"gas={cand.gas_used} prio={cand.priority_fee // 10**9}gwei\n{hops_str}",
+        )
+
+
 async def consume_result_batches(
     engine_registry: EngineRegistry,
     async_w3: AsyncProviderAdapter,
+    sim_ctx: PySimulateContext,
     executor_address: str,
     operator_address: str,
     operator_private_key: str,
@@ -2618,6 +2806,7 @@ async def consume_result_batches(
                     dispatcher,
                     engine_registry,
                     async_w3,
+                    sim_ctx,
                     executor_address,
                     operator_address,
                     operator_private_key,
@@ -2759,6 +2948,7 @@ async def _apply_result_if_ready(
     dispatcher: PyDispatcher,
     engine_registry: EngineRegistry,
     async_w3: AsyncProviderAdapter,
+    sim_ctx: PySimulateContext,
     executor_address: str,
     operator_address: str,
     operator_private_key: str,
@@ -2807,21 +2997,20 @@ async def _apply_result_if_ready(
         dispatcher.discard_path(int(path_id))
 
     if results:
-        await dispatch_profitable_results(
+        await _dispatch_profitable(
             results=results,
             engine_registry=engine_registry,
             async_w3=async_w3,
-            executor_address=executor_address,
-            operator_address=operator_address,
+            sim_ctx=sim_ctx,
             operator_private_key=operator_private_key,
+            operator_nonce=operator_nonce,
+            dispatcher=dispatcher,
+            current_block=current_block,
             base_fee_next=next_base_fee(
                 parent_base_fee=int(cast("Any", batch.get("base_fee_per_gas") or 0)),
                 parent_gas_used=int(cast("Any", batch["gas_used"])),
                 parent_gas_limit=int(cast("Any", batch["gas_limit"])),
             ),
-            current_block=current_block,
-            operator_nonce=operator_nonce,
-            dispatcher=dispatcher,
             dry_run=dry_run,
         )
 

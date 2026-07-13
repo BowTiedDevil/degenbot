@@ -156,31 +156,42 @@ async def _run(
 ) -> tuple[PyDispatcher, _FakeW3, list[int]]:
     dispatcher = dispatcher or PyDispatcher.for_block(0)
     w3 = _FakeW3()
-    # Monkeypatch dispatch_profitable_results so a non-empty batch records the
+    # Monkeypatch _dispatch_profitable so a non-empty batch records the
     # `current_block` it was dispatched with, proving it keys off the block
-    # stream (not solve_block).
+    # stream (not solve_block). The A5 cutover rewired the hot loop from
+    # the module-level ``dispatch_profitable_results`` to
+    # ``_dispatch_profitable`` (which drives ``dispatch_profitable_py`` →
+    # ``dispatch_and_submit_py``). ``sim_ctx=None`` is safe: empty batches
+    # return before dispatch; non-empty batches hit the monkeypatch (the real
+    # ``_dispatch_profitable`` — which would pass ``sim_ctx`` to the Rust
+    # ``dispatch_profitable_py`` leaf — never runs).
     dispatched: list[int] = []
 
     async def _fake_dispatch(**kwargs):
         dispatched.append(kwargs["current_block"])
         return None
 
-    orig = runner.dispatch_profitable_results
-    runner.dispatch_profitable_results = _fake_dispatch  # type: ignore[assignment]
+    orig = runner._dispatch_profitable
+    runner._dispatch_profitable = _fake_dispatch  # type: ignore[assignment]
     try:
         await runner.consume_result_batches(
             engine_registry=object(),  # type: ignore[arg-type] — not read (streams injected)
             async_w3=w3,  # type: ignore[arg-type]
+            sim_ctx=None,  # type: ignore[arg-type] — see comment above
             executor_address="0x" + "0" * 40,
             operator_address="0x" + "0" * 40,
-            operator_private_key="0x" + "0" * 64,
+            # dry-run placeholder must be a valid secp256k1 scalar (the real
+            # `dispatch_profitable_results` would construct a `PyTxSigner` from
+            # it; all-zero is rejected by the curve). Here `dispatch_*` is
+            # stubbed so the value is cosmetic, but it mirrors the real config.
+            operator_private_key="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
             dispatcher=dispatcher,
             dry_run=True,
             block_stream=_Blocks(blocks),
             result_iter=_Results(batches),
         )
     finally:
-        runner.dispatch_profitable_results = orig  # type: ignore[assignment]
+        runner._dispatch_profitable = orig  # type: ignore[assignment]
     return dispatcher, w3, dispatched
 
 
@@ -234,8 +245,7 @@ class TestBlockClockFromStream:
         # solve_block (999) as the current block — only the block-stream
         # clock (the seed 0 or a ticked 301/302, depending on race order).
         assert dispatched[0] != 999, (
-            "dispatch must key off the block-stream clock, never the batch's "
-            "stale solve_block"
+            "dispatch must key off the block-stream clock, never the batch's stale solve_block"
         )
 
 
