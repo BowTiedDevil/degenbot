@@ -135,13 +135,18 @@ impl CommittedTx {
 /// succeeds the path is permanently un-suppressed.
 ///
 /// Port of `examples/eth_backrun_v2_v3_v4_rust.py` `PathSuppression`
-/// (L509–L578). Composed into [`Dispatcher`] and delegated through
-/// `record_success`/`record_failure`/`is_suppressed`/`is_path_blocked`.
+/// (L509–L578).
 ///
-/// Owned by the Simulation epic (`5LLJHX` `5FB5MW`) per the `4JGPDW` scope —
-/// this module REFERENCES its shape (compose + delegate); the Simulation leaf
-/// may later host the canonical struct (no hard edge — the dispatch
-/// orchestration composes whichever lands first).
+/// # Ownership (ADR-003 / ergo `LITQFF`)
+///
+/// Standalone — **not** composed into [`Dispatcher`]. It is owned behind its
+/// own `Arc<Mutex<PathSuppression>>` (held by `PyDispatcher` alongside the
+/// `Dispatcher` arc) so the simulation seam (`dispatch_profitable_results`)
+/// can lock it directly without locking the `Dispatcher` (which the
+/// submission monitor tasks contend for). The `Dispatcher` never touches
+/// `PathSuppression` — the `record_success`/`record_failure`/`is_suppressed`/
+/// `total_suppressed`/`discard_path` accessors live on `PyDispatcher` (the
+/// `PyO3` seam), delegating to the suppression arc.
 #[derive(Debug, Default)]
 pub struct PathSuppression {
     /// `path_id` → consecutive failure count.
@@ -262,9 +267,6 @@ pub struct Dispatcher {
     /// fee)`. Pruned to `FEE_HISTORY_WINDOW` on insert (min key popped on
     /// overflow — matches Python).
     block_priority_fees: BTreeMap<u64, BTreeMap<u64, u128>>,
-    /// Composed path-suppression tracker (delegated via
-    /// `record_success`/`record_failure`/`is_suppressed`).
-    path_suppression: PathSuppression,
 }
 
 impl Default for Dispatcher {
@@ -276,7 +278,6 @@ impl Default for Dispatcher {
             current_block: Arc::new(Mutex::new(0)),
             block_times: VecDeque::with_capacity(BLOCK_TIMES_WINDOW),
             block_priority_fees: BTreeMap::new(),
-            path_suppression: PathSuppression::new(),
         }
     }
 }
@@ -480,35 +481,15 @@ impl Dispatcher {
         &self.block_priority_fees
     }
 
-    // ── PathSuppression delegation ───────────────────────────────────────
-
-    /// A path succeeded at simulation — [`PathSuppression::record_success`].
-    pub fn record_success(&mut self, path_id: u64) {
-        self.path_suppression.record_success(path_id);
-    }
-
-    /// A path failed simulation — [`PathSuppression::record_failure`].
-    pub fn record_failure(&mut self, path_id: u64) {
-        self.path_suppression.record_failure(path_id);
-    }
-
-    /// Check if a path is currently suppressed —
-    /// [`PathSuppression::is_suppressed`].
-    pub fn is_suppressed(&mut self, path_id: u64, current_block: u64) -> bool {
-        self.path_suppression.is_suppressed(path_id, current_block)
-    }
-
-    /// Total paths suppressed (cumulative) — [`PathSuppression::total_suppressed`].
-    #[must_use]
-    pub fn total_suppressed(&self) -> u64 {
-        self.path_suppression.total_suppressed()
-    }
-
-    /// Permanently discard suppression tracking —
-    /// [`PathSuppression::discard`].
-    pub fn discard_path(&mut self, path_id: u64) {
-        self.path_suppression.discard(path_id);
-    }
+    // ── PathSuppression ───────────────────────────────────────────────────
+    // (Removed — LITQFF) `PathSuppression` is no longer composed into
+    // `Dispatcher`. The `record_success`/`record_failure`/`is_suppressed`/
+    // `total_suppressed`/`discard_path` accessors live on `PyDispatcher` (the
+    // PyO3 seam), delegating to the standalone `Arc<Mutex<PathSuppression>>`.
+    // The simulation seam takes that arc directly; `Dispatcher` never touches
+    // suppression. This keeps the `Dispatcher` lock uncontended during the
+    // simulation fan-out (the submission monitor tasks that contend for the
+    // `Dispatcher` lock never block on suppression bookkeeping).
 
     // ── inspection (test + monitor parity) ──────────────────────────────
 
@@ -649,26 +630,26 @@ mod tests {
         fn prop_suppression_state_machine(
             path_id in 0u64..10,
         ) {
-            let mut d = Dispatcher::default();
+            let mut s = PathSuppression::new();
             // not suppressed initially
-            proptest::prop_assert!(!d.is_suppressed(path_id, 0));
+            proptest::prop_assert!(!s.is_suppressed(path_id, 0));
             // record THRESHOLD-1 failures: still not suppressed
             for _ in 0..(PATH_SUPPRESS_THRESHOLD - 1) {
-                d.record_failure(path_id);
+                s.record_failure(path_id);
             }
-            proptest::prop_assert!(!d.is_suppressed(path_id, 0));
+            proptest::prop_assert!(!s.is_suppressed(path_id, 0));
             // one more failure: suppressed
-            d.record_failure(path_id);
-            proptest::prop_assert!(d.is_suppressed(path_id, 0));
-            proptest::prop_assert_eq!(d.total_suppressed(), 1);
+            s.record_failure(path_id);
+            proptest::prop_assert!(s.is_suppressed(path_id, 0));
+            proptest::prop_assert_eq!(s.total_suppressed(), 1);
             // within retry interval: stays suppressed
-            proptest::prop_assert!(d.is_suppressed(path_id, PATH_SUPPRESS_RETRY_INTERVAL - 1));
+            proptest::prop_assert!(s.is_suppressed(path_id, PATH_SUPPRESS_RETRY_INTERVAL - 1));
             // at retry interval: allowed once (returns false) then re-suppressed
-            proptest::prop_assert!(!d.is_suppressed(path_id, PATH_SUPPRESS_RETRY_INTERVAL));
-            proptest::prop_assert!(d.is_suppressed(path_id, PATH_SUPPRESS_RETRY_INTERVAL));
+            proptest::prop_assert!(!s.is_suppressed(path_id, PATH_SUPPRESS_RETRY_INTERVAL));
+            proptest::prop_assert!(s.is_suppressed(path_id, PATH_SUPPRESS_RETRY_INTERVAL));
             // record_success permanently un-suppresses
-            d.record_success(path_id);
-            proptest::prop_assert!(!d.is_suppressed(path_id, PATH_SUPPRESS_RETRY_INTERVAL * 2));
+            s.record_success(path_id);
+            proptest::prop_assert!(!s.is_suppressed(path_id, PATH_SUPPRESS_RETRY_INTERVAL * 2));
         }
     }
 
@@ -716,14 +697,14 @@ mod tests {
 
     #[test]
     fn discard_path_clears_all_tracking() {
-        let mut d = Dispatcher::default();
+        let mut s = PathSuppression::new();
         for _ in 0..PATH_SUPPRESS_THRESHOLD {
-            d.record_failure(5);
+            s.record_failure(5);
         }
-        assert!(d.is_suppressed(5, 0));
-        d.discard_path(5);
-        assert!(!d.is_suppressed(5, 0));
-        assert_eq!(d.total_suppressed(), 1); // cumulative, not decremented
+        assert!(s.is_suppressed(5, 0));
+        s.discard(5);
+        assert!(!s.is_suppressed(5, 0));
+        assert_eq!(s.total_suppressed(), 1); // cumulative, not decremented
     }
 
     #[tokio::test]
