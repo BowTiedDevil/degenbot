@@ -22,3 +22,5 @@
 //! lives under `degenbot-python/src/fork/`.
 
 pub mod node;
+
+pub use node::{AnvilFork, AnvilForkBuilder, ForkError, MiningMode};
