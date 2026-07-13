@@ -22,10 +22,16 @@ Two surfaces:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+from eth_utils.abi import event_abi_to_log_topic
 from eth_utils.crypto import keccak as _keccak
 from hexbytes import HexBytes
 
 from degenbot.degenbot_rs import get_function_selector
+
+if TYPE_CHECKING:
+    from eth_typing import ABIEvent
 
 
 def function_selector(signature: str) -> bytes:
@@ -56,3 +62,22 @@ def keccak256(data: bytes) -> HexBytes:
 
     """
     return HexBytes(_keccak(data))
+
+
+def event_topic(event_abi_entry: ABIEvent) -> HexBytes:
+    r"""Return the 32-byte event topic hash for an ABI event entry.
+
+    Replaces ``Web3().eth.contract(abi=...).events.<Name>().topic``.
+    Computes ``keccak256(canonical_event_signature)`` from the ABI entry
+    (the canonical signature omits ``indexed`` markers and uses the
+    parameter types in order), so the result is byte-identical to the
+    web3-derived topic without importing web3.
+
+    Args:
+        event_abi_entry: A single ABI dict with ``"type": "event"``.
+
+    Returns:
+        The 32-byte topic as :class:`~hexbytes.HexBytes`.
+
+    """
+    return HexBytes(event_abi_to_log_topic(event_abi_entry))
