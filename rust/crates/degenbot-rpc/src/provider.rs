@@ -19,7 +19,7 @@ use alloy::rpc::types::TransactionRequest;
 use alloy::rpc::types::{Filter, Log};
 use alloy::transports::ipc::IpcConnect;
 use alloy::transports::layers::ThrottleLayer;
-use alloy::transports::ws::WsConnect;
+use alloy::transports::ws::{WebSocketConfig, WsConnect};
 use alloy::transports::{RpcError, TransportErrorKind};
 use degenbot_core::errors::{ProviderError, ProviderResult};
 use rand::RngExt;
@@ -381,7 +381,26 @@ impl AlloyProvider {
                     .erased();
                 Arc::new(provider)
             } else if rpc_url.starts_with("ws://") || rpc_url.starts_with("wss://") {
-                let ws_connect = WsConnect::new(rpc_url.to_string());
+                // Raise tungstenite's default message/frame size caps (`64 MiB`
+                // / `16 MiB`) to `None` (unlimited). A single WS connection is
+                // used for BOTH subscriptions (`newHeads`/logs — tiny messages)
+                // AND batch `eth_getLogs` (the snapshot→WS backfill issues a
+                // 6-topic OR filter over up to 2000 blocks → ~100k logs, well
+                // over 64 MiB). With the default caps the oversized
+                // `eth_getLogs` response stalls the read loop indefinitely
+                // (tungstenite neither completes the message reassembly nor
+                // surfaces an error — a true stall, not a retryable failure).
+                // Removing the caps lets the same transport satisfy both
+                // workloads; this matches HTTP transport behaviour (no body
+                // cap) and the degenbot threat model (the RPC endpoint is the
+                // user's own node, not an untrusted server). See the
+                // `ws_getlogs_large_filter_diagnostic` test in
+                // `degenbot_bot::bot_core::block_pump` (2026-07-12).
+                let ws_connect = WsConnect::new(rpc_url.to_string()).with_config(
+                    WebSocketConfig::default()
+                        .max_message_size(None)
+                        .max_frame_size(None),
+                );
                 let provider = ProviderBuilder::default()
                     .with_default_caching()
                     .connect_ws(ws_connect)

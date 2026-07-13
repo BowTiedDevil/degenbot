@@ -69,9 +69,6 @@ class FakeEngine:
     def set_verify_rpc_url(self, rpc: str) -> None:
         self.calls.append("set_verify_rpc_url")
 
-    def set_backfill_http_rpc_url(self, rpc: str) -> None:
-        self.calls.append("set_backfill_http_rpc_url")
-
     def set_verify_state_view(self, addr: str) -> None:
         self.calls.append("set_verify_state_view")
 
@@ -116,7 +113,6 @@ def test_start_no_snapshots_calls_subscribe_then_verify_never_resume() -> None:
     )
 
     assert fake.calls == [
-        "set_backfill_http_rpc_url",
         "subscribe",
         "set_verify_rpc_url",
     ]
@@ -173,7 +169,6 @@ def test_start_derives_snapshot_block_as_min_newest_block(monkeypatch) -> None:
     # the core auto-backfill inside resume picks up S=min(newest_block)), then
     # verify-config.
     assert fake.calls == [
-        "set_backfill_http_rpc_url",
         "subscribe",
         "stream_v3",
         "stream_v4",
