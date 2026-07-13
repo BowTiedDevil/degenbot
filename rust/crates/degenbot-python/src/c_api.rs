@@ -115,6 +115,11 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "executor")]
     crate::executor::add_executor_module(m)?;
 
+    // Anvil-fork seam (feature = "fork") — `PyAnvilFork` over the
+    // `degenbot-fork` core crate (epic NXYVYU). Lifecycle + dev-RPC.
+    #[cfg(feature = "fork")]
+    crate::fork::add_fork_module(m)?;
+
     // ABI decoder/encoder functions (feature = "abi")
     #[cfg(feature = "abi")]
     m.add_function(wrap_pyfunction!(crate::abi::decoder::decode, m)?)?;

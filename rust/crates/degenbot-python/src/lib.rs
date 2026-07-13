@@ -46,6 +46,8 @@ pub mod curve_math;
 pub mod db;
 #[cfg(feature = "executor")]
 pub mod executor;
+#[cfg(feature = "fork")]
+pub mod fork;
 #[cfg(feature = "pathfinding")]
 pub mod pathfinding;
 #[cfg(feature = "pool")]

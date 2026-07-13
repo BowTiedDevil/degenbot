@@ -264,10 +264,7 @@ impl AnvilForkBuilder {
             })?
             .erased();
 
-        let fork = AnvilFork {
-            _instance: instance,
-            provider,
-        };
+        let fork = AnvilFork { instance, provider };
 
         // Apply queued state overrides post-spawn.
         for (addr, bal) in &self.balance_overrides {
@@ -340,7 +337,7 @@ impl AnvilForkBuilder {
 /// Call [`AnvilForkBuilder::try_spawn`] to construct.
 pub struct AnvilFork {
     /// Owns the anvil subprocess lifecycle (drop = kill).
-    _instance: alloy::node_bindings::AnvilInstance,
+    instance: alloy::node_bindings::AnvilInstance,
     /// The alloy Provider wired to the anvil node over IPC.
     provider: DynProvider,
 }
@@ -352,6 +349,17 @@ impl AnvilFork {
     #[must_use]
     pub const fn provider(&self) -> &DynProvider {
         &self.provider
+    }
+
+    /// The resolved IPC socket path the spawned anvil process is listening on
+    /// (anvil's `--ipc` arg, or its default `/tmp/anvil.ipc`).
+    ///
+    /// Python companions + standalone Rust consumers use this to construct a
+    /// second `Provider` over the same IPC socket (e.g. `AlloyProvider` for
+    /// retry-aware `eth_call`/`get_logs` against the in-memory fork).
+    #[must_use]
+    pub fn ipc_path(&self) -> &str {
+        self.instance.ipc_path()
     }
 
     /// `evm_mine` — mine a single block.
