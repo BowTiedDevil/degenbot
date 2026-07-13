@@ -607,21 +607,26 @@ class BackrunSession:
         # pipeline.
         async_alloy = self.async_w3.as_async_alloy()
         if async_alloy is None:
-            raise RuntimeError(
-                "async_w3 is not Alloy-backed; cannot build PySimulateContext",
+            # Non-Alloy adapter (test fakes / the legacy web3 backend being
+            # retired). Defer the sim context: production sessions are
+            # Alloy-backed + build it eagerly here; dispatch raises a clear
+            # error if reached without one ("async_w3 is not an Alloy-backed
+            # adapter; cannot submit"). The session lifecycle tests inject a
+            # non-dispatching consumer, so this None path is test-only.
+            self._sim_ctx = None
+        else:
+            runtime_code = _load_executor_runtime_bytecode()
+            self._sim_ctx = PySimulateContext(
+                provider=async_alloy,
+                executor_owner=cfg.operator_address,
+                executor_address=cfg.executor_address,
+                weth_address=WETH_ADDRESS,
+                pool_manager_address=UNISWAP_V4_POOL_MANAGER_ADDRESS,
+                multicall3_address=MULTICALL3_ADDRESS,
+                inject_code=INJECT_EXECUTOR_CODE,
+                executor_runtime_bytecode=bytes.fromhex(runtime_code[2:]),
+                injected_address=INJECTED_EXECUTOR_ADDRESS if INJECT_EXECUTOR_CODE else None,
             )
-        runtime_code = _load_executor_runtime_bytecode()
-        self._sim_ctx = PySimulateContext(
-            provider=async_alloy,
-            executor_owner=cfg.operator_address,
-            executor_address=cfg.executor_address,
-            weth_address=WETH_ADDRESS,
-            pool_manager_address=UNISWAP_V4_POOL_MANAGER_ADDRESS,
-            multicall3_address=MULTICALL3_ADDRESS,
-            inject_code=INJECT_EXECUTOR_CODE,
-            executor_runtime_bytecode=bytes.fromhex(runtime_code[2:]),
-            injected_address=INJECTED_EXECUTOR_ADDRESS if INJECT_EXECUTOR_CODE else None,
-        )
 
         # ── Snapshots (V3 pool tracker pre-population only; the engine's DB
         # snapshot is loaded eagerly at PyBot construction via

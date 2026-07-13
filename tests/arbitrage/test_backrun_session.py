@@ -193,6 +193,13 @@ class _FakeAsyncW3:
     def rpc_url(self) -> str:
         return "http://fake:8545"
 
+    def as_async_alloy(self) -> None:
+        # The session lifecycle tests don't drive dispatch (they inject a
+        # `_Recorder` consumer that ignores args), so the alloy provider is
+        # never used. `start()` tolerates `None` here (defers `_sim_ctx`);
+        # only a session that actually dispatches needs a real provider.
+        return None
+
 
 def _noop_coro():
     async def _n() -> None:

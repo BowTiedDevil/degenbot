@@ -162,20 +162,55 @@ class TestExampleRoutesThroughRust:
         )
 
     @pytest.mark.parametrize(
-        "symbol",
+        "function",
         [
-            "encode_cmd_stream",
-            "compute_simulation_warmup_slots",
-            "pack_expected_balance",
-            "v4_input_is_native",
-            "mapping_slot",
+            "dispatch_profitable_results",
+            "simulate_one",
+            "build_simulation_state_overrides",
+            "_compute_priority_fee",
         ],
     )
-    def test_symbol_called_via_degenbot_rs(self, symbol: str) -> None:
-        """Each retired symbol is called as `degenbot_rs.<symbol>` in the example."""
+    def test_python_sim_functions_retired(self, function: str) -> None:
+        """The parallel Python sim implementation is deleted (A5).
+
+        The example must NOT define the retired Python sim functions — their
+        logic moved to the ``degenbot_simulation`` Rust crate
+        (``dispatch_profitable_py`` owns simulate + the encode/warmup/payload
+        helpers ``encode_cmd_stream`` / ``compute_simulation_warmup_slots`` /
+        ``pack_expected_balance`` / ``v4_input_is_native`` / ``mapping_slot``,
+        now called INTERNALLY by the seam, not from the example).
+        ``format_failure_breakdown`` is kept (a pure renderer
+        ``_render_sim_summary`` plugs into).
+        """
         src = self._example_source()
-        assert f"degenbot_rs.{symbol}" in src, (
-            f"example must call degenbot_rs.{symbol} (not a Python import)"
+        tree = ast.parse(src)
+        defined = {
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        assert function not in defined, (
+            f"example must not define the retired Python sim function {function} (A5)"
+        )
+
+    def test_sim_dispatch_routes_through_rust_seam(self) -> None:
+        """The example routes the sim+submit flow through the Rust seam (A5).
+
+        A5 superseded the per-symbol ``degenbot_rs.<symbol>`` routing that this
+        class previously enforced: the five encoder/warmup symbols moved INTO
+        the Rust core (``degenbot_simulation`` / ``degenbot_executor``), called
+        internally by ``dispatch_profitable_py`` + ``PySimulateContext``
+        construction. The example's dispatch path is now
+        ``dispatch_profitable_py`` (simulate) → ``dispatch_and_submit_py``
+        (submit), both Rust-bound pyfunctions imported via
+        ``degenbot.degenbot_rs``.
+        """
+        src = self._example_source()
+        assert "dispatch_profitable_py(" in src, (
+            "example must route simulation through dispatch_profitable_py (A5)"
+        )
+        assert "dispatch_and_submit_py(" in src, (
+            "example must route submission through dispatch_and_submit_py (A5)"
         )
 
 
