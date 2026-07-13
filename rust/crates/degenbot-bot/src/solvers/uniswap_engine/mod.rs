@@ -714,9 +714,20 @@ impl UniswapEngine {
     }
 
     /// Register a V3 pool into the engine's `BotState` and return its `pool_id`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the underlying `BotState::register_v3_pool` rejects the
+    /// params (duplicate address, or spec-violating `sqrt_price_x96` / `tick`
+    /// / `fee` / `tick_spacing`). This is a test convenience — production
+    /// code goes through `PyBot::register_v3_pool`, which surfaces the
+    /// rejection as a typed Python exception.
     #[must_use]
     pub fn register_v3_pool(&self, params: &crate::bot_core::RegisterV3PoolParams) -> u64 {
-        self.core.write().register_v3_pool(params)
+        self.core
+            .write()
+            .register_v3_pool(params)
+            .expect("test setup: V3 registration")
     }
 
     /// Register a V4 pool into the engine's `BotState` and return its `pool_id`.

@@ -520,15 +520,34 @@ impl BotState {
     ///
     /// Returns the auto-assigned pool ID.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the pool address is already registered.
-    pub fn register_v3_pool(&mut self, params: &RegisterV3PoolParams) -> u64 {
-        assert!(
-            !self.pool_addresses.contains_key(&params.address),
-            "pool already registered: {}",
-            params.address
-        );
+    /// Returns [`RegisterV3PoolError::AlreadyRegistered`] if a pool at this
+    /// address is already registered (replaces the prior `assert!` panic).
+    ///
+    /// Returns [`RegisterV3PoolError::SpecViolation`] when `sqrt_price_x96`,
+    /// `tick`, `fee`, or `tick_spacing` violates its Solidity-bounded on-chain
+    /// invariant (see [`spec_bounds`]). These checks fire *before* the
+    /// `seed_from_store` snapshot step — `seed_from_store` only overrides
+    /// `tick_data`/`coverage` (snapshot-derived) and never touches the immutable
+    /// config / current state scalars under validation here.
+    pub fn register_v3_pool(
+        &mut self,
+        params: &RegisterV3PoolParams,
+    ) -> Result<u64, RegisterV3PoolError> {
+        use crate::bot_core::spec_bounds as sb;
+        sb::validate_sqrt_price(params.sqrt_price_x96)
+            .map_err(RegisterV3PoolError::SpecViolation)?;
+        sb::validate_tick(params.tick).map_err(RegisterV3PoolError::SpecViolation)?;
+        sb::validate_v3_fee(params.fee).map_err(RegisterV3PoolError::SpecViolation)?;
+        sb::validate_tick_spacing(params.tick_spacing)
+            .map_err(RegisterV3PoolError::SpecViolation)?;
+
+        if self.pool_addresses.contains_key(&params.address) {
+            return Err(RegisterV3PoolError::AlreadyRegistered {
+                address: params.address,
+            });
+        }
 
         let pool_id = self.next_pool_id;
         self.next_pool_id += 1;
@@ -552,7 +571,7 @@ impl BotState {
         self.pools.insert(pool_id, PoolEntry::V3(identity, state));
         self.pool_addresses.insert(address, pool_id);
 
-        pool_id
+        Ok(pool_id)
     }
 
     /// Register a Curve `StableSwap` pool by contract address.
@@ -5062,6 +5081,7 @@ mod tests {
             fetcher: None,
             ..Default::default()
         })
+        .expect("test setup: V3 registration")
     }
 
     /// Regression (WZWKKU): `v3_restore_before_block(B)` with `B` strictly past
@@ -5189,6 +5209,7 @@ mod tests {
             fetcher: None,
             ..Default::default()
         })
+        .expect("test setup: V3 registration")
     }
 
     /// Regression (HO3GWT, V3 backfill buffer): a Mint buffered during the
@@ -5924,23 +5945,25 @@ mod tests {
         use crate::solvers::uniswap_engine::PoolTickCoverage;
 
         let mut core = BotState::new();
-        let pool_id = core.register_v3_pool(&RegisterV3PoolParams {
-            address: Address::from([0xf7u8; 20]),
-            token0: Address::ZERO,
-            token1: Address::from([1u8; 20]),
-            fee: 500,
-            tick_spacing: 10,
-            factory: Address::ZERO,
-            sqrt_price_x96: U256::from(1u128) << 96,
-            liquidity: 1_000_000,
-            tick: 0,
-            tick_data: HashMap::new(),
-            update_block: 0,
-            coverage: PoolTickCoverage::Sparse,
-            seed_from_store: false,
-            fetcher: None,
-            ..Default::default()
-        });
+        let pool_id = core
+            .register_v3_pool(&RegisterV3PoolParams {
+                address: Address::from([0xf7u8; 20]),
+                token0: Address::ZERO,
+                token1: Address::from([1u8; 20]),
+                fee: 500,
+                tick_spacing: 10,
+                factory: Address::ZERO,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 1_000_000,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block: 0,
+                coverage: PoolTickCoverage::Sparse,
+                seed_from_store: false,
+                fetcher: None,
+                ..Default::default()
+            })
+            .expect("test setup: V3 registration");
 
         let block_b = 9u64;
         // Two same-block Swaps with distinct scalars.
@@ -6087,6 +6110,136 @@ mod tests {
         );
     }
 
+    // -----------------------------------------------------------------------
+    // Spec-bound admission (epic WOYYS2 / task 24KNGF).
+    // `register_v3_pool` is a typed `Result` that rejects (a) duplicate
+    // address and (b) out-of-spec `sqrtPriceX96` / `tick` / `fee` /
+    // `tickSpacing`, rather than `assert!`-panicking on (a) and silently
+    // accepting impossible CL config on (b). Mirrors the V2 tests above.
+    // -----------------------------------------------------------------------
+
+    /// Baseline in-spec V3 params at tick 0, `sqrt=1<<96`, `fee=3_000`,
+    /// `tick_spacing=60`, undirectional tokens. Each spec-violation test below
+    /// derives a fresh broken-on-one-field copy.
+    fn make_v3_params_in_spec() -> RegisterV3PoolParams {
+        RegisterV3PoolParams {
+            address: make_pool_addr(),
+            token0: make_token0(),
+            token1: make_token1(),
+            fee: 3_000,
+            tick_spacing: 60,
+            factory: make_factory(),
+            sqrt_price_x96: U256::from(1u64) << 96,
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data: std::collections::HashMap::new(),
+            update_block: 0,
+            coverage: PoolTickCoverage::Sparse,
+            seed_from_store: false,
+            fetcher: None,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn register_v3_pool_rejects_duplicate_address_as_already_registered() {
+        let mut core = BotState::new();
+        let params = make_v3_params_in_spec();
+        let _ok = core.register_v3_pool(&params).expect("first registration");
+        assert!(
+            matches! {
+                core.register_v3_pool(&params),
+                Err(RegisterV3PoolError::AlreadyRegistered { address }) if address == params.address,
+            },
+            "duplicate-address registration surfaces a typed Err, not an assert! panic"
+        );
+    }
+
+    #[test]
+    fn register_v3_pool_rejects_sqrt_price_at_max_as_spec_violation() {
+        let mut core = BotState::new();
+        let mut params = make_v3_params_in_spec();
+        params.sqrt_price_x96 = U256::from(degenbot_cl_math::cl_lib::tick_math::MAX_SQRT_RATIO);
+        assert!(
+            matches! {
+                core.register_v3_pool(&params),
+                Err(RegisterV3PoolError::SpecViolation(v)) if v.field == "sqrtPriceX96",
+            },
+            "sqrtPriceX96 == MAX_SQRT_RATIO surfaces a typed SpecViolation"
+        );
+    }
+
+    #[test]
+    fn register_v3_pool_rejects_sqrt_price_below_min_as_spec_violation() {
+        let mut core = BotState::new();
+        let mut params = make_v3_params_in_spec();
+        params.sqrt_price_x96 =
+            U256::from(degenbot_cl_math::cl_lib::tick_math::MIN_SQRT_RATIO) - uint!(1_U256);
+        assert!(
+            matches! {
+                core.register_v3_pool(&params),
+                Err(RegisterV3PoolError::SpecViolation(v)) if v.field == "sqrtPriceX96",
+            },
+            "sqrtPriceX96 < MIN_SQRT_RATIO surfaces a typed SpecViolation"
+        );
+    }
+
+    #[test]
+    fn register_v3_pool_rejects_tick_below_min_as_spec_violation() {
+        let mut core = BotState::new();
+        let mut params = make_v3_params_in_spec();
+        params.tick = degenbot_cl_math::cl_lib::tick_math::MIN_TICK - 1;
+        assert!(
+            matches! {
+                core.register_v3_pool(&params),
+                Err(RegisterV3PoolError::SpecViolation(v)) if v.field == "tick",
+            },
+            "tick < MIN_TICK surfaces a typed SpecViolation"
+        );
+    }
+
+    #[test]
+    fn register_v3_pool_rejects_fee_at_max_as_spec_violation() {
+        let mut core = BotState::new();
+        let mut params = make_v3_params_in_spec();
+        params.fee = crate::bot_core::spec_bounds::V3_FEE_MAX;
+        assert!(
+            matches! {
+                core.register_v3_pool(&params),
+                Err(RegisterV3PoolError::SpecViolation(v)) if v.field == "fee",
+            },
+            "fee >= 1_000_000 surfaces a typed SpecViolation"
+        );
+    }
+
+    #[test]
+    fn register_v3_pool_rejects_tick_spacing_out_of_range_as_spec_violation() {
+        let mut core = BotState::new();
+        let mut params = make_v3_params_in_spec();
+        params.tick_spacing = crate::bot_core::spec_bounds::MAX_TICK_SPACING + 1;
+        assert!(
+            matches! {
+                core.register_v3_pool(&params),
+                Err(RegisterV3PoolError::SpecViolation(v)) if v.field == "tickSpacing",
+            },
+            "tickSpacing > MAX_TICK_SPACING surfaces a typed SpecViolation"
+        );
+    }
+
+    #[test]
+    fn register_v3_pool_accepts_in_spec_params() {
+        // Green companion for the reject tests above: each validator's accept
+        // boundary (sqrtPriceX96 in [MIN_SQRT_RATIO, MAX_SQRT_RATIO), tick in
+        // [MIN_TICK, MAX_TICK], fee < 1_000_000, tickSpacing in [1, 32_767])
+        // composes — the baseline `make_v3_params_in_spec()` must register OK.
+        let mut core = BotState::new();
+        let params = make_v3_params_in_spec();
+        let pool_id = core
+            .register_v3_pool(&params)
+            .expect("in-spec V3 params must register");
+        assert!(pool_id > 0, "registration returns a non-zero pool_id");
+    }
+
     #[test]
     fn unregister_v3_pool_discards_buffered_liquidity_events() {
         let mut core = BotState::new();
@@ -6106,23 +6259,25 @@ mod tests {
         // (drain is caller-driven via `apply_backfill_buffer_v3`); the buffer
         // entry persists. This mirrors the live pump path where events can
         // arrive pre-registration and stay buffered.
-        let _ = core.register_v3_pool(&RegisterV3PoolParams {
-            address: v3_addr,
-            token0: make_token0(),
-            token1: make_token1(),
-            fee: 3_000,
-            tick_spacing: 60,
-            factory: make_factory(),
-            sqrt_price_x96: U256::from(1u64) << 96,
-            liquidity: 0,
-            tick: 0,
-            tick_data: HashMap::new(),
-            update_block: 0,
-            coverage: PoolTickCoverage::Sparse,
-            seed_from_store: false,
-            fetcher: None,
-            ..Default::default()
-        });
+        let _ = core
+            .register_v3_pool(&RegisterV3PoolParams {
+                address: v3_addr,
+                token0: make_token0(),
+                token1: make_token1(),
+                fee: 3_000,
+                tick_spacing: 60,
+                factory: make_factory(),
+                sqrt_price_x96: U256::from(1u64) << 96,
+                liquidity: 0,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block: 0,
+                coverage: PoolTickCoverage::Sparse,
+                seed_from_store: false,
+                fetcher: None,
+                ..Default::default()
+            })
+            .expect("test setup: V3 registration");
         assert_eq!(
             core.buffered_v3_event_count(&v3_addr),
             1,
@@ -6184,7 +6339,8 @@ mod tests {
             seed_from_store: false,
             fetcher: None,
             ..Default::default()
-        });
+        })
+        .expect("test setup: V3 registration");
 
         // The seed is pinned at registration for Tracked (snapshot) pools.
         assert_eq!(
@@ -6258,23 +6414,25 @@ mod tests {
 
         // Register with seed_from_store=true. Pass EMPTY tick_data + Sparse —
         // the store's ticks + Tracked must win.
-        let _ = core.register_v3_pool(&RegisterV3PoolParams {
-            address: v3_addr,
-            token0: make_token0(),
-            token1: make_token1(),
-            fee: 3_000,
-            tick_spacing: 60,
-            factory: make_factory(),
-            sqrt_price_x96: U256::from(1u64) << 96,
-            liquidity: 0,
-            tick: 0,
-            tick_data: HashMap::new(),
-            update_block: 0,
-            coverage: PoolTickCoverage::Sparse,
-            seed_from_store: true,
-            fetcher: None,
-            ..Default::default()
-        });
+        let _ = core
+            .register_v3_pool(&RegisterV3PoolParams {
+                address: v3_addr,
+                token0: make_token0(),
+                token1: make_token1(),
+                fee: 3_000,
+                tick_spacing: 60,
+                factory: make_factory(),
+                sqrt_price_x96: U256::from(1u64) << 96,
+                liquidity: 0,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block: 0,
+                coverage: PoolTickCoverage::Sparse,
+                seed_from_store: true,
+                fetcher: None,
+                ..Default::default()
+            })
+            .expect("test setup: V3 registration");
 
         assert_eq!(
             core.v3_snapshot_seed(v3_addr).cloned(),
@@ -6298,23 +6456,25 @@ mod tests {
         let mut core = BotState::new();
         let v3_addr = make_pool_addr();
         // Store is empty (no entry for v3_addr).
-        let _ = core.register_v3_pool(&RegisterV3PoolParams {
-            address: v3_addr,
-            token0: make_token0(),
-            token1: make_token1(),
-            fee: 3_000,
-            tick_spacing: 60,
-            factory: make_factory(),
-            sqrt_price_x96: U256::from(1u64) << 96,
-            liquidity: 0,
-            tick: 0,
-            tick_data: HashMap::new(),
-            update_block: 0,
-            coverage: PoolTickCoverage::Tracked,
-            seed_from_store: true,
-            fetcher: None,
-            ..Default::default()
-        });
+        let _ = core
+            .register_v3_pool(&RegisterV3PoolParams {
+                address: v3_addr,
+                token0: make_token0(),
+                token1: make_token1(),
+                fee: 3_000,
+                tick_spacing: 60,
+                factory: make_factory(),
+                sqrt_price_x96: U256::from(1u64) << 96,
+                liquidity: 0,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block: 0,
+                coverage: PoolTickCoverage::Tracked,
+                seed_from_store: true,
+                fetcher: None,
+                ..Default::default()
+            })
+            .expect("test setup: V3 registration");
         assert_eq!(
             core.v3_snapshot_seed(v3_addr),
             None,
@@ -6355,23 +6515,25 @@ mod tests {
             },
         );
         let explicit_seed = explicit.clone();
-        let _ = core.register_v3_pool(&RegisterV3PoolParams {
-            address: v3_addr,
-            token0: make_token0(),
-            token1: make_token1(),
-            fee: 3_000,
-            tick_spacing: 60,
-            factory: make_factory(),
-            sqrt_price_x96: U256::from(1u64) << 96,
-            liquidity: 0,
-            tick: 0,
-            tick_data: explicit,
-            update_block: 0,
-            coverage: PoolTickCoverage::Tracked,
-            seed_from_store: false,
-            fetcher: None,
-            ..Default::default()
-        });
+        let _ = core
+            .register_v3_pool(&RegisterV3PoolParams {
+                address: v3_addr,
+                token0: make_token0(),
+                token1: make_token1(),
+                fee: 3_000,
+                tick_spacing: 60,
+                factory: make_factory(),
+                sqrt_price_x96: U256::from(1u64) << 96,
+                liquidity: 0,
+                tick: 0,
+                tick_data: explicit,
+                update_block: 0,
+                coverage: PoolTickCoverage::Tracked,
+                seed_from_store: false,
+                fetcher: None,
+                ..Default::default()
+            })
+            .expect("test setup: V3 registration");
         assert_eq!(
             core.v3_snapshot_seed(v3_addr).cloned(),
             Some(explicit_seed),
@@ -6427,7 +6589,8 @@ mod tests {
             seed_from_store: false,
             fetcher: None,
             ..Default::default()
-        });
+        })
+        .expect("test setup: V3 registration");
 
         // Pin the post-drain state atomically with the drain (no buffer here →
         // pin == current tick_data == the seed at registration). This is what
@@ -6489,7 +6652,8 @@ mod tests {
             seed_from_store: false,
             fetcher: None,
             ..Default::default()
-        });
+        })
+        .expect("test setup: V3 registration");
         core.pin_v3_post_drain_snapshot(v3_addr);
         assert_eq!(
             core.take_v3_post_drain_snapshot(v3_addr),
@@ -6565,7 +6729,8 @@ mod tests {
             seed_from_store: false,
             fetcher: None,
             ..Default::default()
-        });
+        })
+        .expect("test setup: V3 registration");
 
         // Drain both buffers + pin — exactly what `apply_buffer_v3` does
         // inside its single `core.write()` hold.
@@ -6930,23 +7095,25 @@ mod tests {
         }
 
         let mut core = BotState::new();
-        let pool_id = core.register_v3_pool(&RegisterV3PoolParams {
-            address: Address::ZERO,
-            token0: Address::ZERO,
-            token1: Address::from([1u8; 20]),
-            fee: 3000,
-            tick_spacing: 60,
-            factory: Address::ZERO,
-            sqrt_price_x96: U256::from(1u128) << 96,
-            liquidity: 10_000_000_000_000u128,
-            tick: 0,
-            tick_data: HashMap::new(), // fully sparse — word 0 unknown
-            update_block: 0,
-            coverage: PoolTickCoverage::Sparse,
-            seed_from_store: false,
-            fetcher: Some(std::sync::Arc::new(FakeFetcher)),
-            ..Default::default()
-        });
+        let pool_id = core
+            .register_v3_pool(&RegisterV3PoolParams {
+                address: Address::ZERO,
+                token0: Address::ZERO,
+                token1: Address::from([1u8; 20]),
+                fee: 3000,
+                tick_spacing: 60,
+                factory: Address::ZERO,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 10_000_000_000_000u128,
+                tick: 0,
+                tick_data: HashMap::new(), // fully sparse — word 0 unknown
+                update_block: 0,
+                coverage: PoolTickCoverage::Sparse,
+                seed_from_store: false,
+                fetcher: Some(std::sync::Arc::new(FakeFetcher)),
+                ..Default::default()
+            })
+            .expect("test setup: V3 registration");
 
         // Without the fetch+retry loop: the starting word (0) is unknown →
         // miss → ZERO (calculate_tokens_out does NOT use the stored fetcher).
@@ -7007,23 +7174,25 @@ mod tests {
         }
 
         let mut core = BotState::new();
-        let pool_id = core.register_v3_pool(&RegisterV3PoolParams {
-            address: Address::ZERO,
-            token0: Address::ZERO,
-            token1: Address::from([1u8; 20]),
-            fee: 3000,
-            tick_spacing: 60,
-            factory: Address::ZERO,
-            sqrt_price_x96: U256::from(1u128) << 96,
-            liquidity: 10_000_000_000_000u128,
-            tick: 0,
-            tick_data: HashMap::new(),
-            update_block: 0,
-            coverage: PoolTickCoverage::Sparse,
-            seed_from_store: false,
-            fetcher: Some(std::sync::Arc::new(FailingFetcher)),
-            ..Default::default()
-        });
+        let pool_id = core
+            .register_v3_pool(&RegisterV3PoolParams {
+                address: Address::ZERO,
+                token0: Address::ZERO,
+                token1: Address::from([1u8; 20]),
+                fee: 3000,
+                tick_spacing: 60,
+                factory: Address::ZERO,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 10_000_000_000_000u128,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block: 0,
+                coverage: PoolTickCoverage::Sparse,
+                seed_from_store: false,
+                fetcher: Some(std::sync::Arc::new(FailingFetcher)),
+                ..Default::default()
+            })
+            .expect("test setup: V3 registration");
 
         assert_eq!(
             core.calculate_tokens_out_with_fetch(pool_id, true, U256::from(1000u64), 0,),
@@ -7066,23 +7235,25 @@ mod tests {
             calls: AtomicU32::new(0),
         });
         let mut core = BotState::new();
-        let pool_id = core.register_v3_pool(&RegisterV3PoolParams {
-            address: Address::ZERO,
-            token0: Address::ZERO,
-            token1: Address::from([1u8; 20]),
-            fee: 3000,
-            tick_spacing: 60,
-            factory: Address::ZERO,
-            sqrt_price_x96: U256::from(1u128) << 96,
-            liquidity: 10_000_000_000_000u128,
-            tick: 0,
-            tick_data: HashMap::new(),
-            update_block: 0,
-            coverage: PoolTickCoverage::Sparse,
-            seed_from_store: false,
-            fetcher: Some(counter.clone() as Arc<dyn TickWordFetcher>),
-            ..Default::default()
-        });
+        let pool_id = core
+            .register_v3_pool(&RegisterV3PoolParams {
+                address: Address::ZERO,
+                token0: Address::ZERO,
+                token1: Address::from([1u8; 20]),
+                fee: 3000,
+                tick_spacing: 60,
+                factory: Address::ZERO,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 10_000_000_000_000u128,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block: 0,
+                coverage: PoolTickCoverage::Sparse,
+                seed_from_store: false,
+                fetcher: Some(counter.clone() as Arc<dyn TickWordFetcher>),
+                ..Default::default()
+            })
+            .expect("test setup: V3 registration");
 
         // First solve: misses word 0, fetches (empty), retries → computes.
         let first = core.calculate_tokens_out_with_fetch(pool_id, true, U256::from(1000u64), 0);

@@ -425,23 +425,27 @@ mod tests {
     ) -> (Arc<Bot>, u64, Arc<CountingSubscriber>) {
         use crate::bot_core::{PoolTickCoverage, RegisterV3PoolParams};
         let bot = Arc::new(Bot::new(1));
-        let pool_id = bot.state.write().register_v3_pool(&RegisterV3PoolParams {
-            address: pool_addr,
-            token0: Address::from([0xa0u8; 20]),
-            token1: Address::from([0xa1u8; 20]),
-            fee: 3_000,
-            tick_spacing: 60,
-            factory: Address::from([0xf0u8; 20]),
-            sqrt_price_x96: U256::from(1u128) << 96,
-            liquidity: 1_000_000,
-            tick: 0,
-            tick_data: HashMap::new(),
-            update_block,
-            coverage: PoolTickCoverage::Sparse,
-            seed_from_store: false,
-            fetcher: None,
-            ..Default::default()
-        });
+        let pool_id = bot
+            .state
+            .write()
+            .register_v3_pool(&RegisterV3PoolParams {
+                address: pool_addr,
+                token0: Address::from([0xa0u8; 20]),
+                token1: Address::from([0xa1u8; 20]),
+                fee: 3_000,
+                tick_spacing: 60,
+                factory: Address::from([0xf0u8; 20]),
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 1_000_000,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block,
+                coverage: PoolTickCoverage::Sparse,
+                seed_from_store: false,
+                fetcher: None,
+                ..Default::default()
+            })
+            .expect("test setup: V3 registration");
         let counting = Arc::new(CountingSubscriber {
             notifies: Mutex::new(0),
         });

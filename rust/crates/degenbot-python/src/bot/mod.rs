@@ -744,8 +744,7 @@ impl PyBot {
         // via `take()`). Inline tick_data (test fixtures / file snapshots) wins.
         let seed_from_store = cov == PoolTickCoverage::Tracked && rust_tick_data.is_empty();
 
-        Ok(self
-            .bot
+        self.bot
             .state_arc()
             .write()
             .register_v3_pool(&RegisterV3PoolParams {
@@ -767,7 +766,16 @@ impl PyBot {
                 fetcher: tick_data_fetcher
                     .filter(|f| !f.is_none())
                     .map(|f| crate::bot::pool::make_tick_fetcher(f.clone().unbind())),
-            }))
+            })
+            // Stop-gap mapper (will be replaced by the typed
+            // `map_register_v3_err` in F2EVV6, which introduces a typed
+            // `PoolRegistrationError` Python exception hierarchy mirroring
+            // `map_register_v4_err`).
+            .map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "V3 pool registration failed: {e:?}"
+                ))
+            })
     }
 
     /// Register a V4 pool by `(pool_manager, pool_id)`.
