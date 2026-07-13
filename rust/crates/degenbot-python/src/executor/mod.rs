@@ -44,14 +44,19 @@ use crate::conversion::alloy::u256_to_py;
 /// `isinstance`-checked to dispatch a Python hop dataclass to the right Rust
 /// `HopInfo` variant. Mirrors the polars-python pattern for lazy conversion
 /// of arbitrary Python objects.
-struct HopTypes {
+///
+/// `pub(crate)` so the simulation seam (`crate::simulation`) reuses the same
+/// extraction for `PyDispatchCandidate` — DRY: there is exactly one place that
+/// translates a Python `PathInfo` dataclass to the Rust `PathInfo` (the
+/// candidate + the encode seam must agree byte-for-byte).
+pub(crate) struct HopTypes {
     v2: Py<PyType>,
     v3: Py<PyType>,
     v4: Py<PyType>,
 }
 
 impl HopTypes {
-    fn load(py: Python<'_>) -> PyResult<Self> {
+    pub(crate) fn load(py: Python<'_>) -> PyResult<Self> {
         let module = PyModule::import(py, "degenbot.arbitrage.hop_info")?;
         Ok(Self {
             v2: module.getattr("V2HopInfo")?.extract()?,
@@ -150,7 +155,14 @@ fn extract_hop(hop: &Bound<'_, PyAny>, types: &HopTypes) -> PyResult<HopInfo> {
 
 /// Extract a Rust `PathInfo` from a Python `PathInfo` dataclass, iterating
 /// its `hops` list and dispatching each via [`extract_hop`].
-fn extract_path_info(path_info: &Bound<'_, PyAny>, types: &HopTypes) -> PyResult<PathInfo> {
+///
+/// `pub(crate)` so the simulation seam reuses the exact same extraction —
+/// the candidate the cockpit hands to `dispatch_profitable_py` must encode
+/// identically to the one the encode seam produces.
+pub(crate) fn extract_path_info(
+    path_info: &Bound<'_, PyAny>,
+    types: &HopTypes,
+) -> PyResult<PathInfo> {
     let hops_iter = path_info.getattr("hops")?.try_iter()?;
     let mut hops = Vec::new();
     for hop in hops_iter {

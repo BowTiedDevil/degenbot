@@ -3158,6 +3158,196 @@ class DatabaseSchemaStale(ValueError):
     upgrade``" hint instead of a Python traceback.
     """
 
+class PyTxParams:
+    """EIP-1559 transaction field set (minus ``chain_id``, owned by ``PyTxSigner``).
+
+    Constructed with the recipient/calldata/gas/nonce/value/access-list, then
+    fees are set by :func:`finalize_fees`, then signed by
+    :meth:`PyTxSigner.sign_eip1559`.
+    """
+
+    def __init__(
+        self,
+        to: str,
+        data: bytes,
+        gas_limit: int,
+        nonce: int,
+        value: int = 0,
+        access_list: list[dict[str, Any]] | None = None,
+    ) -> None: ...
+    @property
+    def max_fee_per_gas(self) -> int: ...
+    @property
+    def max_priority_fee_per_gas(self) -> int: ...
+
+class PyTxSigner:
+    """EIP-1559 transaction signer holding the operator key once.
+
+    The private key (hex string or 32 raw bytes) crosses into Rust at
+    construction and never round-trips back to Python per transaction.
+    """
+
+    def __init__(self, key: str | bytes, chain_id: int) -> None: ...
+    @property
+    def address(self) -> str: ...
+    @property
+    def chain_id(self) -> int: ...
+    def sign_eip1559(self, tx_params: PyTxParams) -> bytes: ...
+    @staticmethod
+    def recover_sender(raw_signed: bytes) -> str: ...
+
+class PyDispatcher:
+    """Coordination-state value object for the dispatch loop.
+
+    Holds the Rust-owned ``Dispatcher`` behind ``Arc<Mutex<...>>`` so the
+    submit/fee/monitor Rust leaves lock the SAME state Python drives. Construct
+    via :meth:`for_block`.
+    """
+
+    def __init__(self) -> None: ...
+    @staticmethod
+    def for_block(current_block: int) -> PyDispatcher: ...
+    # ── nonce coordination ──
+    def claim_nonce(self, start: int) -> int: ...
+    def release_nonce(self, nonce: int) -> None: ...
+    # ── pool mutual exclusion ──
+    def reserve_pools(self, path_pools: set[str]) -> None: ...
+    def release_pools(self, pools: set[str]) -> None: ...
+    def is_path_blocked(
+        self,
+        path_pools: set[str],
+        committed_pools: set[str],
+    ) -> bool: ...
+    def release_tx(self, tx: tuple[int, set[str]]) -> None: ...
+    # ── task tracking ──
+    def active_task_count(self) -> int: ...
+    def reap_finished(self) -> int: ...
+    def abort_all_tasks(self) -> None: ...
+    # ── block / fee recording ──
+    @property
+    def current_block(self) -> int: ...
+    def advance_block(self, block: int) -> None: ...
+    def record_block_time(self, block: int, timestamp: int) -> None: ...
+    def record_priority_fees(self, block: int, fees: dict[int, int]) -> None: ...
+    def latest_priority_fees(self) -> dict[int, int]: ...
+    @property
+    def block_priority_fees(self) -> dict[int, dict[int, int]]: ...
+    # ── block-time ring ──
+    def block_time_count(self) -> int: ...
+    def block_times_oldest(self) -> tuple[int, int]: ...
+    # ── PathSuppression delegation ──
+    def record_success(self, path_id: int) -> None: ...
+    def record_failure(self, path_id: int) -> None: ...
+    def is_suppressed(self, path_id: int, current_block: int) -> bool: ...
+    def total_suppressed(self) -> int: ...
+    def discard_path(self, path_id: int) -> None: ...
+    # ── introspection ──
+    def pending_nonce_count(self) -> int: ...
+    def pending_pool_count(self) -> int: ...
+
+class PySubmitCandidate:
+    """Per-path builder constructed from ``gas_profitable`` before the submit leaf."""
+
+    def __init__(
+        self,
+        path_id: int,
+        gross_profit: int,
+        net_profit: int,
+        gas_used: int,
+        priority_fee: int,
+        base_fee_next: int,
+        execute_calldata: bytes,
+        executor_address: str,
+        access_list: list[dict[str, Any]] | None = None,
+        path_pools: set[str] | None = None,
+    ) -> None: ...
+
+# ------------------------------------------------------------------
+# Simulation seam (per-block profitability pipeline)
+# ------------------------------------------------------------------
+class PySimulateContext:
+    """Session-static config bag for :func:`dispatch_profitable_py`.
+
+    Construct once per session from the :class:`AsyncAlloyProvider` + the
+    executor/WETH/PoolManager/Multicall3 addresses + the inject flag + the
+    executor runtime bytecode. Handed to :func:`dispatch_profitable_py` each
+    block alongside the per-block args.
+    """
+
+    def __init__(
+        self,
+        provider: AsyncAlloyProvider,
+        executor_owner: str,
+        executor_address: str,
+        weth_address: str,
+        pool_manager_address: str,
+        multicall3_address: str,
+        inject_code: bool,
+        executor_runtime_bytecode: bytes,
+        injected_address: str | None = None,
+    ) -> None: ...
+    @property
+    def rpc_url(self) -> str: ...
+
+class PyDispatchCandidate:
+    """Pre-simulation candidate builder (engine result + resolved ``PathInfo``)."""
+
+    def __init__(
+        self,
+        path_id: int,
+        optimal_input: int,
+        engine_profit: int,
+        hop_outputs: list[int],
+        solve_block: int,
+        path_info: PathInfo,
+        *,
+        erc6909_profit: bool = False,
+        use_v4_batch: bool = False,
+    ) -> None: ...
+
+class PyDispatchOutcome:
+    """Read-only outcome of a block's profitable-dispatch fan-out."""
+
+    @property
+    def gas_profitable(self) -> list[PySubmitCandidate]: ...
+    @property
+    def gas_unprofitable_count(self) -> int: ...
+    @property
+    def exception_count(self) -> int: ...
+    @property
+    def fail_count(self) -> int: ...
+    @property
+    def candidate_count(self) -> int: ...
+    @property
+    def suppressed_count(self) -> int: ...
+    @property
+    def thin_dropped(self) -> int: ...
+    @property
+    def fail_buckets(self) -> dict[str, int]: ...
+
+def dispatch_and_submit_py(
+    candidates: list[PySubmitCandidate],
+    dispatcher: PyDispatcher,
+    provider: AsyncAlloyProvider,
+    signer: PyTxSigner,
+    operator_nonce: int,
+    current_block: int,
+    dry_run: bool,
+    inject_code: bool,
+) -> Coroutine[Any, Any, list[dict[str, Any]]]: ...
+def fetch_fee_history_py(
+    provider: AsyncAlloyProvider,
+    dispatcher: PyDispatcher,
+    block_count: int,
+    last_block: int,
+    reward_percentiles: list[float],
+) -> Coroutine[Any, Any, bool]: ...
+def finalize_fees(
+    params: PyTxParams,
+    base_fee_next: int,
+    priority_fee: int,
+) -> None: ...
+
 __all__ = [
     "MAX_SQRT_RATIO",
     "MAX_TICK",
@@ -3188,8 +3378,15 @@ __all__ = [
     "PyBotIo",
     "PyDatabasePositionQuery",
     "PyDatabaseSnapshot",
+    "PyDispatchCandidate",
+    "PyDispatchOutcome",
+    "PyDispatcher",
     "PyErc20Token",
     "PyLiquidityPool",
+    "PySimulateContext",
+    "PySubmitCandidate",
+    "PyTxParams",
+    "PyTxSigner",
     "TransactionData",
     "TransactionReceiptData",
     "UniswapArbEngine",
@@ -3276,10 +3473,13 @@ __all__ = [
     "decode_return_data",
     "decode_single",
     "dex_identity",
+    "dispatch_and_submit_py",
     "encode",
     "encode_cmd_stream",
     "encode_function_call",
     "encode_single",
+    "fetch_fee_history_py",
+    "finalize_fees",
     "find_paths_rust",
     "flz_compress",
     "flz_decompress",
