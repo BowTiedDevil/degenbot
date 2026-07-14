@@ -43,7 +43,9 @@ use degenbot_executor::composers::{EncodeOptions, PathInfo};
 use degenbot_submission::PathSuppression;
 use futures::stream::{self, StreamExt};
 
-use crate::simulate_one::{simulate_one, FailBuckets, SimResult, SimulateContext, SimulatePath};
+use crate::simulate_one::{
+    simulate_one, FailBuckets, SimFailure, SimResult, SimulateContext, SimulatePath,
+};
 
 // ─────────────────────────────────────────────────────────────────────────
 // Constants (ports the Python oracle's module-level literals)
@@ -199,8 +201,17 @@ pub struct DispatchOutcome {
     pub thin_dropped: usize,
     /// The `_fail_buckets` tally — the revert/no-profit/overflow buckets
     /// accumulated across the fan-out (ports `_fail_buckets`, L1769). The
-    /// rendering (`format_failure_breakdown`) stays Python (D4).
+    /// aggregation rendering (`format_failure_breakdown`) stays Python (D4);
+    /// this exposes the typed buckets the companion renders.
     pub fail_buckets: FailBuckets,
+    /// The per-path `SimFailure` records (one per `tally`/`record` site across
+    /// the fan-out), in fan-out completion order — surfaced across the FFI so
+    /// the Python driver can render a per-candidate `[sim-fail]` line carrying
+    /// `path_id` + `fail_index` + the raw revert bytes. The aggregation
+    /// (`fail_buckets`) collapses these into a count; this preserves the
+    /// per-candidate attribution the operator needs to identify WHICH path
+    /// reverted against WHICH pools.
+    pub failures: Vec<SimFailure>,
 }
 
 impl DispatchOutcome {
@@ -346,6 +357,13 @@ pub async fn dispatch_profitable_results(
                 .or_insert(0);
             *entry += count;
         }
+        // Surface the per-candidate failure detail (`path_id` + `fail_index` +
+        // `revert_data`) across the FFI so the Python driver can render a
+        // `[sim-fail]` line. `fail_buckets.tally` was paired with `record`
+        // (pushing a `SimFailure`) at every site that should be surfaced;
+        // `into_failures()` moves them out of the dropped `buckets` instance
+        // into the outcome without a clone.
+        outcome.failures.extend(buckets.into_failures());
         match result {
             Ok(Some(r)) => {
                 succeeded_path_ids.insert(pid);
@@ -1034,5 +1052,78 @@ mod tests {
         .unwrap();
         assert_eq!(outcome.fail_count, 2);
         assert_eq!(outcome.fail_buckets.get("no-profit"), 2);
+    }
+
+    // ── D1: per-path failure detail surfacing ────────────────────────────
+
+    #[tokio::test]
+    async fn dispatch_surfaces_per_path_failures_with_no_fail_index() {
+        // Two no-profit candidates → two `SimFailure` records in
+        // `outcome.failures`, each carrying its own `path_id`. No call
+        // reverted (no-profit = all 7 succeeded), so `fail_index` is `None`.
+        let asserter = Asserter::new();
+        push_profitable(&asserter, U256::ZERO, 100_000);
+        push_profitable(&asserter, U256::ZERO, 100_000);
+        let provider = mock_provider(&asserter);
+        let suppression = Arc::new(Mutex::new(PathSuppression::new()));
+
+        let cands = vec![
+            candidate(30, 1_000_000_000_000_000_000u128, 1_000),
+            candidate(31, 1_000_000_000_000_000_000u128, 1_000),
+        ];
+        let outcome = dispatch_profitable_results(
+            cands,
+            &ctx(&provider),
+            &suppression,
+            100,
+            MIN_PROFIT_NET,
+            0,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.failures.len(), 2, "expected two failure records");
+        let ids: Vec<u64> = outcome.failures.iter().map(|f| f.path_id).collect();
+        assert!(ids.contains(&30), "path 30 must be surfaced, got {ids:?}");
+        assert!(ids.contains(&31), "path 31 must be surfaced, got {ids:?}");
+        for f in &outcome.failures {
+            assert_eq!(f.bucket, "no-profit");
+            assert!(f.fail_index.is_none(), "no-profit has no failing call idx");
+            assert!(f.revert_data.is_empty(), "no revert data on no-profit");
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_surfaces_rpc_failed_failure_with_fail_index_none() {
+        // A simulate_v1 RPC failure tallies `rpc-failed` + records a
+        // `SimFailure` with `fail_index: None` + empty `revert_data` (no
+        // simulate response was ever returned to inspect).
+        let asserter = Asserter::new();
+        asserter.push_success(&access_list_response());
+        asserter.push_failure_msg("simulate_v1 RPC failed");
+        let provider = mock_provider(&asserter);
+        let suppression = Arc::new(Mutex::new(PathSuppression::new()));
+
+        let outcome = dispatch_profitable_results(
+            vec![candidate(
+                21,
+                1_000_000_000_000_000_000u128,
+                2_000_000_000_000_000_000u128,
+            )],
+            &ctx(&provider),
+            &suppression,
+            100,
+            MIN_PROFIT_NET,
+            0,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.failures.len(), 1);
+        let f = &outcome.failures[0];
+        assert_eq!(f.path_id, 21);
+        assert_eq!(f.bucket, "rpc-failed");
+        assert!(f.fail_index.is_none(), "rpc-failed has no sim call idx");
+        assert!(f.revert_data.is_empty());
     }
 }

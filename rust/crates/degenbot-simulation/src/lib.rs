@@ -92,10 +92,10 @@ pub mod dispatch_profitable;
 pub use dispatch::{BlockPriorityFees, SimulatedCall, SimulationResult};
 pub use payload::{build_simulate_payload, SimulationParams, SIM_CALL_COUNT};
 pub use simulate_one::{
-    compute_priority_fee, fits_int128, simulate_one, FailBuckets, SimResult, SimulateContext,
-    SimulatePath, AGE_DECAY_CONSTANT, EXECUTE_CONFIG, GAS_SAFETY_MARGIN, INITIAL_EXECUTE_GAS,
-    INT128_MAX, INT128_MIN, MAX_PRIORITY_FEE_PERCENTILE, MIN_PRIORITY_FEE_PERCENTILE,
-    TARGET_PROFIT_RATIO,
+    compute_priority_fee, fits_int128, simulate_one, FailBuckets, SimFailure, SimResult,
+    SimulateContext, SimulatePath, AGE_DECAY_CONSTANT, EXECUTE_CONFIG, GAS_SAFETY_MARGIN,
+    INITIAL_EXECUTE_GAS, INT128_MAX, INT128_MIN, MAX_PRIORITY_FEE_PERCENTILE,
+    MIN_PRIORITY_FEE_PERCENTILE, TARGET_PROFIT_RATIO,
 };
 
 /// Operational funding amounts + the warmup 1-wei touch value.
