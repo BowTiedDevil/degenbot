@@ -35,6 +35,14 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyString, PyTuple};
 use std::fmt::Write as _;
+use std::sync::Arc;
+
+use crate::conversion::rpc_types::block_to_py_dict;
+use crate::provider::AlloyProvider;
+use crate::rpc::provider::PyAlloyProvider;
+use crate::rpc::revert_to_pyerr;
+use degenbot_core::errors::ProviderError;
+use degenbot_core::runtime::get_runtime;
 
 /// Immutable data tuple returned by [`PyBotIo::fetch_v2_immutable_data`]:
 /// `(factory, token0, token1, fee, tick_spacing)`.
@@ -126,6 +134,15 @@ impl PyErc20TokenRow {
 
 #[pyclass(name = "PyBotIo")]
 pub struct PyBotIo {
+    /// Native Rust `AlloyProvider` extracted from the held Python provider
+    /// when it is `PyAlloyProvider`-backed (live alloy or the O2 `OfflineProvider`
+    /// shell). When `Some`, the `fetch_*` choreography methods + the `PoolIO`
+    /// surface run entirely in Rust via this arc (no GIL round-trip) —
+    /// `forward_call_to_provider` becomes a native `eth_call`, and
+    /// `get_block_timestamp` derives from `get_block(n).header.timestamp`.
+    /// `None` for non-alloy Python providers (legacy test doubles), which fall
+    /// back to the Python delegation path — retired by O3.
+    alloy: Option<Arc<AlloyProvider>>,
     provider: Py<PyAny>,
     db: Option<Py<PyAny>>,
     /// The on-disk `SQLite` database path (QVMWQC). When set, DB-query methods
@@ -156,8 +173,18 @@ impl PyBotIo {
     /// `session.scalar(select(...))` / `session.commit()` bodies retire).
     #[new]
     #[pyo3(signature = (provider, db=None, database_path=None))]
-    fn new(provider: Py<PyAny>, db: Option<Py<PyAny>>, database_path: Option<String>) -> Self {
+    fn new(
+        py: Python<'_>,
+        provider: Py<PyAny>,
+        db: Option<Py<PyAny>>,
+        database_path: Option<String>,
+    ) -> Self {
+        // Extract a native Rust `AlloyProvider` when the held Python provider
+        // is `PyAlloyProvider`-backed (live alloy or the offline shell). Non-
+        // alloy providers (legacy test doubles) yield `None` → Python fallback.
+        let alloy = extract_native_alloy(provider.bind(py));
         Self {
+            alloy,
             provider,
             db,
             database_path,
@@ -530,38 +557,96 @@ impl PyBotIo {
             .collect()
     }
 
-    /// Return the current block number (delegates to `provider.get_block_number()`).
+    /// Return the current block number. Native path: direct `AlloyProvider`
+    /// call (no GIL round-trip). Fallback: delegates to the held Python
+    /// provider's `get_block_number()` for non-alloy providers.
     fn get_block_number(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        if let Some(alloy) = &self.alloy {
+            let alloy = Arc::clone(alloy);
+            let n = py
+                .detach(|| get_runtime().block_on(async { alloy.get_block_number().await }))
+                .map_err(Into::<PyErr>::into)?;
+            return crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(n))
+                .map(pyo3::Bound::into_any)
+                .map(pyo3::Bound::unbind);
+        }
         self.call_kw(py, "get_block_number", &[])
     }
 
-    /// Return block data for the given identifier (delegates to
-    /// `provider.get_block(block_identifier)` — positional, mirrors `SyncPoolIO`).
+    /// Return block data for the given identifier. Native path: direct
+    /// `AlloyProvider.get_block(n)` for integer ids (returns a full block dict,
+    /// including `number` + `timestamp`). Fallback: delegates to
+    /// `provider.get_block(block_identifier)` (positional, mirrors `SyncPoolIO`).
     fn get_block(
         &self,
         py: Python<'_>,
         block_identifier: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
+        if let Some(alloy) = &self.alloy {
+            if let Ok(n) = block_identifier.extract::<u64>() {
+                let alloy = Arc::clone(alloy);
+                let block = py
+                    .detach(|| get_runtime().block_on(async { alloy.get_block(n).await }))
+                    .map_err(Into::<PyErr>::into)?;
+                return match block {
+                    Some(b) => Ok(block_to_py_dict(py, &b)?.into_any().unbind()),
+                    None => Ok(py.None()),
+                };
+            }
+            // Non-integer identifier (e.g. "latest") — fall back to Python.
+        }
         // SyncPoolIO forwards positionally: provider.get_block(block_identifier)
         let method = self.provider.bind(py).getattr("get_block")?;
         let args = PyTuple::new(py, [block_identifier])?;
         Ok(method.call(args, None)?.unbind())
     }
 
-    /// Return the timestamp for the given block (delegates to
-    /// `provider.get_block_timestamp(block=block)` — kw, mirrors `SyncPoolIO`).
+    /// Return the timestamp for the given block. Native path: derives from
+    /// `AlloyProvider.get_block(n).header.timestamp` (no separate RPC). Fallback:
+    /// delegates to `provider.get_block_timestamp(block=block)`.
     #[pyo3(signature = (block=None))]
     fn get_block_timestamp(
         &self,
         py: Python<'_>,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
+        if let Some(alloy) = &self.alloy {
+            let n = match block {
+                None => {
+                    let a = Arc::clone(alloy);
+                    py.detach(|| get_runtime().block_on(async { a.get_block_number().await }))
+                        .map_err(Into::<PyErr>::into)?
+                }
+                Some(b) => match b.extract::<u64>() {
+                    Ok(n) => n,
+                    Err(_) => {
+                        // Non-integer block tag (e.g. "latest") — fall back to
+                        // the Python provider which accepts the tag directly.
+                        return self.call_kw(py, "get_block_timestamp", &[("block", block)]);
+                    }
+                },
+            };
+            let alloy = Arc::clone(alloy);
+            let block_opt = py
+                .detach(|| get_runtime().block_on(async { alloy.get_block(n).await }))
+                .map_err(Into::<PyErr>::into)?;
+            let ts = block_opt
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(format!("Block {n} not found"))
+                })?
+                .header
+                .inner
+                .timestamp;
+            return crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(ts))
+                .map(pyo3::Bound::into_any)
+                .map(pyo3::Bound::unbind);
+        }
         self.call_kw(py, "get_block_timestamp", &[("block", block)])
     }
 
-    /// Return the code at the given address (delegates to
-    /// `provider.get_code(address, block=block)` — address positional, block
-    /// kw, mirrors `SyncPoolIO` exactly).
+    /// Return the code at the given address. Native path: direct
+    /// `AlloyProvider.get_code(addr, block)`. Fallback: delegates to
+    /// `provider.get_code(address, block=block)` (mirrors `SyncPoolIO`).
     #[pyo3(signature = (address, block=None))]
     fn get_code(
         &self,
@@ -569,14 +654,32 @@ impl PyBotIo {
         address: &Bound<'_, PyAny>,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
+        if let Some(alloy) = &self.alloy {
+            if let (Ok(addr_str), Ok(block_num)) =
+                (address.extract::<String>(), extract_block_u64(block))
+            {
+                let addr = alloy::primitives::Address::from(parse_address_for_call(&addr_str)?);
+                let alloy = Arc::clone(alloy);
+                let code = py
+                    .detach(|| {
+                        get_runtime().block_on(async { alloy.get_code(&addr, block_num).await })
+                    })
+                    .map_err(Into::<PyErr>::into)?;
+                return crate::conversion::cache::create_hexbytes(py, code.as_ref())
+                    .map(pyo3::Bound::into_any)
+                    .map(pyo3::Bound::unbind);
+            }
+            // Address/block shape not native-compatible — fall back to Python.
+        }
         let method = self.provider.bind(py).getattr("get_code")?;
         let kwargs = build_block_kw(py, block)?;
         let args = PyTuple::new(py, [address])?;
         Ok(method.call(args, kwargs.as_ref())?.unbind())
     }
 
-    /// Return the ETH balance at the given address (delegates to
-    /// `provider.get_balance(address, block=block)` — mirrors `SyncPoolIO`).
+    /// Return the ETH balance at the given address. Native path: direct
+    /// `AlloyProvider.get_balance(addr, block)`. Fallback: delegates to
+    /// `provider.get_balance(address, block=block)` (mirrors `SyncPoolIO`).
     #[pyo3(signature = (address, block=None))]
     fn get_balance(
         &self,
@@ -584,15 +687,34 @@ impl PyBotIo {
         address: &Bound<'_, PyAny>,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
+        if let Some(alloy) = &self.alloy {
+            if let (Ok(addr_str), Ok(block_num)) =
+                (address.extract::<String>(), extract_block_u64(block))
+            {
+                let addr = alloy::primitives::Address::from(parse_address_for_call(&addr_str)?);
+                let alloy = Arc::clone(alloy);
+                let balance = py
+                    .detach(|| {
+                        get_runtime().block_on(async { alloy.get_balance(&addr, block_num).await })
+                    })
+                    .map_err(Into::<PyErr>::into)?;
+                return crate::conversion::alloy::u256_to_py(py, &balance)
+                    .map(pyo3::Bound::into_any)
+                    .map(pyo3::Bound::unbind);
+            }
+            // Address/block shape not native-compatible — fall back to Python.
+        }
         let method = self.provider.bind(py).getattr("get_balance")?;
         let kwargs = build_block_kw(py, block)?;
         let args = PyTuple::new(py, [address])?;
         Ok(method.call(args, kwargs.as_ref())?.unbind())
     }
 
-    /// Perform an `eth_call` and return the result (delegates to
-    /// `provider.call(to=to, data=data, block=block)` — kw-only, mirrors
-    /// `SyncPoolIO` exactly).
+    /// Perform an `eth_call` and return the result. Native path: direct
+    /// `AlloyProvider.eth_call(to, data, block)` (reverts map to
+    /// `ContractLogicError`, matching the alloy revert path). Fallback:
+    /// delegates to `provider.call(to=to, data=data, block=block)` (kw-only,
+    /// mirrors `SyncPoolIO` exactly).
     ///
     /// `OfflineProvider.call(*, to, data, block_number)` has a keyword-only
     /// signature, and test doubles (`MagicMock(side_effect=mock_call)` where
@@ -606,6 +728,30 @@ impl PyBotIo {
         data: &Bound<'_, PyAny>,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
+        if let Some(alloy) = &self.alloy {
+            if let (Ok(to_str), Ok(data_bytes), Ok(block_num)) = (
+                to.extract::<String>(),
+                data.extract::<&[u8]>(),
+                extract_block_u64(block),
+            ) {
+                let addr = alloy::primitives::Address::from(parse_address_for_call(&to_str)?);
+                let data_b = alloy::primitives::Bytes::from(data_bytes.to_vec());
+                let alloy = Arc::clone(alloy);
+                let result = py.detach(|| {
+                    get_runtime().block_on(async { alloy.eth_call(&addr, data_b, block_num).await })
+                });
+                return match result {
+                    Ok(bytes) => crate::conversion::cache::create_hexbytes(py, bytes.as_ref())
+                        .map(pyo3::Bound::into_any)
+                        .map(pyo3::Bound::unbind),
+                    Err(ProviderError::ExecutionReverted { message, .. }) => {
+                        Err(revert_to_pyerr(py, &to_str, &message))
+                    }
+                    Err(e) => Err(e.into()),
+                };
+            }
+            // `to`/`data`/`block` shape not native-compatible — fall back.
+        }
         self.call_kw(
             py,
             "call",
@@ -613,9 +759,10 @@ impl PyBotIo {
         )
     }
 
-    /// Perform a raw `eth_call` and return the result (delegates to
-    /// `provider.call_raw(tx, block=block)` — tx positional, block kw, mirrors
-    /// `SyncPoolIO`).
+    /// Perform a raw `eth_call` and return the result. Native path: reuses
+    /// the native `call` body above by extracting `to`/`data` from the tx
+    /// dict. Fallback: delegates to `provider.call_raw(tx, block=block)` (tx
+    /// positional, block kw, mirrors `SyncPoolIO`).
     ///
     /// `tx` is a web3 `TxParams` dict; `PyBotIo` forwards it verbatim (the
     /// builder assembles it; this is a pass-through, not a tx-builder).
@@ -626,6 +773,16 @@ impl PyBotIo {
         tx: &Bound<'_, PyAny>,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
+        if let Some(_alloy) = &self.alloy {
+            // The native path needs `to` + `data` from the tx dict; forward
+            // through the native `call` body when extractable. A bare
+            // `PyAlloyProvider` has no `call_raw`, so the native path is
+            // mandatory here (no Python fallback).
+            if let (Ok(to), Ok(data)) = (tx.get_item("to"), tx.get_item("data")) {
+                return self.call(py, &to, &data, block);
+            }
+            // tx dict shape not native-compatible — fall back.
+        }
         let method = self.provider.bind(py).getattr("call_raw")?;
         let kwargs = build_block_kw(py, block)?;
         let args = PyTuple::new(py, [tx])?;
@@ -1964,6 +2121,33 @@ impl PyBotIo {
         calldata: &[u8],
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
+        // Native fast path: a real Rust `AlloyProvider` answers the `eth_call`
+        // directly (no GIL round-trip). Reverts map to `ContractLogicError`
+        // (matching `PyAlloyProvider::call`'s revert handling).
+        if let Some(alloy) = &self.alloy {
+            if let Ok(block_num) = extract_block_u64(block) {
+                let addr = alloy::primitives::Address::from(parse_address_for_call(token)?);
+                let data = alloy::primitives::Bytes::from(calldata.to_vec());
+                let alloy = Arc::clone(alloy);
+                let result = py.detach(|| {
+                    get_runtime().block_on(async { alloy.eth_call(&addr, data, block_num).await })
+                });
+                return match result {
+                    Ok(bytes) => crate::conversion::cache::create_hexbytes(py, bytes.as_ref())
+                        .map(pyo3::Bound::into_any)
+                        .map(pyo3::Bound::unbind),
+                    Err(ProviderError::ExecutionReverted { message, .. }) => {
+                        Err(revert_to_pyerr(py, token, &message))
+                    }
+                    Err(e) => Err(e.into()),
+                };
+            }
+            // Non-integer block tag — fall back to the Python provider, which
+            // accepts the tag directly.
+        }
+        // Fallback: forward `call(to=token, data=calldata, block=…)` to the
+        // held Python provider (legacy doubles). Single seam: the call-forward
+        // strategy is localized to this helper.
         let address_obj = PyString::new(py, token);
         let data_obj = PyBytes::new(py, calldata);
         self.call_kw(
@@ -1975,6 +2159,38 @@ impl PyBotIo {
                 ("block", block),
             ],
         )
+    }
+}
+
+/// Extract a native Rust `AlloyProvider` from the held Python provider when
+/// it is `PyAlloyProvider`-backed (live alloy or the O2 `OfflineProvider`
+/// shell). Returns `None` for non-alloy providers (legacy test doubles), which
+/// fall back to the Python delegation path.
+///
+/// Tries, in order: (1) the provider *is* a `PyAlloyProvider`; (2) the provider
+/// exposes `to_alloy_provider()` returning a `PyAlloyProvider` (the Python
+/// `AlloyProvider` wrapper + the `OfflineProvider` shell both do).
+fn extract_native_alloy(provider: &Bound<'_, PyAny>) -> Option<Arc<AlloyProvider>> {
+    if let Ok(pyap) = provider.extract::<PyRef<'_, PyAlloyProvider>>() {
+        return Some(Arc::clone(&pyap.provider));
+    }
+    if let Ok(method) = provider.getattr("to_alloy_provider") {
+        if let Ok(result) = method.call0() {
+            if let Ok(pyap) = result.extract::<PyRef<'_, PyAlloyProvider>>() {
+                return Some(Arc::clone(&pyap.provider));
+            }
+        }
+    }
+    None
+}
+
+/// Extract an optional block number from the `block` kw-sentinel.
+/// `Ok(None)` when absent; `Ok(Some(n))` when an integer; `Err` when present
+/// but not an integer (caller falls back to the Python provider for tags).
+fn extract_block_u64(block: Option<&Bound<'_, PyAny>>) -> PyResult<Option<u64>> {
+    match block {
+        None => Ok(None),
+        Some(b) => b.extract::<u64>().map(Some),
     }
 }
 

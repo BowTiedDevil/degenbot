@@ -1079,3 +1079,6 @@
 {"type":"state","ts":"2026-07-14T19:23:50.954814707Z","data":{"id":"JY5NI4","state":"canceled","ts":"2026-07-14T19:23:50.954814707Z"}}
 {"type":"result","ts":"2026-07-14T19:52:03.623939155Z","data":{"task_id":"XPH7IJ","summary":"rust/crates/degenbot-rpc/src/offline.rs","path":"rust/crates/degenbot-rpc/src/offline.rs","sha256_at_attach":"7a934154f66d854daf5acd87b04d18ef4e35eb343470da80bee7a5f831635981","mtime_at_attach":"2026-07-14T19:49:18.288833181Z","git_commit_at_attach":"d3d1528d8eacc18276ff4d46a126bc48069145b7","ts":"2026-07-14T19:52:03.623939155Z"}}
 {"type":"state","ts":"2026-07-14T19:52:03.623939155Z","data":{"id":"XPH7IJ","state":"done","ts":"2026-07-14T19:52:03.623939155Z"}}
+{"type":"state","ts":"2026-07-14T20:11:31.905286474Z","data":{"id":"K76NPZ","state":"done","ts":"2026-07-14T20:11:31.905286474Z"}}
+{"type":"state","ts":"2026-07-14T20:11:31.956015331Z","data":{"id":"MTMFT5","state":"canceled","ts":"2026-07-14T20:11:31.956015331Z"}}
+{"type":"state","ts":"2026-07-14T20:11:32.005456657Z","data":{"id":"JY5NI4","state":"canceled","ts":"2026-07-14T20:11:32.005456657Z"}}

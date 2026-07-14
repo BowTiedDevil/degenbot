@@ -1549,3 +1549,121 @@ def test_pybot_io_fetch_curve_balances_propagates_reverts():
     io = PyBotIo(provider=_BalancerProvider())  # no responses configured
     with pytest.raises(RuntimeError):
         io.fetch_curve_balances("0x" + "cu" * 20, 3)
+
+
+# === Native alloy path (B1) ===
+#
+# `PyBotIo` extracts a native Rust `AlloyProvider` when the held provider is
+# `PyAlloyProvider`-backed (live alloy or the O2 `OfflineProvider` shell). The
+# `fetch_*` choreography methods + the `PoolIO` surface then run entirely in
+# Rust via that arc (no GIL round-trip). These tests exercise that native path
+# against a recorded-JSON `OfflineProvider` (real Rust transport, no fakes) to
+# confirm the native bodies behave identically to the Python-delegation path.
+
+
+def _recorded_factory_fixture() -> str:
+    """Build a single-block recorded-JSON fixture with a `factory()` call."""
+    import json
+
+    factory_raw = "66f9664f97f2b50f62d13ea064982f936de76657"  # 20-byte lowercase
+    pool_addr = "ab" * 20
+    # `factory()` selector = keccak256("factory()")[:4] = 0xc45a0155.
+    # Recorded result = ABI-encoded address (32 bytes, right-aligned), no 0x.
+    encoded = eth_abi.abi.encode(types=["address"], args=["0x" + factory_raw]).hex()
+    calls = {f"0x{pool_addr}:0xc45a0155": encoded}
+    code = {f"0x{pool_addr}": "60806040"}
+    return json.dumps(
+        {
+            "chain_id": 1,
+            "block_number": 100,
+            "timestamp": 1_700_000_000,
+            "calls": calls,
+            "code": code,
+        }
+    )
+
+
+def test_pybot_io_native_alloy_fetch_factory_address():
+    """Native alloy path: `fetch_factory_address` against a recorded
+    `OfflineProvider` (Rust transport) returns the EIP-55 checksum — no Python
+    provider round-trip (the offline shell holds the `PyAlloyProvider`)."""
+    from degenbot.degenbot_rs import AlloyProvider as RustAlloyProvider
+
+    factory_raw = "66f9664f97f2b50f62d13ea064982f936de76657"
+    expected = "0x66f9664f97F2b50F62D13eA064982f936dE76657"
+    pool_address = "0x" + "ab" * 20
+
+    provider = RustAlloyProvider.offline_from_json_string(_recorded_factory_fixture())
+    io = PyBotIo(provider=provider)
+
+    assert io.fetch_factory_address(pool_address) == expected
+
+
+def test_pybot_io_native_alloy_poolio_surface():
+    """Native alloy path: the `PoolIO` surface (`get_block_number`,
+    `get_block`, `get_block_timestamp`, `get_code`, `call`) runs against the
+    Rust offline transport and returns the expected shapes."""
+    from degenbot.degenbot_rs import AlloyProvider as RustAlloyProvider
+
+    provider = RustAlloyProvider.offline_from_json_string(_recorded_factory_fixture())
+    io = PyBotIo(provider=provider)
+
+    assert io.get_block_number() == 100
+    block = io.get_block(100)
+    assert block["number"] == 100
+    assert block["timestamp"] == 1_700_000_000
+    assert io.get_block_timestamp() == 1_700_000_000
+    assert io.get_block_timestamp(100) == 1_700_000_000
+
+    pool_address = "0x" + "ab" * 20
+    code = io.get_code(pool_address)
+    assert code == HexBytes(bytes.fromhex("60806040"))
+
+    # `call(factory())` returns the recorded ABI-encoded address word.
+    result = io.call(to=pool_address, data=bytes.fromhex("c45a0155"))
+    assert result == HexBytes(
+        eth_abi.abi.encode(types=["address"], args=["0x66f9664f97f2b50f62d13ea064982f936de76657"])
+    )
+
+
+def test_pybot_io_native_alloy_call_raw_routes_through_native_call():
+    """Native alloy path: `call_raw(tx)` extracts `to`/`data` from the tx dict
+    and routes through the native `call` body."""
+    from degenbot.degenbot_rs import AlloyProvider as RustAlloyProvider
+
+    provider = RustAlloyProvider.offline_from_json_string(_recorded_factory_fixture())
+    io = PyBotIo(provider=provider)
+    pool_address = "0x" + "ab" * 20
+    result = io.call_raw({"to": pool_address, "data": bytes.fromhex("c45a0155")})
+    assert result == HexBytes(
+        eth_abi.abi.encode(types=["address"], args=["0x66f9664f97f2b50f62d13ea064982f936de76657"])
+    )
+
+
+def test_pybot_io_native_alloy_revert_surfaces_contract_logic_error():
+    """Native alloy path: a recorded revert (`null` result) surfaces as
+    `ContractLogicError` (the alloy revert path), not a generic RuntimeError."""
+    from degenbot.degenbot_rs import AlloyProvider as RustAlloyProvider
+    from degenbot.exceptions import ContractLogicError
+
+    import json
+
+    factory_raw = "66f9664f97f2b50f62d13ea064982f936de76657"
+    pool_addr = "ab" * 20
+    encoded = eth_abi.abi.encode(types=["address"], args=["0x" + factory_raw]).hex()
+    data = {
+        "chain_id": 1,
+        "block_number": 100,
+        "timestamp": 1_700_000_000,
+        # A *different* selector reverted (null); factory() still succeeds.
+        "calls": {f"0x{pool_addr}:0xffffffff": None, f"0x{pool_addr}:0xc45a0155": encoded},
+        "code": {f"0x{pool_addr}": "60806040"},
+    }
+    provider = RustAlloyProvider.offline_from_json_string(json.dumps(data))
+    io = PyBotIo(provider=provider)
+    pool_address = "0x" + "ab" * 20
+
+    with pytest.raises(ContractLogicError):
+        io.call(to=pool_address, data=bytes.fromhex("ffffffff"))
+    # The factory() call still succeeds (not the reverted selector).
+    assert io.fetch_factory_address(pool_address) == "0x66f9664f97F2b50F62D13eA064982f936dE76657"
