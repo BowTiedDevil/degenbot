@@ -265,6 +265,11 @@ def _pool_types_from_filter(perms: set[str] | None) -> list[type]:
 # Number of consecutive sim-failures before a path is suppressed.
 PATH_SUPPRESS_THRESHOLD = 10
 
+# Cap on per-batch `[sim-fail]` lines emitted by `_render_sim_failures`. A
+# thin-margin revert storm can otherwise flood the log during a stalled BP —
+# the remainder is summarized as a single `… (+N more)` trailing line.
+_SIM_FAIL_RENDER_CAP = 25
+
 # How many blocks between retry attempts for suppressed paths.
 PATH_SUPPRESS_RETRY_INTERVAL = 100
 
@@ -1417,6 +1422,7 @@ async def _dispatch_profitable(
         min_profit_margin_bps=MIN_PROFIT_MARGIN_BPS,
     )
     _render_sim_summary(outcome)
+    _render_sim_failures(outcome)
     _render_profit_logs(outcome)
 
     # ── Submit gas-profitable via the Rust submit leaf ───
@@ -1470,9 +1476,7 @@ def _render_sim_summary(outcome: PyDispatchOutcome) -> None:
     sim_ok = len(profitable) + outcome.gas_unprofitable_count
     extra = ""
     if outcome.suppressed_count or outcome.thin_dropped:
-        extra = (
-            f" — suppressed={outcome.suppressed_count}, thin={outcome.thin_dropped}"
-        )
+        extra = f" — suppressed={outcome.suppressed_count}, thin={outcome.thin_dropped}"
     bot_logger.info(
         f"[sim] {outcome.candidate_count} candidates: "
         f"{sim_ok} ok ({len(profitable)} profitable, "
@@ -1524,6 +1528,47 @@ def _render_profit_logs(outcome: PyDispatchOutcome) -> None:
             f"net={cand.net_profit / 1e18:.6f}ETH ({cand.net_profit // 10**9}gwei) "
             f"gas={cand.gas_used} prio={cand.priority_fee // 10**9}gwei\n{hops_str}",
         )
+
+
+def _render_sim_failures(outcome: PyDispatchOutcome) -> None:
+    """Render one ``[sim-fail]`` line per reverted / failed candidate (D3).
+
+    Counterpart to :func:`_render_profit_logs` — operates on the FAILURES
+    rather than the survivors. Each record carries the per-candidate detail the
+    Rust core surfaced across the FFI (``path_id`` + bucket + ``fail_index``
+    + raw revert bytes); this renderer joins it to the path's hop token
+    summary (via :func:`_hop_token_summary`), looked up from
+    ``outcome.path_infos`` — the same map :func:`_render_profit_logs` uses —
+    so the operator can identify WHICH path reverted against WHICH pools
+    without lifting a session.
+
+    The ``[sim]`` aggregate summary still leads; this only emits when the
+    Rust outcome reports ``N > 0`` failures. Capped at
+    :data:`_SIM_FAIL_RENDER_CAP` records per batch with a ``… (+M more)``
+    trailing line so a thin-margin revert storm doesn't flood the log.
+    """
+    failures = outcome.failures
+    if not failures:
+        return
+    cap = _SIM_FAIL_RENDER_CAP
+    path_infos = outcome.path_infos
+    for rec in failures[:cap]:
+        path_id = rec["path_id"]
+        bucket = rec["bucket"]
+        fail_idx = rec["fail_index"]
+        revert_hex = rec["revert_data"]
+        path_info = path_infos.get(path_id)
+        path_type = path_info.path_type if path_info is not None else "?"
+        hops = (
+            _hop_token_summary(path_info.hops) if path_info is not None else "(path_info missing)"
+        )
+        bot_logger.info(
+            f"[sim-fail] path={path_id} type={path_type} bucket={bucket} "
+            f"fail_idx={fail_idx} revert={revert_hex} hops={hops}",
+        )
+    overflow = len(failures) - cap
+    if overflow > 0:
+        bot_logger.info(f"[sim-fail] … (+{overflow} more)")
 
 
 async def consume_result_batches(
