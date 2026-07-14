@@ -34,6 +34,13 @@ degenbot-solvers = { path = "../degenbot-solvers" }
 degenbot-uniswap = { path = "../degenbot-uniswap" }
 degenbot-v2-math = { path = "../degenbot-v2-math" }
 futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
+# hotpath: drain-path profiling tracer (ADR-005 core, pyo3-free). The crate is a
+# non-optional dependency so the `#[hotpath::measure]` attributes resolve, but
+# with `default-features = false` it expands to no-op stubs (see hotpath's
+# `lib_off.rs`) — zero compile-time or runtime cost in default builds. Enable
+# the `hotpath` / `hotpath-cpu` / `hotpath-alloc` features below (or in a
+# consumer crate) to turn the macros into real instrumentation.
+hotpath = { version = "^0.21", default-features = false }
 log = { version = "^0.4" }
 parking_lot = { version = "^0.12" }
 rand = { version = "^0.10" }
@@ -42,6 +49,15 @@ serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }
 thiserror = { version = "^2.0" }
 tokio = { version = "^1.52", features = ["rt-multi-thread", "time", "macros", "sync"] }
+
+[features]
+# Drain-path profiling tracer bullet (see `src/profiling.rs`). Enable with
+# `--features hotpath` (timing+threads), `hotpath-cpu` (CPU sampling, Linux/macOS
+# only), or `hotpath-alloc` (allocation accounting). Operationally gated by the
+# `DEGENBOT_HOTPATH=1` env var so default runs never construct the guard.
+hotpath = ["hotpath/hotpath", "hotpath/threads"]
+hotpath-cpu = ["hotpath", "hotpath/hotpath-cpu"]
+hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
 
 [dev-dependencies]
 proptest = "^1.10"

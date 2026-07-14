@@ -4122,6 +4122,7 @@ impl Bot {
     /// Drive one WS log through the event bus (ADR-006 D4). Decode via a
     /// registered decoder, apply to `BotState` under a write guard, release,
     /// then notify subscribers. The pump (slice 5) calls this per log.
+    #[hotpath::measure(impl_type = "Bot")]
     pub fn dispatch_log(&self, log: &alloy::rpc::types::Log) {
         self.dispatcher.dispatch(log, &self.state);
     }

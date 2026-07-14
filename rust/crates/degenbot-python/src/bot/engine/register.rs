@@ -6,9 +6,8 @@
 //! blocks per type, so each concern file contributes one slice.
 
 use super::{
-    mpsc, Arc, Bot, DynamicFeePoolRejectedError, EngineHandle, EngineSubscriber,
-    HookedPoolRejectedError, PoolHop, PyBot, PyList, PyUniswapArbEngine, ReorgCoordinator,
-    SolveCoordinator, UniswapEngine,
+    mpsc, Arc, Bot, DynamicFeePoolRejectedError, EngineHandle, HookedPoolRejectedError, PoolHop,
+    PyBot, PyList, PyUniswapArbEngine, ReorgCoordinator, SolveCoordinator, UniswapEngine,
 };
 use crate::prelude::*;
 
@@ -48,9 +47,18 @@ impl PyUniswapArbEngine {
         // calls to the engine under a `drain_lock` and exposes a
         // drain-consistent `last_processed_block` (Python polls block until
         // any in-flight drain completes — no Rust/Python race).
-        let coordinator = Arc::new(SolveCoordinator::new(vec![EngineHandle::arc_dyn(
-            Arc::clone(&engine),
-        )]));
+        //
+        // The `EngineHandle` is retained on `Self` (not discarded into the
+        // coordinator) so `register_path`/`register_and_solve_path` can draw a
+        // live `Weak<dyn PoolStateSubscriber>` from it via `subscriber_weak()`.
+        // This is the ADR-006 cycle-free home for the strong subscriber: it is
+        // co-owned with the engine `Arc`, so the dispatcher's `Weak::upgrade`
+        // succeeds until the engine actually drops (the fix for the dangling-
+        // Weak bug the 2026-07-14 hotpath capture surfaced).
+        let engine_handle = Arc::new(EngineHandle::new(Arc::clone(&engine)));
+        let coordinator = Arc::new(SolveCoordinator::new(vec![
+            Arc::clone(&engine_handle) as Arc<dyn degenbot_bot::bot_core::engine::Engine>
+        ]));
         let reorg_coordinator = Arc::new(ReorgCoordinator::new(Arc::clone(&bot)));
         let pump = Arc::new(crate::bot::pump::PumpState::new(
             Arc::clone(&engine),
@@ -63,6 +71,7 @@ impl PyUniswapArbEngine {
         }
         Self {
             engine,
+            engine_handle,
             pump,
             result_rx: Arc::new(parking_lot::Mutex::new(Some(result_rx))),
             block_rx: Arc::new(parking_lot::Mutex::new(Some(block_rx))),
@@ -111,7 +120,12 @@ impl PyUniswapArbEngine {
         // severed when `apply_log` was replaced by `dispatch_log` in slice 5).
         // Duplicate pool_ids across paths are harmless (`insert_dirty` is
         // idempotent via `HashSet`).
-        let subscriber = EngineSubscriber::weak_handle(&self.engine);
+        //
+        // The `Weak` is drawn from the retained `EngineHandle` (the
+        // cycle-free strong owner) so `LogDispatcher::notify`'s `upgrade()`
+        // succeeds until the engine drops — the fix for the dangling-Weak bug
+        // (2026-07-14 hotpath capture: 71 notifies → 0 dirties).
+        let subscriber = self.engine_handle.subscriber_weak();
         for pool_id in pool_ids {
             self.pump.bot.attach_engine(pool_id, subscriber.clone());
         }
@@ -156,7 +170,7 @@ impl PyUniswapArbEngine {
             .register_and_solve_path(hops)
             .map_err(pyo3::exceptions::PyValueError::new_err)?;
         // ADR-006 D4: subscribe the engine to each pool_id (see `register_path`).
-        let subscriber = EngineSubscriber::weak_handle(&self.engine);
+        let subscriber = self.engine_handle.subscriber_weak();
         for pool_id in pool_ids {
             self.pump.bot.attach_engine(pool_id, subscriber.clone());
         }

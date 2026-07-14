@@ -11,7 +11,7 @@
 //! taken with no core lock held. `insert_dirty` takes a *read* guard on core
 //! (engine-then-core-read), which is the same order `apply_log` already uses.
 
-use std::sync::{Arc, Weak};
+use std::sync::Weak;
 
 use parking_lot::Mutex;
 
@@ -30,19 +30,13 @@ pub struct EngineSubscriber {
 
 impl EngineSubscriber {
     /// Construct from a weak reference to the shared engine.
+    ///
+    /// The strong `Arc<dyn PoolStateSubscriber>` that keeps the dispatcher's
+    /// `Weak` alive is owned by [`EngineHandle`] (the cycle-free home on the
+    /// engine side, ADR-006) — see `EngineHandle::subscriber_weak`.
     #[must_use]
     pub fn new(engine: Weak<Mutex<UniswapEngine>>) -> Self {
         Self { engine }
-    }
-
-    /// Construct a `Weak<dyn PoolStateSubscriber>` from a strong engine handle,
-    /// the convenience `Bot.attach_engine` callers use.
-    #[must_use]
-    pub fn weak_handle(engine: &Arc<Mutex<UniswapEngine>>) -> Weak<dyn PoolStateSubscriber> {
-        let strong: Arc<dyn PoolStateSubscriber> = Arc::new(Self {
-            engine: Arc::downgrade(engine),
-        });
-        Arc::downgrade(&strong)
     }
 }
 
@@ -64,6 +58,7 @@ impl PoolStateSubscriber for EngineSubscriber {
 mod tests {
     use super::*;
     use crate::solvers::uniswap_engine::UniswapEngine;
+    use std::sync::Arc;
 
     /// RED→GREEN tracer (ADR-006 slice 4): the adapter forwards a notify to
     /// `engine.insert_dirty`, dirtying the pool in the engine's set. The
