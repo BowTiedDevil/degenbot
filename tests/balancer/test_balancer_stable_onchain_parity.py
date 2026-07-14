@@ -49,7 +49,6 @@ from fractions import Fraction
 from typing import TYPE_CHECKING, Any, Self
 
 import pytest
-import web3
 from hexbytes import HexBytes
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import ContractLogicError
@@ -65,6 +64,7 @@ from degenbot.exceptions.pool import EVMRevertError
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.w3_contract import make_contract
 
 if TYPE_CHECKING:
     from degenbot.balancer.stable_pools import BalancerV2StablePool

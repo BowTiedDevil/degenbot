@@ -20,7 +20,8 @@ from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.exceptions.pool import EVMRevertError
 
 if TYPE_CHECKING:
-    from web3.contract import Contract
+    pass
+
 
 # Strategies for generating test inputs
 uint256_strategy = st.integers(min_value=MIN_UINT256, max_value=MAX_UINT256)

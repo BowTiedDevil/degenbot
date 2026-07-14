@@ -4,7 +4,6 @@ from typing import Any
 
 import pydantic_core
 import pytest
-import web3
 
 from degenbot.aerodrome.abi import AERODROME_V2_POOL_ABI
 from degenbot.aerodrome.functions import generate_aerodrome_v2_pool_address
@@ -19,6 +18,7 @@ from degenbot.exceptions.pool import ExternalUpdateError
 from degenbot.provider import AlloyProvider
 from degenbot.uniswap.v3_libraries import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 from tests.helpers.bot_factory import make_bot_with_provider
+from tests.helpers.w3_contract import make_contract
 
 WETH_CONTRACT_ADDRESS = get_checksum_address(
     "0x4200000000000000000000000000000000000006",
@@ -181,10 +181,7 @@ def test_calculation_volatile(fork_base_full: AnvilFork, test_pools: list[Any]):
         max_reserves_token0 = lp.reserves_token0
         max_reserves_token1 = lp.reserves_token1
 
-        w3_contract = web3.Web3(web3.HTTPProvider(fork_base_full.http_url)).eth.contract(
-            address=pool_address,
-            abi=AERODROME_V2_POOL_ABI,
-        )
+        w3_contract = make_contract(fork_base_full.http_url, pool_address, AERODROME_V2_POOL_ABI)
 
         if max_reserves_token1 >= 2:
             for token_mult in token_amount_multipliers:
@@ -257,10 +254,7 @@ def test_calculation_stable(fork_base_full: AnvilFork, test_pools: list[Any]):
         max_reserves_token0 = lp.reserves_token0
         max_reserves_token1 = lp.reserves_token1
 
-        w3_contract = web3.Web3(web3.HTTPProvider(fork_base_full.http_url)).eth.contract(
-            address=pool_address,
-            abi=AERODROME_V2_POOL_ABI,
-        )
+        w3_contract = make_contract(fork_base_full.http_url, pool_address, AERODROME_V2_POOL_ABI)
 
         if max_reserves_token1 >= 2:
             for token_mult in token_amount_multipliers:
@@ -318,8 +312,7 @@ def test_aerodrome_v3_state(fork_base_full: AnvilFork) -> None:
 
 def test_aerodrome_v3_pool_calculation(fork_base_full: AnvilFork) -> None:
 
-    quoter = web3.Web3(web3.HTTPProvider(fork_base_full.http_url)).eth.contract(
-        address=AERODROME_V3_QUOTER_ADDRESS, abi=AERODROME_V3_QUOTER_ABI
+    quoter = make_contract(fork_base_full.http_url, AERODROME_V3_QUOTER_ADDRESS, AERODROME_V3_QUOTER_ABI
     )
     bot = make_bot_with_provider(fork_base_full.provider)
     lp = bot.build_pool("0x98c7A2338336d2d354663246F64676009c7bDa97")

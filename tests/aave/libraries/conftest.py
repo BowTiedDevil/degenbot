@@ -10,13 +10,14 @@ from collections.abc import Generator
 from typing import TYPE_CHECKING
 
 import pytest
-import web3
 
 from degenbot.anvil_fork import AnvilFork
+from degenbot.provider import AlloyProvider
+from tests.helpers.w3_contract import make_contract
 
 if TYPE_CHECKING:
-        from web3.contract import Contract
-
+    pass
+    
 
 def _load_contract_artifact(artifact_path: pathlib.Path) -> dict:
     """Load a compiled contract artifact (ABI + bytecode)."""
@@ -25,34 +26,48 @@ def _load_contract_artifact(artifact_path: pathlib.Path) -> dict:
 
 
 def _deploy_contract(
-    w3: "Web3",
+    provider: AlloyProvider,
     artifact: dict,
     deployer_address: str,
-) -> "Contract":
+) -> W3ContractCompat:
     """Deploy a contract from compiled artifact.
 
     Args:
-        w3: Web3 instance connected to Anvil
+        provider: AlloyProvider connected to Anvil
         artifact: Compiled contract artifact with 'abi' and 'bytecode'
         deployer_address: Address to deploy from (must have ETH)
 
     Returns:
-        Deployed contract instance
+        Deployed contract wrapper instance
 
     """
     bytecode = artifact["bytecode"]["object"]
 
-    # Build and send deployment transaction
-    contract_factory = w3.eth.contract(
-        abi=artifact["abi"],
-        bytecode=bytecode,
+    # Deploy via eth_sendTransaction (Anvil auto-signs for pre-funded accounts)
+    tx_hash = provider.make_request(
+        "eth_sendTransaction",
+        [{"from": deployer_address, "data": "0x" + bytecode if not bytecode.startswith("0x") else bytecode}],
     )
-    tx_hash = contract_factory.constructor().transact({"from": deployer_address})
-    receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
 
-    # Return contract instance at deployed address
-    return w3.eth.contract(
-        address=receipt["contractAddress"],
+    # Wait for receipt
+    receipt = None
+    for _ in range(30):
+        receipt = provider.get_transaction_receipt(tx_hash)
+        if receipt is not None:
+            break
+        import time
+        time.sleep(0.1)
+
+    if receipt is None:
+        msg = f"Contract deployment failed: no receipt for {tx_hash}"
+        raise RuntimeError(msg)
+
+    contract_address = receipt["contractAddress"]
+
+    # Return contract wrapper for read-only calls
+    return make_contract(
+        provider_url=provider.rpc_url,
+        address=contract_address,
         abi=artifact["abi"],
     )
 
@@ -109,10 +124,11 @@ def token_math_wrappers(
         ...     assert result == expected_value
 
     """
-    w3 = web3.Web3(web3.HTTPProvider(standalone_anvil.http_url))
+    provider = standalone_anvil.provider
 
     # Use the first pre-funded Anvil account as deployer
-    deployer = w3.eth.accounts[0]
+    accounts = provider.make_request("eth_accounts", [])
+    deployer = accounts[0]
 
     compiled_dir = pathlib.Path(__file__).parent / "contracts" / ".foundry" / "out"
 
@@ -127,7 +143,7 @@ def token_math_wrappers(
         )
         artifact = _load_contract_artifact(artifact_path)
 
-        contract = _deploy_contract(w3, artifact, deployer)
+        contract = _deploy_contract(provider, artifact, deployer)
         wrappers[revision] = contract
 
     return wrappers

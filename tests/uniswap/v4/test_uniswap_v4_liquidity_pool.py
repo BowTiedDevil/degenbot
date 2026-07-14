@@ -6,9 +6,8 @@ import hypothesis
 import hypothesis.strategies
 import pydantic_core
 import pytest
-import web3
 from hexbytes import HexBytes
-from web3.contract import Contract
+
 from degenbot.exceptions import ContractLogicError
 
 from degenbot.anvil_fork import AnvilFork
@@ -22,6 +21,7 @@ from degenbot.exceptions.pool import (
 from degenbot.provider import AlloyProvider
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from tests.helpers.bot_factory import make_bot_with_provider
+from tests.helpers.w3_contract import make_contract
 
 if TYPE_CHECKING:
     from eth_typing import HexStr
@@ -359,10 +359,7 @@ def test_cached_calculations(
     eth_usdc_v4: UniswapV4Pool,
     fork_mainnet_full: AnvilFork,
 ) -> None:
-    quoter = web3.Web3(web3.HTTPProvider(fork_mainnet_full.http_url)).eth.contract(
-        address=UNISWAP_V4_QUOTER_ADDRESS,
-        abi=UNISWAP_V4_QUOTER_ABI,
-    )
+    quoter = make_contract(fork_mainnet_full.http_url, UNISWAP_V4_QUOTER_ADDRESS, UNISWAP_V4_QUOTER_ABI)
 
     for token_in, token_out in [
         (eth_usdc_v4.token0, eth_usdc_v4.token1),
@@ -414,10 +411,7 @@ def test_first_200_pools(
     fork_mainnet_full: AnvilFork,
     testing_pools,
 ):
-    quoter = web3.Web3(web3.HTTPProvider(fork_mainnet_full.http_url)).eth.contract(
-        address=UNISWAP_V4_QUOTER_ADDRESS,
-        abi=UNISWAP_V4_QUOTER_ABI,
-    )
+    quoter = make_contract(fork_mainnet_full.http_url, UNISWAP_V4_QUOTER_ADDRESS, UNISWAP_V4_QUOTER_ABI)
 
     for pool in testing_pools:
         _test_pool_exact_input(
@@ -443,10 +437,7 @@ def test_first_200_pools_with_snapshot(
     testing_pools,
     liquidity_snapshot,
 ):
-    quoter = web3.Web3(web3.HTTPProvider(fork_mainnet_archive.http_url)).eth.contract(
-        address=UNISWAP_V4_QUOTER_ADDRESS,
-        abi=UNISWAP_V4_QUOTER_ABI,
-    )
+    quoter = make_contract(fork_mainnet_archive.http_url, UNISWAP_V4_QUOTER_ADDRESS, UNISWAP_V4_QUOTER_ABI)
 
     for pool in testing_pools:
         _test_pool_exact_input(
