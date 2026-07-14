@@ -1033,3 +1033,7 @@
 {"type":"claim","ts":"2026-07-14T05:14:18.127506204Z","data":{"id":"354UIY","agent_id":"sonnet@t-3bbc","ts":"2026-07-14T05:14:18.127506204Z"}}
 {"type":"state","ts":"2026-07-14T05:14:18.127506204Z","data":{"id":"354UIY","state":"doing","ts":"2026-07-14T05:14:18.127506204Z"}}
 {"type":"state","ts":"2026-07-14T05:21:06.050179884Z","data":{"id":"354UIY","state":"done","ts":"2026-07-14T05:21:06.050179884Z"}}
+{"type":"claim","ts":"2026-07-14T05:56:27.702267857Z","data":{"id":"4OKTXY","agent_id":"sonnet@t-71d6","ts":"2026-07-14T05:56:27.702267857Z"}}
+{"type":"state","ts":"2026-07-14T05:56:27.702267857Z","data":{"id":"4OKTXY","state":"doing","ts":"2026-07-14T05:56:27.702267857Z"}}
+{"type":"body","ts":"2026-07-14T06:01:07.081118523Z","data":{"id":"4OKTXY","body":"## Result\n- src/degenbot/provider/factory.py: alloy-only factory (web3 branches, _fast_decode_rpc_response, optimize/use_alloy params, DEGENBOT_USE_ALLOY_PROVIDER env switch all deleted). Chain-id now enforced on the alloy path (was a latent skip).\n- tests/provider/test_factory_cascade.py: rewritten for alloy construction + a chain-id mismatch case.\n\nValidation: uv run pytest tests/provider/ tests/test_bot.py tests/test_config_default_chain_id.py tests/rust/test_provider_interface.py tests/rust/test_alloy_provider.py → 196 passed (3 cascade + 193 existing). ruff + ty clean.\n","ts":"2026-07-14T06:01:07.081118523Z"}}
+{"type":"state","ts":"2026-07-14T06:01:07.081118523Z","data":{"id":"4OKTXY","state":"done","ts":"2026-07-14T06:01:07.081118523Z"}}
