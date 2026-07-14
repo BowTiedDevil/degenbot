@@ -11,6 +11,7 @@
 //! [`Provider`]: alloy::providers::Provider
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use alloy::{
     node_bindings::Anvil,
@@ -56,6 +57,14 @@ pub enum MiningMode {
     Interval(u64),
     /// `mining_mode="none"` → `--no-mining --order=fifo`.
     None,
+}
+
+/// Generate a process-unique default IPC socket path so concurrent
+/// `AnvilFork` instances don't collide on `/tmp/anvil.ipc`.
+fn default_ipc_path() -> String {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
+    format!("/tmp/degenbot-anvil-{}-{n}.ipc", std::process::id())
 }
 
 /// Builder for an [`AnvilFork`].
@@ -242,10 +251,14 @@ impl AnvilForkBuilder {
     /// - [`ForkError::Connect`] if the IPC connection fails.
     /// - [`ForkError::Rpc`] if a queued state-override call fails.
     pub async fn try_spawn(self) -> Result<AnvilFork, ForkError> {
-        let ipc_path = self.ipc_path.as_ref().map_or_else(
-            || alloy::node_bindings::anvil::DEFAULT_IPC_ENDPOINT.to_string(),
-            |p| p.to_string_lossy().into_owned(),
-        );
+        // Use a process-unique IPC path by default (avoids `/tmp/anvil.ipc`
+        // collisions when multiple anvil forks spawn concurrently — e.g.
+        // pytest-xdist parallel workers, or multiple `AnvilFork` instances in
+        // one process). Caller-supplied `ipc_path` overrides this.
+        let ipc_path = self
+            .ipc_path
+            .as_ref()
+            .map_or_else(default_ipc_path, |p| p.to_string_lossy().into_owned());
 
         let anvil = self.build_anvil(&ipc_path);
         let instance = anvil
@@ -360,6 +373,28 @@ impl AnvilFork {
     #[must_use]
     pub fn ipc_path(&self) -> &str {
         self.instance.ipc_path()
+    }
+
+    /// HTTP endpoint of the spawned anvil node (e.g. `http://127.0.0.1:PORT`).
+    ///
+    /// Companion shells use this to construct their own `Web3`/`HTTPProvider`
+    /// over the rust-owned subprocess when they cannot use the IPC-bound
+    /// `DynProvider` (e.g. test code still on web3.py contract patterns).
+    #[must_use]
+    pub fn http_url(&self) -> String {
+        self.instance.endpoint()
+    }
+
+    /// WebSocket endpoint of the spawned anvil node (e.g. `ws://127.0.0.1:PORT`).
+    #[must_use]
+    pub fn ws_url(&self) -> String {
+        self.instance.ws_endpoint()
+    }
+
+    /// TCP port the spawned anvil node listens on.
+    #[must_use]
+    pub const fn port(&self) -> u16 {
+        self.instance.port()
     }
 
     /// `evm_mine` — mine a single block.

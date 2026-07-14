@@ -24,7 +24,7 @@ CHAINLINK_WETH_PRICE_FEED = get_checksum_address("0x5f4ec3df9cbd43714fe2740f5e36
 
 @pytest.fixture
 def bot(fork_mainnet_full: AnvilFork) -> Bot:
-    return make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+    return make_bot_with_provider(ProviderAdapter.from_alloy(fork_mainnet_full.provider))
 
 
 @pytest.fixture
@@ -149,8 +149,8 @@ def test_ether_placeholder(fork_mainnet_full: AnvilFork):
     ether = make_ether_placeholder(_PY_BOT, ZERO_ADDRESS)
 
     fake_balance = 69_420_000
-    current_block = fork_mainnet_full.w3.eth.block_number
-    balance_actual = fork_mainnet_full.w3.eth.get_balance(VITALIK_ADDRESS)
+    current_block = fork_mainnet_full.provider.get_block_number()
+    balance_actual = fork_mainnet_full.provider.get_balance(VITALIK_ADDRESS)
     ether.set_cached_balance(VITALIK_ADDRESS, current_block, fake_balance)
     balance_from_cache = ether.get_cached_balance(VITALIK_ADDRESS, current_block)
     assert balance_from_cache == fake_balance

@@ -39,6 +39,7 @@ from fractions import Fraction
 from typing import Any, Self
 
 import pytest
+import web3
 
 from degenbot.aerodrome.abi import AERODROME_V2_POOL_ABI
 from degenbot.aerodrome.pools import AerodromeV2Pool
@@ -202,7 +203,7 @@ def _run_parity(
     with _RecordFork(recording=golden.is_recording) as ctx:
         if golden.is_recording:
             assert ctx.fork is not None
-            ctx.contract = ctx.fork.w3.eth.contract(
+            ctx.contract = web3.Web3(web3.HTTPProvider(ctx.fork.http_url)).eth.contract(
                 address=lp.address,
                 abi=AERODROME_V2_POOL_ABI,
             )

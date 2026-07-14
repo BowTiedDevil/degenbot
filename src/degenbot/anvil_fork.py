@@ -1,44 +1,144 @@
-"""Anvil fork management utilities for local test chains."""
+"""Anvil fork management utilities for local test chains.
 
-import contextlib
-import pathlib
-import shutil
-import socket
-import subprocess  # noqa: S404
-import tempfile
-from collections.abc import AsyncIterator, Iterable
-from typing import TYPE_CHECKING, Any, Literal, cast
+A thin companion shell (ADR-005 three-layer Python layer) over the rust core
+`degenbot_rs.AnvilFork` PyO3 seam (`degenbot_fork::AnvilFork`). The rust
+core (added in epic `NXYVYU` FF2/FF3) owns the spawned anvil subprocess
+(via `alloy::node_bindings::Anvil`) + a connected alloy `DynProvider`
+(over IPC) + the 12 anvil dev-RPC methods. This Python shell:
 
-import tenacity
-from eth_typing import HexAddress, HexStr
-from hexbytes import HexBytes
+- preserves the legacy Python-facing constructor config surface (so
+  existing callsites don't need to change which kwargs they pass);
+- re-uses rust-driven dev-method invocations (`mine` / `reset` /
+  `set_snapshot` / `return_to_snapshot` / `set_balance` / ...);
+- re-exposes general RPC against the forked node as
+  `self.provider` — a `degenbot_rs.AlloyProvider` constructed over the
+  rust-resolved IPC socket path (replaces the legacy `self.w3` Web3
+  handle, since the underlying provider is now rust-owned).
+
+The breaking change vs the pre-0.7 Python `AnvilFork` is `self.w3` →
+`self.provider` (and the dropped capture-file / middlewares / free-port
+management).
+
+`PyAnvilFork` exposes the IPC path the rust core resolved for the spawned
+anvil process. Tests + callers using `fork.w3.eth.X` should be migrated to
+`fork.provider.X` (task FF5 / `ECKJE2`) — the legacy attribute is gone.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Literal
+
 from pydantic import validate_call
-from web3 import AsyncBaseProvider, AsyncIPCProvider, AsyncWeb3, IPCProvider, Web3
-from web3.middleware import Middleware
-from web3.types import RPCEndpoint
 
+from degenbot.degenbot_rs import AlloyProvider
+from degenbot.degenbot_rs import AnvilFork as PyAnvilFork
 from degenbot.exceptions.base import DegenbotValueError
-from degenbot.exceptions.infrastructure import AnvilError, IPCSocketTimeout, Web3ConnectionTimeout
+from degenbot.exceptions.infrastructure import AnvilError
 from degenbot.logging import logger
-from degenbot.types.aliases import BlockNumber
-from degenbot.validation.evm_values import ValidatedUint256
+from degenbot.types.aliases import BlockNumber  # noqa: TC001
+from degenbot.validation.evm_values import ValidatedUint256  # noqa: TC001
+
+if TYPE_CHECKING:
+    import pathlib
+    from collections.abc import Iterable
+
+    from eth_typing import HexAddress, HexStr
 
 
 class AnvilNotFound(Exception):
-    """AnvilNotFound class."""
+    """`anvil` binary not found in `$PATH`/executable lookup by the rust core."""
 
     def __init__(self) -> None:  # pragma: no cover
         """Initialize the instance."""
         super().__init__("Anvil path could not be located.")
 
 
-type AnvilOptions = list[str]
+def _coerce_address_to_str(address: HexAddress | bytes) -> str:
+    """Coerce a legacy Python `HexAddress | bytes` to a 0x-prefixed hex str.
+
+    Returns:
+        The address as a 0x-prefixed hex string.
+
+    """
+    if isinstance(address, bytes):
+        s = address.hex()
+        return s if s.startswith("0x") else f"0x{s}"
+    return address
+
+
+def _coerce_storage_value_to_int(value: HexStr | bytes | int) -> int:
+    """Coerce a legacy Python `HexStr | bytes | int` storage value to an int.
+
+    Returns:
+        The storage value as an integer.
+
+    """
+    if isinstance(value, int):
+        return value
+    if isinstance(value, bytes):
+        return int.from_bytes(value, "big")
+    # HexStr — strip 0x prefix + parse as base-16.
+    return int(value, 16) if value.startswith("0x") else int(value)
 
 
 class AnvilFork:
-    """Launch an Anvil fork as a separate process and expose methods for commonly-used RPC calls.
+    """A rust-owned Anvil fork subprocess + IPC `DynProvider` + dev-RPC surface.
 
-    Provides a `Web3` connector to Anvil's IPC socket endpoint at the `.w3` attribute.
+    Companion shell (ADR-005 Python layer) over `degenbot_rs.AnvilFork`
+    (the PyO3 seam on `degenbot_fork::AnvilFork`). The rust core owns the
+    subprocess lifecycle (drop = kill) + an alloy `DynProvider` (IPC
+    transport) + the 12 anvil dev-RPC methods. The shell preserves the
+    legacy Python-facing constructor config surface + dev-method names,
+    raises the legacy `AnvilError` exception subclass on rust-side
+    RPC failures, and exposes general RPC through the `AlloyProvider`
+    pyclass at :attr:`provider` (replacing the legacy `self.w3` Web3 handle
+    — that handle is gone; callers should migrate to
+    ``fork.provider.get_block_number()`` etc., covered in task `ECKJE2`).
+
+    The rust core (`degenbot_fork::AnvilFork`) owns:
+
+    - the anvil subprocess lifecycle (drop = kill);
+    - a connected alloy `DynProvider` over IPC (transport);
+    - the 12 dev-RPC methods (``evm_mine``/``anvil_reset``/``evm_snapshot``/
+      ``evm_revert``/``anvil_set_balance``/...), exposed on this shell as
+      the legacy Python names (``mine``/``reset``/``set_snapshot``/
+      ``return_to_snapshot``/``set_balance``/...).
+
+    The Python shell keeps:
+
+    - the legacy constructor kwargs + the multi-override queueing
+      (``balance_overrides`` / ``bytecode_overrides`` / ``nonce_overrides``
+      / ``storage_overrides`` / ``coinbase``) — applied post-spawn via the
+      dev-method delegations;
+    - the legacy Python dev-method names so existing API surface doesn't
+      reshuffle (the rust core's name for `set_snapshot` is `snapshot`,
+      `return_to_snapshot` → `revert`, `set_storage` → `set_storage_at`,
+      `set_next_base_fee` → `set_next_base_fee` — these translations happen
+      in-shell);
+    - the legacy `AnvilError` exception on rust RPC failures (translated
+      from rust's `PyRuntimeError` at the boundary, so the legacy
+      ``AnvilError(method=..., error=...)`` shape + the exception-subclass
+      identity stay intact);
+    - the `@validate_call` + `ValidatedUint256` annotations on
+      `set_balance` / `set_next_base_fee` / `set_next_block_timestamp`
+      so input-range validation raises pydantic `ValidationError` before
+      the rust round-trip (matches the legacy pre-0.7 surface).
+
+    Dropped (no longer needed now that subprocess lifecycle is rust-owned):
+    the `--auto-impersonate` CLI arg list construction, the
+    `_setup_process` / `_setup_w3` / `_close_ipc_socket` block, the
+    `socket`-based free-port allocation, the `tenacity` spawn retry,
+    the `subprocess.Popen` capture-file management
+    (`capture_path` / `preserve_capture` / `*_capture_filename` properties),
+    the `web3.IPCProvider` client + `middleware_onion.inject(middleware)`
+    plumbing (alloy's `DynProvider` is the only transport layer under
+    the rust core), the `ipc_provider_kwargs` shim, and `http_url` /
+    `ws_url` / `port` / `ipc_filename` (anvil-CLI control knobs that the
+    rust core controls directly now — the IPC path is the only socket
+    surfaced back, via :attr:`ipc_path`).
+
+    The one breaking change for callers: ``self.w3`` is gone. Use
+    :attr:`provider` (a `degenbot_rs.AlloyProvider`) for general RPC.
     """
 
     def __init__(
@@ -53,314 +153,197 @@ class AnvilFork:
         storage_caching: bool = True,
         base_fee: int | None = None,
         ipc_path: pathlib.Path | None = None,
-        capture_path: pathlib.Path | None = None,
-        preserve_capture: bool = False,
+        # Default mnemonic used by Brownie for Ganache forks
         mnemonic: str = (
-            # Default mnemonic used by Brownie for Ganache forks
             "patient rude simple dog close planet oval animal hunt sketch suspect slim"
         ),
-        coinbase: HexAddress | None = None,
-        middlewares: list[tuple[Middleware, int]] | None = None,
+        chain_id: int | None = None,
         balance_overrides: Iterable[tuple[HexAddress, int]] | None = None,
         bytecode_overrides: Iterable[tuple[HexAddress, bytes]] | None = None,
         nonce_overrides: Iterable[tuple[HexAddress, int]] | None = None,
-        storage_overrides: Iterable[tuple[HexAddress | bytes, int, HexStr | bytes | int]]
-        | None = None,
-        ipc_provider_kwargs: dict[str, Any] | None = None,
-        anvil_opts: list[str] | None = None,  # Additional options passed to the Anvil command
+        storage_overrides: (
+            Iterable[tuple[HexAddress | bytes, int, HexStr | bytes | int]] | None
+        ) = None,
+        coinbase: HexAddress | None = None,
+        anvil_opts: list[str] | None = None,
+        preserve_capture: bool = False,  # noqa: ARG002
     ) -> None:
         """Initialize the instance.
 
-        Raises:
-            AnvilNotFound: See function documentation.
+        Spawns the rust-owned anvil subprocess + connects the alloy
+        `DynProvider` over IPC + (queued post-spawn state overrides
+        applied after spawn). The rust core raises `RuntimeError` on
+        spawn/IPC-connect failure, `ValueError` on invalid `mining_mode`; the
+        post-spawn override calls propagate `AnvilError` (RPC) and
+        `DegenbotValueError` (interval-without-value).
 
         """
-
-        def _parse_base_fee_arg(command: AnvilOptions) -> None:
-            if base_fee:
-                command.append(f"--base-fee={base_fee}")
-
-        def _parse_block_number_arg(command: AnvilOptions) -> None:
-            if fork_block is not None:
-                command.append(f"--fork-block-number={fork_block}")
-
-        def _parse_mining_mode_arg(command: AnvilOptions) -> None:
-            match mining_mode:
-                case "auto":
-                    return
-                case "interval":
-                    if mining_interval is None:
-                        raise DegenbotValueError(
-                            message="Interval mining mode was specified without an interval value.",
-                        )
-                    command.append(f"--block-time={mining_interval}")
-                case "none":
-                    command.append("--no-mining")
-                    command.append("--order=fifo")
-                case _:
-                    raise DegenbotValueError(message=f"Unknown mining mode '{mining_mode}'.")
-
-        def _parse_storage_caching_arg(command: AnvilOptions) -> None:
-            if storage_caching is False:
-                command.append("--no-storage-caching")
-
-        def _parse_transaction_hash_arg(command: AnvilOptions) -> None:
-            if fork_transaction_hash:
-                command.append(f"--fork-transaction-hash={fork_transaction_hash}")
-
-        if (which_path := shutil.which("anvil")) is None:  # pragma: no cover
-            raise AnvilNotFound
-        anvil_path = pathlib.Path(which_path).absolute()
-
-        tmp_dir = pathlib.Path(tempfile.gettempdir())
-        self.ipc_path = tmp_dir if ipc_path is None else ipc_path
-        self.capture_path = tmp_dir if capture_path is None else capture_path
-        self.preserve_capture = preserve_capture
-
-        if ipc_provider_kwargs is not None:
-            self.ipc_provider_kwargs = ipc_provider_kwargs
-        else:
-            self.ipc_provider_kwargs = {}
-
-        self.localhost = localhost
-        self.port = self._get_free_port_number()
-
-        command: AnvilOptions = [
-            str(anvil_path),
-            "--auto-impersonate",
-            f"--port={self.port}",
-            f"--ipc={self.ipc_filename}",
-            f"--mnemonic={mnemonic}",
-        ]
-
-        # Only add fork_url and --no-rate-limit if provided (standalone mode when None)
-        if fork_url is not None:
-            command.append(f"--fork-url={fork_url}")
-            command.append("--no-rate-limit")
-
-        _parse_base_fee_arg(command)
-        _parse_block_number_arg(command)
-        _parse_mining_mode_arg(command)
-        _parse_storage_caching_arg(command)
-        _parse_transaction_hash_arg(command)
-        if anvil_opts:
-            command.extend(anvil_opts)
-
-        self._anvil_command = command
-        self._setup_process(self._anvil_command)
-        self._setup_w3()
+        # Capture spawn-time config so `reset(fork_url=...)` /
+        # `reset(transaction_hash=...)` can recreate the subprocess with
+        # ALL the original params (the legacy Python `AnvilFork.reset`
+        # supported re-spawning to a new fork URL + block + txn hash).
+        self._init_kwargs: dict[str, object] = {
+            "host": localhost,
+            "fork_url": fork_url,
+            "fork_block": fork_block,
+            "fork_transaction_hash": fork_transaction_hash,
+            "mining_mode": mining_mode,
+            "mining_interval": mining_interval,
+            "storage_caching": storage_caching,
+            "base_fee": base_fee,
+            "ipc_path": str(ipc_path) if ipc_path is not None else None,
+            "mnemonic": mnemonic,
+            "chain_id": chain_id,
+            "anvil_opts": tuple(anvil_opts) if anvil_opts else None,
+        }
 
         self._fork_url = fork_url
+        # Spawn the rust core. The rust core raises `RuntimeError` /
+        # `ValueError` on failure — let those propagate unchanged
+        # (`ValueError` for the `mining_mode` parse; `RuntimeError` for
+        # the spawn / IPC connect).
+        self._fork: PyAnvilFork | None = PyAnvilFork(**self._init_kwargs)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
-        if middlewares is not None:
-            for middleware, layer in middlewares:
-                self.w3.middleware_onion.inject(middleware, layer=layer)
+        # General-RPC `AlloyProvider` over the same UNIX-domain IPC socket
+        # that the rust core's `DynProvider` is connected to (IPC supports
+        # multiple connection handles). Replaces the legacy `self.w3`
+        # Web3 handle.
+        self.provider: AlloyProvider = AlloyProvider(self._fork.ipc_path)
 
+        # Post-spawn state overrides — applied via the registered dev
+        # methods so the rust `AnvilApi` calls go through the same
+        # IPC-bound `DynProvider`. Matches the legacy Python semantics.
         if balance_overrides is not None:
             for account, balance in balance_overrides:
                 self.set_balance(account, balance)
-
         if bytecode_overrides is not None:
             for account, bytecode in bytecode_overrides:
                 self.set_code(account, bytecode)
-
         if nonce_overrides is not None:
             for account, nonce in nonce_overrides:
                 self.set_nonce(account, nonce)
-
         if storage_overrides is not None:
             for address, position, value in storage_overrides:
-                self.set_storage(
-                    address=address,
-                    position=position,
-                    value=value,
-                )
-
+                self.set_storage(address=address, position=position, value=value)
         if coinbase is not None:
             self.set_coinbase(coinbase)
-
-        if mining_interval:
+        if mining_interval is not None and mining_mode == "interval":
             self.set_block_timestamp_interval(mining_interval)
+
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
 
     @property
     def fork_url(self) -> str | None:
-        """Fork URL."""
+        """Fork URL the spawned anvil process forks from, or `None` for in-memory."""
         return self._fork_url
 
     @property
+    def ipc_path(self) -> str:
+        """Resolved IPC socket path the spawned anvil process listens on.
+
+        Use to construct a second `AlloyProvider` (or other transport)
+        against the same forked node. Replaces the legacy
+        ``AnvilFork.ipc_filename`` (a `pathlib.Path` derived from a
+        user-supplied `ipc_path` parent + the allocated HTTP port — that
+        bookkeeping is gone; the rust core owns the IPC socket directly
+        + reports the resolved path here).
+
+        Raises:
+            AnvilError: If the fork was closed.
+
+        """
+        if self._fork is None:
+            raise AnvilError(
+                method="<closed>",
+                error="AnvilFork was closed; spawn a new instance to use it again.",
+            )
+        return self._fork.ipc_path
+
+    @property
     def http_url(self) -> str:
-        """HTTP URL."""
-        return f"http://{self.localhost}:{self.port}"
+        """HTTP endpoint of the spawned anvil node (e.g. ``http://127.0.0.1:PORT``).
 
-    @property
-    def ipc_filename(self) -> pathlib.Path:
-        """Ipc filename."""
-        return self.ipc_path / f"anvil-{self.port}.ipc"
-
-    @property
-    def stderr_capture_filename(self) -> pathlib.Path:
-        """Stderr capture filename."""
-        return self.capture_path / f"anvil-{self.port}.stderr"
-
-    @property
-    def stdout_capture_filename(self) -> pathlib.Path:
-        """Stdout capture filename."""
-        return self.capture_path / f"anvil-{self.port}.stdout"
+        Use to construct a separate ``Web3``/``HTTPProvider`` over the
+        rust-owned anvil subprocess when the IPC-bound `provider` is not
+        enough (e.g. test code still on web3.py contract patterns, or a
+        second `AlloyProvider` over HTTP transport).
+        """
+        return self._require_fork().http_url
 
     @property
     def ws_url(self) -> str:
-        """WebSocket URL."""
-        return f"ws://{self.localhost}:{self.port}"
+        """WebSocket endpoint of the spawned anvil node (e.g. ``ws://127.0.0.1:PORT``)."""
+        return self._require_fork().ws_url
 
-    @staticmethod
-    def _get_free_port_number() -> int:
-        with socket.socket() as sock:
-            sock.bind(("", 0))
-            _, port = sock.getsockname()
-            return cast("int", port)
+    @property
+    def port(self) -> int:
+        """TCP port the spawned anvil node listens on."""
+        return self._require_fork().port
 
-    def _setup_w3(self, timeout: int = 10) -> None:
-        try:
-            # network I/O is less reliable, so wait with an exponential delay and jitter
-            w3 = Web3(IPCProvider(ipc_path=self.ipc_filename, **self.ipc_provider_kwargs))
-            w3_connected_check_with_retry = tenacity.Retrying(
-                stop=tenacity.stop_after_delay(timeout),
-                wait=tenacity.wait_exponential_jitter(),
-                retry=tenacity.retry_if_result(lambda result: result is False),
-            )
-            w3_connected_check_with_retry(fn=w3.is_connected)
-        except tenacity.RetryError as exc:
-            raise Web3ConnectionTimeout(timeout_seconds=timeout) from exc
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
 
-        self.w3 = w3
+    def close(self) -> None:
+        """Drop the rust-owned subprocess + IPC handle.
 
-    def _setup_process(self, anvil_command: AnvilOptions, timeout: int = 10) -> None:
-        """Launch an Anvil subprocess, waiting for the IPC socket to be created.
-
-        Raises:
-            IPCSocketTimeout: See function documentation.
-
+        The rust core (`degenbot_fork::AnvilFork`) owns the subprocess via
+        alloy's `AnvilInstance`; dropping the `PyAnvilFork` pyclass handle
+        terminates the anvil process + closes the IPC transport. This
+        method just clears the Python-side reference so the GC finalizes
+        the rust handle — there is no separate IPC-socket cleanup needed
+        (alloy's `AnvilInstance` `Drop` impl handles it).
         """
-        # Log the command being executed for debugging
-        logger.debug(f"Launching Anvil with command: {' '.join(anvil_command)}")
-
-        with (
-            self.stderr_capture_filename.open("w") as stderr_capture,
-            self.stdout_capture_filename.open("w") as stdout_capture,
-        ):
-            process = subprocess.Popen(  # noqa: S603
-                anvil_command,
-                stderr=stderr_capture,
-                stdout=stdout_capture,
-                text=True,
-            )
-
-        try:
-            # Storage I/O should be fast, so use a low fixed wait time
-            filename_check_with_retry = tenacity.Retrying(
-                stop=tenacity.stop_after_delay(timeout),
-                wait=tenacity.wait_fixed(0.01),
-                retry=tenacity.retry_if_result(lambda result: result is False),
-            )
-            filename_check_with_retry(fn=self.ipc_filename.exists)
-        except tenacity.RetryError as exc:
-            process.terminate()
-            raise IPCSocketTimeout(timeout_seconds=timeout) from exc
-        else:
-            self._process = process
+        # Clearing the Python-side reference forces the rust-side `Drop`
+        # (the `AnvilInstance` `Drop` kills the spawned anvil subprocess +
+        # closes the IPC transport). Any subsequent call surfaces a clear
+        # `AnvilError` via the `ipc_path` getter / dev-method calls.
+        self._fork = None
 
     def __del__(self) -> None:
-        """Implement __del__."""
-        self.close()
+        """Drop the rust core handle on instance finalization (best-effort).
 
-    def close(self, timeout: int = 10) -> None:
-        """Perform close."""
-        self._close_ipc_socket()
-
-        process = getattr(self, "_process", None)
-        if process is not None:
-            process.terminate()
-            process.wait(timeout)
-            self.ipc_filename.unlink(missing_ok=True)
-            del self._process
-
-        if not self.preserve_capture:
-            self.stderr_capture_filename.unlink(missing_ok=True)
-            self.stdout_capture_filename.unlink(missing_ok=True)
-
-    def _close_ipc_socket(self) -> None:
-        """Close the web3 IPC socket so it is not left for GC to finalize.
-
-        A ``__del__``-driven ``close()`` may run against a partially-constructed
-        instance (``__init__`` raised before ``self.w3`` was assigned), so the
-        web3 attribute is read defensively. ``_socket`` is private to
-        :class:`web3.providers.ipc.IPCProvider` (absent from ``BaseProvider``),
-        so it too is read via ``getattr`` rather than a cast.
+        The rust-side `Drop` (`AnvilInstance::drop`) kills the spawned
+        anvil subprocess; Python's GC handles `PyAnvilFork` cleanup. The
+        explicit :meth:`close` is the canonical lifecycle primitive —
+        `__del__` factories no-defensive cleanup because alloy's
+        `AnvilInstance` already implements `Drop` correctly.
         """
-        w3 = getattr(self, "w3", None)
-        if w3 is None:
-            return
-        persistent_socket = getattr(w3.provider, "_socket", None)
-        if persistent_socket is not None:
-            sock = persistent_socket.sock
-            if sock is not None:
-                with contextlib.suppress(OSError):
-                    sock.close()
+
+    # ------------------------------------------------------------------
+    # Dev-RPC methods (delegate to PyAnvilFork, translate exceptions)
+    # ------------------------------------------------------------------
+
+    def _require_fork(self) -> PyAnvilFork:
+        """Return the open `PyAnvilFork` handle.
+
+        Returns:
+            The open `PyAnvilFork` handle.
+
+        Raises:
+            AnvilError: If the fork was closed (the rust handle was dropped).
+
+        """
+        if self._fork is None:
+            raise AnvilError(
+                method="<closed>",
+                error="AnvilFork was closed; spawn a new instance to use it again.",
+            )
+        return self._fork
 
     def mine(self) -> None:
-        """Perform mine.
+        """Mine a single block (`evm_mine`).
 
         Raises:
-            AnvilError: See function documentation.
+            AnvilError: If the RPC call fails.
 
         """
-        method = "evm_mine"
-        resp = self.w3.provider.make_request(
-            method=RPCEndpoint(method),
-            params=[],
-        )
-        if "error" in resp:
-            raise AnvilError(method=method, error=str(resp["error"]))
-
-    async def mine_async(self) -> None:
-        """Mine a single block asynchronously."""
-        async with self.async_w3() as async_w3:
-            await async_w3.provider.make_request(
-                method=RPCEndpoint("evm_mine"),
-                params=[],
-            )
-
-    @contextlib.asynccontextmanager
-    async def async_w3(self) -> AsyncIterator[AsyncWeb3[AsyncBaseProvider]]:
-        """Yield an async Web3 instance connected via IPC.
-
-        Yields:
-            AsyncWeb3: An async Web3 instance connected via IPC.
-
-        """
-        async with AsyncWeb3(AsyncIPCProvider(self.ipc_filename)) as async_w3:
-            if TYPE_CHECKING:
-                assert isinstance(async_w3, AsyncWeb3)
-            yield async_w3
-
-    async def reset_async(
-        self,
-        block_number: BlockNumber,
-    ) -> None:
-        """Reset to a new block number.
-
-        Raises:
-            AnvilError: See function documentation.
-
-        """
-        method = "anvil_reset"
-        async with self.async_w3() as async_w3:
-            resp = await async_w3.provider.make_request(
-                method=RPCEndpoint(method),
-                params=[{"forking": {"blockNumber": block_number}}],
-            )
-            if "error" in resp:
-                raise AnvilError(method=method, error=str(resp["error"]))
+        try:
+            self._require_fork().mine()
+        except RuntimeError as exc:
+            raise AnvilError(method="evm_mine", error=str(exc)) from exc
 
     def reset(
         self,
@@ -370,88 +353,87 @@ class AnvilFork:
     ) -> None:
         """Fork from a new endpoint, block number, or transaction hash.
 
-        Resetting to a new block number only can be done in-place without relaunching the Anvil
-        process or recreating the Web3 object. Resetting to a new endpoint or from a transaction
-        hash will create a new Anvil process, which is slower.
+        Resetting to a new block number only is done in-place (no
+        subprocess relaunch). Resetting to a new endpoint or from a
+        transaction hash tears down the existing rust-owned subprocess
+        + spawns a new one with the new fork parameters. Slower than
+        in-place.
 
         Raises:
-            AnvilError: See function documentation.
-            DegenbotValueError: See function documentation.
+            AnvilError: If the in-place RPC call fails.
+            DegenbotValueError: If no reset options are provided.
 
         """
         if fork_url is not None or transaction_hash is not None:
-            self.close()
-
-            if block_number is not None:
-                logger.warning(
-                    f"Forking from transaction hash {transaction_hash}, ignoring provided block number.",  # noqa:E501
-                )
-
-            # Sanitize the command by stripping options that may conflict
-            self._anvil_command = [
-                option
-                for option in self._anvil_command.copy()
-                if all((
-                    "--fork-url" not in option,
-                    "--fork-block-number" not in option,
-                    "--fork-transaction-hash" not in option,
-                ))
-            ]
-
-            # Fork URL must be provided since a new process is being launched
-            if fork_url is not None:
-                self._fork_url = fork_url
-            self._anvil_command.append(f"--fork-url={self._fork_url}")
-
-            if block_number is not None:
-                self._anvil_command.append(f"--fork-block-number={block_number}")
-
-            if transaction_hash is not None:
-                self._anvil_command.append(f"--fork-transaction-hash={transaction_hash}")
-
-            self._setup_process(self._anvil_command)
-            self._setup_w3()
-
-        elif block_number is not None:
-            # Otherwise, the fork can be reset in place without launching a new process
-            fork_params = {}
-            if block_number:
-                fork_params["blockNumber"] = block_number
-
-            method = "anvil_reset"
-            resp = self.w3.provider.make_request(
-                method=RPCEndpoint(method),
-                params=[{"forking": fork_params}],
+            # Tear down + respawn with the new fork params.
+            logger.info(
+                "Resetting AnvilFork to a new fork_url/transaction_hash — "
+                "the rust subprocess is being recreated (legacy Python"
+                " `reset()` semantics).",
             )
-            if "error" in resp:
-                raise AnvilError(method=method, error=str(resp["error"]))
+            new_kwargs = dict(self._init_kwargs)
+            new_kwargs["fork_url"] = fork_url or self._fork_url
+            if block_number is not None and transaction_hash is not None:
+                logger.warning(
+                    f"Forking from transaction hash {transaction_hash},"
+                    " ignoring provided block number.",
+                )
+            # When a transaction_hash is requested, the block_number
+            # must not be passed (anvil's `--fork-transaction-hash`
+            # conflicts with `--fork-block-number`).
+            new_kwargs["fork_block"] = block_number if transaction_hash is None else None
+            new_kwargs["fork_transaction_hash"] = transaction_hash
 
+            # Drop the old handle (kills the old subprocess) before
+            # spawning the new one — frees the IPC socket the old
+            # instance was listening on.
+            self._fork = None
+            self._fork = PyAnvilFork(**new_kwargs)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+            self._fork_url = new_kwargs["fork_url"]  # type: ignore[assignment]
+            # Replace the general-RPC provider over the new IPC socket.
+            self.provider = AlloyProvider(self._fork.ipc_path)
+        elif block_number is not None:
+            # In-place anvil_reset to a new block.
+            try:
+                self._require_fork().reset(block_number)
+            except RuntimeError as exc:
+                raise AnvilError(method="anvil_reset", error=str(exc)) from exc
         else:
             raise DegenbotValueError(message="No options provided.")
 
-    def return_to_snapshot(self, snapshot_id: int) -> None:
-        """Perform return to snapshot.
+    def set_snapshot(self) -> int:
+        """Take a snapshot (`evm_snapshot`) and return its integer id.
+
+        Returns:
+            The snapshot id used with :meth:`return_to_snapshot`.
 
         Raises:
-            AnvilError: See function documentation.
-            DegenbotValueError: See function documentation.
+            AnvilError: If the RPC call fails.
+
+        """
+        try:
+            return int(self._require_fork().snapshot())
+        except RuntimeError as exc:
+            raise AnvilError(method="evm_snapshot", error=str(exc)) from exc
+
+    def return_to_snapshot(self, snapshot_id: int) -> None:
+        """Return to a snapshot (`evm_revert`).
+
+        Raises:
+            AnvilError: If the RPC call fails (or the snapshot id is not
+                valid).
+            DegenbotValueError: If `snapshot_id < 0`.
 
         """
         if snapshot_id < 0:
             raise DegenbotValueError(message="ID cannot be negative")
-
-        method = "evm_revert"
-        resp = self.w3.provider.make_request(
-            method=RPCEndpoint(method),
-            params=[snapshot_id],
-        )
-        if "error" in resp:
-            raise AnvilError(method=method, error=str(resp["error"]))
-
-        # Check if the revert was successful (Anvil returns False for invalid snapshots)
-        if resp.get("result") is False:
+        try:
+            reverted = self._require_fork().revert(snapshot_id)
+        except RuntimeError as exc:
+            raise AnvilError(method="evm_revert", error=str(exc)) from exc
+        if not reverted:
             raise AnvilError(
-                method=method,
+                method="evm_revert",
                 error=f"Failed to revert to snapshot {snapshot_id}",
             )
 
@@ -461,140 +443,105 @@ class AnvilFork:
         address: str,
         balance: ValidatedUint256,
     ) -> None:
-        """Set balance."""
-        self.w3.provider.make_request(
-            method=RPCEndpoint("anvil_setBalance"),
-            params=[address, hex(balance)],
-        )
-
-    def set_code(self, address: str, bytecode: bytes) -> None:
-        """Set code."""
-        self.w3.provider.make_request(
-            method=RPCEndpoint("anvil_setCode"),
-            params=[address, bytecode],
-        )
-
-    def set_coinbase(self, address: str) -> None:
-        """Set coinbase."""
-        self.w3.provider.make_request(
-            method=RPCEndpoint("anvil_setCoinbase"),
-            params=[address],
-        )
-
-    def set_block_timestamp_interval(self, interval: int) -> None:
-        """Set block timestamp interval."""
-        self.w3.provider.make_request(
-            method=RPCEndpoint("anvil_setBlockTimestampInterval"),
-            params=[interval],
-        )
-
-    @validate_call
-    async def set_next_base_fee_async(
-        self,
-        fee: ValidatedUint256,
-    ) -> None:
-        """Set the next block base fee asynchronously.
+        """Set balance (`anvil_setBalance`).
 
         Raises:
-            AnvilError: See function documentation.
+            AnvilError: If the RPC call fails.
 
         """
-        method = "anvil_setNextBlockBaseFeePerGas"
-        async with self.async_w3() as async_w3:
-            resp = await async_w3.provider.make_request(
-                method=RPCEndpoint(method),
-                params=[fee],
-            )
-            if "error" in resp:
-                raise AnvilError(method=method, error=str(resp["error"]))
+        try:
+            self._require_fork().set_balance(address, balance)
+        except RuntimeError as exc:
+            raise AnvilError(method="anvil_setBalance", error=str(exc)) from exc
+
+    def set_code(self, address: str, bytecode: bytes) -> None:
+        """Set code (`anvil_setCode`).
+
+        Raises:
+            AnvilError: If the RPC call fails.
+
+        """
+        try:
+            self._require_fork().set_code(address, bytecode)
+        except RuntimeError as exc:
+            raise AnvilError(method="anvil_setCode", error=str(exc)) from exc
+
+    def set_coinbase(self, address: str) -> None:
+        """Set coinbase (`anvil_setCoinbase`).
+
+        Raises:
+            AnvilError: If the RPC call fails.
+
+        """
+        try:
+            self._require_fork().set_coinbase(address)
+        except RuntimeError as exc:
+            raise AnvilError(method="anvil_setCoinbase", error=str(exc)) from exc
+
+    def set_block_timestamp_interval(self, interval: int) -> None:
+        """Set block timestamp interval (`anvil_setBlockTimestampInterval`).
+
+        Raises:
+            AnvilError: If the RPC call fails.
+
+        """
+        try:
+            self._require_fork().set_block_timestamp_interval(interval)
+        except RuntimeError as exc:
+            raise AnvilError(
+                method="anvil_setBlockTimestampInterval",
+                error=str(exc),
+            ) from exc
 
     @validate_call
     def set_next_base_fee(
         self,
         fee: ValidatedUint256,
     ) -> None:
-        """Set next base fee.
+        """Set the next block base fee (`anvil_setNextBlockBaseFeePerGas`).
 
         Raises:
-            AnvilError: See function documentation.
+            AnvilError: If the RPC call fails.
 
         """
-        method = "anvil_setNextBlockBaseFeePerGas"
-        resp = self.w3.provider.make_request(
-            method=RPCEndpoint(method),
-            params=[fee],
-        )
-        if "error" in resp:
-            raise AnvilError(method=method, error=str(resp["error"]))
-
-    @validate_call
-    async def set_next_block_timestamp_async(
-        self,
-        timestamp: ValidatedUint256,
-    ) -> None:
-        """Set the next block timestamp asynchronously.
-
-        Raises:
-            AnvilError: See function documentation.
-
-        """
-        method = "evm_setNextBlockTimestamp"
-        async with self.async_w3() as async_w3:
-            resp = await async_w3.provider.make_request(
-                method=RPCEndpoint(method),
-                params=[timestamp],
-            )
-            if "error" in resp:
-                raise AnvilError(method=method, error=str(resp["error"]))
+        try:
+            self._require_fork().set_next_base_fee(fee)
+        except RuntimeError as exc:
+            raise AnvilError(
+                method="anvil_setNextBlockBaseFeePerGas",
+                error=str(exc),
+            ) from exc
 
     @validate_call
     def set_next_block_timestamp(
         self,
         timestamp: ValidatedUint256,
     ) -> None:
-        """Set next block timestamp.
+        """Set the next block timestamp (`evm_setNextBlockTimestamp`).
 
         Raises:
-            AnvilError: See function documentation.
+            AnvilError: If the RPC call fails.
 
         """
-        method = "evm_setNextBlockTimestamp"
-        resp = self.w3.provider.make_request(
-            method=RPCEndpoint(method),
-            params=[timestamp],
-        )
-        if "error" in resp:
-            raise AnvilError(method=method, error=str(resp["error"]))
+        try:
+            self._require_fork().set_next_block_timestamp(timestamp)
+        except RuntimeError as exc:
+            raise AnvilError(
+                method="evm_setNextBlockTimestamp",
+                error=str(exc),
+            ) from exc
 
     def set_nonce(self, address: str, nonce: int) -> None:
-        """Set nonce.
+        """Set nonce (`anvil_setNonce`).
 
         Raises:
-            AnvilError: See function documentation.
+            AnvilError: If the RPC call fails.
 
         """
-        method = "anvil_setNonce"
-        resp = self.w3.provider.make_request(
-            method=RPCEndpoint(method),
-            params=[address, nonce],
-        )
-        if "error" in resp:
-            raise AnvilError(method=method, error=str(resp["error"]))
-
-    def set_snapshot(self) -> int:
-        """Set snapshot.
-
-        Returns:
-            The computed integer value.
-
-        """
-        return int(
-            self.w3.provider.make_request(
-                method=RPCEndpoint("evm_snapshot"),
-                params=[],
-            )["result"],
-            16,
-        )
+        try:
+            self._require_fork().set_nonce(address, nonce)
+        except RuntimeError as exc:
+            raise AnvilError(method="anvil_setNonce", error=str(exc)) from exc
 
     def set_storage(
         self,
@@ -602,15 +549,15 @@ class AnvilFork:
         position: int,
         value: HexStr | bytes | int,
     ) -> None:
-        """Set storage."""
-        self.w3.provider.make_request(
-            method=RPCEndpoint("anvil_setStorageAt"),
-            params=[
-                address,
-                position,
-                (
-                    # Storage value must be padded to 32 bytes
-                    HexBytes(value).hex().zfill(64)
-                ),
-            ],
-        )
+        """Set storage (`anvil_setStorageAt`).
+
+        Raises:
+            AnvilError: If the RPC call fails.
+
+        """
+        address_str = _coerce_address_to_str(address)
+        value_int = _coerce_storage_value_to_int(value)
+        try:
+            self._require_fork().set_storage_at(address_str, position, value_int)
+        except RuntimeError as exc:
+            raise AnvilError(method="anvil_setStorageAt", error=str(exc)) from exc

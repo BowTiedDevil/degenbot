@@ -188,7 +188,6 @@ def golden_factory(request: pytest.FixtureRequest):
 def fork_arbitrum_full() -> Generator[AnvilFork, None, None]:
     fork = AnvilFork(
         fork_url=ARBITRUM_FULL_NODE_HTTP_URI,
-        ipc_provider_kwargs={"timeout": None},
         storage_caching=False,
         anvil_opts=["--accounts=0"],
     )
@@ -212,7 +211,6 @@ def fork_base_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork, No
         fork_url=BASE_ARCHIVE_NODE_HTTP_URI,
         storage_caching=True,
         fork_block=block_number,
-        ipc_provider_kwargs={"timeout": None},
         anvil_opts=["--accounts=0", "--optimism"],
     )
     yield fork
@@ -246,7 +244,6 @@ def fork_mainnet_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork,
         fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
         storage_caching=True,
         fork_block=block_number,
-        ipc_provider_kwargs={"timeout": None},
         anvil_opts=["--accounts=0"],
     )
     yield fork
@@ -257,7 +254,6 @@ def fork_mainnet_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork,
 def fork_mainnet_full() -> Generator[AnvilFork, None, None]:
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
-        ipc_provider_kwargs={"timeout": None},
         storage_caching=False,
         anvil_opts=["--accounts=0"],
     )
@@ -268,7 +264,7 @@ def fork_mainnet_full() -> Generator[AnvilFork, None, None]:
 @pytest.fixture
 def bot_mainnet_full(fork_mainnet_full: AnvilFork) -> Generator[Bot, None, None]:
     """Provide a Bot with the mainnet full fork's provider registered."""
-    provider = ProviderAdapter.from_web3(fork_mainnet_full.w3)
+    provider = ProviderAdapter.from_alloy(fork_mainnet_full.provider)
     bot = make_bot_with_provider(provider)
     yield bot
     bot.close()
@@ -277,7 +273,7 @@ def bot_mainnet_full(fork_mainnet_full: AnvilFork) -> Generator[Bot, None, None]
 @pytest.fixture
 def bot_mainnet_archive(fork_mainnet_archive: AnvilFork) -> Generator[Bot, None, None]:
     """Provide a Bot with the mainnet archive fork's provider registered."""
-    provider = ProviderAdapter.from_web3(fork_mainnet_archive.w3)
+    provider = ProviderAdapter.from_alloy(fork_mainnet_archive.provider)
     bot = make_bot_with_provider(provider)
     yield bot
     bot.close()

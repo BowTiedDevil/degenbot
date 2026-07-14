@@ -48,6 +48,7 @@ from contextlib import AbstractContextManager
 from typing import Any, Self
 
 import pytest
+import web3
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
@@ -301,7 +302,7 @@ def test_cached_calculations_v3_wbtc_weth(golden_factory) -> None:
     with _RecordFork(recording=golden.is_recording) as ctx:
         if golden.is_recording:
             assert ctx.fork is not None
-            ctx.contract = ctx.fork.w3.eth.contract(
+            ctx.contract = web3.Web3(web3.HTTPProvider(ctx.fork.http_url)).eth.contract(
                 address=UNISWAP_V3_QUOTER_ADDRESS,
                 abi=_QUOTER_ABI,
             )
