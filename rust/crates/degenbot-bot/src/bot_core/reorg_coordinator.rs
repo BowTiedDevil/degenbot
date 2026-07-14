@@ -105,6 +105,16 @@ impl ReorgCoordinator {
         // `restore_pool_before_block` released the write guard internally;
         // notify subscribers (engine dirties + re-solves at the next drain
         // tick; no separate reorg path in the engine).
+        //
+        // Visible per-pool unwind signal: confirms the coordinator did work —
+        // without this the only observable symptom was a cancelled publish,
+        // which leaves "duplicate block" indistinguishable from a reorg vs.
+        // an unreliable-WS duplication. `warn!` (not `info!`) because a chain
+        // reorg is an operator-actionable event, not routine traffic.
+        log::warn!(
+            "ReorgCoordinator: restored pool {pool_id} to its pre-block-{block} \
+             state + notified subscribers"
+        );
         bot.notify_pool_state_updated(pool_id);
         Ok(())
     }

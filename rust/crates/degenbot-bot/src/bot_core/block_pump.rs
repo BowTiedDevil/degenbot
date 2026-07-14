@@ -721,10 +721,19 @@ impl BlockPump {
                     // tombstone (first removed:false log for N+1), a reorg
                     // signal, or an unreliable-WS late forward (→ shutdown).
                     match clock.observe_log(log_block, log.removed) {
-                        LogDecision::EnterReorg(_) | LogDecision::ContinueReorg => {
+                        LogDecision::EnterReorg(reorg_block) => {
                             // Reorg: per-event per-pool restore via the
                             // coordinator (ADR-006 slice 7). A too-deep reorg
-                            // → graceful shutdown.
+                            // → graceful shutdown. The previous block was
+                            // tombstoned; this `removed: true` log reopens it.
+                            // Visible operator signal so an unwind is no longer
+                            // silent — the prior success path logged nothing,
+                            // making a duplicate block log ambiguous (reorg
+                            // vs. WS duplication).
+                            log::warn!(
+                                "BlockPump: chain reorg detected at block \
+                                 {reorg_block} (removed log) — entering unwind path"
+                            );
                             if let Err(err) = self.reorg_coordinator.dispatch_reorg_log(&log) {
                                 log::error!("BlockPump: too-deep reorg — shutting down. {err:?}");
                                 self.shutdown.store(true, Ordering::Relaxed);
@@ -735,10 +744,31 @@ impl BlockPump {
                             publish_pending = false;
                             continue;
                         }
+                        LogDecision::ContinueReorg => {
+                            // Subsequent removed: true log in the same window —
+                            // restore another pool at `log_block`. Trailing the
+                            // first event lets the operator correlate successive
+                            // unwinds in the same reorg.
+                            log::warn!(
+                                "BlockPump: reorg continues — restoring pool for \
+                                 removed log at block {log_block}"
+                            );
+                            if let Err(err) = self.reorg_coordinator.dispatch_reorg_log(&log) {
+                                log::error!("BlockPump: too-deep reorg — shutting down. {err:?}");
+                                self.shutdown.store(true, Ordering::Relaxed);
+                                return;
+                            }
+                            publish_pending = false;
+                            continue;
+                        }
                         LogDecision::CloseReorg { new_head } => {
                             // Reorg window closed — the coordinator restored
                             // unwound pools per-event; this forward log's block
                             // is the new head. Resume forward tracking from it.
+                            log::info!(
+                                "BlockPump: reorg window closed — resuming \
+                                 forward tracking from block {new_head}"
+                            );
                             current_block = new_head;
                             publish_pending = false;
                             // Fall through to dispatch this forward log.
