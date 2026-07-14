@@ -109,10 +109,12 @@ pub fn compute_int_mobius_coefficients(
     }
 
     let first = &hops[0];
-    // Recompute U512 from the pub fields (not the private `_u512` cache, which
-    // is an internal hot-path optimization of `IntHopState::swap` living in
-    // `degenbot-v2-math`). Each hop is read once here, so the reconversion is
-    // negligible; this keeps v2-math's public API to `new`/`swap`/pub fields.
+    // Widen the per-hop U256 fields to U512 for the matrix recurrence.
+    // `IntHopState` holds `reserve_in`/`reserve_out`/`gamma_numer`/`fee_denom`
+    // as `U256` (the swap-math width); this recurrence needs the wider `U512`
+    // to avoid overflow across multi-hop compositions. `U512::from(U256)` is
+    // the cross-width widening (a widened copy of the limbs); each hop is read
+    // once here, so the cost is one widening per hop.
     let gn0 = U512::from(first.gamma_numer);
     let fd0 = U512::from(first.fee_denom);
     let r0 = U512::from(first.reserve_in);
