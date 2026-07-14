@@ -213,8 +213,8 @@ class TestBotBuildV2Pool:
         token0_encoded = eth_abi.abi.encode(types=["address"], args=[weth_addr])
         token1_encoded = eth_abi.abi.encode(types=["address"], args=[usdc_addr])
         reserves_encoded = eth_abi.abi.encode(
-            types=["uint256", "uint256"],
-            args=[1000 * 10**18, 2_000_000 * 10**6],
+            types=["uint112", "uint112", "uint32"],
+            args=[1000 * 10**18, 2_000_000 * 10**6, 0],
         )
 
         # The bot's build_pool will call provider.call() 4 times for:
@@ -361,8 +361,8 @@ class TestV2PoolTrackerWithBot:
                 return call_responses[data]
             if data == reserves_calldata:
                 return eth_abi.abi.encode(
-                    types=["uint256", "uint256"],
-                    args=[1000 * 10**18, 2_000_000 * 10**6],
+                    types=["uint112", "uint112", "uint32"],
+                    args=[1000 * 10**18, 2_000_000 * 10**6, 0],
                 )
             msg = f"Unexpected call with data={data!r}"
             raise ValueError(msg)
