@@ -235,3 +235,51 @@ class TestProviderDefaults:
         sig = inspect.signature(alloy_provider.get_storage_at)
         default = sig.parameters["block_number"].default
         assert default is None
+
+
+class TestAlloyProviderRevertRaisesContractLogicError:
+    """eth_call execution reverts raise degenbot.exceptions.ContractLogicError.
+
+    Replaces the Python adapter-seam string-scraping (alloy_errors): the Rust
+    core classifies reverts as ProviderError::ExecutionReverted, and the FFI
+    layer raises the degenbot-owned ContractLogicError directly. Probe sites
+    catch RpcError (the base class) to mean "method not implemented."
+    """
+
+    WETH9 = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+
+    @staticmethod
+    def _revert_calldata() -> bytes:
+        """Calldata for WETH9.withdraw(uint256) with an impossibly large amount.
+
+        The zero-address caller has no WETH balance, so the call reverts with
+        "execution reverted" — a reliable, portable revert trigger.
+        """
+        import eth_abi
+
+        selector = bytes.fromhex("2e1a7d4d")  # withdraw(uint256)
+        return selector + eth_abi.encode(["uint256"], [2**255])
+
+    def test_sync_call_revert_raises_contract_logic_error(self, alloy_provider):
+        """AlloyProvider.call raises ContractLogicError on an EVM revert."""
+        from degenbot.exceptions import ContractLogicError
+
+        with pytest.raises(ContractLogicError, match="reverted"):
+            alloy_provider.call(self.WETH9, self._revert_calldata())
+
+    def test_sync_call_revert_is_catchable_as_rpc_error(self, alloy_provider):
+        """ContractLogicError is a subclass of RpcError (probe-site contract)."""
+        from degenbot.exceptions import RpcError
+
+        with pytest.raises(RpcError):
+            alloy_provider.call(self.WETH9, self._revert_calldata())
+
+    @pytest.mark.asyncio
+    async def test_async_call_revert_raises_contract_logic_error(self, alloy_provider):
+        """AsyncAlloyProvider.call raises ContractLogicError on an EVM revert."""
+        from degenbot.degenbot_rs import AsyncAlloyProvider
+        from degenbot.exceptions import ContractLogicError
+
+        async_alloy = await AsyncAlloyProvider.create(alloy_provider.rpc_url)
+        with pytest.raises(ContractLogicError, match="reverted"):
+            await async_alloy.call(self.WETH9, self._revert_calldata())
