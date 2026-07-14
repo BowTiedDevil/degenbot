@@ -80,6 +80,7 @@ pub mod curve_state;
 #[allow(clippy::doc_markdown)]
 pub mod int_v3_hop;
 pub mod liquidity_event;
+pub mod liquidity_event_buffer;
 pub mod rate_provider;
 pub mod registry;
 pub mod simulate_swap;
