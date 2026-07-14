@@ -46,4 +46,4 @@
 //! (+ `new` / `swap`), [`SimulationResult`], and [`int_simulate_path`].
 
 pub mod hop_state;
-pub use hop_state::{int_simulate_path, IntHopState, SimulationResult};
+pub use hop_state::{int_simulate_path, HopSwapError, IntHopState, SimulationResult};

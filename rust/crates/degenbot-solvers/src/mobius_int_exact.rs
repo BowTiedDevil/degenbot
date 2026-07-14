@@ -138,14 +138,16 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
         // when the profit is vanishingly small (K/M ≈ 1).
         // Try a small input to detect micro-profits.
         let sim = int_simulate_path(U256::from(1u64), hops);
-        if sim.final_output > U256::from(1u64) {
-            return Ok(ExactMobiusResult {
-                optimal_input: U256::from(1u64),
-                profit: sim.final_output - U256::from(1u64),
-                is_profitable: true,
-                used_closed_form: false,
-                hop_outputs: sim.hop_outputs,
-            });
+        if let Ok(sim) = sim {
+            if sim.final_output > U256::from(1u64) {
+                return Ok(ExactMobiusResult {
+                    optimal_input: U256::from(1u64),
+                    profit: sim.final_output - U256::from(1u64),
+                    is_profitable: true,
+                    used_closed_form: false,
+                    hop_outputs: sim.hop_outputs,
+                });
+            }
         }
         return Ok(ExactMobiusResult {
             optimal_input: U256::ZERO,
@@ -172,7 +174,11 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
             continue;
         }
 
-        let sim = int_simulate_path(candidate, hops);
+        let Ok(sim) = int_simulate_path(candidate, hops) else {
+            // Candidate's swap reverts on-chain (uint256 overflow) →
+            // not a viable arb input; skip.
+            continue;
+        };
 
         if sim.final_output > candidate {
             let profit = sim.final_output - candidate;
@@ -443,7 +449,9 @@ mod tests {
         assert!(!result.profit.is_zero());
 
         // Verify EVM-exact: simulate at optimal_input
-        let output = int_simulate_path(result.optimal_input, &hops).final_output;
+        let output = int_simulate_path(result.optimal_input, &hops)
+            .unwrap()
+            .final_output;
         assert!(output > result.optimal_input);
         assert_eq!(output - result.optimal_input, result.profit);
     }
@@ -470,7 +478,7 @@ mod tests {
             if candidate.is_zero() {
                 continue;
             }
-            let output = int_simulate_path(candidate, &hops).final_output;
+            let output = int_simulate_path(candidate, &hops).unwrap().final_output;
             if output > candidate {
                 let profit = output - candidate;
                 assert!(
@@ -580,7 +588,9 @@ mod tests {
         // These pools barely disagree — fees may eat all profit
         // Just verify no panic and result is consistent
         if result.is_profitable {
-            let output = int_simulate_path(result.optimal_input, &hops).final_output;
+            let output = int_simulate_path(result.optimal_input, &hops)
+                .unwrap()
+                .final_output;
             assert!(output > result.optimal_input);
             assert_eq!(output - result.optimal_input, result.profit);
         }
@@ -656,7 +666,7 @@ mod proptests {
             ];
             let result = exact_mobius_solve(&hops).unwrap();
             if result.is_profitable {
-                let output = int_simulate_path(result.optimal_input, &hops).final_output;
+                let output = int_simulate_path(result.optimal_input, &hops).unwrap().final_output;
                 assert!(output > result.optimal_input);
                 assert_eq!(output - result.optimal_input, result.profit);
             }
@@ -682,11 +692,11 @@ mod proptests {
         assert_eq!(result.hop_outputs.len(), 2);
 
         // Invariant: hop_outputs[0] = hops[0].swap(optimal_input)
-        let expected_hop1 = hops[0].swap(result.optimal_input);
+        let expected_hop1 = hops[0].swap(result.optimal_input).unwrap();
         assert_eq!(result.hop_outputs[0], expected_hop1);
 
         // Invariant: hop_outputs[1] = hops[1].swap(hop_outputs[0])
-        let expected_hop2 = hops[1].swap(expected_hop1);
+        let expected_hop2 = hops[1].swap(expected_hop1).unwrap();
         assert_eq!(result.hop_outputs[1], expected_hop2);
 
         // Invariant: profit = final_output - optimal_input

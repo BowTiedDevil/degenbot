@@ -839,8 +839,11 @@ fn int_simulate_v2_hops(amount_in: U256, v2_hops: &[IntHopState]) -> U256 {
         if current.is_zero() {
             return U256::ZERO;
         }
-        current =
-            degenbot_v2_math::int_simulate_path(current, std::slice::from_ref(hop)).final_output;
+        current = match degenbot_v2_math::int_simulate_path(current, std::slice::from_ref(hop)) {
+            Ok(r) => r.final_output,
+            // V2 hop overflow-reverts on-chain → path yields nothing.
+            Err(_) => return U256::ZERO,
+        };
     }
     current
 }
@@ -1013,7 +1016,19 @@ fn int_simulate_mixed_path_n(
                     consumed_inputs,
                 };
             };
-            let output = hop.swap(current_input);
+            let Ok(output) = hop.swap(current_input) else {
+                // V2 hop overflow-reverts on-chain (uint256 intermediate) —
+                // the multi-hop path reverts; mirror the exhaustion shape.
+                for _ in i..n_hops {
+                    hop_outputs.push(U256::ZERO);
+                    consumed_inputs.push(U256::ZERO);
+                }
+                return SimulationResult {
+                    final_output: U256::ZERO,
+                    hop_outputs,
+                    consumed_inputs,
+                };
+            };
             hop_outputs.push(output);
             consumed_inputs.push(current_input);
             current_input = output;
@@ -2126,7 +2141,7 @@ mod tests {
 
         // Verify chain manually
         // Hop 1 (V2): swap 1000 in pool (1M, 2M)
-        let expected_out1 = v2_hop1.swap(amount_in);
+        let expected_out1 = v2_hop1.swap(amount_in).unwrap();
         assert_eq!(result.hop_outputs[0], expected_out1);
         assert_eq!(result.consumed_inputs[0], amount_in);
 
@@ -2135,7 +2150,7 @@ mod tests {
         assert_eq!(result.hop_outputs[1], expected_out2.output);
 
         // Hop 3 (V2): swap output through V2 pool 2
-        let expected_out3 = v2_hop2.swap(expected_out2.output);
+        let expected_out3 = v2_hop2.swap(expected_out2.output).unwrap();
         assert_eq!(result.hop_outputs[2], expected_out3);
 
         assert_eq!(result.final_output, expected_out3);
