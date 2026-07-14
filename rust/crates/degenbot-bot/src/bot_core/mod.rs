@@ -7,16 +7,14 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use alloy::primitives::{Address, B256, I256, U256};
+use alloy::primitives::{Address, I256, U256};
 
 use crate::bot_core::snapshot_verify::SnapshotLoadError;
 use crate::bot_core::state_history::{
     JournalError, ReorgJournal, ScalarPriors, TickBefore, V2BlockDelta, V3BlockDelta,
     V3RestoreResult,
 };
-use degenbot_uniswap::dex_identity::DexVariant;
 use degenbot_uniswap::v2_encoding::{encode_v2_swap, EncodedCall};
-use degenbot_v2_math::IntHopState;
 
 pub mod aerodrome_v2_state;
 pub mod balancer_stable_state;
@@ -84,245 +82,19 @@ pub use block_clock::{BlockClock, BlockState, HeaderDecision, LogDecision};
 // Pool state types
 // ---------------------------------------------------------------------------
 
-/// A single pool's state. Pool-type-specific fields are in the enum variants.
-#[derive(Clone, Debug)]
-pub enum PoolEntry {
-    V2(V2PoolIdentity, V2PoolState),
-    V3(V3PoolIdentity, V3PoolState),
-    V4(V4PoolIdentity, V4PoolState),
-    Curve(CurvePoolIdentity, CurvePoolState),
-    BalancerWeighted(BalancerWeightedPoolIdentity, BalancerWeightedPoolState),
-    BalancerStable(BalancerStablePoolIdentity, BalancerStablePoolState),
-    AerodromeV2(AerodromeV2PoolIdentity, AerodromeV2PoolState),
-}
+// ---------------------------------------------------------------------------
+// Pool registry sum type + V2 identity/state + token entry + swap-sim dispatch.
+// **Relocated** to `degenbot-pools`; re-exported here at the historical
+// `bot_core::*` paths so consumers resolve unchanged.
+// Transient re-export — repointed at `degenbot_pools::*` natively by USPN7M/P2CKRL.
+// ---------------------------------------------------------------------------
 
-/// Read-only surface shared by [`V3PoolState`] and [`V4PoolState`] — the
-/// fields the per-handle `PyLiquidityPool` reader API presents uniformly
-/// across the V3/V4 concentrated-liquidity families (J63J3N).
-///
-/// Both variants store the same mutable scalars (`sqrt_price_x96`/
-/// `liquidity`/`tick`/`update_block`) and an identical `tick_data:
-/// HashMap<i32, TickInfo>`; V4 additionally nests `fee`/`tick_spacing`
-/// inside `pool_key`, which the impl projects out. The trait lets
-/// [`BotState::get_v3_or_v4_pool`] return one borrowed view covering both
-/// families without cloning — the reader twin of the RAJ3PP apply dispatchers.
-///
-/// V2 is intentionally excluded (different state shape — reserves, not
-/// scalars); a V2 `pool_id` yields `None` from the accessor, matching the
-/// prior V3-only contract.
-/// Mutable-reader trait for V3/V4 concentrated-liquidity pools.
-///
-/// Projects only mutable runtime scalars (`sqrt_price_x96`/`liquidity`/`tick`/
-/// `update_block`/`tick_data`) — the values a swap calc consumes. Immutable
-/// config (`fee`/`tick_spacing`) lives on `V3PoolIdentity`/`V4PoolIdentity`;
-/// read it via [`BotState::get_v3_identity`]/[`BotState::get_v4_identity`].
-/// The dyn-dispatch surface is a `&VxPoolState` borrowed from the registry.
-pub trait V3FamilyPool {
-    fn sqrt_price_x96(&self) -> U256;
-    fn liquidity(&self) -> u128;
-    fn tick(&self) -> i32;
-    fn update_block(&self) -> u64;
-    fn tick_data(&self) -> &HashMap<i32, TickInfo>;
-}
-
-impl V3FamilyPool for V3PoolState {
-    fn sqrt_price_x96(&self) -> U256 {
-        self.sqrt_price_x96
-    }
-    fn liquidity(&self) -> u128 {
-        self.liquidity
-    }
-    fn tick(&self) -> i32 {
-        self.tick
-    }
-    fn update_block(&self) -> u64 {
-        self.update_block
-    }
-    fn tick_data(&self) -> &HashMap<i32, TickInfo> {
-        &self.tick_data
-    }
-}
-
-impl V3FamilyPool for V4PoolState {
-    fn sqrt_price_x96(&self) -> U256 {
-        self.sqrt_price_x96
-    }
-    fn liquidity(&self) -> u128 {
-        self.liquidity
-    }
-    fn tick(&self) -> i32 {
-        self.tick
-    }
-    fn update_block(&self) -> u64 {
-        self.update_block
-    }
-    fn tick_data(&self) -> &HashMap<i32, TickInfo> {
-        &self.tick_data
-    }
-}
-
-/// Immutable V2 registration identity (ADR-005 identity slice).
-///
-/// Pure registration data — the pool's permanent identity, set once at
-/// `register_v2_pool` and never mutated. Mirrors [`TokenEntry`] (one immutable
-/// identity struct per registry entry, no mutable half). Distinct from
-/// [`V2PoolState`], which carries only mutable runtime data (reserves +
-/// journal + update block).
-///
-/// This completes the half-done ADR-005 split: the former `V2PoolDescriptor`
-/// (`variant/stable_swap/fee_denominator`) is folded in here, alongside the
-/// level-2 identity (address/tokens/fees/factory) that previously sat on the
-/// mutable `V2PoolState`. The `PyLiquidityPool` handle reads all of this
-/// through [`BotState::get_v2_identity`] — the Polars `_from_pydf` end state.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct V2PoolIdentity {
-    /// Pool contract address.
-    pub address: Address,
-    /// Token0 contract address.
-    pub token0: Address,
-    /// Token1 contract address.
-    pub token1: Address,
-    /// Fee parameters for token0→token1 swaps: (`gamma_numer`, `fee_denom`).
-    pub fee_token0: (u64, u64),
-    /// Fee parameters for token1→token0 swaps: (`gamma_numer`, `fee_denom`).
-    pub fee_token1: (u64, u64),
-    /// Pool factory address.
-    pub factory: Address,
-    /// The CREATE2 deployer this pool's address was verified against (Fork A,
-    /// NSAZ4X). The JSON row's `deployer` (or `factory` for null), or the
-    /// factory itself for non-JSON pools. The `dex` getter merges this per-
-    /// (chain,factory) deployer into the protocol preset (replacing the
-    /// canonical-mainnet preset deployer).
-    pub deployer: Address,
-    /// The CREATE2 init code hash (Fork A, NSAZ4X). The JSON row's `init_hash`,
-    /// or the V2 mainnet fallback const for non-JSON pools.
-    pub init_hash: B256,
-    /// The DEX+variant discriminator. Resolves the canonical
-    /// [`degenbot_uniswap::dex_identity::DexIdentity`] preset
-    /// (factory/deployer/init-hash/default fees/ABI shape) for encoding and
-    /// `_verified_address` derivation.
-    pub variant: DexVariant,
-    /// Camelot solidly-stable strategy flag (false for all non-Camelot V2).
-    pub stable_swap: bool,
-    /// Camelot's integer fee scaling (used by the solidly-stable math). `None`
-    /// for non-Camelot V2 (the volatile calc ignores it).
-    pub fee_denominator: Option<u64>,
-}
-
-/// Mutable runtime state for a Uniswap V2-style constant-product pool.
-///
-/// Pure mutable data — the values that change as reserves are pumped and
-/// rolled back. Immutable identity lives on [`V2PoolIdentity`]; look it up via
-/// [`BotState::get_v2_identity`]. The two are paired in [`PoolEntry::V2`].
-#[derive(Clone, Debug)]
-pub struct V2PoolState {
-    /// Current reserve of token0.
-    pub reserve0: U256,
-    /// Current reserve of token1.
-    pub reserve1: U256,
-    /// Block number of the last update.
-    pub update_block: u64,
-
-    /// Reorg journal — "before" values for rollback.
-    /// V2 is the degenerate case: delta = full state (two reserves).
-    pub journal: ReorgJournal<V2BlockDelta>,
-}
-
-/// Parameters for registering a V2 pool.
-#[derive(Clone, Debug, Default)]
-pub struct RegisterV2PoolParams {
-    pub address: Address,
-    pub token0: Address,
-    pub token1: Address,
-    pub reserve0: U256,
-    pub reserve1: U256,
-    pub fee_token0: (u64, u64),
-    pub fee_token1: (u64, u64),
-    pub factory: Address,
-    /// The CREATE2 deployer the Rust builder verified this pool's address
-    /// against (Fork A, NSAZ4X). Equals the JSON row's `deployer`, or
-    /// `factory` when the row had `null` (the `None -> factory` convention).
-    /// For non-JSON pools, the factory itself. Stored on the identity so the
-    /// `dex` getter merges the per-(chain,factory) deployer (no getter-time
-    /// `chain_id` lookup).
-    pub deployer: Address,
-    /// The CREATE2 init code hash the builder verified against (Fork A,
-    /// NSAZ4X). The JSON row's `init_hash`; the V2 mainnet fallback const
-    /// for non-JSON pools.
-    pub init_hash: B256,
-    /// Block number of the registration state — seeds the genesis reorg
-    /// journal delta (ADR-005 slice 4). The landed-at journal must anchor the
-    /// registration state at a real block so `restore_before_block` can land
-    /// on it; pre-slice-4 the journal was empty until the first Sync.
-    pub update_block: u64,
-    /// DEX+variant discriminator (registration metadata — see
-    /// [`V2PoolIdentity`]).
-    pub variant: DexVariant,
-    /// Camelot solidly-stable strategy flag.
-    pub stable_swap: bool,
-    /// Camelot integer fee scaling (the solidly-stable math's denominator).
-    pub fee_denominator: Option<u64>,
-}
-
-/// Typed rejection from [`BotState::register_v2_pool`] (the spec-bound +
-/// duplicate-address admission contract — see [`spec_bounds`]).
-///
-/// Mirrors [`RegisterV4PoolError`]: `#[derive(Clone, Debug, PartialEq, Eq)]`,
-/// no `Display`/`Error` impl (the `PyO3` mapper pattern-matches the variants
-/// directly and constructs Python exceptions via `format!`).
-///
-/// Variants:
-/// - [`AlreadyRegistered`](Self::AlreadyRegistered) — replaces the prior
-///   `assert!` duplicate-check panic (`assert!(!pool_addresses.contains_key(..))`).
-/// - [`SpecViolation`](Self::SpecViolation) — wraps a
-///   [`spec_bounds::SpecViolation`] from the validator helpers
-///   (`validate_v2_reserve`); fires on `reserve{0,1} > uint112::MAX` (only
-///   reachable for synthetic / corrupt registration — `Sync(uint112,uint112)`
-///   events are structurally spec-bound).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RegisterV2PoolError {
-    /// A pool at this contract address is already registered.
-    AlreadyRegistered { address: Address },
-    /// An out-of-spec field (e.g. `reserve0 > uint112::MAX`).
-    SpecViolation(crate::bot_core::spec_bounds::SpecViolation),
-}
-
-impl From<crate::bot_core::spec_bounds::SpecViolation> for RegisterV2PoolError {
-    fn from(v: crate::bot_core::spec_bounds::SpecViolation) -> Self {
-        Self::SpecViolation(v)
-    }
-}
-
-/// Liquidity data at an initialized tick.
-///
-/// Mirrors the Python `LiquidityAtTick` from `concentrated/types.py`.
-///
-/// **Relocated** to `degenbot-pools` (the value struct is needed there by
-/// the `TickWordFetcher` seam it now defines). Re-exported here at the
-/// historical `bot_core::TickInfo` path so the bot's consumers resolve
-/// unchanged. Transient re-export — repointed at `degenbot_pools::TickInfo`
-/// natively by USPN7M/P2CKRL.
+pub use ::degenbot_pools::registry::{PoolEntry, TokenEntry, V3FamilyPool};
+pub use ::degenbot_pools::simulate_swap::simulate_swap;
+pub use ::degenbot_pools::v2_state::{
+    RegisterV2PoolError, RegisterV2PoolParams, V2PoolIdentity, V2PoolState,
+};
 pub use ::degenbot_pools::TickInfo;
-
-// ---------------------------------------------------------------------------
-// V3 pool state — defined in [`v3_state`] (merged engine + journal types).
-// ---------------------------------------------------------------------------
-
-// `RegisterV3PoolParams` lives in [`v3_state`] (re-exported above).
-
-// ---------------------------------------------------------------------------
-// Token state
-// ---------------------------------------------------------------------------
-
-/// ERC20 token metadata.
-#[derive(Clone, Debug)]
-pub struct TokenEntry {
-    pub address: Address,
-    pub name: String,
-    pub symbol: String,
-    pub decimals: u8,
-    pub chain_id: u64,
-}
 
 // ---------------------------------------------------------------------------
 // BotState
@@ -1837,94 +1609,7 @@ impl BotState {
         let Some(entry) = self.pools.get(&pool_id) else {
             return Ok(U256::ZERO);
         };
-
-        match entry {
-            PoolEntry::V2(identity, state) => {
-                if amount_in.is_zero() {
-                    return Ok(U256::ZERO);
-                }
-
-                let (reserve_in, reserve_out, gamma_numer, fee_denom) = if zero_for_one {
-                    (
-                        state.reserve0,
-                        state.reserve1,
-                        identity.fee_token0.0,
-                        identity.fee_token0.1,
-                    )
-                } else {
-                    (
-                        state.reserve1,
-                        state.reserve0,
-                        identity.fee_token1.0,
-                        identity.fee_token1.1,
-                    )
-                };
-
-                let hop = IntHopState::new(reserve_in, reserve_out, gamma_numer, fee_denom);
-                Ok(hop.swap(amount_in))
-            }
-            // V3 concentrated-liquidity math. Exact-input swap: amount_specified
-            // > 0 (V3 convention). Output is token1 for zfo, token0 for ofz
-            // (matches the V3 Swap callback: zfo pays token0, receives token1).
-            PoolEntry::V3(identity, state) => {
-                if amount_in.is_zero() {
-                    return Ok(U256::ZERO);
-                }
-                let Some(spec) = I256::try_from(amount_in).ok() else {
-                    return Err(SimulateSwapError::NotComputable);
-                };
-                let outcome = v3_simulate_swap(
-                    state,
-                    identity.fee,
-                    identity.tick_spacing,
-                    zero_for_one,
-                    spec,
-                    V3PoolState::default_sqrt_price_limit(zero_for_one),
-                )?;
-                Ok(if zero_for_one {
-                    outcome.amount1
-                } else {
-                    outcome.amount0
-                })
-            }
-            // V4 concentrated-liquidity math. Same CL math as V3; sign
-            // convention: V4 exact-input is `amountSpecified < 0` (negative),
-            // opposite to V3. The caller (calculate_tokens_out) flips so the
-            // simulator sees the V4-native sign.
-            PoolEntry::V4(identity, state) => {
-                if amount_in.is_zero() {
-                    return Ok(U256::ZERO);
-                }
-                let Some(spec) = I256::try_from(amount_in).ok() else {
-                    return Err(SimulateSwapError::NotComputable);
-                };
-                let outcome = v4_simulate_swap(
-                    state,
-                    identity.pool_key.fee,
-                    identity.pool_key.tick_spacing,
-                    zero_for_one,
-                    -spec,
-                    V3PoolState::default_sqrt_price_limit(zero_for_one),
-                )?;
-                Ok(if zero_for_one {
-                    outcome.amount1
-                } else {
-                    outcome.amount0
-                })
-            }
-            // Curve (11a) + Balancer weighted (12a) + Balancer stable (12c): the
-            // stableswap / weighted-product / stable-invariant math is NOT
-            // ported in their state-port sub-slices. The Python companions
-            // (11b / 12b / 12d) keep doing their own math via `DyCalculator`
-            // / `WeightedMath` / `StableMath` through the `swap_fn` returned
-            // by `to_hop_state`; this Rust core path returns 0 (the
-            // "not-yet-Rust-side" sentinel — same as an unregistered pool).
-            // Curve ported in 11c; Balancer weighted stable in 12e.
-            PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..)
-            | PoolEntry::AerodromeV2(..) => Ok(U256::ZERO),
-        }
+        simulate_swap(entry, zero_for_one, amount_in)
     }
 
     /// Merge a fetched tick-bitmap word into a V3/V4 pool's state.
