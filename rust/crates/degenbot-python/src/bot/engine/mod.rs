@@ -44,7 +44,6 @@ pub(crate) use degenbot_bot::bot_core::{
 };
 
 pub(crate) use degenbot_bot::solvers::uniswap_engine::engine_handle::EngineHandle;
-pub(crate) use degenbot_bot::solvers::uniswap_engine::engine_subscriber::EngineSubscriber;
 
 pub(crate) use degenbot_bot::solvers::uniswap_engine::{
     BlockMetadata, BlockNotification, EnginePhase, HopType, MixedPoolRef, PoolHop, ResultBatch,
@@ -59,6 +58,13 @@ pub(crate) use degenbot_bot::solvers::uniswap_engine::{
 pub struct PyUniswapArbEngine {
     /// Shared engine state
     engine: Arc<parking_lot::Mutex<UniswapEngine>>,
+    /// Retained `EngineHandle` — the ADR-006 cycle-free owner of the strong
+    /// `EngineSubscriber`. `register_path`/`register_and_solve_path` draw a
+    /// live `Weak` from this (see `subscriber_weak`) so `LogDispatcher::notify`
+    /// routes `on_pool_state_updated` → `insert_dirty` on the live engine.
+    /// A clone of this same `Arc<EngineHandle>` is the `Arc<dyn Engine>` held
+    /// by `SolveCoordinator`.
+    engine_handle: Arc<EngineHandle>,
     /// ADR-006 D4 (T3): the pump lifecycle state (coordinator, reorg
     /// coordinator, bot, shutdown, pump handle, subscribe state, phase) now
     /// lives in a shared `Arc<PumpState>` co-owned with `PyBot`. The legacy

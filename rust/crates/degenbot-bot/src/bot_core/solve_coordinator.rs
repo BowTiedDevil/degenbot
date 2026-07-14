@@ -110,6 +110,7 @@ impl SolveCoordinator {
 }
 
 impl DrainSink for SolveCoordinator {
+    #[hotpath::measure(label = "SolveCoordinator::has_dirty_paths")]
     fn has_dirty_paths(&self) -> bool {
         // Take drain_lock so the read is consistent with any in-flight fan-out
         // (engines can't be mid-`solve_dirty` while we iterate their dirty
@@ -118,6 +119,7 @@ impl DrainSink for SolveCoordinator {
         self.engines.iter().any(|e| e.has_dirty_paths())
     }
 
+    #[hotpath::measure(label = "SolveCoordinator::on_drain")]
     fn on_drain(&self, block: u64, metadata: &BlockMetadata) {
         let mut state = self.drain_lock.lock().expect("drain_lock poisoned");
         // DEFERRED (ADR-006): `SolvePolicy::Eager`/`Block`/`Manual` would
@@ -133,6 +135,7 @@ impl DrainSink for SolveCoordinator {
         state.last_drained_block = Some(block);
     }
 
+    #[hotpath::measure(label = "SolveCoordinator::on_send")]
     fn on_send(&self, metadata: &BlockMetadata) {
         let _guard = self.drain_lock.lock().expect("drain_lock poisoned");
         for engine in &self.engines {
@@ -140,6 +143,7 @@ impl DrainSink for SolveCoordinator {
         }
     }
 
+    #[hotpath::measure(label = "SolveCoordinator::finalize_block")]
     fn finalize_block(
         &self,
         block: u64,
@@ -162,6 +166,7 @@ impl DrainSink for SolveCoordinator {
         state.last_drained_block
     }
 
+    #[hotpath::measure(label = "SolveCoordinator::notify_block")]
     fn notify_block(&self, block: u64, metadata: &BlockMetadata) {
         // Fan out to every engine under the drain lock — same shape as
         // `on_drain`/`on_send`. Each engine forwards to its `block_tx`;

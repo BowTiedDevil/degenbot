@@ -29,4 +29,5 @@
 //! - [`solvers`] — Möbius solvers + the unified `UniswapEngine`.
 
 pub mod bot_core;
+pub mod profiling;
 pub mod solvers;

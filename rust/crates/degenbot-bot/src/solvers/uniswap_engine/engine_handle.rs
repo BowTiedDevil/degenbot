@@ -21,11 +21,13 @@
 //! takes its own core `read`/`write` internally. Coordinator `drain_lock` →
 //! `engine-Mutex` → `BotState` `RwLock`, never reversed.
 
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use crate::bot_core::engine::Engine;
+use crate::bot_core::log_dispatcher::PoolStateSubscriber;
 use crate::bot_core::BlockMetadata;
 
+use super::engine_subscriber::EngineSubscriber;
 use super::UniswapEngine;
 
 /// A `Arc<dyn Engine>` view over a shared `Arc<parking_lot::Mutex<UniswapEngine>>`.
@@ -37,13 +39,42 @@ use super::UniswapEngine;
 /// the same underlying `UniswapEngine`.
 pub struct EngineHandle {
     engine: Arc<parking_lot::Mutex<UniswapEngine>>,
+    /// Strong owner of the `EngineSubscriber` (ADR-006 cycle-free topology:
+    /// the strong lives on the engine side, co-owned with `engine`).
+    /// `LogDispatcher::notify` holds only a `Weak<dyn PoolStateSubscriber>`;
+    /// its `upgrade()` succeeds until every `EngineHandle` (and thus the
+    /// engine) drops — the subscriber dies with the engine, no leak, no cycle.
+    ///
+    /// This field exists because `EngineSubscriber::weak_handle` returned a
+    /// dangling `Weak` (its strong dropped on return). Holding the strong here
+    /// is the lift: the subscriber is alive for the engine's lifetime.
+    subscriber: Arc<dyn PoolStateSubscriber>,
 }
 
 impl EngineHandle {
     /// Construct from a strong clone of the shared engine handle.
+    ///
+    /// Builds and holds the strong `EngineSubscriber` (the cycle-free home
+    /// for the dispatcher's `Weak`) — see [`subscriber_weak`](Self::subscriber_weak).
     #[must_use]
     pub fn new(engine: Arc<parking_lot::Mutex<UniswapEngine>>) -> Self {
-        Self { engine }
+        let subscriber: Arc<dyn PoolStateSubscriber> =
+            Arc::new(EngineSubscriber::new(Arc::downgrade(&engine)));
+        Self { engine, subscriber }
+    }
+
+    /// A `Weak<dyn PoolStateSubscriber>` that stays live while this `EngineHandle`
+    /// (and thus the engine) lives. The wiring layer hands this to
+    /// `Bot::attach_engine` at `register_path` time so `LogDispatcher::notify`
+    /// routes `on_pool_state_updated` → `insert_dirty` on the live engine.
+    ///
+    /// Replaces the deleted `EngineSubscriber::weak_handle`, which returned a
+    /// dangling `Weak` (its strong dropped on return — hotpath capture
+    /// 2026-07-14 showed 71 notifies → 0 dirties because every `upgrade()`
+    /// returned `None`).
+    #[must_use]
+    pub fn subscriber_weak(&self) -> Weak<dyn PoolStateSubscriber> {
+        Arc::downgrade(&self.subscriber)
     }
 
     /// Construct an `Arc<dyn Engine>` from a strong clone — the convenience
@@ -77,18 +108,22 @@ impl Engine for EngineHandle {
     /// single hold for serialization. `latest_results()` is test/admin-only —
     /// grep-verified absent from the example hot loop, which is
     /// `async for batch in engine_registry.engine:`.
+    #[hotpath::measure(label = "EngineHandle::solve_dirty")]
     fn solve_dirty(&self, block: u64, metadata: &BlockMetadata) {
         self.engine.lock().solve_dirty(block, metadata);
     }
 
+    #[hotpath::measure(label = "EngineHandle::send_result_batch")]
     fn send_result_batch(&self, metadata: &BlockMetadata) {
         self.engine.lock().send_result_batch(metadata);
     }
 
+    #[hotpath::measure(label = "EngineHandle::has_dirty_paths")]
     fn has_dirty_paths(&self) -> bool {
         self.engine.lock().has_dirty_paths()
     }
 
+    #[hotpath::measure(label = "EngineHandle::finalize_block")]
     fn finalize_block(
         &self,
         block: u64,
@@ -105,6 +140,7 @@ impl Engine for EngineHandle {
         self.engine.lock().last_processed_block()
     }
 
+    #[hotpath::measure(label = "EngineHandle::notify_block")]
     fn notify_block(&self, block: u64, metadata: &BlockMetadata) {
         self.engine.lock().notify_block(block, metadata);
     }
@@ -138,5 +174,40 @@ mod tests {
         handle.finalize_block(1, &metadata, &mut last_solved, &mut has_logs);
 
         assert!(!handle.has_dirty_paths());
+    }
+
+    /// GREEN (fix for the hotpath-captured bug 2026-07-14): `subscriber_weak`
+    /// returns a `Weak<dyn PoolStateSubscriber>` whose `upgrade()` succeeds
+    /// while the `EngineHandle` (and thus the engine) lives. This is the
+    /// invariant `LogDispatcher::notify` relies on to route
+    /// `on_pool_state_updated` → `insert_dirty`.
+    ///
+    /// The deleted `EngineSubscriber::weak_handle` returned a *dangling* Weak
+    /// (its strong dropped on return) — the 5-minute mainnet capture showed
+    /// 71 WS logs reaching `notify` but 0 `on_drain`/`solve_dirty`, because
+    /// every `weak.upgrade()` returned `None`. Holding the strong on
+    /// `EngineHandle` (the ADR-006 cycle-free engine-side owner) is the lift.
+    #[test]
+    fn subscriber_weak_stays_live_while_engine_handle_lives() {
+        let weak = {
+            let engine = Arc::new(parking_lot::Mutex::new(UniswapEngine::new()));
+            let handle = EngineHandle::new(engine);
+            handle.subscriber_weak() // handle drops at end of block
+        };
+        // EngineHandle dropped → the strong subscriber dropped → Weak is dead.
+        assert!(
+            weak.upgrade().is_none(),
+            "subscriber Weak should dangle once EngineHandle drops"
+        );
+
+        // And the positive case: held alive → upgrade succeeds.
+        let engine = Arc::new(parking_lot::Mutex::new(UniswapEngine::new()));
+        let handle = EngineHandle::new(engine);
+        let weak = handle.subscriber_weak();
+        assert!(
+            weak.upgrade().is_some(),
+            "subscriber Weak must upgrade while EngineHandle is alive — \
+             LogDispatcher::notify depends on this to fire on_pool_state_updated"
+        );
     }
 }

@@ -362,14 +362,27 @@ impl LogDispatcher {
     /// any subscriber notify — subscribers take only their own lock (D2's
     /// engine-then-core order preserved by not nesting).
     pub fn dispatch(&self, log: &Log, state: &Arc<parking_lot::RwLock<BotState>>) {
-        let Some(decoded) = self.decoders.iter().find_map(|d| d.try_decode(log)) else {
+        // Phase-labeled `measure_block!` for the rolling-start dirty-path
+        // diagnostic: distinguishes "decode miss" (no decoder recognized the
+        // log) from "apply miss" (pool not registered in BotState → no-op)
+        // from "notify miss" (pool registered but no subscriber attached).
+        // Each appears as its own row in the hotpath functions-timing table
+        // with a per-phase call count — zero-cost no-ops when the `hotpath`
+        // feature is off. See `src/profiling.rs`.
+        let decoded = hotpath::measure_block!("dispatch.decode", {
+            self.decoders.iter().find_map(|d| d.try_decode(log))
+        });
+        let Some(decoded) = decoded else {
             return;
         };
         // Apply under the write guard, then RELEASE before notifying.
-        let Some(pool_id) = decoded.apply(&mut state.write()) else {
+        let pool_id = hotpath::measure_block!("dispatch.apply", decoded.apply(&mut state.write()));
+        let Some(pool_id) = pool_id else {
             return;
         };
-        self.notify(pool_id);
+        hotpath::measure_block!("dispatch.notify", {
+            self.notify(pool_id);
+        });
     }
 
     /// Decode `log` into a [`DecodedPoolEvent`] via the decoder registry, or

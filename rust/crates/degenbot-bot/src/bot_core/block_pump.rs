@@ -437,6 +437,13 @@ impl BlockPump {
         // confirmed and fixed.
         const DIAG_STATS_INTERVAL: Duration = Duration::from_secs(10);
 
+        // hotpath drain-path tracer bullet (`src/profiling.rs`): hold a
+        // profiling guard for the whole pump loop iff `DEGENBOT_HOTPATH=1`.
+        // No-op (not even constructed) otherwise, and a no-op stub when the
+        // `hotpath` Cargo feature is off. Dropping at loop exit writes the
+        // report; for a long-running bot use `HOTPATH_SHUTDOWN_MS`.
+        let _hotpath_guard = crate::profiling::hotpath_guard("block_pump");
+
         let relevant_topic_set: HashSet<B256> = RELEVANT_TOPICS.into_iter().collect();
 
         // Read the last block processed by the engine (the post-backfill
