@@ -10,6 +10,7 @@ from collections.abc import Generator
 from typing import TYPE_CHECKING
 
 import pytest
+import web3
 
 from degenbot.anvil_fork import AnvilFork
 
@@ -65,7 +66,6 @@ def standalone_anvil() -> Generator[AnvilFork, None, None]:
     """
     fork = AnvilFork(
         fork_url=None,  # No forking - standalone mode
-        ipc_provider_kwargs={"timeout": None},
     )
     yield fork
     fork.close()
@@ -110,7 +110,7 @@ def token_math_wrappers(
         ...     assert result == expected_value
 
     """
-    w3 = standalone_anvil.w3
+    w3 = web3.Web3(web3.HTTPProvider(standalone_anvil.http_url))
 
     # Use the first pre-funded Anvil account as deployer
     deployer = w3.eth.accounts[0]

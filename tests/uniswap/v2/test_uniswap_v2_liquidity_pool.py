@@ -4,6 +4,7 @@
 # anvil to the `UniswapV2Pool` + `dex.variant` model. See
 # docs/migration-guides/dex-subclass-collapse.md.
 import pytest
+import web3
 
 pytest.skip(
     "ADR-005 slice 7 step 4b: fork test pending rewrite after DEX subclass collapse",
@@ -31,7 +32,6 @@ from degenbot.exceptions.pool import (
     NoPoolStateAvailable,
 )
 from degenbot.provider import ProviderAdapter
-from degenbot.uniswap.abi import UNISWAP_V2_ROUTER_ABI
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import (
     UniswapV2PoolExternalUpdate,
@@ -64,7 +64,7 @@ CAMELOT_MIM_USDC_LP_ADDRESS = get_checksum_address("0x68A0859de50B4Dfc6EFEbE981c
 
 def _make_bot(fork: AnvilFork) -> Bot:
     """Create a Bot with the fork's provider registered."""
-    provider = ProviderAdapter.from_web3(fork.w3)
+    provider = ProviderAdapter.from_alloy(fork.provider)
     return make_bot_with_provider(provider)
 
 
@@ -170,7 +170,7 @@ def test_create_camelot_v2_stable_pool(fork_arbitrum_full: AnvilFork):
     amount_in = 1000 * 10**token_in.decimals  # nominal value of $1000
 
     # Test that the swap output from the pool contract matches the off-chain calculation
-    w3_contract = fork_arbitrum_full.w3.eth.contract(
+    w3_contract = web3.Web3(web3.HTTPProvider(fork_arbitrum_full.http_url)).eth.contract(
         address=CAMELOT_MIM_USDC_LP_ADDRESS,
         abi=CAMELOT_POOL_ABI,
     )
@@ -193,7 +193,7 @@ def test_create_camelot_v2_pool(fork_arbitrum_full: AnvilFork):
     token_in = lp.token1
     amount_in = 1000 * 10**token_in.decimals  # nominal value of $1000
 
-    w3_contract: Contract = fork_arbitrum_full.w3.eth.contract(
+    w3_contract: Contract = web3.Web3(web3.HTTPProvider(fork_arbitrum_full.http_url)).eth.contract(
         address=CAMELOT_WETH_USDC_LP_ADDRESS,
         abi=CAMELOT_POOL_ABI,
     )

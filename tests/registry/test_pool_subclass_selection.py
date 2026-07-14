@@ -22,13 +22,14 @@ This ensures that:
 - AerodromeV3PoolTracker returns AerodromeV3Pool
 """
 
+from degenbot.sushiswap.pools import SushiswapV2Pool
+
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.provider import ProviderAdapter
-from degenbot.sushiswap.pools import SushiswapV2Pool
 from degenbot.sushiswap.trackers import SushiswapV2PoolTracker
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.trackers import UniswapV2PoolTracker, UniswapV3PoolTracker
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from tests.helpers.bot_factory import make_bot_with_provider
 
@@ -65,7 +66,7 @@ class TestV2PoolSubclassSelection:
         fork_mainnet_full: AnvilFork,
     ) -> None:
         """UniswapV2PoolTracker should return UniswapV2Pool instances."""
-        bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+        bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork_mainnet_full.provider))
         manager = UniswapV2PoolTracker(
             factory_address=MAINNET_UNISWAP_V2_FACTORY,
             bot=bot,
@@ -84,7 +85,7 @@ class TestV2PoolSubclassSelection:
         fork_mainnet_full: AnvilFork,
     ) -> None:
         """SushiswapV2PoolTracker should return SushiswapV2Pool instances."""
-        bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+        bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork_mainnet_full.provider))
         manager = SushiswapV2PoolTracker(
             factory_address=MAINNET_SUSHISWAP_V2_FACTORY,
             bot=bot,
@@ -113,7 +114,7 @@ class TestV3PoolSubclassSelection:
         fork_mainnet_full: AnvilFork,
     ) -> None:
         """UniswapV3PoolTracker should return UniswapV3Pool instances."""
-        bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+        bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork_mainnet_full.provider))
         manager = UniswapV3PoolTracker(
             factory_address=MAINNET_UNISWAP_V3_FACTORY,
             bot=bot,
@@ -140,7 +141,7 @@ class TestBotBuildPoolSubclassSelection:
         fork_mainnet_full: AnvilFork,
     ) -> None:
         """Bot.build_pool should return UniswapV3Pool for Uniswap factory."""
-        bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+        bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork_mainnet_full.provider))
 
         pool = bot.build_pool(MAINNET_UNISWAP_V3_WETH_WBTC)
 

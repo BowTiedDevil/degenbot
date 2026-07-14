@@ -75,7 +75,7 @@ BASE_PANCAKESWAP_V3_EXCHANGE = UniswapV3ExchangeDeployment(
 @pytest.mark.base
 def test_create_base_chain_trackers(fork_base_full: AnvilFork):
 
-    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
+    bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork_base_full.provider))
     uniswap_v2_pool_tracker = UniswapV2PoolTracker(
         factory_address=BASE_UNISWAP_V2_FACTORY_ADDRESS,
         bot=bot,
@@ -127,7 +127,7 @@ def test_base_pancake_v3_pool_tracker(fork_base_full: AnvilFork):
 @pytest.mark.base
 def test_create_mainnet_trackers(fork_mainnet_full: AnvilFork):
 
-    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+    bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork_mainnet_full.provider))
     uniswap_v2_pool_tracker = UniswapV2PoolTracker(
         factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS,
         bot=bot,
@@ -202,7 +202,7 @@ def test_create_mainnet_trackers(fork_mainnet_full: AnvilFork):
 
 def test_tracker_behavior_for_unassociated_pools(fork_mainnet_full: AnvilFork):
 
-    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+    bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork_mainnet_full.provider))
     uniswap_v3_pool_tracker = UniswapV3PoolTracker(
         factory_address=MAINNET_UNISWAP_V3_FACTORY_ADDRESS,
         bot=bot,
@@ -229,7 +229,7 @@ def test_tracker_behavior_for_unassociated_pools(fork_mainnet_full: AnvilFork):
 
 def test_pool_remove_and_recreate(fork_mainnet_full: AnvilFork):
 
-    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+    bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork_mainnet_full.provider))
     uniswap_v2_pool_tracker = UniswapV2PoolTracker(
         factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS,
         bot=bot,
@@ -305,7 +305,7 @@ def test_pool_remove_and_recreate(fork_mainnet_full: AnvilFork):
 
 def test_get_already_registered_pool(fork_mainnet_full: AnvilFork):
 
-    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+    bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork_mainnet_full.provider))
     uniswap_v2_pool_tracker = UniswapV2PoolTracker(
         factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS,
         bot=bot,
@@ -329,7 +329,7 @@ def test_get_already_registered_pool(fork_mainnet_full: AnvilFork):
 
 def test_get_pool_with_kwargs(fork_mainnet_full: AnvilFork):
 
-    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+    bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork_mainnet_full.provider))
     uniswap_v2_pool_tracker = UniswapV2PoolTracker(
         factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS,
         bot=bot,

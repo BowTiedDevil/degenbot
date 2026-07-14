@@ -212,6 +212,24 @@ impl PyAnvilFork {
         self.fork.ipc_path()
     }
 
+    /// HTTP endpoint of the spawned anvil node (`http://127.0.0.1:PORT`).
+    #[getter]
+    fn http_url(&self) -> String {
+        self.fork.http_url()
+    }
+
+    /// WebSocket endpoint of the spawned anvil node (`ws://127.0.0.1:PORT`).
+    #[getter]
+    fn ws_url(&self) -> String {
+        self.fork.ws_url()
+    }
+
+    /// TCP port the spawned anvil node listens on.
+    #[getter]
+    fn port(&self) -> u16 {
+        self.fork.port()
+    }
+
     /// `evm_mine` — mine a single block.
     ///
     /// # Errors

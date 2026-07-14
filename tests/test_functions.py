@@ -57,7 +57,7 @@ def test_encode_function_calldata():
 
 @pytest.mark.online_rpc
 def test_low_level_call_for_factory_address(fork_mainnet_full: AnvilFork):
-    provider = ProviderAdapter.from_web3(fork_mainnet_full.w3)
+    provider = ProviderAdapter.from_alloy(fork_mainnet_full.provider)
 
     pool_address = get_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
 
@@ -65,7 +65,7 @@ def test_low_level_call_for_factory_address(fork_mainnet_full: AnvilFork):
 
     (result,) = raw_call(
         provider=provider,
-        block_identifier=fork_mainnet_full.w3.eth.block_number,
+        block_identifier=fork_mainnet_full.provider.get_block_number(),
         address=pool_address,
         calldata=encode_function_calldata(
             function_prototype=function_prototype,

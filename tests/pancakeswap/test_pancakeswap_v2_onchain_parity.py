@@ -37,6 +37,7 @@ from fractions import Fraction
 from typing import TYPE_CHECKING, Any, Self
 
 import pytest
+import web3
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
@@ -225,7 +226,7 @@ def test_pancakeswap_v2_router_get_amounts_out(golden_factory) -> None:
     with _RecordFork(recording=golden.is_recording) as ctx:
         if golden.is_recording:
             assert ctx.fork is not None
-            ctx.contract = ctx.fork.w3.eth.contract(
+            ctx.contract = web3.Web3(web3.HTTPProvider(ctx.fork.http_url)).eth.contract(
                 address=PANCAKE_V2_ROUTER_ADDRESS,
                 abi=_ROUTER_ABI,
             )

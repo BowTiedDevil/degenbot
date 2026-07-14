@@ -24,6 +24,7 @@ re-recordable).
 from __future__ import annotations
 
 import pytest
+import web3
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.camelot.abi import CAMELOT_POOL_ABI
@@ -100,7 +101,7 @@ def _record_get_amount_out() -> int:
         anvil_opts=["--accounts=0"],
     )
     try:
-        w3_contract = fork.w3.eth.contract(
+        w3_contract = web3.Web3(web3.HTTPProvider(fork.http_url)).eth.contract(
             address=CAMELOT_WETH_USDC_LP_ADDRESS,
             abi=CAMELOT_POOL_ABI,
         )

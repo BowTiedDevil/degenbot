@@ -17,6 +17,7 @@ import json
 from fractions import Fraction
 
 import pytest
+import web3
 from hexbytes import HexBytes
 from web3.exceptions import ContractLogicError
 
@@ -148,13 +149,13 @@ def _build_pool_from_chain(
     pool_id_hex: str,
 ) -> BalancerV2Pool:
     """Build a BalancerV2Pool by fetching on-chain data from an anvil fork."""
-    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork.w3))
+    bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork.provider))
 
-    pool_contract = fork.w3.eth.contract(
+    pool_contract = web3.Web3(web3.HTTPProvider(fork.http_url)).eth.contract(
         address=get_checksum_address(pool_address),
         abi=WEIGHTED_POOL_ABI,
     )
-    vault_contract = fork.w3.eth.contract(
+    vault_contract = web3.Web3(web3.HTTPProvider(fork.http_url)).eth.contract(
         address=BALANCER_V2_VAULT_ADDRESS,
         abi=BALANCER_V2_VAULT_ABI,
     )
@@ -174,7 +175,7 @@ def _build_pool_from_chain(
     tokens = [bot.build_erc20token(addr) for addr in tokens_addresses]
 
     # Detect which FixedPoint pow implementation the deployed pool uses
-    bytecode = fork.w3.eth.get_code(get_checksum_address(pool_address)).hex()
+    bytecode = fork.provider.get_code(get_checksum_address(pool_address)).hex()
     pow_version = detect_pow_version(bytecode)
 
     return make_balancer_weighted_pool(
@@ -205,11 +206,11 @@ def _run_given_in_swaps(
                 if i != j:
                     swap_directions.append((i, j))
 
-    query_contract = fork.w3.eth.contract(
+    query_contract = web3.Web3(web3.HTTPProvider(fork.http_url)).eth.contract(
         address=BALANCERQUERIES_CONTRACT_ADDRESS,
         abi=BALANCERQUERIES_CONTRACT_ABI,
     )
-    vault_contract = fork.w3.eth.contract(
+    vault_contract = web3.Web3(web3.HTTPProvider(fork.http_url)).eth.contract(
         address=BALANCER_V2_VAULT_ADDRESS,
         abi=BALANCER_V2_VAULT_ABI,
     )
@@ -291,11 +292,11 @@ def _run_given_out_swaps(
                 if i != j:
                     swap_directions.append((i, j))
 
-    query_contract = fork.w3.eth.contract(
+    query_contract = web3.Web3(web3.HTTPProvider(fork.http_url)).eth.contract(
         address=BALANCERQUERIES_CONTRACT_ADDRESS,
         abi=BALANCERQUERIES_CONTRACT_ABI,
     )
-    vault_contract = fork.w3.eth.contract(
+    vault_contract = web3.Web3(web3.HTTPProvider(fork.http_url)).eth.contract(
         address=BALANCER_V2_VAULT_ADDRESS,
         abi=BALANCER_V2_VAULT_ABI,
     )

@@ -35,6 +35,7 @@ from fractions import Fraction
 from typing import TYPE_CHECKING, Any, Self
 
 import pytest
+import web3
 from hexbytes import HexBytes
 from web3 import Web3
 from web3.exceptions import ContractLogicError
@@ -195,7 +196,7 @@ class _RecordFork(AbstractContextManager):
 
     def raw_call(self, to: str, data: bytes) -> bytes:
         assert self.fork is not None
-        return self.fork.w3.eth.call(transaction={"to": to, "data": data.hex()})
+        return self.fork.provider.call(to, data)
 
 
 def _query_swap_callable(
@@ -209,7 +210,7 @@ def _query_swap_callable(
     """BalancerQueries ``querySwap`` oracle call (GIVEN_IN or GIVEN_OUT)."""
 
     def _call() -> int:
-        query_contract = fork.fork.w3.eth.contract(  # type: ignore[union-attr]
+        query_contract = web3.Web3(web3.HTTPProvider(fork.fork.http_url)).eth.contract(  # type: ignore[union-attr]
             address=BALANCERQUERIES_CONTRACT_ADDRESS,
             abi=_BALANCERQUERIES_ABI,
         )

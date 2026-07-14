@@ -188,8 +188,14 @@ pub fn log_to_py_dict<'py>(py: Python<'py>, log: &Log) -> PyResult<Bound<'py, Py
         dict.set_item("transactionHash", py.None())?;
     }
 
+    // transactionIndex as int (optional)
+    dict.set_item("transactionIndex", log.transaction_index)?;
+
     // logIndex as int
     dict.set_item("logIndex", log.log_index)?;
+
+    // removed (Geth compatibility: whether this log was removed via reorg)
+    dict.set_item("removed", log.removed)?;
 
     Ok(dict)
 }

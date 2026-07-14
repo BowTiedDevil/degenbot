@@ -247,7 +247,7 @@ class _RecordFork(AbstractContextManager):
 
     def raw_call(self, to: str, data: bytes) -> bytes:
         assert self.fork is not None
-        return self.fork.w3.eth.call(transaction={"to": to, "data": data.hex()})
+        return self.fork.provider.call(to, data)
 
 
 def _get_dy_standard_callable(

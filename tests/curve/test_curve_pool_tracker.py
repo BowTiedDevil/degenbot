@@ -114,7 +114,7 @@ def test_curve_pool_tracker_returns_cached_pool() -> None:
 @pytest.mark.online_rpc
 def test_curve_pool_tracker_fork_tripool(fork_mainnet_full: AnvilFork) -> None:
     """Integration test: build tripool via tracker on a forked network."""
-    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+    bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork_mainnet_full.provider))
     tracker = CurveStableswapPoolTracker(bot=bot, chain_id=1)
 
     # 3Crv tripool
@@ -131,7 +131,7 @@ def test_curve_pool_tracker_fork_tripool(fork_mainnet_full: AnvilFork) -> None:
 @pytest.mark.online_rpc
 def test_curve_pool_tracker_fork_metapool(fork_mainnet_full: AnvilFork) -> None:
     """Integration test: build metapool via tracker on a forked network."""
-    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+    bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork_mainnet_full.provider))
     tracker = CurveStableswapPoolTracker(bot=bot, chain_id=1)
 
     # RAI-3Crv metapool
@@ -144,7 +144,7 @@ def test_curve_pool_tracker_fork_metapool(fork_mainnet_full: AnvilFork) -> None:
 @pytest.mark.online_rpc
 def test_curve_pool_tracker_get_pools_for_token(fork_mainnet_full: AnvilFork) -> None:
     """get_pools_for_token returns pools containing a given token."""
-    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+    bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork_mainnet_full.provider))
     tracker = CurveStableswapPoolTracker(bot=bot, chain_id=1)
 
     # Build tripool

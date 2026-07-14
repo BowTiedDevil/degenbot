@@ -4,6 +4,7 @@
 # anvil to the `UniswapV2Pool` + `dex.variant` model. See
 # docs/migration-guides/dex-subclass-collapse.md.
 import pytest
+import web3
 
 pytest.skip(
     "ADR-005 slice 7 step 4b: fork test pending rewrite after DEX subclass collapse",
@@ -59,7 +60,7 @@ def test_pancakeswap_calculations(fork_base_full: AnvilFork, test_pools: list[An
         0.75,
     ]
 
-    pancake_v2_router_contract = fork_base_full.w3.eth.contract(
+    pancake_v2_router_contract = web3.Web3(web3.HTTPProvider(fork_base_full.http_url)).eth.contract(
         address=PANCAKE_V2_ROUTER, abi=PANCAKE_V2_ROUTER_ABI
     )
     for pool in test_pools:
