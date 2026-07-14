@@ -32,13 +32,13 @@ use crate::bot::engine::{
 };
 use crate::bot::pool::PyLiquidityPool;
 use crate::bot::token::PyErc20Token;
-use degenbot_pools::state_history::JournalError;
 use degenbot_bot::bot_core::PoolTickCoverage;
 use degenbot_bot::bot_core::{
     Bot, RegisterAerodromeV2PoolParams, RegisterBalancerStablePoolParams,
     RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams, RegisterV2PoolParams,
     RegisterV3PoolParams, RegisterV4PoolParams, V4PoolKey,
 };
+use degenbot_pools::state_history::JournalError;
 use degenbot_uniswap::dex_identity::DexVariant;
 use pyo3::types::{PyDict, PyList};
 use pyo3::Bound;
