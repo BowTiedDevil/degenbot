@@ -32,9 +32,22 @@ from degenbot.database.models.pools import (
     LiquidityPositionTable,
     UniswapV3PoolTable,
 )
+from degenbot.degenbot_rs import AlloyProvider as RustAlloyProvider
 from degenbot.degenbot_rs import PyBotIo, db_create_new_database
 
 CHAIN = 1
+_POOL_OFFLINE_JSON = (
+    '{"chain_id":1,"block_number":1,"timestamp":1,"calls":{},"code":{}}'
+)
+
+
+def _offline_provider() -> RustAlloyProvider:
+    """A one-block `OfflineProvider`-backed `AlloyProvider` (no RPC).
+
+    The pool-builder DB seam never touches the provider; a valid provider
+    keeps the seam honest (no Python `object()` double — see O3).
+    """
+    return RustAlloyProvider.offline_from_json_string(_POOL_OFFLINE_JSON)
 POOL_ADDR = "0x" + "12" * 20
 TOK0_ADDR = "0x" + "34" * 20
 TOK1_ADDR = "0x" + "56" * 20
@@ -102,7 +115,7 @@ def _seed_v3_pool(database_path: str) -> int:
 
 
 def _io(database_path: str) -> PyBotIo:
-    return PyBotIo(provider=object(), database_path=database_path)
+    return PyBotIo(provider=_offline_provider(), database_path=database_path)
 
 
 def test_fetch_pool_row_parity(tmp_path):
@@ -201,7 +214,7 @@ def test_fetch_tick_snapshot(tmp_path):
 
 
 def test_no_database_path_skips_pool_reads():
-    io = PyBotIo(provider=object(), database_path=None)
+    io = PyBotIo(provider=_offline_provider(), database_path=None)
     assert io.fetch_pool_row(CHAIN, POOL_ADDR) is None
     assert io.fetch_pool_kind("uniswap_v3", 1) is None
     assert io.fetch_token_by_id(1) is None
