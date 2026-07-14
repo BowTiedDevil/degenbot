@@ -69,11 +69,25 @@
 //! - **stateless swap sims** (`v3_simulate_swap`, `v4_simulate_swap`,
 //!   `SimulateSwapError`, `V3SwapOutcome`, the V2/Curve/Balancer dispatch)
 
+pub mod aerodrome_v2_state;
+pub mod balancer_stable_state;
+pub mod balancer_weighted_state;
 pub mod curve_data_provider;
+pub mod curve_state;
+// Domain-math prose (sqrtPriceX96, Solidity, …) moved verbatim from
+// `degenbot-bot/src/solvers/mobius_v3_int.rs`; mirrors the `#[allow]` on that
+// module in `degenbot-bot/src/solvers/mod.rs`.
+#[allow(clippy::doc_markdown)]
+pub mod int_v3_hop;
+pub mod liquidity_event;
 pub mod rate_provider;
 pub mod spec_bounds;
+pub mod state_history;
 pub mod tick_bitmap;
 pub mod tick_fetch;
+pub mod tick_map;
+pub mod v3_state;
+pub mod v4_state;
 
 // Re-export the seam traits + their value-only error/return types at the crate
 // root, so `degenbot-bot`'s transient shim modules can write

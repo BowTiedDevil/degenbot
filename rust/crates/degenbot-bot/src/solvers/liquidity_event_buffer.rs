@@ -153,11 +153,7 @@ where
     }
 }
 
-/// Trait for buffered liquidity events that support expiry by block number.
-pub trait LiquidityEvent {
-    /// The block number at which this event occurred.
-    fn block_number(&self) -> u64;
-}
+pub use ::degenbot_pools::liquidity_event::LiquidityEvent;
 
 #[cfg(test)]
 mod tests {
