@@ -11,7 +11,7 @@ pub use ::degenbot_pools::balancer_weighted_state::*;
 mod tests {
     #![allow(unused_imports)]
     use super::*;
-    use crate::bot_core::state_history::{BlockDelta, ReorgJournal};
+    use ::degenbot_pools::state_history::{BlockDelta, ReorgJournal};
     use crate::bot_core::{BotState, RegisterBalancerWeightedPoolParams};
     use alloy::primitives::{Address, U256};
 

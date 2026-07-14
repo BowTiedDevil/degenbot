@@ -10,38 +10,29 @@ use std::sync::Arc;
 use alloy::primitives::{Address, I256, U256};
 
 use crate::bot_core::snapshot_verify::SnapshotLoadError;
-use crate::bot_core::state_history::{
+use ::degenbot_pools::state_history::{
     JournalError, ReorgJournal, ScalarPriors, TickBefore, V2BlockDelta, V3BlockDelta,
     V3RestoreResult,
 };
 use degenbot_uniswap::v2_encoding::{encode_v2_swap, EncodedCall};
 
-pub mod aerodrome_v2_state;
 pub mod balancer_stable_state;
 pub mod balancer_weighted_state;
 pub mod block_clock;
 pub mod block_pump;
-pub mod curve_data_provider;
 pub mod curve_state;
 pub mod drain_sink;
 pub mod engine;
 pub mod liquidity_verifier;
 pub mod log_dispatcher;
-pub mod rate_provider;
 pub mod reorg_coordinator;
 pub mod snapshot_verify;
 pub mod solve_coordinator;
-pub mod spec_bounds;
-pub mod state_history;
-pub mod tick_bitmap;
-pub mod tick_fetch;
-pub mod tick_map;
 pub mod v3_state;
-pub mod v4_state;
 
 // Re-export the merged V3/V4/Curve state types (ADR-003: BotState owns
 // pool state; Curve is the ADR-003 "third family").
-pub use aerodrome_v2_state::{
+pub use ::degenbot_pools::aerodrome_v2_state::{
     AerodromeV2PoolIdentity, AerodromeV2PoolState, RegisterAerodromeV2PoolParams,
 };
 pub use balancer_stable_state::{
@@ -52,27 +43,27 @@ pub use balancer_weighted_state::{
     BalancerWeightedBlockDelta, BalancerWeightedPoolIdentity, BalancerWeightedPoolState,
     RegisterBalancerWeightedPoolParams,
 };
-pub use curve_data_provider::{CurveDataProvider, CurveDataProviderError};
+pub use ::degenbot_pools::curve_data_provider::{CurveDataProvider, CurveDataProviderError};
 pub use curve_state::{
     CurveBlockDelta, CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams,
 };
-pub use rate_provider::{BalancerRateProvider, RateProviderError, StaticRateProvider};
-pub use spec_bounds::{SpecValue, SpecViolation, UINT112_MAX};
+pub use ::degenbot_pools::rate_provider::{BalancerRateProvider, RateProviderError, StaticRateProvider};
+pub use ::degenbot_pools::spec_bounds::{SpecValue, SpecViolation, UINT112_MAX};
 pub use v3_state::{
     v3_simulate_swap, BufferedV3LiquidityUpdate, PoolTickCoverage, RegisterV3PoolError,
     RegisterV3PoolParams, SimulateSwapError, V3PoolIdentity, V3PoolState, V3SwapOutcome,
     V3SwapUpdate,
 };
-pub use v4_state::RegisterV4PoolError;
-pub use v4_state::{
-    v4_simulate_swap, BufferedV4LiquidityUpdate, RegisterV4PoolParams, V4PoolIdentity, V4PoolKey,
+
+pub use ::degenbot_pools::v4_state::{
+    v4_simulate_swap, BufferedV4LiquidityUpdate, RegisterV4PoolError, RegisterV4PoolParams, V4PoolIdentity, V4PoolKey,
     V4PoolState, V4StateSync, V4SwapUpdate, AMOUNT_MODIFYING_HOOK_MASK, V4_DYNAMIC_FEE_FLAG,
 };
 
 // Re-export the ADR-004 typed TickMap boundary trait (V3 + V4 impls both live
 // in `tick_map.rs`). State structs stay flat; only verifier/apply views are
 // typed-narrowed.
-pub use tick_map::{TickMap, TickMapMut};
+pub use ::degenbot_pools::tick_map::{TickMap, TickMapMut};
 
 // Re-export the ADR-008 per-block state machine core (pure; the pump drives
 // it — see `bot_core/block_clock.rs`).
@@ -208,8 +199,8 @@ impl BotState {
         // downstream swap-math U512→U256 narrowing would silently degrade to
         // `U256::MAX` under the prior sat-cap, or panic — see the helper's
         // `# Panics` section committed in `19218a2c`).
-        crate::bot_core::spec_bounds::validate_v2_reserve(params.reserve0, "reserve0")?;
-        crate::bot_core::spec_bounds::validate_v2_reserve(params.reserve1, "reserve1")?;
+        ::degenbot_pools::spec_bounds::validate_v2_reserve(params.reserve0, "reserve0")?;
+        ::degenbot_pools::spec_bounds::validate_v2_reserve(params.reserve1, "reserve1")?;
         if self.pool_addresses.contains_key(&params.address) {
             return Err(RegisterV2PoolError::AlreadyRegistered {
                 address: params.address,
@@ -299,7 +290,7 @@ impl BotState {
         &mut self,
         params: &RegisterV3PoolParams,
     ) -> Result<u64, RegisterV3PoolError> {
-        use crate::bot_core::spec_bounds as sb;
+        use ::degenbot_pools::spec_bounds as sb;
         sb::validate_sqrt_price(params.sqrt_price_x96)
             .map_err(RegisterV3PoolError::SpecViolation)?;
         sb::validate_tick(params.tick).map_err(RegisterV3PoolError::SpecViolation)?;
@@ -1078,7 +1069,7 @@ impl BotState {
             ));
         }
 
-        crate::bot_core::tick_bitmap::apply_liquidity_to_tick_range(
+        ::degenbot_pools::tick_bitmap::apply_liquidity_to_tick_range(
             &mut state.tick_data,
             tick_lower,
             tick_upper,
@@ -1172,7 +1163,7 @@ impl BotState {
     ) {
         if let Some(&key) = self.pool_addresses.get(&pool_address) {
             if let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&key) {
-                crate::bot_core::tick_bitmap::apply_liquidity_to_tick_range(
+                ::degenbot_pools::tick_bitmap::apply_liquidity_to_tick_range(
                     &mut state.tick_data,
                     tick_lower,
                     tick_upper,
@@ -1248,7 +1239,7 @@ impl BotState {
                         },
                     ));
                 }
-                crate::bot_core::tick_bitmap::apply_liquidity_to_tick_range(
+                ::degenbot_pools::tick_bitmap::apply_liquidity_to_tick_range(
                     &mut state.tick_data,
                     update.tick_lower,
                     update.tick_upper,
@@ -1304,7 +1295,7 @@ impl BotState {
                         },
                     ));
                 }
-                crate::bot_core::tick_bitmap::apply_liquidity_to_tick_range(
+                ::degenbot_pools::tick_bitmap::apply_liquidity_to_tick_range(
                     &mut state.tick_data,
                     update.tick_lower,
                     update.tick_upper,
@@ -1627,7 +1618,7 @@ impl BotState {
     pub fn merge_tick_word(
         &mut self,
         pool_id: u64,
-        fetched: crate::bot_core::tick_fetch::FetchedTickWord,
+        fetched: ::degenbot_pools::tick_fetch::FetchedTickWord,
     ) -> bool {
         let Some(entry) = self.pools.get_mut(&pool_id) else {
             return false;
@@ -1682,7 +1673,7 @@ impl BotState {
         // Clone the stored `Arc<dyn TickWordFetcher>` off the V3/V4 state
         // before the loop (avoids a self-referential borrow: the loop both
         // calls the fetcher and mutates `self.pools` via `merge_tick_word`).
-        let fetcher: Option<Arc<dyn crate::bot_core::tick_fetch::TickWordFetcher>> =
+        let fetcher: Option<Arc<dyn ::degenbot_pools::tick_fetch::TickWordFetcher>> =
             match self.pools.get(&pool_id) {
                 Some(PoolEntry::V3(_, state)) => state.fetcher.clone(),
                 Some(PoolEntry::V4(_, state)) => state.fetcher.clone(),
@@ -1787,7 +1778,7 @@ impl BotState {
         sqrt_price_limit: U256,
         block: u64,
     ) -> Option<V3SwapOutcome> {
-        let fetcher: Option<Arc<dyn crate::bot_core::tick_fetch::TickWordFetcher>> =
+        let fetcher: Option<Arc<dyn ::degenbot_pools::tick_fetch::TickWordFetcher>> =
             match self.pools.get(&pool_id) {
                 Some(PoolEntry::V3(_, state)) => state.fetcher.clone(),
                 Some(PoolEntry::V4(_, state)) => state.fetcher.clone(),
@@ -1889,7 +1880,7 @@ impl BotState {
         sqrt_price_limit: U256,
         block: u64,
     ) -> Option<V3SwapOutcome> {
-        let fetcher: Option<Arc<dyn crate::bot_core::tick_fetch::TickWordFetcher>> =
+        let fetcher: Option<Arc<dyn ::degenbot_pools::tick_fetch::TickWordFetcher>> =
             match self.pools.get(&pool_id) {
                 Some(PoolEntry::V3(_, state)) => state.fetcher.clone(),
                 Some(PoolEntry::V4(_, state)) => state.fetcher.clone(),
@@ -1980,7 +1971,7 @@ impl BotState {
         let spec = I256::try_from(amount).ok()?;
         // Clone the stored fetcher off the registered state (the override
         // state is a transient copy — the fetcher itself is shared via `Arc`).
-        let fetcher: Option<Arc<dyn crate::bot_core::tick_fetch::TickWordFetcher>> = match entry {
+        let fetcher: Option<Arc<dyn ::degenbot_pools::tick_fetch::TickWordFetcher>> = match entry {
             PoolEntry::V3(_, state) => state.fetcher.clone(),
             PoolEntry::V4(_, state) => state.fetcher.clone(),
             _ => None,
@@ -3054,7 +3045,7 @@ impl BotState {
         &mut self,
         params: &RegisterV4PoolParams,
     ) -> Result<u64, RegisterV4PoolError> {
-        use crate::bot_core::spec_bounds as sb;
+        use ::degenbot_pools::spec_bounds as sb;
         sb::validate_sqrt_price(params.sqrt_price_x96)
             .map_err(RegisterV4PoolError::SpecViolation)?;
         sb::validate_tick(params.tick).map_err(RegisterV4PoolError::SpecViolation)?;
@@ -3192,7 +3183,7 @@ impl BotState {
             ));
         }
 
-        crate::bot_core::tick_bitmap::apply_liquidity_to_tick_range(
+        ::degenbot_pools::tick_bitmap::apply_liquidity_to_tick_range(
             &mut state.tick_data,
             tick_lower,
             tick_upper,
@@ -3310,7 +3301,7 @@ impl BotState {
             ));
         }
 
-        crate::bot_core::tick_bitmap::apply_liquidity_to_tick_range(
+        ::degenbot_pools::tick_bitmap::apply_liquidity_to_tick_range(
             &mut state.tick_data,
             tick_lower,
             tick_upper,
@@ -3415,7 +3406,7 @@ impl BotState {
         if let Some(&id) = self.v4_pool_ids.get(&key) {
             if let Some(PoolEntry::V4(_, state)) = self.pools.get_mut(&id) {
                 if let Ok(delta_i128) = i128::try_from(liquidity_delta) {
-                    crate::bot_core::tick_bitmap::apply_liquidity_to_tick_range(
+                    ::degenbot_pools::tick_bitmap::apply_liquidity_to_tick_range(
                         &mut state.tick_data,
                         tick_lower,
                         tick_upper,
@@ -3475,7 +3466,7 @@ impl BotState {
                         },
                     ));
                 }
-                crate::bot_core::tick_bitmap::apply_liquidity_to_tick_range(
+                ::degenbot_pools::tick_bitmap::apply_liquidity_to_tick_range(
                     &mut state.tick_data,
                     update.tick_lower,
                     update.tick_upper,
@@ -3527,7 +3518,7 @@ impl BotState {
                         },
                     ));
                 }
-                crate::bot_core::tick_bitmap::apply_liquidity_to_tick_range(
+                ::degenbot_pools::tick_bitmap::apply_liquidity_to_tick_range(
                     &mut state.tick_data,
                     update.tick_lower,
                     update.tick_upper,
@@ -5346,7 +5337,7 @@ mod tests {
         let mut core = BotState::new();
         let mut params = make_v4_params_in_spec();
         params.pool_id = [0xe4u8; 32];
-        params.pool_key.fee = crate::bot_core::spec_bounds::V4_FEE_MAX;
+        params.pool_key.fee = ::degenbot_pools::spec_bounds::V4_FEE_MAX;
         assert!(
             matches! {
                 core.register_v4_pool(&params),
@@ -5362,7 +5353,7 @@ mod tests {
         let mut core = BotState::new();
         let mut params = make_v4_params_in_spec();
         params.pool_id = [0xe5u8; 32];
-        params.pool_key.tick_spacing = crate::bot_core::spec_bounds::MAX_TICK_SPACING + 1;
+        params.pool_key.tick_spacing = ::degenbot_pools::spec_bounds::MAX_TICK_SPACING + 1;
         assert!(
             matches! {
                 core.register_v4_pool(&params),
@@ -5914,7 +5905,7 @@ mod tests {
     #[test]
     fn register_v2_pool_rejects_overlarge_reserve0_as_spec_violation() {
         let mut core = BotState::new();
-        let overlarge = crate::bot_core::spec_bounds::UINT112_MAX + uint!(1_U256);
+        let overlarge = ::degenbot_pools::spec_bounds::UINT112_MAX + uint!(1_U256);
         let mut params = make_params(U256::from(1000), U256::from(2000));
         params.reserve0 = overlarge;
         // Prior impl silently propagated the overlarge reserve into V2PoolState
@@ -5932,7 +5923,7 @@ mod tests {
     #[test]
     fn register_v2_pool_rejects_overlarge_reserve1_as_spec_violation() {
         let mut core = BotState::new();
-        let overlarge = crate::bot_core::spec_bounds::UINT112_MAX + uint!(1_U256);
+        let overlarge = ::degenbot_pools::spec_bounds::UINT112_MAX + uint!(1_U256);
         let mut params = make_params(U256::from(1000), U256::from(2000));
         params.reserve1 = overlarge;
         assert!(
@@ -6036,7 +6027,7 @@ mod tests {
     fn register_v3_pool_rejects_fee_at_max_as_spec_violation() {
         let mut core = BotState::new();
         let mut params = make_v3_params_in_spec();
-        params.fee = crate::bot_core::spec_bounds::V3_FEE_MAX;
+        params.fee = ::degenbot_pools::spec_bounds::V3_FEE_MAX;
         assert!(
             matches! {
                 core.register_v3_pool(&params),
@@ -6050,7 +6041,7 @@ mod tests {
     fn register_v3_pool_rejects_tick_spacing_out_of_range_as_spec_violation() {
         let mut core = BotState::new();
         let mut params = make_v3_params_in_spec();
-        params.tick_spacing = crate::bot_core::spec_bounds::MAX_TICK_SPACING + 1;
+        params.tick_spacing = ::degenbot_pools::spec_bounds::MAX_TICK_SPACING + 1;
         assert!(
             matches! {
                 core.register_v3_pool(&params),
@@ -6909,7 +6900,7 @@ mod tests {
         // (via a fake fetcher) and retries; the result must match the direct
         // no-miss path (word 0 now known after the fetch merge) and must be
         // non-zero (not the miss sentinel).
-        use crate::bot_core::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
+        use ::degenbot_pools::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
 
         #[derive(Debug)]
         struct FakeFetcher;
@@ -6992,7 +6983,7 @@ mod tests {
         // If the fetcher cannot satisfy the missing word (RPC error / out of
         // range), the calc must give up with `U256::ZERO` rather than panic or
         // spin. Covers the `Err(_)` arm of the fetch+retry loop.
-        use crate::bot_core::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
+        use ::degenbot_pools::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
 
         #[derive(Debug)]
         struct FailingFetcher;
@@ -7042,7 +7033,7 @@ mod tests {
         // the fetcher — the empty word survived in the bitmap (ADR-006/005
         // stored-tick-fetcher task MLJT4V). This is the bitmap empty-word fix
         // that lets the companion delete `_bitmap_override`.
-        use crate::bot_core::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
+        use ::degenbot_pools::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
         use std::sync::atomic::{AtomicU32, Ordering};
         use std::sync::Arc;
 

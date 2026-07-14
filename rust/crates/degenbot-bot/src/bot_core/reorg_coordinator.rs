@@ -128,7 +128,7 @@ impl ReorgCoordinator {
 mod tests {
     use super::*;
     use crate::bot_core::log_dispatcher::PoolStateSubscriber;
-    use crate::bot_core::state_history::{ReorgJournal, V2BlockDelta};
+    use ::degenbot_pools::state_history::{ReorgJournal, V2BlockDelta};
     use crate::bot_core::{Bot, RegisterV2PoolParams};
     use alloy::primitives::{Address, Bytes, I256, U128, U256};
     use alloy::rpc::types::Log;
@@ -227,12 +227,12 @@ mod tests {
         let err = j.restore_before_block(5).unwrap_err();
         assert!(matches!(
             err,
-            crate::bot_core::state_history::JournalError::NoStatePriorToBlock { block: 5 }
+            ::degenbot_pools::state_history::JournalError::NoStatePriorToBlock { block: 5 }
         ));
         let err = j.restore_before_block(3).unwrap_err();
         assert!(matches!(
             err,
-            crate::bot_core::state_history::JournalError::NoStatePriorToBlock { block: 3 }
+            ::degenbot_pools::state_history::JournalError::NoStatePriorToBlock { block: 3 }
         ));
     }
 

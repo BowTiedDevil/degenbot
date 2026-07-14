@@ -2027,6 +2027,7 @@ dependencies = [
  "degenbot-fork",
  "degenbot-pathfinding",
  "degenbot-pool-updater",
+ "degenbot-pools",
  "degenbot-price",
  "degenbot-rpc",
  "degenbot-simulation",

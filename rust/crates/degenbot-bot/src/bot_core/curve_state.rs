@@ -11,8 +11,8 @@ pub use ::degenbot_pools::curve_state::*;
 mod tests {
     #![allow(unused_imports)]
     use super::*;
-    use crate::bot_core::curve_data_provider::CurveDataProvider;
-    use crate::bot_core::state_history::{BlockDelta, ReorgJournal};
+    use ::degenbot_pools::curve_data_provider::CurveDataProvider;
+    use ::degenbot_pools::state_history::{BlockDelta, ReorgJournal};
     use crate::bot_core::{BotState, RegisterCurvePoolParams};
     use alloy::primitives::{Address, U256};
     use std::sync::Arc;
