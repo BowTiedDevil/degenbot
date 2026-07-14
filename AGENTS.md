@@ -2,9 +2,6 @@
 
 **Respond in English only**
 
-## Coordinating With Other Agents
-When you begin a session, Read the 'pi-link-coordination' skill. Then use `link_list` to identify all agents working in this project. Send messages with `link_send` with `triggerTurn:true` to coordinate concurrent work and avoid making contradictory changes. Respond **directly** to other agents.
-
 ## Architectural Vision
 
 **Long-term goal: a set of first-class standalone Rust crates that together form a complete, functional MEV bot — no Python required.**
@@ -62,6 +59,29 @@ Recovery: if the `.so` ever goes stale (e.g. a venv copied from another machine 
 - `just test-all` - Run all tests (Rust + Python)
 - `just lint` - Run lint and type checks (Rust + Python)
 - `just format` - Run formatters (Rust + Python)
+
+## Profiling (hotpath)
+
+The `degenbot-bot` drain path (BlockPump → SolveCoordinator → EngineHandle) is instrumented with `#[hotpath::measure]` attributes and `hotpath::measure_block!` phase probes; the guard lifecycle lives in `rust/crates/degenbot-bot/src/profiling.rs`. hotpath is a non-optional dependency of `degenbot-bot` with `default-features = false`, so the macros resolve to **no-op stubs unless the `hotpath` Cargo feature is enabled** — zero compile-time or runtime cost in default builds, and the no-pyo3-in-cores invariant is unaffected (hotpath pulls no pyo3).
+
+**Dev:** the `[tool.maturin] features` list in `pyproject.toml` compiles `degenbot-bot/hotpath` into every dev `uv sync` build, so the dev `.so` always has it. Profiling is then toggled at runtime by an env var — **no rebuild when you want to profile**:
+
+```bash
+DEGENBOT_HOTPATH=1 \
+HOTPATH_SHUTDOWN_MS=300000 \
+HOTPATH_OUTPUT_PATH=hp.json \
+HOTPATH_OUTPUT_FORMAT=json \
+HOTPATH_REPORT=functions-timing,threads \
+uv run python examples/eth_backrun_v2_v3_v4_rust.py
+```
+
+`HOTPATH_SHUTDOWN_MS` forces a clean timed report from the long-running bot (the guard otherwise only drops at pump exit). For a live TUI view instead of a static report: `cargo install hotpath --features=tui` then `hotpath console` in another terminal while the bot runs.
+
+`DEGENBOT_HOTPATH=1` is an **opt-in runtime gate** (not a build gate): without it no guard is constructed, so the singleton-guard invariant can't be tripped by default runs, tests, or a Python process hosting multiple bots. Set it to construct the guard; leave it unset to run uninstrumented.
+
+**CI/CD:** release wheels exclude hotpath. The PyPI `maturin-action` passes `--features pyo3/extension-module`, which **overrides** the dev `[tool.maturin] features` list (verified empirically: the cargo invocation shows only `pyo3/extension-module`, no hotpath), so the shipped wheel's macros are no-op `lib_off` stubs with zero runtime penalty. CI's `just build-rust-extension` (`cargo build --features extension-module`) is already hotpath-free for the same reason.
+
+**Extending:** the pattern for new instrumentation is `#[hotpath::measure]` on a function (`impl_type = "Type"` for inherent methods, `label = "..."` for trait impls), or `hotpath::measure_block!("phase_name", { ... })` for sub-function phases. They're no-ops unless `hotpath` Cargo feature + `DEGENBOT_HOTPATH=1` are both on, so sprinkle liberally — same discipline as `log::debug!`. To widen coverage to a library crate, add the crate as a non-optional dep with `default-features = false` and gate the real `hotpath/hotpath` feature behind a Cargo feature on that crate (see `degenbot-bot/Cargo.toml` for the pattern).
 
 ## Git Commits
 Commit messages must follow the project convention enforced by `commitlint`. Git hooks are managed by [`prek`](https://prek.j178.dev/) and declared in [`prek.toml`](prek.toml). Run `just setup-git-hooks` once after cloning to install the hooks and the editor template. The hooks are:

@@ -63,7 +63,12 @@ jobs:
         with:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
-          args: --release --out dist ${{ matrix.args }}
+          # `--features pyo3/extension-module` OVERRIDES the dev `[tool.maturin]
+          # features` list (which adds `degenbot-bot/hotpath` for local profiling)
+          # so the shipped wheel excludes hotpath — its `#[hotpath::measure]`
+          # macros expand to no-op `lib_off` stubs, zero runtime penalty. See
+          # rust/crates/degenbot-bot/src/profiling.rs.
+          args: --release --out dist --features pyo3/extension-module ${{ matrix.args }}
           sccache: 'true'
           working-directory: .
 
