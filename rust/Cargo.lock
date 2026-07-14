@@ -1909,9 +1909,12 @@ dependencies = [
  "degenbot-balancer-math",
  "degenbot-cl-math",
  "degenbot-curve-math",
+ "degenbot-decoders",
  "degenbot-solidly-math",
  "degenbot-uniswap",
  "degenbot-v2-math",
+ "parking_lot",
+ "proptest",
  "thiserror",
 ]
 
