@@ -24,12 +24,26 @@ from sqlalchemy.orm import Session
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models import Base
 from degenbot.database.models.erc20 import Erc20TokenTable
+from degenbot.degenbot_rs import AlloyProvider as RustAlloyProvider
 from degenbot.degenbot_rs import PyBotIo, db_create_new_database
 
 CHAIN = 1
 # Production stores addresses checksummed (the builder checksums before insert);
 # the Rust seam queries with `to_checksum(None)`, so the test seed must match.
 ADDR = get_checksum_address("0x" + "ab" * 20)
+
+# A trivial real provider for the DB seam. After B1, `PyBotIo` extracts a
+# native `Arc<AlloyProvider>` when the provider is `PyAlloyProvider`-backed;
+# the DB methods never touch the provider, but a valid provider keeps the seam
+# honest (no Python `object()` double — see O3).
+_MINIMAL_OFFLINE_JSON = (
+    '{"chain_id":1,"block_number":1,"timestamp":1,"calls":{},"code":{}}'
+)
+
+
+def _offline_provider() -> RustAlloyProvider:
+    """A one-block `OfflineProvider`-backed `AlloyProvider` (no RPC)."""
+    return RustAlloyProvider.offline_from_json_string(_MINIMAL_OFFLINE_JSON)
 
 
 def _seed_token_row(database_path: str) -> int:
@@ -71,7 +85,7 @@ def test_fetch_erc20_token_parity(tmp_path):
     db_create_new_database(database_path)
     expected_id = _seed_token_row(database_path)
 
-    io = PyBotIo(provider=object(), database_path=database_path)
+    io = PyBotIo(provider=_offline_provider(), database_path=database_path)
     row = io.fetch_erc20_token(chain_id=CHAIN, address=ADDR)
 
     assert row is not None
@@ -98,7 +112,7 @@ def test_fetch_erc20_token_missing_row_returns_none(tmp_path):
     database_path = str(tmp_path / "erc20_seam_missing.db")
     db_create_new_database(database_path)
 
-    io = PyBotIo(provider=object(), database_path=database_path)
+    io = PyBotIo(provider=_offline_provider(), database_path=database_path)
     assert io.fetch_erc20_token(chain_id=CHAIN, address="0x" + "00" * 20) is None
 
 
@@ -108,7 +122,7 @@ def test_update_erc20_token_metadata_lands_update(tmp_path):
     db_create_new_database(database_path)
     _seed_token_row(database_path)
 
-    io = PyBotIo(provider=object(), database_path=database_path)
+    io = PyBotIo(provider=_offline_provider(), database_path=database_path)
     # The builder's write-back: row existed with NULL metadata, now populated.
     result = io.update_erc20_token_metadata(
         chain_id=CHAIN, address=ADDR, name="Test", symbol="TST", decimals=6
@@ -124,7 +138,7 @@ def test_update_erc20_token_metadata_lands_update(tmp_path):
 
 def test_no_database_path_skips_db_read():
     """No `database_path` → `fetch_erc20_token` returns None (the skip path)."""
-    io = PyBotIo(provider=object(), database_path=None)
+    io = PyBotIo(provider=_offline_provider(), database_path=None)
     assert io.database_path is None
     assert io.fetch_erc20_token(chain_id=CHAIN, address=ADDR) is None
     # And the write-back is a no-op.

@@ -12,7 +12,7 @@ from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.degenbot_rs import PyBot
 from degenbot.exceptions.pool import TrackerAlreadyInitialized
-from degenbot.provider import AlloyProvider
+from degenbot.provider import AlloyProvider, OfflineProvider
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.uniswap.trackers import UniswapV2PoolTracker
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
@@ -27,10 +27,18 @@ def _make_test_config(tmp_path: pathlib.Path, chain_id: int = 1) -> DegenbotConf
     )
 
 
-def _fake_provider(chain_id: int = 1) -> AlloyProvider:
-    provider = MagicMock(spec=AlloyProvider)
-    provider.chain_id = chain_id
-    return provider
+def _fake_provider(chain_id: int = 1) -> OfflineProvider:
+    """A real offline provider (recorded JSON, no RPC) with the given chain_id.
+
+    `Bot.__init__` reads `provider.chain_id` (the recorded chain_id) to enforce
+    config/chain alignment; no RPC is issued at construction, so an offline
+    provider over an in-memory Rust transport suffices — no MagicMock double
+    (see O3).
+    """
+    return OfflineProvider(
+        chain_id=chain_id,
+        blocks={"1": {"timestamp": 1, "calls": {}, "code": {}}},
+    )
 
 
 class TestBotInit:

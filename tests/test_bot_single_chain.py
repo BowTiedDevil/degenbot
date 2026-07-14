@@ -16,7 +16,7 @@ from degenbot.async_bot import AsyncBot
 from degenbot.bot import Bot
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.exceptions import DegenbotValueError
-from degenbot.provider import AlloyProvider
+from degenbot.provider import AlloyProvider, OfflineProvider
 
 
 def _make_test_config(tmp_path: pathlib.Path, chain_id: int = 1) -> DegenbotConfig:
@@ -27,16 +27,18 @@ def _make_test_config(tmp_path: pathlib.Path, chain_id: int = 1) -> DegenbotConf
     )
 
 
-def _fake_provider(chain_id: int = 1) -> AlloyProvider:
-    """A minimal fake provider exposing only ``chain_id`` (no network).
+def _fake_provider(chain_id: int = 1) -> OfflineProvider:
+    """A real offline provider (recorded JSON, no RPC) with the given chain_id.
 
-    The Bot's chain-enforcement only reads ``provider.chain_id`` at
-    construction, so a MagicMock suffices to exercise the match/mismatch
-    branches without spinning up an OfflineProvider.
+    `Bot.__init__` reads `provider.chain_id` (the recorded chain_id) to enforce
+    config/chain alignment; no RPC is issued at construction, so an offline
+    provider over an in-memory Rust transport suffices — no MagicMock double
+    (see O3).
     """
-    provider = MagicMock(spec=AlloyProvider)
-    provider.chain_id = chain_id
-    return provider
+    return OfflineProvider(
+        chain_id=chain_id,
+        blocks={"1": {"timestamp": 1, "calls": {}, "code": {}}},
+    )
 
 
 def _fake_async_provider(chain_id: int = 1) -> MagicMock:
@@ -70,7 +72,7 @@ class TestSingleChainBot:
         config = _make_test_config(tmp_path, chain_id=1)
         bot = Bot(config, provider=_fake_provider(1))
         assert bot.chain_id == 1
-        assert isinstance(bot.provider, AlloyProvider)
+        assert isinstance(bot.provider, (AlloyProvider, OfflineProvider))
 
 
 class TestTwoBotsAreIndependent:
