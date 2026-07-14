@@ -372,10 +372,10 @@ class TestAlloyProviderMethodSignatures:
         assert "block_number" in params
 
     def test_get_block_signature(self, mock_alloy_provider):
-        """get_block method should accept (block_number)."""
+        """get_block method should accept a block identifier (number or tag)."""
         sig = inspect.signature(mock_alloy_provider.get_block)
         params = list(sig.parameters.keys())
-        assert "block_number" in params
+        assert "block_identifier" in params
 
     def test_get_logs_signature(self, mock_alloy_provider):
         """get_logs method should accept LogFilter or keyword args."""
