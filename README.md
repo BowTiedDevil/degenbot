@@ -1,10 +1,18 @@
 # Degenbot
 
-Python classes to aid rapid development of Uniswap (V2, V3, V4), Curve V1, Solidly V2, Balancer V2, and Aave V3 integrations on EVM-compatible blockchains.
+A Rust MEV-bot core with a first-class Python driver shell, for Uniswap (V2, V3, V4), Curve V1, Solidly V2, Balancer V2, and Aave V3 integrations on EVM-compatible blockchains.
+
+Degenbot has two equally first-class consumers sharing one Rust core:
+
+- **Pure-Rust MEV bot** — `cargo add degenbot` (the umbrella crate re-exporting the cores) and build a fully functional MEV bot in Rust only.
+- **Python-driven MEV bot** — drive the same Rust core from Python through a thin [PyO3](https://pyo3.rs) layer that translates Python calls into Rust calls.
+
+The Rust core is the engine; Python is a driver shell, not a co-implementation. Pool/token state, swap math, event decoding, solvers, the pump loop, and swap encoding all live in Rust core crates; the Python layer provides the user-facing API, orchestration, and immutable config dual-tracking. See [`AGENTS.md`](AGENTS.md) and [`docs/adr/ADR-005-polars-inspired-three-layer-architecture.md`](docs/adr/ADR-005-polars-inspired-three-layer-architecture.md) for the full architectural vision.
 
 ## Contents
 
 - [Overview](#overview)
+- [Architecture: The Python-Rust Split](#architecture-the-python-rust-split)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Supported Protocols](#supported-protocols)
@@ -24,7 +32,7 @@ Python classes to aid rapid development of Uniswap (V2, V3, V4), Curve V1, Solid
 - [Bot API Reference](#bot-api-reference)
 - [CLI Reference](#cli-reference)
 - [Configuration](#configuration)
-- [Rust Extension](#rust-extension)
+- [The Rust Core (`degenbot_rs`)](#the-rust-core-degenbot_rs)
 - [Documentation](#documentation)
 - [Contributing](#contributing)
 - [License](#license)
@@ -32,9 +40,45 @@ Python classes to aid rapid development of Uniswap (V2, V3, V4), Curve V1, Solid
 
 ## Overview
 
-Degenbot is a set of Python classes that abstract many of the implementation details of Uniswap liquidity pools and their underlying ERC-20 tokens. It uses [web3.py](https://github.com/ethereum/web3.py/) for communication with an EVM blockchain through the standard JSON-RPC interface.
+Degenbot abstracts the implementation details of Uniswap liquidity pools and their underlying ERC-20 tokens into a set of Rust core crates exposed to Python through a thin PyO3 binding layer. The Rust core owns all performance-critical and stateful logic — pool/token state, swap math, event decoding, solvers, the pump loop, and swap encoding — while the Python companion provides the user-facing API, docstrings, and I/O orchestration.
+
+Today the Python layer still owns some infrastructure (database via SQLAlchemy, RPC via web3.py, publisher/subscriber, price oracles, the DB-aware updaters, simulation, and transaction submission); each of these is on the migration path into the Rust core, moved one piece at a time.
 
 These classes serve as building blocks for the lessons published by [BowTiedDevil](https://twitter.com/BowTiedDevil) on [Degen Code](https://www.degencode.com/).
+
+## Architecture: The Python-Rust Split
+
+Degenbot follows a Polars-inspired three-layer architecture (ADR-005). Every concern belongs to exactly one layer:
+
+| Layer | Where it lives | Holds |
+|-------|----------------|-------|
+| **Rust core** | `rust/crates/degenbot-{core,-cl-math,-curve-math,-balancer-math,-abi,-decoders,-uniswap,-rpc,-bot,-pools,-solvers,…}` — **zero `pyo3`** by default | data + state-machine logic + pure math + protocols (DexIdentity, encoders, decoders) |
+| **PyO3 wrapper** | `rust/crates/degenbot-python/src/<domain>/**` (the `degenbot_rs` extension module) | `#[pyclass]`/`#[pyfunction]` only — arg extraction → GIL release → core call → result wrap. **No business logic.** |
+| **Python companion** | `src/degenbot/**` | user-facing API, docstrings, I/O orchestration, immutable config dual-tracking, `Fraction`-based display |
+
+**The standalone-Rust-core constraint:** anything a standalone Rust consumer (`cargo add degenbot`) needs to build an MEV bot lives in a core crate from day one — never stranded on the Python side. The no-pyo3-in-cores invariant is enforced by `just check-no-pyo3-in-cores`.
+
+### Rust Core Crates
+
+The Rust workspace under `rust/crates/` exposes focused, independently consumable crates:
+
+| Crate | Responsibility |
+|-------|----------------|
+| `degenbot-core` | Shared types, `DexIdentity`, protocols |
+| `degenbot-v2-math` / `degenbot-cl-math` / `degenbot-curve-math` / `degenbot-balancer-math` / `degenbot-solidly-math` / `degenbot-evm-math` | Per-protocol pure swap/invariant math |
+| `degenbot-pools` | I/O-free pool state machines |
+| `degenbot-decoders` / `degenbot-abi` | Event + ABI decode/encode |
+| `degenbot-uniswap` | Uniswap V2/V3/V4 domain types |
+| `degenbot-rpc` / `degenbot-fork` | RPC interaction + anvil forking |
+| `degenbot-solvers` / `degenbot-pathfinding` | Arbitrage solving + path discovery |
+| `degenbot-bot` | The `Bot` state owner + pump/engine lifecycle |
+| `degenbot-db` | Rust-owned schema (cutover target, ADR-010) |
+| `degenbot-pool-updater` / `degenbot-aave-updater` | DB-aware state updaters |
+| `degenbot-price` / `degenbot-executor` / `degenbot-submission` / `degenbot-simulation` | Oracles, executor, tx submission, simulation |
+| `degenbot-python` | The PyO3 binding layer (`degenbot_rs`) |
+| `degenbot` | Umbrella crate re-exporting the cores for `cargo add degenbot` |
+
+Full component map and pump/engine lifecycle in [`docs/architecture/rust-owned-bot.md`](docs/architecture/rust-owned-bot.md).
 
 ## Installation
 
@@ -1222,9 +1266,11 @@ path = "/path/to/degenbot.db"
 `Bot` refuses to construct without it, and the connected RPC's `eth_chainId`
 is enforced to match it at construction.
 
-## Rust Extension
+## The Rust Core (`degenbot_rs`)
 
-Degenbot includes a high-performance Rust extension module (`degenbot_rs`) that provides optimized implementations of performance-critical operations. The extension is built automatically during installation using [maturin](https://www.maturin.rs/).
+The Rust core is the engine of degenbot — it owns all performance-critical and stateful logic. Python reaches it through the `degenbot_rs` extension module, a thin PyO3 binding layer (`rust/crates/degenbot-python/`) that translates Python calls into Rust calls with no business logic of its own. The underlying core crates are pyo3-free by default and are also consumable directly from pure Rust via `cargo add degenbot`.
+
+The extension is built automatically during installation using [maturin](https://www.maturin.rs/) (or `uv sync`, which invokes maturin under the hood).
 
 ### Key Dependencies
 
