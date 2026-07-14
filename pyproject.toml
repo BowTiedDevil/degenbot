@@ -259,7 +259,12 @@ python-source = "src"
 module-name = "degenbot.degenbot_rs"
 bindings = "pyo3"
 profile = "release"
-features = ["pyo3/extension-module"]
+# Dev builds compile hotpath in (toggle at runtime via DEGENBOT_HOTPATH=1 —
+# see rust/crates/degenbot-bot/src/profiling.rs). Release wheels override this
+# list with `--features pyo3/extension-module` (see
+# .github/workflows/publish-to-pypi.yaml) so the shipped artifact excludes
+# hotpath — macros are no-op `lib_off`, zero runtime penalty.
+features = ["pyo3/extension-module", "degenbot-bot/hotpath"]
 python-packages = ["degenbot"]
 
 [tool.alembic]
