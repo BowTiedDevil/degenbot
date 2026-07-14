@@ -1,28 +1,33 @@
 """Offline provider for testing without RPC calls.
 
-This module provides a ProviderBackend implementation that serves
+This module provides a provider implementation that serves
 pre-recorded chain data from JSON files, allowing tests to run without
 requiring a live blockchain connection.
 
 Example:
-    >>> from degenbot.provider import OfflineProvider, ProviderAdapter
+    >>> from degenbot.provider import OfflineProvider
     >>>
     >>> # Load recorded data
     >>> offline = OfflineProvider.from_json_file(
     ...     Path("tests/fixtures/chain_data/1/multi_block.json")
     ... )
-    >>> provider = ProviderAdapter.from_offline(offline)
     >>>
     >>> # Use in tests
-    >>> result = provider.call(to="0x...", data=calldata, block=24945700)
+    >>> result = offline.call(to="0x...", data=calldata, block=24945700)
 
 """
 
+from __future__ import annotations
+
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from hexbytes import HexBytes
+
+if TYPE_CHECKING:
+    from degenbot.provider import AlloyProvider
+    from degenbot.types.rpc_types import BlockIdentifier, TxParams
 
 
 class BlockNotRecordedError(Exception):
@@ -63,7 +68,7 @@ class OfflineCallReverted(Exception):
 class OfflineProvider:
     """Ethereum provider that serves pre-recorded chain data.
 
-    This class implements the ProviderBackend Protocol (minus async methods)
+    This class implements the provider interface directly (no adapter needed).
     by loading recorded RPC responses from JSON files. It allows tests to
     run without requiring a live blockchain connection.
 
@@ -113,7 +118,7 @@ class OfflineProvider:
             raise ValueError(msg)
 
     @classmethod
-    def from_json_file(cls, path: Path) -> "OfflineProvider":
+    def from_json_file(cls, path: Path) -> OfflineProvider:
         """Load recorded data from a JSON file.
 
         Supports both old multi-block format (with "blocks" key) and new single-block
@@ -145,7 +150,7 @@ class OfflineProvider:
         )
 
     @classmethod
-    def from_json_string(cls, json_str: str) -> "OfflineProvider":
+    def from_json_string(cls, json_str: str) -> OfflineProvider:
         """Load recorded data from a JSON string.
 
         Args:
@@ -410,6 +415,101 @@ class OfflineProvider:
 
         """
         return True
+
+    def call_raw(self, tx: TxParams, block: BlockIdentifier | None = None) -> HexBytes:
+        """Execute an eth_call with a raw transaction dict.
+
+        Args:
+            tx: Transaction dict with at least ``to`` and ``data`` keys.
+            block: Block number, or None for latest.
+
+        Returns:
+            The raw return data from the contract call.
+
+        """
+        return self.call(tx["to"], tx["data"], block_number=block)
+
+    def batch_call(self, calls: list[TxParams], block: int | None = None) -> list[HexBytes]:
+        """Execute multiple eth_calls sequentially.
+
+        Args:
+            calls: List of transaction dicts, each with ``to`` and ``data``.
+            block: Block number, or None for latest.
+
+        Returns:
+            A list of raw return data from each call.
+
+        """
+        return [self.call_raw(tx, block) for tx in calls]
+
+    def get_block_timestamp(self, block: int | None = None) -> int:
+        """Get the timestamp for a block.
+
+        Args:
+            block: Block number, or None for latest.
+
+        Returns:
+            The block timestamp as an integer (Unix seconds).
+
+        Raises:
+            ValueError: If the block is not found.
+
+        """
+        block_data = self.get_block(block if block is not None else self.get_block_number())
+        if block_data is None:
+            msg = f"Block {block} not found"
+            raise ValueError(msg)
+        return block_data["timestamp"]
+
+    def make_request(self, method: str, params: list[Any]) -> Any:  # noqa: ANN401
+        """Raw JSON-RPC request — not supported by OfflineProvider."""
+        msg = f"OfflineProvider does not support make_request (method={method!r})"
+        raise NotImplementedError(msg)
+
+    def close(self) -> None:  # noqa: PLR6301
+        """Close the provider — no resources to release."""
+        return
+
+    def to_alloy_provider(self) -> AlloyProvider:  # noqa: PLR6301
+        """Build an ``AlloyProvider`` from this offline provider's data.
+
+        OfflineProvider has no live RPC transport, so this always raises.
+
+        Raises:
+            ValueError: Always — no live transport is available.
+
+        """
+        msg = "Cannot build an AlloyProvider from an OfflineProvider (no live transport)."
+        raise ValueError(msg)
+
+    @property
+    def provider_type(self) -> str:
+        """The provider type (always 'offline')."""
+        return "offline"
+
+    @property
+    def provider(self) -> OfflineProvider:
+        """The underlying provider (identity — returns ``self``)."""
+        return self
+
+    @staticmethod
+    def as_web3() -> None:
+        """Return ``None`` — this provider has no Web3 backend."""
+        return
+
+    @staticmethod
+    def as_alloy() -> None:
+        """Return ``None`` — this provider is not an ``AlloyProvider``."""
+        return
+
+    def as_offline(self) -> OfflineProvider:
+        """Return ``self`` as an ``OfflineProvider``.
+
+        Returns:
+            This provider instance.
+
+        """
+        return self
 
     def __repr__(self) -> str:
         """Return a string representation.

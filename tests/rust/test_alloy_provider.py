@@ -77,10 +77,10 @@ class TestAlloyProviderMethodSignatures:
         assert "block_number" in params
 
     def test_get_block_signature(self, alloy_provider: AlloyProvider):
-        """Test get_block accepts block_number parameter."""
+        """Test get_block accepts a block identifier (number or tag)."""
         sig = inspect.signature(alloy_provider.get_block)
         params = list(sig.parameters.keys())
-        assert "block_number" in params
+        assert "block_identifier" in params
 
     def test_get_logs_signature(self, alloy_provider: AlloyProvider):
         """Test get_logs accepts LogFilter or keyword arguments."""
@@ -225,10 +225,10 @@ class TestProviderDefaults:
         assert default is None
 
     def test_get_block_default_block_number(self, alloy_provider: AlloyProvider):
-        """Test get_block has no default - requires block number."""
+        """Test get_block accepts a block identifier (number or tag)."""
         sig = inspect.signature(alloy_provider.get_block)
-        # block_number is required, no default
-        assert sig.parameters["block_number"].default is inspect.Parameter.empty
+        # block_identifier is required, no default
+        assert sig.parameters["block_identifier"].default is inspect.Parameter.empty
 
     def test_get_storage_at_default_block_number(self, alloy_provider: AlloyProvider):
         """Test get_storage_at has None default for block_number (latest)."""

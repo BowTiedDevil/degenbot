@@ -50,7 +50,14 @@ from degenbot.provider.protocols import AsyncProviderBackend, ProviderBackend
 from degenbot.provider.subscription import LogSubscriptionFilter, Subscription
 from degenbot.provider.sync_adapter import ProviderAdapter
 from degenbot.types.aliases import BlockNumber
-from degenbot.types.rpc_types import BlockData, LogData, TransactionData, TransactionReceiptData
+from degenbot.types.rpc_types import (
+    BlockData,
+    BlockIdentifier,
+    LogData,
+    TransactionData,
+    TransactionReceiptData,
+    TxParams,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,14 +191,30 @@ class AlloyProvider:
         """
         return self._provider.get_gas_price()
 
-    def get_block(self, block_number: int) -> BlockData | None:
-        """Get a block by number.
+    def get_block(self, block_identifier: int | str) -> BlockData | None:
+        """Get a block by number or tag.
+
+        Args:
+            block_identifier: Block number, or one of 'latest', 'earliest', 'pending'.
 
         Returns:
             Block data as dictionary with HexBytes for hash fields, or None if not found.
 
+        Raises:
+            ValueError: If ``block_identifier`` is an unsupported string.
+
         """
-        return self._provider.get_block(block_number)
+        if isinstance(block_identifier, str):
+            if block_identifier == "latest":
+                block_identifier = self._provider.get_block_number()
+            elif block_identifier == "earliest":
+                block_identifier = 0
+            elif block_identifier == "pending":
+                block_identifier = self._provider.get_block_number() + 1
+            else:
+                msg = f"Unsupported block identifier: {block_identifier!r}"
+                raise ValueError(msg)
+        return self._provider.get_block(block_identifier)
 
     def get_code(self, address: str, block_number: int | None = None) -> HexBytes:
         """Get contract code at an address.
@@ -455,6 +478,109 @@ class AlloyProvider:
 
         """
         return self._provider.make_request(method, params)
+
+    def call_raw(self, tx: TxParams, block: BlockIdentifier | None = None) -> HexBytes:
+        """Execute an eth_call with a raw transaction dict.
+
+        This is the low-level counterpart to :meth:`call`. The dict must
+        contain ``to`` (address string) and ``data`` (bytes). Additional keys
+        (e.g. ``from``, ``value``) are accepted but ignored — alloy's
+        ``eth_call`` uses the latest block by default.
+
+        Args:
+            tx: Transaction dict with at least ``to`` and ``data`` keys.
+            block: Block number, or None for latest.
+
+        Returns:
+            The raw return data from the contract call.
+
+        """
+        return self._provider.call(tx["to"], tx["data"], block)
+
+    def batch_call(self, calls: list[TxParams], block: int | None = None) -> list[HexBytes]:
+        """Execute multiple eth_calls sequentially and return results in order.
+
+        Args:
+            calls: List of transaction dicts, each with ``to`` and ``data``.
+            block: Block number, or None for latest.
+
+        Returns:
+            A list of raw return data from each call.
+
+        """
+        return [self.call_raw(tx, block) for tx in calls]
+
+    def get_block_timestamp(self, block: int | None = None) -> int:
+        """Get the timestamp for a block.
+
+        Args:
+            block: Block number, or None for latest.
+
+        Returns:
+            The block timestamp as an integer (Unix seconds).
+
+        Raises:
+            ValueError: If the block is not found.
+
+        """
+        block_data = self.get_block(block if block is not None else "latest")
+        if block_data is None:
+            msg = f"Block {block} not found"
+            raise ValueError(msg)
+        return block_data["timestamp"]
+
+    # --- Introspection / adapter-compat shims ---
+
+    def to_alloy_provider(self) -> "AlloyProvider":
+        """Return an ``AlloyProvider`` over this provider's transport.
+
+        This provider *is* already an ``AlloyProvider``, so return ``self``.
+        Kept for adapter-compatibility with call sites that previously held a
+        ``ProviderAdapter``.
+
+        Returns:
+            This provider instance (already an ``AlloyProvider``).
+
+        """
+        return self
+
+    @property
+    def provider_type(self) -> str:
+        """The provider type (always 'alloy')."""
+        return "alloy"
+
+    @property
+    def provider(self) -> "AlloyProvider":
+        """The underlying provider (identity — returns ``self``)."""
+        return self
+
+    @staticmethod
+    def as_web3() -> None:
+        """Return ``None`` — this provider has no Web3 backend."""
+        return
+
+    def as_alloy(self) -> "AlloyProvider":
+        """Return ``self`` as an ``AlloyProvider``.
+
+        Returns:
+            This provider instance.
+
+        """
+        return self
+
+    @staticmethod
+    def as_offline() -> None:
+        """Return ``None`` — this provider is not an ``OfflineProvider``."""
+        return
+
+    def __repr__(self) -> str:
+        """Return a string representation.
+
+        Returns:
+            A string representation of the provider.
+
+        """
+        return f"AlloyProvider(rpc_url={self._rpc_url!r})"
 
     def __enter__(self) -> Self:
         """Context manager entry.
