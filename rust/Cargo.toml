@@ -36,6 +36,7 @@ members = [
     "crates/degenbot-solidly-math",
     "crates/degenbot-evm-math",
     "crates/degenbot-pools",
+    "crates/degenbot-solvers",
     "crates/degenbot-price",
     "crates/degenbot-executor",
     "crates/degenbot-submission",

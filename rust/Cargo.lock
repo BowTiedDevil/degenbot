@@ -1976,6 +1976,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "degenbot-solvers"
+version = "0.6.0-alpha.3"
+dependencies = [
+ "alloy",
+ "degenbot-cl-math",
+ "degenbot-pools",
+ "degenbot-v2-math",
+ "proptest",
+]
+
+[[package]]
 name = "degenbot-submission"
 version = "0.6.0-alpha.3"
 dependencies = [
