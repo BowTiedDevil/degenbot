@@ -11,9 +11,9 @@ pub use ::degenbot_pools::balancer_stable_state::*;
 mod tests {
     #![allow(unused_imports)]
     use super::*;
+    use crate::bot_core::{BotState, RegisterBalancerStablePoolParams};
     use ::degenbot_pools::rate_provider::BalancerRateProvider;
     use ::degenbot_pools::state_history::{BlockDelta, ReorgJournal};
-    use crate::bot_core::{BotState, RegisterBalancerStablePoolParams};
     use alloy::primitives::{Address, U256};
     use std::sync::Arc;
 

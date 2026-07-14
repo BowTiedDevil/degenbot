@@ -11,12 +11,4 @@
 //! - [`mobius_int_exact`] — closed-form U512-native solver (`exact_mobius_solve`)
 //! - [`mobius_v3_int`] — integer V3 tick-range types, crossing, CL solvers
 
-pub mod affected_keys;
-pub mod liquidity_event_buffer;
-#[allow(clippy::doc_markdown)]
-pub mod mobius_int;
-#[allow(clippy::doc_markdown)]
-pub mod mobius_int_exact;
-#[allow(clippy::doc_markdown)]
-pub mod mobius_v3_int;
 pub mod uniswap_engine;

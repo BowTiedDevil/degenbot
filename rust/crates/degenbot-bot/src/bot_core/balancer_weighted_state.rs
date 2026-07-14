@@ -11,8 +11,8 @@ pub use ::degenbot_pools::balancer_weighted_state::*;
 mod tests {
     #![allow(unused_imports)]
     use super::*;
-    use ::degenbot_pools::state_history::{BlockDelta, ReorgJournal};
     use crate::bot_core::{BotState, RegisterBalancerWeightedPoolParams};
+    use ::degenbot_pools::state_history::{BlockDelta, ReorgJournal};
     use alloy::primitives::{Address, U256};
 
     /// Two-token weighted pool fixture (mirrors a Curve two-coin helper).

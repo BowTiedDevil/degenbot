@@ -35,6 +35,11 @@ pub mod v3_state;
 pub use ::degenbot_pools::aerodrome_v2_state::{
     AerodromeV2PoolIdentity, AerodromeV2PoolState, RegisterAerodromeV2PoolParams,
 };
+pub use ::degenbot_pools::curve_data_provider::{CurveDataProvider, CurveDataProviderError};
+pub use ::degenbot_pools::rate_provider::{
+    BalancerRateProvider, RateProviderError, StaticRateProvider,
+};
+pub use ::degenbot_pools::spec_bounds::{SpecValue, SpecViolation, UINT112_MAX};
 pub use balancer_stable_state::{
     BalancerStableBlockDelta, BalancerStablePoolIdentity, BalancerStablePoolState,
     RegisterBalancerStablePoolParams,
@@ -43,12 +48,9 @@ pub use balancer_weighted_state::{
     BalancerWeightedBlockDelta, BalancerWeightedPoolIdentity, BalancerWeightedPoolState,
     RegisterBalancerWeightedPoolParams,
 };
-pub use ::degenbot_pools::curve_data_provider::{CurveDataProvider, CurveDataProviderError};
 pub use curve_state::{
     CurveBlockDelta, CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams,
 };
-pub use ::degenbot_pools::rate_provider::{BalancerRateProvider, RateProviderError, StaticRateProvider};
-pub use ::degenbot_pools::spec_bounds::{SpecValue, SpecViolation, UINT112_MAX};
 pub use v3_state::{
     v3_simulate_swap, BufferedV3LiquidityUpdate, PoolTickCoverage, RegisterV3PoolError,
     RegisterV3PoolParams, SimulateSwapError, V3PoolIdentity, V3PoolState, V3SwapOutcome,
@@ -56,8 +58,9 @@ pub use v3_state::{
 };
 
 pub use ::degenbot_pools::v4_state::{
-    v4_simulate_swap, BufferedV4LiquidityUpdate, RegisterV4PoolError, RegisterV4PoolParams, V4PoolIdentity, V4PoolKey,
-    V4PoolState, V4StateSync, V4SwapUpdate, AMOUNT_MODIFYING_HOOK_MASK, V4_DYNAMIC_FEE_FLAG,
+    v4_simulate_swap, BufferedV4LiquidityUpdate, RegisterV4PoolError, RegisterV4PoolParams,
+    V4PoolIdentity, V4PoolKey, V4PoolState, V4StateSync, V4SwapUpdate, AMOUNT_MODIFYING_HOOK_MASK,
+    V4_DYNAMIC_FEE_FLAG,
 };
 
 // Re-export the ADR-004 typed TickMap boundary trait (V3 + V4 impls both live
@@ -115,13 +118,13 @@ pub struct BotState {
     /// Dual-buffer for V3 liquidity (Mint/Burn) events awaiting pool
     /// registration (ADR-003: the accurate-state buffer lives on `BotState`, not
     /// the dissolved `V3BlockEngine`).
-    v3_buffer: crate::solvers::liquidity_event_buffer::LiquidityEventBuffer<
+    v3_buffer: ::degenbot_pools::liquidity_event_buffer::LiquidityEventBuffer<
         Address,
         BufferedV3LiquidityUpdate,
     >,
     /// Dual-buffer for V4 `ModifyLiquidity` events awaiting pool registration.
     /// Keyed by `(pool_manager, pool_id)`.
-    v4_buffer: crate::solvers::liquidity_event_buffer::LiquidityEventBuffer<
+    v4_buffer: ::degenbot_pools::liquidity_event_buffer::LiquidityEventBuffer<
         (Address, degenbot_decoders::v4_swap_decoder::PoolId),
         BufferedV4LiquidityUpdate,
     >,
@@ -168,8 +171,8 @@ impl BotState {
             tokens: HashMap::new(),
             next_pool_id: 1,
             journal_depth,
-            v3_buffer: crate::solvers::liquidity_event_buffer::LiquidityEventBuffer::new(),
-            v4_buffer: crate::solvers::liquidity_event_buffer::LiquidityEventBuffer::new(),
+            v3_buffer: ::degenbot_pools::liquidity_event_buffer::LiquidityEventBuffer::new(),
+            v4_buffer: ::degenbot_pools::liquidity_event_buffer::LiquidityEventBuffer::new(),
             v4_pool_ids: HashMap::new(),
             v3_snapshot: crate::bot_core::snapshot_verify::SnapshotStore::new(),
             v4_snapshot: crate::bot_core::snapshot_verify::SnapshotStore::new(),

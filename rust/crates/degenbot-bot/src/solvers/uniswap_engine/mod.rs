@@ -366,11 +366,11 @@ pub enum ResolvedHop {
     },
     /// V3 concentrated-liquidity hop
     V3 {
-        int_seq: crate::solvers::mobius_v3_int::IntV3TickRangeSequence,
+        int_seq: ::degenbot_solvers::mobius_v3_int::IntV3TickRangeSequence,
     },
     /// V4 concentrated-liquidity hop (same CL math as V3, different settlement)
     V4 {
-        int_seq: crate::solvers::mobius_v3_int::IntV3TickRangeSequence,
+        int_seq: ::degenbot_solvers::mobius_v3_int::IntV3TickRangeSequence,
     },
     /// Solidly/Aerodrome/Camelot stable or volatile hop. Owns its own solve
     /// branch — NOT concentrated-liquidity, so `as_int_sequence()` returns
@@ -404,7 +404,7 @@ impl ResolvedHop {
     #[must_use]
     pub const fn as_int_sequence(
         &self,
-    ) -> Option<&crate::solvers::mobius_v3_int::IntV3TickRangeSequence> {
+    ) -> Option<&::degenbot_solvers::mobius_v3_int::IntV3TickRangeSequence> {
         match self {
             Self::V3 { int_seq, .. } | Self::V4 { int_seq, .. } => Some(int_seq),
             Self::V2 { .. } | Self::SolidlyStable { .. } => None,

@@ -167,7 +167,7 @@ impl UniswapEngine {
                 .cloned()
                 .collect();
             if int_hops.len() == resolved.hops.len() {
-                crate::solvers::mobius_int_exact::exact_mobius_solve(&int_hops)
+                ::degenbot_solvers::mobius_int_exact::exact_mobius_solve(&int_hops)
                     .ok()
                     .and_then(|r| {
                         if r.is_profitable && !r.optimal_input.is_zero() && !r.profit.is_zero() {
@@ -200,7 +200,7 @@ impl UniswapEngine {
                 .filter_map(ResolvedHop::as_int_sequence)
                 .collect();
             if int_sequences.len() >= 2 {
-                crate::solvers::mobius_v3_int::int_solve_cl_path(&int_sequences).map(
+                ::degenbot_solvers::mobius_v3_int::int_solve_cl_path(&int_sequences).map(
                     |(optimal_input, _profit, hop_outputs)| {
                         // consumed_inputs[0] = optimal_input (first hop always consumes
                         // its full input for single-range paths; no partial fill).
@@ -323,14 +323,14 @@ impl UniswapEngine {
             .iter()
             .map(|h| h.as_v2_state().cloned())
             .collect();
-        let int_v3_sequences: Vec<Option<crate::solvers::mobius_v3_int::IntV3TickRangeSequence>> =
+        let int_v3_sequences: Vec<Option<::degenbot_solvers::mobius_v3_int::IntV3TickRangeSequence>> =
             resolved
                 .hops
                 .iter()
                 .map(|h| h.as_int_sequence().cloned())
                 .collect();
 
-        crate::solvers::mobius_v3_int::exact_solve_mixed_path_n(
+        ::degenbot_solvers::mobius_v3_int::exact_solve_mixed_path_n(
             &v2_hops,
             &int_v3_sequences,
             &hop_order,
@@ -363,8 +363,8 @@ impl UniswapEngine {
     /// (the `_solve_golden_section` branch with `swap_fn` set). The Möbius
     /// precheck early-outs unprofitable paths before the expensive search.
     fn solve_solidly_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
-        use crate::solvers::mobius_int::compute_int_mobius_coefficients;
-        use crate::solvers::mobius_int_exact::compute_mobius_model_optimal_input;
+        use ::degenbot_solvers::mobius_int::compute_int_mobius_coefficients;
+        use ::degenbot_solvers::mobius_int_exact::compute_mobius_model_optimal_input;
         use degenbot_v2_math::IntHopState;
 
         let hops = &resolved.hops;
@@ -422,7 +422,7 @@ impl UniswapEngine {
         let phi_span = |lo: U256, hi: U256| -> U256 {
             let d = U512::from(hi - lo);
             let scaled = d * U512::from(phi_num) / U512::from(phi_den);
-            crate::solvers::mobius_int_exact::u512_to_u256_internal(scaled)
+            ::degenbot_solvers::mobius_int_exact::u512_to_u256_internal(scaled)
         };
         let mut x1 = x_high - phi_span(x_low, x_high);
         let mut x2 = x_low + phi_span(x_low, x_high);
