@@ -24,3 +24,5 @@ pub mod affected_keys;
 pub mod mobius_int;
 #[allow(clippy::doc_markdown)]
 pub mod mobius_int_exact;
+#[allow(clippy::doc_markdown)]
+pub mod mobius_v3_int;
