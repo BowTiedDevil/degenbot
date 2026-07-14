@@ -32,7 +32,7 @@ use crate::bot::engine::{
 };
 use crate::bot::pool::PyLiquidityPool;
 use crate::bot::token::PyErc20Token;
-use degenbot_bot::bot_core::state_history::JournalError;
+use degenbot_pools::state_history::JournalError;
 use degenbot_bot::bot_core::PoolTickCoverage;
 use degenbot_bot::bot_core::{
     Bot, RegisterAerodromeV2PoolParams, RegisterBalancerStablePoolParams,

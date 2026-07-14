@@ -35,6 +35,7 @@ alloy = { version = "^2.0", features = ["full", "transport-throttle"] }
 # conversions from core are available at this binding layer.
 degenbot-rpc = { path = "../degenbot-rpc", optional = true }
 degenbot-bot = { path = "../degenbot-bot", optional = true }
+degenbot-pools = { path = "../degenbot-pools" }
 degenbot-decoders = { path = "../degenbot-decoders", optional = true }
 degenbot-uniswap = { path = "../degenbot-uniswap", optional = true }
 degenbot-abi = { path = "../degenbot-abi", optional = true }
