@@ -23,7 +23,7 @@ import pytest
 from eth_abi import encode as abi_encode
 from hexbytes import HexBytes
 from sqlalchemy import select
-from web3.types import LogReceipt
+from degenbot.types.rpc_types import LogReceipt
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli.pool_updater_configs import (

@@ -17,7 +17,7 @@ import pathlib
 
 import eth_abi.abi
 import pytest
-from web3 import Web3
+from degenbot.crypto import keccak256
 
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.degenbot_rs import PyBot
@@ -44,7 +44,7 @@ def _compute_v4_pool_id(
     """Mirror UniswapV4Pool's pool_id derivation so the test pool validates."""
     return (
         "0x"
-        + Web3.keccak(
+        + keccak256(
             eth_abi.abi.encode(
                 types=["address", "address", "uint24", "int24", "address"],
                 args=[currency0, currency1, fee, tick_spacing, hooks],
@@ -246,7 +246,7 @@ def _build_pool_from_corpus(
     token1 = make_erc20(py_bot, address="0x" + "bb" * 20, name="T1", symbol="T1", decimals=18)
     pool_id = (
         "0x"
-        + Web3.keccak(
+        + keccak256(
             eth_abi.abi.encode(
                 ["address", "address", "uint24", "int24", "address"],
                 [token0.address, token1.address, state["fee"], state["tick_spacing"], ZERO_ADDRESS],

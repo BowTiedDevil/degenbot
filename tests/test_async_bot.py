@@ -9,7 +9,8 @@ from unittest.mock import AsyncMock, MagicMock
 import eth_abi.abi
 import pytest
 from hexbytes import HexBytes
-from web3 import Web3
+from degenbot.crypto import function_selector
+from degenbot.checksum_cache import get_checksum_address
 
 from degenbot.async_bot import AsyncBot
 from degenbot.checksum_cache import get_checksum_address
@@ -237,7 +238,7 @@ class TestAsyncBotBuildPoolV3:
         )
         liquidity_encoded = eth_abi.abi.encode(types=["uint128"], args=[liquidity])
 
-        tick_bitmap_selector = Web3.keccak(text="tickBitmap(int16)")[:4]
+        tick_bitmap_selector = function_selector("tickBitmap(int16)")
 
         responses = {
             factory_calldata: eth_abi.abi.encode(types=["address"], args=[UNISWAP_V3_FACTORY]),
@@ -309,7 +310,7 @@ class TestAsyncBotBuildPoolV4:
         liquidity_calldata = encode_function_calldata(
             "getLiquidity(bytes32)", [HexBytes(v4_pool_id)]
         )
-        tick_bitmap_selector = Web3.keccak(text="getTickBitmap(bytes32,int16)")[:4]
+        tick_bitmap_selector = function_selector("getTickBitmap(bytes32,int16)")
 
         slot0_encoded = eth_abi.abi.encode(
             types=["uint160", "int24", "uint24", "uint24"],

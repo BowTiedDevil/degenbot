@@ -8,7 +8,7 @@ import pytest
 import web3
 from eth_typing import ChainId
 from hexbytes import HexBytes
-from web3.exceptions import ContractLogicError
+from degenbot.exceptions import ContractLogicError
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.bot import Bot

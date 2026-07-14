@@ -19,7 +19,7 @@ from fractions import Fraction
 import pytest
 import web3
 from hexbytes import HexBytes
-from web3.exceptions import ContractLogicError
+from degenbot.exceptions import ContractLogicError
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.balancer.deployments import (

@@ -14,7 +14,7 @@ from fractions import Fraction
 from typing import TYPE_CHECKING
 
 import pytest
-from web3.exceptions import ContractLogicError
+from degenbot.exceptions import ContractLogicError
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.balancer.deployments import (

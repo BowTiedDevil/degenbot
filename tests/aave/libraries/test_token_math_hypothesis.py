@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import hypothesis
 import hypothesis.strategies as st
 import pytest
-from web3.exceptions import ContractLogicError
+from degenbot.exceptions import ContractLogicError
 
 from degenbot.aave.libraries import wad_ray_math
 from degenbot.aave.libraries.token_math import (

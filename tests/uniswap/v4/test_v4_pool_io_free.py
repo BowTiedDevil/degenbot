@@ -5,7 +5,8 @@ from unittest.mock import MagicMock
 
 import eth_abi.abi
 from hexbytes import HexBytes
-from web3 import Web3
+from degenbot.crypto import function_selector
+from degenbot.checksum_cache import get_checksum_address
 
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
@@ -282,7 +283,7 @@ class TestBotBuildV4Pool:
 
         # getTickBitmap(bytes32,int16) selector
 
-        tick_bitmap_selector = Web3.keccak(text="getTickBitmap(bytes32,int16)")[:4]
+        tick_bitmap_selector = function_selector("getTickBitmap(bytes32,int16)")
 
         def mock_call(to, data, block=None):
             if data == slot0_calldata:

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
-from web3.types import LogReceipt
+from degenbot.types.rpc_types import LogReceipt
 
 from degenbot.aave.enrichment.context import EnrichmentContext
 from degenbot.aave.enrichment.handlers.base import OperationHandler

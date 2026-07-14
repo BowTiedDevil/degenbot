@@ -9,7 +9,7 @@ import pytest
 import web3
 from hexbytes import HexBytes
 from web3.contract import Contract
-from web3.exceptions import ContractLogicError
+from degenbot.exceptions import ContractLogicError
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address

@@ -51,8 +51,8 @@ from typing import TYPE_CHECKING, Any, Self
 import pytest
 import web3
 from hexbytes import HexBytes
-from web3 import Web3
-from web3.exceptions import ContractLogicError
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.exceptions import ContractLogicError
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.balancer.deployments import (
@@ -243,7 +243,7 @@ def _query_swap_callable(
             abi=_BALANCERQUERIES_ABI,
         )
         return query_contract.functions.querySwap(
-            (Web3.to_bytes(hexstr=pool_id_hex), swap_kind, token_in, token_out, amount, b""),
+            (HexBytes(pool_id_hex), swap_kind, token_in, token_out, amount, b""),
             (VITALIK_ADDRESS, False, VITALIK_ADDRESS, False),
         ).call()
 

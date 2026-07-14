@@ -8,7 +8,7 @@ produce:
 """
 
 import eth_abi.abi
-from web3 import Web3
+from degenbot.checksum_cache import get_checksum_address
 
 from degenbot.arbitrage.types import (
     UniswapV4PoolSwapAmounts,
@@ -17,10 +17,10 @@ from degenbot.arbitrage.types import (
 
 # ── Constants ──────────────────────────────────────────────────
 
-WETH_ADDRESS = Web3.to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
-USDC_ADDRESS = Web3.to_checksum_address("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
-ZERO_ADDRESS = Web3.to_checksum_address("0x0000000000000000000000000000000000000000")
-POOL_MANAGER = Web3.to_checksum_address("0x000000000004444c5dc75cB358380D2e3De08A90")
+WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+USDC_ADDRESS = get_checksum_address("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+ZERO_ADDRESS = get_checksum_address("0x0000000000000000000000000000000000000000")
+POOL_MANAGER = get_checksum_address("0x000000000004444c5dc75cB358380D2e3De08A90")
 
 MIN_SQRT_RATIO = 4295128739
 MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342

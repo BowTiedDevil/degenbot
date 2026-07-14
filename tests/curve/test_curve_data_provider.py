@@ -6,7 +6,8 @@ and correctly delegates to the underlying AlloyProvider.
 
 import eth_abi.abi
 from hexbytes import HexBytes
-from web3 import Web3
+from degenbot.crypto import function_selector, keccak256
+from degenbot.checksum_cache import get_checksum_address
 
 from degenbot.builders.pool_io import SyncPoolIO
 from degenbot.checksum_cache import get_checksum_address
@@ -116,7 +117,7 @@ def _make_reverting_provider() -> AlloyProvider:
 
 
 def _selector(signature: str) -> bytes:
-    return Web3.keccak(text=signature)[:4]
+    return function_selector(signature)
 
 
 POOL_ADDRESS = "0x0000000000000000000000000000000000000001"

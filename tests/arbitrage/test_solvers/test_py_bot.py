@@ -505,7 +505,7 @@ class TestV2SwapEncoding:
     def test_encode_swap_matches_python_reference(self):
         """Full byte-level comparison against Python eth_abi output."""
         import eth_abi
-        from web3 import Web3
+        from degenbot.crypto import function_selector
 
         core, pool_id = self._make_core_with_pool()
         result = core.encode_swap(
@@ -515,7 +515,7 @@ class TestV2SwapEncoding:
         _, calldata_hex, _ = result
 
         # Generate reference calldata from Python eth_abi
-        selector = Web3.keccak(text="swap(uint256,uint256,address,bytes)")[:4]
+        selector = function_selector("swap(uint256,uint256,address,bytes)")
         reference_data = eth_abi.abi.encode(
             types=["uint256", "uint256", "address", "bytes"],
             args=[0, 181, self.RECIPIENT, b""],
@@ -527,7 +527,7 @@ class TestV2SwapEncoding:
     def test_encode_swap_one_for_zero(self):
         """Encode a token1→token0 swap (amount0Out nonzero)."""
         import eth_abi
-        from web3 import Web3
+        from degenbot.crypto import function_selector
 
         core, pool_id = self._make_core_with_pool()
         result = core.encode_swap(
@@ -537,7 +537,7 @@ class TestV2SwapEncoding:
         _, calldata_hex, _ = result
 
         # Generate reference calldata from Python eth_abi
-        selector = Web3.keccak(text="swap(uint256,uint256,address,bytes)")[:4]
+        selector = function_selector("swap(uint256,uint256,address,bytes)")
         reference_data = eth_abi.abi.encode(
             types=["uint256", "uint256", "address", "bytes"],
             args=[181, 0, self.RECIPIENT, b""],
@@ -555,7 +555,7 @@ class TestV2SwapEncoding:
     def test_pool_handle_encode_swap(self):
         """Pool handle can also encode swaps."""
         import eth_abi
-        from web3 import Web3
+        from degenbot.crypto import function_selector
 
         core, pool_id = self._make_core_with_pool()
         pool = core.get_pool(pool_id)
@@ -566,7 +566,7 @@ class TestV2SwapEncoding:
         _, calldata_hex, _ = result
 
         # Generate reference calldata from Python eth_abi
-        selector = Web3.keccak(text="swap(uint256,uint256,address,bytes)")[:4]
+        selector = function_selector("swap(uint256,uint256,address,bytes)")
         reference_data = eth_abi.abi.encode(
             types=["uint256", "uint256", "address", "bytes"],
             args=[0, 181, self.RECIPIENT, b""],
