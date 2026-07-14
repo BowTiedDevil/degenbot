@@ -211,8 +211,15 @@ impl PyAlloyProvider {
                         .eth_call(&to_address, data_bytes, block_number)
                         .await
                 })
-            })
-            .map_err(Into::<PyErr>::into)?;
+            });
+
+        let result = match result {
+            Ok(bytes) => bytes,
+            Err(degenbot_core::errors::ProviderError::ExecutionReverted { message, .. }) => {
+                return Err(crate::rpc::revert_to_pyerr(py, to, &message));
+            }
+            Err(e) => return Err(e.into()),
+        };
 
         // Create HexBytes from result
         let result_hb = create_hexbytes(py, &result)?;
