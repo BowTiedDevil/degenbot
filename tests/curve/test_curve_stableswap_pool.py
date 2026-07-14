@@ -5,9 +5,10 @@ import eth_abi.abi
 import eth_abi.exceptions
 import pytest
 import web3
-from web3 import Web3
-from web3.exceptions import ContractLogicError
-from web3.types import TxParams
+from degenbot.crypto import function_selector, keccak256
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.exceptions import ContractLogicError
+from degenbot.types.rpc_types import TxParams
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
@@ -29,7 +30,8 @@ pytestmark = pytest.mark.online_rpc
 
 if TYPE_CHECKING:
     from web3.contract.contract import Contract
-    from web3.types import Timestamp
+    from typing import TypedDict
+Timestamp = int
 
 
 CRYPTO_POOL_ADDRESSES = {"0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5"}
@@ -90,7 +92,7 @@ def _test_calculations(lp: CurveStableswapPool, w3: Web3):
                 if lp.address == "0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5":
                     tx = TxParams(
                         to=lp.address,
-                        data=Web3.keccak(text="get_dy(uint256,uint256,uint256)")[:4]
+                        data=function_selector("get_dy(uint256,uint256,uint256)")
                         + eth_abi.abi.encode(
                             types=["uint256", "uint256", "uint256"],
                             args=[token_in_index, token_out_index, amount],
@@ -353,7 +355,7 @@ def test_base_pool(fork_mainnet_full: AnvilFork):
                 data=web3.Web3(web3.HTTPProvider(fork_mainnet_full.http_url)).eth.call(
                     transaction=TxParams(
                         to=basepool.address,
-                        data=Web3.keccak(text="calc_withdraw_one_coin(uint256,int128)")[:4]
+                        data=function_selector("calc_withdraw_one_coin(uint256,int128)")
                         + eth_abi.abi.encode(
                             types=["uint256", "int128"],
                             args=[token_in_amount, token_index],
@@ -382,7 +384,7 @@ def test_base_pool(fork_mainnet_full: AnvilFork):
                 data=web3.Web3(web3.HTTPProvider(fork_mainnet_full.http_url)).eth.call(
                     transaction=TxParams(
                         to=basepool.address,
-                        data=Web3.keccak(
+                        data=keccak256(
                             text=f"calc_token_amount(uint256[{len(basepool.tokens)}],bool)",
                         )[:4]
                         + eth_abi.abi.encode(

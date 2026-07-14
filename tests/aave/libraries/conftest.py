@@ -15,8 +15,7 @@ import web3
 from degenbot.anvil_fork import AnvilFork
 
 if TYPE_CHECKING:
-    from web3 import Web3
-    from web3.contract import Contract
+        from web3.contract import Contract
 
 
 def _load_contract_artifact(artifact_path: pathlib.Path) -> dict:

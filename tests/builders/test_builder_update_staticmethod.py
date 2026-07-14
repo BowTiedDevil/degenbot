@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 import eth_abi.abi
 import pytest
 from hexbytes import HexBytes
-from web3 import Web3
+from degenbot.crypto import function_selector, keccak256
 
 from degenbot.builders.aerodrome_v2_builder import AerodromeV2Builder
 from degenbot.builders.async_context import AsyncBuilderContext
@@ -57,7 +57,7 @@ def _mock_token(address: str, *, symbol: str, decimals: int = 18) -> object:
 
 def _selector(signature: str) -> str:
     """Return the 4-byte function selector as a hex string (no 0x prefix)."""
-    return Web3.keccak(text=signature)[:4].hex()
+    return function_selector(signature).hex()
 
 
 def _fake_builder_context() -> BuilderContext:

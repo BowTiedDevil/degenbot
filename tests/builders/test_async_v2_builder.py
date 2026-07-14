@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import eth_abi.abi
 import pytest
 from hexbytes import HexBytes
-from web3 import Web3
+from degenbot.crypto import function_selector, keccak256
 
 from degenbot.builders.async_context import AsyncBuilderContext
 from degenbot.builders.async_erc20_builder import AsyncErc20Builder
@@ -29,7 +29,7 @@ from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 def _selector(signature: str) -> str:
     """Return the 4-byte function selector as a hex string (no 0x prefix)."""
-    return Web3.keccak(text=signature)[:4].hex()
+    return function_selector(signature).hex()
 
 
 class FakeAsyncProvider:

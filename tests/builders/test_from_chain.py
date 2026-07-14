@@ -25,7 +25,7 @@ import eth_abi.abi
 from degenbot.builders.camelot_builder import CamelotBuilder
 from degenbot.camelot.pools import CamelotLiquidityPool
 from hexbytes import HexBytes
-from web3 import Web3
+from degenbot.crypto import function_selector, keccak256
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.builders.aerodrome_v2_builder import AerodromeV2Builder
@@ -65,7 +65,7 @@ class FakeProvider:
 
 def _selector(signature: str) -> str:
     """Return the 4-byte function selector as a hex string (no 0x prefix)."""
-    return Web3.keccak(text=signature)[:4].hex()
+    return function_selector(signature).hex()
 
 
 def _make_erc20(address: str, chain_id: int = 42161) -> Erc20Token:

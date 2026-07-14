@@ -7,7 +7,7 @@ class. Tests verify construction, property derivation, and validation routing.
 import pytest
 from eth_typing import ChecksumAddress
 from pydantic import ValidationError
-from web3.types import LogReceipt
+from degenbot.types.rpc_types import LogReceipt
 
 from degenbot.aave.events import ScaledTokenEventType
 from degenbot.aave.models import (

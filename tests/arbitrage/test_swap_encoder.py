@@ -6,7 +6,8 @@ ApprovalStrategy and PayloadComposer are pluggable at the pipeline level.
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress
-from web3 import Web3
+from degenbot.crypto import function_selector
+from degenbot.checksum_cache import get_checksum_address
 
 from degenbot.arbitrage.encoding import (
     EncodedCall,
@@ -25,8 +26,8 @@ _PY_BOT = PyBot()
 
 def test_v2_swap_amounts_encodes_swap_call() -> None:
     """UniswapV2PoolSwapAmounts.encode() produces a V2 swap() EncodedCall."""
-    pool_address = ChecksumAddress(Web3.to_checksum_address("0x" + "ab" * 20))
-    recipient = ChecksumAddress(Web3.to_checksum_address("0x" + "cd" * 20))
+    pool_address = ChecksumAddress(get_checksum_address("0x" + "ab" * 20))
+    recipient = ChecksumAddress(get_checksum_address("0x" + "cd" * 20))
 
     swap = UniswapV2PoolSwapAmounts(
         pool=pool_address,
@@ -41,7 +42,7 @@ def test_v2_swap_amounts_encodes_swap_call() -> None:
     assert encoded.value == 0
 
     # Verify the calldata starts with V2 swap() selector
-    v2_swap_selector = Web3.keccak(text="swap(uint256,uint256,address,bytes)")[:4]
+    v2_swap_selector = function_selector("swap(uint256,uint256,address,bytes)")
     assert encoded.data[:4] == v2_swap_selector
 
     # Decode the parameters and verify
@@ -52,14 +53,14 @@ def test_v2_swap_amounts_encodes_swap_call() -> None:
     # amounts_out used as swap amounts: (0, 900)
     assert params[0] == 0  # amount0Out
     assert params[1] == 900  # amount1Out
-    assert Web3.to_checksum_address(params[2]) == recipient
+    assert get_checksum_address(params[2]) == recipient
     assert params[3] == b""
 
 
 def test_v3_swap_amounts_encodes_swap_call() -> None:
     """UniswapV3PoolSwapAmounts.encode() produces a V3 swap() EncodedCall."""
-    pool_address = ChecksumAddress(Web3.to_checksum_address("0x" + "ab" * 20))
-    recipient = ChecksumAddress(Web3.to_checksum_address("0x" + "cd" * 20))
+    pool_address = ChecksumAddress(get_checksum_address("0x" + "ab" * 20))
+    recipient = ChecksumAddress(get_checksum_address("0x" + "cd" * 20))
 
     swap = UniswapV3PoolSwapAmounts(
         pool=pool_address,
@@ -77,7 +78,7 @@ def test_v3_swap_amounts_encodes_swap_call() -> None:
     assert encoded.value == 0
 
     # Verify the calldata starts with V3 swap() selector
-    v3_swap_selector = Web3.keccak(text="swap(address,bool,int256,uint160,bytes)")[:4]
+    v3_swap_selector = function_selector("swap(address,bool,int256,uint160,bytes)")
     assert encoded.data[:4] == v3_swap_selector
 
     # Decode the parameters and verify
@@ -85,7 +86,7 @@ def test_v3_swap_amounts_encodes_swap_call() -> None:
         ["address", "bool", "int256", "uint160", "bytes"],
         encoded.data[4:],
     )
-    assert Web3.to_checksum_address(params[0]) == recipient
+    assert get_checksum_address(params[0]) == recipient
     assert params[1] is True  # zero_for_one
     assert params[2] == -1000  # amount_specified
     assert params[3] == 4295128739  # sqrt_price_limit_x96
@@ -94,9 +95,9 @@ def test_v3_swap_amounts_encodes_swap_call() -> None:
 
 def test_generate_payloads_encodes_multi_swap_path() -> None:
     """generate_payloads() encodes a path with multiple swaps."""
-    pool_a = ChecksumAddress(Web3.to_checksum_address("0x" + "aa" * 20))
-    pool_b = ChecksumAddress(Web3.to_checksum_address("0x" + "bb" * 20))
-    recipient = ChecksumAddress(Web3.to_checksum_address("0x" + "cd" * 20))
+    pool_a = ChecksumAddress(get_checksum_address("0x" + "aa" * 20))
+    pool_b = ChecksumAddress(get_checksum_address("0x" + "bb" * 20))
+    recipient = ChecksumAddress(get_checksum_address("0x" + "cd" * 20))
 
     swap_amounts = (
         UniswapV2PoolSwapAmounts(
@@ -123,8 +124,8 @@ def test_generate_payloads_encodes_multi_swap_path() -> None:
 
 def test_generate_payloads_with_custom_composer() -> None:
     """generate_payloads() uses the provided PayloadComposer."""
-    pool = ChecksumAddress(Web3.to_checksum_address("0x" + "aa" * 20))
-    recipient = ChecksumAddress(Web3.to_checksum_address("0x" + "cd" * 20))
+    pool = ChecksumAddress(get_checksum_address("0x" + "aa" * 20))
+    recipient = ChecksumAddress(get_checksum_address("0x" + "cd" * 20))
 
     swap_amounts = (
         UniswapV2PoolSwapAmounts(
@@ -135,7 +136,7 @@ def test_generate_payloads_with_custom_composer() -> None:
     )
 
     # Custom composer that wraps calls in a Multicall3-style tuple
-    multicall_address = ChecksumAddress(Web3.to_checksum_address("0x" + "ee" * 20))
+    multicall_address = ChecksumAddress(get_checksum_address("0x" + "ee" * 20))
 
     class Multicall3Composer:
         def compose(self, calls: list[EncodedCall]) -> list[EncodedCall]:
@@ -155,9 +156,9 @@ def test_generate_payloads_with_custom_composer() -> None:
 
 def test_generate_payloads_with_custom_approval_strategy() -> None:
     """generate_payloads() uses the provided ApprovalStrategy."""
-    pool = ChecksumAddress(Web3.to_checksum_address("0x" + "aa" * 20))
-    token = ChecksumAddress(Web3.to_checksum_address("0x" + "11" * 20))
-    recipient = ChecksumAddress(Web3.to_checksum_address("0x" + "cd" * 20))
+    pool = ChecksumAddress(get_checksum_address("0x" + "aa" * 20))
+    token = ChecksumAddress(get_checksum_address("0x" + "11" * 20))
+    recipient = ChecksumAddress(get_checksum_address("0x" + "cd" * 20))
 
     swap_amounts = (
         UniswapV2PoolSwapAmounts(
@@ -174,7 +175,7 @@ def test_generate_payloads_with_custom_approval_strategy() -> None:
             swap_amounts: tuple[UniswapV2PoolSwapAmounts, ...],
             calls: list[EncodedCall],
         ) -> list[EncodedCall]:
-            approve_data = Web3.keccak(text="approve(address,uint256)")[:4] + eth_abi.abi.encode(
+            approve_data = function_selector("approve(address,uint256)") + eth_abi.abi.encode(
                 ["address", "uint256"], [pool, 1000]
             )
             return [EncodedCall(to=token, data=approve_data)]
@@ -192,7 +193,7 @@ def test_generate_payloads_with_custom_approval_strategy() -> None:
 
 def test_curve_swap_amounts_encodes_exchange_call() -> None:
     """CurveStableSwapPoolSwapAmounts.encode() produces an exchange() EncodedCall."""
-    pool_address = ChecksumAddress(Web3.to_checksum_address("0x" + "ab" * 20))
+    pool_address = ChecksumAddress(get_checksum_address("0x" + "ab" * 20))
     token_in = make_erc20(_PY_BOT, "0x" + "11" * 20, name="TokenA", symbol="TKA", decimals=18)
     token_out = make_erc20(_PY_BOT, "0x" + "22" * 20, name="TokenB", symbol="TKB", decimals=18)
 
@@ -214,7 +215,7 @@ def test_curve_swap_amounts_encodes_exchange_call() -> None:
     assert encoded.value == 0
 
     # Verify selector is exchange()
-    exchange_selector = Web3.keccak(text="exchange(int128,int128,uint256,uint256)")[:4]
+    exchange_selector = function_selector("exchange(int128,int128,uint256,uint256)")
     assert encoded.data[:4] == exchange_selector
 
     # Decode and verify params
@@ -230,7 +231,7 @@ def test_curve_swap_amounts_encodes_exchange_call() -> None:
 
 def test_curve_swap_amounts_encodes_exchange_underlying_call() -> None:
     """CurveStableSwapPoolSwapAmounts with underlying=True encodes exchange_underlying()."""
-    pool_address = ChecksumAddress(Web3.to_checksum_address("0x" + "ab" * 20))
+    pool_address = ChecksumAddress(get_checksum_address("0x" + "ab" * 20))
     token_in = make_erc20(_PY_BOT, "0x" + "11" * 20, name="TokenA", symbol="TKA", decimals=18)
     token_out = make_erc20(_PY_BOT, "0x" + "22" * 20, name="TokenB", symbol="TKB", decimals=18)
 
@@ -248,5 +249,5 @@ def test_curve_swap_amounts_encodes_exchange_underlying_call() -> None:
     encoded = swap.encode(recipient=pool_address)
 
     # Verify selector is exchange_underlying()
-    underlying_selector = Web3.keccak(text="exchange_underlying(int128,int128,uint256,uint256)")[:4]
+    underlying_selector = function_selector("exchange_underlying(int128,int128,uint256,uint256)")
     assert encoded.data[:4] == underlying_selector

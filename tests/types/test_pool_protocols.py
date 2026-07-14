@@ -9,7 +9,7 @@ from fractions import Fraction
 
 import pytest
 from eth_typing import ChecksumAddress
-from web3 import Web3
+from degenbot.checksum_cache import get_checksum_address
 
 from degenbot.types.abstract import AbstractPoolState
 from degenbot.types.hop_types import ConstantProductHop, HopType
@@ -27,7 +27,7 @@ class FakePoolSimulation:
 
     def __init__(self, address: str = "0x" + "a" * 40) -> None:
 
-        self._address = ChecksumAddress(Web3.to_checksum_address(address))
+        self._address = ChecksumAddress(get_checksum_address(address))
         self._subscribers: set[object] = set()
 
     @property

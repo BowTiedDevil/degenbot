@@ -34,7 +34,7 @@ from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
-    from web3.types import TxParams
+    from degenbot.types.rpc_types import TxParams
 
 
 CHAIN_ID = 1

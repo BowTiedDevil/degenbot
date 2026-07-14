@@ -9,7 +9,7 @@ from hexbytes import HexBytes
 from degenbot.builders.pool_io import AsyncPoolIO, AsyncPoolIOProtocol, PoolIO, SyncPoolIO
 
 if TYPE_CHECKING:
-    from web3.types import BlockData, BlockIdentifier, TxParams
+    from degenbot.types.rpc_types import BlockData, BlockIdentifier, TxParams
 
 
 # --- Fake providers ---

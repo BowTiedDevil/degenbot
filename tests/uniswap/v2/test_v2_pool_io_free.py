@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import eth_abi.abi
 import pytest
-from web3.exceptions import Web3Exception
+
 
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
@@ -236,7 +236,7 @@ class TestBotBuildV2Pool:
             factory_calldata: factory_encoded,
             token0_calldata: token0_encoded,
             token1_calldata: token1_encoded,
-            slot0_calldata: None,  # marker: will raise Web3Exception
+            slot0_calldata: None,  # marker: will raise RuntimeError
         }
 
         def mock_get_reserves_call(*, to, data, block=None):
@@ -244,7 +244,7 @@ class TestBotBuildV2Pool:
                 if data == slot0_calldata:
                     # V3 slot0() reverts on a V2 pool
                     msg = "revert"
-                    raise Web3Exception(msg)
+                    raise RuntimeError(msg)
                 return call_responses[data]
             if data == reserves_calldata:
                 # getReserves returns (uint112, uint112, uint32)
@@ -357,7 +357,7 @@ class TestV2PoolTrackerWithBot:
             if data in call_responses:
                 if data == slot0_calldata:
                     msg = "revert"
-                    raise Web3Exception(msg)
+                    raise RuntimeError(msg)
                 return call_responses[data]
             if data == reserves_calldata:
                 return eth_abi.abi.encode(
