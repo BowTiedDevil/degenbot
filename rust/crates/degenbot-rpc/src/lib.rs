@@ -17,5 +17,6 @@
 pub mod abi;
 pub mod contract;
 pub mod multicall3;
+pub mod offline;
 pub mod provider;
 pub mod subscription;
