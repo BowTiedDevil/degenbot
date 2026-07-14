@@ -79,6 +79,13 @@ pub enum HopSwapError {
 /// swap math widens them to `uint256` (`SafeMath`). Reserves sourced from
 /// [`V2PoolState`](degenbot_pools::v2_state::V2PoolState) (`uint112`) are
 /// widened at the call site — the same widening `Solidity` performs.
+///
+/// `gamma_numer` / `fee_denom` are likewise held as `U256` (the swap-math
+/// width), widened once in [`new`](IntHopState::new) from their natural `u64`
+/// fee-parameter representation. This eliminates a per-swap `U256::from`
+/// conversion in the hot path (the constructor runs once per pool-state
+/// snapshot; [`swap`](IntHopState::swap) runs per candidate amount). They
+/// remain small (e.g. 997 / 1000) and fit comfortably in `uint256`.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct IntHopState {
@@ -86,21 +93,26 @@ pub struct IntHopState {
     pub reserve_in: U256,
     /// Reserve of the output token (`uint256` swap-math width).
     pub reserve_out: U256,
-    /// Gamma numerator: the retained fraction (e.g. 997 for 0.3% fee).
-    pub gamma_numer: u64,
-    /// Fee denominator (e.g. 1000 for 0.3% fee).
-    pub fee_denom: u64,
+    /// Gamma numerator: the retained fraction (e.g. 997 for 0.3% fee), held as
+    /// `uint256` swap-math width (widened once in `new`).
+    pub gamma_numer: U256,
+    /// Fee denominator (e.g. 1000 for 0.3% fee), held as `uint256` swap-math
+    /// width (widened once in `new`).
+    pub fee_denom: U256,
 }
 
 impl IntHopState {
     /// Create a new integer hop state.
+    ///
+    /// `gamma_numer` and `fee_denom` are widened to `U256` here (once per
+    /// pool-state snapshot) so the per-swap hot path needs no conversion.
     #[must_use]
     pub fn new(reserve_in: U256, reserve_out: U256, gamma_numer: u64, fee_denom: u64) -> Self {
         Self {
             reserve_in,
             reserve_out,
-            gamma_numer,
-            fee_denom,
+            gamma_numer: U256::from(gamma_numer),
+            fee_denom: U256::from(fee_denom),
         }
     }
 
@@ -122,11 +134,12 @@ impl IntHopState {
     pub fn swap(&self, x: U256) -> Result<U256, HopSwapError> {
         // Mirror on-chain `getAmountOut` exactly: all arithmetic in `uint256`
         // with `SafeMath` `.mul` / `.add`, which revert on overflow. Reserves
-        // arrive as `U256` (the swap-math width — `uint112` storage widened
-        // at the call site, as `Solidity` does). Widening to a wider integer
-        // would here only manufacture outputs the chain never produces: any
-        // `uint256`-overflowing intermediate reverts on-chain, so we surface
-        // it as `Overflow` rather than returning a phantom result.
+        // and fee parameters arrive as `U256` (the swap-math width — `uint112`
+        // storage widened at the call site, as `Solidity` does; fee params
+        // widened once in `new`). Widening to a wider integer would here only
+        // manufacture outputs the chain never produces: any `uint256`-
+        // overflowing intermediate reverts on-chain, so we surface it as
+        // `Overflow` rather than returning a phantom result.
         //
         // `getAmountOut`:
         //   amountInWithFee = amountIn * rate            (gamma_numer)
@@ -134,16 +147,15 @@ impl IntHopState {
         //   denominator     = reserveIn * base + amountInWithFee
         //                  = reserveIn * fee_denom + amountInWithFee
         //   amountOut       = numerator / denominator   (EVM floor DIV)
-        let gamma = U256::from(self.gamma_numer);
-        let base = U256::from(self.fee_denom);
-
-        let amount_in_with_fee = x.checked_mul(gamma).ok_or(HopSwapError::Overflow)?;
+        let amount_in_with_fee = x
+            .checked_mul(self.gamma_numer)
+            .ok_or(HopSwapError::Overflow)?;
         let numerator = amount_in_with_fee
             .checked_mul(self.reserve_out)
             .ok_or(HopSwapError::Overflow)?;
         let denom = self
             .reserve_in
-            .checked_mul(base)
+            .checked_mul(self.fee_denom)
             .ok_or(HopSwapError::Overflow)?
             .checked_add(amount_in_with_fee)
             .ok_or(HopSwapError::Overflow)?;
@@ -202,6 +214,16 @@ mod tests {
 
     fn u256(n: u64) -> U256 {
         U256::from(n)
+    }
+
+    #[test]
+    fn new_widens_fee_params_to_u256_once() {
+        // The fee parameters are widened to `U256` in `new` so the per-swap
+        // hot path issues no `U256::from` conversion. This locks that
+        // invariant: the struct holds the widened values, not the `u64` inputs.
+        let hop = IntHopState::new(u256(1_000_000), u256(2_000_000), 997, 1000);
+        assert_eq!(hop.gamma_numer, U256::from(997u64));
+        assert_eq!(hop.fee_denom, U256::from(1000u64));
     }
 
     #[test]

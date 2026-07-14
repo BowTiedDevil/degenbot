@@ -1374,8 +1374,8 @@ mod tests {
 
         assert_eq!(int_hop.reserve_in, U256::from(1_000_000_000_000u128));
         assert_eq!(int_hop.reserve_out, U256::from(1_000_000_000_000u128));
-        assert_eq!(int_hop.gamma_numer, 997_000);
-        assert_eq!(int_hop.fee_denom, 1_000_000);
+        assert_eq!(int_hop.gamma_numer, U256::from(997_000));
+        assert_eq!(int_hop.fee_denom, U256::from(1_000_000));
     }
 
     #[test]
