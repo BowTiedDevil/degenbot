@@ -14,8 +14,6 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential_jitter,
 )
-from web3._utils.threads import Timeout  # noqa: PLC2701
-from web3.exceptions import Web3Exception
 
 from degenbot.exceptions.infrastructure import LogFetchingTimeout
 from degenbot.logging import logger
@@ -145,7 +143,7 @@ def fetch_logs_retrying(
         stop=stop_after_attempt(max_retries),
         wait=wait_exponential_jitter(),
         retry=retry_if_exception_type(
-            (Timeout, Web3Exception, RequestException),
+            (TimeoutError, RuntimeError, RequestException),
         ),
     )
 
@@ -236,7 +234,7 @@ async def fetch_logs_retrying_async(
 
     retrier = AsyncRetrying(
         stop=stop_after_attempt(max_retries),
-        retry=retry_if_exception_type((Timeout, Web3Exception)),
+        retry=retry_if_exception_type((TimeoutError, RuntimeError)),
     )
 
     pbar = tqdm.tqdm(
@@ -251,8 +249,8 @@ async def fetch_logs_retrying_async(
         """Fetch a single chunk of logs within a retry attempt.
 
         Raises:
-            Timeout: If the RPC call times out.
-            Web3Exception: If the RPC call fails.
+            TimeoutError: If the RPC call times out.
+            RuntimeError: If the RPC call fails.
 
         """
         with attempt:  # ty:ignore[invalid-context-manager]
@@ -270,7 +268,7 @@ async def fetch_logs_retrying_async(
                     topics=topics_list,
                 )
                 event_logs.extend(logs)
-            except (Timeout, Web3Exception):
+            except (TimeoutError, RuntimeError):
                 old_working_span = fetcher.working_span
                 fetcher.on_timeout()
                 logger.debug(
