@@ -27,7 +27,7 @@ dependencies = [
     "tomlkit ~= 0.15",
     "tqdm ~= 4.67",
     "ujson ~= 5.12",
-    "web3 ~= 7.14",
+    
 ]
 license = {text = "MIT"}
 license-files = ["LICENSE"]
@@ -156,7 +156,7 @@ allow-star-arg-any = true
     "D",        # docstring strictness (Returns:/Raises:/imperative) not enforced on the CLI
     "DOC",      # pydoclint Returns:/Raises: sections not enforced on the CLI
     "EM102",    # short f-string error messages are fine in a script
-    "PLC0415",  # lazy web3/ProviderAdapter imports avoid a hard dep at module load
+    "PLC0415",  # lazy imports avoid circular dependency with degenbot.provider
     "PLW0717",  # the drive fn's broad try/except is intentional (log+re-raise)
     "PLR1702",  # the bisect loop nests deeply by design
     "PTH",      # os.path + os.makedirs are fine for the bisect's file-copy logic
@@ -238,6 +238,7 @@ dev = [
     "sybil",
     "ty",
     "vyper",
+    "web3 ~= 7.14",
 ]
 
 [tool.ty.environment]
