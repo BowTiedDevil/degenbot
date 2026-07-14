@@ -798,33 +798,12 @@ impl PyBotIo {
         pool_address: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
-        use alloy::dyn_abi::{DynSolType, DynSolValue};
-
-        let calldata = selector(b"getReserves()");
+        // Calldata + return decode sourced from the `sol!`-generated ABI in
+        // `degenbot_rpc::abi` (B2) — no hand-rolled selector/`DynSolType` here.
+        let calldata = degenbot_rpc::abi::encode_get_reserves();
         let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
         let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        // getReserves returns (uint112, uint112, uint32) packed, but the Python
-        // impl decodes as `(uint256, uint256)` and takes the first two words —
-        // the third word (blockTimestampLast) is unused. Replicate exactly so
-        // the parity test passes.
-        let tuple_type = DynSolType::Tuple(vec![DynSolType::Uint(256), DynSolType::Uint(256)]);
-        let decoded = tuple_type.abi_decode(bytes).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("invalid reserves decode: {e}"))
-        })?;
-        let mut it = match decoded {
-            DynSolValue::Tuple(vals) => vals.into_iter(),
-            _ => {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "expected tuple for getReserves",
-                ))
-            }
-        };
-        let Some(DynSolValue::Uint(r0, _)) = it.next() else {
-            return Err(pyo3::exceptions::PyValueError::new_err("invalid reserves0"));
-        };
-        let Some(DynSolValue::Uint(r1, _)) = it.next() else {
-            return Err(pyo3::exceptions::PyValueError::new_err("invalid reserves1"));
-        };
+        let (r0, r1) = degenbot_rpc::abi::decode_get_reserves(bytes)?;
         Ok((
             crate::conversion::alloy::u256_to_py(py, &r0)?.unbind(),
             crate::conversion::alloy::u256_to_py(py, &r1)?.unbind(),
@@ -894,42 +873,24 @@ impl PyBotIo {
         pool_address: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<(Py<PyAny>, Py<PyAny>, Py<PyAny>)> {
-        use alloy::dyn_abi::{DynSolType, DynSolValue};
-
-        // slot0(): decode sqrtPriceX96 as uint160 (word 0) + tick as int24 (word 1);
-        // the remaining 5 packed fields are ignored.
-        let slot0_calldata = selector(b"slot0()");
-        let slot0_obj = self.forward_call_to_provider(py, pool_address, &slot0_calldata, block)?;
+        // Calldata + return decode from `degenbot_rpc::abi` (B2).
+        let slot0_obj = self.forward_call_to_provider(
+            py,
+            pool_address,
+            &degenbot_rpc::abi::encode_slot0(),
+            block,
+        )?;
         let slot0_bytes: &[u8] = slot0_obj.bind(py).extract::<&[u8]>()?;
-        let slot0_tuple = DynSolType::Tuple(vec![DynSolType::Uint(160), DynSolType::Int(24)]);
-        let slot0_decoded = slot0_tuple.abi_decode(slot0_bytes).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("invalid slot0 decode: {e}"))
-        })?;
-        let mut slot0_it = match slot0_decoded {
-            DynSolValue::Tuple(vals) => vals.into_iter(),
-            _ => {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "expected tuple for slot0",
-                ))
-            }
-        };
-        let Some(DynSolValue::Uint(sqrt_price_x96, _)) = slot0_it.next() else {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "invalid sqrtPriceX96",
-            ));
-        };
-        let Some(DynSolValue::Int(tick_i256, _)) = slot0_it.next() else {
-            return Err(pyo3::exceptions::PyValueError::new_err("invalid tick"));
-        };
+        let (sqrt_price_x96, tick_i256) = degenbot_rpc::abi::decode_slot0(slot0_bytes)?;
 
-        // liquidity(): uint128, right-padded in a 32-byte word; treat as uint256 decode for convenience.
-        let liq_calldata = selector(b"liquidity()");
-        let liq_obj = self.forward_call_to_provider(py, pool_address, &liq_calldata, block)?;
+        let liq_obj = self.forward_call_to_provider(
+            py,
+            pool_address,
+            &degenbot_rpc::abi::encode_liquidity(),
+            block,
+        )?;
         let liq_bytes: &[u8] = liq_obj.bind(py).extract::<&[u8]>()?;
-        let Ok(DynSolValue::Uint(liquidity, _)) = DynSolType::Uint(128).abi_decode(liq_bytes)
-        else {
-            return Err(pyo3::exceptions::PyValueError::new_err("invalid liquidity"));
-        };
+        let liquidity = degenbot_rpc::abi::decode_liquidity(liq_bytes)?;
 
         Ok((
             crate::conversion::alloy::u256_to_py(py, &sqrt_price_x96)?.unbind(),
@@ -963,60 +924,29 @@ impl PyBotIo {
         pool_id: &[u8],
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Slot0LiquidityState> {
-        use alloy::dyn_abi::{DynSolType, DynSolValue};
+        // Calldata + return decode from `degenbot_rpc::abi` (B2).
+        let pool_id_arr: [u8; 32] = pool_id
+            .try_into()
+            .map_err(|_| pyo3::exceptions::PyValueError::new_err("pool_id must be 32 bytes"))?;
 
-        // getSlot0(bytes32)
-        let mut slot0_calldata = Vec::with_capacity(36);
-        slot0_calldata.extend_from_slice(&selector(b"getSlot0(bytes32)"));
-        slot0_calldata.extend_from_slice(pool_id);
-        let slot0_obj =
-            self.forward_call_to_provider(py, state_view_address, &slot0_calldata, block)?;
+        let slot0_obj = self.forward_call_to_provider(
+            py,
+            state_view_address,
+            &degenbot_rpc::abi::encode_get_slot0(&pool_id_arr),
+            block,
+        )?;
         let slot0_bytes: &[u8] = slot0_obj.bind(py).extract::<&[u8]>()?;
-        let slot0_tuple = DynSolType::Tuple(vec![
-            DynSolType::Uint(160),
-            DynSolType::Int(24),
-            DynSolType::Uint(24),
-            DynSolType::Uint(24),
-        ]);
-        let slot0_decoded = slot0_tuple.abi_decode(slot0_bytes).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("invalid V4 slot0 decode: {e}"))
-        })?;
-        let mut slot0_it = match slot0_decoded {
-            DynSolValue::Tuple(vals) => vals.into_iter(),
-            _ => {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "expected tuple for V4 slot0",
-                ))
-            }
-        };
-        let Some(DynSolValue::Uint(sqrt_price_x96, _)) = slot0_it.next() else {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "invalid sqrtPriceX96",
-            ));
-        };
-        let Some(DynSolValue::Int(tick_i256, _)) = slot0_it.next() else {
-            return Err(pyo3::exceptions::PyValueError::new_err("invalid tick"));
-        };
-        let Some(DynSolValue::Uint(protocol_fee, _)) = slot0_it.next() else {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "invalid protocolFee",
-            ));
-        };
-        let Some(DynSolValue::Uint(lp_fee, _)) = slot0_it.next() else {
-            return Err(pyo3::exceptions::PyValueError::new_err("invalid lpFee"));
-        };
+        let (sqrt_price_x96, tick_i256, protocol_fee, lp_fee) =
+            degenbot_rpc::abi::decode_get_slot0(slot0_bytes)?;
 
-        // getLiquidity(bytes32)
-        let mut liq_calldata = Vec::with_capacity(36);
-        liq_calldata.extend_from_slice(&selector(b"getLiquidity(bytes32)"));
-        liq_calldata.extend_from_slice(pool_id);
-        let liq_obj =
-            self.forward_call_to_provider(py, state_view_address, &liq_calldata, block)?;
+        let liq_obj = self.forward_call_to_provider(
+            py,
+            state_view_address,
+            &degenbot_rpc::abi::encode_get_liquidity(&pool_id_arr),
+            block,
+        )?;
         let liq_bytes: &[u8] = liq_obj.bind(py).extract::<&[u8]>()?;
-        let Ok(DynSolValue::Uint(liquidity, _)) = DynSolType::Uint(256).abi_decode(liq_bytes)
-        else {
-            return Err(pyo3::exceptions::PyValueError::new_err("invalid liquidity"));
-        };
+        let liquidity = degenbot_rpc::abi::decode_liquidity(liq_bytes)?;
 
         Ok((
             crate::conversion::alloy::u256_to_py(py, &sqrt_price_x96)?.unbind(),
@@ -1189,9 +1119,9 @@ impl PyBotIo {
     ///
     /// Mirrors `degenbot/builders/erc20_builder.py::Erc20Builder.get_token_balance`'s
     /// I/O call path (cache + checksum are out of scope; the caller still owns
-    /// those). The `balanceOf(address)` selector (`0x70a08231`) is built via the
-    /// [`selector`] helper; the 20-byte address arg is ABI-encoded right-padded
-    /// in a 32-byte word; the `uint256` result is decoded via alloy's `DynSolType`.
+    /// those). The `balanceOf(address)` selector (`0x70a08231`) + ABI-encoded
+    /// `address` arg and the `uint256` return decode are sourced from the
+    /// `sol!`-generated definitions in `degenbot_rpc::abi` (B2).
     ///
     /// Errors propagate: a provider call revert or decode failure surfaces as a
     /// `PyErr` to the caller (no swallowing) — matches the Python impl's no-
@@ -1204,7 +1134,12 @@ impl PyBotIo {
         owner: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        self.fetch_single_address_arg_uint(py, selector(b"balanceOf(address)"), token, owner, block)
+        let owner_addr = alloy::primitives::Address::from(parse_address_for_call(owner)?);
+        let calldata = degenbot_rpc::abi::encode_balance_of(&owner_addr);
+        let result_obj = self.forward_call_to_provider(py, token, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        let n = degenbot_rpc::abi::decode_balance_of(bytes)?;
+        crate::conversion::alloy::u256_to_py(py, &n).map(pyo3::Bound::unbind)
     }
 
     /// Fetch an ERC-20 token allowance via `allowance(address,address)`, the
@@ -1222,26 +1157,12 @@ impl PyBotIo {
         spender: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        use alloy::dyn_abi::{DynSolType, DynSolValue};
-
-        let sel = selector(b"allowance(address,address)");
-        let owner_addr = parse_address_for_call(owner)?;
-        let spender_addr = parse_address_for_call(spender)?;
-        // Manually pack: selector (4) + 2 right-padded 32-byte address words.
-        let mut calldata = Vec::with_capacity(4 + 64);
-        calldata.extend_from_slice(&sel);
-        calldata.extend_from_slice(&[0u8; 12]);
-        calldata.extend_from_slice(owner_addr.as_slice());
-        calldata.extend_from_slice(&[0u8; 12]);
-        calldata.extend_from_slice(spender_addr.as_slice());
-
+        let owner_addr = alloy::primitives::Address::from(parse_address_for_call(owner)?);
+        let spender_addr = alloy::primitives::Address::from(parse_address_for_call(spender)?);
+        let calldata = degenbot_rpc::abi::encode_allowance(&owner_addr, &spender_addr);
         let result_obj = self.forward_call_to_provider(py, token, &calldata, block)?;
         let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        let Ok(DynSolValue::Uint(n, _)) = DynSolType::Uint(256).abi_decode(bytes) else {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "invalid uint256 decode",
-            ));
-        };
+        let n = degenbot_rpc::abi::decode_allowance(bytes)?;
         crate::conversion::alloy::u256_to_py(py, &n).map(pyo3::Bound::unbind)
     }
 
@@ -1257,16 +1178,10 @@ impl PyBotIo {
         token: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        use alloy::dyn_abi::{DynSolType, DynSolValue};
-
-        let calldata = selector(b"totalSupply()");
+        let calldata = degenbot_rpc::abi::encode_total_supply();
         let result_obj = self.forward_call_to_provider(py, token, &calldata, block)?;
         let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        let Ok(DynSolValue::Uint(n, _)) = DynSolType::Uint(256).abi_decode(bytes) else {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "invalid uint256 decode",
-            ));
-        };
+        let n = degenbot_rpc::abi::decode_total_supply(bytes)?;
         crate::conversion::alloy::u256_to_py(py, &n).map(pyo3::Bound::unbind)
     }
 
@@ -2060,39 +1975,6 @@ impl PyBotIo {
                 ("block", block),
             ],
         )
-    }
-
-    /// Shared skeleton for the single-address-arg, uint256-returning ERC-20
-    /// read methods (`balanceOf(address)`):
-    /// build selector + right-padded 32-byte address word, call, decode `uint256`.
-    /// Used by `fetch_token_balance` (and re-usable for any future analogous
-    /// read). Errors propagate.
-    fn fetch_single_address_arg_uint(
-        &self,
-        py: Python<'_>,
-        sel: [u8; 4],
-        token: &str,
-        address_arg: &str,
-        block: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        use alloy::dyn_abi::{DynSolType, DynSolValue};
-
-        let addr = parse_address_for_call(address_arg)?;
-        // ABI-encode: selector (4) + 32-byte word, right-padded with 12 zero
-        // prefix bytes then the 20-byte address.
-        let mut calldata = Vec::with_capacity(4 + 32);
-        calldata.extend_from_slice(&sel);
-        calldata.extend_from_slice(&[0u8; 12]);
-        calldata.extend_from_slice(addr.as_slice());
-
-        let result_obj = self.forward_call_to_provider(py, token, &calldata, block)?;
-        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        let Ok(DynSolValue::Uint(n, _)) = DynSolType::Uint(256).abi_decode(bytes) else {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "invalid uint256 decode",
-            ));
-        };
-        crate::conversion::alloy::u256_to_py(py, &n).map(pyo3::Bound::unbind)
     }
 }
 

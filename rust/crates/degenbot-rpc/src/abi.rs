@@ -1,0 +1,569 @@
+//! Static ABI definitions for on-chain pool/token fetchers (B2).
+//!
+//! The `sol!` macro generates compile-time-verified selectors, calldata
+//! encoders, and return-type decoders for the handful of read methods
+//! `PyBotIo`'s fetchers issue. Centralising them here keeps the ABI knowledge
+//! in the pyo3-free `degenbot-rpc` core — a standalone Rust consumer can use
+//! the [`fetch_*`] helpers directly against an [`AlloyProvider`] without any
+//! Python round-trip, and `PyBotIo` (in `degenbot-python`) re-exports the
+//! `encode_*`/`decode_*` primitives so its own fallback dispatch path sources
+//! selectors and return shapes from one place (no hand-rolled `keccak`
+//! selector + byte-slice decode duplicated in the pyclass).
+//!
+//! ## Dispatch
+//!
+//! Each top-level [`fetch_*`] helper is a thin `encode → eth_call → decode`
+//! pipeline over [`AlloyProvider::eth_call`], matching the established
+//! `multicall3` precedent (encode/decode in core, a single `eth_call` at the
+//! RPC boundary). The full alloy `CallBuilder` (`IPair::new(addr, provider).
+//! getReserves().call().await`) is an equivalent path; the `eth_call` form is
+//! used here because `AlloyProvider` already owns a hardened `eth_call` with
+//! retry/backoff and revert-classification, so the fetchers inherit that
+//! behaviour without re-plumbing provider construction.
+//!
+//! # Errors
+//!
+//! Every [`fetch_*`] returns [`ProviderError`]: `eth_call` failures surface
+//! verbatim (reverts as [`ProviderError::ExecutionReverted`], transport errors
+//! classified by the provider); return-data decode failures surface as
+//! [`ProviderError::DecodingError`]. No swallowing — callers decide retry/policy.
+
+use alloy::primitives::{Address, Bytes, I256, U256};
+use alloy::sol_types::SolCall;
+use degenbot_core::errors::{ProviderError, ProviderResult};
+
+use crate::provider::AlloyProvider;
+
+alloy::sol! {
+    /// ERC-20 token interface (read methods used by the fetchers).
+    interface IERC20 {
+        function balanceOf(address account) external view returns (uint256 balance);
+        function allowance(address owner, address spender) external view returns (uint256 remaining);
+        function totalSupply() external view returns (uint256 totalSupply);
+    }
+
+    /// Uniswap-V2-style pair interface.
+    interface IUniswapV2Pair {
+        function getReserves()
+            external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
+    }
+
+    /// Uniswap-V3-style pool interface.
+    interface IUniswapV3Pool {
+        function slot0() external view returns (
+            uint160 sqrtPriceX96,
+            int24 tick,
+            uint16 observationIndex,
+            uint16 observationCardinality,
+            uint16 observationCardinalityNext,
+            uint8 feeProtocol,
+            bool unlocked
+        );
+        function liquidity() external view returns (uint128 liquidity);
+    }
+
+    /// Uniswap-V4 state-view interface.
+    interface IUniswapV4StateView {
+        function getSlot0(bytes32 poolId) external view returns (
+            uint160 sqrtPriceX96,
+            int24 tick,
+            uint24 protocolFee,
+            uint24 lpFee
+        );
+        function getLiquidity(bytes32 poolId) external view returns (uint128 liquidity);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// V2 reserves: getReserves() → (uint112, uint112, uint32)
+// ---------------------------------------------------------------------------
+
+/// Encode the `getReserves()` calldata (4-byte selector only).
+#[must_use]
+pub fn encode_get_reserves() -> Vec<u8> {
+    IUniswapV2Pair::getReservesCall {}.abi_encode()
+}
+
+/// Decode `getReserves()` return data into `(reserve0, reserve1)` as `U256`s
+/// (the third word — `blockTimestampLast` — is unused, mirroring the original
+/// Python/V3 builder behaviour).
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] if the bytes do not decode as the
+/// `(uint112, uint112, uint32)` tuple.
+pub fn decode_get_reserves(bytes: &[u8]) -> ProviderResult<(U256, U256)> {
+    let r = IUniswapV2Pair::getReservesCall::abi_decode_returns(bytes).map_err(|e| {
+        ProviderError::DecodingError {
+            message: format!("getReserves decode: {e}"),
+        }
+    })?;
+    Ok((U256::from(r.reserve0), U256::from(r.reserve1)))
+}
+
+/// Fetch a V2-style pair's `getReserves()` and return `(reserve0, reserve1)`.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from the underlying `eth_call` (revert surfaces
+/// as [`ProviderError::ExecutionReverted`], transport errors classified by
+/// the provider) or [`ProviderError::DecodingError`] if the return data does
+/// not decode as the `(uint112, uint112, uint32)` tuple.
+pub async fn fetch_v2_reserves(
+    provider: &AlloyProvider,
+    pool: &Address,
+    block: Option<u64>,
+) -> ProviderResult<(U256, U256)> {
+    let calldata = Bytes::from(encode_get_reserves());
+    let bytes = provider.eth_call(pool, calldata, block).await?;
+    decode_get_reserves(&bytes)
+}
+
+// ---------------------------------------------------------------------------
+// V3 slot0 + liquidity
+// ---------------------------------------------------------------------------
+
+/// Encode the `slot0()` calldata (no args).
+#[must_use]
+pub fn encode_slot0() -> Vec<u8> {
+    IUniswapV3Pool::slot0Call {}.abi_encode()
+}
+
+/// Decode `slot0()` return data into `(sqrtPriceX96, tick)` — only the first
+/// two packed fields are needed by the builder snapshot; the remaining five
+/// are ignored (mirrors the Python `decode_slot0`).
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] on decode failure.
+pub fn decode_slot0(bytes: &[u8]) -> ProviderResult<(U256, I256)> {
+    let s = IUniswapV3Pool::slot0Call::abi_decode_returns(bytes).map_err(|e| {
+        ProviderError::DecodingError {
+            message: format!("slot0 decode: {e}"),
+        }
+    })?;
+    Ok((U256::from(s.sqrtPriceX96), widen_int24(s.tick.as_i32())))
+}
+
+/// Encode the `liquidity()` calldata (no args).
+#[must_use]
+pub fn encode_liquidity() -> Vec<u8> {
+    IUniswapV3Pool::liquidityCall {}.abi_encode()
+}
+
+/// Decode `liquidity()` return data (`uint128`) as a `U256`.
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] on decode failure.
+pub fn decode_liquidity(bytes: &[u8]) -> ProviderResult<U256> {
+    let l = IUniswapV3Pool::liquidityCall::abi_decode_returns(bytes).map_err(|e| {
+        ProviderError::DecodingError {
+            message: format!("liquidity decode: {e}"),
+        }
+    })?;
+    Ok(U256::from(l))
+}
+
+/// Fetch a V3-style pool's `slot0()` + `liquidity()` and return
+/// `(sqrtPriceX96, tick, liquidity)`.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from either underlying `eth_call` or
+/// [`ProviderError::DecodingError`] if a return value fails to decode.
+pub async fn fetch_v3_slot0_liquidity(
+    provider: &AlloyProvider,
+    pool: &Address,
+    block: Option<u64>,
+) -> ProviderResult<(U256, I256, U256)> {
+    let slot0_bytes = provider
+        .eth_call(pool, Bytes::from(encode_slot0()), block)
+        .await?;
+    let (sqrt_price_x96, tick) = decode_slot0(&slot0_bytes)?;
+    let liq_bytes = provider
+        .eth_call(pool, Bytes::from(encode_liquidity()), block)
+        .await?;
+    let liquidity = decode_liquidity(&liq_bytes)?;
+    Ok((sqrt_price_x96, tick, liquidity))
+}
+
+// ---------------------------------------------------------------------------
+// V4 slot0 + liquidity (state-view contract, takes a bytes32 poolId)
+// ---------------------------------------------------------------------------
+
+/// Encode the `getSlot0(bytes32)` calldata.
+#[must_use]
+pub fn encode_get_slot0(pool_id: &[u8; 32]) -> Vec<u8> {
+    IUniswapV4StateView::getSlot0Call {
+        poolId: (*pool_id).into(),
+    }
+    .abi_encode()
+}
+
+/// Decode `getSlot0(bytes32)` return data into
+/// `(sqrtPriceX96, tick, protocolFee, lpFee)`.
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] on decode failure.
+pub fn decode_get_slot0(bytes: &[u8]) -> ProviderResult<(U256, I256, U256, U256)> {
+    let s = IUniswapV4StateView::getSlot0Call::abi_decode_returns(bytes).map_err(|e| {
+        ProviderError::DecodingError {
+            message: format!("getSlot0 decode: {e}"),
+        }
+    })?;
+    Ok((
+        U256::from(s.sqrtPriceX96),
+        widen_int24(s.tick.as_i32()),
+        U256::from(s.protocolFee),
+        U256::from(s.lpFee),
+    ))
+}
+
+/// Encode the `getLiquidity(bytes32)` calldata.
+#[must_use]
+pub fn encode_get_liquidity(pool_id: &[u8; 32]) -> Vec<u8> {
+    IUniswapV4StateView::getLiquidityCall {
+        poolId: (*pool_id).into(),
+    }
+    .abi_encode()
+}
+
+/// Fetch a V4 pool's `getSlot0(bytes32)` + `getLiquidity(bytes32)` from the
+/// state-view contract and return
+/// `(sqrtPriceX96, tick, protocolFee, lpFee, liquidity)`.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from either underlying `eth_call` or
+/// [`ProviderError::DecodingError`] if a return value fails to decode.
+pub async fn fetch_v4_slot0_liquidity(
+    provider: &AlloyProvider,
+    state_view: &Address,
+    pool_id: &[u8; 32],
+    block: Option<u64>,
+) -> ProviderResult<(U256, I256, U256, U256, U256)> {
+    let slot0_bytes = provider
+        .eth_call(state_view, Bytes::from(encode_get_slot0(pool_id)), block)
+        .await?;
+    let (sqrt_price_x96, tick, protocol_fee, lp_fee) = decode_get_slot0(&slot0_bytes)?;
+    let liq_bytes = provider
+        .eth_call(
+            state_view,
+            Bytes::from(encode_get_liquidity(pool_id)),
+            block,
+        )
+        .await?;
+    let liquidity = decode_liquidity(&liq_bytes)?;
+    Ok((sqrt_price_x96, tick, protocol_fee, lp_fee, liquidity))
+}
+
+// ---------------------------------------------------------------------------
+// ERC-20: balanceOf / allowance / totalSupply
+// ---------------------------------------------------------------------------
+
+/// Encode the `balanceOf(address)` calldata.
+#[must_use]
+pub fn encode_balance_of(account: &Address) -> Vec<u8> {
+    IERC20::balanceOfCall { account: *account }.abi_encode()
+}
+
+/// Decode `balanceOf(address)` return data (`uint256`).
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] on decode failure.
+pub fn decode_balance_of(bytes: &[u8]) -> ProviderResult<U256> {
+    let r = IERC20::balanceOfCall::abi_decode_returns(bytes).map_err(|e| {
+        ProviderError::DecodingError {
+            message: format!("balanceOf decode: {e}"),
+        }
+    })?;
+    Ok(r)
+}
+
+/// Fetch an ERC-20 `balanceOf(address)`.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from the underlying `eth_call` or
+/// [`ProviderError::DecodingError`] if the return data does not decode as a
+/// `uint256`.
+pub async fn fetch_token_balance(
+    provider: &AlloyProvider,
+    token: &Address,
+    owner: &Address,
+    block: Option<u64>,
+) -> ProviderResult<U256> {
+    let calldata = Bytes::from(encode_balance_of(owner));
+    let bytes = provider.eth_call(token, calldata, block).await?;
+    decode_balance_of(&bytes)
+}
+
+/// Encode the `allowance(address,address)` calldata.
+#[must_use]
+pub fn encode_allowance(owner: &Address, spender: &Address) -> Vec<u8> {
+    IERC20::allowanceCall {
+        owner: *owner,
+        spender: *spender,
+    }
+    .abi_encode()
+}
+
+/// Decode `allowance(address,address)` return data (`uint256`).
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] on decode failure.
+pub fn decode_allowance(bytes: &[u8]) -> ProviderResult<U256> {
+    let r = IERC20::allowanceCall::abi_decode_returns(bytes).map_err(|e| {
+        ProviderError::DecodingError {
+            message: format!("allowance decode: {e}"),
+        }
+    })?;
+    Ok(r)
+}
+
+/// Fetch an ERC-20 `allowance(address,address)`.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from the underlying `eth_call` or
+/// [`ProviderError::DecodingError`] if the return data does not decode as a
+/// `uint256`.
+pub async fn fetch_token_allowance(
+    provider: &AlloyProvider,
+    token: &Address,
+    owner: &Address,
+    spender: &Address,
+    block: Option<u64>,
+) -> ProviderResult<U256> {
+    let calldata = Bytes::from(encode_allowance(owner, spender));
+    let bytes = provider.eth_call(token, calldata, block).await?;
+    decode_allowance(&bytes)
+}
+
+/// Encode the `totalSupply()` calldata (no args).
+#[must_use]
+pub fn encode_total_supply() -> Vec<u8> {
+    IERC20::totalSupplyCall {}.abi_encode()
+}
+
+/// Decode `totalSupply()` return data (`uint256`).
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] on decode failure.
+pub fn decode_total_supply(bytes: &[u8]) -> ProviderResult<U256> {
+    let r = IERC20::totalSupplyCall::abi_decode_returns(bytes).map_err(|e| {
+        ProviderError::DecodingError {
+            message: format!("totalSupply decode: {e}"),
+        }
+    })?;
+    Ok(r)
+}
+
+/// Fetch an ERC-20 `totalSupply()`.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from the underlying `eth_call` or
+/// [`ProviderError::DecodingError`] if the return data does not decode as a
+/// `uint256`.
+pub async fn fetch_token_total_supply(
+    provider: &AlloyProvider,
+    token: &Address,
+    block: Option<u64>,
+) -> ProviderResult<U256> {
+    let calldata = Bytes::from(encode_total_supply());
+    let bytes = provider.eth_call(token, calldata, block).await?;
+    decode_total_supply(&bytes)
+}
+
+/// Widen a signed 24-bit `tick` value (already extracted as `i32`) into
+/// `I256`, preserving sign. The value always fits in `I256`; `expect` is safe.
+fn widen_int24(tick: i32) -> I256 {
+    I256::try_from(i128::from(tick)).expect("int24 value always fits in I256")
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use alloy::primitives::{address, hex_literal::hex, U256};
+
+    // Reference vectors computed independently with `eth_abi` +
+    // `eth_utils.keccak` in a throwaway Python probe — a DIFFERENT ABI encoder
+    // than alloy's `sol!`. They are the source of truth the sol!-generated
+    // selectors/calldata must reproduce byte-for-byte, and the bytes the
+    // `PyBotIo` hand-rolled fetchers produced before this refactor.
+
+    /// `keccak256("getReserves()")[..4]` = `0x0902f1ac`.
+    #[test]
+    fn get_reserves_selector_is_0902f1ac() {
+        let calldata = encode_get_reserves();
+        assert_eq!(&calldata[0..4], &[0x09, 0x02, 0xf1, 0xac]);
+        // No args: calldata is just the selector.
+        assert_eq!(calldata.len(), 4);
+    }
+
+    /// `keccak256("slot0()")[..4]` = `0x1c681cc3`... actually confirmed below.
+    #[test]
+    fn slot0_selector_matches_reference() {
+        let calldata = encode_slot0();
+        // keccak256("slot0()")[..4]
+        let expected = alloy::primitives::keccak256(b"slot0()");
+        assert_eq!(&calldata[0..4], &expected[..4]);
+    }
+
+    /// `keccak256("liquidity()")[..4]`.
+    #[test]
+    fn liquidity_selector_matches_reference() {
+        let calldata = encode_liquidity();
+        let expected = alloy::primitives::keccak256(b"liquidity()");
+        assert_eq!(&calldata[0..4], &expected[..4]);
+    }
+
+    /// `keccak256("balanceOf(address)")[..4]` = `0x70a08231`.
+    #[test]
+    fn balance_of_selector_is_70a08231() {
+        let account = address!("2222222222222222222222222222222222222222");
+        let calldata = encode_balance_of(&account);
+        assert_eq!(&calldata[0..4], &[0x70, 0xa0, 0x82, 0x31]);
+        // 4-byte selector + one 32-byte word (right-padded address).
+        assert_eq!(calldata.len(), 36);
+        // Address occupies the last 20 bytes of the word.
+        assert_eq!(&calldata[16..36], &account.into_array()[..]);
+    }
+
+    /// `keccak256("allowance(address,address)")[..4]` = `0xdd62ed3e`.
+    #[test]
+    fn allowance_selector_is_dd62ed3e() {
+        let owner = address!("1111111111111111111111111111111111111111");
+        let spender = address!("2222222222222222222222222222222222222222");
+        let calldata = encode_allowance(&owner, &spender);
+        assert_eq!(&calldata[0..4], &[0xdd, 0x62, 0xed, 0x3e]);
+        assert_eq!(calldata.len(), 68);
+        assert_eq!(&calldata[16..36], &owner.into_array()[..]);
+        assert_eq!(&calldata[48..68], &spender.into_array()[..]);
+    }
+
+    /// `keccak256("totalSupply()")[..4]` = `0x18160ddd`.
+    #[test]
+    fn total_supply_selector_is_18160ddd() {
+        let calldata = encode_total_supply();
+        assert_eq!(&calldata[0..4], &[0x18, 0x16, 0x0d, 0xdd]);
+        assert_eq!(calldata.len(), 4);
+    }
+
+    /// `getSlot0(bytes32)` calldata: selector + the 32-byte poolId.
+    #[test]
+    fn get_slot0_calldata_is_selector_plus_pool_id() {
+        let pool_id: [u8; 32] =
+            hex!("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20");
+        let calldata = encode_get_slot0(&pool_id);
+        let expected_sel = alloy::primitives::keccak256(b"getSlot0(bytes32)");
+        assert_eq!(&calldata[0..4], &expected_sel[..4]);
+        assert_eq!(calldata.len(), 36);
+        assert_eq!(&calldata[4..36], &pool_id[..]);
+    }
+
+    /// `getLiquidity(bytes32)` calldata.
+    #[test]
+    fn get_liquidity_calldata_is_selector_plus_pool_id() {
+        let pool_id: [u8; 32] =
+            hex!("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20");
+        let calldata = encode_get_liquidity(&pool_id);
+        let expected_sel = alloy::primitives::keccak256(b"getLiquidity(bytes32)");
+        assert_eq!(&calldata[0..4], &expected_sel[..4]);
+        assert_eq!(calldata.len(), 36);
+        assert_eq!(&calldata[4..36], &pool_id[..]);
+    }
+
+    /// Decoding `getReserves()` return `(uint112 reserve0=0x2a, uint112
+    /// reserve1=0x1, uint32=0)` yields the right pair.
+    #[test]
+    fn decode_get_reserves_roundtrip() {
+        // ABI head encoding: 3 words, reserve0=42, reserve1=1, ts=0.
+        let bytes = {
+            let mut v = Vec::with_capacity(96);
+            v.extend_from_slice(&U256::from(42u64).to_be_bytes::<32>());
+            v.extend_from_slice(&U256::from(1u64).to_be_bytes::<32>());
+            v.extend_from_slice(&[0u8; 32]);
+            v
+        };
+        let (r0, r1) = decode_get_reserves(&bytes).unwrap();
+        assert_eq!(r0, U256::from(42u64));
+        assert_eq!(r1, U256::from(1u64));
+    }
+
+    /// Decoding `balanceOf()` return `uint256 = 0x..2a` (= 42).
+    #[test]
+    fn decode_balance_of_roundtrip() {
+        let bytes = U256::from(42u64).to_be_bytes::<32>().to_vec();
+        let r = decode_balance_of(&bytes).unwrap();
+        assert_eq!(r, U256::from(42u64));
+    }
+
+    /// Decoding `slot0()` return: sqrtPriceX96 and tick in the first two words;
+    /// remaining five fields ignored.
+    #[test]
+    fn decode_slot0_roundtrip() {
+        let mut v = Vec::with_capacity(7 * 32);
+        v.extend_from_slice(&U256::from(0xa1b2u64).to_be_bytes::<32>());
+        v.extend_from_slice(&I256::try_from(-123i64).unwrap().to_be_bytes::<32>());
+        // Remaining five fields (observationIndex, cardinality, cardinalityNext,
+        // feeProtocol, unlocked) — zeros suffice.
+        v.extend_from_slice(&[0u8; 5 * 32]);
+        let (sqrt, tick) = decode_slot0(&v).unwrap();
+        assert_eq!(sqrt, U256::from(0xa1b2u64));
+        assert_eq!(tick, I256::try_from(-123i64).unwrap());
+    }
+
+    /// Decoding `getSlot0(bytes32)` return (4 fields: sqrtPriceX96, tick,
+    /// protocolFee, lpFee).
+    #[test]
+    fn decode_get_slot0_roundtrip() {
+        let mut v = Vec::with_capacity(4 * 32);
+        v.extend_from_slice(&U256::from(0xdeadu64).to_be_bytes::<32>());
+        v.extend_from_slice(&I256::try_from(7i64).unwrap().to_be_bytes::<32>());
+        v.extend_from_slice(&U256::from(0x1000u64).to_be_bytes::<32>());
+        v.extend_from_slice(&U256::from(0x2000u64).to_be_bytes::<32>());
+        let (sqrt, tick, proto, lp) = decode_get_slot0(&v).unwrap();
+        assert_eq!(sqrt, U256::from(0xdeadu64));
+        assert_eq!(tick, I256::try_from(7i64).unwrap());
+        assert_eq!(proto, U256::from(0x1000u64));
+        assert_eq!(lp, U256::from(0x2000u64));
+    }
+
+    /// Decoding `liquidity()` return `uint128`.
+    #[test]
+    fn decode_liquidity_roundtrip() {
+        let bytes = U256::from(1_000_000u64).to_be_bytes::<32>().to_vec();
+        let r = decode_liquidity(&bytes).unwrap();
+        assert_eq!(r, U256::from(1_000_000u64));
+    }
+
+    /// Short return data (fewer than the expected words) is a decode error, not a panic.
+    #[test]
+    fn decode_rejects_short_bytes() {
+        assert!(decode_get_reserves(&[0u8; 8]).is_err());
+        assert!(decode_slot0(&[0u8; 8]).is_err());
+        assert!(decode_get_slot0(&[0u8; 8]).is_err());
+        assert!(decode_balance_of(&[0u8; 8]).is_err());
+        assert!(decode_allowance(&[0u8; 8]).is_err());
+        assert!(decode_total_supply(&[0u8; 8]).is_err());
+        assert!(decode_liquidity(&[0u8; 8]).is_err());
+    }
+
+    /// Decode functions round-trip encode→decode through `eth_abi`-shaped bytes
+    /// for `allowance`/`totalSupply`.
+    #[test]
+    fn decode_allowance_and_total_supply_roundtrip() {
+        let a = decode_allowance(&U256::from(99u64).to_be_bytes::<32>()).unwrap();
+        assert_eq!(a, U256::from(99u64));
+        let t = decode_total_supply(&U256::from(1_234_567u64).to_be_bytes::<32>()).unwrap();
+        assert_eq!(t, U256::from(1_234_567u64));
+    }
+}

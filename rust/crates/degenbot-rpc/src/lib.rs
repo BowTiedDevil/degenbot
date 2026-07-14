@@ -14,6 +14,7 @@
 //! - [`subscription`] — double-buffer `SubscriptionHandle`, raw `drain_raw`,
 //!   and the `pump_*` subscription drivers.
 
+pub mod abi;
 pub mod contract;
 pub mod multicall3;
 pub mod provider;

@@ -431,7 +431,7 @@ class _V2PoolProvider:
             bytes.fromhex("d21220a7"): eth_abi.abi.encode(types=["address"], args=[token1]),
             # keccak256("getReserves()")[..4] = 0x0902f1ac
             bytes.fromhex("0902f1ac"): eth_abi.abi.encode(
-                types=["uint256", "uint256"], args=[reserves0, reserves1]
+                types=["uint112", "uint112", "uint32"], args=[reserves0, reserves1, 0]
             ),
         }
         self.calls: list[bytes] = []
