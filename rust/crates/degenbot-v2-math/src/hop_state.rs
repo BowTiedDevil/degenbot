@@ -11,7 +11,7 @@
 //! (`compute_int_mobius_coefficients`, `exact_mobius_solve`), which stay in
 //! the solver crate — only the primitive swap surface lives here.
 
-use alloy::primitives::{U256, U512};
+use alloy::primitives::U256;
 
 // -----------------------------------------------------------------------
 // SimulationResult
@@ -27,7 +27,7 @@ use alloy::primitives::{U256, U512};
 /// the unused remainder is retained by the caller.
 ///
 /// `final_output` equals `hop_outputs.last()` for non-empty paths.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SimulationResult {
     /// Final output amount after all hops.
     pub final_output: U256,
@@ -36,6 +36,26 @@ pub struct SimulationResult {
     /// Per-hop consumed input amounts. `consumed_inputs[i]` = gross input
     /// actually consumed by hop `i` (including fees).
     pub consumed_inputs: Vec<U256>,
+}
+
+// -----------------------------------------------------------------------
+// HopSwapError
+// -----------------------------------------------------------------------
+
+/// A single V2 constant-product hop swap reverted — mirrors the on-chain
+/// `getAmountOut` revert conditions.
+///
+/// On-chain, Uniswap V2's `getAmountOut` computes in `uint256` with `SafeMath`
+/// `.mul` / `.add`; an intermediate overflow reverts the call. The hop swap
+/// primitive must surface the same condition (rather than silently widening
+/// to a wider integer and returning a phantom output the chain would never
+/// produce), so callers can treat the path as reverting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HopSwapError {
+    /// A `uint256` intermediate (`amountIn * gamma`, `amountInWithFee *
+    /// reserveOut`, `reserveIn * feeDenom`, or their sum) overflowed — the
+    /// on-chain `getAmountOut` reverts here via `SafeMath`.
+    Overflow,
 }
 
 // -----------------------------------------------------------------------
@@ -53,31 +73,27 @@ pub struct SimulationResult {
 ///
 /// The swap formula is:
 /// `y = gamma_numer * reserve_out * x / (fee_denom * reserve_in + gamma_numer * x)`
+///
+/// Reserves are held as `U256` to match the on-chain `getAmountOut` arithmetic
+/// width (`uint256`): the pair contract stores reserves as `uint112`, but the
+/// swap math widens them to `uint256` (`SafeMath`). Reserves sourced from
+/// [`V2PoolState`](degenbot_pools::v2_state::V2PoolState) (`uint112`) are
+/// widened at the call site — the same widening `Solidity` performs.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct IntHopState {
-    /// Reserve of the input token (uint256 scale).
+    /// Reserve of the input token (`uint256` swap-math width).
     pub reserve_in: U256,
-    /// Reserve of the output token (uint256 scale).
+    /// Reserve of the output token (`uint256` swap-math width).
     pub reserve_out: U256,
     /// Gamma numerator: the retained fraction (e.g. 997 for 0.3% fee).
     pub gamma_numer: u64,
     /// Fee denominator (e.g. 1000 for 0.3% fee).
     pub fee_denom: u64,
-    /// Pre-converted U512 `reserve_in` for swap hot path.
-    reserve_in_u512: U512,
-    /// Pre-converted U512 `reserve_out` for swap hot path.
-    reserve_out_u512: U512,
-    /// Pre-converted U512 `gamma_numer` for swap hot path.
-    gamma_numer_u512: U512,
-    /// Pre-converted U512 `fee_denom` for swap hot path.
-    fee_denom_u512: U512,
 }
 
 impl IntHopState {
     /// Create a new integer hop state.
-    ///
-    /// Not `const fn` because `U512::from(U256)` is not `const fn` in ruint.
     #[must_use]
     pub fn new(reserve_in: U256, reserve_out: U256, gamma_numer: u64, fee_denom: u64) -> Self {
         Self {
@@ -85,64 +101,59 @@ impl IntHopState {
             reserve_out,
             gamma_numer,
             fee_denom,
-            reserve_in_u512: U512::from(reserve_in),
-            reserve_out_u512: U512::from(reserve_out),
-            gamma_numer_u512: U512::from(gamma_numer),
-            fee_denom_u512: U512::from(fee_denom),
         }
     }
 
     /// Simulate a swap through this hop using EVM-exact integer arithmetic.
     ///
-    /// Returns `0` if the denominator (sum of `fee_denom * reserve_in` and
-    /// `gamma_numer * x`) is zero — the constant-product formula is undefined
+    /// Returns `Ok(0)` if the denominator (`fee_denom * reserve_in +
+    /// gamma_numer * x`) is zero — the constant-product formula is undefined
     /// there, but the swap output is well-defined as zero (no positive `x`
     /// can extract anything from a pool whose `reserve_in`=0 or whose fee
     /// convention degenerates).
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the quotient overflows `U256` — i.e. if the input violates
-    /// the spec-bound pool invariants (`reserve_out > uint112::MAX` for V2,
-    /// or non-V2 family pools passed in). Real V2/Solidly-volatile state
-    /// satisfies `reserve_out ≤ uint112::MAX`, and the swap output is bounded
-    /// by `reserve_out` (you can't extract more than the pool holds), so
-    /// this is unreachable for state ingested from on-chain `Sync` events.
-    /// The spec widths are enforced at `register_v2_pool` /
-    /// `register_v3_pool` / `register_v4_pool` (see `bot_core/spec_bounds.rs`
-    /// and ADR-012); see `u512_to_u256_internal` for the narrowing contract.
-    #[must_use]
-    pub fn swap(&self, x: U256) -> U256 {
-        // y = gamma_numer * reserve_out * x / (fee_denom * reserve_in + gamma_numer * x)
-        // All U512 values pre-converted at construction to avoid repeated conversions.
-        let x_u512 = U512::from(x);
+    /// Returns [`HopSwapError::Overflow`] when a `uint256` intermediate
+    /// overflows — mirroring the on-chain `getAmountOut` `SafeMath` revert.
+    /// On-chain a wider-than-`uint256` result is never produced (the call
+    /// reverts first), so the swap primitive surfaces the same condition
+    /// instead of returning a phantom output via a wider integer.
+    pub fn swap(&self, x: U256) -> Result<U256, HopSwapError> {
+        // Mirror on-chain `getAmountOut` exactly: all arithmetic in `uint256`
+        // with `SafeMath` `.mul` / `.add`, which revert on overflow. Reserves
+        // arrive as `U256` (the swap-math width — `uint112` storage widened
+        // at the call site, as `Solidity` does). Widening to a wider integer
+        // would here only manufacture outputs the chain never produces: any
+        // `uint256`-overflowing intermediate reverts on-chain, so we surface
+        // it as `Overflow` rather than returning a phantom result.
+        //
+        // `getAmountOut`:
+        //   amountInWithFee = amountIn * rate            (gamma_numer)
+        //   numerator       = amountInWithFee * reserveOut
+        //   denominator     = reserveIn * base + amountInWithFee
+        //                  = reserveIn * fee_denom + amountInWithFee
+        //   amountOut       = numerator / denominator   (EVM floor DIV)
+        let gamma = U256::from(self.gamma_numer);
+        let base = U256::from(self.fee_denom);
 
-        // numerator = gamma_numer * reserve_out * x
-        let numerator = self.gamma_numer_u512 * self.reserve_out_u512 * x_u512;
-
-        // denominator = fee_denom * reserve_in + gamma_numer * x
-        let denom = self.fee_denom_u512 * self.reserve_in_u512 + self.gamma_numer_u512 * x_u512;
+        let amount_in_with_fee = x.checked_mul(gamma).ok_or(HopSwapError::Overflow)?;
+        let numerator = amount_in_with_fee
+            .checked_mul(self.reserve_out)
+            .ok_or(HopSwapError::Overflow)?;
+        let denom = self
+            .reserve_in
+            .checked_mul(base)
+            .ok_or(HopSwapError::Overflow)?
+            .checked_add(amount_in_with_fee)
+            .ok_or(HopSwapError::Overflow)?;
 
         if denom.is_zero() {
-            return U256::ZERO;
+            return Ok(U256::ZERO);
         }
 
-        // Floor division (EVM semantics)
-        let result_u512 = numerator / denom;
-
-        // Narrow U512 → U256. Bounded by `reserve_out` (an output swap can
-        // never extract more than the pool holds): `result ≤ γ·reserve_out·x /
-        // (γ·x) = reserve_out ≤ uint112::MAX` for spec-bound V2 state — so this
-        // is unreachable for real pools. The spec widths are now enforced at
-        // `register_v2_pool` / `register_v3_pool` / `register_v4_pool`
-        // (see `bot_core/spec_bounds.rs` and ADR-012); on-chain-sourced
-        // pool state cannot reach this panic.
-        assert!(
-            result_u512 <= U512::from(U256::MAX),
-            "U512 → U256 narrowing overflow (corrupt/synthetic input; \
-             spec-bound pool state is unreachable — enforced at register_*_pool)",
-        );
-        result_u512.to::<U256>()
+        // Floor division — EVM `DIV` semantics.
+        Ok(numerator / denom)
     }
 }
 
@@ -156,28 +167,32 @@ impl IntHopState {
 /// with floor division (EVM semantics).
 ///
 /// Returns a [`SimulationResult`] with per-hop output and consumed-input amounts.
-#[must_use]
-pub fn int_simulate_path(x: U256, hops: &[IntHopState]) -> SimulationResult {
+///
+/// # Errors
+///
+/// Returns [`HopSwapError`] if any hop reverts (on-chain `getAmountOut`
+/// overflow) — the whole multi-hop swap reverts on-chain if any hop does.
+pub fn int_simulate_path(x: U256, hops: &[IntHopState]) -> Result<SimulationResult, HopSwapError> {
     let mut amount = x;
     let mut hop_outputs = Vec::with_capacity(hops.len());
     // V2 constant-product pools always consume the full input
     let consumed_inputs = vec![x; hops.len()];
     for hop in hops {
         if amount.is_zero() {
-            return SimulationResult {
+            return Ok(SimulationResult {
                 final_output: U256::ZERO,
                 hop_outputs,
                 consumed_inputs,
-            };
+            });
         }
-        amount = hop.swap(amount);
+        amount = hop.swap(amount)?;
         hop_outputs.push(amount);
     }
-    SimulationResult {
+    Ok(SimulationResult {
         final_output: amount,
         hop_outputs,
         consumed_inputs,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -192,14 +207,14 @@ mod tests {
     #[test]
     fn test_int_hop_swap_zero_input() {
         let hop = IntHopState::new(u256(1_000_000), u256(2_000_000), 997, 1000);
-        let output = hop.swap(U256::ZERO);
+        let output = hop.swap(U256::ZERO).unwrap();
         assert!(output.is_zero());
     }
 
     #[test]
     fn test_int_hop_swap_basic() {
         let hop = IntHopState::new(u256(1_000_000), u256(2_000_000), 997, 1000);
-        let output = hop.swap(u256(1000));
+        let output = hop.swap(u256(1000)).unwrap();
         assert!(!output.is_zero());
         assert!(output < u256(2000)); // Output < 2x input
     }
@@ -210,8 +225,8 @@ mod tests {
         // (approximately) the input — sanity check for the swap formula.
         let fwd = IntHopState::new(u256(1_000_000), u256(2_000_000), 997, 1000);
         let rev = IntHopState::new(u256(2_000_000), u256(1_000_000), 997, 1000);
-        let mid = fwd.swap(u256(1000));
-        let back = rev.swap(mid);
+        let mid = fwd.swap(u256(1000)).unwrap();
+        let back = rev.swap(mid).unwrap();
         // After two 0.3% fees, recovered amount is strictly less than input.
         assert!(back < u256(1000));
     }
@@ -222,7 +237,7 @@ mod tests {
             IntHopState::new(u256(1_000_000), u256(2_000_000), 997, 1000),
             IntHopState::new(u256(2_000_000), u256(1_000_000), 997, 1000),
         ];
-        let result = int_simulate_path(U256::ZERO, &hops);
+        let result = int_simulate_path(U256::ZERO, &hops).unwrap();
         assert!(result.final_output.is_zero());
         assert_eq!(result.hop_outputs.len(), 0);
     }
@@ -233,10 +248,54 @@ mod tests {
             IntHopState::new(u256(1_000_000), u256(2_000_000), 997, 1000),
             IntHopState::new(u256(2_000_000), u256(1_000_000), 997, 1000),
         ];
-        let result = int_simulate_path(u256(1000), &hops);
+        let result = int_simulate_path(u256(1000), &hops).unwrap();
         // Two hops, both consume full input.
         assert_eq!(result.consumed_inputs, vec![u256(1000), u256(1000)]);
         assert_eq!(result.hop_outputs.len(), 2);
         assert_eq!(result.final_output, *result.hop_outputs.last().unwrap());
+    }
+
+    // ── on-chain revert parity (U512 removal) ──────────────────────────
+
+    /// On-chain `getAmountOut` computes `amountInWithFee = amountIn * gamma`
+    /// in `uint256` via `SafeMath` and reverts on overflow. With `x = MAX` and a
+    /// non-trivial `gamma`, `x * gamma` overflows `uint256` — the trade
+    /// reverts. The hop swap must surface this as `Overflow`, NOT return a
+    /// phantom output by silently widening to a wider integer.
+    #[test]
+    fn swap_reverts_on_amount_in_times_gamma_overflow() {
+        let hop = IntHopState::new(u256(1_000_000), u256(1_000_000), 997, 1000);
+        // 997 * U256::MAX overflows uint256 → on-chain revert.
+        assert_eq!(hop.swap(U256::MAX), Err(HopSwapError::Overflow));
+    }
+
+    /// `amountInWithFee * reserveOut` is the second `SafeMath` `mul`; an
+    /// overflow here also reverts on-chain.
+    #[test]
+    fn swap_reverts_on_amount_in_with_fee_times_reserve_out_overflow() {
+        // `amountIn * gamma` fits (gamma = 1), but `amountInWithFee *
+        // reserveOut` = MAX * MAX overflows uint256 → revert.
+        let hop = IntHopState::new(u256(1), U256::MAX, 1, 1000);
+        assert_eq!(hop.swap(U256::MAX), Err(HopSwapError::Overflow));
+    }
+
+    /// `reserveIn * feeDenom` (a denominator term) overflows uint256 → revert.
+    #[test]
+    fn swap_reverts_on_reserve_in_times_fee_denom_overflow() {
+        let hop = IntHopState::new(U256::MAX, u256(1), 1, u64::MAX);
+        assert_eq!(hop.swap(u256(1)), Err(HopSwapError::Overflow));
+    }
+
+    /// A multi-hop path reverts if ANY hop reverts — matching on-chain
+    /// (the whole multi-hop swap reverts).
+    #[test]
+    fn int_simulate_path_reverts_if_any_hop_overflows() {
+        let good = IntHopState::new(u256(1_000_000), u256(1_000_000), 997, 1000);
+        let reverting = IntHopState::new(u256(1_000_000), u256(1_000_000), 997, 1000);
+        let hops = vec![good, reverting];
+        assert_eq!(
+            int_simulate_path(U256::MAX, &hops),
+            Err(HopSwapError::Overflow),
+        );
     }
 }

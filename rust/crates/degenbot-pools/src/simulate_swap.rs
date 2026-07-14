@@ -67,7 +67,8 @@ pub fn simulate_swap(
                 )
             };
             let hop = IntHopState::new(reserve_in, reserve_out, gamma_numer, fee_denom);
-            Ok(hop.swap(amount_in))
+            hop.swap(amount_in)
+                .map_err(|_| SimulateSwapError::NotComputable)
         }
         // V3 concentrated-liquidity math. Exact-input swap: amount_specified
         // > 0 (V3 convention). Output is token1 for zfo, token0 for ofz

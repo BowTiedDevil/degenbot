@@ -551,7 +551,7 @@ impl UniswapEngine {
                 continue;
             }
             let out = match hop {
-                ResolvedHop::V2 { state } => state.swap(amount),
+                ResolvedHop::V2 { state } => state.swap(amount).unwrap_or(U256::ZERO),
                 ResolvedHop::SolidlyStable { state } => Self::simulate_solidly_hop(amount, state),
                 // Non-V2/Solidly hops can't reach here — the solve dispatch
                 // rejects Solidly+CL paths before calling this.

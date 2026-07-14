@@ -169,7 +169,9 @@ pub fn recompute_v2_amount_out(state: &DiagnosticPoolState, amount_in: U256) -> 
     else {
         return U256::ZERO;
     };
-    degenbot_v2_math::IntHopState::new(ri, ro, gamma_numer, fee_denom).swap(amount_in)
+    degenbot_v2_math::IntHopState::new(ri, ro, gamma_numer, fee_denom)
+        .swap(amount_in)
+        .unwrap_or(U256::ZERO)
 }
 
 /// Recompute a V3 hop's output from its engine `V3PoolState` + `amount_in`
