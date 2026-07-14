@@ -4,7 +4,6 @@
 # anvil to the `UniswapV2Pool` + `dex.variant` model. See
 # docs/migration-guides/dex-subclass-collapse.md.
 import pytest
-import web3
 
 pytest.skip(
     "ADR-005 slice 7 step 4b: fork test pending rewrite after DEX subclass collapse",
@@ -40,9 +39,9 @@ from degenbot.uniswap.v2_types import (
 )
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.v2_pool_factory import make_v2_pool
+from tests.helpers.w3_contract import make_contract
 
 if TYPE_CHECKING:
-    from web3.contract.contract import Contract
 
     from degenbot.types.aliases import BlockNumber
 
@@ -170,10 +169,7 @@ def test_create_camelot_v2_stable_pool(fork_arbitrum_full: AnvilFork):
     amount_in = 1000 * 10**token_in.decimals  # nominal value of $1000
 
     # Test that the swap output from the pool contract matches the off-chain calculation
-    w3_contract = web3.Web3(web3.HTTPProvider(fork_arbitrum_full.http_url)).eth.contract(
-        address=CAMELOT_MIM_USDC_LP_ADDRESS,
-        abi=CAMELOT_POOL_ABI,
-    )
+    w3_contract = make_contract(fork_arbitrum_full.http_url, CAMELOT_MIM_USDC_LP_ADDRESS, CAMELOT_POOL_ABI)
 
     contract_amount = w3_contract.functions.getAmountOut(
         amountIn=amount_in,
@@ -193,10 +189,7 @@ def test_create_camelot_v2_pool(fork_arbitrum_full: AnvilFork):
     token_in = lp.token1
     amount_in = 1000 * 10**token_in.decimals  # nominal value of $1000
 
-    w3_contract: Contract = web3.Web3(web3.HTTPProvider(fork_arbitrum_full.http_url)).eth.contract(
-        address=CAMELOT_WETH_USDC_LP_ADDRESS,
-        abi=CAMELOT_POOL_ABI,
-    )
+    w3_contract: Contract = make_contract(fork_arbitrum_full.http_url, CAMELOT_WETH_USDC_LP_ADDRESS, CAMELOT_POOL_ABI)
     assert w3_contract.functions.getAmountOut(
         amountIn=amount_in,
         tokenIn=token_in.address,

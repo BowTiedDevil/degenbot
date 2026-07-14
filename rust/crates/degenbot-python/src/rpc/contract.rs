@@ -71,6 +71,7 @@ impl PyContract {
     ///
     /// Returns:
     ///     List of decoded return values as strings
+    #[pyo3(signature = (function_signature, args, block_number=None))]
     fn call(
         &self,
         py: Python<'_>,
@@ -126,6 +127,7 @@ impl PyContract {
     ///
     /// Returns:
     ///     List of decoded return values as native Python types
+    #[pyo3(signature = (function_signature, args, block_number=None))]
     fn call_typed(
         &self,
         py: Python<'_>,

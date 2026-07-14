@@ -47,7 +47,6 @@ from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING, Any, Self
 
 import pytest
-import web3
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
@@ -61,6 +60,7 @@ from tests.uniswap.v4.test_uniswap_v4_liquidity_pool import (
     UNISWAP_V4_QUOTER_ABI,
     UNISWAP_V4_QUOTER_ADDRESS,
 )
+from tests.helpers.w3_contract import make_contract
 
 if TYPE_CHECKING:
     from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
@@ -265,10 +265,7 @@ def test_cached_calculations_v4_eth_usdc(golden_factory) -> None:
     with _RecordFork(recording=golden.is_recording) as ctx:
         if golden.is_recording:
             assert ctx.fork is not None
-            ctx.contract = web3.Web3(web3.HTTPProvider(ctx.fork.http_url)).eth.contract(
-                address=UNISWAP_V4_QUOTER_ADDRESS,
-                abi=UNISWAP_V4_QUOTER_ABI,
-            )
+            ctx.contract = make_contract(ctx.fork.http_url, UNISWAP_V4_QUOTER_ADDRESS, UNISWAP_V4_QUOTER_ABI)
         for method, key, token_in, token_out, amount, zero_for_one in cases:
             oracle = golden.check(
                 key,

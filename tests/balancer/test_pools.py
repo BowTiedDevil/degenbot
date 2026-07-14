@@ -3,7 +3,6 @@ import json
 from fractions import Fraction
 
 import pytest
-import web3
 from hexbytes import HexBytes
 
 from degenbot.anvil_fork import AnvilFork
@@ -16,6 +15,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.provider import AlloyProvider
 from tests.helpers.balancer_pool_factory import make_balancer_weighted_pool
 from tests.helpers.bot_factory import make_bot_with_provider
+from tests.helpers.w3_contract import make_contract
 
 pytestmark = pytest.mark.online_rpc
 
@@ -85,14 +85,8 @@ def _build_pool_from_chain(
     """Build a BalancerV2Pool by fetching on-chain data from an anvil fork."""
     bot = make_bot_with_provider(fork.provider)
 
-    pool_contract = web3.Web3(web3.HTTPProvider(fork.http_url)).eth.contract(
-        address=get_checksum_address(pool_address),
-        abi=BALANCER_V2_WETH_BAL_POOL_ABI,
-    )
-    vault_contract = web3.Web3(web3.HTTPProvider(fork.http_url)).eth.contract(
-        address=BALANCER_V2_VAULT_ADDRESS,
-        abi=BALANCER_V2_VAULT_ABI,
-    )
+    pool_contract = make_contract(fork.http_url, get_checksum_address(pool_address), BALANCER_V2_WETH_BAL_POOL_ABI)
+    vault_contract = make_contract(fork.http_url, BALANCER_V2_VAULT_ADDRESS, BALANCER_V2_VAULT_ABI)
 
     pool_id = pool_contract.functions.getPoolId().call()
     vault = pool_contract.functions.getVault().call()
@@ -220,15 +214,9 @@ def _run_swap_calculations(
         # Default: test both directions (0→1 and 1→0)
         swap_directions = [(0, 1), (1, 0)]
 
-    query_contract = web3.Web3(web3.HTTPProvider(fork.http_url)).eth.contract(
-        address=BALANCERQUERIES_CONTRACT_ADDRESS,
-        abi=BALANCERQUERIES_CONTRACT_ABI,
-    )
+    query_contract = make_contract(fork.http_url, BALANCERQUERIES_CONTRACT_ADDRESS, BALANCERQUERIES_CONTRACT_ABI)
 
-    vault_contract = web3.Web3(web3.HTTPProvider(fork.http_url)).eth.contract(
-        address=BALANCER_V2_VAULT_ADDRESS,
-        abi=BALANCER_V2_VAULT_ABI,
-    )
+    vault_contract = make_contract(fork.http_url, BALANCER_V2_VAULT_ADDRESS, BALANCER_V2_VAULT_ABI)
 
     assert lp.balances == tuple(vault_contract.functions.getPoolTokens(lp.pool_id).call()[1])
 

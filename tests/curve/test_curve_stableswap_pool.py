@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING, cast
 import eth_abi.abi
 import eth_abi.exceptions
 import pytest
-import web3
 from degenbot.crypto import function_selector, keccak256
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import ContractLogicError
@@ -24,12 +23,12 @@ from degenbot.exceptions.pool import (
 from degenbot.provider import AlloyProvider
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.bot_factory import make_bot_with_provider
+from tests.helpers.w3_contract import make_contract
 
 pytestmark = pytest.mark.online_rpc
 
 
 if TYPE_CHECKING:
-    from web3.contract.contract import Contract
     from typing import TypedDict
 Timestamp = int
 
@@ -436,10 +435,7 @@ def test_factory_stableswap_pools(fork_mainnet_full: AnvilFork):
 
 def test_base_registry_pools(fork_mainnet_full: AnvilFork):
     """Test the custom pools deployed by Curve"""
-    registry: Contract = web3.Web3(web3.HTTPProvider(fork_mainnet_full.http_url)).eth.contract(
-        address=CURVE_V1_REGISTRY_ADDRESS,
-        abi=CURVE_V1_REGISTRY_ABI,
-    )
+    registry: Contract = make_contract(fork_mainnet_full.http_url, CURVE_V1_REGISTRY_ADDRESS, CURVE_V1_REGISTRY_ABI)
     pool_count = registry.functions.pool_count().call()
 
     with web3.Web3(web3.HTTPProvider(fork_mainnet_full.http_url)).batch_requests() as batch:

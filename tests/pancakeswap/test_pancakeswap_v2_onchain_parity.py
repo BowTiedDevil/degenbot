@@ -37,13 +37,13 @@ from fractions import Fraction
 from typing import TYPE_CHECKING, Any, Self
 
 import pytest
-import web3
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.degenbot_rs import PyBot
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
+from tests.helpers.w3_contract import make_contract
 
 if TYPE_CHECKING:
     from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
@@ -226,10 +226,7 @@ def test_pancakeswap_v2_router_get_amounts_out(golden_factory) -> None:
     with _RecordFork(recording=golden.is_recording) as ctx:
         if golden.is_recording:
             assert ctx.fork is not None
-            ctx.contract = web3.Web3(web3.HTTPProvider(ctx.fork.http_url)).eth.contract(
-                address=PANCAKE_V2_ROUTER_ADDRESS,
-                abi=_ROUTER_ABI,
-            )
+            ctx.contract = make_contract(ctx.fork.http_url, PANCAKE_V2_ROUTER_ADDRESS, _ROUTER_ABI)
         for key, token_in, token_out, amount_in in cases:
             oracle = golden.check(
                 key,

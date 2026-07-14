@@ -48,7 +48,6 @@ from contextlib import AbstractContextManager
 from typing import Any, Self
 
 import pytest
-import web3
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
@@ -63,6 +62,7 @@ from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v3_pool_factory import make_v3_pool
+from tests.helpers.w3_contract import make_contract
 
 UNISWAP_V3_PARITY_BLOCK = 24_407_242  # tip minus ~1M
 
@@ -302,10 +302,7 @@ def test_cached_calculations_v3_wbtc_weth(golden_factory) -> None:
     with _RecordFork(recording=golden.is_recording) as ctx:
         if golden.is_recording:
             assert ctx.fork is not None
-            ctx.contract = web3.Web3(web3.HTTPProvider(ctx.fork.http_url)).eth.contract(
-                address=UNISWAP_V3_QUOTER_ADDRESS,
-                abi=_QUOTER_ABI,
-            )
+            ctx.contract = make_contract(ctx.fork.http_url, UNISWAP_V3_QUOTER_ADDRESS, _QUOTER_ABI)
         for method, key, token_in, token_out, amount, sqrt_limit in cases:
             oracle = golden.check(
                 key,
