@@ -119,10 +119,7 @@ impl IntoProviderError for RpcError<TransportErrorKind> {
             // mirroring the Python `alloy_errors.is_alloy_revert` markers; the
             // FFI layer (degenbot-python) raises the degenbot-owned
             // `ContractLogicError` from this variant.
-            let is_revert = error_resp
-                .message
-                .to_lowercase()
-                .contains("revert")
+            let is_revert = error_resp.message.to_lowercase().contains("revert")
                 || error_resp.as_revert_data().is_some();
             if is_revert {
                 return ProviderError::ExecutionReverted {
@@ -1146,8 +1143,7 @@ mod tests {
     #[test]
     fn execution_revert_classified_as_execution_reverted() {
         let json = r#"{"code":-32000,"message":"execution reverted"}"#;
-        let payload: alloy::rpc::json_rpc::ErrorPayload =
-            serde_json::from_str(json).unwrap();
+        let payload: alloy::rpc::json_rpc::ErrorPayload = serde_json::from_str(json).unwrap();
         let rpc_err: RpcError<TransportErrorKind> = RpcError::ErrorResp(payload);
         let provider_err = rpc_err.into_provider_error("eth_call failed");
         assert!(
@@ -1165,8 +1161,7 @@ mod tests {
     #[test]
     fn anvil_revert_classified_as_execution_reverted() {
         let json = r#"{"code":3,"message":"error code 3: execution reverted"}"#;
-        let payload: alloy::rpc::json_rpc::ErrorPayload =
-            serde_json::from_str(json).unwrap();
+        let payload: alloy::rpc::json_rpc::ErrorPayload = serde_json::from_str(json).unwrap();
         let rpc_err: RpcError<TransportErrorKind> = RpcError::ErrorResp(payload);
         let provider_err = rpc_err.into_provider_error("eth_call failed");
         assert!(
@@ -1182,15 +1177,11 @@ mod tests {
     #[test]
     fn non_revert_error_stays_rpc_error() {
         let json = r#"{"code":-32001,"message":"requested block not available"}"#;
-        let payload: alloy::rpc::json_rpc::ErrorPayload =
-            serde_json::from_str(json).unwrap();
+        let payload: alloy::rpc::json_rpc::ErrorPayload = serde_json::from_str(json).unwrap();
         let rpc_err: RpcError<TransportErrorKind> = RpcError::ErrorResp(payload);
         let provider_err = rpc_err.into_provider_error("eth_call failed");
         assert!(
-            matches!(
-                provider_err,
-                ProviderError::RpcError { code: -32001, .. }
-            ),
+            matches!(provider_err, ProviderError::RpcError { code: -32001, .. }),
             "expected RpcError, got {provider_err:?}"
         );
     }

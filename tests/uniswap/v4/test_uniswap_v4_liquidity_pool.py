@@ -19,7 +19,7 @@ from degenbot.exceptions.pool import (
     IncompleteSwap,
     LiquidityPoolError,
 )
-from degenbot.provider import ProviderAdapter
+from degenbot.provider import AlloyProvider
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from tests.helpers.bot_factory import make_bot_with_provider
 
@@ -59,7 +59,7 @@ SNAPSHOT_BLOCK = 21883665
 
 @pytest.fixture
 def eth_usdc_v4(fork_mainnet_full: AnvilFork) -> UniswapV4Pool:
-    bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork_mainnet_full.provider))
+    bot = make_bot_with_provider(fork_mainnet_full.provider)
     return bot.build_managed_pool(
         V4_POOL_MANAGER_ADDRESS,
         ETH_USDC_V4_POOL_ID,
@@ -97,7 +97,7 @@ def _test_pool_exact_input(
 
     pool_id: HexStr = pool["pool_id"]
 
-    bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork.provider))
+    bot = make_bot_with_provider(fork.provider)
     lp = bot.managed_pools.get(
         chain_id=fork.provider.get_chain_id(),
         pool_manager_address=V4_POOL_MANAGER_ADDRESS,
@@ -215,7 +215,7 @@ def _test_pool_exact_output(
 ):
     pool_id: HexStr = pool["pool_id"]
 
-    bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork.provider))
+    bot = make_bot_with_provider(fork.provider)
     lp = bot.managed_pools.get(
         chain_id=fork.provider.get_chain_id(),
         pool_manager_address=V4_POOL_MANAGER_ADDRESS,

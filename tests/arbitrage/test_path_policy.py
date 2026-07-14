@@ -54,7 +54,9 @@ class FakeUniswapArbEngine:
         return path_id
 
 
-def _registry_with_fake_engine(predicate=None) -> tuple[runner.EngineRegistry, FakeUniswapArbEngine]:
+def _registry_with_fake_engine(
+    predicate=None,
+) -> tuple[runner.EngineRegistry, FakeUniswapArbEngine]:
     fake = FakeUniswapArbEngine()
     registry = runner.EngineRegistry(bot=None, engine=fake, path_predicate=predicate)
     return registry, fake

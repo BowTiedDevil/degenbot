@@ -187,6 +187,9 @@ allow-star-arg-any = true
     "SLF001",   # tests may need to access private attributes to test implementation
     "T201",     # print
 ]
+"src/degenbot/provider/factory.py" = [
+    "PLC0415",  # lazy import avoids circular dependency with degenbot.provider.__init__
+]
 
 [tool.pytest.ini_options]
 addopts = [

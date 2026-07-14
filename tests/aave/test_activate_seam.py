@@ -73,10 +73,7 @@ def _dump_market(db_path: Path) -> dict[str, Any]:
     engine = create_engine(f"sqlite:///{db_path}")
     with Session(engine) as session:
         row = session.execute(
-            text(
-                "SELECT id, chain_id, name, active, last_update_block "
-                "FROM aave_v3_markets"
-            )
+            text("SELECT id, chain_id, name, active, last_update_block FROM aave_v3_markets")
         ).one()
         out = dict(row._mapping)
     engine.dispose()

@@ -201,6 +201,7 @@ class TestVerificationRetryPolicy:
             VerificationMismatchError,
             VerificationRpcError,
         )
+
         accepted = retrier.retry.exception_types
         accepted_tuple = accepted if isinstance(accepted, tuple) else (accepted,)
         assert VerificationRpcError in accepted_tuple

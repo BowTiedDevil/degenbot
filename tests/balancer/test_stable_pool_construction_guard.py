@@ -55,12 +55,8 @@ class TestWrongFamilyHandle:
     def test_v2_handle_raises_degenbot_value_error(self) -> None:
         """A V2-family handle is not a Balancer stable pool."""
         bot = PyBot()
-        t0 = make_erc20(
-            bot, address="0x" + "a1" * 20, name="T0", symbol="T0", decimals=18
-        )
-        t1 = make_erc20(
-            bot, address="0x" + "b2" * 20, name="T1", symbol="T1", decimals=18
-        )
+        t0 = make_erc20(bot, address="0x" + "a1" * 20, name="T0", symbol="T0", decimals=18)
+        t1 = make_erc20(bot, address="0x" + "b2" * 20, name="T1", symbol="T1", decimals=18)
         v2_pool = make_v2_pool(
             "0x" + "c3" * 20,
             token0=t0,
@@ -90,12 +86,8 @@ class TestRateProviderIsStored:
         from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
 
         bot = PyBot()
-        t0 = make_erc20(
-            bot, address="0x" + "d4" * 20, name="S0", symbol="S0", decimals=18
-        )
-        t1 = make_erc20(
-            bot, address="0x" + "e5" * 20, name="S1", symbol="S1", decimals=18
-        )
+        t0 = make_erc20(bot, address="0x" + "d4" * 20, name="S0", symbol="S0", decimals=18)
+        t1 = make_erc20(bot, address="0x" + "e5" * 20, name="S1", symbol="S1", decimals=18)
         pool = make_balancer_stable_pool(
             address="0x" + "f6" * 20,
             pool_id=bytes.fromhex("f6" * 20 + "0002" + "0" * 20),
@@ -127,12 +119,8 @@ class TestRateProviderIsStored:
         from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
 
         bot = PyBot()
-        t0 = make_erc20(
-            bot, address="0x" + "d4" * 20, name="S0", symbol="S0", decimals=18
-        )
-        t1 = make_erc20(
-            bot, address="0x" + "e5" * 20, name="S1", symbol="S1", decimals=18
-        )
+        t0 = make_erc20(bot, address="0x" + "d4" * 20, name="S0", symbol="S0", decimals=18)
+        t1 = make_erc20(bot, address="0x" + "e5" * 20, name="S1", symbol="S1", decimals=18)
         # ComposableStablePool (bpt_idx=0) + dynamic provider.
         rates = (10**18, 2 * 10**18, 3 * 10**18)
         pool = make_balancer_stable_pool(

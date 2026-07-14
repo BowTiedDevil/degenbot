@@ -29,7 +29,7 @@ from degenbot.balancer.deployments import (
 from degenbot.balancer.pools import BalancerV2Pool, detect_pow_version
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions.pool import EVMRevertError
-from degenbot.provider import ProviderAdapter
+from degenbot.provider import AlloyProvider
 from tests.helpers.balancer_pool_factory import make_balancer_weighted_pool
 from tests.helpers.bot_factory import make_bot_with_provider
 
@@ -149,7 +149,7 @@ def _build_pool_from_chain(
     pool_id_hex: str,
 ) -> BalancerV2Pool:
     """Build a BalancerV2Pool by fetching on-chain data from an anvil fork."""
-    bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork.provider))
+    bot = make_bot_with_provider(fork.provider)
 
     pool_contract = web3.Web3(web3.HTTPProvider(fork.http_url)).eth.contract(
         address=get_checksum_address(pool_address),

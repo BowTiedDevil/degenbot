@@ -19,10 +19,9 @@ from web3.exceptions import Web3Exception
 
 from degenbot.exceptions.infrastructure import LogFetchingTimeout
 from degenbot.logging import logger
-from degenbot.provider import ProviderAdapter
-from degenbot.provider.async_adapter import AsyncProviderAdapter
+from degenbot.provider import AlloyProvider, AsyncAlloyProvider
 from degenbot.types.aliases import BlockNumber
-from degenbot.types.rpc_types import LogReceipt
+from degenbot.types.rpc_types import LogData
 
 
 def _build_topics_list(
@@ -94,14 +93,14 @@ class _ChunkedLogFetcher:
 
 def fetch_logs_retrying(
     *,
-    provider: ProviderAdapter,
+    provider: AlloyProvider,
     start_block: BlockNumber,
     end_block: BlockNumber,
     max_retries: int = 10,
     max_blocks_per_request: int | None = None,
     address: list[ChecksumAddress] | None = None,
     topic_signature: Sequence[Sequence[HexBytes] | HexBytes] | None = None,
-) -> list[LogReceipt]:
+) -> list[LogData]:
     """Fetch event logs for a topic signature within a block range.
 
     Max blocks per request is set to 5,000 if not specified.
@@ -110,7 +109,7 @@ def fetch_logs_retrying(
     for formatting of topic signatures.
 
     Args:
-        provider: ProviderAdapter instance
+        provider: AlloyProvider instance
         start_block: Starting block number
         end_block: Ending block number
         max_retries: Maximum retry attempts
@@ -150,14 +149,14 @@ def fetch_logs_retrying(
         ),
     )
 
-    event_logs: list[LogReceipt] = []
+    event_logs: list[LogData] = []
 
     def _get_logs(
         from_block: int,
         to_block: int,
         addr: list[ChecksumAddress],
         topics: Sequence[Sequence[HexBytes] | HexBytes],
-    ) -> list[LogReceipt]:
+    ) -> list[LogData]:
         topics_str: list[list[str]] = []
         for topic in topics:
             if isinstance(topic, HexBytes):
@@ -207,14 +206,14 @@ def fetch_logs_retrying(
 
 async def fetch_logs_retrying_async(
     *,
-    provider: AsyncProviderAdapter,
+    provider: AsyncAlloyProvider,
     start_block: BlockNumber,
     end_block: BlockNumber,
     max_retries: int = 10,
     max_blocks_per_request: int | None = None,
     address: ChecksumAddress | None = None,
     topic_signature: Sequence[Sequence[HexBytes] | HexBytes] | None = None,
-) -> list[LogReceipt]:
+) -> list[LogData]:
     """Async version of fetch_logs_retrying.
 
     Returns:
@@ -233,7 +232,7 @@ async def fetch_logs_retrying_async(
         max_blocks_per_request=max_blocks_per_request,
     )
 
-    event_logs: list[LogReceipt] = []
+    event_logs: list[LogData] = []
 
     retrier = AsyncRetrying(
         stop=stop_after_attempt(max_retries),

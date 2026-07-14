@@ -198,8 +198,7 @@ class TestFakeSubscriberRustSeamRouting:
         # Each received the SAME pool_id (one-notify-per-dispatch).
         for sub in (sub1, sub2, sub3):
             assert sub.notifications == [(None, pool_id)], (
-                f"subscriber fired with {sub.notifications!r}, "
-                f"expected pool_id={pool_id}"
+                f"subscriber fired with {sub.notifications!r}, expected pool_id={pool_id}"
             )
         # Registration-order determinism is asserted at the seam level by
         # worker_3's test_pubsub_seam_parity.py (the ``_Recorder``-order test);
@@ -299,8 +298,7 @@ class TestFakeSubscriberRustSeamRouting:
             block_number=300,
         )
         assert sub_a.notifications == [], (
-            "a FakeSubscriber registered for pool A must not be notified "
-            "for a pool B mutation"
+            "a FakeSubscriber registered for pool A must not be notified for a pool B mutation"
         )
 
 

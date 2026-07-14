@@ -8,7 +8,7 @@ from degenbot.calculations.evm_math import next_base_fee
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.contract.addresses import create2_address
 from degenbot.exceptions import DegenbotValueError
-from degenbot.provider import ProviderAdapter
+from degenbot.provider import AlloyProvider
 from degenbot.provider.block_helpers import get_number_for_block_identifier
 from degenbot.provider.call_helpers import (
     encode_function_calldata,
@@ -57,7 +57,7 @@ def test_encode_function_calldata():
 
 @pytest.mark.online_rpc
 def test_low_level_call_for_factory_address(fork_mainnet_full: AnvilFork):
-    provider = ProviderAdapter.from_alloy(fork_mainnet_full.provider)
+    provider = fork_mainnet_full.provider
 
     pool_address = get_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
 
@@ -136,7 +136,7 @@ def test_create2():
 def test_converting_block_identifier_to_int(fork_mainnet_full: AnvilFork):
     """Check that all inputs for web3 type `BlockIdentifier` can be converted to an integer"""
     w3 = fork_mainnet_full.w3
-    provider = ProviderAdapter.from_web3(w3)
+    provider = AlloyProvider.from_web3(w3)
 
     # Known string literals
     latest_block = get_number_for_block_identifier("latest", provider)

@@ -201,9 +201,7 @@ def test_heal_round_trips_through_seam(tmp_path: pathlib.Path):
         with engine.connect() as conn:
             tables = {
                 r[0]
-                for r in conn.execute(
-                    text("SELECT name FROM sqlite_master WHERE type='table'")
-                )
+                for r in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
             }
         assert "alembic_version" not in tables
         assert "_degenbot_db_schema_version" in tables

@@ -166,10 +166,10 @@ class _FakeEth:
 
 
 class _FakeAsyncW3:
-    """Fake ``AsyncProviderAdapter`` for BackrunSession tests (PAGQCK).
+    """Fake ``AsyncAlloyProvider`` for BackrunSession tests (PAGQCK).
 
     The dispatch hot loop was routed off raw ``AsyncWeb3`` onto
-    ``AsyncProviderAdapter`` — this fake exposes the SAME flat surface
+    ``AsyncAlloyProvider`` — this fake exposes the SAME flat surface
     (``get_block`` / ``get_transaction_count`` / ``make_request`` / ``rpc_url``)
     the example now drives, delegating to the inner ``_FakeEth``.
     """
@@ -492,7 +492,9 @@ class TestBackrunSessionRunBlockStreamAcquiredOnce:
             def __init__(self) -> None:
                 self.engine = _OnceOnlyEngine()
 
-            def start(self, node_http, node_ws, *, v3_snapshot, v4_snapshot, verify_state_view) -> int:
+            def start(
+                self, node_http, node_ws, *, v3_snapshot, v4_snapshot, verify_state_view
+            ) -> int:
                 # No backfill target beyond current_block (12_345) — main-loop entry.
                 return 0
 

@@ -25,9 +25,7 @@ UNISWAP_V2_MAINNET_FACTORY = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
 PANCAKESWAP_V3_MAINNET_FACTORY = "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865"
 PANCAKESWAP_V3_MAINNET_DEPLOYER = "0x41ff9AA7e16B8B1a8a8dc4f0eFacd93D02d071c9"
 
-UNISWAP_V2_MAINNET_INIT_HASH = (
-    "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
-)
+UNISWAP_V2_MAINNET_INIT_HASH = "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
 PANCAKESWAP_V3_MAINNET_INIT_HASH = (
     "0x6ce8eb472fa82df5469c6ab6d485f17c3ad13c8cd7af59b3d4a8026c5ce0f7e2"
 )
@@ -40,23 +38,14 @@ class TestInitHashFor:
     """``init_hash_for`` resolves the CREATE2 init hash from the JSON embed."""
 
     def test_uniswap_v2_mainnet_init_hash(self) -> None:
-        assert (
-            init_hash_for(1, UNISWAP_V2_MAINNET_FACTORY)
-            == UNISWAP_V2_MAINNET_INIT_HASH
-        )
+        assert init_hash_for(1, UNISWAP_V2_MAINNET_FACTORY) == UNISWAP_V2_MAINNET_INIT_HASH
 
     def test_pancakeswap_v3_mainnet_init_hash(self) -> None:
-        assert (
-            init_hash_for(1, PANCAKESWAP_V3_MAINNET_FACTORY)
-            == PANCAKESWAP_V3_MAINNET_INIT_HASH
-        )
+        assert init_hash_for(1, PANCAKESWAP_V3_MAINNET_FACTORY) == PANCAKESWAP_V3_MAINNET_INIT_HASH
 
     def test_lowercase_factory_matches(self) -> None:
         """Address lookup is case-insensitive (Address equality, not string)."""
-        assert (
-            init_hash_for(1, UNISWAP_V2_MAINNET_FACTORY.lower())
-            == UNISWAP_V2_MAINNET_INIT_HASH
-        )
+        assert init_hash_for(1, UNISWAP_V2_MAINNET_FACTORY.lower()) == UNISWAP_V2_MAINNET_INIT_HASH
 
     def test_unknown_chain_factory_returns_none(self) -> None:
         assert init_hash_for(999_999, UNISWAP_V2_MAINNET_FACTORY) is None

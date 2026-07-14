@@ -20,7 +20,7 @@ from degenbot.exceptions.pool import (
     InvalidSwapInputAmount,
     MissingCurveData,
 )
-from degenbot.provider import ProviderAdapter
+from degenbot.provider import AlloyProvider
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.bot_factory import make_bot_with_provider
 
@@ -42,7 +42,7 @@ TRIPOOL_ADDRESS = get_checksum_address("0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1
 def _build_pool(fork: AnvilFork, address: str) -> CurveStableswapPool:
     """Helper to build a Curve pool using the Bot builder."""
     # Schedule set_web3 for any code that still relies on the legacy singleton
-    bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork.provider))
+    bot = make_bot_with_provider(fork.provider)
     return bot.build_pool(address)
 
 
@@ -204,7 +204,7 @@ def test_pool_state_at_different_blocks(fork_mainnet_archive: AnvilFork):
 def test_bot_update_curve_pool(fork_mainnet_archive: AnvilFork):
     """bot.update(pool) fetches fresh balances and applies them via external_update."""
     block_number = fork_mainnet_archive.provider.get_block_number()
-    bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork_mainnet_archive.provider))
+    bot = make_bot_with_provider(fork_mainnet_archive.provider)
 
     tripool = bot.build_pool(TRIPOOL_ADDRESS)
     assert tripool.update_block == block_number
@@ -216,7 +216,7 @@ def test_bot_update_curve_pool(fork_mainnet_archive: AnvilFork):
         fork_block=block_number + 1,
     )
     # Rebuild bot with the advanced fork
-    advanced_bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork.provider))
+    advanced_bot = make_bot_with_provider(fork.provider)
 
     # The original pool still has old balances
     assert tripool.balances == initial_balances
@@ -397,7 +397,9 @@ def test_base_pool(fork_mainnet_full: AnvilFork):
 
 def test_factory_stableswap_pools(fork_mainnet_full: AnvilFork):
     """Test the user-deployed pools deployed by the factory"""
-    stableswap_factory: Contract = web3.Web3(web3.HTTPProvider(fork_mainnet_full.http_url)).eth.contract(
+    stableswap_factory: Contract = web3.Web3(
+        web3.HTTPProvider(fork_mainnet_full.http_url)
+    ).eth.contract(
         address=CURVE_V1_FACTORY_ADDRESS,
         abi=CURVE_V1_FACTORY_ABI,
     )

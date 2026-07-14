@@ -22,7 +22,7 @@ from degenbot.degenbot_rs import (
     db_upsert_v3_pools,
     db_upsert_v4_pools,
 )
-from degenbot.provider import ProviderAdapter
+from degenbot.provider import AlloyProvider
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.types.rpc_types import LogReceipt
 
@@ -100,7 +100,7 @@ class V4PoolUpdateConfig:
 
 
 def update_v2_pools(
-    provider: ProviderAdapter,
+    provider: AlloyProvider,
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
@@ -183,7 +183,7 @@ def update_v2_pools(
 
 
 def update_v3_pools(
-    provider: ProviderAdapter,
+    provider: AlloyProvider,
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
@@ -257,7 +257,7 @@ def update_v3_pools(
 
 
 def update_v4_pools(
-    provider: ProviderAdapter,
+    provider: AlloyProvider,
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
@@ -320,7 +320,7 @@ def update_v4_pools(
 
 
 def apply_v3_liquidity_updates(
-    provider: ProviderAdapter,
+    provider: AlloyProvider,
     pool_address: str,
     liquidity_events: list[LogReceipt],
     exchanges_in_scope: set[ExchangeTable],

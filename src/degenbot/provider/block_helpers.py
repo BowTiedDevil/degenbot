@@ -3,21 +3,20 @@
 from typing import TYPE_CHECKING, cast
 
 from degenbot.exceptions import DegenbotValueError
-from degenbot.provider import ProviderAdapter
-from degenbot.provider.async_adapter import AsyncProviderAdapter
+from degenbot.provider import AlloyProvider, AsyncAlloyProvider
 from degenbot.types.aliases import BlockNumber
 from degenbot.types.rpc_types import BlockIdentifier
 
 
 def get_number_for_block_identifier(
     identifier: BlockIdentifier | None,
-    provider: ProviderAdapter,
+    provider: AlloyProvider,
 ) -> BlockNumber:
     """Convert a block identifier to a block number.
 
     Args:
         identifier: Block identifier (None, int, or string tag like 'latest')
-        provider: ProviderAdapter instance
+        provider: AlloyProvider instance
 
     Returns:
         Block number as integer
@@ -54,7 +53,7 @@ def get_number_for_block_identifier(
 
 async def get_number_for_block_identifier_async(
     identifier: BlockIdentifier | None,
-    provider: AsyncProviderAdapter,
+    provider: AsyncAlloyProvider,
 ) -> BlockNumber:
     """Resolve a block identifier to a block number asynchronously.
 

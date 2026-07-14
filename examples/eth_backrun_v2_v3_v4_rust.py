@@ -87,8 +87,8 @@ from degenbot.degenbot_rs import (
 )
 from degenbot.logging import logger as bot_logger
 from degenbot.pathfinding import find_paths_async
-from degenbot.provider.async_adapter import AsyncProviderAdapter
-from degenbot.provider.sync_adapter import ProviderAdapter
+from degenbot.provider import AsyncAlloyProvider
+from degenbot.provider import AlloyProvider
 from degenbot.uniswap.deployments import EthereumMainnetUniswapV4
 from degenbot.uniswap.trackers import UniswapV3PoolTracker
 from degenbot.uniswap.v3_snapshot import DatabaseSnapshot as V3DatabaseSnapshot
@@ -538,7 +538,7 @@ class BackrunSession:
         *,
         bot: Bot | None = None,
         engine_registry: EngineRegistry | None = None,
-        async_w3: AsyncProviderAdapter | None = None,
+        async_w3: AsyncAlloyProvider | None = None,
         snapshots: tuple[Any, Any, Any, Any] | None = None,
         path_builder: Any = None,
         consumer: Any = None,
@@ -554,7 +554,7 @@ class BackrunSession:
         # Resolved in start():
         self.bot: Bot | None = None
         self.engine_registry: EngineRegistry | None = None
-        self.async_w3: AsyncProviderAdapter | None = None
+        self.async_w3: AsyncAlloyProvider | None = None
         self.dispatcher: PyDispatcher | None = None
         self._sim_ctx: PySimulateContext | None = None
         self.v3_snapshot: Any = None
@@ -607,17 +607,14 @@ class BackrunSession:
         # ── Simulation seam context (A5) — one PySimulateContext per session,
         # held alongside the dispatcher. The runtime-bytecode file-load stays
         # Python (A2 disposition `stays-python`); the bytes cross here. The
-        # AsyncAlloyProvider handle is taken from the session's adapter so
+        # AsyncAlloyProvider handle is taken from the session's provider so
         # `dispatch_profitable_py` shares one provider with the rest of the
         # pipeline.
         async_alloy = self.async_w3.as_async_alloy()
         if async_alloy is None:
-            # Non-Alloy adapter (test fakes / the legacy web3 backend being
-            # retired). Defer the sim context: production sessions are
-            # Alloy-backed + build it eagerly here; dispatch raises a clear
-            # error if reached without one ("async_w3 is not an Alloy-backed
-            # adapter; cannot submit"). The session lifecycle tests inject a
-            # non-dispatching consumer, so this None path is test-only.
+            # Non-Alloy provider (test fakes). Defer the sim context:
+            # production sessions are Alloy-backed + build it eagerly here;
+            # dispatch raises a clear error if reached without one.
             self._sim_ctx = None
         else:
             runtime_code = _load_executor_runtime_bytecode()
@@ -805,15 +802,15 @@ class BackrunSession:
         # during `build_paths`. Use the Rust `AlloyProvider` instead —
         # `PyAlloyProvider.call` releases the GIL (`py.detach`) and does HTTP
         # in Rust, so the pump/consumer can proceed and RPC is faster. This
-        # is the sync web3.py ProviderAdapter being retired.
+        # is the sync web3.py AlloyProvider being retired.
         alloy = AlloyProvider(cfg.node_http)
-        return Bot(config_obj, provider=ProviderAdapter.from_alloy(alloy))
+        return Bot(config_obj, provider=alloy)
 
     @staticmethod
-    async def _build_async_w3(cfg: BackrunConfig) -> AsyncProviderAdapter:
+    async def _build_async_w3(cfg: BackrunConfig) -> AsyncAlloyProvider:
         """Build the dispatch-path RPC provider (PAGQCK).
 
-        Returns an ``AsyncProviderAdapter`` wrapping a Rust
+        Returns an ``AsyncAlloyProvider`` wrapping a Rust
         ``AsyncAlloyProvider`` — every dispatch-side ``eth_*`` call the hot
         loop makes goes through Rust (releasing the GIL), not raw
         ``AsyncWeb3(AsyncHTTPProvider(...))``. The four typed calls
@@ -824,11 +821,11 @@ class BackrunSession:
         the adapter's typed methods.
 
         Returns:
-            An ``AsyncProviderAdapter`` (alloy backend) for the dispatch path.
+            An ``AsyncAlloyProvider`` (alloy backend) for the dispatch path.
 
         """
         alloy = await AsyncAlloyProvider.create(cfg.node_http)
-        return AsyncProviderAdapter.from_alloy(async_alloy=alloy)
+        return alloy
 
     # ── Async context manager ────────────────────────────────────────
     async def __aenter__(self) -> "BackrunSession":
@@ -1367,7 +1364,7 @@ async def _dispatch_profitable(
     *,
     results: list[tuple[int, int, int, tuple[int, ...], tuple[int, ...], int]],
     engine_registry: EngineRegistry,
-    async_w3: AsyncProviderAdapter,
+    async_w3: AsyncAlloyProvider,
     sim_ctx: PySimulateContext,
     operator_private_key: str,
     operator_nonce: int,
@@ -1428,7 +1425,7 @@ async def _dispatch_profitable(
     # ── Submit gas-profitable via the Rust submit leaf ───
     async_alloy = async_w3.as_async_alloy()
     if async_alloy is None:
-        bot_logger.error("[dispatch] async_w3 is not an Alloy-backed adapter; cannot submit")
+        bot_logger.error("[dispatch] async_w3 is not an Alloy-backed provider; cannot submit")
         return
     signer = PyTxSigner(key=operator_private_key, chain_id=1)
     records = await dispatch_and_submit_py(
@@ -1573,7 +1570,7 @@ def _render_sim_failures(outcome: PyDispatchOutcome) -> None:
 
 async def consume_result_batches(
     engine_registry: EngineRegistry,
-    async_w3: AsyncProviderAdapter,
+    async_w3: AsyncAlloyProvider,
     sim_ctx: PySimulateContext,
     executor_address: str,
     operator_address: str,
@@ -1722,7 +1719,7 @@ def _reprime(
 async def _apply_block_if_ready(
     fut: asyncio.Task[dict[str, int]],
     dispatcher: PyDispatcher,
-    async_w3: AsyncProviderAdapter,
+    async_w3: AsyncAlloyProvider,
 ) -> None:
     """Drive the block clock from a forwarded ``newHeads`` tick if fut resolved.
 
@@ -1782,7 +1779,7 @@ async def _apply_result_if_ready(
     fut: asyncio.Task[dict[str, object]],
     dispatcher: PyDispatcher,
     engine_registry: EngineRegistry,
-    async_w3: AsyncProviderAdapter,
+    async_w3: AsyncAlloyProvider,
     sim_ctx: PySimulateContext,
     executor_address: str,
     operator_address: str,

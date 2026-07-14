@@ -142,8 +142,8 @@ def test_register_path_dispatches_aerodrome_solidly_hop() -> None:
         factory="0x9008d19f58aabd9ed0d60971565aa8510560ab41",
         fee=Fraction(3, 1000),
         stable=True,
-        reserves_token0=1_000_000 * 10 ** 6,
-        reserves_token1=1000 * 10 ** 18,
+        reserves_token0=1_000_000 * 10**6,
+        reserves_token1=1000 * 10**18,
     )
     # register_aerodrome_pool caches the shared-core pool_id.
     aero_key = registry.register_aerodrome_pool(aero)

@@ -52,17 +52,17 @@ def _known_config_bitmap() -> int:
     borrowable_in_isolation, e_mode_category=7, debt_ceiling=999.
     """
     b = 0
-    b |= 7500           # ltv (bits 0-15)
-    b |= 8000 << 16     # liquidation_threshold
-    b |= 10500 << 32    # liquidation_bonus
-    b |= 6 << 48        # decimals
-    b |= 1 << 56        # is_active
-    b |= 1 << 58        # borrowing_enabled
-    b |= 1 << 61        # borrowable_in_isolation
-    b |= 1 << 62        # isolation_mode
-    b |= 1 << 63        # flash_loan_enabled
-    b |= 7 << 168       # e_mode byte (also the low byte of unbacked_mint_cap)
-    b |= 999 << 212     # debt_ceiling
+    b |= 7500  # ltv (bits 0-15)
+    b |= 8000 << 16  # liquidation_threshold
+    b |= 10500 << 32  # liquidation_bonus
+    b |= 6 << 48  # decimals
+    b |= 1 << 56  # is_active
+    b |= 1 << 58  # borrowing_enabled
+    b |= 1 << 61  # borrowable_in_isolation
+    b |= 1 << 62  # isolation_mode
+    b |= 1 << 63  # flash_loan_enabled
+    b |= 7 << 168  # e_mode byte (also the low byte of unbacked_mint_cap)
+    b |= 999 << 212  # debt_ceiling
     return b
 
 
@@ -159,9 +159,7 @@ def test_get_or_create_user_collateral_config_creates_disabled(tmp_path: Path) -
     db_create_new_database(str(db_path))
     asset_id = _seed_parents(db_path)
 
-    user_id = db_get_or_create_user(
-        str(db_path), MARKET_ID, "0xuserA", gho_discount=0
-    )
+    user_id = db_get_or_create_user(str(db_path), MARKET_ID, "0xuserA", gho_discount=0)
     row_id = db_get_or_create_user_collateral_config(str(db_path), user_id, asset_id)
     assert row_id >= 1
 
@@ -181,9 +179,7 @@ def test_get_or_create_user_persists_gho_discount(tmp_path: Path) -> None:
     db_create_new_database(str(db_path))
     _seed_parents(db_path)
 
-    row_id = db_get_or_create_user(
-        str(db_path), MARKET_ID, "0xuserB", gho_discount=1500
-    )
+    row_id = db_get_or_create_user(str(db_path), MARKET_ID, "0xuserB", gho_discount=1500)
     # idempotent; a second call with a different discount does NOT overwrite.
     assert db_get_or_create_user(str(db_path), MARKET_ID, "0xuserB", 9999) == row_id
 
@@ -213,9 +209,9 @@ def test_get_or_create_erc20_token_persists_metadata(tmp_path: Path) -> None:
         str(db_path), CHAIN_ID, "0xtoken", name="Weth", symbol="WETH", decimals=18
     )
     # second call returns the existing row WITHOUT overwriting metadata.
-    assert db_get_or_create_erc20_token(
-        str(db_path), CHAIN_ID, "0xtoken", None, None, None
-    ) == row_id
+    assert (
+        db_get_or_create_erc20_token(str(db_path), CHAIN_ID, "0xtoken", None, None, None) == row_id
+    )
 
     conn = _open(db_path)
     try:
@@ -232,9 +228,7 @@ def test_get_or_create_positions_create_with_zero_balance(tmp_path: Path) -> Non
     db_path = tmp_path / "aave_positions.db"
     db_create_new_database(str(db_path))
     asset_id = _seed_parents(db_path)
-    user_id = db_get_or_create_user(
-        str(db_path), MARKET_ID, "0xuserC", gho_discount=0
-    )
+    user_id = db_get_or_create_user(str(db_path), MARKET_ID, "0xuserC", gho_discount=0)
 
     collat_id = db_get_or_create_collateral_position(str(db_path), user_id, asset_id)
     debt_id = db_get_or_create_debt_position(str(db_path), user_id, asset_id)
@@ -243,8 +237,7 @@ def test_get_or_create_positions_create_with_zero_balance(tmp_path: Path) -> Non
     conn = _open(db_path)
     try:
         cbalance, clast = conn.execute(
-            "SELECT balance, last_index FROM aave_v3_collateral_positions "
-            "WHERE id = ?",
+            "SELECT balance, last_index FROM aave_v3_collateral_positions WHERE id = ?",
             (collat_id,),
         ).fetchone()
         dbalance, dlast = conn.execute(
@@ -303,14 +296,29 @@ def test_apply_e_mode_category_added_inserts_then_updates(tmp_path: Path) -> Non
     _seed_parents(db_path)
 
     row_id = db_apply_e_mode_category_added(
-        str(db_path), MARKET_ID, 3, 9000, 9500, 10000,
-        price_source="0xoracle", label="ETH",
+        str(db_path),
+        MARKET_ID,
+        3,
+        9000,
+        9500,
+        10000,
+        price_source="0xoracle",
+        label="ETH",
     )
     # update path
-    assert db_apply_e_mode_category_added(
-        str(db_path), MARKET_ID, 3, 9100, 9600, 10100,
-        price_source="0xoracle2", label="ETH-v2",
-    ) == row_id
+    assert (
+        db_apply_e_mode_category_added(
+            str(db_path),
+            MARKET_ID,
+            3,
+            9100,
+            9600,
+            10100,
+            price_source="0xoracle2",
+            label="ETH-v2",
+        )
+        == row_id
+    )
 
     conn = _open(db_path)
     try:
@@ -340,8 +348,7 @@ def test_apply_emode_asset_category_changed_unconditional_set(tmp_path: Path) ->
     conn = _open(db_path)
     try:
         emode = conn.execute(
-            "SELECT e_mode_category_id FROM aave_v3_asset_configs "
-            "WHERE id = ?",
+            "SELECT e_mode_category_id FROM aave_v3_asset_configs WHERE id = ?",
             (row_id,),
         ).fetchone()[0]
     finally:
@@ -361,8 +368,7 @@ def test_apply_asset_collateral_in_emode_changed_gated(tmp_path: Path) -> None:
     conn = _open(db_path)
     try:
         emode = conn.execute(
-            "SELECT e_mode_category_id FROM aave_v3_asset_configs "
-            "WHERE asset_id = ?",
+            "SELECT e_mode_category_id FROM aave_v3_asset_configs WHERE asset_id = ?",
             (asset_id,),
         ).fetchone()[0]
     finally:
@@ -374,15 +380,11 @@ def test_apply_reserve_used_as_collateral_enable_then_disable(tmp_path: Path) ->
     db_path = tmp_path / "aave_ruac.db"
     db_create_new_database(str(db_path))
     asset_id = _seed_parents(db_path)
-    user_id = db_get_or_create_user(
-        str(db_path), MARKET_ID, "0xuserD", gho_discount=0
-    )
+    user_id = db_get_or_create_user(str(db_path), MARKET_ID, "0xuserD", gho_discount=0)
 
     row_id = db_apply_reserve_used_as_collateral(str(db_path), user_id, asset_id, True)
     # disable → update existing to False
-    assert db_apply_reserve_used_as_collateral(
-        str(db_path), user_id, asset_id, False
-    ) == row_id
+    assert db_apply_reserve_used_as_collateral(str(db_path), user_id, asset_id, False) == row_id
 
     conn = _open(db_path)
     try:
@@ -399,9 +401,7 @@ def test_apply_user_e_mode_set_updates_e_mode(tmp_path: Path) -> None:
     db_path = tmp_path / "aave_uem.db"
     db_create_new_database(str(db_path))
     _seed_parents(db_path)
-    user_id = db_get_or_create_user(
-        str(db_path), MARKET_ID, "0xuserE", gho_discount=0
-    )
+    user_id = db_get_or_create_user(str(db_path), MARKET_ID, "0xuserE", gho_discount=0)
 
     db_apply_user_e_mode_set(str(db_path), user_id, 3)
 
@@ -421,9 +421,7 @@ def test_apply_price_oracle_updated_inserts_then_updates(tmp_path: Path) -> None
     _seed_parents(db_path)
 
     row_id = db_apply_price_oracle_updated(str(db_path), MARKET_ID, "0xoracle1")
-    assert db_apply_price_oracle_updated(
-        str(db_path), MARKET_ID, "0xoracle2"
-    ) == row_id
+    assert db_apply_price_oracle_updated(str(db_path), MARKET_ID, "0xoracle2") == row_id
 
     conn = _open(db_path)
     try:

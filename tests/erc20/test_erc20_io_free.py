@@ -126,7 +126,7 @@ class TestBotBuildErc20Token:
         provider.get_code.return_value = b"\x01"  # contract exists
 
         # Mock batched RPC call to return name, symbol, decimals
-        def mock_call(*, to, data, block=None):
+        def mock_call(to, data, block=None):
             if data[:4] == b"\x06\xfd\xde\x03":  # name()
                 return eth_abi_encode(["string"], ["Wrapped Ether"])
             if data[:4] == b"\x95\xd8\x9b\x41":  # symbol()

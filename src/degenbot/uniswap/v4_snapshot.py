@@ -20,9 +20,8 @@ from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.degenbot_rs import PyDatabaseSnapshot
 from degenbot.exceptions.pool import UnknownPoolId
 from degenbot.logging import logger
-from degenbot.provider.async_adapter import AsyncProviderAdapter
+from degenbot.provider import AlloyProvider, AsyncAlloyProvider
 from degenbot.provider.log_fetching import fetch_logs_retrying, fetch_logs_retrying_async
-from degenbot.provider.sync_adapter import ProviderAdapter
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import KeyedDefaultDict
 from degenbot.types.rpc_types import LogReceipt
@@ -395,7 +394,7 @@ class UniswapV4LiquiditySnapshot:
         self,
         to_block: BlockNumber,
         *,
-        provider: ProviderAdapter,
+        provider: AlloyProvider,
         blocks_per_request: int | None = None,
     ) -> None:
         """Fetch liquidity events from the block following the last-known event to the target block.
@@ -436,7 +435,7 @@ class UniswapV4LiquiditySnapshot:
         self,
         to_block: BlockNumber,
         *,
-        provider: AsyncProviderAdapter,
+        provider: AsyncAlloyProvider,
         blocks_per_request: int | None = None,
     ) -> None:
         """Async version of fetch_new_events.

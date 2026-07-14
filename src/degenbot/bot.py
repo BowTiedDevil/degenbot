@@ -40,11 +40,12 @@ from degenbot.degenbot_rs import PyBot, PyBotIo
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import TrackerAlreadyInitialized
 from degenbot.logging import logger
-from degenbot.provider import AsyncAlloyProvider
-from degenbot.provider.async_adapter import AsyncProviderAdapter
+from degenbot.provider import (
+    AlloyProvider,
+    AsyncAlloyProvider,
+)
 from degenbot.provider.factory import get_provider_from_config
 from degenbot.provider.subscription import Subscription  # noqa: TC001
-from degenbot.provider.sync_adapter import ProviderAdapter  # noqa: TC001
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -83,7 +84,7 @@ class Bot:
         self,
         config: DegenbotConfig,
         *,
-        provider: ProviderAdapter | None = None,
+        provider: AlloyProvider | None = None,
     ) -> None:
         """Initialize the single-chain Bot session.
 
@@ -193,7 +194,7 @@ class Bot:
         self._builders: dict[type, PoolBuilder] = {}
 
         # Async adapter for subscriptions (single chain; created on demand)
-        self._async_adapter: AsyncProviderAdapter | None = None
+        self._async_adapter: AsyncAlloyProvider | None = None
         self.register_builder(UniswapV2Pool, self._v2_builder)
         self.register_builder(UniswapV3Pool, self._v3_builder)
         self.register_builder(UniswapV4Pool, self._v4_builder)
@@ -209,7 +210,7 @@ class Bot:
         self._check_database_version()
 
     @staticmethod
-    def _enforce_provider_chain(provider: ProviderAdapter, expected: ChainId) -> None:
+    def _enforce_provider_chain(provider: AlloyProvider, expected: ChainId) -> None:
         """Raise if the provider's chain_id doesn't match ``expected``.
 
         Fail-fast on a misconfigured endpoint: if the RPC reports a different
@@ -235,7 +236,7 @@ class Bot:
         return self._chain_id
 
     @property
-    def provider(self) -> ProviderAdapter:
+    def provider(self) -> AlloyProvider:
         """The single RPC provider for this Bot's chain."""
         return self._provider
 
@@ -655,7 +656,7 @@ class Bot:
             io=io,
         )
 
-    def get_provider(self) -> ProviderAdapter:
+    def get_provider(self) -> AlloyProvider:
         """Return this Bot's single provider.
 
         Returns:
@@ -668,7 +669,7 @@ class Bot:
         """Start WS subscriptions for newHeads and unfiltered logs on this Bot's chain.
 
         Single chain (ADR-006 D5): no ``chain_id`` argument. Creates an
-        AsyncProviderAdapter from the configured WS URI for this Bot's chain,
+        AsyncAlloyProvider from the configured WS URI for this Bot's chain,
         subscribes to new block headers and unfiltered log events
         (``eth_subscribe("logs", {})``), and returns both subscriptions as a
         tuple ``(heads_sub, logs_sub)``. The adapter is cached on the Bot.
@@ -696,8 +697,7 @@ class Bot:
             raise DegenbotValueError(message=msg)
 
         # Create async alloy provider from WS URI
-        alloy = await AsyncAlloyProvider.create(str(ws_uri))
-        adapter = AsyncProviderAdapter.from_alloy(alloy)
+        adapter = await AsyncAlloyProvider.create(str(ws_uri))
 
         self._async_adapter = adapter
 

@@ -10,7 +10,7 @@ from degenbot.degenbot_rs import PyBot
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.infrastructure import NoPriceOracle
-from degenbot.provider import ProviderAdapter
+from degenbot.provider import AlloyProvider
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.erc20_factory import make_ether_placeholder
 
@@ -24,7 +24,7 @@ CHAINLINK_WETH_PRICE_FEED = get_checksum_address("0x5f4ec3df9cbd43714fe2740f5e36
 
 @pytest.fixture
 def bot(fork_mainnet_full: AnvilFork) -> Bot:
-    return make_bot_with_provider(ProviderAdapter.from_alloy(fork_mainnet_full.provider))
+    return make_bot_with_provider(fork_mainnet_full.provider)
 
 
 @pytest.fixture

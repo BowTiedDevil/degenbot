@@ -16,18 +16,20 @@ re-exports it for backward compatibility.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from degenbot.config import DegenbotConfig, _init_config, resolve_http_rpc_uri
-from degenbot.degenbot_rs import AlloyProvider, AsyncAlloyProvider
-from degenbot.provider.async_adapter import AsyncProviderAdapter
-from degenbot.provider.sync_adapter import ProviderAdapter
+
+if TYPE_CHECKING:
+    from degenbot.provider import AlloyProvider, AsyncAlloyProvider
 
 
 def get_provider_from_config(
     *,
     chain_id: int,
     config: DegenbotConfig | None = None,
-) -> ProviderAdapter:
-    """Build a :class:`ProviderAdapter` for ``chain_id`` from the resolved RPC entry.
+) -> AlloyProvider:
+    """Build an :class:`AlloyProvider` for ``chain_id`` from the resolved RPC entry.
 
     Resolves the HTTP/IPC endpoint through the standard cascade
     (:func:`degenbot.config.resolve_http_rpc_uri`): CLI arg > OS env
@@ -48,7 +50,7 @@ def get_provider_from_config(
             passed to the resolver as the config.toml layer)
 
     Returns:
-        A ProviderAdapter wrapping a Rust AlloyProvider.
+        An AlloyProvider over the resolved RPC endpoint.
 
     Raises:
         ValueError: If no RPC is configured for ``chain_id`` (raised as
@@ -58,6 +60,8 @@ def get_provider_from_config(
     """
     if config is None:
         config = _init_config()
+    from degenbot.provider import AlloyProvider
+
     endpoint = resolve_http_rpc_uri(chain_id, config=config)
     alloy = AlloyProvider(endpoint)
     actual = alloy.get_chain_id()
@@ -67,15 +71,15 @@ def get_provider_from_config(
             f"the chain ID ({chain_id}) defined in the config file."
         )
         raise ValueError(msg)
-    return ProviderAdapter.from_alloy(alloy)
+    return alloy
 
 
 async def get_async_provider_from_config(
     *,
     chain_id: int,
     config: DegenbotConfig | None = None,
-) -> AsyncProviderAdapter:
-    """Build an :class:`AsyncProviderAdapter` for ``chain_id`` from the resolved RPC entry.
+) -> AsyncAlloyProvider:
+    """Build an :class:`AsyncAlloyProvider` for ``chain_id`` from the resolved RPC entry.
 
     Async counterpart of :func:`get_provider_from_config`. Resolves the
     HTTP/IPC endpoint through the standard cascade
@@ -86,7 +90,7 @@ async def get_async_provider_from_config(
     raises :class:`ValueError` on mismatch (fail-fast, ADR-006 D5).
 
     Returns:
-        An AsyncProviderAdapter wrapping a Rust AsyncAlloyProvider.
+        An AsyncAlloyProvider over the resolved RPC endpoint.
 
     Raises:
         ValueError: If no RPC is configured for ``chain_id`` (raised as
@@ -96,14 +100,15 @@ async def get_async_provider_from_config(
     """
     if config is None:
         config = _init_config()
+    from degenbot.provider import AsyncAlloyProvider
+
     endpoint = resolve_http_rpc_uri(chain_id, config=config)
     alloy = await AsyncAlloyProvider.create(endpoint)
-    adapter = AsyncProviderAdapter.from_alloy(alloy)
-    actual = await adapter.get_chain_id()
+    actual = await alloy.get_chain_id()
     if actual != chain_id:
         msg = (
             f"The chain ID ({actual}) at endpoint {endpoint} does not match "
             f"the configured chain ID ({chain_id})."
         )
         raise ValueError(msg)
-    return adapter
+    return alloy

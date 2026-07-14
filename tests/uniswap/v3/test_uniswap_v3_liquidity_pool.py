@@ -23,7 +23,7 @@ from degenbot.exceptions.pool import (
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
-from degenbot.provider import ProviderAdapter
+from degenbot.provider import AlloyProvider
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.deployments import (
     UniswapFactoryDeployment,
@@ -103,13 +103,13 @@ def weth(bot_mainnet_full: Bot) -> Erc20Token:
 
 @pytest.fixture
 def wbtc_weth_v3_lp_at_historical_block(fork_mainnet_archive: AnvilFork) -> UniswapV3Pool:
-    bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork_mainnet_archive.provider))
+    bot = make_bot_with_provider(fork_mainnet_archive.provider)
     return bot.build_pool(WBTC_WETH_V3_POOL_ADDRESS)
 
 
 @pytest.fixture
 def wbtc_weth_v3_lp(fork_mainnet_full: AnvilFork) -> UniswapV3Pool:
-    bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork_mainnet_full.provider))
+    bot = make_bot_with_provider(fork_mainnet_full.provider)
     return bot.build_pool(WBTC_WETH_V3_POOL_ADDRESS)
 
 
@@ -145,7 +145,7 @@ def test_first_200_pools(
     fork_mainnet_full: AnvilFork,
     testing_pools,
 ):
-    bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork_mainnet_full.provider))
+    bot = make_bot_with_provider(fork_mainnet_full.provider)
 
     quoter = web3.Web3(web3.HTTPProvider(fork_mainnet_full.http_url)).eth.contract(
         address=UNISWAP_V3_QUOTER_ADDRESS,
@@ -229,7 +229,7 @@ def test_first_200_pools_with_snapshot(
     testing_pools,
     liquidity_snapshot,
 ):
-    bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork_mainnet_archive.provider))
+    bot = make_bot_with_provider(fork_mainnet_archive.provider)
 
     quoter = web3.Web3(web3.HTTPProvider(fork_mainnet_archive.http_url)).eth.contract(
         address=UNISWAP_V3_QUOTER_ADDRESS,
@@ -319,7 +319,7 @@ def test_pool_creation_with_liquidity_map(bot_mainnet_full: Bot) -> None:
 
 @pytest.mark.base
 def test_creation_with_wrong_pool_type(fork_base_full: AnvilFork) -> None:
-    bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork_base_full.provider))
+    bot = make_bot_with_provider(fork_base_full.provider)
 
     pancake_pool_address = "0xC07d7737FD8A06359E9C877863119Bf5F6abFb9E"
     with pytest.raises(LiquidityPoolError):
@@ -328,13 +328,13 @@ def test_creation_with_wrong_pool_type(fork_base_full: AnvilFork) -> None:
 
 @pytest.mark.base
 def test_pancake_v3_pool_creation(fork_base_full: AnvilFork) -> None:
-    bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork_base_full.provider))
+    bot = make_bot_with_provider(fork_base_full.provider)
     bot.build_pool("0xC07d7737FD8A06359E9C877863119Bf5F6abFb9E")
 
 
 @pytest.mark.online_rpc
 def test_sparse_liquidity_map(fork_mainnet_full: AnvilFork) -> None:
-    bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork_mainnet_full.provider))
+    bot = make_bot_with_provider(fork_mainnet_full.provider)
     lp = bot.build_pool(WBTC_WETH_V3_POOL_ADDRESS)
     current_word, _ = cl_get_tick_word_and_bit_position(MIN_TICK, lp.tick_spacing)
     assert lp.sparse_liquidity_map is True
@@ -350,7 +350,7 @@ def test_sparse_liquidity_map(fork_mainnet_full: AnvilFork) -> None:
 
 @pytest.mark.online_rpc
 def test_external_update_with_sparse_liquidity_map(fork_mainnet_full: AnvilFork) -> None:
-    bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork_mainnet_full.provider))
+    bot = make_bot_with_provider(fork_mainnet_full.provider)
     lp = bot.build_pool(WBTC_WETH_V3_POOL_ADDRESS)
     print(f"{lp.tick_bitmap.keys()=}")
     current_word, _ = cl_get_tick_word_and_bit_position(
@@ -1056,7 +1056,7 @@ def test_mint_and_burn_in_empty_word(fork_mainnet_archive: AnvilFork) -> None:
     """Test that minting and burning an equal position inside an empty word results in no net
     liquidity in the mapping, and the removal of the position.
     """
-    bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork_mainnet_archive.provider))
+    bot = make_bot_with_provider(fork_mainnet_archive.provider)
     block_number = fork_mainnet_archive.provider.get_block_number()
 
     lp = bot.build_pool(WBTC_WETH_V3_POOL_ADDRESS)
@@ -1109,7 +1109,7 @@ def test_complex_liquidity_transaction_1(fork_mainnet_archive: AnvilFork):
     State values taken from Tenderly: https://dashboard.tenderly.co/tx/mainnet/0xcc9b213c730978b096e2b629470c510fb68b32a1cb708ca21bbbbdce4221b00d/state-diff
     """
     state_block = fork_mainnet_archive.provider.get_block_number()
-    bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork_mainnet_archive.provider))
+    bot = make_bot_with_provider(fork_mainnet_archive.provider)
     lp = bot.build_pool("0x3416cF6C708Da44DB2624D63ea0AAef7113527C6")
 
     # Verify initial state
@@ -1183,7 +1183,7 @@ def test_complex_liquidity_transaction_2(fork_mainnet_archive: AnvilFork):
 
     lp_address = "0x3416cF6C708Da44DB2624D63ea0AAef7113527C6"
 
-    bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork_mainnet_archive.provider))
+    bot = make_bot_with_provider(fork_mainnet_archive.provider)
     lp = bot.build_pool(lp_address)
 
     # Verify initial state
@@ -1243,7 +1243,7 @@ def test_complex_liquidity_transaction_2(fork_mainnet_archive: AnvilFork):
 
 @pytest.mark.base
 def test_base_pancakeswap_v3(fork_base_full: AnvilFork):
-    bot = make_bot_with_provider(ProviderAdapter.from_alloy(fork_base_full.provider))
+    bot = make_bot_with_provider(fork_base_full.provider)
 
     # Build a PancakeSwap V3 pool, which extends UniswapV3Pool
     lp = bot.build_pool(BASE_CBETH_WETH_V3_POOL_ADDRESS)

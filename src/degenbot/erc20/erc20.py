@@ -13,7 +13,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models import Erc20TokenTable
 from degenbot.degenbot_rs import PyErc20Token
 from degenbot.exceptions.infrastructure import NoPriceOracle
-from degenbot.provider import ProviderAdapter
+from degenbot.provider import AlloyProvider
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.types.abstract import AbstractErc20Token
 from degenbot.types.aliases import BlockNumber
@@ -223,7 +223,7 @@ class Erc20Token(AbstractErc20Token):
     @staticmethod
     def fetch_name_symbol_decimals_batched(
         address: ChecksumAddress,
-        provider: ProviderAdapter,
+        provider: AlloyProvider,
     ) -> tuple[str, str, int]:
         """Fetch token name, symbol, and decimals via batched RPC calls.
 
@@ -257,7 +257,7 @@ class Erc20Token(AbstractErc20Token):
     @staticmethod
     def fetch_name(
         address: ChecksumAddress,
-        provider: ProviderAdapter,
+        provider: AlloyProvider,
         func_prototype: str = "name()",
     ) -> str:
         """Fetch token name via RPC call.
@@ -284,7 +284,7 @@ class Erc20Token(AbstractErc20Token):
     @staticmethod
     def fetch_symbol(
         address: ChecksumAddress,
-        provider: ProviderAdapter,
+        provider: AlloyProvider,
         func_prototype: str = "symbol()",
     ) -> str:
         """Fetch token symbol via RPC call.
@@ -311,7 +311,7 @@ class Erc20Token(AbstractErc20Token):
     @staticmethod
     def fetch_decimals(
         address: ChecksumAddress,
-        provider: ProviderAdapter,
+        provider: AlloyProvider,
         func_prototype: str = "decimals()",
     ) -> int:
         """Fetch token decimals via RPC call.
@@ -334,7 +334,7 @@ class Erc20Token(AbstractErc20Token):
     @staticmethod
     def fetch_total_supply(
         address: ChecksumAddress,
-        provider: ProviderAdapter,
+        provider: AlloyProvider,
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
         """Fetch total supply via RPC call.

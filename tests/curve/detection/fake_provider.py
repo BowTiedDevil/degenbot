@@ -1,4 +1,4 @@
-"""Fake ProviderAdapter for Curve pool detection tests.
+"""Fake AlloyProvider for Curve pool detection tests.
 
 Provides a configurable fake that returns pre-programmed responses to
 provider.call_raw() based on the method selector in the calldata.
@@ -12,7 +12,7 @@ from hexbytes import HexBytes
 
 from degenbot.builders.pool_io import SyncPoolIO
 from degenbot.exceptions import ContractLogicError
-from degenbot.provider.sync_adapter import ProviderAdapter
+from degenbot.provider import AlloyProvider
 
 
 class FakeCurveBackend:
@@ -84,8 +84,10 @@ class FakeCurveBackend:
         pass
 
 
-def make_fake_curve_provider(call_responses: dict[bytes, Any]) -> ProviderAdapter:
-    """Create a ProviderAdapter backed by a FakeCurveBackend.
+def make_fake_curve_provider(call_responses: dict[bytes, Any]) -> AlloyProvider:
+    """Create a (duck-typed) AlloyProvider backed by a FakeCurveBackend.
+
+    The returned object satisfies the ``SyncPoolIO`` interface via duck typing.
 
     Usage:
         provider = make_fake_curve_provider({
@@ -94,21 +96,15 @@ def make_fake_curve_provider(call_responses: dict[bytes, Any]) -> ProviderAdapte
         })
         result = discover_coins(io=SyncPoolIO(provider), pool_address, block_identifier=18_000_000)
     """
-    backend = FakeCurveBackend(call_responses)
-    # Bypass factory methods — inject the backend directly
-    adapter = ProviderAdapter.__new__(ProviderAdapter)
-    adapter._backend = backend
-    adapter._provider_type = "alloy"  # not "web3" — we're testing the abstracted path
-    adapter._raw_provider = None
-    return adapter
+    return FakeCurveBackend(call_responses)
 
 
 def make_fake_pool_io(call_responses: dict[bytes, Any]) -> SyncPoolIO:
     """Create a SyncPoolIO backed by a FakeCurveBackend.
 
     Thin wrapper around make_fake_curve_provider that returns a SyncPoolIO
-    instead of a bare ProviderAdapter. Preferred for detection module tests
-    that now accept io: PoolIO instead of provider: ProviderAdapter.
+    instead of a bare AlloyProvider. Preferred for detection module tests
+    that now accept io: PoolIO instead of provider: AlloyProvider.
 
     Usage:
         io = make_fake_pool_io({

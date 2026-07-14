@@ -234,9 +234,12 @@ def test_force_heal_on_stale_accepts_and_rebuilds(
     # alembic_version is gone.
     conn = sqlite3.connect(db_path_str)
     try:
-        assert conn.execute(
-            "SELECT COUNT(*) FROM sqlite_master WHERE name='alembic_version'",
-        ).fetchone()[0] == 0
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name='alembic_version'",
+            ).fetchone()[0]
+            == 0
+        )
     finally:
         conn.close()
 

@@ -170,7 +170,7 @@ class TestBotBuildV2Pool:
         bot = Bot(config, provider=provider)
 
         # Mock RPC responses for immutable values and reserves
-        def mock_call(*, to, data, block=None):
+        def mock_call(to, data, block=None):
             # We'll check the method selector from the calldata
             # factory() selector
             if data[:4] == b"\x1a\x1a\xb0\xa5":  # not real, just placeholder
@@ -353,7 +353,7 @@ class TestV2PoolTrackerWithBot:
             slot0_calldata: None,  # marker: slot0() reverts on V2 pools
         }
 
-        def mock_call(*, to, data, block=None):
+        def mock_call(to, data, block=None):
             if data in call_responses:
                 if data == slot0_calldata:
                     msg = "revert"

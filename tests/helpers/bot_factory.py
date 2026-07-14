@@ -4,11 +4,11 @@ from pathlib import Path
 
 from degenbot.bot import Bot
 from degenbot.config import DatabaseSettings, DegenbotConfig
-from degenbot.provider import ProviderAdapter
+from degenbot.provider import AlloyProvider
 
 
 def make_bot_with_provider(
-    provider: ProviderAdapter,
+    provider: AlloyProvider,
     chain_id: int | None = None,
     database_path: str = ":memory:",
 ) -> Bot:

@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 
+import degenbot.provider as provider_mod
 from degenbot.config import DatabaseSettings, DegenbotConfig, RpcNotConfiguredError
 from degenbot.provider import factory as factory_mod
 from degenbot.provider.factory import get_provider_from_config
@@ -72,23 +73,14 @@ class TestFactoryDelegatesToCascade:
             constructed.append(endpoint)
             return _FakeAlloy(endpoint, chain_id=1)
 
-        monkeypatch.setattr(factory_mod, "AlloyProvider", fake_alloy)
+        monkeypatch.setattr(provider_mod, "AlloyProvider", fake_alloy)
 
-        captured: list[_FakeAlloy] = []
-
-        def fake_from_alloy(alloy: _FakeAlloy) -> object:
-            captured.append(alloy)
-            return object()
-
-        monkeypatch.setattr(
-            factory_mod.ProviderAdapter, "from_alloy", staticmethod(fake_from_alloy)
-        )
-
-        get_provider_from_config(chain_id=1, config=config)
+        result = get_provider_from_config(chain_id=1, config=config)
 
         assert resolved == ["called"]
         assert constructed == ["http://from-resolver.example"]
-        assert captured[0].endpoint == "http://from-resolver.example"
+        assert isinstance(result, _FakeAlloy)
+        assert result.endpoint == "http://from-resolver.example"
 
     def test_raises_value_error_on_chain_id_mismatch(
         self,
@@ -102,7 +94,7 @@ class TestFactoryDelegatesToCascade:
 
         monkeypatch.setattr(factory_mod, "resolve_http_rpc_uri", fake_resolve)
         monkeypatch.setattr(
-            factory_mod,
+            provider_mod,
             "AlloyProvider",
             lambda endpoint: _FakeAlloy(endpoint, chain_id=999),
         )

@@ -27,7 +27,7 @@ from hexbytes import HexBytes
 
 if TYPE_CHECKING:
     from degenbot.provider import AlloyProvider
-    from degenbot.types.rpc_types import BlockIdentifier, TxParams
+    from degenbot.types.rpc_types import TxParams
 
 
 class BlockNotRecordedError(Exception):
@@ -221,15 +221,14 @@ class OfflineProvider:
         self,
         to: str,
         data: bytes,
-        *,
-        block_number: int | None = None,
+        block: int | None = None,
     ) -> HexBytes:
         """Execute a contract call using recorded data.
 
         Args:
             to: Contract address to call
             data: Calldata bytes
-            block_number: Block number, or None for latest
+            block: Block number, or None for latest
 
         Returns:
             Raw return data from the contract call
@@ -239,7 +238,7 @@ class OfflineProvider:
             OfflineCallReverted: If the recorded call reverted (result is null)
 
         """
-        block_key = self._get_block_key(block_number)
+        block_key = self._get_block_key(block)
 
         call_key = f"{to.lower()}:0x{data.hex()}"
         block_data = self._blocks[block_key]
@@ -258,19 +257,19 @@ class OfflineProvider:
     def get_code(
         self,
         address: str,
-        block_number: int | None = None,
+        block: int | None = None,
     ) -> HexBytes:
         """Get contract bytecode at an address.
 
         Args:
             address: Contract address
-            block_number: Block number, or None for latest
+            block: Block number, or None for latest
 
         Returns:
             Contract bytecode, or empty bytes if not recorded
 
         """
-        block_key = self._get_block_key(block_number)
+        block_key = self._get_block_key(block)
         block_data = self._blocks[block_key]
 
         code = block_data.get("code", {}).get(address.lower(), "")
@@ -311,7 +310,7 @@ class OfflineProvider:
     def get_balance(
         self,
         address: str,
-        block_number: int | None = None,
+        block: int | None = None,
     ) -> int:
         """Get the balance of an address.
 
@@ -320,7 +319,7 @@ class OfflineProvider:
 
         Args:
             address: Ethereum address
-            block_number: Block number, or None for latest
+            block: Block number, or None for latest
 
         Raises:
             NotImplementedError: Balances are not recorded
@@ -336,7 +335,7 @@ class OfflineProvider:
         self,
         address: str,
         position: int,
-        block_number: int | None = None,
+        block: int | None = None,
     ) -> HexBytes:
         """Get storage at a given position.
 
@@ -346,7 +345,7 @@ class OfflineProvider:
         Args:
             address: Contract address
             position: Storage slot position
-            block_number: Block number, or None for latest
+            block: Block number, or None for latest
 
         Raises:
             NotImplementedError: Storage is not recorded
@@ -361,7 +360,7 @@ class OfflineProvider:
     def get_transaction_count(
         self,
         address: str,
-        block_number: int | None = None,
+        block: int | None = None,
     ) -> int:
         """Get the transaction count (nonce) for an address.
 
@@ -370,7 +369,7 @@ class OfflineProvider:
 
         Args:
             address: Ethereum address
-            block_number: Block number, or None for latest
+            block: Block number, or None for latest
 
         Raises:
             NotImplementedError: Transaction counts are not recorded
@@ -416,7 +415,7 @@ class OfflineProvider:
         """
         return True
 
-    def call_raw(self, tx: TxParams, block: BlockIdentifier | None = None) -> HexBytes:
+    def call_raw(self, tx: TxParams, block: int | None = None) -> HexBytes:
         """Execute an eth_call with a raw transaction dict.
 
         Args:
@@ -427,7 +426,7 @@ class OfflineProvider:
             The raw return data from the contract call.
 
         """
-        return self.call(tx["to"], tx["data"], block_number=block)
+        return self.call(tx["to"], HexBytes(tx["data"]), block=block)
 
     def batch_call(self, calls: list[TxParams], block: int | None = None) -> list[HexBytes]:
         """Execute multiple eth_calls sequentially.

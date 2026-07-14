@@ -30,11 +30,11 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import validate_call
 
-from degenbot.degenbot_rs import AlloyProvider
 from degenbot.degenbot_rs import AnvilFork as PyAnvilFork
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.infrastructure import AnvilError
 from degenbot.logging import logger
+from degenbot.provider import AlloyProvider
 from degenbot.types.aliases import BlockNumber  # noqa: TC001
 from degenbot.validation.evm_values import ValidatedUint256  # noqa: TC001
 

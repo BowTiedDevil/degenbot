@@ -154,9 +154,7 @@ def make_curve_pool(
         gamma=gamma,
         lp_token=(lp_token.address if lp_token is not None else None),
         use_lending=list(use_lending) if use_lending is not None else None,
-        precision_multipliers=(
-            list(precision_mults) if precision_mults else None
-        ),
+        precision_multipliers=(list(precision_mults) if precision_mults else None),
         tokens_underlying=(
             [t.address for t in tokens_underlying] if tokens_underlying is not None else None
         ),

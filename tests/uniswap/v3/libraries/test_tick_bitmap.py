@@ -121,9 +121,6 @@ def test_is_initialized():
     assert is_initialized(tick_bitmap, 1) is False
 
 
-
-
-
 def test_next_initialized_tick_within_one_word() -> None:
     tick_spacing = 1
     initialized_ticks = [-200, -55, -4, 70, 78, 84, 139, 240, 535]

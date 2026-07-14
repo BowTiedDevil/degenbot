@@ -154,9 +154,7 @@ def make_v3_pool(
     # built against a different ``PyBot``; re-register their metadata here.
     for tok in (token0, token1):
         if bot.get_token(tok.address) is None:
-            bot.register_token(
-                tok.address, tok.name, tok.symbol, tok.decimals, tok.chain_id
-            )
+            bot.register_token(tok.address, tok.name, tok.symbol, tok.decimals, tok.chain_id)
     pool = pool_class._from_py_pool(handle)  # noqa: SLF001
     pool._sparse_liquidity_map = sparse  # noqa: SLF001
     return pool
