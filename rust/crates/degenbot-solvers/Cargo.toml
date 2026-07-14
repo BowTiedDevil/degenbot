@@ -21,6 +21,7 @@ suspicious = "warn"
 
 [dependencies]
 alloy = { version = "^2.0" }
+thiserror = { version = "^2.0" }
 degenbot-v2-math = { path = "../degenbot-v2-math" }
 degenbot-cl-math = { path = "../degenbot-cl-math" }
 degenbot-pools = { path = "../degenbot-pools" }

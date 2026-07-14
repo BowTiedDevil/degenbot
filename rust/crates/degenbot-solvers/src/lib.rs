@@ -19,3 +19,8 @@
 //! `pyo3`-free (enforced by `just check-no-pyo3-in-cores`); consumable by
 //! both the standalone Rust path (`cargo add degenbot-solvers`) and the
 //! PyO3 driver shell.
+pub mod affected_keys;
+#[allow(clippy::doc_markdown)]
+pub mod mobius_int;
+#[allow(clippy::doc_markdown)]
+pub mod mobius_int_exact;
