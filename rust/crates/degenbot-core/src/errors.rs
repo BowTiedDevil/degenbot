@@ -181,6 +181,15 @@ pub enum ProviderError {
     #[error("RPC error: {code} - {message}")]
     RpcError { code: i64, message: String },
 
+    /// An EVM execution revert reported by the provider (`eth_call`/
+    /// `eth_estimateGas`). Replaces the string-scraping the Python adapter seam
+    /// (`degenbot.provider.alloy_errors`) used to perform: the JSON-RPC error
+    /// code (`-32000` Geth/Alchemy, `-3` Anvil, etc.) is preserved alongside
+    /// the message so the FFI layer can raise the degenbot-owned
+    /// `ContractLogicError` structurally rather than by marker substring.
+    #[error("execution reverted: {message}")]
+    ExecutionReverted { code: i64, message: String },
+
     /// Invalid block range.
     #[error("Invalid block range: {from} to {to}")]
     InvalidBlockRange { from: u64, to: u64 },
@@ -252,6 +261,7 @@ impl From<ProviderError> for PyErr {
             ProviderError::SubscriptionNotSupported { .. }
             | ProviderError::RateLimited { .. }
             | ProviderError::RpcError { .. }
+            | ProviderError::ExecutionReverted { .. }
             | ProviderError::SerializationError { .. }
             | ProviderError::InvalidResponse { .. }
             | ProviderError::AnvilError { .. }

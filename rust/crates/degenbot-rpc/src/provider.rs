@@ -112,6 +112,24 @@ impl IntoProviderError for RpcError<TransportErrorKind> {
 
         // Server returned an error response (JSON-RPC error)
         if let Some(error_resp) = self.as_error_resp() {
+            // Detect EVM execution reverts structurally (alloy's
+            // `as_revert_data()` checks `message.contains("revert")` + spelunks
+            // `data` for the 0x08c379a0/0x4e487b71 selector). The classification
+            // here is by message content (case-insensitive marker substring),
+            // mirroring the Python `alloy_errors.is_alloy_revert` markers; the
+            // FFI layer (degenbot-python) raises the degenbot-owned
+            // `ContractLogicError` from this variant.
+            let is_revert = error_resp
+                .message
+                .to_lowercase()
+                .contains("revert")
+                || error_resp.as_revert_data().is_some();
+            if is_revert {
+                return ProviderError::ExecutionReverted {
+                    code: error_resp.code,
+                    message,
+                };
+            }
             return ProviderError::RpcError {
                 code: error_resp.code,
                 message,
@@ -1121,6 +1139,62 @@ impl LogFetcher {
 mod tests {
     use super::*;
 
+    // ── Revert classification ───────────────────────────────────────────
+
+    /// An EVM execution revert ("execution reverted" message, code -32000)
+    /// classifies as `ProviderError::ExecutionReverted`, not `RpcError`.
+    #[test]
+    fn execution_revert_classified_as_execution_reverted() {
+        let json = r#"{"code":-32000,"message":"execution reverted"}"#;
+        let payload: alloy::rpc::json_rpc::ErrorPayload =
+            serde_json::from_str(json).unwrap();
+        let rpc_err: RpcError<TransportErrorKind> = RpcError::ErrorResp(payload);
+        let provider_err = rpc_err.into_provider_error("eth_call failed");
+        assert!(
+            matches!(
+                provider_err,
+                ProviderError::ExecutionReverted { code: -32000, .. }
+            ),
+            "expected ExecutionReverted, got {provider_err:?}"
+        );
+        assert!(!provider_err.is_retryable());
+    }
+
+    /// An Anvil-style revert ("error code 3: execution reverted") also
+    /// classifies as `ExecutionReverted` (case-insensitive marker match).
+    #[test]
+    fn anvil_revert_classified_as_execution_reverted() {
+        let json = r#"{"code":3,"message":"error code 3: execution reverted"}"#;
+        let payload: alloy::rpc::json_rpc::ErrorPayload =
+            serde_json::from_str(json).unwrap();
+        let rpc_err: RpcError<TransportErrorKind> = RpcError::ErrorResp(payload);
+        let provider_err = rpc_err.into_provider_error("eth_call failed");
+        assert!(
+            matches!(
+                provider_err,
+                ProviderError::ExecutionReverted { code: 3, .. }
+            ),
+            "expected ExecutionReverted, got {provider_err:?}"
+        );
+    }
+
+    /// A non-revert JSON-RPC error stays `RpcError`.
+    #[test]
+    fn non_revert_error_stays_rpc_error() {
+        let json = r#"{"code":-32001,"message":"requested block not available"}"#;
+        let payload: alloy::rpc::json_rpc::ErrorPayload =
+            serde_json::from_str(json).unwrap();
+        let rpc_err: RpcError<TransportErrorKind> = RpcError::ErrorResp(payload);
+        let provider_err = rpc_err.into_provider_error("eth_call failed");
+        assert!(
+            matches!(
+                provider_err,
+                ProviderError::RpcError { code: -32001, .. }
+            ),
+            "expected RpcError, got {provider_err:?}"
+        );
+    }
+
     // ── LogFilter construction ──────────────────────────────────────────
 
     #[test]
@@ -1376,6 +1450,10 @@ mod tests {
             ProviderError::RpcError {
                 code: -32000,
                 message: "revert".to_string(),
+            },
+            ProviderError::ExecutionReverted {
+                code: -32000,
+                message: "execution reverted".to_string(),
             },
             ProviderError::InvalidBlockRange { from: 1, to: 0 },
             ProviderError::InvalidParams {
