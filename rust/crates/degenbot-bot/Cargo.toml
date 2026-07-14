@@ -30,6 +30,7 @@ degenbot-decoders = { path = "../degenbot-decoders" }
 degenbot-rpc = { path = "../degenbot-rpc" }
 degenbot-solidly-math = { path = "../degenbot-solidly-math" }
 degenbot-pools = { path = "../degenbot-pools" }
+degenbot-solvers = { path = "../degenbot-solvers" }
 degenbot-uniswap = { path = "../degenbot-uniswap" }
 degenbot-v2-math = { path = "../degenbot-v2-math" }
 futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }

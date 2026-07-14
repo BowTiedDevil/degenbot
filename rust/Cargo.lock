@@ -1784,6 +1784,7 @@ dependencies = [
  "degenbot-pools",
  "degenbot-rpc",
  "degenbot-solidly-math",
+ "degenbot-solvers",
  "degenbot-uniswap",
  "degenbot-v2-math",
  "futures-util",
@@ -1984,6 +1985,7 @@ dependencies = [
  "degenbot-pools",
  "degenbot-v2-math",
  "proptest",
+ "thiserror",
 ]
 
 [[package]]
