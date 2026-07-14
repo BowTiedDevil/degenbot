@@ -128,8 +128,8 @@ impl ReorgCoordinator {
 mod tests {
     use super::*;
     use crate::bot_core::log_dispatcher::PoolStateSubscriber;
-    use ::degenbot_pools::state_history::{ReorgJournal, V2BlockDelta};
     use crate::bot_core::{Bot, RegisterV2PoolParams};
+    use ::degenbot_pools::state_history::{ReorgJournal, V2BlockDelta};
     use alloy::primitives::{Address, Bytes, I256, U128, U256};
     use alloy::rpc::types::Log;
     use std::collections::HashMap;

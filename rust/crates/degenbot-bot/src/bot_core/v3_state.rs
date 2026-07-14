@@ -11,11 +11,11 @@ pub use ::degenbot_pools::v3_state::*;
 mod tests {
     #![allow(unused_imports)]
     use super::*;
+    use crate::bot_core::TickInfo;
+    use ::degenbot_solvers::mobius_v3_int::{IntV3TickRangeHop, IntV3TickRangeSequence};
     use ::degenbot_pools::state_history::{ReorgJournal, V3BlockDelta};
     use ::degenbot_pools::tick_bitmap::{compute_tick_ranges, gen_ticks, V3TickRangeForSolver};
     use ::degenbot_pools::tick_fetch::TickWordFetcher;
-    use crate::bot_core::TickInfo;
-    use crate::solvers::mobius_v3_int::{IntV3TickRangeHop, IntV3TickRangeSequence};
     use alloy::primitives::{Address, B256, U160};
     use alloy::primitives::{I256, U128, U256};
     use degenbot_cl_math::cl_lib::functions::tick_position;
