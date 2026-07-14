@@ -53,15 +53,15 @@ pub fn simulate_swap(
             }
             let (reserve_in, reserve_out, gamma_numer, fee_denom) = if zero_for_one {
                 (
-                    state.reserve0,
-                    state.reserve1,
+                    state.reserve0.to::<U256>(),
+                    state.reserve1.to::<U256>(),
                     identity.fee_token0.0,
                     identity.fee_token0.1,
                 )
             } else {
                 (
-                    state.reserve1,
-                    state.reserve0,
+                    state.reserve1.to::<U256>(),
+                    state.reserve0.to::<U256>(),
                     identity.fee_token1.0,
                     identity.fee_token1.1,
                 )

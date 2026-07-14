@@ -651,15 +651,15 @@ impl UniswapEngine {
                     let (reserve_in, reserve_out, gamma_numer, fee_denom) = if pool_ref.zero_for_one
                     {
                         (
-                            state.reserve0,
-                            state.reserve1,
+                            state.reserve0.to::<U256>(),
+                            state.reserve1.to::<U256>(),
                             identity.fee_token0.0,
                             identity.fee_token0.1,
                         )
                     } else {
                         (
-                            state.reserve1,
-                            state.reserve0,
+                            state.reserve1.to::<U256>(),
+                            state.reserve0.to::<U256>(),
                             identity.fee_token1.0,
                             identity.fee_token1.1,
                         )
@@ -732,8 +732,8 @@ impl UniswapEngine {
                         // (cf. Camelot below).
                         resolved.hops.push(ResolvedHop::SolidlyStable {
                             state: SolidlyHopState {
-                                reserves_0: state.reserve0,
-                                reserves_1: state.reserve1,
+                                reserves_0: state.reserve0.to::<U256>(),
+                                reserves_1: state.reserve1.to::<U256>(),
                                 decimals_0,
                                 decimals_1,
                                 token_in: u8::from(!pool_ref.zero_for_one),
@@ -769,8 +769,8 @@ impl UniswapEngine {
                         };
                         resolved.hops.push(ResolvedHop::SolidlyStable {
                             state: SolidlyHopState {
-                                reserves_0: state.reserve0,
-                                reserves_1: state.reserve1,
+                                reserves_0: state.reserve0.to::<U256>(),
+                                reserves_1: state.reserve1.to::<U256>(),
                                 decimals_0,
                                 decimals_1,
                                 token_in: u8::from(!pool_ref.zero_for_one),

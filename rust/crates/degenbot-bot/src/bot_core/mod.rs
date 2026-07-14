@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use alloy::primitives::{Address, I256, U256};
+use alloy::primitives::{aliases::U112, Address, I256, U256};
 
 use crate::bot_core::snapshot_verify::SnapshotLoadError;
 use ::degenbot_pools::state_history::{
@@ -727,8 +727,8 @@ impl BotState {
     pub fn apply_v2_sync(
         &mut self,
         pool_address: Address,
-        reserve0: U256,
-        reserve1: U256,
+        reserve0: U112,
+        reserve1: U112,
         block_number: u64,
     ) -> Option<u64> {
         let &pool_id = self.pool_addresses.get(&pool_address)?;
@@ -768,8 +768,8 @@ impl BotState {
     pub fn update_v2_pool(
         &mut self,
         pool_address: Address,
-        reserve0: U256,
-        reserve1: U256,
+        reserve0: U112,
+        reserve1: U112,
         block_number: u64,
     ) {
         let _ = self.apply_v2_sync(pool_address, reserve0, reserve1, block_number);
@@ -782,8 +782,8 @@ impl BotState {
     pub fn apply_v2_sync_by_pool_id(
         &mut self,
         pool_id: u64,
-        reserve0: U256,
-        reserve1: U256,
+        reserve0: U112,
+        reserve1: U112,
         block_number: u64,
     ) -> Option<u64> {
         let Some(PoolEntry::V2(_, state)) = self.pools.get_mut(&pool_id) else {
@@ -869,7 +869,11 @@ impl BotState {
     #[must_use]
     pub fn v2_snapshot(&self, pool_id: u64) -> Option<(U256, U256, u64)> {
         let state = self.get_v2_pool_state(pool_id)?;
-        Some((state.reserve0, state.reserve1, state.update_block))
+        Some((
+            state.reserve0.to::<U256>(),
+            state.reserve1.to::<U256>(),
+            state.update_block,
+        ))
     }
 
     /// Update a V3 pool's state from a Swap event.
@@ -2102,15 +2106,15 @@ impl BotState {
 
                 let (reserve_in, reserve_out, gamma_numer, fee_denom) = if zero_for_one {
                     (
-                        state.reserve0,
-                        state.reserve1,
+                        state.reserve0.to::<U256>(),
+                        state.reserve1.to::<U256>(),
                         identity.fee_token0.0,
                         identity.fee_token0.1,
                     )
                 } else {
                     (
-                        state.reserve1,
-                        state.reserve0,
+                        state.reserve1.to::<U256>(),
+                        state.reserve0.to::<U256>(),
                         identity.fee_token1.0,
                         identity.fee_token1.1,
                     )
@@ -2349,7 +2353,7 @@ impl BotState {
         &mut self,
         pool_id: u64,
         block: u64,
-    ) -> Option<Result<(U256, U256, u64), JournalError>> {
+    ) -> Option<Result<(U112, U112, u64), JournalError>> {
         let PoolEntry::V2(_, state) = self.pools.get_mut(&pool_id)? else {
             return None;
         };
@@ -2693,8 +2697,8 @@ impl BotState {
     pub fn apply_aerodrome_sync_by_pool_id(
         &mut self,
         pool_id: u64,
-        reserve0: U256,
-        reserve1: U256,
+        reserve0: U112,
+        reserve1: U112,
         block_number: u64,
     ) -> Option<u64> {
         let Some(PoolEntry::AerodromeV2(_, state)) = self.pools.get_mut(&pool_id) else {
@@ -2772,7 +2776,7 @@ impl BotState {
         &mut self,
         pool_id: u64,
         block: u64,
-    ) -> Option<Result<(U256, U256, u64), JournalError>> {
+    ) -> Option<Result<(U112, U112, u64), JournalError>> {
         let PoolEntry::AerodromeV2(_, state) = self.pools.get_mut(&pool_id)? else {
             return None;
         };
@@ -4332,7 +4336,7 @@ mod tests {
         Address::from([0xdd; 20])
     }
 
-    fn make_params(r0: U256, r1: U256) -> RegisterV2PoolParams {
+    fn make_params(r0: U112, r1: U112) -> RegisterV2PoolParams {
         RegisterV2PoolParams {
             address: make_pool_addr(),
             token0: make_token0(),
@@ -4354,7 +4358,7 @@ mod tests {
     fn register_v2_pool_and_calculate_tokens_out() {
         let mut core = BotState::new();
         let pool_id = core
-            .register_v2_pool(&make_params(U256::from(1000), U256::from(2000)))
+            .register_v2_pool(&make_params(U112::from(1000), U112::from(2000)))
             .expect("test setup: V2 registration");
 
         // Python reference: constant_product_calc_exact_in(100, 1000, 2000, 3/1000) = 181
@@ -4370,7 +4374,7 @@ mod tests {
         // (mirrors TokenEntry), distinct from the mutable V2PoolState.
         let mut core = BotState::new();
         let pool_id = core
-            .register_v2_pool(&make_params(U256::from(1000), U256::from(2000)))
+            .register_v2_pool(&make_params(U112::from(1000), U112::from(2000)))
             .expect("test setup: V2 registration");
         let id = core
             .get_v2_identity(pool_id)
@@ -4397,7 +4401,7 @@ mod tests {
         // V2-only `variant` getter). Tracer bullet: V2 + unregistered.
         let mut core = BotState::new();
         let pool_id = core
-            .register_v2_pool(&make_params(U256::from(1000), U256::from(2000)))
+            .register_v2_pool(&make_params(U112::from(1000), U112::from(2000)))
             .expect("test setup: V2 registration");
         assert_eq!(core.pool_family(pool_id), "v2");
         assert_eq!(core.pool_family(999_999), "");
@@ -4539,8 +4543,8 @@ mod tests {
             variant: degenbot_uniswap::dex_identity::DexVariant::AerodromeV2Volatile,
             stable: false,
             fee: (3, 1000),
-            reserve0: U256::from(1_000_000u64),
-            reserve1: U256::from(2_000_000u64),
+            reserve0: U112::from(1_000_000u64),
+            reserve1: U112::from(2_000_000u64),
             update_block: 0,
         });
         assert_eq!(core.pool_family(aero_id), "aerodrome-v2");
@@ -4563,8 +4567,8 @@ mod tests {
             variant: degenbot_uniswap::dex_identity::DexVariant::AerodromeV2Volatile,
             stable: false,
             fee: (3, 1000),
-            reserve0: U256::from(1_000u64),
-            reserve1: U256::from(2_000u64),
+            reserve0: U112::from(1_000u64),
+            reserve1: U112::from(2_000u64),
             update_block: 10,
         });
 
@@ -4577,42 +4581,42 @@ mod tests {
 
         // Initial registration state (genesis anchor at block 10).
         let state = core.get_aerodrome_pool(pool_id).expect("aerodrome state");
-        assert_eq!(state.reserve0, U256::from(1_000u64));
-        assert_eq!(state.reserve1, U256::from(2_000u64));
+        assert_eq!(state.reserve0, U112::from(1_000u64));
+        assert_eq!(state.reserve1, U112::from(2_000u64));
         assert_eq!(state.update_block, 10);
         assert_eq!(state.journal.len(), 1);
 
         // Apply a Sync at block 20 (journals prior reserves, lands new).
         let applied = core.apply_aerodrome_sync_by_pool_id(
             pool_id,
-            U256::from(1_500u64),
-            U256::from(2_500u64),
+            U112::from(1_500u64),
+            U112::from(2_500u64),
             20,
         );
         assert_eq!(applied, Some(pool_id));
         let state = core.get_aerodrome_pool(pool_id).expect("aerodrome state");
-        assert_eq!(state.reserve0, U256::from(1_500u64));
-        assert_eq!(state.reserve1, U256::from(2_500u64));
+        assert_eq!(state.reserve0, U112::from(1_500u64));
+        assert_eq!(state.reserve1, U112::from(2_500u64));
         assert_eq!(state.update_block, 20);
         assert_eq!(state.journal.len(), 2);
 
         // Reorg to before block 20 → restores registration state (genesis at 10).
         let restored = core.aerodrome_restore_before_block(pool_id, 20);
         let (r0, r1, blk) = restored.expect("restore returns Some").expect("Ok");
-        assert_eq!(r0, U256::from(1_000u64));
-        assert_eq!(r1, U256::from(2_000u64));
+        assert_eq!(r0, U112::from(1_000u64));
+        assert_eq!(r1, U112::from(2_000u64));
         assert_eq!(blk, 10);
         let state = core.get_aerodrome_pool(pool_id).expect("aerodrome state");
-        assert_eq!(state.reserve0, U256::from(1_000u64));
-        assert_eq!(state.reserve1, U256::from(2_000u64));
+        assert_eq!(state.reserve0, U112::from(1_000u64));
+        assert_eq!(state.reserve1, U112::from(2_000u64));
         assert_eq!(state.update_block, 10);
 
         // A non-Aerodrome pool_id is a silent no-op for apply + restore.
         let v2_id = core
-            .register_v2_pool(&make_params(U256::from(100), U256::from(200)))
+            .register_v2_pool(&make_params(U112::from(100), U112::from(200)))
             .expect("test setup: V2 registration");
         assert_eq!(
-            core.apply_aerodrome_sync_by_pool_id(v2_id, U256::ZERO, U256::ZERO, 99),
+            core.apply_aerodrome_sync_by_pool_id(v2_id, U112::ZERO, U112::ZERO, 99),
             None
         );
         assert_eq!(core.aerodrome_restore_before_block(v2_id, 1), None);
@@ -4622,7 +4626,7 @@ mod tests {
     fn calculate_tokens_out_reverse_direction() {
         let mut core = BotState::new();
         let pool_id = core
-            .register_v2_pool(&make_params(U256::from(2000), U256::from(1000)))
+            .register_v2_pool(&make_params(U112::from(2000), U112::from(1000)))
             .expect("test setup: V2 registration");
 
         // Python reference: constant_product_calc_exact_in(100, 1000, 2000, 3/1000) = 181
@@ -4634,7 +4638,7 @@ mod tests {
     fn update_v2_pool_changes_calculation_result() {
         let mut core = BotState::new();
         let pool_id = core
-            .register_v2_pool(&make_params(U256::from(1000), U256::from(2000)))
+            .register_v2_pool(&make_params(U112::from(1000), U112::from(2000)))
             .expect("test setup: V2 registration");
 
         // Before update: swap 100 token0 → 181 token1
@@ -4642,7 +4646,7 @@ mod tests {
         assert_eq!(before, U256::from(181));
 
         // Update reserves: now reserve0=2000, reserve1=1000
-        core.update_v2_pool(make_pool_addr(), U256::from(2000), U256::from(1000), 42);
+        core.update_v2_pool(make_pool_addr(), U112::from(2000), U112::from(1000), 42);
 
         // After update: Python: constant_product_calc_exact_in(100, 2000, 1000, 3/1000) = 47
         let after = core.calculate_tokens_out(pool_id, true, U256::from(100));
@@ -4653,7 +4657,7 @@ mod tests {
     fn calculate_tokens_in_for_v2_pool() {
         let mut core = BotState::new();
         let pool_id = core
-            .register_v2_pool(&make_params(U256::from(1000), U256::from(2000)))
+            .register_v2_pool(&make_params(U112::from(1000), U112::from(2000)))
             .expect("test setup: V2 registration");
 
         // Python: constant_product_calc_exact_out(50, 1000, 2000, 3/1000) = 26
@@ -4670,8 +4674,8 @@ mod tests {
         let mut core = BotState::new();
 
         // Realistic: 1.5M USDC / 800 WETH, 0.3% fee
-        let reserve0 = U256::from(1_500_000_000_000u64); // 1.5M USDC (6dp)
-        let reserve1 = U256::from(800u128) * U256::from(10u64).pow(U256::from(18)); // 800 WETH
+        let reserve0 = U112::from(1_500_000_000_000u64); // 1.5M USDC (6dp)
+        let reserve1 = U112::from(800u128) * U112::from(10u64).pow(U112::from(18)); // 800 WETH
 
         let params = RegisterV2PoolParams {
             address: make_pool_addr(),
@@ -4721,8 +4725,8 @@ mod tests {
             address: Address::from([0x11u8; 20]),
             token0: Address::from([0x01u8; 20]),
             token1: Address::from([0x02u8; 20]),
-            reserve0: U256::from(1000),
-            reserve1: U256::from(2000),
+            reserve0: U112::from(1000),
+            reserve1: U112::from(2000),
             fee_token0: (997, 1000),
             fee_token1: (997, 1000),
             factory: Address::from([0x33u8; 20]),
@@ -5839,7 +5843,7 @@ mod tests {
     #[test]
     fn unregister_v2_pool_returns_true_then_re_register_allocates_fresh_id() {
         let mut core = BotState::new();
-        let params = make_params(U256::from(1000), U256::from(2000));
+        let params = make_params(U112::from(1000), U112::from(2000));
         let first_id = core
             .register_v2_pool(&params)
             .expect("test setup: V2 registration");
@@ -5872,7 +5876,7 @@ mod tests {
         let mut core = BotState::new();
         // Register one pool at make_pool_addr().
         let _ = core
-            .register_v2_pool(&make_params(U256::from(1000), U256::from(2000)))
+            .register_v2_pool(&make_params(U112::from(1000), U112::from(2000)))
             .expect("test setup: V2 registration");
         let unknown = Address::from([0x99u8; 20]);
 
@@ -5892,7 +5896,7 @@ mod tests {
     #[test]
     fn register_v2_pool_rejects_duplicate_address_as_already_registered() {
         let mut core = BotState::new();
-        let params = make_params(U256::from(1000), U256::from(2000));
+        let params = make_params(U112::from(1000), U112::from(2000));
         let _ok = core.register_v2_pool(&params).expect("first registration");
         // Second registration at the same address: prior impl `assert!`-panicked;
         // now returns `Err(AlreadyRegistered { address })`.
@@ -5905,38 +5909,14 @@ mod tests {
         );
     }
 
-    #[test]
-    fn register_v2_pool_rejects_overlarge_reserve0_as_spec_violation() {
-        let mut core = BotState::new();
-        let overlarge = ::degenbot_pools::spec_bounds::UINT112_MAX + uint!(1_U256);
-        let mut params = make_params(U256::from(1000), U256::from(2000));
-        params.reserve0 = overlarge;
-        // Prior impl silently propagated the overlarge reserve into V2PoolState
-        // (downstream swap math could then narrow to a `U256::MAX` sat-cap).
-        // Now the admission contract rejects up-front with a typed `SpecViolation`.
-        assert!(
-            matches! {
-                core.register_v2_pool(&params),
-                Err(RegisterV2PoolError::SpecViolation(v)) if v.field == "reserve0",
-            },
-            "reserve0 > uint112::MAX surfaces a typed SpecViolation"
-        );
-    }
-
-    #[test]
-    fn register_v2_pool_rejects_overlarge_reserve1_as_spec_violation() {
-        let mut core = BotState::new();
-        let overlarge = ::degenbot_pools::spec_bounds::UINT112_MAX + uint!(1_U256);
-        let mut params = make_params(U256::from(1000), U256::from(2000));
-        params.reserve1 = overlarge;
-        assert!(
-            matches! {
-                core.register_v2_pool(&params),
-                Err(RegisterV2PoolError::SpecViolation(v)) if v.field == "reserve1",
-            },
-            "reserve1 > uint112::MAX surfaces a typed SpecViolation"
-        );
-    }
+    // Note: the overlarge-reserve rejection that lived here pre-ZPHT6X has
+    // moved to the `narrow_v2_reserve` ingestion seam (PyO3 `sync_reserves` /
+    // `register_*_pool` paths + the V2 Sync decoder) — see
+    // `degenbot_pools::spec_bounds::narrow_v2_reserve` and its tests. With
+    // `V2PoolState`/`RegisterV2PoolParams.reserve0/1` typed `U112`, an
+    // overlarge value cannot be constructed at the `register_v2_pool` layer
+    // (the type system enforces the `uint112` bound), so there is nothing to
+    // test here.
 
     // -----------------------------------------------------------------------
     // Spec-bound admission (epic WOYYS2 / task 24KNGF).

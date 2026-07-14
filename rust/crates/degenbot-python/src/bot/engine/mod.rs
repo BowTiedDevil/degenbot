@@ -31,7 +31,7 @@ use crate::prelude::*;
 pub(crate) use std::collections::HashMap;
 pub(crate) use std::sync::Arc;
 
-pub(crate) use alloy::primitives::{Address, U256};
+pub(crate) use alloy::primitives::{aliases::U112, Address, U256};
 pub(crate) use pyo3::exceptions::PyStopAsyncIteration;
 pub(crate) use pyo3::types::{PyDict, PyList};
 pub(crate) use tokio::sync::mpsc;
@@ -82,8 +82,8 @@ impl PyUniswapArbEngine {
     /// Parse V2 Sync updates from a Python list of 3-tuples.
     pub(crate) fn parse_v2_updates(
         v2_sync_updates: &Bound<'_, PyList>,
-    ) -> PyResult<Vec<(Address, U256, U256)>> {
-        let mut rust_v2: Vec<(Address, U256, U256)> = Vec::with_capacity(v2_sync_updates.len());
+    ) -> PyResult<Vec<(Address, U112, U112)>> {
+        let mut rust_v2: Vec<(Address, U112, U112)> = Vec::with_capacity(v2_sync_updates.len());
         for item in v2_sync_updates.iter() {
             let tuple = item.cast::<pyo3::types::PyTuple>()?;
             if tuple.len() != 3 {
@@ -98,8 +98,16 @@ impl PyUniswapArbEngine {
             let addr = addr_str.parse::<Address>().map_err(|e| {
                 pyo3::exceptions::PyValueError::new_err(format!("Invalid address: {e}"))
             })?;
-            let r0 = crate::conversion::alloy::extract_python_u256(&tuple.get_item(1)?)?;
-            let r1 = crate::conversion::alloy::extract_python_u256(&tuple.get_item(2)?)?;
+            let r0 = degenbot_pools::spec_bounds::narrow_v2_reserve(
+                crate::conversion::alloy::extract_python_u256(&tuple.get_item(1)?)?,
+                "reserve0",
+            )
+            .map_err(|sv| crate::bot::engine::SpecViolationError::new_err(format!("{sv}")))?;
+            let r1 = degenbot_pools::spec_bounds::narrow_v2_reserve(
+                crate::conversion::alloy::extract_python_u256(&tuple.get_item(2)?)?,
+                "reserve1",
+            )
+            .map_err(|sv| crate::bot::engine::SpecViolationError::new_err(format!("{sv}")))?;
             rust_v2.push((addr, r0, r1));
         }
         Ok(rust_v2)

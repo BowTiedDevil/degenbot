@@ -140,7 +140,7 @@ mod tests {
     use crate::bot_core::log_dispatcher::PoolStateSubscriber;
     use crate::bot_core::{Bot, RegisterV2PoolParams};
     use ::degenbot_pools::state_history::{ReorgJournal, V2BlockDelta};
-    use alloy::primitives::{Address, Bytes, I256, U128, U256};
+    use alloy::primitives::{aliases::U112, Address, Bytes, I256, U128, U256};
     use alloy::rpc::types::Log;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
@@ -153,10 +153,10 @@ mod tests {
     fn v2_genesis(block: u64, r0: u64, r1: u64) -> V2BlockDelta {
         V2BlockDelta {
             block,
-            reserve0_before: U256::from(r0),
-            reserve1_before: U256::from(r1),
-            reserve0_after: U256::from(r0),
-            reserve1_after: U256::from(r1),
+            reserve0_before: U112::from(r0),
+            reserve1_before: U112::from(r1),
+            reserve0_after: U112::from(r0),
+            reserve1_after: U112::from(r1),
         }
     }
     fn v2_transition(
@@ -168,10 +168,10 @@ mod tests {
     ) -> V2BlockDelta {
         V2BlockDelta {
             block,
-            reserve0_before: U256::from(r0_before),
-            reserve1_before: U256::from(r1_before),
-            reserve0_after: U256::from(r0_after),
-            reserve1_after: U256::from(r1_after),
+            reserve0_before: U112::from(r0_before),
+            reserve1_before: U112::from(r1_before),
+            reserve0_after: U112::from(r0_after),
+            reserve1_after: U112::from(r1_after),
         }
     }
 
@@ -187,7 +187,7 @@ mod tests {
 
         // First restore at block 7 → pops the block-7 delta, lands at genesis.
         let first = j.restore_before_block(7).expect("first restore ok");
-        assert_eq!(first, (U256::from(1_000), U256::from(2_000), 5));
+        assert_eq!(first, (U112::from(1_000), U112::from(2_000), 5));
 
         // Second restore at block 7 → newest delta (5) < target (7) → no-op.
         let second = j.restore_before_block(7).expect("second restore ok");
@@ -204,9 +204,9 @@ mod tests {
         j.push_delta(v2_transition(8, 1_500, 2_500, 1_900, 2_900));
 
         let (r0, _, _) = j.restore_before_block(8).expect("restore before 8");
-        assert_eq!(r0, U256::from(1_500), "land at block-6 after-state");
+        assert_eq!(r0, U112::from(1_500), "land at block-6 after-state");
         let (r0, _, _) = j.restore_before_block(6).expect("restore before 6");
-        assert_eq!(r0, U256::from(1_000), "land at genesis (pre-C)");
+        assert_eq!(r0, U112::from(1_000), "land at genesis (pre-C)");
     }
 
     /// ADR-006 slice 7: reverse-chronological rollback (C then D) — first call
@@ -220,11 +220,11 @@ mod tests {
 
         // Reverse: target C=6 first — pops both block-6 and block-8 deltas.
         let (r0, _, _) = j.restore_before_block(6).expect("restore before 6");
-        assert_eq!(r0, U256::from(1_000), "land at genesis");
+        assert_eq!(r0, U112::from(1_000), "land at genesis");
 
         // Then target D=8 — newest is now 5 < 8 → no-op, stays at genesis.
         let (r0_2, _, _) = j.restore_before_block(8).expect("restore before 8 (no-op)");
-        assert_eq!(r0_2, U256::from(1_000), "no-op: still at genesis");
+        assert_eq!(r0_2, U112::from(1_000), "no-op: still at genesis");
     }
 
     /// ADR-006 slice 7: a too-deep reorg (target at/below the journal's
@@ -267,6 +267,10 @@ mod tests {
         block_number: u64,
         removed: bool,
     ) -> Log {
+        // Test helper: emits a raw V2 `Sync(uint112,uint112)` log as 64
+        // bytes of ABI data (two 32-byte left-padded words). The decoder
+        // narrows to `U112` on decode — this helper keeps the `U256` ABI
+        // word shape so the bytes match on-chain log data.
         let data = {
             let mut data = Vec::with_capacity(64);
             data.extend_from_slice(&reserve0.to_be_bytes::<32>());
@@ -316,8 +320,8 @@ mod tests {
                 address: pool_addr,
                 token0: Address::from([0xa0u8; 20]),
                 token1: Address::from([0xa1u8; 20]),
-                reserve0: U256::from(1_000),
-                reserve1: U256::from(2_000),
+                reserve0: U112::from(1_000),
+                reserve1: U112::from(2_000),
                 fee_token0: (997, 1000),
                 fee_token1: (997, 1000),
                 factory: Address::from([0xf0u8; 20]),

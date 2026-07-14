@@ -1,6 +1,6 @@
 //! Log event routing: apply live and backfill events to sub-engines.
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{aliases::U112, Address};
 use alloy::rpc::types::Log;
 
 use crate::bot_core::V3SwapUpdate;
@@ -240,7 +240,7 @@ impl UniswapEngine {
     /// Process pre-decoded updates for testing.
     pub fn process_updates(
         &mut self,
-        v2_updates: &[(Address, U256, U256)],
+        v2_updates: &[(Address, U112, U112)],
         v3_updates: &[V3SwapUpdate],
         block_number: u64,
         metadata: &BlockMetadata,
@@ -308,7 +308,7 @@ impl UniswapEngine {
     /// Process all updates at once (V2 + V3 + V4).
     pub fn process_all_updates(
         &mut self,
-        v2_updates: &[(Address, U256, U256)],
+        v2_updates: &[(Address, U112, U112)],
         v3_updates: &[V3SwapUpdate],
         v4_updates: &[V4SwapUpdate],
         block_number: u64,

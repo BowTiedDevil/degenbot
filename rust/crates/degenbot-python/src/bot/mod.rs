@@ -29,7 +29,18 @@ use alloy::primitives::Address;
 
 use crate::bot::engine::{
     hex_string_to_pool_id, map_register_v2_err, map_register_v3_err, map_register_v4_err,
+    SpecViolationError,
 };
+
+/// Narrow a Python-supplied `U256` reserve to `U112` (the on-chain `uint112`
+/// width), raising `SpecViolationError` if bits ≥ 112 are set.
+fn narrow_reserve(
+    value: alloy::primitives::U256,
+    field: &'static str,
+) -> PyResult<alloy::primitives::aliases::U112> {
+    degenbot_pools::spec_bounds::narrow_v2_reserve(value, field)
+        .map_err(|sv| SpecViolationError::new_err(format!("{sv}")))
+}
 use crate::bot::pool::PyLiquidityPool;
 use crate::bot::token::PyErc20Token;
 use degenbot_bot::bot_core::PoolTickCoverage;
@@ -418,8 +429,14 @@ impl PyBot {
         let t0 = parse_address(token0)?;
         let t1 = parse_address(token1)?;
         let fac = parse_address(factory)?;
-        let r0 = crate::conversion::alloy::extract_python_u256(reserve0)?;
-        let r1 = crate::conversion::alloy::extract_python_u256(reserve1)?;
+        let r0 = narrow_reserve(
+            crate::conversion::alloy::extract_python_u256(reserve0)?,
+            "reserve0",
+        )?;
+        let r1 = narrow_reserve(
+            crate::conversion::alloy::extract_python_u256(reserve1)?,
+            "reserve1",
+        )?;
         let variant_enum = DexVariant::from_kebab(variant).ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err(format!("unknown variant: {variant}"))
         })?;
@@ -470,8 +487,14 @@ impl PyBot {
         block_number: u64,
     ) -> PyResult<()> {
         let addr = parse_address(address)?;
-        let r0 = crate::conversion::alloy::extract_python_u256(reserve0)?;
-        let r1 = crate::conversion::alloy::extract_python_u256(reserve1)?;
+        let r0 = narrow_reserve(
+            crate::conversion::alloy::extract_python_u256(reserve0)?,
+            "reserve0",
+        )?;
+        let r1 = narrow_reserve(
+            crate::conversion::alloy::extract_python_u256(reserve1)?,
+            "reserve1",
+        )?;
 
         self.bot
             .state_arc()
@@ -1202,8 +1225,14 @@ impl PyBot {
         let t0 = parse_address(token0)?;
         let t1 = parse_address(token1)?;
         let fac = parse_address(factory)?;
-        let r0 = crate::conversion::alloy::extract_python_u256(reserve0)?;
-        let r1 = crate::conversion::alloy::extract_python_u256(reserve1)?;
+        let r0 = narrow_reserve(
+            crate::conversion::alloy::extract_python_u256(reserve0)?,
+            "reserve0",
+        )?;
+        let r1 = narrow_reserve(
+            crate::conversion::alloy::extract_python_u256(reserve1)?,
+            "reserve1",
+        )?;
         let variant_enum = DexVariant::from_kebab(variant).ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err(format!("unknown variant: {variant}"))
         })?;
@@ -1443,6 +1472,8 @@ impl PyBot {
             None => Ok(None),
             Some(Err(e)) => Err(journal_err_to_py(e)),
             Some(Ok((r0, r1, blk))) => {
+                let r0 = r0.to::<alloy::primitives::U256>();
+                let r1 = r1.to::<alloy::primitives::U256>();
                 let tuple = pyo3::types::PyTuple::new(
                     py,
                     [

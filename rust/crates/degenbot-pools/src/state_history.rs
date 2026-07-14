@@ -99,20 +99,22 @@ pub enum JournalError {
 pub struct V2BlockDelta {
     /// Block number of this delta.
     pub block: u64,
-    /// Reserve of token0 *before* this block's update.
+    /// Reserve of token0 *before* this block's update (on-chain `uint112`).
     /// Redundant with the preceding delta's `reserve0_after`, retained for a
     /// self-describing transition record.
-    pub reserve0_before: alloy::primitives::U256,
-    /// Reserve of token1 *before* this block's update.
+    pub reserve0_before: alloy::primitives::aliases::U112,
+    /// Reserve of token1 *before* this block's update (on-chain `uint112`).
     /// Redundant with the preceding delta's `reserve1_after`, retained for a
     /// self-describing transition record.
-    pub reserve1_before: alloy::primitives::U256,
+    pub reserve1_before: alloy::primitives::aliases::U112,
     /// Reserve of token0 *after* this block's update — the landed-at state for
-    /// this block, returned by `restore_before_block` when it lands here.
-    pub reserve0_after: alloy::primitives::U256,
+    /// this block, returned by `restore_before_block` when it lands here
+    /// (on-chain `uint112`).
+    pub reserve0_after: alloy::primitives::aliases::U112,
     /// Reserve of token1 *after* this block's update — the landed-at state for
-    /// this block, returned by `restore_before_block` when it lands here.
-    pub reserve1_after: alloy::primitives::U256,
+    /// this block, returned by `restore_before_block` when it lands here
+    /// (on-chain `uint112`).
+    pub reserve1_after: alloy::primitives::aliases::U112,
 }
 
 impl BlockDelta for V2BlockDelta {
@@ -422,7 +424,14 @@ impl ReorgJournal<V2BlockDelta> {
     pub fn restore_before_block(
         &mut self,
         block: u64,
-    ) -> Result<(alloy::primitives::U256, alloy::primitives::U256, u64), JournalError> {
+    ) -> Result<
+        (
+            alloy::primitives::aliases::U112,
+            alloy::primitives::aliases::U112,
+            u64,
+        ),
+        JournalError,
+    > {
         if self.deltas.is_empty() {
             return Err(JournalError::NoStatePriorToBlock { block });
         }
@@ -762,16 +771,16 @@ impl ReorgJournal<BalancerStableBlockDelta> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::U256;
+    use alloy::primitives::aliases::U112;
 
     fn genesis(block: u64, r0: u64, r1: u64) -> V2BlockDelta {
         // Registration delta: before == after == registration reserves.
         V2BlockDelta {
             block,
-            reserve0_before: U256::from(r0),
-            reserve1_before: U256::from(r1),
-            reserve0_after: U256::from(r0),
-            reserve1_after: U256::from(r1),
+            reserve0_before: U112::from(r0),
+            reserve1_before: U112::from(r1),
+            reserve0_after: U112::from(r0),
+            reserve1_after: U112::from(r1),
         }
     }
 
@@ -784,10 +793,10 @@ mod tests {
     ) -> V2BlockDelta {
         V2BlockDelta {
             block,
-            reserve0_before: U256::from(r0_before),
-            reserve1_before: U256::from(r1_before),
-            reserve0_after: U256::from(r0_after),
-            reserve1_after: U256::from(r1_after),
+            reserve0_before: U112::from(r0_before),
+            reserve1_before: U112::from(r1_before),
+            reserve0_after: U112::from(r0_after),
+            reserve1_after: U112::from(r1_after),
         }
     }
 
@@ -808,8 +817,8 @@ mod tests {
         assert!(j.push_delta(transition(1, 100, 200, 150, 250)));
         assert_eq!(j.len(), 1);
         // The replacement carries the new after-values.
-        assert_eq!(j.deltas[0].reserve0_after, U256::from(150));
-        assert_eq!(j.deltas[0].reserve1_after, U256::from(250));
+        assert_eq!(j.deltas[0].reserve0_after, U112::from(150));
+        assert_eq!(j.deltas[0].reserve1_after, U112::from(250));
     }
 
     #[test]
@@ -912,8 +921,8 @@ mod tests {
         j.push_delta(transition(7, 500, 600, 700, 800));
 
         let (r0, r1, blk) = j.restore_before_block(5).expect("target within range");
-        assert_eq!(r0, U256::from(300));
-        assert_eq!(r1, U256::from(400));
+        assert_eq!(r0, U112::from(300));
+        assert_eq!(r1, U112::from(400));
         assert_eq!(blk, 3, "landed-at block is the largest block < target");
         // Deltas at/after the target (5, 7) are popped; genesis + 3 remain.
         assert_eq!(j.len(), 2);
@@ -929,8 +938,8 @@ mod tests {
         j.push_delta(transition(7, 300, 400, 700, 800));
 
         let (r0, r1, blk) = j.restore_before_block(7).expect("target within range");
-        assert_eq!(r0, U256::from(300));
-        assert_eq!(r1, U256::from(400));
+        assert_eq!(r0, U112::from(300));
+        assert_eq!(r1, U112::from(400));
         assert_eq!(blk, 3);
         assert_eq!(j.len(), 2);
     }
@@ -946,8 +955,8 @@ mod tests {
         // restore(20) lands at the largest block < 20, i.e. genesis (10),
         // returning the registration reserves (1000, 2000) at block 10.
         let (r0, r1, blk) = j.restore_before_block(20).expect("target within range");
-        assert_eq!(r0, U256::from(1000));
-        assert_eq!(r1, U256::from(2000));
+        assert_eq!(r0, U112::from(1000));
+        assert_eq!(r1, U112::from(2000));
         assert_eq!(blk, 10, "lands at the genesis (registration) block");
         // Genesis survives (it's below the target); the block-20 update popped.
         assert_eq!(j.len(), 1);
@@ -965,8 +974,8 @@ mod tests {
 
         // Newest (3) is before target (10): no-op, return block-3 after (100,200).
         let (r0, r1, blk) = j.restore_before_block(10).expect("no-op path");
-        assert_eq!(r0, U256::from(100));
-        assert_eq!(r1, U256::from(200));
+        assert_eq!(r0, U112::from(100));
+        assert_eq!(r1, U112::from(200));
         assert_eq!(blk, 3);
         assert_eq!(j.len(), 2, "no-op: nothing popped");
     }
@@ -1404,7 +1413,7 @@ mod v3_delta_priors_tests {
 #[cfg(test)]
 mod proptests {
     use super::*;
-    use alloy::primitives::U256;
+    use alloy::primitives::aliases::U112;
     use proptest::prelude::*;
 
     /// A faithful model that tracks exactly the same state as the journal — a
@@ -1470,7 +1479,7 @@ mod proptests {
         /// Returns `Some((r0, r1, blk))` on the Ok paths (no-op returns newest
         /// after; rollback returns new-newest after), `None` if the journal
         /// would error (empty, or target at/before genesis).
-        fn restore_before_block(&mut self, block: u64) -> Option<(U256, U256, u64)> {
+        fn restore_before_block(&mut self, block: u64) -> Option<(U112, U112, u64)> {
             if self.deltas.is_empty() {
                 return None;
             }
@@ -1555,10 +1564,10 @@ mod proptests {
                     Op::Push { block, r0_before, r1_before, r0_after, r1_after } => {
                         let d = V2BlockDelta {
                             block: *block,
-                            reserve0_before: U256::from(*r0_before),
-                            reserve1_before: U256::from(*r1_before),
-                            reserve0_after: U256::from(*r0_after),
-                            reserve1_after: U256::from(*r1_after),
+                            reserve0_before: U112::from(*r0_before),
+                            reserve1_before: U112::from(*r1_before),
+                            reserve0_after: U112::from(*r0_after),
+                            reserve1_after: U112::from(*r1_after),
                         };
                         let journal_accepted = journal.push_delta(d.clone());
                         let model_accepted = model.push_delta(d);
@@ -1649,8 +1658,8 @@ mod proptests {
                                   // the journal replaces — keep it simple here)
                     }
                 }
-                let after0 = U256::from(*block) * U256::from(7u64);
-                let after1 = U256::from(*block) * U256::from(11u64);
+                let after0 = U112::from(*block) * U112::from(7u64);
+                let after1 = U112::from(*block) * U112::from(11u64);
                 let before0 = ordered.last().map_or(after0, |d| d.reserve0_after);
                 let before1 = ordered.last().map_or(after1, |d| d.reserve1_after);
                 ordered.push(V2BlockDelta {
@@ -1729,10 +1738,10 @@ mod proptests {
 
                 journal.push_delta(V2BlockDelta {
                     block: effective_block,
-                    reserve0_before: U256::from(r0),
-                    reserve1_before: U256::from(r1),
-                    reserve0_after: U256::from(r0),
-                    reserve1_after: U256::from(r1),
+                    reserve0_before: U112::from(r0),
+                    reserve1_before: U112::from(r1),
+                    reserve0_after: U112::from(r0),
+                    reserve1_after: U112::from(r1),
                 });
 
                 prop_assert!(
