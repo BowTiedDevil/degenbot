@@ -81,11 +81,14 @@ pub mod curve_state;
 pub mod int_v3_hop;
 pub mod liquidity_event;
 pub mod rate_provider;
+pub mod registry;
+pub mod simulate_swap;
 pub mod spec_bounds;
 pub mod state_history;
 pub mod tick_bitmap;
 pub mod tick_fetch;
 pub mod tick_map;
+pub mod v2_state;
 pub mod v3_state;
 pub mod v4_state;
 
