@@ -132,10 +132,8 @@ impl degenbot_pools::rate_provider::BalancerRateProvider for PyBalancerRateProvi
     fn get_rates(
         &self,
         block_identifier: Option<u64>,
-    ) -> Result<
-        Vec<alloy::primitives::U256>,
-        degenbot_pools::rate_provider::RateProviderError,
-    > {
+    ) -> Result<Vec<alloy::primitives::U256>, degenbot_pools::rate_provider::RateProviderError>
+    {
         use degenbot_pools::rate_provider::RateProviderError;
         pyo3::Python::attach(|py| {
             let py_none = pyo3::types::PyNone::get(py);
@@ -231,10 +229,8 @@ impl degenbot_pools::curve_data_provider::CurveDataProvider for PyCurveDataProvi
         token_address: alloy::primitives::Address,
         holder_address: alloy::primitives::Address,
         block_number: u64,
-    ) -> Result<
-        alloy::primitives::U256,
-        degenbot_pools::curve_data_provider::CurveDataProviderError,
-    > {
+    ) -> Result<alloy::primitives::U256, degenbot_pools::curve_data_provider::CurveDataProviderError>
+    {
         use degenbot_pools::curve_data_provider::CurveDataProviderError;
         pyo3::Python::attach(|py| {
             let tok = address_utils::address_to_checksum_string(&token_address);
@@ -254,10 +250,8 @@ impl degenbot_pools::curve_data_provider::CurveDataProvider for PyCurveDataProvi
         &self,
         token_address: alloy::primitives::Address,
         block_number: u64,
-    ) -> Result<
-        alloy::primitives::U256,
-        degenbot_pools::curve_data_provider::CurveDataProviderError,
-    > {
+    ) -> Result<alloy::primitives::U256, degenbot_pools::curve_data_provider::CurveDataProviderError>
+    {
         use degenbot_pools::curve_data_provider::CurveDataProviderError;
         pyo3::Python::attach(|py| {
             let tok = address_utils::address_to_checksum_string(&token_address);
@@ -285,20 +279,16 @@ impl degenbot_pools::curve_data_provider::CurveDataProvider for PyCurveDataProvi
     fn d(
         &self,
         block_number: u64,
-    ) -> Result<
-        alloy::primitives::U256,
-        degenbot_pools::curve_data_provider::CurveDataProviderError,
-    > {
+    ) -> Result<alloy::primitives::U256, degenbot_pools::curve_data_provider::CurveDataProviderError>
+    {
         self.read_u256("d", block_number)
     }
 
     fn gamma(
         &self,
         block_number: u64,
-    ) -> Result<
-        alloy::primitives::U256,
-        degenbot_pools::curve_data_provider::CurveDataProviderError,
-    > {
+    ) -> Result<alloy::primitives::U256, degenbot_pools::curve_data_provider::CurveDataProviderError>
+    {
         self.read_u256("gamma", block_number)
     }
 
@@ -325,10 +315,8 @@ impl degenbot_pools::curve_data_provider::CurveDataProvider for PyCurveDataProvi
     fn redemption_price(
         &self,
         block_number: u64,
-    ) -> Result<
-        alloy::primitives::U256,
-        degenbot_pools::curve_data_provider::CurveDataProviderError,
-    > {
+    ) -> Result<alloy::primitives::U256, degenbot_pools::curve_data_provider::CurveDataProviderError>
+    {
         self.read_u256("redemption_price", block_number)
     }
 
@@ -352,20 +340,16 @@ impl degenbot_pools::curve_data_provider::CurveDataProvider for PyCurveDataProvi
     fn base_virtual_price(
         &self,
         block_number: u64,
-    ) -> Result<
-        alloy::primitives::U256,
-        degenbot_pools::curve_data_provider::CurveDataProviderError,
-    > {
+    ) -> Result<alloy::primitives::U256, degenbot_pools::curve_data_provider::CurveDataProviderError>
+    {
         self.read_u256("base_virtual_price", block_number)
     }
 
     fn virtual_price(
         &self,
         block_number: u64,
-    ) -> Result<
-        alloy::primitives::U256,
-        degenbot_pools::curve_data_provider::CurveDataProviderError,
-    > {
+    ) -> Result<alloy::primitives::U256, degenbot_pools::curve_data_provider::CurveDataProviderError>
+    {
         self.read_u256("virtual_price", block_number)
     }
 }
@@ -376,10 +360,8 @@ impl PyCurveDataProvider {
         &self,
         method: &str,
         block_number: u64,
-    ) -> Result<
-        alloy::primitives::U256,
-        degenbot_pools::curve_data_provider::CurveDataProviderError,
-    > {
+    ) -> Result<alloy::primitives::U256, degenbot_pools::curve_data_provider::CurveDataProviderError>
+    {
         use degenbot_pools::curve_data_provider::CurveDataProviderError;
         pyo3::Python::attach(|py| {
             let result = self
@@ -445,8 +427,7 @@ impl PyLiquidityPool {
     /// re-entrant) provider call.
     fn curve_provider(
         &self,
-    ) -> Option<std::sync::Arc<dyn degenbot_pools::curve_data_provider::CurveDataProvider>>
-    {
+    ) -> Option<std::sync::Arc<dyn degenbot_pools::curve_data_provider::CurveDataProvider>> {
         let core = self.core.read();
         core.get_curve_pool(self.pool_id)?.data_provider.clone()
     }
