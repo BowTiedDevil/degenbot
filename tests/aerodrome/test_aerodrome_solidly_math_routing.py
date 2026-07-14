@@ -114,9 +114,7 @@ def volatile_pool():
 @pytest.fixture
 def functions_stable_spy(monkeypatch) -> _Spy:
     spy = _Spy(functions_mod.solidly_calc_exact_in_stable_solidly)
-    monkeypatch.setattr(
-        functions_mod, "solidly_calc_exact_in_stable_solidly", spy
-    )
+    monkeypatch.setattr(functions_mod, "solidly_calc_exact_in_stable_solidly", spy)
     return spy
 
 
@@ -126,9 +124,7 @@ def calc_strategy_spies(monkeypatch) -> dict[str, _Spy]:
         "stable": _Spy(calc_mod._rs_calc_exact_in_stable_solidly),
         "volatile": _Spy(calc_mod._rs_calc_exact_in_volatile),
     }
-    monkeypatch.setattr(
-        calc_mod, "_rs_calc_exact_in_stable_solidly", spies["stable"]
-    )
+    monkeypatch.setattr(calc_mod, "_rs_calc_exact_in_stable_solidly", spies["stable"])
     monkeypatch.setattr(calc_mod, "_rs_calc_exact_in_volatile", spies["volatile"])
     return spies
 
@@ -164,9 +160,7 @@ class TestFunctionsRouting:
 
 
 class TestPoolCalcRouting:
-    def test_stable_swap_routes_through_rust(
-        self, stable_pool, calc_strategy_spies
-    ) -> None:
+    def test_stable_swap_routes_through_rust(self, stable_pool, calc_strategy_spies) -> None:
         t0, t1 = stable_pool._token0, stable_pool._token1
         amount_in = 100_000_000  # 100 USDC
         stable_pool.calculate_tokens_out_from_tokens_in(t0, amount_in)
@@ -177,9 +171,7 @@ class TestPoolCalcRouting:
         assert len(calc_strategy_spies["stable"].calls) == 1
         assert len(calc_strategy_spies["volatile"].calls) == 0
 
-    def test_volatile_swap_routes_through_rust(
-        self, volatile_pool, calc_strategy_spies
-    ) -> None:
+    def test_volatile_swap_routes_through_rust(self, volatile_pool, calc_strategy_spies) -> None:
         t0, t1 = volatile_pool._token0, volatile_pool._token1
         amount_in = 100_000_000_000_000_000  # 0.1 WETH
         volatile_pool.calculate_tokens_out_from_tokens_in(t0, amount_in)

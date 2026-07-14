@@ -1,6 +1,6 @@
 """AsyncBot — the async counterpart to Bot.
 
-Single-chain (ADR-006 D5): one ``AsyncProviderAdapter`` per Bot, the chain
+Single-chain (ADR-006 D5): one ``AsyncAlloyProvider`` per Bot, the chain
 identity from ``config.default_chain_id``. Returns the same I/O-free domain
 objects as Bot.
 """
@@ -51,19 +51,19 @@ if TYPE_CHECKING:
 
     from degenbot.builders.protocol import AsyncPoolBuilder
     from degenbot.erc20.erc20 import Erc20Token
-    from degenbot.provider.async_adapter import AsyncProviderAdapter
+    from degenbot.provider import AsyncAlloyProvider
     from degenbot.types.aliases import ChainId
     from degenbot.types.rpc_types import BlockIdentifier
 
 
 class AsyncBot:
-    """Async session object — single-chain facade over one AsyncProviderAdapter."""
+    """Async session object — single-chain facade over one AsyncAlloyProvider."""
 
     def __init__(
         self,
         config: DegenbotConfig,
         *,
-        provider: AsyncProviderAdapter,
+        provider: AsyncAlloyProvider,
     ) -> None:
         """Initialize the single-chain async Bot session.
 
@@ -136,7 +136,7 @@ class AsyncBot:
         cls,
         config: DegenbotConfig,
         *,
-        provider: AsyncProviderAdapter,
+        provider: AsyncAlloyProvider,
     ) -> AsyncBot:
         """Build an AsyncBot from a config + an injected async provider.
 
@@ -203,7 +203,7 @@ class AsyncBot:
         return self._chain_id
 
     @property
-    def provider(self) -> AsyncProviderAdapter:
+    def provider(self) -> AsyncAlloyProvider:
         """The single async provider for this Bot's chain."""
         return self._provider
 
@@ -606,7 +606,7 @@ class AsyncBot:
             io=io,
         )
 
-    def get_provider(self) -> AsyncProviderAdapter:
+    def get_provider(self) -> AsyncAlloyProvider:
         """Return this Bot's single async provider.
 
         Returns:

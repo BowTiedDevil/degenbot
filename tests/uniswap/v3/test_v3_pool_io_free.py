@@ -225,7 +225,7 @@ class TestBotBuildV3Pool:
         # tickBitmap(int16) selector = first 4 bytes of keccak256("tickBitmap(int16)")
         tick_bitmap_selector = Web3.keccak(text="tickBitmap(int16)")[:4]
 
-        def mock_call(*, to, data, block=None):
+        def mock_call(to, data, block=None):
             if data in immutable_responses:
                 return immutable_responses[data]
             if data == slot0_calldata:

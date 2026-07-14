@@ -1,6 +1,6 @@
 """Tests for AlloyProvider's direct interface.
 
-These tests verify that AlloyProvider exposes the ProviderBackend
+These tests verify that AlloyProvider exposes the AlloyProvider
 interface with correct method signatures and default values.
 """
 
@@ -62,19 +62,19 @@ class TestAlloyProviderMethodSignatures:
     """Test method signatures match the expected interface."""
 
     def test_get_code_signature(self, alloy_provider: AlloyProvider):
-        """Test get_code accepts address and block_number parameters."""
+        """Test get_code accepts address and block parameter."""
         sig = inspect.signature(alloy_provider.get_code)
         params = list(sig.parameters.keys())
         assert "address" in params
-        assert "block_number" in params
+        assert "block" in params
 
     def test_call_signature(self, alloy_provider: AlloyProvider):
-        """Test call accepts to, data, and block_number parameters."""
+        """Test call accepts to, data, and block parameter."""
         sig = inspect.signature(alloy_provider.call)
         params = list(sig.parameters.keys())
         assert "to" in params
         assert "data" in params
-        assert "block_number" in params
+        assert "block" in params
 
     def test_get_block_signature(self, alloy_provider: AlloyProvider):
         """Test get_block accepts a block identifier (number or tag)."""
@@ -94,12 +94,12 @@ class TestAlloyProviderMethodSignatures:
         assert params["to_block"].kind == inspect.Parameter.KEYWORD_ONLY
 
     def test_get_storage_at_signature(self, alloy_provider: AlloyProvider):
-        """Test get_storage_at accepts address, position, block_number."""
+        """Test get_storage_at accepts address, position, block."""
         sig = inspect.signature(alloy_provider.get_storage_at)
         params = list(sig.parameters.keys())
         assert "address" in params
         assert "position" in params
-        assert "block_number" in params
+        assert "block" in params
 
     def test_get_transaction_signature(self, alloy_provider: AlloyProvider):
         """Test get_transaction accepts tx_hash parameter."""
@@ -212,28 +212,28 @@ class TestAlloyProviderContextManager:
 class TestProviderDefaults:
     """Test default parameter values."""
 
-    def test_get_code_default_block_number(self, alloy_provider: AlloyProvider):
-        """Test get_code has None default for block_number (latest)."""
+    def test_get_code_default_block(self, alloy_provider: AlloyProvider):
+        """Test get_code has None default for block (latest)."""
         sig = inspect.signature(alloy_provider.get_code)
-        default = sig.parameters["block_number"].default
+        default = sig.parameters["block"].default
         assert default is None
 
-    def test_call_default_block_number(self, alloy_provider: AlloyProvider):
-        """Test call has None default for block_number (latest)."""
+    def test_call_default_block(self, alloy_provider: AlloyProvider):
+        """Test call has None default for block (latest)."""
         sig = inspect.signature(alloy_provider.call)
-        default = sig.parameters["block_number"].default
+        default = sig.parameters["block"].default
         assert default is None
 
-    def test_get_block_default_block_number(self, alloy_provider: AlloyProvider):
+    def test_get_block_default_block(self, alloy_provider: AlloyProvider):
         """Test get_block accepts a block identifier (number or tag)."""
         sig = inspect.signature(alloy_provider.get_block)
         # block_identifier is required, no default
         assert sig.parameters["block_identifier"].default is inspect.Parameter.empty
 
-    def test_get_storage_at_default_block_number(self, alloy_provider: AlloyProvider):
-        """Test get_storage_at has None default for block_number (latest)."""
+    def test_get_storage_at_default_block(self, alloy_provider: AlloyProvider):
+        """Test get_storage_at has None default for block (latest)."""
         sig = inspect.signature(alloy_provider.get_storage_at)
-        default = sig.parameters["block_number"].default
+        default = sig.parameters["block"].default
         assert default is None
 
 

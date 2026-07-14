@@ -80,7 +80,9 @@ def test_calculate_tokens_out_with_fetch_fills_word_and_retries() -> None:
 
     amount = int(
         pool.calculate_tokens_out_with_fetch(
-            zero_for_one=True, amount_in=1000, block=0,
+            zero_for_one=True,
+            amount_in=1000,
+            block=0,
         ),
     )
 
@@ -106,7 +108,9 @@ def test_calculate_tokens_out_with_fetch_failing_fetcher_returns_zero() -> None:
     assert (
         int(
             pool.calculate_tokens_out_with_fetch(
-                zero_for_one=True, amount_in=1000, block=0,
+                zero_for_one=True,
+                amount_in=1000,
+                block=0,
             ),
         )
         == 0

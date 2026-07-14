@@ -126,7 +126,11 @@ def test_register_v3_pool_drains_backfill_buffer_onto_snapshot_seed() -> None:
     # tick is absent, not zero — this is what the verify reproduces). So the
     # drain's observable effect is the tick's disappearance from tick_data.
     engine.debug_buffer_v3_liquidity_update(
-        address, tick_lower=-201000, tick_upper=-200990, liquidity_delta=-100, block_number=18_000_005
+        address,
+        tick_lower=-201000,
+        tick_upper=-200990,
+        liquidity_delta=-100,
+        block_number=18_000_005,
     )
     # The buffered event is pending (pool not in BotState yet).
     assert engine.debug_v3_buffer_count(address) == 1

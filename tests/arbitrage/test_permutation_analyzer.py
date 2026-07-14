@@ -27,61 +27,53 @@ def _hop(*, drift: bool = False, matches_solver: object = None) -> dict:
 def test_classify_drift_when_any_hop_drifts() -> None:
     """Drift takes precedence: any hop with drift=true → Drift, regardless of
     the recompute result (a drifted state makes the recompute basis invalid)."""
-    snap = _line(
-        {
-            "hops": [
-                _hop(drift=False, matches_solver=True),
-                _hop(drift=True, matches_solver=False),
-                _hop(drift=False, matches_solver=True),
-            ],
-            "revert_info": "0x IIA",
-        }
-    )
+    snap = _line({
+        "hops": [
+            _hop(drift=False, matches_solver=True),
+            _hop(drift=True, matches_solver=False),
+            _hop(drift=False, matches_solver=True),
+        ],
+        "revert_info": "0x IIA",
+    })
     assert classify_candidate(snap) == "Drift"
 
 
 def test_classify_solvercalc_when_no_drift_and_recompute_mismatches() -> None:
     """No drift + any hop recompute.matches_solver == False → SolverCalc
     (correct on-chain state, wrong solver output)."""
-    snap = _line(
-        {
-            "hops": [
-                _hop(drift=False, matches_solver=True),
-                _hop(drift=False, matches_solver=False),
-            ],
-            "revert_info": "0x SomeError",
-        }
-    )
+    snap = _line({
+        "hops": [
+            _hop(drift=False, matches_solver=True),
+            _hop(drift=False, matches_solver=False),
+        ],
+        "revert_info": "0x SomeError",
+    })
     assert classify_candidate(snap) == "SolverCalc"
 
 
 def test_classify_encoding_when_no_drift_and_all_recompute_matches() -> None:
     """No drift + all hops matches_solver == True, yet sim reverted → the
     amounts were right, so the stream must be wrong → Encoding."""
-    snap = _line(
-        {
-            "hops": [
-                _hop(drift=False, matches_solver=True),
-                _hop(drift=False, matches_solver=True),
-            ],
-            "revert_info": "0x CurrencyNotSettled",
-        }
-    )
+    snap = _line({
+        "hops": [
+            _hop(drift=False, matches_solver=True),
+            _hop(drift=False, matches_solver=True),
+        ],
+        "revert_info": "0x CurrencyNotSettled",
+    })
     assert classify_candidate(snap) == "Encoding"
 
 
 def test_classify_unknown_when_recompute_unavailable() -> None:
     """No drift + recompute unavailable (matches_solver None on every hop — V3/V4
     where onchain recompute is deferred) → Unknown (cannot attribute)."""
-    snap = _line(
-        {
-            "hops": [
-                _hop(drift=False, matches_solver=None),
-                _hop(drift=False, matches_solver=None),
-            ],
-            "revert_info": "0x execution reverted",
-        }
-    )
+    snap = _line({
+        "hops": [
+            _hop(drift=False, matches_solver=None),
+            _hop(drift=False, matches_solver=None),
+        ],
+        "revert_info": "0x execution reverted",
+    })
     assert classify_candidate(snap) == "Unknown"
 
 
@@ -95,6 +87,7 @@ def test_classify_unknown_when_no_hops_or_malformed() -> None:
     """Malformed snapshot (no hops) → Unknown (never raises)."""
     snap = _line({"hops": [], "revert_info": "0x whatever"})
     assert classify_candidate(snap) == "Unknown"
+
 
 # ---------------------------------------------------------------------------
 # DriftArtifact: post-publish-advance snapshot artifact (O5SKZ6)
@@ -119,14 +112,12 @@ def test_classify_post_publish_advance_drift_is_artifact_not_real_lag() -> None:
     executor-custody ``Comp::_transferTokens`` bug (fixed by WVKFDH), not drift
     — no evidence of drift-driven onchain failures in any permutation.
     """
-    snap = _line(
-        {
-            "solve_block": 25398800,
-            "engine_processed_block": 25398801,  # engine advanced past publish
-            "revert_info": "0x6675636b Localization: BLAH",
-            "hops": [_hop(drift=True, matches_solver=None)],
-        }
-    )
+    snap = _line({
+        "solve_block": 25398800,
+        "engine_processed_block": 25398801,  # engine advanced past publish
+        "revert_info": "0x6675636b Localization: BLAH",
+        "hops": [_hop(drift=True, matches_solver=None)],
+    })
     assert classify_candidate(snap) == DRIFT_ARTIFACT
 
 
@@ -135,14 +126,12 @@ def test_classify_post_publish_advance_via_onchain_block_is_artifact() -> None:
     block the diagnostic's RPC fetch actually hit) is later than the published
     ``solve_block``, the drift is a snapshot artifact — the RPC was pinned
     upstream of the published solve block, not at solve time."""
-    snap = _line(
-        {
-            "solve_block": 25398800,
-            "onchain_block": 25398801,  # RPC fetched at a block past publish
-            "revert_info": "0x IIA",
-            "hops": [_hop(drift=True, matches_solver=None)],
-        }
-    )
+    snap = _line({
+        "solve_block": 25398800,
+        "onchain_block": 25398801,  # RPC fetched at a block past publish
+        "revert_info": "0x IIA",
+        "hops": [_hop(drift=True, matches_solver=None)],
+    })
     assert classify_candidate(snap) == DRIFT_ARTIFACT
 
 
@@ -155,14 +144,12 @@ def test_classify_drift_at_published_block_is_real_lag() -> None:
     onchain truth at the same block. Means a swap was applied wrong, or the
     pump published during `LogsArriving` and the WS hasn't delivered the
     straggler at snapshot time."""
-    snap = _line(
-        {
-            "solve_block": 25398800,
-            "engine_processed_block": 25398800,  # no advance
-            "revert_info": "0x IIA",
-            "hops": [_hop(drift=True, matches_solver=None)],
-        }
-    )
+    snap = _line({
+        "solve_block": 25398800,
+        "engine_processed_block": 25398800,  # no advance
+        "revert_info": "0x IIA",
+        "hops": [_hop(drift=True, matches_solver=None)],
+    })
     assert classify_candidate(snap) == "Drift"
 
 
@@ -170,13 +157,11 @@ def test_classify_drift_with_no_block_metadata_is_real_lag() -> None:
     """Drift with no ``engine_processed_block`` / ``onchain_block`` metadata
     (older sim-diag lines predating the O5SKZ6 fix) defaults to ``Drift`` —
     cannot prove artifact, so attribute conservatively."""
-    snap = _line(
-        {
-            "solve_block": 25398800,
-            "revert_info": "0x IIA",
-            "hops": [_hop(drift=True, matches_solver=None)],
-        }
-    )
+    snap = _line({
+        "solve_block": 25398800,
+        "revert_info": "0x IIA",
+        "hops": [_hop(drift=True, matches_solver=None)],
+    })
     assert classify_candidate(snap) == "Drift"
 
 
@@ -191,12 +176,12 @@ def test_analyze_log_classifies_reverts_from_sim_diag_lines() -> None:
     log = (
         "[sim] 5 ok (3 profitable, 2 below threshold), 3 failed, 0 exceptions\n"
         "[sim] by reason: no-profit=1 CurrencyNotSettled=1 unknown:0x..=1\n"
-        "[sim-diag] {\"path_id\":1,\"revert_info\":\"0x CurrencyNotSettled\","
-        "\"hops\":[{\"drift\":false,\"recompute\":{\"matches_solver\":true}}]}\n"
-        "[sim-diag] {\"path_id\":2,\"revert_info\":\"0x IIA\","
-        "\"hops\":[{\"drift\":true,\"recompute\":{\"matches_solver\":null}}]}\n"
-        "[sim-diag] {\"path_id\":3,\"revert_info\":\"0x execution reverted\","
-        "\"hops\":[{\"drift\":false,\"recompute\":{\"matches_solver\":null}}]}\n"
+        '[sim-diag] {"path_id":1,"revert_info":"0x CurrencyNotSettled",'
+        '"hops":[{"drift":false,"recompute":{"matches_solver":true}}]}\n'
+        '[sim-diag] {"path_id":2,"revert_info":"0x IIA",'
+        '"hops":[{"drift":true,"recompute":{"matches_solver":null}}]}\n'
+        '[sim-diag] {"path_id":3,"revert_info":"0x execution reverted",'
+        '"hops":[{"drift":false,"recompute":{"matches_solver":null}}]}\n'
     )
     r = analyze_log(log, permutation="V2-V3-V4")
     assert r.sim_ok == 5
@@ -299,15 +284,13 @@ def test_classify_v3_no_drift_partial_recompute_is_unknown_not_solvercalc() -> N
     NEVER as SolverCalc. Guards against the V2 refresh clobbering a V3/V4
     hop's deferred-None on-chain fields with a spurious matches_solver=False
     (which would wrongly trigger SolverCalc)."""
-    snap = _line(
-        {
-            "hops": [
-                # V3 hop: no drift, recompute fully deferred (all None).
-                _hop(drift=False, matches_solver=None),
-            ],
-            "revert_info": "0x CurrencyNotSettled",
-        }
-    )
+    snap = _line({
+        "hops": [
+            # V3 hop: no drift, recompute fully deferred (all None).
+            _hop(drift=False, matches_solver=None),
+        ],
+        "revert_info": "0x CurrencyNotSettled",
+    })
     assert classify_candidate(snap) == "Unknown"
 
 
@@ -318,11 +301,11 @@ def test_analyze_log_tallies_drift_artifact_separately() -> None:
     dedicated column, while real-drift lines still tally under ``Drift``."""
     log = (
         "[sim] 2 ok (2), 0 failed, 0 exceptions\n"
-        "[sim-diag] {\"path_id\":1,\"solve_block\":25398800,"
-        "\"engine_processed_block\":25398801,\"revert_info\":\"0x IIA\","
-        "\"hops\":[{\"drift\":true,\"recompute\":{\"matches_solver\":null}}]}\n"
-        "[sim-diag] {\"path_id\":2,\"solve_block\":25398800,\"revert_info\":\"0x IIA\","
-        "\"hops\":[{\"drift\":true,\"recompute\":{\"matches_solver\":null}}]}\n"
+        '[sim-diag] {"path_id":1,"solve_block":25398800,'
+        '"engine_processed_block":25398801,"revert_info":"0x IIA",'
+        '"hops":[{"drift":true,"recompute":{"matches_solver":null}}]}\n'
+        '[sim-diag] {"path_id":2,"solve_block":25398800,"revert_info":"0x IIA",'
+        '"hops":[{"drift":true,"recompute":{"matches_solver":null}}]}\n'
     )
     r = analyze_log(log, permutation="V4-V4-V3")
     assert r.drift_artifact == 1

@@ -48,7 +48,8 @@ class _RecordingDb:
 
 class TestAsyncBotContextManager:
     async def test_context_manager_releases_all_handles_on_exit(
-        self, tmp_path: pathlib.Path,
+        self,
+        tmp_path: pathlib.Path,
     ) -> None:
         config = _make_test_config(tmp_path)
         provider = _fake_async_provider(1)

@@ -4,7 +4,7 @@ ADR-005 slice 14a: `Bot.build_pool`'s `io = SyncPoolIO(self.provider)` becomes
 `io = PyBotIo(provider=self.provider, db=self.db)`. The swap must be
 behavior-preserving — every builder that receives an `io: PoolIO` must see the
 same observable delegation when `io` is a `PyBotIo` as when it's a
-`SyncPoolIO` (both wrap the same `ProviderAdapter`).
+`SyncPoolIO` (both wrap the same `AlloyProvider`).
 
 These tests pin the wiring (the `io` handed to builders is a `PyBotIo`) and
 the delegation parity (same `provider.call` arguments, same return values)
@@ -27,9 +27,9 @@ from degenbot.degenbot_rs import PyBotIo
 
 
 class _RecordingProvider:
-    """A ProviderAdapter-shaped double recording every PoolIO call.
+    """A AlloyProvider-shaped double recording every PoolIO call.
 
-    Mirrors `ProviderAdapter`'s actual signature shape (the backing object
+    Mirrors `AlloyProvider`'s actual signature shape (the backing object
     `SyncPoolIO` wraps — NOT a raw `OfflineProvider`/`_AlloyAdapter` backend):
     positional leading args (`address`/`to`/`tx`) + `block` keyword. `call` /
     `call_raw` match the `SyncPoolIO`-forwarded kw call shape exactly so the
@@ -55,13 +55,13 @@ class _RecordingProvider:
     def get_balance(self, address: str, block: int | None = None) -> int:
         return 0
 
-    def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+    def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
         # `call` keeps the kw-only shape `SyncPoolIO.call` forwards (to=, data=,
         # block=), matching how test doubles mock `provider.call(*, to, data)`.
         self.call_log.append(("call", to, data.hex()))
         return HexBytes(b"\x00" * 32)
 
-    def call_raw(self, *, tx: Any, block: int | None = None) -> HexBytes:
+    def call_raw(self, tx: Any, block: int | None = None) -> HexBytes:
         self.call_log.append(("call_raw", tx["to"], tx["data"].hex()))
         return HexBytes(b"\x00" * 32)
 

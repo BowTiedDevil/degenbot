@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
     from degenbot.degenbot_rs import PyLiquidityPool
-    from degenbot.provider.sync_adapter import ProviderAdapter
+    from degenbot.provider import AlloyProvider
     from degenbot.types.aliases import BlockNumber
     from degenbot.uniswap.types import UniswapPoolSwapVector
 
@@ -236,7 +236,7 @@ class AerodromeV2Pool(
 
     def get_pool_identity_values(
         self,
-        provider: ProviderAdapter,
+        provider: AlloyProvider,
         state_block: BlockNumber,
     ) -> tuple[
         ChecksumAddress,  # factory

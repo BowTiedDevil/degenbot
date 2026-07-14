@@ -133,9 +133,12 @@ def test_dry_run_on_alembic_current_writes_nothing(fresh_alembic_db: _StubBot) -
     assert after == "alembic_current"
     conn = sqlite3.connect(fresh_alembic_db.config.database.path)
     try:
-        assert conn.execute(
-            "SELECT COUNT(*) FROM sqlite_master WHERE name='alembic_version'",
-        ).fetchone()[0] == 1
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name='alembic_version'",
+            ).fetchone()[0]
+            == 1
+        )
     finally:
         conn.close()
 
@@ -154,9 +157,12 @@ def test_force_cutover_on_alembic_current_reports_converted(fresh_alembic_db: _S
     assert db_inspect_schema_state(fresh_alembic_db.config.database.path) == "rust_owned"
     conn = sqlite3.connect(fresh_alembic_db.config.database.path)
     try:
-        assert conn.execute(
-            "SELECT COUNT(*) FROM sqlite_master WHERE name='alembic_version'",
-        ).fetchone()[0] == 0
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name='alembic_version'",
+            ).fetchone()[0]
+            == 0
+        )
     finally:
         conn.close()
 

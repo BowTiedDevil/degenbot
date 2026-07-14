@@ -923,19 +923,13 @@ class TestSharedStateTopologyConcurrency:
                 spx, liq, tick, block = snap
                 # All four fields must encode the SAME write index `block`.
                 if spx != V3_SQRT_PRICE + block:
-                    errors.append(
-                        f"torn read: spx={spx} != base+block={V3_SQRT_PRICE + block}"
-                    )
+                    errors.append(f"torn read: spx={spx} != base+block={V3_SQRT_PRICE + block}")
                     return
                 if liq != V3_LIQUIDITY + block:
-                    errors.append(
-                        f"torn read: liq={liq} != base+block={V3_LIQUIDITY + block}"
-                    )
+                    errors.append(f"torn read: liq={liq} != base+block={V3_LIQUIDITY + block}")
                     return
                 if tick != V3_TICK + block:
-                    errors.append(
-                        f"torn read: tick={tick} != base+block={V3_TICK + block}"
-                    )
+                    errors.append(f"torn read: tick={tick} != base+block={V3_TICK + block}")
                     return
 
         writer_thread = threading.Thread(target=writer)
@@ -990,9 +984,7 @@ class TestSharedStateTopologyConcurrency:
                 errors.append(exc)
 
         solver_thread = threading.Thread(target=solver)
-        reader_threads = [
-            threading.Thread(target=reader) for _ in range(self._READERS)
-        ]
+        reader_threads = [threading.Thread(target=reader) for _ in range(self._READERS)]
         solver_thread.start()
         for t in reader_threads:
             t.start()

@@ -7,9 +7,9 @@ from typing import Any
 
 import pytest
 
-from degenbot.degenbot_rs import AlloyProvider
+from degenbot.degenbot_rs import AlloyProvider as RustAlloyProvider
 from degenbot.exceptions import SubscriptionDisconnected, SubscriptionNotSupported
-from degenbot.provider import AsyncProviderAdapter, ProviderAdapter
+from degenbot.provider import AlloyProvider, AsyncAlloyProvider
 from degenbot.provider.subscription import Subscription
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI, ETHEREUM_ARCHIVE_NODE_WS_URI
 
@@ -20,7 +20,7 @@ class TestLiveWSSubscribeBlocks:
     @pytest.mark.asyncio
     async def test_subscribe_blocks_yields_headers(self) -> None:
         """Subscribe to block headers and verify we get at least one."""
-        provider = AlloyProvider(ETHEREUM_ARCHIVE_NODE_WS_URI)
+        provider = RustAlloyProvider(ETHEREUM_ARCHIVE_NODE_WS_URI)
         sub = provider.subscribe_blocks()
         subscription = Subscription(_inner=sub)
 
@@ -40,7 +40,7 @@ class TestLiveWSSubscribeBlocks:
     @pytest.mark.asyncio
     async def test_unsubscribe_stops_iteration(self) -> None:
         """Unsubscribe should stop the async iteration."""
-        provider = AlloyProvider(ETHEREUM_ARCHIVE_NODE_WS_URI)
+        provider = RustAlloyProvider(ETHEREUM_ARCHIVE_NODE_WS_URI)
         sub = provider.subscribe_blocks()
         subscription = Subscription(_inner=sub)
 
@@ -65,7 +65,7 @@ class TestLiveWSHTTPRaises:
     def test_http_provider_subscribe_raises(self) -> None:
         """HTTP providers should raise SubscriptionNotSupported."""
         provider = AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI)
-        adapter = ProviderAdapter.from_alloy(provider)
+        adapter = provider
 
         with pytest.raises(SubscriptionNotSupported):
             adapter.subscribe_blocks()
@@ -77,7 +77,7 @@ class TestLiveWSLogsSubscription:
     @pytest.mark.asyncio
     async def test_subscribe_logs_with_no_filter(self) -> None:
         """Subscribe to all logs and verify we get at least one."""
-        provider = AlloyProvider(ETHEREUM_ARCHIVE_NODE_WS_URI)
+        provider = RustAlloyProvider(ETHEREUM_ARCHIVE_NODE_WS_URI)
         sub = provider.subscribe_logs()
         subscription = Subscription(_inner=sub)
 
@@ -100,14 +100,14 @@ class TestLiveWSLogsSubscription:
 
 
 class TestLiveWSAdapterLogSubscription:
-    """Test the AsyncProviderAdapter WS log subscription path."""
+    """Test the AsyncAlloyProvider WS log subscription path."""
 
     @pytest.mark.asyncio
     async def test_adapter_subscribe_blocks(self) -> None:
-        """AsyncProviderAdapter.subscribe_blocks() yields headers via live WS."""
-        provider = AlloyProvider(ETHEREUM_ARCHIVE_NODE_WS_URI)
-        adapter = AsyncProviderAdapter.from_alloy(provider)
-        sub = await adapter.subscribe_blocks()
+        """Subscribe to blocks via live WS and verify the subscription yields headers."""
+        provider = RustAlloyProvider(ETHEREUM_ARCHIVE_NODE_WS_URI)
+        sub = provider.subscribe_blocks()
+        subscription = Subscription(_inner=sub)
 
         try:
             header = None
@@ -117,14 +117,14 @@ class TestLiveWSAdapterLogSubscription:
             assert header is not None
             assert isinstance(header, dict)
         finally:
-            await sub.unsubscribe()
+            sub.unsubscribe()
 
     @pytest.mark.asyncio
     async def test_subscribe_logs_yields_log_dicts(self) -> None:
         """Subscribe to unfiltered logs; verify the WS subscription yields log dicts."""
-        provider = AlloyProvider(ETHEREUM_ARCHIVE_NODE_WS_URI)
-        adapter = AsyncProviderAdapter.from_alloy(provider)
-        sub = await adapter.subscribe_logs()
+        provider = RustAlloyProvider(ETHEREUM_ARCHIVE_NODE_WS_URI)
+        sub = provider.subscribe_logs()
+        subscription = Subscription(_inner=sub)
 
         all_logs: list[dict] = []
 
@@ -143,7 +143,7 @@ class TestLiveWSAdapterLogSubscription:
         except (TimeoutError, SubscriptionDisconnected):
             pass  # Normal — may not see a log in time
         finally:
-            await sub.unsubscribe()
+            sub.unsubscribe()
 
         if all_logs:
             log = all_logs[0]

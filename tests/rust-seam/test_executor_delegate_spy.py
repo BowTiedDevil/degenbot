@@ -133,13 +133,12 @@ class TestExampleRoutesThroughRust:
                 # `from degenbot import ...degenbot_rs...` (any aliased position)
                 # OR `from degenbot.degenbot_rs import (...)` (the submodule).
                 names = [a.name for a in node.names]
-                if (node.module == "degenbot" and "degenbot_rs" in names) or \
-                   node.module == "degenbot.degenbot_rs":
+                if (
+                    node.module == "degenbot" and "degenbot_rs" in names
+                ) or node.module == "degenbot.degenbot_rs":
                     found = True
                     break
-        assert found, (
-            "example must import degenbot_rs (the Rust seam)"
-        )
+        assert found, "example must import degenbot_rs (the Rust seam)"
 
     def test_does_not_import_python_encoder(self) -> None:
         """The example must NOT import `encode_cmd_stream` from Python helpers."""

@@ -12,7 +12,7 @@ from degenbot.anvil_fork import AnvilFork
 from degenbot.bot import Bot
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.logging import set_log_level
-from degenbot.provider import ProviderAdapter
+from degenbot.provider import AlloyProvider
 from tests.golden.oracle import GOLDEN_ROOT, GoldenOracle, _nodeid_to_path
 from tests.helpers.bot_factory import make_bot_with_provider
 
@@ -264,7 +264,7 @@ def fork_mainnet_full() -> Generator[AnvilFork, None, None]:
 @pytest.fixture
 def bot_mainnet_full(fork_mainnet_full: AnvilFork) -> Generator[Bot, None, None]:
     """Provide a Bot with the mainnet full fork's provider registered."""
-    provider = ProviderAdapter.from_alloy(fork_mainnet_full.provider)
+    provider = fork_mainnet_full.provider
     bot = make_bot_with_provider(provider)
     yield bot
     bot.close()
@@ -273,7 +273,7 @@ def bot_mainnet_full(fork_mainnet_full: AnvilFork) -> Generator[Bot, None, None]
 @pytest.fixture
 def bot_mainnet_archive(fork_mainnet_archive: AnvilFork) -> Generator[Bot, None, None]:
     """Provide a Bot with the mainnet archive fork's provider registered."""
-    provider = ProviderAdapter.from_alloy(fork_mainnet_archive.provider)
+    provider = fork_mainnet_archive.provider
     bot = make_bot_with_provider(provider)
     yield bot
     bot.close()

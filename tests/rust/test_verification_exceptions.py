@@ -91,8 +91,7 @@ def test_rpc_transport_failure_message_is_not_a_mismatch() -> None:
     ``VerificationMismatchError``; they now surface as the retryable type.
     """
     transport_msg = (
-        "V3 pool 0x.. at snapshot block 1: "
-        "tickBitmap(0) RPC call failed: connection reset"
+        "V3 pool 0x.. at snapshot block 1: tickBitmap(0) RPC call failed: connection reset"
     )
     rpc_exc = degenbot_rs.VerificationRpcError(transport_msg)
     mismatch_exc = degenbot_rs.VerificationMismatchError(

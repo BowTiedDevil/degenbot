@@ -64,6 +64,5 @@ def test_cl_get_tick_word_and_bit_position_parity(tick: int, tick_spacing: int) 
     expected = _EXPECTED_WORD_BIT[(tick, tick_spacing)]
     rs_word, rs_bit = cl_get_tick_word_and_bit_position(tick, tick_spacing)
     assert (rs_word, int(rs_bit)) == expected, (
-        f"tick={tick} spacing={tick_spacing}: rust={(rs_word, int(rs_bit))} "
-        f"expected={expected}"
+        f"tick={tick} spacing={tick_spacing}: rust={(rs_word, int(rs_bit))} expected={expected}"
     )

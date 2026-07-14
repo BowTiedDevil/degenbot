@@ -96,9 +96,7 @@ class TestV4SnapshotParity:
             key = (entry["pool_manager"], entry["pool_hash"])
             assert key in rust_keys, f"missing V4 all-maps key {key}"
             rust_ticks = rust[key]
-            assert {
-                int(t): tuple(map(int, v)) for t, v in entry["ticks"].items()
-            } == rust_ticks
+            assert {int(t): tuple(map(int, v)) for t, v in entry["ticks"].items()} == rust_ticks
 
 
 # ── §4.5 delegation: Python reader hits the Rust seam with the right args ─

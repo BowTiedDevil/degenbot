@@ -209,14 +209,12 @@ impl PyAsyncAlloyProvider {
                 .eth_call(&to_address, data_bytes, block_number)
                 .await
             {
-                Ok(result) => {
-                    Python::attach(|py| create_hexbytes(py, &result).map(Bound::unbind))
-                }
-                Err(degenbot_core::errors::ProviderError::ExecutionReverted { message, .. }) => {
-                    Python::attach(|py| -> PyResult<Py<PyAny>> {
-                        Err(crate::rpc::revert_to_pyerr(py, &to_owned, &message))
-                    })
-                }
+                Ok(result) => Python::attach(|py| create_hexbytes(py, &result).map(Bound::unbind)),
+                Err(degenbot_core::errors::ProviderError::ExecutionReverted {
+                    message, ..
+                }) => Python::attach(|py| -> PyResult<Py<PyAny>> {
+                    Err(crate::rpc::revert_to_pyerr(py, &to_owned, &message))
+                }),
                 Err(e) => Err(e.into()),
             }
         })

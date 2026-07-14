@@ -23,7 +23,7 @@ from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.degenbot_rs import UniswapArbEngine
-from degenbot.provider import ProviderAdapter
+from degenbot.provider import AlloyProvider
 from degenbot.uniswap.trackers import UniswapV2PoolTracker
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 
@@ -60,8 +60,8 @@ def _make_test_config(tmp_path: pathlib.Path, chain_id: int = 1) -> DegenbotConf
     )
 
 
-def _fake_provider(chain_id: int = 1) -> ProviderAdapter:
-    provider = MagicMock(spec=ProviderAdapter)
+def _fake_provider(chain_id: int = 1) -> AlloyProvider:
+    provider = MagicMock(spec=AlloyProvider)
     provider.chain_id = chain_id
     return provider
 

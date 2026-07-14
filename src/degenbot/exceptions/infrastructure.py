@@ -154,7 +154,7 @@ class SubscriptionNotSupported(SubscriptionError):
             f"Subscriptions require a WebSocket or IPC transport. "
             f"This provider was created with {transport} transport "
             f"('{rpc_url}'). "
-            f"Use AsyncProviderAdapter with a WS/IPC URL instead."
+            f"Use AsyncAlloyProvider with a WS/IPC URL instead."
         )
         super().__init__(message=msg)
 

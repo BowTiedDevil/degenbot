@@ -10,7 +10,7 @@ import pytest
 
 from degenbot.degenbot_rs import PyBot
 from degenbot.erc20.erc20 import Erc20Token
-from degenbot.provider import OfflineProvider, ProviderAdapter
+from degenbot.provider import OfflineProvider, AlloyProvider
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -66,13 +66,13 @@ def offline_provider() -> OfflineProvider:
 
 
 @pytest.fixture
-def offline_adapter(offline_provider: OfflineProvider) -> ProviderAdapter:
-    """Provide a ProviderAdapter wrapping the offline provider."""
-    return ProviderAdapter.from_offline(offline_provider)
+def offline_adapter(offline_provider: OfflineProvider) -> AlloyProvider:
+    """Provide a AlloyProvider wrapping the offline provider."""
+    return offline_provider
 
 
 @pytest.fixture
-def offline_wbtc_weth_v3_pool(offline_adapter: ProviderAdapter) -> UniswapV3Pool:
+def offline_wbtc_weth_v3_pool(offline_adapter: AlloyProvider) -> UniswapV3Pool:
     """Provide WBTC-WETH V3 pool using offline provider with complete tick data."""
     # Load tick data from recorded file
     data_file = CHAIN_DATA_PATH / "1" / f"block_{UNISWAP_V3_WBTC_WETH_BLOCK}.json"

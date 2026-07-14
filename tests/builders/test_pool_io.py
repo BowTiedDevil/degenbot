@@ -22,7 +22,7 @@ class FakeSyncProvider:
         self.call_count = 0
         self.call_raw_count = 0
 
-    def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+    def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
         self.call_count += 1
         return HexBytes(b"\x00" * 32)
 
@@ -34,7 +34,7 @@ class FakeSyncProvider:
         return 42
 
     def get_block(self, block_identifier: int | str) -> BlockData | None:
-        return {"number": 42}  # type: ignore[return-value]
+        return {"number": 42, "timestamp": 1_700_000_000}  # type: ignore[return-value]
 
     def get_block_timestamp(self, block: int | None = None) -> int:
         return 1_700_000_000
@@ -52,7 +52,7 @@ class FakeAsyncProvider:
     def __init__(self) -> None:
         self.call_count = 0
 
-    async def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+    async def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
         self.call_count += 1
         return HexBytes(b"\x00" * 32)
 

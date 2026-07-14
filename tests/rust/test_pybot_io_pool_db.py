@@ -86,11 +86,7 @@ def _seed_v3_pool(database_path: str) -> int:
         pool_id = pool.id
 
         # Tick snapshot: one init-map word + one liquidity position.
-        session.add(
-            InitializationMapTable(
-                id=1, pool_id=pool_id, word=-3, bitmap=str(2**128 + 7)
-            )
-        )
+        session.add(InitializationMapTable(id=1, pool_id=pool_id, word=-3, bitmap=str(2**128 + 7)))
         session.add(
             LiquidityPositionTable(
                 id=1,

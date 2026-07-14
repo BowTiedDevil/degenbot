@@ -204,14 +204,13 @@ impl PyAlloyProvider {
         let provider = Arc::clone(&self.provider);
 
         // Release GIL during RPC call
-        let result = py
-            .detach(|| {
-                get_runtime().block_on(async {
-                    provider
-                        .eth_call(&to_address, data_bytes, block_number)
-                        .await
-                })
-            });
+        let result = py.detach(|| {
+            get_runtime().block_on(async {
+                provider
+                    .eth_call(&to_address, data_bytes, block_number)
+                    .await
+            })
+        });
 
         let result = match result {
             Ok(bytes) => bytes,

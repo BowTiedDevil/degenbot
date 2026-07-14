@@ -9,7 +9,7 @@ from degenbot.degenbot_rs import PyChainlinkPriceFeed
 
 if TYPE_CHECKING:
     from degenbot.bot import Bot
-    from degenbot.provider.sync_adapter import ProviderAdapter
+    from degenbot.provider import AlloyProvider
     from degenbot.types.aliases import ChainId
 
 
@@ -59,7 +59,7 @@ class ChainlinkPriceContract:
             if self._bot is None:
                 msg = "ChainlinkPriceContract requires a `bot` to fetch price"
                 raise ValueError(msg)
-            provider: ProviderAdapter = self._bot.provider
+            provider: AlloyProvider = self._bot.provider
             alloy_provider = provider.to_alloy_provider()
             self._py_feed = PyChainlinkPriceFeed(
                 self.address,

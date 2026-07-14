@@ -31,7 +31,7 @@ from degenbot.exceptions.pool import (
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
-from degenbot.provider import ProviderAdapter
+from degenbot.provider import AlloyProvider
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import (
     UniswapV2PoolExternalUpdate,
@@ -64,7 +64,7 @@ CAMELOT_MIM_USDC_LP_ADDRESS = get_checksum_address("0x68A0859de50B4Dfc6EFEbE981c
 
 def _make_bot(fork: AnvilFork) -> Bot:
     """Create a Bot with the fork's provider registered."""
-    provider = ProviderAdapter.from_alloy(fork.provider)
+    provider = fork.provider
     return make_bot_with_provider(provider)
 
 

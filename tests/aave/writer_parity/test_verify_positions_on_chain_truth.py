@@ -96,6 +96,7 @@ def _eth_call_responses() -> dict[str, str]:
         DEBT_TOKEN_REVISION_SELECTOR,
         GET_SOURCE_OF_ASSET_SELECTOR,
     )
+
     a_rev = 1
     v_rev = 1
     price_source = "0x" + "ab" * 20
@@ -242,8 +243,7 @@ def test_verify_touched_positions_on_chain_catches_corrupted_balance(
         # writes _AMOUNT as SENDER's scaled balance).
         report_dict = _drive_rust(rust_path, rpc_url)
         assert report_dict["chunks_committed"] == 1, (
-            f"fixture setup failed: rust writer didn't commit its chunk; "
-            f"report={report_dict}"
+            f"fixture setup failed: rust writer didn't commit its chunk; report={report_dict}"
         )
 
         # The writer's DB state post-chunk.
@@ -292,9 +292,7 @@ def test_verify_touched_positions_on_chain_catches_corrupted_balance(
             assert int(d["actual"]) == on_chain  # the on-chain truth (_AMOUNT)
         else:
             # GREEN — the on-chain truth matches the DB state.
-            assert divergences == [], (
-                f"expected no divergences on GREEN arm; got: {divergences}"
-            )
+            assert divergences == [], f"expected no divergences on GREEN arm; got: {divergences}"
 
 
 # ─┐
@@ -359,6 +357,7 @@ def _liq_eth_call_responses() -> dict[str, str]:
         DEBT_TOKEN_REVISION_SELECTOR,
         GET_SOURCE_OF_ASSET_SELECTOR,
     )
+
     a_rev = 1
     v_rev = 1
     price_source = "0x" + "ab" * 20
@@ -387,15 +386,11 @@ def _build_liquidation_burn_side_chunk_logs() -> list[dict[str, object]]:
     # Asset setup: WETH + DAI reserves initialized (vToken for DAI needed for
     # the Liquidation parser's debt_v_token_address resolve).
     logs.append(
-        make_reserve_initialized_log(
-            asset=_WETH, a_token=_A_WETH, v_token=_V_WETH, log_index=li
-        )
+        make_reserve_initialized_log(asset=_WETH, a_token=_A_WETH, v_token=_V_WETH, log_index=li)
     )
     li += 1
     logs.append(
-        make_reserve_initialized_log(
-            asset=_DAI, a_token=_A_DAI, v_token=_V_DAI, log_index=li
-        )
+        make_reserve_initialized_log(asset=_DAI, a_token=_A_DAI, v_token=_V_DAI, log_index=li)
     )
     li += 1
 
@@ -509,8 +504,7 @@ def test_liquidation_burn_side_pair_single_debit(
     ):
         report_dict = _drive_rust(rust_path, rpc_url)
         assert report_dict["chunks_committed"] == 1, (
-            f"fixture setup failed: rust writer didn't commit its chunk; "
-            f"report={report_dict}"
+            f"fixture setup failed: rust writer didn't commit its chunk; report={report_dict}"
         )
 
         # The verify gate fires for ALL nonzero positions (verify-all mode).

@@ -58,7 +58,7 @@ class _FakeAsyncPoolIO:
     def add_response(self, calldata: bytes, response: bytes) -> None:
         self._responses[calldata] = response
 
-    async def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+    async def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
         # tickBitmap(int16, word) — record which words were fetched on-chain.
         if data[:4] == encode_function_calldata("tickBitmap(int16)", [0])[:4]:
             word = eth_abi.abi.decode(["int16"], data[4:])[0]

@@ -10,7 +10,7 @@ import pytest
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.degenbot_rs import PyBot
 from degenbot.exceptions import DegenbotValueError
-from degenbot.provider import OfflineProvider, ProviderAdapter
+from degenbot.provider import OfflineProvider, AlloyProvider
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
@@ -31,7 +31,7 @@ def _get_offline_v2_pool() -> UniswapV2Pool:
     """Construct a V2 pool using offline data."""
     data_file = CHAIN_DATA_PATH / "1" / "block_24945920.json"
     provider = OfflineProvider.from_json_file(data_file)
-    adapter = ProviderAdapter.from_offline(provider)
+    adapter = provider
 
     factory_address = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
     wbtc = make_erc20(

@@ -23,7 +23,7 @@ from degenbot.aave.analysis.protocols import PositionQuery, PriceFetcher
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.degenbot_rs import PyAavePriceOracle, PyDatabasePositionQuery
 from degenbot.logging import logger
-from degenbot.provider.sync_adapter import ProviderAdapter
+from degenbot.provider import AlloyProvider
 
 
 class DatabasePositionQuery:
@@ -177,7 +177,7 @@ class OraclePriceFetcher:
     catch).
     """
 
-    def __init__(self, provider: ProviderAdapter, oracle_address: ChecksumAddress) -> None:
+    def __init__(self, provider: AlloyProvider, oracle_address: ChecksumAddress) -> None:
         """Initialize the instance."""
         self._provider = provider
         self._oracle_address = oracle_address
@@ -275,7 +275,7 @@ def analyze_positions_for_market(
     market_id: int,
     health_factor_threshold: float = 1.1,
     limit: int | None = None,
-    provider: ProviderAdapter | None = None,
+    provider: AlloyProvider | None = None,
 ) -> PositionAnalysisResult:
     """Backward-compatible entry point.
 

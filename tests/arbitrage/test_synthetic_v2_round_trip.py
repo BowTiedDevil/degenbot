@@ -216,9 +216,7 @@ async def test_synthetic_v2_round_trip_registers_and_eager_solves(db) -> None:
         pools = [pools_by_address[step.address] for step in cycle]
         zfo_list = runner.resolve_directions(pools, WETH_ADDR)
         assert zfo_list is not None, "cycle does not close on WETH"
-        path_ids.append(
-            registry.register_path(list(zip(pools, zfo_list, strict=True)))
-        )
+        path_ids.append(registry.register_path(list(zip(pools, zfo_list, strict=True))))
 
     assert registry.engine.path_count() == len(cycles)
     # Eager solve should have surfaced a profitable result for the profitable
@@ -228,6 +226,5 @@ async def test_synthetic_v2_round_trip_registers_and_eager_solves(db) -> None:
     result_path_ids = {entry[0] for entry in results}
     profitable = result_path_ids & set(path_ids)
     assert profitable, (
-        f"eager solve did not surface a profitable path among {path_ids} in "
-        f"results: {results}"
+        f"eager solve did not surface a profitable path among {path_ids} in results: {results}"
     )

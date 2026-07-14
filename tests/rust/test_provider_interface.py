@@ -1,4 +1,4 @@
-"""Tests for the provider interface and adapter."""
+"""Tests for the AlloyProvider interface."""
 
 from collections.abc import Iterator
 
@@ -9,8 +9,6 @@ from degenbot.anvil_fork import AnvilFork
 from degenbot.provider import (
     AlloyProvider,
     LogFilter,
-    ProviderAdapter,
-    ProviderBackend,
 )
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 
@@ -27,35 +25,32 @@ def alloy_provider(fork_mainnet_full: AnvilFork) -> Iterator[AlloyProvider]:
         provider.close()
 
 
-class TestProviderAdapter:
-    """Test ProviderAdapter with both Web3 and AlloyProvider."""
+class TestAlloyProviderAdapter:
+    """Test AlloyProvider direct interface."""
 
-    def test_from_alloy_creates_adapter(self, alloy_provider: AlloyProvider):
-        """Test creating adapter from AlloyProvider."""
-        adapter = ProviderAdapter.from_alloy(alloy_provider)
+    def test_adapter_properties(self, alloy_provider: AlloyProvider):
+        """Test that the provider exposes the expected interface."""
+        adapter = alloy_provider
 
         assert adapter.provider_type == "alloy"
-        assert adapter.provider is alloy_provider
         assert adapter.is_connected() is True
-        assert "ProviderAdapter" in repr(adapter)
+        assert "AlloyProvider" in repr(adapter)
 
     @pytest.mark.online_rpc
-    def test_from_web3_creates_adapter(self, fork_mainnet_full: AnvilFork):
-        """Test creating adapter from Web3."""
-        adapter = ProviderAdapter.from_alloy(fork_mainnet_full.provider)
+    def test_fork_provider_is_alloy(self, fork_mainnet_full: AnvilFork):
+        """Test that the fork provider is an AlloyProvider."""
+        adapter = fork_mainnet_full.provider
 
-        assert adapter.provider_type == "web3"
-        assert adapter.provider is fork_mainnet_full.w3
+        assert adapter.provider_type == "alloy"
         assert adapter.is_connected() is True
 
     def test_adapter_has_required_interface(self, alloy_provider: AlloyProvider):
-        """Test that adapter satisfies ProviderBackend protocol."""
-        adapter = ProviderAdapter.from_alloy(alloy_provider)
+        """Test that adapter satisfies the provider interface."""
+        adapter = alloy_provider
 
-        # Should have all required properties and methods (check class, not instance)
-        assert hasattr(type(adapter), "chain_id") or "chain_id" in dir(adapter)
-        assert hasattr(type(adapter), "block_number") or "block_number" in dir(adapter)
-        # Methods don't trigger RPC calls
+        # Should have all required properties and methods
+        assert hasattr(adapter, "chain_id")
+        assert hasattr(adapter, "block_number")
         assert hasattr(adapter, "get_block_number")
         assert hasattr(adapter, "get_block")
         assert hasattr(adapter, "get_logs")
@@ -64,56 +59,54 @@ class TestProviderAdapter:
         assert hasattr(adapter, "is_connected")
 
 
-class TestProviderAdapterWithLiveConnection:
-    """Test ProviderAdapter with live RPC connections."""
+class TestAlloyProviderWithLiveConnection:
+    """Test AlloyProvider with live RPC connections."""
 
-    def test_alloy_adapter_get_chain_id(self):
-        """Test getting chain ID through adapter."""
+    def test_get_chain_id(self):
+        """Test getting chain ID."""
         with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as alloy:
-            adapter = ProviderAdapter.from_alloy(alloy)
-            chain_id = adapter.chain_id
+            chain_id = alloy.chain_id
             assert chain_id == 1
 
-    def test_alloy_adapter_get_block_number(self):
-        """Test getting block number through adapter."""
+    def test_get_block_number(self):
+        """Test getting block number."""
         with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as alloy:
-            adapter = ProviderAdapter.from_alloy(alloy)
-            block_number = adapter.get_block_number()
+            block_number = alloy.get_block_number()
             assert isinstance(block_number, int)
             assert block_number > 0
 
-    def test_alloy_adapter_get_block(self):
-        """Test getting block through adapter."""
+    def test_get_block(self):
+        """Test getting block."""
         with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as alloy:
-            adapter = ProviderAdapter.from_alloy(alloy)
-            block = adapter.get_block(18_000_000)
+            block = alloy.get_block(18_000_000)
             assert block is not None
             assert block.get("number") == 18_000_000
 
-    def test_alloy_adapter_get_block_with_string_identifier(self):
-        """Test getting block with string identifier through adapter."""
+    def test_get_block_with_string_identifier(self):
+        """Test getting block with string identifier."""
         with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as alloy:
-            adapter = ProviderAdapter.from_alloy(alloy)
-            # Test "latest" string identifier
-            block = adapter.get_block("latest")
+            block = alloy.get_block("latest")
             assert block is not None
             assert block.get("number") is not None
 
-    def test_alloy_adapter_get_code(self):
-        """Test getting contract code through adapter."""
         with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as alloy:
-            adapter = ProviderAdapter.from_alloy(alloy)
-            code = adapter.get_code(WETH_ADDRESS, 18_000_000)
+            block = alloy.get_block("earliest")
+            assert block is not None
+            assert block.get("number") == 0
+
+    def test_get_code(self):
+        """Test getting contract code."""
+        with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as alloy:
+            code = alloy.get_code(WETH_ADDRESS, 18_000_000)
             assert isinstance(code, (bytes, HexBytes))
             assert len(code) > 0
 
-    def test_alloy_adapter_call(self):
-        """Test eth_call through adapter."""
+    def test_call(self):
+        """Test eth_call."""
         with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as alloy:
-            adapter = ProviderAdapter.from_alloy(alloy)
             # totalSupply() selector
             calldata = HexBytes("0x18160ddd")
-            result = adapter.call(
+            result = alloy.call(
                 to=WETH_ADDRESS,
                 data=calldata,
                 block=18_000_000,
@@ -121,52 +114,43 @@ class TestProviderAdapterWithLiveConnection:
             assert isinstance(result, (bytes, HexBytes))
             assert len(result) == 32  # uint256 return
 
-    def test_alloy_adapter_get_logs(self):
-        """Test getting logs through adapter."""
+    def test_get_logs(self):
+        """Test getting logs."""
         with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as alloy:
-            adapter = ProviderAdapter.from_alloy(alloy)
-            logs = adapter.get_logs(
+            logs = alloy.get_logs(
                 from_block=18_000_000,
                 to_block=18_000_010,
             )
             assert isinstance(logs, list)
 
-    def test_alloy_adapter_get_storage_at(self):
-        """Test getting storage through adapter."""
+    def test_get_storage_at(self):
+        """Test getting storage."""
         with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as alloy:
-            adapter = ProviderAdapter.from_alloy(alloy)
-            # Slot 0 of WETH contract at a specific block
-            storage = adapter.get_storage_at(WETH_ADDRESS, 0, 18_000_000)
+            storage = alloy.get_storage_at(WETH_ADDRESS, 0, 18_000_000)
             assert isinstance(storage, (bytes, HexBytes))
-            assert len(storage) == 32  # Always 32 bytes
+            assert len(storage) == 32
 
-    def test_alloy_adapter_get_storage_at_large_position(self):
-        """Test getting storage with large position (like mapping slots)."""
+    def test_get_storage_at_large_position(self):
+        """Test getting storage with large position."""
         with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as alloy:
-            adapter = ProviderAdapter.from_alloy(alloy)
-            # Large position simulating a mapping slot
             large_position = 0x6C34D219A4B1E5E2F2E3D4C5B6A7F8E9D0C1B2A3F4E5D6C7B8A9F0E1D2C3B4A5
-            storage = adapter.get_storage_at(WETH_ADDRESS, large_position, 18_000_000)
+            storage = alloy.get_storage_at(WETH_ADDRESS, large_position, 18_000_000)
             assert isinstance(storage, (bytes, HexBytes))
-            assert len(storage) == 32  # Always 32 bytes
+            assert len(storage) == 32
 
-    def test_alloy_adapter_properties(self):
+    def test_properties(self):
         """Test adapter properties with live connection."""
         with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as alloy:
-            adapter = ProviderAdapter.from_alloy(alloy)
-
-            # Properties should work without calling methods
-            assert adapter.chain_id == 1
-            assert adapter.block_number > 0
-            assert adapter.provider_type == "alloy"
+            assert alloy.chain_id == 1
+            assert alloy.block_number > 0
+            assert alloy.provider_type == "alloy"
 
 
-class TestAlloyProvider:
+class TestAlloyProviderDirect:
     """Test AlloyProvider direct interface (no nested eth namespace)."""
 
     def test_provider_has_direct_interface(self):
         """Test that AlloyProvider exposes methods directly."""
-        # Check the class has the required interface, no need for a live connection
         assert hasattr(AlloyProvider, "chain_id")
         assert hasattr(AlloyProvider, "block_number")
         assert hasattr(AlloyProvider, "get_block_number")
@@ -176,58 +160,46 @@ class TestAlloyProvider:
         assert hasattr(AlloyProvider, "get_code")
         assert hasattr(AlloyProvider, "is_connected")
 
-    def test_adapter_satisfies_protocol(self):
-        """Test that _AlloyAdapter satisfies ProviderBackend protocol."""
-        with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as alloy_provider:
-            adapter = ProviderAdapter.from_alloy(alloy_provider)
-            # The adapter's backend should satisfy the protocol
-            assert isinstance(adapter._backend, ProviderBackend)
-
     def test_provider_direct_access(self):
         """Test accessing methods directly on AlloyProvider."""
         with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as provider:
-            # Direct property access
             assert provider.chain_id == 1
             assert provider.block_number > 0
 
-            # Direct method access
             block = provider.get_block(18_000_000)
             assert block is not None
             assert block.get("number") == 18_000_000
 
 
-class TestWeb3Adapter:
-    """Test ProviderAdapter with Web3 from AnvilFork."""
+class TestForkProvider:
+    """Test AlloyProvider from AnvilFork."""
 
     @pytest.mark.online_rpc
-    def test_web3_adapter_delegates_to_eth_namespace(self, fork_mainnet_full: AnvilFork):
-        """Test that Web3 adapter properly delegates to eth namespace."""
-        adapter = ProviderAdapter.from_alloy(fork_mainnet_full.provider)
+    def test_fork_provider_delegates_to_eth_namespace(self, fork_mainnet_full: AnvilFork):
+        """Test that the fork provider delegates to the RPC endpoint."""
+        adapter = fork_mainnet_full.provider
 
-        # Properties should delegate to eth namespace
         assert adapter.chain_id == 1
         assert adapter.block_number > 0
 
-        # Methods should delegate to eth namespace
         block_number = adapter.get_block_number()
         assert isinstance(block_number, int)
         assert block_number > 0
 
     @pytest.mark.online_rpc
-    def test_web3_adapter_get_block(self, fork_mainnet_full: AnvilFork):
-        """Test get_block through Web3 adapter."""
-        adapter = ProviderAdapter.from_alloy(fork_mainnet_full.provider)
+    def test_fork_provider_get_block(self, fork_mainnet_full: AnvilFork):
+        """Test get_block through the fork provider."""
+        adapter = fork_mainnet_full.provider
         block = adapter.get_block(18_000_000)
 
         assert block is not None
         assert block.get("number") == 18_000_000
 
     @pytest.mark.online_rpc
-    def test_web3_adapter_get_block_string_identifier(self, fork_mainnet_full: AnvilFork):
-        """Test get_block with string identifier through Web3 adapter."""
-        adapter = ProviderAdapter.from_alloy(fork_mainnet_full.provider)
+    def test_fork_provider_get_block_string_identifier(self, fork_mainnet_full: AnvilFork):
+        """Test get_block with string identifier."""
+        adapter = fork_mainnet_full.provider
 
-        # Test various block identifiers
         block_latest = adapter.get_block("latest")
         assert block_latest is not None
         assert block_latest.get("number") is not None
@@ -237,11 +209,10 @@ class TestWeb3Adapter:
         assert block_earliest.get("number") == 0
 
     @pytest.mark.online_rpc
-    def test_web3_adapter_call(self, fork_mainnet_full: AnvilFork):
-        """Test eth_call through Web3 adapter."""
-        adapter = ProviderAdapter.from_alloy(fork_mainnet_full.provider)
+    def test_fork_provider_call(self, fork_mainnet_full: AnvilFork):
+        """Test eth_call through the fork provider."""
+        adapter = fork_mainnet_full.provider
 
-        # totalSupply() selector
         calldata = HexBytes("0x18160ddd")
         result = adapter.call(
             to=WETH_ADDRESS,
@@ -250,21 +221,21 @@ class TestWeb3Adapter:
         )
 
         assert isinstance(result, (bytes, HexBytes))
-        assert len(result) == 32  # uint256 return
+        assert len(result) == 32
 
     @pytest.mark.online_rpc
-    def test_web3_adapter_get_code(self, fork_mainnet_full: AnvilFork):
-        """Test get_code through Web3 adapter."""
-        adapter = ProviderAdapter.from_alloy(fork_mainnet_full.provider)
+    def test_fork_provider_get_code(self, fork_mainnet_full: AnvilFork):
+        """Test get_code through the fork provider."""
+        adapter = fork_mainnet_full.provider
 
         code = adapter.get_code(WETH_ADDRESS, 18_000_000)
         assert isinstance(code, (bytes, HexBytes))
         assert len(code) > 0
 
     @pytest.mark.online_rpc
-    def test_web3_adapter_get_logs(self, fork_mainnet_full: AnvilFork):
-        """Test get_logs through Web3 adapter."""
-        adapter = ProviderAdapter.from_alloy(fork_mainnet_full.provider)
+    def test_fork_provider_get_logs(self, fork_mainnet_full: AnvilFork):
+        """Test get_logs through the fork provider."""
+        adapter = fork_mainnet_full.provider
 
         logs = adapter.get_logs(
             from_block=18_000_000,
@@ -273,36 +244,36 @@ class TestWeb3Adapter:
         assert isinstance(logs, list)
 
     @pytest.mark.online_rpc
-    def test_web3_adapter_get_balance(self, fork_mainnet_full: AnvilFork):
-        """Test get_balance through Web3 adapter."""
-        adapter = ProviderAdapter.from_alloy(fork_mainnet_full.provider)
+    def test_fork_provider_get_balance(self, fork_mainnet_full: AnvilFork):
+        """Test get_balance through the fork provider."""
+        adapter = fork_mainnet_full.provider
 
         balance = adapter.get_balance(WETH_ADDRESS, 18_000_000)
         assert isinstance(balance, int)
         assert balance >= 0
 
     @pytest.mark.online_rpc
-    def test_web3_adapter_get_storage_at(self, fork_mainnet_full: AnvilFork):
-        """Test get_storage_at through Web3 adapter."""
-        adapter = ProviderAdapter.from_alloy(fork_mainnet_full.provider)
+    def test_fork_provider_get_storage_at(self, fork_mainnet_full: AnvilFork):
+        """Test get_storage_at through the fork provider."""
+        adapter = fork_mainnet_full.provider
 
         storage = adapter.get_storage_at(WETH_ADDRESS, 0, 18_000_000)
         assert isinstance(storage, (bytes, HexBytes))
-        assert len(storage) == 32  # Always 32 bytes
+        assert len(storage) == 32
 
     @pytest.mark.online_rpc
-    def test_web3_adapter_get_transaction_count(self, fork_mainnet_full: AnvilFork):
-        """Test get_transaction_count through Web3 adapter."""
-        adapter = ProviderAdapter.from_alloy(fork_mainnet_full.provider)
+    def test_fork_provider_get_transaction_count(self, fork_mainnet_full: AnvilFork):
+        """Test get_transaction_count through the fork provider."""
+        adapter = fork_mainnet_full.provider
 
         count = adapter.get_transaction_count(WETH_ADDRESS, 18_000_000)
         assert isinstance(count, int)
         assert count >= 0
 
     @pytest.mark.online_rpc
-    def test_web3_adapter_is_connected(self, fork_mainnet_full: AnvilFork):
-        """Test is_connected through Web3 adapter."""
-        adapter = ProviderAdapter.from_alloy(fork_mainnet_full.provider)
+    def test_fork_provider_is_connected(self, fork_mainnet_full: AnvilFork):
+        """Test is_connected through the fork provider."""
+        adapter = fork_mainnet_full.provider
 
         assert adapter.is_connected() is True
 

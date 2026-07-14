@@ -138,13 +138,25 @@ def test_sparse_mainline_v4_swap_fetch_merge_matches_dense_oracle():
     # unknown → the first `v4_simulate_swap` call raises `MissingTickWord(0)` →
     # the fetch+retry loop backfills the bounds' words on demand.
     token0_b = make_erc20(
-        py_bot, address=f"0x{'b' * 40}", name="T0b", symbol="T0b", decimals=18,
+        py_bot,
+        address=f"0x{'b' * 40}",
+        name="T0b",
+        symbol="T0b",
+        decimals=18,
     )
     token1_b = make_erc20(
-        py_bot, address=f"0x{'b' * 39}{'e'}", name="T1b", symbol="T1b", decimals=18,
+        py_bot,
+        address=f"0x{'b' * 39}{'e'}",
+        name="T1b",
+        symbol="T1b",
+        decimals=18,
     )
     pool_id_b = _compute_v4_pool_id(
-        token0_b.address, token1_b.address, _FEE, _TICK_SPACING, ZERO_ADDRESS,
+        token0_b.address,
+        token1_b.address,
+        _FEE,
+        _TICK_SPACING,
+        ZERO_ADDRESS,
     )
     fetched_words: list[int] = []
 
@@ -436,7 +448,11 @@ def test_sparse_fetch_reaches_min_tick_via_empty_words_v4():
     token0b = make_erc20(py_bot, address="0x" + "d" * 40, name="T0b", symbol="T0", decimals=18)
     token1b = make_erc20(py_bot, address="0x" + "c" * 40, name="T1b", symbol="T1", decimals=18)
     pool_id2 = _compute_v4_pool_id(
-        token0b.address, token1b.address, _FEE, _TICK_SPACING, ZERO_ADDRESS,
+        token0b.address,
+        token1b.address,
+        _FEE,
+        _TICK_SPACING,
+        ZERO_ADDRESS,
     )
     sparse = make_v4_pool(
         pool_id=pool_id2,

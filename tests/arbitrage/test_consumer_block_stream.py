@@ -46,10 +46,10 @@ class _Eth:
 
 
 class _FakeW3:
-    """Fake ``AsyncProviderAdapter`` for the dispatch-path tests (PAGQCK).
+    """Fake ``AsyncAlloyProvider`` for the dispatch-path tests (PAGQCK).
 
     The dispatch hot loop was routed off raw ``AsyncWeb3`` onto
-    ``AsyncProviderAdapter`` — this fake exposes the SAME flat surface
+    ``AsyncAlloyProvider`` — this fake exposes the SAME flat surface
     (``get_transaction_count`` / ``make_request`` / ``rpc_url``) the example
     now drives, instead of the old ``async_w3.eth.<method>`` nesting. The
     ``make_request`` dispatcher mirrors the raw-RPC shapes the alloy backend

@@ -34,9 +34,7 @@ V3_UNI_USDC_WETH_500_ADDR = "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640"
 V3_PCS_USDC_WETH_500_SEPARATE_ADDR = "0x1ac1A8FEaAEa1900C4166dEeed0C11cC10669D36"
 # The address PancakeSwap V3 *would* compute with the factory as deployer
 # (wrong — proves the separate-deployer distinction is enforced).
-V3_PCS_USDC_WETH_500_FACTORY_ADDR_WRONG = (
-    "0xc1CaD0F6b1Cc9124D71DE161a7F133da6aF93c0D"
-)
+V3_PCS_USDC_WETH_500_FACTORY_ADDR_WRONG = "0xc1CaD0F6b1Cc9124D71DE161a7F133da6aF93c0D"
 
 
 class TestV2RegistrationVerify:

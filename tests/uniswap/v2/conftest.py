@@ -10,7 +10,7 @@ import pytest
 
 from degenbot.degenbot_rs import PyBot
 from degenbot.erc20.erc20 import Erc20Token
-from degenbot.provider import OfflineProvider, ProviderAdapter
+from degenbot.provider import OfflineProvider, AlloyProvider
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from tests.constants import (
@@ -43,9 +43,9 @@ def offline_provider() -> OfflineProvider:
 
 
 @pytest.fixture
-def offline_adapter(offline_provider: OfflineProvider) -> ProviderAdapter:
-    """Provide a ProviderAdapter wrapping the offline provider."""
-    return ProviderAdapter.from_offline(offline_provider)
+def offline_adapter(offline_provider: OfflineProvider) -> AlloyProvider:
+    """Provide a AlloyProvider wrapping the offline provider."""
+    return offline_provider
 
 
 @pytest.fixture
@@ -61,7 +61,7 @@ def offline_weth(offline_wbtc_weth_v2_pool: UniswapV2Pool) -> Erc20Token:
 
 
 @pytest.fixture
-def offline_wbtc_weth_v2_pool(offline_adapter: ProviderAdapter) -> UniswapV2Pool:
+def offline_wbtc_weth_v2_pool(offline_adapter: AlloyProvider) -> UniswapV2Pool:
     """Provide WBTC-WETH V2 pool using offline provider."""
     # Construct I/O-free tokens
     wbtc = make_erc20(

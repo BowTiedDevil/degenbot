@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from degenbot.provider import AlloyProvider, ProviderAdapter
+from degenbot.provider import AlloyProvider
 
 # =============================================================================
 # Web3 methods discovered in the codebase
@@ -59,14 +59,14 @@ WEB3_ETH_METHODS: dict[str, dict[str, Any]] = {
     "call": {
         "web3_usage": "w3.eth.call(tx, block)",
         "locations": ["bot.py", "aerodrome/pools.py"],
-        "alloy_equivalent": "call(to: str, data: bytes, block_number: int | None)",
+        "alloy_equivalent": "call(to: str, data: bytes, block: int | None)",
         "implemented": True,
-        "note": "AlloyProvider uses (to, data, block_number) signature instead of tx dict",
+        "note": "AlloyProvider uses (to, data, block) signature instead of tx dict",
     },
     "get_code": {
         "web3_usage": "w3.eth.get_code(address, block)",
         "locations": ["various"],
-        "alloy_equivalent": "get_code(address: str, block_number: int | None)",
+        "alloy_equivalent": "get_code(address: str, block: int | None)",
         "implemented": True,
     },
     "get_balance": {
@@ -156,7 +156,7 @@ WEB3_INSTANCE_METHODS: dict[str, dict[str, Any]] = {
     },
 }
 
-# Additional ProviderBackend protocol methods (from interface.py)
+# Additional AlloyProvider protocol methods (from interface.py)
 PROVIDER_PROTOCOL_METHODS: list[str] = [
     "chain_id",
     "block_number",
@@ -349,27 +349,27 @@ class TestAlloyProviderMethodSignatures:
         return AlloyProvider
 
     def test_call_signature(self, mock_alloy_provider):
-        """Call method should accept (to, data, block_number)."""
+        """Call method should accept (to, data, block)."""
         sig = inspect.signature(mock_alloy_provider.call)
         params = list(sig.parameters.keys())
         assert "to" in params
         assert "data" in params
-        assert "block_number" in params
+        assert "block" in params
 
     def test_get_code_signature(self, mock_alloy_provider):
-        """get_code method should accept (address, block_number)."""
+        """get_code method should accept (address, block)."""
         sig = inspect.signature(mock_alloy_provider.get_code)
         params = list(sig.parameters.keys())
         assert "address" in params
-        assert "block_number" in params
+        assert "block" in params
 
     def test_get_storage_at_signature(self, mock_alloy_provider):
-        """get_storage_at method should accept (address, position, block_number)."""
+        """get_storage_at method should accept (address, position, block)."""
         sig = inspect.signature(mock_alloy_provider.get_storage_at)
         params = list(sig.parameters.keys())
         assert "address" in params
         assert "position" in params
-        assert "block_number" in params
+        assert "block" in params
 
     def test_get_block_signature(self, mock_alloy_provider):
         """get_block method should accept a block identifier (number or tag)."""
@@ -390,7 +390,7 @@ class TestAlloyProviderMethodSignatures:
 
 
 class TestProviderBackendProtocolOnAlloy:
-    """Test that AlloyProvider satisfies ProviderBackend protocol."""
+    """Test that AlloyProvider satisfies AlloyProvider protocol."""
 
     @pytest.fixture
     def mock_alloy_provider(self):
@@ -399,21 +399,10 @@ class TestProviderBackendProtocolOnAlloy:
 
     @pytest.mark.parametrize("method_name", PROVIDER_PROTOCOL_METHODS)
     def test_alloy_has_protocol_method(self, mock_alloy_provider, method_name: str):
-        """AlloyProvider must have all ProviderBackend protocol methods."""
+        """AlloyProvider must have all AlloyProvider protocol methods."""
         # Properties are also valid protocol members
         has_method = hasattr(mock_alloy_provider, method_name)
         assert has_method, f"AlloyProvider missing protocol method: {method_name}"
-
-
-class TestProviderAdapterIntegration:
-    """Test that ProviderAdapter correctly wraps AlloyProvider."""
-
-    def test_provider_adapter_from_alloy(self):
-        """ProviderAdapter can be created from AlloyProvider."""
-        # Just test that the factory method exists and works
-        # (we use a mock URL since we're not making real calls)
-        assert hasattr(ProviderAdapter, "from_alloy")
-        assert callable(ProviderAdapter.from_alloy)
 
 
 class TestFeatureParitySummary:

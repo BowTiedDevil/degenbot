@@ -51,7 +51,7 @@ class FakeAsyncProvider:
     def set_response(self, data_hex: str, response: HexBytes) -> None:
         self._responses[data_hex] = response
 
-    async def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+    async def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
         key = data.hex()
         if key in self._responses:
             return self._responses[key]

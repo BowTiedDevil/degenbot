@@ -284,7 +284,7 @@ class TestBotBuildV4Pool:
 
         tick_bitmap_selector = Web3.keccak(text="getTickBitmap(bytes32,int16)")[:4]
 
-        def mock_call(*, to, data, block=None):
+        def mock_call(to, data, block=None):
             if data == slot0_calldata:
                 return slot0_encoded
             if data == liquidity_calldata:

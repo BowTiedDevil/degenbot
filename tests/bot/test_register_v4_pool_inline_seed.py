@@ -24,7 +24,7 @@ from unittest.mock import MagicMock
 from degenbot.bot import Bot
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.degenbot_rs import PyBot
-from degenbot.provider import ProviderAdapter
+from degenbot.provider import AlloyProvider
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v4_pool_factory import make_v4_pool
 
@@ -42,8 +42,8 @@ def _make_test_config(tmp_path: pathlib.Path, chain_id: int = 1) -> DegenbotConf
     )
 
 
-def _fake_provider(chain_id: int = 1) -> ProviderAdapter:
-    provider = MagicMock(spec=ProviderAdapter)
+def _fake_provider(chain_id: int = 1) -> AlloyProvider:
+    provider = MagicMock(spec=AlloyProvider)
     provider.chain_id = chain_id
     return provider
 

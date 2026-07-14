@@ -47,9 +47,7 @@ def make_aerodrome_v2_pool(
     # ADR-006: tokens must be in the same Bot as the pool.
     for tok in (token0, token1):
         if bot.get_token(tok.address) is None:
-            bot.register_token(
-                tok.address, tok.name, tok.symbol, tok.decimals, tok.chain_id
-            )
+            bot.register_token(tok.address, tok.name, tok.symbol, tok.decimals, tok.chain_id)
 
     variant = "aerodrome-v2-stable" if stable else "aerodrome-v2-volatile"
     pool_id = bot.register_aerodrome_pool(

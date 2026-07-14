@@ -27,9 +27,7 @@ from tests.helpers.erc20_factory import make_erc20
 _PY_BOT = PyBot()
 
 
-def _make_test_config(
-    tmp_path: pathlib.Path, chain_id: int = 1
-) -> DegenbotConfig:
+def _make_test_config(tmp_path: pathlib.Path, chain_id: int = 1) -> DegenbotConfig:
     return DegenbotConfig(
         database=DatabaseSettings(path=tmp_path / "test.db"),
         rpc={1: ETHEREUM_ARCHIVE_NODE_HTTP_URI},
@@ -126,7 +124,7 @@ class TestAsyncBotBuildErc20Token:
             decimals_calldata: decimals_encoded,
         }
 
-        async def mock_call(*, to, data, block=None):
+        async def mock_call(to, data, block=None):
             await asyncio.sleep(0)
             return responses[data]
 
@@ -185,7 +183,7 @@ class TestAsyncBotBuildPoolV2:
             reserves_calldata: reserves_encoded,
         }
 
-        async def mock_call(*, to, data, block=None):
+        async def mock_call(to, data, block=None):
             await asyncio.sleep(0)
             return responses[data]
 
@@ -251,7 +249,7 @@ class TestAsyncBotBuildPoolV3:
             liquidity_calldata: liquidity_encoded,
         }
 
-        async def mock_call(*, to, data, block=None):
+        async def mock_call(to, data, block=None):
             await asyncio.sleep(0)
             if data in responses:
                 return responses[data]
@@ -324,7 +322,7 @@ class TestAsyncBotBuildPoolV4:
             liquidity_calldata: liquidity_encoded,
         }
 
-        async def mock_call(*, to, data, block=None):
+        async def mock_call(to, data, block=None):
             await asyncio.sleep(0)
             if data in responses:
                 return responses[data]
@@ -369,7 +367,7 @@ class TestAsyncBotIOMethods:
         balance_calldata = encode_function_calldata("balanceOf(address)", [holder_address])
         balance_encoded = eth_abi.abi.encode(types=["uint256"], args=[1000000000])
 
-        async def mock_call(*, to, data, block=None):
+        async def mock_call(to, data, block=None):
             await asyncio.sleep(0)
             if data == balance_calldata:
                 return balance_encoded
@@ -404,7 +402,7 @@ class TestAsyncBotIOMethods:
         )
         approval_encoded = eth_abi.abi.encode(types=["uint256"], args=[500000000])
 
-        async def mock_call(*, to, data, block=None):
+        async def mock_call(to, data, block=None):
             await asyncio.sleep(0)
             if data == approval_calldata:
                 return approval_encoded
@@ -436,7 +434,7 @@ class TestAsyncBotIOMethods:
         total_supply_calldata = encode_function_calldata("totalSupply()", None)
         total_supply_encoded = eth_abi.abi.encode(types=["uint256"], args=[10**27])
 
-        async def mock_call(*, to, data, block=None):
+        async def mock_call(to, data, block=None):
             await asyncio.sleep(0)
             if data == total_supply_calldata:
                 return total_supply_encoded

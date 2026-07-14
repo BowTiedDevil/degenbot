@@ -45,7 +45,7 @@ class FakeAsyncPoolIO:
     def set_call_side_effect(self, fn: Any) -> None:
         self._call_side_effect = fn
 
-    async def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+    async def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
         self.call_log.append((to, data, block))
         if self._call_side_effect is not None:
             return self._call_side_effect(to=to, data=data, block=block)

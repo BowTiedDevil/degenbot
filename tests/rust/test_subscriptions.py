@@ -17,7 +17,7 @@ from degenbot.exceptions import (
     SubscriptionError,
     SubscriptionNotSupported,
 )
-from degenbot.provider import AlloyProvider, ProviderAdapter
+from degenbot.provider import AlloyProvider
 from degenbot.provider.subscription import LogSubscriptionFilter, Subscription
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 
@@ -267,22 +267,22 @@ class TestLogSubscriptionFilter:
 
 
 # ---------------------------------------------------------------------------
-# ProviderAdapter stub tests
+# AlloyProvider stub tests
 # ---------------------------------------------------------------------------
 
 
 class TestSyncProviderStubs:
-    """Tests that sync ProviderAdapter subscribe_* methods raise correctly."""
+    """Tests that sync AlloyProvider subscribe_* methods raise correctly."""
 
     def test_provider_adapter_subscribe_blocks_raises(self) -> None:
         provider = AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI)
-        adapter = ProviderAdapter.from_alloy(provider)
+        adapter = provider
         with pytest.raises(SubscriptionNotSupported):
             adapter.subscribe_blocks()
 
     def test_provider_adapter_subscribe_logs_raises(self) -> None:
         provider = AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI)
-        adapter = ProviderAdapter.from_alloy(provider)
+        adapter = provider
         with pytest.raises(SubscriptionNotSupported):
             adapter.subscribe_logs()
 

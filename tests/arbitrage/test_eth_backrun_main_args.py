@@ -22,9 +22,12 @@ class TestParserNodeFlags:
 
     def test_node_http_node_ws_parsed(self) -> None:
         parser = _build_arg_parser()
-        args = parser.parse_args(
-            ["--node-http", "https://from-cli.example", "--node-ws", "wss://from-cli.example"]
-        )
+        args = parser.parse_args([
+            "--node-http",
+            "https://from-cli.example",
+            "--node-ws",
+            "wss://from-cli.example",
+        ])
         assert args.node_http == "https://from-cli.example"
         assert args.node_ws == "wss://from-cli.example"
 

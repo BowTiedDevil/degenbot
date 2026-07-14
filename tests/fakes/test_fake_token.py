@@ -193,6 +193,7 @@ class TestCanaryAerodromeV2PoolWithFakeToken:
         )
         assert pool.token0.address == token0.address
         assert pool.token1.address == token1.address
+
     """Canary: CurveStableswapPool construction with FakeToken."""
 
     def test_construct_curve_pool(self) -> None:

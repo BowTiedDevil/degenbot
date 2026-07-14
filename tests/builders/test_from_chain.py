@@ -52,7 +52,7 @@ class FakeProvider:
     def __init__(self, responses: dict[str, bytes]) -> None:
         self._responses = responses
 
-    def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+    def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
         selector = data[:4].hex()
         if selector in self._responses:
             return HexBytes(self._responses[selector])

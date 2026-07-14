@@ -101,9 +101,7 @@ def make_balancer_weighted_pool(
     # ADR-005 sealed seam: register tokens in the same Bot as the pool.
     for tok in tokens:
         if bot.get_token(tok.address) is None:
-            bot.register_token(
-                tok.address, tok.name, tok.symbol, tok.decimals, tok.chain_id
-            )
+            bot.register_token(tok.address, tok.name, tok.symbol, tok.decimals, tok.chain_id)
     return pool_class._from_py_pool(handle)  # noqa: SLF001
 
 
@@ -164,9 +162,7 @@ def make_balancer_stable_pool(
     # get_balancer_stable_tokens, which requires registered tokens).
     for tok in tokens:
         if bot.get_token(tok.address) is None:
-            bot.register_token(
-                tok.address, tok.name, tok.symbol, tok.decimals, tok.chain_id
-            )
+            bot.register_token(tok.address, tok.name, tok.symbol, tok.decimals, tok.chain_id)
 
     pool_id_int = bot.register_balancer_stable_pool(
         address=address_checksum,

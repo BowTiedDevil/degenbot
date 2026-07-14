@@ -17,9 +17,8 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from hexbytes import HexBytes
 
-    from degenbot.provider.async_adapter import AsyncProviderAdapter
-    from degenbot.provider.sync_adapter import ProviderAdapter
-    from degenbot.types.rpc_types import BlockData, BlockIdentifier, TxParams
+    from degenbot.provider import AlloyProvider, AsyncAlloyProvider
+    from degenbot.types.rpc_types import BlockData, TxParams
 
 
 @runtime_checkable
@@ -28,8 +27,8 @@ class PoolIO(Protocol):
 
     Encapsulates the RPC surface builders use so they are agnostic
     to sync vs async execution. Two adapters satisfy this protocol:
-    SyncPoolIO (wrapping ProviderAdapter) and AsyncPoolIO (wrapping
-    AsyncProviderAdapter).
+    SyncPoolIO (wrapping AlloyProvider) and AsyncPoolIO (wrapping
+    AsyncAlloyProvider).
     """
 
     def get_block_number(self) -> int:
@@ -56,7 +55,7 @@ class PoolIO(Protocol):
         """Perform an eth_call and return the result."""
         ...
 
-    def call_raw(self, tx: TxParams, block: BlockIdentifier | None = None) -> HexBytes:
+    def call_raw(self, tx: TxParams, block: int | None = None) -> HexBytes:
         """Perform a raw eth_call and return the result."""
         ...
 
@@ -95,9 +94,9 @@ class AsyncPoolIOProtocol(Protocol):
 
 
 class SyncPoolIO:
-    """PoolIO adapter wrapping a sync ProviderAdapter."""
+    """PoolIO adapter wrapping a sync AlloyProvider."""
 
-    def __init__(self, provider: ProviderAdapter) -> None:
+    def __init__(self, provider: AlloyProvider) -> None:
         """Initialize the instance."""
         self._provider = provider
 
@@ -125,8 +124,17 @@ class SyncPoolIO:
         Returns:
             The computed value.
 
+        Raises:
+            ValueError: If the block is not found.
+
         """
-        return self._provider.get_block_timestamp(block=block)
+        block_data = self._provider.get_block(
+            block if block is not None else self._provider.get_block_number()
+        )
+        if block_data is None:
+            msg = f"Block {block} not found"
+            raise ValueError(msg)
+        return block_data["timestamp"]
 
     def get_code(self, address: str, block: int | None = None) -> HexBytes:
         """Return the code at the given address.
@@ -135,7 +143,7 @@ class SyncPoolIO:
             The computed value.
 
         """
-        return self._provider.get_code(address, block=block)
+        return self._provider.get_code(address, block)
 
     def get_balance(self, address: str, block: int | None = None) -> int:
         """Return the ETH balance at the given address.
@@ -144,7 +152,7 @@ class SyncPoolIO:
             The computed value.
 
         """
-        return self._provider.get_balance(address, block=block)
+        return self._provider.get_balance(address, block)
 
     def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
         """Perform an eth_call and return the result.
@@ -153,26 +161,26 @@ class SyncPoolIO:
             The computed value.
 
         """
-        return self._provider.call(to=to, data=data, block=block)
+        return self._provider.call(to, data, block)
 
-    def call_raw(self, tx: TxParams, block: BlockIdentifier | None = None) -> HexBytes:
+    def call_raw(self, tx: TxParams, block: int | None = None) -> HexBytes:
         """Perform a raw eth_call and return the result.
 
         Returns:
             The computed value.
 
         """
-        return self._provider.call_raw(tx, block=block)  # ty: ignore
+        return self._provider.call_raw(tx, block)
 
 
 class AsyncPoolIO:
-    """PoolIO adapter wrapping an AsyncProviderAdapter.
+    """PoolIO adapter wrapping an AsyncAlloyProvider.
 
     All methods are async. Used by AsyncBot's async builders.
     Satisfies the AsyncPoolIOProtocol at runtime.
     """
 
-    def __init__(self, provider: AsyncProviderAdapter) -> None:
+    def __init__(self, provider: AsyncAlloyProvider) -> None:
         """Initialize the instance."""
         self._provider = provider
 
@@ -217,7 +225,7 @@ class AsyncPoolIO:
             The computed value.
 
         """
-        return await self._provider.get_code(address, block=block)
+        return await self._provider.get_code(address, block)
 
     async def get_balance(self, address: str, block: int | None = None) -> int:
         """Return the ETH balance at the given address.
@@ -226,7 +234,7 @@ class AsyncPoolIO:
             The computed value.
 
         """
-        return await self._provider.get_balance(address, block=block)
+        return await self._provider.get_balance(address, block)
 
     async def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
         """Perform an eth_call and return the result.
@@ -235,4 +243,4 @@ class AsyncPoolIO:
             The computed value.
 
         """
-        return await self._provider.call(to=to, data=data, block=block)
+        return await self._provider.call(to, data, block)

@@ -150,9 +150,7 @@ def make_v2_pool(
     # so guard with ``get_token``.
     for tok in (token0, token1):
         if py_bot.get_token(tok.address) is None:
-            py_bot.register_token(
-                tok.address, tok.name, tok.symbol, tok.decimals, tok.chain_id
-            )
+            py_bot.register_token(tok.address, tok.name, tok.symbol, tok.decimals, tok.chain_id)
 
     py_pool: PyLiquidityPool | None = py_bot.get_pool(pool_id)
     assert py_pool is not None, "register_v2_pool returned a pool_id with no handle"
