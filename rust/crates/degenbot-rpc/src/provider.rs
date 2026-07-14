@@ -989,18 +989,12 @@ impl AlloyProvider {
     }
 }
 
-/// Test-only constructors for `AlloyProvider`.
-///
-/// Gated behind the `test-utils` feature so production builds don't carry them,
-/// but downstream crates' tests (e.g. `bot_core::block_pump` tests in the
-/// root `degenbot_rs` crate) can opt in via `degenbot-rpc/test-utils`.
-/// In a library crate, `#[cfg(test)]` is not visible to consumers' tests, so
-/// this feature gate is the seam.
-#[cfg(feature = "test-utils")]
 impl AlloyProvider {
-    /// Test-only constructor wrapping a pre-built provider (e.g. a mock
-    /// transport). Used by `BlockPump` tests that drive `run_with_stream`
-    /// from a deterministic synthetic `WsEvent` stream without a live RPC.
+    /// Wraps a pre-built provider (e.g. a custom transport such as the
+    /// `OfflineProvider`, or a mock transport). Used both at runtime (the
+    /// offline provider wraps an in-memory transport via this constructor) and
+    /// by tests that drive `run_with_stream` from a deterministic synthetic
+    /// `WsEvent` stream without a live RPC.
     #[must_use]
     pub fn from_provider(inner: Arc<dyn Provider<Ethereum>>) -> Self {
         Self {
