@@ -615,7 +615,6 @@ dependencies = [
     { name = "tomlkit" },
     { name = "tqdm" },
     { name = "ujson" },
-    { name = "web3" },
 ]
 
 [package.dev-dependencies]
@@ -636,6 +635,7 @@ dev = [
     { name = "sybil" },
     { name = "ty" },
     { name = "vyper" },
+    { name = "web3" },
 ]
 
 [package.metadata]
@@ -650,7 +650,6 @@ requires-dist = [
     { name = "tomlkit", specifier = "~=0.15" },
     { name = "tqdm", specifier = "~=4.67" },
     { name = "ujson", specifier = "~=5.12" },
-    { name = "web3", specifier = "~=7.14" },
 ]
 
 [package.metadata.requires-dev]
@@ -671,6 +670,7 @@ dev = [
     { name = "sybil" },
     { name = "ty" },
     { name = "vyper" },
+    { name = "web3", specifier = "~=7.14" },
 ]
 
 [[package]]
