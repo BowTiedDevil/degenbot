@@ -163,6 +163,32 @@ impl SimResult {
     }
 }
 
+/// A per-path simulation failure record captured alongside the [`FailBuckets`]
+/// tally when a path fails simulation, surfaced as `DispatchOutcome::failures`
+/// so the Python driver can render a per-candidate `[sim-fail]` line
+/// (path_id + bucket label + the failing call's index in the 7-call vector +
+/// the raw revert data bytes).
+///
+/// `fail_index` is `Some(idx)` for failures attributable to a specific
+/// simulated call — the revert branch (`result.first_failure`) AND the
+/// balance-decode branch (the malformed word's call index). It is `None` for
+/// orchestration-only buckets (`int128-overflow`, `encode-failed`,
+/// `rpc-failed`, `no-profit`) where no single call failed.
+#[derive(Debug, Clone)]
+pub struct SimFailure {
+    /// The path id (mirror of `SimulatePath::path_id`).
+    pub path_id: u64,
+    /// The bucket label — the `classify_revert` output for reverts, else the
+    /// orchestration-only bucket string.
+    pub bucket: String,
+    /// The index of the failing call in the 7-call vector, if any.
+    pub fail_index: Option<usize>,
+    /// The raw revert data bytes (the 4-byte selector + ABI-encoded args).
+    /// Empty for orchestration-only buckets + the balance-decode branch
+    /// (where the call succeeded but its returnData wasn't a uint256).
+    pub revert_data: alloy::primitives::Bytes,
+}
+
 /// A revert-bucket tally accumulator (ports `_tally_fail`, L1769–L1771).
 ///
 /// `_tally_fail(bucket)` does `_fail_buckets[bucket] = _fail_buckets.get(bucket, 0) + 1`.
@@ -170,10 +196,20 @@ impl SimResult {
 /// orchestration-only buckets (`int128-overflow`, `rpc-failed`,
 /// `balance-decode`, `no-profit`, `encode-failed`, `blocked-path`).
 ///
-/// The rendering of this map (the `[sim] summary` line) stays in the Python
-/// driver — sibling D4 `stays-python`. This leaf only ACCUMULATES.
+/// In addition to the per-bucket count, this struct carries the per-path
+/// [`SimFailure`] records (one per `tally`/`record` site) so the dispatch
+/// outcome can surface per-candidate failure detail across the FFI boundary —
+/// the count alone is insufficient for the operator to identify WHICH path
+/// reverted against WHICH pools.
+///
+/// The rendering of these maps (the `[sim] summary` + the `[sim-fail]` lines)
+/// stays in the Python driver — sibling D4 `stays-python`. This leaf only
+/// ACCUMULATES.
 #[derive(Debug, Default, Clone)]
-pub struct FailBuckets(BTreeMap<String, u64>);
+pub struct FailBuckets {
+    buckets: BTreeMap<String, u64>,
+    failures: Vec<SimFailure>,
+}
 
 impl FailBuckets {
     /// Construct an empty tally.
@@ -184,25 +220,64 @@ impl FailBuckets {
 
     /// Increment the bucket count (ports `_tally_fail`).
     pub fn tally(&mut self, bucket: &str) {
-        *self.0.entry(bucket.to_string()).or_insert(0) += 1;
+        *self.buckets.entry(bucket.to_string()).or_insert(0) += 1;
+    }
+
+    /// Record a per-path failure: increment the bucket count AND push the
+    /// [`SimFailure`] detail so the dispatch outcome can surface per-candidate
+    /// attribution (`path_id` + `fail_index` + `revert_data`).
+    ///
+    /// `tally` sites that should also be surfaced as a `[sim-fail]` detail call
+    /// this instead of `tally` directly (most do — the exception is the
+    /// hop-output length mismatch guard, which is a pre-sim skip, not a
+    /// sim-failed bucket, and stays `tally`-less).
+    pub fn record(
+        &mut self,
+        path_id: u64,
+        bucket: &str,
+        fail_index: Option<usize>,
+        revert_data: alloy::primitives::Bytes,
+    ) {
+        self.tally(bucket);
+        self.failures.push(SimFailure {
+            path_id,
+            bucket: bucket.to_string(),
+            fail_index,
+            revert_data,
+        });
     }
 
     /// Read a bucket's count (0 if absent).
     #[must_use]
     pub fn get(&self, bucket: &str) -> u64 {
-        self.0.get(bucket).copied().unwrap_or(0)
+        self.buckets.get(bucket).copied().unwrap_or(0)
     }
 
     /// The underlying bucket→count map (for the Python driver's `[sim] summary`).
     #[must_use]
     pub fn buckets(&self) -> &BTreeMap<String, u64> {
-        &self.0
+        &self.buckets
     }
 
     /// The underlying bucket→count map, mutable (for the dispatch fan-out to
     /// merge per-path buckets into the outcome tally).
     pub fn buckets_mut(&mut self) -> &mut BTreeMap<String, u64> {
-        &mut self.0
+        &mut self.buckets
+    }
+
+    /// The per-path [`SimFailure`] records accumulated via [`record`] —
+    /// surfaced as `DispatchOutcome::failures` for the Python driver's
+    /// `[sim-fail]` line.
+    #[must_use]
+    pub fn failures(&self) -> &[SimFailure] {
+        &self.failures
+    }
+
+    /// Take ownership of the per-path failures (used by the dispatch fan-out
+    /// to move the per-path record set into the outcome tally without cloning).
+    #[must_use]
+    pub fn into_failures(self) -> Vec<SimFailure> {
+        self.failures
     }
 }
 
@@ -402,7 +477,12 @@ pub async fn simulate_one(
             };
             let output_amount = path.hop_outputs[i];
             if !fits_int128(amount_specified) || !fits_int128(output_amount) {
-                fail_buckets.tally("int128-overflow");
+                fail_buckets.record(
+                    path.path_id,
+                    "int128-overflow",
+                    None,
+                    alloy::primitives::Bytes::new(),
+                );
                 return Ok(None);
             }
         }
@@ -423,7 +503,12 @@ pub async fn simulate_one(
         path.opts,
     );
     let Some(cmd_bytes) = cmd_bytes else {
-        fail_buckets.tally("encode-failed");
+        fail_buckets.record(
+            path.path_id,
+            "encode-failed",
+            None,
+            alloy::primitives::Bytes::new(),
+        );
         return Ok(None);
     };
 
@@ -476,7 +561,12 @@ pub async fn simulate_one(
         access_list: access_list.clone(),
     };
     let Ok(result) = dispatch::simulate_v1(ctx.provider, &sim_params, state_overrides).await else {
-        fail_buckets.tally("rpc-failed");
+        fail_buckets.record(
+            path.path_id,
+            "rpc-failed",
+            None,
+            alloy::primitives::Bytes::new(),
+        );
         return Ok(None);
     };
 
@@ -496,9 +586,12 @@ pub async fn simulate_one(
                 }
             })
             .unwrap_or_default();
-        // `classify_revert` (SYI3PG). C6 (the param-decode for the
-        // `[sim-fail]` log line) stays Python — diagnostic-only.
-        fail_buckets.tally(&classify_revert(&revert_data));
+        // `classify_revert` (SYI3PG) returns the bucket label; `record`
+        // surfaces the per-path detail (`fail_idx` + the raw revert bytes) so
+        // the Python driver can render a `[sim-fail]` line. C6 (the
+        // param-decode) stays Python — diagnostic-only.
+        let bucket = classify_revert(&revert_data);
+        fail_buckets.record(path.path_id, &bucket, Some(fail_idx), revert_data);
         return Ok(None);
     }
 
@@ -507,27 +600,57 @@ pub async fn simulate_one(
     // `erc6909 = calls[2/6]`. Decode each `returnData` as a big-endian uint256.
     let decode = |idx: usize| -> Option<U256> { decode_balance(&result.calls[idx].return_data) };
     let Some(weth_before) = decode(0) else {
-        fail_buckets.tally("balance-decode");
+        fail_buckets.record(
+            path.path_id,
+            "balance-decode",
+            Some(0),
+            alloy::primitives::Bytes::new(),
+        );
         return Ok(None);
     };
     let Some(eth_before) = decode(1) else {
-        fail_buckets.tally("balance-decode");
+        fail_buckets.record(
+            path.path_id,
+            "balance-decode",
+            Some(1),
+            alloy::primitives::Bytes::new(),
+        );
         return Ok(None);
     };
     let Some(erc6909_before) = decode(2) else {
-        fail_buckets.tally("balance-decode");
+        fail_buckets.record(
+            path.path_id,
+            "balance-decode",
+            Some(2),
+            alloy::primitives::Bytes::new(),
+        );
         return Ok(None);
     };
     let Some(weth_after) = decode(4) else {
-        fail_buckets.tally("balance-decode");
+        fail_buckets.record(
+            path.path_id,
+            "balance-decode",
+            Some(4),
+            alloy::primitives::Bytes::new(),
+        );
         return Ok(None);
     };
     let Some(eth_after) = decode(5) else {
-        fail_buckets.tally("balance-decode");
+        fail_buckets.record(
+            path.path_id,
+            "balance-decode",
+            Some(5),
+            alloy::primitives::Bytes::new(),
+        );
         return Ok(None);
     };
     let Some(erc6909_after) = decode(6) else {
-        fail_buckets.tally("balance-decode");
+        fail_buckets.record(
+            path.path_id,
+            "balance-decode",
+            Some(6),
+            alloy::primitives::Bytes::new(),
+        );
         return Ok(None);
     };
 
@@ -537,9 +660,15 @@ pub async fn simulate_one(
     if gross_profit.is_zero() {
         // `gross_profit <= 0` — `u128`/`U256` arithmetic can't go negative;
         // a non-positive gross decodes to `0` here, which is the `no-profit`
-        // bucket. (The Python oracle logs the actual negative value; the
-        // rendering stays Python — diagnostic-only.)
-        fail_buckets.tally("no-profit");
+        // bucket. No single call failed (all 7 succeeded); `fail_index: None`.
+        // (The Python oracle logs the actual negative value; the rendering
+        // stays Python — diagnostic-only.)
+        fail_buckets.record(
+            path.path_id,
+            "no-profit",
+            None,
+            alloy::primitives::Bytes::new(),
+        );
         return Ok(None);
     }
 
@@ -992,6 +1121,133 @@ mod tests {
         assert!(result.is_none());
         // Panic(0x11) → classify_revert returns "Panic(0x11)".
         assert_eq!(buckets.get("Panic(0x11)"), 1);
+    }
+
+    #[tokio::test]
+    async fn simulate_one_records_failure_detail_on_revert() {
+        // The same revert fixture as above, but assert the per-path
+        // `SimFailure` detail (path_id + bucket + fail_index + revert_data)
+        // is captured — surfaced across the FFI for the `[sim-fail]` line.
+        let asserter = Asserter::new();
+        asserter.push_success(&access_list_response());
+        let revert_data = Bytes::from_static(&[
+            0x4e, 0x48, 0x7b, 0x71, // selector
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0x00, 0x00, 0x00, 0x11, // panic code 0x11
+        ]);
+        let calls = vec![
+            ok_call(U256::from(1u128)),
+            ok_call(U256::from(1u128)),
+            ok_call(U256::ZERO),
+            SimCallResult {
+                return_data: Bytes::new(),
+                logs: Vec::new(),
+                gas_used: 21_000,
+                max_used_gas: None,
+                status: false,
+                error: Some(alloy::rpc::types::eth::simulate::SimulateError {
+                    code: 3,
+                    message: "execution reverted".into(),
+                    data: Some(revert_data.clone()),
+                }),
+            },
+            ok_call(U256::from(1u128)),
+            ok_call(U256::from(1u128)),
+            ok_call(U256::ZERO),
+        ];
+        let block = SimulatedBlock {
+            inner: degenbot_rpc::provider::EthBlock::default(),
+            calls,
+        };
+        asserter.push_success(&vec![block]);
+        let provider = mock_provider(&asserter);
+        let mut buckets = FailBuckets::new();
+
+        let result = simulate_one(&ctx(&provider), path(2), &mut buckets)
+            .await
+            .unwrap();
+        assert!(result.is_none());
+
+        // The per-path failure record carries the path_id + the classified
+        // bucket + the failing call's index (call [3] — the execute()) + the
+        // raw revert bytes (the 36-byte Panic-encoded payload).
+        let failures = buckets.failures();
+        assert_eq!(
+            failures.len(),
+            1,
+            "expected one failure record, got {failures:?}"
+        );
+        let f = &failures[0];
+        assert_eq!(f.path_id, 2);
+        assert_eq!(f.bucket, "Panic(0x11)");
+        assert_eq!(f.fail_index, Some(3), "the execute() call [3] reverted");
+        assert_eq!(f.revert_data.as_ref(), revert_data.as_ref());
+    }
+
+    #[tokio::test]
+    async fn simulate_one_records_no_profit_failure_with_no_fail_index() {
+        // A no-profit outcome (all 7 calls succeed, but the cumulative
+        // balance is unchanged) records a failure with `fail_index: None`
+        // (no single call failed) and empty `revert_data`.
+        let asserter = Asserter::new();
+        asserter.push_success(&access_list_response());
+        asserter.push_success(&profit_block(U256::ZERO, 200_000));
+        let provider = mock_provider(&asserter);
+        let mut buckets = FailBuckets::new();
+
+        let result = simulate_one(&ctx(&provider), path(71), &mut buckets)
+            .await
+            .unwrap();
+        assert!(result.is_none());
+        let failures = buckets.failures();
+        assert_eq!(failures.len(), 1);
+        let f = &failures[0];
+        assert_eq!(f.path_id, 71);
+        assert_eq!(f.bucket, "no-profit");
+        assert!(f.fail_index.is_none(), "no call reverted on no-profit");
+        assert!(f.revert_data.is_empty(), "no revert data on no-profit");
+    }
+
+    #[tokio::test]
+    async fn simulate_one_records_int128_overflow_pre_encode() {
+        // Pre-encode int128 overflow records a failure with no RPC dispatched
+        // + no revert_data + no fail_index.
+        let asserter = Asserter::new();
+        asserter.push_success(&serde_json::json!({"accessList": []}));
+        let provider = mock_provider(&asserter);
+        let mut buckets = FailBuckets::new();
+        let v4 = HopInfo::V4(degenbot_executor::composers::V4HopInfo {
+            pool_manager_address: PM,
+            pool_id_hex: "0x".to_string(),
+            currency0_address: WETH,
+            currency1_address: address!("1111111111111111111111111111111111111111"),
+            fee: 3000,
+            tick_spacing: 60,
+            hook_address: Address::ZERO,
+            zfo: true,
+        });
+        let p = SimulatePath {
+            path_id: 88,
+            optimal_input: INT128_MAX as u128 + 1,
+            hop_outputs: vec![1u128],
+            path_info: PathInfo::new(vec![v4]),
+            solve_block: 100,
+            opts: EncodeOptions {
+                erc6909_profit: false,
+                use_v4_batch: false,
+            },
+        };
+        let result = simulate_one(&ctx(&provider), p, &mut buckets)
+            .await
+            .unwrap();
+        assert!(result.is_none());
+        let failures = buckets.failures();
+        assert_eq!(failures.len(), 1);
+        let f = &failures[0];
+        assert_eq!(f.path_id, 88);
+        assert_eq!(f.bucket, "int128-overflow");
+        assert!(f.fail_index.is_none());
+        assert!(f.revert_data.is_empty());
     }
 
     #[tokio::test]
