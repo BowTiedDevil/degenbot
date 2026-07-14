@@ -3,7 +3,7 @@
 mod tests {
     use std::collections::{HashMap, HashSet};
 
-    use alloy::primitives::{Address, U256};
+    use alloy::primitives::{aliases::U112, Address, U256};
 
     use crate::bot_core::RegisterV3PoolParams;
     use crate::bot_core::RegisterV4PoolParams;
@@ -14,12 +14,12 @@ mod tests {
     };
     use degenbot_uniswap::dex_identity::DexVariant;
 
-    fn usdc(amount: u64) -> U256 {
-        U256::from(amount) * U256::from(10u64).pow(U256::from(6))
+    fn usdc(amount: u64) -> U112 {
+        (U256::from(amount) * U256::from(10u64).pow(U256::from(6))).to::<U112>()
     }
 
-    fn weth(amount: u64) -> U256 {
-        U256::from(amount) * U256::from(10u64).pow(U256::from(18))
+    fn weth(amount: u64) -> U112 {
+        (U256::from(amount) * U256::from(10u64).pow(U256::from(18))).to::<U112>()
     }
 
     const GAMMA_03: u64 = 997;
@@ -1945,8 +1945,8 @@ mod tests {
             address: Address::from([0x11u8; 20]),
             token0: Address::from([0x01u8; 20]),
             token1: Address::from([0x02u8; 20]),
-            reserve0: U256::from(1000),
-            reserve1: U256::from(2000),
+            reserve0: U112::from(1000),
+            reserve1: U112::from(2000),
             fee_token0: (997, 1000),
             fee_token1: (997, 1000),
             factory: Address::from([0x33u8; 20]),
@@ -1990,8 +1990,8 @@ mod tests {
                 address: Address::from([0x11u8; 20]),
                 token0: Address::from([0x01u8; 20]),
                 token1: Address::from([0x02u8; 20]),
-                reserve0: U256::from(1000),
-                reserve1: U256::from(2000),
+                reserve0: U112::from(1000),
+                reserve1: U112::from(2000),
                 fee_token0: (997, 1000),
                 fee_token1: (997, 1000),
                 factory: Address::from([0x33u8; 20]),
@@ -2660,8 +2660,8 @@ mod tests {
                 variant: DexVariant::AerodromeV2Stable,
                 stable: true,
                 fee: (3, 1000),
-                reserve0: U256::from(1_000_000u64),
-                reserve1: U256::from(2_000_000u64),
+                reserve0: U112::from(1_000_000u64),
+                reserve1: U112::from(2_000_000u64),
                 update_block: 0,
             });
 
@@ -2677,8 +2677,8 @@ mod tests {
                 variant: DexVariant::AerodromeV2Stable,
                 stable: true,
                 fee: (3, 1000),
-                reserve0: U256::from(1_100_000u64),
-                reserve1: U256::from(1_800_000u64),
+                reserve0: U112::from(1_100_000u64),
+                reserve1: U112::from(1_800_000u64),
                 update_block: 0,
             });
 
@@ -2762,8 +2762,8 @@ mod tests {
                 address: Address::from([0xc1u8; 20]),
                 token0: Address::from([0x01u8; 20]),
                 token1: Address::from([0x02u8; 20]),
-                reserve0: U256::from(1_000_000u64),
-                reserve1: U256::from(2_000_000u64),
+                reserve0: U112::from(1_000_000u64),
+                reserve1: U112::from(2_000_000u64),
                 fee_token0: (9970, 10000),
                 fee_token1: (9970, 10000),
                 factory: Address::from([0xfau8; 20]),
@@ -2780,8 +2780,8 @@ mod tests {
                 address: Address::from([0xc2u8; 20]),
                 token0: Address::from([0x01u8; 20]),
                 token1: Address::from([0x02u8; 20]),
-                reserve0: U256::from(1_100_000u64),
-                reserve1: U256::from(1_900_000u64),
+                reserve0: U112::from(1_100_000u64),
+                reserve1: U112::from(1_900_000u64),
                 fee_token0: (9970, 10000),
                 fee_token1: (9970, 10000),
                 factory: Address::from([0xfau8; 20]),
@@ -2850,8 +2850,8 @@ mod tests {
                 variant: DexVariant::AerodromeV2Stable,
                 stable: true,
                 fee: (3, 1000),
-                reserve0: U256::from(1_000_000u64),
-                reserve1: U256::from(2_000_000u64),
+                reserve0: U112::from(1_000_000u64),
+                reserve1: U112::from(2_000_000u64),
                 update_block: 0,
             });
         let aero_id2 = core
@@ -2864,8 +2864,8 @@ mod tests {
                 variant: DexVariant::AerodromeV2Stable,
                 stable: true,
                 fee: (3, 1000),
-                reserve0: U256::from(1_100_000u64),
-                reserve1: U256::from(1_900_000u64),
+                reserve0: U112::from(1_100_000u64),
+                reserve1: U112::from(1_900_000u64),
                 update_block: 0,
             });
 
@@ -2902,8 +2902,8 @@ mod tests {
         use crate::bot_core::{BotState, RegisterAerodromeV2PoolParams};
         use std::sync::Arc;
 
-        fn tokens(n: u64) -> U256 {
-            U256::from(n) * U256::from(10u64).pow(U256::from(18u64))
+        fn tokens(n: u64) -> U112 {
+            (U256::from(n) * U256::from(10u64).pow(U256::from(18u64))).to::<U112>()
         }
 
         let core = Arc::new(parking_lot::RwLock::new(BotState::new()));
@@ -3021,8 +3021,8 @@ mod tests {
         use crate::bot_core::{BotState, RegisterAerodromeV2PoolParams, RegisterV2PoolParams};
         use std::sync::Arc;
 
-        fn tokens(n: u64) -> U256 {
-            U256::from(n) * U256::from(10u64).pow(U256::from(18u64))
+        fn tokens(n: u64) -> U112 {
+            (U256::from(n) * U256::from(10u64).pow(U256::from(18u64))).to::<U112>()
         }
 
         let core = Arc::new(parking_lot::RwLock::new(BotState::new()));
@@ -3096,8 +3096,8 @@ mod tests {
 
         // Grid scan parity check (Solidly hop uses the integer leaf, V2 hop
         // uses IntHopState::swap).
-        let max_reserve = tokens(1000);
-        let grid_step = tokens(1);
+        let max_reserve = tokens(1000).to::<U256>();
+        let grid_step = tokens(1).to::<U256>();
         let mut grid_best = U256::ZERO;
         let mut x = U256::from(1u64);
         while x <= max_reserve {
@@ -3170,8 +3170,10 @@ mod tests {
                 variant: DexVariant::AerodromeV2Stable,
                 stable: true,
                 fee: (3, 1000),
-                reserve0: U256::from(1000u64) * U256::from(10u64).pow(U256::from(18u64)),
-                reserve1: U256::from(100u64) * U256::from(10u64).pow(U256::from(18u64)),
+                reserve0: (U256::from(1000u64) * U256::from(10u64).pow(U256::from(18u64)))
+                    .to::<U112>(),
+                reserve1: (U256::from(100u64) * U256::from(10u64).pow(U256::from(18u64)))
+                    .to::<U112>(),
                 update_block: 0,
             });
         // Register a minimal V3 pool for the second hop using the same

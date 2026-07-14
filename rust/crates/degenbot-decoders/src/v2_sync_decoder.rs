@@ -14,7 +14,7 @@
 //! data    = abi.encode(uint112, uint112) = 64 bytes (each left-padded to 32 bytes)
 //! ```
 
-use alloy::primitives::{Address, B256, U256};
+use alloy::primitives::{aliases::U112, Address, B256, U256};
 use alloy::rpc::types::Log;
 
 /// Keccak256 of `Sync(uint112,uint112)`.
@@ -28,10 +28,12 @@ pub const V2_SYNC_TOPIC: B256 = B256::new([
 pub struct SyncEvent {
     /// The pair contract that emitted the event.
     pub pool_address: Address,
-    /// Reserve of token0 (uint112, ABI-decoded).
-    pub reserve0: U256,
-    /// Reserve of token1 (uint112, ABI-decoded).
-    pub reserve1: U256,
+    /// Reserve of token0 (on-chain `uint112` — typed `U112` post-ZPHT6X;
+    /// the decoder validates the high 144 bits of the ABI word are zero
+    /// before narrowing).
+    pub reserve0: U112,
+    /// Reserve of token1 (on-chain `uint112`).
+    pub reserve1: U112,
 }
 
 /// Decode a V2 Sync event from a log.
@@ -56,17 +58,33 @@ pub fn decode_sync_log(log: &Log) -> Option<SyncEvent> {
         return None;
     }
 
-    // Decode reserve0 (bytes 0..32, left-padded uint112)
-    let reserve0 = U256::from_be_bytes::<32>(data[..32].try_into().ok()?);
+    // Decode reserve0 (bytes 0..32, left-padded uint112). The ABI word is
+    // 32 bytes, but a real uint112 is left-padded with zeros — any non-zero
+    // bits above position 112 indicate a corrupt / synthetic log → reject.
+    let r0 = U256::from_be_bytes::<32>(data[..32].try_into().ok()?);
+    let reserve0 = narrow_sync_reserve(r0)?;
 
-    // Decode reserve1 (bytes 32..64, left-padded uint112)
-    let reserve1 = U256::from_be_bytes::<32>(data[32..64].try_into().ok()?);
+    // Decode reserve1 (bytes 32..64, left-padded uint112).
+    let r1 = U256::from_be_bytes::<32>(data[32..64].try_into().ok()?);
+    let reserve1 = narrow_sync_reserve(r1)?;
 
     Some(SyncEvent {
         pool_address: log.address(),
         reserve0,
         reserve1,
     })
+}
+
+/// Narrow a 32-byte ABI word to `U112`, returning `None` if bits above
+/// position 112 are set (i.e. the value exceeds `uint112::MAX`). A real
+/// `Sync(uint112,uint112)` event's ABI slot is left-zero-padded; stray high
+/// bits indicate a corrupt / synthetic log, treated as malformed (the existing
+/// `None` paths for short data / topic mismatch).
+fn narrow_sync_reserve(word: U256) -> Option<U112> {
+    if word > U112::MAX.to::<U256>() {
+        return None;
+    }
+    Some(word.to::<U112>())
 }
 
 #[cfg(test)]
@@ -130,8 +148,8 @@ mod tests {
 
         let event = result.unwrap();
         assert_eq!(event.pool_address, pool);
-        assert_eq!(event.reserve0, U256::from(1_500_000_000_000u64));
-        let weth_800 = U256::from(800u64) * U256::from(10u64).pow(U256::from(18));
+        assert_eq!(event.reserve0, U112::from(1_500_000_000_000u64));
+        let weth_800 = U112::from(800u64) * U112::from(10u64).pow(U112::from(18));
         assert_eq!(event.reserve1, weth_800);
     }
 
@@ -175,8 +193,32 @@ mod tests {
         assert!(result.is_some());
 
         let event = result.unwrap();
-        assert_eq!(event.reserve0, U256::ZERO);
-        assert_eq!(event.reserve1, U256::ZERO);
+        assert_eq!(event.reserve0, U112::ZERO);
+        assert_eq!(event.reserve1, U112::ZERO);
+    }
+
+    #[test]
+    fn decode_sync_accepts_uint112_max() {
+        // The highest value a real Sync(uint112,uint112) event can carry.
+        let pool = Address::ZERO;
+        let max_u256 = U112::MAX.to::<U256>();
+        let log = make_sync_log(pool, max_u256, max_u256);
+
+        let event = decode_sync_log(&log).expect("uint112::MAX must decode cleanly");
+        assert_eq!(event.reserve0, U112::MAX);
+        assert_eq!(event.reserve1, U112::MAX);
+    }
+
+    #[test]
+    fn decode_sync_rejects_high_bits_set() {
+        // A value > uint112::MAX in the ABI word indicates a corrupt /
+        // synthetic log — the decoder must reject it (return None), not
+        // silently truncate.
+        let pool = Address::ZERO;
+        let over = U112::MAX.to::<U256>() + U256::from(1u64);
+        let log = make_sync_log(pool, over, U256::ZERO);
+
+        assert!(decode_sync_log(&log).is_none());
     }
 
     #[test]
@@ -230,7 +272,7 @@ mod tests {
         assert!(result.is_some());
 
         let event = result.unwrap();
-        assert_eq!(event.reserve0, U256::from(42u64));
-        assert_eq!(event.reserve1, U256::from(99u64));
+        assert_eq!(event.reserve0, U112::from(42u64));
+        assert_eq!(event.reserve1, U112::from(99u64));
     }
 }

@@ -39,6 +39,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+#[cfg(test)]
+use alloy::primitives::aliases::U112;
 use alloy::primitives::{Address, U256};
 
 use crate::bot_core::BotState;
@@ -687,8 +689,8 @@ impl UniswapEngine {
     pub fn register_v2_pool(
         &self,
         address: Address,
-        reserve0: U256,
-        reserve1: U256,
+        reserve0: U112,
+        reserve1: U112,
         gamma_numer: u64,
         fee_denom: u64,
     ) -> u64 {

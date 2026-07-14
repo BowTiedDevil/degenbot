@@ -14,7 +14,7 @@ mod tests {
     use crate::bot_core::{BotState, RegisterCurvePoolParams};
     use ::degenbot_pools::curve_data_provider::CurveDataProvider;
     use ::degenbot_pools::state_history::{BlockDelta, ReorgJournal};
-    use alloy::primitives::{Address, U256};
+    use alloy::primitives::{aliases::U112, Address, U256};
     use std::sync::Arc;
 
     fn three_coin_params(block: u64, balances: &[u64]) -> RegisterCurvePoolParams {
@@ -104,8 +104,8 @@ mod tests {
                 address: Address::repeat_byte(0x22),
                 token0: Address::repeat_byte(0x01),
                 token1: Address::repeat_byte(0x02),
-                reserve0: U256::from(1_000),
-                reserve1: U256::from(2_000),
+                reserve0: U112::from(1_000),
+                reserve1: U112::from(2_000),
                 fee_token0: (997, 1000),
                 fee_token1: (997, 1000),
                 factory: Address::repeat_byte(0xff),

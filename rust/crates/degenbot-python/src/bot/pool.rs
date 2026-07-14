@@ -9,6 +9,7 @@
 
 use crate::bot::token::PyErc20Token;
 use crate::prelude::*;
+use alloy::primitives::U256;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -820,7 +821,7 @@ impl PyLiquidityPool {
         let r = {
             let core = self.core.read();
             core.get_v2_pool_state(self.pool_id)
-                .map(|s| s.reserve0)
+                .map(|s| s.reserve0.to::<U256>())
                 .unwrap_or_default()
         };
         Ok(crate::conversion::alloy::u256_to_py(py, &r)?.unbind())
@@ -832,7 +833,7 @@ impl PyLiquidityPool {
         let r = {
             let core = self.core.read();
             core.get_v2_pool_state(self.pool_id)
-                .map(|s| s.reserve1)
+                .map(|s| s.reserve1.to::<U256>())
                 .unwrap_or_default()
         };
         Ok(crate::conversion::alloy::u256_to_py(py, &r)?.unbind())
@@ -1276,7 +1277,7 @@ impl PyLiquidityPool {
         let v = {
             let core = self.core.read();
             core.get_aerodrome_pool(self.pool_id)
-                .map(|s| s.reserve0)
+                .map(|s| s.reserve0.to::<U256>())
                 .unwrap_or_default()
         };
         Ok(crate::conversion::alloy::u256_to_py(py, &v)?.unbind())
@@ -1288,7 +1289,7 @@ impl PyLiquidityPool {
         let v = {
             let core = self.core.read();
             core.get_aerodrome_pool(self.pool_id)
-                .map(|s| s.reserve1)
+                .map(|s| s.reserve1.to::<U256>())
                 .unwrap_or_default()
         };
         Ok(crate::conversion::alloy::u256_to_py(py, &v)?.unbind())
@@ -1301,11 +1302,13 @@ impl PyLiquidityPool {
     /// WETH = 5e21), so the prior `to::<u64>()` conversion panicked on
     /// overflow.
     fn snapshot_aerodrome(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        let snap = self
-            .core
-            .read()
-            .get_aerodrome_pool(self.pool_id)
-            .map(|s| (s.reserve0, s.reserve1, s.update_block));
+        let snap = self.core.read().get_aerodrome_pool(self.pool_id).map(|s| {
+            (
+                s.reserve0.to::<U256>(),
+                s.reserve1.to::<U256>(),
+                s.update_block,
+            )
+        });
         match snap {
             None => Ok(None),
             Some((reserve0, reserve1, block)) => {
@@ -1332,8 +1335,16 @@ impl PyLiquidityPool {
         reserve1: &Bound<'_, PyAny>,
         block_number: u64,
     ) -> PyResult<()> {
-        let r0 = crate::conversion::alloy::extract_python_u256(reserve0)?;
-        let r1 = crate::conversion::alloy::extract_python_u256(reserve1)?;
+        let r0 = degenbot_pools::spec_bounds::narrow_v2_reserve(
+            crate::conversion::alloy::extract_python_u256(reserve0)?,
+            "reserve0",
+        )
+        .map_err(|sv| crate::bot::engine::SpecViolationError::new_err(format!("{sv}")))?;
+        let r1 = degenbot_pools::spec_bounds::narrow_v2_reserve(
+            crate::conversion::alloy::extract_python_u256(reserve1)?,
+            "reserve1",
+        )
+        .map_err(|sv| crate::bot::engine::SpecViolationError::new_err(format!("{sv}")))?;
         let _ =
             self.core
                 .write()
@@ -1457,8 +1468,16 @@ impl PyLiquidityPool {
         reserve1: &Bound<'_, PyAny>,
         block_number: u64,
     ) -> PyResult<()> {
-        let r0 = crate::conversion::alloy::extract_python_u256(reserve0)?;
-        let r1 = crate::conversion::alloy::extract_python_u256(reserve1)?;
+        let r0 = degenbot_pools::spec_bounds::narrow_v2_reserve(
+            crate::conversion::alloy::extract_python_u256(reserve0)?,
+            "reserve0",
+        )
+        .map_err(|sv| crate::bot::engine::SpecViolationError::new_err(format!("{sv}")))?;
+        let r1 = degenbot_pools::spec_bounds::narrow_v2_reserve(
+            crate::conversion::alloy::extract_python_u256(reserve1)?,
+            "reserve1",
+        )
+        .map_err(|sv| crate::bot::engine::SpecViolationError::new_err(format!("{sv}")))?;
         let _ = self
             .core
             .write()
@@ -1501,6 +1520,8 @@ impl PyLiquidityPool {
             None => Ok(None),
             Some(Err(e)) => Err(journal_err_to_py(e)),
             Some(Ok((r0, r1, blk))) => {
+                let r0 = r0.to::<alloy::primitives::U256>();
+                let r1 = r1.to::<alloy::primitives::U256>();
                 let tuple = pyo3::types::PyTuple::new(
                     py,
                     [
@@ -1549,6 +1570,8 @@ impl PyLiquidityPool {
             None => Ok(None),
             Some(Err(e)) => Err(journal_err_to_py(e)),
             Some(Ok((r0, r1, blk))) => {
+                let r0 = r0.to::<alloy::primitives::U256>();
+                let r1 = r1.to::<alloy::primitives::U256>();
                 let tuple = pyo3::types::PyTuple::new(
                     py,
                     [

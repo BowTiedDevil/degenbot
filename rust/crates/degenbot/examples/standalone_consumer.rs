@@ -15,7 +15,7 @@
 
 use std::path::PathBuf;
 
-use alloy::primitives::{address, U256};
+use alloy::primitives::{address, aliases::U112, U256};
 use degenbot::degenbot_balancer_math::{mul_down, ONE};
 use degenbot::degenbot_curve_math::{stableswap_get_d, DVariant};
 use degenbot::degenbot_db::connection::DegenbotDb;
@@ -113,8 +113,8 @@ fn main() {
         address: pool,
         token0,
         token1,
-        reserve0,
-        reserve1,
+        reserve0: reserve0.to::<U112>(),
+        reserve1: reserve1.to::<U112>(),
         fee_token0: UNISWAP_V2.fee_token0,
         fee_token1: UNISWAP_V2.fee_token1,
         factory: UNISWAP_V2.factory,

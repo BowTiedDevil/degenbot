@@ -3,7 +3,7 @@
 //! at the historical `bot_core::V2*`/`RegisterV2*` path.
 
 use crate::state_history::{ReorgJournal, V2BlockDelta};
-use alloy::primitives::{Address, B256, U256};
+use alloy::primitives::{aliases::U112, Address, B256};
 use degenbot_uniswap::dex_identity::DexVariant;
 
 /// Immutable V2 registration identity (ADR-005 identity slice).
@@ -59,12 +59,22 @@ pub struct V2PoolIdentity {
 /// Pure mutable data — the values that change as reserves are pumped and
 /// rolled back. Immutable identity lives on [`V2PoolIdentity`]; look it up via
 /// [`BotState::get_v2_identity`]. The two are paired in [`PoolEntry::V2`].
+///
+/// The reserves are typed `U112` to mirror v2-core's on-chain `uint112`
+/// storage width (`UniswapV2Pair._update`'s
+/// `require(balance0 <= uint112(-1))`). The spec-bound admission contract
+/// (ADR-012 / epic `WOYYS2`) enforces this width at `register_v2_pool`;
+/// typing the field `U112` makes that contract a *type-level* guarantee —
+/// the runtime `validate_v2_reserve` check below it is a tautology against
+/// `U112::MAX`, retained for diagnostic-message uniformity with the other
+/// `spec_bounds` validators. The deeper fix forward-referenced in commit
+/// `19218a2c` ("a multiply-precision dodge") lands here.
 #[derive(Clone, Debug)]
 pub struct V2PoolState {
-    /// Current reserve of token0.
-    pub reserve0: U256,
-    /// Current reserve of token1.
-    pub reserve1: U256,
+    /// Current reserve of token0 (on-chain `uint112`).
+    pub reserve0: U112,
+    /// Current reserve of token1 (on-chain `uint112`).
+    pub reserve1: U112,
     /// Block number of the last update.
     pub update_block: u64,
 
@@ -79,8 +89,10 @@ pub struct RegisterV2PoolParams {
     pub address: Address,
     pub token0: Address,
     pub token1: Address,
-    pub reserve0: U256,
-    pub reserve1: U256,
+    /// Reserves typed `U112` to match v2-core's on-chain `uint112` storage
+    /// width.
+    pub reserve0: U112,
+    pub reserve1: U112,
     pub fee_token0: (u64, u64),
     pub fee_token1: (u64, u64),
     pub factory: Address,

@@ -15,7 +15,7 @@
 //! as V2 — so the reorg journal reuses [`crate::state_history::V2BlockDelta`]
 //! (a genesis anchor + one delta per `external_update`).
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{aliases::U112, Address};
 
 use crate::state_history::{ReorgJournal, V2BlockDelta};
 use degenbot_uniswap::dex_identity::DexVariant;
@@ -59,12 +59,17 @@ pub struct AerodromeV2PoolIdentity {
 /// rolled back. Immutable identity lives on [`AerodromeV2PoolIdentity`]; look
 /// it up via [`crate::BotState::get_aerodrome_identity`]. The two
 /// are paired in [`crate::PoolEntry::AerodromeV2`].
+///
+/// Reserves are typed `U112` to mirror the on-chain `uint112` storage width
+/// (Solidly / Aerodrome pair contracts mirror v2-core's
+/// `Sync(uint112,uint112)` reserve shape). See [`crate::V2PoolState`] for the
+/// type-level enforcement rationale (ADR-012 / epic `ZPHT6X`).
 #[derive(Clone, Debug)]
 pub struct AerodromeV2PoolState {
-    /// Current reserve of token0.
-    pub reserve0: U256,
-    /// Current reserve of token1.
-    pub reserve1: U256,
+    /// Current reserve of token0 (on-chain `uint112`).
+    pub reserve0: U112,
+    /// Current reserve of token1 (on-chain `uint112`).
+    pub reserve1: U112,
     /// Block number of the last update.
     pub update_block: u64,
     /// Reorg journal — reuses the V2 delta shape (two reserves).
@@ -82,8 +87,10 @@ pub struct RegisterAerodromeV2PoolParams {
     pub stable: bool,
     /// Unidirectional fee: `(fee_numer, fee_denom)`.
     pub fee: (u64, u64),
-    pub reserve0: U256,
-    pub reserve1: U256,
+    /// Reserves typed `U112` to mirror the on-chain `uint112` storage width
+    /// (Solidly / Aerodrome pair contracts).
+    pub reserve0: U112,
+    pub reserve1: U112,
     /// Block number of the registration state — seeds the genesis reorg
     /// journal delta (mirror of V2's discipline).
     pub update_block: u64,

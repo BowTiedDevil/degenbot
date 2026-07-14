@@ -1437,15 +1437,15 @@ fn build_engine_pool_state(
             let identity = core.get_v2_identity(pool_ref.pool_key)?;
             let (reserve_in, reserve_out, gamma_numer, fee_denom) = if pool_ref.zero_for_one {
                 (
-                    state.reserve0,
-                    state.reserve1,
+                    state.reserve0.to::<U256>(),
+                    state.reserve1.to::<U256>(),
                     identity.fee_token0.0,
                     identity.fee_token0.1,
                 )
             } else {
                 (
-                    state.reserve1,
-                    state.reserve0,
+                    state.reserve1.to::<U256>(),
+                    state.reserve0.to::<U256>(),
                     identity.fee_token1.0,
                     identity.fee_token1.1,
                 )
@@ -1506,7 +1506,7 @@ mod tests {
     use std::collections::HashMap;
 
     use alloy::dyn_abi::DynSolValue;
-    use alloy::primitives::{Address, U256};
+    use alloy::primitives::{aliases::U112, Address, U256};
 
     use super::{DiagnosticHop, DiagnosticPoolState};
     use crate::bot_core::RegisterV3PoolParams as V3Params;
@@ -1515,12 +1515,12 @@ mod tests {
         DiagnosticPathState, PoolHop, PoolTickCoverage, UniswapEngine,
     };
 
-    fn usdc(amount: u64) -> U256 {
-        U256::from(amount) * U256::from(10u64).pow(U256::from(6))
+    fn usdc(amount: u64) -> U112 {
+        (U256::from(amount) * U256::from(10u64).pow(U256::from(6))).to::<U112>()
     }
 
-    fn weth(amount: u64) -> U256 {
-        U256::from(amount) * U256::from(10u64).pow(U256::from(18))
+    fn weth(amount: u64) -> U112 {
+        (U256::from(amount) * U256::from(10u64).pow(U256::from(18))).to::<U112>()
     }
 
     #[test]

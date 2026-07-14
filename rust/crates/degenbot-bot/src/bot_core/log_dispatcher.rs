@@ -52,8 +52,8 @@ pub enum DecodedPoolEvent {
     /// V2 `Sync` — `(address, reserve0, reserve1)`.
     V2Sync {
         pool_address: alloy::primitives::Address,
-        reserve0: alloy::primitives::U256,
-        reserve1: alloy::primitives::U256,
+        reserve0: alloy::primitives::aliases::U112,
+        reserve1: alloy::primitives::aliases::U112,
         block_number: u64,
     },
     /// V3 `Swap` — `(address, sqrt_price_x96, liquidity, tick)`.
@@ -421,8 +421,8 @@ mod tests {
             if log.topics().first().map(|t| t.0) == Some(SENTRY_TOPIC) {
                 Some(DecodedPoolEvent::V2Sync {
                     pool_address: self.pool_address,
-                    reserve0: alloy::primitives::U256::from(1),
-                    reserve1: alloy::primitives::U256::from(2),
+                    reserve0: alloy::primitives::aliases::U112::from(1),
+                    reserve1: alloy::primitives::aliases::U112::from(2),
                     block_number: 0,
                 })
             } else {
@@ -498,8 +498,8 @@ mod tests {
                 address: pool_address,
                 token0: alloy::primitives::Address::ZERO,
                 token1: alloy::primitives::Address::ZERO,
-                reserve0: alloy::primitives::U256::from(1000),
-                reserve1: alloy::primitives::U256::from(2000),
+                reserve0: alloy::primitives::aliases::U112::from(1000),
+                reserve1: alloy::primitives::aliases::U112::from(2000),
                 fee_token0: (997, 1000),
                 fee_token1: (997, 1000),
                 factory: alloy::primitives::Address::ZERO,
@@ -546,8 +546,8 @@ mod tests {
                 address: pool_address,
                 token0: alloy::primitives::Address::ZERO,
                 token1: alloy::primitives::Address::ZERO,
-                reserve0: alloy::primitives::U256::from(1000),
-                reserve1: alloy::primitives::U256::from(2000),
+                reserve0: alloy::primitives::aliases::U112::from(1000),
+                reserve1: alloy::primitives::aliases::U112::from(2000),
                 fee_token0: (997, 1000),
                 fee_token1: (997, 1000),
                 factory: alloy::primitives::Address::ZERO,

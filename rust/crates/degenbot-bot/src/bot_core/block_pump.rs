@@ -1649,7 +1649,7 @@ mod tests {
 
     use crate::bot_core::log_dispatcher::PoolStateSubscriber;
     use crate::bot_core::RegisterV2PoolParams;
-    use alloy::primitives::{Address, Bytes, U256};
+    use alloy::primitives::{aliases::U112, Address, Bytes, U256};
 
     /// Build a V2 `Sync` log for `pool_address` carrying
     /// `(reserve0, reserve1)`, at `block_number`, with `removed` set.
@@ -1661,6 +1661,10 @@ mod tests {
         block_number: u64,
         removed: bool,
     ) -> Log {
+        // Test helper: emits a raw V2 `Sync(uint112,uint112)` log as 64
+        // bytes of ABI data (two 32-byte left-padded words). The decoder
+        // narrows to `U112` on decode — this helper keeps the `U256` ABI
+        // word shape so the bytes match on-chain log data.
         let data = {
             let mut data = Vec::with_capacity(64);
             data.extend_from_slice(&reserve0.to_be_bytes::<32>());
@@ -1755,8 +1759,8 @@ mod tests {
                 address: pool_addr,
                 token0: Address::from([0xa0u8; 20]),
                 token1: Address::from([0xa1u8; 20]),
-                reserve0: U256::from(1_000),
-                reserve1: U256::from(2_000),
+                reserve0: U112::from(1_000),
+                reserve1: U112::from(2_000),
                 fee_token0: (997, 1000),
                 fee_token1: (997, 1000),
                 factory: Address::from([0xf0u8; 20]),

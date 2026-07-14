@@ -25,7 +25,7 @@
 //! (`MIN_SQRT_RATIO` / `MAX_SQRT_RATIO` / `MIN_TICK` / `MAX_TICK`) — both V3
 //! and V4 share the same `TickMath`, so the validators are family-agnostic.
 
-use alloy::primitives::{uint, U256};
+use alloy::primitives::{aliases::U112, uint, U256};
 use degenbot_cl_math::cl_lib::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK};
 
 /// `uint112(-1)` — `2^112 − 1`. The `uint112` storage width v2-core asserts
@@ -121,7 +121,34 @@ impl std::fmt::Display for SpecViolation {
 ///
 /// Returns [`Err`] with a [`SpecViolation`] bound `"uint112 (≤ 2^112 − 1)"`
 /// when `value > UINT112_MAX` (i.e. `> 2^112 − 1`).
-pub fn validate_v2_reserve(value: U256, field: &'static str) -> Result<(), SpecViolation> {
+pub fn validate_v2_reserve(value: U112, field: &'static str) -> Result<(), SpecViolation> {
+    if U256::from(value) > UINT112_MAX {
+        return Err(SpecViolation {
+            field,
+            value: SpecValue::U256(U256::from(value)),
+            bound: "uint112 (≤ 2^112 − 1)",
+        });
+    }
+    Ok(())
+}
+
+/// Narrow a `U256`-sourced reserve to `U112` with a spec-bound check.
+///
+/// The ingestion seam for reserves that arrive as `U256` from Python / RPC
+/// decoding (the `PyO3` `sync_reserves` path, the V2 Sync decoder's
+/// ABI-word decode): validates `value ≤ uint112::MAX` before narrowing to
+/// `U112` via `.to::<U112>()` (which panics on overflow — this fn runs the
+/// check first, so the `.to` is infallible here).
+///
+/// Post-ZPHT6X the `V2PoolState` / `V2BlockDelta` fields are typed `U112`,
+/// so any `U256`-sourced reserve must narrow through this seam before
+/// reaching typed storage.
+///
+/// # Errors
+///
+/// Returns [`Err`] with a [`SpecViolation`] bound `"uint112 (≤ 2^112 − 1)"`
+/// when `value > UINT112_MAX` (i.e. `> 2^112 − 1`).
+pub fn narrow_v2_reserve(value: U256, field: &'static str) -> Result<U112, SpecViolation> {
     if value > UINT112_MAX {
         return Err(SpecViolation {
             field,
@@ -129,7 +156,7 @@ pub fn validate_v2_reserve(value: U256, field: &'static str) -> Result<(), SpecV
             bound: "uint112 (≤ 2^112 − 1)",
         });
     }
-    Ok(())
+    Ok(value.to::<U112>())
 }
 
 /// Validate a V3/V4 `sqrtPriceX96` (`TickMath`-bounded `uint160`).
@@ -243,20 +270,21 @@ mod tests {
 
     #[test]
     fn v2_reserve_accepts_uint112_max() {
-        assert_eq!(validate_v2_reserve(UINT112_MAX, "reserve0"), Ok(()));
-    }
-    #[test]
-    fn v2_reserve_rejects_uint112_max_plus_one() {
-        let v = UINT112_MAX + uint!(1_U256);
-        assert!(matches!(
-            validate_v2_reserve(v, "reserve0"),
-            Err(SpecViolation { field: "reserve0", bound, .. }) if bound.contains("uint112"),
-        ));
+        // Post-ZPHT6X the field is typed `U112`, so `U112::MAX` *is*
+        // `UINT112_MAX`; the type-level bound supersedes the runtime check.
+        assert_eq!(validate_v2_reserve(U112::MAX, "reserve0"), Ok(()));
     }
     #[test]
     fn v2_reserve_accepts_zero() {
-        assert_eq!(validate_v2_reserve(U256::ZERO, "reserve1"), Ok(()));
+        assert_eq!(validate_v2_reserve(U112::ZERO, "reserve1"), Ok(()));
     }
+    // Note: the pre-ZPHT6X `v2_reserve_rejects_uint112_max_plus_one` test is
+    // removed — a value `> UINT112_MAX` cannot be constructed as a `U112`
+    // (the type's `MAX` *is* `UINT112_MAX`), so the runtime reject branch is
+    // unreachable for `U112`-typed input. The branch remains live for the
+    // `U256`-ingestion seams (PyO3 `sync_reserves`, the Sync decoder's
+    // high-bits-zero check) that narrow to `U112` after validation; those
+    // paths exercise the bound in their own crate's tests.
 
     #[test]
     fn sqrt_price_accepts_min() {
