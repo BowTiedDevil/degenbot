@@ -91,7 +91,7 @@ RUN curl -L https://foundry.paradigm.xyz | bash \
 # rebuild the image to bump.
 RUN npm install -g @earendil-works/pi-coding-agent
 RUN npm install -g agent-browser
-RUN agent-browser install
+RUN agent-browser install --with-deps
 RUN npx skills add vercel-labs/agent-browser -g --agent pi --yes
 
 RUN go install github.com/sandover/ergo/cmd/ergo@latest
