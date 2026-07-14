@@ -311,6 +311,51 @@ impl PyAlloyProvider {
         format!("AlloyProvider(rpc_url={:?})", self.provider.rpc_url())
     }
 
+    /// Build an offline `AlloyProvider` from a recorded-JSON file.
+    ///
+    /// The JSON may be either the single-block format (`{chain_id, block_number,
+    /// timestamp, calls, code}`) or the multi-block format (`{chain_id, blocks:
+    /// {"<n>": {…}}}`). All RPCs are served from the in-memory recorded data —
+    /// no network connection is needed.
+    ///
+    /// # Errors
+    ///
+    /// `ValueError` if the file cannot be read or is not valid recorded data.
+    #[staticmethod]
+    #[pyo3(name = "offline_from_json_file")]
+    fn offline_from_json_file(path: &str) -> PyResult<Self> {
+        let bytes = std::fs::read(path).map_err(|e| {
+            PyValueError::new_err(format!("Failed to read offline JSON file {path:?}: {e}"))
+        })?;
+        let offline = degenbot_rpc::offline::OfflineProvider::from_json_bytes(&bytes)
+            .map_err(|e| PyValueError::new_err(format!("Invalid offline JSON: {e}")))?;
+        let provider = offline.as_alloy_provider();
+        Ok(Self {
+            provider: Arc::new(provider),
+            max_blocks_per_request: 5000,
+        })
+    }
+
+    /// Build an offline `AlloyProvider` from a recorded-JSON string.
+    ///
+    /// See [`offline_from_json_file`](Self::offline_from_json_file) for the
+    /// accepted formats.
+    ///
+    /// # Errors
+    ///
+    /// `ValueError` if the string is not valid recorded data.
+    #[staticmethod]
+    #[pyo3(name = "offline_from_json_string")]
+    fn offline_from_json_string(s: &str) -> PyResult<Self> {
+        let offline = degenbot_rpc::offline::OfflineProvider::from_json_str(s)
+            .map_err(|e| PyValueError::new_err(format!("Invalid offline JSON: {e}")))?;
+        let provider = offline.as_alloy_provider();
+        Ok(Self {
+            provider: Arc::new(provider),
+            max_blocks_per_request: 5000,
+        })
+    }
+
     /// Get current gas price.
     fn get_gas_price(&self, py: Python<'_>) -> PyResult<u128> {
         let provider = Arc::clone(&self.provider);

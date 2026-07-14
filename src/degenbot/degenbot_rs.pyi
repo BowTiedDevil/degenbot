@@ -1950,6 +1950,10 @@ class AlloyProvider:
         address: str,
         block_number: int | None = None,
     ) -> int: ...
+    @staticmethod
+    def offline_from_json_file(path: str) -> AlloyProvider: ...
+    @staticmethod
+    def offline_from_json_string(s: str) -> AlloyProvider: ...
     def make_request(
         self,
         method: str,
