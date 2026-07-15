@@ -7,7 +7,12 @@ messages; the Rust core owns the database state.
 import click
 import eth_typing
 
-from degenbot import _ffi
+from degenbot._ffi.db import (
+    db_fetch_exchange_by_name,
+    db_set_exchange_active,
+    db_upsert_exchange,
+    db_upsert_pool_manager,
+)
 from degenbot.bot import Bot
 from degenbot.cli import cli
 from degenbot.uniswap.deployments import (
@@ -68,7 +73,7 @@ def activate_base_aerodrome_v2(
 ) -> None:
     """Activate Aerodrome V2 on Base mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_upsert_exchange(
+    row = db_upsert_exchange(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -78,7 +83,7 @@ def activate_base_aerodrome_v2(
     if row.active:
         click.echo("Exchange is already activated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=True,
@@ -95,7 +100,7 @@ def activate_base_aerodrome_v3(
 ) -> None:
     """Activate Aerodrome V3 on Base mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_upsert_exchange(
+    row = db_upsert_exchange(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -105,7 +110,7 @@ def activate_base_aerodrome_v3(
     if row.active:
         click.echo("Exchange is already activated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=True,
@@ -122,7 +127,7 @@ def activate_base_pancakeswap_v2(
 ) -> None:
     """Activate Pancakeswap V2 on Base mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_upsert_exchange(
+    row = db_upsert_exchange(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -132,7 +137,7 @@ def activate_base_pancakeswap_v2(
     if row.active:
         click.echo("Exchange is already activated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=True,
@@ -149,7 +154,7 @@ def activate_base_pancakeswap_v3(
 ) -> None:
     """Activate Pancakeswap V3 on Base mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_upsert_exchange(
+    row = db_upsert_exchange(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -159,7 +164,7 @@ def activate_base_pancakeswap_v3(
     if row.active:
         click.echo("Exchange is already activated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=True,
@@ -176,7 +181,7 @@ def activate_base_swapbased_v2(
 ) -> None:
     """Activate SwapBased V2 on Base mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_upsert_exchange(
+    row = db_upsert_exchange(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -186,7 +191,7 @@ def activate_base_swapbased_v2(
     if row.active:
         click.echo("Exchange is already activated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=True,
@@ -203,7 +208,7 @@ def activate_base_sushiswap_v2(
 ) -> None:
     """Activate Sushiswap V2 on Base mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_upsert_exchange(
+    row = db_upsert_exchange(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -213,7 +218,7 @@ def activate_base_sushiswap_v2(
     if row.active:
         click.echo("Exchange is already activated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=True,
@@ -230,7 +235,7 @@ def activate_base_sushiswap_v3(
 ) -> None:
     """Activate Sushiswap V3 on Base mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_upsert_exchange(
+    row = db_upsert_exchange(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -240,7 +245,7 @@ def activate_base_sushiswap_v3(
     if row.active:
         click.echo("Exchange is already activated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=True,
@@ -257,7 +262,7 @@ def activate_base_uniswap_v2(
 ) -> None:
     """Activate Uniswap V2 on Base mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_upsert_exchange(
+    row = db_upsert_exchange(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -267,7 +272,7 @@ def activate_base_uniswap_v2(
     if row.active:
         click.echo("Exchange is already activated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=True,
@@ -284,7 +289,7 @@ def activate_base_uniswap_v3(
 ) -> None:
     """Activate Uniswap V3 on Base mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_upsert_exchange(
+    row = db_upsert_exchange(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -294,7 +299,7 @@ def activate_base_uniswap_v3(
     if row.active:
         click.echo("Exchange is already activated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=True,
@@ -311,7 +316,7 @@ def activate_base_uniswap_v4(
 ) -> None:
     """Activate Uniswap V4 on Base mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_upsert_exchange(
+    row = db_upsert_exchange(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -321,12 +326,12 @@ def activate_base_uniswap_v4(
     if row.active:
         click.echo("Exchange is already activated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=True,
     )
-    _ffi.db_upsert_pool_manager(
+    db_upsert_pool_manager(
         database_path=database_path,
         address=BaseUniswapV4.pool_manager.address,
         chain=chain_id,
@@ -351,7 +356,7 @@ def activate_ethereum_pancakeswap_v2(
 ) -> None:
     """Activate Pancakeswap V2 on Ethereum mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_upsert_exchange(
+    row = db_upsert_exchange(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -361,7 +366,7 @@ def activate_ethereum_pancakeswap_v2(
     if row.active:
         click.echo("Exchange is already activated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=True,
@@ -378,7 +383,7 @@ def activate_ethereum_pancakeswap_v3(
 ) -> None:
     """Activate Pancakeswap V3 on Ethereum mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_upsert_exchange(
+    row = db_upsert_exchange(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -388,7 +393,7 @@ def activate_ethereum_pancakeswap_v3(
     if row.active:
         click.echo("Exchange is already activated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=True,
@@ -405,7 +410,7 @@ def activate_ethereum_sushiswap_v2(
 ) -> None:
     """Activate Sushiswap V2 on Ethereum mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_upsert_exchange(
+    row = db_upsert_exchange(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -415,7 +420,7 @@ def activate_ethereum_sushiswap_v2(
     if row.active:
         click.echo("Exchange is already activated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=True,
@@ -432,7 +437,7 @@ def activate_ethereum_sushiswap_v3(
 ) -> None:
     """Activate Sushiswap V3 on Ethereum mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_upsert_exchange(
+    row = db_upsert_exchange(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -442,7 +447,7 @@ def activate_ethereum_sushiswap_v3(
     if row.active:
         click.echo("Exchange is already activated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=True,
@@ -459,7 +464,7 @@ def activate_ethereum_uniswap_v2(
 ) -> None:
     """Activate Uniswap V2 on Ethereum mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_upsert_exchange(
+    row = db_upsert_exchange(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -469,7 +474,7 @@ def activate_ethereum_uniswap_v2(
     if row.active:
         click.echo("Exchange is already activated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=True,
@@ -486,7 +491,7 @@ def activate_ethereum_uniswap_v3(
 ) -> None:
     """Activate Uniswap V3 on Ethereum mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_upsert_exchange(
+    row = db_upsert_exchange(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -496,7 +501,7 @@ def activate_ethereum_uniswap_v3(
     if row.active:
         click.echo("Exchange is already activated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=True,
@@ -513,7 +518,7 @@ def activate_ethereum_uniswap_v4(
 ) -> None:
     """Activate Uniswap V4 on Ethereum mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_upsert_exchange(
+    row = db_upsert_exchange(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -523,12 +528,12 @@ def activate_ethereum_uniswap_v4(
     if row.active:
         click.echo("Exchange is already activated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=True,
     )
-    _ffi.db_upsert_pool_manager(
+    db_upsert_pool_manager(
         database_path=database_path,
         address=EthereumMainnetUniswapV4.pool_manager.address,
         chain=chain_id,
@@ -553,7 +558,7 @@ def deactivate_base_aerodrome_v2(
 ) -> None:
     """Deactivate Aerodrome V2 on Base mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_fetch_exchange_by_name(
+    row = db_fetch_exchange_by_name(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -564,7 +569,7 @@ def deactivate_base_aerodrome_v2(
     if not row.active:
         click.echo("Exchange is already deactivated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=False,
@@ -581,7 +586,7 @@ def deactivate_base_aerodrome_v3(
 ) -> None:
     """Deactivate Aerodrome V3 on Base mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_fetch_exchange_by_name(
+    row = db_fetch_exchange_by_name(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -592,7 +597,7 @@ def deactivate_base_aerodrome_v3(
     if not row.active:
         click.echo("Exchange is already deactivated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=False,
@@ -609,7 +614,7 @@ def deactivate_base_pancakeswap_v2(
 ) -> None:
     """Deactivate Pancakeswap V2 on Base mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_fetch_exchange_by_name(
+    row = db_fetch_exchange_by_name(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -622,7 +627,7 @@ def deactivate_base_pancakeswap_v2(
     if not row.active:
         click.echo("Exchange is already deactivated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=False,
@@ -639,7 +644,7 @@ def deactivate_base_pancakeswap_v3(
 ) -> None:
     """Deactivate Pancakeswap V3 on Base mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_fetch_exchange_by_name(
+    row = db_fetch_exchange_by_name(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -652,7 +657,7 @@ def deactivate_base_pancakeswap_v3(
     if not row.active:
         click.echo("Exchange is already deactivated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=False,
@@ -669,7 +674,7 @@ def deactivate_base_sushiswap_v2(
 ) -> None:
     """Deactivate Sushiswap V2 on Base mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_fetch_exchange_by_name(
+    row = db_fetch_exchange_by_name(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -680,7 +685,7 @@ def deactivate_base_sushiswap_v2(
     if not row.active:
         click.echo("Exchange is already deactivated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=False,
@@ -697,7 +702,7 @@ def deactivate_base_sushiswap_v3(
 ) -> None:
     """Deactivate Sushiswap V3 on Base mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_fetch_exchange_by_name(
+    row = db_fetch_exchange_by_name(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -708,7 +713,7 @@ def deactivate_base_sushiswap_v3(
     if not row.active:
         click.echo("Exchange is already deactivated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=False,
@@ -725,7 +730,7 @@ def deactivate_base_swapbased_v2(
 ) -> None:
     """Deactivate SwapBased V2 on Base mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_fetch_exchange_by_name(
+    row = db_fetch_exchange_by_name(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -736,7 +741,7 @@ def deactivate_base_swapbased_v2(
     if not row.active:
         click.echo("Exchange is already deactivated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=False,
@@ -753,7 +758,7 @@ def deactivate_base_uniswap_v2(
 ) -> None:
     """Deactivate Uniswap V2 on Base mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_fetch_exchange_by_name(
+    row = db_fetch_exchange_by_name(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -764,7 +769,7 @@ def deactivate_base_uniswap_v2(
     if not row.active:
         click.echo("Exchange is already deactivated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=False,
@@ -781,7 +786,7 @@ def deactivate_base_uniswap_v3(
 ) -> None:
     """Deactivate Uniswap V3 on Base mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_fetch_exchange_by_name(
+    row = db_fetch_exchange_by_name(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -792,7 +797,7 @@ def deactivate_base_uniswap_v3(
     if not row.active:
         click.echo("Exchange is already deactivated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=False,
@@ -809,7 +814,7 @@ def deactivate_base_uniswap_v4(
 ) -> None:
     """Deactivate Uniswap V4 on Base mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_fetch_exchange_by_name(
+    row = db_fetch_exchange_by_name(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -820,7 +825,7 @@ def deactivate_base_uniswap_v4(
     if not row.active:
         click.echo("Exchange is already deactivated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=False,
@@ -842,7 +847,7 @@ def deactivate_ethereum_pancakeswap_v2(
 ) -> None:
     """Deactivate Pancakeswap V2 on Ethereum mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_fetch_exchange_by_name(
+    row = db_fetch_exchange_by_name(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -855,7 +860,7 @@ def deactivate_ethereum_pancakeswap_v2(
     if not row.active:
         click.echo("Exchange is already deactivated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=False,
@@ -872,7 +877,7 @@ def deactivate_ethereum_pancakeswap_v3(
 ) -> None:
     """Deactivate Pancakeswap V3 on Ethereum mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_fetch_exchange_by_name(
+    row = db_fetch_exchange_by_name(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -885,7 +890,7 @@ def deactivate_ethereum_pancakeswap_v3(
     if not row.active:
         click.echo("Exchange is already deactivated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=False,
@@ -902,7 +907,7 @@ def deactivate_ethereum_sushiswap_v2(
 ) -> None:
     """Deactivate Sushiswap V2 on Ethereum mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_fetch_exchange_by_name(
+    row = db_fetch_exchange_by_name(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -915,7 +920,7 @@ def deactivate_ethereum_sushiswap_v2(
     if not row.active:
         click.echo("Exchange is already deactivated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=False,
@@ -932,7 +937,7 @@ def deactivate_ethereum_sushiswap_v3(
 ) -> None:
     """Deactivate Sushiswap V3 on Ethereum mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_fetch_exchange_by_name(
+    row = db_fetch_exchange_by_name(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -943,7 +948,7 @@ def deactivate_ethereum_sushiswap_v3(
     if not row.active:
         click.echo("Exchange is already deactivated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=False,
@@ -960,7 +965,7 @@ def deactivate_ethereum_uniswap_v2(
 ) -> None:
     """Deactivate Uniswap V2 on Ethereum mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_fetch_exchange_by_name(
+    row = db_fetch_exchange_by_name(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -973,7 +978,7 @@ def deactivate_ethereum_uniswap_v2(
     if not row.active:
         click.echo("Exchange is already deactivated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=False,
@@ -990,7 +995,7 @@ def deactivate_ethereum_uniswap_v3(
 ) -> None:
     """Deactivate Uniswap V3 on Ethereum mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_fetch_exchange_by_name(
+    row = db_fetch_exchange_by_name(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -1003,7 +1008,7 @@ def deactivate_ethereum_uniswap_v3(
     if not row.active:
         click.echo("Exchange is already deactivated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=False,
@@ -1020,7 +1025,7 @@ def deactivate_ethereum_uniswap_v4(
 ) -> None:
     """Deactivate Uniswap V4 on Ethereum mainnet."""
     database_path = str(bot.config.database.path)
-    row = _ffi.db_fetch_exchange_by_name(
+    row = db_fetch_exchange_by_name(
         database_path=database_path,
         chain_id=chain_id,
         name=exchange_name,
@@ -1033,7 +1038,7 @@ def deactivate_ethereum_uniswap_v4(
     if not row.active:
         click.echo("Exchange is already deactivated.")
         return
-    _ffi.db_set_exchange_active(
+    db_set_exchange_active(
         database_path=database_path,
         exchange_id=row.id,
         active=False,

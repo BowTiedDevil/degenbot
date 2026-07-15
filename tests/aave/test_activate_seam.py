@@ -20,9 +20,9 @@ from sqlalchemy.orm import Session
 
 from degenbot._ffi import (
     activate_aave_market,
-    db_upgrade_database,
     deactivate_aave_market,
 )
+from degenbot.database._ffi import db_upgrade_database
 from tests.aave.writer_parity.harness import mock_rpc_server
 
 # The 4-byte selectors the activation path RPCs (keccak256 of the canonical
