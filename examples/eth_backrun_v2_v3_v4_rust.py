@@ -337,10 +337,6 @@ EXECUTOR_ADDRESS = os.environ.get(
     "EXECUTOR_CONTRACT_ADDRESS",
     "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",  # OLD — update after deployment
 )
-EXECUTOR_OWNER = os.environ.get(
-    "EXECUTOR_OWNER_ADDRESS",
-    "0x9C56a29c7231974c269E24F9FB3c29203039089E",  # Throwaway — override with real key at runtime
-)
 EXECUTOR_ABI = [
     # execute(commands, config) — cmd_executor
     {
@@ -620,7 +616,7 @@ class BackrunSession:
             runtime_code = _load_executor_runtime_bytecode()
             self._sim_ctx = PySimulateContext(
                 provider=async_alloy,
-                executor_owner=cfg.operator_address,
+                executor_owner=cfg.executor_owner,
                 executor_address=cfg.executor_address,
                 weth_address=WETH_ADDRESS,
                 pool_manager_address=UNISWAP_V4_POOL_MANAGER_ADDRESS,
