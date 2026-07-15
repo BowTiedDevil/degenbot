@@ -110,7 +110,7 @@ ETH_MAINNET_ALLOWED_TOKENS: set[str] = {
     "0x163f8C2467924be0ae7B5347228CABF260318753",  # WLD
     "0x6c3ea9036406852006290770BEdFcAbA0e23A0e8",  # PyUSD
     "0xB8c77482e45F1F44dE1745F52C74426C631bDD52",  # BNB
-    "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84",  # LIDO stETH
+    "0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0",  # wstETH (non-rebasing wrapper; stETH rebases, use wstETH)
     "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",  # WETH
     "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",  # USDC
     "0xdAC17F958D2ee523a2206206994597C13D831ec7",  # USDT
@@ -123,6 +123,28 @@ ETH_MAINNET_ALLOWED_TOKENS: set[str] = {
     "0xc00e94Cb662C3520282E6f5717214004A7f26888",  # COMP
     "0x0bc529c00C6401aEF6D220BE8C6Ea1667F6Ad93e",  # YFI
     "0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0",  # MATIC/POL
+    # ── Expanded set (verified tax-free via scripts/verify_tokens.py: every
+    #    token's recipient balanceOf delta == emitted Transfer amount across
+    #    recent blocks; re-run the verifier after any future edit). Excluded:
+    #    HEX (conditional origin fee, not a blanket tax), staked derivatives
+    #    with rebasing risk (stETH/AMPL/OHM family). sUSDe + wstETH are
+    #    non-rebasing yield wrappers (fixed balanceOf; yield accrues via a
+    #    redemption rate, ~constant across the sub-second sim window). ──
+    "0xdC035D45d973E3EC169d2276DDab16f1e407384F",  # USDS (Sky USD)
+    "0x4c9EDD5852cd905f086C759E8383e09bff1E68B3",  # USDe (Ethena)
+    "0x9D39A5DE30e57443BfF2A8307A4256c8797A3497",  # sUSDe (staked USDe, non-rebasing)
+    "0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29",  # frxUSD (Frax USD)
+    "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E",  # crvUSD
+    "0x8d0D000Ee44948FC98c9B98A4FA4921476f08B0d",  # USD1 (WLFI)
+    "0x1aBaEA1f7C830bD89Acc67eC4af516284b1bC33c",  # EURC (Circle EUR)
+    "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9",  # AAVE
+    "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",  # cbBTC (Coinbase BTC)
+    "0x45804880De22913dAFE09f4980848ECE6EcbAf78",  # PAXG (Paxos Gold)
+    "0x68749665FF8D2d112Fa859AA293F07A622782F38",  # XAUt (Tether Gold)
+    "0x6982508145454Ce325dDbE47a25d4ec3d2311933",  # PEPE
+    "0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE",  # SHIB
+    "0x57e114B691Db790C35207b2e685D4A43181e6061",  # ENA
+    "0x3073f7aAA4DB83f95e9FFf17424F71D4751a3073",  # MOVE
 }
 
 MIN_PROFIT_NET = 1  # was 5 * 10**9 (5 gwei)
@@ -168,8 +190,12 @@ PATH_PERMUTATION_FILTER: set[str] | None = None  # e.g. {"V3-V4-V3"}
 # gas and always revert.
 #
 # All tokens below are verified standard ERC-20 (no transfer fees,
-# no rebase mechanics). Do NOT add tokens without verifying:
-#   - stETH: rebase token (balance changes without transfers) — use wstETH instead
+# no rebase mechanics). Each was verified on-chain: a real Transfer event's
+# emitted amount exactly equals the recipient balanceOf delta (1:1 transfer).
+# Do NOT add tokens without verifying:
+#   - stETH (0xae7ab96520…): rebase token (balanceOf changes daily without
+#     transfers) — INVALIDATES the pre/post balance-diff profit calc. Its
+#     non-rebasing wrapper wstETH is used instead (255 V4 pools vs stETH's 58).
 #   - AMPL: rebase token — exclude
 #   - HEX: origin fee on transfer — exclude
 ALLOWED_INTERMEDIATE_TOKENS: set[str] | None = ETH_MAINNET_ALLOWED_TOKENS
