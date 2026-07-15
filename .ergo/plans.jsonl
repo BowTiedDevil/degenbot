@@ -1043,3 +1043,7 @@
 {"type":"state","ts":"2026-07-15T22:09:00.577313641Z","data":{"id":"PLVFHK","state":"done","ts":"2026-07-15T22:09:00.577313641Z"}}
 {"type":"claim","ts":"2026-07-15T22:09:05.154047334Z","data":{"id":"DR3HJK","agent_id":"sonnet@pi","ts":"2026-07-15T22:09:05.154047334Z"}}
 {"type":"state","ts":"2026-07-15T22:09:05.154047334Z","data":{"id":"DR3HJK","state":"doing","ts":"2026-07-15T22:09:05.154047334Z"}}
+{"type":"result","ts":"2026-07-15T22:15:46.055143063Z","data":{"task_id":"DR3HJK","summary":"src/degenbot/aerodrome/math.py","path":"src/degenbot/aerodrome/math.py","sha256_at_attach":"05a0b9ecfe8d2e1c9643a86c9fc980eaedfd6a50d761440d2ba5e2fbac01053d","mtime_at_attach":"2026-07-15T22:09:36.598010615Z","git_commit_at_attach":"426e433594290fad6fe7302f6c2971350c7a6ee2","ts":"2026-07-15T22:15:46.055143063Z"}}
+{"type":"state","ts":"2026-07-15T22:15:46.055143063Z","data":{"id":"DR3HJK","state":"done","ts":"2026-07-15T22:15:46.055143063Z"}}
+{"type":"claim","ts":"2026-07-15T22:15:49.321313334Z","data":{"id":"UMQ6EI","agent_id":"sonnet@pi","ts":"2026-07-15T22:15:49.321313334Z"}}
+{"type":"state","ts":"2026-07-15T22:15:49.321313334Z","data":{"id":"UMQ6EI","state":"doing","ts":"2026-07-15T22:15:49.321313334Z"}}

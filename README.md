@@ -1305,7 +1305,7 @@ tick = get_tick_at_sqrt_ratio(56736275128821120)  # Returns: 253320
 High-performance ABI decoding for contract data:
 
 ```python
-from degenbot._ffi import decode, decode_single, encode
+from degenbot._ffi.abi import decode, decode_single, encode
 
 # Encode then decode multiple values
 types = ["address", "uint256", "uint256"]

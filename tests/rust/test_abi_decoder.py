@@ -38,8 +38,8 @@ from degenbot.constants import (
     MIN_UINT128,
     MIN_UINT256,
 )
-from degenbot._ffi import decode as decode_rs
-from degenbot._ffi import decode_single as decode_single_rs
+from degenbot._ffi.abi import decode as decode_rs
+from degenbot._ffi.abi import decode_single as decode_single_rs
 
 
 class TestBasicTypes:

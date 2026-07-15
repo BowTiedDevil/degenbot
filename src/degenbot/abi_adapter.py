@@ -22,9 +22,9 @@ from eth_abi.exceptions import DecodingError as EthAbiDecodingError
 from eth_abi.exceptions import EncodingError as EthAbiEncodingError
 from eth_abi.exceptions import ParseError as EthAbiParseError
 
-from degenbot._ffi import decode as rs_decode
-from degenbot._ffi import decode_single as rs_decode_single
-from degenbot._ffi import encode as rs_encode
+from degenbot._ffi.abi import decode as rs_decode
+from degenbot._ffi.abi import decode_single as rs_decode_single
+from degenbot._ffi.abi import encode as rs_encode
 from degenbot.exceptions.base import DegenbotError
 from degenbot.utils.bytes import HexBytesLike, to_bytes
 

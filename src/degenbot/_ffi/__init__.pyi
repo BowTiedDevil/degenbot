@@ -1491,139 +1491,14 @@ def get_tick_at_sqrt_ratio(sqrt_price_x96: bytes) -> int: ...
 def to_checksum_address(address: str) -> str: ...
 @overload
 def to_checksum_address(address: bytes) -> str: ...
-def decode(
-    types: list[str],
-    data: bytes,
-    checksum: bool = True,
-) -> list[str | bool | int | bytes | list[Any]]:
-    """Decode ABI-encoded data for multiple types.
 
-    Args:
-        types: List of ABI type strings
-        data: Raw ABI-encoded bytes
-        checksum: If True (default), returns checksummed addresses
-
-    Returns:
-        A list of decoded Python values
-
-    Raises:
-        ValueError: If data is invalid or insufficient
-        NotImplementedError: For unsupported types (e.g., fixed-point)
-
-    """
-
-@overload
-def decode_single(
-    abi_type: Literal["address"],
-    data: bytes,
-    checksum: bool = True,
-) -> str: ...
-@overload
-def decode_single(
-    abi_type: Literal["bool"],
-    data: bytes,
-    checksum: bool = True,
-) -> bool: ...
-@overload
-def decode_single(
-    abi_type: Literal["string"],
-    data: bytes,
-    checksum: bool = True,
-) -> str: ...
-@overload
-def decode_single(
-    abi_type: Literal[
-        "uint8",
-        "uint16",
-        "uint32",
-        "uint64",
-        "uint128",
-        "uint256",
-    ],
-    data: bytes,
-    checksum: bool = True,
-) -> int: ...
-@overload
-def decode_single(
-    abi_type: Literal[
-        "int8",
-        "int16",
-        "int32",
-        "int64",
-        "int128",
-        "int256",
-    ],
-    data: bytes,
-    checksum: bool = True,
-) -> int: ...
-@overload
-def decode_single(
-    abi_type: Literal["bytes"],
-    data: bytes,
-    checksum: bool = True,
-) -> bytes: ...
-@overload
-def decode_single(
-    abi_type: Literal[
-        "bytes1",
-        "bytes2",
-        "bytes3",
-        "bytes4",
-        "bytes5",
-        "bytes6",
-        "bytes7",
-        "bytes8",
-        "bytes9",
-        "bytes10",
-        "bytes11",
-        "bytes12",
-        "bytes13",
-        "bytes14",
-        "bytes15",
-        "bytes16",
-        "bytes17",
-        "bytes18",
-        "bytes19",
-        "bytes20",
-        "bytes21",
-        "bytes22",
-        "bytes23",
-        "bytes24",
-        "bytes25",
-        "bytes26",
-        "bytes27",
-        "bytes28",
-        "bytes29",
-        "bytes30",
-        "bytes31",
-        "bytes32",
-    ],
-    data: bytes,
-    checksum: bool = True,
-) -> bytes: ...
-@overload
-def decode_single(
-    abi_type: str,
-    data: bytes,
-    checksum: bool = True,
-) -> str | bool | int | bytes: ...
-def encode(
-    types: list[str],
-    values: list[str | bool | int | bytes],
-) -> bytes:
-    """Encode multiple ABI values.
-
-    Args:
-        types: List of ABI type strings
-        values: List of Python values to encode
-
-    Returns:
-        The ABI-encoded bytes.
-
-    Raises:
-        ValueError: If values cannot be encoded or type/value counts differ
-
-    """
+# ── ABI decoder/encoder (feature = "abi"). ──
+# Pure-math wrappers over the degenbot-abi leaf, registered on a real Python
+# submodule (`degenbot._ffi.abi`) with un-prefixed names.
+# See `abi.pyi` for the function signatures (decode/decode_single/encode/
+# encode_single). ValueError on invalid data; NotImplementedError for
+# unsupported types (e.g. fixed-point).
+from . import abi as abi  # noqa: E402
 
 def encode_function_call(function_signature: str, args: list[str]) -> bytes:
     """Encode function arguments into calldata.
@@ -1637,21 +1512,6 @@ def encode_function_call(function_signature: str, args: list[str]) -> bytes:
 
     Raises:
         ValueError: If the signature or arguments are invalid
-
-    """
-
-def encode_single(abi_type: str, value: str | bool | int | bytes) -> bytes:
-    """Encode a single ABI value.
-
-    Args:
-        abi_type: ABI type string (e.g., "uint256", "address", "bytes")
-        value: Python value to encode
-
-    Returns:
-        The ABI-encoded bytes.
-
-    Raises:
-        ValueError: If the value cannot be encoded for the given type
 
     """
 
@@ -3420,6 +3280,7 @@ __all__ = [
     "V4PoolRowInput",
     "VerificationMismatchError",
     "VerificationRpcError",
+    "abi",
     "balancer_math",
     "build_path_graph",
     "cl_add_delta",
@@ -3479,16 +3340,12 @@ __all__ = [
     "db_upsert_v2_pools",
     "db_upsert_v3_pools",
     "db_upsert_v4_pools",
-    "decode",
     "decode_return_data",
-    "decode_single",
     "dex_identity",
     "dispatch_and_submit_py",
     "dispatch_profitable_py",
-    "encode",
     "encode_cmd_stream",
     "encode_function_call",
-    "encode_single",
     "fetch_fee_history_py",
     "finalize_fees",
     "find_paths_rust",

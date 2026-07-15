@@ -120,15 +120,11 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "fork")]
     crate::fork::add_fork_module(m)?;
 
-    // ABI decoder/encoder functions (feature = "abi")
+    // ABI decoder/encoder functions (feature = "abi") — registered on a real
+    // Python submodule `degenbot._ffi.abi` (decode/decode_single/encode/
+    // encode_single). See `crate::abi::add_abi_module`.
     #[cfg(feature = "abi")]
-    m.add_function(wrap_pyfunction!(crate::abi::decoder::decode, m)?)?;
-    #[cfg(feature = "abi")]
-    m.add_function(wrap_pyfunction!(crate::abi::decoder::decode_single, m)?)?;
-    #[cfg(feature = "abi")]
-    m.add_function(wrap_pyfunction!(crate::abi::encoder::encode, m)?)?;
-    #[cfg(feature = "abi")]
-    m.add_function(wrap_pyfunction!(crate::abi::encoder::encode_single, m)?)?;
+    crate::abi::add_abi_module(m)?;
 
     // Provider + contract + subscription modules (feature = "rpc")
     #[cfg(feature = "rpc")]
