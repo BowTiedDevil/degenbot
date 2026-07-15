@@ -102,7 +102,7 @@ pub fn build_simulate_payload(
     state_overrides: StateOverride,
 ) -> SimulatePayload {
     let weth_call = balance_call(params.weth_address, params.executor_address);
-    let eth_call = balance_call(params.multicall3_address, params.executor_address);
+    let eth_call = eth_balance_call(params.multicall3_address, params.executor_address);
     let erc6909_call = erc6909_balance_call(
         params.pool_manager_address,
         params.executor_address,
@@ -139,7 +139,12 @@ fn balance_call(target: Address, account: Address) -> TransactionRequest {
 }
 
 /// Build the Multicall3 `getEthBalance(address)` `TransactionRequest`.
-fn _eth_balance_call(multicall3: Address, account: Address) -> TransactionRequest {
+///
+/// This MUST use `encode_get_eth_balance_calldata` (selector `0x4d2301cc`),
+/// NOT `balanceOf` — Multicall3 has no `balanceOf(address)`; routing the
+/// WETH/ERC20 `balanceOf` selector here reverts every path at call index
+/// `[1]`/`[5]` with an empty revert (no matching function selector).
+fn eth_balance_call(multicall3: Address, account: Address) -> TransactionRequest {
     TransactionRequest {
         to: Some(multicall3.into()),
         input: alloy::rpc::types::eth::TransactionInput::new(
@@ -325,6 +330,56 @@ mod tests {
         assert_eq!(calls[0].to, Some(WETH.into()));
         assert_eq!(calls[1].to, Some(MULTICALL3.into()));
         assert_eq!(calls[2].to, Some(PM.into()));
+    }
+
+    #[test]
+    fn eth_balance_calls_use_getethbalance_selector_not_balanceof() {
+        // Regression: `eth_call` (indices [1]/[5]) must target Multicall3 WITH
+        // the `getEthBalance(address)` selector (`0x4d2301cc`), not the ERC20
+        // `balanceOf(address)` selector (`0x70a08231`). Routing `balanceOf`
+        // at Multicall3 reverts on the unknown selector with empty revert data,
+        // failing every candidate at `fail_idx=1` (`bucket=empty`).
+        let overrides = build_simulation_state_overrides(
+            OWNER,
+            true,
+            Some(EXECUTOR),
+            RUNTIME_BYTECODE.into(),
+            warmup(),
+            WETH,
+            PM,
+        );
+        let payload = build_simulate_payload(&params(Bytes::new()), overrides);
+        let calls = &payload.block_state_calls[0].calls;
+
+        let weth_input = calls[0].input.input.as_ref().expect("weth call has input");
+        let eth_input = calls[1].input.input.as_ref().expect("eth call has input");
+        let erc6909_input = calls[2]
+            .input
+            .input
+            .as_ref()
+            .expect("erc6909 call has input");
+
+        // [0]/[4] WETH9 balanceOf(address) = 0x70a08231.
+        assert_eq!(
+            &weth_input[..4],
+            crate::calldata::BALANCE_OF_SELECTOR.as_slice()
+        );
+        assert_eq!(calls[0].to, Some(WETH.into()));
+        // [1]/[5] Multicall3 getEthBalance(address) = 0x4d2301cc — the fix.
+        assert_eq!(
+            &eth_input[..4],
+            crate::calldata::GET_ETH_BALANCE_SELECTOR.as_slice()
+        );
+        assert_eq!(calls[1].to, Some(MULTICALL3.into()));
+        // [2]/[6] PoolManager ERC6909 balanceOf(address,uint256) = 0x00fdd58e.
+        assert_eq!(
+            &erc6909_input[..4],
+            crate::calldata::ERC6909_BALANCE_OF_SELECTOR.as_slice()
+        );
+        assert_eq!(calls[2].to, Some(PM.into()));
+
+        // The pre/post pairs share the same (selector, target, input) shape.
+        assert_eq!(calls[1], calls[5]);
     }
 
     #[test]
