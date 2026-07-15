@@ -348,7 +348,7 @@ fn build_graph_dict<'py>(
 /// growable buffer — this avoids the per-path `Vec<EdgeKey>` allocation
 /// (~96k small allocs for a typical search) and only converts indices →
 /// `(pool_id, kind_u8)` lazily when building each Python list.
-#[pyclass]
+#[pyclass(module = "degenbot._ffi")]
 pub struct PathIterator {
     finder: OwnedPathFinder,
     /// Flat pool-index buffer for the current batch. Consume from the back:

@@ -28,7 +28,11 @@ use degenbot_simulation::dispatch_profitable::DispatchCandidate;
 /// Ports the Python `EngineResult` tuple `(path_id, opt_input, profit,
 /// hop_outputs, solve_block)` + the `engine_registry.paths.get(path_id)`
 /// `PathInfo` resolve. Construct one per solved path, per block.
-#[pyclass(name = "PyDispatchCandidate", skip_from_py_object)]
+#[pyclass(
+    name = "PyDispatchCandidate",
+    skip_from_py_object,
+    module = "degenbot._ffi"
+)]
 // `inner` is read by `dispatch_profitable_py` (A4, QQFTB4) — not yet landed;
 // the field is dead until then.
 #[allow(dead_code)]

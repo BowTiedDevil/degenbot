@@ -123,7 +123,7 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 /// Rust-owned `BotState`; `BlockPump` clones the same `Arc<Bot>` so its
 /// `dispatch_log` writes flow through to the engine's reads (N handles → one
 /// state — the Polars three-layer invariant, preserved + generalized by D4).
-#[pyclass(skip_from_py_object)]
+#[pyclass(skip_from_py_object, module = "degenbot._ffi")]
 pub struct PyBot {
     bot: Arc<Bot>,
     /// ADR-006 D4 (T3): the pump lifecycle state, shared with the

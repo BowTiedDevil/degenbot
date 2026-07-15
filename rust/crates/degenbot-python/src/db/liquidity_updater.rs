@@ -35,7 +35,7 @@ use crate::db::db_err_to_py;
 /// negated for V3; V4 Modify decoded signed). The block/log-index ordering
 /// invariants (`block >= last; same-block log_index > last`) are enforced in
 /// the Rust apply loop (panics on violation, matching the Python `assert`s).
-#[pyclass(name = "LiquidityUpdateEvent")]
+#[pyclass(name = "LiquidityUpdateEvent", module = "degenbot._ffi.db")]
 pub struct PyLiquidityUpdateEvent {
     block_number: u64,
     log_index: u64,

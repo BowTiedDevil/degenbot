@@ -411,7 +411,7 @@ impl PyCurveDataProvider {
 /// A thin Python handle to a pool registered in `BotState`.
 ///
 /// Does not own any state — all data lives in Rust inside `BotState`.
-#[pyclass(skip_from_py_object)]
+#[pyclass(skip_from_py_object, module = "degenbot._ffi")]
 pub struct PyLiquidityPool {
     core: Arc<parking_lot::RwLock<BotState>>,
     pool_id: u64,

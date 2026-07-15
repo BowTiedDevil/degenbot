@@ -35,7 +35,7 @@ use crate::db::pool_read::{PyExchangeRow, PyPoolManagerRow};
 /// the tokens + inserts the polymorphic base `pools` row + the subclass detail
 /// row. `stable` is `None` for all V2 families except `Aerodrome` (the sole
 /// V2 subclass with a `stable` column).
-#[pyclass(name = "V2PoolRowInput")]
+#[pyclass(name = "V2PoolRowInput", module = "degenbot._ffi.db")]
 pub struct PyV2PoolRowInput {
     address: String,
     token0_address: String,
@@ -85,7 +85,7 @@ impl PyV2PoolRowInput {
 }
 
 /// One V3 pool-row to upsert (WR7EA6). Mirrors [`degenbot_db::V3PoolRowInput`].
-#[pyclass(name = "V3PoolRowInput")]
+#[pyclass(name = "V3PoolRowInput", module = "degenbot._ffi.db")]
 pub struct PyV3PoolRowInput {
     address: String,
     token0_address: String,
@@ -132,7 +132,7 @@ impl PyV3PoolRowInput {
 /// One V4 pool-row to upsert (WR7EA6). Mirrors [`degenbot_db::V4PoolRowInput`].
 /// The `pool_id` / `manager_id` is resolved inside the `Rust` core from the
 /// passed `pool_manager_address` (one `SELECT` per batch).
-#[pyclass(name = "V4PoolRowInput")]
+#[pyclass(name = "V4PoolRowInput", module = "degenbot._ffi.db")]
 pub struct PyV4PoolRowInput {
     pool_hash: String,
     hooks: String,

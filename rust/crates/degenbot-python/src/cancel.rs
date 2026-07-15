@@ -32,7 +32,7 @@ use pyo3::prelude::*;
 /// state, no race between concurrent runs, no stale global stuck "set" after
 /// a run), + Python owns the lifetime (drop after the run). Mirrors the
 /// `Arc<AtomicBool>` the core `run_pool_update` / `run_aave_update` take.
-#[pyclass(name = "CancelHandle")]
+#[pyclass(name = "CancelHandle", module = "degenbot._ffi")]
 pub struct CancelHandle {
     /// The shared flag the chunk loop polls between chunks. `Arc`-cloned into
     /// the core call (both `run_pool_update` + `run_aave_update` take

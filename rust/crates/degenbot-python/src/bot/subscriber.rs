@@ -108,7 +108,7 @@ impl PoolStateSubscriber for PySubscriberAdapter {
 /// no-op-drop that simply releases the strong ref. To re-add, call
 /// `register_subscriber` again (a fresh `Weak` registers + a fresh handle
 /// returns).
-#[pyclass(name = "PySubscription")]
+#[pyclass(name = "PySubscription", module = "degenbot._ffi")]
 pub struct PySubscription {
     /// The strong ref keeping the adapter's `Weak` alive in `LogDispatcher`.
     /// `subscribe_pool_state_change` registered only a `Weak`; this anchor

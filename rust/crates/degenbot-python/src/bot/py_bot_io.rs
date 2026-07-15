@@ -74,7 +74,7 @@ type StableFeeTuple = (bool, Py<PyAny>, Py<PyAny>, Py<PyAny>);
 /// `.decimals`) so the builder's downstream attribute reads stay unchanged
 /// after the cutover from `session.scalar(select(Erc20TokenTable)...)`.
 #[cfg(feature = "db")]
-#[pyclass(name = "Erc20TokenRow")]
+#[pyclass(name = "Erc20TokenRow", module = "degenbot._ffi")]
 pub struct PyErc20TokenRow {
     id: i64,
     chain: i64,
@@ -132,7 +132,7 @@ impl PyErc20TokenRow {
     }
 }
 
-#[pyclass(name = "PyBotIo")]
+#[pyclass(name = "PyBotIo", module = "degenbot._ffi")]
 pub struct PyBotIo {
     /// Native Rust `AlloyProvider` extracted from the held Python provider
     /// when it is `PyAlloyProvider`-backed (live alloy or the O2 `OfflineProvider`

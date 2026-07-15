@@ -129,7 +129,11 @@ pub(crate) fn drain_buffer(handle: &SubscriptionHandle, py: Python<'_>) -> PyRes
 /// ```python
 /// await subscription.started()  # Raises on failure
 /// ```
-#[pyclass(name = "AlloySubscription", skip_from_py_object)]
+#[pyclass(
+    name = "AlloySubscription",
+    skip_from_py_object,
+    module = "degenbot._ffi"
+)]
 pub struct PyAlloySubscription {
     /// The shared subscription handle.
     handle: Arc<SubscriptionHandle>,

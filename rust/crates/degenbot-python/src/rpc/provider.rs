@@ -16,7 +16,7 @@ use runtime::get_runtime;
 use std::sync::Arc;
 
 /// Python wrapper for `LogFilter`.
-#[pyclass(name = "LogFilter", skip_from_py_object)]
+#[pyclass(name = "LogFilter", skip_from_py_object, module = "degenbot._ffi")]
 #[derive(Clone)]
 pub struct PyLogFilter {
     pub inner: LogFilter,
@@ -72,7 +72,7 @@ impl PyLogFilter {
 }
 
 /// Python wrapper for `AlloyProvider`.
-#[pyclass(name = "AlloyProvider", skip_from_py_object)]
+#[pyclass(name = "AlloyProvider", skip_from_py_object, module = "degenbot._ffi")]
 pub struct PyAlloyProvider {
     pub provider: Arc<AlloyProvider>,
     pub max_blocks_per_request: u64,

@@ -11,7 +11,7 @@ use pyo3_async_runtimes::tokio::future_into_py;
 use std::sync::Arc;
 
 /// Async contract wrapper for Python.
-#[pyclass(name = "AsyncContract", skip_from_py_object)]
+#[pyclass(name = "AsyncContract", skip_from_py_object, module = "degenbot._ffi")]
 pub struct PyAsyncContract {
     contract: Arc<Contract>,
 }
