@@ -45,14 +45,6 @@ if TYPE_CHECKING:
     from eth_typing import HexAddress, HexStr
 
 
-class AnvilNotFound(Exception):
-    """`anvil` binary not found in `$PATH`/executable lookup by the rust core."""
-
-    def __init__(self) -> None:  # pragma: no cover
-        """Initialize the instance."""
-        super().__init__("Anvil path could not be located.")
-
-
 def _coerce_address_to_str(address: HexAddress | bytes) -> str:
     """Coerce a legacy Python `HexAddress | bytes` to a 0x-prefixed hex str.
 

@@ -39,54 +39,6 @@ if TYPE_CHECKING:
     from degenbot.types.rpc_types import BlockData, TxParams
 
 
-class BlockNotRecordedError(Exception):
-    """Raised when requesting data for a block that was not recorded.
-
-    Kept importable for backwards compatibility. The delegating shell now
-    surfaces unrecorded blocks as ``None`` (for ``get_block``) or an alloy
-    ``ProviderError`` (for ``eth_call``/``eth_getCode`` at an unrecorded block)
-    rather than this specific type.
-    """
-
-    def __init__(self, block: int, available: list[int]) -> None:
-        """Initialize the instance."""
-        self.block = block
-        self.available = available
-        available_str = ", ".join(str(b) for b in available)
-        super().__init__(f"No data recorded for block {block}. Available blocks: {available_str}")
-
-
-class OfflineDataMissing(Exception):
-    """Raised when requested call data was not recorded.
-
-    Kept importable for backwards compatibility. The delegating shell now
-    surfaces unrecorded calls as an alloy ``ProviderError`` (``RuntimeError``)
-    rather than this specific type.
-    """
-
-    def __init__(self, to: str, data: bytes) -> None:
-        """Initialize the instance."""
-        super().__init__(f"No recorded data for call to {to} with data 0x{data.hex()[:40]}...")
-
-
-class OfflineCallReverted(Exception):
-    """Raised when a recorded call reverted or the contract didn't exist at the block.
-
-    Kept importable for backwards compatibility. The delegating shell now
-    surfaces recorded reverts as a :class:`degenbot.exceptions.ContractLogicError`
-    (the alloy revert path) rather than this specific type.
-    """
-
-    def __init__(self, to: str, data: bytes) -> None:
-        self.to = to
-        self.data = data
-        msg = (
-            f"Recorded call reverted or contract not deployed"
-            f" for call to {to} with data 0x{data.hex()[:40]}..."
-        )
-        super().__init__(msg)
-
-
 class OfflineProvider:
     """Ethereum provider that serves pre-recorded chain data.
 
@@ -508,7 +460,5 @@ class OfflineProvider:
 
 
 __all__ = [
-    "BlockNotRecordedError",
-    "OfflineDataMissing",
     "OfflineProvider",
 ]
