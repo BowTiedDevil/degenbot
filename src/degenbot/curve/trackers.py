@@ -128,6 +128,3 @@ class CurveStableswapPoolTracker(
             f"chain_id={self._chain_id}, "
             f"pools={len(self._tracked_pools)})"
         )
-
-        """Return a string representation."""
-        return None

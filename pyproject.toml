@@ -239,11 +239,24 @@ dev = [
     "ty",
     "vyper",
     "web3 ~= 7.14",
+    "vulture>=2.16",
 ]
 
 [tool.ty.environment]
 python-version = "3.12"
 extra-paths = ["examples"]
+
+[tool.vulture]
+# Dead-code detector. Output is a triage list, not a gate: each hit
+# needs a human call (rg for refs) before deletion — vulture is static
+# and can't see FFI-seam callers (Rust core) or framework dispatch
+# (pydantic validators, SQLAlchemy TypeDecorator signatures, protocol
+# params). 80% confidence is the operating point — the 60% tier is
+# mostly framework-dispatched methods (validators, properties on
+# models, enum members referenced dynamically).
+min_confidence = 80
+paths = ["src/degenbot"]
+exclude = ["src/degenbot/migrations"]  # Alembic, retention-gated per ADR-010
 
 [tool.uv]
 exclude-newer = "14 days"

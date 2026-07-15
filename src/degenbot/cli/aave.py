@@ -42,7 +42,6 @@ from degenbot.updater import CancelHandle
 if TYPE_CHECKING:
     from eth_typing.evm import BlockParams
 
-
 # Display limit for ``aave position risk`` output (the sole survivor of the
 # former ``constants.py`` — the rest was deleted by the §4.2 writer
 # retirement, CZM7TI, which moved every writer path to the Rust core).
