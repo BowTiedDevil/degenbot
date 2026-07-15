@@ -21,7 +21,7 @@ use pyo3::types::PyBytes;
 /// Constructed from the operator private key (hex or 32 raw bytes) + a chain
 /// id. ``sign_eip1559`` builds + signs a type-2 ``TxEnvelope`` and returns the
 /// raw signed bytes ready for ``eth_sendRawTransaction``.
-#[pyclass(name = "PyTxSigner", skip_from_py_object)]
+#[pyclass(name = "PyTxSigner", skip_from_py_object, module = "degenbot._ffi")]
 pub struct PyTxSigner {
     signer: TxSigner,
 }

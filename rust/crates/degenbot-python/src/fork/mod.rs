@@ -84,7 +84,7 @@ fn parse_addr(address: &str) -> PyResult<Address> {
 /// Rust-owned Anvil fork handle: subprocess + IPC `DynProvider` + dev-RPC
 /// surface. Construct via `AnvilFork(**kwargs)`; see `__new__` for the
 /// keyword surface.
-#[pyclass(name = "AnvilFork", skip_from_py_object)]
+#[pyclass(name = "AnvilFork", skip_from_py_object, module = "degenbot._ffi")]
 pub struct PyAnvilFork {
     /// The Rust core handle. `Arc` so each `#[pymethods]` call can cheaply
     /// clone out before `py.detach` (the underlying `AnvilFork` itself is

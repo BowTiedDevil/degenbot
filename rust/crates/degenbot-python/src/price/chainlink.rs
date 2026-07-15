@@ -20,7 +20,11 @@ use runtime::get_runtime;
 /// Constructed with the aggregator address + a shared `AlloyProvider`; routes
 /// `decimals()` / `latestRoundData()` through the Rust `eth_call` + ABI decode
 /// path (no Python `abi_decode` / `provider.call_raw` round-trip).
-#[pyclass(name = "PyChainlinkPriceFeed", skip_from_py_object)]
+#[pyclass(
+    name = "PyChainlinkPriceFeed",
+    skip_from_py_object,
+    module = "degenbot._ffi"
+)]
 pub struct PyChainlinkPriceFeed {
     feed: ChainlinkPriceFeed,
 }

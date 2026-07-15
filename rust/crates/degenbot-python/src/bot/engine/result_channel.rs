@@ -430,7 +430,7 @@ fn hop_info_to_pydict<'py>(py: Python<'py>, hop: &HopInfo) -> PyResult<Bound<'py
 // shared receiver survives across awaits.
 
 /// pyo3 async iterator over `newHeads` block notifications.
-#[pyclass(name = "BlockStream", skip_from_py_object)]
+#[pyclass(name = "BlockStream", skip_from_py_object, module = "degenbot._ffi")]
 pub struct BlockStream {
     /// The block-notification receiver. `Option` + `put-back` mirrors
     /// `PyUniswapArbEngine::result_rx` so the coroutine can re-share the

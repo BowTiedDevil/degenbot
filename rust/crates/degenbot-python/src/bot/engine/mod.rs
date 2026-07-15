@@ -54,7 +54,11 @@ pub(crate) use degenbot_bot::solvers::uniswap_engine::{
 ///
 /// Wraps [`UniswapEngine`] with a `parking_lot::Mutex` for safe access
 /// from the Tokio pump task.
-#[pyclass(name = "UniswapArbEngine", skip_from_py_object)]
+#[pyclass(
+    name = "UniswapArbEngine",
+    skip_from_py_object,
+    module = "degenbot._ffi"
+)]
 pub struct PyUniswapArbEngine {
     /// Shared engine state
     engine: Arc<parking_lot::Mutex<UniswapEngine>>,

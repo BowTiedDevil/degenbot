@@ -11,7 +11,7 @@ use runtime::get_runtime;
 use std::sync::Arc;
 
 /// Python wrapper for a Contract.
-#[pyclass(name = "Contract", skip_from_py_object)]
+#[pyclass(name = "Contract", skip_from_py_object, module = "degenbot._ffi")]
 pub struct PyContract {
     contract: Contract,
 }

@@ -46,7 +46,7 @@ pub use snapshot::PyDatabaseSnapshot;
 // `VerificationMismatchError` / `HookedPoolRejectedError` (typed subclasses of
 // a builtin so callers classify by type, not fragile string matching).
 create_exception!(
-    degenbot_rs,
+    degenbot._ffi.db,
     DatabaseSchemaStale,
     PyValueError,
     "The database is stamped at a prior Alembic revision; run `degenbot database upgrade`."

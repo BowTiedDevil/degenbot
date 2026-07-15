@@ -20,7 +20,7 @@ use crate::conversion::alloy::u256_to_py;
 /// Mirrors the `SQLAlchemy` `LiquidityPoolTable` scalar + FK-id columns the
 /// builders hydrate relationships from: `exchange_id` / `token0_id` /
 /// `token1_id` feed the per-FK fetch methods; `kind` selects the subclass row.
-#[pyclass(name = "LiquidityPoolRow")]
+#[pyclass(name = "LiquidityPoolRow", module = "degenbot._ffi.db")]
 pub struct PyLiquidityPoolRow {
     id: i64,
     address: String,
@@ -85,7 +85,7 @@ impl PyLiquidityPoolRow {
 /// The single pyclass surfaces every subclass field as an attribute; the
 /// `variant` getter tells Python which family populated it (so the builder
 /// picks the right fields).
-#[pyclass(name = "PoolKindRow")]
+#[pyclass(name = "PoolKindRow", module = "degenbot._ffi.db")]
 pub struct PyPoolKindRow {
     variant: String,
     pool_id: i64,
@@ -231,7 +231,7 @@ impl PyPoolKindRow {
 // ── FK companion rows ────────────────────────────────────────────────
 
 /// A typed `exchanges` row (`exchange` relationship hydration).
-#[pyclass(name = "ExchangeRow")]
+#[pyclass(name = "ExchangeRow", module = "degenbot._ffi.db")]
 pub struct PyExchangeRow {
     id: i64,
     chain_id: i64,
@@ -293,7 +293,7 @@ impl PyExchangeRow {
 /// A `pool_managers` row (V4). The V4 builder resolves its pool manager by
 /// `(address, chain)` to obtain the `id` (for the V4 pool join) + the
 /// `state_view` contract address.
-#[pyclass(name = "PoolManagerRow")]
+#[pyclass(name = "PoolManagerRow", module = "degenbot._ffi.db")]
 pub struct PyPoolManagerRow {
     id: i64,
     address: String,
@@ -347,7 +347,7 @@ impl PyPoolManagerRow {
 // ── V3 tick snapshot rows ────────────────────────────────────────────
 
 /// A `liquidity_positions` row (V3 tick liquidity).
-#[pyclass(name = "LiquidityPositionRow")]
+#[pyclass(name = "LiquidityPositionRow", module = "degenbot._ffi.db")]
 pub struct PyLiquidityPositionRow {
     tick: i32,
     /// `liquidity_net` is a `uint128` stored as a decimal string; exposed as a
@@ -400,7 +400,7 @@ impl PyLiquidityPositionRow {
 }
 
 /// An `initialization_maps` row (V3 tick bitmap).
-#[pyclass(name = "InitializationMapRow")]
+#[pyclass(name = "InitializationMapRow", module = "degenbot._ffi.db")]
 pub struct PyInitializationMapRow {
     word: i64,
     bitmap: Py<PyAny>,
