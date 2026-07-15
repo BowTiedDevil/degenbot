@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from degenbot.curve.types import CurveStableswapPoolState, DyCalculationInputs, SwapStyle
 
-from degenbot._ffi import curve_stableswap_get_y
+from degenbot.curve.math import stableswap_get_y as curve_stableswap_get_y
 from degenbot.exceptions.pool import EVMRevertError
 
 

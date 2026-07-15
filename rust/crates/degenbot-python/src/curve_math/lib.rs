@@ -110,7 +110,7 @@ fn curve_err(e: CurveMathError) -> PyErr {
 ///
 /// Returns `OverflowError` on uint256 overflow; `ValueError` ("Not converged") after 255 iterations.
 #[pyfunction(signature = (xp, amp, n_coins, a_precision, d_variant))]
-pub fn curve_stableswap_get_d(
+pub fn stableswap_get_d(
     xp: &Bound<'_, PyAny>,
     amp: &Bound<'_, PyAny>,
     n_coins: &Bound<'_, PyAny>,
@@ -136,7 +136,7 @@ pub fn curve_stableswap_get_d(
 /// Returns `ValueError` ("Index out of bounds") if `i == j` or out of range; "Not converged" after 255 iterations; `OverflowError` on overflow.
 #[pyfunction(signature = (i, j, x, xp, amp, n_coins, a_precision, y_variant, d_variant))]
 #[allow(clippy::too_many_arguments)] // mirrors the Vyper contract's 9-arg signature
-pub fn curve_stableswap_get_y(
+pub fn stableswap_get_y(
     i: usize,
     j: usize,
     x: &Bound<'_, PyAny>,
@@ -169,7 +169,7 @@ pub fn curve_stableswap_get_y(
 ///
 /// Returns `ValueError` ("Index out of bounds") if `i >= n_coins`; "Not converged" after 255 iterations; `OverflowError` on overflow.
 #[pyfunction(signature = (amp, i, xp, d, n_coins, a_precision, yd_variant))]
-pub fn curve_stableswap_get_y_d(
+pub fn stableswap_get_y_d(
     amp: &Bound<'_, PyAny>,
     i: usize,
     xp: &Bound<'_, PyAny>,
@@ -198,7 +198,7 @@ pub fn curve_stableswap_get_y_d(
 ///
 /// Returns `ValueError` ("Unsafe value") on an A/gamma/D/frac safety-assertion failure; "Not converged" after 255 iterations; `OverflowError` on overflow.
 #[pyfunction(signature = (ann, gamma, xp, d, token_index, n_coins, a_multiplier))]
-pub fn curve_stableswap_newton_y(
+pub fn stableswap_newton_y(
     ann: &Bound<'_, PyAny>,
     gamma: &Bound<'_, PyAny>,
     xp: &Bound<'_, PyAny>,
@@ -227,7 +227,7 @@ pub fn curve_stableswap_newton_y(
 ///
 /// Returns `OverflowError` on uint256 overflow.
 #[pyfunction(signature = (x, fee_gamma, n_coins))]
-pub fn curve_stableswap_reduction_coefficient(
+pub fn stableswap_reduction_coefficient(
     x: &Bound<'_, PyAny>,
     fee_gamma: &Bound<'_, PyAny>,
     n_coins: &Bound<'_, PyAny>,
@@ -242,16 +242,39 @@ pub fn curve_stableswap_reduction_coefficient(
     u256_to_py_obj(py, result)
 }
 
-/// Register all Curve-math functions on the umbrella module.
+/// Register all Curve-math functions on a real Python submodule.
+///
+/// Creates `degenbot._ffi.curve_math` (a `PyModule`, not a flat
+/// root-level prefix) and registers the 5 `StableSwap` solver functions on it
+/// with un-prefixed names — `stableswap_get_d`, not `curve_stableswap_get_d`.
+/// The `curve_` prefix was an artifact of the flat root registration; on the
+/// submodule it is redundant.
+///
+/// The companion `src/degenbot/curve/math.py` re-exports these as the stable
+/// import path (`from degenbot.curve.math import stableswap_get_y`),
+/// decoupling Python consumers from the `degenbot._ffi` internal module.
 ///
 /// # Errors
 ///
 /// Returns `PyErr` if any function fails to register.
 pub fn add_curve_math_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(curve_stableswap_get_d, m)?)?;
-    m.add_function(wrap_pyfunction!(curve_stableswap_get_y, m)?)?;
-    m.add_function(wrap_pyfunction!(curve_stableswap_get_y_d, m)?)?;
-    m.add_function(wrap_pyfunction!(curve_stableswap_newton_y, m)?)?;
-    m.add_function(wrap_pyfunction!(curve_stableswap_reduction_coefficient, m)?)?;
+    let py = m.py();
+    let submod = PyModule::new(py, "degenbot._ffi.curve_math")?;
+
+    submod.add_function(wrap_pyfunction!(stableswap_get_d, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(stableswap_get_y, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(stableswap_get_y_d, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(stableswap_newton_y, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(stableswap_reduction_coefficient, &submod)?)?;
+
+    // Register as parent attribute AND in `sys.modules` so
+    // `from degenbot._ffi.curve_math import X` resolves (see
+    // `add_balancer_math_module` for the `sys.modules` rationale —
+    // the extension module is a single file, not a package).
+    m.add_submodule(&submod)?;
+    py.import("sys")?
+        .getattr("modules")?
+        .set_item("degenbot._ffi.curve_math", &submod)?;
+
     Ok(())
 }
