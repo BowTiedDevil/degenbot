@@ -1291,7 +1291,7 @@ The extension is built automatically during installation using [maturin](https:/
 Uniswap V3 tick-to-price conversions:
 
 ```python
-from degenbot import get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio
+from degenbot.uniswap.v3_libraries import get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio
 
 # Convert tick to sqrt price (X96 format)
 sqrt_price = get_sqrt_ratio_at_tick(253320)  # Returns: 56736275128821120...
@@ -1321,9 +1321,9 @@ address = decode_single("address", data[:32])
 EIP-55 checksummed address conversion:
 
 ```python
-from degenbot import to_checksum_address
+from degenbot import get_checksum_address
 
-checksummed = to_checksum_address("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+checksummed = get_checksum_address("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
 # Returns: "0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF"
 ```
 
@@ -1332,11 +1332,11 @@ checksummed = to_checksum_address("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
 Encode function calls and compute selectors:
 
 ```python
-from degenbot import encode_function_call, get_function_selector, decode_return_data
+from degenbot.contract import encode_function_call, get_function_selector, decode_return_data
 ```
 
 <!-- invisible-code-block: python
-from degenbot import encode_function_call, get_function_selector, decode_return_data
+from degenbot.contract import encode_function_call, get_function_selector, decode_return_data
 -->
 
 ```python
