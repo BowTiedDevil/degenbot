@@ -119,7 +119,7 @@ fn bal_err(e: BalancerMathError) -> PyErr {
 ///
 /// Returns `OverflowError`/`ValueError` (Solidity revert tag) on overflow or a zero invariant.
 #[pyfunction(signature = (normalized_weights, balances, version))]
-pub fn balancer_weighted_calculate_invariant(
+pub fn weighted_calculate_invariant(
     normalized_weights: &Bound<'_, PyAny>,
     balances: &Bound<'_, PyAny>,
     version: u8,
@@ -142,7 +142,7 @@ pub fn balancer_weighted_calculate_invariant(
 ///
 /// Returns `ValueError` (`MAX_IN_RATIO`) if `amount_in` exceeds 30% of `balance_in`, plus overflow reverts.
 #[pyfunction(signature = (balance_in, weight_in, balance_out, weight_out, amount_in, version))]
-pub fn balancer_weighted_calc_out_given_in(
+pub fn weighted_calc_out_given_in(
     balance_in: &Bound<'_, PyAny>,
     weight_in: &Bound<'_, PyAny>,
     balance_out: &Bound<'_, PyAny>,
@@ -169,7 +169,7 @@ pub fn balancer_weighted_calc_out_given_in(
 ///
 /// Returns `ValueError` (`MAX_OUT_RATIO`) if `amount_out` exceeds 30% of `balance_out`, plus overflow reverts.
 #[pyfunction(signature = (balance_in, weight_in, balance_out, weight_out, amount_out, version))]
-pub fn balancer_weighted_calc_in_given_out(
+pub fn weighted_calc_in_given_out(
     balance_in: &Bound<'_, PyAny>,
     weight_in: &Bound<'_, PyAny>,
     balance_out: &Bound<'_, PyAny>,
@@ -196,7 +196,7 @@ pub fn balancer_weighted_calc_in_given_out(
 ///
 /// Returns `OverflowError` (`MUL_OVERFLOW`/`SUB_OVERFLOW`) on overflow.
 #[pyfunction(signature = (amount, fee_percentage))]
-pub fn balancer_weighted_subtract_swap_fee_amount(
+pub fn weighted_subtract_swap_fee_amount(
     amount: &Bound<'_, PyAny>,
     fee_percentage: &Bound<'_, PyAny>,
 ) -> PyResult<PyObject> {
@@ -215,7 +215,7 @@ pub fn balancer_weighted_subtract_swap_fee_amount(
 ///
 /// Returns `OverflowError` (`MUL_OVERFLOW`/`ADD_OVERFLOW`) on overflow.
 #[pyfunction(signature = (amount, fee_percentage))]
-pub fn balancer_weighted_add_swap_fee_amount(
+pub fn weighted_add_swap_fee_amount(
     amount: &Bound<'_, PyAny>,
     fee_percentage: &Bound<'_, PyAny>,
 ) -> PyResult<PyObject> {
@@ -243,10 +243,7 @@ pub fn balancer_weighted_add_swap_fee_amount(
 /// Never reverts (differs from the Python port's `MUL_OVERFLOW` check,
 /// which is unreachable for valid scaling factors).
 #[pyfunction(signature = (a, b))]
-pub fn balancer_fixed_point_mul_down(
-    a: &Bound<'_, PyAny>,
-    b: &Bound<'_, PyAny>,
-) -> PyResult<PyObject> {
+pub fn fixed_point_mul_down(a: &Bound<'_, PyAny>, b: &Bound<'_, PyAny>) -> PyResult<PyObject> {
     let py = a.py();
     let result = degenbot_balancer_math::fixed_point::mul_down(extract_u256(a)?, extract_u256(b)?)
         .map_err(bal_err)?;
@@ -260,10 +257,7 @@ pub fn balancer_fixed_point_mul_down(
 /// Returns `ValueError` (`ZERO_DIVISION`) on `b == 0`; `OverflowError`
 /// (`DIV_INTERNAL`) when `a * ONE` exceeds `MAX_UINT256`.
 #[pyfunction(signature = (a, b))]
-pub fn balancer_fixed_point_div_down(
-    a: &Bound<'_, PyAny>,
-    b: &Bound<'_, PyAny>,
-) -> PyResult<PyObject> {
+pub fn fixed_point_div_down(a: &Bound<'_, PyAny>, b: &Bound<'_, PyAny>) -> PyResult<PyObject> {
     let py = a.py();
     let result = degenbot_balancer_math::fixed_point::div_down(extract_u256(a)?, extract_u256(b)?)
         .map_err(bal_err)?;
@@ -277,10 +271,7 @@ pub fn balancer_fixed_point_div_down(
 /// Returns `ValueError` (`ZERO_DIVISION`) on `b == 0`; `OverflowError`
 /// (`DIV_INTERNAL`) when `a * ONE` exceeds `MAX_UINT256`.
 #[pyfunction(signature = (a, b))]
-pub fn balancer_fixed_point_div_up(
-    a: &Bound<'_, PyAny>,
-    b: &Bound<'_, PyAny>,
-) -> PyResult<PyObject> {
+pub fn fixed_point_div_up(a: &Bound<'_, PyAny>, b: &Bound<'_, PyAny>) -> PyResult<PyObject> {
     let py = a.py();
     let result = degenbot_balancer_math::fixed_point::div_up(extract_u256(a)?, extract_u256(b)?)
         .map_err(bal_err)?;
@@ -295,7 +286,7 @@ pub fn balancer_fixed_point_div_up(
 ///
 /// Returns `ValueError` (`STABLE_INVARIANT_DIDNT_CONVERGE`) if Newton iteration fails to converge.
 #[pyfunction(signature = (amp, balances))]
-pub fn balancer_stable_calculate_invariant(
+pub fn stable_calculate_invariant(
     amp: &Bound<'_, PyAny>,
     balances: &Bound<'_, PyAny>,
 ) -> PyResult<PyObject> {
@@ -312,7 +303,7 @@ pub fn balancer_stable_calculate_invariant(
 ///
 /// Returns `ValueError` (`STABLE_INVARIANT_DIDNT_CONVERGE`) if Newton iteration fails to converge.
 #[pyfunction(signature = (amp, balances, round_up))]
-pub fn balancer_stable_calculate_invariant_deployed(
+pub fn stable_calculate_invariant_deployed(
     amp: &Bound<'_, PyAny>,
     balances: &Bound<'_, PyAny>,
     round_up: bool,
@@ -334,7 +325,7 @@ pub fn balancer_stable_calculate_invariant_deployed(
 ///
 /// Returns `ValueError` (`STABLE_GET_BALANCE_DIDNT_CONVERGE`/`SUB_OVERFLOW`) on non-convergence or underflow.
 #[pyfunction(signature = (amp, balances, token_index_in, token_index_out, token_amount_in, invariant))]
-pub fn balancer_stable_calc_out_given_in(
+pub fn stable_calc_out_given_in(
     amp: &Bound<'_, PyAny>,
     balances: &Bound<'_, PyAny>,
     token_index_in: usize,
@@ -362,7 +353,7 @@ pub fn balancer_stable_calc_out_given_in(
 ///
 /// Returns `ValueError` (`STABLE_GET_BALANCE_DIDNT_CONVERGE`/`SUB_OVERFLOW`) on non-convergence or underflow.
 #[pyfunction(signature = (amp, balances, token_index_in, token_index_out, token_amount_out, invariant))]
-pub fn balancer_stable_calc_in_given_out(
+pub fn stable_calc_in_given_out(
     amp: &Bound<'_, PyAny>,
     balances: &Bound<'_, PyAny>,
     token_index_in: usize,
@@ -384,29 +375,61 @@ pub fn balancer_stable_calc_in_given_out(
     u256_to_py_obj(py, result)
 }
 
-/// Register all Balancer-math functions on the umbrella module.
+/// Register the Balancer-math functions as a real Python submodule.
+///
+/// Creates `degenbot._ffi.balancer_math` (a `PyModule`, not a flat
+/// root-level prefix) and registers the 12 swap-path math functions on it
+/// with un-prefixed names — `fixed_point_mul_down`, not
+/// `balancer_fixed_point_mul_down`. The `balancer_` prefix was an artifact
+/// of the flat root registration; on the submodule it is redundant.
+///
+/// The companion `src/degenbot/balancer/math.py` re-exports these as the
+/// stable import path (`from degenbot.balancer.math import fixed_point_div_down`),
+/// decoupling Python consumers from the `degenbot._ffi` internal module and
+/// letting the Rust crate structure show through to Python.
 ///
 /// # Errors
 ///
 /// Returns `PyErr` if any function fails to register.
 pub fn add_balancer_math_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(balancer_weighted_calculate_invariant, m)?)?;
-    m.add_function(wrap_pyfunction!(balancer_weighted_calc_out_given_in, m)?)?;
-    m.add_function(wrap_pyfunction!(balancer_weighted_calc_in_given_out, m)?)?;
-    m.add_function(wrap_pyfunction!(
-        balancer_weighted_subtract_swap_fee_amount,
-        m
+    let py = m.py();
+    let submod = PyModule::new(py, "degenbot._ffi.balancer_math")?;
+
+    // Weighted math
+    submod.add_function(wrap_pyfunction!(weighted_calculate_invariant, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(weighted_calc_out_given_in, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(weighted_calc_in_given_out, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(
+        weighted_subtract_swap_fee_amount,
+        &submod
     )?)?;
-    m.add_function(wrap_pyfunction!(balancer_weighted_add_swap_fee_amount, m)?)?;
-    m.add_function(wrap_pyfunction!(balancer_fixed_point_mul_down, m)?)?;
-    m.add_function(wrap_pyfunction!(balancer_fixed_point_div_down, m)?)?;
-    m.add_function(wrap_pyfunction!(balancer_fixed_point_div_up, m)?)?;
-    m.add_function(wrap_pyfunction!(balancer_stable_calculate_invariant, m)?)?;
-    m.add_function(wrap_pyfunction!(
-        balancer_stable_calculate_invariant_deployed,
-        m
+    submod.add_function(wrap_pyfunction!(weighted_add_swap_fee_amount, &submod)?)?;
+
+    // Fixed-point (shared by weighted + stable)
+    submod.add_function(wrap_pyfunction!(fixed_point_mul_down, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(fixed_point_div_down, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(fixed_point_div_up, &submod)?)?;
+
+    // Stable math
+    submod.add_function(wrap_pyfunction!(stable_calculate_invariant, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(
+        stable_calculate_invariant_deployed,
+        &submod
     )?)?;
-    m.add_function(wrap_pyfunction!(balancer_stable_calc_out_given_in, m)?)?;
-    m.add_function(wrap_pyfunction!(balancer_stable_calc_in_given_out, m)?)?;
+    submod.add_function(wrap_pyfunction!(stable_calc_out_given_in, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(stable_calc_in_given_out, &submod)?)?;
+
+    // Register as an attribute of the parent AND in `sys.modules` so
+    // `from degenbot._ffi.balancer_math import X` resolves. `add_submodule`
+    // alone only sets the attribute — Python's import system also requires
+    // a `sys.modules` entry to traverse the `degenbot._ffi.balancer_math`
+    // dotted path (the extension module `_ffi.abi3.so` is a single file,
+    // not a package, so without this entry the dotted-path import fails
+    // with `ModuleNotFoundError: 'degenbot._ffi' is not a package`).
+    m.add_submodule(&submod)?;
+    py.import("sys")?
+        .getattr("modules")?
+        .set_item("degenbot._ffi.balancer_math", &submod)?;
+
     Ok(())
 }

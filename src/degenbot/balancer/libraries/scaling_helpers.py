@@ -3,10 +3,16 @@
 from collections.abc import Sequence
 from typing import cast
 
-from degenbot._ffi import balancer_fixed_point_div_down as _rs_div_down
-from degenbot._ffi import balancer_fixed_point_div_up as _rs_div_up
-from degenbot._ffi import balancer_fixed_point_mul_down as _rs_mul_down
 from degenbot.balancer.libraries.constants import ONE
+from degenbot.balancer.math import (
+    fixed_point_div_down as _rs_div_down,
+)
+from degenbot.balancer.math import (
+    fixed_point_div_up as _rs_div_up,
+)
+from degenbot.balancer.math import (
+    fixed_point_mul_down as _rs_mul_down,
+)
 from degenbot.erc20 import Erc20Token
 
 # To simplify Pool logic, all token balances and amounts are normalized to behave as if the token
