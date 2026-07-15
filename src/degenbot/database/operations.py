@@ -3,7 +3,7 @@
 The SQLite **file operations** (`create_new_sqlite_database`,
 `backup_sqlite_database`, `compact_sqlite_database`,
 `upgrade_existing_sqlite_database`) are now thin delegating shells over the
-Rust core (`degenbot_rs.db_*`), per ADR-005 / the three-layer architecture
+Rust core (`degenbot._ffi.db_*`), per ADR-005 / the three-layer architecture
 (ergo `OP23QV`). The Alembic-config/session helpers stay Python (config +
 session orchestration are shell concerns — rubric §2.1).
 """
@@ -16,7 +16,7 @@ from alembic.config import Config
 from sqlalchemy import URL, Engine, create_engine, event
 from sqlalchemy.orm import Session, scoped_session, sessionmaker
 
-from degenbot.degenbot_rs import (
+from degenbot._ffi import (
     DatabaseSchemaStale,
     db_backup_database,
     db_compact_database,
@@ -40,7 +40,7 @@ def backup_sqlite_database(
     """Back up the SQLite database to a ``.db.bak`` sibling.
 
     The backup + integrity-check now run in the Rust core
-    (``degenbot_rs.db_backup_database``); this shell resolves the path,
+    (``degenbot._ffi.db_backup_database``); this shell resolves the path,
     applies the optional ``prefix``/``suffix`` stem decoration, and honors the
     ``BackupExists`` guard (CLI orchestration concern — rubric §2.1).
 
@@ -84,7 +84,7 @@ def _get_sqlite_db_string(db_path: pathlib.Path) -> str:
 def create_new_sqlite_database(db_path: pathlib.Path) -> None:
     """Create a new SQLite database stamped at the Alembic head.
 
-    Delegates to the Rust core (``degenbot_rs.db_create_new_database``):
+    Delegates to the Rust core (``degenbot._ffi.db_create_new_database``):
     WAL mode + the full head DDL + ``VACUUM`` + an Alembic ``head`` stamp.
     """
     db_create_new_database(str(db_path))
@@ -94,7 +94,7 @@ def create_new_sqlite_database(db_path: pathlib.Path) -> None:
 def compact_sqlite_database(db_path: pathlib.Path) -> None:
     """Compact the SQLite database via ``VACUUM``.
 
-    Delegates to the Rust core (``degenbot_rs.db_compact_database").
+    Delegates to the Rust core (``degenbot._ffi.db_compact_database").
     """
     db_compact_database(str(db_path))
     logger.info(f"Compacted SQLite database at {db_path}")
@@ -105,7 +105,7 @@ def upgrade_existing_sqlite_database(database_path: pathlib.Path) -> str:
 
     Two-stage upgrade path:
 
-    1. **Rust fast-path** (``degenbot_rs.db_upgrade_database``): a no-op if
+    1. **Rust fast-path** (``degenbot._ffi.db_upgrade_database``): a no-op if
        already at the Alembic head, or applies the head DDL + stamp on an
        empty file. This handles the common cases without spinning up the
        Alembic migration runner.
@@ -143,7 +143,7 @@ def convert_alembic_to_rust_owned(database_path: pathlib.Path) -> str:
     """Flip an Alembic-stamped DB into Rust ownership (ADR-010 cutover).
 
     A thin delegating shell over the Rust core
-    (``degenbot_rs.db_convert_alembic_to_rust_owned``): drops
+    (``degenbot._ffi.db_convert_alembic_to_rust_owned``): drops
     ``alembic_version``, stamps ``_degenbot_db_schema_version``. The cutover is
     one-way and opt-in — nothing on the open path auto-runs it.
 
@@ -166,7 +166,7 @@ def convert_alembic_to_rust_owned(database_path: pathlib.Path) -> str:
 def inspect_schema_state(database_path: pathlib.Path) -> str:
     """Inspect the schema state WITHOUT writing (ADR-010 dry-run).
 
-    Thin shell over ``degenbot_rs.db_inspect_schema_state`` — the read-only
+    Thin shell over ``degenbot._ffi.db_inspect_schema_state`` — the read-only
     companion to :func:`convert_alembic_to_rust_owned`. Reports the state for
     all cases (never refuses); only a genuine I/O failure raises.
 
@@ -181,7 +181,7 @@ def inspect_schema_state(database_path: pathlib.Path) -> str:
 def heal_database(database_path: pathlib.Path) -> dict[str, Any]:
     """Out-of-place dump-and-restore heal (ADR-011).
 
-    Thin shell over ``degenbot_rs.db_heal_database``: rebuilds the DB at the
+    Thin shell over ``degenbot._ffi.db_heal_database``: rebuilds the DB at the
     Rust head schema, copies all user rows preserving PKs + FK integrity,
     stamps RustOwned, atomic-swaps with a ``*.bak`` backup. Never mutates
     the old DB in place. No Alembic dependency (the column mapping is

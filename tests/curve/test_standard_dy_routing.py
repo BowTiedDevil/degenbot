@@ -2,7 +2,7 @@
 
 Ergo 6TLIJ5/7QMFWM: the ``StandardDyCalculator.calculate`` solve step routes
 ``stableswap_get_y`` through the ``degenbot-curve-math`` Rust leaf
-(``degenbot_rs.curve_stableswap_get_y``) instead of the Python
+(``degenbot._ffi.curve_stableswap_get_y``) instead of the Python
 ``calculations/stableswap.py`` port. The variant-orchestration (rate/fee
 conversion, balance sourcing) + the crypto/live_admin/metapool variants stay
 Python (I/O-bound via ``CurveDataProvider`` + base-pool recursion — out of
@@ -23,7 +23,7 @@ import pytest
 from degenbot.curve.calculators import standard as standard_mod
 from degenbot.curve.calculators.standard import StandardDyCalculator
 from degenbot.curve.types import DVariant, DyCalculationInputs, SwapStyle, YVariant
-from degenbot.degenbot_rs import curve_stableswap_get_y
+from degenbot._ffi import curve_stableswap_get_y
 
 PRECISION = 10**18
 FEE_DENOMINATOR = 10**10

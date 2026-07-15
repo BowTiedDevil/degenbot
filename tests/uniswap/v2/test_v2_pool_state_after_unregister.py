@@ -17,7 +17,7 @@ from fractions import Fraction
 import pytest
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.degenbot_rs import PyBot
+from degenbot._ffi import PyBot
 from degenbot.exceptions import DegenbotValueError
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from tests.helpers.erc20_factory import make_erc20

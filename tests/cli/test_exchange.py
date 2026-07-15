@@ -1,7 +1,7 @@
 """CLI tests for the `exchange activate/deactivate` Rust-seam cutover (MXAEWD).
 
 The ~30 commands in `src/degenbot/cli/exchange.py` are thin delegating shells
-over the Rust core substrate (`degenbot_rs.db_upsert_exchange` /
+over the Rust core substrate (`degenbot._ffi.db_upsert_exchange` /
 `db_set_exchange_active` / `db_fetch_exchange_by_name` /
 `db_upsert_pool_manager`). These tests pin the user-facing behavior end to
 end: activation inserts an `active=False` row then flips it `True`;
@@ -26,7 +26,7 @@ from click.testing import CliRunner
 
 from degenbot.cli.exchange import activate, deactivate
 from degenbot.database.operations import create_new_sqlite_database
-from degenbot.degenbot_rs import db_fetch_exchange_by_name
+from degenbot._ffi import db_fetch_exchange_by_name
 from degenbot.uniswap.deployments import (
     EthereumMainnetUniswapV2,
     EthereumMainnetUniswapV4,

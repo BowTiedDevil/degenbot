@@ -11,8 +11,8 @@ import functools
 from collections.abc import Callable
 from typing import Any
 
-from degenbot.degenbot_rs import cl_muldiv as _rs_muldiv
-from degenbot.degenbot_rs import cl_muldiv_rounding_up as _rs_muldiv_rounding_up
+from degenbot._ffi import cl_muldiv as _rs_muldiv
+from degenbot._ffi import cl_muldiv_rounding_up as _rs_muldiv_rounding_up
 from degenbot.exceptions.pool import EVMRevertError
 
 # Translation table: Rust core messages → V3 Solidity revert messages

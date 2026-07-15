@@ -18,7 +18,7 @@ from degenbot.arbitrage.types import (
     UniswapV2PoolSwapAmounts,
     UniswapV3PoolSwapAmounts,
 )
-from degenbot.degenbot_rs import PyBot
+from degenbot._ffi import PyBot
 from tests.helpers.erc20_factory import make_erc20
 
 _PY_BOT = PyBot()

@@ -14,10 +14,10 @@ from __future__ import annotations
 from fractions import Fraction
 from typing import TYPE_CHECKING, Literal
 
-from degenbot.degenbot_rs import (
+from degenbot._ffi import (
     solidly_calc_exact_in_stable_solidly as _rs_calc_exact_in_stable_solidly,
 )
-from degenbot.degenbot_rs import (
+from degenbot._ffi import (
     solidly_calc_exact_in_volatile as _rs_calc_exact_in_volatile,
 )
 from degenbot.exceptions import DegenbotValueError

@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from degenbot.degenbot_rs import AlloyProvider as RustAlloyProvider
+from degenbot._ffi import AlloyProvider as RustAlloyProvider
 from degenbot.exceptions import SubscriptionDisconnected, SubscriptionNotSupported
 from degenbot.provider import AlloyProvider, AsyncAlloyProvider
 from degenbot.provider.subscription import Subscription

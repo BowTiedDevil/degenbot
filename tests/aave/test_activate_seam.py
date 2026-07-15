@@ -1,6 +1,6 @@
 """Rust-path market-activation tests (MPI6Q3).
 
-Exercises the PyO3 seam `degenbot_rs.activate_aave_market` /
+Exercises the PyO3 seam `degenbot._ffi.activate_aave_market` /
 `deactivate_aave_market` against the mock JSON-RPC harness — verifies the
 Rust-owned activation path (getMarketId RPC + GHO metadata fetch + the
 `aave_v3_markets` / `POOL_ADDRESS_PROVIDER` contract / GHO `erc20_tokens` /
@@ -18,7 +18,7 @@ from typing import Any
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
-from degenbot.degenbot_rs import (
+from degenbot._ffi import (
     activate_aave_market,
     db_upgrade_database,
     deactivate_aave_market,

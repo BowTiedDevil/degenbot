@@ -3,7 +3,7 @@
 The heal command is the out-of-place dump-and-restore path to Rust schema
 ownership. It surfaces the core substrate from FCA2HP (`ca782237`) —
 `degenbot_db::heal::heal_database` — via the PyO3 seam from MZ55NP
-(`67691f7c` — `degenbot_rs.db_heal_database`) and a Click command.
+(`67691f7c` — `degenbot._ffi.db_heal_database`) and a Click command.
 
 Unlike `database cutover`, heal ACCEPTS a stale Alembic DB (the out-of-place
 rebuild handles divergent schemas via the auto-derived column mapping) — so
@@ -43,7 +43,7 @@ from degenbot.database.operations import (
     get_scoped_sqlite_session,
 )
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.degenbot_rs import (
+from degenbot._ffi import (
     db_fetch_exchange_by_name,
     db_inspect_schema_state,
     db_upsert_exchange,

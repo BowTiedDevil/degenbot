@@ -22,7 +22,7 @@ Mirrors ``tests/uniswap/v2/test_v2_pool_io_free.py::TestV2CalcDelegation``.
 
 from __future__ import annotations
 
-from degenbot.degenbot_rs import PyBot
+from degenbot._ffi import PyBot
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v3_pool_factory import make_v3_pool

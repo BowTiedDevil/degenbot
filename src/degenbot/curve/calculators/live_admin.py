@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import TYPE_CHECKING
 
-from degenbot.degenbot_rs import curve_stableswap_get_y
+from degenbot._ffi import curve_stableswap_get_y
 from degenbot.exceptions.pool import EVMRevertError
 
 if TYPE_CHECKING:

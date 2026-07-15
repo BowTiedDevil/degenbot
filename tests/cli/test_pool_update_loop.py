@@ -1,14 +1,14 @@
 """Tests for the `pool update` CLI command's boot + hand-off shape.
 
 Task ``JJ232N`` (epic ``2SFL6I``): ``pool_update`` is now a thin boot +
-hand-off to the Rust-owned chunk loop (``degenbot_rs.run_pool_update``,
+hand-off to the Rust-owned chunk loop (``degenbot._ffi.run_pool_update``,
 Task ``QZHNZQ``). The previous test pinned the multi-chunk control flow
 (commit ``a67214ae``'s stale-readback regression); with the loop now in
 Rust, the regression test moves to the Rust core's
 ``apply_chunk_writes_on_conn_*`` tests (Task ``CKXCOB`` 3c). This file now
 asserts the *hand-off*: the CLI builds a ``CancelHandle``, installs a
 SIGINT handler, threads a progress callback + the resolved ``to_block`` +
-``rpc_url``, calls ``degenbot_rs.run_pool_update`` exactly once per
+``rpc_url``, calls ``degenbot._ffi.run_pool_update`` exactly once per
 chain, + echoes the returned report ``dict``.
 """
 
@@ -85,7 +85,7 @@ def test_pool_update_handoff_calls_run_pool_update_once_per_chain(
     stub_bot: _StubBot,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``pool update`` delegates to ``degenbot_rs.run_pool_update`` with the
+    """``pool update`` delegates to ``degenbot._ffi.run_pool_update`` with the
     resolved config + a ``CancelHandle``, then echoes the report.
 
     The stub ``run_pool_update`` records the call args + returns a fixed

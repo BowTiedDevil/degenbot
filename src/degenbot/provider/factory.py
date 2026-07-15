@@ -6,7 +6,7 @@ factory enforces that the RPC it connects to returns the configured
 misconfigured endpoint, before any pool/token I/O runs).
 
 The factory is alloy-only: it builds a Rust-backed
-:class:`~degenbot.degenbot_rs.AlloyProvider` (HTTP/WS/IPC, scheme-detected)
+:class:`~degenbot._ffi.AlloyProvider` (HTTP/WS/IPC, scheme-detected)
 unconditionally and verifies ``eth_chainId`` against ``chain_id``.
 
 Lives in ``degenbot.provider`` (the lib layer) so both ``Bot.__init__`` and
@@ -39,7 +39,7 @@ def get_provider_from_config(
     ``docs/migration-guides/rpc-uri-cascade.md``), so a plain ``export`` in the
     devcontainer takes effect here too.
 
-    Constructs an :class:`~degenbot.degenbot_rs.AlloyProvider` over the
+    Constructs an :class:`~degenbot._ffi.AlloyProvider` over the
     resolved endpoint (HTTP/WS/IPC, detected by scheme), then **enforces**
     the connected RPC's ``eth_chainId`` equals ``chain_id`` — raises
     :class:`ValueError` on mismatch (fail-fast).

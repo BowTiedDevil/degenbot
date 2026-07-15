@@ -4,7 +4,7 @@ This demonstrates how the I/O-free pattern eliminates the need for mocks
 when testing pool logic. All on-chain data is injected via a CurveDataProvider.
 """
 
-from degenbot.degenbot_rs import PyBot
+from degenbot._ffi import PyBot
 from tests.fakes.curve_data_provider import FakeCurveDataProvider
 from tests.helpers.curve_pool_factory import make_curve_pool
 from tests.helpers.erc20_factory import make_erc20

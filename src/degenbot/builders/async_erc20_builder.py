@@ -23,9 +23,9 @@ from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata
 
 if TYPE_CHECKING:
+    from degenbot._ffi import PyBot
     from degenbot.builders.pool_io import AsyncPoolIO
     from degenbot.database.session_manager import DatabaseSessionManager
-    from degenbot.degenbot_rs import PyBot
     from degenbot.registry import TokenRegistry
     from degenbot.types.aliases import ChainId
     from degenbot.types.rpc_types import BlockIdentifier

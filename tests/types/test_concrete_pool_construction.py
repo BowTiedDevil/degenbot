@@ -10,7 +10,7 @@ from fractions import Fraction
 import pytest
 
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.degenbot_rs import PyBot
+from degenbot._ffi import PyBot
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.pancakeswap.pools import PancakeswapV3Pool
 from degenbot.types.abstract import AbstractLiquidityPool

@@ -30,7 +30,7 @@ from degenbot.builders.v2_pool_builder import V2PoolBuilder
 from degenbot.builders.v3_pool_builder import V3PoolBuilder
 from degenbot.builders.v4_pool_builder import V4PoolBuilder
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.degenbot_rs import PyBot
+from degenbot._ffi import PyBot
 from degenbot.registry import PoolRegistry, TokenRegistry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool

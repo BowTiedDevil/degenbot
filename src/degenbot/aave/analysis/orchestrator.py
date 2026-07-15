@@ -12,6 +12,7 @@ from eth_typing import ChecksumAddress
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from degenbot._ffi import PyAavePriceOracle, PyDatabasePositionQuery
 from degenbot.aave.analysis.core import (
     CollateralPositionRecord,
     DebtPositionRecord,
@@ -21,7 +22,6 @@ from degenbot.aave.analysis.core import (
 )
 from degenbot.aave.analysis.protocols import PositionQuery, PriceFetcher
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.degenbot_rs import PyAavePriceOracle, PyDatabasePositionQuery
 from degenbot.logging import logger
 from degenbot.provider import AlloyProvider
 

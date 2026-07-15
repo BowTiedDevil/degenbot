@@ -7,9 +7,9 @@ from typing import TYPE_CHECKING
 
 import eth_abi.abi
 
+from degenbot._ffi import dex_identity
 from degenbot.builders.v2_builder_base import V2BuilderBase
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.degenbot_rs import dex_identity
 from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.registry.pool_type import pool_type_registry

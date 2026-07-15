@@ -23,7 +23,7 @@ from degenbot.bot import Bot
 from degenbot.builders.pool_io import SyncPoolIO
 from degenbot.builders.request import BuildPoolRequest
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.degenbot_rs import PyBotIo
+from degenbot._ffi import PyBotIo
 
 
 class _RecordingProvider:

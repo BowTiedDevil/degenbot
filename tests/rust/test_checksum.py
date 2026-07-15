@@ -1,6 +1,6 @@
 import pytest
 
-from degenbot.degenbot_rs import to_checksum_address
+from degenbot._ffi import to_checksum_address
 
 
 def test_rust_checksum(random_addresses, checksummed_random_addresses):

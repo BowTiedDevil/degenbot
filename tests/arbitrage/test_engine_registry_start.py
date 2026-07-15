@@ -212,7 +212,7 @@ def test_pybot_exposes_verify_methods_after_engine_attach() -> None:
     verify_liquidity_maps, verify_v3_liquidity_maps, verify_v4_liquidity_maps as
     delegating entry points once a UniswapArbEngine is constructed against it.
     The batch verify still passes (same behavior, new home on PyBot)."""
-    from degenbot.degenbot_rs import PyBot, UniswapArbEngine
+    from degenbot._ffi import PyBot, UniswapArbEngine
 
     bot = PyBot()
     UniswapArbEngine(py_bot=bot)  # attaches shared PumpState
@@ -237,7 +237,7 @@ def test_pybot_exposes_pump_lifecycle_methods_after_engine_attach() -> None:
     (J3FMDO). The non-DB path uses the `snapshot_seed_block` setter to record
     `S` so the core auto-backfill picks it up.
     """
-    from degenbot.degenbot_rs import PyBot, UniswapArbEngine
+    from degenbot._ffi import PyBot, UniswapArbEngine
 
     bot = PyBot()
     # Constructing the engine against the bot attaches the shared PumpState.

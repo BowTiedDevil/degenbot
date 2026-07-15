@@ -9,6 +9,7 @@ import eth_abi.abi
 from hexbytes import HexBytes
 from sqlalchemy import select
 
+from degenbot._ffi import cl_get_tick_word_and_bit_position
 from degenbot.builders.request import BuildManagedPoolRequest
 from degenbot.builders.tick_data_fetcher import (
     FetchedTickData,
@@ -19,7 +20,6 @@ from degenbot.builders.v4_builder_base import V4BuilderBase
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
 from degenbot.database.models.pools import PoolManagerTable, UniswapV4PoolTable
-from degenbot.degenbot_rs import cl_get_tick_word_and_bit_position
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger

@@ -34,8 +34,8 @@ from typing import Any, Self
 
 from hexbytes import HexBytes
 
-from degenbot.degenbot_rs import AlloyProvider as RustAlloyProvider
-from degenbot.degenbot_rs import AsyncAlloyProvider as RustAsyncAlloyProvider
+from degenbot._ffi import AlloyProvider as RustAlloyProvider
+from degenbot._ffi import AsyncAlloyProvider as RustAsyncAlloyProvider
 from degenbot.exceptions import SubscriptionNotSupported
 from degenbot.provider.factory import (
     get_async_provider_from_config,

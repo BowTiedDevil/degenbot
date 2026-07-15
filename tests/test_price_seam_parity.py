@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 
 from degenbot.aave.analysis.orchestrator import OraclePriceFetcher
 from degenbot.chainlink import ChainlinkPriceContract
-from degenbot.degenbot_rs import AlloyProvider, PyAavePriceOracle, PyChainlinkPriceFeed
+from degenbot._ffi import AlloyProvider, PyAavePriceOracle, PyChainlinkPriceFeed
 from degenbot.provider import AlloyProvider
 
 # Canonical Chainlink selectors (first 4 bytes of keccak of the canonical sig).

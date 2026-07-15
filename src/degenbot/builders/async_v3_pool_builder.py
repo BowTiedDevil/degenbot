@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, cast
 import eth_abi.abi
 from sqlalchemy import select
 
+from degenbot._ffi import cl_get_tick_word_and_bit_position
 from degenbot.builders.tick_data_fetcher import (
     FetchedTickData,
     TickDataTypes,
@@ -17,7 +18,6 @@ from degenbot.builders.tick_data_fetcher import (
 from degenbot.builders.v3_builder_base import V3BuilderBase
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.pools import LiquidityPoolTable, UniswapV3PoolTableBase
-from degenbot.degenbot_rs import cl_get_tick_word_and_bit_position
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger

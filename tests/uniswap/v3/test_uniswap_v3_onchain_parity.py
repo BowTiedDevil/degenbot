@@ -52,7 +52,7 @@ import pytest
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_INT256
-from degenbot.degenbot_rs import PyBot
+from degenbot._ffi import PyBot
 from degenbot.exceptions.pool import IncompleteSwap
 from degenbot.uniswap.v3_libraries import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool

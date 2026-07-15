@@ -2,7 +2,7 @@
 
 C8d routes `scaling_helpers.py` off the pure-Python `fixed_point.py` port
 to the Rust `degenbot-balancer-math` core (`fixed_point.rs`), exposed via
-the `degenbot_rs.balancer_fixed_point_*` seam. This module is the seam-
+the `degenbot._ffi.balancer_fixed_point_*` seam. This module is the seam-
 level gate (exposure + boundary error-mapping + basic parity); the math
 itself is cross-checked by the frozen `degenbot-balancer-math` Rust
 `#[cfg(test)]` corpus + the `oracle_crosscheck.rs` snapshot.
@@ -20,7 +20,7 @@ import pytest
 
 from degenbot.balancer.libraries.constants import ONE
 from degenbot.constants import MAX_UINT256
-from degenbot.degenbot_rs import (
+from degenbot._ffi import (
     balancer_fixed_point_div_down,
     balancer_fixed_point_div_up,
     balancer_fixed_point_mul_down,

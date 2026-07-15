@@ -90,7 +90,7 @@ class TestDryRunDefaults:
         # killing the result-consumer task on the very first result batch. The
         # Anvil account-0 key is a well-known valid throwaway that never signs
         # (the Rust submit leaf's `dry_run` guard skips `sign_eip1559`).
-        from degenbot.degenbot_rs import PyTxSigner
+        from degenbot._ffi import PyTxSigner
 
         _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
         env = _full_env() | {"OPERATOR_ADDRESS": "", "OPERATOR_PRIVATE_KEY": ""}

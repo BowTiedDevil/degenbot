@@ -44,20 +44,20 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot import degenbot_rs
+from degenbot import _ffi
 
 
 def test_hooked_pool_rejected_error_is_exposed() -> None:
     """``HookedPoolRejectedError`` is exported and is a ``ValueError``."""
-    assert hasattr(degenbot_rs, "HookedPoolRejectedError")
-    exc_type = degenbot_rs.HookedPoolRejectedError
+    assert hasattr(_ffi, "HookedPoolRejectedError")
+    exc_type = _ffi.HookedPoolRejectedError
     assert issubclass(exc_type, ValueError)
 
 
 def test_dynamic_fee_pool_rejected_error_is_exposed() -> None:
     """``DynamicFeePoolRejectedError`` is exported and is a ``ValueError``."""
-    assert hasattr(degenbot_rs, "DynamicFeePoolRejectedError")
-    exc_type = degenbot_rs.DynamicFeePoolRejectedError
+    assert hasattr(_ffi, "DynamicFeePoolRejectedError")
+    exc_type = _ffi.DynamicFeePoolRejectedError
     assert issubclass(exc_type, ValueError)
 
 
@@ -69,8 +69,8 @@ def test_admission_errors_are_distinct_value_errors() -> None:
     counters without re-introducing string matching. F2EVV6 reparented them
     under ``PoolRegistrationError``; they stay distinct from each other.
     """
-    hooked = degenbot_rs.HookedPoolRejectedError
-    dynamic = degenbot_rs.DynamicFeePoolRejectedError
+    hooked = _ffi.HookedPoolRejectedError
+    dynamic = _ffi.DynamicFeePoolRejectedError
     assert hooked is not dynamic
     assert not issubclass(hooked, dynamic)
     assert not issubclass(dynamic, hooked)
@@ -83,20 +83,20 @@ def test_v4_admission_errors_are_pool_registration_errors() -> None:
     narrow to the V4-specific subclasses). Reparenting is the unified
     hierarchy; the V4 origins stay distinguishable by ``isinstance``.
     """
-    base = degenbot_rs.PoolRegistrationError
-    assert issubclass(degenbot_rs.HookedPoolRejectedError, base)
-    assert issubclass(degenbot_rs.DynamicFeePoolRejectedError, base)
+    base = _ffi.PoolRegistrationError
+    assert issubclass(_ffi.HookedPoolRejectedError, base)
+    assert issubclass(_ffi.DynamicFeePoolRejectedError, base)
 
 
 def test_hooked_pool_rejected_error_carries_message() -> None:
     """A raised ``HookedPoolRejectedError`` carries a useful message."""
-    exc = degenbot_rs.HookedPoolRejectedError("V4 pool has amount-modifying hooks")
+    exc = _ffi.HookedPoolRejectedError("V4 pool has amount-modifying hooks")
     assert "amount-modifying hooks" in str(exc)
 
 
 def test_dynamic_fee_pool_rejected_error_carries_message() -> None:
     """A raised ``DynamicFeePoolRejectedError`` carries a useful message."""
-    exc = degenbot_rs.DynamicFeePoolRejectedError("V4 pool has dynamic fee")
+    exc = _ffi.DynamicFeePoolRejectedError("V4 pool has dynamic fee")
     assert "dynamic fee" in str(exc)
 
 
@@ -110,7 +110,7 @@ def test_admission_errors_catchable_as_value_error(exc_name: str) -> None:
     ``build_paths`` already wraps registration in ``except ValueError`` to skip
     rejected pools — the typed exceptions must not escape that net.
     """
-    exc_type = getattr(degenbot_rs, exc_name)
+    exc_type = getattr(_ffi, exc_name)
     msg = "rejected"
     with pytest.raises(ValueError):  # noqa: PT011 — broad catch is the contract
         raise exc_type(msg)

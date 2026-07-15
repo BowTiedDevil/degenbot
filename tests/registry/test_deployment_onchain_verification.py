@@ -501,7 +501,7 @@ class TestDeploymentOnchainVerification:
         # live on the pool identity (stored at registration); this tier
         # verifies THAT runtime value reproduces ground truth. The Python
         # record is the lookup key only.
-        from degenbot.degenbot_rs import (
+        from degenbot._ffi import (
             resolve_deployer,
             resolve_v2_init_hash,
             resolve_v3_init_hash,

@@ -4,7 +4,7 @@ from typing import cast
 
 from eth_typing import ChecksumAddress
 
-from degenbot.degenbot_rs import decode_single as rs_decode_single
+from degenbot._ffi import decode_single as rs_decode_single
 
 
 def decode_address(input_: bytes) -> ChecksumAddress:

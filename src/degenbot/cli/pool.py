@@ -1,7 +1,7 @@
 """CLI commands for pool state queries.
 
 `pool_update` is a thin boot + hand-off to the Rust-owned chunk loop
-(`degenbot_rs.run_pool_update`). Python is a driver shell -- config
+(`degenbot._ffi.run_pool_update`). Python is a driver shell -- config
 bootstrap, SIGINT -> cancel flag, tqdm-on-callback, + a user-facing summary.
 The chunk loop, the RPC fetches, the decode, the DB writes, + the per-chunk
 transaction all live in the Rust core (`degenbot-pool-updater`). The
@@ -26,14 +26,14 @@ import click
 import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
-from degenbot.cli import cli
-from degenbot.config import resolve_http_rpc_uri
-from degenbot.degenbot_rs import (
+from degenbot._ffi import (
     CancelHandle,
     run_pool_update,
     verify_v3_liquidity_map,
     verify_v4_liquidity_map,
 )
+from degenbot.cli import cli
+from degenbot.config import resolve_http_rpc_uri
 from degenbot.logging import logger
 from degenbot.provider.block_helpers import get_number_for_block_identifier
 from degenbot.provider.factory import get_provider_from_config
@@ -130,7 +130,7 @@ def pool_update(  # noqa: PLR0917
 
     Boot + hand-off: read the bot config, install a SIGINT -> cancel-flag
     handler, build a tqdm-ticking progress callback, + delegate the whole
-    chunk loop to the Rust core (`degenbot_rs.run_pool_update`). The core
+    chunk loop to the Rust core (`degenbot._ffi.run_pool_update`). The core
     owns the RPC fetches, the decode, the per-chunk transaction (atomicity),
     + the `last_update_block` stamp (restart-invariance). The GIL is
     released across the whole run; only the progress callback re-acquires

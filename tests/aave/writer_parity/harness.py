@@ -1,7 +1,7 @@
 """Shared mock-RPC harness for the Aave Rust-writer tests.
 
 The offline mock-RPC harness (ADR-005 §4.2). Drives the Rust writer
-(``degenbot_rs.run_aave_update``) against a mock JSON-RPC server serving
+(``degenbot._ffi.run_aave_update``) against a mock JSON-RPC server serving
 canned ``eth_getLogs`` + ``eth_blockNumber`` + ``eth_call`` responses, into a
 temp SQLite DB. The resulting ``aave_*`` rows are asserted against expectations
 (or compared against on-chain truth via the Rust ``verify_*`` seams).
@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
-from degenbot.degenbot_rs import db_upgrade_database
+from degenbot._ffi import db_upgrade_database
 
 if TYPE_CHECKING:
     from collections.abc import Generator

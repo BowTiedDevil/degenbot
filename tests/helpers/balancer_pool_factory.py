@@ -23,11 +23,11 @@ from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.balancer.stable_pools import BalancerV2StablePool, INVARIANT_V2
 from degenbot.builders.balancer_builder_base import BalancerBuilderBase
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.degenbot_rs import PyBot
+from degenbot._ffi import PyBot
 
 if TYPE_CHECKING:
     from degenbot.balancer.stable_pools import BalancerRateProvider
-    from degenbot.degenbot_rs import PyLiquidityPool
+    from degenbot._ffi import PyLiquidityPool
     from degenbot.erc20.erc20 import Erc20Token
     from degenbot.types.aliases import BlockNumber
 

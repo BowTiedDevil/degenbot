@@ -2,7 +2,7 @@
 
 Ergo 6TLIJ5/QF2PPN: the Solidly-stable swap-calc paths route the core math
 through the ``degenbot-solidly-math`` Rust leaf
-(``degenbot_rs.solidly_calc_exact_in_stable_solidly`` /
+(``degenbot._ffi.solidly_calc_exact_in_stable_solidly`` /
 ``solidly_calc_exact_in_volatile``) instead of the Python
 ``calculations/solidly_stable.py`` + ``calculations/camelot.py`` ports. The
 companion-level swap-strategy methods (in ``aerodrome/v2_pool_calc.py``) +
@@ -34,7 +34,7 @@ import degenbot.aerodrome.functions as functions_mod
 import degenbot.aerodrome.v2_pool_calc as calc_mod
 from degenbot.aerodrome.functions import calc_exact_in_stable
 from degenbot.aerodrome.pools import AerodromeV2Pool
-from degenbot.degenbot_rs import PyBot
+from degenbot._ffi import PyBot
 from tests.helpers.aerodrome_pool_factory import make_aerodrome_v2_pool
 from tests.helpers.erc20_factory import make_erc20
 

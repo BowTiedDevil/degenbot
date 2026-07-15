@@ -6,7 +6,7 @@ dispatch / simulation / signer symbols from the companion package
 ``Py*`` prefix and ``*_py`` suffix on the FFI names are the seam naming
 itself; those should never appear in driver code.
 
-These re-exports must be **direct aliases** (``from degenbot_rs import
+These re-exports must be **direct aliases** (``from degenbot._ffi import
 PyX as X``), not Python wrappers/subclasses: the Rust engine constructs and
 consumes these pyclasses / pyfunctions directly, and driver code passes the
 instances to Rust. A wrapper class would break type identity at the Rust
@@ -18,7 +18,7 @@ names so driver code does not import ``degenbot_rs``.
 from __future__ import annotations
 
 import degenbot.dispatch as d
-from degenbot.degenbot_rs import (
+from degenbot._ffi import (
     PyDispatchCandidate,
     PyDispatchOutcome,
     PyDispatcher,

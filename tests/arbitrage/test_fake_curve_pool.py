@@ -19,7 +19,7 @@ from degenbot.arbitrage.solvers._solver_utils import (
 )
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.curve.types import CurveStableswapPoolState
-from degenbot.degenbot_rs import PyBot
+from degenbot._ffi import PyBot
 from degenbot.types.hop_types import PoolInvariant
 from tests.fakes.curve_data_provider import FakeCurveDataProvider
 from tests.helpers.curve_pool_factory import make_curve_pool

@@ -35,8 +35,8 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot import degenbot_rs
-from degenbot.degenbot_rs import PyBot
+from degenbot import _ffi
+from degenbot._ffi import PyBot
 
 # Cross-checked mainnet V2/V3 vectors (see tests/registry/test_registration_verify).
 UNISWAP_V2_FACTORY = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
@@ -63,15 +63,15 @@ V2_RESERVE_OVER_112BIT = 1 << 112
 
 
 def test_pool_registration_error_is_exposed_and_is_value_error() -> None:
-    assert hasattr(degenbot_rs, "PoolRegistrationError")
-    assert issubclass(degenbot_rs.PoolRegistrationError, ValueError)
+    assert hasattr(_ffi, "PoolRegistrationError")
+    assert issubclass(_ffi.PoolRegistrationError, ValueError)
 
 
 def test_spec_violation_error_and_already_registered_are_exposed() -> None:
-    assert hasattr(degenbot_rs, "SpecViolationError")
-    assert hasattr(degenbot_rs, "PoolAlreadyRegisteredError")
-    assert issubclass(degenbot_rs.SpecViolationError, degenbot_rs.PoolRegistrationError)
-    assert issubclass(degenbot_rs.PoolAlreadyRegisteredError, degenbot_rs.PoolRegistrationError)
+    assert hasattr(_ffi, "SpecViolationError")
+    assert hasattr(_ffi, "PoolAlreadyRegisteredError")
+    assert issubclass(_ffi.SpecViolationError, _ffi.PoolRegistrationError)
+    assert issubclass(_ffi.PoolAlreadyRegisteredError, _ffi.PoolRegistrationError)
 
 
 def test_v4_admission_errors_reparented_under_pool_registration_error() -> None:
@@ -80,8 +80,8 @@ def test_v4_admission_errors_reparented_under_pool_registration_error() -> None:
     A broad `except PoolRegistrationError:` must now catch V4 admission
     rejections too, not just the new V2/V3 spec/dup variants.
     """
-    assert issubclass(degenbot_rs.HookedPoolRejectedError, degenbot_rs.PoolRegistrationError)
-    assert issubclass(degenbot_rs.DynamicFeePoolRejectedError, degenbot_rs.PoolRegistrationError)
+    assert issubclass(_ffi.HookedPoolRejectedError, _ffi.PoolRegistrationError)
+    assert issubclass(_ffi.DynamicFeePoolRejectedError, _ffi.PoolRegistrationError)
 
 
 @pytest.mark.parametrize(
@@ -97,7 +97,7 @@ def test_v4_admission_errors_reparented_under_pool_registration_error() -> None:
 def test_admission_errors_catchable_as_value_error(exc_name: str) -> None:
     """The whole hierarchy subclasses ValueError (backward compat with the
     broad `except ValueError:` net in `build_paths`)."""
-    exc_type = getattr(degenbot_rs, exc_name)
+    exc_type = getattr(_ffi, exc_name)
     msg = "rejected"
     with pytest.raises(ValueError):  # noqa: PT011 — broad catch is the contract
         raise exc_type(msg)
@@ -127,7 +127,7 @@ class TestV2SeamAdmission:
         # Second registration at the same address: the Rust core's
         # `AlreadyRegistered` rejection now surfaces (was an `assert!` panic
         # pre-MSTAT2) as the typed `PoolAlreadyRegisteredError`.
-        with pytest.raises(degenbot_rs.PoolAlreadyRegisteredError) as exc_info:
+        with pytest.raises(_ffi.PoolAlreadyRegisteredError) as exc_info:
             bot.register_v2_pool(
                 address=V2_DAI_WETH_ADDR,
                 token0=WETH,
@@ -147,7 +147,7 @@ class TestV2SeamAdmission:
         """V2 reserves are `uint112` on-chain; > `uint112(-1)` is rejected up
         front (MSTAT2 admission floor)."""
         bot = PyBot(chain_id=1)
-        with pytest.raises(degenbot_rs.SpecViolationError) as exc_info:
+        with pytest.raises(_ffi.SpecViolationError) as exc_info:
             bot.register_v2_pool(
                 address=V2_DAI_WETH_ADDR,
                 token0=WETH,
@@ -182,14 +182,14 @@ class TestV3SeamAdmission:
     def test_duplicate_address_raises_pool_already_registered(self) -> None:
         bot = PyBot(chain_id=1)
         bot.register_v3_pool(**self._in_spec_kwargs())
-        with pytest.raises(degenbot_rs.PoolAlreadyRegisteredError):
+        with pytest.raises(_ffi.PoolAlreadyRegisteredError):
             bot.register_v3_pool(**self._in_spec_kwargs())
 
     def test_out_of_spec_sqrt_price_raises_spec_violation_error(self) -> None:
         bot = PyBot(chain_id=1)
         kw = self._in_spec_kwargs()
         kw["sqrt_price_x96"] = 1  # below MIN_SQRT_RATIO = 4_295_128_740
-        with pytest.raises(degenbot_rs.SpecViolationError) as exc_info:
+        with pytest.raises(_ffi.SpecViolationError) as exc_info:
             bot.register_v3_pool(**kw)
         assert "sqrtPriceX96" in str(exc_info.value)
 
@@ -197,7 +197,7 @@ class TestV3SeamAdmission:
         bot = PyBot(chain_id=1)
         kw = self._in_spec_kwargs()
         kw["tick"] = -887_273  # one below MIN_TICK = -887_272
-        with pytest.raises(degenbot_rs.SpecViolationError) as exc_info:
+        with pytest.raises(_ffi.SpecViolationError) as exc_info:
             bot.register_v3_pool(**kw)
         assert "tick" in str(exc_info.value)
 
@@ -209,7 +209,7 @@ class TestV3SeamAdmission:
         # still passes, leaving the Rust core's `validate_sqrt_price` to reject.
         sqrt_ratio_max = 1461446703485210103287273052203988822378723970342
         kw["sqrt_price_x96"] = sqrt_ratio_max
-        with pytest.raises(degenbot_rs.SpecViolationError) as exc_info:
+        with pytest.raises(_ffi.SpecViolationError) as exc_info:
             bot.register_v3_pool(**kw)
         assert "sqrtPriceX96" in str(exc_info.value)
 
@@ -217,7 +217,7 @@ class TestV3SeamAdmission:
         bot = PyBot(chain_id=1)
         kw = self._in_spec_kwargs()
         kw["tick_spacing"] = 32_768  # one above MAX_TICK_SPACING = 32_767
-        with pytest.raises(degenbot_rs.SpecViolationError) as exc_info:
+        with pytest.raises(_ffi.SpecViolationError) as exc_info:
             bot.register_v3_pool(**kw)
         assert "tickSpacing" in str(exc_info.value)
 
@@ -249,14 +249,14 @@ class TestV4SeamAdmission:
     def test_duplicate_raises_pool_already_registered(self) -> None:
         bot = PyBot(chain_id=1)
         bot.register_v4_pool(**self._in_spec_kwargs())
-        with pytest.raises(degenbot_rs.PoolAlreadyRegisteredError):
+        with pytest.raises(_ffi.PoolAlreadyRegisteredError):
             bot.register_v4_pool(**self._in_spec_kwargs())
 
     def test_out_of_spec_sqrt_price_raises_spec_violation_error(self) -> None:
         bot = PyBot(chain_id=1)
         kw = self._in_spec_kwargs("0x" + "e1" * 32)
         kw["sqrt_price_x96"] = 1
-        with pytest.raises(degenbot_rs.SpecViolationError) as exc_info:
+        with pytest.raises(_ffi.SpecViolationError) as exc_info:
             bot.register_v4_pool(**kw)
         assert "sqrtPriceX96" in str(exc_info.value)
 
@@ -270,7 +270,7 @@ class TestV4SeamAdmission:
         bot = PyBot(chain_id=1)
         kw = self._in_spec_kwargs("0x" + "e2" * 32)
         kw["fee"] = 1 << 24  # V4_FEE_MAX
-        with pytest.raises(degenbot_rs.SpecViolationError) as exc_info:
+        with pytest.raises(_ffi.SpecViolationError) as exc_info:
             bot.register_v4_pool(**kw)
         assert "fee" in str(exc_info.value)
 
@@ -283,5 +283,5 @@ class TestV4SeamAdmission:
         bot = PyBot(chain_id=1)
         kw = self._in_spec_kwargs("0x" + "e3" * 32)
         kw["hook_flags"] = 0x80  # BEFORE_SWAP — amount-modifying
-        with pytest.raises(degenbot_rs.HookedPoolRejectedError):
+        with pytest.raises(_ffi.HookedPoolRejectedError):
             bot.register_v4_pool(**kw)

@@ -17,7 +17,7 @@ from __future__ import annotations
 import pytest
 
 from degenbot.arbitrage.hop_info import V2HopInfo, PathInfo
-from degenbot.degenbot_rs import (
+from degenbot._ffi import (
     AlloyProvider,
     AsyncAlloyProvider,
     PyDispatchCandidate,

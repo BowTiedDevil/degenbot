@@ -30,9 +30,9 @@ from weakref import WeakSet
 
 from eth_typing import ChecksumAddress
 
+from degenbot._ffi import PyLiquidityPool, cl_get_tick_word_and_bit_position
 from degenbot.arbitrage.types import UniswapV3PoolSwapAmounts
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.degenbot_rs import PyLiquidityPool, cl_get_tick_word_and_bit_position
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import (

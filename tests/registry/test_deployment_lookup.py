@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot.degenbot_rs import deployer_for, init_hash_for
+from degenbot._ffi import deployer_for, init_hash_for
 
 UNISWAP_V2_MAINNET_FACTORY = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
 PANCAKESWAP_V3_MAINNET_FACTORY = "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865"

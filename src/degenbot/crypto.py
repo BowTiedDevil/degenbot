@@ -9,7 +9,7 @@ Two surfaces:
 
 - :func:`function_selector` — the 4-byte Solidity selector for a function
   signature. Delegates to the Rust core's
-  :func:`degenbot_rs.get_function_selector` (alloy ``keccak256`` under the
+  :func:`degenbot._ffi.get_function_selector` (alloy ``keccak256`` under the
   hood) so the selector computation is owned by Rust, not by a Python
   keccak re-export.
 - :func:`keccak256` — the full 32-byte keccak digest of a byte string.
@@ -28,7 +28,7 @@ from eth_utils.abi import event_abi_to_log_topic
 from eth_utils.crypto import keccak as _keccak
 from hexbytes import HexBytes
 
-from degenbot.degenbot_rs import get_function_selector
+from degenbot._ffi import get_function_selector
 
 if TYPE_CHECKING:
     from eth_typing import ABIEvent

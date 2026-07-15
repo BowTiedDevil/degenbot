@@ -18,7 +18,7 @@ from degenbot.builders.async_erc20_builder import AsyncErc20Builder
 from degenbot.builders.pool_io import AsyncPoolIO
 from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.degenbot_rs import PyBot
+from degenbot._ffi import PyBot
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.registry import TokenRegistry
 from tests.helpers.erc20_factory import make_erc20

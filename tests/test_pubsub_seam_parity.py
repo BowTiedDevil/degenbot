@@ -44,7 +44,7 @@ import weakref
 
 import pytest
 
-from degenbot.degenbot_rs import PyBot, register_subscriber
+from degenbot._ffi import PyBot, register_subscriber
 
 # keccak256("Sync(uint112,uint112)") — the V2 Sync event signature.
 _V2_SYNC_TOPIC = "0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1"

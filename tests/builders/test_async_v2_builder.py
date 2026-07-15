@@ -19,7 +19,7 @@ from degenbot.builders.request import BuildPoolRequest
 from degenbot.builders.v2_builder_base import V2BuilderBase
 from degenbot.database.models.pools import UniswapFeeMixin
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.degenbot_rs import PyBot
+from degenbot._ffi import PyBot
 from degenbot.erc20 import Erc20Token
 from degenbot.registry import PoolRegistry, TokenRegistry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool

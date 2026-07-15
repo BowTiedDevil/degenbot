@@ -3,7 +3,7 @@
 The Rust pub/sub mechanism (`degenbot_bot::bot_core::log_dispatcher` — the
 `PoolStateSubscriber` trait + `LogDispatcher` `Weak`-fan-out) is the single
 notification path for Rust-owned ``BotState`` mutations. Worker_3's ZBD4MS seam
-(``degenbot_rs.register_subscriber(bot, pool_id, callback) -> PySubscription``
+(``degenbot._ffi.register_subscriber(bot, pool_id, callback) -> PySubscription``
 + the ``PySubscriberAdapter``) is the bridge a Python callable uses to register
 against that SAME ``LogDispatcher`` path the engine ``EngineSubscriber`` uses.
 
@@ -45,7 +45,7 @@ from __future__ import annotations
 
 from fractions import Fraction
 
-from degenbot.degenbot_rs import PyBot
+from degenbot._ffi import PyBot
 from tests.fakes.subscribers import FakeSubscriber
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool

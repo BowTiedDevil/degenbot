@@ -7,7 +7,7 @@ import pytest
 from degenbot.builders.context import BuilderContext
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.degenbot_rs import PyBot
+from degenbot._ffi import PyBot
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 
 

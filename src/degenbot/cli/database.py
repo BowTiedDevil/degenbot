@@ -4,6 +4,7 @@ import click
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 
+from degenbot._ffi import DatabaseSchemaStale
 from degenbot.bot import Bot
 from degenbot.cli import cli
 from degenbot.database.operations import (
@@ -16,7 +17,6 @@ from degenbot.database.operations import (
     inspect_schema_state,
     upgrade_existing_sqlite_database,
 )
-from degenbot.degenbot_rs import DatabaseSchemaStale
 from degenbot.exceptions.infrastructure import BackupExists
 from degenbot.version import __version__
 
