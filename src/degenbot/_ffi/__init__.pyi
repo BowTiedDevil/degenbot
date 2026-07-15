@@ -401,6 +401,7 @@ def cl_apply_liquidity_mapping_update(
 # Reverts surface as ValueError/OverflowError carrying the Solidity revert tag.
 from . import balancer_math as balancer_math  # noqa: E402
 from . import curve_math as curve_math  # noqa: E402
+from . import solidly_math as solidly_math  # noqa: E402
 
 # ── Curve StableSwap math (feature = "curve-math"). ──
 # Pure-math wrappers over the degenbot-curve-math leaf, registered on a real
@@ -414,51 +415,20 @@ from . import curve_math as curve_math  # noqa: E402
 # `EVMRevertError(error=str(e))`.
 
 # ── Solidly / Aerodrome / Camelot stable math (feature = "solidly-math"). ──
-# Pure-math wrappers over the degenbot-solidly-math leaf. The Solidly /
-# Camelot invariant math (calc_d / calc_k / calc_f / get_y_solidly /
-# f_camelot / k_camelot / get_y_camelot) is pure integer arithmetic (Newton's
-# method on the Solidly `x^3*y + y^3*x >= k` invariant); code that reverts
-# on uint256 overflow / non-convergence / invalid token_in surfaces as
-# ValueError / ZeroDivisionError carrying the Solidity revert tag. The
-# Solidly + Camelot amount-out orchestration is exposed as two pre-baked
-# entrypoints (one per (k_func, get_y_func) pair the companions actually
-# use); `fee` is split into ``fee_numer``/``fee_denom`` at the seam so the
-# pure-math leaf stays `num-rational`-free.
-def solidly_calc_d(x0: int, y: int) -> int: ...
-def solidly_calc_k(balance_0: int, balance_1: int, decimals_0: int, decimals_1: int) -> int: ...
-def solidly_calc_f(x0: int, y: int) -> int: ...
-def camelot_f(x0: int, y: int) -> int: ...
-def camelot_k(balance_0: int, balance_1: int, decimals_0: int, decimals_1: int) -> int: ...
-def solidly_get_y_solidly(x0: int, xy: int, y: int, decimals_0: int, decimals_1: int) -> int: ...
-def camelot_get_y_camelot(x_0: int, xy: int, y: int) -> int: ...
-def solidly_calc_exact_in_volatile(
-    amount_in: int,
-    token_in: int,
-    reserves_0: int,
-    reserves_1: int,
-    fee_numer: int,
-    fee_denom: int,
-) -> int: ...
-def solidly_calc_exact_in_stable_solidly(
-    amount_in: int,
-    token_in: int,
-    reserves_0: int,
-    reserves_1: int,
-    decimals_0: int,
-    decimals_1: int,
-    fee_numer: int,
-    fee_denom: int,
-) -> int: ...
-def solidly_calc_exact_in_stable_camelot(
-    amount_in: int,
-    token_in: int,
-    reserves_0: int,
-    reserves_1: int,
-    decimals_0: int,
-    decimals_1: int,
-    fee_numer: int,
-    fee_denom: int,
-) -> int: ...
+# Pure-math wrappers over the degenbot-solidly-math leaf, registered on a real
+# Python submodule (`degenbot._ffi.solidly_math`) with un-prefixed names — the
+# `solidly_` prefix was an artifact of the flat root registration; `camelot_`
+# stays because camelot is a distinct variant in the same crate.
+# See `solidly_math.pyi` for the function signatures.
+# The Solidly / Camelot invariant math (calc_d / calc_k / calc_f /
+# get_y_solidly / camelot_f / camelot_k / camelot_get_y_camelot) is pure
+# integer arithmetic (Newton's method on the Solidly `x^3*y + y^3*x >= k`
+# invariant); code that reverts on uint256 overflow / non-convergence /
+# invalid token_in surfaces as ValueError / ZeroDivisionError carrying the
+# Solidity revert tag. The Solidly + Camelot amount-out orchestration is
+# exposed as two pre-baked entrypoints (one per (k_func, get_y_func) pair the
+# companions actually use); `fee` is split into ``fee_numer``/``fee_denom`` at
+# the seam so the pure-math leaf stays `num-rational`-free.
 
 # ── Solady LibZip (FastLZ) (degenbot-core, no feature gate). ──
 # Thin wrappers over `degenbot_core::libzip`. Accept a hex string (with
@@ -3533,6 +3503,7 @@ __all__ = [
     "pack_expected_balance",
     "run_aave_update",
     "run_pool_update",
+    "solidly_math",
     "to_checksum_address",
     "v4_input_is_native",
     "v4_output_is_native",

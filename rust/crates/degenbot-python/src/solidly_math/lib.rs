@@ -84,20 +84,20 @@ fn solidly_err(e: SolidlyMathError) -> PyErr {
 
 // ─── Step functions ─────────────────────────────────────────────────────
 
-/// `solidly_calc_d` — the Solidly stable `D = 3*x0*y^2 + x0^3*y` analytic.
+/// `calc_d` — the Solidly stable `D = 3*x0*y^2 + x0^3*y` analytic.
 ///
 /// # Errors
 ///
 /// Only surfaces `PyErr` if the result-`int` conversion fails (vanishingly
 /// rare — the value is always a valid `uint256`).
 #[pyfunction]
-pub fn solidly_calc_d(x0: &Bound<'_, PyAny>, y: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+pub fn calc_d(x0: &Bound<'_, PyAny>, y: &Bound<'_, PyAny>) -> PyResult<PyObject> {
     let py = x0.py();
     let result = degenbot_solidly_math::calc_d(extract_u256(x0)?, extract_u256(y)?);
     u256_to_py_obj(py, result)
 }
 
-/// `solidly_calc_k` — the Solidly/Aerodrome invariant `k = a*b` over
+/// `calc_k` — the Solidly/Aerodrome invariant `k = a*b` over
 /// decimal-scaled reserves. Surfaces the deployed-contract's
 /// `InvalidUint256` revert as `ZeroDivisionError`-tagged `ValueError`.
 ///
@@ -105,7 +105,7 @@ pub fn solidly_calc_d(x0: &Bound<'_, PyAny>, y: &Bound<'_, PyAny>) -> PyResult<P
 ///
 /// Returns `ValueError` ("EVM Revert: Not a valid uint256") on overflow.
 #[pyfunction]
-pub fn solidly_calc_k(
+pub fn calc_k(
     balance_0: &Bound<'_, PyAny>,
     balance_1: &Bound<'_, PyAny>,
     decimals_0: &Bound<'_, PyAny>,
@@ -122,13 +122,13 @@ pub fn solidly_calc_k(
     u256_to_py_obj(py, result)
 }
 
-/// `solidly_calc_f` — the Solidly/Aerodrome invariant `f(x0, y) = x0*y^3 + x0^3*y`.
+/// `calc_f` — the Solidly/Aerodrome invariant `f(x0, y) = x0*y^3 + x0^3*y`.
 ///
 /// # Errors
 ///
 /// Only surfaces `PyErr` if the result-`int` conversion fails.
 #[pyfunction]
-pub fn solidly_calc_f(x0: &Bound<'_, PyAny>, y: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+pub fn calc_f(x0: &Bound<'_, PyAny>, y: &Bound<'_, PyAny>) -> PyResult<PyObject> {
     let py = x0.py();
     let result = degenbot_solidly_math::calc_f(extract_u256(x0)?, extract_u256(y)?);
     u256_to_py_obj(py, result)
@@ -171,7 +171,7 @@ pub fn camelot_k(
 
 // ─── Iterative solvers ──────────────────────────────────────────────────
 
-/// `solidly_get_y_solidly` — Newton's-method `y` solve for the Solidly/Aerodrome
+/// `get_y_solidly` — Newton's-method `y` solve for the Solidly/Aerodrome
 /// invariant. Direct port of `solidly_stable.get_y_solidly`.
 ///
 /// # Errors
@@ -179,7 +179,7 @@ pub fn camelot_k(
 /// Returns `ValueError` on non-convergence (after 255 iterations) or overflow.
 #[pyfunction(signature = (x0, xy, y, decimals_0, decimals_1))]
 #[allow(clippy::too_many_arguments)] // mirrors the deployed-contract 5-arg signature + decimals pair
-pub fn solidly_get_y_solidly(
+pub fn get_y_solidly(
     x0: &Bound<'_, PyAny>,
     xy: &Bound<'_, PyAny>,
     y: &Bound<'_, PyAny>,
@@ -206,7 +206,7 @@ pub fn solidly_get_y_solidly(
 ///
 /// Never reverts from the loop; surfaces `ValueError` only if the inner
 /// `calc_d` would divide by zero (the Python oracle propagates
-/// `ZeroDivisionError` from `solidly_calc_d`).
+/// `ZeroDivisionError` from `calc_d`).
 #[pyfunction(signature = (x_0, xy, y))]
 pub fn camelot_get_y_camelot(
     x_0: &Bound<'_, PyAny>,
@@ -224,7 +224,7 @@ pub fn camelot_get_y_camelot(
 
 // ─── Pre-baked orchestration entrypoints ────────────────────────────────
 
-/// `solidly_calc_exact_in_volatile` — Solidly volatile (`x*y >= k`) amount-out.
+/// `calc_exact_in_volatile` — Solidly volatile (`x*y >= k`) amount-out.
 /// Direct port of `solidly_stable.calc_exact_in_volatile`.
 ///
 /// # Errors
@@ -233,7 +233,7 @@ pub fn camelot_get_y_camelot(
 /// 0 or 1.
 #[pyfunction(signature = (amount_in, token_in, reserves_0, reserves_1, fee_numer, fee_denom))]
 #[allow(clippy::too_many_arguments)]
-pub fn solidly_calc_exact_in_volatile(
+pub fn calc_exact_in_volatile(
     amount_in: &Bound<'_, PyAny>,
     token_in: u8,
     reserves_0: &Bound<'_, PyAny>,
@@ -254,7 +254,7 @@ pub fn solidly_calc_exact_in_volatile(
     u256_to_py_obj(py, result)
 }
 
-/// `solidly_calc_exact_in_stable_solidly` — Solidly / Aerodrome stable
+/// `calc_exact_in_stable_solidly` — Solidly / Aerodrome stable
 /// amount-out. Pre-baked variant using `calc_k` + `get_y_solidly`.
 ///
 /// # Errors
@@ -262,7 +262,7 @@ pub fn solidly_calc_exact_in_volatile(
 /// Returns `ValueError` on invalid `token_in`, overflow, or non-convergence.
 #[pyfunction(signature = (amount_in, token_in, reserves_0, reserves_1, decimals_0, decimals_1, fee_numer, fee_denom))]
 #[allow(clippy::too_many_arguments)]
-pub fn solidly_calc_exact_in_stable_solidly(
+pub fn calc_exact_in_stable_solidly(
     amount_in: &Bound<'_, PyAny>,
     token_in: u8,
     reserves_0: &Bound<'_, PyAny>,
@@ -287,7 +287,7 @@ pub fn solidly_calc_exact_in_stable_solidly(
     u256_to_py_obj(py, result)
 }
 
-/// `solidly_calc_exact_in_stable_camelot` — Camelot stable amount-out.
+/// `calc_exact_in_stable_camelot` — Camelot stable amount-out.
 /// Pre-baked variant using `k_camelot` + `get_y_camelot`.
 ///
 /// # Errors
@@ -295,7 +295,7 @@ pub fn solidly_calc_exact_in_stable_solidly(
 /// Returns `ValueError` on invalid `token_in`, overflow, or non-convergence.
 #[pyfunction(signature = (amount_in, token_in, reserves_0, reserves_1, decimals_0, decimals_1, fee_numer, fee_denom))]
 #[allow(clippy::too_many_arguments)]
-pub fn solidly_calc_exact_in_stable_camelot(
+pub fn calc_exact_in_stable_camelot(
     amount_in: &Bound<'_, PyAny>,
     token_in: u8,
     reserves_0: &Bound<'_, PyAny>,
@@ -322,19 +322,40 @@ pub fn solidly_calc_exact_in_stable_camelot(
 
 /// Register all Solidly-math functions on the umbrella module.
 ///
+/// Register all Solidly/Aerodrome/Camelot math functions on a real Python
+/// submodule.
+///
+/// Creates `degenbot._ffi.solidly_math` (a `PyModule`, not a flat root-level
+/// prefix) and registers the 10 fns on it with un-prefixed names —
+/// `calc_d`, not `solidly_calc_d`. The `solidly_` prefix was an artifact of
+/// the flat root registration; `camelot_` stays because camelot is a distinct
+/// variant in the same crate (matches `camelot.rs`).
+///
+/// The companion `src/degenbot/aerodrome/math.py` re-exports these as the
+/// stable import path, decoupling Python consumers from `degenbot._ffi`.
+///
 /// # Errors
 ///
 /// Returns `PyErr` if any function fails to register.
 pub fn add_solidly_math_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(solidly_calc_d, m)?)?;
-    m.add_function(wrap_pyfunction!(solidly_calc_k, m)?)?;
-    m.add_function(wrap_pyfunction!(solidly_calc_f, m)?)?;
-    m.add_function(wrap_pyfunction!(camelot_f, m)?)?;
-    m.add_function(wrap_pyfunction!(camelot_k, m)?)?;
-    m.add_function(wrap_pyfunction!(solidly_get_y_solidly, m)?)?;
-    m.add_function(wrap_pyfunction!(camelot_get_y_camelot, m)?)?;
-    m.add_function(wrap_pyfunction!(solidly_calc_exact_in_volatile, m)?)?;
-    m.add_function(wrap_pyfunction!(solidly_calc_exact_in_stable_solidly, m)?)?;
-    m.add_function(wrap_pyfunction!(solidly_calc_exact_in_stable_camelot, m)?)?;
+    let py = m.py();
+    let submod = PyModule::new(py, "degenbot._ffi.solidly_math")?;
+
+    submod.add_function(wrap_pyfunction!(calc_d, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(calc_k, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(calc_f, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(camelot_f, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(camelot_k, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(get_y_solidly, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(camelot_get_y_camelot, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(calc_exact_in_volatile, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(calc_exact_in_stable_solidly, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(calc_exact_in_stable_camelot, &submod)?)?;
+
+    m.add_submodule(&submod)?;
+    py.import("sys")?
+        .getattr("modules")?
+        .set_item("degenbot._ffi.solidly_math", &submod)?;
+
     Ok(())
 }
