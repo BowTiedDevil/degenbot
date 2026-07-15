@@ -1047,3 +1047,7 @@
 {"type":"state","ts":"2026-07-15T22:15:46.055143063Z","data":{"id":"DR3HJK","state":"done","ts":"2026-07-15T22:15:46.055143063Z"}}
 {"type":"claim","ts":"2026-07-15T22:15:49.321313334Z","data":{"id":"UMQ6EI","agent_id":"sonnet@pi","ts":"2026-07-15T22:15:49.321313334Z"}}
 {"type":"state","ts":"2026-07-15T22:15:49.321313334Z","data":{"id":"UMQ6EI","state":"doing","ts":"2026-07-15T22:15:49.321313334Z"}}
+{"type":"result","ts":"2026-07-15T22:30:38.332273535Z","data":{"task_id":"UMQ6EI","summary":"src/degenbot/_ffi/abi.pyi","path":"src/degenbot/_ffi/abi.pyi","sha256_at_attach":"58a118ae0aa9caf5fc2ece5ffcb926b2b3acf30f179640f6e6d13cb598899777","mtime_at_attach":"2026-07-15T22:22:40.901606519Z","git_commit_at_attach":"0ce2899f51942f430ca442245ac9e763e5ed82b5","ts":"2026-07-15T22:30:38.332273535Z"}}
+{"type":"state","ts":"2026-07-15T22:30:38.332273535Z","data":{"id":"UMQ6EI","state":"done","ts":"2026-07-15T22:30:38.332273535Z"}}
+{"type":"claim","ts":"2026-07-15T22:30:41.847484249Z","data":{"id":"56FB5K","agent_id":"sonnet@pi","ts":"2026-07-15T22:30:41.847484249Z"}}
+{"type":"state","ts":"2026-07-15T22:30:41.847484249Z","data":{"id":"56FB5K","state":"doing","ts":"2026-07-15T22:30:41.847484249Z"}}

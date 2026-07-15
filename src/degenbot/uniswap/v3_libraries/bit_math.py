@@ -6,14 +6,14 @@ matching the V3 Solidity contract's revert behavior.
 See: contract_reference/uniswap/V3/UniswapV3Factory.sol (BitMath library)
 """
 
-from degenbot._ffi import (
-    cl_least_significant_bit as _rs_least_significant_bit,
-)
-from degenbot._ffi import (
-    cl_most_significant_bit as _rs_most_significant_bit,
-)
 from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.exceptions.pool import EVMRevertError
+from degenbot.uniswap.math import (
+    least_significant_bit as _rs_least_significant_bit,
+)
+from degenbot.uniswap.math import (
+    most_significant_bit as _rs_most_significant_bit,
+)
 
 
 def least_significant_bit(number: int) -> int:

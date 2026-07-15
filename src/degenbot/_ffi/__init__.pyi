@@ -21,377 +21,6 @@ from degenbot.types.rpc_types import (
 from degenbot.types.rpc_types import BlockData as Web3BlockData
 
 # ------------------------------------------------------------------
-# ABI encoding / decoding
-# ------------------------------------------------------------------
-
-# ------------------------------------------------------------------
-# Concentrated-liquidity math (cl_*)
-# ------------------------------------------------------------------
-
-def cl_most_significant_bit(x: int) -> int:
-    """Find the index of the most significant bit set in x.
-
-    Args:
-        x: A non-negative integer
-
-    Returns:
-        The index (0-255) of the highest set bit
-
-    Raises:
-        ValueError: If x is zero
-
-    """
-
-def cl_least_significant_bit(x: int) -> int:
-    """Find the index of the least significant bit set in x.
-
-    Args:
-        x: A non-negative integer
-
-    Returns:
-        The index (0-255) of the lowest set bit
-
-    Raises:
-        ValueError: If x is zero
-
-    """
-
-def cl_muldiv(a: int, b: int, denominator: int) -> int:
-    """Compute floor(a * b / denominator) with full 512-bit precision.
-
-    Args:
-        a: First multiplicand
-        b: Second multiplicand
-        denominator: Divisor
-
-    Returns:
-        The floored result as a Python int
-
-    Raises:
-        ValueError: On division by zero or overflow
-
-    """
-
-def cl_muldiv_rounding_up(a: int, b: int, denominator: int) -> int:
-    """Compute ceil(a * b / denominator) with full 512-bit precision.
-
-    Args:
-        a: First multiplicand
-        b: Second multiplicand
-        denominator: Divisor
-
-    Returns:
-        The ceiling result as a Python int
-
-    Raises:
-        ValueError: On division by zero or overflow
-
-    """
-
-def cl_div_rounding_up(x: int, y: int) -> int:
-    """Compute ceil(x / y) without overflow checking.
-
-    Args:
-        x: Dividend
-        y: Divisor
-
-    Returns:
-        The ceiling result as a Python int
-
-    Raises:
-        ValueError: If y is zero
-
-    """
-
-def cl_simple_mul_div(a: int, b: int, denominator: int) -> int:
-    """Compute (a * b) / denominator without overflow checking.
-
-    Args:
-        a: First multiplicand
-        b: Second multiplicand
-        denominator: Divisor
-
-    Returns:
-        The result as a Python int
-
-    Raises:
-        ValueError: If denominator is zero
-
-    """
-
-def cl_add_delta(x: int, y: int) -> int:
-    """Add a signed delta y to x, checking that the result fits in uint128.
-
-    Args:
-        x: Base value (must fit in uint128)
-        y: Signed delta (must fit in int128)
-
-    Returns:
-        The result as a Python int
-
-    Raises:
-        ValueError: If the result overflows or inputs are out of range
-
-    """
-
-def cl_get_amount0_delta(
-    sqrt_price_a: int,
-    sqrt_price_b: int,
-    liquidity: int,
-    round_up: bool | None = None,
-) -> int:
-    """Get the amount0 delta between two prices for a given liquidity.
-
-    Args:
-        sqrt_price_a: First sqrt price (X96)
-        sqrt_price_b: Second sqrt price (X96)
-        liquidity: Liquidity value
-        round_up: Whether to round up
-
-    Returns:
-        The token0 amount delta as a Python int
-
-    Raises:
-        ValueError: On invalid input (zero price, overflow, etc.)
-
-    """
-
-def cl_get_amount1_delta(
-    sqrt_price_a: int,
-    sqrt_price_b: int,
-    liquidity: int,
-    round_up: bool | None = None,
-) -> int:
-    """Get the amount1 delta between two prices for a given liquidity.
-
-    Args:
-        sqrt_price_a: First sqrt price (X96)
-        sqrt_price_b: Second sqrt price (X96)
-        liquidity: Liquidity value
-        round_up: Whether to round up
-
-    Returns:
-        The token1 amount delta as a Python int
-
-    Raises:
-        ValueError: On invalid input (negative liquidity, overflow, etc.)
-
-    """
-
-def cl_get_next_sqrt_price_from_amount0_rounding_up(
-    sqrt_price_x96: int,
-    liquidity: int,
-    amount: int,
-    add: bool,
-) -> int:
-    """Get the next sqrt price given a delta of token0, rounding up.
-
-    Args:
-        sqrt_price_x96: Current sqrt price (X96)
-        liquidity: Liquidity value
-        amount: Token0 amount
-        add: Whether to add (True) or remove (False)
-
-    Returns:
-        The next sqrt price (X96) as a Python int
-
-    Raises:
-        ValueError: On overflow or insufficient liquidity
-
-    """
-
-def cl_get_next_sqrt_price_from_amount1_rounding_down(
-    sqrt_price_x96: int,
-    liquidity: int,
-    amount: int,
-    add: bool,
-) -> int:
-    """Get the next sqrt price given a delta of token1, rounding down.
-
-    Args:
-        sqrt_price_x96: Current sqrt price (X96)
-        liquidity: Liquidity value
-        amount: Token1 amount
-        add: Whether to add (True) or remove (False)
-
-    Returns:
-        The next sqrt price (X96) as a Python int
-
-    Raises:
-        ValueError: On overflow or insufficient liquidity
-
-    """
-
-def cl_get_next_sqrt_price_from_input(
-    sqrt_price_x96: int,
-    liquidity: int,
-    amount_in: int,
-    zero_for_one: bool,
-) -> int:
-    """Get the next sqrt price given an input amount.
-
-    Args:
-        sqrt_price_x96: Current sqrt price (X96)
-        liquidity: Liquidity value
-        amount_in: Input amount
-        zero_for_one: Direction flag
-
-    Returns:
-        The next sqrt price (X96) as a Python int
-
-    Raises:
-        ValueError: On invalid price/liquidity or overflow
-
-    """
-
-def cl_get_next_sqrt_price_from_output(
-    sqrt_price_x96: int,
-    liquidity: int,
-    amount_out: int,
-    zero_for_one: bool,
-) -> int:
-    """Get the next sqrt price given an output amount.
-
-    Args:
-        sqrt_price_x96: Current sqrt price (X96)
-        liquidity: Liquidity value
-        amount_out: Output amount
-        zero_for_one: Direction flag
-
-    Returns:
-        The next sqrt price (X96) as a Python int
-
-    Raises:
-        ValueError: On invalid price/liquidity or overflow
-
-    """
-
-def cl_compute_swap_step_v3(
-    sqrt_price_current: int,
-    sqrt_price_target: int,
-    liquidity: int,
-    amount_remaining: int,
-    fee_pips: int,
-) -> tuple[int, int, int, int]:
-    """Compute a V3-style swap step.
-
-    Args:
-        sqrt_price_current: Current sqrt price (X96)
-        sqrt_price_target: Target sqrt price (X96)
-        liquidity: Liquidity value
-        amount_remaining: Remaining amount (signed)
-        fee_pips: Fee in pips
-
-    Returns:
-        Tuple of (sqrt_price_next, amount_in, amount_out, fee_amount)
-
-    Raises:
-        ValueError: On invalid input, overflow, or if liquidity exceeds int128
-
-    """
-
-def cl_compute_swap_step_v4(
-    sqrt_price_current: int,
-    sqrt_price_target: int,
-    liquidity: int,
-    amount_remaining: int,
-    fee_pips: int,
-) -> tuple[int, int, int, int]:
-    """Compute a V4-style swap step.
-
-    Args:
-        sqrt_price_current: Current sqrt price (X96)
-        sqrt_price_target: Target sqrt price (X96)
-        liquidity: Liquidity value
-        amount_remaining: Remaining amount (signed)
-        fee_pips: Fee in pips
-
-    Returns:
-        Tuple of (sqrt_price_next, amount_in, amount_out, fee_amount)
-
-    Raises:
-        ValueError: On invalid input, overflow, or if liquidity exceeds int128
-
-    """
-
-def cl_max_usable_tick(tick_spacing: int) -> int:
-    """Compute the maximum usable tick for a given tick spacing.
-
-    Args:
-        tick_spacing: The tick spacing value
-
-    Returns:
-        The maximum usable tick as an int
-
-    """
-
-def cl_min_usable_tick(tick_spacing: int) -> int:
-    """Compute the minimum usable tick for a given tick spacing.
-
-    Args:
-        tick_spacing: The tick spacing value
-
-    Returns:
-        The minimum usable tick as an int
-
-    """
-
-def cl_get_tick_word_and_bit_position(tick: int, tick_spacing: int) -> tuple[int, int]:
-    """Compute the tick word and bit position for a compressed tick.
-
-    Args:
-        tick: The tick value
-        tick_spacing: The tick spacing value
-
-    Returns:
-        A ``(word, bit)`` tuple where ``word`` is the bitmap mapping key
-        and ``bit`` is in ``0..=255``.
-
-    """
-
-def cl_apply_liquidity_mapping_update(
-    tick_bitmap: dict[int, Any],
-    tick_data: dict[int, Any],
-    tick_spacing: int,
-    tick: int,
-    liquidity: int,
-    initial_state_block: int,
-    update_block: int,
-    tick_lower: int,
-    tick_upper: int,
-    liquidity_delta: int,
-) -> dict[str, Any]:
-    """Apply a liquidity-mapping update (mint/burn) to the tick bitmap & data.
-
-    A thin PyO3 wrapper over the pure-Rust
-    ``degenbot_cl_math::cl_lib::liquidity_mapping::apply_liquidity_mapping_update``.
-    Mirrors ``degenbot.calculations.concentrated_liquidity.apply_liquidity_mapping_update``.
-    Values may be plain dicts or pydantic ``BitmapAtWord`` / ``LiquidityAtTick``
-    models (the seam reads by key or attribute). ``initial_state_block`` values
-    exceeding ``u64::MAX`` (e.g. ``MAX_UINT256`` used to disable the in-range
-    adjustment) are clamped to ``u64::MAX``, preserving the skip behavior.
-
-    Args:
-        tick_bitmap: Word → ``{"bitmap": int, "block": int}`` (or models)
-        tick_data: Tick → ``{"liquidity_net": int,
-            "liquidity_gross": int, "block": int}`` (or models)
-        tick_spacing: Tick spacing
-        tick: Active tick (for the in-range check)
-        liquidity: Active in-range liquidity (uint128)
-        initial_state_block: State block at which the active liquidity was last settled
-        update_block: Block of this liquidity event
-        tick_lower: Position lower tick
-        tick_upper: Position upper tick
-        liquidity_delta: Signed delta (mint positive, burn negative)
-
-    Returns:
-        ``{"tick_bitmap": {...}, "tick_data": {...}, "liquidity": int}``
-
-    Raises:
-        ValueError: On invalid input types, non-uint128 liquidity, or non-i32 ticks
-
-    """
-
 # ── Balancer V2 math (feature = "balancer-math"). ──
 # Pure-math wrappers over the degenbot-balancer-math leaf, registered on a
 # real Python submodule (`degenbot._ffi.balancer_math`) with un-prefixed names
@@ -399,9 +28,20 @@ def cl_apply_liquidity_mapping_update(
 # The `version` discriminant (1=V1, 2=V2) is the bytecode-detected PowVersion;
 # `round_up` is the stable-invariant V1(always-roundDown)/V2(roundUp) axis.
 # Reverts surface as ValueError/OverflowError carrying the Solidity revert tag.
-from . import balancer_math as balancer_math  # noqa: E402
-from . import curve_math as curve_math  # noqa: E402
-from . import solidly_math as solidly_math  # noqa: E402
+from . import balancer_math as balancer_math
+
+# ------------------------------------------------------------------
+# ABI encoding / decoding
+# ------------------------------------------------------------------
+# ------------------------------------------------------------------
+# Concentrated-liquidity math (feature = "cl-math").
+# Registered on a real Python submodule (`degenbot._ffi.cl_math`) with
+# un-prefixed names — the `cl_` prefix was an artifact of the flat root
+# registration. See `cl_math.pyi` for the 21 function signatures + the 4
+# tick-boundary constants (MIN_TICK/MAX_TICK/MIN_SQRT_RATIO/MAX_SQRT_RATIO).
+from . import cl_math as cl_math
+from . import curve_math as curve_math
+from . import solidly_math as solidly_math
 
 # ── Curve StableSwap math (feature = "curve-math"). ──
 # Pure-math wrappers over the degenbot-curve-math leaf, registered on a real
@@ -1460,33 +1100,6 @@ class PathIterator:
     def __iter__(self) -> PathIterator: ...
     def __next__(self) -> list[tuple[int, int]]: ...
 
-def get_sqrt_ratio_at_tick(tick: int) -> int:
-    """Convert a tick value to its corresponding sqrt price (X96 format).
-
-    Args:
-        tick: The tick value in range [-887272, 887272]
-
-    Returns:
-        A Python int representing the sqrt price X96 value
-
-    Raises:
-        ValueError: If the tick value is invalid (out of range)
-
-    """
-
-#: Minimum Uniswap V3 tick. Canonical source: ``degenbot-cl-math`` core.
-MIN_TICK: int
-#: Maximum Uniswap V3 tick. Canonical source: ``degenbot-cl-math`` core.
-MAX_TICK: int
-#: Minimum sqrt price ratio (X96). Canonical source: ``degenbot-cl-math`` core.
-MIN_SQRT_RATIO: int
-#: Maximum sqrt price ratio (X96). Canonical source: ``degenbot-cl-math`` core.
-MAX_SQRT_RATIO: int
-
-@overload
-def get_tick_at_sqrt_ratio(sqrt_price_x96: int) -> int: ...
-@overload
-def get_tick_at_sqrt_ratio(sqrt_price_x96: bytes) -> int: ...
 @overload
 def to_checksum_address(address: str) -> str: ...
 @overload
@@ -3233,10 +2846,6 @@ def finalize_fees(
 ) -> None: ...
 
 __all__ = [
-    "MAX_SQRT_RATIO",
-    "MAX_TICK",
-    "MIN_SQRT_RATIO",
-    "MIN_TICK",
     "AlloyProvider",
     "AlloySubscription",
     "AnvilFork",
@@ -3283,25 +2892,7 @@ __all__ = [
     "abi",
     "balancer_math",
     "build_path_graph",
-    "cl_add_delta",
-    "cl_apply_liquidity_mapping_update",
-    "cl_compute_swap_step_v3",
-    "cl_compute_swap_step_v4",
-    "cl_div_rounding_up",
-    "cl_get_amount0_delta",
-    "cl_get_amount1_delta",
-    "cl_get_next_sqrt_price_from_amount0_rounding_up",
-    "cl_get_next_sqrt_price_from_amount1_rounding_down",
-    "cl_get_next_sqrt_price_from_input",
-    "cl_get_next_sqrt_price_from_output",
-    "cl_get_tick_word_and_bit_position",
-    "cl_least_significant_bit",
-    "cl_max_usable_tick",
-    "cl_min_usable_tick",
-    "cl_most_significant_bit",
-    "cl_muldiv",
-    "cl_muldiv_rounding_up",
-    "cl_simple_mul_div",
+    "cl_math",
     "cleanup_zero_balance_positions",
     "compute_simulation_warmup_slots",
     "curve_math",
@@ -3352,8 +2943,6 @@ __all__ = [
     "flz_compress",
     "flz_decompress",
     "get_function_selector",
-    "get_sqrt_ratio_at_tick",
-    "get_tick_at_sqrt_ratio",
     "mapping_slot",
     "nested_mapping_slot",
     "pack_config",

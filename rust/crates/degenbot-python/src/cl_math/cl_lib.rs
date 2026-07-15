@@ -91,7 +91,7 @@ fn extract_i128(obj: &Bound<'_, PyAny>) -> PyResult<i128> {
 ///
 /// Returns `PyValueError` if `x` is zero.
 #[pyfunction(signature = (x))]
-pub fn cl_most_significant_bit(x: &Bound<'_, PyAny>) -> PyResult<u8> {
+pub fn most_significant_bit(x: &Bound<'_, PyAny>) -> PyResult<u8> {
     let v = extract_u256(x)?;
     bit_math::most_significant_bit(v).map_err(|e| PyValueError::new_err(e.to_string()))
 }
@@ -102,7 +102,7 @@ pub fn cl_most_significant_bit(x: &Bound<'_, PyAny>) -> PyResult<u8> {
 ///
 /// Returns `PyValueError` if `x` is zero.
 #[pyfunction(signature = (x))]
-pub fn cl_least_significant_bit(x: &Bound<'_, PyAny>) -> PyResult<u8> {
+pub fn least_significant_bit(x: &Bound<'_, PyAny>) -> PyResult<u8> {
     let v = extract_u256(x)?;
     bit_math::least_significant_bit(v).map_err(|e| PyValueError::new_err(e.to_string()))
 }
@@ -115,7 +115,7 @@ pub fn cl_least_significant_bit(x: &Bound<'_, PyAny>) -> PyResult<u8> {
 ///
 /// Returns `PyValueError` on division by zero or overflow.
 #[pyfunction(signature = (a, b, denominator))]
-pub fn cl_muldiv(
+pub fn muldiv(
     a: &Bound<'_, PyAny>,
     b: &Bound<'_, PyAny>,
     denominator: &Bound<'_, PyAny>,
@@ -135,7 +135,7 @@ pub fn cl_muldiv(
 ///
 /// Returns `PyValueError` on division by zero or overflow.
 #[pyfunction(signature = (a, b, denominator))]
-pub fn cl_muldiv_rounding_up(
+pub fn muldiv_rounding_up(
     a: &Bound<'_, PyAny>,
     b: &Bound<'_, PyAny>,
     denominator: &Bound<'_, PyAny>,
@@ -157,7 +157,7 @@ pub fn cl_muldiv_rounding_up(
 ///
 /// Returns `PyValueError` if `y` is zero.
 #[pyfunction(signature = (x, y))]
-pub fn cl_div_rounding_up(x: &Bound<'_, PyAny>, y: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+pub fn div_rounding_up(x: &Bound<'_, PyAny>, y: &Bound<'_, PyAny>) -> PyResult<PyObject> {
     let py = x.py();
     let result = unsafe_math::div_rounding_up(extract_u256(x)?, extract_u256(y)?);
     u256_to_py_obj(py, result)
@@ -169,7 +169,7 @@ pub fn cl_div_rounding_up(x: &Bound<'_, PyAny>, y: &Bound<'_, PyAny>) -> PyResul
 ///
 /// Returns `PyValueError` if `denominator` is zero.
 #[pyfunction(signature = (a, b, denominator))]
-pub fn cl_simple_mul_div(
+pub fn simple_mul_div(
     a: &Bound<'_, PyAny>,
     b: &Bound<'_, PyAny>,
     denominator: &Bound<'_, PyAny>,
@@ -191,7 +191,7 @@ pub fn cl_simple_mul_div(
 ///
 /// Returns `PyValueError` if the result overflows or inputs are out of range.
 #[pyfunction(signature = (x, y))]
-pub fn cl_add_delta(x: &Bound<'_, PyAny>, y: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+pub fn add_delta(x: &Bound<'_, PyAny>, y: &Bound<'_, PyAny>) -> PyResult<PyObject> {
     let py = x.py();
     // Extract x as u128 via U256 — validate range first
     let x_u256 = extract_u256(x)?;
@@ -216,7 +216,7 @@ pub fn cl_add_delta(x: &Bound<'_, PyAny>, y: &Bound<'_, PyAny>) -> PyResult<PyOb
 ///
 /// Returns `PyValueError` on invalid input (zero price, overflow, etc.).
 #[pyfunction(signature = (sqrt_price_a, sqrt_price_b, liquidity, round_up=None))]
-pub fn cl_get_amount0_delta(
+pub fn get_amount0_delta(
     sqrt_price_a: &Bound<'_, PyAny>,
     sqrt_price_b: &Bound<'_, PyAny>,
     liquidity: &Bound<'_, PyAny>,
@@ -238,7 +238,7 @@ pub fn cl_get_amount0_delta(
 ///
 /// Returns `PyValueError` on invalid input (negative liquidity, overflow, etc.).
 #[pyfunction(signature = (sqrt_price_a, sqrt_price_b, liquidity, round_up=None))]
-pub fn cl_get_amount1_delta(
+pub fn get_amount1_delta(
     sqrt_price_a: &Bound<'_, PyAny>,
     sqrt_price_b: &Bound<'_, PyAny>,
     liquidity: &Bound<'_, PyAny>,
@@ -260,7 +260,7 @@ pub fn cl_get_amount1_delta(
 ///
 /// Returns `PyValueError` on overflow or insufficient liquidity.
 #[pyfunction(signature = (sqrt_price_x96, liquidity, amount, add))]
-pub fn cl_get_next_sqrt_price_from_amount0_rounding_up(
+pub fn get_next_sqrt_price_from_amount0_rounding_up(
     sqrt_price_x96: &Bound<'_, PyAny>,
     liquidity: &Bound<'_, PyAny>,
     amount: &Bound<'_, PyAny>,
@@ -282,7 +282,7 @@ pub fn cl_get_next_sqrt_price_from_amount0_rounding_up(
 ///
 /// Returns `PyValueError` on overflow or insufficient liquidity.
 #[pyfunction(signature = (sqrt_price_x96, liquidity, amount, add))]
-pub fn cl_get_next_sqrt_price_from_amount1_rounding_down(
+pub fn get_next_sqrt_price_from_amount1_rounding_down(
     sqrt_price_x96: &Bound<'_, PyAny>,
     liquidity: &Bound<'_, PyAny>,
     amount: &Bound<'_, PyAny>,
@@ -304,7 +304,7 @@ pub fn cl_get_next_sqrt_price_from_amount1_rounding_down(
 ///
 /// Returns `PyValueError` on invalid price/liquidity or overflow.
 #[pyfunction(signature = (sqrt_price_x96, liquidity, amount_in, zero_for_one))]
-pub fn cl_get_next_sqrt_price_from_input(
+pub fn get_next_sqrt_price_from_input(
     sqrt_price_x96: &Bound<'_, PyAny>,
     liquidity: &Bound<'_, PyAny>,
     amount_in: &Bound<'_, PyAny>,
@@ -326,7 +326,7 @@ pub fn cl_get_next_sqrt_price_from_input(
 ///
 /// Returns `PyValueError` on invalid price/liquidity or overflow.
 #[pyfunction(signature = (sqrt_price_x96, liquidity, amount_out, zero_for_one))]
-pub fn cl_get_next_sqrt_price_from_output(
+pub fn get_next_sqrt_price_from_output(
     sqrt_price_x96: &Bound<'_, PyAny>,
     liquidity: &Bound<'_, PyAny>,
     amount_out: &Bound<'_, PyAny>,
@@ -351,7 +351,7 @@ pub fn cl_get_next_sqrt_price_from_output(
 /// Returns `PyValueError` on invalid input, overflow, or if liquidity exceeds int128.
 #[allow(clippy::similar_names)]
 #[pyfunction(signature = (sqrt_price_current, sqrt_price_target, liquidity, amount_remaining, fee_pips))]
-pub fn cl_compute_swap_step_v3(
+pub fn compute_swap_step_v3(
     sqrt_price_current: &Bound<'_, PyAny>,
     sqrt_price_target: &Bound<'_, PyAny>,
     liquidity: &Bound<'_, PyAny>,
@@ -400,7 +400,7 @@ pub fn cl_compute_swap_step_v3(
 /// Returns `PyValueError` on invalid input, overflow, or if liquidity exceeds int128.
 #[allow(clippy::similar_names)]
 #[pyfunction(signature = (sqrt_price_current, sqrt_price_target, liquidity, amount_remaining, fee_pips))]
-pub fn cl_compute_swap_step_v4(
+pub fn compute_swap_step_v4(
     sqrt_price_current: &Bound<'_, PyAny>,
     sqrt_price_target: &Bound<'_, PyAny>,
     liquidity: &Bound<'_, PyAny>,
@@ -450,14 +450,14 @@ pub fn cl_compute_swap_step_v4(
 #[pyfunction(signature = (tick_spacing))]
 #[must_use]
 #[allow(clippy::missing_const_for_fn)]
-pub fn cl_max_usable_tick(tick_spacing: i32) -> i32 {
+pub fn max_usable_tick(tick_spacing: i32) -> i32 {
     tick_math::max_usable_tick(tick_spacing)
 }
 
 #[pyfunction(signature = (tick_spacing))]
 #[must_use]
 #[allow(clippy::missing_const_for_fn)]
-pub fn cl_min_usable_tick(tick_spacing: i32) -> i32 {
+pub fn min_usable_tick(tick_spacing: i32) -> i32 {
     tick_math::min_usable_tick(tick_spacing)
 }
 
@@ -469,7 +469,7 @@ pub fn cl_min_usable_tick(tick_spacing: i32) -> i32 {
 /// is in `0..=255` (`u8`). Mirrors `degenbot_cl_math::get_tick_word_and_bit_position`.
 #[pyfunction(signature = (tick, tick_spacing))]
 #[must_use]
-pub fn cl_get_tick_word_and_bit_position(tick: i32, tick_spacing: i32) -> (i32, u8) {
+pub fn get_tick_word_and_bit_position(tick: i32, tick_spacing: i32) -> (i32, u8) {
     liquidity_mapping::get_tick_word_and_bit_position(tick, tick_spacing)
 }
 
@@ -519,7 +519,7 @@ fn u128_to_py_obj(py: Python<'_>, v: U128) -> PyResult<PyObject> {
 /// non-i32 ticks.
 #[allow(clippy::too_many_arguments, clippy::similar_names)]
 #[pyfunction]
-pub fn cl_apply_liquidity_mapping_update(
+pub fn apply_liquidity_mapping_update(
     tick_bitmap: &Bound<'_, PyAny>,
     tick_data: &Bound<'_, PyAny>,
     tick_spacing: i32,
@@ -622,52 +622,58 @@ pub fn cl_apply_liquidity_mapping_update(
 
 // ─── Register all CL math functions ────────────────────────────────────
 
-/// Add all concentrated-liquidity math functions to the Python module.
+/// Register the 19 `cl_lib` math functions on the CL-math submodule.
+///
+/// Called by `crate::cl_math::add_cl_math_module` (the single entry point that
+/// also registers the `tick_math.rs` entry points + boundary constants and
+/// wires up `sys.modules`). This helper registers only the `cl_lib.rs` fns
+/// (`BitMath` / `FullMath` / `UnsafeMath` / `LiquidityMath` / `SqrtPriceMath` /
+/// `SwapMath` / `TickMath` helpers / `LiquidityMapping`), un-prefixed.
 ///
 /// # Errors
 ///
 /// Returns `PyErr` if any function fails to register.
-pub fn add_cl_lib_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
+pub fn add_cl_lib_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // BitMath
-    m.add_function(wrap_pyfunction!(cl_most_significant_bit, m)?)?;
-    m.add_function(wrap_pyfunction!(cl_least_significant_bit, m)?)?;
+    m.add_function(wrap_pyfunction!(most_significant_bit, m)?)?;
+    m.add_function(wrap_pyfunction!(least_significant_bit, m)?)?;
 
     // FullMath
-    m.add_function(wrap_pyfunction!(cl_muldiv, m)?)?;
-    m.add_function(wrap_pyfunction!(cl_muldiv_rounding_up, m)?)?;
+    m.add_function(wrap_pyfunction!(muldiv, m)?)?;
+    m.add_function(wrap_pyfunction!(muldiv_rounding_up, m)?)?;
 
     // UnsafeMath
-    m.add_function(wrap_pyfunction!(cl_div_rounding_up, m)?)?;
-    m.add_function(wrap_pyfunction!(cl_simple_mul_div, m)?)?;
+    m.add_function(wrap_pyfunction!(div_rounding_up, m)?)?;
+    m.add_function(wrap_pyfunction!(simple_mul_div, m)?)?;
 
     // LiquidityMath
-    m.add_function(wrap_pyfunction!(cl_add_delta, m)?)?;
+    m.add_function(wrap_pyfunction!(add_delta, m)?)?;
 
     // SqrtPriceMath
-    m.add_function(wrap_pyfunction!(cl_get_amount0_delta, m)?)?;
-    m.add_function(wrap_pyfunction!(cl_get_amount1_delta, m)?)?;
+    m.add_function(wrap_pyfunction!(get_amount0_delta, m)?)?;
+    m.add_function(wrap_pyfunction!(get_amount1_delta, m)?)?;
     m.add_function(wrap_pyfunction!(
-        cl_get_next_sqrt_price_from_amount0_rounding_up,
+        get_next_sqrt_price_from_amount0_rounding_up,
         m
     )?)?;
     m.add_function(wrap_pyfunction!(
-        cl_get_next_sqrt_price_from_amount1_rounding_down,
+        get_next_sqrt_price_from_amount1_rounding_down,
         m
     )?)?;
-    m.add_function(wrap_pyfunction!(cl_get_next_sqrt_price_from_input, m)?)?;
-    m.add_function(wrap_pyfunction!(cl_get_next_sqrt_price_from_output, m)?)?;
+    m.add_function(wrap_pyfunction!(get_next_sqrt_price_from_input, m)?)?;
+    m.add_function(wrap_pyfunction!(get_next_sqrt_price_from_output, m)?)?;
 
     // SwapMath
-    m.add_function(wrap_pyfunction!(cl_compute_swap_step_v3, m)?)?;
-    m.add_function(wrap_pyfunction!(cl_compute_swap_step_v4, m)?)?;
+    m.add_function(wrap_pyfunction!(compute_swap_step_v3, m)?)?;
+    m.add_function(wrap_pyfunction!(compute_swap_step_v4, m)?)?;
 
     // TickMath (additional helpers beyond the existing get_sqrt_ratio/tick functions)
-    m.add_function(wrap_pyfunction!(cl_max_usable_tick, m)?)?;
-    m.add_function(wrap_pyfunction!(cl_min_usable_tick, m)?)?;
+    m.add_function(wrap_pyfunction!(max_usable_tick, m)?)?;
+    m.add_function(wrap_pyfunction!(min_usable_tick, m)?)?;
 
     // LiquidityMapping
-    m.add_function(wrap_pyfunction!(cl_get_tick_word_and_bit_position, m)?)?;
-    m.add_function(wrap_pyfunction!(cl_apply_liquidity_mapping_update, m)?)?;
+    m.add_function(wrap_pyfunction!(get_tick_word_and_bit_position, m)?)?;
+    m.add_function(wrap_pyfunction!(apply_liquidity_mapping_update, m)?)?;
 
     Ok(())
 }

@@ -30,7 +30,7 @@ from weakref import WeakSet
 
 from eth_typing import ChecksumAddress
 
-from degenbot._ffi import PyLiquidityPool, cl_get_tick_word_and_bit_position
+from degenbot._ffi import PyLiquidityPool
 from degenbot.arbitrage.types import UniswapV3PoolSwapAmounts
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
@@ -46,6 +46,9 @@ from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import BoundedProductHop, HopType, V3TickRangeInfo
 from degenbot.types.pool_protocols import SimulationResult
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
+from degenbot.uniswap.math import (
+    get_tick_word_and_bit_position as cl_get_tick_word_and_bit_position,
+)
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v3_libraries import (
     MAX_SQRT_RATIO,
