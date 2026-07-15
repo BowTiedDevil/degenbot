@@ -21,6 +21,7 @@ from degenbot.exceptions.arbitrage import (
     Unprofitable,
 )
 from degenbot.exceptions.base import DegenbotError, DegenbotTypeError, DegenbotValueError
+from degenbot.exceptions.database import DatabaseSchemaStale
 from degenbot.exceptions.infrastructure import (
     AnvilError,
     BackupExists,
@@ -84,6 +85,7 @@ __all__ = (
     "ConnectionTimeout",
     "ContractLogicError",
     "CurveError",
+    "DatabaseSchemaStale",
     "DegenbotConnectionError",
     "DegenbotError",
     "DegenbotTypeError",

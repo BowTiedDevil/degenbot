@@ -63,7 +63,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from degenbot._ffi import PyDexIdentity, dex_identity
+from degenbot._ffi import dex_identity
 from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
 from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.balancer.stable_pools import BalancerV2StablePool
@@ -77,6 +77,7 @@ from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
     from degenbot.registry.pool_type import PoolTypeRegistry
+    from degenbot.types import DexIdentity
     from degenbot.types.abstract import AbstractLiquidityPool
 
 _SHIPPED_JSON = Path(__file__).with_name("deployments.json")
@@ -320,7 +321,7 @@ def register_from_deployments(records: list[DeploymentRecord], registry: PoolTyp
         pool_class = POOL_TYPE_MAP[record.pool_type]
         family = _resolve_family(record.family)
         if record.dex_variant is not None:
-            identity: PyDexIdentity | None = dex_identity(record.dex_variant)
+            identity: DexIdentity | None = dex_identity(record.dex_variant)
             assert identity is not None, (
                 f"dex_variant {record.dex_variant!r} for "
                 f"{record.name} (chain {record.chain_id}, {record.factory}) "

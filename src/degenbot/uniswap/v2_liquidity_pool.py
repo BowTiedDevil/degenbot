@@ -7,7 +7,7 @@ from weakref import WeakSet
 
 from eth_typing import ChecksumAddress
 
-from degenbot._ffi import PyDexIdentity, PyLiquidityPool
+from degenbot._ffi import PyLiquidityPool
 from degenbot._ffi import (
     solidly_calc_exact_in_stable_camelot as _rs_calc_exact_in_stable_camelot,
 )
@@ -16,6 +16,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import ExternalUpdateError
+from degenbot.types import DexIdentity
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import PublisherMixin, Subscriber
@@ -51,7 +52,7 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
     # `__init__` raises). Declared at class scope so the type checker tracks
     # them without inline annotations on the classmethod body
     _py_pool: PyLiquidityPool
-    dex: PyDexIdentity
+    dex: DexIdentity
     address: ChecksumAddress
     factory: ChecksumAddress
     _fee_token0: Fraction

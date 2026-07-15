@@ -17,7 +17,6 @@ from sqlalchemy import URL, Engine, create_engine, event
 from sqlalchemy.orm import Session, scoped_session, sessionmaker
 
 from degenbot._ffi import (
-    DatabaseSchemaStale,
     db_backup_database,
     db_compact_database,
     db_convert_alembic_to_rust_owned,
@@ -26,6 +25,7 @@ from degenbot._ffi import (
     db_inspect_schema_state,
     db_upgrade_database,
 )
+from degenbot.exceptions import DatabaseSchemaStale
 from degenbot.exceptions.infrastructure import BackupExists
 from degenbot.logging import logger
 

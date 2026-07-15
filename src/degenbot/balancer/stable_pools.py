@@ -7,30 +7,16 @@ from itertools import starmap
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, Self, runtime_checkable
 from weakref import WeakSet
 
-from degenbot._ffi import (
-    balancer_fixed_point_div_down as _rs_div_down,
-)
-from degenbot._ffi import (
-    balancer_fixed_point_div_up as _rs_div_up,
-)
-from degenbot._ffi import (
-    balancer_fixed_point_mul_down as _rs_mul_down,
-)
-from degenbot._ffi import (
-    balancer_stable_calc_in_given_out as _rs_calc_in_given_out,
-)
-from degenbot._ffi import (
-    balancer_stable_calc_out_given_in as _rs_calc_out_given_in,
-)
-from degenbot._ffi import (
-    balancer_stable_calculate_invariant as _rs_calculate_invariant,
-)
+from degenbot._ffi import balancer_fixed_point_div_down as _rs_div_down
+from degenbot._ffi import balancer_fixed_point_div_up as _rs_div_up
+from degenbot._ffi import balancer_fixed_point_mul_down as _rs_mul_down
+from degenbot._ffi import balancer_stable_calc_in_given_out as _rs_calc_in_given_out
+from degenbot._ffi import balancer_stable_calc_out_given_in as _rs_calc_out_given_in
+from degenbot._ffi import balancer_stable_calculate_invariant as _rs_calculate_invariant
 from degenbot._ffi import (
     balancer_stable_calculate_invariant_deployed as _rs_calculate_invariant_deployed,
 )
-from degenbot._ffi import (
-    balancer_weighted_subtract_swap_fee_amount as _rs_subtract_swap_fee_amount,
-)
+from degenbot._ffi import balancer_weighted_subtract_swap_fee_amount as _rs_subtract_swap_fee_amount
 from degenbot.balancer.libraries.constants import ONE
 from degenbot.balancer.libraries.scaling_helpers import _compute_scaling_factor
 from degenbot.balancer.swap_amounts import BalancerV2SwapAmounts

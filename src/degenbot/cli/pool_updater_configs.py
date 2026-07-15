@@ -8,10 +8,6 @@ from hexbytes import HexBytes
 
 from degenbot import abi_decode
 from degenbot._ffi import (
-    LiquidityUpdateEvent,
-    V2PoolRowInput,
-    V3PoolRowInput,
-    V4PoolRowInput,
     db_apply_v3_liquidity_updates,
     db_apply_v4_liquidity_updates,
     db_fetch_pool_row,
@@ -25,6 +21,12 @@ from degenbot.database.models.pools import PoolManagerTable
 from degenbot.provider import AlloyProvider
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.types.rpc_types import LogReceipt
+from degenbot.updater import (
+    LiquidityUpdateEvent,
+    V2PoolRowInput,
+    V3PoolRowInput,
+    V4PoolRowInput,
+)
 
 # V3 liquidity event topic0 hashes (Mint/Burn). Used by the V3 decode shell
 # (`apply_v3_liquidity_updates`) to recognize the Burn signature + negate the

@@ -1,6 +1,6 @@
 """Offline §4.2 parity tests for the price-reader PyO3 seam + shells.
 
-Drives the full ``PyChainlinkPriceFeed`` / ``PyAavePriceOracle`` pyclasses +
+Drives the full ``ChainlinkPriceFeed`` / ``AavePriceOracle`` pyclasses +
 the delegating ``ChainlinkPriceContract`` / ``OraclePriceFetcher`` shells
 through a local in-process JSON-RPC mock that returns canned ABI-encoded
 ``eth_call`` bytes. This exercises the actual ``eth_call`` → Rust ABI decode
@@ -36,9 +36,9 @@ import pytest
 if TYPE_CHECKING:
     from collections.abc import Generator
 
+from degenbot.aave import AavePriceOracle
 from degenbot.aave.analysis.orchestrator import OraclePriceFetcher
-from degenbot.chainlink import ChainlinkPriceContract
-from degenbot._ffi import AlloyProvider, PyAavePriceOracle, PyChainlinkPriceFeed
+from degenbot.chainlink import ChainlinkPriceContract, ChainlinkPriceFeed
 from degenbot.provider import AlloyProvider
 
 # Canonical Chainlink selectors (first 4 bytes of keccak of the canonical sig).
@@ -159,14 +159,14 @@ def _free_port_plausible() -> bool:
 
 
 def test_py_chainlink_feed_decimals_byte_exact(mock_provider: AlloyProvider) -> None:
-    feed = PyChainlinkPriceFeed(CHAINLINK_ETH_USD, mock_provider.as_alloy())
+    feed = ChainlinkPriceFeed(CHAINLINK_ETH_USD, mock_provider.as_alloy())
     assert feed.decimals() == CHAINLINK_DECIMALS
 
 
 def test_py_chainlink_feed_latest_round_data_byte_exact(
     mock_provider: AlloyProvider,
 ) -> None:
-    feed = PyChainlinkPriceFeed(CHAINLINK_ETH_USD, mock_provider.as_alloy())
+    feed = ChainlinkPriceFeed(CHAINLINK_ETH_USD, mock_provider.as_alloy())
     round_id, answer, started_at, updated_at, answered_in_round = feed.latest_round_data()
     assert round_id == 1
     assert answer == CHAINLINK_ANSWER
@@ -198,7 +198,7 @@ def test_chainlink_shell_decimals_cached(fake_bot: SimpleNamespace) -> None:
 
 def test_chainlink_py_price_truncates_whole_units(mock_provider: AlloyProvider) -> None:
     """The Rust ``price()`` convenience truncates to whole units (integer div)."""
-    feed = PyChainlinkPriceFeed(CHAINLINK_ETH_USD, mock_provider.as_alloy())
+    feed = ChainlinkPriceFeed(CHAINLINK_ETH_USD, mock_provider.as_alloy())
     truncated = feed.price()
     assert truncated == 1845  # int(answer // 10**decimals)
 
@@ -211,7 +211,7 @@ def test_chainlink_py_price_truncates_whole_units(mock_provider: AlloyProvider) 
 def test_py_aave_oracle_get_asset_price_byte_exact(
     mock_provider: AlloyProvider,
 ) -> None:
-    oracle = PyAavePriceOracle(AAVE_ORACLE, mock_provider.as_alloy())
+    oracle = AavePriceOracle(AAVE_ORACLE, mock_provider.as_alloy())
     assert oracle.get_asset_price(ASSET_ADDRESS) == AAVE_ASSET_PRICE
 
 
