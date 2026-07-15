@@ -4,6 +4,8 @@ from degenbot.exceptions.arbitrage import (
     ArbCalculationError,
     ArbitrageError,
     DuplicatePoolError,
+    DynamicFeePoolRejectedError,
+    HookedPoolRejectedError,
     HopCountExceededError,
     HopCountInsufficientError,
     IncompatiblePoolInvariant,
@@ -66,6 +68,10 @@ from degenbot.exceptions.rpc import (
     RpcError,
     TransactionNotFound,
 )
+from degenbot.exceptions.verification import (
+    VerificationMismatchError,
+    VerificationRpcError,
+)
 
 __all__ = (
     "AddressMismatch",
@@ -83,10 +89,12 @@ __all__ = (
     "DegenbotTypeError",
     "DegenbotValueError",
     "DuplicatePoolError",
+    "DynamicFeePoolRejectedError",
     "EVMRevertError",
     "Erc20TokenError",
     "ExternalUpdateError",
     "FetchingError",
+    "HookedPoolRejectedError",
     "HookedPoolResult",
     "HopCountExceededError",
     "HopCountInsufficientError",
@@ -127,5 +135,7 @@ __all__ = (
     "UnknownPool",
     "UnknownPoolId",
     "Unprofitable",
+    "VerificationMismatchError",
+    "VerificationRpcError",
     "Web3ConnectionTimeout",
 )
