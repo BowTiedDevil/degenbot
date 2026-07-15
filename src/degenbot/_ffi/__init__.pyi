@@ -400,51 +400,18 @@ def cl_apply_liquidity_mapping_update(
 # `round_up` is the stable-invariant V1(always-roundDown)/V2(roundUp) axis.
 # Reverts surface as ValueError/OverflowError carrying the Solidity revert tag.
 from . import balancer_math as balancer_math  # noqa: E402
+from . import curve_math as curve_math  # noqa: E402
 
 # ── Curve StableSwap math (feature = "curve-math"). ──
-# Pure-math wrappers over the degenbot-curve-math leaf (the five iterative
-# solvers the DyCalculator strategy seam invokes). The variant discriminants
-# (`d_variant`/`y_variant`/`yd_variant`) are 1-based `auto()` enum `.value`s
-# matching the Rust `try_from_u8`. Vyper reverts (overflow / non-convergence /
-# index / unsafe-value) all surface as `ValueError` — the shape the Python
-# `DyCalculator` catches and wraps as `EVMRevertError(error=str(e))`.
-def curve_stableswap_get_d(
-    xp: list[int],
-    amp: int,
-    n_coins: int,
-    a_precision: int,
-    d_variant: int,
-) -> int: ...
-def curve_stableswap_get_y(
-    i: int,
-    j: int,
-    x: int,
-    xp: list[int],
-    amp: int,
-    n_coins: int,
-    a_precision: int,
-    y_variant: int,
-    d_variant: int,
-) -> int: ...
-def curve_stableswap_get_y_d(
-    amp: int,
-    i: int,
-    xp: list[int],
-    d: int,
-    n_coins: int,
-    a_precision: int,
-    yd_variant: int,
-) -> int: ...
-def curve_stableswap_newton_y(
-    ann: int,
-    gamma: int,
-    xp: list[int],
-    d: int,
-    token_index: int,
-    n_coins: int,
-    a_multiplier: int,
-) -> int: ...
-def curve_stableswap_reduction_coefficient(x: list[int], fee_gamma: int, n_coins: int) -> int: ...
+# Pure-math wrappers over the degenbot-curve-math leaf, registered on a real
+# Python submodule (`degenbot._ffi.curve_math`) with un-prefixed names — the
+# `curve_` prefix was an artifact of the flat root registration.
+# See `curve_math.pyi` for the function signatures.
+# The variant discriminants (`d_variant`/`y_variant`/`yd_variant`) are 1-based
+# `auto()` enum `.value`s matching the Rust `try_from_u8`. Vyper reverts
+# (overflow / non-convergence / index / unsafe-value) all surface as
+# `ValueError` — the shape the Python `DyCalculator` catches and wraps as
+# `EVMRevertError(error=str(e))`.
 
 # ── Solidly / Aerodrome / Camelot stable math (feature = "solidly-math"). ──
 # Pure-math wrappers over the degenbot-solidly-math leaf. The Solidly /
@@ -3506,11 +3473,7 @@ __all__ = [
     "cl_simple_mul_div",
     "cleanup_zero_balance_positions",
     "compute_simulation_warmup_slots",
-    "curve_stableswap_get_d",
-    "curve_stableswap_get_y",
-    "curve_stableswap_get_y_d",
-    "curve_stableswap_newton_y",
-    "curve_stableswap_reduction_coefficient",
+    "curve_math",
     "db_apply_asset_collateral_in_emode_changed",
     "db_apply_asset_source_updated",
     "db_apply_collateral_configuration_changed",
