@@ -42,14 +42,10 @@ from degenbot.balancer.deployments import (
 )
 from degenbot.balancer.libraries.constants import ONE
 from degenbot.checksum_cache import get_checksum_address
-from degenbot._ffi import (
-    balancer_stable_calc_in_given_out as _calc_in_given_out,
-)
-from degenbot._ffi import (
-    balancer_stable_calc_out_given_in as _calc_out_given_in,
-)
-from degenbot._ffi import (
-    balancer_stable_calculate_invariant_deployed as _calculate_invariant_deployed,
+from degenbot.balancer.math import (
+    stable_calc_in_given_out as _calc_in_given_out,
+    stable_calc_out_given_in as _calc_out_given_in,
+    stable_calculate_invariant_deployed as _calculate_invariant_deployed,
 )
 
 pytestmark = pytest.mark.online_rpc

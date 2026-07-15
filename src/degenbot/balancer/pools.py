@@ -7,10 +7,6 @@ from weakref import WeakSet
 from eth_typing import ChecksumAddress
 
 from degenbot._ffi import PyLiquidityPool
-from degenbot._ffi import balancer_weighted_add_swap_fee_amount as _rs_add_swap_fee_amount
-from degenbot._ffi import balancer_weighted_calc_in_given_out as _rs_calc_in_given_out
-from degenbot._ffi import balancer_weighted_calc_out_given_in as _rs_calc_out_given_in
-from degenbot._ffi import balancer_weighted_subtract_swap_fee_amount as _rs_subtract_swap_fee_amount
 from degenbot.balancer.libraries.constants import PowVersion
 from degenbot.balancer.libraries.scaling_helpers import (
     _compute_scaling_factor,
@@ -18,6 +14,18 @@ from degenbot.balancer.libraries.scaling_helpers import (
     _downscale_up,
     _upscale,
     _upscale_array,
+)
+from degenbot.balancer.math import (
+    weighted_add_swap_fee_amount as _rs_add_swap_fee_amount,
+)
+from degenbot.balancer.math import (
+    weighted_calc_in_given_out as _rs_calc_in_given_out,
+)
+from degenbot.balancer.math import (
+    weighted_calc_out_given_in as _rs_calc_out_given_in,
+)
+from degenbot.balancer.math import (
+    weighted_subtract_swap_fee_amount as _rs_subtract_swap_fee_amount,
 )
 from degenbot.balancer.swap_amounts import BalancerV2SwapAmounts
 from degenbot.balancer.types import (
