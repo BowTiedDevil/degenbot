@@ -12,10 +12,12 @@ break type identity at the FFI boundary.
 from __future__ import annotations
 
 from degenbot._ffi import CancelHandle
-from degenbot._ffi import LiquidityUpdateEvent
-from degenbot._ffi import V2PoolRowInput
-from degenbot._ffi import V3PoolRowInput
-from degenbot._ffi import V4PoolRowInput
+from degenbot.database._ffi import (
+    LiquidityUpdateEvent,
+    V2PoolRowInput,
+    V3PoolRowInput,
+    V4PoolRowInput,
+)
 
 from degenbot.exceptions import DatabaseSchemaStale
 
@@ -52,6 +54,6 @@ def test_v4_pool_row_input_alias() -> None:
 
 def test_database_schema_stale_alias() -> None:
     """DatabaseSchemaStale is re-exported from degenbot.exceptions, identity-preserved."""
-    from degenbot._ffi import DatabaseSchemaStale as FfiDatabaseSchemaStale
+    from degenbot.database._ffi import DatabaseSchemaStale as FfiDatabaseSchemaStale
 
     assert DatabaseSchemaStale is FfiDatabaseSchemaStale

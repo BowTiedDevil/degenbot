@@ -1051,3 +1051,7 @@
 {"type":"state","ts":"2026-07-15T22:30:38.332273535Z","data":{"id":"UMQ6EI","state":"done","ts":"2026-07-15T22:30:38.332273535Z"}}
 {"type":"claim","ts":"2026-07-15T22:30:41.847484249Z","data":{"id":"56FB5K","agent_id":"sonnet@pi","ts":"2026-07-15T22:30:41.847484249Z"}}
 {"type":"state","ts":"2026-07-15T22:30:41.847484249Z","data":{"id":"56FB5K","state":"doing","ts":"2026-07-15T22:30:41.847484249Z"}}
+{"type":"result","ts":"2026-07-15T22:50:21.441073633Z","data":{"task_id":"56FB5K","summary":"src/degenbot/uniswap/math.py","path":"src/degenbot/uniswap/math.py","sha256_at_attach":"8015d720f0ab44214b8762b957d52dc1a3e5394c5690c144f6a19764455b3e2c","mtime_at_attach":"2026-07-15T22:32:46.027240962Z","git_commit_at_attach":"7e182abc7437d3029d0221a05b5ae284f1cc4c52","ts":"2026-07-15T22:50:21.441073633Z"}}
+{"type":"state","ts":"2026-07-15T22:50:21.441073633Z","data":{"id":"56FB5K","state":"done","ts":"2026-07-15T22:50:21.441073633Z"}}
+{"type":"claim","ts":"2026-07-15T22:50:26.735208802Z","data":{"id":"RRAWQS","agent_id":"sonnet@pi","ts":"2026-07-15T22:50:26.735208802Z"}}
+{"type":"state","ts":"2026-07-15T22:50:26.735208802Z","data":{"id":"RRAWQS","state":"doing","ts":"2026-07-15T22:50:26.735208802Z"}}

@@ -13,9 +13,9 @@ from eth_typing import ChecksumAddress, HexAddress, HexStr
 from hexbytes import HexBytes
 from sqlalchemy.orm import Session, scoped_session
 
-from degenbot._ffi import PyDatabaseSnapshot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.crypto import event_topic
+from degenbot.database._ffi import PyDatabaseSnapshot
 from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.pool import UnknownPoolId

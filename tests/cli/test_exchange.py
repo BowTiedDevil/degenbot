@@ -26,7 +26,7 @@ from click.testing import CliRunner
 
 from degenbot.cli.exchange import activate, deactivate
 from degenbot.database.operations import create_new_sqlite_database
-from degenbot._ffi import db_fetch_exchange_by_name
+from degenbot.database._ffi import db_fetch_exchange_by_name
 from degenbot.uniswap.deployments import (
     EthereumMainnetUniswapV2,
     EthereumMainnetUniswapV4,

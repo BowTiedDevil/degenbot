@@ -33,7 +33,8 @@ from degenbot.database.models.pools import (
     UniswapV3PoolTable,
 )
 from degenbot._ffi import AlloyProvider as RustAlloyProvider
-from degenbot._ffi import PyBotIo, db_create_new_database
+from degenbot._ffi import PyBotIo
+from degenbot.database._ffi import db_create_new_database
 
 CHAIN = 1
 _POOL_OFFLINE_JSON = (

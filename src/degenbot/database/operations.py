@@ -16,7 +16,7 @@ from alembic.config import Config
 from sqlalchemy import URL, Engine, create_engine, event
 from sqlalchemy.orm import Session, scoped_session, sessionmaker
 
-from degenbot._ffi import (
+from degenbot._ffi.db import (
     db_backup_database,
     db_compact_database,
     db_convert_alembic_to_rust_owned,

@@ -7,7 +7,8 @@ import tqdm
 from hexbytes import HexBytes
 
 from degenbot import abi_decode
-from degenbot._ffi import (
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.database._ffi import (
     db_apply_v3_liquidity_updates,
     db_apply_v4_liquidity_updates,
     db_fetch_pool_row,
@@ -15,7 +16,6 @@ from degenbot._ffi import (
     db_upsert_v3_pools,
     db_upsert_v4_pools,
 )
-from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.base import ExchangeTable
 from degenbot.database.models.pools import PoolManagerTable
 from degenbot.provider import AlloyProvider
