@@ -3,10 +3,26 @@
 from fractions import Fraction
 from typing import Any
 
+from degenbot.degenbot_rs import (  # noqa: F401
+    DynamicFeePoolRejectedError,
+    HookedPoolRejectedError,
+)
 from degenbot.exceptions.base import DegenbotError
 
 """
 Exceptions defined here are raised by classes and functions in the `arbitrage` module.
+
+The ``HookedPoolRejectedError`` / ``DynamicFeePoolRejectedError`` names are
+direct alias re-exports of the Rust ``#[pyclass]`` admission-error types (the
+companion imports its own FFI seam). They are *not* re-exported under
+:class:`ArbitrageError` — the documented contract is that these V4 pool
+*admission* refusals root at ``ValueError`` (via
+:class:`degenbot_rs.PoolRegistrationError`) and stay distinct from the
+:class:`ArbitrageError`-rooted *policy* rejections like
+:class:`PathRejectedError`. See ``PathRejectedError``'s docstring for the
+admission-vs-policy contrast. Aliasing (not subclassing) preserves type
+identity so Python-side ``except HookedPoolRejectedError:`` matches the
+instances Rust raises.
 """
 
 

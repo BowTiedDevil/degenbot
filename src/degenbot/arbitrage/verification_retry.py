@@ -36,7 +36,7 @@ from tenacity import (
     wait_exponential_jitter,
 )
 
-from degenbot.degenbot_rs import VerificationRpcError  # type: ignore[attr-defined]
+from degenbot.exceptions import VerificationRpcError
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
