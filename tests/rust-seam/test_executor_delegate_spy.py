@@ -118,27 +118,33 @@ class TestExampleRoutesThroughRust:
     def _example_source() -> str:
         return (EXAMPLES_DIR / "eth_backrun_v2_v3_v4_rust.py").read_text()
 
-    def test_imports_degenbot_rs(self) -> None:
-        """The example imports `degenbot_rs` from the `degenbot` package.
+    def test_imports_dispatch_from_companion(self) -> None:
+        """The example imports the dispatch seam from the companion, not FFI.
 
-        Accepts either `from degenbot import ...degenbot_rs...` (line 63) or
-        `from degenbot.degenbot_rs import (...)` (the FFI submodule form)
-        — both reach the Rust seam through the `degenbot` package.
+        A5 originally wired the example to import ``degenbot_rs`` directly.
+        The three-layer cutover (ADR-005) moves the driver to import the
+        stable companion re-exports from ``degenbot.dispatch`` instead —
+        the example must NOT import ``degenbot_rs`` (the PyO3 wrapper is an
+        implementation detail of the companion, not a driver surface).
         """
         src = self._example_source()
         tree = ast.parse(src)
-        found = False
+        imports_degenbot_rs = False
+        imports_companion_dispatch = False
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom) and node.module:
-                # `from degenbot import ...degenbot_rs...` (any aliased position)
-                # OR `from degenbot.degenbot_rs import (...)` (the submodule).
-                names = [a.name for a in node.names]
-                if (
-                    node.module == "degenbot" and "degenbot_rs" in names
-                ) or node.module == "degenbot.degenbot_rs":
-                    found = True
-                    break
-        assert found, "example must import degenbot_rs (the Rust seam)"
+                if node.module == "degenbot.degenbot_rs" or (
+                    node.module == "degenbot" and "degenbot_rs" in [a.name for a in node.names]
+                ):
+                    imports_degenbot_rs = True
+                if node.module == "degenbot.dispatch":
+                    imports_companion_dispatch = True
+        assert imports_companion_dispatch, (
+            "example must import dispatch symbols from degenbot.dispatch (the companion seam)"
+        )
+        assert not imports_degenbot_rs, (
+            "example must NOT import degenbot_rs directly (use degenbot.dispatch / degenbot.exceptions)"
+        )
 
     def test_does_not_import_python_encoder(self) -> None:
         """The example must NOT import `encode_cmd_stream` from Python helpers."""
@@ -198,18 +204,19 @@ class TestExampleRoutesThroughRust:
         A5 superseded the per-symbol ``degenbot_rs.<symbol>`` routing that this
         class previously enforced: the five encoder/warmup symbols moved INTO
         the Rust core (``degenbot_simulation`` / ``degenbot_executor``), called
-        internally by ``dispatch_profitable_py`` + ``PySimulateContext``
+        internally by ``dispatch_profitable`` + ``SimulateContext``
         construction. The example's dispatch path is now
-        ``dispatch_profitable_py`` (simulate) → ``dispatch_and_submit_py``
-        (submit), both Rust-bound pyfunctions imported via
-        ``degenbot.degenbot_rs``.
+        ``dispatch_profitable`` (simulate) → ``dispatch_and_submit``
+        (submit), both Rust-bound pyfunctions imported via the companion
+        package ``degenbot.dispatch`` (stable re-exports of the FFI symbols —
+        the example does not import ``degenbot_rs`` directly).
         """
         src = self._example_source()
-        assert "dispatch_profitable_py(" in src, (
-            "example must route simulation through dispatch_profitable_py (A5)"
+        assert "dispatch_profitable(" in src, (
+            "example must route simulation through dispatch_profitable (A5)"
         )
-        assert "dispatch_and_submit_py(" in src, (
-            "example must route submission through dispatch_and_submit_py (A5)"
+        assert "dispatch_and_submit(" in src, (
+            "example must route submission through dispatch_and_submit (A5)"
         )
 
 
