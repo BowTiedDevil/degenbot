@@ -1,5 +1,7 @@
 """Shared types: AddressComparable, state caches, pool enums, and aliases."""
 
+from degenbot._ffi import PyDexIdentity as DexIdentity
+
 from .address_comparable import AddressComparable
 from .concrete import BoundedCache, KeyedDefaultDict
 from .hop_types import (
@@ -34,6 +36,7 @@ __all__ = (
     "BoundedProductHop",
     "ConstantProductHop",
     "CurveStableswapHop",
+    "DexIdentity",
     "HopType",
     "KeyedDefaultDict",
     "MultiTokenSwapCalculation",

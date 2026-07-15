@@ -12,7 +12,8 @@ from eth_typing import ChecksumAddress
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from degenbot._ffi import PyAavePriceOracle, PyDatabasePositionQuery
+from degenbot._ffi import PyDatabasePositionQuery
+from degenbot.aave import AavePriceOracle
 from degenbot.aave.analysis.core import (
     CollateralPositionRecord,
     DebtPositionRecord,
@@ -189,7 +190,7 @@ class OraclePriceFetcher:
             The computed value.
 
         """
-        py_oracle = PyAavePriceOracle(
+        py_oracle = AavePriceOracle(
             self._oracle_address,
             self._provider.to_alloy_provider(),
         )

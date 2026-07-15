@@ -1,5 +1,6 @@
 """Aave V3 lending market models and operations."""
 
+from degenbot._ffi import PyAavePriceOracle as AavePriceOracle
 from degenbot.aave.operations import (
     Operation,
     ScaledTokenEvent,
@@ -9,6 +10,7 @@ from degenbot.aave.operations import (
 from degenbot.aave.types import TokenType
 
 __all__ = [
+    "AavePriceOracle",
     "Operation",
     "ScaledTokenEvent",
     "TokenType",

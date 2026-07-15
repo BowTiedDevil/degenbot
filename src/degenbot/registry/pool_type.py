@@ -16,7 +16,7 @@ from degenbot.types.pool_type import PoolFamily, PoolTypeDescriptor, derive_kind
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
-    from degenbot._ffi import PyDexIdentity
+    from degenbot.types import DexIdentity
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
     from degenbot.types.pool_protocols import ConcentratedLiquidityPool, ConstantProductPool
@@ -149,7 +149,7 @@ class PoolTypeRegistry:
         deployer: str | None = None,
         family: PoolFamily | None = None,
         variant: str | None = None,
-        dex_identity: PyDexIdentity | None = None,
+        dex_identity: DexIdentity | None = None,
     ) -> None:
         """Register a pool class for a specific (chain_id, factory) deployment.
 
@@ -342,7 +342,7 @@ class PoolTypeRegistry:
             factory=entry.deployment.factory_address,
         )
 
-    def get_v2_identity(self, chain_id: ChainId, factory_address: str) -> PyDexIdentity | None:
+    def get_v2_identity(self, chain_id: ChainId, factory_address: str) -> DexIdentity | None:
         """Get the DexIdentity preset for (chain_id, factory), or None.
 
         Returns None if no registration exists OR if the registration was made
@@ -408,7 +408,7 @@ class _RegistryEntry:
     variant: str | None
     kind: str
     deployment: PoolDeploymentData
-    dex_identity: PyDexIdentity | None = None
+    dex_identity: DexIdentity | None = None
 
     @property
     def descriptor(self) -> PoolTypeDescriptor:

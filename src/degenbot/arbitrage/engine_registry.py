@@ -20,10 +20,7 @@ from degenbot import Bot, UniswapV2Pool
 from degenbot._ffi import UniswapArbEngine
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.logging import logger as bot_logger
-from degenbot.uniswap.snapshot_binary import (
-    _v3_snapshot_to_py_dict,
-    _v4_snapshot_to_py_dict,
-)
+from degenbot.uniswap.snapshot_binary import _v3_snapshot_to_py_dict, _v4_snapshot_to_py_dict
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
 from .hop_info import PathInfo, build_hops_from_pools

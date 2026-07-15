@@ -65,8 +65,8 @@ from degenbot.database.models.pools import (
 )
 from degenbot.dispatch import (
     DispatchCandidate,
-    DispatchOutcome,
     Dispatcher,
+    DispatchOutcome,
     SimulateContext,
     TxSigner,
     dispatch_and_submit,
@@ -81,7 +81,6 @@ from degenbot.exceptions import (
 )
 from degenbot.logging import logger as bot_logger
 from degenbot.pathfinding import find_paths_async
-
 from degenbot.provider import AlloyProvider, AsyncAlloyProvider
 from degenbot.uniswap.deployments import EthereumMainnetUniswapV4
 from degenbot.uniswap.trackers import UniswapV3PoolTracker
