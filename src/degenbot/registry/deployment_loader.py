@@ -63,7 +63,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from degenbot._ffi import dex_identity
 from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
 from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.balancer.stable_pools import BalancerV2StablePool
@@ -71,6 +70,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import CONFIG_FILE
 from degenbot.logging import logger
 from degenbot.pancakeswap.pools import PancakeswapV3Pool
+from degenbot.types import dex_identity
 from degenbot.types.pool_type import PoolFamily
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool

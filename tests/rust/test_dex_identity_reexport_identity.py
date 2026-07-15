@@ -21,3 +21,11 @@ def test_dex_identity_alias_identity() -> None:
     from degenbot.types import DexIdentity
 
     assert DexIdentity is PyDexIdentity
+
+
+def test_dex_identity_factory_alias_identity() -> None:
+    """The stable companion ``dex_identity`` factory is the exact FFI function."""
+    from degenbot._ffi import dex_identity as ffi_dex_identity
+    from degenbot.types import dex_identity
+
+    assert dex_identity is ffi_dex_identity
