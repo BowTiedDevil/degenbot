@@ -1,13 +1,5 @@
 """degenbot: Ethereum DEX helper library."""
 
-from ._ffi import (
-    decode_return_data,
-    encode_function_call,
-    get_function_selector,
-    get_sqrt_ratio_at_tick,
-    get_tick_at_sqrt_ratio,
-    to_checksum_address,
-)
 from .abi_adapter import (
     AbiAdapter,
     AbiBackend,
@@ -158,16 +150,10 @@ __all__ = (
     "abi_decode",
     "abi_decode_single",
     "abi_encode",
-    "decode_return_data",
-    "encode_function_call",
     "generate_payloads",
     "get_checksum_address",
     "get_default_adapter",
     "get_default_backend",
-    "get_function_selector",
-    "get_sqrt_ratio_at_tick",
-    "get_tick_at_sqrt_ratio",
     "logger",
     "pool_type_registry",
-    "to_checksum_address",
 )
