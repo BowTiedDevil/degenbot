@@ -12,7 +12,7 @@ and should never leak into driver code. This package hides them.
 
 .. note::
 
-    These are **direct alias re-exports** (``from degenbot_rs import PyX as
+    These are **direct alias re-exports** (``from degenbot._ffi import PyX as
     X``), not Python wrapper classes. The Rust engine constructs and
     consumes these pyclasses / pyfunctions directly — driver code constructs
     a ``SimulateContext`` / ``TxSigner`` in Python and passes it to a Rust
@@ -39,28 +39,28 @@ Symbol map (FFI name → stable companion name):
 - ``fetch_fee_history_py``   → :func:`fetch_fee_history`
 """
 
-from degenbot.degenbot_rs import (
+from degenbot._ffi import (
     PyDispatchCandidate as DispatchCandidate,
 )
-from degenbot.degenbot_rs import (
+from degenbot._ffi import (
     PyDispatcher as Dispatcher,
 )
-from degenbot.degenbot_rs import (
+from degenbot._ffi import (
     PyDispatchOutcome as DispatchOutcome,
 )
-from degenbot.degenbot_rs import (
+from degenbot._ffi import (
     PySimulateContext as SimulateContext,
 )
-from degenbot.degenbot_rs import (
+from degenbot._ffi import (
     PyTxSigner as TxSigner,
 )
-from degenbot.degenbot_rs import (
+from degenbot._ffi import (
     dispatch_and_submit_py as dispatch_and_submit,
 )
-from degenbot.degenbot_rs import (
+from degenbot._ffi import (
     dispatch_profitable_py as dispatch_profitable,
 )
-from degenbot.degenbot_rs import (
+from degenbot._ffi import (
     fetch_fee_history_py as fetch_fee_history,
 )
 

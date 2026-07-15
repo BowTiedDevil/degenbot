@@ -2,8 +2,8 @@
 
 import click
 
+from degenbot._ffi import DatabaseSchemaStale
 from degenbot.bot import Bot
-from degenbot.degenbot_rs import DatabaseSchemaStale
 
 
 class DegenbotCLI(click.Group):

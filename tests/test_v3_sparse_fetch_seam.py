@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot.degenbot_rs import PyBot
+from degenbot._ffi import PyBot
 
 _ZERO_ADDRESS = "0x" + "00" * 20
 _TOKEN1_ADDRESS = "0x" + "11" * 20

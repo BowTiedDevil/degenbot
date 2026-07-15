@@ -10,7 +10,7 @@ from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.degenbot_rs import PyBot
+from degenbot._ffi import PyBot
 from degenbot.exceptions.pool import TrackerAlreadyInitialized
 from degenbot.provider import AlloyProvider, OfflineProvider
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry

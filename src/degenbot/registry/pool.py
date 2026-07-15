@@ -10,7 +10,7 @@ from degenbot.types.pool_protocols import ConcentratedLiquidityPool
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
-    from degenbot.degenbot_rs import PyBot
+    from degenbot._ffi import PyBot
     from degenbot.types.abstract import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
 

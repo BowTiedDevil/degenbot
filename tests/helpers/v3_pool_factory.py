@@ -17,13 +17,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.degenbot_rs import PyBot
+from degenbot._ffi import PyBot
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
-    from degenbot.degenbot_rs import PyLiquidityPool
+    from degenbot._ffi import PyLiquidityPool
     from degenbot.types.aliases import BlockNumber
 
 

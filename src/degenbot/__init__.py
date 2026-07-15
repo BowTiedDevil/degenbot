@@ -1,5 +1,13 @@
 """degenbot: Ethereum DEX helper library."""
 
+from ._ffi import (
+    decode_return_data,
+    encode_function_call,
+    get_function_selector,
+    get_sqrt_ratio_at_tick,
+    get_tick_at_sqrt_ratio,
+    to_checksum_address,
+)
 from .abi_adapter import (
     AbiAdapter,
     AbiBackend,
@@ -14,14 +22,6 @@ from .abi_adapter import encode as abi_encode
 from .async_bot import AsyncBot
 from .bot import Bot
 from .checksum_cache import get_checksum_address
-from .degenbot_rs import (
-    decode_return_data,
-    encode_function_call,
-    get_function_selector,
-    get_sqrt_ratio_at_tick,
-    get_tick_at_sqrt_ratio,
-    to_checksum_address,
-)
 from .version import __version__
 
 # isort: split

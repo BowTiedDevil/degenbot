@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from hexbytes import HexBytes
 
+from degenbot._ffi import cl_get_tick_word_and_bit_position
 from degenbot.abi_adapter import decode as abi_decode
 from degenbot.builders.request import BuildManagedPoolRequest
 from degenbot.builders.tick_data_fetcher import (
@@ -17,7 +18,6 @@ from degenbot.builders.tick_data_fetcher import (
 from degenbot.builders.v4_builder_base import V4BuilderBase, V4DbValues, V4Slot0Data
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
-from degenbot.degenbot_rs import cl_get_tick_word_and_bit_position
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger

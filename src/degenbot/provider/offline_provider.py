@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Any
 
 from hexbytes import HexBytes
 
-from degenbot.degenbot_rs import AlloyProvider as RustAlloyProvider
+from degenbot._ffi import AlloyProvider as RustAlloyProvider
 
 if TYPE_CHECKING:
     from degenbot.types.rpc_types import BlockData, TxParams
@@ -459,7 +459,7 @@ class OfflineProvider:
         in-memory transport, so this returns the held pyclass.
 
         Returns:
-            The wrapped :class:`degenbot.degenbot_rs.AlloyProvider`.
+            The wrapped :class:`degenbot._ffi.AlloyProvider`.
 
         """
         return self._alloy
@@ -483,7 +483,7 @@ class OfflineProvider:
         """Return the underlying Rust :class:`AlloyProvider`.
 
         Returns:
-            The wrapped :class:`degenbot.degenbot_rs.AlloyProvider`.
+            The wrapped :class:`degenbot._ffi.AlloyProvider`.
 
         """
         return self._alloy

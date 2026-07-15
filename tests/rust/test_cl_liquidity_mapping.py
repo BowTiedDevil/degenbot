@@ -1,6 +1,6 @@
 """Parity test: the `cl_get_tick_word_and_bit_position` PyO3 seam (ZJEL3N).
 
-The Rust seam (``degenbot.degenbot_rs.cl_get_tick_word_and_bit_position``) wraps
+The Rust seam (``degenbot._ffi.cl_get_tick_word_and_bit_position``) wraps
 the pure-Rust core ``degenbot_cl_math::cl_lib::liquidity_mapping::get_tick_word_
 and_bit_position`` (the Uniswap V3 ``TickBitmap.position`` Solidity-equivalent:
 EVM division truncates toward zero on the spacing compression, then ``word =
@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot.degenbot_rs import cl_get_tick_word_and_bit_position
+from degenbot._ffi import cl_get_tick_word_and_bit_position
 
 # Hardcoded ``TickBitmap.position`` expectations for the parametrized cases
 # (EVM toward-zero division on the spacing compression, then word=compressed>>8,

@@ -1,7 +1,7 @@
 """Aerodrome pool calculations and address generation.
 
 Routes the Solidly-stable swap calc through the Rust ``degenbot-solidly-math``
-leaf (via ``degenbot_rs.solidly_calc_exact_in_stable_solidly``) and retains
+leaf (via ``degenbot._ffi.solidly_calc_exact_in_stable_solidly``) and retains
 address-generation helpers (CREATE2 deterministic pool address).
 """
 
@@ -13,9 +13,9 @@ from eth_typing import ChecksumAddress
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
+from degenbot._ffi import solidly_calc_exact_in_stable_solidly
 from degenbot.abi_adapter import encode as abi_encode
 from degenbot.contract.addresses import eip_1167_clone_address
-from degenbot.degenbot_rs import solidly_calc_exact_in_stable_solidly
 
 
 def calc_exact_in_stable(
@@ -31,7 +31,7 @@ def calc_exact_in_stable(
     """Aerodrome-specific stable exact-in calculation.
 
     Routes through the Rust ``degenbot-solidly-math`` leaf via
-    :func:`degenbot_rs.solidly_calc_exact_in_stable_solidly`, which wraps the
+    :func:`degenbot._ffi.solidly_calc_exact_in_stable_solidly`, which wraps the
     Solidly/Aerodrome pre-baked orchestration
     (``calc_k`` + ``get_y_solidly``). The Solidly/Camelot invariant math
     (``calc_d`` / ``calc_k`` / ``calc_f`` / ``get_y_solidly``) is computed in

@@ -3,7 +3,7 @@
 The three-layer architecture (ADR-005) requires that driver and policy code
 import exception types from the companion package ``degenbot.exceptions`` —
 not from the PyO3 wrapper ``degenbot_rs``. The companion re-exports must be
-**direct aliases** (``from degenbot_rs import X as Y``), not Python
+**direct aliases** (``from degenbot._ffi import X as Y``), not Python
 subclasses: these exceptions are *raised by Rust* ``#[pyclass]`` code, so
 Python-side ``except SomeError:`` / ``isinstance(exc, SomeError)`` matching
 must hit the exact type the Rust side raises. A subclass re-export would
@@ -15,16 +15,16 @@ These tests pin the identity contract.
 
 from __future__ import annotations
 
-from degenbot.degenbot_rs import (
+from degenbot._ffi import (
     DynamicFeePoolRejectedError as RsDynamicFeePoolRejectedError,
 )
-from degenbot.degenbot_rs import (
+from degenbot._ffi import (
     HookedPoolRejectedError as RsHookedPoolRejectedError,
 )
-from degenbot.degenbot_rs import (
+from degenbot._ffi import (
     VerificationMismatchError as RsVerificationMismatchError,
 )
-from degenbot.degenbot_rs import (
+from degenbot._ffi import (
     VerificationRpcError as RsVerificationRpcError,
 )
 from degenbot.exceptions import (
@@ -76,7 +76,7 @@ def test_verification_rpc_error_caught_from_rust_raised_instance() -> None:
 
     This is the load-bearing contract: ``verification_retry.py`` catches
     ``VerificationRpcError`` from the companion, and Rust code raises the
-    ``degenbot_rs.VerificationRpcError`` pyclass. The alias makes those the
+    ``degenbot._ffi.VerificationRpcError`` pyclass. The alias makes those the
     same type so ``except`` matches.
     """
     try:

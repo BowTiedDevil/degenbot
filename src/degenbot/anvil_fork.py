@@ -1,7 +1,7 @@
 """Anvil fork management utilities for local test chains.
 
 A thin companion shell (ADR-005 three-layer Python layer) over the rust core
-`degenbot_rs.AnvilFork` PyO3 seam (`degenbot_fork::AnvilFork`). The rust
+`degenbot._ffi.AnvilFork` PyO3 seam (`degenbot_fork::AnvilFork`). The rust
 core (added in epic `NXYVYU` FF2/FF3) owns the spawned anvil subprocess
 (via `alloy::node_bindings::Anvil`) + a connected alloy `DynProvider`
 (over IPC) + the 12 anvil dev-RPC methods. This Python shell:
@@ -11,7 +11,7 @@ core (added in epic `NXYVYU` FF2/FF3) owns the spawned anvil subprocess
 - re-uses rust-driven dev-method invocations (`mine` / `reset` /
   `set_snapshot` / `return_to_snapshot` / `set_balance` / ...);
 - re-exposes general RPC against the forked node as
-  `self.provider` — a `degenbot_rs.AlloyProvider` constructed over the
+  `self.provider` — a `degenbot._ffi.AlloyProvider` constructed over the
   rust-resolved IPC socket path (replaces the legacy `self.w3` Web3
   handle, since the underlying provider is now rust-owned).
 
@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import validate_call
 
-from degenbot.degenbot_rs import AnvilFork as PyAnvilFork
+from degenbot._ffi import AnvilFork as PyAnvilFork
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.infrastructure import AnvilError
 from degenbot.logging import logger
@@ -84,7 +84,7 @@ def _coerce_storage_value_to_int(value: HexStr | bytes | int) -> int:
 class AnvilFork:
     """A rust-owned Anvil fork subprocess + IPC `DynProvider` + dev-RPC surface.
 
-    Companion shell (ADR-005 Python layer) over `degenbot_rs.AnvilFork`
+    Companion shell (ADR-005 Python layer) over `degenbot._ffi.AnvilFork`
     (the PyO3 seam on `degenbot_fork::AnvilFork`). The rust core owns the
     subprocess lifecycle (drop = kill) + an alloy `DynProvider` (IPC
     transport) + the 12 anvil dev-RPC methods. The shell preserves the
@@ -138,7 +138,7 @@ class AnvilFork:
     surfaced back, via :attr:`ipc_path`).
 
     The one breaking change for callers: ``self.w3`` is gone. Use
-    :attr:`provider` (a `degenbot_rs.AlloyProvider`) for general RPC.
+    :attr:`provider` (a `degenbot._ffi.AlloyProvider`) for general RPC.
     """
 
     def __init__(

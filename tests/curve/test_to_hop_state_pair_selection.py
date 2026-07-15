@@ -13,7 +13,7 @@ from fractions import Fraction
 import pytest
 
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
-from degenbot.degenbot_rs import PyBot
+from degenbot._ffi import PyBot
 from degenbot.exceptions import DegenbotValueError
 from degenbot.types.hop_types import PoolInvariant
 from tests.fakes.curve_data_provider import FakeCurveDataProvider

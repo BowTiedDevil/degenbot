@@ -63,12 +63,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from degenbot._ffi import PyDexIdentity, dex_identity
 from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
 from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.balancer.stable_pools import BalancerV2StablePool
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import CONFIG_FILE
-from degenbot.degenbot_rs import PyDexIdentity, dex_identity
 from degenbot.logging import logger
 from degenbot.pancakeswap.pools import PancakeswapV3Pool
 from degenbot.types.pool_type import PoolFamily
@@ -307,7 +307,7 @@ def register_from_deployments(records: list[DeploymentRecord], registry: PoolTyp
     low-level ``register()`` primitive for each record.
 
     The ``dex_variant`` preset is resolved via
-    :func:`~degenbot.degenbot_rs.dex_identity` and asserted non-None — a
+    :func:`~degenbot._ffi.dex_identity` and asserted non-None — a
     preset string in the JSON must resolve, otherwise the deployment data is
     inconsistent with the compiled ``DexIdentity`` presets (Rust-side).
 

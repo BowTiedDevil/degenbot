@@ -25,9 +25,9 @@ from degenbot.provider.call_helpers import encode_function_calldata
 if TYPE_CHECKING:
     from hexbytes import HexBytes
 
+    from degenbot._ffi import PyBot
     from degenbot.builders.pool_io import PoolIO
     from degenbot.database.session_manager import DatabaseSessionManager
-    from degenbot.degenbot_rs import PyBot
     from degenbot.registry import TokenRegistry
     from degenbot.types.aliases import ChainId
     from degenbot.types.rpc_types import BlockIdentifier
@@ -391,7 +391,7 @@ def _resolve_block_number(io: PoolIO, block_identifier: BlockIdentifier | None) 
 def _fetch_name_symbol_decimals_batched(*, address: str, io: PoolIO) -> tuple[str, str, int]:
     """Fetch token name, symbol, and decimals via batched RPC calls.
 
-    When ``io`` is a Rust :class:`~degenbot.degenbot_rs.PyBotIo` (the Bot's
+    When ``io`` is a Rust :class:`~degenbot._ffi.PyBotIo` (the Bot's
     build-path adapter -- ADR-005 slice 14a), the encode -> call (x3) -> decode
     choreography is delegated to ``PyBotIo.fetch_erc20_metadata`` (Rust, slice
     14c), not run in Python. Raw ``SyncPoolIO`` callers fork / offline tests
@@ -448,7 +448,7 @@ def _fetch_name_symbol_decimals_batched(*, address: str, io: PoolIO) -> tuple[st
 def _fetch_name(*, address: str, io: PoolIO, func_prototype: str = "name()") -> str:
     """Fetch token name via RPC call.
 
-    When ``io`` is a Rust :class:`~degenbot.degenbot_rs.PyBotIo`, delegates
+    When ``io`` is a Rust :class:`~degenbot._ffi.PyBotIo`, delegates
     to ``PyBotIo.fetch_erc20_string_field`` (Rust, slice 14h).
 
     Returns:
@@ -484,7 +484,7 @@ def _fetch_name(*, address: str, io: PoolIO, func_prototype: str = "name()") -> 
 def _fetch_symbol(*, address: str, io: PoolIO, func_prototype: str = "symbol()") -> str:
     """Fetch token symbol via RPC call.
 
-    When ``io`` is a Rust :class:`~degenbot.degenbot_rs.PyBotIo`, delegates
+    When ``io`` is a Rust :class:`~degenbot._ffi.PyBotIo`, delegates
     to ``PyBotIo.fetch_erc20_string_field`` (Rust, slice 14h).
 
     Returns:
@@ -520,7 +520,7 @@ def _fetch_symbol(*, address: str, io: PoolIO, func_prototype: str = "symbol()")
 def _fetch_decimals(*, address: str, io: PoolIO, func_prototype: str = "decimals()") -> int:
     """Fetch token decimals via RPC call.
 
-    When ``io`` is a Rust :class:`~degenbot.degenbot_rs.PyBotIo`, delegates
+    When ``io`` is a Rust :class:`~degenbot._ffi.PyBotIo`, delegates
     to ``PyBotIo.fetch_erc20_uint_field`` (Rust, slice 14h).
 
     Returns:

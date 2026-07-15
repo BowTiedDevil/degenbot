@@ -171,7 +171,7 @@ fn init_python_before_test_threads() {
 use pyo3::prelude::*;
 
 #[pymodule]
-fn degenbot_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Initialize logging bridge from Rust to Python. Stays in the module init
     // (not `c_api::register`) because it is module-lifecycle setup rather than
     // symbol registration.

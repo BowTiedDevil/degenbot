@@ -69,7 +69,7 @@ RUST_BRIDGE_LOGGER_NAMES = (
     # Cargo ``name`` is ``degenbot_rs`` (set in its ``Cargo.toml``), so every
     # bare ``log::info!`` in that crate (``verify.rs``, ``register.rs``,
     # ``json.rs``) emits under ``degenbot_rs::...`` → Python logger
-    # ``degenbot_rs.<...>``. A previous entry of ``degenbot_python`` matched
+    # ``degenbot._ffi.<...>``. A previous entry of ``degenbot_python`` matched
     # the directory name, which no Rust target ever uses — the ``[verify]``
     # success/failure lines and the register/snapshot logs were dropped.
     "degenbot_rs",

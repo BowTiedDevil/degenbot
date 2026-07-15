@@ -42,7 +42,7 @@ from degenbot.database.models.pools import (
     UniswapV4PoolTable,
 )
 from degenbot.database.operations import create_new_sqlite_database, get_scoped_sqlite_session
-from degenbot.degenbot_rs import (
+from degenbot._ffi import (
     db_fetch_exchange,
     db_fetch_exchange_by_name,
     db_set_exchange_active,

@@ -4,7 +4,7 @@ The :class:`degenbot.arbitrage.solvers.hop_types.Solver` family uses its own
 ``HopType``/``BoundedProductHop`` shape for *solving*. This module holds a
 distinct, **engine-facing** shape: the hop descriptors
 ``EngineRegistry.register_path`` builds from concrete pool objects to hand to
-the Rust :class:`~degenbot.degenbot_rs.UniswapArbEngine` (and that the example's
+the Rust :class:`~degenbot._ffi.UniswapArbEngine` (and that the example's
 ``encode_cmd_stream`` reads back to build the on-chain command stream).
 
 Lifted verbatim from ``examples/eth_backrun_helpers.py`` — frozen dataclasses

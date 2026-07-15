@@ -6,8 +6,8 @@ import contextlib
 from threading import Lock
 from typing import TYPE_CHECKING
 
+from degenbot._ffi import resolve_deployer, resolve_v2_init_hash, resolve_v3_init_hash
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.degenbot_rs import resolve_deployer, resolve_v2_init_hash, resolve_v3_init_hash
 from degenbot.exceptions.pool import (
     LiquidityPoolError,
     PoolCreationFailed,

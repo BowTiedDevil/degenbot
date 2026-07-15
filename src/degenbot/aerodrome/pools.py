@@ -37,7 +37,7 @@ from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
-    from degenbot.degenbot_rs import PyLiquidityPool
+    from degenbot._ffi import PyLiquidityPool
     from degenbot.provider import AlloyProvider
     from degenbot.types.aliases import BlockNumber
     from degenbot.uniswap.types import UniswapPoolSwapVector

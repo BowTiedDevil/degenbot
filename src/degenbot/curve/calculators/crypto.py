@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from degenbot.curve.types import CurveStableswapPoolState
 
+from degenbot._ffi import curve_stableswap_newton_y, curve_stableswap_reduction_coefficient
 from degenbot.curve.types import DyCalculationInputs, SwapStyle
-from degenbot.degenbot_rs import curve_stableswap_newton_y, curve_stableswap_reduction_coefficient
 from degenbot.exceptions.pool import EVMRevertError
 
 

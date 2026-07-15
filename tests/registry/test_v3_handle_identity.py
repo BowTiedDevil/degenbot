@@ -12,7 +12,7 @@ PancakeSwap V3 (separate deployer) is the load-bearing case: the handle's
 
 from __future__ import annotations
 
-from degenbot.degenbot_rs import PyBot
+from degenbot._ffi import PyBot
 
 UNISWAP_V3_FACTORY = "0x1F98431c8aD98523631AE4a59f267346ea31F984"
 PANCAKESWAP_V3_FACTORY = "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865"

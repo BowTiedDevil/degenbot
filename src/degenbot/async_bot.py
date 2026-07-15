@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Self
 
 from hexbytes import HexBytes
 
+from degenbot._ffi import PyBot
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.bot_lifecycle import close as _close_handles
 from degenbot.bot_lifecycle import (
@@ -33,7 +34,6 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DegenbotConfig, _init_config
 from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.degenbot_rs import PyBot
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import TrackerAlreadyInitialized
 from degenbot.provider.factory import get_async_provider_from_config

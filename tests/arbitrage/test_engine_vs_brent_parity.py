@@ -29,7 +29,7 @@ import pytest
 
 from degenbot.arbitrage.solvers.brent_solver import BrentSolver
 from degenbot.arbitrage.solvers.hop_types import SolveInput
-from degenbot.degenbot_rs import PyBot, UniswapArbEngine
+from degenbot._ffi import PyBot, UniswapArbEngine
 from degenbot.types.hop_types import PoolInvariant
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool

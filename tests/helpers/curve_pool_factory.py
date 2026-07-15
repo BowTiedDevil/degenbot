@@ -21,11 +21,11 @@ from degenbot.curve.curve_stableswap_liquidity_pool import (
     _compute_rate_and_precision_multipliers,
 )
 from degenbot.curve.strategies import PoolStrategies
-from degenbot.degenbot_rs import PyBot
+from degenbot._ffi import PyBot
 
 if TYPE_CHECKING:
     from degenbot.curve.curve_stableswap_liquidity_pool import CurveDataProvider
-    from degenbot.degenbot_rs import PyLiquidityPool
+    from degenbot._ffi import PyLiquidityPool
     from degenbot.erc20.erc20 import Erc20Token
     from degenbot.types.aliases import BlockNumber
 

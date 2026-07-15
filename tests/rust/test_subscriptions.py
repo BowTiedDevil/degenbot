@@ -51,7 +51,7 @@ class FakeAsyncIterator:
 
 
 class FakeSubscription:
-    """Mocks degenbot.degenbot_rs.AlloySubscription for testing.
+    """Mocks degenbot._ffi.AlloySubscription for testing.
 
     Supports drain(), started(), and the async iterator protocol.
     """

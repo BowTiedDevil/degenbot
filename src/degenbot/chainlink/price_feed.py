@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from degenbot._ffi import PyChainlinkPriceFeed
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.degenbot_rs import PyChainlinkPriceFeed
 
 if TYPE_CHECKING:
     from degenbot.bot import Bot

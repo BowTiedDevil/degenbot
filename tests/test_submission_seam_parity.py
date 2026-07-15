@@ -16,7 +16,7 @@ from __future__ import annotations
 import eth_account
 from eth_account import Account
 
-from degenbot.degenbot_rs import (
+from degenbot._ffi import (
     PyTxParams,
     PyTxSigner,
     finalize_fees as rs_finalize_fees,

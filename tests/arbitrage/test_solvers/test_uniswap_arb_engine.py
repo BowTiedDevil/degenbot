@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot.degenbot_rs import UniswapArbEngine
+from degenbot._ffi import UniswapArbEngine
 
 # sqrt price at tick 0 (1:1 price for 18-decimal tokens)
 SQRT_PRICE_TICK_0 = 79228162514264337593543950336

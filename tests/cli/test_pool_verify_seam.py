@@ -1,7 +1,7 @@
 """Seam test for the `pool verify` CLI command + the verify-v3/v4 PyO3 stubs.
 
 Locks the:
-- `degenbot pool verify --family v3|v4` CLI hand-off to `degenbot_rs.verify_v3/v4_liquidity_map`
+- `degenbot pool verify --family v3|v4` CLI hand-off to `degenbot._ffi.verify_v3/v4_liquidity_map`
   (the arg-threading + the GREEN/RED echo), via monkeypatching the Rust entry
   points (no live RPC node is touched).
 - the named-divergence dict shape (`variant` + `tick`/`word` + `expected`/`actual`)

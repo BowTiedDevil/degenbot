@@ -33,7 +33,7 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
-from degenbot.degenbot_rs import (
+from degenbot._ffi import (
     CancelHandle,
     run_aave_update,
     verify_touched_positions_on_chain,

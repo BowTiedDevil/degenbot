@@ -32,7 +32,7 @@ The Rust core is the engine; Python is a driver shell, not a co-implementation. 
 - [Bot API Reference](#bot-api-reference)
 - [CLI Reference](#cli-reference)
 - [Configuration](#configuration)
-- [The Rust Core (`degenbot_rs`)](#the-rust-core-degenbot_rs)
+- [The Rust Core](#the-rust-core-degenbot_rs-rust-crate-degenbot_ffi-python-module)
 - [Documentation](#documentation)
 - [Contributing](#contributing)
 - [License](#license)
@@ -53,7 +53,7 @@ Degenbot follows a Polars-inspired three-layer architecture (ADR-005). Every con
 | Layer | Where it lives | Holds |
 |-------|----------------|-------|
 | **Rust core** | `rust/crates/degenbot-{core,-cl-math,-curve-math,-balancer-math,-abi,-decoders,-uniswap,-rpc,-bot,-pools,-solvers,…}` — **zero `pyo3`** by default | data + state-machine logic + pure math + protocols (DexIdentity, encoders, decoders) |
-| **PyO3 wrapper** | `rust/crates/degenbot-python/src/<domain>/**` (the `degenbot_rs` extension module) | `#[pyclass]`/`#[pyfunction]` only — arg extraction → GIL release → core call → result wrap. **No business logic.** |
+| **PyO3 wrapper** | `rust/crates/degenbot-python/src/<domain>/**` (the `degenbot._ffi` extension module) | `#[pyclass]`/`#[pyfunction]` only — arg extraction → GIL release → core call → result wrap. **No business logic.** |
 | **Python companion** | `src/degenbot/**` | user-facing API, docstrings, I/O orchestration, immutable config dual-tracking, `Fraction`-based display |
 
 **The standalone-Rust-core constraint:** anything a standalone Rust consumer (`cargo add degenbot`) needs to build an MEV bot lives in a core crate from day one — never stranded on the Python side. The no-pyo3-in-cores invariant is enforced by `just check-no-pyo3-in-cores`.
@@ -75,7 +75,7 @@ The Rust workspace under `rust/crates/` exposes focused, independently consumabl
 | `degenbot-db` | Rust-owned schema (cutover target, ADR-010) |
 | `degenbot-pool-updater` / `degenbot-aave-updater` | DB-aware state updaters |
 | `degenbot-price` / `degenbot-executor` / `degenbot-submission` / `degenbot-simulation` | Oracles, executor, tx submission, simulation |
-| `degenbot-python` | The PyO3 binding layer (`degenbot_rs`) |
+| `degenbot-python` | The PyO3 binding layer (`degenbot._ffi` Python module, `degenbot_rs` Rust crate) |
 | `degenbot` | Umbrella crate re-exporting the cores for `cargo add degenbot` |
 
 Full component map and pump/engine lifecycle in [`docs/architecture/rust-owned-bot.md`](docs/architecture/rust-owned-bot.md).
@@ -237,7 +237,7 @@ When `build_pool` is called, type resolution proceeds in order: (1) pool registr
 Pools receive state updates via `external_update()` — a pure-logic method that validates the update and transitions pool state. The builder handles all I/O (fetching reserves, slot0, etc. from RPC), constructs an `ExternalUpdate` message, and pushes it to the pool:
 
 <!-- invisible-code-block: python
-from degenbot.degenbot_rs import PyBot
+from degenbot._ffi import PyBot
 _PY_BOT = PyBot()
 from tests.helpers.erc20_factory import make_erc20
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
@@ -383,7 +383,7 @@ pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
 V2 pools use the constant-product invariant (x·y=k) with directional fees:
 
 <!-- invisible-code-block: python
-from degenbot.degenbot_rs import PyBot
+from degenbot._ffi import PyBot
 _PY_BOT = PyBot()
 from tests.helpers.erc20_factory import make_erc20
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
@@ -461,7 +461,7 @@ assert lp.reserves_token1 == 2056841643098872755548
 V3 pools use concentrated liquidity with tick-based positions. The V3 pool uses a **sparse tick data fetcher** for on-demand liquidity loading:
 
 <!-- invisible-code-block: python
-from degenbot.degenbot_rs import PyBot
+from degenbot._ffi import PyBot
 _PY_BOT = PyBot()
 from tests.helpers.erc20_factory import make_erc20
 import json
@@ -534,7 +534,7 @@ assert 0 in lp.tick_data
 V4 uses a singleton pool manager with hooks. Pools are identified by `pool_id` instead of address:
 
 <!-- invisible-code-block: python
-from degenbot.degenbot_rs import PyBot
+from degenbot._ffi import PyBot
 _PY_BOT = PyBot()
 from tests.helpers.erc20_factory import make_erc20
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool, UniswapV4PoolKey
@@ -701,7 +701,7 @@ Users wanting fine-grained control over **all** client options may pass them thr
 Curve pools follow the I/O-free architecture with a single `CurveDataProvider` seam. The Bot handles metapool detection, lending token identification, and data provider injection:
 
 <!-- invisible-code-block: python
-from degenbot.degenbot_rs import PyBot
+from degenbot._ffi import PyBot
 _PY_BOT = PyBot()
 from tests.helpers.erc20_factory import make_erc20
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
@@ -1266,9 +1266,9 @@ path = "/path/to/degenbot.db"
 `Bot` refuses to construct without it, and the connected RPC's `eth_chainId`
 is enforced to match it at construction.
 
-## The Rust Core (`degenbot_rs`)
+## The Rust Core (`degenbot_rs` Rust crate, `degenbot._ffi` Python module)
 
-The Rust core is the engine of degenbot — it owns all performance-critical and stateful logic. Python reaches it through the `degenbot_rs` extension module, a thin PyO3 binding layer (`rust/crates/degenbot-python/`) that translates Python calls into Rust calls with no business logic of its own. The underlying core crates are pyo3-free by default and are also consumable directly from pure Rust via `cargo add degenbot`.
+The Rust core is the engine of degenbot — it owns all performance-critical and stateful logic. Python reaches it through the `degenbot._ffi` extension module, a thin PyO3 binding layer (`rust/crates/degenbot-python/`) that translates Python calls into Rust calls with no business logic of its own. The underlying core crates are pyo3-free by default and are also consumable directly from pure Rust via `cargo add degenbot`.
 
 The extension is built automatically during installation using [maturin](https://www.maturin.rs/) (or `uv sync`, which invokes maturin under the hood).
 
@@ -1305,7 +1305,7 @@ tick = get_tick_at_sqrt_ratio(56736275128821120)  # Returns: 253320
 High-performance ABI decoding for contract data:
 
 ```python
-from degenbot.degenbot_rs import decode, decode_single, encode
+from degenbot._ffi import decode, decode_single, encode
 
 # Encode then decode multiple values
 types = ["address", "uint256", "uint256"]
@@ -1359,7 +1359,7 @@ values = decode_return_data(calldata[4:], ["address", "uint256"])
 The extension includes synchronous and async Ethereum RPC providers:
 
 <!-- invisible-code-block: python
-from degenbot.degenbot_rs import AlloyProvider, Contract
+from degenbot._ffi import AlloyProvider, Contract
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI as RPC_URL
 -->
 
@@ -1397,7 +1397,7 @@ The extension also includes async wrappers for use with `asyncio`:
 <!-- skip: start "await outside async; uses placeholder addresses" -->
 
 ```python
-from degenbot.degenbot_rs import AsyncAlloyProvider, AsyncContract
+from degenbot._ffi import AsyncAlloyProvider, AsyncContract
 
 # Create an async provider
 async_provider = await AsyncAlloyProvider.create(
@@ -1421,7 +1421,7 @@ results = await async_contract.batch_call(
 #### Log Filtering
 
 ```python
-from degenbot.degenbot_rs import LogFilter
+from degenbot._ffi import LogFilter
 
 # Build a log filter
 log_filter = LogFilter(

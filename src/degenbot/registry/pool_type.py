@@ -16,7 +16,7 @@ from degenbot.types.pool_type import PoolFamily, PoolTypeDescriptor, derive_kind
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
-    from degenbot.degenbot_rs import PyDexIdentity
+    from degenbot._ffi import PyDexIdentity
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
     from degenbot.types.pool_protocols import ConcentratedLiquidityPool, ConstantProductPool

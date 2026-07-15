@@ -6,13 +6,13 @@ import contextlib
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Never
 
+from degenbot._ffi import resolve_deployer, resolve_v2_init_hash
 from degenbot.aerodrome.functions import (
     generate_aerodrome_v2_pool_address,
     generate_aerodrome_v3_pool_address,
 )
 from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.degenbot_rs import resolve_deployer, resolve_v2_init_hash
 from degenbot.exceptions.pool import (
     LiquidityPoolError,
     PoolCreationFailed,

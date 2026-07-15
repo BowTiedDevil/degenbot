@@ -22,7 +22,7 @@ from unittest.mock import MagicMock
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
-from degenbot.degenbot_rs import UniswapArbEngine
+from degenbot._ffi import UniswapArbEngine
 from degenbot.provider import AlloyProvider
 from degenbot.uniswap.trackers import UniswapV2PoolTracker
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI

@@ -2,7 +2,7 @@
 
 Ergo 6TLIJ5/FSD3CR: the weighted + stable companion ``swap_fn`` paths
 route the core swap math through the ``degenbot-balancer-math`` Rust leaf
-(``degenbot_rs.balancer_*``) instead of the Python ``balancer/libraries/``
+(``degenbot._ffi.balancer_*``) instead of the Python ``balancer/libraries/``
 ports. Scaling orchestration + the stable ``_add_swap_fee_amount`` divUp
 fee path stay Python (ADR-005: the math leaf is pure arithmetic; the I/O /
 scaling / bytecode-detection stays Python-side).
@@ -27,7 +27,7 @@ import degenbot.balancer.stable_pools as sp_mod
 from degenbot.balancer.libraries.constants import ONE
 from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.balancer.stable_pools import INVARIANT_V2
-from degenbot.degenbot_rs import PyBot
+from degenbot._ffi import PyBot
 from tests.helpers.balancer_pool_factory import (
     make_balancer_stable_pool,
     make_balancer_weighted_pool,

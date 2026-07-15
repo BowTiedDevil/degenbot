@@ -17,7 +17,7 @@ handlers still catch them):
 .. note::
 
     These are **direct alias re-exports** of the Rust ``#[pyclass]`` types
-    (``from degenbot_rs import X as Y``), not Python subclasses. The Rust
+    (``from degenbot._ffi import X as Y``), not Python subclasses. The Rust
     engine *raises* the ``degenbot_rs`` pyclass instances, so Python-side
     ``except VerificationRpcError:`` / ``isinstance(exc, VerificationRpcError)``
     must match the exact type the Rust side raises. A subclass re-export
@@ -38,7 +38,7 @@ retry policy branches on the verification-specific type, not a generic
 provider-base catch.
 """
 
-from degenbot.degenbot_rs import VerificationMismatchError, VerificationRpcError
+from degenbot._ffi import VerificationMismatchError, VerificationRpcError
 
 __all__ = [
     "VerificationMismatchError",

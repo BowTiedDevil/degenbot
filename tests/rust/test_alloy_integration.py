@@ -10,7 +10,7 @@ from degenbot.contract import (
     encode_function_call,
     get_function_selector,
 )
-from degenbot.degenbot_rs import decode_single, encode_single
+from degenbot._ffi import decode_single, encode_single
 from degenbot.provider import AlloyProvider, LogFilter
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 

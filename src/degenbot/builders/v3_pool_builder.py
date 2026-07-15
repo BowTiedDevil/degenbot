@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING, Any, cast
 
+from degenbot._ffi import cl_get_tick_word_and_bit_position
 from degenbot.abi_adapter import decode as abi_decode
 from degenbot.builders.tick_data_fetcher import (
     FetchedTickData,
@@ -13,7 +14,6 @@ from degenbot.builders.tick_data_fetcher import (
 )
 from degenbot.builders.v3_builder_base import V3BuilderBase, V3DbValues
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.degenbot_rs import cl_get_tick_word_and_bit_position
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger

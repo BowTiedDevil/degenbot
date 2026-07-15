@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING
 
 import eth_abi.abi
 
+from degenbot._ffi import resolve_deployer, resolve_v2_init_hash
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.pools import LiquidityPoolTable, UniswapFeeMixin
-from degenbot.degenbot_rs import resolve_deployer, resolve_v2_init_hash
 from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata

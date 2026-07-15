@@ -29,7 +29,7 @@ from degenbot.balancer.stable_pools import (
     BalancerV2StablePool,
 )
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.degenbot_rs import PyBot
+from degenbot._ffi import PyBot
 from degenbot.exceptions.pool import StaleRateResult
 from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
 from tests.helpers.erc20_factory import make_erc20

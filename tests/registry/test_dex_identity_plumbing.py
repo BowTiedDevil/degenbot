@@ -20,7 +20,7 @@ import pytest
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.degenbot_rs import PyBot, PyDexIdentity, dex_identity
+from degenbot._ffi import PyBot, PyDexIdentity, dex_identity
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from tests.helpers.erc20_factory import make_erc20

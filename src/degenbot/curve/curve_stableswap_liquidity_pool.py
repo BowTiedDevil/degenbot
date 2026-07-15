@@ -13,6 +13,14 @@ from weakref import WeakSet
 
 from eth_typing import ChecksumAddress
 
+from degenbot._ffi import (
+    PyLiquidityPool,
+    curve_stableswap_get_d,
+    curve_stableswap_get_y,
+    curve_stableswap_get_y_d,
+    curve_stableswap_newton_y,
+    curve_stableswap_reduction_coefficient,
+)
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.per_block_cache import PerBlockCache
 from degenbot.curve.stableswap_pool_state import StableswapPoolState
@@ -31,14 +39,6 @@ from degenbot.curve.types import (
     SwapStyle,
     YDVariant,
     YVariant,
-)
-from degenbot.degenbot_rs import (
-    PyLiquidityPool,
-    curve_stableswap_get_d,
-    curve_stableswap_get_y,
-    curve_stableswap_get_y_d,
-    curve_stableswap_newton_y,
-    curve_stableswap_reduction_coefficient,
 )
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError

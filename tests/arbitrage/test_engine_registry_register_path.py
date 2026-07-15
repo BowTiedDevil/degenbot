@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 import examples.eth_backrun_v2_v3_v4_rust as runner
-from degenbot.degenbot_rs import PyBot, UniswapArbEngine
+from degenbot._ffi import PyBot, UniswapArbEngine
 from examples.eth_backrun_helpers import build_hops_from_pools
 from tests.types.test_concrete_pool_construction import (
     _make_uniswap_v2_pool,

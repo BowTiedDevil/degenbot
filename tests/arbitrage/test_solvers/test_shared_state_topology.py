@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import threading
 
-from degenbot.degenbot_rs import PyBot, UniswapArbEngine
+from degenbot._ffi import PyBot, UniswapArbEngine
 
 USDC = 10**6
 WETH = 10**18

@@ -10,9 +10,9 @@ import dataclasses
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from degenbot._ffi import PyBot
     from degenbot.builders.async_erc20_builder import AsyncErc20Builder
     from degenbot.database.session_manager import DatabaseSessionManager
-    from degenbot.degenbot_rs import PyBot
     from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
     from degenbot.types.aliases import ChainId
 

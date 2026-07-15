@@ -3,7 +3,7 @@
 from fractions import Fraction
 from typing import Any
 
-from degenbot.degenbot_rs import (  # noqa: F401
+from degenbot._ffi import (  # noqa: F401
     DynamicFeePoolRejectedError,
     HookedPoolRejectedError,
 )
@@ -17,7 +17,7 @@ direct alias re-exports of the Rust ``#[pyclass]`` admission-error types (the
 companion imports its own FFI seam). They are *not* re-exported under
 :class:`ArbitrageError` — the documented contract is that these V4 pool
 *admission* refusals root at ``ValueError`` (via
-:class:`degenbot_rs.PoolRegistrationError`) and stay distinct from the
+:class:`degenbot._ffi.PoolRegistrationError`) and stay distinct from the
 :class:`ArbitrageError`-rooted *policy* rejections like
 :class:`PathRejectedError`. See ``PathRejectedError``'s docstring for the
 admission-vs-policy contrast. Aliasing (not subclassing) preserves type

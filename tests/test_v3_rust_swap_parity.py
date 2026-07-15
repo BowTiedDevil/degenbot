@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot.degenbot_rs import PyBot
+from degenbot._ffi import PyBot
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.v3_libraries import MIN_SQRT_RATIO
 from tests.helpers.erc20_factory import make_erc20

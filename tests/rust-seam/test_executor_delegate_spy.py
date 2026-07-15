@@ -77,9 +77,9 @@ class TestRustSeamPresent:
 
     @pytest.fixture(autouse=True)  # noqa: RUF076
     def _import_rs(self) -> None:
-        from degenbot import degenbot_rs
+        from degenbot import _ffi
 
-        self.rs = degenbot_rs
+        self.rs = _ffi
 
     def test_encode_cmd_stream(self) -> None:
         assert hasattr(self.rs, "encode_cmd_stream")
@@ -107,11 +107,11 @@ class TestRustSeamPresent:
 
 
 class TestExampleRoutesThroughRust:
-    """The example's source references `degenbot_rs` for every retired symbol.
+    """The example's source references `_ffi` for every retired symbol.
 
     Rather than a fragile full-import (the example needs dotenv/web3/etc.),
     this parses the example's AST import graph and confirms the symbols are
-    bound to `degenbot_rs`, not `eth_backrun_helpers` or `cmd_stream`.
+    bound to `_ffi`, not `eth_backrun_helpers` or `cmd_stream`.
     """
 
     @staticmethod
@@ -121,29 +121,29 @@ class TestExampleRoutesThroughRust:
     def test_imports_dispatch_from_companion(self) -> None:
         """The example imports the dispatch seam from the companion, not FFI.
 
-        A5 originally wired the example to import ``degenbot_rs`` directly.
+        A5 originally wired the example to import ``degenbot._ffi`` directly.
         The three-layer cutover (ADR-005) moves the driver to import the
         stable companion re-exports from ``degenbot.dispatch`` instead —
-        the example must NOT import ``degenbot_rs`` (the PyO3 wrapper is an
+        the example must NOT import ``degenbot._ffi`` (the PyO3 wrapper is an
         implementation detail of the companion, not a driver surface).
         """
         src = self._example_source()
         tree = ast.parse(src)
-        imports_degenbot_rs = False
+        imports_ffi = False
         imports_companion_dispatch = False
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom) and node.module:
-                if node.module == "degenbot.degenbot_rs" or (
-                    node.module == "degenbot" and "degenbot_rs" in [a.name for a in node.names]
+                if node.module == "degenbot._ffi" or (
+                    node.module == "degenbot" and "_ffi" in [a.name for a in node.names]
                 ):
-                    imports_degenbot_rs = True
+                    imports_ffi = True
                 if node.module == "degenbot.dispatch":
                     imports_companion_dispatch = True
         assert imports_companion_dispatch, (
             "example must import dispatch symbols from degenbot.dispatch (the companion seam)"
         )
-        assert not imports_degenbot_rs, (
-            "example must NOT import degenbot_rs directly (use degenbot.dispatch / degenbot.exceptions)"
+        assert not imports_ffi, (
+            "example must NOT import degenbot._ffi directly (use degenbot.dispatch / degenbot.exceptions)"
         )
 
     def test_does_not_import_python_encoder(self) -> None:
@@ -201,7 +201,7 @@ class TestExampleRoutesThroughRust:
     def test_sim_dispatch_routes_through_rust_seam(self) -> None:
         """The example routes the sim+submit flow through the Rust seam (A5).
 
-        A5 superseded the per-symbol ``degenbot_rs.<symbol>`` routing that this
+        A5 superseded the per-symbol ``_ffi.<symbol>`` routing that this
         class previously enforced: the five encoder/warmup symbols moved INTO
         the Rust core (``degenbot_simulation`` / ``degenbot_executor``), called
         internally by ``dispatch_profitable`` + ``SimulateContext``
@@ -224,12 +224,12 @@ class TestExampleRoutesThroughRust:
 
 
 class TestDelegateSpyEncodeCall:
-    """Monkey-patch `degenbot_rs.encode_cmd_stream` and confirm the example
+    """Monkey-patch `_ffi.encode_cmd_stream` and confirm the example
     actually calls it when encoding a path — proving delegation, not just
     import graph shape.
 
     Since the example has heavy import deps, we instead spy on the seam
-    directly: call `degenbot_rs.encode_cmd_stream` through a patched sentinel
+    directly: call `_ffi.encode_cmd_stream` through a patched sentinel
     and confirm the patched function is invoked.
     """
 
@@ -238,9 +238,9 @@ class TestDelegateSpyEncodeCall:
         (Rust extension function), not a Python function — proving it
         delegates to the Rust core, not a Python re-implementation.
         """
-        from degenbot import degenbot_rs
+        from degenbot import _ffi
 
-        fn = degenbot_rs.encode_cmd_stream
+        fn = _ffi.encode_cmd_stream
         # PyO3-bound functions are builtin_function_or_method, not Python defs.
         assert fn.__class__.__name__ in (
             "builtin_function_or_method",
@@ -252,9 +252,9 @@ class TestDelegateSpyEncodeCall:
         )
 
     def test_compute_simulation_warmup_slots_is_rust_bound(self) -> None:
-        from degenbot import degenbot_rs
+        from degenbot import _ffi
 
-        fn = degenbot_rs.compute_simulation_warmup_slots
+        fn = _ffi.compute_simulation_warmup_slots
         assert fn.__class__.__name__ in (
             "builtin_function_or_method",
             "method_descriptor",
@@ -262,9 +262,9 @@ class TestDelegateSpyEncodeCall:
         )
 
     def test_pack_config_is_rust_bound(self) -> None:
-        from degenbot import degenbot_rs
+        from degenbot import _ffi
 
-        fn = degenbot_rs.pack_config
+        fn = _ffi.pack_config
         assert fn.__class__.__name__ in (
             "builtin_function_or_method",
             "method_descriptor",
@@ -272,9 +272,9 @@ class TestDelegateSpyEncodeCall:
         )
 
     def test_mapping_slot_is_rust_bound(self) -> None:
-        from degenbot import degenbot_rs
+        from degenbot import _ffi
 
-        fn = degenbot_rs.mapping_slot
+        fn = _ffi.mapping_slot
         assert fn.__class__.__name__ in (
             "builtin_function_or_method",
             "method_descriptor",

@@ -1,7 +1,7 @@
 """The canonical bot-startup orchestrator (Plan 102, slice 3).
 
 :class:`EngineRegistry` is the **one correct way to start** a
-:class:`~degenbot.degenbot_rs.UniswapArbEngine` operator: it runs the
+:class:`~degenbot._ffi.UniswapArbEngine` operator: it runs the
 pre-pump startup ritual (``subscribe`` → stream snapshots → ``backfill`` →
 verify config) and *stops before* ``resume()``, so the caller can attach its
 result consumer before any batches flow. It also maintains the Python pool ↔
@@ -17,8 +17,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from degenbot import Bot, UniswapV2Pool
+from degenbot._ffi import UniswapArbEngine
 from degenbot.aerodrome.pools import AerodromeV2Pool
-from degenbot.degenbot_rs import UniswapArbEngine
 from degenbot.logging import logger as bot_logger
 from degenbot.uniswap.snapshot_binary import (
     _v3_snapshot_to_py_dict,

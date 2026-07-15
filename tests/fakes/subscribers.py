@@ -22,7 +22,7 @@ Python mirror of Rust-owned state — rejected per AGENTS.md's "do not
 introduce a Python mirror of Rust-owned state"):
 
 - **``subscribe_rust(bot, pool_id)``** — routes through the Rust pub/sub
-  seam (``degenbot_rs.register_subscriber``), so the ``FakeSubscriber``
+  seam (``degenbot._ffi.register_subscriber``), so the ``FakeSubscriber``
   receives state-change notifications through the SAME ``LogDispatcher``
   ``Weak``-fan-out path the engine ``EngineSubscriber`` uses (the single
   Rust notification path for Rust-owned ``BotState`` mutations, per ADR-005
@@ -78,7 +78,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from degenbot.degenbot_rs import PyBot, PySubscription
+    from degenbot._ffi import PyBot, PySubscription
     from degenbot.types.concrete import AbstractPublisherMessage, Publisher
 
 
@@ -129,7 +129,7 @@ class FakeSubscriber:
     def subscribe_rust(self, bot: PyBot, pool_id: int) -> None:
         """Subscribe to a Rust-owned pool through the Rust pub/sub seam.
 
-        Routes the subscription through ``degenbot_rs.register_subscriber``
+        Routes the subscription through ``degenbot._ffi.register_subscriber``
         (the ZBD4MS seam, committed ``e7b721c6``), so this ``FakeSubscriber``
         receives state-change notifications through the SAME ``LogDispatcher``
         ``Weak``-fan-out path the engine ``EngineSubscriber`` uses — the single
@@ -151,7 +151,7 @@ class FakeSubscriber:
             pool_id: The Rust pool id (from ``pool._py_pool.pool_id``).
 
         """
-        from degenbot.degenbot_rs import register_subscriber
+        from degenbot._ffi import register_subscriber
 
         subscription = register_subscriber(bot, pool_id, self)
         self._subscriptions.append(subscription)

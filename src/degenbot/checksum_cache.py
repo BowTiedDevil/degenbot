@@ -5,7 +5,7 @@ from typing import cast
 
 from eth_typing import ChecksumAddress, HexAddress
 
-from degenbot.degenbot_rs import to_checksum_address
+from degenbot._ffi import to_checksum_address
 
 _HEX_PREFIX_LENGTH = 2
 

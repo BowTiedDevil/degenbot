@@ -13,7 +13,7 @@ from degenbot.anvil_fork import AnvilFork
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_INT256
-from degenbot.degenbot_rs import cl_get_tick_word_and_bit_position
+from degenbot._ffi import cl_get_tick_word_and_bit_position
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import (

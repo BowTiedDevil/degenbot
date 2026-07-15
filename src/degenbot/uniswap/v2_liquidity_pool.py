@@ -7,12 +7,12 @@ from weakref import WeakSet
 
 from eth_typing import ChecksumAddress
 
-from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts
-from degenbot.checksum_cache import get_checksum_address
-from degenbot.degenbot_rs import PyDexIdentity, PyLiquidityPool
-from degenbot.degenbot_rs import (
+from degenbot._ffi import PyDexIdentity, PyLiquidityPool
+from degenbot._ffi import (
     solidly_calc_exact_in_stable_camelot as _rs_calc_exact_in_stable_camelot,
 )
+from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import ExternalUpdateError

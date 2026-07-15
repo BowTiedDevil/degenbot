@@ -18,20 +18,20 @@ pin the seam's public surface.
 
 from __future__ import annotations
 
-from degenbot import degenbot_rs
+from degenbot import _ffi
 
 
 def test_verification_mismatch_error_is_exposed() -> None:
     """``VerificationMismatchError`` is exported and is a ``RuntimeError``."""
-    assert hasattr(degenbot_rs, "VerificationMismatchError")
-    exc_type = degenbot_rs.VerificationMismatchError
+    assert hasattr(_ffi, "VerificationMismatchError")
+    exc_type = _ffi.VerificationMismatchError
     assert issubclass(exc_type, RuntimeError)
 
 
 def test_verification_rpc_error_is_exposed() -> None:
     """``VerificationRpcError`` is exported and is a ``RuntimeError``."""
-    assert hasattr(degenbot_rs, "VerificationRpcError")
-    exc_type = degenbot_rs.VerificationRpcError
+    assert hasattr(_ffi, "VerificationRpcError")
+    exc_type = _ffi.VerificationRpcError
     assert issubclass(exc_type, RuntimeError)
 
 
@@ -42,8 +42,8 @@ def test_verification_errors_are_distinct_types() -> None:
     a mismatch (fatal) and an RPC failure (transport) must not be the same
     Python type.
     """
-    mismatch = degenbot_rs.VerificationMismatchError
-    rpc = degenbot_rs.VerificationRpcError
+    mismatch = _ffi.VerificationMismatchError
+    rpc = _ffi.VerificationRpcError
     assert mismatch is not rpc
     assert not issubclass(mismatch, rpc)
     assert not issubclass(rpc, mismatch)
@@ -52,14 +52,14 @@ def test_verification_errors_are_distinct_types() -> None:
 def test_verification_mismatch_error_carries_message() -> None:
     """The exception preserves its message (``str(exc)`` round-trips)."""
     msg = "V3 pool 0x.. at snapshot block 1: tick data mismatch: ..."
-    exc = degenbot_rs.VerificationMismatchError(msg)
+    exc = _ffi.VerificationMismatchError(msg)
     assert str(exc) == msg
 
 
 def test_verification_rpc_error_carries_message() -> None:
     """The RPC-error exception preserves its message."""
     msg = "verify: 0x..: failed to create provider: connection refused"
-    exc = degenbot_rs.VerificationRpcError(msg)
+    exc = _ffi.VerificationRpcError(msg)
     assert str(exc) == msg
 
 
@@ -70,8 +70,8 @@ def test_both_exceptions_caught_by_runtime_error_handler() -> None:
     new types only *add* the ability to discriminate by type.
     """
     for exc_type in (
-        degenbot_rs.VerificationMismatchError,
-        degenbot_rs.VerificationRpcError,
+        _ffi.VerificationMismatchError,
+        _ffi.VerificationRpcError,
     ):
         try:
             raise exc_type("boom")  # noqa: EM101
@@ -93,15 +93,15 @@ def test_rpc_transport_failure_message_is_not_a_mismatch() -> None:
     transport_msg = (
         "V3 pool 0x.. at snapshot block 1: tickBitmap(0) RPC call failed: connection reset"
     )
-    rpc_exc = degenbot_rs.VerificationRpcError(transport_msg)
-    mismatch_exc = degenbot_rs.VerificationMismatchError(
+    rpc_exc = _ffi.VerificationRpcError(transport_msg)
+    mismatch_exc = _ffi.VerificationMismatchError(
         "V3 pool 0x.. at snapshot block 1: tick data mismatch"
     )
     # A transport failure raises the Rpc type, not the Mismatch type — the
     # two are distinguishable by isinstance (the contract build_paths relies
     # on, per VP42BP).
-    assert isinstance(rpc_exc, degenbot_rs.VerificationRpcError)
-    assert not isinstance(rpc_exc, degenbot_rs.VerificationMismatchError)
-    assert isinstance(mismatch_exc, degenbot_rs.VerificationMismatchError)
-    assert not isinstance(mismatch_exc, degenbot_rs.VerificationRpcError)
+    assert isinstance(rpc_exc, _ffi.VerificationRpcError)
+    assert not isinstance(rpc_exc, _ffi.VerificationMismatchError)
+    assert isinstance(mismatch_exc, _ffi.VerificationMismatchError)
+    assert not isinstance(mismatch_exc, _ffi.VerificationRpcError)
     assert str(rpc_exc) == transport_msg
