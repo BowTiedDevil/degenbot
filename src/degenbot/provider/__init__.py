@@ -42,8 +42,6 @@ from degenbot.provider.factory import (
     get_provider_from_config,
 )
 from degenbot.provider.offline_provider import (
-    BlockNotRecordedError,
-    OfflineDataMissing,
     OfflineProvider,
 )
 from degenbot.provider.subscription import LogSubscriptionFilter, Subscription
@@ -1049,10 +1047,8 @@ class AsyncAlloyProvider:
 __all__ = [
     "AlloyProvider",
     "AsyncAlloyProvider",
-    "BlockNotRecordedError",
     "LogFilter",
     "LogSubscriptionFilter",
-    "OfflineDataMissing",
     "OfflineProvider",
     "Subscription",
     "get_async_provider_from_config",

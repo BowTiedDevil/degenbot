@@ -4,16 +4,10 @@ from degenbot._ffi import PyAavePriceOracle as AavePriceOracle
 from degenbot.aave.operations import (
     Operation,
     ScaledTokenEvent,
-    TransactionOperations,
-    TransactionValidationError,
 )
-from degenbot.aave.types import TokenType
 
 __all__ = [
     "AavePriceOracle",
     "Operation",
     "ScaledTokenEvent",
-    "TokenType",
-    "TransactionOperations",
-    "TransactionValidationError",
 ]
