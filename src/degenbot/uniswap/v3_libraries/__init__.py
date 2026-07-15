@@ -21,7 +21,7 @@ adds input validation and ``EVMRevertError`` conversion on top of the
 ``cl_*`` primitives.
 """
 
-from degenbot._ffi import (
+from degenbot.uniswap.math import (
     MAX_SQRT_RATIO,
     MAX_TICK,
     MIN_SQRT_RATIO,

@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import cl_get_tick_word_and_bit_position
+from degenbot.uniswap.math import get_tick_word_and_bit_position as cl_get_tick_word_and_bit_position
 
 # Hardcoded ``TickBitmap.position`` expectations for the parametrized cases
 # (EVM toward-zero division on the spacing compression, then word=compressed>>8,
