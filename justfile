@@ -131,6 +131,26 @@ lint-python-check:
     uv run ruff check src/
     uv run ty check --no-progress src/
 
+# Dead-code detector (off the gate — output is a triage list). Each hit
+# needs an `rg` call before deletion: vulture is static and can't see
+# FFI-seam callers (Rust core) or framework dispatch (pydantic validators,
+# SQLAlchemy TypeDecorator signatures, `__exit__`/Protocol params). 80%
+# confidence is the operating point; the 60% tier is mostly framework-
+# dispatched methods (validators, properties on models, enum members).
+# Complements ruff: ruff's F401 rule exempts `if TYPE_CHECKING:` imports
+# and there is no ruff unreachable-code rule, so vulture catches both.
+dead-code:
+    uv run vulture src/degenbot vulture_whitelist.py --min-confidence 80
+
+# Deeper dead-code sweep — catches unused functions/methods/classes too
+# (the 80% tier only catches unused variables, imports, unreachable code).
+# Output is much noisier (~hundreds of findings, mostly framework-dispatched
+# pydantic validators, @property on models, enum members). Use periodically
+# for intentional dead-code audits; not a routine gate. Generate whitelist
+# candidates with: vulture src/degenbot --min-confidence 60 --make-whitelist
+dead-code-deep:
+    uv run vulture src/degenbot --min-confidence 60 --make-whitelist
+
 # Check Python formatting (read-only; fails on drift). Run `just format` to fix.
 fmt-check-python:
     uv run ruff format --check src/
