@@ -21,7 +21,7 @@ from typing import Any
 import pytest
 
 import examples.eth_backrun_v2_v3_v4_rust as runner
-from examples.eth_backrun_v2_v3_v4_rust import PyDispatcher
+from examples.eth_backrun_v2_v3_v4_rust import Dispatcher
 
 
 class _Eth:
@@ -152,9 +152,9 @@ async def _run(
     blocks: list[dict[str, int]],
     batches: list[dict[str, Any]],
     *,
-    dispatcher: PyDispatcher | None = None,
-) -> tuple[PyDispatcher, _FakeW3, list[int]]:
-    dispatcher = dispatcher or PyDispatcher.for_block(0)
+    dispatcher: Dispatcher | None = None,
+) -> tuple[Dispatcher, _FakeW3, list[int]]:
+    dispatcher = dispatcher or Dispatcher.for_block(0)
     w3 = _FakeW3()
     # Monkeypatch _dispatch_profitable so a non-empty batch records the
     # `current_block` it was dispatched with, proving it keys off the block

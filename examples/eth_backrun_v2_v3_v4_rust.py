@@ -30,16 +30,11 @@ Startup sequence:
 import argparse
 import asyncio
 import contextlib
-import datetime
 import gc
-import itertools
-import json
-import operator
 import os
 import pathlib
 import signal
 import time
-import traceback
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, cast
@@ -51,7 +46,7 @@ from eth_backrun_helpers import (
 )
 from eth_typing import ChainId, ChecksumAddress
 
-from degenbot import Bot, UniswapV2Pool, UniswapV3Pool, degenbot_rs, get_checksum_address
+from degenbot import Bot, UniswapV2Pool, UniswapV3Pool, get_checksum_address
 from degenbot.arbitrage.engine_registry import EngineRegistry
 from degenbot.arbitrage.hop_info import HopInfo, V2HopInfo, V3HopInfo, V4HopInfo
 from degenbot.arbitrage.verification_retry import (
@@ -68,27 +63,26 @@ from degenbot.database.models.pools import (
     UniswapV4PoolTable,
     UniswapV4PoolTableBase,
 )
-from degenbot.degenbot_rs import (
-    AlloyProvider,
-    AsyncAlloyProvider,
+from degenbot.dispatch import (
+    DispatchCandidate,
+    DispatchOutcome,
+    Dispatcher,
+    SimulateContext,
+    TxSigner,
+    dispatch_and_submit,
+    dispatch_profitable,
+    fetch_fee_history,
+)
+from degenbot.exceptions import (
     DynamicFeePoolRejectedError,
     HookedPoolRejectedError,
-    PyDispatchCandidate,
-    PyDispatchOutcome,
-    PyDispatcher,
-    PySimulateContext,
-    PySubmitCandidate,
-    PyTxSigner,
     VerificationMismatchError,
     VerificationRpcError,
-    dispatch_and_submit_py,
-    dispatch_profitable_py,
-    fetch_fee_history_py,
 )
 from degenbot.logging import logger as bot_logger
 from degenbot.pathfinding import find_paths_async
-from degenbot.provider import AsyncAlloyProvider
-from degenbot.provider import AlloyProvider
+
+from degenbot.provider import AlloyProvider, AsyncAlloyProvider
 from degenbot.uniswap.deployments import EthereumMainnetUniswapV4
 from degenbot.uniswap.trackers import UniswapV3PoolTracker
 from degenbot.uniswap.v3_snapshot import DatabaseSnapshot as V3DatabaseSnapshot
@@ -110,7 +104,7 @@ ETH_MAINNET_ALLOWED_TOKENS: set[str] = {
     "0x163f8C2467924be0ae7B5347228CABF260318753",  # WLD
     "0x6c3ea9036406852006290770BEdFcAbA0e23A0e8",  # PyUSD
     "0xB8c77482e45F1F44dE1745F52C74426C631bDD52",  # BNB
-    "0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0",  # wstETH (non-rebasing wrapper; stETH rebases, use wstETH)
+    "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84",  # LIDO stETH
     "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",  # WETH
     "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",  # USDC
     "0xdAC17F958D2ee523a2206206994597C13D831ec7",  # USDT
@@ -123,28 +117,6 @@ ETH_MAINNET_ALLOWED_TOKENS: set[str] = {
     "0xc00e94Cb662C3520282E6f5717214004A7f26888",  # COMP
     "0x0bc529c00C6401aEF6D220BE8C6Ea1667F6Ad93e",  # YFI
     "0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0",  # MATIC/POL
-    # ── Expanded set (verified tax-free via scripts/verify_tokens.py: every
-    #    token's recipient balanceOf delta == emitted Transfer amount across
-    #    recent blocks; re-run the verifier after any future edit). Excluded:
-    #    HEX (conditional origin fee, not a blanket tax), staked derivatives
-    #    with rebasing risk (stETH/AMPL/OHM family). sUSDe + wstETH are
-    #    non-rebasing yield wrappers (fixed balanceOf; yield accrues via a
-    #    redemption rate, ~constant across the sub-second sim window). ──
-    "0xdC035D45d973E3EC169d2276DDab16f1e407384F",  # USDS (Sky USD)
-    "0x4c9EDD5852cd905f086C759E8383e09bff1E68B3",  # USDe (Ethena)
-    "0x9D39A5DE30e57443BfF2A8307A4256c8797A3497",  # sUSDe (staked USDe, non-rebasing)
-    "0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29",  # frxUSD (Frax USD)
-    "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E",  # crvUSD
-    "0x8d0D000Ee44948FC98c9B98A4FA4921476f08B0d",  # USD1 (WLFI)
-    "0x1aBaEA1f7C830bD89Acc67eC4af516284b1bC33c",  # EURC (Circle EUR)
-    "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9",  # AAVE
-    "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",  # cbBTC (Coinbase BTC)
-    "0x45804880De22913dAFE09f4980848ECE6EcbAf78",  # PAXG (Paxos Gold)
-    "0x68749665FF8D2d112Fa859AA293F07A622782F38",  # XAUt (Tether Gold)
-    "0x6982508145454Ce325dDbE47a25d4ec3d2311933",  # PEPE
-    "0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE",  # SHIB
-    "0x57e114B691Db790C35207b2e685D4A43181e6061",  # ENA
-    "0x3073f7aAA4DB83f95e9FFf17424F71D4751a3073",  # MOVE
 }
 
 MIN_PROFIT_NET = 1  # was 5 * 10**9 (5 gwei)
@@ -190,12 +162,8 @@ PATH_PERMUTATION_FILTER: set[str] | None = None  # e.g. {"V3-V4-V3"}
 # gas and always revert.
 #
 # All tokens below are verified standard ERC-20 (no transfer fees,
-# no rebase mechanics). Each was verified on-chain: a real Transfer event's
-# emitted amount exactly equals the recipient balanceOf delta (1:1 transfer).
-# Do NOT add tokens without verifying:
-#   - stETH (0xae7ab96520…): rebase token (balanceOf changes daily without
-#     transfers) — INVALIDATES the pre/post balance-diff profit calc. Its
-#     non-rebasing wrapper wstETH is used instead (255 V4 pools vs stETH's 58).
+# no rebase mechanics). Do NOT add tokens without verifying:
+#   - stETH: rebase token (balance changes without transfers) — use wstETH instead
 #   - AMPL: rebase token — exclude
 #   - HEX: origin fee on transfer — exclude
 ALLOWED_INTERMEDIATE_TOKENS: set[str] | None = ETH_MAINNET_ALLOWED_TOKENS
@@ -577,8 +545,8 @@ class BackrunSession:
         self.bot: Bot | None = None
         self.engine_registry: EngineRegistry | None = None
         self.async_w3: AsyncAlloyProvider | None = None
-        self.dispatcher: PyDispatcher | None = None
-        self._sim_ctx: PySimulateContext | None = None
+        self.dispatcher: Dispatcher | None = None
+        self._sim_ctx: SimulateContext | None = None
         self.v3_snapshot: Any = None
         self.v4_snapshot: Any = None
         self.current_block: int = 0
@@ -624,13 +592,13 @@ class BackrunSession:
         self.current_block = latest_block["number"]
 
         # ── Coordination state ──
-        self.dispatcher = PyDispatcher.for_block(self.current_block)
+        self.dispatcher = Dispatcher.for_block(self.current_block)
 
-        # ── Simulation seam context (A5) — one PySimulateContext per session,
+        # ── Simulation seam context (A5) — one SimulateContext per session,
         # held alongside the dispatcher. The runtime-bytecode file-load stays
         # Python (A2 disposition `stays-python`); the bytes cross here. The
         # AsyncAlloyProvider handle is taken from the session's provider so
-        # `dispatch_profitable_py` shares one provider with the rest of the
+        # `dispatch_profitable` shares one provider with the rest of the
         # pipeline.
         async_alloy = self.async_w3.as_async_alloy()
         if async_alloy is None:
@@ -640,7 +608,7 @@ class BackrunSession:
             self._sim_ctx = None
         else:
             runtime_code = _load_executor_runtime_bytecode()
-            self._sim_ctx = PySimulateContext(
+            self._sim_ctx = SimulateContext(
                 provider=async_alloy,
                 executor_owner=cfg.executor_owner,
                 executor_address=cfg.executor_address,
@@ -1387,10 +1355,10 @@ async def _dispatch_profitable(
     results: list[tuple[int, int, int, tuple[int, ...], tuple[int, ...], int]],
     engine_registry: EngineRegistry,
     async_w3: AsyncAlloyProvider,
-    sim_ctx: PySimulateContext,
+    sim_ctx: SimulateContext,
     operator_private_key: str,
     operator_nonce: int,
-    dispatcher: PyDispatcher,
+    dispatcher: Dispatcher,
     current_block: int,
     base_fee_next: int,
     dry_run: bool,
@@ -1398,14 +1366,14 @@ async def _dispatch_profitable(
     """Encode → simulate → submit a batch of profitable results via the Rust seam.
 
     The A5 cutover: this replaces the Python ``dispatch_profitable_results`` +
-    ``simulate_one`` chain with ``dispatch_profitable_py`` (simulate) →
-    ``dispatch_and_submit_py`` (submit). The sim fan-out, the gross/net profit
+    ``simulate_one`` chain with ``dispatch_profitable`` (simulate) →
+    ``dispatch_and_submit`` (submit). The sim fan-out, the gross/net profit
     arithmetic, the market-aware priority fee, the path suppression, and the
     thin-margin pre-filter all run in the Rust core; Python only builds the
     candidate list, renders the ``[sim]``/``[profit]`` summaries, and chains to
     the submit seam.
     """
-    candidates: list[PyDispatchCandidate] = []
+    candidates: list[DispatchCandidate] = []
     for pid, inp, prof, ho, _ci, sb in results:
         path_info = engine_registry.paths.get(pid)
         if path_info is None:
@@ -1418,7 +1386,7 @@ async def _dispatch_profitable(
             )
             continue
         candidates.append(
-            PyDispatchCandidate(
+            DispatchCandidate(
                 path_id=pid,
                 optimal_input=inp,
                 engine_profit=prof,
@@ -1431,7 +1399,7 @@ async def _dispatch_profitable(
     if not candidates:
         return
 
-    outcome = await dispatch_profitable_py(
+    outcome = await dispatch_profitable(
         candidates=candidates,
         context=sim_ctx,
         dispatcher=dispatcher,
@@ -1449,8 +1417,8 @@ async def _dispatch_profitable(
     if async_alloy is None:
         bot_logger.error("[dispatch] async_w3 is not an Alloy-backed provider; cannot submit")
         return
-    signer = PyTxSigner(key=operator_private_key, chain_id=1)
-    records = await dispatch_and_submit_py(
+    signer = TxSigner(key=operator_private_key, chain_id=1)
+    records = await dispatch_and_submit(
         candidates=outcome.gas_profitable,
         dispatcher=dispatcher,
         provider=async_alloy,
@@ -1479,8 +1447,8 @@ async def _dispatch_profitable(
             bot_logger.debug(f"Send failed: {record.get('detail', '')}")
 
 
-def _render_sim_summary(outcome: PyDispatchOutcome) -> None:
-    """Render the ``[sim]`` line from ``PyDispatchOutcome`` fields (D4 stay-Python).
+def _render_sim_summary(outcome: DispatchOutcome) -> None:
+    """Render the ``[sim]`` line from ``DispatchOutcome`` fields (D4 stay-Python).
 
     Ports the prior ``[sim] N candidates: X ok (Y profitable, Z below
     threshold), W failed, V exceptions …`` summary (the only rendering the A5
@@ -1507,11 +1475,11 @@ def _render_sim_summary(outcome: PyDispatchOutcome) -> None:
     )
 
 
-def _render_profit_logs(outcome: PyDispatchOutcome) -> None:
+def _render_profit_logs(outcome: DispatchOutcome) -> None:
     """Render the ``[profit]`` per-path hop-detail log (D4 stay-Python).
 
     The prior ``[sim-ok]`` gas-unprofitable per-path log is NOT reproduced:
-    ``PyDispatchOutcome`` collapses gas-unprofitable to a count by design (A2 —
+    ``DispatchOutcome`` collapses gas-unprofitable to a count by design (A2 —
     the cockpit only logs these as a tally; they're valid sims below the net
     threshold, not submitted). The ``[profit]`` log iterates the survivors +
     looks up each path's ``PathInfo`` via ``outcome.path_infos`` (Decision 1=B).
@@ -1549,7 +1517,7 @@ def _render_profit_logs(outcome: PyDispatchOutcome) -> None:
         )
 
 
-def _render_sim_failures(outcome: PyDispatchOutcome) -> None:
+def _render_sim_failures(outcome: DispatchOutcome) -> None:
     """Render one ``[sim-fail]`` line per reverted / failed candidate (D3).
 
     Counterpart to :func:`_render_profit_logs` — operates on the FAILURES
@@ -1593,11 +1561,11 @@ def _render_sim_failures(outcome: PyDispatchOutcome) -> None:
 async def consume_result_batches(
     engine_registry: EngineRegistry,
     async_w3: AsyncAlloyProvider,
-    sim_ctx: PySimulateContext,
+    sim_ctx: SimulateContext,
     executor_address: str,
     operator_address: str,
     operator_private_key: str,
-    dispatcher: PyDispatcher,
+    dispatcher: Dispatcher,
     dry_run: bool,
     *,
     block_stream: AsyncIterator[dict[str, int]] | None = None,
@@ -1616,7 +1584,7 @@ async def consume_result_batches(
       * block stream  → ``dispatcher.advance_block``, ``record_block_time``,
         ``fee_history``, the ``[block:]`` log, and ``base_fee_next``.
       * result batch  → ``_dispatch_profitable`` (the Rust
-        ``dispatch_profitable_py`` → ``dispatch_and_submit_py`` chain) keyed
+        ``dispatch_profitable`` → ``dispatch_and_submit`` chain) keyed
         off ``dispatcher.current_block`` (the block clock), with the
         per-result solve_block recorded for age/staleness.
 
@@ -1740,7 +1708,7 @@ def _reprime(
 
 async def _apply_block_if_ready(
     fut: asyncio.Task[dict[str, int]],
-    dispatcher: PyDispatcher,
+    dispatcher: Dispatcher,
     async_w3: AsyncAlloyProvider,
 ) -> None:
     """Drive the block clock from a forwarded ``newHeads`` tick if fut resolved.
@@ -1769,13 +1737,13 @@ async def _apply_block_if_ready(
     )
 
     # 7UIYJ6: ``eth_feeHistory`` + hex-decode + ``record_priority_fees`` now
-    # happen in the Rust submit leaf (``fetch_fee_history_py`` extracts the
+    # happen in the Rust submit leaf (``fetch_fee_history`` extracts the
     # AsyncAlloyProvider, calls eth_feeHistory, records into the dispatcher's
     # ring internally, no-ops on RPC failure — matching the prior
     # ``except Web3Exception: pass``).
     async_alloy = async_w3.as_async_alloy()
     if async_alloy is not None:
-        await fetch_fee_history_py(
+        await fetch_fee_history(
             provider=async_alloy,
             dispatcher=dispatcher,
             block_count=1,
@@ -1799,10 +1767,10 @@ async def _apply_block_if_ready(
 
 async def _apply_result_if_ready(
     fut: asyncio.Task[dict[str, object]],
-    dispatcher: PyDispatcher,
+    dispatcher: Dispatcher,
     engine_registry: EngineRegistry,
     async_w3: AsyncAlloyProvider,
-    sim_ctx: PySimulateContext,
+    sim_ctx: SimulateContext,
     executor_address: str,
     operator_address: str,
     operator_private_key: str,
