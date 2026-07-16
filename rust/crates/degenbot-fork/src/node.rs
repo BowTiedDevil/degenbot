@@ -59,12 +59,16 @@ pub enum MiningMode {
     None,
 }
 
-/// Generate a process-unique default IPC socket path so concurrent
-/// `AnvilFork` instances don't collide on `/tmp/anvil.ipc`.
+/// Generate a process-unique default IPC socket path under the OS temp
+/// directory so concurrent `AnvilFork` instances don't collide on anvil's
+/// default `/tmp/anvil.ipc`.
 fn default_ipc_path() -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
-    format!("/tmp/degenbot-anvil-{}-{n}.ipc", std::process::id())
+    std::env::temp_dir()
+        .join(format!("degenbot-anvil-{}-{n}.ipc", std::process::id()))
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// Builder for an [`AnvilFork`].
@@ -168,8 +172,8 @@ impl AnvilForkBuilder {
         self
     }
 
-    /// Set the IPC socket path (`ipc_path`). Defaults to anvil's
-    /// `/tmp/anvil.ipc` (alloy's `DEFAULT_IPC_ENDPOINT`).
+    /// Set the IPC socket path (`ipc_path`). Defaults to a process-unique
+    /// file under the OS temp directory (e.g. `/tmp` on POSIX).
     #[must_use]
     pub fn ipc_path(mut self, path: impl Into<PathBuf>) -> Self {
         self.ipc_path = Some(path.into());
@@ -251,8 +255,8 @@ impl AnvilForkBuilder {
     /// - [`ForkError::Connect`] if the IPC connection fails.
     /// - [`ForkError::Rpc`] if a queued state-override call fails.
     pub async fn try_spawn(self) -> Result<AnvilFork, ForkError> {
-        // Use a process-unique IPC path by default (avoids `/tmp/anvil.ipc`
-        // collisions when multiple anvil forks spawn concurrently — e.g.
+        // Use a process-unique IPC path by default (avoids anvil's default
+        // socket collisions when multiple anvil forks spawn concurrently — e.g.
         // pytest-xdist parallel workers, or multiple `AnvilFork` instances in
         // one process). Caller-supplied `ipc_path` overrides this.
         let ipc_path = self
@@ -377,7 +381,7 @@ impl AnvilFork {
     }
 
     /// The resolved IPC socket path the spawned anvil process is listening on
-    /// (anvil's `--ipc` arg, or its default `/tmp/anvil.ipc`).
+    /// (anvil's `--ipc` arg, or its default socket path).
     ///
     /// Python companions + standalone Rust consumers use this to construct a
     /// second `Provider` over the same IPC socket (e.g. `AlloyProvider` for
@@ -582,7 +586,10 @@ mod tests {
         // concurrent anvil instance during the test run.
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let n = COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
-        format!("/tmp/degenbot-fork-test-{}-{n}.ipc", std::process::id())
+        std::env::temp_dir()
+            .join(format!("degenbot-fork-test-{}-{n}.ipc", std::process::id()))
+            .to_string_lossy()
+            .into_owned()
     }
 
     #[tokio::test]
