@@ -42,7 +42,8 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import text
 
-from degenbot._ffi import CancelHandle, run_aave_update
+from degenbot._ffi.cancel import CancelHandle
+from degenbot._ffi.aave import run_aave_update
 from tests.aave.writer_parity.harness import (
     ATOKEN_REVISION_SELECTOR,
     DEBT_TOKEN_REVISION_SELECTOR,

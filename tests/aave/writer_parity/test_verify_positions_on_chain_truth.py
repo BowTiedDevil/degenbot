@@ -33,11 +33,11 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
-from degenbot._ffi import (
-    CancelHandle,
+from degenbot._ffi.aave import (
     run_aave_update,
     verify_touched_positions_on_chain,
 )
+from degenbot._ffi.cancel import CancelHandle
 from tests.aave.writer_parity.harness import (
     FIXTURE_BLOCK,
     LIQUIDATION_CALL_TOPIC,

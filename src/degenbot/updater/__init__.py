@@ -16,7 +16,7 @@ Symbol map:
 - :class:`CancelHandle` — an async cancellation token for ``run_pool_update`` / ``run_aave_update``
 """
 
-from degenbot._ffi import CancelHandle
+from degenbot._ffi.cancel import CancelHandle
 from degenbot._ffi.db import (
     LiquidityUpdateEvent,
     V2PoolRowInput,

@@ -35,7 +35,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyModule};
 
 use degenbot_pool_updater::run::{self, ChunkProgress, ProgressSink, RunError, UpdateReport};
 
@@ -491,11 +491,17 @@ fn run_err_to_py(err: RunError) -> PyErr {
 /// Returns a [`PyErr`] if any `add_function`/`add_class` call fails (a name
 /// collision); propagated unchanged to the `#[pymodule]` caller.
 pub fn add_pool_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(run_pool_update, m)?)?;
-    m.add_function(wrap_pyfunction!(verify_v3_liquidity_map, m)?)?;
-    m.add_function(wrap_pyfunction!(verify_v4_liquidity_map, m)?)?;
+    let py = m.py();
+    let submod = PyModule::new(py, "degenbot._ffi.pool")?;
+    submod.add_function(wrap_pyfunction!(run_pool_update, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(verify_v3_liquidity_map, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(verify_v4_liquidity_map, &submod)?)?;
     // `CancelHandle` is registered by `cancel::register_cancel` in `c_api`
     // (shared with the Aave updater seam).
+    m.add_submodule(&submod)?;
+    py.import("sys")?
+        .getattr("modules")?
+        .set_item("degenbot._ffi.pool", &submod)?;
     Ok(())
 }
 

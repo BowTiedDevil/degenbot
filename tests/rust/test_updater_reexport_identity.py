@@ -11,7 +11,7 @@ break type identity at the FFI boundary.
 
 from __future__ import annotations
 
-from degenbot._ffi import CancelHandle
+from degenbot._ffi.cancel import CancelHandle
 from degenbot.database._ffi import (
     LiquidityUpdateEvent,
     V2PoolRowInput,

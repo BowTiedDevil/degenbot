@@ -20,6 +20,8 @@ from degenbot.types.rpc_types import (
 )
 from degenbot.types.rpc_types import BlockData as Web3BlockData
 
+from . import aave as aave
+
 # ------------------------------------------------------------------
 # ── Balancer V2 math (feature = "balancer-math"). ──
 # ------------------------------------------------------------------
@@ -30,6 +32,7 @@ from degenbot.types.rpc_types import BlockData as Web3BlockData
 # `round_up` is the stable-invariant V1(always-roundDown)/V2(roundUp) axis.
 # Reverts surface as ValueError/OverflowError carrying the Solidity revert tag.
 from . import balancer_math as balancer_math
+from . import cancel as cancel
 
 # ------------------------------------------------------------------
 # ABI encoding / decoding
@@ -43,6 +46,7 @@ from . import cl_math as cl_math
 from . import curve_math as curve_math
 from . import db as db
 from . import fork as fork
+from . import pool as pool
 from . import price as price
 from . import solady as solady
 from . import solidly_math as solidly_math
@@ -111,214 +115,6 @@ def find_paths_rust(
 # any connection / DDL / backup / integrity-check failure.
 # `db_upgrade_database` returns a discriminant string.
 
-def run_pool_update(
-    database_path: str,
-    chain_id: int,
-    to_block: int | None,
-    chunk_size: int,
-    rpc_url: str,
-    progress_callback: Callable[..., None],
-    cancel_handle: CancelHandle,
-    verify_chunk: bool = False,
-    *,
-    verify_all_interval: int | None = None,
-    verify_all_at_completion: bool = False,
-) -> dict[str, Any]:
-    """Drive the Rust-owned pool-updater chunk loop (epic 2SFL6I).
-
-    Advance every active exchange's ``last_update_block`` to ``to_block`` (or
-    the chain tip if ``None``). Each chunk: RPC-fetch pool creations +
-    V3/V4 liquidity, decode, write under ONE ``Transaction`` (atomicity),
-    stamp ``last_update_block`` LAST (restart-invariance). The GIL is released
-    across the whole run; only ``progress_callback`` re-acquires it briefly,
-    once per chunk.
-
-    Args:
-        database_path: The writeable ``DegenbotDb`` path (already migrated
-            to the Rust-owned schema).
-        chain_id: The chain to advance.
-        to_block: ``int`` to advance to a specific block; ``None`` to
-            advance to the chain tip (``eth_blockNumber``).
-        chunk_size: Blocks per chunk.
-        rpc_url: The HTTP RPC endpoint.
-        progress_callback: A callable invoked with a per-chunk ``dict``
-            ``{chain_id, chunk_start, chunk_end, pools_written,
-            liquidity_apply_count, committed, is_final}`` once per chunk boundary.
-        cancel_handle: A ``CancelHandle`` constructed up front; a SIGINT
-            handler calls ``cancel_handle.cancel()`` to stop at the next
-            chunk boundary.
-        verify_chunk: When ``True``, run the pre-commit per-chunk on-chain-truth gate
-            (Full per-pool touched-pool verification) before each chunk's persist
-            commits; a divergence rolls back the chunk + does NOT advance
-            ``last_update_block``. ``False`` (default) = the no-gate path.
-        verify_all_interval: When set, run a pre-commit FULL (market-wide, all
-            in-scope pools) verification when a chunk crosses/lands-on a multiple
-            of this block interval. A divergence rolls back the chunk.
-        verify_all_at_completion: When ``True``, run a pre-commit FULL
-            verification on the run's final chunk. A divergence rolls back the
-            chunk.
-
-    Returns:
-        ``dict {chain_id, from_block, to_block, chunks_committed,
-        total_pools_written, total_liquidity_applies}``.
-
-    Raises:
-        ValueError: For a DB or RPC failure (in-flight chunk rolled back).
-        RuntimeError: If cancelled (committed chunks stay durable).
-
-    Note:
-        Must NOT be called from an existing tokio runtime; the CLI runs this
-        from a worker thread with no ambient runtime.
-
-    """
-
-def verify_v3_liquidity_map(
-    database_path: str,
-    rpc_url: str,
-    chain_id: int,
-    pool_address: str,
-    block_number: int,
-) -> list[dict[str, Any]]:
-    """Stand-alone on-chain-truth verification of a V3 pool's COMMITTED map.
-
-    Opens the DB read-only, fetches the pool's ``liquidity_positions`` +
-    ``initialization_maps`` rows, and compares every tick + bitmap word
-    against on-chain ``ticks(int24)`` / ``tickBitmap(int16)`` at
-    ``block_number`` (batched via Multicall3). Returns the divergence list
-    (empty = GREEN — the DB matches the chain).
-
-    This is the ad-hoc / spot-check sibling of the pre-commit gate
-    (``run_pool_update(verify=True)``); the gate runs the SAME compare BEFORE
-    the write commits, while this reads the already-committed state.
-
-    Args:
-        database_path: The ``DegenbotDb`` path (opened read-only).
-        rpc_url: The HTTP RPC endpoint.
-        chain_id: The chain the pool lives on.
-        pool_address: The V3 pool contract address (checksummed or not).
-        block_number: The block to verify against.
-
-    Returns:
-        A list of divergence dicts (empty = GREEN). Each dict carries
-        ``variant`` (``TickGross`` / ``TickNet`` / ``BitmapWord`` /
-        ``TickCallReverted`` / ``BitmapCallReverted``) + the named fields
-        (``tick`` / ``word``, ``expected``, ``actual``) for bisect-able triage.
-
-    Raises:
-        ValueError: For a DB or RPC failure.
-        KeyError: If the pool is not found on the chain.
-
-    """
-
-def verify_v4_liquidity_map(
-    database_path: str,
-    rpc_url: str,
-    chain_id: int,
-    pool_hash: str,
-    pool_manager_address: str,
-    block_number: int,
-) -> list[dict[str, Any]]:
-    """Stand-alone on-chain-truth verification of a V4 pool's COMMITTED map.
-
-    Mirrors :func:`verify_v3_liquidity_map` for V4: reads the ``managed_pool``
-    liquidity rows + compares every tick slot + bitmap-word slot against the
-    singleton ``PoolManager`` storage via ``extsload(bytes32[])`` at
-    ``block_number``. Returns the divergence list (empty = GREEN).
-
-    Args:
-        database_path: The ``DegenbotDb`` path (opened read-only).
-        rpc_url: The HTTP RPC endpoint.
-        chain_id: The chain the pool lives on.
-        pool_hash: The V4 ``PoolId`` (bytes32 hex, ``0x…``).
-        pool_manager_address: The deployed V4 ``PoolManager`` singleton
-            (the V4 exchange's ``factory``).
-        block_number: The block to verify against.
-
-    Returns:
-        A list of divergence dicts (same shape as :func:`verify_v3_liquidity_map`).
-
-    Raises:
-        ValueError: For a DB or RPC failure.
-        KeyError: If the pool is not found on the chain.
-
-    """
-
-def run_aave_update(
-    database_path: str,
-    chain_id: int,
-    market_id: int,
-    to_block: int | None,
-    chunk_size: int,
-    rpc_url: str,
-    progress_callback: Callable[..., None],
-    cancel_handle: CancelHandle,
-    verify_chunk: bool = False,
-    max_chunks: int | None = None,
-    *,
-    verify_all_interval: int | None = None,
-    verify_all_at_completion: bool = False,
-) -> dict[str, Any]:
-    """Drive the Rust-owned Aave V3 updater chunk loop (epic AZGJUN, 5XNTC5).
-
-    Advance ``aave_v3_markets.last_update_block`` for ``market_id`` to
-    ``to_block`` (or the chain tip if ``None``). Each chunk: RPC-fetch the 7
-    Aave event passes, group by transaction, run the per-tx discount
-    pre-pass + config dispatch + operations parser, write under ONE
-    ``Transaction`` (§3.4 atomicity), stamp ``last_update_block`` LAST
-    (restart-invariance). The GIL is released across the whole run; only
-    ``progress_callback`` re-acquires it briefly, once per chunk.
-
-    Args:
-        database_path: The writeable ``DegenbotDb`` path.
-        chain_id: The chain.
-        market_id: The ``aave_v3_markets.id`` to advance.
-        to_block: ``int`` to advance to a specific block; ``None`` for the
-            chain tip (``eth_blockNumber``).
-        chunk_size: Blocks per chunk.
-        rpc_url: The HTTP RPC endpoint.
-        progress_callback: A callable invoked with a per-chunk ``dict``
-            ``{chain_id, market_id, chunk_start, chunk_end, events_applied,
-            committed, is_final}`` once per chunk boundary.
-        cancel_handle: A ``CancelHandle`` (shared with ``run_pool_update``);
-            a SIGINT handler calls ``cancel_handle.cancel()``.
-        verify_chunk: If ``True``, run pre-commit verification on each chunk
-            ("scaled-token balance + last_index" against the on-chain
-            truth at ``chunk_end``). A divergence drops the transaction
-            (rollback) so ``last_update_block`` does NOT advance + the next
-            run re-processes the same chunk. If ``False``, verification is
-            skipped.
-        max_chunks: ``None`` to advance to ``to_block``/tip; ``int`` to stop
-            after committing that many chunks (one-chunk mode).
-            ``last_update_block`` is advanced to the last committed chunk's
-            end, so the next run resumes from there.
-        verify_all_interval: When set, run a pre-commit FULL (market-wide,
-            all 4-check) verification when a chunk crosses/lands-on a multiple
-            of this block interval. A divergence drops the transaction
-            (rollback) so ``last_update_block`` does NOT advance.
-        verify_all_at_completion: When ``True``, run a pre-commit FULL
-            verification on the run's final chunk. A divergence rolls back the
-            chunk (``last_update_block`` does NOT advance).
-
-    Returns:
-        ``dict {chain_id, market_id, from_block, to_block,
-        chunks_committed, total_events_applied}``.
-
-    Raises:
-        ValueError: For a DB / RPC / config-dispatch / parse failure
-            (in-flight chunk rolled back; committed chunks stay durable).
-        RuntimeError: If cancelled (committed chunks stay durable).
-        AssertionError: If ``verify_chunk=True`` and pre-commit verification
-            found divergences (in-flight chunk rolled back;
-            ``last_update_block`` did NOT advance).
-        ValueError: If the market has no ``last_update_block`` (NotBootstrapped
-            — bootstrap the stamp first).
-
-    Note:
-        Must NOT be called from within an existing tokio runtime. The CLI
-        runs this from a worker thread with no ambient runtime.
-
-    """
-
 class CancelHandle:
     """Cooperative cancel flag for the long-running updater loops.
 
@@ -335,121 +131,6 @@ class CancelHandle:
         """Whether cancellation was requested."""
     def reset(self) -> None:
         """Reset the flag to ``False`` (reuse the handle)."""
-
-def verify_all_positions_on_chain(
-    database_path: str,
-    rpc_url: str,
-    market_id: int,
-    chain_id: int,
-    block_number: int,
-    touched_users: list[str] | None = None,
-) -> list[dict[str, Any]]:
-    """Full on-chain-truth verification (Rust port of Python ``verify_all_positions``).
-
-    Runs all 4 checks:
-    1. Collateral scaled-token balance + last_index (``scaledBalanceOf`` +
-       ``getPreviousIndex`` on each aToken).
-    2. Debt scaled-token balance + last_index (same calls on each vToken).
-    3. stkAAVE balance (``balanceOf`` on the discount token).
-    4. GHO discount percent (``getDiscountPercent`` on the GHO vToken,
-       with a revision-based skip guard at revision >= 4).
-
-    Args:
-        database_path: The ``DegenbotDb`` path (opened read-only).
-        rpc_url: The HTTP RPC endpoint.
-        market_id: The ``aave_v3_markets.id`` to verify.
-        chain_id: The chain ID (needed to resolve the GHO asset row).
-        block_number: The block to verify against.
-        touched_users: ``None`` (default) verifies ALL positions/users;
-            a list of address strings verifies only those users.
-
-    Returns:
-        A list of divergence dicts (empty = GREEN). Each dict has a ``check``
-        field (``"scaled_token"``, ``"stk_aave_balance"``, or
-        ``"gho_discount"``) plus the relevant fields for that check type.
-
-    Raises:
-        ValueError: For a DB/RPC failure that prevents verification.
-
-    """
-
-def cleanup_zero_balance_positions(
-    database_path: str,
-    market_id: int,
-) -> None:
-    """Delete all zero-balance collateral + debt positions for ``market_id``.
-
-    Mirrors the Python ``cleanup_zero_balance_positions``. Opens the DB for
-    writes, deletes zero-balance rows, + commits. The GIL is released across
-    the call.
-
-    Args:
-        database_path: The writeable ``DegenbotDb`` path.
-        market_id: The ``aave_v3_markets.id`` to clean up.
-
-    Raises:
-        ValueError: For a DB failure.
-
-    """
-
-def activate_aave_market(
-    database_path: str,
-    chain_id: int,
-    pool_address_provider: str,
-    gho_token_address: str,
-    rpc_url: str,
-) -> dict[str, Any]:
-    """Seed (or re-activate) an Aave V3 market (MPI6Q3).
-
-    The ONE-TIME setup the chunk loop's ``run_aave_update`` bootstraps from.
-    Rust-owned replacement for the Python ``activate_ethereum_aave_v3``
-    (commands.py) — the last ORM writer on the Aave path after the §4.2
-    retirement (CZM7TI). RPC-fetches ``getMarketId()`` on the pool address
-    provider + the GHO token's ``name()``/``symbol()``/``decimals()``, then
-    seeds — in ONE transaction — the ``aave_v3_markets`` row, the
-    ``POOL_ADDRESS_PROVIDER`` contract row, + the GHO ``erc20_tokens`` +
-    ``aave_gho_tokens`` rows. Idempotent: re-activating an existing market
-    sets ``active = True`` + inserts no duplicate rows.
-
-    The GIL is released across the whole call (the core owns its tokio
-    runtime + does the RPC fetches + DB writes internally).
-
-    Args:
-        database_path: The writeable ``DegenbotDb`` path.
-        chain_id: The chain.
-        pool_address_provider: The ``PoolAddressProvider`` contract address
-            (checksummed).
-        gho_token_address: The chain's GHO token address (checksummed).
-        rpc_url: The HTTP RPC endpoint.
-
-    Returns:
-        A ``dict`` ``{market_id, market_name, created}``. ``market_id`` is
-        the ``aave_v3_markets.id`` to pass to ``run_aave_update``. ``created``
-        is ``True`` if the market was newly created, ``False`` if it
-        pre-existed (re-activation).
-
-    Raises:
-        ValueError: For a DB / RPC / address-parse failure.
-
-    """
-
-def deactivate_aave_market(
-    database_path: str,
-    market_id: int,
-) -> None:
-    """Set ``active = False`` for ``market_id`` (MPI6Q3).
-
-    Rust-owned replacement for the Python ``deactivate_mainnet_aave_v3``
-    (commands.py). The GIL is released across the call.
-
-    Args:
-        database_path: The writeable ``DegenbotDb`` path.
-        market_id: The ``aave_v3_markets.id`` to deactivate.
-
-    Raises:
-        ValueError: If ``market_id`` doesn't exist or on a DB failure.
-
-    """
 
 # ------------------------------------------------------------------
 # V3/V4 DB-aware liquidity updater seam (feature = "db").
@@ -2106,11 +1787,12 @@ __all__ = [
     "UniswapArbEngine",
     "VerificationMismatchError",
     "VerificationRpcError",
+    "aave",
     "abi",
     "balancer_math",
     "build_path_graph",
+    "cancel",
     "cl_math",
-    "cleanup_zero_balance_positions",
     "compute_simulation_warmup_slots",
     "curve_math",
     "db",
@@ -2129,13 +1811,11 @@ __all__ = [
     "nested_mapping_slot",
     "pack_config",
     "pack_expected_balance",
+    "pool",
     "price",
-    "run_aave_update",
-    "run_pool_update",
     "solady",
     "solidly_math",
     "to_checksum_address",
     "v4_input_is_native",
     "v4_output_is_native",
-    "verify_all_positions_on_chain",
 ]

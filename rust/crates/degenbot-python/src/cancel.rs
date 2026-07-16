@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use pyo3::prelude::*;
+use pyo3::types::PyModule;
 
 /// `degenbot_rs.CancelHandle` — the cooperative cancel flag for the
 /// long-running updater loops (`run_pool_update`, `run_aave_update`).
@@ -32,7 +33,7 @@ use pyo3::prelude::*;
 /// state, no race between concurrent runs, no stale global stuck "set" after
 /// a run), + Python owns the lifetime (drop after the run). Mirrors the
 /// `Arc<AtomicBool>` the core `run_pool_update` / `run_aave_update` take.
-#[pyclass(name = "CancelHandle", module = "degenbot._ffi")]
+#[pyclass(name = "CancelHandle", module = "degenbot._ffi.cancel")]
 pub struct CancelHandle {
     /// The shared flag the chunk loop polls between chunks. `Arc`-cloned into
     /// the core call (both `run_pool_update` + `run_aave_update` take
@@ -87,7 +88,13 @@ impl Default for CancelHandle {
 /// an already-registered `CancelHandle`); propagated unchanged to the
 /// `#[pymodule]` caller.
 pub fn register_cancel(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<CancelHandle>()?;
+    let py = m.py();
+    let submod = PyModule::new(py, "degenbot._ffi.cancel")?;
+    submod.add_class::<CancelHandle>()?;
+    m.add_submodule(&submod)?;
+    py.import("sys")?
+        .getattr("modules")?
+        .set_item("degenbot._ffi.cancel", &submod)?;
     Ok(())
 }
 
