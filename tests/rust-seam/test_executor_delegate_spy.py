@@ -77,9 +77,9 @@ class TestRustSeamPresent:
 
     @pytest.fixture(autouse=True)  # noqa: RUF076
     def _import_rs(self) -> None:
-        from degenbot import _ffi
+        from degenbot._ffi import executor as _ffi_executor
 
-        self.rs = _ffi
+        self.rs = _ffi_executor
 
     def test_encode_cmd_stream(self) -> None:
         assert hasattr(self.rs, "encode_cmd_stream")
@@ -224,12 +224,12 @@ class TestExampleRoutesThroughRust:
 
 
 class TestDelegateSpyEncodeCall:
-    """Monkey-patch `_ffi.encode_cmd_stream` and confirm the example
+    """Monkey-patch `_ffi_executor.encode_cmd_stream` and confirm the example
     actually calls it when encoding a path — proving delegation, not just
     import graph shape.
 
     Since the example has heavy import deps, we instead spy on the seam
-    directly: call `_ffi.encode_cmd_stream` through a patched sentinel
+    directly: call `_ffi_executor.encode_cmd_stream` through a patched sentinel
     and confirm the patched function is invoked.
     """
 
@@ -238,9 +238,9 @@ class TestDelegateSpyEncodeCall:
         (Rust extension function), not a Python function — proving it
         delegates to the Rust core, not a Python re-implementation.
         """
-        from degenbot import _ffi
+        from degenbot._ffi import executor as _ffi_executor
 
-        fn = _ffi.encode_cmd_stream
+        fn = _ffi_executor.encode_cmd_stream
         # PyO3-bound functions are builtin_function_or_method, not Python defs.
         assert fn.__class__.__name__ in (
             "builtin_function_or_method",
@@ -252,9 +252,9 @@ class TestDelegateSpyEncodeCall:
         )
 
     def test_compute_simulation_warmup_slots_is_rust_bound(self) -> None:
-        from degenbot import _ffi
+        from degenbot._ffi import executor as _ffi_executor
 
-        fn = _ffi.compute_simulation_warmup_slots
+        fn = _ffi_executor.compute_simulation_warmup_slots
         assert fn.__class__.__name__ in (
             "builtin_function_or_method",
             "method_descriptor",
@@ -262,9 +262,9 @@ class TestDelegateSpyEncodeCall:
         )
 
     def test_pack_config_is_rust_bound(self) -> None:
-        from degenbot import _ffi
+        from degenbot._ffi import executor as _ffi_executor
 
-        fn = _ffi.pack_config
+        fn = _ffi_executor.pack_config
         assert fn.__class__.__name__ in (
             "builtin_function_or_method",
             "method_descriptor",
@@ -272,9 +272,9 @@ class TestDelegateSpyEncodeCall:
         )
 
     def test_mapping_slot_is_rust_bound(self) -> None:
-        from degenbot import _ffi
+        from degenbot._ffi import executor as _ffi_executor
 
-        fn = _ffi.mapping_slot
+        fn = _ffi_executor.mapping_slot
         assert fn.__class__.__name__ in (
             "builtin_function_or_method",
             "method_descriptor",
