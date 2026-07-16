@@ -63,33 +63,13 @@ GHO is Aave's stablecoin with discounted borrowing based on stkAAVE holdings. Th
 
 This difference exists because GHO deprecated the discount mechanism in revision 4, which changed the rounding requirements in the Pool contract.
 
-When processing GHO BORROW events, always pre-calculate the scaled amount using `calculate_mint_scaled_amount()` from the original borrow amount (extracted from the BORROW event), then pass it to `process_mint_event()`:
-
-```python
-processor = TokenProcessorFactory.get_gho_debt_processor(revision=6)
-
-# Pre-calculate from BORROW event
-borrow_amount = ...  # From BORROW event
-scaled_delta = processor.calculate_mint_scaled_amount(
-    raw_amount=borrow_amount,
-    index=index,
-)
-
-# Process Mint event with pre-calculated value
-result = processor.process_mint_event(
-    event_data=mint_event,
-    previous_balance=previous_balance,
-    previous_index=previous_index,
-    previous_discount=0,  # Ignored for V4+
-)
-```
-
-### GHO Processing
-
-Dedicated processors handle GHO Mint/Burn events:
-- Calculate discount-scaled balances
-- Update user discount rates based on position changes
-- Verify against contract after each block
+When processing GHO BORROW events, the scaled amount must be pre-calculated
+from the original borrow amount (extracted from the BORROW event) using
+`calculate_mint_scaled_amount()` before being applied to the Mint event.
+This rounding behaviour now lives in the Rust `degenbot-aave-updater` core
+(see the *Writer implementation* section below); the Python
+`TokenProcessorFactory` that previously exposed it was retired with the
+rest of the Python enrichment/processing pipeline.
 
 ## Offline Position Calculation
 
@@ -425,7 +405,7 @@ The command uses Web3 connections from the degenbot config file. Each active cha
 - **Blockchain**: Web3.py for RPC calls
 - **Math**: Aave WadRayMath library for scaled balance calculations with rounding enum support
 - **Logging**: Click for CLI output, tqdm for progress bars
-- **Token Revisions**: Protocol-based library selection for different Aave V3 token implementations
+- **Writer**: Rust `degenbot-aave-updater` core crate (the Python enrichment/processing pipeline was retired)
 
 ## Solidity Reference
 
