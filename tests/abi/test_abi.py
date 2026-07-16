@@ -1,7 +1,9 @@
 """Tests for the `degenbot.abi` home — the stable mirror for ``_ffi.abi``.
 
-Exercises the three public functions (``encode``, ``decode``, ``decode_single``)
-and the Rust→``eth_abi`` fixed-point fallback that lives as a private seam.
+Exercises the three public functions (``encode``, ``decode``,
+``decode_single``). The Rust ``degenbot-abi`` core is the only backend;
+``eth_abi`` is used here solely as a reference encoder for round-trip
+fixtures.
 """
 
 import eth_abi.abi
@@ -30,7 +32,7 @@ class TestEncode:
         assert result == eth_abi.abi.encode(["uint256"], [42])
 
     def test_encode_empty_types(self) -> None:
-        """Empty types list produces empty bytes (or eth_abi's variant)."""
+        """Empty types list produces empty bytes."""
         result = encode([], [])
         assert isinstance(result, bytes)
 
@@ -150,23 +152,23 @@ class TestDecodeSingle:
         assert result == 999
 
 
-class TestFixedPointFallback:
-    """The Rust→eth_abi fallback for fixed-point types.
+class TestUnsupportedTypes:
+    """Fixed-point and other unsupported types raise (no eth_abi fallback).
 
-    These types are not supported by the Rust core; the private seam falls
-    back to ``eth_abi`` so callers never have to know about the gap.
+    The Rust ``degenbot-abi`` core raises ``NotImplementedError`` for these;
+    the home wraps it as ``AbiEncodeError`` / ``AbiDecodeError``.
     """
 
-    def test_decode_fixed128x18_fallback(self) -> None:
-        """fixed128x18 decode routes through eth_abi fallback."""
+    def test_decode_fixed128x18_raises(self) -> None:
+        """fixed128x18 decode is not supported — raises AbiDecodeError."""
         data = eth_abi.abi.encode(["fixed128x18"], [1])
-        result = decode(["fixed128x18"], data)
-        assert result == (1,)
+        with pytest.raises(AbiDecodeError, match="ABI decoding failed"):
+            decode(["fixed128x18"], data)
 
-    def test_encode_fixed128x18_fallback(self) -> None:
-        """fixed128x18 encode routes through eth_abi fallback."""
-        result = encode(["fixed128x18"], [1])
-        assert result == eth_abi.abi.encode(["fixed128x18"], [1])
+    def test_encode_fixed128x18_raises(self) -> None:
+        """fixed128x18 encode is not supported — raises AbiEncodeError."""
+        with pytest.raises(AbiEncodeError, match="ABI encoding failed"):
+            encode(["fixed128x18"], [1])
 
 
 class TestErrors:
@@ -186,52 +188,3 @@ class TestErrors:
         """Bad data raises AbiDecodeError."""
         with pytest.raises(AbiDecodeError):
             decode_single("uint256", b"\x00" * 10)
-
-
-class TestEnvVar:
-    """``DEGENBOT_USE_RUST_ABI_DECODER`` controls the backend."""
-
-    @pytest.mark.parametrize(
-        ("env_value", "expected_rust"),
-        [
-            ("1", True),
-            ("true", True),
-            ("yes", True),
-            ("0", False),
-            ("false", False),
-            ("no", False),
-            ("off", False),
-        ],
-    )
-    def test_env_var_controls_backend(
-        self,
-        env_value: str,
-        expected_rust: bool,  # noqa: FBT001
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """The env var selects Rust vs eth_abi."""
-        monkeypatch.setenv("DEGENBOT_USE_RUST_ABI_DECODER", env_value)
-        from degenbot.abi import _use_rust_backend
-
-        assert _use_rust_backend() is expected_rust
-
-    def test_env_var_unset_uses_rust(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Unset env var defaults to Rust."""
-        monkeypatch.delenv("DEGENBOT_USE_RUST_ABI_DECODER", raising=False)
-        from degenbot.abi import _use_rust_backend
-
-        assert _use_rust_backend() is True
-
-    def test_env_var_case_insensitive(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Env var is case-insensitive."""
-        monkeypatch.setenv("DEGENBOT_USE_RUST_ABI_DECODER", "FALSE")
-        from degenbot.abi import _use_rust_backend
-
-        assert _use_rust_backend() is False
-
-    def test_decode_uses_env_var_backend(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """When env var forces eth_abi, decode still produces correct values."""
-        monkeypatch.setenv("DEGENBOT_USE_RUST_ABI_DECODER", "false")
-        data = eth_abi.abi.encode(["uint256"], [42])
-        result = decode(["uint256"], data)
-        assert result == (42,)
