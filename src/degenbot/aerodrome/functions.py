@@ -8,16 +8,16 @@ address-generation helpers (CREATE2 deterministic pool address).
 from collections.abc import Sequence
 from fractions import Fraction
 
-import eth_abi.packed
 from eth_typing import ChecksumAddress
-from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
 from degenbot.abi import encode as abi_encode
+from degenbot.abi import encode_packed
 from degenbot.aerodrome.math import (
     calc_exact_in_stable_solidly as solidly_calc_exact_in_stable_solidly,
 )
 from degenbot.contract.addresses import eip_1167_clone_address
+from degenbot.crypto import keccak256
 
 
 def calc_exact_in_stable(
@@ -80,9 +80,9 @@ def generate_aerodrome_v2_pool_address(
     """
     sorted_token_addresses = sorted([HexBytes(address) for address in token_addresses])
 
-    salt = keccak(
-        eth_abi.packed.encode_packed(
-            ("address", "address", "bool"),
+    salt = keccak256(
+        encode_packed(
+            ["address", "address", "bool"],
             [*sorted_token_addresses, stable],
         ),
     )
@@ -114,9 +114,9 @@ def generate_aerodrome_v3_pool_address(
     """
     sorted_token_addresses = sorted([HexBytes(address) for address in token_addresses])
 
-    salt = keccak(
+    salt = keccak256(
         abi_encode(
-            ("address", "address", "int24"),
+            ["address", "address", "int24"],
             [*sorted_token_addresses, tick_spacing],
         ),
     )

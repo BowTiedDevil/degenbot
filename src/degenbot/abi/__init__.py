@@ -11,6 +11,7 @@ from typing import Any
 from degenbot._ffi.abi import decode as rs_decode
 from degenbot._ffi.abi import decode_single as rs_decode_single
 from degenbot._ffi.abi import encode as rs_encode
+from degenbot._ffi.abi import encode_packed as rs_encode_packed
 from degenbot.exceptions.base import DegenbotError
 from degenbot.utils.bytes import HexBytesLike, to_bytes
 
@@ -24,6 +25,7 @@ __all__ = (
     "decode",
     "decode_single",
     "encode",
+    "encode_packed",
 )
 
 
@@ -53,6 +55,30 @@ def encode(types: Sequence[str], args: Sequence[Any]) -> bytes:
         return rs_encode(types=list(types), values=list(args))
     except (ValueError, NotImplementedError) as e:
         raise AbiEncodeError(message=f"ABI encoding failed: {e}") from e
+
+
+def encode_packed(types: Sequence[str], args: Sequence[Any]) -> bytes:
+    """Pack-encode values into Solidity ``abi.encodePacked`` bytes.
+
+    Each value is encoded tightly with no 32-byte word padding and no
+    length prefix for dynamic types — the values are simply concatenated
+    in their packed forms. Tuples are packed element-by-element.
+
+    Args:
+        types: ABI type strings (e.g., ``["address", "address", "bool"]``).
+        args: Values to encode.
+
+    Returns:
+        The packed-encoded bytes.
+
+    Raises:
+        AbiEncodeError: If encoding fails.
+
+    """
+    try:
+        return rs_encode_packed(types=list(types), values=list(args))
+    except (ValueError, NotImplementedError) as e:
+        raise AbiEncodeError(message=f"ABI packed encoding failed: {e}") from e
 
 
 def decode(types: Sequence[str], data: BytesLike) -> tuple[Any, ...]:
