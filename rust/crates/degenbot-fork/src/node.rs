@@ -345,7 +345,8 @@ impl AnvilForkBuilder {
 ///
 /// Owns the spawned `anvil` subprocess (via the embedded `AnvilInstance`) +
 /// a connected alloy [`Provider`] (over IPC). Dropping the handle kills the
-/// subprocess + closes the transport.
+/// subprocess + closes the transport, and removes the Unix-domain IPC socket
+/// file so `/tmp` doesn't accumulate leftover `.ipc` files.
 ///
 /// Call [`AnvilForkBuilder::try_spawn`] to construct.
 pub struct AnvilFork {
@@ -353,6 +354,17 @@ pub struct AnvilFork {
     instance: alloy::node_bindings::AnvilInstance,
     /// The alloy Provider wired to the anvil node over IPC.
     provider: DynProvider,
+}
+
+impl Drop for AnvilFork {
+    fn drop(&mut self) {
+        // Remove the IPC socket file before the fields are dropped.  Unix
+        // domain sockets can be unlinked while a process still holds an open
+        // fd, so this is safe even though the provider connection may still
+        // be alive.  After this returns alloy kills the anvil child process
+        // and the provider transport is closed.
+        let _ = std::fs::remove_file(self.instance.ipc_path());
+    }
 }
 
 impl AnvilFork {
@@ -674,5 +686,32 @@ mod tests {
             .await
             .expect("get_storage_at");
         assert_eq!(got, value);
+    }
+
+    #[tokio::test]
+    async fn ipc_file_removed_on_drop() {
+        ensure_anvil_available();
+        let ipc = test_ipc_path();
+        let _ = std::fs::remove_file(&ipc);
+
+        let fork = AnvilForkBuilder::new()
+            .ipc_path(&ipc)
+            .try_spawn()
+            .await
+            .expect("spawn");
+
+        // The socket file must exist while the instance is alive.
+        assert!(
+            std::fs::metadata(&ipc).is_ok(),
+            "IPC socket should exist while AnvilFork is alive"
+        );
+
+        drop(fork);
+
+        // After dropping the handle the file must be gone.
+        assert!(
+            std::fs::metadata(&ipc).is_err(),
+            "IPC socket should be removed after AnvilFork is dropped"
+        );
     }
 }
