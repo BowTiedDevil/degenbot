@@ -5,7 +5,7 @@ import hypothesis.strategies
 from eth_typing import HexStr
 from hexbytes import HexBytes
 
-from degenbot.utils.solady.libzip import flz_compress, flz_decompress
+from degenbot.utils.solady import flz_compress, flz_decompress
 
 
 def test_fastlz_decompress_literal_run():
