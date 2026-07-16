@@ -5,7 +5,7 @@ from fractions import Fraction
 import pytest
 from hexbytes import HexBytes
 
-from degenbot.anvil_fork import AnvilFork
+from degenbot.fork import AnvilFork
 from degenbot.balancer.deployments import (
     BALANCER_V2_VAULT_ADDRESS,
     BALANCERQUERIES_CONTRACT_ADDRESS,

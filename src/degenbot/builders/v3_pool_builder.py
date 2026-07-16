@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING, Any, cast
 
-from degenbot.abi_adapter import decode as abi_decode
+from degenbot.abi import decode as abi_decode
 from degenbot.builders.tick_data_fetcher import (
     FetchedTickData,
     TickDataTypes,

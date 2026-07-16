@@ -6,7 +6,6 @@ import contextlib
 from threading import Lock
 from typing import TYPE_CHECKING
 
-from degenbot._ffi.deployments import resolve_deployer, resolve_v2_init_hash, resolve_v3_init_hash
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions.pool import (
     LiquidityPoolError,
@@ -15,6 +14,11 @@ from degenbot.exceptions.pool import (
 )
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.types.abstract import AbstractPoolTracker
+from degenbot.uniswap.deployments import (
+    resolve_deployer,
+    resolve_v2_init_hash,
+    resolve_v3_init_hash,
+)
 from degenbot.uniswap.v2_functions import generate_v2_pool_address
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_functions import generate_v3_pool_address

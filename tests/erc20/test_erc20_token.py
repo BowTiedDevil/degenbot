@@ -1,7 +1,7 @@
 import pytest
 from hexbytes import HexBytes
 
-from degenbot.anvil_fork import AnvilFork
+from degenbot.fork import AnvilFork
 from degenbot.bot import Bot
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.checksum_cache import get_checksum_address

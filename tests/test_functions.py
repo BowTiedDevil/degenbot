@@ -3,7 +3,7 @@ from eth_typing import Hash32, HexStr
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
-from degenbot.anvil_fork import AnvilFork
+from degenbot.fork import AnvilFork
 from degenbot.calculations.evm_math import next_base_fee
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.contract.addresses import create2_address

@@ -9,7 +9,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import ContractLogicError
 from degenbot.types.rpc_types import TxParams
 
-from degenbot.anvil_fork import AnvilFork
+from degenbot.fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.abi import CURVE_V1_FACTORY_ABI, CURVE_V1_POOL_ABI, CURVE_V1_REGISTRY_ABI
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool

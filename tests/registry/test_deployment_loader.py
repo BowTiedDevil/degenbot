@@ -18,8 +18,8 @@ from operator import itemgetter
 import pytest
 
 from degenbot.registry.deployment_loader import (
-    POOL_TYPE_MAP,
     DeploymentRecord,
+    _pool_type_map,
     load_deployments,
     register_from_deployments,
 )
@@ -80,7 +80,7 @@ class TestLoadDeploymentsMatchesLiveRegistry:
         """The JSON ``pool_type`` maps to the same Python class the registry holds."""
         record = _records_by_key()[chain_id, factory]
         live_class, *_ = _live_registrations()[chain_id, factory]
-        assert POOL_TYPE_MAP[record.pool_type] is live_class
+        assert _pool_type_map()[record.pool_type] is live_class
 
     @pytest.mark.parametrize(("chain_id", "factory"), _KEYS, ids=_IDS)
     def test_variant_matches(self, chain_id: int, factory: str) -> None:
@@ -91,7 +91,7 @@ class TestLoadDeploymentsMatchesLiveRegistry:
         # uses getattr(cls, "variant", None)); a string means explicit override.
         resolved = record.variant
         if resolved is None:
-            resolved = getattr(POOL_TYPE_MAP[record.pool_type], "variant", None)
+            resolved = getattr(_pool_type_map()[record.pool_type], "variant", None)
         assert resolved == live_variant
 
     @pytest.mark.parametrize(("chain_id", "factory"), _KEYS, ids=_IDS)

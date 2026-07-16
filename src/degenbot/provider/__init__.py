@@ -35,6 +35,7 @@ from typing import Any, Self
 from hexbytes import HexBytes
 
 from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
+from degenbot._ffi.provider import AlloySubscription
 from degenbot._ffi.provider import AsyncAlloyProvider as RustAsyncAlloyProvider
 from degenbot.exceptions import SubscriptionNotSupported
 from degenbot.provider.factory import (
@@ -1046,6 +1047,7 @@ class AsyncAlloyProvider:
 
 __all__ = [
     "AlloyProvider",
+    "AlloySubscription",
     "AsyncAlloyProvider",
     "LogFilter",
     "LogSubscriptionFilter",

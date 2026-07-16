@@ -44,7 +44,7 @@ import eth_abi.abi
 import pytest
 from degenbot.crypto import function_selector, keccak256
 
-from degenbot.anvil_fork import AnvilFork
+from degenbot.fork import AnvilFork
 from degenbot.curve.strategies import (
     DVariant,
     LendingRateStyle,

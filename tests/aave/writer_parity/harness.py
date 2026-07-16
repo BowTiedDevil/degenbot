@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
-from degenbot.database._ffi import db_upgrade_database
+from degenbot.db import db_upgrade_database
 
 if TYPE_CHECKING:
     from collections.abc import Generator

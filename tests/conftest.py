@@ -8,7 +8,7 @@ import pytest
 from _pytest.config import Config, Parser
 from _pytest.nodes import Item
 
-from degenbot.anvil_fork import AnvilFork
+from degenbot.fork import AnvilFork
 from degenbot.bot import Bot
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.logging import set_log_level

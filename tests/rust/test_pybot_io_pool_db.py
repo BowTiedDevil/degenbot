@@ -34,7 +34,7 @@ from degenbot.database.models.pools import (
 )
 from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot.bot import PyBotIo
-from degenbot.database._ffi import db_create_new_database
+from degenbot.db import db_create_new_database
 
 CHAIN = 1
 _POOL_OFFLINE_JSON = (

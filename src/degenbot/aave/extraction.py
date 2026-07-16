@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 from degenbot.aave.events import AaveV3PoolEvent
 from degenbot.aave.models import EnrichmentError
-from degenbot.abi_adapter import decode as abi_decode
+from degenbot.abi import decode as abi_decode
 from degenbot.types.rpc_types import LogReceipt
 
 EVENT_EXTRACTORS: dict[AaveV3PoolEvent, Callable[[LogReceipt], int]] = {}

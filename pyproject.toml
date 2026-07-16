@@ -190,6 +190,12 @@ allow-star-arg-any = true
 "src/degenbot/provider/factory.py" = [
     "PLC0415",  # lazy import avoids circular dependency with degenbot.provider.__init__
 ]
+"src/degenbot/registry/deployment_loader.py" = [
+    "PLC0415",  # lazy imports avoid circular dependency (pool classes → uniswap → this module)
+]
+"src/degenbot/uniswap/deployments.py" = [
+    "PLC0415",  # lazy import avoids circular dependency (deployment_loader → pool classes → this module)
+]
 
 [tool.pytest.ini_options]
 addopts = [

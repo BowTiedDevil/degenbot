@@ -26,7 +26,7 @@ from degenbot.database.models import Base
 from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot.bot import PyBotIo
-from degenbot.database._ffi import db_create_new_database
+from degenbot.db import db_create_new_database
 
 CHAIN = 1
 # Production stores addresses checksummed (the builder checksums before insert);

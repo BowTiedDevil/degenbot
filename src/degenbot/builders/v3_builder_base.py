@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from degenbot.abi_adapter import decode as abi_decode
+from degenbot.abi import decode as abi_decode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 

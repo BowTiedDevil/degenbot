@@ -33,7 +33,7 @@ from degenbot.database.operations import (
     get_alembic_config,
     upgrade_existing_sqlite_database,
 )
-from degenbot.database._ffi import (
+from degenbot.db import (
     DatabaseSchemaStale,
     db_backup_database,
     db_create_new_database,

@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any
 from degenbot.exceptions import SubscriptionDisconnected
 
 if TYPE_CHECKING:
-    from degenbot._ffi.provider import AlloySubscription
+    from degenbot.provider import AlloySubscription
 
 
 @dataclass(frozen=True)

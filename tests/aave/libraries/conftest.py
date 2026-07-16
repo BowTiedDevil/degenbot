@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from degenbot.anvil_fork import AnvilFork
+from degenbot.fork import AnvilFork
 from degenbot.provider import AlloyProvider
 from tests.helpers.w3_contract import make_contract
 

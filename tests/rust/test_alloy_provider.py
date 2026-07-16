@@ -9,7 +9,7 @@ import inspect
 import pytest
 from hexbytes import HexBytes
 
-from degenbot.anvil_fork import AnvilFork
+from degenbot.fork import AnvilFork
 from degenbot.provider import AlloyProvider
 
 
