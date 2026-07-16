@@ -18,7 +18,8 @@ from fractions import Fraction
 from typing import TYPE_CHECKING
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot._ffi import PyBot, PyDexIdentity, PyLiquidityPool
+from degenbot._ffi.dex_identity import PyDexIdentity
+from degenbot._ffi import PyBot, PyLiquidityPool
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 if TYPE_CHECKING:
