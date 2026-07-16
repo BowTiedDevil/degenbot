@@ -6,7 +6,7 @@ import contextlib
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Never
 
-from degenbot._ffi import resolve_deployer, resolve_v2_init_hash
+from degenbot._ffi.deployments import resolve_deployer, resolve_v2_init_hash
 from degenbot.aerodrome.functions import (
     generate_aerodrome_v2_pool_address,
     generate_aerodrome_v3_pool_address,

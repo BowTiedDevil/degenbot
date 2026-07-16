@@ -78,7 +78,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from degenbot._ffi import PyBot, PySubscription
+    from degenbot._ffi import PyBot
+    from degenbot._ffi.subscriber import PySubscription
     from degenbot.types.concrete import AbstractPublisherMessage, Publisher
 
 
@@ -151,7 +152,7 @@ class FakeSubscriber:
             pool_id: The Rust pool id (from ``pool._py_pool.pool_id``).
 
         """
-        from degenbot._ffi import register_subscriber
+        from degenbot._ffi.subscriber import register_subscriber
 
         subscription = register_subscriber(bot, pool_id, self)
         self._subscriptions.append(subscription)

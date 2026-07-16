@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import eth_abi.abi
 
-from degenbot._ffi import resolve_deployer, resolve_v2_init_hash
+from degenbot._ffi.deployments import resolve_deployer, resolve_v2_init_hash
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.pools import LiquidityPoolTable, UniswapFeeMixin
 from degenbot.exceptions.pool import LiquidityPoolError

@@ -111,11 +111,17 @@ fn resolve_v2_init_hash(chain_id: u64, factory: &str) -> PyResult<String> {
 /// Register the `init_hash_for` / `deployer_for` free functions on the
 /// top-level `degenbot_rs` module.
 pub(crate) fn add_deployments(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(init_hash_for, m)?)?;
-    m.add_function(wrap_pyfunction!(deployer_for, m)?)?;
-    m.add_function(wrap_pyfunction!(resolve_deployer, m)?)?;
-    m.add_function(wrap_pyfunction!(resolve_v3_init_hash, m)?)?;
-    m.add_function(wrap_pyfunction!(resolve_v2_init_hash, m)?)?;
+    let py = m.py();
+    let submod = PyModule::new(py, "degenbot._ffi.deployments")?;
+    submod.add_function(wrap_pyfunction!(init_hash_for, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(deployer_for, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(resolve_deployer, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(resolve_v3_init_hash, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(resolve_v2_init_hash, &submod)?)?;
+    m.add_submodule(&submod)?;
+    py.import("sys")?
+        .getattr("modules")?
+        .set_item("degenbot._ffi.deployments", &submod)?;
     Ok(())
 }
 

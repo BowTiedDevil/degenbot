@@ -45,11 +45,14 @@ from . import cancel as cancel
 from . import cl_math as cl_math
 from . import curve_math as curve_math
 from . import db as db
+from . import deployments as deployments
+from . import dex_identity as dex_identity
 from . import fork as fork
 from . import pool as pool
 from . import price as price
 from . import solady as solady
 from . import solidly_math as solidly_math
+from . import subscriber as subscriber
 from .db import (
     ExchangeRow,
     InitializationMapRow,
@@ -58,6 +61,7 @@ from .db import (
     PoolKindRow,
     PoolManagerRow,
 )
+from .dex_identity import PyDexIdentity as PyDexIdentity
 
 # ── Curve StableSwap math (feature = "curve-math"). ──
 # Pure-math wrappers over the degenbot-curve-math leaf, registered on a real
@@ -572,78 +576,6 @@ class PyErc20Token:
     def name(self) -> str: ...
     @property
     def chain_id(self) -> int: ...
-
-class PyDexIdentity:
-    """Frozen Python view over a `DexIdentity` preset (ADR-005 slice 6).
-
-    Read-only deployment identity (factory, deployer, init hash, default fees,
-    reserve ABI shape, variant string). Constructable via `PyDexIdentity(...)`
-    for custom identities (tests / ad-hoc deployments) or resolved via
-    `dex_identity(variant)` for canonical presets.
-    """
-
-    def __init__(
-        self,
-        factory: str,
-        init_hash: str,
-        fee_token0: tuple[int, int],
-        fee_token1: tuple[int, int],
-        variant: str,
-        reserves_abi: list[str] | None = None,
-    ) -> None: ...
-    @property
-    def factory(self) -> str: ...
-    @property
-    def deployer(self) -> str: ...
-    @property
-    def init_hash(self) -> str: ...
-    @property
-    def fee_token0(self) -> tuple[int, int]: ...
-    @property
-    def fee_token1(self) -> tuple[int, int]: ...
-    @property
-    def reserves_abi(self) -> list[str]: ...
-    @property
-    def variant(self) -> str: ...
-
-def dex_identity(variant: str) -> PyDexIdentity | None:
-    """Look up a DEX deployment-identity preset by kebab-case variant string.
-
-    Case-insensitive. Returns `None` for an unrecognized variant.
-    """
-
-def init_hash_for(chain_id: int, factory: str) -> str | None:
-    """JSON-sourced CREATE2 init code hash for a `(chain_id, factory)` pair.
-
-    Returns `None` if the pair is not in the shipped JSON.
-    """
-
-def deployer_for(chain_id: int, factory: str) -> str | None:
-    """JSON-sourced effective CREATE2 deployer for a `(chain_id, factory)` pair.
-
-    Returns `None` if the pair is not in the shipped JSON.
-    """
-
-def resolve_deployer(chain_id: int, factory: str) -> str:
-    """Resolve the effective CREATE2 deployer for a `(chain_id, factory)` pair.
-
-    Applies the `None -> factory` convention; returns the factory itself for
-    non-JSON pools (Fork A, P62DKO).
-    """
-
-def resolve_v3_init_hash(chain_id: int, factory: str) -> str:
-    """Resolve the CREATE2 init code hash for a V3 `(chain_id, factory)` pair.
-
-    Returns the JSON row's init hash when shipped, else the Uniswap V3
-    mainnet fallback (Fork A, P62DKO).
-    """
-
-def resolve_v2_init_hash(chain_id: int, factory: str) -> str:
-    """Resolve the CREATE2 init code hash for a V2 `(chain_id, factory)` pair.
-
-    Returns the JSON row's init hash when shipped, else the Uniswap V2
-    mainnet fallback (Fork A, NSAZ4X).
-    """
 
 class PyLiquidityPool:
     """Thin PyO3 handle to a pool registered in the Rust `Bot`.
@@ -1797,6 +1729,7 @@ __all__ = [
     "curve_math",
     "db",
     "decode_return_data",
+    "deployments",
     "dex_identity",
     "dispatch_and_submit_py",
     "dispatch_profitable_py",
@@ -1815,6 +1748,7 @@ __all__ = [
     "price",
     "solady",
     "solidly_math",
+    "subscriber",
     "to_checksum_address",
     "v4_input_is_native",
     "v4_output_is_native",
