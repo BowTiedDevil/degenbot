@@ -1,62 +1,20 @@
-"""Aerodrome pool calculations and address generation.
+"""Aerodrome deterministic CREATE2 pool-address derivation (EIP-1167 clones).
 
-Routes the Solidly-stable swap calc through the Rust ``degenbot-solidly-math``
-leaf (via ``degenbot._ffi.solidly_calc_exact_in_stable_solidly``) and retains
-address-generation helpers (CREATE2 deterministic pool address).
+The Solidly-stable swap calc is now invoked in-line at its sole call site
+(``aerodrome/pools.py::to_hop_state``) via the Rust leaf re-exported by
+``degenbot.aerodrome.math``; the redundant Fraction-splitting wrapper that
+lived here was deleted (ergo S5SJXF / NFYOWI).
 """
 
 from collections.abc import Sequence
-from fractions import Fraction
 
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 
 from degenbot.abi import encode as abi_encode
 from degenbot.abi import encode_packed
-from degenbot.aerodrome.math import (
-    calc_exact_in_stable_solidly as solidly_calc_exact_in_stable_solidly,
-)
 from degenbot.contract.addresses import eip_1167_clone_address
 from degenbot.crypto import keccak256
-
-
-def calc_exact_in_stable(
-    *,
-    amount_in: int,
-    token_in: int,
-    reserves0: int,
-    reserves1: int,
-    decimals0: int,
-    decimals1: int,
-    fee: Fraction,
-) -> int:
-    """Aerodrome-specific stable exact-in calculation.
-
-    Routes through the Rust ``degenbot-solidly-math`` leaf via
-    :func:`degenbot._ffi.solidly_calc_exact_in_stable_solidly`, which wraps the
-    Solidly/Aerodrome pre-baked orchestration
-    (``calc_k`` + ``get_y_solidly``). The Solidly/Camelot invariant math
-    (``calc_d`` / ``calc_k`` / ``calc_f`` / ``get_y_solidly``) is computed in
-    pure Rust (cross-checked by ``degenbot-solidly-math/tests/oracle_crosscheck.rs``).
-
-    The Python ``Fraction`` fee is split into ``numerator`` + ``denominator``
-    integers at the seam (the Rust leaf takes two ``U256``s to avoid pulling
-    ``num-rational`` into the pure-math core).
-
-    Returns:
-        The computed integer value.
-
-    """
-    return solidly_calc_exact_in_stable_solidly(
-        amount_in,
-        token_in,
-        reserves0,
-        reserves1,
-        decimals0,
-        decimals1,
-        fee.numerator,
-        fee.denominator,
-    )
 
 
 def generate_aerodrome_v2_pool_address(
