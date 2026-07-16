@@ -557,6 +557,122 @@ class PyDatabasePositionQuery:
     def get_oracle_address(self, market_id: int) -> str | None: ...
     def get_asset_addresses(self, market_id: int) -> list[str]: ...
 
+def analyze_aave_user_position(
+    user: dict[str, Any],
+    collateral_positions: list[dict[str, Any]],
+    debt_positions: list[dict[str, Any]],
+    collateral_config_map: dict[int, bool],
+    price_map: dict[str, int] | None = None,
+) -> PyUserPositionSummary:
+    """Analyze a single user's Aave V3 position for liquidation risk.
+
+    Pure math (no I/O) over the Rust ``degenbot-aave::analysis`` core. Takes
+    the plain ``dict`` records ``PyDatabasePositionQuery.get_*`` returns + a
+    config map + an optional price map, and returns a
+    :class:`PyUserPositionSummary` with attribute access matching the Python
+    ``UserPositionSummary`` dataclass.
+
+    Args:
+        user: A ``dict`` with keys ``id``, ``address``, ``market_id``,
+            ``e_mode``, ``is_isolation_mode``, ``isolation_mode_debt``,
+            ``isolation_debt_ceiling``.
+        collateral_positions: A ``list[dict]`` (the
+            ``get_collateral_positions`` row shape).
+        debt_positions: A ``list[dict]`` (the ``get_debt_positions`` row
+            shape).
+        collateral_config_map: A ``dict[int, bool]`` (``asset_id`` ->
+            enabled).
+        price_map: An optional ``dict[str, int]`` (address -> oracle price in
+            8 decimals). When ``None``, prices are treated as 1.
+
+    Returns:
+        The position summary.
+
+    Raises:
+        ValueError: On a missing dict key, a malformed value, or a scaled-
+            balance computation overflow.
+
+    """
+
+class PyCollateralPositionData:
+    """Collateral position with calculated values (Rust-backed)."""
+
+    @property
+    def asset_address(self) -> str: ...
+    @property
+    def asset_symbol(self) -> str | None: ...
+    @property
+    def scaled_balance(self) -> int: ...
+    @property
+    def actual_balance(self) -> int: ...
+    @property
+    def liquidation_threshold(self) -> int: ...
+    @property
+    def ltv(self) -> int: ...
+    @property
+    def is_enabled_as_collateral(self) -> bool: ...
+    @property
+    def in_emode(self) -> bool: ...
+    @property
+    def emode_category_id(self) -> int | None: ...
+    @property
+    def price(self) -> int | None: ...
+
+class PyDebtPositionData:
+    """Debt position with calculated values (Rust-backed)."""
+
+    @property
+    def asset_address(self) -> str: ...
+    @property
+    def asset_symbol(self) -> str | None: ...
+    @property
+    def scaled_balance(self) -> int: ...
+    @property
+    def actual_balance(self) -> int: ...
+    @property
+    def stable_debt(self) -> bool: ...
+    @property
+    def in_emode(self) -> bool: ...
+    @property
+    def emode_category_id(self) -> int | None: ...
+    @property
+    def price(self) -> int | None: ...
+
+class PyUserPositionSummary:
+    """A user's Aave V3 position summary (Rust-backed).
+
+    Rust-backed mirror of the Python ``UserPositionSummary`` dataclass. The
+    Step C cutover swaps the Python dataclass for this ``#[pyclass]`` — the
+    CLI + the parity test read the same attribute names.
+    """
+
+    @property
+    def user_address(self) -> str: ...
+    @property
+    def market_id(self) -> int: ...
+    @property
+    def emode_category_id(self) -> int | None: ...
+    @property
+    def is_isolation_mode(self) -> bool: ...
+    @property
+    def collateral_positions(self) -> list[PyCollateralPositionData]: ...
+    @property
+    def debt_positions(self) -> list[PyDebtPositionData]: ...
+    @property
+    def total_collateral_value(self) -> int: ...
+    @property
+    def total_debt_value(self) -> int: ...
+    @property
+    def health_factor(self) -> float | None: ...
+    @property
+    def max_ltv_ratio(self) -> float | None: ...
+    @property
+    def is_at_risk(self) -> bool: ...
+    @property
+    def is_liquidatable(self) -> bool: ...
+    @property
+    def has_debt(self) -> bool: ...
+
 class LiquidityPoolRow:
     """A typed `pools` DB row (QVMWQC)."""
 
@@ -700,11 +816,15 @@ __all__ = [
     "LiquidityUpdateEvent",
     "PoolKindRow",
     "PoolManagerRow",
+    "PyCollateralPositionData",
     "PyDatabasePositionQuery",
     "PyDatabaseSnapshot",
+    "PyDebtPositionData",
+    "PyUserPositionSummary",
     "V2PoolRowInput",
     "V3PoolRowInput",
     "V4PoolRowInput",
+    "analyze_aave_user_position",
     "db_apply_asset_collateral_in_emode_changed",
     "db_apply_asset_source_updated",
     "db_apply_collateral_configuration_changed",

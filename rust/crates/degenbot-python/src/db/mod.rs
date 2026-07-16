@@ -12,6 +12,8 @@
 //! retired in favor of these Rust-backed wrappers.
 
 pub mod aave;
+#[cfg(feature = "aave-updater")]
+pub mod aave_analysis;
 pub mod discovery;
 pub mod liquidity_updater;
 pub mod pool_read;
@@ -233,6 +235,35 @@ pub(crate) fn db_err_to_py(err: &degenbot_db::DbError) -> PyErr {
 ///
 /// # Errors
 ///
+/// Register the `#[pyclass]` types + the `DatabaseSchemaStale` exception on
+/// the `db` submodule (extracted from [`add_db_module`] to keep it under
+/// clippy's line budget).
+///
+/// # Errors
+///
+/// Returns a [`PyErr`] if any `add_class`/`add` call fails.
+fn register_db_classes(submod: &Bound<'_, PyModule>) -> PyResult<()> {
+    submod.add_class::<liquidity_updater::PyLiquidityUpdateEvent>()?;
+    submod.add_class::<snapshot::PyDatabaseSnapshot>()?;
+    submod.add_class::<aave::PyDatabasePositionQuery>()?;
+    submod.add_class::<pool_read::PyLiquidityPoolRow>()?;
+    submod.add_class::<pool_read::PyPoolKindRow>()?;
+    submod.add_class::<pool_read::PyExchangeRow>()?;
+    submod.add_class::<pool_read::PyLiquidityPositionRow>()?;
+    submod.add_class::<pool_read::PyInitializationMapRow>()?;
+    submod.add_class::<pool_read::PyPoolManagerRow>()?;
+
+    // Typed database-schema-stale exception (`DbError::AlembicStale` →
+    // `DatabaseSchemaStale`, a `ValueError` subclass). Previously registered
+    // flat on root via `c_api.rs`; moved onto the db submodule so the whole
+    // db surface lives under `degenbot._ffi.db`.
+    submod.add(
+        "DatabaseSchemaStale",
+        submod.py().get_type::<crate::db::DatabaseSchemaStale>(),
+    )?;
+    Ok(())
+}
+
 /// Register the DB functions + classes on a real Python submodule.
 ///
 /// Creates `degenbot._ffi.db` (a `PyModule`, not flat root-level functions)
@@ -337,24 +368,12 @@ pub fn add_db_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
         &submod
     )?)?;
     discovery::add_discovery_module(&submod)?;
-    submod.add_class::<liquidity_updater::PyLiquidityUpdateEvent>()?;
-    submod.add_class::<snapshot::PyDatabaseSnapshot>()?;
-    submod.add_class::<aave::PyDatabasePositionQuery>()?;
-    submod.add_class::<pool_read::PyLiquidityPoolRow>()?;
-    submod.add_class::<pool_read::PyPoolKindRow>()?;
-    submod.add_class::<pool_read::PyExchangeRow>()?;
-    submod.add_class::<pool_read::PyLiquidityPositionRow>()?;
-    submod.add_class::<pool_read::PyInitializationMapRow>()?;
-    submod.add_class::<pool_read::PyPoolManagerRow>()?;
-
-    // Typed database-schema-stale exception (`DbError::AlembicStale` →
-    // `DatabaseSchemaStale`, a `ValueError` subclass). Previously registered
-    // flat on root via `c_api.rs`; moved onto the db submodule so the whole
-    // db surface lives under `degenbot._ffi.db`.
-    submod.add(
-        "DatabaseSchemaStale",
-        py.get_type::<crate::db::DatabaseSchemaStale>(),
-    )?;
+    register_db_classes(&submod)?;
+    // Aave analysis seam (Step B of GAXGCR): the pure `analyze_user_position`
+    // math over `degenbot-aave::analysis`. Gated on `aave-updater` (the
+    // feature that brings in the `degenbot-aave` dep).
+    #[cfg(feature = "aave-updater")]
+    aave_analysis::register_aave_analysis(&submod)?;
 
     m.add_submodule(&submod)?;
     py.import("sys")?
