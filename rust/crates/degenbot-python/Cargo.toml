@@ -51,7 +51,7 @@ degenbot-simulation = { path = "../degenbot-simulation", optional = true }
 degenbot-executor = { path = "../degenbot-executor", optional = true }
 degenbot-fork = { path = "../degenbot-fork", optional = true }
 degenbot-pool-updater = { path = "../degenbot-pool-updater", optional = true }
-degenbot-aave-updater = { path = "../degenbot-aave-updater", optional = true }
+degenbot-aave = { path = "../degenbot-aave", optional = true }
 degenbot-core = { path = "../degenbot-core", features = ["pyo3"] }
 dashmap = { version = "^6.1" }
 futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
@@ -90,7 +90,7 @@ abi = ["dep:degenbot-abi"]
 cl-math = ["dep:degenbot-cl-math"]
 db = ["dep:degenbot-db"]
 pool = ["dep:degenbot-pool-updater", "db", "rpc"]
-aave-updater = ["dep:degenbot-aave-updater", "db", "rpc"]
+aave-updater = ["dep:degenbot-aave", "db", "rpc"]
 balancer-math = ["dep:degenbot-balancer-math"]
 curve-math = ["dep:degenbot-curve-math"]
 solidly-math = ["dep:degenbot-solidly-math"]

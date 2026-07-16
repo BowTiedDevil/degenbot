@@ -1,6 +1,6 @@
 [package]
-name = "degenbot-aave-updater"
-description = "Pure-Rust Aave V3 updater chunk-loop core: transactional apply of decoded Aave events under one rusqlite Transaction (epic AZGJUN, task CXRGX4)."
+name = "degenbot-aave"
+description = "Pure-Rust Aave V3 domain crate: the updater chunk-loop (transactional apply of decoded Aave events under one rusqlite Transaction) + the position-analysis math (health-factor / LTV / eMode / isolation). Epic AZGJUN."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

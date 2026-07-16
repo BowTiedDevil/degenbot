@@ -656,7 +656,7 @@ impl DegenbotDb {
     /// price_source)`; on existing, `UPDATE`s the same five fields (matching
     /// the Python create-vs-mutate trajectory). `price_source` is the
     /// checksummed oracle address — the canonical caller
-    /// ([`degenbot_aave_updater::config_dispatch::dispatch_e_mode_category_added`])
+    /// ([`degenbot_aave::config_dispatch::dispatch_e_mode_category_added`])
     /// always passes `Some(checksum(&oracle))`, so a zero-oracle event
     /// produces the literal `"0x0000000000000000000000000000000000000000"`
     /// string (matching Python's `get_checksum_address(Address::ZERO)`
@@ -1542,7 +1542,7 @@ impl DegenbotDb {
     // `aave_v3_debt_positions`. These apply fns are the pure substrate: they
     // take a PRE-COMPUTED signed `balance_delta` (the revision-aware
     // `process_mint_event`/`process_burn_event` math in
-    // `degenbot-aave-updater::processors` computed it from the event's
+    // `degenbot-aave::processors` computed it from the event's
     // `value`/`balance_increase`/`index`/`scaled_amount` + the token
     // revision's rounding strategy) + the new index, then mutate the row.
     //

@@ -1772,7 +1772,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "degenbot-aave-updater"
+name = "degenbot-aave"
 version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
@@ -2065,7 +2065,7 @@ dependencies = [
  "alloy",
  "ctor",
  "dashmap",
- "degenbot-aave-updater",
+ "degenbot-aave",
  "degenbot-abi",
  "degenbot-balancer-math",
  "degenbot-bot",

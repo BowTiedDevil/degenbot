@@ -1,8 +1,8 @@
-//! `PyO3` seam for the `degenbot-aave-updater` chunk loop (epic `AZGJUN`,
+//! `PyO3` seam for the `degenbot-aave` chunk loop (epic `AZGJUN`,
 //! task `5XNTC5`).
 //!
 //! Thin `#[pyfunction]` wrapper over
-//! [`degenbot_aave_updater::run::run_aave_update`] (the 6SWY4R core). Arg
+//! [`degenbot_aave::run::run_aave_update`] (the 6SWY4R core). Arg
 //! extraction → GIL release (`py.detach`) → core call → result wrap. No
 //! business logic (three-layer architecture, ADR-005). The "Rust is the
 //! engine; Python is the cockpit" framing: Python threads the args + a
@@ -22,7 +22,7 @@
 //!
 //! # Owned-runtime constraint (D2)
 //!
-//! [`degenbot_aave_updater::run::run_aave_update`] owns its
+//! [`degenbot_aave::run::run_aave_update`] owns its
 //! `tokio::runtime::Runtime`. Calling it from within an existing tokio
 //! runtime panics ("Cannot start a runtime from within a runtime"). The CLI
 //! driver runs `run_aave_update` from a worker thread with NO ambient tokio
@@ -34,7 +34,7 @@ use std::sync::Arc;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
 
-use degenbot_aave_updater::{
+use degenbot_aave::{
     activate_aave_market as core_activate_aave_market,
     deactivate_aave_market as core_deactivate_aave_market, run_aave_update as core_run_aave_update,
     verify::{
@@ -136,7 +136,7 @@ fn aave_report_to_dict(py: Python<'_>, r: &AaveUpdateReport) -> PyResult<Py<PyDi
 /// Drive the Rust-owned Aave V3 updater chunk loop for `market_id`, advancing
 /// `aave_v3_markets.last_update_block` to `to_block` (or the chain tip if
 /// `to_block is None`). See
-/// [`degenbot_aave_updater::run::run_aave_update`] for the §3.4 atomicity
+/// [`degenbot_aave::run::run_aave_update`] for the §3.4 atomicity
 /// invariant (one `Transaction` per chunk; failure mid-chunk → rollback →
 /// `last_update_block` unchanged → restart re-processes clean).
 ///
@@ -274,12 +274,12 @@ fn run_err_to_py(err: RunError) -> PyErr {
             );
             for d in &divergences {
                 let kind = match d.kind {
-                    degenbot_aave_updater::verify::PositionKind::Collateral => "collateral",
-                    degenbot_aave_updater::verify::PositionKind::Debt => "debt",
+                    degenbot_aave::verify::PositionKind::Collateral => "collateral",
+                    degenbot_aave::verify::PositionKind::Debt => "debt",
                 };
                 let field = match d.field {
-                    degenbot_aave_updater::verify::DivergenceField::Balance => "balance",
-                    degenbot_aave_updater::verify::DivergenceField::LastIndex => "last_index",
+                    degenbot_aave::verify::DivergenceField::Balance => "balance",
+                    degenbot_aave::verify::DivergenceField::LastIndex => "last_index",
                 };
                 let _ = write!(
                     lines,
@@ -407,8 +407,8 @@ fn verify_touched_positions_on_chain(
         dict.set_item(
             "kind",
             match d.kind {
-                degenbot_aave_updater::verify::PositionKind::Collateral => "collateral",
-                degenbot_aave_updater::verify::PositionKind::Debt => "debt",
+                degenbot_aave::verify::PositionKind::Collateral => "collateral",
+                degenbot_aave::verify::PositionKind::Debt => "debt",
             },
         )?;
         dict.set_item("position_id", d.position_id)?;
@@ -418,8 +418,8 @@ fn verify_touched_positions_on_chain(
         dict.set_item(
             "field",
             match d.field {
-                degenbot_aave_updater::verify::DivergenceField::Balance => "balance",
-                degenbot_aave_updater::verify::DivergenceField::LastIndex => "last_index",
+                degenbot_aave::verify::DivergenceField::Balance => "balance",
+                degenbot_aave::verify::DivergenceField::LastIndex => "last_index",
             },
         )?;
         dict.set_item("expected", format!("{}", d.expected))?;
@@ -521,13 +521,13 @@ fn verify_all_positions_on_chain(
     for d in divergences {
         let dict = PyDict::new(py);
         match d {
-            degenbot_aave_updater::verify::VerificationDivergence::ScaledToken(p) => {
+            degenbot_aave::verify::VerificationDivergence::ScaledToken(p) => {
                 dict.set_item("check", "scaled_token")?;
                 dict.set_item(
                     "kind",
                     match p.kind {
-                        degenbot_aave_updater::verify::PositionKind::Collateral => "collateral",
-                        degenbot_aave_updater::verify::PositionKind::Debt => "debt",
+                        degenbot_aave::verify::PositionKind::Collateral => "collateral",
+                        degenbot_aave::verify::PositionKind::Debt => "debt",
                     },
                 )?;
                 dict.set_item("position_id", p.position_id)?;
@@ -537,14 +537,14 @@ fn verify_all_positions_on_chain(
                 dict.set_item(
                     "field",
                     match p.field {
-                        degenbot_aave_updater::verify::DivergenceField::Balance => "balance",
-                        degenbot_aave_updater::verify::DivergenceField::LastIndex => "last_index",
+                        degenbot_aave::verify::DivergenceField::Balance => "balance",
+                        degenbot_aave::verify::DivergenceField::LastIndex => "last_index",
                     },
                 )?;
                 dict.set_item("expected", format!("{}", p.expected))?;
                 dict.set_item("actual", format!("{}", p.actual))?;
             }
-            degenbot_aave_updater::verify::VerificationDivergence::StkAaveBalance {
+            degenbot_aave::verify::VerificationDivergence::StkAaveBalance {
                 user_id,
                 user_address,
                 token_address,
@@ -560,7 +560,7 @@ fn verify_all_positions_on_chain(
                 dict.set_item("expected", format!("{expected}"))?;
                 dict.set_item("actual", format!("{actual}"))?;
             }
-            degenbot_aave_updater::verify::VerificationDivergence::GhoDiscount {
+            degenbot_aave::verify::VerificationDivergence::GhoDiscount {
                 user_id,
                 user_address,
                 token_address,
