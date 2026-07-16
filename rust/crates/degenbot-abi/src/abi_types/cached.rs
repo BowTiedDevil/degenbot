@@ -339,6 +339,44 @@ impl CachedAbiTypes {
         Ok(tuple_value.abi_encode_params())
     }
 
+    /// Pack-encode multiple values (Solidity `abi.encodePacked`).
+    ///
+    /// Uses the same coercion path as `encode` but calls `abi_encode_packed`
+    /// on the tuple, which concatenates each value's packed form (no word
+    /// padding, no length prefix for dynamic types). Mirrors
+    /// `eth_abi.packed.encode_packed` exactly.
+    ///
+    /// # Arguments
+    ///
+    /// * `values` - Slice of values to pack-encode
+    ///
+    /// # Returns
+    ///
+    /// The packed-encoded bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns `AbiDecodeError` if a value doesn't match its type.
+    #[inline]
+    pub fn encode_packed(&self, values: &[AbiValue]) -> Result<Vec<u8>, AbiDecodeError> {
+        if values.len() != self.types.len() {
+            return Err(AbiDecodeError::InvalidLength(format!(
+                "Type count {} does not match value count {}",
+                self.types.len(),
+                values.len()
+            )));
+        }
+
+        let mut alloy_values = Vec::with_capacity(self.types.len());
+        for (alloy_type, value) in self.alloy_types.iter().zip(values.iter()) {
+            let alloy_value = value_to_alloy_for_type(value, alloy_type)?;
+            alloy_values.push(alloy_value);
+        }
+
+        let tuple_value = alloy::dyn_abi::DynSolValue::Tuple(alloy_values);
+        Ok(tuple_value.abi_encode_packed())
+    }
+
     /// Encode multiple value sets using cached types.
     ///
     /// # Arguments

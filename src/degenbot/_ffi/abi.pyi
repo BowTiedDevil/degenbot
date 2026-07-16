@@ -107,4 +107,27 @@ def encode_single(abi_type: str, value: str | bool | int | bytes) -> bytes:
 
     """
 
-__all__ = ["decode", "decode_single", "encode", "encode_single"]
+def encode_packed(
+    types: list[str],
+    values: list[str | bool | int | bytes],
+) -> bytes:
+    """Pack-encode multiple ABI values (Solidity `abi.encodePacked`).
+
+    Each value is encoded tightly with no 32-byte word padding and no
+    length prefix for dynamic types — the values are simply concatenated
+    in their packed forms. Tuples are packed element-by-element.
+
+    Args:
+        types: List of ABI type strings (e.g., ["address", "address", "bool"])
+        values: List of Python values to encode
+
+    Returns:
+        The packed-encoded bytes.
+
+    Raises:
+        ValueError: If values cannot be encoded or type/value counts differ
+        NotImplementedError: For unsupported types (e.g., fixed-point)
+
+    """
+
+__all__ = ["decode", "decode_single", "encode", "encode_packed", "encode_single"]
