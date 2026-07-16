@@ -15,9 +15,9 @@ from sqlalchemy.orm import Session, scoped_session
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.crypto import event_topic
-from degenbot.database._ffi import PyDatabaseSnapshot
 from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
+from degenbot.db import PyDatabaseSnapshot
 from degenbot.exceptions.pool import UnknownPoolId
 from degenbot.logging import logger
 from degenbot.provider import AlloyProvider, AsyncAlloyProvider

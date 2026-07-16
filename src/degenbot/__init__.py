@@ -1,16 +1,12 @@
 """degenbot: Ethereum DEX helper library."""
 
-from .abi_adapter import (
-    AbiAdapter,
-    AbiBackend,
+from .abi import (
     AbiDecodeError,
     AbiEncodeError,
-    get_default_adapter,
-    get_default_backend,
 )
-from .abi_adapter import decode as abi_decode
-from .abi_adapter import decode_single as abi_decode_single
-from .abi_adapter import encode as abi_encode
+from .abi import decode as abi_decode
+from .abi import decode_single as abi_decode_single
+from .abi import encode as abi_encode
 from .async_bot import AsyncBot
 from .bot import Bot
 from .checksum_cache import get_checksum_address
@@ -29,7 +25,6 @@ from .aerodrome import (
     AerodromeV3PoolState,
     AerodromeV3PoolTracker,
 )
-from .anvil_fork import AnvilFork
 from .arbitrage import (
     ApprovalStrategy,
     ArbitrageCalculationResult,
@@ -48,6 +43,7 @@ from .curve import (
     CurveStableSwapPoolStateUpdated,
 )
 from .erc20 import Erc20Token, EtherPlaceholder
+from .fork import AnvilFork
 from .logging import logger
 from .pancakeswap import (
     PancakeswapV3Pool,
@@ -97,8 +93,6 @@ from .uniswap import (
 _register_from_deployments(_load_deployments(), pool_type_registry)
 
 __all__ = (
-    "AbiAdapter",
-    "AbiBackend",
     "AbiDecodeError",
     "AbiEncodeError",
     "AerodromeV2Pool",
@@ -152,8 +146,6 @@ __all__ = (
     "abi_encode",
     "generate_payloads",
     "get_checksum_address",
-    "get_default_adapter",
-    "get_default_backend",
     "logger",
     "pool_type_registry",
 )

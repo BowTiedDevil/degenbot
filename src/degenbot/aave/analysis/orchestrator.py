@@ -22,7 +22,7 @@ from degenbot.aave.analysis.core import (
 )
 from degenbot.aave.analysis.protocols import PositionQuery, PriceFetcher
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.database._ffi import PyDatabasePositionQuery
+from degenbot.db import PyDatabasePositionQuery
 from degenbot.logging import logger
 from degenbot.provider import AlloyProvider
 

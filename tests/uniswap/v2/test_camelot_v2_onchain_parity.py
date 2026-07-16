@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot.anvil_fork import AnvilFork
+from degenbot.fork import AnvilFork
 from degenbot.camelot.abi import CAMELOT_POOL_ABI
 from degenbot.checksum_cache import get_checksum_address
 from degenbot._ffi.dex_identity import dex_identity

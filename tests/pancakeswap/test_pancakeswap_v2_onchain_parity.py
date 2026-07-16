@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any, Self
 
 import pytest
 
-from degenbot.anvil_fork import AnvilFork
+from degenbot.fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.bot import PyBot
 from tests.helpers.erc20_factory import make_erc20

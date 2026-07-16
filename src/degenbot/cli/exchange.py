@@ -7,14 +7,14 @@ messages; the Rust core owns the database state.
 import click
 import eth_typing
 
-from degenbot._ffi.db import (
+from degenbot.bot import Bot
+from degenbot.cli import cli
+from degenbot.db import (
     db_fetch_exchange_by_name,
     db_set_exchange_active,
     db_upsert_exchange,
     db_upsert_pool_manager,
 )
-from degenbot.bot import Bot
-from degenbot.cli import cli
 from degenbot.uniswap.deployments import (
     BaseAerodromeV2,
     BaseAerodromeV3,

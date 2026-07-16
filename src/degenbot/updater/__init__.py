@@ -4,7 +4,7 @@ This package re-exports the Rust-owned pool-updater input pyclasses under
 stable, seam-agnostic names. Driver / CLI code imports from here — never from
 the PyO3 wrapper :mod:`degenbot._ffi`.
 
-The re-exports are **direct aliases** (``from degenbot._ffi.db import X``), not
+The re-exports are **direct aliases** (``from degenbot.db import X``), not
 Python subclasses — the Rust engine constructs and consumes these pyclasses
 directly; subclassing would break type identity at the FFI boundary.
 
@@ -17,7 +17,7 @@ Symbol map:
 """
 
 from degenbot._ffi.cancel import CancelHandle
-from degenbot._ffi.db import (
+from degenbot.db import (
     LiquidityUpdateEvent,
     V2PoolRowInput,
     V3PoolRowInput,

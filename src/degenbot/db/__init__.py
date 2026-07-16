@@ -1,9 +1,9 @@
-"""Stable companion home for database PyO3 functions + classes + exception.
+"""Rust-backed database row types + operations — the stable mirror home for ``_ffi.db``.
 
 Re-exports the Rust-backed database surface from the ``degenbot._ffi.db``
 submodule. Importers should use::
 
-    from degenbot.database._ffi import db_backup_database, V2PoolRowInput
+    from degenbot.db import db_backup_database, V2PoolRowInput
 
 rather than reaching into ``degenbot._ffi`` directly — this path is stable
 across future Rust reshuffles, and lets the Rust crate structure
@@ -17,6 +17,12 @@ functional namespace marker for the ~45 database operations.
 The classes are ADR-005 ``Py*`` aliases / ``*Row``/``*RowInput`` types;
 ``DatabaseSchemaStale`` is the typed ``ValueError`` subclass for the
 "DB is stamped at a prior Alembic revision" rejection.
+
+Split from ``degenbot.database`` (ADR-013): ``degenbot.db`` owns the
+Rust-backed row types + operations; ``degenbot.database`` keeps the
+SQLAlchemy ORM (``DatabaseSessionManager``, ``models/``). The split
+respects ADR-010's Alembic-retention constraint — the ORM layer is
+untouched until the 0.7 cutover.
 """
 
 from degenbot._ffi.db import (

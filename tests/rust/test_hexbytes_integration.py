@@ -8,7 +8,7 @@ These tests verify that the provider returns:
 import pytest
 from hexbytes import HexBytes
 
-from degenbot.anvil_fork import AnvilFork
+from degenbot.fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.provider import AlloyProvider
 

@@ -13,7 +13,7 @@ from eth_typing import ChecksumAddress
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
-from degenbot.abi_adapter import encode as abi_encode
+from degenbot.abi import encode as abi_encode
 from degenbot.aerodrome.math import (
     calc_exact_in_stable_solidly as solidly_calc_exact_in_stable_solidly,
 )

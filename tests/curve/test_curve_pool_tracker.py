@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from degenbot.anvil_fork import AnvilFork
+from degenbot.fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.curve.trackers import CurveStableswapPoolTracker

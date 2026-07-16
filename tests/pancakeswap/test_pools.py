@@ -16,7 +16,7 @@ from typing import Any
 import pydantic_core
 import pytest
 
-from degenbot.anvil_fork import AnvilFork
+from degenbot.fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.pancakeswap.pools import PancakeswapV2Pool
 from tests.helpers.w3_contract import make_contract

@@ -43,7 +43,7 @@ from degenbot.database.operations import (
     get_scoped_sqlite_session,
 )
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.database._ffi import (
+from degenbot.db import (
     db_fetch_exchange_by_name,
     db_inspect_schema_state,
     db_upsert_exchange,

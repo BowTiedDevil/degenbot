@@ -14,7 +14,7 @@ from degenbot.aave.events import ScaledTokenEventType
 from degenbot.aave.operation_types import OperationType
 from degenbot.aave.operations import Operation, ScaledTokenEvent
 from degenbot.aave.pattern_types import LiquidationGroup, LiquidationPatternContext
-from degenbot.abi_adapter import decode as abi_decode
+from degenbot.abi import decode as abi_decode
 from degenbot.contract.decoding import decode_address
 from degenbot.logging import logger
 

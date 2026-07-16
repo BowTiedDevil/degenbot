@@ -53,7 +53,7 @@ from hexbytes import HexBytes
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import ContractLogicError
 
-from degenbot.anvil_fork import AnvilFork
+from degenbot.fork import AnvilFork
 from degenbot.balancer.deployments import (
     BALANCERQUERIES_CONTRACT_ADDRESS,
 )

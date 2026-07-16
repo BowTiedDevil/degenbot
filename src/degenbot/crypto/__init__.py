@@ -1,23 +1,17 @@
-"""Hashing + selector helpers owned by degenbot.
+"""EVM hashing + selector helpers — the stable mirror home for crypto surfaces.
 
-Replaces ``web3.Web3.keccak`` (which web3 re-exports from
-:mod:`eth_utils.crypto`) with degenbot-owned surfaces so source files no
-longer import ``Web3`` solely to compute a function selector or a keccak
-digest.
-
-Two surfaces:
+Provides three public functions:
 
 - :func:`function_selector` — the 4-byte Solidity selector for a function
-  signature. Delegates to the Rust core's
-  :func:`degenbot._ffi.get_function_selector` (alloy ``keccak256`` under the
-  hood) so the selector computation is owned by Rust, not by a Python
-  keccak re-export.
+  signature. Delegates to :func:`degenbot.contract.get_function_selector`
+  (alloy ``keccak256`` under the hood) so the selector computation is owned
+  by Rust, not by a Python keccak re-export.
 - :func:`keccak256` — the full 32-byte keccak digest of a byte string.
-  Currently wraps :func:`eth_utils.crypto.keccak` (the same implementation
-  ``Web3.keccak`` used). This is the one remaining non-Rust hashing surface;
-  a follow-up will expose a Rust ``keccak256`` pyfunction and this wrapper
-  will delegate to it, dropping the ``eth_utils`` dependency from the
-  hashing path.
+  Currently wraps :func:`eth_utils.crypto.keccak`. This is the one remaining
+  non-Rust hashing surface; a follow-up will expose a Rust ``keccak256``
+  pyfunction and this wrapper will delegate to it, dropping the
+  ``eth_utils`` dependency from the hashing path.
+- :func:`event_topic` — the 32-byte event topic hash for an ABI event entry.
 """
 
 from __future__ import annotations
@@ -28,10 +22,16 @@ from eth_utils.abi import event_abi_to_log_topic
 from eth_utils.crypto import keccak as _keccak
 from hexbytes import HexBytes
 
-from degenbot._ffi.contract import get_function_selector
+from degenbot.contract import get_function_selector
 
 if TYPE_CHECKING:
     from eth_typing import ABIEvent
+
+__all__ = (
+    "event_topic",
+    "function_selector",
+    "keccak256",
+)
 
 
 def function_selector(signature: str) -> bytes:

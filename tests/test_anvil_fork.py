@@ -4,7 +4,7 @@ import pytest
 from hexbytes import HexBytes
 from pydantic import ValidationError
 
-from degenbot.anvil_fork import AnvilFork
+from degenbot.fork import AnvilFork
 from degenbot.provider import AlloyProvider
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_UINT256, MIN_UINT256

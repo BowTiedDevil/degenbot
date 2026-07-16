@@ -20,7 +20,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from degenbot.database._ffi import (
+from degenbot.db import (
     db_apply_asset_collateral_in_emode_changed,
     db_apply_asset_source_updated,
     db_apply_collateral_configuration_changed,

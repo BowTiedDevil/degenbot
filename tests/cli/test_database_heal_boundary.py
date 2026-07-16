@@ -30,7 +30,7 @@ from degenbot.database.operations import (
     inspect_schema_state,
 )
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.database._ffi import (
+from degenbot.db import (
     V2PoolRowInput,
     db_create_new_database,
     db_fetch_exchange_by_name,

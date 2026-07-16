@@ -11,7 +11,7 @@ from degenbot.aerodrome.types import (
     AerodromeV2PoolExternalUpdate,
     AerodromeV3PoolState,
 )
-from degenbot.anvil_fork import AnvilFork
+from degenbot.fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import DegenbotError
 from degenbot.exceptions.pool import ExternalUpdateError

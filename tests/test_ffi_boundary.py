@@ -1,254 +1,132 @@
-"""Boundary test: ban flat-root ``degenbot._ffi`` imports in leaf code.
+"""Boundary test: the Pydantic ban on ``degenbot._ffi`` in non-barrier modules.
 
-After the three-layer transition (ADR-005) and the flat→submodule conversion
-epic (XZ54NW) + the companion-homes remap (WLAB6U), the only modules that may
-import symbols from the flat root ``degenbot._ffi`` grab-bag are the companion
-re-exporters themselves (which own the _ffi→companion bridge). Every other
-module must import from the typed companion home or a typed ``_ffi`` submodule.
+After ADR-013 (the FFI seam is private), the rule is mechanical: **no file
+outside an explicit BARRIER set may import from ``degenbot._ffi``** — not
+the flat root and not a typed submodule. Every production module that needs
+a Rust-backed symbol imports it from its stable ``degenbot.<domain>`` home;
+the barrier modules are the only files permitted to bridge ``_ffi`` → public
+name.
 
-This test AST-scans every ``src/degenbot/**/*.py``, ``tests/**/*.py``, and
-``examples/**/*.py`` file and FAILs if any file outside an explicit allowlist
-contains:
+Test code (``tests/**``) and examples (``examples/**``) are excluded from
+the scan — they legitimately test the FFI seam directly.
 
-  - ``from degenbot._ffi import <Name>``  — a flat-root symbol import, OR
-  - ``from degenbot import _ffi``         — importing the root package itself, OR
-  - ``import degenbot._ffi``              — same, in `import` form.
-
-Submodule imports (``from degenbot._ffi.db import X``,
-``from degenbot._ffi.cl_math import muldiv``, ``from degenbot._ffi import
-executor`` where ``executor`` is a submodule) are NOT banned — the typed,
-namespaced surface is the approved destination.
+The test is one grep: ``rg "from degenbot\\._ffi|import degenbot\\._ffi"``
+over ``src/degenbot/**/*.py``, excluding the BARRIER set. A stale-barrier
+guard ensures every BARRIER entry actually imports from ``_ffi`` (catches
+barrier rot — a file that used to bridge but no longer does).
 """
 
 from __future__ import annotations
 
-import ast
-import importlib
-import inspect
-import sys
+import re
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCAN_DIRS = (
-    REPO_ROOT / "src" / "degenbot",
-    REPO_ROOT / "tests",
-    REPO_ROOT / "examples",
-)
+SCAN_DIR = REPO_ROOT / "src" / "degenbot"
 
 # ---------------------------------------------------------------------------
-# Allowlist: files permitted to import from flat-root ``degenbot._ffi``.
+# Barrier modules: the only production files permitted to import from
+# ``degenbot._ffi``. Each bridges a Rust ``_ffi`` surface to a stable
+# ``degenbot.<domain>`` public name.
 #
-# Each entry is a repo-relative path. Add a companion re-exporter here only
-# when it owns the _ffi→companion bridge for its domain. Add the reason as a
-# comment — the test failure message names the file so the reason should be
-# discoverable.
+# To add a barrier: the module must own a _ffi→public bridge (re-export a
+# Rust pyclass/function under a stable Python name). Barriers are the seam
+# between the Rust core and the Python companion layer (ADR-005/ADR-013).
 # ---------------------------------------------------------------------------
-ALLOWLIST: frozenset[str] = frozenset(
+BARRIER: frozenset[str] = frozenset(
     {
-        # --- companion re-exporters (own the _ffi→companion bridge) ---
-        "src/degenbot/bot.py",  # PyBot + PyBotIo: the bot cockpit
-        "src/degenbot/types/__init__.py",  # PyLiquidityPool: DEX-agnostic pool handle
-        "src/degenbot/arbitrage/engine_registry.py",  # UniswapArbEngine: engine wrapper
-        "src/degenbot/erc20/erc20.py",  # PyErc20Token: ERC20 companion
-        "src/degenbot/exceptions/arbitrage.py",  # *RejectedError: exception re-exporter
-        "src/degenbot/exceptions/verification.py",  # Verification*Error: exception re-exporter
-        "src/degenbot/checksum_cache.py",  # to_checksum_address: checksum module
-        "src/degenbot/pathfinding.py",  # find_paths_rust, build_path_graph: pathfinding
-        # --- test files that introspect the _ffi root package itself ---
-        "tests/rust/test_pyclass_module_annotation.py",  # walks dir(_ffi) to assert __module__
+        # --- flat-root bridges (Py* classes re-exported under stable names) ---
+        "src/degenbot/bot.py",  # PyBot, PyBotIo → Bot cockpit
+        "src/degenbot/types/__init__.py",  # PyLiquidityPool, dex_identity
+        "src/degenbot/arbitrage/engine_registry.py",  # UniswapArbEngine
+        "src/degenbot/erc20/erc20.py",  # PyErc20Token
+        "src/degenbot/exceptions/arbitrage.py",  # *RejectedError
+        "src/degenbot/exceptions/verification.py",  # Verification*Error
+        "src/degenbot/checksum_cache.py",  # to_checksum_address
+        "src/degenbot/pathfinding.py",  # find_paths_rust, build_path_graph
+        # --- typed-submodule bridges (mirror homes for _ffi.<sub>) ---
+        "src/degenbot/aave/__init__.py",  # _ffi.aave (Aave price oracle)
+        "src/degenbot/abi/__init__.py",  # _ffi.abi (encode/decode/decode_single)
+        "src/degenbot/aerodrome/math.py",  # _ffi.solidly_math
+        "src/degenbot/balancer/math.py",  # _ffi.balancer_math
+        "src/degenbot/chainlink/__init__.py",  # _ffi.price (Chainlink feed)
+        "src/degenbot/cli/aave.py",  # _ffi.aave (CLI driver for Aave update)
+        "src/degenbot/cli/pool.py",  # _ffi.pool (CLI driver for pool update)
+        "src/degenbot/contract/__init__.py",  # _ffi.contract (Contract, get_function_selector)
+        "src/degenbot/curve/math.py",  # _ffi.curve_math
+        "src/degenbot/db/__init__.py",  # _ffi.db (row types + db_* operations)
+        "src/degenbot/dispatch/__init__.py",  # _ffi.simulation, _ffi.submission
+        "src/degenbot/fork/__init__.py",  # _ffi.fork (AnvilFork)
+        "src/degenbot/provider/__init__.py",  # _ffi.provider (AlloyProvider)
+        "src/degenbot/uniswap/deployments.py",  # _ffi.deployments (resolve_deployer etc.)
+        "src/degenbot/uniswap/math.py",  # _ffi.cl_math
+        "src/degenbot/updater/__init__.py",  # _ffi.cancel, _ffi.db (updater re-exports)
+        "src/degenbot/utils/solady/libzip.py",  # _ffi.solady (libzip)
     }
 )
 
-
-def _ffi_submodule_names() -> frozenset[str]:
-    """Return the set of real submodules of ``degenbot._ffi`` at runtime.
-
-    Used to distinguish ``from degenbot._ffi import <submod>`` (a submodule
-    import — allowed) from ``from degenbot._ffi import <Symbol>`` (a flat-root
-    symbol import — banned).
-    """
-    try:
-        ffi = importlib.import_module("degenbot._ffi")
-    except ImportError:
-        return frozenset()
-    return frozenset(
-        name
-        for name in dir(ffi)
-        if not name.startswith("_")
-        and inspect.ismodule(getattr(ffi, name))
-    )
+# Matches any line containing an actual import from degenbot._ffi
+# (flat root or typed submodule). Does NOT match docstring/comment mentions.
+_FFI_IMPORT_RE = re.compile(r"(?:^|\s)(?:from|import)\s+degenbot\._ffi")
 
 
-_FFI_SUBMODULES = _ffi_submodule_names()
-
-
-def _iter_python_files() -> list[tuple[Path, str]]:
-    """Yield (absolute_path, repo_relative_path) for every .py file in scan dirs."""
-    out: list[tuple[Path, str]] = []
-    for base in SCAN_DIRS:
-        for f in base.rglob("*.py"):
-            if "__pycache__" in f.parts:
-                continue
-            if f.is_absolute():
-                rel = str(f.relative_to(REPO_ROOT))
-            else:
-                rel = str(f)
-                f = REPO_ROOT / f
-            out.append((f, rel))
-    return out
-
-
-def _find_banned_imports(
-    source: str,
-    rel_path: str,
-    ffi_submodules: frozenset[str],
-) -> list[str]:
-    """Return a list of human-readable violation strings for ``source``.
-
-    A violation is any ``from degenbot._ffi import <Name>`` where ``<Name>`` is
-    NOT a submodule, or any ``from degenbot import _ffi`` / ``import
-    degenbot._ffi`` (importing the root package for symbol access).
-    """
-    violations: list[str] = []
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return violations
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.level == 0:
-            if node.module == "degenbot._ffi":
-                # from degenbot._ffi import X, Y
-                for alias in node.names:
-                    if alias.name in ffi_submodules:
-                        continue  # submodule import — allowed
-                    as_str = f" as {alias.asname}" if alias.asname else ""
-                    violations.append(
-                        f"{rel_path}:{node.lineno}: "
-                        f"from degenbot._ffi import {alias.name}{as_str} "
-                        f"— import from the typed companion home instead "
-                        f"(see tests/test_ffi_boundary.py ALLOWLIST)"
-                    )
-            elif node.module == "degenbot" and any(
-                a.name == "_ffi" for a in node.names
-            ):
-                # from degenbot import _ffi
-                violations.append(
-                    f"{rel_path}:{node.lineno}: from degenbot import _ffi "
-                    f"— import from the typed companion home instead"
-                )
-        elif isinstance(node, ast.Import):
-            # import degenbot._ffi [as X] — root package access
-            for alias in node.names:
-                if alias.name == "degenbot._ffi":
-                    as_str = f" as {alias.asname}" if alias.asname else ""
-                    violations.append(
-                        f"{rel_path}:{node.lineno}: "
-                        f"import degenbot._ffi{as_str} "
-                        f"— import from the typed companion home instead"
-                    )
-    return violations
+def _iter_python_files() -> list[Path]:
+    """Yield every .py file under src/degenbot/ (excluding __pycache__)."""
+    return [
+        f
+        for f in SCAN_DIR.rglob("*.py")
+        if "__pycache__" not in f.parts
+    ]
 
 
 def test_no_flat_root_ffi_imports_in_leaf_code() -> None:
-    """Fail if any non-allowlisted file imports from flat-root ``degenbot._ffi``.
+    """Fail if any non-barrier file imports from ``degenbot._ffi``.
 
-    Companion re-exporters (the ALLOWLIST) own the _ffi→companion bridge and
-    are the only files permitted to reach into the flat root. Everyone else
-    must import from the typed companion (``degenbot.bot``, ``degenbot.types``,
-    ``degenbot.exceptions``, etc.) or a typed ``_ffi`` submodule
-    (``degenbot._ffi.db``, ``degenbot._ffi.cl_math``).
+    The Pydantic ban (ADR-013): every production module that needs a
+    Rust-backed symbol imports it from its stable ``degenbot.<domain>``
+    home. The BARRIER set lists the only files permitted to bridge
+    ``_ffi`` → public name.
     """
-    ffi_submodules = _ffi_submodule_names()
     violations: list[str] = []
-    files_scanned = 0
-    allowlisted_hits = 0
-    for f, rel in _iter_python_files():
-        files_scanned += 1
-        if rel in ALLOWLIST:
-            allowlisted_hits += 1
+    for f in _iter_python_files():
+        rel = str(f.relative_to(REPO_ROOT))
+        if rel in BARRIER:
             continue
         source = f.read_text()
-        violations.extend(_find_banned_imports(source, rel, ffi_submodules))
+        for lineno, line in enumerate(source.splitlines(), 1):
+            if _FFI_IMPORT_RE.search(line):
+                violations.append(f"{rel}:{lineno}: {line.strip()}")
     if violations:
         msg = (
-            f"\nFound {len(violations)} flat-root `degenbot._ffi` import(s) in "
-            f"non-allowlisted files (scanned {files_scanned} .py files, "
-            f"{allowlisted_hits} allowlisted):\n\n"
+            f"\nFound {len(violations)} `degenbot._ffi` import(s) in "
+            f"non-barrier files (Pydantic ban, ADR-013):\n\n"
             + "\n".join(f"  - {v}" for v in violations)
-            + "\n\nThese must be remapped to the typed companion home or a "
-            "typed _ffi submodule. See tests/test_ffi_boundary.py ALLOWLIST for "
-            "the files permitted to bridge _ffi→companion."
+            + "\n\nThese must import from the stable `degenbot.<domain>` "
+            "home instead. See tests/test_ffi_boundary.py BARRIER for the "
+            "files permitted to bridge _ffi→public name."
         )
         pytest.fail(msg)
 
 
-def test_submodule_imports_are_not_banned() -> None:
-    """Guard: ``from degenbot._ffi.<sub> import X`` must NOT trip the ban.
+def test_barrier_entries_actually_import_ffi() -> None:
+    """Every barrier file must actually import from ``degenbot._ffi``.
 
-    This is a positive control: if the boundary test logic regresses to ban
-    submodule imports too, this test catches it.
+    A barrier entry that DOESN'T import from ``_ffi`` is stale — it was
+    rerouted to a stable home and should be removed from the BARRIER set.
+    This catches barrier rot.
     """
-    # Build a fake source with a definitely-allowed submodule import.
-    # degenbot._ffi.db is a real submodule (shipped in every build).
-    ffi_submodules = _ffi_submodule_names()
-    assert "db" in ffi_submodules, (
-        "degenbot._ffi.db must be a real submodule (sanity: the conversion "
-        "epic shipped it)"
-    )
-    fake_source = "from degenbot._ffi import db\n"
-    violations = _find_banned_imports(fake_source, "<fake>", ffi_submodules)
-    assert violations == [], (
-        f"submodule import `from degenbot._ffi import db` must not be banned, "
-        f"got: {violations}"
-    )
-
-
-def test_allowlist_entries_exist() -> None:
-    """Every allowlisted path must exist (stale allowlist entries are noise)."""
-    missing = [p for p in ALLOWLIST if not (REPO_ROOT / p).exists()]
-    assert missing == [], (
-        f"stale allowlist entries (file no longer exists): {missing}"
-    )
-
-
-def test_allowlist_entries_actually_import_ffi_root() -> None:
-    """Every allowlisted file must actually contain a flat-root _ffi import.
-
-    A file in the allowlist that DOESN'T import from _ffi root is dead weight
-    — it should be removed from the allowlist. This catches allowlist rot.
-    """
-    ffi_submodules = _ffi_submodule_names()
     stale: list[str] = []
-    for rel in ALLOWLIST:
+    for rel in BARRIER:
         f = REPO_ROOT / rel
         if not f.exists():
-            continue  # covered by the existence test
+            stale.append(f"{rel} (file does not exist)")
+            continue
         source = f.read_text()
-        # An allowlisted file should have at least one flat-root import that is
-        # NOT a pure submodule import (i.e. it bridges a real symbol).
-        tree = ast.parse(source)
-        has_root_bridge = False
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.level == 0:
-                if node.module == "degenbot._ffi" and any(
-                    a.name not in ffi_submodules for a in node.names
-                ):
-                    has_root_bridge = True
-                    break
-                if node.module == "degenbot" and any(
-                    a.name == "_ffi" for a in node.names
-                ):
-                    has_root_bridge = True
-                    break
-            elif isinstance(node, ast.Import) and any(
-                a.name == "degenbot._ffi" for a in node.names
-            ):
-                has_root_bridge = True
-                break
-        if not has_root_bridge:
+        has_bridge = any(_FFI_IMPORT_RE.search(line) for line in source.splitlines())
+        if not has_bridge:
             stale.append(rel)
     assert stale == [], (
-        f"allowlist entries with no flat-root _ffi bridge (remove them): {stale}"
+        f"stale barrier entries (no `degenbot._ffi` import — remove from BARRIER): {stale}"
     )

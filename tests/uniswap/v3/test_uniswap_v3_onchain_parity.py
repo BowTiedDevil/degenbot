@@ -49,7 +49,7 @@ from typing import Any, Self
 
 import pytest
 
-from degenbot.anvil_fork import AnvilFork
+from degenbot.fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_INT256
 from degenbot.bot import PyBot

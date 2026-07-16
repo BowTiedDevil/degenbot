@@ -10,7 +10,7 @@ from hexbytes import HexBytes
 
 from degenbot.exceptions import ContractLogicError
 
-from degenbot.anvil_fork import AnvilFork
+from degenbot.fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_INT128, ZERO_ADDRESS
 from degenbot.exceptions.pool import (
