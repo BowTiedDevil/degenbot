@@ -1,19 +1,18 @@
-"""Boundary test: the Pydantic ban on ``degenbot._ffi`` in non-barrier modules.
+"""Boundary test: ``degenbot._ffi`` may only appear in ``__init__.py`` files.
 
-After ADR-013 (the FFI seam is private), the rule is mechanical: **no file
-outside an explicit BARRIER set may import from ``degenbot._ffi``** — not
-the flat root and not a typed submodule. Every production module that needs
-a Rust-backed symbol imports it from its stable ``degenbot.<domain>`` home;
-the barrier modules are the only files permitted to bridge ``_ffi`` → public
-name.
+The Pydantic barrier rule (ADR-013), tightened: every Rust ``_ffi`` symbol
+reaches Python through a stable ``degenbot.<domain>`` home, and that home is
+an ``__init__.py`` file. No leaf module (a file with real logic) may import
+from ``degenbot._ffi`` — not the flat root, not a typed submodule.
 
-Test code (``tests/**``) and examples (``examples/**``) are excluded from
-the scan — they legitimately test the FFI seam directly.
+This makes incomplete migrations visible: a non-``__init__.py`` file with an
+``_ffi`` import is automatically suspicious, no allowlist or judgment call
+required.
 
-The test is one grep: ``rg "from degenbot\\._ffi|import degenbot\\._ffi"``
-over ``src/degenbot/**/*.py``, excluding the BARRIER set. A stale-barrier
-guard ensures every BARRIER entry actually imports from ``_ffi`` (catches
-barrier rot — a file that used to bridge but no longer does).
+The 6 files in ``KNOWN_VIOLATIONS`` are category-B migration debt — leaf
+modules with hundreds of lines of real logic that also bridge ``_ffi``.
+Each is a TODO: extract the bridge into the package ``__init__.py``, leave
+the deep logic in the leaf file importing from the home.
 """
 
 from __future__ import annotations
@@ -27,43 +26,24 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SCAN_DIR = REPO_ROOT / "src" / "degenbot"
 
 # ---------------------------------------------------------------------------
-# Barrier modules: the only production files permitted to import from
-# ``degenbot._ffi``. Each bridges a Rust ``_ffi`` surface to a stable
-# ``degenbot.<domain>`` public name.
+# Known violations: leaf modules that still bridge ``_ffi`` (category-B
+# migration debt). Each entry is a repo-relative path. The fix is to extract
+# the ``_ffi`` bridge into the package ``__init__.py`` and reroute the leaf
+# to import from the home.
 #
-# To add a barrier: the module must own a _ffi→public bridge (re-export a
-# Rust pyclass/function under a stable Python name). Barriers are the seam
-# between the Rust core and the Python companion layer (ADR-005/ADR-013).
+# To remove an entry: convert the file's ``_ffi`` import into a re-export
+# in its package ``__init__.py``, then reroute the file to import from the
+# home. See the category-A conversions (checksum_cache, math/, etc.) for
+# the pattern.
 # ---------------------------------------------------------------------------
-BARRIER: frozenset[str] = frozenset(
+KNOWN_VIOLATIONS: frozenset[str] = frozenset(
     {
-        # --- flat-root bridges (Py* classes re-exported under stable names) ---
-        "src/degenbot/bot.py",  # PyBot, PyBotIo → Bot cockpit
-        "src/degenbot/types/__init__.py",  # PyLiquidityPool, dex_identity
-        "src/degenbot/arbitrage/engine_registry.py",  # UniswapArbEngine
-        "src/degenbot/erc20/erc20.py",  # PyErc20Token
-        "src/degenbot/exceptions/arbitrage.py",  # *RejectedError
-        "src/degenbot/exceptions/verification.py",  # Verification*Error
-        "src/degenbot/checksum_cache.py",  # to_checksum_address
-        "src/degenbot/pathfinding.py",  # find_paths_rust, build_path_graph
-        # --- typed-submodule bridges (mirror homes for _ffi.<sub>) ---
-        "src/degenbot/aave/__init__.py",  # _ffi.aave (Aave price oracle)
-        "src/degenbot/abi/__init__.py",  # _ffi.abi (encode/decode/decode_single)
-        "src/degenbot/aerodrome/math.py",  # _ffi.solidly_math
-        "src/degenbot/balancer/math.py",  # _ffi.balancer_math
-        "src/degenbot/chainlink/__init__.py",  # _ffi.price (Chainlink feed)
-        "src/degenbot/cli/aave.py",  # _ffi.aave (CLI driver for Aave update)
-        "src/degenbot/cli/pool.py",  # _ffi.pool (CLI driver for pool update)
-        "src/degenbot/contract/__init__.py",  # _ffi.contract (Contract, get_function_selector)
-        "src/degenbot/curve/math.py",  # _ffi.curve_math
-        "src/degenbot/db/__init__.py",  # _ffi.db (row types + db_* operations)
-        "src/degenbot/dispatch/__init__.py",  # _ffi.simulation, _ffi.submission
-        "src/degenbot/fork/__init__.py",  # _ffi.fork (AnvilFork)
-        "src/degenbot/provider/__init__.py",  # _ffi.provider (AlloyProvider)
-        "src/degenbot/uniswap/deployments.py",  # _ffi.deployments (resolve_deployer etc.)
-        "src/degenbot/uniswap/math.py",  # _ffi.cl_math
-        "src/degenbot/updater/__init__.py",  # _ffi.cancel, _ffi.db (updater re-exports)
-        "src/degenbot/utils/solady/libzip.py",  # _ffi.solady (libzip)
+        "src/degenbot/bot.py",  # PyBot, PyBotIo — Bot lifecycle (765 lines)
+        "src/degenbot/arbitrage/engine_registry.py",  # UniswapArbEngine — engine wrapper (640 lines)
+        "src/degenbot/pathfinding.py",  # find_paths_rust, build_path_graph — pathfinding (696 lines)
+        "src/degenbot/erc20/erc20.py",  # PyErc20Token — ERC20 token class (376 lines)
+        "src/degenbot/uniswap/deployments.py",  # resolve_deployer etc. — deployment constants (394 lines)
+        "src/degenbot/exceptions/arbitrage.py",  # *RejectedError — exception aliases + class defs (215 lines)
     }
 )
 
@@ -81,18 +61,20 @@ def _iter_python_files() -> list[Path]:
     ]
 
 
-def test_no_flat_root_ffi_imports_in_leaf_code() -> None:
-    """Fail if any non-barrier file imports from ``degenbot._ffi``.
+def test_no_ffi_imports_outside_init_files() -> None:
+    """Fail if any non-``__init__.py`` file imports from ``degenbot._ffi``.
 
-    The Pydantic ban (ADR-013): every production module that needs a
-    Rust-backed symbol imports it from its stable ``degenbot.<domain>``
-    home. The BARRIER set lists the only files permitted to bridge
-    ``_ffi`` → public name.
+    The only files permitted to import from ``_ffi`` are ``__init__.py``
+    files (the barrier modules). Every other file must import from its
+    stable ``degenbot.<domain>`` home. Known violations are acknowledged
+    as migration debt (see ``KNOWN_VIOLATIONS``).
     """
     violations: list[str] = []
     for f in _iter_python_files():
         rel = str(f.relative_to(REPO_ROOT))
-        if rel in BARRIER:
+        if rel in KNOWN_VIOLATIONS:
+            continue
+        if f.name == "__init__.py":
             continue
         source = f.read_text()
         for lineno, line in enumerate(source.splitlines(), 1):
@@ -101,32 +83,31 @@ def test_no_flat_root_ffi_imports_in_leaf_code() -> None:
     if violations:
         msg = (
             f"\nFound {len(violations)} `degenbot._ffi` import(s) in "
-            f"non-barrier files (Pydantic ban, ADR-013):\n\n"
+            f"non-`__init__.py` files (ADR-013: the Pydantic barrier):\n\n"
             + "\n".join(f"  - {v}" for v in violations)
             + "\n\nThese must import from the stable `degenbot.<domain>` "
-            "home instead. See tests/test_ffi_boundary.py BARRIER for the "
-            "files permitted to bridge _ffi→public name."
+            "home instead. See tests/test_ffi_boundary.py for the rule."
         )
         pytest.fail(msg)
 
 
-def test_barrier_entries_actually_import_ffi() -> None:
-    """Every barrier file must actually import from ``degenbot._ffi``.
+def test_known_violations_still_exist() -> None:
+    """Every KNOWN_VIOLATIONS entry must still import from ``_ffi``.
 
-    A barrier entry that DOESN'T import from ``_ffi`` is stale — it was
-    rerouted to a stable home and should be removed from the BARRIER set.
-    This catches barrier rot.
+    A violation that no longer imports from ``_ffi`` has been migrated
+    and should be removed from the set. This catches stale debt entries.
     """
-    stale: list[str] = []
-    for rel in BARRIER:
+    migrated: list[str] = []
+    for rel in KNOWN_VIOLATIONS:
         f = REPO_ROOT / rel
         if not f.exists():
-            stale.append(f"{rel} (file does not exist)")
+            migrated.append(f"{rel} (file removed)")
             continue
         source = f.read_text()
-        has_bridge = any(_FFI_IMPORT_RE.search(line) for line in source.splitlines())
-        if not has_bridge:
-            stale.append(rel)
-    assert stale == [], (
-        f"stale barrier entries (no `degenbot._ffi` import — remove from BARRIER): {stale}"
+        has_ffi = any(_FFI_IMPORT_RE.search(line) for line in source.splitlines())
+        if not has_ffi:
+            migrated.append(rel)
+    assert migrated == [], (
+        f"KNOWN_VIOLATIONS entries that no longer import from `_ffi` "
+        f"(remove them — migration complete): {migrated}"
     )

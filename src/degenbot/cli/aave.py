@@ -11,12 +11,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 from tqdm.contrib.logging import logging_redirect_tqdm
 
-from degenbot._ffi.aave import (
+from degenbot.aave import (
     activate_aave_market,
     deactivate_aave_market,
     run_aave_update,
 )
-from degenbot._ffi.aave import (
+from degenbot.aave import (
     cleanup_zero_balance_positions as rs_cleanup_zero_balance_positions,
 )
 from degenbot.aave.analysis.core import UserPositionSummary
