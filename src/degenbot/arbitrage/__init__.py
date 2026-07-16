@@ -1,5 +1,10 @@
 """Arbitrage path construction, swap encoding, and solver integration.
 
+The Rust-backed ``UniswapArbEngine`` pyclass is re-exported here (bridged
+from ``_ffi``) so consumers import ``from degenbot.arbitrage import
+UniswapArbEngine`` rather than reaching into ``_ffi`` (ADR-013: the
+Pydantic barrier — ``_ffi`` only in ``__init__.py``).
+
 The engine-facing orchestrator (:mod:`.engine_registry`), hop descriptors
 (:mod:`.hop_info`), and path policies (:mod:`.policy`) are intentionally NOT
 re-exported here: they import concrete pool classes that, during
@@ -11,6 +16,8 @@ time, creating a cycle). Import them directly from their submodules instead:
     from degenbot.arbitrage.hop_info import HopInfo, PathInfo, V2HopInfo, ...
     from degenbot.arbitrage.policy import PathPolicy, ...
 """
+
+from degenbot._ffi import UniswapArbEngine
 
 from .encoding import (
     ApprovalStrategy,
@@ -29,6 +36,7 @@ __all__ = (
     "FlatComposer",
     "NoApprovals",
     "PayloadComposer",
+    "UniswapArbEngine",
     "V4PoolKey",
     "generate_payloads",
 )

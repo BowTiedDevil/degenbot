@@ -12,7 +12,6 @@ import sqlalchemy
 from eth_typing import ChecksumAddress
 from sqlalchemy.orm import Session
 
-from degenbot._ffi import build_path_graph, find_paths_rust
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.database.models.pools import (
@@ -25,6 +24,7 @@ from degenbot.database.models.pools import (
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.logging import logger
+from degenbot.pathfinding import build_path_graph, find_paths_rust
 
 type PoolId = int
 type TokenId = int

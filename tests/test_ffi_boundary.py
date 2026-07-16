@@ -38,9 +38,10 @@ SCAN_DIR = REPO_ROOT / "src" / "degenbot"
 # ---------------------------------------------------------------------------
 KNOWN_VIOLATIONS: frozenset[str] = frozenset(
     {
-        "src/degenbot/bot.py",  # PyBot, PyBotIo — Bot lifecycle (765 lines)
-        "src/degenbot/arbitrage/engine_registry.py",  # UniswapArbEngine — engine wrapper (640 lines)
-        "src/degenbot/pathfinding.py",  # find_paths_rust, build_path_graph — pathfinding (696 lines)
+        # All 6 original violations have been migrated. The barrier rule is
+        # now absolute: no non-`__init__.py` file may import `degenbot._ffi`.
+        # To re-introduce a violation, extract a barrier `__init__.py` for
+        # the domain and reroute the leaf to import from the home.
     }
 )
 

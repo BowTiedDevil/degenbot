@@ -9,10 +9,10 @@ from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from hexbytes import HexBytes
 
-from degenbot._ffi import PyBot, PyBotIo
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.balancer.stable_pools import BalancerV2StablePool
+from degenbot.bot import PyBot, PyBotIo
 from degenbot.bot_lifecycle import close as _close_handles
 from degenbot.bot_lifecycle import (
     release_python_state as _release_python_state,
