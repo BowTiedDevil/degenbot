@@ -590,7 +590,7 @@ impl DegenbotDb {
 
     /// Read a user's `gho_discount` by `(market_id, address)` — the path #1
     /// lookup for the discount pre-pass (`build_discount_snapshot` in
-    /// `degenbot-aave-updater::config_dispatch`). Returns `None` when the user
+    /// `degenbot-aave::config_dispatch`). Returns `None` when the user
     /// doesn't exist (the path #2 RPC trigger — mirrors the Python
     /// `gho_users.get(user_address)` returning `None`). Pure read (does NOT
     /// create a user — `get_or_create_user_on_conn` is the dispatch path's

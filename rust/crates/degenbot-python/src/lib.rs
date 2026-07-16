@@ -23,7 +23,7 @@
 //!
 //! See individual module documentation for usage examples.
 
-/// PyO3 seam for the `degenbot-aave-updater` chunk loop (`run_aave_update`).
+/// PyO3 seam for the `degenbot-aave` chunk loop (`run_aave_update`).
 #[cfg(feature = "aave-updater")]
 pub mod aave_updater;
 #[cfg(feature = "abi")]

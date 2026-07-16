@@ -1,10 +1,15 @@
-//! Pure-Rust Aave V3 updater chunk-loop — the transactional apply core
-//! (epic `AZGJUN`, task `CXRGX4`).
+//! `degenbot-aave` — the Aave V3 domain crate: the updater chunk-loop + the
+//! position-analysis math.
 //!
-//! This is the apply half of the standalone-Rust `aave_update` core (mirroring
-//! `degenbot-pool-updater`'s `apply_chunk_writes_on_conn`). It is the
-//! **transactional core**: pure, synchronous, fixture-testable, NO RPC, NO
-//! `pyo3`, NO `database_path`, NO `open_for_writes`.
+//! Two sibling concerns live here, each in its own submodule:
+//! - [`updater`] — the transactional apply core (epic `AZGJUN`, task
+//!   `CXRGX4`): pure, synchronous, fixture-testable, NO RPC, NO `pyo3`, NO
+//!   `database_path`, NO `open_for_writes`.
+//! - [`analysis`] — the pure position health-factor / LTV / eMode / isolation
+//!   math (port of `src/degenbot/aave/analysis/core.py`).
+//!
+//! The updater is the apply half of the standalone-Rust `aave_update` core
+//! (mirroring `degenbot-pool-updater`'s `apply_chunk_writes_on_conn`).
 //!
 //! # The chunk-boundary commit invariant (inviolable)
 //!
@@ -46,38 +51,22 @@
 //! sibling `6SWY4R`) opens ONE `DegenbotDb`, begins ONE `Transaction`, calls
 //! [`apply_aave_chunk_writes_on_conn`], and commits.
 //!
-//! # The TWO roles this crate plays in the epic
+//! # The TWO roles the [`updater`] module plays in the epic
 //!
-//! - **Transactional apply core** (this file): the pure apply loop, callable
-//!   on any `&Connection`, fixture-tested with atomicity round-trip tests.
-//! - *(future `run_aave_update` orchestrator — sibling `6SWY4R`)*: RPC fetch +
-//!   decode into `AaveChunkEvent` + the outer chunk-advance loop over the
-//!   `aave_v3_markets.last_update_block` cursor.
+//! - **Transactional apply core** ([`updater::apply_aave_chunk_writes_on_conn`]):
+//!   the pure apply loop, callable on any `&Connection`, fixture-tested with
+//!   atomicity round-trip tests.
+//! - **`run_aave_update` orchestrator** ([`updater::run_aave_update`]): RPC
+//!   fetch + decode into `AaveChunkEvent` + the outer chunk-advance loop over
+//!   the `aave_v3_markets.last_update_block` cursor.
 //!
-//! No `pyo3` (enforced by `just check-no-pyo3-in-cores`). The `PyO3` seam will
-//! live in `degenbot-python`.
+//! No `pyo3` (enforced by `just check-no-pyo3-in-cores`). The `PyO3` seam lives
+//! in `degenbot-python`.
 
-pub mod aave_fetch;
-pub mod config_dispatch;
-pub mod gho_processor;
-pub mod operations;
-pub mod operations_parser;
-pub mod processors;
-mod run;
-pub mod transaction_processor;
-pub mod verify;
+pub mod analysis;
+pub mod updater;
 
-pub use gho_processor::{
-    GhoProcessorError, GhoScaledTokenBurnResult, GhoScaledTokenMintResult, GhoUserOperation,
-    UnifiedGhoProcessor,
-};
-pub use processors::{
-    ProcessorError, RayDivMode, RoundingStrategy, ScaledTokenBurnResult, ScaledTokenEventData,
-    ScaledTokenMintResult, ScaledTokenProcessor,
-};
-pub use run::{
-    activate_aave_market, apply_aave_chunk_writes_on_conn, deactivate_aave_market, run_aave_update,
-    AaveChunkEvent, AaveChunkProgress, AaveChunkWriteReport, AaveUpdateReport, ActivatedMarket,
-    NoProgress, ProgressSink, RunError,
-};
-pub use transaction_processor::{process_transaction, ProcessTxError};
+// Re-export the updater surface at the crate root so the PyO3 seam +
+// standalone consumers resolve `degenbot_aave::run_aave_update` etc. without
+// the `updater::` prefix. The analysis surface is likewise re-exported.
+pub use updater::*;

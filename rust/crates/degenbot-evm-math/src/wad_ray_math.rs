@@ -22,7 +22,7 @@
 //! - **Ceil** (`(a*b) // RAY + ((a*b) % RAY != 0)` — rounds toward +∞).
 //!
 //! `ray_mul` / `ray_div` take an optional [`RayRounding`] mode; the
-//! revision-aware token processors (`degenbot-aave-updater::processors`)
+//! revision-aware token processors (`degenbot-aave::processors`)
 //! select floor/ceil/half-up per the token revision's strategy (see the
 //! Python `processors/strategies.py::RoundingStrategy`).
 //!
