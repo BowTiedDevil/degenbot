@@ -14,7 +14,7 @@ from degenbot.database.models.pools import LiquidityPoolTable, UniswapFeeMixin
 from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata
-from degenbot.uniswap.deployments import resolve_deployer, resolve_v2_init_hash
+from degenbot.uniswap import resolve_deployer, resolve_v2_init_hash
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress

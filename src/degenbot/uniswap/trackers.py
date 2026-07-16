@@ -14,7 +14,7 @@ from degenbot.exceptions.pool import (
 )
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.types.abstract import AbstractPoolTracker
-from degenbot.uniswap.deployments import (
+from degenbot.uniswap import (
     resolve_deployer,
     resolve_v2_init_hash,
     resolve_v3_init_hash,
