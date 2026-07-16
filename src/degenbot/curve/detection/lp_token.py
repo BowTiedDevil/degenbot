@@ -8,9 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import eth_abi.abi
-from eth_abi.exceptions import DecodingError
-
+from degenbot.abi import AbiDecodeError, decode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
 from degenbot.exceptions import RpcError
@@ -51,10 +49,10 @@ def find_lp_token(
                 },
                 block=block_identifier,
             )
-            (lp_token_addr,) = eth_abi.abi.decode(types=["address"], data=lp_token_result)
+            (lp_token_addr,) = decode(["address"], lp_token_result)
             if lp_token_addr != _ZERO_ADDRESS:
                 return get_checksum_address(lp_token_addr)
-        except (RpcError, DecodingError, ValueError):
+        except (RpcError, AbiDecodeError, ValueError):
             continue
 
     return None

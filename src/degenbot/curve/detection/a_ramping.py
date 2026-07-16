@@ -8,9 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import eth_abi.abi
-from eth_abi.exceptions import DecodingError
-
+from degenbot.abi import AbiDecodeError, decode
 from degenbot.curve.detection.types import ARampingResult
 from degenbot.exceptions import RpcError
 from degenbot.provider.call_helpers import encode_function_calldata
@@ -47,7 +45,7 @@ def detect_a_ramping(
             },
             block=block_identifier,
         )
-        (initial_a,) = eth_abi.abi.decode(types=["uint256"], data=initial_a_result)
+        (initial_a,) = decode(["uint256"], initial_a_result)
 
         initial_a_time_result = io.call_raw(
             {
@@ -59,7 +57,7 @@ def detect_a_ramping(
             },
             block=block_identifier,
         )
-        (initial_a_time,) = eth_abi.abi.decode(types=["uint256"], data=initial_a_time_result)
+        (initial_a_time,) = decode(["uint256"], initial_a_time_result)
 
         future_a_result = io.call_raw(
             {
@@ -71,7 +69,7 @@ def detect_a_ramping(
             },
             block=block_identifier,
         )
-        (future_a,) = eth_abi.abi.decode(types=["uint256"], data=future_a_result)
+        (future_a,) = decode(["uint256"], future_a_result)
 
         future_a_time_result = io.call_raw(
             {
@@ -83,8 +81,8 @@ def detect_a_ramping(
             },
             block=block_identifier,
         )
-        (future_a_time,) = eth_abi.abi.decode(types=["uint256"], data=future_a_time_result)
-    except (RpcError, DecodingError, ValueError):
+        (future_a_time,) = decode(["uint256"], future_a_time_result)
+    except (RpcError, AbiDecodeError, ValueError):
         return ARampingResult(
             initial_a=None,
             initial_a_time=None,

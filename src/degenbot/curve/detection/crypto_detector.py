@@ -10,9 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import eth_abi.abi
-from eth_abi.exceptions import DecodingError
-
+from degenbot.abi import AbiDecodeError, decode
 from degenbot.curve.detection.types import CryptoDetectionResult
 from degenbot.exceptions import RpcError
 from degenbot.provider.call_helpers import encode_function_calldata
@@ -55,7 +53,7 @@ def detect_crypto_params(
             },
             block=block_identifier,
         )
-        (fee_gamma_val,) = eth_abi.abi.decode(types=["uint256"], data=fee_gamma_result)
+        (fee_gamma_val,) = decode(["uint256"], fee_gamma_result)
         if fee_gamma_val > 0:
             fee_gamma = fee_gamma_val
 
@@ -71,9 +69,9 @@ def detect_crypto_params(
                     },
                     block=block_identifier,
                 )
-                (mid_fee_val,) = eth_abi.abi.decode(types=["uint256"], data=mid_fee_result)
+                (mid_fee_val,) = decode(["uint256"], mid_fee_result)
                 mid_fee = mid_fee_val
-            except (RpcError, DecodingError, ValueError):
+            except (RpcError, AbiDecodeError, ValueError):
                 pass
 
             try:
@@ -87,9 +85,9 @@ def detect_crypto_params(
                     },
                     block=block_identifier,
                 )
-                (out_fee_val,) = eth_abi.abi.decode(types=["uint256"], data=out_fee_result)
+                (out_fee_val,) = decode(["uint256"], out_fee_result)
                 out_fee = out_fee_val
-            except (RpcError, DecodingError, ValueError):
+            except (RpcError, AbiDecodeError, ValueError):
                 pass
 
             try:
@@ -103,11 +101,11 @@ def detect_crypto_params(
                     },
                     block=block_identifier,
                 )
-                (gamma_val,) = eth_abi.abi.decode(types=["uint256"], data=gamma_result)
+                (gamma_val,) = decode(["uint256"], gamma_result)
                 gamma = gamma_val
-            except (RpcError, DecodingError, ValueError):
+            except (RpcError, AbiDecodeError, ValueError):
                 pass
-    except (RpcError, DecodingError, ValueError):
+    except (RpcError, AbiDecodeError, ValueError):
         pass
 
     # Fetch offpeg_fee_multiplier (used by some lending/crypto pools)
@@ -122,9 +120,9 @@ def detect_crypto_params(
             },
             block=block_identifier,
         )
-        (offpeg_val,) = eth_abi.abi.decode(types=["uint256"], data=offpeg_result)
+        (offpeg_val,) = decode(["uint256"], offpeg_result)
         offpeg_fee_multiplier = offpeg_val
-    except (RpcError, DecodingError, ValueError):
+    except (RpcError, AbiDecodeError, ValueError):
         pass
 
     return CryptoDetectionResult(

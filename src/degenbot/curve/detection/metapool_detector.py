@@ -12,9 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import eth_abi.abi
-from eth_abi.exceptions import DecodingError
-
+from degenbot.abi import AbiDecodeError, decode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.detection.types import MetapoolDetectionResult
 from degenbot.exceptions import RpcError
@@ -60,7 +58,7 @@ def detect_metapool(
                 },
                 block=block_identifier,
             )
-            (is_meta,) = eth_abi.abi.decode(types=["bool"], data=is_meta_result)
+            (is_meta,) = decode(["bool"], is_meta_result)
             if not is_meta:
                 # Try next registry
                 continue
@@ -85,9 +83,9 @@ def detect_metapool(
                 },
                 block=block_identifier,
             )
-            underlying_addresses = eth_abi.abi.decode(
-                types=["address[8]"],
-                data=underlying_coins_result,
+            underlying_addresses = decode(
+                ["address[8]"],
+                underlying_coins_result,
             )[0]
 
             # Filter out zero addresses
@@ -103,7 +101,7 @@ def detect_metapool(
                 base_pool_address=base_pool_address,
                 tokens_underlying=tuple(tokens_underlying),
             )
-        except (RpcError, DecodingError, ValueError):
+        except (RpcError, AbiDecodeError, ValueError):
             continue
 
     return MetapoolDetectionResult(
@@ -138,9 +136,9 @@ def _resolve_base_pool_address(
             },
             block=block_identifier,
         )
-        (base_pool_address,) = eth_abi.abi.decode(types=["address"], data=base_pool_result)
+        (base_pool_address,) = decode(["address"], base_pool_result)
         return get_checksum_address(base_pool_address)
-    except (RpcError, DecodingError, ValueError):
+    except (RpcError, AbiDecodeError, ValueError):
         pass
 
     # Try get_base_pool() on the registry
@@ -155,9 +153,9 @@ def _resolve_base_pool_address(
             },
             block=block_identifier,
         )
-        (base_pool_address,) = eth_abi.abi.decode(types=["address"], data=base_pool_result)
+        (base_pool_address,) = decode(["address"], base_pool_result)
         return get_checksum_address(base_pool_address)
-    except (RpcError, DecodingError, ValueError):
+    except (RpcError, AbiDecodeError, ValueError):
         pass
 
     # Last resort: if the pool's second token is the 3Crv LP token,
