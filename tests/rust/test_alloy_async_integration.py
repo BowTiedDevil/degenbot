@@ -7,7 +7,7 @@ pyo3-async-runtimes.
 import pytest
 from hexbytes import HexBytes
 
-from degenbot._ffi import AsyncAlloyProvider
+from degenbot._ffi.provider import AsyncAlloyProvider
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"

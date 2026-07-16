@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Any
 
 from hexbytes import HexBytes
 
-from degenbot._ffi import AlloyProvider as RustAlloyProvider
+from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 
 if TYPE_CHECKING:
     from degenbot.types.rpc_types import BlockData, TxParams

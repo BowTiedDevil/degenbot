@@ -32,7 +32,7 @@ from degenbot.database.models.pools import (
     LiquidityPositionTable,
     UniswapV3PoolTable,
 )
-from degenbot._ffi import AlloyProvider as RustAlloyProvider
+from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot._ffi import PyBotIo
 from degenbot.database._ffi import db_create_new_database
 

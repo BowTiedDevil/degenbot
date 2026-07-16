@@ -30,10 +30,10 @@ from typing import TYPE_CHECKING
 
 from eth_typing import ChecksumAddress as Address
 
-from degenbot._ffi import Contract as _Contract
-from degenbot._ffi import decode_return_data as _decode_return_data
-from degenbot._ffi import encode_function_call as _encode_function_call
-from degenbot._ffi import get_function_selector as _get_function_selector
+from degenbot._ffi.contract import Contract as _Contract
+from degenbot._ffi.contract import decode_return_data as _decode_return_data
+from degenbot._ffi.contract import encode_function_call as _encode_function_call
+from degenbot._ffi.contract import get_function_selector as _get_function_selector
 
 if TYPE_CHECKING:
     from degenbot.provider import AlloyProvider
