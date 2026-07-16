@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, cast
 from weakref import WeakSet
 
 from degenbot.abi import decode as abi_decode
-from degenbot.aerodrome.functions import (
-    calc_exact_in_stable,
+from degenbot.aerodrome.math import (
+    calc_exact_in_stable_solidly as _calc_exact_in_stable_solidly,
 )
 from degenbot.aerodrome.types import (
     AerodromeV2PoolExternalUpdate,
@@ -494,14 +494,15 @@ class AerodromeV2Pool(
                 _fee: Fraction = fee,
                 _token_in: Literal[0, 1] = token_in,
             ) -> int:
-                return calc_exact_in_stable(
-                    amount_in=amount_in,
-                    token_in=_token_in,
-                    reserves0=_reserves0,
-                    reserves1=_reserves1,
-                    decimals0=_decimals0,
-                    decimals1=_decimals1,
-                    fee=_fee,
+                return _calc_exact_in_stable_solidly(
+                    amount_in,
+                    _token_in,
+                    _reserves0,
+                    _reserves1,
+                    _decimals0,
+                    _decimals1,
+                    _fee.numerator,
+                    _fee.denominator,
                 )
 
             return SolidlyStableHop(
