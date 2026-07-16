@@ -25,7 +25,7 @@ from degenbot.provider.call_helpers import encode_function_calldata
 if TYPE_CHECKING:
     from hexbytes import HexBytes
 
-    from degenbot._ffi import PyBot
+    from degenbot.bot import PyBot
     from degenbot.builders.pool_io import PoolIO
     from degenbot.database.session_manager import DatabaseSessionManager
     from degenbot.registry import TokenRegistry

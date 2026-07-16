@@ -29,12 +29,12 @@ from degenbot.provider.call_helpers import encode_function_calldata
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from degenbot._ffi import PyLiquidityPool
     from degenbot.builders.context import BuilderContext
     from degenbot.builders.pool_io import PoolIO
     from degenbot.curve.detection.types import MetapoolDetectionResult
     from degenbot.curve.strategies import PoolStrategies
     from degenbot.erc20 import Erc20Token
+    from degenbot.types import PyLiquidityPool
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
     from degenbot.types.rpc_types import BlockIdentifier

@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from degenbot.erc20 import Erc20Token, EtherPlaceholder
 
 if TYPE_CHECKING:
-    from degenbot._ffi import PyBot
+    from degenbot.bot import PyBot
 
 
 def make_erc20(

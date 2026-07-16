@@ -23,7 +23,7 @@ import pytest
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.curve.types import BasePoolPort, DyCalculationInputs
-from degenbot._ffi import PyBot
+from degenbot.bot import PyBot
 from degenbot.exceptions import DegenbotValueError
 from tests.helpers.curve_pool_factory import make_curve_pool
 from tests.helpers.erc20_factory import make_erc20

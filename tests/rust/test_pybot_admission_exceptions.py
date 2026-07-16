@@ -36,7 +36,7 @@ from __future__ import annotations
 import pytest
 
 from degenbot import _ffi
-from degenbot._ffi import PyBot
+from degenbot.bot import PyBot
 
 # Cross-checked mainnet V2/V3 vectors (see tests/registry/test_registration_verify).
 UNISWAP_V2_FACTORY = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"

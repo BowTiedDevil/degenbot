@@ -1117,3 +1117,7 @@
 {"type":"state","ts":"2026-07-16T02:03:43.212760904Z","data":{"id":"TSYECF","state":"canceled","ts":"2026-07-16T02:03:43.212760904Z"}}
 {"type":"claim","ts":"2026-07-16T02:03:53.986260815Z","data":{"id":"WGN4ZM","agent_id":"sonnet@pi","ts":"2026-07-16T02:03:53.986260815Z"}}
 {"type":"state","ts":"2026-07-16T02:03:53.986260815Z","data":{"id":"WGN4ZM","state":"doing","ts":"2026-07-16T02:03:53.986260815Z"}}
+{"type":"result","ts":"2026-07-16T02:07:12.726148603Z","data":{"task_id":"WGN4ZM","summary":"src/degenbot/types/__init__.py","path":"src/degenbot/types/__init__.py","sha256_at_attach":"e070b42ae0a7dbedf761114f7c7af8e968d416acf264bfc7180acf48191a44fe","mtime_at_attach":"2026-07-16T02:05:54.795122713Z","git_commit_at_attach":"bd8a3320329123d2b77c7494dc58be7fa0d83b71","ts":"2026-07-16T02:07:12.726148603Z"}}
+{"type":"state","ts":"2026-07-16T02:07:12.726148603Z","data":{"id":"WGN4ZM","state":"done","ts":"2026-07-16T02:07:12.726148603Z"}}
+{"type":"claim","ts":"2026-07-16T02:07:15.404557086Z","data":{"id":"A47JML","agent_id":"sonnet@pi","ts":"2026-07-16T02:07:15.404557086Z"}}
+{"type":"state","ts":"2026-07-16T02:07:15.404557086Z","data":{"id":"A47JML","state":"doing","ts":"2026-07-16T02:07:15.404557086Z"}}

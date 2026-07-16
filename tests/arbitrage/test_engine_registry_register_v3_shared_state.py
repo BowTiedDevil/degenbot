@@ -18,7 +18,8 @@ import asyncio
 import dataclasses
 
 from degenbot.arbitrage.engine_registry import EngineRegistry
-from degenbot._ffi import PyBot, UniswapArbEngine
+from degenbot.bot import PyBot
+from degenbot.arbitrage.engine_registry import UniswapArbEngine
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v3_pool_factory import make_v3_pool
 

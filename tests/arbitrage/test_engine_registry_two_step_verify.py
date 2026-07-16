@@ -16,7 +16,7 @@ import inspect
 import pytest
 
 import degenbot.arbitrage.engine_registry as runner
-from degenbot._ffi import VerificationMismatchError
+from degenbot.exceptions import VerificationMismatchError
 
 
 class _RecordingVerifyEngine:

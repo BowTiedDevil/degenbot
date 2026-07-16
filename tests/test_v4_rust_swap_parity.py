@@ -20,7 +20,7 @@ import pytest
 from degenbot.crypto import keccak256
 
 from degenbot.constants import ZERO_ADDRESS
-from degenbot._ffi import PyBot
+from degenbot.bot import PyBot
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.v3_libraries import MIN_SQRT_RATIO as MIN_SQRT_PRICE
 from tests.helpers.erc20_factory import make_erc20

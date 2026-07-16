@@ -35,7 +35,6 @@ import eth_abi.abi
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 
-from degenbot._ffi import PyLiquidityPool
 from degenbot.arbitrage.types import UniswapV4PoolSwapAmounts, V4PoolKey
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
@@ -49,6 +48,7 @@ from degenbot.exceptions.pool import (
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
+from degenbot.types import PyLiquidityPool
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import PublisherMixin, Subscriber

@@ -26,8 +26,8 @@ from degenbot.uniswap.v2_functions import (
 )
 
 if TYPE_CHECKING:
-    from degenbot._ffi import PyLiquidityPool
     from degenbot.erc20 import Erc20Token
+    from degenbot.types import PyLiquidityPool
     from degenbot.uniswap.v2_types import UniswapV2PoolState
 
 

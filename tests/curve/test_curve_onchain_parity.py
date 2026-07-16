@@ -55,7 +55,7 @@ from degenbot.curve.strategies import (
     YDVariant,
     YVariant,
 )
-from degenbot._ffi import PyBot
+from degenbot.bot import PyBot
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.fakes.curve_data_provider import FakeCurveDataProvider
 from tests.helpers.curve_pool_factory import make_curve_pool

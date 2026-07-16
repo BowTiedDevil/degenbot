@@ -22,7 +22,7 @@ from degenbot.builders.tick_data_fetcher import (
     TickDataTypes,
     make_tick_data_fetcher_from_async_io,
 )
-from degenbot._ffi import PyBot
+from degenbot.bot import PyBot
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
