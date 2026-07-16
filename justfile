@@ -76,18 +76,14 @@ dev:
 build-wheels:
     uv run maturin build --release
 
-# Compile Solidity test contracts
-compile-test-contracts:
-    cd tests/aave/libraries/contracts && forge build --quiet
-
 # Run Python tests
-test-python: compile-test-contracts
+test-python:
     uv run pytest -x -q --no-header
 
 # Run only on-chain-oracle parity tests in REPLAY mode (offline, CI-safe, no RPC/secrets).
 # Replay is read-only (asserts against recorded ints), so xdist parallelism is
 # safe — the shared-golden-file race only affects record mode (see below).
-test-offline-parity: compile-test-contracts
+test-offline-parity:
     uv run pytest -m onchain_oracle -q --no-header
 
 # Re-populate golden files for on-chain-oracle parity tests. Requires a working
@@ -97,7 +93,7 @@ test-offline-parity: compile-test-contracts
 # test function and accumulate keys across params; xdist parallelism would race
 # the shared file (last-writer-wins, losing keys). Replay is read-only and safe
 # under xdist, but record accumulates writes.
-record-golden *args: compile-test-contracts
+record-golden *args:
     DEGENBOT_GOLDEN_MODE=record uv run pytest -m onchain_oracle -q --no-header -n0 {{ args }}
 
 # Verify every shipped deployment address is actually deployed on-chain (cast).

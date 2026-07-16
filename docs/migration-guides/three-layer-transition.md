@@ -237,7 +237,7 @@ delegation seam, not just the numbers.
 ```
 just test-rust            # cargo test --workspace (Rust unit + integration)
 just test-rust-python     # pytest tests/rust (PyO3-wrapped Python tests)
-just test-python          # full pytest suite (compile-test-contracts first)
+just test-python          # full pytest suite
 just lint-rust            # clippy --fix --all-targets --deny warnings
 just check-no-pyo3-in-cores  # cores + umbrella pyo3-free under default features
 just lint-python          # ruff + ty
