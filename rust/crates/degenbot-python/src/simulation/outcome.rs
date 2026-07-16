@@ -38,7 +38,7 @@ use std::collections::HashMap;
 /// Constructed by `dispatch_profitable_py` (A4); the cockpit renders the
 /// `[sim]` summary from the counters + `fail_buckets`, then hands
 /// `gas_profitable` straight to `dispatch_and_submit_py`.
-#[pyclass(name = "PyDispatchOutcome", module = "degenbot._ffi")]
+#[pyclass(name = "PyDispatchOutcome", module = "degenbot._ffi.simulation")]
 pub struct PyDispatchOutcome {
     /// The gas-profitable candidates, joined to `SubmitCandidate` shape at
     /// result-wrap time (A4). Returned as `list[PySubmitCandidate]`.

@@ -18,16 +18,8 @@ names so driver code does not import ``degenbot_rs``.
 from __future__ import annotations
 
 import degenbot.dispatch as d
-from degenbot._ffi import (
-    PyDispatchCandidate,
-    PyDispatchOutcome,
-    PyDispatcher,
-    PySimulateContext,
-    PyTxSigner,
-    dispatch_and_submit_py,
-    dispatch_profitable_py,
-    fetch_fee_history_py,
-)
+from degenbot._ffi.simulation import PyDispatchCandidate, PyDispatchOutcome, PySimulateContext, dispatch_profitable_py
+from degenbot._ffi.submission import PyDispatcher, PyTxSigner, dispatch_and_submit_py, fetch_fee_history_py
 
 
 def test_dispatch_candidate_is_identity_alias() -> None:

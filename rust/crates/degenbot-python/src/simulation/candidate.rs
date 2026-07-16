@@ -31,7 +31,7 @@ use degenbot_simulation::dispatch_profitable::DispatchCandidate;
 #[pyclass(
     name = "PyDispatchCandidate",
     skip_from_py_object,
-    module = "degenbot._ffi"
+    module = "degenbot._ffi.simulation"
 )]
 // `inner` is read by `dispatch_profitable_py` (A4, QQFTB4) — not yet landed;
 // the field is dead until then.
