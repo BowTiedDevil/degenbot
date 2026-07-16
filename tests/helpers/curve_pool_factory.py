@@ -15,18 +15,18 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from degenbot.bot import PyBot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.curve_stableswap_liquidity_pool import (
     CurveStableswapPool,
     _compute_rate_and_precision_multipliers,
 )
 from degenbot.curve.strategies import PoolStrategies
-from degenbot.bot import PyBot
 
 if TYPE_CHECKING:
     from degenbot.curve.curve_stableswap_liquidity_pool import CurveDataProvider
-    from degenbot.types import PyLiquidityPool
     from degenbot.erc20.erc20 import Erc20Token
+    from degenbot.types import PyLiquidityPool
     from degenbot.types.aliases import BlockNumber
 
 
@@ -165,7 +165,7 @@ def make_curve_pool(
     handle: PyLiquidityPool | None = bot.get_pool(pool_id)
     assert handle is not None, "register_curve_pool returned a pool_id with no handle"
 
-    return pool_class._from_py_pool(handle)  # noqa: SLF001
+    return pool_class._from_py_pool(handle)
 
 
 __all__ = [

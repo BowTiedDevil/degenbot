@@ -7,7 +7,6 @@ instance (no forking) since the contracts are stateless with pure functions only
 import json
 import pathlib
 from collections.abc import Generator
-from typing import TYPE_CHECKING
 
 import pytest
 
@@ -15,9 +14,6 @@ from degenbot.fork import AnvilFork
 from degenbot.provider import AlloyProvider
 from tests.helpers.w3_contract import make_contract
 
-if TYPE_CHECKING:
-    pass
-    
 
 def _load_contract_artifact(artifact_path: pathlib.Path) -> dict:
     """Load a compiled contract artifact (ABI + bytecode)."""

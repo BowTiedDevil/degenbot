@@ -11,7 +11,6 @@ the now-Rust ``classify_revert`` label).
 import json
 
 from examples.eth_backrun_helpers import (
-    BPS_DENOM,
     filter_thin_margin_results,
     format_sim_diag_line,
 )

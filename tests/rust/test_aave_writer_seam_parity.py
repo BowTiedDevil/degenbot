@@ -461,7 +461,7 @@ def test_decode_reserve_configuration_bitmap_returns_oracle_dict(tmp_path: Path)
     Python ``_decode_reserve_configuration_bitmap`` oracle returns is present
     with the expected value for the canonical bitmap.
     """
-    _ = tmp_path  # noqa: F841 (shape parity)
+    _ = tmp_path
     cfg = db_decode_reserve_configuration_bitmap(_known_config_bitmap())
 
     expected_keys = {

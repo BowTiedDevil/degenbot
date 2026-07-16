@@ -1,16 +1,14 @@
 import pytest
 from hexbytes import HexBytes
 
-from degenbot.fork import AnvilFork
-from degenbot.bot import Bot
+from degenbot.bot import Bot, PyBot
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.bot import PyBot
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.infrastructure import NoPriceOracle
-from degenbot.provider import AlloyProvider
+from degenbot.fork import AnvilFork
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.erc20_factory import make_ether_placeholder
 

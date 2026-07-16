@@ -37,9 +37,9 @@ from typing import Any, Self
 import pytest
 
 from degenbot.aerodrome.pools import AerodromeV3Pool
-from degenbot.fork import AnvilFork
-from degenbot.checksum_cache import get_checksum_address
 from degenbot.bot import PyBot
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.fork import AnvilFork
 from degenbot.uniswap.v3_libraries import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 from tests.aerodrome.test_aerodrome_pools import AERODROME_V3_QUOTER_ABI
 from tests.helpers.erc20_factory import make_erc20

@@ -75,7 +75,7 @@ class TestPythonEncoderRetired:
 class TestRustSeamPresent:
     """The Rust extension must expose every retired symbol."""
 
-    @pytest.fixture(autouse=True)  # noqa: RUF076
+    @pytest.fixture(autouse=True)
     def _import_rs(self) -> None:
         from degenbot._ffi import executor as _ffi_executor
 

@@ -45,7 +45,11 @@ from __future__ import annotations
 import pytest
 
 import degenbot.exceptions
-from degenbot.exceptions import DynamicFeePoolRejectedError, HookedPoolRejectedError, PoolRegistrationError
+from degenbot.exceptions import (
+    DynamicFeePoolRejectedError,
+    HookedPoolRejectedError,
+    PoolRegistrationError,
+)
 
 
 def test_hooked_pool_rejected_error_is_exposed() -> None:

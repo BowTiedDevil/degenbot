@@ -21,11 +21,11 @@ from __future__ import annotations
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
+from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
+from degenbot.bot import PyBotIo
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models import Base
 from degenbot.database.models.erc20 import Erc20TokenTable
-from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
-from degenbot.bot import PyBotIo
 from degenbot.db import db_create_new_database
 
 CHAIN = 1

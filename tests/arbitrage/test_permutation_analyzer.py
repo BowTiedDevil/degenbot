@@ -169,7 +169,7 @@ def test_classify_drift_with_no_block_metadata_is_real_lag() -> None:
 # analyze_log: integration (sim-diag parsing, NoProfit, fallback, verify basis)
 # ---------------------------------------------------------------------------
 
-from logs.permutation_analyzer import analyze_log, tsv_header, result_to_tsv_row
+from logs.permutation_analyzer import analyze_log, result_to_tsv_row, tsv_header
 
 
 def test_analyze_log_classifies_reverts_from_sim_diag_lines() -> None:

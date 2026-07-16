@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot.uniswap.math import get_tick_word_and_bit_position as cl_get_tick_word_and_bit_position
+from degenbot.uniswap.math import (
+    get_tick_word_and_bit_position as cl_get_tick_word_and_bit_position,
+)
 
 # Hardcoded ``TickBitmap.position`` expectations for the parametrized cases
 # (EVM toward-zero division on the spacing compression, then word=compressed>>8,
@@ -61,7 +63,7 @@ def test_cl_get_tick_word_and_bit_position_parity(tick: int, tick_spacing: int) 
     Solidity-equivalent — including the negative-tick toward-zero division +
     ``rem_euclid(256)`` bit-position edge (the V3 hot path must not regress on
     tick-bitmap lookups)."""
-    expected = _EXPECTED_WORD_BIT[(tick, tick_spacing)]
+    expected = _EXPECTED_WORD_BIT[tick, tick_spacing]
     rs_word, rs_bit = cl_get_tick_word_and_bit_position(tick, tick_spacing)
     assert (rs_word, int(rs_bit)) == expected, (
         f"tick={tick} spacing={tick_spacing}: rust={(rs_word, int(rs_bit))} expected={expected}"

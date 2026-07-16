@@ -33,20 +33,24 @@ with a small residual from rate timestamp differences.
 import json
 
 import pytest
-from degenbot.exceptions import ContractLogicError
 
-from degenbot.fork import AnvilFork
 from degenbot.balancer.deployments import (
     BALANCER_V2_VAULT_ADDRESS,
     BALANCERQUERIES_CONTRACT_ADDRESS,
 )
 from degenbot.balancer.libraries.constants import ONE
-from degenbot.checksum_cache import get_checksum_address
 from degenbot.balancer.math import (
     stable_calc_in_given_out as _calc_in_given_out,
+)
+from degenbot.balancer.math import (
     stable_calc_out_given_in as _calc_out_given_in,
+)
+from degenbot.balancer.math import (
     stable_calculate_invariant_deployed as _calculate_invariant_deployed,
 )
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.exceptions import ContractLogicError
+from degenbot.fork import AnvilFork
 
 pytestmark = pytest.mark.online_rpc
 

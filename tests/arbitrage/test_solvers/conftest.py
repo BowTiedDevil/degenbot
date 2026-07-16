@@ -1,8 +1,8 @@
 from fractions import Fraction
 
 from degenbot.types.hop_types import ConstantProductHop
-from degenbot.uniswap.v3_libraries.constants import Q96
 from degenbot.uniswap.v3_libraries import get_sqrt_ratio_at_tick
+from degenbot.uniswap.v3_libraries.constants import Q96
 
 # ACDWOC retire: the f64 Möbius-math conftest helpers went with the deleted
 # solver stack (the `brent_solve_hops` / `make_v3_tick_range` helpers used

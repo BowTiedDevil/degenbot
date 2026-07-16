@@ -40,7 +40,6 @@ from degenbot._ffi.aave import (
 from degenbot._ffi.cancel import CancelHandle
 from tests.aave.writer_parity.harness import (
     FIXTURE_BLOCK,
-    LIQUIDATION_CALL_TOPIC,
     make_erc20_transfer_log,
     make_liquidation_call_log,
     make_reserve_initialized_log,

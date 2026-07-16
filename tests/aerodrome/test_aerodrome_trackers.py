@@ -1,8 +1,8 @@
 import pytest
 
 from degenbot.aerodrome.trackers import AerodromeV2PoolTracker, AerodromeV3PoolTracker
-from degenbot.fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.fork import AnvilFork
 
 BASE_AERODROME_V2_FACTORY = get_checksum_address("0x420DD381b31aEf6683db6B902084cB0FFECe40Da")
 BASE_AERODROME_V3_FACTORY = get_checksum_address("0x5e7BB104d84c7CB9B682AaC2F3d509f5F406809A")

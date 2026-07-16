@@ -1,18 +1,15 @@
 import itertools
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import eth_abi.abi
 import eth_abi.exceptions
 import pytest
-from degenbot.crypto import function_selector, keccak256
-from degenbot.checksum_cache import get_checksum_address
-from degenbot.exceptions import ContractLogicError
-from degenbot.types.rpc_types import TxParams
 
-from degenbot.fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.crypto import function_selector, keccak256
 from degenbot.curve.abi import CURVE_V1_FACTORY_ABI, CURVE_V1_POOL_ABI, CURVE_V1_REGISTRY_ABI
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
+from degenbot.exceptions import ContractLogicError
 from degenbot.exceptions.arbitrage import NoLiquidity
 from degenbot.exceptions.pool import (
     BrokenPool,
@@ -20,7 +17,8 @@ from degenbot.exceptions.pool import (
     InvalidSwapInputAmount,
     MissingCurveData,
 )
-from degenbot.provider import AlloyProvider
+from degenbot.fork import AnvilFork
+from degenbot.types.rpc_types import TxParams
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.w3_contract import make_contract
@@ -28,8 +26,6 @@ from tests.helpers.w3_contract import make_contract
 pytestmark = pytest.mark.online_rpc
 
 
-if TYPE_CHECKING:
-    from typing import TypedDict
 Timestamp = int
 
 

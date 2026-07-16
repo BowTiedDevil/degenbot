@@ -148,7 +148,7 @@ class TestDeploymentRecordShape:
 class TestOverlayMerge:
     """The ``[deployments] overlay`` config mechanism merges user deployments."""
 
-    def test_programmatic_overlay_overrides_on_conflict(self, tmp_path) -> None:  # noqa: ANN001
+    def test_programmatic_overlay_overrides_on_conflict(self, tmp_path) -> None:
         """An overlay entry with the same (chain_id, factory) overrides the shipped default."""
         # Override Uniswap V2 mainnet with a different init_hash (simulating
         # a user correcting/replacing a deployment).
@@ -175,11 +175,11 @@ class TestOverlayMerge:
 
         records = load_deployments(overlay_path=overlay_file)
         # The overridden entry carries the overlay's init_hash + name.
-        record = {(r.chain_id, r.factory): r for r in records}[(1, factory)]
+        record = {(r.chain_id, r.factory): r for r in records}[1, factory]
         assert record.name == "Custom Uniswap V2"
         assert record.init_hash == "0x" + "ab" * 32
 
-    def test_programmatic_overlay_adds_new_deployment(self, tmp_path) -> None:  # noqa: ANN001
+    def test_programmatic_overlay_adds_new_deployment(self, tmp_path) -> None:
         """An overlay entry with a new (chain_id, factory) appends to the shipped set."""
         import json
 
@@ -205,13 +205,13 @@ class TestOverlayMerge:
         overlay_file.write_text(json.dumps(overlay), encoding="utf-8")
 
         records = load_deployments(overlay_path=overlay_file)
-        record = {(r.chain_id, r.factory): r for r in records}[(999, new_factory)]
+        record = {(r.chain_id, r.factory): r for r in records}[999, new_factory]
         assert record.name == "My Custom DEX"
         assert record.init_hash == "0x" + "cd" * 32
         # The shipped entries are unaffected.
         assert len(records) > 1
 
-    def test_missing_overlay_file_is_silent_noop(self, tmp_path) -> None:  # noqa: ANN001
+    def test_missing_overlay_file_is_silent_noop(self, tmp_path) -> None:
         """A non-existent overlay path falls back to shipped defaults only."""
         records = load_deployments(overlay_path=tmp_path / "nonexistent.json")
         # Same count as the shipped JSON (no overlay applied).

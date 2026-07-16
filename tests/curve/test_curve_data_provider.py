@@ -6,11 +6,10 @@ and correctly delegates to the underlying AlloyProvider.
 
 import eth_abi.abi
 from hexbytes import HexBytes
-from degenbot.crypto import function_selector, keccak256
-from degenbot.checksum_cache import get_checksum_address
 
 from degenbot.builders.pool_io import SyncPoolIO
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.crypto import function_selector
 from degenbot.curve.data_provider_impl import CurveDataProviderImpl
 from degenbot.curve.types import CurveDataProvider, LendingRateStyle
 from degenbot.exceptions import ContractLogicError

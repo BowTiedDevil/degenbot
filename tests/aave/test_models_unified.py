@@ -7,7 +7,6 @@ class. Tests verify construction, property derivation, and validation routing.
 import pytest
 from eth_typing import ChecksumAddress
 from pydantic import ValidationError
-from degenbot.types.rpc_types import LogReceipt
 
 from degenbot.aave.events import ScaledTokenEventType
 from degenbot.aave.models import (
@@ -16,6 +15,7 @@ from degenbot.aave.models import (
     _TRANSFER_TYPES,
     EnrichedScaledTokenEvent,
 )
+from degenbot.types.rpc_types import LogReceipt
 
 
 def _fake_address(n: int = 1) -> ChecksumAddress:

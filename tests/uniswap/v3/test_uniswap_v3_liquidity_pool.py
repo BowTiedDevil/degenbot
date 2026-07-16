@@ -7,14 +7,12 @@ import pydantic_core
 import pytest
 from eth_typing import ChainId
 from hexbytes import HexBytes
-from degenbot.exceptions import ContractLogicError
 
-from degenbot.fork import AnvilFork
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_INT256
-from degenbot.uniswap.math import get_tick_word_and_bit_position as cl_get_tick_word_and_bit_position
 from degenbot.erc20.erc20 import Erc20Token
+from degenbot.exceptions import ContractLogicError
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import (
     ExternalUpdateError,
@@ -22,11 +20,14 @@ from degenbot.exceptions.pool import (
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
-from degenbot.provider import AlloyProvider
+from degenbot.fork import AnvilFork
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.deployments import (
     UniswapFactoryDeployment,
     UniswapV3ExchangeDeployment,
+)
+from degenbot.uniswap.math import (
+    get_tick_word_and_bit_position as cl_get_tick_word_and_bit_position,
 )
 from degenbot.uniswap.v3_libraries import (
     MAX_SQRT_RATIO,

@@ -18,17 +18,16 @@ from fractions import Fraction
 
 import pytest
 from hexbytes import HexBytes
-from degenbot.exceptions import ContractLogicError
 
-from degenbot.fork import AnvilFork
 from degenbot.balancer.deployments import (
     BALANCER_V2_VAULT_ADDRESS,
     BALANCERQUERIES_CONTRACT_ADDRESS,
 )
 from degenbot.balancer.pools import BalancerV2Pool, detect_pow_version
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.exceptions import ContractLogicError
 from degenbot.exceptions.pool import EVMRevertError
-from degenbot.provider import AlloyProvider
+from degenbot.fork import AnvilFork
 from tests.helpers.balancer_pool_factory import make_balancer_weighted_pool
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.w3_contract import make_contract

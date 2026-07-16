@@ -25,7 +25,6 @@ import eth_abi.abi
 from degenbot.builders.camelot_builder import CamelotBuilder
 from degenbot.camelot.pools import CamelotLiquidityPool
 from hexbytes import HexBytes
-from degenbot.crypto import function_selector, keccak256
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.builders.aerodrome_v2_builder import AerodromeV2Builder
@@ -33,6 +32,7 @@ from degenbot.builders.context import BuilderContext
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.builders.pool_io import SyncPoolIO
 from degenbot.builders.request import BuildPoolRequest
+from degenbot.crypto import function_selector
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.erc20 import Erc20Token
 from degenbot.registry import PoolRegistry, TokenRegistry

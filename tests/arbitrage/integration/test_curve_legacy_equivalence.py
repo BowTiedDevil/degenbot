@@ -12,12 +12,12 @@ from fractions import Fraction
 import pytest
 
 from degenbot.arbitrage.solvers._solver_utils import (
-    _simulate_path,
     _simulate_mixed_path,
     _simulate_mixed_path_int,
+    _simulate_path,
 )
-from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.bot import PyBot
+from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from tests.fakes.curve_data_provider import FakeCurveDataProvider
 from tests.fakes.tokens import FakeToken
 from tests.helpers.curve_pool_factory import make_curve_pool

@@ -9,8 +9,8 @@ from fractions import Fraction
 
 import pytest
 
-from degenbot.constants import ZERO_ADDRESS
 from degenbot.bot import PyBot
+from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.pancakeswap.pools import PancakeswapV3Pool
 from degenbot.types.abstract import AbstractLiquidityPool

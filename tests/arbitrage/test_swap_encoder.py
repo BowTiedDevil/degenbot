@@ -6,8 +6,6 @@ ApprovalStrategy and PayloadComposer are pluggable at the pipeline level.
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress
-from degenbot.crypto import function_selector
-from degenbot.checksum_cache import get_checksum_address
 
 from degenbot.arbitrage.encoding import (
     EncodedCall,
@@ -19,6 +17,8 @@ from degenbot.arbitrage.types import (
     UniswapV3PoolSwapAmounts,
 )
 from degenbot.bot import PyBot
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.crypto import function_selector
 from tests.helpers.erc20_factory import make_erc20
 
 _PY_BOT = PyBot()

@@ -8,17 +8,15 @@ import pydantic_core
 import pytest
 from hexbytes import HexBytes
 
-from degenbot.exceptions import ContractLogicError
-
-from degenbot.fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_INT128, ZERO_ADDRESS
+from degenbot.exceptions import ContractLogicError
 from degenbot.exceptions.pool import (
     HookedPoolResult,
     IncompleteSwap,
     LiquidityPoolError,
 )
-from degenbot.provider import AlloyProvider
+from degenbot.fork import AnvilFork
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.w3_contract import make_contract

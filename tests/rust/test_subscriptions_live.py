@@ -9,7 +9,7 @@ import pytest
 
 from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot.exceptions import SubscriptionDisconnected, SubscriptionNotSupported
-from degenbot.provider import AlloyProvider, AsyncAlloyProvider
+from degenbot.provider import AlloyProvider
 from degenbot.provider.subscription import Subscription
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI, ETHEREUM_ARCHIVE_NODE_WS_URI
 

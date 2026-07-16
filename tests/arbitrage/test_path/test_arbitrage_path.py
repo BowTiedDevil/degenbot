@@ -9,12 +9,11 @@ math. The engine is the production solve surface, cross-validated against
 ``BrentSolver`` in ``tests/arbitrage/test_engine_vs_brent_parity.py``.
 """
 
-from degenbot import UniswapV2Pool
-
 from fractions import Fraction
 
 import pytest
 
+from degenbot import UniswapV2Pool
 from degenbot.exceptions.arbitrage import IncompatiblePoolInvariant
 from degenbot.types.hop_types import BoundedProductHop, ConstantProductHop
 from degenbot.uniswap.v3_libraries.constants import Q96

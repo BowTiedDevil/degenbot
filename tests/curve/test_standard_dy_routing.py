@@ -23,7 +23,6 @@ import pytest
 from degenbot.curve.calculators import standard as standard_mod
 from degenbot.curve.calculators.standard import StandardDyCalculator
 from degenbot.curve.types import DVariant, DyCalculationInputs, SwapStyle, YVariant
-from degenbot.curve.math import stableswap_get_y as curve_stableswap_get_y
 
 PRECISION = 10**18
 FEE_DENOMINATOR = 10**10

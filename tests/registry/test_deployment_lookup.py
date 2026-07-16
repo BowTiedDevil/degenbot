@@ -17,8 +17,6 @@ second copies with the JSON single source. The separate-deployer case
 
 from __future__ import annotations
 
-import pytest
-
 from degenbot._ffi.deployments import deployer_for, init_hash_for
 
 UNISWAP_V2_MAINNET_FACTORY = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"

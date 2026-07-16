@@ -3,7 +3,6 @@
 Uses production UniswapV2Pool for swap calculations instead of MockV2Pool.
 """
 
-import time
 from fractions import Fraction
 from typing import TYPE_CHECKING
 

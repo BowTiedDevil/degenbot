@@ -505,6 +505,7 @@ class TestV2SwapEncoding:
     def test_encode_swap_matches_python_reference(self):
         """Full byte-level comparison against Python eth_abi output."""
         import eth_abi
+
         from degenbot.crypto import function_selector
 
         core, pool_id = self._make_core_with_pool()
@@ -527,6 +528,7 @@ class TestV2SwapEncoding:
     def test_encode_swap_one_for_zero(self):
         """Encode a token1→token0 swap (amount0Out nonzero)."""
         import eth_abi
+
         from degenbot.crypto import function_selector
 
         core, pool_id = self._make_core_with_pool()
@@ -555,6 +557,7 @@ class TestV2SwapEncoding:
     def test_pool_handle_encode_swap(self):
         """Pool handle can also encode swaps."""
         import eth_abi
+
         from degenbot.crypto import function_selector
 
         core, pool_id = self._make_core_with_pool()

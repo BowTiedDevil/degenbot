@@ -8,8 +8,8 @@ These tests verify that the provider returns:
 import pytest
 from hexbytes import HexBytes
 
-from degenbot.fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.fork import AnvilFork
 from degenbot.provider import AlloyProvider
 
 WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")

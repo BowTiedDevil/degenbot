@@ -8,7 +8,6 @@ import eth_abi.abi
 import pytest
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
-from degenbot.types.rpc_types import LogReceipt
 
 from degenbot.aave.enrichment.context import EnrichmentContext
 from degenbot.aave.enrichment.handlers.base import OperationHandler
@@ -16,6 +15,7 @@ from degenbot.aave.enrichment.handlers.supply import SupplyHandler
 from degenbot.aave.events import ScaledTokenEventType
 from degenbot.aave.models import EnrichedScaledTokenEvent
 from degenbot.aave.operation_types import OperationType
+from degenbot.types.rpc_types import LogReceipt
 
 if TYPE_CHECKING:
     from degenbot.aave.operations import Operation, ScaledTokenEvent

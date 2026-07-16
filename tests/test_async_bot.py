@@ -9,14 +9,13 @@ from unittest.mock import AsyncMock, MagicMock
 import eth_abi.abi
 import pytest
 from hexbytes import HexBytes
-from degenbot.crypto import function_selector
-from degenbot.checksum_cache import get_checksum_address
 
 from degenbot.async_bot import AsyncBot
+from degenbot.bot import PyBot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.bot import PyBot
+from degenbot.crypto import function_selector
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
