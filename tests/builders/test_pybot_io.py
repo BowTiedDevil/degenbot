@@ -26,7 +26,7 @@ from degenbot.checksum_cache import get_checksum_address
 
 from degenbot.builders.pool_io import SyncPoolIO
 from degenbot.builders.type_resolution import fetch_factory_from_chain
-from degenbot._ffi import AlloyProvider as RustAlloyProvider
+from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot._ffi import PyBotIo
 
 # A minimal real offline provider (recorded JSON, no RPC) for tests that need a
@@ -1544,7 +1544,7 @@ def test_pybot_io_native_alloy_fetch_factory_address():
     """Native alloy path: `fetch_factory_address` against a recorded
     `OfflineProvider` (Rust transport) returns the EIP-55 checksum — no Python
     provider round-trip (the offline shell holds the `PyAlloyProvider`)."""
-    from degenbot._ffi import AlloyProvider as RustAlloyProvider
+    from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 
     factory_raw = "66f9664f97f2b50f62d13ea064982f936de76657"
     expected = "0x66f9664f97F2b50F62D13eA064982f936dE76657"
@@ -1560,7 +1560,7 @@ def test_pybot_io_native_alloy_poolio_surface():
     """Native alloy path: the `PoolIO` surface (`get_block_number`,
     `get_block`, `get_block_timestamp`, `get_code`, `call`) runs against the
     Rust offline transport and returns the expected shapes."""
-    from degenbot._ffi import AlloyProvider as RustAlloyProvider
+    from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 
     provider = RustAlloyProvider.offline_from_json_string(_recorded_factory_fixture())
     io = PyBotIo(provider=provider)
@@ -1586,7 +1586,7 @@ def test_pybot_io_native_alloy_poolio_surface():
 def test_pybot_io_native_alloy_call_raw_routes_through_native_call():
     """Native alloy path: `call_raw(tx)` extracts `to`/`data` from the tx dict
     and routes through the native `call` body."""
-    from degenbot._ffi import AlloyProvider as RustAlloyProvider
+    from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 
     provider = RustAlloyProvider.offline_from_json_string(_recorded_factory_fixture())
     io = PyBotIo(provider=provider)
@@ -1600,7 +1600,7 @@ def test_pybot_io_native_alloy_call_raw_routes_through_native_call():
 def test_pybot_io_native_alloy_revert_surfaces_contract_logic_error():
     """Native alloy path: a recorded revert (`null` result) surfaces as
     `ContractLogicError` (the alloy revert path), not a generic RuntimeError."""
-    from degenbot._ffi import AlloyProvider as RustAlloyProvider
+    from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
     from degenbot.exceptions import ContractLogicError
 
     import json

@@ -28,7 +28,7 @@ from eth_utils.abi import event_abi_to_log_topic
 from eth_utils.crypto import keccak as _keccak
 from hexbytes import HexBytes
 
-from degenbot._ffi import get_function_selector
+from degenbot._ffi.contract import get_function_selector
 
 if TYPE_CHECKING:
     from eth_typing import ABIEvent

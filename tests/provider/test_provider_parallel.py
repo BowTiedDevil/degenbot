@@ -15,7 +15,7 @@ This is a necessary (but not sufficient) condition for ThreadPoolExecutor-based
 parallelism.
 """
 
-from degenbot._ffi import AlloyProvider
+from degenbot._ffi.provider import AlloyProvider
 
 HTTP_RPC_URL = "https://ethereum.publicnode.com"
 

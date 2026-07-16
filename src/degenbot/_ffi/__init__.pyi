@@ -43,6 +43,7 @@ from . import cancel as cancel
 # registration. See `cl_math.pyi` for the 21 function signatures + the 4
 # tick-boundary constants (MIN_TICK/MAX_TICK/MIN_SQRT_RATIO/MAX_SQRT_RATIO).
 from . import cl_math as cl_math
+from . import contract as contract
 from . import curve_math as curve_math
 from . import db as db
 from . import deployments as deployments
@@ -50,6 +51,7 @@ from . import dex_identity as dex_identity
 from . import fork as fork
 from . import pool as pool
 from . import price as price
+from . import provider as provider
 from . import solady as solady
 from . import solidly_math as solidly_math
 from . import subscriber as subscriber
@@ -62,6 +64,18 @@ from .db import (
     PoolManagerRow,
 )
 from .dex_identity import PyDexIdentity as PyDexIdentity
+from .provider import (
+    AlloyProvider as AlloyProvider,
+)
+from .provider import (
+    AlloySubscription as AlloySubscription,
+)
+from .provider import (
+    AsyncAlloyProvider as AsyncAlloyProvider,
+)
+from .provider import (
+    LogFilter as LogFilter,
+)
 
 # ── Curve StableSwap math (feature = "curve-math"). ──
 # Pure-math wrappers over the degenbot-curve-math leaf, registered on a real
@@ -262,277 +276,6 @@ def to_checksum_address(address: bytes) -> str: ...
 # encode_single). ValueError on invalid data; NotImplementedError for
 # unsupported types (e.g. fixed-point).
 from . import abi as abi  # noqa: E402
-
-def encode_function_call(function_signature: str, args: list[str]) -> bytes:
-    """Encode function arguments into calldata.
-
-    Args:
-        function_signature: Function signature like "transfer(address,uint256)"
-        args: List of arguments as strings
-
-    Returns:
-        Encoded calldata as bytes (selector + encoded args)
-
-    Raises:
-        ValueError: If the signature or arguments are invalid
-
-    """
-
-def decode_return_data(data: bytes, output_types: list[str]) -> list[str]:
-    """Decode return data from a contract call.
-
-    Args:
-        data: Return data as bytes
-        output_types: List of output type strings like ["uint256", "address"]
-
-    Returns:
-        List of decoded values as strings
-
-    Raises:
-        ValueError: If data is invalid or cannot be decoded
-
-    """
-
-def get_function_selector(function_signature: str) -> str:
-    """Parse a function signature and return its selector.
-
-    Args:
-        function_signature: Function signature like "transfer(address,uint256)"
-
-    Returns:
-        4-byte function selector as hex string (e.g., "0xa9059cbb")
-
-    Raises:
-        ValueError: If the function signature is invalid
-
-    """
-
-class Contract:
-    """Synchronous wrapper for smart contract interactions."""
-
-    def __init__(self, address: str, provider_url: str | None = None) -> None: ...
-    @staticmethod
-    def from_provider(address: str, provider: AlloyProvider) -> Contract: ...
-    @property
-    def address(self) -> str: ...
-    def call(
-        self,
-        function_signature: str,
-        args: list[str],
-        block_number: int | None = None,
-    ) -> list[str]:
-        """Execute a contract call.
-
-        Args:
-            function_signature: Function signature like "balanceOf(address)"
-            args: List of arguments as strings
-            block_number: Optional block number to query
-
-        Returns:
-            List of decoded return values as strings
-
-        """
-
-class LogFilter:
-    """Filter for log queries."""
-
-    def __init__(
-        self,
-        from_block: int,
-        to_block: int,
-        addresses: list[str] | None = None,
-        topics: list[list[str]] | None = None,
-    ) -> None: ...
-    @property
-    def from_block(self) -> int | None: ...
-    @property
-    def to_block(self) -> int | None: ...
-    @property
-    def addresses(self) -> list[str]: ...
-    @property
-    def topics(self) -> list[list[str]]: ...
-
-class AlloyProvider:
-    r"""Synchronous Ethereum RPC provider.
-
-    Automatically detects connection type from URL:
-    - HTTP/HTTPS URLs use HTTP transport with connection pooling
-    - WS/WSS URLs use WebSocket transport
-    - File paths (Unix: /path, Windows: \\.\pipe\...) use IPC transport
-
-    Rate limiting is opt-in: pass ``requests_per_second`` and ``burst``
-    together to enable transport-level throttling on HTTP connections.
-    """
-
-    def __init__(
-        self,
-        rpc_url: str,
-        max_retries: int = 10,
-        max_blocks_per_request: int = 5000,
-        requests_per_second: int | None = None,
-        burst: int | None = None,
-    ) -> None: ...
-    @property
-    def rpc_url(self) -> str: ...
-    def get_block_number(self) -> int: ...
-    def get_chain_id(self) -> int: ...
-    def get_gas_price(self) -> int: ...
-    def get_block(self, block_number: int) -> BlockData | None: ...
-    def get_transaction(self, tx_hash: str) -> TransactionData | None: ...
-    def get_transaction_receipt(self, tx_hash: str) -> TransactionReceiptData | None: ...
-    def get_logs(
-        self,
-        *,
-        from_block: int,
-        to_block: int,
-        addresses: list[str] | None = None,
-        topics: list[list[str]] | None = None,
-    ) -> list[LogData]: ...
-    def call(
-        self,
-        to: str,
-        data: bytes,
-        block_number: int | None = None,
-    ) -> HexBytes: ...
-    def get_code(
-        self,
-        address: str,
-        block_number: int | None = None,
-    ) -> HexBytes: ...
-    def estimate_gas(
-        self,
-        to: str,
-        data: bytes,
-        from_: str | None = None,
-        value: int | None = None,
-        block_number: int | None = None,
-    ) -> int: ...
-    def get_storage_at(
-        self,
-        address: str,
-        position: int,
-        block_number: int | None = None,
-    ) -> HexBytes: ...
-    def get_balance(
-        self,
-        address: str,
-        block_number: int | None = None,
-    ) -> int: ...
-    def get_transaction_count(
-        self,
-        address: str,
-        block_number: int | None = None,
-    ) -> int: ...
-    @staticmethod
-    def offline_from_json_file(path: str) -> AlloyProvider: ...
-    @staticmethod
-    def offline_from_json_string(s: str) -> AlloyProvider: ...
-    def make_request(
-        self,
-        method: str,
-        params: list[str | bool | int | bytes | None],
-    ) -> str | bool | int | bytes | list[Any] | dict[str, Any] | None: ...
-    def close(self) -> None: ...
-    def subscribe_blocks(self) -> AlloySubscription: ...
-    def subscribe_full_blocks(self) -> AlloySubscription: ...
-    def subscribe_pending_transactions(self) -> AlloySubscription: ...
-    def subscribe_full_pending_transactions(self) -> AlloySubscription: ...
-    def subscribe_logs(
-        self,
-        addresses: list[str] | None = None,
-        topics: list[list[str]] | None = None,
-    ) -> AlloySubscription: ...
-
-class AsyncAlloyProvider:
-    """Async wrapper for AlloyProvider operations."""
-
-    def __init__(self, sync_provider: AlloyProvider) -> None: ...
-    @staticmethod
-    def create(
-        rpc_url: str,
-        max_retries: int = 10,
-        max_blocks_per_request: int = 5000,
-        requests_per_second: int | None = None,
-        burst: int | None = None,
-    ) -> Coroutine[Any, Any, AsyncAlloyProvider]: ...
-    @property
-    def rpc_url(self) -> str: ...
-    def get_block_number(self) -> Coroutine[Any, Any, int]: ...
-    def get_chain_id(self) -> Coroutine[Any, Any, int]: ...
-    def get_gas_price(self) -> Coroutine[Any, Any, int]: ...
-    def get_block(self, block_number: int) -> Coroutine[Any, Any, BlockData | None]: ...
-    def get_transaction(self, tx_hash: str) -> Coroutine[Any, Any, TransactionData | None]: ...
-    def get_transaction_receipt(
-        self,
-        tx_hash: str,
-    ) -> Coroutine[Any, Any, TransactionReceiptData | None]: ...
-    def get_logs(
-        self,
-        *,
-        from_block: int,
-        to_block: int,
-        addresses: list[str] | None = None,
-        topics: list[list[str]] | None = None,
-    ) -> Coroutine[Any, Any, list[LogData]]: ...
-    def call(
-        self,
-        to: str,
-        data: bytes,
-        block_number: int | None = None,
-    ) -> Coroutine[Any, Any, HexBytes]: ...
-    def get_code(
-        self,
-        address: str,
-        block_number: int | None = None,
-    ) -> Coroutine[Any, Any, HexBytes]: ...
-    def estimate_gas(
-        self,
-        to: str,
-        data: bytes,
-        from_: str | None = None,
-        value: int | None = None,
-        block_number: int | None = None,
-    ) -> Coroutine[Any, Any, int]: ...
-    def get_storage_at(
-        self,
-        address: str,
-        position: int,
-        block_number: int | None = None,
-    ) -> Coroutine[Any, Any, HexBytes]: ...
-    def get_balance(
-        self,
-        address: str,
-        block_number: int | None = None,
-    ) -> Coroutine[Any, Any, int]: ...
-    def get_transaction_count(
-        self,
-        address: str,
-        block_number: int | None = None,
-    ) -> Coroutine[Any, Any, int]: ...
-    def make_request(
-        self,
-        method: str,
-        params: list[str | bool | int | bytes | None],
-    ) -> Coroutine[Any, Any, str | bool | int | bytes | list[Any] | dict[str, Any] | None]: ...
-    def close(self) -> None: ...
-    def subscribe_blocks(self) -> AlloySubscription: ...
-    def subscribe_full_blocks(self) -> AlloySubscription: ...
-    def subscribe_pending_transactions(self) -> AlloySubscription: ...
-    def subscribe_full_pending_transactions(self) -> AlloySubscription: ...
-    def subscribe_logs(
-        self,
-        addresses: list[str] | None = None,
-        topics: list[list[str]] | None = None,
-    ) -> AlloySubscription: ...
-
-class AlloySubscription:
-    """Python wrapper for a subscription from the Rust layer."""
-
-    def __aiter__(self) -> AlloySubscription: ...
-    def __anext__(self) -> Coroutine[Any, Any, BlockData | LogData | str]: ...
-    def drain(self) -> list[BlockData | LogData | str]: ...
-    async def started(self) -> None: ...
-    def unsubscribe(self) -> None: ...
 
 class AsyncContract:
     """Async wrapper for contract interactions."""
@@ -1690,19 +1433,14 @@ def finalize_fees(
 ) -> None: ...
 
 __all__ = [
-    "AlloyProvider",
-    "AlloySubscription",
-    "AsyncAlloyProvider",
     "AsyncContract",
     "BlockData",
     "BlockStream",
     "CancelHandle",
-    "Contract",
     "DynamicFeePoolRejectedError",
     "Erc20TokenRow",
     "HookedPoolRejectedError",
     "LogData",
-    "LogFilter",
     "PyBot",
     "PyBotIo",
     "PyDispatchCandidate",
@@ -1726,26 +1464,25 @@ __all__ = [
     "cancel",
     "cl_math",
     "compute_simulation_warmup_slots",
+    "contract",
     "curve_math",
     "db",
-    "decode_return_data",
     "deployments",
     "dex_identity",
     "dispatch_and_submit_py",
     "dispatch_profitable_py",
     "encode_cmd_stream",
-    "encode_function_call",
     "fetch_fee_history_py",
     "finalize_fees",
     "find_paths_rust",
     "fork",
-    "get_function_selector",
     "mapping_slot",
     "nested_mapping_slot",
     "pack_config",
     "pack_expected_balance",
     "pool",
     "price",
+    "provider",
     "solady",
     "solidly_math",
     "subscriber",

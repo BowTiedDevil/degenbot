@@ -30,7 +30,7 @@ use std::sync::Arc;
 #[pyclass(
     name = "AsyncAlloyProvider",
     skip_from_py_object,
-    module = "degenbot._ffi"
+    module = "degenbot._ffi.provider"
 )]
 pub struct PyAsyncAlloyProvider {
     provider: Arc<AlloyProvider>,

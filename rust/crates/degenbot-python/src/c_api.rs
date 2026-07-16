@@ -191,16 +191,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "bot")]
     crate::bot::deployments::add_deployments(m)?;
 
-    // Async modules (feature = "async")
-    #[cfg(feature = "async")]
-    m.add_class::<crate::rpc::async_provider::PyAsyncAlloyProvider>()?;
-    #[cfg(feature = "async")]
-    m.add_class::<crate::rpc::async_contract::PyAsyncContract>()?;
-
-    // Subscription module (feature = "rpc")
-    #[cfg(feature = "rpc")]
-    m.add_class::<crate::rpc::subscription::PyAlloySubscription>()?;
-
     // Price-reader seam (feature = "price")
     #[cfg(feature = "price")]
     crate::price::add_price_module(m)?;

@@ -1359,7 +1359,8 @@ values = decode_return_data(calldata[4:], ["address", "uint256"])
 The extension includes synchronous and async Ethereum RPC providers:
 
 <!-- invisible-code-block: python
-from degenbot._ffi import AlloyProvider, Contract
+from degenbot._ffi.contract import Contract
+from degenbot._ffi.provider import AlloyProvider
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI as RPC_URL
 -->
 
@@ -1397,7 +1398,8 @@ The extension also includes async wrappers for use with `asyncio`:
 <!-- skip: start "await outside async; uses placeholder addresses" -->
 
 ```python
-from degenbot._ffi import AsyncAlloyProvider, AsyncContract
+from degenbot._ffi.contract import AsyncContract
+from degenbot._ffi.provider import AsyncAlloyProvider
 
 # Create an async provider
 async_provider = await AsyncAlloyProvider.create(
@@ -1421,7 +1423,7 @@ results = await async_contract.batch_call(
 #### Log Filtering
 
 ```python
-from degenbot._ffi import LogFilter
+from degenbot._ffi.provider import LogFilter
 
 # Build a log filter
 log_filter = LogFilter(
