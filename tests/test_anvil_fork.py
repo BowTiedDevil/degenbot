@@ -1,14 +1,13 @@
-from typing import TYPE_CHECKING
 
 import pytest
 from hexbytes import HexBytes
 from pydantic import ValidationError
 
-from degenbot.fork import AnvilFork
-from degenbot.provider import AlloyProvider
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.exceptions.base import DegenbotError, DegenbotValueError
+from degenbot.fork import AnvilFork
+from degenbot.provider import AlloyProvider
 
 from .conftest import (
     BASE_FULL_NODE_HTTP_URI,

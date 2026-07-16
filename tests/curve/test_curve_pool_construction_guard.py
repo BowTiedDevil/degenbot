@@ -20,10 +20,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from degenbot.bot import PyBot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.curve.types import BasePoolPort, DyCalculationInputs
-from degenbot.bot import PyBot
 from degenbot.exceptions import DegenbotValueError
 from tests.helpers.curve_pool_factory import make_curve_pool
 from tests.helpers.erc20_factory import make_erc20
@@ -74,7 +74,7 @@ class TestWrongFamilyHandle:
             py_bot=bot,
         )
         with pytest.raises(DegenbotValueError) as exc_info:
-            CurveStableswapPool._from_py_pool(v2_pool._py_pool)  # noqa: SLF001
+            CurveStableswapPool._from_py_pool(v2_pool._py_pool)
         assert "Curve stableswap" in str(exc_info.value)
 
 
@@ -126,7 +126,7 @@ class TestGoBetweenResolvesBasePool:
 
         # The handle's go-between resolves the base by address.
         # base_pool._py_pool.curve_base_pool()  is None for a plain pool.
-        assert base_pool._py_pool.curve_base_pool() is None  # noqa: SLF001
+        assert base_pool._py_pool.curve_base_pool() is None
 
         mt0 = make_erc20(bot, address="0x" + "55" * 20, name="M0", symbol="M0", decimals=18)
         mlp = make_erc20(bot, address="0x" + "66" * 20, name="MLP", symbol="MLP", decimals=18)
@@ -168,13 +168,13 @@ class TestStubBasePoolSatisfiesPort:
             def fee(self) -> int:
                 return 1_000_000
 
-            def calc_token_amount(self, *, amounts, deposit, **_):  # noqa: ANN001, ANN202
+            def calc_token_amount(self, *, amounts, deposit, **_):
                 return sum(amounts)
 
-            def get_dy(self, i, j, dx, **_):  # noqa: ANN001, ANN202
+            def get_dy(self, i, j, dx, **_):
                 return dx
 
-            def calc_withdraw_one_coin(self, _token_amount, i, **_):  # noqa: ANN001, ANN202
+            def calc_withdraw_one_coin(self, _token_amount, i, **_):
                 return (_token_amount,)
 
         stub = StubBasePool()

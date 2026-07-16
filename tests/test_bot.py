@@ -1,18 +1,17 @@
 """Tests for the Bot class (single-chain facade, ADR-006 D5)."""
 
 import pathlib
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from degenbot.async_bot import AsyncBot
-from degenbot.bot import Bot
+from degenbot.bot import Bot, PyBot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.bot import PyBot
 from degenbot.exceptions.pool import TrackerAlreadyInitialized
-from degenbot.provider import AlloyProvider, OfflineProvider
+from degenbot.provider import OfflineProvider
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.uniswap.trackers import UniswapV2PoolTracker
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI

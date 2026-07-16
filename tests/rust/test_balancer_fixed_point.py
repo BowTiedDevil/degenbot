@@ -18,13 +18,13 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot.balancer.libraries.constants import ONE
-from degenbot.constants import MAX_UINT256
 from degenbot._ffi.balancer_math import (
     fixed_point_div_down,
     fixed_point_div_up,
     fixed_point_mul_down,
 )
+from degenbot.balancer.libraries.constants import ONE
+from degenbot.constants import MAX_UINT256
 
 
 class TestFixedPointExposure:

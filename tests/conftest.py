@@ -8,11 +8,10 @@ import pytest
 from _pytest.config import Config, Parser
 from _pytest.nodes import Item
 
-from degenbot.fork import AnvilFork
 from degenbot.bot import Bot
 from degenbot.database.session_manager import DatabaseSessionManager
+from degenbot.fork import AnvilFork
 from degenbot.logging import set_log_level
-from degenbot.provider import AlloyProvider
 from tests.golden.oracle import GOLDEN_ROOT, GoldenOracle, _nodeid_to_path
 from tests.helpers.bot_factory import make_bot_with_provider
 

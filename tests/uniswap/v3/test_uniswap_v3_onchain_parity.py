@@ -49,11 +49,11 @@ from typing import Any, Self
 
 import pytest
 
-from degenbot.fork import AnvilFork
+from degenbot.bot import PyBot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_INT256
-from degenbot.bot import PyBot
 from degenbot.exceptions.pool import IncompleteSwap
+from degenbot.fork import AnvilFork
 from degenbot.uniswap.v3_libraries import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 

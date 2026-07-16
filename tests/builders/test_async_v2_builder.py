@@ -9,17 +9,17 @@ from unittest.mock import MagicMock
 import eth_abi.abi
 import pytest
 from hexbytes import HexBytes
-from degenbot.crypto import function_selector, keccak256
 
+from degenbot.bot import PyBot
 from degenbot.builders.async_context import AsyncBuilderContext
 from degenbot.builders.async_erc20_builder import AsyncErc20Builder
 from degenbot.builders.async_v2_pool_builder import AsyncV2PoolBuilder
 from degenbot.builders.pool_io import AsyncPoolIO
 from degenbot.builders.request import BuildPoolRequest
 from degenbot.builders.v2_builder_base import V2BuilderBase
+from degenbot.crypto import function_selector
 from degenbot.database.models.pools import UniswapFeeMixin
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.bot import PyBot
 from degenbot.erc20 import Erc20Token
 from degenbot.registry import PoolRegistry, TokenRegistry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool

@@ -18,8 +18,6 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-import pytest
-
 import examples.eth_backrun_v2_v3_v4_rust as runner
 from examples.eth_backrun_v2_v3_v4_rust import Dispatcher
 
@@ -94,7 +92,7 @@ class _Blocks:
         self._blocks = list(blocks)
         self._i = 0
 
-    def __aiter__(self) -> "_Blocks":
+    def __aiter__(self) -> _Blocks:
         return self
 
     async def __anext__(self) -> dict[str, int]:
@@ -112,7 +110,7 @@ class _Results:
         self._batches = list(batches)
         self._i = 0
 
-    def __aiter__(self) -> "_Results":
+    def __aiter__(self) -> _Results:
         return self
 
     async def __anext__(self) -> dict[str, Any]:
@@ -169,7 +167,7 @@ async def _run(
 
     async def _fake_dispatch(**kwargs):
         dispatched.append(kwargs["current_block"])
-        return None
+        return
 
     orig = runner._dispatch_profitable
     runner._dispatch_profitable = _fake_dispatch  # type: ignore[assignment]

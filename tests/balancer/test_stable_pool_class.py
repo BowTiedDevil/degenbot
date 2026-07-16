@@ -14,9 +14,7 @@ from fractions import Fraction
 from typing import TYPE_CHECKING
 
 import pytest
-from degenbot.exceptions import ContractLogicError
 
-from degenbot.fork import AnvilFork
 from degenbot.balancer.deployments import (
     BALANCER_V2_VAULT_ADDRESS,
     BALANCERQUERIES_CONTRACT_ADDRESS,
@@ -28,9 +26,11 @@ from degenbot.balancer.stable_pools import (
     BalancerRateProvider,
     BalancerV2StablePool,
 )
-from degenbot.checksum_cache import get_checksum_address
 from degenbot.bot import PyBot
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.exceptions import ContractLogicError
 from degenbot.exceptions.pool import StaleRateResult
+from degenbot.fork import AnvilFork
 from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
 from tests.helpers.erc20_factory import make_erc20
 

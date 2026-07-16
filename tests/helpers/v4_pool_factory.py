@@ -12,9 +12,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from degenbot.bot import PyBot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.bot import PyBot
 from degenbot.erc20 import Erc20Token
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v4_liquidity_pool import ProtocolFee, UniswapV4Pool
@@ -116,11 +116,11 @@ def make_v4_pool(
         if bot.get_token(tok.address) is None:
             bot.register_token(tok.address, tok.name, tok.symbol, tok.decimals, tok.chain_id)
     sparse = tick_data is None or len(tick_data) == 0
-    pool = UniswapV4Pool._from_py_pool(handle)  # noqa: SLF001
+    pool = UniswapV4Pool._from_py_pool(handle)
     # Builder-supplied values the seam defaults; override from test args.
     pool._state_view_address = (
         get_checksum_address(state_view_address) if state_view_address else ZERO_ADDRESS
-    )  # noqa: SLF001
+    )
     pool.protocol_fee = ProtocolFee(
         zero_for_one=protocol_fee_zero_for_one,
         one_for_zero=protocol_fee_one_for_zero,
@@ -134,7 +134,7 @@ def make_v4_pool(
                 pool._bitmap_override[int(word)] = BitmapAtWord(**bitmap_at_word)
             else:
                 pool._bitmap_override[int(word)] = bitmap_at_word
-    pool._sparse_liquidity_map = sparse  # noqa: SLF001
+    pool._sparse_liquidity_map = sparse
     return pool
 
 

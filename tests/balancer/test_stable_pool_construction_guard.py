@@ -72,7 +72,7 @@ class TestWrongFamilyHandle:
         # The V2 pool's handle is a V2-family handle; wrapping it as a
         # Balancer stable companion must raise.
         with pytest.raises(DegenbotValueError) as exc_info:
-            BalancerV2StablePool._from_py_pool(v2_pool._py_pool)  # noqa: SLF001
+            BalancerV2StablePool._from_py_pool(v2_pool._py_pool)
 
         message = str(exc_info.value)
         assert "Balancer stable" in message
@@ -101,7 +101,7 @@ class TestRateProviderIsStored:
         )
 
         # No live provider → static fallback → these all report "no I/O".
-        assert pool._rate_provider_is_static is True  # noqa: SLF001
+        assert pool._rate_provider_is_static is True
         assert pool.rate_provider is None
         assert not pool.requires_io_at_calculation_time
         # If token list does include BPT... here it doesn't, so also check.
@@ -113,7 +113,7 @@ class TestRateProviderIsStored:
             def __init__(self, rates: tuple[int, ...]) -> None:
                 self._rates = rates
 
-            def get_rates(self, block_identifier=None):  # noqa: ANN001, ANN202, ARG002
+            def get_rates(self, block_identifier=None):
                 return self._rates
 
         from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
@@ -137,7 +137,7 @@ class TestRateProviderIsStored:
             py_bot=bot,
         )
 
-        assert pool._rate_provider_is_static is False  # noqa: SLF001
+        assert pool._rate_provider_is_static is False
         assert pool.rate_provider is not None
         # The adapter delegates get_rates to the stored Rust trait object.
         assert pool.rate_provider.get_rates(42) == rates

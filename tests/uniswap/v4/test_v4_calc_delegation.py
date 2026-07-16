@@ -18,10 +18,10 @@ just "the result matches". Mirrors
 from __future__ import annotations
 
 import eth_abi.abi
-from degenbot.crypto import keccak256
 
-from degenbot.constants import ZERO_ADDRESS
 from degenbot.bot import PyBot
+from degenbot.constants import ZERO_ADDRESS
+from degenbot.crypto import keccak256
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v4_pool_factory import make_v4_pool

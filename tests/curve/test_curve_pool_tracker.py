@@ -8,12 +8,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from degenbot.fork import AnvilFork
+from degenbot.bot import PyBot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.curve.trackers import CurveStableswapPoolTracker
-from degenbot.bot import PyBot
-from degenbot.provider import AlloyProvider
+from degenbot.fork import AnvilFork
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.curve_pool_factory import make_curve_pool
 from tests.helpers.erc20_factory import make_erc20

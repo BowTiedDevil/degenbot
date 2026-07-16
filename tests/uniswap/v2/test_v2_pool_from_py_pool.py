@@ -12,8 +12,8 @@ from fractions import Fraction
 
 import pytest
 
-from degenbot.checksum_cache import get_checksum_address
 from degenbot.bot import PyBot
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
@@ -122,7 +122,7 @@ class TestFromPyPoolSlimSeam:
         # companion holds the same handle shape, so passing it to the V2 seam
         # is the misuse the ``pool_family`` assertion must catch.
         with pytest.raises(DegenbotValueError, match="V2-family"):
-            UniswapV2Pool._from_py_pool(v3_pool._py_pool)  # noqa: SLF001
+            UniswapV2Pool._from_py_pool(v3_pool._py_pool)
 
     def test_tokens_recovered_from_same_bot(self) -> None:
         """token0/token1 companions are rebuilt off the pool's handle."""

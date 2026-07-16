@@ -22,10 +22,7 @@ from examples.eth_backrun_helpers import (
 from tests.helpers.aerodrome_pool_factory import make_aerodrome_v2_pool
 from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.types.test_concrete_pool_construction import (
-    PANCAKESWAP_V2_FACTORY,
     SUSHISWAP_V2_FACTORY,
-    UNISWAP_V2_FACTORY,
-    _make_sushi,
     _make_uniswap_v2_pool,
     _make_uniswap_v3_pool,
     _make_uniswap_v4_pool,
@@ -218,7 +215,7 @@ def test_build_hops_from_aerodrome_stable_pool() -> None:
 
 def test_build_hops_from_aerodrome_volatile_pool_stays_solidly() -> None:
     """An Aerodrome VOLATILE pool also routes to SolidlyHopInfo (variant tagged
-    volatile) — the engine solves the volatile path via calc_exact_in_volatile."""  # noqa: E501
+    volatile) — the engine solves the volatile path via calc_exact_in_volatile."""
     weth = _make_weth()
     usdc = _make_usdc()
     pool = make_aerodrome_v2_pool(

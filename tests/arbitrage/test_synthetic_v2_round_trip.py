@@ -23,13 +23,13 @@ import pytest
 from eth_typing import ChainId
 
 import examples.eth_backrun_v2_v3_v4_rust as runner
+from degenbot.arbitrage.engine_registry import UniswapArbEngine
+from degenbot.bot import PyBot
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.database.models import Erc20TokenTable, UniswapV2PoolTable
 from degenbot.database.models.base import Base, ExchangeTable
 from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.bot import PyBot
-from degenbot.arbitrage.engine_registry import UniswapArbEngine
 from degenbot.pathfinding import find_paths_async
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool

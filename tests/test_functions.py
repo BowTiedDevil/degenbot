@@ -3,11 +3,11 @@ from eth_typing import Hash32, HexStr
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
-from degenbot.fork import AnvilFork
 from degenbot.calculations.evm_math import next_base_fee
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.contract.addresses import create2_address
 from degenbot.exceptions import DegenbotValueError
+from degenbot.fork import AnvilFork
 from degenbot.provider import AlloyProvider
 from degenbot.provider.block_helpers import get_number_for_block_identifier
 from degenbot.provider.call_helpers import (

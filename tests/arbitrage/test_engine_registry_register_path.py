@@ -12,8 +12,8 @@ from __future__ import annotations
 import pytest
 
 import examples.eth_backrun_v2_v3_v4_rust as runner
-from degenbot.bot import PyBot
 from degenbot.arbitrage.engine_registry import UniswapArbEngine
+from degenbot.bot import PyBot
 from examples.eth_backrun_helpers import build_hops_from_pools
 from tests.types.test_concrete_pool_construction import (
     _make_uniswap_v2_pool,
@@ -148,7 +148,7 @@ def test_register_path_dispatches_aerodrome_solidly_hop() -> None:
     )
     # register_aerodrome_pool caches the shared-core pool_id.
     aero_key = registry.register_aerodrome_pool(aero)
-    assert aero_key == aero._py_pool.pool_id  # noqa: SLF001
+    assert aero_key == aero._py_pool.pool_id
 
     path_id = registry.register_path([(aero, False)])
 

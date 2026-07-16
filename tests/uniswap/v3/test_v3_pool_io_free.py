@@ -4,13 +4,11 @@ import pathlib
 from unittest.mock import MagicMock
 
 import eth_abi.abi
-from degenbot.crypto import function_selector, keccak256
-from degenbot.checksum_cache import get_checksum_address
 
-from degenbot.bot import Bot
+from degenbot.bot import Bot, PyBot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
-from degenbot.bot import PyBot
+from degenbot.crypto import function_selector
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
@@ -189,8 +187,8 @@ class TestBotBuildV3Pool:
         weth = _make_weth()
         usdc = _make_usdc()
         for tok in (weth, usdc):
-            if bot._py_bot.get_token(tok.address) is None:  # noqa: SLF001
-                bot._py_bot.register_token(  # noqa: SLF001
+            if bot._py_bot.get_token(tok.address) is None:
+                bot._py_bot.register_token(
                     tok.address, tok.name, tok.symbol, tok.decimals, 1
                 )
         bot.tokens.add(token_address=weth_addr, chain_id=1, token=weth)

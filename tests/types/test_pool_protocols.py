@@ -9,8 +9,8 @@ from fractions import Fraction
 
 import pytest
 from eth_typing import ChecksumAddress
-from degenbot.checksum_cache import get_checksum_address
 
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.types.abstract import AbstractPoolState
 from degenbot.types.hop_types import ConstantProductHop, HopType
 from degenbot.types.pool_protocols import (

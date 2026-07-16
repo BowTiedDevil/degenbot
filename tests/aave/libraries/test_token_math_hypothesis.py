@@ -4,12 +4,10 @@ Uses Hypothesis to generate random inputs and verify Python implementations
 exactly match Solidity contract behavior across all revisions.
 """
 
-from typing import TYPE_CHECKING
 
 import hypothesis
 import hypothesis.strategies as st
 import pytest
-from degenbot.exceptions import ContractLogicError
 
 from degenbot.aave.libraries import wad_ray_math
 from degenbot.aave.libraries.token_math import (
@@ -17,11 +15,8 @@ from degenbot.aave.libraries.token_math import (
     HalfUpRoundingMath,
 )
 from degenbot.constants import MAX_UINT256, MIN_UINT256
+from degenbot.exceptions import ContractLogicError
 from degenbot.exceptions.pool import EVMRevertError
-
-if TYPE_CHECKING:
-    pass
-
 
 # Strategies for generating test inputs
 uint256_strategy = st.integers(min_value=MIN_UINT256, max_value=MAX_UINT256)

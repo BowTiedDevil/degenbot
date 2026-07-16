@@ -2,11 +2,10 @@ from collections import deque
 
 import pytest
 
-from degenbot.fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions.pool import UnknownPool
-from degenbot.provider import AlloyProvider
+from degenbot.fork import AnvilFork
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.trackers import UniswapV3PoolTracker
 from degenbot.uniswap.v3_snapshot import (

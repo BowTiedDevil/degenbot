@@ -7,21 +7,19 @@ from unittest.mock import MagicMock
 import eth_abi.abi
 import pytest
 
-
-from degenbot.bot import Bot
+from degenbot.bot import Bot, PyBot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
-from degenbot.bot import PyBot
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import InvalidSwapInputAmount, LiquidityPoolError
 from degenbot.provider.call_helpers import encode_function_calldata
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.trackers import UniswapV2PoolTracker
 from degenbot.uniswap.v2_functions import (
     constant_product_calc_exact_in,
     constant_product_calc_exact_out,
 )
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate, UniswapV2PoolState
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.erc20_factory import make_erc20

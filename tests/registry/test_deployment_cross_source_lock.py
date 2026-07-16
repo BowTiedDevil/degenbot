@@ -17,8 +17,8 @@ For every Python ``DeploymentRecord``:
 
 from __future__ import annotations
 
-from degenbot.checksum_cache import get_checksum_address
 from degenbot._ffi.deployments import deployer_for, init_hash_for
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.registry.deployment_loader import DeploymentRecord, load_deployments
 
 RECORDS: list[DeploymentRecord] = load_deployments()

@@ -11,11 +11,10 @@ from degenbot.aerodrome.types import (
     AerodromeV2PoolExternalUpdate,
     AerodromeV3PoolState,
 )
-from degenbot.fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import DegenbotError
 from degenbot.exceptions.pool import ExternalUpdateError
-from degenbot.provider import AlloyProvider
+from degenbot.fork import AnvilFork
 from degenbot.uniswap.v3_libraries import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.w3_contract import make_contract

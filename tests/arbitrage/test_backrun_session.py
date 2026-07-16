@@ -219,7 +219,7 @@ class _BlocksStream:
         self._blocks = list(blocks)
         self._i = 0
 
-    def __aiter__(self) -> "_BlocksStream":
+    def __aiter__(self) -> _BlocksStream:
         return self
 
     async def __anext__(self) -> dict[str, int]:

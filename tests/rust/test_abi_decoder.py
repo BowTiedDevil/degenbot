@@ -9,6 +9,8 @@ import hypothesis
 import hypothesis.strategies as st
 import pytest
 
+from degenbot._ffi.abi import decode as decode_rs
+from degenbot._ffi.abi import decode_single as decode_single_rs
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import (
     MAX_INT16,
@@ -38,8 +40,6 @@ from degenbot.constants import (
     MIN_UINT128,
     MIN_UINT256,
 )
-from degenbot._ffi.abi import decode as decode_rs
-from degenbot._ffi.abi import decode_single as decode_single_rs
 
 
 class TestBasicTypes:

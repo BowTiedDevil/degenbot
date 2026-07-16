@@ -19,10 +19,10 @@ import pathlib
 from threading import Lock
 from unittest.mock import MagicMock
 
+from degenbot.arbitrage.engine_registry import UniswapArbEngine
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
-from degenbot.arbitrage.engine_registry import UniswapArbEngine
 from degenbot.provider import AlloyProvider
 from degenbot.uniswap.trackers import UniswapV2PoolTracker
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI

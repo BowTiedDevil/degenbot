@@ -23,6 +23,8 @@ from __future__ import annotations
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
+from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
+from degenbot.bot import PyBotIo
 from degenbot.database.models import Base
 from degenbot.database.models.base import ExchangeTable
 from degenbot.database.models.erc20 import Erc20TokenTable
@@ -32,8 +34,6 @@ from degenbot.database.models.pools import (
     LiquidityPositionTable,
     UniswapV3PoolTable,
 )
-from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
-from degenbot.bot import PyBotIo
 from degenbot.db import db_create_new_database
 
 CHAIN = 1
@@ -49,6 +49,8 @@ def _offline_provider() -> RustAlloyProvider:
     keeps the seam honest (no Python `object()` double — see O3).
     """
     return RustAlloyProvider.offline_from_json_string(_POOL_OFFLINE_JSON)
+
+
 POOL_ADDR = "0x" + "12" * 20
 TOK0_ADDR = "0x" + "34" * 20
 TOK1_ADDR = "0x" + "56" * 20

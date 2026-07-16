@@ -12,8 +12,8 @@ from fractions import Fraction
 from typing import TYPE_CHECKING
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
-from degenbot.checksum_cache import get_checksum_address
 from degenbot.bot import PyBot
+from degenbot.checksum_cache import get_checksum_address
 
 if TYPE_CHECKING:
     from degenbot.erc20 import Erc20Token
@@ -66,9 +66,9 @@ def make_aerodrome_v2_pool(
     handle = bot.get_pool(pool_id)
     assert handle is not None, "register_aerodrome_pool returned no handle"
 
-    pool = pool_class._from_py_pool(handle)  # noqa: SLF001
+    pool = pool_class._from_py_pool(handle)
     if deployer_address is not None:
-        pool.deployer_address = get_checksum_address(deployer_address)  # noqa: SLF001
+        pool.deployer_address = get_checksum_address(deployer_address)
     return pool
 
 

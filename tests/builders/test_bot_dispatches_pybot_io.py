@@ -19,11 +19,10 @@ from unittest.mock import MagicMock
 
 from hexbytes import HexBytes
 
-from degenbot.bot import Bot
+from degenbot.bot import Bot, PyBotIo
 from degenbot.builders.pool_io import SyncPoolIO
 from degenbot.builders.request import BuildPoolRequest
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.bot import PyBotIo
 
 
 class _RecordingProvider:

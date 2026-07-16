@@ -16,8 +16,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from degenbot.checksum_cache import get_checksum_address
 from degenbot.bot import PyBot
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -155,8 +155,8 @@ def make_v3_pool(
     for tok in (token0, token1):
         if bot.get_token(tok.address) is None:
             bot.register_token(tok.address, tok.name, tok.symbol, tok.decimals, tok.chain_id)
-    pool = pool_class._from_py_pool(handle)  # noqa: SLF001
-    pool._sparse_liquidity_map = sparse  # noqa: SLF001
+    pool = pool_class._from_py_pool(handle)
+    pool._sparse_liquidity_map = sparse
     return pool
 
 

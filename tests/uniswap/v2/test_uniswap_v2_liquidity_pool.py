@@ -17,7 +17,6 @@ import pytest
 from degenbot.camelot.pools import CamelotLiquidityPool
 from hexbytes import HexBytes
 
-from degenbot.fork import AnvilFork
 from degenbot.bot import Bot
 from degenbot.camelot.abi import CAMELOT_POOL_ABI
 from degenbot.checksum_cache import get_checksum_address
@@ -30,7 +29,7 @@ from degenbot.exceptions.pool import (
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
-from degenbot.provider import AlloyProvider
+from degenbot.fork import AnvilFork
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import (
     UniswapV2PoolExternalUpdate,

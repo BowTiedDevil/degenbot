@@ -42,9 +42,9 @@ from typing import TYPE_CHECKING, Any, Self
 
 import eth_abi.abi
 import pytest
-from degenbot.crypto import function_selector, keccak256
 
-from degenbot.fork import AnvilFork
+from degenbot.bot import PyBot
+from degenbot.crypto import function_selector, keccak256
 from degenbot.curve.strategies import (
     DVariant,
     LendingRateStyle,
@@ -55,7 +55,7 @@ from degenbot.curve.strategies import (
     YDVariant,
     YVariant,
 )
-from degenbot.bot import PyBot
+from degenbot.fork import AnvilFork
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.fakes.curve_data_provider import FakeCurveDataProvider
 from tests.helpers.curve_pool_factory import make_curve_pool

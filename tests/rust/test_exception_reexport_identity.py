@@ -15,16 +15,16 @@ These tests pin the identity contract.
 
 from __future__ import annotations
 
-from degenbot.exceptions import DynamicFeePoolRejectedError as RsDynamicFeePoolRejectedError
-from degenbot.exceptions import HookedPoolRejectedError as RsHookedPoolRejectedError
-from degenbot.exceptions import VerificationMismatchError as RsVerificationMismatchError
-from degenbot.exceptions import VerificationRpcError as RsVerificationRpcError
 from degenbot.exceptions import (
     DynamicFeePoolRejectedError,
     HookedPoolRejectedError,
     VerificationMismatchError,
     VerificationRpcError,
 )
+from degenbot.exceptions import DynamicFeePoolRejectedError as RsDynamicFeePoolRejectedError
+from degenbot.exceptions import HookedPoolRejectedError as RsHookedPoolRejectedError
+from degenbot.exceptions import VerificationMismatchError as RsVerificationMismatchError
+from degenbot.exceptions import VerificationRpcError as RsVerificationRpcError
 from degenbot.exceptions.arbitrage import (
     DynamicFeePoolRejectedError as ArbDynamicFeePoolRejectedError,
 )

@@ -4,10 +4,10 @@ import dataclasses
 
 import pytest
 
+from degenbot.bot import PyBot
 from degenbot.builders.context import BuilderContext
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.bot import PyBot
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 
 

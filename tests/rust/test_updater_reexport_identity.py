@@ -18,7 +18,6 @@ from degenbot.db import (
     V3PoolRowInput,
     V4PoolRowInput,
 )
-
 from degenbot.exceptions import DatabaseSchemaStale
 
 

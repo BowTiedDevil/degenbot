@@ -16,9 +16,9 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot.arbitrage.hop_info import V2HopInfo, PathInfo
 from degenbot._ffi.provider import AlloyProvider, AsyncAlloyProvider
 from degenbot._ffi.simulation import PyDispatchCandidate, PyDispatchOutcome, PySimulateContext
+from degenbot.arbitrage.hop_info import PathInfo, V2HopInfo
 
 # Canonical mainnet addresses (parity corpus constants).
 OWNER = "0x9c56a29c7231974c269e24f9fb3c29203039089e"

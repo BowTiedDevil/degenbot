@@ -15,19 +15,16 @@ route a real builder through `PyBotIo`; that's the 14a follow-on (one builder's
 
 from __future__ import annotations
 
-from typing import Any
-
 import eth_abi.abi
 import pytest
 from hexbytes import HexBytes
-from degenbot.crypto import function_selector, keccak256
-from degenbot.checksum_cache import get_checksum_address
 
-
-from degenbot.builders.pool_io import SyncPoolIO
-from degenbot.builders.type_resolution import fetch_factory_from_chain
 from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot.bot import PyBotIo
+from degenbot.builders.pool_io import SyncPoolIO
+from degenbot.builders.type_resolution import fetch_factory_from_chain
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.crypto import function_selector
 
 # A minimal real offline provider (recorded JSON, no RPC) for tests that need a
 # valid `PyBotIo` provider but don't exercise specific RPC responses (DB handle
@@ -399,7 +396,6 @@ class _V2PoolProvider:
 
 
 def _eip55(addr: str) -> str:
-    from degenbot.checksum_cache import get_checksum_address
 
     return get_checksum_address(addr)
 
@@ -1600,10 +1596,10 @@ def test_pybot_io_native_alloy_call_raw_routes_through_native_call():
 def test_pybot_io_native_alloy_revert_surfaces_contract_logic_error():
     """Native alloy path: a recorded revert (`null` result) surfaces as
     `ContractLogicError` (the alloy revert path), not a generic RuntimeError."""
+    import json
+
     from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
     from degenbot.exceptions import ContractLogicError
-
-    import json
 
     factory_raw = "66f9664f97f2b50f62d13ea064982f936de76657"
     pool_addr = "ab" * 20

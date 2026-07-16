@@ -64,7 +64,6 @@ class _FunctionsResult:
         # Handle reverts (empty data means revert)
         if raw_bytes is None or len(raw_bytes) == 0:
 
-
             msg = "execution reverted"
             raise ContractLogicError(msg)
 

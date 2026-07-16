@@ -8,12 +8,12 @@ produce:
 """
 
 import eth_abi.abi
-from degenbot.checksum_cache import get_checksum_address
 
 from degenbot.arbitrage.types import (
     UniswapV4PoolSwapAmounts,
     V4PoolKey,
 )
+from degenbot.checksum_cache import get_checksum_address
 
 # ── Constants ──────────────────────────────────────────────────
 
