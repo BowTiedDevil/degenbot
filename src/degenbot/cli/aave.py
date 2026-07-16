@@ -19,7 +19,6 @@ from degenbot.aave import (
 from degenbot.aave import (
     cleanup_zero_balance_positions as rs_cleanup_zero_balance_positions,
 )
-from degenbot.aave.analysis.core import UserPositionSummary
 from degenbot.aave.analysis.orchestrator import analyze_positions_for_market
 from degenbot.aave.deployments import EthereumMainnetAaveV3
 from degenbot.bot import Bot
@@ -33,6 +32,7 @@ from degenbot.database.models.aave import (
     AaveV3User,
 )
 from degenbot.database.operations import backup_sqlite_database
+from degenbot.db import PyUserPositionSummary
 from degenbot.exceptions import DegenbotValueError
 from degenbot.logging import logger
 from degenbot.provider.block_helpers import get_number_for_block_identifier
@@ -826,7 +826,7 @@ def position_risk(  # noqa: PLR0917
 
 
 def _display_user_risk(
-    user_summary: UserPositionSummary,
+    user_summary: PyUserPositionSummary,
     *,
     show_positions: bool,
 ) -> None:

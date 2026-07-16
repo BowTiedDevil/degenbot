@@ -1,11 +1,18 @@
-"""Orchestrator that assembles data and delegates to core functions.
+"""I/O orchestration for Aave V3 position analysis.
 
-This is where I/O lives: database queries and oracle price fetching.
-The orchestrator converts ORM objects to flat records before passing
-them to core.
+A thin Python driver shell over the Rust ``degenbot-aave::analysis`` core
+(ADR-005 three-layer architecture). The pure math (health-factor / LTV /
+eMode / isolation / scaled-balance calc) lives in Rust; this module owns only
+the I/O orchestration: resolve the DB path, fetch users / positions / prices
+via Rust-backed readers, drive the per-user Rust analysis seam, and bucket the
+results.
+
+The former ``core.py`` (pure math + dataclasses) + ``protocols.py`` (typing
+seams) were retired once the Rust core reached byte-identical parity (verified
+by the §4.2 parity gate before deletion). The ``PositionAnalysisResult``
+bucket-sorter stays here (it's trivial Python, not math).
 """
 
-from collections.abc import Sequence
 from typing import Any
 
 from eth_typing import ChecksumAddress
@@ -13,28 +20,18 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from degenbot.aave import AavePriceOracle
-from degenbot.aave.analysis.core import (
-    CollateralPositionRecord,
-    DebtPositionRecord,
-    PositionAnalysisResult,
-    UserRecord,
-    analyze_user_position,
-)
-from degenbot.aave.analysis.protocols import PositionQuery, PriceFetcher
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.db import PyDatabasePositionQuery
+from degenbot.db import PyDatabasePositionQuery, PyUserPositionSummary, analyze_aave_user_position
 from degenbot.logging import logger
 from degenbot.provider import AlloyProvider
 
 
 class DatabasePositionQuery:
-    """PositionQuery implementation backed by the Rust `degenbot-db` core.
+    """PositionQuery backed by the Rust ``PyDatabasePositionQuery`` reader.
 
-    Routes every read through the `PyDatabasePositionQuery` PyO3 seam (ADR-005
-    three-layer architecture). The `session` is retained for explicit-deps
-    construction + resolving the DB file path + the `AaveV3Market` lookup (the
-    market id is an I/O detail resolved at the CLI boundary); reads no longer
-    use the SQLAlchemy session.
+    Routes every read through the PyO3 seam (ADR-005). The ``session`` is
+    retained for resolving the DB file path + the ``AaveV3Market`` lookup at
+    the CLI boundary; reads no longer use the SQLAlchemy session.
     """
 
     def __init__(self, session: Session) -> None:
@@ -42,7 +39,7 @@ class DatabasePositionQuery:
 
         Args:
             session: A SQLAlchemy session (used to resolve the database file
-                path + look up the `AaveV3Market` id at the CLI boundary).
+                path + look up the ``AaveV3Market`` id at the CLI boundary).
 
         """
         self._session = session
@@ -71,35 +68,33 @@ class DatabasePositionQuery:
             self._rust = PyDatabasePositionQuery(self._db_path())
         return self._rust
 
-    def get_users_with_debt(self, market_id: int, limit: int | None = None) -> Sequence[UserRecord]:
-        """Get all users with debt positions in a market, as flat records.
+    def get_users_with_debt(self, market_id: int, limit: int | None = None) -> list[dict[str, Any]]:
+        """Get all users with debt positions in a market, as flat dicts.
 
         Returns:
-            The computed value.
+            The Rust-backed row dicts (address checksummed to match the
+            price-map keys the analysis seam consumes).
 
         """
-        rows = self._handle().get_users_with_debt(market_id, limit)
-        return [UserRecord(**_checksum_user(r)) for r in rows]
+        return [_checksum_user(r) for r in self._handle().get_users_with_debt(market_id, limit)]
 
-    def get_collateral_positions(self, user_id: int) -> Sequence[CollateralPositionRecord]:
-        """Get collateral positions for a user, as flat records.
+    def get_collateral_positions(self, user_id: int) -> list[dict[str, Any]]:
+        """Get collateral positions for a user, as flat dicts.
 
         Returns:
-            The computed value.
+            The Rust-backed row dicts (address checksummed).
 
         """
-        rows = self._handle().get_collateral_positions(user_id)
-        return [CollateralPositionRecord(**_checksum_collateral(r)) for r in rows]
+        return [_checksum_collateral(r) for r in self._handle().get_collateral_positions(user_id)]
 
-    def get_debt_positions(self, user_id: int) -> Sequence[DebtPositionRecord]:
-        """Get debt positions for a user, as flat records.
+    def get_debt_positions(self, user_id: int) -> list[dict[str, Any]]:
+        """Get debt positions for a user, as flat dicts.
 
         Returns:
-            The computed value.
+            The Rust-backed row dicts (address checksummed).
 
         """
-        rows = self._handle().get_debt_positions(user_id)
-        return [DebtPositionRecord(**_checksum_debt(r)) for r in rows]
+        return [_checksum_debt(r) for r in self._handle().get_debt_positions(user_id)]
 
     def get_collateral_config_map(self, user_id: int) -> dict[int, bool]:
         """Get map of asset_id to enabled status for a user.
@@ -130,52 +125,13 @@ class DatabasePositionQuery:
         return {get_checksum_address(a) for a in self._handle().get_asset_addresses(market_id)}
 
 
-def _checksum_user(row: dict[str, Any]) -> dict[str, Any]:
-    """Normalize the user address to a ``ChecksumAddress``.
-
-    Returns:
-        The row with its ``address`` field EIP-55 checksummed.
-
-    """
-    row = dict(row)
-    row["address"] = get_checksum_address(row["address"])
-    return row
-
-
-def _checksum_collateral(row: dict[str, Any]) -> dict[str, Any]:
-    """Normalize the underlying address to a ``ChecksumAddress``.
-
-    Returns:
-        The row with its ``underlying_address`` field EIP-55 checksummed.
-
-    """
-    row = dict(row)
-    row["underlying_address"] = get_checksum_address(row["underlying_address"])
-    return row
-
-
-def _checksum_debt(row: dict[str, Any]) -> dict[str, Any]:
-    """Normalize the underlying address to a ``ChecksumAddress``.
-
-    Returns:
-        The row with its ``underlying_address`` field EIP-55 checksummed.
-
-    """
-    row = dict(row)
-    row["underlying_address"] = get_checksum_address(row["underlying_address"])
-    return row
-
-
 class OraclePriceFetcher:
-    """PriceFetcher implementation using the Aave oracle contract.
+    """PriceFetcher using the Aave oracle contract.
 
     Delegating shell over the Rust ``PyAavePriceOracle`` reader (the
-    ``degenbot-price`` core crate, ADR-005). The inline ``raw_call`` /
-    ``encode_function_calldata`` loop is retired — ``getAssetPrice(address)``
-    ``eth_call`` + ``uint256`` decode now run in Rust, with the same tolerant
-    per-asset skip-on-error behavior (the Rust core logs + skips reverts /
-    decode failures, matching the prior ``ContractLogicError`` / ``ValueError``
-    catch).
+    ``degenbot-price`` core crate, ADR-005). ``getAssetPrice(address)``
+    ``eth_call`` + ``uint256`` decode run in Rust, with the same tolerant
+    per-asset skip-on-error behavior.
     """
 
     def __init__(self, provider: AlloyProvider, oracle_address: ChecksumAddress) -> None:
@@ -194,81 +150,68 @@ class OraclePriceFetcher:
             self._oracle_address,
             self._provider.to_alloy_provider(),
         )
-        # The Rust reader returns EIP-55 checksummed string keys; the inputs
-        # were already checksummed ``ChecksumAddress`` values, so each input
-        # key is present verbatim — preserve the input keys exactly (matching
-        # the prior Python ``prices[asset_address] = price`` shape).
+        # The Rust reader returns EIP-55 checksummed string keys; preserve the
+        # input keys exactly (matching the prior Python shape).
         fetched = py_oracle.fetch(list(asset_addresses))
         return {addr: fetched[addr] for addr in asset_addresses if addr in fetched}
 
 
-class PositionAnalysisService:
-    """Service that coordinates position analysis with I/O.
+class PositionAnalysisResult:
+    """Result of analyzing positions for liquidation risk.
 
-    Created by Bot or CLI. Injects fetchers for testing.
-    Orchestrator converts ORM → flat records, then delegates to core.
+    Bucket-sorter only (no math) — the per-user ``PyUserPositionSummary``
+    objects (Rust-built via the analysis seam) are categorized by health factor
+    into safe / at-risk / liquidatable lists.
     """
 
-    def __init__(
-        self,
-        position_query: PositionQuery,
-        price_fetcher: PriceFetcher | None = None,
+    def __init__(self) -> None:
+        """Initialize empty buckets."""
+        self.safe_users: list[PyUserPositionSummary] = []
+        self.at_risk_users: list[PyUserPositionSummary] = []
+        self.liquidatable_users: list[PyUserPositionSummary] = []
+
+    @property
+    def total_users(self) -> int:
+        """Total users."""
+        return len(self.safe_users) + len(self.at_risk_users) + len(self.liquidatable_users)
+
+    @property
+    def at_risk_count(self) -> int:
+        """At risk count."""
+        return len(self.at_risk_users)
+
+    @property
+    def liquidatable_count(self) -> int:
+        """Liquidatable count."""
+        return len(self.liquidatable_users)
+
+    def categorize(
+        self, summary: PyUserPositionSummary, health_factor_threshold: float = 1.1
     ) -> None:
-        """Initialize the instance."""
-        self.position_query = position_query
-        self.price_fetcher = price_fetcher
+        """Categorize a user summary by health factor.
 
-    def analyze_market(
-        self,
-        market_id: int,
-        health_factor_threshold: float = 1.1,
-        limit: int | None = None,
-    ) -> PositionAnalysisResult:
-        """Entry point: call I/O, then delegate to core.
-
-        Returns:
-            The computed value.
+        Args:
+            summary: A ``PyUserPositionSummary`` (Rust-built).
+            health_factor_threshold: The at-risk threshold (default 1.1).
 
         """
-        result = PositionAnalysisResult()
+        hf = summary.health_factor
+        if hf is not None and hf < 1.0:
+            self.liquidatable_users.append(summary)
+        elif hf is not None and hf < health_factor_threshold:
+            self.at_risk_users.append(summary)
+        else:
+            self.safe_users.append(summary)
 
-        # Query users with debt
-        users = self.position_query.get_users_with_debt(market_id, limit)
+    def sort_by_risk(self) -> None:
+        """Sort at-risk + liquidatable users by health factor (lowest first).
 
-        # Fetch prices if fetcher available
-        price_map: dict[ChecksumAddress, int] = {}
-        if self.price_fetcher is not None:
-            asset_addresses = self.position_query.get_asset_addresses(market_id)
-            if asset_addresses:
-                price_map = self.price_fetcher.fetch(asset_addresses)
-
-        logger.info(f"Analyzing {len(users)} users with debt positions")
-
-        # Analyze each user via core
-        for user in users:
-            collateral = self.position_query.get_collateral_positions(user.id)
-            debt = self.position_query.get_debt_positions(user.id)
-            config_map = self.position_query.get_collateral_config_map(user.id)
-
-            summary = analyze_user_position(
-                user=user,
-                collateral_positions=list(collateral),
-                debt_positions=list(debt),
-                collateral_config_map=config_map,
-                price_map=price_map,
-            )
-
-            result.categorize(summary, health_factor_threshold)
-
-        result.sort_by_risk()
-
-        logger.info(
-            f"Analysis complete: {len(result.safe_users)} safe, "
-            f"{len(result.at_risk_users)} at risk, "
-            f"{len(result.liquidatable_users)} liquidatable",
-        )
-
-        return result
+        Mirrors the Rust ``PositionAnalysisResult::sort_by_risk`` key: a
+        ``None`` OR falsy (``0.0``) health factor sorts as ``+inf`` (the Python
+        ``or`` treats ``0.0`` as falsy).
+        """
+        self.at_risk_users.sort(key=lambda x: x.health_factor or float("inf"))
+        self.liquidatable_users.sort(key=lambda x: x.health_factor or float("inf"))
 
 
 def analyze_positions_for_market(
@@ -278,27 +221,99 @@ def analyze_positions_for_market(
     limit: int | None = None,
     provider: AlloyProvider | None = None,
 ) -> PositionAnalysisResult:
-    """Backward-compatible entry point.
+    """Analyze all users-with-debt in a market for liquidation risk.
 
-    Creates a PositionAnalysisService from session + optional provider,
-    then delegates to analyze_market().
+    Thin driver shell: fetches users + prices via Rust-backed readers, drives
+    the per-user ``analyze_aave_user_position`` Rust seam, and buckets the
+    results. The pure math (HF / LTV / scaled-balance) lives in Rust
+    (``degenbot-aave::analysis``).
+
+    Args:
+        session: A SQLAlchemy session (for DB path resolution).
+        market_id: The Aave V3 market id.
+        health_factor_threshold: The at-risk threshold (default 1.1).
+        limit: Optional cap on the number of users analyzed.
+        provider: Optional RPC provider for price fetching (when ``None``,
+            prices are treated as 1 — faster, but HFs are relative).
 
     Returns:
-        The computed value.
+        The bucketed analysis result.
 
     """
     position_query = DatabasePositionQuery(session)
 
-    price_fetcher: PriceFetcher | None = None
+    price_map: dict[ChecksumAddress, int] = {}
     if provider is not None:
         oracle_address = position_query.get_oracle_address(market_id)
         if oracle_address is None:
             logger.warning("Price oracle not found for market, prices will not be applied")
         else:
-            price_fetcher = OraclePriceFetcher(provider, oracle_address)
+            price_map = OraclePriceFetcher(provider, oracle_address).fetch(
+                position_query.get_asset_addresses(market_id)
+            )
 
-    service = PositionAnalysisService(
-        position_query=position_query,
-        price_fetcher=price_fetcher,
+    users = position_query.get_users_with_debt(market_id, limit)
+    logger.info(f"Analyzing {len(users)} users with debt positions")
+
+    result = PositionAnalysisResult()
+
+    # The price_map is keyed by checksummed ChecksumAddress (the fetcher's
+    # output); the record dicts carry checksummed addresses too (the
+    # _checksum_* helpers). Both match — pass the price_map straight through.
+    seam_prices: dict[str, int] | None = (
+        {str(k): v for k, v in price_map.items()} if price_map else None
     )
-    return service.analyze_market(market_id, health_factor_threshold, limit)
+
+    for user in users:
+        collateral = position_query.get_collateral_positions(user["id"])
+        debt = position_query.get_debt_positions(user["id"])
+        cfg = position_query.get_collateral_config_map(user["id"])
+
+        summary = analyze_aave_user_position(user, collateral, debt, cfg, seam_prices)
+        result.categorize(summary, health_factor_threshold)
+
+    result.sort_by_risk()
+
+    logger.info(
+        f"Analysis complete: {len(result.safe_users)} safe, "
+        f"{len(result.at_risk_users)} at risk, "
+        f"{len(result.liquidatable_users)} liquidatable",
+    )
+
+    return result
+
+
+def _checksum_user(row: dict[str, Any]) -> dict[str, Any]:
+    """Normalize the user address to a ChecksumAddress.
+
+    Returns:
+        The row with its ``address`` field EIP-55 checksummed.
+
+    """
+    row = dict(row)
+    row["address"] = get_checksum_address(row["address"])
+    return row
+
+
+def _checksum_collateral(row: dict[str, Any]) -> dict[str, Any]:
+    """Normalize the underlying address to a ChecksumAddress.
+
+    Returns:
+        The row with its ``underlying_address`` field EIP-55 checksummed.
+
+    """
+    row = dict(row)
+    row["underlying_address"] = get_checksum_address(row["underlying_address"])
+    return row
+
+
+def _checksum_debt(row: dict[str, Any]) -> dict[str, Any]:
+    """Normalize the underlying address to a ChecksumAddress.
+
+    Returns:
+        The row with its ``underlying_address`` field EIP-55 checksummed.
+
+    """
+    row = dict(row)
+    row["underlying_address"] = get_checksum_address(row["underlying_address"])
+    return row
