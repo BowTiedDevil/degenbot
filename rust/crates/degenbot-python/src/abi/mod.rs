@@ -25,6 +25,7 @@ pub fn add_abi_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     submod.add_function(wrap_pyfunction!(decoder::decode, &submod)?)?;
     submod.add_function(wrap_pyfunction!(decoder::decode_single, &submod)?)?;
     submod.add_function(wrap_pyfunction!(encoder::encode, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(encoder::encode_packed, &submod)?)?;
     submod.add_function(wrap_pyfunction!(encoder::encode_single, &submod)?)?;
 
     m.add_submodule(&submod)?;

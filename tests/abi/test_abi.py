@@ -7,10 +7,18 @@ fixtures.
 """
 
 import eth_abi.abi
+import eth_abi.packed
 import pytest
 from hexbytes import HexBytes
 
-from degenbot.abi import AbiDecodeError, AbiEncodeError, decode, decode_single, encode
+from degenbot.abi import (
+    AbiDecodeError,
+    AbiEncodeError,
+    decode,
+    decode_single,
+    encode,
+    encode_packed,
+)
 
 
 class TestEncode:
@@ -35,6 +43,91 @@ class TestEncode:
         """Empty types list produces empty bytes."""
         result = encode([], [])
         assert isinstance(result, bytes)
+
+
+class TestEncodePacked:
+    """Parity tests for ``encode_packed`` (Solidity ``abi.encodePacked``)."""
+
+    def test_packed_address_address_bool(self) -> None:
+        """Aerodrome CREATE2 salt: (address, address, bool) packs to 41 bytes."""
+        addr1 = "0x" + "11" * 20
+        addr2 = "0x" + "22" * 20
+        result = encode_packed(["address", "address", "bool"], [addr1, addr2, True])
+        expected = eth_abi.packed.encode_packed(
+            ("address", "address", "bool"),
+            [addr1, addr2, True],
+        )
+        assert result == expected
+        assert len(result) == 41
+
+    def test_packed_address_address(self) -> None:
+        """Uniswap V2 CREATE2 salt: (address, address) packs to 40 bytes."""
+        addr1 = "0x" + "aa" * 20
+        addr2 = "0x" + "bb" * 20
+        result = encode_packed(["address", "address"], [addr1, addr2])
+        expected = eth_abi.packed.encode_packed(
+            ("address", "address"),
+            [addr1, addr2],
+        )
+        assert result == expected
+        assert len(result) == 40
+
+    def test_packed_uint24(self) -> None:
+        """uint24 packs to 3 bytes big-endian, no padding."""
+        result = encode_packed(["uint24"], [0x010203])
+        expected = eth_abi.packed.encode_packed(("uint24",), [0x010203])
+        assert result == expected
+        assert result == b"\x01\x02\x03"
+
+    def test_packed_int8_negative(self) -> None:
+        """int8 -1 packs to a single 0xff byte (two's complement)."""
+        result = encode_packed(["int8"], [-1])
+        expected = eth_abi.packed.encode_packed(("int8",), [-1])
+        assert result == expected
+        assert result == b"\xff"
+
+    def test_packed_mixed_widths(self) -> None:
+        """uint24 + address packs to 3 + 20 = 23 bytes."""
+        addr = "0xd3cda913deb6f67967b99d67acdfa1712c293601"
+        result = encode_packed(["uint24", "address"], [0x010203, addr])
+        expected = eth_abi.packed.encode_packed(
+            ("uint24", "address"),
+            [0x010203, addr],
+        )
+        assert result == expected
+
+    def test_packed_bytes32(self) -> None:
+        """bytes32 packs to 32 bytes, no padding change."""
+        value = b"\x00" * 32
+        result = encode_packed(["bytes32"], [value])
+        expected = eth_abi.packed.encode_packed(("bytes32",), [value])
+        assert result == expected
+
+    def test_packed_hexbytes_as_address(self) -> None:
+        """20-byte HexBytes is accepted as ``address`` (eth_abi parity)."""
+        addr_bytes = HexBytes("0x" + "11" * 20)
+        result = encode_packed(["address", "address"], [addr_bytes, addr_bytes])
+        expected = eth_abi.packed.encode_packed(
+            ("address", "address"),
+            [addr_bytes, addr_bytes],
+        )
+        assert result == expected
+
+    def test_packed_empty(self) -> None:
+        """Empty types list produces empty bytes."""
+        result = encode_packed([], [])
+        assert isinstance(result, bytes)
+        assert len(result) == 0
+
+    def test_packed_rejects_fixed_point(self) -> None:
+        """fixed128x18 raises AbiEncodeError (no eth_abi fallback)."""
+        with pytest.raises(AbiEncodeError, match="packed encoding failed"):
+            encode_packed(["fixed128x18"], [1])
+
+    def test_packed_mismatched_counts_raises(self) -> None:
+        """Mismatched types/values count raises ValueError -> AbiEncodeError."""
+        with pytest.raises(AbiEncodeError):
+            encode_packed(["uint256", "bool"], [42])
 
 
 class TestDecode:

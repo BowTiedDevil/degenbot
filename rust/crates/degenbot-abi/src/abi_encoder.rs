@@ -150,6 +150,76 @@ pub fn encode_for_types(types: &[AbiType], values: &[AbiValue]) -> Result<Vec<u8
     let cached = crate::abi_types::CachedAbiTypes::from_abi_types(types)?;
     cached.encode(values)
 }
+
+/// Encode multiple ABI values in **non-standard packed mode** (Solidity
+/// `abi.encodePacked` / `eth_abi.packed.encode_packed`).
+///
+/// Each value is encoded tightly with no 32-byte word padding and no length
+/// prefix for dynamic types — the values are simply concatenated in their
+/// packed forms. Tuples are packed element-by-element.
+///
+/// Uses the same `value_to_alloy_for_type` coercion path as `encode_rust`
+/// (so non-negative Python ints can satisfy signed `Int` slots, 20-byte
+/// `bytes` can satisfy `address`, etc.).
+///
+/// # Arguments
+///
+/// * `types` - Slice of ABI type strings
+/// * `values` - Slice of values to pack-encode
+///
+/// # Returns
+///
+/// The packed-encoded bytes (no function selector, no padding).
+///
+/// # Errors
+///
+/// Returns `AbiDecodeError` if a type is unsupported or a value doesn't
+/// fit the requested type.
+///
+/// # Example
+///
+/// ```
+/// use degenbot_abi::abi_encoder::encode_packed_rust;
+/// use degenbot_abi::abi_types::AbiValue;
+/// use alloy::primitives::U256;
+///
+/// let types = ["address", "address", "bool"];
+/// let values = [
+///     AbiValue::Address([0x11; 20]),
+///     AbiValue::Address([0x22; 20]),
+///     AbiValue::Bool(true),
+/// ];
+///
+/// let packed = encode_packed_rust(&types, &values)?;
+/// // 20 + 20 + 1 = 41 bytes (no padding)
+/// assert_eq!(packed.len(), 41);
+///
+/// Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn encode_packed_rust(types: &[&str], values: &[AbiValue]) -> Result<Vec<u8>, AbiDecodeError> {
+    if types.len() != values.len() {
+        return Err(AbiDecodeError::InvalidLength(format!(
+            "Type count {} does not match value count {}",
+            types.len(),
+            values.len()
+        )));
+    }
+
+    if types.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Fixed-point types are not representable in `AbiValue` and have no alloy
+    // DynSolType mapping — reject up front (same guard as `encode_rust`).
+    for ty in types {
+        if ty.contains("fixed") || ty.contains("ufixed") {
+            return Err(AbiDecodeError::FixedPointNotImplemented);
+        }
+    }
+
+    let cached = get_cached_types(types)?;
+    cached.encode_packed(values)
+}
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -290,6 +360,61 @@ mod tests {
         assert_eq!(encoded[31], 42);
         // Second word: true
         assert_eq!(encoded[63], 1);
+    }
+
+    #[test]
+    fn test_encode_packed_address_bool() {
+        // Mirrors eth_abi.packed.encode_packed for (address, address, bool):
+        // 20 + 20 + 1 = 41 bytes, no padding.
+        let values = vec![
+            AbiValue::Address([0x11; 20]),
+            AbiValue::Address([0x22; 20]),
+            AbiValue::Bool(true),
+        ];
+        let encoded = encode_packed_rust(&["address", "address", "bool"], &values).unwrap();
+        assert_eq!(encoded.len(), 41);
+        assert_eq!(&encoded[0..20], &[0x11; 20]);
+        assert_eq!(&encoded[20..40], &[0x22; 20]);
+        assert_eq!(encoded[40], 1);
+    }
+
+    #[test]
+    fn test_encode_packed_address_address() {
+        // Mirrors Uniswap V2 CREATE2 salt: (address, address) → 40 bytes.
+        let values = vec![AbiValue::Address([0xaa; 20]), AbiValue::Address([0xbb; 20])];
+        let encoded = encode_packed_rust(&["address", "address"], &values).unwrap();
+        assert_eq!(encoded.len(), 40);
+        assert_eq!(&encoded[0..20], &[0xaa; 20]);
+        assert_eq!(&encoded[20..40], &[0xbb; 20]);
+    }
+
+    #[test]
+    fn test_encode_packed_uint_widths() {
+        // uint24 packs to 3 bytes big-endian (Solidity `abi.encodePacked`).
+        let values = vec![AbiValue::Uint(U256::from(0x0001_0203_u64), 24)];
+        let encoded = encode_packed_rust(&["uint24"], &values).unwrap();
+        assert_eq!(encoded, vec![0x01, 0x02, 0x03]);
+    }
+
+    #[test]
+    fn test_encode_packed_empty() {
+        let encoded = encode_packed_rust(&[], &[]).unwrap();
+        assert!(encoded.is_empty());
+    }
+
+    #[test]
+    fn test_encode_packed_rejects_fixed_point() {
+        let value = AbiValue::Uint(U256::from(1u64), 256);
+        let err = encode_packed_rust(&["fixed128x18"], &[value]).unwrap_err();
+        assert!(matches!(err, AbiDecodeError::FixedPointNotImplemented));
+    }
+
+    #[test]
+    fn test_encode_packed_int_negative() {
+        // int8 negative packs to 1 byte two's complement.
+        let values = vec![AbiValue::Int(I256::MINUS_ONE, 8)];
+        let encoded = encode_packed_rust(&["int8"], &values).unwrap();
+        assert_eq!(encoded, vec![0xff]);
     }
 
     #[test]

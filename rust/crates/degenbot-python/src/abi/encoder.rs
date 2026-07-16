@@ -8,7 +8,7 @@
 //! [`crate::conversion::alloy::abi_value_from_python`].
 
 use crate::prelude::*;
-use degenbot_abi::abi_encoder::{encode_rust, encode_single_rust};
+use degenbot_abi::abi_encoder::{encode_packed_rust, encode_rust, encode_single_rust};
 use degenbot_abi::abi_types::AbiValue;
 use errors::AbiDecodeError;
 use pyo3::exceptions::{PyNotImplementedError, PyValueError};
@@ -104,6 +104,54 @@ pub fn encode<'py>(
     let abi_values = abi_values?;
     let encoded = py
         .detach(|| encode_rust(&type_refs, &abi_values))
+        .map_err(|e| map_encode_error(&e))?;
+    Ok(PyBytes::new(py, &encoded))
+}
+
+/// Pack-encode multiple ABI values (Solidity `abi.encodePacked`).
+///
+/// # Arguments
+///
+/// * `types` - List of ABI type strings
+/// * `values` - List of Python values to pack-encode
+///
+/// # Returns
+///
+/// The packed-encoded bytes (no padding, no length prefixes).
+#[allow(clippy::missing_errors_doc)]
+#[pyfunction]
+#[pyo3(signature = (types, values))]
+pub fn encode_packed<'py>(
+    py: Python<'py>,
+    types: &Bound<'_, PyList>,
+    values: &Bound<'_, PyList>,
+) -> PyResult<Bound<'py, PyBytes>> {
+    if types.len() != values.len() {
+        return Err(PyValueError::new_err(format!(
+            "Type count {} does not match value count {}",
+            types.len(),
+            values.len()
+        )));
+    }
+
+    // SAFETY: GIL is held — `abi_value_from_python` extracts values from
+    // Python objects that require the GIL. The subsequent `py.detach()` releases
+    // the GIL for the pure-Rust encode computation.
+    let abi_values: Result<Vec<AbiValue>, _> = values
+        .iter()
+        .map(|v| alloy_py::abi_value_from_python(py, &v))
+        .collect();
+
+    let type_strings: Vec<String> = types
+        .iter()
+        .map(|t| t.extract::<String>())
+        .collect::<Result<_, _>>()?;
+
+    let type_refs: Vec<&str> = type_strings.iter().map(String::as_str).collect();
+
+    let abi_values = abi_values?;
+    let encoded = py
+        .detach(|| encode_packed_rust(&type_refs, &abi_values))
         .map_err(|e| map_encode_error(&e))?;
     Ok(PyBytes::new(py, &encoded))
 }
