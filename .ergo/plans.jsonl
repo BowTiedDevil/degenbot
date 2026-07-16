@@ -1121,3 +1121,7 @@
 {"type":"state","ts":"2026-07-16T02:07:12.726148603Z","data":{"id":"WGN4ZM","state":"done","ts":"2026-07-16T02:07:12.726148603Z"}}
 {"type":"claim","ts":"2026-07-16T02:07:15.404557086Z","data":{"id":"A47JML","agent_id":"sonnet@pi","ts":"2026-07-16T02:07:15.404557086Z"}}
 {"type":"state","ts":"2026-07-16T02:07:15.404557086Z","data":{"id":"A47JML","state":"doing","ts":"2026-07-16T02:07:15.404557086Z"}}
+{"type":"result","ts":"2026-07-16T02:10:30.667257779Z","data":{"task_id":"A47JML","summary":"src/degenbot/types/__init__.py","path":"src/degenbot/types/__init__.py","sha256_at_attach":"e070b42ae0a7dbedf761114f7c7af8e968d416acf264bfc7180acf48191a44fe","mtime_at_attach":"2026-07-16T02:05:54.795122713Z","git_commit_at_attach":"861c055d80e0bb7e42e668ee0db0834ab06b3aca","ts":"2026-07-16T02:10:30.667257779Z"}}
+{"type":"state","ts":"2026-07-16T02:10:30.667257779Z","data":{"id":"A47JML","state":"done","ts":"2026-07-16T02:10:30.667257779Z"}}
+{"type":"claim","ts":"2026-07-16T02:10:45.061185899Z","data":{"id":"6SNY2U","agent_id":"sonnet@pi","ts":"2026-07-16T02:10:45.061185899Z"}}
+{"type":"state","ts":"2026-07-16T02:10:45.061185899Z","data":{"id":"6SNY2U","state":"doing","ts":"2026-07-16T02:10:45.061185899Z"}}
