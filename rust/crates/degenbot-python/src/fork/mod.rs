@@ -55,7 +55,7 @@ use alloy::primitives::{Address, Bytes};
 use degenbot_fork::{AnvilFork as CoreAnvilFork, AnvilForkBuilder, ForkError, MiningMode};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyBytes;
+use pyo3::types::{PyBytes, PyModule};
 
 /// Default mnemonic — matches the legacy Python `AnvilFork.__init__`
 /// default (the Brownie/Ganache test mnemonic). The default value
@@ -84,7 +84,7 @@ fn parse_addr(address: &str) -> PyResult<Address> {
 /// Rust-owned Anvil fork handle: subprocess + IPC `DynProvider` + dev-RPC
 /// surface. Construct via `AnvilFork(**kwargs)`; see `__new__` for the
 /// keyword surface.
-#[pyclass(name = "AnvilFork", skip_from_py_object, module = "degenbot._ffi")]
+#[pyclass(name = "AnvilFork", skip_from_py_object, module = "degenbot._ffi.fork")]
 pub struct PyAnvilFork {
     /// The Rust core handle. `Arc` so each `#[pymethods]` call can cheaply
     /// clone out before `py.detach` (the underlying `AnvilFork` itself is
@@ -403,6 +403,12 @@ impl PyAnvilFork {
 /// # Errors
 /// Returns `PyErr` if `add_class` fails (e.g. name collision).
 pub fn add_fork_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyAnvilFork>()?;
+    let py = m.py();
+    let submod = PyModule::new(py, "degenbot._ffi.fork")?;
+    submod.add_class::<PyAnvilFork>()?;
+    m.add_submodule(&submod)?;
+    py.import("sys")?
+        .getattr("modules")?
+        .set_item("degenbot._ffi.fork", &submod)?;
     Ok(())
 }

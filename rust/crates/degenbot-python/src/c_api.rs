@@ -38,9 +38,9 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     )?)?;
 
     // Solady LibZip (FastLZ) compress/decompress — lives in `degenbot-core`
-    // (always a dependency), so no feature gate.
-    m.add_function(wrap_pyfunction!(crate::solady::libzip::flz_compress, m)?)?;
-    m.add_function(wrap_pyfunction!(crate::solady::libzip::flz_decompress, m)?)?;
+    // (always a dependency), so no feature gate. Registered on a real
+    // Python submodule `degenbot._ffi.solady`.
+    crate::solady::add_solady_module(m)?;
 
     // Pathfinding graph + DFS (feature = "pathfinding")
     #[cfg(feature = "pathfinding")]

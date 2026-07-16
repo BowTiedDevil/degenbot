@@ -1,0 +1,58 @@
+"""Stub for the dynamically-created ``degenbot._ffi.fork`` submodule.
+
+Created at runtime by ``add_fork_module`` in the PyO3 wrapper crate
+(``degenbot-python/src/fork/mod.rs``). The class is a thin PyO3 wrapper
+over the pure-Rust ``degenbot-fork`` core crate.
+"""
+
+from typing import Literal
+
+class AnvilFork:
+    """Rust-owned Anvil fork handle (PyO3 seam over ``degenbot-fork``).
+
+    Spawns an ``anvil`` subprocess via ``alloy::node_bindings::Anvil`` and
+    connects an alloy ``DynProvider`` over IPC. The 12 dev-RPC methods
+    (``evm_mine``/``anvil_snapshot``/``anvil_set_balance``/…) are exposed
+    sync; the underlying alloy Provider is async and the PyO3 wrapper drives
+    it via the shared degenbot-core tokio runtime.
+    """
+
+    def __init__(
+        self,
+        *,
+        fork_url: str | None = None,
+        fork_block: int | None = None,
+        fork_transaction_hash: str | None = None,
+        mining_mode: Literal["auto", "interval", "none"] = "auto",
+        mining_interval: int | None = None,
+        storage_caching: bool = True,
+        base_fee: int | None = None,
+        ipc_path: str | None = None,
+        port: int | None = None,
+        host: str = "127.0.0.1",
+        mnemonic: str = ...,
+        chain_id: int | None = None,
+        anvil_opts: list[str] | None = None,
+    ) -> None: ...
+    @property
+    def ipc_path(self) -> str: ...
+    @property
+    def http_url(self) -> str: ...
+    @property
+    def ws_url(self) -> str: ...
+    @property
+    def port(self) -> int: ...
+    def mine(self) -> None: ...
+    def reset(self, block_number: int | None = None) -> None: ...
+    def snapshot(self) -> int: ...
+    def revert(self, snapshot_id: int) -> bool: ...
+    def set_balance(self, address: str, balance: int) -> None: ...
+    def set_code(self, address: str, code: bytes) -> None: ...
+    def set_nonce(self, address: str, nonce: int) -> None: ...
+    def set_storage_at(self, address: str, slot: int, value: int) -> None: ...
+    def set_next_base_fee(self, basefee: int) -> None: ...
+    def set_next_block_timestamp(self, timestamp: int) -> None: ...
+    def set_block_timestamp_interval(self, seconds: int) -> None: ...
+    def set_coinbase(self, address: str) -> None: ...
+
+__all__ = ["AnvilFork"]

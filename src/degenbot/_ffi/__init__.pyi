@@ -5,7 +5,7 @@ used by the degenbot Python package.
 """
 
 from collections.abc import Callable, Coroutine
-from typing import Any, Literal, overload
+from typing import Any, overload
 
 from hexbytes import HexBytes
 
@@ -42,6 +42,9 @@ from . import balancer_math as balancer_math
 from . import cl_math as cl_math
 from . import curve_math as curve_math
 from . import db as db
+from . import fork as fork
+from . import price as price
+from . import solady as solady
 from . import solidly_math as solidly_math
 from .db import (
     ExchangeRow,
@@ -84,8 +87,6 @@ from .db import (
 # optional `0x` prefix), `bytes`, `bytearray`, or `HexBytes`; return `HexBytes`.
 # Truncated/invalid back-references surface as `ValueError`. The Python
 # companion `degenbot.utils.solady.libzip` delegates here (sub-step C routing).
-def flz_compress(uncompressed_data: str | bytes) -> HexBytes: ...
-def flz_decompress(compressed_data: bytes | bytearray | str) -> HexBytes: ...
 def build_path_graph(
     database_path: str,
     chain_id: int,
@@ -647,48 +648,6 @@ class Contract:
 
         """
 
-class PyChainlinkPriceFeed:
-    """Typed Chainlink aggregator price-feed reader."""
-
-    def __init__(
-        self,
-        address: str,
-        provider: AlloyProvider,
-        chain_id: int | None = None,
-    ) -> None: ...
-    @property
-    def address(self) -> str: ...
-    @property
-    def chain_id(self) -> int | None: ...
-    def decimals(self) -> int:
-        """Call ``decimals()`` and return the feed's decimal places (``uint8``)."""
-    def latest_round_data(self) -> tuple[int, int, int, int, int]:
-        """Call ``latestRoundData()`` and return the round tuple.
-
-        ``(round_id, answer, started_at, updated_at, answered_in_round)``
-        as Python ints (``answer`` is the raw ``int256`` in feed decimals).
-        """
-    def price(self) -> int:
-        """Decimal-corrected whole-unit price as an int.
-
-        ``int(answer // 10**decimals)``; negative clamps to 0.
-        """
-
-class PyAavePriceOracle:
-    """Typed Aave price-oracle reader."""
-
-    def __init__(self, oracle_address: str, provider: AlloyProvider) -> None: ...
-    @property
-    def address(self) -> str: ...
-    def get_asset_price(self, asset_address: str) -> int:
-        """Call ``getAssetPrice(asset)`` and return the ``uint256`` price."""
-    def fetch(self, asset_addresses: list[str]) -> dict[str, int]:
-        """Fetch prices for a batch of assets, tolerantly.
-
-        A failure on one asset is logged and skipped; successfully-fetched
-        prices are returned keyed by checksummed asset address.
-        """
-
 class LogFilter:
     """Filter for log queries."""
 
@@ -914,64 +873,6 @@ class AsyncContract:
         calls: list[tuple[str, list[str]]],
         block_number: int | None = None,
     ) -> Coroutine[Any, Any, list[list[str]]]: ...
-
-class AnvilFork:
-    """Rust-owned Anvil fork handle (PyO3 seam over ``degenbot-fork``).
-
-    Spawns an ``anvil`` subprocess via ``alloy::node_bindings::Anvil`` and
-    connects an alloy ``DynProvider`` over IPC. The 12 dev-RPC methods
-    (``evm_mine``/``anvil_snapshot``/``anvil_set_balance``/…) are exposed
-    sync; the underlying alloy Provider is async and the PyO3 wrapper drives
-    it via the shared degenbot-core tokio runtime.
-
-    Post-spawn state overrides (``balance_overrides``/``code_overrides``/
-    ``nonce_overrides``/``storage_overrides``) are NOT exposed on the
-    constructor — apply them after construction via ``set_balance``/
-    ``set_code``/``set_nonce``/``set_storage_at``.
-
-    The legacy Python ``AnvilFork.w3`` handle is replaced in FF4
-    (``WXRNHH``) by an ``AlloyProvider`` constructed over
-    ``AnvilFork.ipc_path``.
-
-    """
-
-    def __init__(
-        self,
-        *,
-        fork_url: str | None = None,
-        fork_block: int | None = None,
-        fork_transaction_hash: str | None = None,
-        mining_mode: Literal["auto", "interval", "none"] = "auto",
-        mining_interval: int | None = None,
-        storage_caching: bool = True,
-        base_fee: int | None = None,
-        ipc_path: str | None = None,
-        port: int | None = None,
-        host: str = "127.0.0.1",
-        mnemonic: str = ...,
-        chain_id: int | None = None,
-        anvil_opts: list[str] | None = None,
-    ) -> None: ...
-    @property
-    def ipc_path(self) -> str: ...
-    @property
-    def http_url(self) -> str: ...
-    @property
-    def ws_url(self) -> str: ...
-    @property
-    def port(self) -> int: ...
-    def mine(self) -> None: ...
-    def reset(self, block_number: int | None = None) -> None: ...
-    def snapshot(self) -> int: ...
-    def revert(self, snapshot_id: int) -> bool: ...
-    def set_balance(self, address: str, balance: int) -> None: ...
-    def set_code(self, address: str, code: bytes) -> None: ...
-    def set_nonce(self, address: str, nonce: int) -> None: ...
-    def set_storage_at(self, address: str, slot: int, value: int) -> None: ...
-    def set_next_base_fee(self, basefee: int) -> None: ...
-    def set_next_block_timestamp(self, timestamp: int) -> None: ...
-    def set_block_timestamp_interval(self, seconds: int) -> None: ...
-    def set_coinbase(self, address: str) -> None: ...
 
 class PyErc20Token:
     """Thin PyO3 handle to a token registered in the Rust `Bot`.
@@ -2178,7 +2079,6 @@ def finalize_fees(
 __all__ = [
     "AlloyProvider",
     "AlloySubscription",
-    "AnvilFork",
     "AsyncAlloyProvider",
     "AsyncContract",
     "BlockData",
@@ -2223,15 +2123,16 @@ __all__ = [
     "fetch_fee_history_py",
     "finalize_fees",
     "find_paths_rust",
-    "flz_compress",
-    "flz_decompress",
+    "fork",
     "get_function_selector",
     "mapping_slot",
     "nested_mapping_slot",
     "pack_config",
     "pack_expected_balance",
+    "price",
     "run_aave_update",
     "run_pool_update",
+    "solady",
     "solidly_math",
     "to_checksum_address",
     "v4_input_is_native",

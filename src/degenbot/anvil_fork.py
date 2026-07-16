@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import validate_call
 
-from degenbot._ffi import AnvilFork as PyAnvilFork
+from degenbot._ffi.fork import AnvilFork as PyAnvilFork
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.infrastructure import AnvilError
 from degenbot.logging import logger
