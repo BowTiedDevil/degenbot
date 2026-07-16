@@ -5,8 +5,8 @@ pre-cutover SQLAlchemy `DatabasePositionQuery`) + a freshly-regenerated
 `aave_parity.db` fixture: the Rust-backed `DatabasePositionQuery` (delegating
 through `PyDatabasePositionQuery`) produces identical results to the frozen
 SQLAlchemy oracle. Plus a §4.5 delegation spy proving the Python reader hits
-Rust with the right args, and an end-to-end `analyze_market` smoke test (the
-pure core consumes the Rust-backed records).
+Rust with the right args, and an end-to-end `analyze_positions_for_market`
+smoke test (the Rust analysis seam consumes the Rust-backed records).
 """
 
 import json
@@ -54,14 +54,14 @@ class TestParity:
         expected = _expected()["users"]
         assert len(users) == len(expected) == 3
         for got, exp in zip(users, expected, strict=True):
-            assert got.id == exp["id"]
-            assert got.address == exp["address"]
-            assert got.market_id == exp["market_id"]
-            assert got.e_mode == exp["e_mode"]
-            assert got.is_isolation_mode == exp["is_isolation_mode"]
-            assert got.isolation_mode_debt == int(exp["isolation_mode_debt"])
+            assert got["id"] == exp["id"]
+            assert got["address"] == exp["address"]
+            assert got["market_id"] == exp["market_id"]
+            assert got["e_mode"] == exp["e_mode"]
+            assert got["is_isolation_mode"] == exp["is_isolation_mode"]
+            assert got["isolation_mode_debt"] == int(exp["isolation_mode_debt"])
             ceiling = exp["isolation_debt_ceiling"]
-            assert got.isolation_debt_ceiling == (int(ceiling) if ceiling is not None else None)
+            assert got["isolation_debt_ceiling"] == (int(ceiling) if ceiling is not None else None)
 
     def test_get_collateral_positions(self, query: DatabasePositionQuery) -> None:
         """Collateral rows (joined asset/config/emode/underlying) match the oracle."""
@@ -69,16 +69,16 @@ class TestParity:
             rows = list(query.get_collateral_positions(u["id"]))
             assert len(rows) == len(u["collateral"])
             for got, exp in zip(rows, u["collateral"], strict=True):
-                assert got.asset_id == exp["asset_id"]
-                assert got.balance == int(exp["balance"])
-                assert got.underlying_address == exp["underlying_address"]
-                assert got.underlying_symbol == exp["underlying_symbol"]
-                assert got.liquidity_index == int(exp["liquidity_index"])
-                assert got.e_mode_category_id == exp["e_mode_category_id"]
-                assert got.asset_lt == exp["asset_lt"]
-                assert got.asset_ltv == exp["asset_ltv"]
-                assert got.emode_lt == exp["emode_lt"]
-                assert got.emode_ltv == exp["emode_ltv"]
+                assert got["asset_id"] == exp["asset_id"]
+                assert got["balance"] == int(exp["balance"])
+                assert got["underlying_address"] == exp["underlying_address"]
+                assert got["underlying_symbol"] == exp["underlying_symbol"]
+                assert got["liquidity_index"] == int(exp["liquidity_index"])
+                assert got["e_mode_category_id"] == exp["e_mode_category_id"]
+                assert got["asset_lt"] == exp["asset_lt"]
+                assert got["asset_ltv"] == exp["asset_ltv"]
+                assert got["emode_lt"] == exp["emode_lt"]
+                assert got["emode_ltv"] == exp["emode_ltv"]
 
     def test_get_debt_positions(self, query: DatabasePositionQuery) -> None:
         """Debt rows (joined asset/emode/underlying) match the oracle."""
@@ -86,12 +86,12 @@ class TestParity:
             rows = list(query.get_debt_positions(u["id"]))
             assert len(rows) == len(u["debt"])
             for got, exp in zip(rows, u["debt"], strict=True):
-                assert got.asset_id == exp["asset_id"]
-                assert got.balance == int(exp["balance"])
-                assert got.underlying_address == exp["underlying_address"]
-                assert got.underlying_symbol == exp["underlying_symbol"]
-                assert got.borrow_index == int(exp["borrow_index"])
-                assert got.e_mode_category_id == exp["e_mode_category_id"]
+                assert got["asset_id"] == exp["asset_id"]
+                assert got["balance"] == int(exp["balance"])
+                assert got["underlying_address"] == exp["underlying_address"]
+                assert got["underlying_symbol"] == exp["underlying_symbol"]
+                assert got["borrow_index"] == int(exp["borrow_index"])
+                assert got["e_mode_category_id"] == exp["e_mode_category_id"]
 
     def test_get_collateral_config_map(self, query: DatabasePositionQuery) -> None:
         """The asset_id to enabled map matches the oracle."""
@@ -112,16 +112,16 @@ class TestParity:
         limited = list(query.get_users_with_debt(market_id, limit=1))
         all_users = list(query.get_users_with_debt(market_id))
         assert len(limited) == 1
-        assert limited[0].id == all_users[0].id
+        assert limited[0]["id"] == all_users[0]["id"]
 
     def test_isolation_debt_ceiling_materialized(
         self, query: DatabasePositionQuery, market_id: int
     ) -> None:
         """User 2 (isolation mode) has the debt ceiling from the asset_config join."""
         users = list(query.get_users_with_debt(market_id))
-        user2 = next(u for u in users if u.is_isolation_mode)
-        assert user2.isolation_debt_ceiling is not None
-        assert user2.isolation_debt_ceiling > 0
+        user2 = next(u for u in users if u["is_isolation_mode"])
+        assert user2["isolation_debt_ceiling"] is not None
+        assert user2["isolation_debt_ceiling"] > 0
 
 
 class TestDelegation:
@@ -161,27 +161,34 @@ class TestDelegation:
 
 
 class TestEndToEndAnalysis:
-    """The pure core consumes Rust-backed records without regression."""
+    """The Rust analysis seam consumes Rust-backed records without regression."""
 
-    def test_analyze_market_runs(self, query: DatabasePositionQuery, market_id: int) -> None:
-        """analyze_user_position (pure core) consumes the Rust-backed records.
+    def test_analyze_positions_for_market_runs(
+        self, query: DatabasePositionQuery, market_id: int
+    ) -> None:
+        """analyze_positions_for_market drives the Rust seam end-to-end.
 
-        No price fetcher (avoids RPC); exercises the full record→core→summary
-        pipeline to prove the seam produces records the core accepts.
+        No price fetcher (avoids RPC); exercises the full record→Rust-seam→
+        bucket pipeline to prove the orchestrator produces a categorized result
+        over the fixture users.
         """
-        from degenbot.aave.analysis.core import PositionAnalysisResult, analyze_user_position
+        from degenbot.aave.analysis.orchestrator import PositionAnalysisResult
+
+        # Drive the per-user Rust seam via the orchestrator's building blocks
+        # (mirrors analyze_positions_for_market without the session/provider).
+        from degenbot.db import analyze_aave_user_position
 
         result = PositionAnalysisResult()
-        for user in query.get_users_with_debt(market_id):
-            collateral = list(query.get_collateral_positions(user.id))
-            debt = list(query.get_debt_positions(user.id))
-            cfg = query.get_collateral_config_map(user.id)
-            summary = analyze_user_position(
-                user=user,
-                collateral_positions=collateral,
-                debt_positions=debt,
-                collateral_config_map=cfg,
-            )
+        users = list(query.get_users_with_debt(market_id))
+        for user in users:
+            collateral = query.get_collateral_positions(user["id"])
+            debt = query.get_debt_positions(user["id"])
+            cfg = query.get_collateral_config_map(user["id"])
+            summary = analyze_aave_user_position(user, collateral, debt, cfg, None)
             result.categorize(summary)
         result.sort_by_risk()
-        assert result.total_users == len(list(query.get_users_with_debt(market_id)))
+        assert result.total_users == len(users)
+        # Every bucketed summary is a Rust PyUserPositionSummary with a HF.
+        for bucket in (result.safe_users, result.at_risk_users, result.liquidatable_users):
+            for s in bucket:
+                assert s.health_factor is not None or not s.has_debt
