@@ -11,7 +11,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot._ffi import CancelHandle, run_aave_update
+from degenbot._ffi.cancel import CancelHandle
+from degenbot._ffi.aave import run_aave_update
 from tests.aave.writer_parity.harness import (
     BOOTSTRAP_BLOCK,
     FIXTURE_BLOCK,

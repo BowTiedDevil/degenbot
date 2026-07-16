@@ -26,7 +26,7 @@ import click
 import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
-from degenbot._ffi import (
+from degenbot._ffi.pool import (
     run_pool_update,
     verify_v3_liquidity_map,
     verify_v4_liquidity_map,

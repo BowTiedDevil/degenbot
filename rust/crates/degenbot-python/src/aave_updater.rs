@@ -32,7 +32,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyModule};
 
 use degenbot_aave_updater::{
     activate_aave_market as core_activate_aave_market,
@@ -690,12 +690,21 @@ fn deactivate_aave_market(py: Python<'_>, database_path: &str, market_id: i64) -
 /// Returns a [`PyErr`] if the `add_function` call fails (a name collision);
 /// propagated unchanged to the `#[pymodule]` caller.
 pub fn add_aave_updater_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(run_aave_update, m)?)?;
-    m.add_function(wrap_pyfunction!(verify_touched_positions_on_chain, m)?)?;
-    m.add_function(wrap_pyfunction!(verify_all_positions_on_chain, m)?)?;
-    m.add_function(wrap_pyfunction!(cleanup_zero_balance_positions, m)?)?;
-    m.add_function(wrap_pyfunction!(activate_aave_market, m)?)?;
-    m.add_function(wrap_pyfunction!(deactivate_aave_market, m)?)?;
+    let py = m.py();
+    let submod = PyModule::new(py, "degenbot._ffi.aave")?;
+    submod.add_function(wrap_pyfunction!(run_aave_update, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(
+        verify_touched_positions_on_chain,
+        &submod
+    )?)?;
+    submod.add_function(wrap_pyfunction!(verify_all_positions_on_chain, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(cleanup_zero_balance_positions, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(activate_aave_market, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(deactivate_aave_market, &submod)?)?;
+    m.add_submodule(&submod)?;
+    py.import("sys")?
+        .getattr("modules")?
+        .set_item("degenbot._ffi.aave", &submod)?;
     Ok(())
 }
 

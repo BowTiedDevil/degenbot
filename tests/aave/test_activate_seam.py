@@ -18,10 +18,7 @@ from typing import Any
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
-from degenbot._ffi import (
-    activate_aave_market,
-    deactivate_aave_market,
-)
+from degenbot._ffi.aave import activate_aave_market, deactivate_aave_market
 from degenbot.database._ffi import db_upgrade_database
 from tests.aave.writer_parity.harness import mock_rpc_server
 
