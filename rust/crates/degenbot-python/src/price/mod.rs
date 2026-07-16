@@ -24,9 +24,16 @@ pub use chainlink::PyChainlinkPriceFeed;
 ///
 /// Returns `PyErr` if a class fails to register on the module.
 pub fn add_price_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyChainlinkPriceFeed>()?;
-    m.add_class::<PyAavePriceOracle>()?;
+    let py = m.py();
+    let submod = PyModule::new(py, "degenbot._ffi.price")?;
+    submod.add_class::<PyChainlinkPriceFeed>()?;
+    submod.add_class::<PyAavePriceOracle>()?;
+    m.add_submodule(&submod)?;
+    py.import("sys")?
+        .getattr("modules")?
+        .set_item("degenbot._ffi.price", &submod)?;
     Ok(())
 }
 
 use pyo3::prelude::*;
+use pyo3::types::PyModule;

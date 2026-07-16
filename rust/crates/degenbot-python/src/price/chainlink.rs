@@ -23,7 +23,7 @@ use runtime::get_runtime;
 #[pyclass(
     name = "PyChainlinkPriceFeed",
     skip_from_py_object,
-    module = "degenbot._ffi"
+    module = "degenbot._ffi.price"
 )]
 pub struct PyChainlinkPriceFeed {
     feed: ChainlinkPriceFeed,

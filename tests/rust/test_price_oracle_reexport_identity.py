@@ -12,8 +12,8 @@ pyclasses directly; subclassing would break type identity at the FFI boundary.
 
 from __future__ import annotations
 
-from degenbot._ffi import PyAavePriceOracle
-from degenbot._ffi import PyChainlinkPriceFeed
+from degenbot._ffi.price import PyAavePriceOracle
+from degenbot._ffi.price import PyChainlinkPriceFeed
 
 
 def test_chainlink_price_feed_alias_identity() -> None:

@@ -23,7 +23,7 @@ use std::collections::HashMap;
 #[pyclass(
     name = "PyAavePriceOracle",
     skip_from_py_object,
-    module = "degenbot._ffi"
+    module = "degenbot._ffi.price"
 )]
 pub struct PyAavePriceOracle {
     oracle: AavePriceOracle,
