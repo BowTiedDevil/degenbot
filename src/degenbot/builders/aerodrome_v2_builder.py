@@ -5,8 +5,7 @@ from __future__ import annotations
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
-import eth_abi.abi
-
+from degenbot.abi import decode
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.aerodrome.types import AerodromeV2PoolExternalUpdate
 from degenbot.builders.v2_builder_base import V2BuilderBase
@@ -88,7 +87,7 @@ class AerodromeV2Builder(V2BuilderBase):
                 data=encode_function_calldata("stable()", None),
                 block=state_block,
             )
-            (stable,) = eth_abi.abi.decode(types=["bool"], data=stable_result)
+            (stable,) = decode(types=["bool"], data=stable_result)
 
             fee_result = io.call(
                 to=common.factory,
@@ -98,7 +97,7 @@ class AerodromeV2Builder(V2BuilderBase):
                 ),
                 block=state_block,
             )
-            (fee_raw,) = eth_abi.abi.decode(types=["uint256"], data=fee_result)
+            (fee_raw,) = decode(types=["uint256"], data=fee_result)
 
         fee = Fraction(fee_raw, AerodromeV2Pool.FEE_DENOMINATOR)
 

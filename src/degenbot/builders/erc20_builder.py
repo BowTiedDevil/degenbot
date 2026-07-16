@@ -5,9 +5,7 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING, cast
 
-import eth_abi.abi
-from eth_abi.exceptions import DecodingError
-
+from degenbot.abi import AbiDecodeError, decode, encode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.crypto import function_selector
 from degenbot.erc20 import EtherPlaceholder
@@ -141,7 +139,7 @@ class Erc20Builder:
                 fetched_name, fetched_symbol, fetched_decimals = (
                     _fetch_name_symbol_decimals_batched(address=address, io=io)
                 )
-            except (RpcError, DecodingError):
+            except (RpcError, AbiDecodeError):
                 # Fallback: try individual calls with alternate prototypes
                 for func_prototype in ("name()", "NAME()"):
                     try:
@@ -151,7 +149,7 @@ class Erc20Builder:
                             func_prototype=func_prototype,
                         )
                         break
-                    except (RpcError, DecodingError):
+                    except (RpcError, AbiDecodeError):
                         continue
                 else:
                     fetched_name = UNKNOWN_NAME
@@ -164,7 +162,7 @@ class Erc20Builder:
                             func_prototype=func_prototype,
                         )
                         break
-                    except (RpcError, DecodingError):
+                    except (RpcError, AbiDecodeError):
                         continue
                 else:
                     fetched_symbol = UNKNOWN_SYMBOL
@@ -177,7 +175,7 @@ class Erc20Builder:
                             func_prototype=func_prototype,
                         )
                         break
-                    except (RpcError, DecodingError):
+                    except (RpcError, AbiDecodeError):
                         continue
                 else:
                     fetched_decimals = UNKNOWN_DECIMALS
@@ -251,12 +249,12 @@ class Erc20Builder:
         if fetch_token_balance is not None:
             balance = fetch_token_balance(token.address, address, block=block_number)
         else:
-            (balance,) = eth_abi.abi.decode(
+            (balance,) = decode(
                 types=["uint256"],
                 data=io.call(
                     to=token.address,
                     data=function_selector("balanceOf(address)")
-                    + eth_abi.abi.encode(types=["address"], args=[address]),
+                    + encode(types=["address"], args=[address]),
                     block=block_number,
                 ),
             )
@@ -295,12 +293,12 @@ class Erc20Builder:
         if fetch_token_allowance is not None:
             approval = fetch_token_allowance(token.address, owner, spender, block=block_number)
         else:
-            (approval,) = eth_abi.abi.decode(
+            (approval,) = decode(
                 types=["uint256"],
                 data=io.call(
                     to=token.address,
                     data=function_selector("allowance(address,address)")
-                    + eth_abi.abi.encode(types=["address", "address"], args=[owner, spender]),
+                    + encode(types=["address", "address"], args=[owner, spender]),
                     block=block_number,
                 ),
             )
@@ -335,7 +333,7 @@ class Erc20Builder:
         if fetch_token_total_supply is not None:
             total_supply = fetch_token_total_supply(token.address, block=block_number)
         else:
-            (total_supply,) = eth_abi.abi.decode(
+            (total_supply,) = decode(
                 types=["uint256"],
                 data=io.call(
                     to=token.address,
@@ -398,16 +396,16 @@ def _fetch_name_symbol_decimals_batched(*, address: str, io: PoolIO) -> tuple[st
     still exercise the Python implementation below -- a behavior-preserving
     parity gate against the Rust impl. Returns `None` from the Rust impl on
     provider error / decode failure (mirrors the caller's `except
-    (RpcError, DecodingError)` fallback contract); a Python-raised error
+    (RpcError, AbiDecodeError)` fallback contract); a Python-raised error
     from the fallback path is surfaced untouched.
 
     Returns:
         The computed value.
 
     Raises:
-        DecodingError: If the Rust batched path failed (provider revert or
+        AbiDecodeError: If the Rust batched path failed (provider revert or
             decode failure) -- re-raised so the caller's `except
-            (RpcError, DecodingError)` fallback kicks in identically.
+            (RpcError, AbiDecodeError)` fallback kicks in identically.
 
     """
     # ADR-005 slice 14c: route through PyBotIo when available -- the
@@ -418,7 +416,7 @@ def _fetch_name_symbol_decimals_batched(*, address: str, io: PoolIO) -> tuple[st
         result = fetch_metadata(address)
         if result is None:
             msg = "batched fetch failed (provider revert or decode failure)"
-            raise DecodingError(msg)
+            raise AbiDecodeError(message=msg)
         return cast("tuple[str, str, int]", result)
 
     name_calldata = encode_function_calldata(
@@ -438,9 +436,9 @@ def _fetch_name_symbol_decimals_batched(*, address: str, io: PoolIO) -> tuple[st
     symbol_result = io.call(to=address, data=symbol_calldata)
     decimals_result = io.call(to=address, data=decimals_calldata)
 
-    (name,) = eth_abi.abi.decode(types=["string"], data=name_result)
-    (symbol,) = eth_abi.abi.decode(types=["string"], data=symbol_result)
-    (decimals,) = eth_abi.abi.decode(types=["uint256"], data=decimals_result)
+    (name,) = decode(types=["string"], data=name_result)
+    (symbol,) = decode(types=["string"], data=symbol_result)
+    (decimals,) = decode(types=["uint256"], data=decimals_result)
 
     return cast("str", name), cast("str", symbol), cast("int", decimals)
 
@@ -455,7 +453,7 @@ def _fetch_name(*, address: str, io: PoolIO, func_prototype: str = "name()") -> 
         The computed value.
 
     Raises:
-        DecodingError: If the field could not be decoded as string or bytes32.
+        AbiDecodeError: If the field could not be decoded as string or bytes32.
 
     """
     fetch_string_field = getattr(io, "fetch_erc20_string_field", None)
@@ -463,7 +461,7 @@ def _fetch_name(*, address: str, io: PoolIO, func_prototype: str = "name()") -> 
         try:
             return fetch_string_field(address, func_prototype)
         except ValueError as exc:
-            raise DecodingError(str(exc)) from exc
+            raise AbiDecodeError(message=str(exc)) from exc
 
     result = io.call(
         to=address,
@@ -474,10 +472,10 @@ def _fetch_name(*, address: str, io: PoolIO, func_prototype: str = "name()") -> 
     )
 
     try:
-        (name,) = eth_abi.abi.decode(types=["string"], data=result)
+        (name,) = decode(types=["string"], data=result)
         return cast("str", name)
-    except DecodingError:
-        (name,) = eth_abi.abi.decode(types=["bytes32"], data=result)
+    except AbiDecodeError:
+        (name,) = decode(types=["bytes32"], data=result)
         return cast("HexBytes", name).decode("utf-8", errors="ignore").strip("\x00")
 
 
@@ -491,7 +489,7 @@ def _fetch_symbol(*, address: str, io: PoolIO, func_prototype: str = "symbol()")
         The computed value.
 
     Raises:
-        DecodingError: If the field could not be decoded as string or bytes32.
+        AbiDecodeError: If the field could not be decoded as string or bytes32.
 
     """
     fetch_string_field = getattr(io, "fetch_erc20_string_field", None)
@@ -499,7 +497,7 @@ def _fetch_symbol(*, address: str, io: PoolIO, func_prototype: str = "symbol()")
         try:
             return fetch_string_field(address, func_prototype)
         except ValueError as exc:
-            raise DecodingError(str(exc)) from exc
+            raise AbiDecodeError(message=str(exc)) from exc
 
     result = io.call(
         to=address,
@@ -510,10 +508,10 @@ def _fetch_symbol(*, address: str, io: PoolIO, func_prototype: str = "symbol()")
     )
 
     try:
-        (symbol,) = eth_abi.abi.decode(types=["string"], data=result)
+        (symbol,) = decode(types=["string"], data=result)
         return cast("str", symbol)
-    except DecodingError:
-        (symbol,) = eth_abi.abi.decode(types=["bytes32"], data=result)
+    except AbiDecodeError:
+        (symbol,) = decode(types=["bytes32"], data=result)
         return cast("HexBytes", symbol).decode("utf-8", errors="ignore").strip("\x00")
 
 
@@ -527,7 +525,7 @@ def _fetch_decimals(*, address: str, io: PoolIO, func_prototype: str = "decimals
         The computed value.
 
     Raises:
-        DecodingError: If the field could not be decoded as uint256.
+        AbiDecodeError: If the field could not be decoded as uint256.
 
     """
     fetch_uint_field = getattr(io, "fetch_erc20_uint_field", None)
@@ -535,9 +533,9 @@ def _fetch_decimals(*, address: str, io: PoolIO, func_prototype: str = "decimals
         try:
             return cast("int", fetch_uint_field(address, func_prototype))
         except ValueError as exc:
-            raise DecodingError(str(exc)) from exc
+            raise AbiDecodeError(message=str(exc)) from exc
 
-    (result,) = eth_abi.abi.decode(
+    (result,) = decode(
         types=["uint256"],
         data=io.call(
             to=address,

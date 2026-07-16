@@ -7,9 +7,7 @@ from enum import IntEnum
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
-import eth_abi.abi
-from eth_abi.exceptions import DecodingError
-
+from degenbot.abi import AbiDecodeError, decode
 from degenbot.balancer.deployments import BALANCER_V2_VAULT_ADDRESS
 from degenbot.balancer.libraries.constants import ONE, PowVersion
 from degenbot.checksum_cache import get_checksum_address
@@ -103,7 +101,7 @@ class BalancerBuilderBase:
             The computed value.
 
         """
-        decoded = eth_abi.abi.decode(["address[]", "uint256[]", "uint256"], raw)
+        decoded = decode(["address[]", "uint256[]", "uint256"], raw)
         return VaultTokensResult(
             tokens=decoded[0],
             balances=decoded[1],
@@ -167,7 +165,7 @@ class BalancerBuilderBase:
             return bytes(fetcher(address, block=block))
         data = encode_function_calldata("getPoolId()", None)
         result = io.call(to=address, data=data, block=block)
-        decoded = eth_abi.abi.decode(["bytes32"], result)
+        decoded = decode(["bytes32"], result)
         return decoded[0]
 
     @staticmethod
@@ -189,7 +187,7 @@ class BalancerBuilderBase:
             data=data,
             block=block,
         )
-        decoded = eth_abi.abi.decode(["address[]", "uint256[]", "uint256"], result)
+        decoded = decode(["address[]", "uint256[]", "uint256"], result)
         return decoded[0], decoded[1]
 
     @staticmethod
@@ -199,7 +197,7 @@ class BalancerBuilderBase:
             return Fraction(fetcher(address, block=block), 10**18)
         data = encode_function_calldata("getSwapFeePercentage()", None)
         result = io.call(to=address, data=data, block=block)
-        decoded = eth_abi.abi.decode(["uint256"], result)
+        decoded = decode(["uint256"], result)
         return Fraction(decoded[0], 10**18)
 
     @staticmethod
@@ -209,7 +207,7 @@ class BalancerBuilderBase:
             return list(fetcher(address, block=block))
         data = encode_function_calldata("getNormalizedWeights()", None)
         result = io.call(to=address, data=data, block=block)
-        decoded = eth_abi.abi.decode(["uint256[]"], result)
+        decoded = decode(["uint256[]"], result)
         return list(decoded[0])
 
     @staticmethod
@@ -219,7 +217,7 @@ class BalancerBuilderBase:
             return fetcher(address, block=block)
         data = encode_function_calldata("getAmplificationParameter()", None)
         result = io.call(to=address, data=data, block=block)
-        decoded = eth_abi.abi.decode(["uint256", "bool"], result)
+        decoded = decode(["uint256", "bool"], result)
         return decoded[0]
 
     @staticmethod
@@ -232,14 +230,14 @@ class BalancerBuilderBase:
         if fetcher is not None:
             try:
                 return list(fetcher(address, block=block))
-            except (RpcError, DecodingError):
+            except (RpcError, AbiDecodeError):
                 return []
         try:
             data = encode_function_calldata("getRateProviders()", None)
             result = io.call(to=address, data=data, block=block)
-            decoded = eth_abi.abi.decode(["address[]"], result)
+            decoded = decode(["address[]"], result)
             return list(decoded[0])
-        except (RpcError, DecodingError):
+        except (RpcError, AbiDecodeError):
             # WeightedPool2Tokens and MetaStablePools may not have getRateProviders
             return []
 
@@ -262,7 +260,7 @@ class BalancerBuilderBase:
                 continue
             data = encode_function_calldata("getRate()", None)
             result = io.call(to=provider, data=data, block=block)
-            decoded = eth_abi.abi.decode(["uint256"], result)
+            decoded = decode(["uint256"], result)
             rates.append(decoded[0])
         return rates
 
@@ -305,7 +303,7 @@ class BalancerBuilderBase:
 
         try:
             data = encode_function_calldata("getNormalizedWeights()", None)
-        except (RpcError, DecodingError):
+        except (RpcError, AbiDecodeError):
             pass
         else:
             try:
@@ -317,7 +315,7 @@ class BalancerBuilderBase:
 
         try:
             data = encode_function_calldata("getAmplificationParameter()", None)
-        except (RpcError, DecodingError):
+        except (RpcError, AbiDecodeError):
             pass
         else:
             try:

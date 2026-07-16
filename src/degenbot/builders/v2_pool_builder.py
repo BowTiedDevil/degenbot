@@ -5,8 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import eth_abi.abi
-
+from degenbot.abi import decode
 from degenbot.builders.v2_builder_base import V2BuilderBase
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.logging import logger
@@ -219,28 +218,28 @@ class V2PoolBuilder(V2BuilderBase):
             data=encode_function_calldata("stableSwap()", None),
             block=state_block,
         )
-        (stable_swap,) = eth_abi.abi.decode(types=["bool"], data=stable_result)
+        (stable_swap,) = decode(types=["bool"], data=stable_result)
 
         fee_denom_result = io.call(
             to=pool_address,
             data=encode_function_calldata("FEE_DENOMINATOR()", None),
             block=state_block,
         )
-        (fee_denominator,) = eth_abi.abi.decode(types=["uint256"], data=fee_denom_result)
+        (fee_denominator,) = decode(types=["uint256"], data=fee_denom_result)
 
         fee0_result = io.call(
             to=pool_address,
             data=encode_function_calldata("token0FeePercent()", None),
             block=state_block,
         )
-        (fee_token0,) = eth_abi.abi.decode(types=["uint16"], data=fee0_result)
+        (fee_token0,) = decode(types=["uint16"], data=fee0_result)
 
         fee1_result = io.call(
             to=pool_address,
             data=encode_function_calldata("token1FeePercent()", None),
             block=state_block,
         )
-        (fee_token1,) = eth_abi.abi.decode(types=["uint16"], data=fee1_result)
+        (fee_token1,) = decode(types=["uint16"], data=fee1_result)
 
         return CamelotStateFetch(
             stable_swap=stable_swap,

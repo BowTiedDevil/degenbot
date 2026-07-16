@@ -7,8 +7,7 @@ from dataclasses import dataclass
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
-import eth_abi.abi
-
+from degenbot.abi import decode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.pools import LiquidityPoolTable, UniswapFeeMixin
 from degenbot.exceptions.pool import LiquidityPoolError
@@ -78,9 +77,9 @@ class V2BuilderBase:
             The computed value.
 
         """
-        (factory_raw,) = eth_abi.abi.decode(types=["address"], data=factory_result)
-        (token0_raw,) = eth_abi.abi.decode(types=["address"], data=token0_result)
-        (token1_raw,) = eth_abi.abi.decode(types=["address"], data=token1_result)
+        (factory_raw,) = decode(types=["address"], data=factory_result)
+        (token0_raw,) = decode(types=["address"], data=token0_result)
+        (token1_raw,) = decode(types=["address"], data=token1_result)
         return (
             get_checksum_address(factory_raw),
             get_checksum_address(token0_raw),
@@ -252,7 +251,7 @@ class V2BuilderBase:
                 data=encode_function_calldata("getReserves()", None),
                 block=state_block,
             )
-            reserves0, reserves1 = eth_abi.abi.decode(
+            reserves0, reserves1 = decode(
                 types=["uint256", "uint256"],
                 data=reserves_result,
             )
@@ -320,7 +319,7 @@ class V2BuilderBase:
             data=encode_function_calldata("getReserves()", None),
             block=block_identifier,
         )
-        reserves0, reserves1 = eth_abi.abi.decode(
+        reserves0, reserves1 = decode(
             types=["uint256", "uint256"],
             data=reserves_result,
         )

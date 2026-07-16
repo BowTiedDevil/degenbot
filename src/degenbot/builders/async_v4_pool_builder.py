@@ -5,10 +5,10 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING, Any, cast
 
-import eth_abi.abi
 from hexbytes import HexBytes
 from sqlalchemy import select
 
+from degenbot.abi import decode
 from degenbot.builders.request import BuildManagedPoolRequest
 from degenbot.builders.tick_data_fetcher import (
     FetchedTickData,
@@ -232,7 +232,7 @@ class AsyncV4PoolBuilder:
             raise LiquidityPoolError(message="Could not decode contract data") from exc
 
         slot0_data = V4BuilderBase.decode_slot0(slot0_result)
-        (liquidity_val,) = eth_abi.abi.decode(
+        (liquidity_val,) = decode(
             types=["uint256"],
             data=liquidity_result,
         )
@@ -277,7 +277,7 @@ class AsyncV4PoolBuilder:
                 )
 
                 assert state_view_address is not None
-                (bitmap_at_word,) = eth_abi.abi.decode(
+                (bitmap_at_word,) = decode(
                     types=["uint256"],
                     data=await io.call(
                         to=state_view_address,
@@ -305,7 +305,7 @@ class AsyncV4PoolBuilder:
                             ),
                             block=state_block,
                         )
-                        liquidity_gross, liquidity_net = eth_abi.abi.decode(
+                        liquidity_gross, liquidity_net = decode(
                             types=["uint128", "int128"],
                             data=result,
                         )
@@ -473,7 +473,7 @@ class AsyncV4PoolBuilder:
         liquidity_calldata = encode_function_calldata("getLiquidity(bytes32)", [pool.pool_id])
         (liquidity_val,) = cast(
             "tuple[int]",
-            eth_abi.abi.decode(
+            decode(
                 types=["uint256"],
                 data=await io.call(
                     to=pool._state_view_address,  # noqa: SLF001

@@ -25,10 +25,9 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING, cast
 
-import eth_abi.abi
-from eth_abi.exceptions import DecodingError
 from sqlalchemy import select
 
+from degenbot.abi import AbiDecodeError, decode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.database.models.pools import LiquidityPoolTable
@@ -234,9 +233,9 @@ def fetch_factory_from_chain(
             to=address,
             data=encode_function_calldata("factory()", None),
         )
-        (factory_raw,) = eth_abi.abi.decode(types=["address"], data=factory_result)
+        (factory_raw,) = decode(types=["address"], data=factory_result)
         return get_checksum_address(factory_raw)
-    except (RpcError, DecodingError):
+    except (RpcError, AbiDecodeError):
         return None
 
 
@@ -257,9 +256,9 @@ async def fetch_factory_from_chain_async(
             to=address,
             data=encode_function_calldata("factory()", None),
         )
-        (factory_raw,) = eth_abi.abi.decode(types=["address"], data=factory_result)
+        (factory_raw,) = decode(types=["address"], data=factory_result)
         return get_checksum_address(factory_raw)
-    except (RpcError, DecodingError):
+    except (RpcError, AbiDecodeError):
         return None
 
 

@@ -2,10 +2,10 @@
 
 import dataclasses
 
-import eth_abi.abi
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 
+from degenbot.abi import encode
 from degenbot.arbitrage.encoding import EncodedCall
 from degenbot.crypto import function_selector
 from degenbot.erc20 import Erc20Token
@@ -106,7 +106,7 @@ class CurveStableSwapPoolSwapAmounts(AbstractSwapAmounts):
             selector = function_selector("exchange_underlying(int128,int128,uint256,uint256)")
         else:
             selector = function_selector("exchange(int128,int128,uint256,uint256)")
-        data = selector + eth_abi.abi.encode(
+        data = selector + encode(
             types=["int128", "int128", "uint256", "uint256"],
             args=[
                 self.token_in_index,
@@ -160,7 +160,7 @@ class UniswapV2PoolSwapAmounts(AbstractSwapAmounts):
 
         """
         selector = function_selector("swap(uint256,uint256,address,bytes)")
-        data = selector + eth_abi.abi.encode(
+        data = selector + encode(
             types=["uint256", "uint256", "address", "bytes"],
             args=[*self.amounts_out, recipient, b""],
         )
@@ -209,7 +209,7 @@ class UniswapV3PoolSwapAmounts(AbstractSwapAmounts):
 
         """
         selector = function_selector("swap(address,bool,int256,uint160,bytes)")
-        data = selector + eth_abi.abi.encode(
+        data = selector + encode(
             types=["address", "bool", "int256", "uint160", "bytes"],
             args=[
                 recipient,

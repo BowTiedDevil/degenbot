@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
-import eth_abi.abi
-
+from degenbot.abi import decode
 from degenbot.builders.request import BuildPoolRequest, BuildRequest
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve._pool_strategies import resolve_pool_strategies
@@ -393,7 +392,7 @@ class CurvePoolBuilder:
             for i, _ in enumerate(pool.tokens):
                 (balance,) = cast(
                     "tuple[int]",
-                    eth_abi.abi.decode(
+                    decode(
                         types=["uint256"],
                         data=io.call_raw(
                             {
@@ -444,7 +443,7 @@ def _fetch_pool_params(
         },
         block=block_identifier,
     )
-    (a_coefficient,) = eth_abi.abi.decode(types=["uint256"], data=a_result)
+    (a_coefficient,) = decode(types=["uint256"], data=a_result)
 
     fee_result = io.call_raw(
         {
@@ -453,7 +452,7 @@ def _fetch_pool_params(
         },
         block=block_identifier,
     )
-    (fee,) = eth_abi.abi.decode(types=["uint256"], data=fee_result)
+    (fee,) = decode(types=["uint256"], data=fee_result)
 
     admin_fee_result = io.call_raw(
         {
@@ -465,6 +464,6 @@ def _fetch_pool_params(
         },
         block=block_identifier,
     )
-    (admin_fee,) = eth_abi.abi.decode(types=["uint256"], data=admin_fee_result)
+    (admin_fee,) = decode(types=["uint256"], data=admin_fee_result)
 
     return a_coefficient, fee, admin_fee

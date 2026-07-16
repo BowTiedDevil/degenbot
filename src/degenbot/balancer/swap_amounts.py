@@ -5,8 +5,7 @@ from __future__ import annotations
 import dataclasses
 from typing import TYPE_CHECKING
 
-import eth_abi.abi
-
+from degenbot.abi import encode
 from degenbot.arbitrage.encoding import EncodedCall
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.crypto import function_selector
@@ -96,7 +95,7 @@ class BalancerV2SwapAmounts:
         selector = function_selector(swap_signature)
         single_swap_type = "(bytes32,uint8,address,address,uint256,bytes)"
         fund_management_type = "(address,bool,address,bool)"
-        data = selector + eth_abi.abi.encode(
+        data = selector + encode(
             types=[single_swap_type, fund_management_type, "uint256", "uint256"],
             args=[
                 (

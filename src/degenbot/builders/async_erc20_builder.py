@@ -5,10 +5,9 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING
 
-import eth_abi.abi
 import sqlalchemy.exc
-from eth_abi.exceptions import DecodingError
 
+from degenbot.abi import AbiDecodeError, decode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import EtherPlaceholder
 from degenbot.erc20.erc20 import (
@@ -130,7 +129,7 @@ class AsyncErc20Builder:
                     fetched_symbol,
                     fetched_decimals,
                 ) = await self._fetch_name_symbol_decimals_batched(address=address, io=io)
-            except (RpcError, DecodingError):
+            except (RpcError, AbiDecodeError):
                 # Fallback: try individual calls with alternate prototypes
                 fetched_name = await self._fetch_with_fallback(
                     address,
@@ -203,9 +202,9 @@ class AsyncErc20Builder:
             data=encode_function_calldata("decimals()", None),
         )
 
-        (name,) = eth_abi.abi.decode(types=["string"], data=name_result)
-        (symbol,) = eth_abi.abi.decode(types=["string"], data=symbol_result)
-        (decimals,) = eth_abi.abi.decode(types=["uint8"], data=decimals_result)
+        (name,) = decode(types=["string"], data=name_result)
+        (symbol,) = decode(types=["string"], data=symbol_result)
+        (decimals,) = decode(types=["uint8"], data=decimals_result)
 
         return name, symbol, decimals
 
@@ -228,9 +227,9 @@ class AsyncErc20Builder:
                     to=address,
                     data=encode_function_calldata(prototype, None),
                 )
-                (value,) = eth_abi.abi.decode(types=["string"], data=result)
+                (value,) = decode(types=["string"], data=result)
                 return value  # noqa: TRY300
-            except (RpcError, DecodingError):
+            except (RpcError, AbiDecodeError):
                 continue
         return default
 
@@ -253,9 +252,9 @@ class AsyncErc20Builder:
                     to=address,
                     data=encode_function_calldata(prototype, None),
                 )
-                (value,) = eth_abi.abi.decode(types=["uint8"], data=result)
+                (value,) = decode(types=["uint8"], data=result)
                 return value  # noqa: TRY300
-            except (RpcError, DecodingError):
+            except (RpcError, AbiDecodeError):
                 continue
         return default
 
@@ -283,7 +282,7 @@ class AsyncErc20Builder:
         if (balance := token.get_cached_balance(address, block_number)) is not None:
             return balance
 
-        (balance,) = eth_abi.abi.decode(
+        (balance,) = decode(
             types=["uint256"],
             data=await io.call(
                 to=token.address,
@@ -321,7 +320,7 @@ class AsyncErc20Builder:
         if (approval := token.get_cached_approval(block_number, owner, spender)) is not None:
             return approval
 
-        (approval,) = eth_abi.abi.decode(
+        (approval,) = decode(
             types=["uint256"],
             data=await io.call(
                 to=token.address,
@@ -355,7 +354,7 @@ class AsyncErc20Builder:
         if (total_supply := token.get_cached_total_supply(block_number)) is not None:
             return total_supply
 
-        (total_supply,) = eth_abi.abi.decode(
+        (total_supply,) = decode(
             types=["uint256"],
             data=await io.call(
                 to=token.address,

@@ -6,9 +6,9 @@ import contextlib
 import dataclasses
 from typing import TYPE_CHECKING, Any, cast
 
-import eth_abi.abi
 from sqlalchemy import select
 
+from degenbot.abi import decode
 from degenbot.builders.tick_data_fetcher import (
     FetchedTickData,
     TickDataTypes,
@@ -221,7 +221,7 @@ class AsyncV3PoolBuilder:
         slot0_data = V3BuilderBase.decode_slot0(slot0_result)
         sqrt_price_x96 = slot0_data.sqrt_price_x96
         tick = slot0_data.tick
-        (liquidity,) = eth_abi.abi.decode(types=["uint128"], data=liquidity_result)
+        (liquidity,) = decode(types=["uint128"], data=liquidity_result)
 
         # Fetch initial tick bitmap and tick data
         db_snapshot_loaded = False
@@ -256,7 +256,7 @@ class AsyncV3PoolBuilder:
                     tick_spacing=tick_spacing_for_pool,
                 )
 
-                (bitmap_at_word,) = eth_abi.abi.decode(
+                (bitmap_at_word,) = decode(
                     types=["uint256"],
                     data=await io.call(
                         to=pool_address,
@@ -278,7 +278,7 @@ class AsyncV3PoolBuilder:
                             data=encode_function_calldata("ticks(int24)", [active_tick]),
                             block=state_block,
                         )
-                        liquidity_gross, liquidity_net, *_ = eth_abi.abi.decode(
+                        liquidity_gross, liquidity_net, *_ = decode(
                             types=[
                                 "uint128",
                                 "int128",
@@ -436,7 +436,7 @@ class AsyncV3PoolBuilder:
 
         (liquidity,) = cast(
             "tuple[int]",
-            eth_abi.abi.decode(
+            decode(
                 types=["uint256"],
                 data=await io.call(
                     to=pool.address,
