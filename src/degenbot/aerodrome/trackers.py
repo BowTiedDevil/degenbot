@@ -15,7 +15,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions.pool import LiquidityPoolError, PoolCreationFailed, PoolNotAssociated
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.types.abstract.pool_tracker import AbstractPoolTracker
-from degenbot.uniswap.deployments import resolve_deployer, resolve_v2_init_hash
+from degenbot.uniswap import resolve_deployer, resolve_v2_init_hash
 from degenbot.uniswap.trackers import AbstractUniswapV3PoolTracker
 
 if TYPE_CHECKING:

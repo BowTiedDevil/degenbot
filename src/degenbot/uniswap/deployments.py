@@ -24,7 +24,6 @@ from typing import TYPE_CHECKING
 import eth_typing
 from eth_typing import ChecksumAddress
 
-from degenbot._ffi.deployments import resolve_deployer, resolve_v2_init_hash, resolve_v3_init_hash
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.types.abstract import AbstractExchangeDeployment
 
@@ -55,12 +54,7 @@ if TYPE_CHECKING:
     ArbitrumUniswapV3: UniswapV3ExchangeDeployment
     ArbitrumSushiswapV3: UniswapV3ExchangeDeployment
 
-__all__ = (
-    "AbstractExchangeDeployment",
-    "resolve_deployer",
-    "resolve_v2_init_hash",
-    "resolve_v3_init_hash",
-)
+__all__ = ("AbstractExchangeDeployment",)
 
 
 @dataclass(slots=True, frozen=True)

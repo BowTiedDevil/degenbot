@@ -1,5 +1,13 @@
 """Uniswap V2/V3/V4 pool type registration and exports."""
 
+# Deployment resolver functions — bridged from the Rust ``degenbot-core``
+# deployments resolver (ADR-013: ``_ffi`` only in ``__init__.py`` barrier).
+from degenbot._ffi.deployments import (
+    resolve_deployer,
+    resolve_v2_init_hash,
+    resolve_v3_init_hash,
+)
+
 # Set default pool classes — UniswapV2Pool and UniswapV3Pool serve as the
 # fallback when no factory-specific registration exists.
 # Deployment data (chain_id, factory → deployer / init_hash / variant /
@@ -53,4 +61,7 @@ __all__ = (
     "UniswapV4PoolExternalUpdate",
     "UniswapV4PoolState",
     "UniswapV4PoolStateUpdated",
+    "resolve_deployer",
+    "resolve_v2_init_hash",
+    "resolve_v3_init_hash",
 )

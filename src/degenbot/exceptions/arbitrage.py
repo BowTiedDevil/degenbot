@@ -3,7 +3,12 @@
 from fractions import Fraction
 from typing import Any
 
-from degenbot._ffi import (  # noqa: F401
+# The five Rust-raised admission/registration errors are re-exported via the
+# package home (``degenbot.exceptions``), which bridges them from ``_ffi``.
+# Sourcing them from the package keeps ``from degenbot.exceptions.arbitrage
+# import HookedPoolRejectedError`` working without this leaf reaching into
+# ``_ffi`` (ADR-013: the Pydantic barrier — ``_ffi`` only in ``__init__.py``).
+from degenbot.exceptions import (  # noqa: F401
     DynamicFeePoolRejectedError,
     HookedPoolRejectedError,
     PoolAlreadyRegisteredError,

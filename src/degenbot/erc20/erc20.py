@@ -8,10 +8,10 @@ from eth_typing import ChecksumAddress
 from sqlalchemy import select
 from sqlalchemy.orm import Session, scoped_session
 
-from degenbot._ffi import PyErc20Token
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models import Erc20TokenTable
+from degenbot.erc20 import PyErc20Token
 from degenbot.exceptions.infrastructure import NoPriceOracle
 from degenbot.provider import AlloyProvider
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call

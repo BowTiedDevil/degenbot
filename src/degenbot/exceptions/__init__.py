@@ -1,11 +1,16 @@
 """Exception classes for degenbot."""
 
+from degenbot._ffi import (
+    DynamicFeePoolRejectedError,
+    HookedPoolRejectedError,
+    PoolAlreadyRegisteredError,
+    PoolRegistrationError,
+    SpecViolationError,
+)
 from degenbot.exceptions.arbitrage import (
     ArbCalculationError,
     ArbitrageError,
     DuplicatePoolError,
-    DynamicFeePoolRejectedError,
-    HookedPoolRejectedError,
     HopCountExceededError,
     HopCountInsufficientError,
     IncompatiblePoolInvariant,
@@ -16,10 +21,7 @@ from degenbot.exceptions.arbitrage import (
     NoSolverSolution,
     OptimizationError,
     PathRejectedError,
-    PoolAlreadyRegisteredError,
-    PoolRegistrationError,
     RateOfExchangeBelowMinimum,
-    SpecViolationError,
     TokenDenylistedError,
     Unprofitable,
 )

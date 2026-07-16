@@ -41,9 +41,6 @@ KNOWN_VIOLATIONS: frozenset[str] = frozenset(
         "src/degenbot/bot.py",  # PyBot, PyBotIo — Bot lifecycle (765 lines)
         "src/degenbot/arbitrage/engine_registry.py",  # UniswapArbEngine — engine wrapper (640 lines)
         "src/degenbot/pathfinding.py",  # find_paths_rust, build_path_graph — pathfinding (696 lines)
-        "src/degenbot/erc20/erc20.py",  # PyErc20Token — ERC20 token class (376 lines)
-        "src/degenbot/uniswap/deployments.py",  # resolve_deployer etc. — deployment constants (394 lines)
-        "src/degenbot/exceptions/arbitrage.py",  # *RejectedError — exception aliases + class defs (215 lines)
     }
 )
 
