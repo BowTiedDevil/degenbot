@@ -17,7 +17,9 @@ The former Python in-memory enrichment/processing pipeline
 ``degenbot-aave`` crate reached feature parity (it owns the full RPC fetch +
 decode + apply + verify loop end-to-end). The ``analysis/`` read-back
 package is a thin driver shell over the same Rust core's position-analysis
-math; the ``libraries/`` math primitives remain Python (pending Step D).
+math. The former Python ``libraries/`` math primitives package was retired
+once ``degenbot-evm-math::wad_ray_math`` owned the equivalents and the
+analysis cutover removed the last Python importer.
 """
 
 from degenbot._ffi.aave import (

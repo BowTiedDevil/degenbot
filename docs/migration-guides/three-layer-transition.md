@@ -83,8 +83,7 @@ Adapted from `rust/AGENTS.md` "Porting Decision Framework":
 A module is likely `partial`/`port-now` if any of these hold:
 - It is a 1:1 port of a Solidity/Vyper library and a `degenbot-*-math` leaf
   for that library already exists (`calculations/*`, `uniswap/v3_libraries/`,
-  `uniswap/v4_libraries/`, `balancer/libraries/`, `aave/libraries/`,
-  `curve/calculators/`).
+  `uniswap/v4_libraries/`, `balancer/libraries/`, `curve/calculators/`).
 - It hand-slices EVM log bytes and `degenbot-decoders` already decodes the
   same event (`uniswap/log_decoders.py`).
 - It ABI-encodes/decodes and `degenbot-abi` already covers the signature
