@@ -87,9 +87,9 @@ Rust symbols).
 
 The three top-level grab-bag `.py` files dissolve **into** their mirror
 home rather than remaining floating peers: `abi_adapter.py` (483 lines,
-the companion-over-Rust with `eth_abi` fallback for fixed-point types)
-becomes `degenbot.abi`; `crypto.py` (81 lines) becomes `degenbot.crypto`;
-`anvil_fork.py` (514 lines) becomes `degenbot.fork`.
+the companion-over-Rust bridge, now dissolved) became `degenbot.abi`;
+`crypto.py` (81 lines) becomes `degenbot.crypto`; `anvil_fork.py` (514
+lines) becomes `degenbot.fork`.
 
 ### The `price` exception — two pyclasses, two domains
 
@@ -153,11 +153,11 @@ out.)
   consumer appears. The ban rule ("no `_ffi` outside barrier modules")
   does not require every submodule to have a home, only every consumed
   one.
-- **`abi_adapter.py`'s backend-dispatch logic moves into `degenbot.abi`.**
-  This is real logic (Rust primary, `eth_abi` fallback for fixed-point),
-  not a pass-through — so `degenbot.abi` becomes a deep module, not a
-  shallow re-exporter. Its interface design is a separate deepening task
-  (see the `/codebase-design` exploration).
+- **`abi_adapter.py`'s backend-dispatch logic moved into `degenbot.abi`.**
+  The `eth_abi` fallback for fixed-point types has been removed — Rust is
+  the only backend, and unsupported types raise `AbiEncodeError` /
+  `AbiDecodeError`. `degenbot.abi` is a deep module, not a shallow
+  re-exporter.
 
 ### Does not change
 
