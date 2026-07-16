@@ -408,6 +408,22 @@ pub fn value_to_alloy_for_type(
             ))
         }
 
+        // Cross-type coercion: a 20-byte `bytes` value (e.g. `HexBytes` of
+        // an address) is accepted as an `address` by `eth_abi`'s permissive
+        // encoder. Mirror that here so callers passing `HexBytes(addr)` with
+        // type `"address"` don't need to pre-convert.
+        (DynSolType::Address, AbiValue::Bytes(bytes)) => {
+            if bytes.len() != 20 {
+                return Err(AbiDecodeError::UnsupportedType(format!(
+                    "address requires 20 bytes, got {}",
+                    bytes.len()
+                )));
+            }
+            Ok(alloy::dyn_abi::DynSolValue::Address(
+                alloy::primitives::Address::from_slice(bytes),
+            ))
+        }
+
         // Handle Uint with correct bit width (to_alloy() hardcodes 256)
         // Handle Uint: use the AbiValue's stored bit width when the
         // DynSolType expects 256 (the common case for alloy decoding).
@@ -425,6 +441,34 @@ pub fn value_to_alloy_for_type(
             debug_assert!(*bits > 0, "Int bit width should never be 0");
             let effective_bits = if *bits > 0 { *bits } else { *val_bits };
             Ok(alloy::dyn_abi::DynSolValue::Int(*n, effective_bits))
+        }
+
+        // Cross-type coercion: a non-negative Python int is produced by
+        // `abi_value_from_python` as `AbiValue::Uint(...)` (it doesn't know
+        // the target type). When the requested ABI type is a signed `Int`,
+        // widen the value if it fits, so e.g. `encode(["int128"], [0])` works
+        // (mirroring `eth_abi`'s permissive coercion).
+        (DynSolType::Int(bits), AbiValue::Uint(n, _)) => {
+            let signed = alloy::primitives::I256::try_from(*n).map_err(|_| {
+                AbiDecodeError::UnsupportedType(format!("value {n} does not fit in int{bits}"))
+            })?;
+            Ok(alloy::dyn_abi::DynSolValue::Int(signed, *bits))
+        }
+
+        // Cross-type coercion: a negative Python int is produced by
+        // `abi_value_from_python` as `AbiValue::Int(...)`. Encoding a
+        // negative value as a `Uint` ABI type is invalid — reject up front
+        // (mirroring `eth_abi`'s behaviour of raising `ValueError`).
+        (DynSolType::Uint(bits), AbiValue::Int(n, _)) => {
+            if *n < alloy::primitives::I256::ZERO {
+                return Err(AbiDecodeError::UnsupportedType(format!(
+                    "negative value {n} cannot be encoded as uint{bits}"
+                )));
+            }
+            let unsigned = alloy::primitives::U256::try_from(*n).map_err(|_| {
+                AbiDecodeError::UnsupportedType(format!("value {n} does not fit in uint{bits}"))
+            })?;
+            Ok(alloy::dyn_abi::DynSolValue::Uint(unsigned, *bits))
         }
 
         // Handle FixedArray conversion
