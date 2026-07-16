@@ -9,9 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import eth_abi.abi
-from eth_abi.exceptions import DecodingError
-
+from degenbot.abi import AbiDecodeError, decode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.detection.types import LendingDetectionResult
 from degenbot.exceptions import RpcError
@@ -62,7 +60,7 @@ def detect_lending_tokens(
                 },
                 block=block_identifier,
             )
-            (is_c,) = eth_abi.abi.decode(types=["bool"], data=is_ctoken_result)
+            (is_c,) = decode(["bool"], is_ctoken_result)
             if is_c:
                 is_lending = True
                 # cToken: get underlying token decimals via underlying() method
@@ -77,9 +75,9 @@ def detect_lending_tokens(
                         },
                         block=block_identifier,
                     )
-                    (underlying_addr,) = eth_abi.abi.decode(
-                        types=["address"],
-                        data=underlying_result,
+                    (underlying_addr,) = decode(
+                        ["address"],
+                        underlying_result,
                     )
                     underlying_addr = get_checksum_address(underlying_addr)
                     # Fetch underlying decimals
@@ -94,17 +92,17 @@ def detect_lending_tokens(
                             },
                             block=block_identifier,
                         )
-                        (underlying_dec,) = eth_abi.abi.decode(
-                            types=["uint8"],
-                            data=underlying_dec_result,
+                        (underlying_dec,) = decode(
+                            ["uint8"],
+                            underlying_dec_result,
                         )
                         # Override precision_multiplier to use underlying decimals
                         precision_multiplier_overrides[idx] = 10 ** (18 - underlying_dec)
-                    except (RpcError, DecodingError, ValueError):
+                    except (RpcError, AbiDecodeError, ValueError):
                         pass
-                except (RpcError, DecodingError, ValueError):
+                except (RpcError, AbiDecodeError, ValueError):
                     pass
-        except (RpcError, DecodingError, ValueError):
+        except (RpcError, AbiDecodeError, ValueError):
             pass
 
         # Check if token is a yToken (has token() method returning underlying)
@@ -120,12 +118,12 @@ def detect_lending_tokens(
                     },
                     block=block_identifier,
                 )
-                (underlying_addr,) = eth_abi.abi.decode(types=["address"], data=ytoken_result)
+                (underlying_addr,) = decode(["address"], ytoken_result)
                 # Verify the underlying is a valid address (not zero)
                 if int(underlying_addr, 16) != 0:
                     is_lending = True
                     # yToken: typically has same decimals as underlying, no override needed
-            except (RpcError, DecodingError, ValueError):
+            except (RpcError, AbiDecodeError, ValueError):
                 pass
 
         use_lending.append(is_lending)

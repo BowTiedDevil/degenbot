@@ -8,9 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import eth_abi.abi
-from eth_abi.exceptions import DecodingError
-
+from degenbot.abi import AbiDecodeError, decode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.detection.types import CoinDiscoveryResult
 from degenbot.exceptions import RpcError
@@ -58,12 +56,12 @@ def discover_coins(
                     },
                     block=block_identifier,
                 )
-                (token_address,) = eth_abi.abi.decode(types=["address"], data=coin_addr)
+                (token_address,) = decode(["address"], coin_addr)
                 if int(token_address, 16) != 0:
                     coin_prototype = "coins(uint256)"
                     balance_prototype = "balances(uint256)"
                     token_address = get_checksum_address(token_address)
-            except (RpcError, DecodingError, ValueError):
+            except (RpcError, AbiDecodeError, ValueError):
                 pass
 
             # Try int128 if uint256 failed
@@ -79,12 +77,12 @@ def discover_coins(
                         },
                         block=block_identifier,
                     )
-                    (token_address,) = eth_abi.abi.decode(types=["address"], data=coin_addr)
+                    (token_address,) = decode(["address"], coin_addr)
                     if int(token_address, 16) != 0:
                         coin_prototype = "coins(int128)"
                         balance_prototype = "balances(int128)"
                         token_address = get_checksum_address(token_address)
-                except (RpcError, DecodingError, ValueError):
+                except (RpcError, AbiDecodeError, ValueError):
                     pass
 
             if coin_prototype is None:
@@ -110,12 +108,12 @@ def discover_coins(
                     },
                     block=block_identifier,
                 )
-                (token_address,) = eth_abi.abi.decode(types=["address"], data=coin_addr)
+                (token_address,) = decode(["address"], coin_addr)
                 if int(token_address, 16) == 0:
                     break
                 token_address = get_checksum_address(token_address)
                 token_addresses.append(token_address)
-            except (RpcError, DecodingError, ValueError):
+            except (RpcError, AbiDecodeError, ValueError):
                 break
 
         # Fetch balance
@@ -131,9 +129,9 @@ def discover_coins(
                 },
                 block=block_identifier,
             )
-            (balance,) = eth_abi.abi.decode(types=["uint256"], data=balance_result)
+            (balance,) = decode(["uint256"], balance_result)
             balances.append(balance)
-        except (RpcError, DecodingError, ValueError):
+        except (RpcError, AbiDecodeError, ValueError):
             break
 
     return CoinDiscoveryResult(
