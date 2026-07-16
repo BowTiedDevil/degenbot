@@ -1125,3 +1125,5 @@
 {"type":"state","ts":"2026-07-16T02:10:30.667257779Z","data":{"id":"A47JML","state":"done","ts":"2026-07-16T02:10:30.667257779Z"}}
 {"type":"claim","ts":"2026-07-16T02:10:45.061185899Z","data":{"id":"6SNY2U","agent_id":"sonnet@pi","ts":"2026-07-16T02:10:45.061185899Z"}}
 {"type":"state","ts":"2026-07-16T02:10:45.061185899Z","data":{"id":"6SNY2U","state":"doing","ts":"2026-07-16T02:10:45.061185899Z"}}
+{"type":"result","ts":"2026-07-16T02:24:55.220381251Z","data":{"task_id":"6SNY2U","summary":"tests/test_ffi_boundary.py","path":"tests/test_ffi_boundary.py","sha256_at_attach":"0216262e8a3e414b285c010cde437fd3eac4cc327f254099b5b5ad784dc5b88c","mtime_at_attach":"2026-07-16T02:17:03.959823591Z","git_commit_at_attach":"7985dcee6bf193889ab801243e939bd06e20fd9f","ts":"2026-07-16T02:24:55.220381251Z"}}
+{"type":"state","ts":"2026-07-16T02:24:55.220381251Z","data":{"id":"6SNY2U","state":"done","ts":"2026-07-16T02:24:55.220381251Z"}}
