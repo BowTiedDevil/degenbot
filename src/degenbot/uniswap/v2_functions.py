@@ -7,12 +7,12 @@ See: contract_reference/uniswap/V2/UniswapV2Factory.sol
 from collections.abc import Iterable
 from fractions import Fraction
 
-import eth_abi.packed
 from eth_typing import ChecksumAddress
-from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
+from degenbot.abi import encode_packed
 from degenbot.contract.addresses import create2_address
+from degenbot.crypto import keccak256
 
 
 def generate_v2_pool_address(
@@ -33,10 +33,10 @@ def generate_v2_pool_address(
     """
     sorted_token_addresses = sorted([HexBytes(address) for address in token_addresses])
 
-    salt = keccak(
-        eth_abi.packed.encode_packed(
-            ("address", "address"),
-            sorted_token_addresses,
+    salt = keccak256(
+        encode_packed(
+            ["address", "address"],
+            [*sorted_token_addresses],
         ),
     )
 
