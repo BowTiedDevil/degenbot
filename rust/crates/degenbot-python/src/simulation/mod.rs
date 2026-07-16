@@ -33,6 +33,7 @@
 //! it depends on the A3 `PathSuppression` extraction.
 
 use pyo3::prelude::*;
+use pyo3::types::PyModule;
 
 pub mod candidate;
 pub mod context;
@@ -52,12 +53,18 @@ pub use outcome::PyDispatchOutcome;
 ///
 /// Returns `PyErr` if a class fails to register on the module.
 pub fn add_simulation_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PySimulateContext>()?;
-    m.add_class::<PyDispatchCandidate>()?;
-    m.add_class::<PyDispatchOutcome>()?;
-    m.add_function(wrap_pyfunction!(
+    let py = m.py();
+    let submod = PyModule::new(py, "degenbot._ffi.simulation")?;
+    submod.add_class::<PySimulateContext>()?;
+    submod.add_class::<PyDispatchCandidate>()?;
+    submod.add_class::<PyDispatchOutcome>()?;
+    submod.add_function(wrap_pyfunction!(
         crate::simulation::dispatch::dispatch_profitable_py,
-        m
+        &submod
     )?)?;
+    m.add_submodule(&submod)?;
+    py.import("sys")?
+        .getattr("modules")?
+        .set_item("degenbot._ffi.simulation", &submod)?;
     Ok(())
 }

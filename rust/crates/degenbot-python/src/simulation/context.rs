@@ -42,7 +42,7 @@ use std::sync::Arc;
 #[pyclass(
     name = "PySimulateContext",
     skip_from_py_object,
-    module = "degenbot._ffi"
+    module = "degenbot._ffi.simulation"
 )]
 // Every field is consumed by `dispatch_profitable_py` (A4, QQFTB4) when it
 // stitches them into the borrowed `SimulateContext<'_>`; until A4 lands only

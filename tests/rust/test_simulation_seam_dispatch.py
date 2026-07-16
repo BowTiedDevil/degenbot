@@ -21,7 +21,8 @@ import pytest
 
 from degenbot.arbitrage.hop_info import PathInfo, V2HopInfo
 from degenbot._ffi.provider import AlloyProvider, AsyncAlloyProvider
-from degenbot._ffi import PyDispatchCandidate, PyDispatcher, PyDispatchOutcome, PySimulateContext, PySubmitCandidate, dispatch_profitable_py
+from degenbot._ffi.simulation import PyDispatchCandidate, PyDispatchOutcome, PySimulateContext, dispatch_profitable_py
+from degenbot._ffi.submission import PyDispatcher, PySubmitCandidate
 
 # Canonical mainnet addresses (parity corpus constants — match the A2 test
 # scaffolding in tests/rust/test_simulation_seam_classes.py).

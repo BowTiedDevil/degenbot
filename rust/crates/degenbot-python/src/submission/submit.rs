@@ -66,7 +66,7 @@ use alloy::rpc::types::AccessList as AlloyAccessList;
 #[pyclass(
     name = "PySubmitCandidate",
     skip_from_py_object,
-    module = "degenbot._ffi"
+    module = "degenbot._ffi.submission"
 )]
 pub struct PySubmitCandidate {
     pub(crate) inner: SubmitCandidate,

@@ -39,30 +39,14 @@ Symbol map (FFI name → stable companion name):
 - ``fetch_fee_history_py``   → :func:`fetch_fee_history`
 """
 
-from degenbot._ffi import (
-    PyDispatchCandidate as DispatchCandidate,
-)
-from degenbot._ffi import (
-    PyDispatcher as Dispatcher,
-)
-from degenbot._ffi import (
-    PyDispatchOutcome as DispatchOutcome,
-)
-from degenbot._ffi import (
-    PySimulateContext as SimulateContext,
-)
-from degenbot._ffi import (
-    PyTxSigner as TxSigner,
-)
-from degenbot._ffi import (
-    dispatch_and_submit_py as dispatch_and_submit,
-)
-from degenbot._ffi import (
-    dispatch_profitable_py as dispatch_profitable,
-)
-from degenbot._ffi import (
-    fetch_fee_history_py as fetch_fee_history,
-)
+from degenbot._ffi.simulation import PyDispatchCandidate as DispatchCandidate
+from degenbot._ffi.simulation import PyDispatchOutcome as DispatchOutcome
+from degenbot._ffi.simulation import PySimulateContext as SimulateContext
+from degenbot._ffi.simulation import dispatch_profitable_py as dispatch_profitable
+from degenbot._ffi.submission import PyDispatcher as Dispatcher
+from degenbot._ffi.submission import PyTxSigner as TxSigner
+from degenbot._ffi.submission import dispatch_and_submit_py as dispatch_and_submit
+from degenbot._ffi.submission import fetch_fee_history_py as fetch_fee_history
 
 __all__ = [
     "DispatchCandidate",

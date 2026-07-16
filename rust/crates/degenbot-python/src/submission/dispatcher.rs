@@ -47,7 +47,11 @@ use std::sync::{Arc, Mutex};
 /// by Rust; Python drives it through the `PyO3` seam (the Rust leaves
 /// `dispatch_and_submit` / `fetch_fee_history` / `monitor_pending_transaction`
 /// receive the SAME `Arc<Mutex<Dispatcher>>` + lock it themselves).
-#[pyclass(name = "PyDispatcher", skip_from_py_object, module = "degenbot._ffi")]
+#[pyclass(
+    name = "PyDispatcher",
+    skip_from_py_object,
+    module = "degenbot._ffi.submission"
+)]
 pub struct PyDispatcher {
     pub(crate) inner: Arc<Mutex<Dispatcher>>,
     /// The standalone path-suppression tracker (LITQFF) — held alongside the

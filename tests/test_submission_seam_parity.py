@@ -16,11 +16,8 @@ from __future__ import annotations
 import eth_account
 from eth_account import Account
 
-from degenbot._ffi import (
-    PyTxParams,
-    PyTxSigner,
-    finalize_fees as rs_finalize_fees,
-)
+from degenbot._ffi.submission import finalize_fees as rs_finalize_fees
+from degenbot._ffi.submission import PyTxParams, PyTxSigner
 
 # Anvil account 0 — canonical well-known test private key + address.
 ANVIL_KEY_HEX = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
