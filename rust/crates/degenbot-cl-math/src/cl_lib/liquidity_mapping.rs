@@ -293,7 +293,7 @@ mod tests {
 
     /// Parse the fixtures JSON embedded at compile time.
     fn fixtures() -> serde_json::Value {
-        serde_json::from_str(include_str!("../../tests/liquidity_mapping_fixtures.json"))
+        serde_json::from_str(include_str!("testdata/liquidity_mapping_fixtures.json"))
             .expect("fixtures JSON parses")
     }
 
