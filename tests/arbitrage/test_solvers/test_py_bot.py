@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import PyBot
+from degenbot.bot import PyBot
 
 
 class TestPyBotV2Pool:

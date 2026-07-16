@@ -6,7 +6,6 @@ from weakref import WeakSet
 
 from eth_typing import ChecksumAddress
 
-from degenbot._ffi import PyLiquidityPool
 from degenbot.balancer.libraries.constants import PowVersion
 from degenbot.balancer.libraries.scaling_helpers import (
     _compute_scaling_factor,
@@ -37,6 +36,7 @@ from degenbot.builders.balancer_builder_base import BalancerBuilderBase
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
+from degenbot.types import PyLiquidityPool
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import BalancerWeightedHop, HopType

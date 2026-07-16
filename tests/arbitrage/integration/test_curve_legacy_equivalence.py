@@ -17,7 +17,7 @@ from degenbot.arbitrage.solvers._solver_utils import (
     _simulate_mixed_path_int,
 )
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
-from degenbot._ffi import PyBot
+from degenbot.bot import PyBot
 from tests.fakes.curve_data_provider import FakeCurveDataProvider
 from tests.fakes.tokens import FakeToken
 from tests.helpers.curve_pool_factory import make_curve_pool

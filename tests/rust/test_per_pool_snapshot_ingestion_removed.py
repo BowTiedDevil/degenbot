@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import UniswapArbEngine
+from degenbot.arbitrage.engine_registry import UniswapArbEngine
 
 _RETIRED_PYO3_METHODS = [
     "begin_v3_snapshot_stream",

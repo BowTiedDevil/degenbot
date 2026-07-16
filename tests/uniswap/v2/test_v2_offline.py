@@ -8,7 +8,7 @@ from fractions import Fraction
 
 import pytest
 
-from degenbot._ffi import PyBot
+from degenbot.bot import PyBot
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import InvalidSwapInputAmount
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool

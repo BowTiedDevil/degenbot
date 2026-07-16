@@ -56,7 +56,7 @@ if TYPE_CHECKING:
 
     from eth_typing import ChecksumAddress
 
-    from degenbot._ffi import PyLiquidityPool
+    from degenbot.types import PyLiquidityPool
     from degenbot.types.abstract import AbstractPoolState
 
 # Enum for deployed StableMath invariant versions.

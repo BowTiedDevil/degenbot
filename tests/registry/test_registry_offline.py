@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot._ffi import PyBot
+from degenbot.bot import PyBot
 from degenbot.exceptions import DegenbotValueError
 from degenbot.provider import OfflineProvider, AlloyProvider
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call

@@ -13,7 +13,6 @@ from weakref import WeakSet
 
 from eth_typing import ChecksumAddress
 
-from degenbot._ffi import PyLiquidityPool
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.math import (
     stableswap_get_d as curve_stableswap_get_d,
@@ -53,6 +52,7 @@ from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.arbitrage import NoLiquidity
 from degenbot.exceptions.pool import EVMRevertError, InvalidSwapInputAmount, MissingCurveData
 from degenbot.logging import logger
+from degenbot.types import PyLiquidityPool
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import (

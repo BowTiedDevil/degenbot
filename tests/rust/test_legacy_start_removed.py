@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import UniswapArbEngine
+from degenbot.arbitrage.engine_registry import UniswapArbEngine
 
 
 def test_start_is_not_exposed() -> None:

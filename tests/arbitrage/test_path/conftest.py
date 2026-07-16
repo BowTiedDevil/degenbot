@@ -1,7 +1,7 @@
 from fractions import Fraction
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
-from degenbot._ffi import PyBot
+from degenbot.bot import PyBot
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from tests.fakes.tokens import FakeToken

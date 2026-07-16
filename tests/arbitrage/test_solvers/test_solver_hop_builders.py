@@ -30,7 +30,7 @@ import pytest
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.arbitrage.solvers.brent_solver import BrentSolver
 from degenbot.arbitrage.solvers.hop_types import SolveInput
-from degenbot._ffi import PyBot
+from degenbot.bot import PyBot
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from tests.arbitrage.generator.pool_generator import PoolStateGenerator

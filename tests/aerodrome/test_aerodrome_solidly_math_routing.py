@@ -34,7 +34,7 @@ import degenbot.aerodrome.functions as functions_mod
 import degenbot.aerodrome.v2_pool_calc as calc_mod
 from degenbot.aerodrome.functions import calc_exact_in_stable
 from degenbot.aerodrome.pools import AerodromeV2Pool
-from degenbot._ffi import PyBot
+from degenbot.bot import PyBot
 from tests.helpers.aerodrome_pool_factory import make_aerodrome_v2_pool
 from tests.helpers.erc20_factory import make_erc20
 

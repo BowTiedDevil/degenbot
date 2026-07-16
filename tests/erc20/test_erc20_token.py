@@ -6,7 +6,7 @@ from degenbot.bot import Bot
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
-from degenbot._ffi import PyBot
+from degenbot.bot import PyBot
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.infrastructure import NoPriceOracle

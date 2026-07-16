@@ -12,7 +12,7 @@ import pytest
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.checksum_cache import get_checksum_address
-from degenbot._ffi import PyBot
+from degenbot.bot import PyBot
 from degenbot.types.address_comparable import AddressComparable
 from tests.fakes.tokens import FakeToken
 from tests.helpers.aerodrome_pool_factory import make_aerodrome_v2_pool

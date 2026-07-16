@@ -7,7 +7,7 @@ import pytest
 from hexbytes import HexBytes
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot._ffi import PyBot
+from degenbot.bot import PyBot
 from tests.helpers.erc20_factory import make_erc20
 
 _PY_BOT = PyBot()

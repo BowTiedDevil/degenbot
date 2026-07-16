@@ -27,7 +27,7 @@ import degenbot.balancer.stable_pools as sp_mod
 from degenbot.balancer.libraries.constants import ONE
 from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.balancer.stable_pools import INVARIANT_V2
-from degenbot._ffi import PyBot
+from degenbot.bot import PyBot
 from tests.helpers.balancer_pool_factory import (
     make_balancer_stable_pool,
     make_balancer_weighted_pool,

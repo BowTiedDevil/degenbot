@@ -59,7 +59,7 @@ from degenbot.balancer.deployments import (
 )
 from degenbot.balancer.stable_pools import INVARIANT_V1, INVARIANT_V2
 from degenbot.checksum_cache import get_checksum_address
-from degenbot._ffi import PyBot
+from degenbot.bot import PyBot
 from degenbot.exceptions.pool import EVMRevertError
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.balancer_pool_factory import make_balancer_stable_pool

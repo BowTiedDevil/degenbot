@@ -12,7 +12,7 @@ from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.curve.trackers import CurveStableswapPoolTracker
-from degenbot._ffi import PyBot
+from degenbot.bot import PyBot
 from degenbot.provider import AlloyProvider
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.curve_pool_factory import make_curve_pool

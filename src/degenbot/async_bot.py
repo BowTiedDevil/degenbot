@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING, Any, Self
 
 from hexbytes import HexBytes
 
-from degenbot._ffi import PyBot
 from degenbot.aerodrome.pools import AerodromeV2Pool
+from degenbot.bot import PyBot
 from degenbot.bot_lifecycle import close as _close_handles
 from degenbot.bot_lifecycle import (
     release_python_state as _release_python_state,

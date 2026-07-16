@@ -27,7 +27,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.builders.pool_io import SyncPoolIO
 from degenbot.builders.type_resolution import fetch_factory_from_chain
 from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
-from degenbot._ffi import PyBotIo
+from degenbot.bot import PyBotIo
 
 # A minimal real offline provider (recorded JSON, no RPC) for tests that need a
 # valid `PyBotIo` provider but don't exercise specific RPC responses (DB handle

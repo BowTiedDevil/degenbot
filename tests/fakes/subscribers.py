@@ -78,7 +78,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from degenbot._ffi import PyBot
+    from degenbot.bot import PyBot
     from degenbot._ffi.subscriber import PySubscription
     from degenbot.types.concrete import AbstractPublisherMessage, Publisher
 

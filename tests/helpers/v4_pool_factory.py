@@ -14,7 +14,7 @@ from typing import Any
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
-from degenbot._ffi import PyBot
+from degenbot.bot import PyBot
 from degenbot.erc20 import Erc20Token
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v4_liquidity_pool import ProtocolFee, UniswapV4Pool

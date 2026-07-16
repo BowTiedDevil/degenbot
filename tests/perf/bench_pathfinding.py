@@ -30,7 +30,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-from degenbot._ffi import find_paths_rust
+from degenbot.pathfinding import find_paths_rust
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
