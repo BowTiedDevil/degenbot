@@ -7,8 +7,7 @@ import dataclasses
 import threading
 from typing import TYPE_CHECKING, Any, cast
 
-import eth_abi.abi
-
+from degenbot.abi import decode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata
@@ -169,7 +168,7 @@ def _fetch_v3(
             return False
     else:
         try:
-            (bitmap_value,) = eth_abi.abi.decode(
+            (bitmap_value,) = decode(
                 types=["uint256"],
                 data=io.call(
                     to=pool_ref.address,
@@ -217,7 +216,7 @@ def _fetch_v3(
                     )
                     continue
 
-                liquidity_gross, liquidity_net, *_ = eth_abi.abi.decode(
+                liquidity_gross, liquidity_net, *_ = decode(
                     types=types.tick_struct_types,
                     data=result,
                 )
@@ -263,7 +262,7 @@ def _fetch_v4(
             return False
     else:
         try:
-            (bitmap_value,) = eth_abi.abi.decode(
+            (bitmap_value,) = decode(
                 types=["uint256"],
                 data=io.call(
                     to=get_checksum_address(state_view_address),
@@ -318,7 +317,7 @@ def _fetch_v4(
                     )
                     continue
 
-                liquidity_gross, liquidity_net = eth_abi.abi.decode(
+                liquidity_gross, liquidity_net = decode(
                     types=types.tick_struct_types,
                     data=result,
                 )

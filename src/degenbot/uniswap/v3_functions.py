@@ -4,11 +4,11 @@ from collections.abc import Callable, Iterable, Iterator
 from fractions import Fraction
 from itertools import cycle
 
-import eth_abi.abi
 from eth_typing import ChecksumAddress
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
+from degenbot.abi import encode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.contract.addresses import create2_address
 from degenbot.exceptions import DegenbotValueError
@@ -103,7 +103,7 @@ def generate_v3_pool_address(
     token_addresses = sorted([HexBytes(address) for address in token_addresses])
 
     salt = keccak(
-        eth_abi.abi.encode(
+        encode(
             ("address", "address", "uint24"),
             (*token_addresses, fee),
         ),

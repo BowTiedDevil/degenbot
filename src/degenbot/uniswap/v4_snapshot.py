@@ -8,11 +8,11 @@ from typing import Any, Protocol, TypedDict
 import pydantic_core
 import tqdm
 import tqdm.asyncio
-from eth_abi.abi import decode as abi_decode
 from eth_typing import ChecksumAddress, HexAddress, HexStr
 from hexbytes import HexBytes
 from sqlalchemy.orm import Session, scoped_session
 
+from degenbot.abi import decode as abi_decode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.crypto import event_topic
 from degenbot.database.operations import get_scoped_sqlite_session

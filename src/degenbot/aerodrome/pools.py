@@ -6,8 +6,7 @@ from fractions import Fraction
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, cast
 from weakref import WeakSet
 
-from eth_abi import decode as abi_decode
-
+from degenbot.abi import decode as abi_decode
 from degenbot.aerodrome.functions import (
     calc_exact_in_stable,
 )

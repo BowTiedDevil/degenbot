@@ -6,9 +6,9 @@ import contextlib
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
-import eth_abi.abi
 from sqlalchemy import select
 
+from degenbot.abi import decode
 from degenbot.builders.v2_builder_base import V2BuilderBase, V2CommonData
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.pools import LiquidityPoolTable
@@ -113,7 +113,7 @@ class AsyncV2PoolBuilder:
             data=encode_function_calldata("getReserves()", None),
             block=state_block,
         )
-        reserves0, reserves1 = eth_abi.abi.decode(
+        reserves0, reserves1 = decode(
             types=["uint256", "uint256"],
             data=reserves_result,
         )
@@ -274,7 +274,7 @@ class AsyncV2PoolBuilder:
             data=encode_function_calldata("getReserves()", None),
             block=block_number_,
         )
-        reserves0, reserves1 = eth_abi.abi.decode(
+        reserves0, reserves1 = decode(
             types=["uint256", "uint256"],
             data=reserves_result,
         )

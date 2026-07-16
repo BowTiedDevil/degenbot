@@ -31,10 +31,10 @@ from enum import Enum
 from typing import Any, Self
 from weakref import WeakSet
 
-import eth_abi.abi
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 
+from degenbot.abi import encode
 from degenbot.arbitrage.types import UniswapV4PoolSwapAmounts, V4PoolKey
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
@@ -305,7 +305,7 @@ class UniswapV4Pool(
         # Verify pool ID — the handle's pool_id is authoritative (Rust-stored).
         assert self.pool_id == (
             calculated_id := keccak256(
-                eth_abi.abi.encode(
+                encode(
                     types=["address", "address", "uint24", "int24", "address"],
                     args=[
                         self.pool_key.currency0,
