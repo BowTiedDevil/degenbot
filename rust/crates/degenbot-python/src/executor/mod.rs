@@ -498,13 +498,19 @@ fn config_err_to_py(err: ConfigError) -> PyErr {
 /// Returns a [`PyErr`] if any `add_function` call fails (e.g. a name
 /// collision); propagated unchanged to the `#[pymodule]` caller.
 pub fn add_executor_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(encode_cmd_stream, m)?)?;
-    m.add_function(wrap_pyfunction!(compute_simulation_warmup_slots, m)?)?;
-    m.add_function(wrap_pyfunction!(pack_config, m)?)?;
-    m.add_function(wrap_pyfunction!(pack_expected_balance, m)?)?;
-    m.add_function(wrap_pyfunction!(mapping_slot, m)?)?;
-    m.add_function(wrap_pyfunction!(nested_mapping_slot, m)?)?;
-    m.add_function(wrap_pyfunction!(v4_input_is_native, m)?)?;
-    m.add_function(wrap_pyfunction!(v4_output_is_native, m)?)?;
+    let py = m.py();
+    let submod = PyModule::new(py, "degenbot._ffi.executor")?;
+    submod.add_function(wrap_pyfunction!(encode_cmd_stream, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(compute_simulation_warmup_slots, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(pack_config, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(pack_expected_balance, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(mapping_slot, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(nested_mapping_slot, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(v4_input_is_native, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(v4_output_is_native, &submod)?)?;
+    m.add_submodule(&submod)?;
+    py.import("sys")?
+        .getattr("modules")?
+        .set_item("degenbot._ffi.executor", &submod)?;
     Ok(())
 }

@@ -48,6 +48,7 @@ from . import curve_math as curve_math
 from . import db as db
 from . import deployments as deployments
 from . import dex_identity as dex_identity
+from . import executor as executor
 from . import fork as fork
 from . import pool as pool
 from . import price as price
@@ -201,64 +202,6 @@ from degenbot.arbitrage.hop_info import PathInfo  # noqa: E402
 
 type BytesOrNone = bytes | None
 type WarmupDict = dict[str, dict[str, Any]]
-
-def encode_cmd_stream(
-    path_info: PathInfo,
-    optimal_input: int,
-    hop_outputs: list[int],
-    executor_address: str,
-    pool_manager_address: str,
-    weth_address: str,
-    *,
-    erc6909_profit: bool = ...,
-    use_v4_batch: bool = ...,
-) -> BytesOrNone: ...
-def compute_simulation_warmup_slots(
-    executor_address: str,
-    weth_address: str,
-    pool_manager_address: str,
-) -> WarmupDict:
-    """Compute ``eth_simulateV1`` ``stateDiff`` overrides.
-
-    Replicates ``cmd_executor.initialize()``'s three warmed storage slots.
-
-    Args:
-        executor_address: The cmd_executor contract address.
-        weth_address: The WETH9 contract address.
-        pool_manager_address: The Uniswap V4 PoolManager address.
-
-    Returns:
-        A dict keyed by checksummed contract addresses, with ``stateDiff``
-        sub-dicts mapping slot hex to 1-wei value hex, plus the executor's
-        residual balance entry.
-
-    """
-
-def pack_config(
-    check_mode: int = ...,
-    expected_value: int = ...,
-    bribe_bips: int = ...,
-    bribe_recipient_idx: int = ...,
-) -> int:
-    """Pack the ``execute(commands, config)`` ABI ``config`` uint256."""
-
-def pack_expected_balance(check_mode: int, expected_value: int) -> int:
-    """Return a deprecated alias for ``pack_config``.
-
-    Uses ``bribe_bips=0`` / ``bribe_recipient_idx=0``.
-    """
-
-def mapping_slot(base_slot: int, key: int) -> int:
-    """Compute a Solidity mapping storage slot (``keccak256(pad(key,32) || pad(base,32))``)."""
-
-def nested_mapping_slot(base_slot: int, key1: int, key2: int) -> int:
-    """Compute a nested Solidity mapping storage slot."""
-
-def v4_input_is_native(hop: object) -> bool:
-    """Return whether the V4 hop's input currency is native ETH (address(0))."""
-
-def v4_output_is_native(hop: object) -> bool:
-    """Return whether the V4 hop's output currency is native ETH (address(0))."""
 
 class PathIterator:
     def __iter__(self) -> PathIterator: ...
@@ -1463,7 +1406,6 @@ __all__ = [
     "build_path_graph",
     "cancel",
     "cl_math",
-    "compute_simulation_warmup_slots",
     "contract",
     "curve_math",
     "db",
@@ -1471,15 +1413,11 @@ __all__ = [
     "dex_identity",
     "dispatch_and_submit_py",
     "dispatch_profitable_py",
-    "encode_cmd_stream",
+    "executor",
     "fetch_fee_history_py",
     "finalize_fees",
     "find_paths_rust",
     "fork",
-    "mapping_slot",
-    "nested_mapping_slot",
-    "pack_config",
-    "pack_expected_balance",
     "pool",
     "price",
     "provider",
@@ -1487,6 +1425,4 @@ __all__ = [
     "solidly_math",
     "subscriber",
     "to_checksum_address",
-    "v4_input_is_native",
-    "v4_output_is_native",
 ]
