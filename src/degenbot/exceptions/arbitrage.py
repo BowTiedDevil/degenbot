@@ -6,6 +6,9 @@ from typing import Any
 from degenbot._ffi import (  # noqa: F401
     DynamicFeePoolRejectedError,
     HookedPoolRejectedError,
+    PoolAlreadyRegisteredError,
+    PoolRegistrationError,
+    SpecViolationError,
 )
 from degenbot.exceptions.base import DegenbotError
 
