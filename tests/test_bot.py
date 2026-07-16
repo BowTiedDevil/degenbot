@@ -118,9 +118,9 @@ class TestBotFromConfigFile:
     """Bot.from_config_file() tests."""
 
     def test_from_config_file_creates_bot(self, tmp_path: pathlib.Path) -> None:
-        with patch("degenbot.bot._init_config") as mock_init:
+        with patch("degenbot.bot._bot._init_config") as mock_init:
             mock_init.return_value = _make_test_config(tmp_path)
-            with patch("degenbot.bot.get_provider_from_config") as mock_factory:
+            with patch("degenbot.bot._bot.get_provider_from_config") as mock_factory:
                 mock_factory.return_value = _fake_provider(1)
                 bot = Bot.from_config_file()
                 assert isinstance(bot, Bot)
