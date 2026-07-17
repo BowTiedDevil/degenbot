@@ -40,6 +40,12 @@ fn make_manager() -> Address {
     Address::from([0xbb; 20])
 }
 
+/// A distinct V4 `StateView` contract address for tests (dummy — the tests use
+/// `chain=None` or a `FakeChainRpc` that ignores the address).
+fn make_state_view() -> Address {
+    Address::from([0xee; 20])
+}
+
 /// A tick that's easy to assert against in the hit cases.
 fn sample_tick_info(tick: i32) -> TickInfo {
     TickInfo {
@@ -320,8 +326,18 @@ fn v4_store_hit_returns_tracked_ticks_and_consumes_entry() {
         m
     });
 
-    let result =
-        assemble_v4_tick_map(|| store.take(&key), Some(&db), mgr, pool_id, 0, 10, 0, None).unwrap();
+    let result = assemble_v4_tick_map(
+        || store.take(&key),
+        Some(&db),
+        mgr,
+        make_state_view(),
+        pool_id,
+        0,
+        10,
+        0,
+        None,
+    )
+    .unwrap();
     let Some((ticks, coverage)) = result else {
         panic!("Store hit should return Some");
     };
@@ -339,7 +355,18 @@ fn v4_store_miss_db_hit_non_empty_returns_tracked_ticks() {
     seed_v4_ticks(&db, managed_id, &[-10, 10]);
     let mgr = make_manager();
 
-    let result = assemble_v4_tick_map(store_miss, Some(&db), mgr, pool_id, 0, 10, 0, None).unwrap();
+    let result = assemble_v4_tick_map(
+        store_miss,
+        Some(&db),
+        mgr,
+        make_state_view(),
+        pool_id,
+        0,
+        10,
+        0,
+        None,
+    )
+    .unwrap();
     let Some((ticks, coverage)) = result else {
         panic!("Db hit should return Some");
     };
@@ -356,6 +383,7 @@ fn v4_store_miss_db_hit_empty_map_returns_miss() {
         store_miss,
         Some(&db),
         make_manager(),
+        make_state_view(),
         pool_id,
         0,
         10,
@@ -374,6 +402,7 @@ fn v4_store_miss_db_miss_pool_not_found_returns_miss() {
         store_miss,
         Some(&db),
         make_manager(),
+        make_state_view(),
         pool_id,
         0,
         10,
@@ -402,6 +431,7 @@ fn v4_store_miss_db_error_is_propagated_not_swallowed() {
         store_miss,
         Some(&db),
         make_manager(),
+        make_state_view(),
         pool_id,
         0,
         10,
@@ -422,8 +452,18 @@ fn v4_store_miss_db_error_is_propagated_not_swallowed() {
 #[test]
 fn v4_db_none_cold_start_store_empty_returns_miss() {
     let pool_id = [0xee; 32];
-    let result =
-        assemble_v4_tick_map(store_miss, None, make_manager(), pool_id, 0, 10, 0, None).unwrap();
+    let result = assemble_v4_tick_map(
+        store_miss,
+        None,
+        make_manager(),
+        make_state_view(),
+        pool_id,
+        0,
+        10,
+        0,
+        None,
+    )
+    .unwrap();
     assert!(result.is_none(), "cold-start + empty store → miss");
 }
 
@@ -466,7 +506,7 @@ impl TickBootstrapRpc for FakeChainRpc {
 
     fn bootstrap_v4_tick_word(
         &self,
-        _pool_manager: &str,
+        _state_view: &str,
         _pool_id: &[u8; 32],
         _tick: i32,
         _tick_spacing: i32,
@@ -575,8 +615,18 @@ fn v4_chain_hit_after_store_db_miss_returns_sparse_ticks() {
         fail_rpc: false,
     };
 
-    let result =
-        assemble_v4_tick_map(store_miss, Some(&db), mgr, pool_id, 10, 1, 100, Some(&rpc)).unwrap();
+    let result = assemble_v4_tick_map(
+        store_miss,
+        Some(&db),
+        mgr,
+        make_state_view(),
+        pool_id,
+        10,
+        1,
+        100,
+        Some(&rpc),
+    )
+    .unwrap();
     let Some((ticks, coverage)) = result else {
         panic!("Chain hit should return Some");
     };
@@ -596,7 +646,17 @@ fn v4_chain_rpc_error_is_propagated_not_swallowed() {
         fail_rpc: true,
     };
 
-    let result = assemble_v4_tick_map(store_miss, Some(&db), mgr, pool_id, 10, 1, 100, Some(&rpc));
+    let result = assemble_v4_tick_map(
+        store_miss,
+        Some(&db),
+        mgr,
+        make_state_view(),
+        pool_id,
+        10,
+        1,
+        100,
+        Some(&rpc),
+    );
     let err = result.expect_err("Chain Rpc error must propagate");
     assert!(
         matches!(err, TickMapAssemblyError::Chain(BootstrapTickError::Rpc)),

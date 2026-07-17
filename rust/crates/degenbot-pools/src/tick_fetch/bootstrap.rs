@@ -106,13 +106,18 @@ pub trait TickBootstrapRpc: Send + Sync + std::fmt::Debug {
     /// that word, at snapshot block `block`. V4 twin of
     /// [`Self::bootstrap_v3_tick_word`].
     ///
+    /// `state_view` is the V4 **`StateView`** contract address (the contract that
+    /// exposes `getTickBitmap(bytes32,int16)` + `getTickLiquidity(bytes32,int24)`
+    /// — NOT the `PoolManager`; V4 state reads route through a separate
+    /// `StateView` deployment).
+    ///
     /// # Errors
     ///
     /// Returns [`BootstrapTickError::Rpc`] on RPC failure, or
     /// [`BootstrapTickError::InvalidReturn`] on a malformed return.
     fn bootstrap_v4_tick_word(
         &self,
-        pool_manager: &str,
+        state_view: &str,
         pool_id: &[u8; 32],
         tick: i32,
         tick_spacing: i32,
@@ -185,7 +190,7 @@ mod tests {
 
         fn bootstrap_v4_tick_word(
             &self,
-            _pool_manager: &str,
+            _state_view: &str,
             _pool_id: &[u8; 32],
             tick: i32,
             tick_spacing: i32,
