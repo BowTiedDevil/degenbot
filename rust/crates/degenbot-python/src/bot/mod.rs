@@ -1236,6 +1236,21 @@ impl PyBot {
         let variant_enum = DexVariant::from_kebab(variant).ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err(format!("unknown variant: {variant}"))
         })?;
+
+        // Verify the pool address against the JSON-sourced EIP-1167 deployer
+        // + implementation address (Fork A follow-on, S5SJXF/WLJD2Y — the
+        // Aerodrome parity gap of JC6OFG). Skipped if (chain, factory) is
+        // not in the shipped JSON or the row has no implementation address —
+        // preserves the manual/ad-hoc registration path.
+        crate::bot::deployments::verify_aerodrome_v2(
+            self.bot.chain_id(),
+            fac,
+            addr,
+            t0,
+            t1,
+            stable,
+        )?;
+
         Ok(self
             .bot
             .state_arc()

@@ -92,9 +92,7 @@ def test_v3_rust_matches_python_oracle(t0: str, t1: str, tick_spacing: int) -> N
         tick_spacing,
         AERODROME_V3_IMPLEMENTATION,
     )
-    assert rs == py, (
-        f"V3 {t0}/{t1} ts={tick_spacing}: rust={rs} py={py}"
-    )
+    assert rs == py, f"V3 {t0}/{t1} ts={tick_spacing}: rust={rs} py={py}"
 
 
 def test_v2_known_onchain_address() -> None:
@@ -124,3 +122,76 @@ def test_v3_known_onchain_address() -> None:
         )
         == "0x82321f3BEB69f503380D6B233857d5C43562e2D0"
     )
+
+
+class TestRegisterTimeVerification:
+    """register_aerodrome_pool recomputes the EIP-1167 address and rejects a mismatch.
+
+    The Fork-A JC6OFG parity gap for Aerodrome: registering against the real
+    Base factory verifies the declared address against the JSON-sourced deployer
+    + implementation (WLJD2Y). Non-JSON factories skip verification.
+    """
+
+    def test_correct_address_accepts(self) -> None:
+        from degenbot._ffi import PyBot
+
+        bot = PyBot(chain_id=8453)  # Base — where the Aerodrome factory lives
+        # The real on-chain BASE_AERO_WETH_V2 volatile pool — recomputed by the
+        # Rust verify path from the JSON deployer + implementation.
+        pool_id = bot.register_aerodrome_pool(
+            address="0x7f670f78B17dEC44d5Ef68a48740b6f8849cc2e6",
+            token0=BASE_WETH,
+            token1=BASE_AERO,
+            factory=AERODROME_V2_DEPLOYER,
+            variant="aerodrome-v2-volatile",
+            stable=False,
+            fee_numer=3,
+            fee_denom=1000,
+            reserve0=1,
+            reserve1=1,
+            update_block=0,
+        )
+        assert pool_id >= 0
+
+    def test_wrong_address_is_rejected(self) -> None:
+        import pytest
+
+        from degenbot._ffi import PyBot
+
+        bot = PyBot(chain_id=8453)
+        with pytest.raises(ValueError, match="CREATE2"):
+            bot.register_aerodrome_pool(
+                address="0x0000000000000000000000000000000000000001",  # wrong
+                token0=BASE_WETH,
+                token1=BASE_AERO,
+                factory=AERODROME_V2_DEPLOYER,
+                variant="aerodrome-v2-volatile",
+                stable=False,
+                fee_numer=3,
+                fee_denom=1000,
+                reserve0=1,
+                reserve1=1,
+                update_block=0,
+            )
+
+    def test_non_json_factory_skips_verification(self) -> None:
+        # An ad-hoc factory not in deployments.json must skip verification
+        # (manual/ad-hoc registration path preserved).
+        from degenbot._ffi import PyBot
+
+        bot = PyBot(chain_id=8453)
+        ad_hoc_factory = "0x" + "ab" * 20
+        pool_id = bot.register_aerodrome_pool(
+            address="0x0000000000000000000000000000000000000001",
+            token0=BASE_WETH,
+            token1=BASE_AERO,
+            factory=ad_hoc_factory,
+            variant="aerodrome-v2-volatile",
+            stable=False,
+            fee_numer=3,
+            fee_denom=1000,
+            reserve0=1,
+            reserve1=1,
+            update_block=0,
+        )
+        assert pool_id >= 0
