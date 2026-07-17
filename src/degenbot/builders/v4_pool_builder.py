@@ -128,7 +128,6 @@ class V4PoolBuilder(V4BuilderBase):
         # token fetches. Falls back to skipping when no `io` /
         # `database_path` is configured (mirrors `contextlib.suppress`).
         db_values = None
-        pool_id_db: int | None = None
         # Route the DB read through the Rust `PyBotIo` seam (QVMWQC). The
         # `contextlib.suppress` makes a missing/empty DB a skip, not an error.
         with contextlib.suppress(Exception):
@@ -151,8 +150,6 @@ class V4PoolBuilder(V4BuilderBase):
                             fee=v4_row.fee_token0,
                             state_view_address=manager_row.state_view,
                         )
-                        # The V4 tick snapshot is keyed by `managed_pool_id`.
-                        pool_id_db = v4_row.managed_pool_id
 
         # Get immutable values
         if db_values is not None:
@@ -225,88 +222,109 @@ class V4PoolBuilder(V4BuilderBase):
             lp_fee=int(lp_fee),
         )
 
-        # Fetch initial tick bitmap and tick data
+        # Fetch initial tick bitmap and tick data via the Rust `assemble_*`
+        # helper (UHPXSD cutover / epic Candidate 1 / Decision 6 (B)) — V4 twin
+        # of the V3 builder cutover. One call — Store take → Db precedence,
+        # both in Rust; on a hit, the returned `tick_rows` is already in
+        # `register_v4_pool`'s `tick_data` arg shape
+        # (`{tick: (liquidity_gross, liquidity_net, block)}`). On a miss, fall
+        # through to Branch 3 (sparse RPC) as before.
+        #
+        # ``tick_map_is_tracked`` is True ONLY when the tick map is complete
+        # (a full snapshot) — so the Rust dense swap's ``gen_ticks(tick_data)``
+        # can trust it to propose every crossing tick. The live single-word RPC
+        # fetch path below seeds ONLY the current tick-bitmap word; swaps that
+        # cross into a neighbouring word would silently walk uninitialized
+        # boundary ticks (applying no liquidity_net) and produce wrong amounts.
+        # Such pools MUST register ``coverage=sparse`` + a fetcher so the Rust
+        # miss-detection backfills missing words.
+        #
+        # QVMWQC: the tick-snapshot read stays routed through the Rust seam.
+        # The `contextlib.suppress(Exception)` swallow around the DB block is
+        # GONE — Db errors propagate as `RuntimeError` from the Rust helper
+        # (Decision 8 (A): loud failure over silent degrade, deliberate
+        # behavior change; a `database is locked` under the concurrent updater
+        # process now aborts pool registration where Python previously
+        # swallowed it and fell to sparse RPC).
+        #
+        # Branch 1 (caller-supplied `request.tick_bitmap` + `request.tick_data`)
+        # is collapsed into the assemble path — those `BuildPoolRequest` fields
+        # are now dead parameters (orphaned; cleanup is a separate task).
+        register_rows: dict[int, tuple[int, int, int]] | None = None
+        coverage = "sparse"
+        tick_map_is_tracked = False
         working_tick_bitmap: dict[int, Any] = {}
-        working_tick_data: dict[int, Any] = {}
-        # ``tick_data_complete`` is True ONLY when ``working_tick_data`` holds
-        # EVERY on-chain initialized tick (a full snapshot) — so the Rust dense
-        # swap's ``gen_ticks(tick_data)`` can trust it to propose every crossing
-        # tick. The live single-word RPC fetch path below seeds ONLY the current
-        # tick-bitmap word; swaps that cross into a neighbouring word would
-        # silently walk uninitialized boundary ticks (applying no liquidity_net)
-        # and produce wrong amounts. Such pools MUST register ``coverage=sparse``
-        # + a fetcher so the Rust miss-detection backfills missing words.
-        tick_data_complete = False
 
-        # Use provided tick data if given (snapshot or test fixtures)
-        if request.tick_bitmap is not None and request.tick_data is not None:
-            working_tick_bitmap = dict(request.tick_bitmap)
-            working_tick_data = dict(request.tick_data)
-            tick_data_complete = True
-        elif request.tick_bitmap is not None or request.tick_data is not None:
-            raise DegenbotValueError(message="Provide both tick_bitmap and tick_data, or neither.")
+        assembled = self._py_bot.assemble_v4_tick_map(
+            pool_manager_address,
+            pool_id_bytes,
+        )
+        if assembled is not None:
+            # Helper hit (Store arm or Db arm) — `tick_rows` is already in the
+            # `register_v4_pool` arg shape; `coverage` is `"tracked"`.
+            rows, coverage = assembled
+            tick_map_is_tracked = coverage == "tracked"
+            register_rows = rows
         else:
-            # Try DB snapshot tables first — route the tick-snapshot read
-            # through the Rust `PyBotIo` seam (QVMWQC). The V4 managed tables
-            # are keyed by `managed_pool_id` (= `pool_id_db`); the
-            # liquidity-update block comes from the V4 subclass row.
-            db_snapshot_loaded = False
-            if pool_id_db is not None:
-                with contextlib.suppress(Exception):
-                    init_maps = io.fetch_managed_initialization_maps(pool_id_db)
-                    liq_positions = io.fetch_managed_liquidity_positions(pool_id_db)
-                    update_block = None
-                    kind_row = io.fetch_pool_kind(kind="uniswap_v4", pool_id=pool_id_db)
-                    if kind_row is not None:
-                        update_block = kind_row.liquidity_update_block
-                    working_tick_bitmap, working_tick_data, db_snapshot_loaded = (
-                        V4BuilderBase.load_tick_snapshot_from_seam_rows(
-                            init_maps=init_maps,
-                            liq_positions=liq_positions,
-                            liquidity_update_block=update_block,
-                        )
+            # Branch 3 sparse RPC (unchanged) — fetch only the current bitmap
+            # word + its active ticks via the Rust `PyBotIo` seam.
+            working_tick_data: dict[int, Any] = {}
+            word, _ = cl_get_tick_word_and_bit_position(
+                tick=int(slot0_data.tick),
+                tick_spacing=tick_spacing_for_pool,
+            )
+
+            assert state_view_address is not None
+            # ADR-005 slice 14t: delegate V4 tick-bitmap + per-tick RPCs to Rust
+            # (PyBotIo is the only executor; the Python parity-gate fallback is retired).
+            bitmap_at_word = io.fetch_v4_tick_bitmap(
+                state_view_address,
+                pool_id_bytes,
+                word,
+                block=state_block,
+            )
+
+            if bitmap_at_word != 0:
+                active_ticks = [
+                    ((word << 8) + i) * tick_spacing_for_pool
+                    for i in range(256)
+                    if bitmap_at_word & (1 << i) > 0
+                ]
+
+                for active_tick in active_ticks:
+                    liquidity_gross, liquidity_net = io.fetch_v4_tick_data(
+                        state_view_address,
+                        pool_id_bytes,
+                        active_tick,
+                        block=state_block,
+                    )
+                    working_tick_data[active_tick] = LiquidityAtTick(
+                        liquidity_net=int(liquidity_net),
+                        liquidity_gross=int(liquidity_gross),
+                        block=state_block,
                     )
 
-            if not db_snapshot_loaded:
-                word, _ = cl_get_tick_word_and_bit_position(
-                    tick=int(slot0_data.tick),
-                    tick_spacing=tick_spacing_for_pool,
-                )
+            working_tick_bitmap[word] = BitmapAtWord(
+                bitmap=bitmap_at_word,
+                block=state_block,
+            )
 
-                assert state_view_address is not None
-                # ADR-005 slice 14t: delegate V4 tick-bitmap + per-tick RPCs to Rust
-                # (PyBotIo is the only executor; the Python parity-gate fallback is retired).
-                bitmap_at_word = io.fetch_v4_tick_bitmap(
-                    state_view_address,
-                    pool_id_bytes,
-                    word,
-                    block=state_block,
-                )
-
-                if bitmap_at_word != 0:
-                    active_ticks = [
-                        ((word << 8) + i) * tick_spacing_for_pool
-                        for i in range(256)
-                        if bitmap_at_word & (1 << i) > 0
-                    ]
-
-                    for active_tick in active_ticks:
-                        liquidity_gross, liquidity_net = io.fetch_v4_tick_data(
-                            state_view_address,
-                            pool_id_bytes,
-                            active_tick,
-                            block=state_block,
+            if working_tick_data:
+                rows = {}
+                for t, info in working_tick_data.items():
+                    if isinstance(info, LiquidityAtTick):
+                        rows[int(t)] = (
+                            int(info.liquidity_gross),
+                            int(info.liquidity_net),
+                            int(info.block),
                         )
-                        working_tick_data[active_tick] = LiquidityAtTick(
-                            liquidity_net=int(liquidity_net),
-                            liquidity_gross=int(liquidity_gross),
-                            block=state_block,
+                    else:
+                        rows[int(t)] = (
+                            int(info[0]),
+                            int(info[1]),
+                            int(info[2]) if len(info) > 2 else 0,  # noqa: PLR2004
                         )
-
-                working_tick_bitmap[word] = BitmapAtWord(
-                    bitmap=bitmap_at_word,
-                    block=state_block,
-                )
+                register_rows = rows
 
         # If tick data was populated, pass both. Otherwise pass None (sparse mode).
         assert state_view_address is not None
@@ -323,32 +341,10 @@ class V4PoolBuilder(V4BuilderBase):
         # Previously the builder registered empty then called
         # ``update_tick_data`` (a `state.tick_data = …` REPLACE that clobbered
         # any live ModifyLiquidity in the register→seed window → V4 desync).
-        register_rows: dict[int, tuple[int, int, int]] | None = None
-        coverage = "sparse"
-        # Seed whatever ticks we have (the current word) INLINE so the pool is
-        # never visible to a live pump unseeded; ``coverage`` is the
-        # completeness contract: ``tracked`` ONLY when the tick map is complete
-        # (full snapshot) — a windowed single-word seed stays ``sparse`` so the
-        # Rust miss-detection backfills neighbouring words on demand.
-        tick_map_is_tracked = bool(working_tick_data) and tick_data_complete
-        if tick_map_is_tracked:
-            coverage = "tracked"
-        if working_tick_data:
-            rows: dict[int, tuple[int, int, int]] = {}
-            for t, info in working_tick_data.items():
-                if isinstance(info, LiquidityAtTick):
-                    rows[int(t)] = (
-                        int(info.liquidity_gross),
-                        int(info.liquidity_net),
-                        int(info.block),
-                    )
-                else:
-                    rows[int(t)] = (
-                        int(info[0]),
-                        int(info[1]),
-                        int(info[2]) if len(info) > 2 else 0,  # noqa: PLR2004
-                    )
-            register_rows = rows
+        # ``coverage`` is the completeness contract: ``tracked`` ONLY when the
+        # tick map is complete (full snapshot) — a windowed single-word seed
+        # stays ``sparse`` so the Rust miss-detection backfills neighbouring
+        # words on demand.
         pool_handle_pool_id = self._py_bot.register_v4_pool(
             pool_manager=pool_manager_address,
             pool_id_hex=pool_id_bytes.to_0x_hex(),
