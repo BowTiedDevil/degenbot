@@ -1523,12 +1523,11 @@ impl PyBotIo {
     /// Fetch a V3 pool's tick bitmap word via `tickBitmap(int16)`, performing
     /// the encode -> call -> decode choreography in Rust (ADR-005 slice 14j).
     ///
-    /// Mirrors `tick_data_fetcher.py::_fetch_v3`'s bitmap RPC block. The
-    /// `word_position` is a signed `int16` ABI-encoded as a sign-extended
-    /// 32-byte word. The result is a `uint256` bitmap value.
-    ///
-    /// New pattern: signed-integer argument encoding (int16 sign extension to
-    /// 32 bytes via `I256::to_be_bytes::<32>()`).
+    /// Calldata + return decode from `degenbot_rpc::abi` (B2) — no hand-rolled
+    /// `selector` / `sign_extend_to_32_bytes` here. The encode/decode helpers
+    /// are shared with `AlloyTickBootstrapRpc` (the standalone-Rust `cargo add
+    /// degenbot` consumer path), so the choreography stays byte-identical
+    /// across the pyo3 adapter and the alloy impl (5NT2OC epic / Y5MHJV).
     ///
     /// Errors propagate: provider revert surfaces as `PyErr` (the Python
     /// caller's `except Exception: return` handles it).
@@ -1540,34 +1539,24 @@ impl PyBotIo {
         word_position: i64,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        use alloy::primitives::U256;
-
-        let sel = selector(b"tickBitmap(int16)");
-        // Sign-extend the int16 argument to a 32-byte word (two's complement).
-        let arg = sign_extend_to_32_bytes(word_position);
-        let mut calldata = Vec::with_capacity(36);
-        calldata.extend_from_slice(&sel);
-        calldata.extend_from_slice(&arg);
+        let word_i16 = i16::try_from(word_position).map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err("word_position out of int16 range")
+        })?;
+        let calldata = degenbot_rpc::abi::encode_tick_bitmap(word_i16);
 
         let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
         let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        if bytes.len() < 32 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "tickBitmap result < 32 bytes",
-            ));
-        }
-        let bitmap = U256::from_be_slice(&bytes[0..32]);
+        let bitmap = degenbot_rpc::abi::decode_tick_bitmap(bytes)?;
         crate::conversion::alloy::u256_to_py(py, &bitmap).map(pyo3::Bound::unbind)
     }
 
     /// Fetch a V3 pool's tick liquidity data via `ticks(int24)`, performing
     /// the encode -> call -> decode choreography in Rust (ADR-005 slice 14j).
     ///
-    /// Mirrors `tick_data_fetcher.py::_fetch_v3`'s tick-data RPC block. The
-    /// `tick` is a signed `int24` ABI-encoded as a sign-extended 32-byte word.
-    /// The result is a multi-field struct; only the first two fields matter:
-    /// `liquidity_gross` (uint128) and `liquidity_net` (int128). These are the
-    /// first two 32-byte words of the ABI-encoded return data.
+    /// Calldata + return decode from `degenbot_rpc::abi` (B2). The result's
+    /// first two fields (`liquidity_gross: uint128`, `liquidity_net: int128`)
+    /// are right-aligned in their 32-byte ABI words; `decode_tick_data` reads
+    /// those 64 bytes directly.
     ///
     /// Errors propagate (see [`Self::fetch_tick_bitmap`]).
     #[pyo3(signature = (pool_address, tick, block=None))]
@@ -1578,30 +1567,17 @@ impl PyBotIo {
         tick: i64,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
-        use alloy::primitives::U256;
-
-        let sel = selector(b"ticks(int24)");
-        // Sign-extend the int24 argument to a 32-byte word (two's complement).
-        let arg = sign_extend_to_32_bytes(tick);
-        let mut calldata = Vec::with_capacity(36);
-        calldata.extend_from_slice(&sel);
-        calldata.extend_from_slice(&arg);
+        let tick_i32 = i32::try_from(tick)
+            .map_err(|_| pyo3::exceptions::PyValueError::new_err("tick out of int24 range"))?;
+        let calldata = degenbot_rpc::abi::encode_tick_data(tick_i32);
 
         let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
         let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        if bytes.len() < 64 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "ticks result < 64 bytes",
-            ));
-        }
-        // Word 0: liquidity_gross (uint128, right-aligned in 32-byte word).
-        let gross = U256::from_be_slice(&bytes[0..32]);
-        // Word 1: liquidity_net (int128, sign-extended in 32-byte word).
-        let net = alloy::primitives::I256::try_from_be_slice(&bytes[32..64])
-            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid int128 decode"))?;
+        let (gross, net) = degenbot_rpc::abi::decode_tick_data(bytes)?;
 
         Ok((
-            crate::conversion::alloy::u256_to_py(py, &gross)?.unbind(),
+            crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(gross))?
+                .unbind(),
             crate::conversion::alloy::i256_to_py(py, &net)?.unbind(),
         ))
     }
@@ -1609,9 +1585,8 @@ impl PyBotIo {
     /// Fetch a V4 pool's tick bitmap via `getTickBitmap(bytes32,int16)` on the
     /// state-view contract (ADR-005 slice 14k).
     ///
-    /// Mirrors `tick_data_fetcher.py::_fetch_v4`'s bitmap RPC block. V4 adds a
+    /// Calldata + return decode from `degenbot_rpc::abi` (B2). V4 adds a
     /// `pool_id` (`bytes32`) prefix argument before the `int16` word position.
-    /// Calldata: selector (4) + `pool_id` (32) + sign-extended int16 (32) = 68 bytes.
     ///
     /// Errors propagate.
     #[pyo3(signature = (state_view_address, pool_id, word_position, block=None))]
@@ -1623,31 +1598,25 @@ impl PyBotIo {
         word_position: i64,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        use alloy::primitives::U256;
-
-        let sel = selector(b"getTickBitmap(bytes32,int16)");
-        let arg = sign_extend_to_32_bytes(word_position);
-        let mut calldata = Vec::with_capacity(68);
-        calldata.extend_from_slice(&sel);
-        calldata.extend_from_slice(pool_id);
-        calldata.extend_from_slice(&arg);
+        let word_i16 = i16::try_from(word_position).map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err("word_position out of int16 range")
+        })?;
+        let pool_id_arr: [u8; 32] = pool_id
+            .try_into()
+            .map_err(|_| pyo3::exceptions::PyValueError::new_err("pool_id must be 32 bytes"))?;
+        let calldata = degenbot_rpc::abi::encode_v4_tick_bitmap(&pool_id_arr, word_i16);
 
         let result_obj = self.forward_call_to_provider(py, state_view_address, &calldata, block)?;
         let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        if bytes.len() < 32 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "getTickBitmap result < 32 bytes",
-            ));
-        }
-        let bitmap = U256::from_be_slice(&bytes[0..32]);
+        let bitmap = degenbot_rpc::abi::decode_v4_tick_bitmap(bytes)?;
         crate::conversion::alloy::u256_to_py(py, &bitmap).map(pyo3::Bound::unbind)
     }
 
     /// Fetch a V4 pool's tick liquidity via `getTickLiquidity(bytes32,int24)`
     /// on the state-view contract (ADR-005 slice 14k).
     ///
-    /// Mirrors `tick_data_fetcher.py::_fetch_v4`'s tick-data RPC block. V4 adds
-    /// a `pool_id` (`bytes32`) prefix argument before the `int24` tick. The V4
+    /// Calldata + return decode from `degenbot_rpc::abi` (B2). V4 adds a
+    /// `pool_id` (`bytes32`) prefix argument before the `int24` tick. The V4
     /// tick return is just `(uint128, int128)` — exactly 2 fields.
     ///
     /// Errors propagate.
@@ -1660,28 +1629,20 @@ impl PyBotIo {
         tick: i64,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
-        use alloy::primitives::U256;
-
-        let sel = selector(b"getTickLiquidity(bytes32,int24)");
-        let arg = sign_extend_to_32_bytes(tick);
-        let mut calldata = Vec::with_capacity(68);
-        calldata.extend_from_slice(&sel);
-        calldata.extend_from_slice(pool_id);
-        calldata.extend_from_slice(&arg);
+        let tick_i32 = i32::try_from(tick)
+            .map_err(|_| pyo3::exceptions::PyValueError::new_err("tick out of int24 range"))?;
+        let pool_id_arr: [u8; 32] = pool_id
+            .try_into()
+            .map_err(|_| pyo3::exceptions::PyValueError::new_err("pool_id must be 32 bytes"))?;
+        let calldata = degenbot_rpc::abi::encode_v4_tick_data(&pool_id_arr, tick_i32);
 
         let result_obj = self.forward_call_to_provider(py, state_view_address, &calldata, block)?;
         let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        if bytes.len() < 64 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "getTickLiquidity result < 64 bytes",
-            ));
-        }
-        let gross = U256::from_be_slice(&bytes[0..32]);
-        let net = alloy::primitives::I256::try_from_be_slice(&bytes[32..64])
-            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid int128 decode"))?;
+        let (gross, net) = degenbot_rpc::abi::decode_v4_tick_data(bytes)?;
 
         Ok((
-            crate::conversion::alloy::u256_to_py(py, &gross)?.unbind(),
+            crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(gross))?
+                .unbind(),
             crate::conversion::alloy::i256_to_py(py, &net)?.unbind(),
         ))
     }
@@ -2232,20 +2193,6 @@ fn selector(signature: &[u8]) -> [u8; 4] {
     let mut s = [0u8; 4];
     s.copy_from_slice(&hash[..4]);
     s
-}
-
-/// Sign-extend an `i64` value to a 32-byte big-endian two's complement word.
-///
-/// Used by `fetch_tick_bitmap` / `fetch_tick_data` to encode `int16` / `int24`
-/// arguments as ABI-compliant 32-byte words. For negative values, the upper
-/// bytes are filled with `0xFF` (sign extension); for non-negative, `0x00`.
-fn sign_extend_to_32_bytes(val: i64) -> [u8; 32] {
-    let mut buf = [0u8; 32];
-    if val < 0 {
-        buf[..24].fill(0xFF);
-    }
-    buf[24..].copy_from_slice(&val.to_be_bytes());
-    buf
 }
 
 /// Decode an ABI-encoded top-level dynamic array into an iterator of 32-byte
