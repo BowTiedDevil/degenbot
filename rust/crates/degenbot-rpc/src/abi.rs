@@ -28,7 +28,7 @@
 //! classified by the provider); return-data decode failures surface as
 //! [`ProviderError::DecodingError`]. No swallowing — callers decide retry/policy.
 
-use alloy::primitives::{Address, Bytes, I256, U256};
+use alloy::primitives::{Address, Bytes, I256, U128, U256};
 use alloy::sol_types::SolCall;
 use degenbot_core::errors::{ProviderError, ProviderResult};
 
@@ -60,6 +60,17 @@ alloy::sol! {
             bool unlocked
         );
         function liquidity() external view returns (uint128 liquidity);
+        function tickBitmap(int16 wordPosition) external view returns (uint256 word);
+        function ticks(int24 tick) external view returns (
+            uint128 liquidityGross,
+            int128 liquidityNet,
+            uint256 feeGrowthOutside0X128,
+            uint256 feeGrowthOutside1X128,
+            int56 tickCumulativeOutside,
+            uint160 secondsPerLiquidityOutsideX128,
+            uint32 secondsOutside,
+            bool initialized
+        );
     }
 
     /// Uniswap-V4 state-view interface.
@@ -71,6 +82,8 @@ alloy::sol! {
             uint24 lpFee
         );
         function getLiquidity(bytes32 poolId) external view returns (uint128 liquidity);
+        function getTickBitmap(bytes32 poolId, int16 wordPosition) external view returns (uint256 word);
+        function getTickLiquidity(bytes32 poolId, int24 tick) external view returns (uint128 gross, int128 net);
     }
 }
 
@@ -257,6 +270,214 @@ pub async fn fetch_v4_slot0_liquidity(
         .await?;
     let liquidity = decode_liquidity(&liq_bytes)?;
     Ok((sqrt_price_x96, tick, protocol_fee, lp_fee, liquidity))
+}
+
+// ---------------------------------------------------------------------------
+// V3 tick-bitmap + tick-data (`tickBitmap(int16)`, `ticks(int24)`)
+//
+// Decoders are intentionally lenient (read the first 1 / 2 of the 32-byte
+// return words, ignore the rest) — matches `PyBotIo::fetch_tick_bitmap` /
+// `fetch_tick_data`'s existing byte-slice decode behaviour. The full V3
+// `ticks(int24)` return tuple is 8 × 32 = 256 bytes (declared in `sol!` above
+// for selector+callee parity) but only the first 2 words are needed here.
+// ---------------------------------------------------------------------------
+
+/// Encode the `tickBitmap(int16)` calldata.
+#[must_use]
+pub fn encode_tick_bitmap(word_position: i16) -> Vec<u8> {
+    IUniswapV3Pool::tickBitmapCall {
+        wordPosition: word_position,
+    }
+    .abi_encode()
+}
+
+/// Decode `tickBitmap(int16)` return data (`uint256`). Returns the full
+/// `U256` word — the caller checks `.is_zero()` and enumerates set bits.
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] if `bytes` is shorter than 32
+/// bytes.
+pub fn decode_tick_bitmap(bytes: &[u8]) -> ProviderResult<U256> {
+    if bytes.len() < 32 {
+        return Err(ProviderError::DecodingError {
+            message: "tickBitmap result < 32 bytes".into(),
+        });
+    }
+    Ok(U256::from_be_slice(&bytes[0..32]))
+}
+
+/// Encode the `ticks(int24)` calldata.
+///
+/// # Panics
+///
+/// Panics if `tick` is outside the signed 24-bit range
+/// (`[-2^23, 2^23 - 1]`). All valid V3 ticks fit; callers passing
+/// user-supplied values should validate the range first.
+#[must_use]
+pub fn encode_tick_data(tick: i32) -> Vec<u8> {
+    IUniswapV3Pool::ticksCall {
+        tick: tick.try_into().expect("tick within int24 range"),
+    }
+    .abi_encode()
+}
+
+/// Decode `ticks(int24)` return data into `(liquidity_gross, liquidity_net)`
+/// — only the first two of the eight packed return fields. Both are
+/// right-aligned in their 32-byte ABI words; `liquidity_gross` is
+/// `uint128`, `liquidity_net` is `int128` (sign-extended in the lower 16
+/// bytes).
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] if `bytes` is shorter than 64
+/// bytes or the sign-extension decoding fails.
+pub fn decode_tick_data(bytes: &[u8]) -> ProviderResult<(U128, I256)> {
+    if bytes.len() < 64 {
+        return Err(ProviderError::DecodingError {
+            message: "ticks result < 64 bytes".into(),
+        });
+    }
+    // Word 0: liquidity_gross (uint128, right-aligned in 32-byte word).
+    let gross = U128::from_be_slice(&bytes[16..32]);
+    // Word 1: liquidity_net (int128, sign-extended in 32-byte word).
+    let net =
+        I256::try_from_be_slice(&bytes[32..64]).ok_or_else(|| ProviderError::DecodingError {
+            message: "invalid ticks(int24) int128 decode".into(),
+        })?;
+    Ok((gross, net))
+}
+
+/// Fetch a V3 pool's `tickBitmap(int16)` from the chain and return it as a
+/// `U256`. The caller enumerates set bits.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from the underlying `eth_call` (revert surfaces
+/// as [`ProviderError::ExecutionReverted`]) or
+/// [`ProviderError::DecodingError`] if the return data fails to decode.
+pub async fn fetch_tick_bitmap(
+    provider: &AlloyProvider,
+    pool: &Address,
+    word_position: i16,
+    block: Option<u64>,
+) -> ProviderResult<U256> {
+    let calldata = Bytes::from(encode_tick_bitmap(word_position));
+    let bytes = provider.eth_call(pool, calldata, block).await?;
+    decode_tick_bitmap(&bytes)
+}
+
+/// Fetch a V3 pool's `ticks(int24)` and return `(liquidity_gross,
+/// liquidity_net)`.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from the underlying `eth_call` or
+/// [`ProviderError::DecodingError`] on decode failure.
+pub async fn fetch_tick_data(
+    provider: &AlloyProvider,
+    pool: &Address,
+    tick: i32,
+    block: Option<u64>,
+) -> ProviderResult<(U128, I256)> {
+    let calldata = Bytes::from(encode_tick_data(tick));
+    let bytes = provider.eth_call(pool, calldata, block).await?;
+    decode_tick_data(&bytes)
+}
+
+// ---------------------------------------------------------------------------
+// V4 tick-bitmap + tick-data (`getTickBitmap(bytes32,int16)`,
+// `getTickLiquidity(bytes32,int24)`) on the state-view contract.
+// ---------------------------------------------------------------------------
+
+/// Encode the `getTickBitmap(bytes32,int16)` calldata.
+#[must_use]
+pub fn encode_v4_tick_bitmap(pool_id: &[u8; 32], word_position: i16) -> Vec<u8> {
+    IUniswapV4StateView::getTickBitmapCall {
+        poolId: (*pool_id).into(),
+        wordPosition: word_position,
+    }
+    .abi_encode()
+}
+
+/// Encode the `getTickLiquidity(bytes32,int24)` calldata.
+///
+/// # Panics
+///
+/// Panics if `tick` is outside the signed 24-bit range
+/// (`[-2^23, 2^23 - 1]`). All valid V4 ticks fit; callers passing
+/// user-supplied values should validate the range first.
+#[must_use]
+pub fn encode_v4_tick_data(pool_id: &[u8; 32], tick: i32) -> Vec<u8> {
+    IUniswapV4StateView::getTickLiquidityCall {
+        poolId: (*pool_id).into(),
+        tick: tick.try_into().expect("tick within int24 range"),
+    }
+    .abi_encode()
+}
+
+/// Decode `getTickBitmap(bytes32,int16)` return data into the bitmap `U256`.
+/// Same shape as [`decode_tick_bitmap`] (V4 layout is identical for the
+/// single-word return).
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] if `bytes` is shorter than 32
+/// bytes.
+pub fn decode_v4_tick_bitmap(bytes: &[u8]) -> ProviderResult<U256> {
+    decode_tick_bitmap(bytes)
+}
+
+/// Decode `getTickLiquidity(bytes32,int24)` return data into
+/// `(liquidity_gross, liquidity_net)`. Same byte layout as
+/// [`decode_tick_data`] — V4 returns only `(uint128 gross, int128 net)`
+/// (2 × 32-byte words); the decoder reuses the V3 path since the first 64
+/// bytes are laid out identically.
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] if `bytes` is shorter than 64
+/// bytes or the decode fails.
+pub fn decode_v4_tick_data(bytes: &[u8]) -> ProviderResult<(U128, I256)> {
+    decode_tick_data(bytes)
+}
+
+/// Fetch a V4 pool's `getTickBitmap(bytes32,int16)` from the state-view
+/// contract and return it as a `U256`.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from the underlying `eth_call` or
+/// [`ProviderError::DecodingError`] on decode failure.
+pub async fn fetch_v4_tick_bitmap(
+    provider: &AlloyProvider,
+    state_view: &Address,
+    pool_id: &[u8; 32],
+    word_position: i16,
+    block: Option<u64>,
+) -> ProviderResult<U256> {
+    let calldata = Bytes::from(encode_v4_tick_bitmap(pool_id, word_position));
+    let bytes = provider.eth_call(state_view, calldata, block).await?;
+    decode_v4_tick_bitmap(&bytes)
+}
+
+/// Fetch a V4 pool's `getTickLiquidity(bytes32,int24)` and return
+/// `(liquidity_gross, liquidity_net)`.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from the underlying `eth_call` or
+/// [`ProviderError::DecodingError`] on decode failure.
+pub async fn fetch_v4_tick_data(
+    provider: &AlloyProvider,
+    state_view: &Address,
+    pool_id: &[u8; 32],
+    tick: i32,
+    block: Option<u64>,
+) -> ProviderResult<(U128, I256)> {
+    let calldata = Bytes::from(encode_v4_tick_data(pool_id, tick));
+    let bytes = provider.eth_call(state_view, calldata, block).await?;
+    decode_v4_tick_data(&bytes)
 }
 
 // ---------------------------------------------------------------------------

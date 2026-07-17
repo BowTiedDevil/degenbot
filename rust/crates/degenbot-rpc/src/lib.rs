@@ -20,3 +20,4 @@ pub mod multicall3;
 pub mod offline;
 pub mod provider;
 pub mod subscription;
+pub mod tick_bootstrap;
