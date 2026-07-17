@@ -124,6 +124,30 @@ def test_v3_known_onchain_address() -> None:
     )
 
 
+def test_bytes_inputs_match_hex_inputs() -> None:
+    # The delegation preserves the original HexBytes-based contract: a
+    # str|bytes input pair must produce the same address as the hex-string
+    # form. Regression guard for the `str(bytes)` cast that would yield a
+    # `"b'...'""` parse failure (WLJD2Y cleanup).
+    from_hex = generate_aerodrome_v2_pool_address(
+        deployer_address=AERODROME_V2_DEPLOYER,
+        token_addresses=(BASE_WETH, BASE_AERO),
+        implementation_address=AERODROME_V2_IMPLEMENTATION,
+        stable=False,
+    )
+    from_bytes_deployer = generate_aerodrome_v2_pool_address(
+        deployer_address=bytes.fromhex(AERODROME_V2_DEPLOYER[2:]),
+        token_addresses=(
+            bytes.fromhex(BASE_WETH[2:]),
+            bytes.fromhex(BASE_AERO[2:]),
+        ),
+        implementation_address=bytes.fromhex(AERODROME_V2_IMPLEMENTATION[2:]),
+        stable=False,
+    )
+    assert from_bytes_deployer == from_hex
+    assert from_hex == "0x7f670f78B17dEC44d5Ef68a48740b6f8849cc2e6"
+
+
 class TestRegisterTimeVerification:
     """register_aerodrome_pool recomputes the EIP-1167 address and rejects a mismatch.
 

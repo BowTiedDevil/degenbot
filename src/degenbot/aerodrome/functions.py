@@ -47,13 +47,15 @@ def generate_aerodrome_v2_pool_address(
 
     """
     t0, t1 = token_addresses  # type: ignore[misc]
+    # Normalize str|bytes inputs to checksummed hex strings — the Rust leaf
+    # parses hex, and this preserves the original HexBytes-based contract.
     return get_checksum_address(
         _rs_compute_aerodrome_v2_pool_address(
-            str(deployer_address),
-            str(t0),
-            str(t1),
+            get_checksum_address(deployer_address),
+            get_checksum_address(t0),
+            get_checksum_address(t1),
             stable,
-            str(implementation_address),
+            get_checksum_address(implementation_address),
         )
     )
 
@@ -77,12 +79,14 @@ def generate_aerodrome_v3_pool_address(
 
     """
     t0, t1 = token_addresses  # type: ignore[misc]
+    # Normalize str|bytes inputs to checksummed hex strings — the Rust leaf
+    # parses hex, and this preserves the original HexBytes-based contract.
     return get_checksum_address(
         _rs_compute_aerodrome_v3_pool_address(
-            str(deployer_address),
-            str(t0),
-            str(t1),
+            get_checksum_address(deployer_address),
+            get_checksum_address(t0),
+            get_checksum_address(t1),
             tick_spacing,
-            str(implementation_address),
+            get_checksum_address(implementation_address),
         )
     )
