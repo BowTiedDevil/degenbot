@@ -1,8 +1,8 @@
 """Shared type resolution for pool construction.
 
-Functions extracted from Bot and AsyncBot so that pool type resolution
+Functions extracted from Bot so that pool type resolution
 logic (DB lookup, factory fetch, on-chain probing, class dispatch) is
-defined once and used by both sync and async paths.
+defined once and used by the Bot build path.
 
 Pure functions (no I/O):
 - pool_class_for_descriptor()
@@ -13,11 +13,6 @@ Sync functions (accept PoolIO):
 - fetch_factory_from_chain()
 - resolve_pool_type_by_probing()
 - resolve_pool_type()
-
-Async functions (accept AsyncPoolIO):
-- fetch_factory_from_chain_async()
-- resolve_pool_type_by_probing_async()
-- resolve_pool_type_async()
 """
 
 from __future__ import annotations
@@ -25,12 +20,9 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING, cast
 
-from sqlalchemy import select
-
 from degenbot.abi import AbiDecodeError, decode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
-from degenbot.database.models.pools import LiquidityPoolTable
 from degenbot.exceptions import RpcError
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.provider.call_helpers import encode_function_calldata
@@ -42,8 +34,8 @@ from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
-    from degenbot.builders.pool_io import AsyncPoolIOProtocol, PoolIO
-    from degenbot.database.session_manager import DatabaseSessionManager
+    from degenbot.builders.pool_io import PoolIO
+    from degenbot.database.models.pools import LiquidityPoolTable
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
 
@@ -239,29 +231,6 @@ def fetch_factory_from_chain(
         return None
 
 
-async def fetch_factory_from_chain_async(
-    address: ChecksumAddress,
-    *,
-    chain_id: ChainId,  # noqa: ARG001 — kept for API consistency with resolve_pool_type_async
-    io: AsyncPoolIOProtocol,
-) -> ChecksumAddress | None:
-    """Fetch the factory address from the pool contract's factory() method (async).
-
-    Returns:
-        The computed value.
-
-    """
-    try:
-        factory_result = await io.call(
-            to=address,
-            data=encode_function_calldata("factory()", None),
-        )
-        (factory_raw,) = decode(types=["address"], data=factory_result)
-        return get_checksum_address(factory_raw)
-    except (RpcError, AbiDecodeError):
-        return None
-
-
 def resolve_pool_type_by_probing(
     address: ChecksumAddress,
     *,
@@ -384,85 +353,6 @@ def resolve_pool_type_by_probing(
     )
 
 
-async def resolve_pool_type_by_probing_async(
-    address: ChecksumAddress,
-    *,
-    chain_id: ChainId,
-    factory: ChecksumAddress,
-    io: AsyncPoolIOProtocol,
-) -> PoolTypeDescriptor:
-    """Determine pool type by probing the contract on-chain (async).
-
-    Returns:
-        The computed value.
-
-    """
-    # Try V3: slot0() exists → CONCENTRATED_LIQUIDITY
-    try:
-        await io.call(
-            to=address,
-            data=encode_function_calldata("slot0()", None),
-        )
-    except RpcError:
-        pass
-    else:
-        return _descriptor_from_probing_result(
-            succeeded_method="slot0",
-            chain_id=chain_id,
-            factory=factory,
-        )
-
-    # Try V2: getReserves() exists → CONSTANT_PRODUCT
-    try:
-        await io.call(
-            to=address,
-            data=encode_function_calldata("getReserves()", None),
-        )
-    except RpcError:
-        pass
-    else:
-        return _descriptor_from_probing_result(
-            succeeded_method="getReserves",
-            chain_id=chain_id,
-            factory=factory,
-        )
-
-    # Try Balancer: getPoolId() exists → Balancer pool
-    try:
-        await io.call(
-            to=address,
-            data=encode_function_calldata("getPoolId()", None),
-        )
-    except RpcError:
-        pass
-    else:
-        # Balancer pool detected — determine weighted vs stable
-        try:
-            await io.call(
-                to=address,
-                data=encode_function_calldata("getNormalizedWeights()", None),
-            )
-            variant = "balancer_weighted"
-            family = PoolFamily.WEIGHTED
-        except RpcError:
-            variant = "balancer_stable"
-            family = PoolFamily.STABLESWAP
-
-        return PoolTypeDescriptor(
-            family=family,
-            variant=variant,
-            kind=derive_kind(family, variant),
-            factory=factory,
-        )
-
-    # Fall through — assume STABLESWAP
-    return _descriptor_from_probing_result(
-        succeeded_method=None,
-        chain_id=chain_id,
-        factory=factory,
-    )
-
-
 def resolve_pool_type(
     address: ChecksumAddress,
     *,
@@ -516,60 +406,6 @@ def resolve_pool_type(
 
         # Step 3: No registry match — probe the contract to determine invariant
         return resolve_pool_type_by_probing(address, chain_id=chain_id, factory=factory, io=io)
-
-    raise DegenbotValueError(
-        message=(
-            f"Cannot resolve pool type for address {address} on chain {chain_id}. "
-            f"The factory() call failed and no database entry exists."
-        ),
-    )
-
-
-async def resolve_pool_type_async(
-    address: ChecksumAddress,
-    *,
-    chain_id: ChainId,
-    io: AsyncPoolIOProtocol,
-    db: DatabaseSessionManager,
-) -> PoolTypeDescriptor:
-    """Resolve the pool type for the given address (async).
-
-    Same logic as resolve_pool_type but uses await for I/O calls.
-
-    Returns:
-        The computed value.
-
-    Raises:
-        DegenbotValueError: If the operation fails.
-
-    """
-    # Step 1: DB lookup — the `kind` column is the most direct signal
-    with contextlib.suppress(Exception), db() as session:
-        pool_from_db = session.scalar(
-            select(LiquidityPoolTable).where(
-                LiquidityPoolTable.address == address,
-                LiquidityPoolTable.chain == chain_id,
-            ),
-        )
-        if pool_from_db is not None:
-            descriptor = _build_descriptor_from_db_result(pool_from_db)
-            if descriptor is not None:
-                return descriptor
-
-    # Step 2: Factory address lookup via PoolTypeRegistry
-    factory = await fetch_factory_from_chain_async(address, chain_id=chain_id, io=io)
-    if factory is not None:
-        registry_descriptor = pool_type_registry.get_descriptor(chain_id, factory)
-        if registry_descriptor is not None:
-            return registry_descriptor
-
-        # Step 3: No registry match — probe the contract
-        return await resolve_pool_type_by_probing_async(
-            address,
-            chain_id=chain_id,
-            factory=factory,
-            io=io,
-        )
 
     raise DegenbotValueError(
         message=(
