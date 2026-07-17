@@ -1,1 +1,0 @@
-Solidly oracle retired; sim helpers moved to _solver_utils.py; test-python+lint+no-pyo3 green, rg src/tests clean of live refs.
