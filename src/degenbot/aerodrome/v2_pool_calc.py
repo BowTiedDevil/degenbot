@@ -122,14 +122,12 @@ class AerodromeV2PoolCalc:
 
         # Canonical (token0, token1) reserves + decimals needed by the
         # Solidly-stable exact-out leaf (the volatile path ignores them).
-        reserves_0 = (
-            override_state.reserves_token0 if override_state is not None else self.reserves_token0
-        )
-        reserves_1 = (
-            override_state.reserves_token1 if override_state is not None else self.reserves_token1
-        )
         # token_in direction (0 or 1): the OPPOSITE side of token_out.
         token_in: Literal[0, 1] = 0 if token_out == self._token1 else 1
+        if token_in == 0:
+            reserves_0, reserves_1 = reserves_in, reserves_out
+        else:
+            reserves_0, reserves_1 = reserves_out, reserves_in
         decimals_0 = 10**self._token0.decimals
         decimals_1 = 10**self._token1.decimals
 

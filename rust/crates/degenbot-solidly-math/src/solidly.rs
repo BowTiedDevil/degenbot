@@ -100,14 +100,11 @@ pub fn get_y_solidly(
     x0: U256,
     xy: U256,
     y_seed: U256,
-    // Decimals are retained on the signature for API stability + the
-    // Solidly `_get_y`'s deployed-contract callers that pass them through;
-    // they were previously fed to a `calc_k` edge-case probe that
-    // mis-scaled (the 1e18-scaled `x0`/`y_plus_one` were re-normalized by
-    // `calc_k`, producing a wrong `k_info` for non-18-decimal tokens and
-    // premature convergence on the up-walking branch). The Solidity-faithful
-    // probe is `calc_f(x0, y+1)` — a direct invariant check that needs no
-    // decimal normalization — so the decimals are now unused here.
+    // `decimals_0` / `decimals_1`: retained on the signature for API
+    // stability (the PyO3 seam + snapshot callers pass them through); unused
+    // here — the up-walking edge-case probe is the Solidity-faithful
+    // `calc_f(x0, y+1)` (a direct invariant check, no decimal normalization
+    // needed — see the comment at the probe site).
     decimals_0: U256,
     decimals_1: U256,
 ) -> Result<U256, SolidlyMathError> {
