@@ -714,28 +714,52 @@ impl PyBot {
     ///
     /// Args:
     ///   address: the V3 pool's contract address (checksummed or lowercase hex).
-    #[pyo3(signature = (address))]
+    ///   tick: the pool's current tick (drives the Chain arm's word computation).
+    ///   `tick_spacing`: the pool's tick spacing (drives active-tick computation).
+    ///   block: the snapshot block for the Chain arm's RPC reads.
+    ///   io: optional `PyBotIo` whose native alloy provider backs the Chain arm.
+    ///     `None` (or a non-alloy provider) → no Chain arm (Store + Db only).
+    #[pyo3(signature = (address, tick=0, tick_spacing=0, block=0, io=None))]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 passes the pyclass Bound by value; borrow is internal"
+    )]
     fn assemble_v3_tick_map<'py>(
         &self,
         py: Python<'py>,
         address: &str,
+        tick: i64,
+        tick_spacing: i64,
+        block: u64,
+        io: Option<pyo3::Bound<'_, crate::bot::py_bot_io::PyBotIo>>,
     ) -> PyResult<Option<(Bound<'py, PyDict>, String)>> {
         let addr = parse_address(address)?;
+        let tick_i32 = i32::try_from(tick)
+            .map_err(|_| pyo3::exceptions::PyValueError::new_err("tick out of int24 range"))?;
+        let spacing_i32 = i32::try_from(tick_spacing)
+            .map_err(|_| pyo3::exceptions::PyValueError::new_err("tick_spacing out of range"))?;
         let state = self.bot.state_arc();
         let db = self.db_handle();
-        // U4KLPV: the Chain arm is wired with `chain=None` for now — the
-        // real `AlloyTickBootstrapRpc` is threaded through `Bot` in a later
-        // task (NOD4PS). The tick/tick_spacing/block params are unused when
-        // `chain=None` (the Chain arm short-circuits), so dummies are safe.
+        // NOD4PS: extract the native alloy provider from `io` + construct an
+        // `AlloyTickBootstrapRpc` (Option B — pure-Rust choreography, no GIL
+        // re-entry per RPC). `None` when `io=None` or the provider isn't
+        // alloy-backed → Chain arm short-circuits (current behavior).
+        let chain: Option<std::sync::Arc<dyn degenbot_pools::tick_fetch::TickBootstrapRpc>> =
+            io.as_ref().and_then(|io_bound| {
+                io_bound
+                    .try_borrow()
+                    .ok()
+                    .and_then(|borrowed| crate::bot::pool::make_tick_bootstrap_rpc(&borrowed))
+            });
         let result = py.detach(|| {
             degenbot_bot::bot_core::tick_assembly::assemble_v3_tick_map(
                 || state.read().v3_snapshot_store().take(&addr),
                 db.as_deref(),
                 addr,
-                0,
-                0,
-                0,
-                None,
+                tick_i32,
+                spacing_i32,
+                block,
+                chain.as_deref(),
             )
         });
         let Some((ticks, coverage)) = result.map_err(|e| crate::db::assembly_err_to_py(&e))? else {
@@ -757,14 +781,28 @@ impl PyBot {
     /// Args:
     ///   `pool_manager`: the V4 `PoolManager` contract address.
     ///   `pool_id`: the V4 pool id as a 32-byte hex `str` (`0x...`) or `bytes`.
-    #[pyo3(signature = (pool_manager, pool_id))]
+    ///   `tick`/`tick_spacing`/`block`/`io`: see [`Self::assemble_v3_tick_map`].
+    #[pyo3(signature = (pool_manager, pool_id, tick=0, tick_spacing=0, block=0, io=None))]
+    #[allow(
+        clippy::too_many_arguments,
+        clippy::needless_pass_by_value,
+        reason = "PyO3 wrapper over the precedence helper; signature mirrors Python surface"
+    )]
     fn assemble_v4_tick_map<'py>(
         &self,
         py: Python<'py>,
         pool_manager: &str,
         pool_id: &Bound<'_, PyAny>,
+        tick: i64,
+        tick_spacing: i64,
+        block: u64,
+        io: Option<pyo3::Bound<'_, crate::bot::py_bot_io::PyBotIo>>,
     ) -> PyResult<Option<(Bound<'py, PyDict>, String)>> {
         let mgr = parse_address(pool_manager)?;
+        let tick_i32 = i32::try_from(tick)
+            .map_err(|_| pyo3::exceptions::PyValueError::new_err("tick out of int24 range"))?;
+        let spacing_i32 = i32::try_from(tick_spacing)
+            .map_err(|_| pyo3::exceptions::PyValueError::new_err("tick_spacing out of range"))?;
         // V4 pool id is `B256` ([u8; 32]); accept either a 0x-hex str or 32
         // bytes (mirror `db/snapshot.rs::get_liquidity_map_v4`'s arg accept).
         let pool_id_hash = if let Ok(s) = pool_id.extract::<String>() {
@@ -788,16 +826,23 @@ impl PyBot {
         let state = self.bot.state_arc();
         let db = self.db_handle();
         let pool_id_inner: degenbot_decoders::v4_swap_decoder::PoolId = pool_id_hash.0; // B256 = FixedBytes<32>; .0 is [u8; 32]
+        let chain: Option<std::sync::Arc<dyn degenbot_pools::tick_fetch::TickBootstrapRpc>> =
+            io.as_ref().and_then(|io_bound| {
+                io_bound
+                    .try_borrow()
+                    .ok()
+                    .and_then(|borrowed| crate::bot::pool::make_tick_bootstrap_rpc(&borrowed))
+            });
         let result = py.detach(|| {
             degenbot_bot::bot_core::tick_assembly::assemble_v4_tick_map(
                 || state.read().v4_snapshot_store().take(&(mgr, pool_id_inner)),
                 db.as_deref(),
                 mgr,
                 pool_id_inner,
-                0,
-                0,
-                0,
-                None,
+                tick_i32,
+                spacing_i32,
+                block,
+                chain.as_deref(),
             )
         });
         let Some((ticks, coverage)) = result.map_err(|e| crate::db::assembly_err_to_py(&e))? else {
@@ -1730,6 +1775,47 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
+    /// Lowercase hex encode (no `0x` prefix) — for `OfflineProvider` call keys.
+    fn hex_encode(bytes: &[u8]) -> String {
+        const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
+        let mut s = String::with_capacity(bytes.len() * 2);
+        for &b in bytes {
+            s.push(HEX_CHARS[(b >> 4) as usize] as char);
+            s.push(HEX_CHARS[(b & 0x0f) as usize] as char);
+        }
+        s
+    }
+
+    /// 32-byte big-endian `uint256` word (hex, no `0x`).
+    fn word_u256(v: &alloy::primitives::U256) -> String {
+        let mut buf = [0u8; 32];
+        v.to_be_bytes::<32>()
+            .iter()
+            .enumerate()
+            .for_each(|(i, &b)| {
+                buf[i] = b;
+            });
+        hex_encode(&buf)
+    }
+
+    /// 32-byte right-aligned `uint128` word (hex).
+    fn word_u128(v: u128) -> String {
+        let mut buf = [0u8; 32];
+        buf[16..].copy_from_slice(&v.to_be_bytes());
+        hex_encode(&buf)
+    }
+
+    /// 32-byte sign-extended `int128` word (hex).
+    fn word_i128(v: i128) -> String {
+        let mut buf = [0u8; 32];
+        let be = v.to_be_bytes();
+        if v < 0 {
+            buf[..16].fill(0xff);
+        }
+        buf[16..].copy_from_slice(&be);
+        hex_encode(&buf)
+    }
+
     /// The parity fixture DB (shared with `degenbot-bot`'s
     /// `load_snapshot_from_db_populates_store_and_seed_block` test).
     fn parity_fixture() -> Option<std::path::PathBuf> {
@@ -1762,7 +1848,14 @@ mod tests {
         pyo3::Python::attach(|py| {
             let py_bot = PyBot::new(1);
             let result = py_bot
-                .assemble_v3_tick_map(py, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+                .assemble_v3_tick_map(
+                    py,
+                    "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    0,
+                    10,
+                    0,
+                    None,
+                )
                 .expect("cold-start assemble should not error");
             assert!(result.is_none(), "cold-start (no store, no Db) → miss");
         });
@@ -1783,13 +1876,112 @@ mod tests {
                     py,
                     "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                     &pool_id_py,
+                    0,
+                    10,
+                    0,
+                    None,
                 )
                 .expect("cold-start assemble should not error");
             assert!(result.is_none(), "cold-start (no store, no Db) → miss");
         });
     }
 
-    /// End-to-end: seed a V3 pool + ticks into a temp-file `SQLite` DB, load the
+    /// NOD4PS: Chain-arm end-to-end — a cold-start `PyBot` (empty Store, no Db)
+    /// with an `io=Some(PyBotIo)` backed by an `OfflineProvider`-recorded alloy
+    /// provider routes through the Chain arm + returns `Some((ticks, "sparse"))`
+    /// with the recorded tick liquidity. Verifies wiring: `io=Some` → Chain arm
+    /// fires → `AlloyTickBootstrapRpc` choreography runs pure-Rust under
+    /// `py.detach`.
+    #[test]
+    fn assemble_v3_tick_map_chain_arm_fires_with_offline_io() {
+        use alloy::primitives::U256;
+        use degenbot_rpc::offline::OfflineProvider;
+        use serde_json::json;
+        use std::sync::Arc;
+
+        pyo3::Python::attach(|py| {
+            // 1. Build an `OfflineProvider` recording the V3 tick-bitmap +
+            //    tick-data responses for a known word + 2 active ticks.
+            //    tick=10, tick_spacing=1 → word=0, bit_pos=10.
+            //    Set bits 10 + 20 → bitmap = (1<<10) | (1<<20).
+            let pool_addr = alloy::primitives::Address::from([0xaa; 20]);
+            let bitmap = U256::from(1u128 << 10) | U256::from(1u128 << 20);
+            let addr_lower = pool_addr.to_checksum(None).to_lowercase();
+
+            let mut calls: std::collections::HashMap<String, Option<String>> =
+                std::collections::HashMap::new();
+
+            // tickBitmap(int16) → uint256
+            let bitmap_calldata = degenbot_rpc::abi::encode_tick_bitmap(0);
+            calls.insert(
+                format!("{}:0x{}", addr_lower, hex_encode(&bitmap_calldata)),
+                Some(word_u256(&bitmap)),
+            );
+            // ticks(int24) → (uint128 gross, int128 net)
+            for &(tick, gross, net) in &[(10_i32, 1_000u128, -500i128), (20, 2_000, 750)] {
+                let td_calldata = degenbot_rpc::abi::encode_tick_data(tick);
+                let mut response = String::new();
+                response.push_str(&word_u128(gross));
+                response.push_str(&word_i128(net));
+                calls.insert(
+                    format!("{}:0x{}", addr_lower, hex_encode(&td_calldata)),
+                    Some(response),
+                );
+            }
+
+            let json_str = json!({
+                "chain_id": 1u64,
+                "block_number": 100u64,
+                "timestamp": 0u64,
+                "calls": calls,
+                "code": {},
+            })
+            .to_string();
+            let alloy = OfflineProvider::from_json_str(&json_str)
+                .expect("valid offline JSON")
+                .as_alloy_provider();
+
+            // 2. Wrap the alloy provider in a `PyAlloyProvider` + `PyBotIo`.
+            let pyalloy = pyo3::Bound::new(
+                py,
+                crate::rpc::provider::PyAlloyProvider {
+                    provider: Arc::new(alloy),
+                    max_blocks_per_request: 5000,
+                },
+            )
+            .expect("PyAlloyProvider construction");
+            let provider_any: pyo3::Py<pyo3::PyAny> = pyalloy.into_any().unbind();
+            let io_struct = crate::bot::py_bot_io::PyBotIo::new(py, provider_any, None, None);
+            let io_bound = pyo3::Bound::new(py, io_struct).expect("wrap PyBotIo as Bound");
+
+            // 3. Cold-start PyBot + assemble_v3_tick_map with `io=Some`.
+            let py_bot = PyBot::new(1);
+            let assembled = py_bot
+                .assemble_v3_tick_map(py, &pool_addr.to_checksum(None), 10, 1, 100, Some(io_bound))
+                .expect("Chain arm must not error")
+                .expect("Chain hit → Some((ticks, sparse))");
+            let (ticks, coverage) = assembled;
+            assert_eq!(coverage, "sparse", "Chain-arm hit → Sparse coverage");
+            assert_eq!(ticks.len(), 2, "both active ticks seeded");
+
+            let tick_10 = ticks
+                .get_item(10)
+                .expect("get_item Ref")
+                .expect("tick 10 present");
+            let (gross10_val, _net10, _block10): (u128, i128, u64) =
+                tick_10.extract().expect("tick 10 as (u128,i128,u64)");
+            assert_eq!(gross10_val, 1_000);
+
+            let tick_20 = ticks
+                .get_item(20)
+                .expect("get_item Ref")
+                .expect("tick 20 present");
+            let (gross20_val, _net20, _block20): (u128, i128, u64) =
+                tick_20.extract().expect("tick 20 as (u128,i128,u64)");
+            assert_eq!(gross20_val, 2_000);
+        });
+    }
+
     /// snapshot via `load_snapshot_from_db`, then `assemble_v3_tick_map(addr)`
     /// must return the seeded ticks with coverage `"tracked"`.
     #[test]
@@ -1875,7 +2067,14 @@ mod tests {
 
             // 3. assemble against the seeded pool — expect a hit.
             let (ticks, coverage) = py_bot
-                .assemble_v3_tick_map(py, "0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa")
+                .assemble_v3_tick_map(
+                    py,
+                    "0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa",
+                    0,
+                    10,
+                    0,
+                    None,
+                )
                 .expect("assemble hit must not error")
                 .expect("store hit against the seeded V3 pool must return Some");
             assert_eq!(coverage, "tracked");

@@ -53,6 +53,29 @@ pub(crate) fn make_tick_fetcher(
     std::sync::Arc::new(PyTickWordFetcher { callback })
 }
 
+/// Construct a Chain-arm `TickBootstrapRpc` from a `PyBotIo`'s native alloy
+/// provider, if present (5NT2OC / NOD4PS — Option B: route the Chain arm
+/// through the pure-Rust [`AlloyTickBootstrapRpc`]).
+///
+/// Returns `None` when the `PyBotIo` has no native alloy provider (legacy
+/// Python test doubles) → the caller passes `chain=None` to the assemble helper,
+/// preserving the current (no-Chain-arm) behavior.
+///
+/// The returned `Arc<dyn TickBootstrapRpc>` is `Send + Sync` + holds no GIL
+/// state — the full choreography (bitmap decode, bit enumeration, per-tick
+/// `eth_call`) runs in pure Rust under `py.detach`, no per-RPC GIL re-entry
+/// (the architectural end state: Rust is the engine; Python is a driver
+/// shell, not a co-implementation).
+#[must_use]
+pub(crate) fn make_tick_bootstrap_rpc(
+    io: &crate::bot::py_bot_io::PyBotIo,
+) -> Option<std::sync::Arc<dyn degenbot_pools::tick_fetch::TickBootstrapRpc>> {
+    io.alloy_provider().map(|provider| {
+        std::sync::Arc::new(degenbot_rpc::AlloyTickBootstrapRpc::new(provider))
+            as std::sync::Arc<dyn degenbot_pools::tick_fetch::TickBootstrapRpc>
+    })
+}
+
 impl degenbot_pools::tick_fetch::TickWordFetcher for PyTickWordFetcher {
     fn fetch_missing_tick_word(
         &self,

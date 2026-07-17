@@ -734,22 +734,33 @@ class PyBot:
         """
 
     def assemble_v3_tick_map(
-        self, address: str
+        self,
+        address: str,
+        *,
+        tick: int = 0,
+        tick_spacing: int = 0,
+        block: int = 0,
+        io: PyBotIo | None = None,
     ) -> tuple[dict[int, tuple[int, int, int]], str] | None:
-        """Assemble a V3 pool's tick map with `Store → Db` precedence.
+        """Assemble a V3 pool's tick map with `Store → Db → Chain` precedence.
 
         Probes the bulk-loaded `SnapshotStore` (consumed once per pool); on a
-        miss falls back to `DegenbotDb::fetch_liquidity_map`. Returns
-        `(tick_data, coverage)` on a hit, `None` on a miss (caller runs Branch
-        3 sparse RPC). Coverage is `"tracked"` on a hit.
+        miss falls back to `DegenbotDb::fetch_liquidity_map`; on a further miss
+        + ``io`` provided, runs the Chain arm (`AlloyTickBootstrapRpc` — sparse
+        RPC word read). Returns ``(tick_data, coverage)`` on a hit, ``None`` on
+        a miss. Coverage is ``"tracked"`` on a Store/Db hit, ``"sparse"`` on a
+        Chain hit.
 
-        `tick_data` has the same `{tick: (liquidity_gross, liquidity_net, block)}`
-        shape as `register_v3_pool`'s `tick_data` arg — pass it straight back.
+        ``tick_data`` has the same ``{tick: (liquidity_gross, liquidity_net,
+        block)}`` shape as ``register_v3_pool``'s ``tick_data`` arg — pass it
+        straight back.
+
+        ``io`` extracts the native alloy provider (no GIL re-entry per RPC);
+        ``None`` or a non-alloy provider → no Chain arm (Store + Db only).
 
         Raises:
-            RuntimeError: on a Db read failure (Decision 8 (A)) — loud error
-                over silent degradation, deliberate behavior change from the
-                prior `contextlib.suppress(Exception)` Python swallow.
+            RuntimeError: on a Db read failure or Chain-arm RPC failure
+                (Decision 8 (A) — loud error over silent degradation).
 
         """
 
@@ -757,10 +768,15 @@ class PyBot:
         self,
         pool_manager: str,
         pool_id: str | bytes,
+        *,
+        tick: int = 0,
+        tick_spacing: int = 0,
+        block: int = 0,
+        io: PyBotIo | None = None,
     ) -> tuple[dict[int, tuple[int, int, int]], str] | None:
         """Assemble a V4 pool's tick map — V4 twin of `assemble_v3_tick_map`.
 
-        `pool_id` is the V4 pool id — a 0x-prefixed 66-char hex `str` or 32-byte
+        ``pool_id`` is the V4 pool id — a 0x-prefixed 66-char hex `str` or 32-byte
         `bytes`. Same precedence, miss, and error semantics as the V3 variant.
         """
 

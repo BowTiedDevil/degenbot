@@ -173,7 +173,7 @@ impl PyBotIo {
     /// `session.scalar(select(...))` / `session.commit()` bodies retire).
     #[new]
     #[pyo3(signature = (provider, db=None, database_path=None))]
-    fn new(
+    pub(crate) fn new(
         py: Python<'_>,
         provider: Py<PyAny>,
         db: Option<Py<PyAny>>,
@@ -1967,6 +1967,18 @@ impl PyBotIo {
 }
 
 impl PyBotIo {
+    /// The native Rust `AlloyProvider`, if the held Python provider is
+    /// `PyAlloyProvider`-backed (live alloy or the offline shell). `None` for
+    /// non-alloy providers (legacy test doubles).
+    ///
+    /// Used by the Chain-arm wiring (5NT2OC / NOD4PS) to construct an
+    /// [`AlloyTickBootstrapRpc`] without a GIL round-trip per RPC call — the
+    /// pure-Rust impl owns the tick-bitmap + tick-data choreography directly.
+    #[must_use]
+    pub(crate) fn alloy_provider(&self) -> Option<std::sync::Arc<AlloyProvider>> {
+        self.alloy.clone()
+    }
+
     /// Call `method_name` on the held provider with the given keyword arguments.
     ///
     /// Single delegation seam for the kw-only forward shape (`call`,
