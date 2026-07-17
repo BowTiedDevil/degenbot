@@ -20,6 +20,20 @@ deepening decisions crystallize.
 - **PyO3 wrapper** — `rust/crates/degenbot-python/src/<domain>/**`. `#[pyclass]`/`#[pyfunction]` only — arg extract → GIL release → core call → result wrap. No business logic.
 - **Python companion** — `src/degenbot/**`. User-facing API, docstrings, I/O orchestration, immutable config dual-tracking, `Fraction`-based display.
 
+### Construction-I/O executor
+
+**`PyBotIo`** (Rust `#[pyclass]`, `degenbot.bot.PyBotIo`) is the sole
+construction-I/O executor: every builder's `build()`/`update()` and the
+type-resolution + tick-fetcher paths receive `io: PyBotIo` and call
+`io.fetch_X()` / `io.probe_X()` directly (ADR-005 slice 14). The Python
+`PoolIO`/`SyncPoolIO`/`AsyncPoolIO` protocols and the encode→call→decode
+parity-gate fallbacks are deleted; `AsyncBot` and the async builders are
+retired (sync `Bot` + `PyBotIo` is the only construction path). `PyBotIo`
+also implements the 7-method generic RPC surface (`call`/`call_raw`/
+`get_block*`/`get_code`/`get_balance`) used by the Curve detection modules.
+`AsyncAlloyProvider` survives for the pump/subscribe/verify loop only —
+never for construction.
+
 ## The `_ffi` seam (Pydantic barrier — DECIDED)
 
 **Decision:** `degenbot._ffi` is **private** — a raw Rust extension imported by ONE barrier per domain, never by leaf code. Model: pydantic-core (`_pydantic_core` is imported only by `pydantic_core/__init__.py`; the companion `pydantic` never touches it). Replaces degenbot's prior mixed state (ban test + allowlist back-door + direct `_ffi.<sub>` leaf imports).
