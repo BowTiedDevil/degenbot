@@ -60,7 +60,8 @@ def test_pancakeswap_calculations(fork_base_full: AnvilFork, test_pools: list[An
         0.75,
     ]
 
-    pancake_v2_router_contract = make_contract(fork_base_full.http_url, PANCAKE_V2_ROUTER, PANCAKE_V2_ROUTER_ABI
+    pancake_v2_router_contract = make_contract(
+        fork_base_full.http_url, PANCAKE_V2_ROUTER, PANCAKE_V2_ROUTER_ABI
     )
     for pool in test_pools:
         pool_address = pool["pool_address"]

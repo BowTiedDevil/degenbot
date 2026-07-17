@@ -37,9 +37,7 @@ ADDR = get_checksum_address("0x" + "ab" * 20)
 # native `Arc<AlloyProvider>` when the provider is `PyAlloyProvider`-backed;
 # the DB methods never touch the provider, but a valid provider keeps the seam
 # honest (no Python `object()` double — see O3).
-_MINIMAL_OFFLINE_JSON = (
-    '{"chain_id":1,"block_number":1,"timestamp":1,"calls":{},"code":{}}'
-)
+_MINIMAL_OFFLINE_JSON = '{"chain_id":1,"block_number":1,"timestamp":1,"calls":{},"code":{}}'
 
 
 def _offline_provider() -> RustAlloyProvider:

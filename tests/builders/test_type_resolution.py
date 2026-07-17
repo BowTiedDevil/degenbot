@@ -1,41 +1,32 @@
 """Tests for the shared type resolution module.
 
-These verify the functions extracted from Bot/AsyncBot into
-src/degenbot/builders/type_resolution.py — a pure-logic function
-(pool_class_for_descriptor) that both sync and async paths share,
-and the I/O-dependent resolve/fetch/probe functions that accept
-PoolIO or AsyncPoolIO.
+Verifies the pure-logic ``pool_class_for_descriptor`` function and the
+I/O-dependent ``resolve``/``fetch``/``probe`` functions in
+``src/degenbot/builders/type_resolution.py``.
+
+Post ADR-005 slice-14 collapse: the resolve/fetch/probe functions call
+``io.fetch_X()`` / ``io.probe_pool_type()`` directly (the Python ``io.call()``
+parity-gate fallback is retired). The fakes here are duck-typed objects
+exposing those ``fetch_*`` methods — no ``PyBotIo`` subclass needed (Q4 alpha):
+builders never ``isinstance(io, PyBotIo)``.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
-import eth_abi.abi
 import pytest
-from hexbytes import HexBytes
 
-from degenbot.builders.pool_io import AsyncPoolIO, SyncPoolIO
 from degenbot.builders.type_resolution import (
     fetch_factory_from_chain,
-    fetch_factory_from_chain_async,
     pool_class_for_descriptor,
     resolve_pool_type,
-    resolve_pool_type_async,
     resolve_pool_type_by_probing,
-    resolve_pool_type_by_probing_async,
 )
-from degenbot.exceptions import ContractLogicError
 from degenbot.exceptions.base import DegenbotValueError
-from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.types.pool_type import PoolFamily, PoolTypeDescriptor
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-
-if TYPE_CHECKING:
-    from degenbot.types.rpc_types import TxParams
-
 
 CHAIN_ID = 1
 
@@ -87,76 +78,49 @@ class TestPoolClassForDescriptor:
         assert issubclass(result, UniswapV2Pool)
 
 
-class FakeSyncProvider:
-    """Minimal fake provider for SyncPoolIO delegation."""
+class FakePyBotIo:
+    """Duck-typed PyBotIo stand-in for type-resolution tests.
 
-    def __init__(self) -> None:
-        self._responses: dict[str, HexBytes] = {}
-        self.call_count = 0
+    Each seam method returns a configurable canned value; theresolve/fetch/
+    probe functions only ever call ``fetch_factory_address`` /
+    ``probe_pool_type`` / ``fetch_pool_row`` / ``fetch_exchange``.
+    """
 
-    def set_response(self, to: str, data: str, response: HexBytes) -> None:
-        self._responses[to, data] = response
-
-    def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
-        self.call_count += 1
-        key = (to, data.hex())
-        if key in self._responses:
-            return self._responses[key]
-        msg = "No mock response"
-        raise ContractLogicError(msg)
-
-    def call_raw(self, tx: TxParams, block: object = None) -> HexBytes:
-        return HexBytes(b"\x00" * 32)
+    def __init__(
+        self,
+        *,
+        factory_address: str | None = None,
+        probe_result: str = "",
+        pool_row: object | None = None,
+        exchange_row: object | None = None,
+    ) -> None:
+        self._factory_address = factory_address
+        self._probe_result = probe_result
+        self._pool_row = pool_row
+        self._exchange_row = exchange_row
 
     def get_block_number(self) -> int:
         return 18_000_000
 
-    def get_block(self, block_identifier: object = None) -> object:
-        return {"number": 18_000_000}
+    def fetch_factory_address(self, _address: str) -> str | None:
+        return self._factory_address
 
+    def probe_pool_type(self, _address: str) -> str:
+        return self._probe_result
 
-class FakeAsyncProvider:
-    """Minimal fake async provider for AsyncPoolIO delegation."""
+    def fetch_pool_row(self, chain_id: int, address: str) -> object | None:
+        return self._pool_row
 
-    def __init__(self) -> None:
-        self._responses: dict[str, HexBytes] = {}
-        self.call_count = 0
-
-    def set_response(self, to: str, data: str, response: HexBytes) -> None:
-        self._responses[to, data] = response
-
-    async def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
-        self.call_count += 1
-        key = (to, data.hex())
-        if key in self._responses:
-            return self._responses[key]
-        msg = "No mock response"
-        raise ContractLogicError(msg)
-
-    async def call_raw(self, tx: TxParams, block: object = None) -> HexBytes:
-        return HexBytes(b"\x00" * 32)
-
-    async def get_block_number(self) -> int:
-        return 18_000_000
-
-    async def get_block(self, block_identifier: object = None) -> object:
-        return {"number": 18_000_000}
+    def fetch_exchange(self, exchange_id: int) -> object | None:
+        return self._exchange_row
 
 
 class TestFetchFactoryFromChain:
     """Tests for the sync fetch_factory_from_chain."""
 
     def test_returns_decoded_factory_address(self) -> None:
-        provider = FakeSyncProvider()
         factory_address = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
-
-        factory_data = encode_function_calldata("factory()", None)
-        provider.set_response(
-            to="0xPool",
-            data=factory_data.hex(),
-            response=HexBytes(eth_abi.abi.encode(types=["address"], args=[factory_address])),
-        )
-        io = SyncPoolIO(provider)
+        io = FakePyBotIo(factory_address=factory_address)
         result = fetch_factory_from_chain(
             "0xPool",  # type: ignore[arg-type]
             chain_id=CHAIN_ID,
@@ -166,42 +130,8 @@ class TestFetchFactoryFromChain:
         assert result.lower() == factory_address.lower()
 
     def test_returns_none_on_failure(self) -> None:
-        provider = FakeSyncProvider()
-        io = SyncPoolIO(provider)
+        io = FakePyBotIo(factory_address=None)
         result = fetch_factory_from_chain(
-            "0xPool",  # type: ignore[arg-type]
-            chain_id=CHAIN_ID,
-            io=io,
-        )
-        assert result is None
-
-
-class TestFetchFactoryFromChainAsync:
-    """Tests for the async fetch_factory_from_chain_async."""
-
-    async def test_returns_decoded_factory_address(self) -> None:
-        provider = FakeAsyncProvider()
-        factory_address = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
-
-        factory_data = encode_function_calldata("factory()", None)
-        provider.set_response(
-            to="0xPool",
-            data=factory_data.hex(),
-            response=HexBytes(eth_abi.abi.encode(types=["address"], args=[factory_address])),
-        )
-        io = AsyncPoolIO(provider)
-        result = await fetch_factory_from_chain_async(
-            "0xPool",  # type: ignore[arg-type]
-            chain_id=CHAIN_ID,
-            io=io,
-        )
-        assert result is not None
-        assert result.lower() == factory_address.lower()
-
-    async def test_returns_none_on_failure(self) -> None:
-        provider = FakeAsyncProvider()
-        io = AsyncPoolIO(provider)
-        result = await fetch_factory_from_chain_async(
             "0xPool",  # type: ignore[arg-type]
             chain_id=CHAIN_ID,
             io=io,
@@ -213,14 +143,7 @@ class TestResolvePoolTypeByProbing:
     """Tests for the sync resolve_pool_type_by_probing."""
 
     def test_v3_probe_returns_concentrated_liquidity(self) -> None:
-        provider = FakeSyncProvider()
-        slot0_data = encode_function_calldata("slot0()", None)
-        provider.set_response(
-            to="0xPool",
-            data=slot0_data.hex(),
-            response=HexBytes(b"\x00" * 32),
-        )
-        io = SyncPoolIO(provider)
+        io = FakePyBotIo(probe_result="slot0")
         result = resolve_pool_type_by_probing(
             "0xPool",  # type: ignore[arg-type]
             chain_id=CHAIN_ID,
@@ -230,14 +153,7 @@ class TestResolvePoolTypeByProbing:
         assert result.family == PoolFamily.CONCENTRATED_LIQUIDITY
 
     def test_v2_probe_returns_constant_product(self) -> None:
-        provider = FakeSyncProvider()
-        reserves_data = encode_function_calldata("getReserves()", None)
-        provider.set_response(
-            to="0xPool",
-            data=reserves_data.hex(),
-            response=HexBytes(b"\x00" * 32),
-        )
-        io = SyncPoolIO(provider)
+        io = FakePyBotIo(probe_result="getReserves")
         result = resolve_pool_type_by_probing(
             "0xPool",  # type: ignore[arg-type]
             chain_id=CHAIN_ID,
@@ -247,58 +163,9 @@ class TestResolvePoolTypeByProbing:
         assert result.family == PoolFamily.CONSTANT_PRODUCT
 
     def test_fallback_returns_stableswap(self) -> None:
-        provider = FakeSyncProvider()
-        io = SyncPoolIO(provider)
+        # An unrecognized probe result falls through to the STABLESWAP default.
+        io = FakePyBotIo(probe_result="")
         result = resolve_pool_type_by_probing(
-            "0xPool",  # type: ignore[arg-type]
-            chain_id=CHAIN_ID,
-            factory="0xFactory",  # type: ignore[arg-type]
-            io=io,
-        )
-        assert result.family == PoolFamily.STABLESWAP
-
-
-class TestResolvePoolTypeByProbingAsync:
-    """Tests for the async resolve_pool_type_by_probing_async."""
-
-    async def test_v3_probe_returns_concentrated_liquidity(self) -> None:
-        provider = FakeAsyncProvider()
-        slot0_data = encode_function_calldata("slot0()", None)
-        provider.set_response(
-            to="0xPool",
-            data=slot0_data.hex(),
-            response=HexBytes(b"\x00" * 32),
-        )
-        io = AsyncPoolIO(provider)
-        result = await resolve_pool_type_by_probing_async(
-            "0xPool",  # type: ignore[arg-type]
-            chain_id=CHAIN_ID,
-            factory="0xFactory",  # type: ignore[arg-type]
-            io=io,
-        )
-        assert result.family == PoolFamily.CONCENTRATED_LIQUIDITY
-
-    async def test_v2_probe_returns_constant_product(self) -> None:
-        provider = FakeAsyncProvider()
-        reserves_data = encode_function_calldata("getReserves()", None)
-        provider.set_response(
-            to="0xPool",
-            data=reserves_data.hex(),
-            response=HexBytes(b"\x00" * 32),
-        )
-        io = AsyncPoolIO(provider)
-        result = await resolve_pool_type_by_probing_async(
-            "0xPool",  # type: ignore[arg-type]
-            chain_id=CHAIN_ID,
-            factory="0xFactory",  # type: ignore[arg-type]
-            io=io,
-        )
-        assert result.family == PoolFamily.CONSTANT_PRODUCT
-
-    async def test_fallback_returns_stableswap(self) -> None:
-        provider = FakeAsyncProvider()
-        io = AsyncPoolIO(provider)
-        result = await resolve_pool_type_by_probing_async(
             "0xPool",  # type: ignore[arg-type]
             chain_id=CHAIN_ID,
             factory="0xFactory",  # type: ignore[arg-type]
@@ -311,12 +178,7 @@ class TestResolvePoolType:
     """Tests for the full sync resolve_pool_type flow."""
 
     def test_raises_when_factory_fails_and_no_db_entry(self) -> None:
-        provider = FakeSyncProvider()
-        io = SyncPoolIO(provider)
-        # `io` is a plain `SyncPoolIO` (no `fetch_pool_row`) — the seam's
-        # `getattr(io, "fetch_pool_row", None)` returns None, so the DB step
-        # is skipped (mirrors "no DB entry") + the code falls through to the
-        # factory fetch (which fails here) → raises.
+        io = FakePyBotIo(factory_address=None, pool_row=None)
         with pytest.raises(DegenbotValueError, match="Cannot resolve pool type"):
             resolve_pool_type(
                 "0xPool",  # type: ignore[arg-type]
@@ -325,50 +187,32 @@ class TestResolvePoolType:
             )
 
     def test_probes_when_no_db_entry(self) -> None:
-        provider = FakeSyncProvider()
         factory_address = "0x1234567890AbCdEf1234567890aBcDeF12345678"
-
-        factory_data = encode_function_calldata("factory()", None)
-        provider.set_response(
-            to="0xPool",
-            data=factory_data.hex(),
-            response=HexBytes(eth_abi.abi.encode(types=["address"], args=[factory_address])),
+        io = FakePyBotIo(
+            factory_address=factory_address,
+            pool_row=None,
+            probe_result="slot0",
         )
-        slot0_data = encode_function_calldata("slot0()", None)
-        provider.set_response(
-            to="0xPool",
-            data=slot0_data.hex(),
-            response=HexBytes(b"\x00" * 32),
-        )
-        io = SyncPoolIO(provider)
-        # Exercise the seam's skip-branch: attach a `fetch_pool_row` that
-        # returns None ("pool not in DB") — the seam resolves it, finds no row,
-        # + falls through to probing.
-        io.fetch_pool_row = MagicMock(return_value=None)  # type: ignore[attr-defined]
-        io.fetch_exchange = MagicMock()  # type: ignore[attr-defined]
-
         result = resolve_pool_type(
             "0xPool",  # type: ignore[arg-type]
             chain_id=CHAIN_ID,
             io=io,
         )
         assert result.family == PoolFamily.CONCENTRATED_LIQUIDITY
-        # The seam was actually consulted (not skipped via the missing-method
-        # fallback) — `fetch_pool_row` was called with the address + chain.
-        io.fetch_pool_row.assert_called_once_with(chain_id=CHAIN_ID, address="0xPool")
 
     def test_resolves_from_db_via_seam(self) -> None:
         """A DB hit returns through the seam without probing."""
-        provider = FakeSyncProvider()
-        io = SyncPoolIO(provider)
         factory_address = "0x1F98431c8aD98523631AE4a59f267346ea31F984"
         pool_row = MagicMock()
         pool_row.kind = "uniswap_v3"
         pool_row.exchange_id = 42
         exchange_row = MagicMock()
         exchange_row.factory = factory_address
-        io.fetch_pool_row = MagicMock(return_value=pool_row)  # type: ignore[attr-defined]
-        io.fetch_exchange = MagicMock(return_value=exchange_row)  # type: ignore[attr-defined]
+        io = FakePyBotIo(
+            factory_address=None,
+            pool_row=pool_row,
+            exchange_row=exchange_row,
+        )
 
         result = resolve_pool_type(
             "0xPool",  # type: ignore[arg-type]
@@ -377,58 +221,3 @@ class TestResolvePoolType:
         )
         assert result.family == PoolFamily.CONCENTRATED_LIQUIDITY
         assert result.factory == factory_address
-        # No factory RPC was issued (the DB seam resolved the descriptor).
-        io.fetch_pool_row.assert_called_once_with(chain_id=CHAIN_ID, address="0xPool")
-        io.fetch_exchange.assert_called_once_with(exchange_id=42)
-
-
-class TestResolvePoolTypeAsync:
-    """Tests for the full async resolve_pool_type_async flow."""
-
-    async def test_raises_when_factory_fails_and_no_db_entry(self) -> None:
-        provider = FakeAsyncProvider()
-        io = AsyncPoolIO(provider)
-        fake_db = MagicMock()
-        session = MagicMock()
-        session.scalar.return_value = None
-        fake_db.return_value.__enter__ = MagicMock(return_value=session)
-        fake_db.return_value.__exit__ = MagicMock(return_value=False)
-
-        with pytest.raises(DegenbotValueError, match="Cannot resolve pool type"):
-            await resolve_pool_type_async(
-                "0xPool",  # type: ignore[arg-type]
-                chain_id=CHAIN_ID,
-                io=io,
-                db=fake_db,
-            )
-
-    async def test_probes_when_no_db_entry(self) -> None:
-        provider = FakeAsyncProvider()
-        factory_address = "0x1234567890AbCdEf1234567890aBcDeF12345678"
-
-        factory_data = encode_function_calldata("factory()", None)
-        provider.set_response(
-            to="0xPool",
-            data=factory_data.hex(),
-            response=HexBytes(eth_abi.abi.encode(types=["address"], args=[factory_address])),
-        )
-        slot0_data = encode_function_calldata("slot0()", None)
-        provider.set_response(
-            to="0xPool",
-            data=slot0_data.hex(),
-            response=HexBytes(b"\x00" * 32),
-        )
-        io = AsyncPoolIO(provider)
-        fake_db = MagicMock()
-        session = MagicMock()
-        session.scalar.return_value = None
-        fake_db.return_value.__enter__ = MagicMock(return_value=session)
-        fake_db.return_value.__exit__ = MagicMock(return_value=False)
-
-        result = await resolve_pool_type_async(
-            "0xPool",  # type: ignore[arg-type]
-            chain_id=CHAIN_ID,
-            io=io,
-            db=fake_db,
-        )
-        assert result.family == PoolFamily.CONCENTRATED_LIQUIDITY

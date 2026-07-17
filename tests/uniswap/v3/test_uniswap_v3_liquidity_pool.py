@@ -148,7 +148,9 @@ def test_first_200_pools(
 ):
     bot = make_bot_with_provider(fork_mainnet_full.provider)
 
-    quoter = make_contract(fork_mainnet_full.http_url, UNISWAP_V3_QUOTER_ADDRESS, UNISWAP_V3_QUOTER_ABI)
+    quoter = make_contract(
+        fork_mainnet_full.http_url, UNISWAP_V3_QUOTER_ADDRESS, UNISWAP_V3_QUOTER_ABI
+    )
 
     for pool in testing_pools:
         pool_address: str = pool["pool_address"]
@@ -229,7 +231,9 @@ def test_first_200_pools_with_snapshot(
 ):
     bot = make_bot_with_provider(fork_mainnet_archive.provider)
 
-    quoter = make_contract(fork_mainnet_archive.http_url, UNISWAP_V3_QUOTER_ADDRESS, UNISWAP_V3_QUOTER_ABI)
+    quoter = make_contract(
+        fork_mainnet_archive.http_url, UNISWAP_V3_QUOTER_ADDRESS, UNISWAP_V3_QUOTER_ABI
+    )
 
     for pool in testing_pools:
         pool_address: str = pool["pool_address"]
@@ -594,7 +598,9 @@ def test_cached_calculations(
     fork_mainnet_full: AnvilFork,
 ) -> None:
 
-    quoter = make_contract(fork_mainnet_full.http_url, UNISWAP_V3_QUOTER_ADDRESS, UNISWAP_V3_QUOTER_ABI)
+    quoter = make_contract(
+        fork_mainnet_full.http_url, UNISWAP_V3_QUOTER_ADDRESS, UNISWAP_V3_QUOTER_ABI
+    )
 
     print(f"Calculating with {amount=}")
 

@@ -37,9 +37,7 @@ from degenbot.database.models.pools import (
 from degenbot.db import db_create_new_database
 
 CHAIN = 1
-_POOL_OFFLINE_JSON = (
-    '{"chain_id":1,"block_number":1,"timestamp":1,"calls":{},"code":{}}'
-)
+_POOL_OFFLINE_JSON = '{"chain_id":1,"block_number":1,"timestamp":1,"calls":{},"code":{}}'
 
 
 def _offline_provider() -> RustAlloyProvider:

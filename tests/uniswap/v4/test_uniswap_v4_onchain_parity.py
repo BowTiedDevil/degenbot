@@ -265,7 +265,9 @@ def test_cached_calculations_v4_eth_usdc(golden_factory) -> None:
     with _RecordFork(recording=golden.is_recording) as ctx:
         if golden.is_recording:
             assert ctx.fork is not None
-            ctx.contract = make_contract(ctx.fork.http_url, UNISWAP_V4_QUOTER_ADDRESS, UNISWAP_V4_QUOTER_ABI)
+            ctx.contract = make_contract(
+                ctx.fork.http_url, UNISWAP_V4_QUOTER_ADDRESS, UNISWAP_V4_QUOTER_ABI
+            )
         for method, key, token_in, token_out, amount, zero_for_one in cases:
             oracle = golden.check(
                 key,

@@ -223,7 +223,9 @@ def test_aerodrome_v3_cbeth_weth_quote(golden_factory) -> None:
     with _RecordFork(recording=golden.is_recording) as ctx:
         if golden.is_recording:
             assert ctx.fork is not None
-            ctx.contract = make_contract(ctx.fork.http_url, AERODROME_V3_QUOTER_ADDRESS, AERODROME_V3_QUOTER_ABI)
+            ctx.contract = make_contract(
+                ctx.fork.http_url, AERODROME_V3_QUOTER_ADDRESS, AERODROME_V3_QUOTER_ABI
+            )
         for key, token_in, token_out, amount_in, sqrt_limit in cases:
             oracle = golden.check(
                 key,

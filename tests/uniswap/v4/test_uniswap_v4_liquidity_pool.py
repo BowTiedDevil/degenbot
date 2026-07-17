@@ -357,7 +357,9 @@ def test_cached_calculations(
     eth_usdc_v4: UniswapV4Pool,
     fork_mainnet_full: AnvilFork,
 ) -> None:
-    quoter = make_contract(fork_mainnet_full.http_url, UNISWAP_V4_QUOTER_ADDRESS, UNISWAP_V4_QUOTER_ABI)
+    quoter = make_contract(
+        fork_mainnet_full.http_url, UNISWAP_V4_QUOTER_ADDRESS, UNISWAP_V4_QUOTER_ABI
+    )
 
     for token_in, token_out in [
         (eth_usdc_v4.token0, eth_usdc_v4.token1),
@@ -409,7 +411,9 @@ def test_first_200_pools(
     fork_mainnet_full: AnvilFork,
     testing_pools,
 ):
-    quoter = make_contract(fork_mainnet_full.http_url, UNISWAP_V4_QUOTER_ADDRESS, UNISWAP_V4_QUOTER_ABI)
+    quoter = make_contract(
+        fork_mainnet_full.http_url, UNISWAP_V4_QUOTER_ADDRESS, UNISWAP_V4_QUOTER_ABI
+    )
 
     for pool in testing_pools:
         _test_pool_exact_input(
@@ -435,7 +439,9 @@ def test_first_200_pools_with_snapshot(
     testing_pools,
     liquidity_snapshot,
 ):
-    quoter = make_contract(fork_mainnet_archive.http_url, UNISWAP_V4_QUOTER_ADDRESS, UNISWAP_V4_QUOTER_ABI)
+    quoter = make_contract(
+        fork_mainnet_archive.http_url, UNISWAP_V4_QUOTER_ADDRESS, UNISWAP_V4_QUOTER_ABI
+    )
 
     for pool in testing_pools:
         _test_pool_exact_input(

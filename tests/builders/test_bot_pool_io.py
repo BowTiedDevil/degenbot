@@ -1,17 +1,16 @@
-"""Tests for Bot passing SyncPoolIO to builders (Plan 048, Slice 2)."""
+"""Tests for Bot passing PyBotIo to builders (Plan 048, Slice 2)."""
 
 from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from degenbot.bot import Bot
-from degenbot.builders.pool_io import SyncPoolIO
+from degenbot.bot import Bot, PyBotIo
 from degenbot.builders.request import BuildPoolRequest
 from degenbot.checksum_cache import get_checksum_address
 
 
-class TestBotPassesPoolIO:
-    """Bot.build_pool() creates SyncPoolIO and passes it to builders."""
+class TestBotPassesPyBotIo:
+    """Bot.build_pool() creates a PyBotIo and passes it to builders."""
 
     def test_dispatch_build_passes_io(self) -> None:
         """_dispatch_build forwards io= and request= to the builder."""
@@ -19,7 +18,7 @@ class TestBotPassesPoolIO:
         builder.build.return_value = MagicMock()
 
         address = get_checksum_address("0x0000000000000000000000000000000000000001")
-        io = MagicMock(spec=SyncPoolIO)
+        io = MagicMock(spec=PyBotIo)
         request = BuildPoolRequest()
 
         Bot._dispatch_build(

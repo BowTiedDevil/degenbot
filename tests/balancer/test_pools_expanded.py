@@ -150,7 +150,9 @@ def _build_pool_from_chain(
     """Build a BalancerV2Pool by fetching on-chain data from an anvil fork."""
     bot = make_bot_with_provider(fork.provider)
 
-    pool_contract = make_contract(fork.http_url, get_checksum_address(pool_address), WEIGHTED_POOL_ABI)
+    pool_contract = make_contract(
+        fork.http_url, get_checksum_address(pool_address), WEIGHTED_POOL_ABI
+    )
     vault_contract = make_contract(fork.http_url, BALANCER_V2_VAULT_ADDRESS, BALANCER_V2_VAULT_ABI)
 
     pool_id = (
@@ -199,7 +201,9 @@ def _run_given_in_swaps(
                 if i != j:
                     swap_directions.append((i, j))
 
-    query_contract = make_contract(fork.http_url, BALANCERQUERIES_CONTRACT_ADDRESS, BALANCERQUERIES_CONTRACT_ABI)
+    query_contract = make_contract(
+        fork.http_url, BALANCERQUERIES_CONTRACT_ADDRESS, BALANCERQUERIES_CONTRACT_ABI
+    )
     vault_contract = make_contract(fork.http_url, BALANCER_V2_VAULT_ADDRESS, BALANCER_V2_VAULT_ABI)
 
     on_chain_balances = tuple(vault_contract.functions.getPoolTokens(lp.pool_id).call()[1])
@@ -279,7 +283,9 @@ def _run_given_out_swaps(
                 if i != j:
                     swap_directions.append((i, j))
 
-    query_contract = make_contract(fork.http_url, BALANCERQUERIES_CONTRACT_ADDRESS, BALANCERQUERIES_CONTRACT_ABI)
+    query_contract = make_contract(
+        fork.http_url, BALANCERQUERIES_CONTRACT_ADDRESS, BALANCERQUERIES_CONTRACT_ABI
+    )
     vault_contract = make_contract(fork.http_url, BALANCER_V2_VAULT_ADDRESS, BALANCER_V2_VAULT_ABI)
 
     on_chain_balances = tuple(vault_contract.functions.getPoolTokens(lp.pool_id).call()[1])

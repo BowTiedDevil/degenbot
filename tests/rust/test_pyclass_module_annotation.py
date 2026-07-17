@@ -101,6 +101,5 @@ def test_db_classes_on_db_submodule() -> None:
     for name in expected:
         cls = getattr(db, name)
         assert cls.__module__ == "degenbot._ffi.db", (
-            f"db.{name}.__module__={cls.__module__!r}, "
-            f"expected 'degenbot._ffi.db'"
+            f"db.{name}.__module__={cls.__module__!r}, expected 'degenbot._ffi.db'"
         )
