@@ -1,5 +1,5 @@
 //! Fetch-callback seam for sparse tick-map swap simulation (ADR-005 sparse-map
-//! feature parity).
+//! feature parity) — the **live-pump miss path**.
 //!
 //! `v3_simulate_swap` / `v4_simulate_swap` return
 //! `SimulateSwapError::MissingTickWord` when `coverage == Sparse` and the walk
@@ -12,8 +12,8 @@
 //!
 //! The fetcher *returns* the fetched data (it does not write back into
 //! `BotState` itself), so the calc holds no lock across the fetch — the Rust
-//! call site (or, in slice 3, the `PyO3` adapter wrapping a Python fetcher) merges
-//! the result. This keeps the seam re-entrancy-safe (a Python fetcher that does
+//! call site (or the `PyO3` adapter wrapping a Python fetcher) merges the
+//! result. This keeps the seam re-entrancy-safe (a Python fetcher that does
 //! RPC cannot deadlock by re-entering `BotState`).
 //!
 //! ## Why this trait lives in `degenbot-pools` (not the bot)
@@ -25,6 +25,18 @@
 //! its value-only error/return types live here, while the RPC/DB
 //! *implementations* (and the `PyTickWordFetcher` `PyO3` adapter) live in
 //! `degenbot-bot` / `degenbot-python`.
+//!
+//! ## Relationship to `super::bootstrap::TickBootstrapRpc`
+//!
+//! The bootstrap trait (sibling module) serves the **registration-time** Chain
+//! arm of `assemble_*_tick_map` — keyed by *address* (the pool's contract
+//! address is known BEFORE `register_*_pool` assigns the internal `pool_id`).
+//! This miss-path trait serves the **live-pump miss-detection path** during
+//! swap simulation — keyed by *`pool_id`* (already-registered pools). The two
+//! traits share the same choreography (compute word → fetch bitmap → enumerate
+//! bits → fetch ticks) but differ in key type and call site. See
+//! `docs/migration-guides/chain-bootstrap-tick-map.md` §3 for the
+//! consolidation rationale (keep two traits for now; consolidate post-`XEANMB`).
 
 use std::collections::HashMap;
 

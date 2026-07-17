@@ -194,3 +194,6 @@ tests/aave/libraries/contracts/.foundryrust/proptest-regressions/
 
 # Permutation test logs and run artifacts
 logs/*
+
+# Local task tracking
+.ergo/*
