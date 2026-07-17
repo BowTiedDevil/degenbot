@@ -723,14 +723,22 @@ impl PyBot {
         let addr = parse_address(address)?;
         let state = self.bot.state_arc();
         let db = self.db_handle();
+        // U4KLPV: the Chain arm is wired with `chain=None` for now — the
+        // real `AlloyTickBootstrapRpc` is threaded through `Bot` in a later
+        // task (NOD4PS). The tick/tick_spacing/block params are unused when
+        // `chain=None` (the Chain arm short-circuits), so dummies are safe.
         let result = py.detach(|| {
             degenbot_bot::bot_core::tick_assembly::assemble_v3_tick_map(
                 || state.read().v3_snapshot_store().take(&addr),
                 db.as_deref(),
                 addr,
+                0,
+                0,
+                0,
+                None,
             )
         });
-        let Some((ticks, coverage)) = result.map_err(|e| crate::db::db_err_to_py(&e))? else {
+        let Some((ticks, coverage)) = result.map_err(|e| crate::db::assembly_err_to_py(&e))? else {
             return Ok(None);
         };
         let dict = build_tick_rows_py(py, &ticks)?;
@@ -786,9 +794,13 @@ impl PyBot {
                 db.as_deref(),
                 mgr,
                 pool_id_inner,
+                0,
+                0,
+                0,
+                None,
             )
         });
-        let Some((ticks, coverage)) = result.map_err(|e| crate::db::db_err_to_py(&e))? else {
+        let Some((ticks, coverage)) = result.map_err(|e| crate::db::assembly_err_to_py(&e))? else {
             return Ok(None);
         };
         let dict = build_tick_rows_py(py, &ticks)?;
