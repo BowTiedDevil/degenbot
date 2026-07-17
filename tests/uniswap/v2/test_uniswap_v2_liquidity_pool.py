@@ -41,7 +41,6 @@ from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.w3_contract import make_contract
 
 if TYPE_CHECKING:
-
     from degenbot.types.aliases import BlockNumber
 
 
@@ -168,7 +167,9 @@ def test_create_camelot_v2_stable_pool(fork_arbitrum_full: AnvilFork):
     amount_in = 1000 * 10**token_in.decimals  # nominal value of $1000
 
     # Test that the swap output from the pool contract matches the off-chain calculation
-    w3_contract = make_contract(fork_arbitrum_full.http_url, CAMELOT_MIM_USDC_LP_ADDRESS, CAMELOT_POOL_ABI)
+    w3_contract = make_contract(
+        fork_arbitrum_full.http_url, CAMELOT_MIM_USDC_LP_ADDRESS, CAMELOT_POOL_ABI
+    )
 
     contract_amount = w3_contract.functions.getAmountOut(
         amountIn=amount_in,
@@ -188,7 +189,9 @@ def test_create_camelot_v2_pool(fork_arbitrum_full: AnvilFork):
     token_in = lp.token1
     amount_in = 1000 * 10**token_in.decimals  # nominal value of $1000
 
-    w3_contract: Contract = make_contract(fork_arbitrum_full.http_url, CAMELOT_WETH_USDC_LP_ADDRESS, CAMELOT_POOL_ABI)
+    w3_contract: Contract = make_contract(
+        fork_arbitrum_full.http_url, CAMELOT_WETH_USDC_LP_ADDRESS, CAMELOT_POOL_ABI
+    )
     assert w3_contract.functions.getAmountOut(
         amountIn=amount_in,
         tokenIn=token_in.address,

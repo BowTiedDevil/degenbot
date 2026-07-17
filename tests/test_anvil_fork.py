@@ -1,4 +1,3 @@
-
 import pytest
 from hexbytes import HexBytes
 from pydantic import ValidationError

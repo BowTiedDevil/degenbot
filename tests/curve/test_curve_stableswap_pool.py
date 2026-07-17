@@ -431,7 +431,9 @@ def test_factory_stableswap_pools(fork_mainnet_full: AnvilFork):
 
 def test_base_registry_pools(fork_mainnet_full: AnvilFork):
     """Test the custom pools deployed by Curve"""
-    registry: Contract = make_contract(fork_mainnet_full.http_url, CURVE_V1_REGISTRY_ADDRESS, CURVE_V1_REGISTRY_ABI)
+    registry: Contract = make_contract(
+        fork_mainnet_full.http_url, CURVE_V1_REGISTRY_ADDRESS, CURVE_V1_REGISTRY_ABI
+    )
     pool_count = registry.functions.pool_count().call()
 
     with web3.Web3(web3.HTTPProvider(fork_mainnet_full.http_url)).batch_requests() as batch:

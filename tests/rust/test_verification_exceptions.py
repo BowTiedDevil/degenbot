@@ -95,9 +95,7 @@ def test_rpc_transport_failure_message_is_not_a_mismatch() -> None:
         "V3 pool 0x.. at snapshot block 1: tickBitmap(0) RPC call failed: connection reset"
     )
     rpc_exc = VerificationRpcError(transport_msg)
-    mismatch_exc = VerificationMismatchError(
-        "V3 pool 0x.. at snapshot block 1: tick data mismatch"
-    )
+    mismatch_exc = VerificationMismatchError("V3 pool 0x.. at snapshot block 1: tick data mismatch")
     # A transport failure raises the Rpc type, not the Mismatch type — the
     # two are distinguishable by isinstance (the contract build_paths relies
     # on, per VP42BP).

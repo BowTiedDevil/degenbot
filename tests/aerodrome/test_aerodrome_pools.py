@@ -311,7 +311,8 @@ def test_aerodrome_v3_state(fork_base_full: AnvilFork) -> None:
 
 def test_aerodrome_v3_pool_calculation(fork_base_full: AnvilFork) -> None:
 
-    quoter = make_contract(fork_base_full.http_url, AERODROME_V3_QUOTER_ADDRESS, AERODROME_V3_QUOTER_ABI
+    quoter = make_contract(
+        fork_base_full.http_url, AERODROME_V3_QUOTER_ADDRESS, AERODROME_V3_QUOTER_ABI
     )
     bot = make_bot_with_provider(fork_base_full.provider)
     lp = bot.build_pool("0x98c7A2338336d2d354663246F64676009c7bDa97")

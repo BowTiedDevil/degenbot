@@ -1,10 +1,9 @@
-"""Tests for Bot.build_managed_pool() and AsyncBot.build_managed_pool()."""
+"""Tests for Bot.build_managed_pool()."""
 
 from __future__ import annotations
 
 import inspect
 
-from degenbot.async_bot import AsyncBot
 from degenbot.bot import Bot
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
@@ -15,10 +14,6 @@ class TestBuildManagedPoolSignature:
     def test_bot_has_build_managed_pool(self):
         """Bot class has a build_managed_pool method."""
         assert hasattr(Bot, "build_managed_pool")
-
-    def test_async_bot_has_build_managed_pool(self):
-        """AsyncBot class has a build_managed_pool method."""
-        assert hasattr(AsyncBot, "build_managed_pool")
 
     def test_build_managed_pool_pool_id_is_required_positional(self):
         """build_managed_pool() requires pool_id as the second positional arg."""

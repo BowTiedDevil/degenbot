@@ -84,7 +84,9 @@ def _build_pool_from_chain(
     """Build a BalancerV2Pool by fetching on-chain data from an anvil fork."""
     bot = make_bot_with_provider(fork.provider)
 
-    pool_contract = make_contract(fork.http_url, get_checksum_address(pool_address), BALANCER_V2_WETH_BAL_POOL_ABI)
+    pool_contract = make_contract(
+        fork.http_url, get_checksum_address(pool_address), BALANCER_V2_WETH_BAL_POOL_ABI
+    )
     vault_contract = make_contract(fork.http_url, BALANCER_V2_VAULT_ADDRESS, BALANCER_V2_VAULT_ABI)
 
     pool_id = pool_contract.functions.getPoolId().call()
@@ -213,7 +215,9 @@ def _run_swap_calculations(
         # Default: test both directions (0→1 and 1→0)
         swap_directions = [(0, 1), (1, 0)]
 
-    query_contract = make_contract(fork.http_url, BALANCERQUERIES_CONTRACT_ADDRESS, BALANCERQUERIES_CONTRACT_ABI)
+    query_contract = make_contract(
+        fork.http_url, BALANCERQUERIES_CONTRACT_ADDRESS, BALANCERQUERIES_CONTRACT_ABI
+    )
 
     vault_contract = make_contract(fork.http_url, BALANCER_V2_VAULT_ADDRESS, BALANCER_V2_VAULT_ABI)
 

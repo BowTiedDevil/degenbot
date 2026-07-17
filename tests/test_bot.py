@@ -5,7 +5,6 @@ from unittest.mock import patch
 
 import pytest
 
-from degenbot.async_bot import AsyncBot
 from degenbot.bot import Bot, PyBot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
@@ -176,17 +175,3 @@ class TestMultipleBots:
         # Second bot can add a manager for the same factory without error
         manager2 = bot2.add_tracker(UniswapV2PoolTracker, factory_address=factory)
         assert manager1 is not manager2
-
-
-class TestAsyncBotInit:
-    """AsyncBot constructor tests."""
-
-    def test_async_bot_creates_database_session_manager(self, tmp_path: pathlib.Path) -> None:
-        config = _make_test_config(tmp_path)
-        bot = AsyncBot(config, provider=_fake_provider(1))
-        assert isinstance(bot.db, DatabaseSessionManager)
-
-    def test_async_bot_stores_config(self, tmp_path: pathlib.Path) -> None:
-        config = _make_test_config(tmp_path)
-        bot = AsyncBot(config, provider=_fake_provider(1))
-        assert bot.config is config

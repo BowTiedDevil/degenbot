@@ -21,8 +21,6 @@ from hexbytes import HexBytes
 
 from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot.bot import PyBotIo
-from degenbot.builders.pool_io import SyncPoolIO
-from degenbot.builders.type_resolution import fetch_factory_from_chain
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.crypto import function_selector
 
@@ -30,10 +28,7 @@ from degenbot.crypto import function_selector
 # valid `PyBotIo` provider but don't exercise specific RPC responses (DB handle
 # round-trip, PoolIO protocol surface). A real `PyAlloyProvider`-backed
 # provider keeps the seam honest — no Python fake double (O3).
-_MIN_OFFLINE_JSON = (
-    '{"chain_id":1,"block_number":100,"timestamp":1700000000,'
-    '"calls":{},"code":{}}'
-)
+_MIN_OFFLINE_JSON = '{"chain_id":1,"block_number":100,"timestamp":1700000000,"calls":{},"code":{}}'
 
 
 def _min_offline_provider() -> RustAlloyProvider:
@@ -147,29 +142,6 @@ def test_pybot_io_fetch_factory_address_returns_none_on_revert():
     assert io.fetch_factory_address("0x" + "ab" * 20) is None
 
 
-def test_pybot_io_fetch_factory_parity_with_python_impl():
-    """`PyBotIo.fetch_factory_address` returns the exact same EIP-55 checksum
-    as the original Python `fetch_factory_from_chain` for the same provider
-    `call` result.
-
-    Two independent implementations (Rust on PyBotIo, Python on SyncPoolIO)
-    against identical backends must agree -- this is the parity gate that lets
-    `Bot.build_pool` route through `PyBotIo.fetch_factory_address` without
-    behavior change. The SyncPoolIO path exercises the original Python
-    decode/checksum; the PyBotIo path exercises the Rust impl."""
-    factory_raw = "66f9664f97f2b50f62d13ea064982f936de76657"
-    pool_address = "0x" + "ab" * 20
-
-    rust_result = PyBotIo(provider=_FactoryCallProvider(factory_raw)).fetch_factory_address(
-        pool_address
-    )
-    py_result = fetch_factory_from_chain(
-        pool_address, chain_id=1, io=SyncPoolIO(_FactoryCallProvider(factory_raw))
-    )
-
-    assert rust_result == py_result
-
-
 # === ERC20 metadata choreography (slice 14c) ===
 #
 # `fetch_erc20_metadata` is the second choreography method: the batched
@@ -240,27 +212,6 @@ def test_pybot_io_fetch_erc20_metadata_returns_none_on_revert():
 
     io = PyBotIo(provider=_RevertingProvider())
     assert io.fetch_erc20_metadata("0x" + "ab" * 20) is None
-
-
-from degenbot.builders.erc20_builder import _fetch_name_symbol_decimals_batched
-
-
-def test_pybot_io_fetch_erc20_metadata_parity_with_python_batched():
-    """`PyBotIo.fetch_erc20_metadata` returns the exact same tuple as the Python
-    `_fetch_name_symbol_decimals_batched` for the same provider `call` results."""
-    name, symbol, decimals = "Wrapped Ether", "WETH", 18
-    address = "0x" + "cd" * 20
-
-    rust_result = PyBotIo(
-        provider=_Erc20MetadataProvider(name=name, symbol=symbol, decimals=decimals)
-    ).fetch_erc20_metadata(address)
-    py_result = _fetch_name_symbol_decimals_batched(
-        address=address,
-        io=SyncPoolIO(_Erc20MetadataProvider(name=name, symbol=symbol, decimals=decimals)),
-    )
-
-    assert rust_result is not None
-    assert rust_result == py_result
 
 
 # === ERC20 read methods (slice 14d) ===
@@ -1525,15 +1476,13 @@ def _recorded_factory_fixture() -> str:
     encoded = eth_abi.abi.encode(types=["address"], args=["0x" + factory_raw]).hex()
     calls = {f"0x{pool_addr}:0xc45a0155": encoded}
     code = {f"0x{pool_addr}": "60806040"}
-    return json.dumps(
-        {
-            "chain_id": 1,
-            "block_number": 100,
-            "timestamp": 1_700_000_000,
-            "calls": calls,
-            "code": code,
-        }
-    )
+    return json.dumps({
+        "chain_id": 1,
+        "block_number": 100,
+        "timestamp": 1_700_000_000,
+        "calls": calls,
+        "code": code,
+    })
 
 
 def test_pybot_io_native_alloy_fetch_factory_address():

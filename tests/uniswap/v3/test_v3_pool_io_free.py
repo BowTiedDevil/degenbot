@@ -188,9 +188,7 @@ class TestBotBuildV3Pool:
         usdc = _make_usdc()
         for tok in (weth, usdc):
             if bot._py_bot.get_token(tok.address) is None:
-                bot._py_bot.register_token(
-                    tok.address, tok.name, tok.symbol, tok.decimals, 1
-                )
+                bot._py_bot.register_token(tok.address, tok.name, tok.symbol, tok.decimals, 1)
         bot.tokens.add(token_address=weth_addr, chain_id=1, token=weth)
         bot.tokens.add(token_address=usdc_addr, chain_id=1, token=usdc)
 

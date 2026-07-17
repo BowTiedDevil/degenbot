@@ -63,7 +63,6 @@ class _FunctionsResult:
 
         # Handle reverts (empty data means revert)
         if raw_bytes is None or len(raw_bytes) == 0:
-
             msg = "execution reverted"
             raise ContractLogicError(msg)
 
@@ -89,9 +88,7 @@ class _FunctionsAccessor:
         self._address = address
         self._abi = abi
         # Pre-build the set of available function names
-        self._method_names = {
-            entry["name"] for entry in abi if entry.get("type") == "function"
-        }
+        self._method_names = {entry["name"] for entry in abi if entry.get("type") == "function"}
 
     def __getattr__(self, name: str) -> Any:
         if name not in self._method_names:
