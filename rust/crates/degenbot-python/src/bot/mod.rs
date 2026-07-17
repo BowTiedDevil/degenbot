@@ -696,6 +696,109 @@ impl PyBot {
         Ok(self.bot.state_arc().write().unregister_pool(addr, None))
     }
 
+    /// Assemble a V3 pool's tick map from the stored DB snapshot (`Store → Db`
+    /// precedence — epic UHPXSD / Decision 6 (B)). Returns
+    /// `(tick_data, coverage)` on a hit, `None` on a miss (caller runs Branch 3
+    /// sparse RPC and registers inline). Raises `RuntimeError` on a Db read
+    /// failure — Decision 8 (A): loud error over silent degrade.
+    ///
+    /// `tick_data` has the same `{tick: (liquidity_gross, liquidity_net, block)}`
+    /// shape as `register_v3_pool`'s `tick_data` arg, so the builder can pass
+    /// the returned dict straight back into `register_v3_pool`. Coverage is
+    /// `"tracked"` on a hit (Store or Db).
+    ///
+    /// **Two-phase lock protocol**: `BotState`'s read guard is held only for
+    /// the `SnapshotStore::take` (brief `Mutex` lock); the Db read inside the
+    /// core helper runs with NO `BotState` lock held (the live pump's
+    /// `state.write()` is not blocked). The GIL is released across the Db read.
+    ///
+    /// Args:
+    ///   address: the V3 pool's contract address (checksummed or lowercase hex).
+    #[pyo3(signature = (address))]
+    fn assemble_v3_tick_map<'py>(
+        &self,
+        py: Python<'py>,
+        address: &str,
+    ) -> PyResult<Option<(Bound<'py, PyDict>, String)>> {
+        let addr = parse_address(address)?;
+        let state = self.bot.state_arc();
+        let db = self.db_handle();
+        let result = py.detach(|| {
+            degenbot_bot::bot_core::tick_assembly::assemble_v3_tick_map(
+                || state.read().v3_snapshot_store().take(&addr),
+                db.as_deref(),
+                addr,
+            )
+        });
+        let Some((ticks, coverage)) = result.map_err(|e| crate::db::db_err_to_py(&e))? else {
+            return Ok(None);
+        };
+        let dict = build_tick_rows_py(py, &ticks)?;
+        let cov_str = match coverage {
+            degenbot_bot::bot_core::PoolTickCoverage::Tracked => "tracked",
+            degenbot_bot::bot_core::PoolTickCoverage::Sparse => "sparse",
+        };
+        Ok(Some((dict, cov_str.to_string())))
+    }
+
+    /// Assemble a V4 pool's tick map from the stored DB snapshot — V4 twin of
+    /// [`Self::assemble_v3_tick_map`]. Same precedence, miss, and error
+    /// semantics; returns `(tick_data, coverage)` on a hit, `None` on miss,
+    /// `RuntimeError` on Db error.
+    ///
+    /// Args:
+    ///   `pool_manager`: the V4 `PoolManager` contract address.
+    ///   `pool_id`: the V4 pool id as a 32-byte hex `str` (`0x...`) or `bytes`.
+    #[pyo3(signature = (pool_manager, pool_id))]
+    fn assemble_v4_tick_map<'py>(
+        &self,
+        py: Python<'py>,
+        pool_manager: &str,
+        pool_id: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<(Bound<'py, PyDict>, String)>> {
+        let mgr = parse_address(pool_manager)?;
+        // V4 pool id is `B256` ([u8; 32]); accept either a 0x-hex str or 32
+        // bytes (mirror `db/snapshot.rs::get_liquidity_map_v4`'s arg accept).
+        let pool_id_hash = if let Ok(s) = pool_id.extract::<String>() {
+            <alloy::primitives::B256 as std::str::FromStr>::from_str(&s)
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("bad pool_id: {e}")))?
+        } else if let Ok(bytes) = pool_id.extract::<&[u8]>() {
+            if bytes.len() != 32 {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "V4 pool_id bytes must be exactly 32 long, got {}",
+                    bytes.len()
+                )));
+            }
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(bytes);
+            alloy::primitives::B256::from(arr)
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "pool_id must be a 0x-hex str or 32-byte bytes",
+            ));
+        };
+        let state = self.bot.state_arc();
+        let db = self.db_handle();
+        let pool_id_inner: degenbot_decoders::v4_swap_decoder::PoolId = pool_id_hash.0; // B256 = FixedBytes<32>; .0 is [u8; 32]
+        let result = py.detach(|| {
+            degenbot_bot::bot_core::tick_assembly::assemble_v4_tick_map(
+                || state.read().v4_snapshot_store().take(&(mgr, pool_id_inner)),
+                db.as_deref(),
+                mgr,
+                pool_id_inner,
+            )
+        });
+        let Some((ticks, coverage)) = result.map_err(|e| crate::db::db_err_to_py(&e))? else {
+            return Ok(None);
+        };
+        let dict = build_tick_rows_py(py, &ticks)?;
+        let cov_str = match coverage {
+            degenbot_bot::bot_core::PoolTickCoverage::Tracked => "tracked",
+            degenbot_bot::bot_core::PoolTickCoverage::Sparse => "sparse",
+        };
+        Ok(Some((dict, cov_str.to_string())))
+    }
+
     /// Register a V3 pool by contract address.
     ///
     /// Returns the auto-assigned pool ID.
@@ -1549,6 +1652,33 @@ fn parse_address(s: &str) -> PyResult<Address> {
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid address '{s}': {e}")))
 }
 
+/// Build a Python `{tick: (liquidity_gross, liquidity_net, block)}` dict from
+/// the helper's `HashMap<i32, TickInfo>`. Symmetric with the `tick_data` arg
+/// shape on `register_v3_pool` / `register_v4_pool`, so the builder can pass
+/// the returned dict straight back into `register_*_pool(tick_data=..., ...)`
+/// without reshaping. `liquidity_gross` narrows `U128 → u128` (infallible for
+/// valid on-chain values — Uniswap's `type(uint128).max` cap); `liquidity_net`
+/// passes through `i256_to_py`; `block` is `u64` (pyo3 maps to a Python int).
+fn build_tick_rows_py<'py>(
+    py: Python<'py>,
+    ticks: &std::collections::HashMap<i32, degenbot_bot::bot_core::TickInfo>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let dict = PyDict::new(py);
+    for (&tick, info) in ticks {
+        // `u128` / `u64` → Python int via pyo3 (arbitrary-precision — no overflow).
+        let py_gross: Bound<'py, PyAny> = info
+            .liquidity_gross
+            .to::<u128>()
+            .into_pyobject(py)?
+            .into_any();
+        let py_net = crate::conversion::alloy::i256_to_py(py, &info.liquidity_net)?;
+        let py_block: Bound<'py, PyAny> = info.block.into_pyobject(py)?.into_any();
+        let tup = pyo3::types::PyTuple::new(py, [py_gross, py_net, py_block])?;
+        dict.set_item(tick, tup)?;
+    }
+    Ok(dict)
+}
+
 /// Parse a Python list of address strings into `Vec<Address>`.
 fn parse_address_list(list: &Bound<'_, PyList>) -> PyResult<Vec<Address>> {
     list.iter()
@@ -1610,6 +1740,146 @@ mod tests {
             py_bot.db_handle().is_none(),
             "a fresh PyBot must not hold a DegenbotDb handle (cold-start)"
         );
+    }
+
+    /// `assemble_v3_tick_map` on a fresh `PyBot` (cold-start, no DB loaded, empty
+    /// store) returns `Ok(None)` — the miss path. Ac A4YUYJ: "Returns None on
+    /// miss".
+    #[test]
+    fn assemble_v3_tick_map_cold_start_returns_none() {
+        pyo3::Python::attach(|py| {
+            let py_bot = PyBot::new(1);
+            let result = py_bot
+                .assemble_v3_tick_map(py, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+                .expect("cold-start assemble should not error");
+            assert!(result.is_none(), "cold-start (no store, no Db) → miss");
+        });
+    }
+
+    /// `assemble_v4_tick_map` cold-start miss — V4 twin of the V3 cold-start test.
+    #[test]
+    fn assemble_v4_tick_map_cold_start_returns_none() {
+        pyo3::Python::attach(|py| {
+            let py_bot = PyBot::new(1);
+            // 32-byte V4 pool id as 0x-hex (64 hex chars + 0x prefix).
+            let pool_id_py = ("0x".to_string() + &"cc".repeat(32))
+                .into_pyobject(py)
+                .expect("str into pyobject")
+                .into_any();
+            let result = py_bot
+                .assemble_v4_tick_map(
+                    py,
+                    "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    &pool_id_py,
+                )
+                .expect("cold-start assemble should not error");
+            assert!(result.is_none(), "cold-start (no store, no Db) → miss");
+        });
+    }
+
+    /// End-to-end: seed a V3 pool + ticks into a temp-file `SQLite` DB, load the
+    /// snapshot via `load_snapshot_from_db`, then `assemble_v3_tick_map(addr)`
+    /// must return the seeded ticks with coverage `"tracked"`.
+    #[test]
+    fn assemble_v3_tick_map_returns_tracked_after_snapshot_load() {
+        use alloy::primitives::{aliases::U128, Address, I256, U256};
+        use degenbot_db::discovery::V3PoolRowInput;
+        use degenbot_db::{ApplyBitmapAtWord, ApplyLiquidityAtTick};
+        use std::collections::HashMap;
+
+        // Create a temp-file path for the test DB (unique via PID + counter).
+        let temp_path = std::env::temp_dir().join(format!(
+            "degenbot_assemble_test_{}_{:x}.db",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        // (Scope-guarded cleanup below; assert at end.)
+
+        // 1. Open writable, seed exchange + V3 pool + init-map + liquidity-pos.
+        {
+            let (db, _state) = degenbot_db::connection::DegenbotDb::open_for_writes(&temp_path)
+                .expect("open_for_writes on temp");
+            let factory = Address::from([
+                0x1F, 0x98, 0x43, 0x1c, 0x8a, 0xD9, 0x85, 0x23, 0x63, 0x1A, 0xE4, 0xa5, 0x9f, 0x26,
+                0x73, 0x46, 0xea, 0x31, 0xF9, 0x84,
+            ]);
+            db.upsert_exchange(1, "uniswap_v3", factory, None).unwrap();
+            let pool_address = Address::from([0xaa; 20]);
+            db.upsert_v3_pools(
+                1,
+                "uniswap_v3",
+                1,
+                1_000_000,
+                &[V3PoolRowInput {
+                    address: pool_address,
+                    token0_address: Address::from([0x11; 20]),
+                    token1_address: Address::from([0x22; 20]),
+                    fee: 0,
+                    tick_spacing: 10,
+                }],
+            )
+            .unwrap();
+            let pool_id: i64 = db
+                .lock()
+                .query_row(
+                    "SELECT id FROM pools WHERE address = ?1 LIMIT 1",
+                    [&pool_address.to_checksum(None)],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let mut tick_data: HashMap<i32, ApplyLiquidityAtTick> = HashMap::new();
+            let mut tick_bitmap: HashMap<i32, ApplyBitmapAtWord> = HashMap::new();
+            tick_data.insert(
+                10,
+                ApplyLiquidityAtTick {
+                    liquidity_gross: U128::from(1_000_000u64),
+                    liquidity_net: I256::try_from(500i64).unwrap(),
+                    block: 0,
+                },
+            );
+            tick_bitmap.insert(
+                0,
+                ApplyBitmapAtWord {
+                    bitmap: U256::from(1u64),
+                    block: 0,
+                },
+            );
+            db.upsert_v3_liquidity_positions(pool_id, &tick_data)
+                .unwrap();
+            db.upsert_v3_initialization_maps(pool_id, &tick_bitmap)
+                .unwrap();
+        }
+        // The writable connection is dropped here; the file persists.
+
+        // 2. Construct PyBot + load the snapshot from the temp file.
+        pyo3::Python::attach(|py| {
+            let py_bot = PyBot::new(1);
+            py_bot
+                .load_snapshot_from_db(&temp_path.to_string_lossy(), 1)
+                .expect("snapshot load must succeed against the seeded temp DB");
+
+            // 3. assemble against the seeded pool — expect a hit.
+            let (ticks, coverage) = py_bot
+                .assemble_v3_tick_map(py, "0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa")
+                .expect("assemble hit must not error")
+                .expect("store hit against the seeded V3 pool must return Some");
+            assert_eq!(coverage, "tracked");
+            assert_eq!(ticks.len(), 1, "one tick seeded at index 10");
+            let val = ticks
+                .get_item(10)
+                .expect("get_item must not error")
+                .expect("tick 10 must be present");
+            let (gross, _net, _block) = val
+                .extract::<(u128, i128, u64)>()
+                .expect("tick value is (gross, net, block)");
+            assert_eq!(gross, 1_000_000);
+        });
+
+        // 4. Cleanup.
+        let _ = std::fs::remove_file(&temp_path);
     }
 
     /// Calling `load_snapshot_from_db` against a missing DB fails cleanly and
