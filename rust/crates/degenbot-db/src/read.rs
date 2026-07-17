@@ -338,27 +338,7 @@ impl DegenbotDb {
         family: ExchangeFamily,
     ) -> Result<Option<i64>, DbError> {
         let conn = self.lock();
-        // NULLIF trick: if any matching row has NULL last_update_block, the
-        // `MIN(last_update_block)` over the set is NULL, so we return None
-        // (matching Python's `if None in last_update_blocks: return None`).
-        let mut stmt = conn.prepare(&format!(
-            "SELECT MAX(last_update_block), MIN(last_update_block) \
-             FROM {EXCHANGES} \
-             WHERE chain_id = ?1 AND name LIKE ?2 ESCAPE '\\'"
-        ))?;
-        let (mx, mn): (Option<i64>, Option<i64>) =
-            stmt.query_row(rusqlite::params![chain, family.suffix()], |row| {
-                Ok::<_, rusqlite::Error>((
-                    row.get::<_, Option<i64>>(0)?,
-                    row.get::<_, Option<i64>>(1)?,
-                ))
-            })?;
-        match (mx, mn) {
-            // Python returns None if the set is empty OR any row has NULL
-            // last_update_block (an empty set → MAX/MIN are both NULL).
-            (_, None) => Ok(None),
-            (mx, _) => Ok(mx),
-        }
+        fetch_newest_update_block_on_conn(&conn, chain, family)
     }
 
     /// All `liquidity_positions` for a V3 pool (ordered by tick).
@@ -472,6 +452,38 @@ impl DegenbotDb {
             crate::rows::ExchangeRow::from_row(row).map_err(rusqlite::Error::from)
         })?;
         Ok(rows.collect::<Result<Vec<_>, rusqlite::Error>>()?)
+    }
+}
+
+/// `fetch_newest_update_block` body taking a borrowed `&Connection` (works on
+/// either a freshly-locked `DegenbotDb` connection or a `SnapshotDb`'s
+/// held-tx connection — see `crate::snapshot::TickMapDb`).
+///
+/// # Errors
+///
+/// Returns [`DbError::Sqlite`] on a query failure.
+pub fn fetch_newest_update_block_on_conn(
+    conn: &rusqlite::Connection,
+    chain: i64,
+    family: ExchangeFamily,
+) -> Result<Option<i64>, DbError> {
+    // NULLIF trick: if any matching row has NULL last_update_block, the
+    // `MIN(last_update_block)` over the set is NULL, so we return None
+    // (matching Python's `if None in last_update_blocks: return None`).
+    let mut stmt = conn.prepare(&format!(
+        "SELECT MAX(last_update_block), MIN(last_update_block) \
+         FROM {EXCHANGES} \
+         WHERE chain_id = ?1 AND name LIKE ?2 ESCAPE '\\'"
+    ))?;
+    let (mx, mn): (Option<i64>, Option<i64>) =
+        stmt.query_row(rusqlite::params![chain, family.suffix()], |row| {
+            Ok::<_, rusqlite::Error>((row.get::<_, Option<i64>>(0)?, row.get::<_, Option<i64>>(1)?))
+        })?;
+    match (mx, mn) {
+        // Python returns None if the set is empty OR any row has NULL
+        // last_update_block (an empty set → MAX/MIN are both NULL).
+        (_, None) => Ok(None),
+        (mx, _) => Ok(mx),
     }
 }
 

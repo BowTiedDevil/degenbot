@@ -134,19 +134,18 @@ pub struct PyBot {
     /// `PyBot` (the D4 owner) and read/write the SAME `PumpState` the
     /// engine's snapshot/solve slices read.
     pump: parking_lot::Mutex<Option<Arc<crate::bot::pump::PumpState>>>,
-    /// Cached read-only `DegenbotDb` handle armed at `load_snapshot_from_db`
-    /// time (Decisions 5 (B) + 9 (A)). `None` for cold-start (no DB) or before
-    /// the snapshot load is attempted. The registration-path `PyO3` functions
-    /// (task `A4YUYJ`) clone this Arc to feed `&DegenbotDb` to the tick-map
+    /// Cached read-only `SnapshotDb` handle armed at `load_snapshot_from_db`
+    /// time (Decisions 5 (B) + 9 (A); epic `XEANMB`). `None` for cold-start
+    /// (no DB) or before the snapshot load is attempted. The registration-path
+    /// `PyO3` functions clone this Arc to feed `&dyn TickMapDb` to the tick-map
     /// assembly helper's Db arm (`bot_core::tick_assembly`).
     ///
-    /// One connection, opened by `load_snapshot_from_db` and **retained**
-    /// (changed from open-use-drop). The snapshot load + the per-pool Db
-    /// probe share one `Mutex<Connection>` but never overlap in time — no
-    /// contention. WAL mode means no contention with the updater process
-    /// either. Forward-looking: future DB-owning Rust ports (pool updater,
-    /// lending-market updater) can clone the same Arc.
-    db: parking_lot::Mutex<Option<Arc<degenbot_db::connection::DegenbotDb>>>,
+    /// One connection, opened by `load_snapshot_from_db` with a held deferred
+    /// read transaction + **retained**. The snapshot load + the per-pool Db
+    /// probe share the SAME `Mutex<Connection>` + its open tx — every read
+    /// shares one frozen DB snapshot across `build_paths` (WAL MVCC).
+    /// `close_snapshot_tx()` commits the tx at end of `build_paths`.
+    db: parking_lot::Mutex<Option<Arc<degenbot_db::snapshot_db::SnapshotDb>>>,
 }
 
 /// Crate-internal Rust surface on `PyBot` (not Python-visible).
@@ -159,17 +158,18 @@ impl PyBot {
         Arc::clone(&self.bot)
     }
 
-    /// The cached read-only `DegenbotDb` handle armed by
-    /// `load_snapshot_from_db` (Decision 5 (B) / task A6J5HG), or `None` on
-    /// the cold-start path (no DB configured, or the snapshot load hasn't run
-    /// or failed). The registration-path `PyO3` functions (task `A4YUYJ` — the
-    /// `assemble_v3_tick_map` / `assemble_v4_tick_map` wrappers) clone this Arc
-    /// and pass `&*arc` to `bot_core::tick_assembly::assemble_*`'s `db` param.
-    /// Returns a fresh `Arc` clone — the caller owns the lifetime of the
-    /// borrow; `PyBot` retains its own Arc so subsequent callers still get `Some`.
+    /// The cached read-only `SnapshotDb` handle armed by
+    /// `load_snapshot_from_db` (Decision 5 (B) / task A6J5HG + epic `XEANMB`),
+    /// or `None` on the cold-start path (no DB configured, or the snapshot
+    /// load hasn't run, or `close_snapshot_tx()` dropped it). The registration-
+    /// path `PyO3` functions (`assemble_v3_tick_map` / `assemble_v4_tick_map`)
+    /// clone this Arc and pass `&*arc as &dyn TickMapDb` to
+    /// `bot_core::tick_assembly::assemble_*`'s `db` param. Returns a fresh
+    /// `Arc` clone — the caller owns the lifetime of the borrow; `PyBot`
+    /// retains its own Arc so subsequent callers still get `Some`.
     #[must_use]
-    #[allow(dead_code)] // wired by task A4YUYJ — the assemble_*_tick_map PyO3 wrappers.
-    pub(crate) fn db_handle(&self) -> Option<Arc<degenbot_db::connection::DegenbotDb>> {
+    #[allow(dead_code)] // wired by the assemble_*_tick_map PyO3 wrappers.
+    pub(crate) fn db_handle(&self) -> Option<Arc<degenbot_db::snapshot_db::SnapshotDb>> {
         self.db.lock().clone()
     }
 
@@ -234,20 +234,59 @@ impl PyBot {
     /// out of range.
     #[pyo3(signature = (db_path, chain_id))]
     fn load_snapshot_from_db(&self, db_path: &str, chain_id: u64) -> PyResult<()> {
-        let db = degenbot_db::connection::DegenbotDb::open(&std::path::PathBuf::from(db_path))
+        // Epic XEANMB: open a `SnapshotDb` — a read-only handle with a held
+        // deferred read transaction. `Bot::load_snapshot_from_db` reads `S =
+        // min(fetch_newest_update_block(V3), V4)` INSIDE the held tx so `S`
+        // and every per-pool `fetch_liquidity_map` read share one frozen DB
+        // snapshot across `build_paths` (the consistency replacement for the
+        // retired `SnapshotStore`). `PyBot.close_snapshot_tx()` commits the
+        // tx at end of `build_paths` to release the WAL snapshot.
+        let snap = degenbot_db::snapshot_db::SnapshotDb::open(&std::path::PathBuf::from(db_path))
             .map_err(|e| crate::db::db_err_to_py(&e))?
             .0;
-        self.bot.load_snapshot_from_db(&db, chain_id).map_err(|e| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!("load_snapshot_from_db failed: {e}"))
-        })?;
-        // Decision 5 (B): retain the read-only `DegenbotDb` as a long-lived
-        // `Arc` so the registration-path PyO3 functions (`assemble_v3_tick_map`
-        // etc. — task A4YUYJ) can clone it to feed `&DegenbotDb` to the
-        // tick-map assembly helper's Db arm. Opened by THIS method (the sole
-        // armer) — single source of truth: `db_path` flows in via the existing
-        // arg, no new param on `#[new]`. Stored AFTER the snapshot load
-        // succeeded, so a failure leaves `db` as `None` (cold-start).
-        *self.db.lock() = Some(Arc::new(db));
+        self.bot
+            .load_snapshot_from_db(&snap, chain_id)
+            .map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "load_snapshot_from_db failed: {e}"
+                ))
+            })?;
+        // Retain the `SnapshotDb` as a long-lived `Arc` so the registration-
+        // path PyO3 functions (`assemble_v3_tick_map` etc.) clone it to feed
+        // `&dyn TickMapDb` to the tick-map assembly helper's Db arm. Stored
+        // AFTER the snapshot load succeeded, so a failure leaves `db` as
+        // `None` (cold-start).
+        *self.db.lock() = Some(Arc::new(snap));
+        Ok(())
+    }
+
+    /// Commit + drop the held snapshot read transaction (epic `XEANMB`).
+    /// Call after `build_paths` finishes so the WAL snapshot is released + the
+    /// updater's checkpoint can reclaim `-wal` space. After this, `db_handle()`
+    /// returns `None` (the `assemble_*` Db arm goes through the held tx — once
+    /// it's closed, there's no Db arm for late registrations; they'd need a
+    /// fresh handle). Idempotent on a not-loaded bot (no-op).
+    ///
+    /// # Errors
+    /// `PyRuntimeError` if the `COMMIT` fails.
+    fn close_snapshot_tx(&self) -> PyResult<()> {
+        let snap = self.db.lock().take();
+        if let Some(snap) = snap {
+            // `Arc::try_unwrap` succeeds only if `assemble_*` calls released
+            // their clones. During `build_paths` the Db arm clones per-call +
+            // drops before `close_snapshot_tx` runs, so at this point the only
+            // remaining `Arc` is this one. A failure (clones remain) surfaces
+            // as a `RuntimeError` rather than silently leaking the tx.
+            match std::sync::Arc::try_unwrap(snap) {
+                Ok(snap) => snap.commit().map_err(|e| crate::db::db_err_to_py(&e))?,
+                Err(_) => {
+                    return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                        "close_snapshot_tx: SnapshotDb Arc still held (clone leak — \
+                         a caller didn't drop its handle)",
+                    ));
+                }
+            }
+        }
         Ok(())
     }
 
@@ -754,7 +793,8 @@ impl PyBot {
         let result = py.detach(|| {
             degenbot_bot::bot_core::tick_assembly::assemble_v3_tick_map(
                 || state.read().v3_snapshot_store().take(&addr),
-                db.as_deref(),
+                db.as_deref()
+                    .map(|d| d as &dyn degenbot_db::snapshot::TickMapDb),
                 addr,
                 tick_i32,
                 spacing_i32,
@@ -839,7 +879,8 @@ impl PyBot {
         let result = py.detach(|| {
             degenbot_bot::bot_core::tick_assembly::assemble_v4_tick_map(
                 || state.read().v4_snapshot_store().take(&(mgr, pool_id_inner)),
-                db.as_deref(),
+                db.as_deref()
+                    .map(|d| d as &dyn degenbot_db::snapshot::TickMapDb),
                 mgr,
                 state_view_addr,
                 pool_id_inner,

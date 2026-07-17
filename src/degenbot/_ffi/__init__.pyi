@@ -701,18 +701,33 @@ class PyBot:
         (which only exercise the Rust core) working without a chain invariant.
         """
     def load_snapshot_from_db(self, db_path: str, chain_id: int) -> None:
-        """Load V3+V4 DB snapshot into the core `BotState` at construction time.
+        """Load `S` from the DB into the core `BotState` at construction time.
 
         Called from Python ``Bot.__init__`` when ``config.database.path`` exists.
-        Opens a read-only ``DegenbotDb`` handle from ``db_path`` and calls the
-        core ``Bot::load_snapshot_from_db`` — streams V3+V4 pools into the core
-        ``SnapshotStore`` via ``stream_liquidity_maps`` (one pool at a time, no
-        materialized ``Vec``) + records ``S = min(fetch_newest_update_block(V3), V4)``.
-        After this, pool registration auto-seeds from the store via ``take()``;
-        the Python builder passes ``tick_data=None, coverage="tracked"``.
+        Opens a ``SnapshotDb`` — a read-only handle with a held deferred read
+        transaction (epic ``XEANMB``) — and calls the core
+        ``Bot::load_snapshot_from_db`` which reads ``S =
+        min(fetch_newest_update_block(V3), V4)`` INSIDE the held tx so ``S`` +
+        every per-pool ``assemble_*_tick_map`` Db-arm read during ``build_paths``
+        share one frozen DB snapshot (the consistency replacement for the retired
+        ``SnapshotStore``). WAL MVCC: a concurrent ``pool_updater`` write cannot
+        perturb the held snapshot.
+
+        After this, pool registration reads tick data through the held tx via
+        ``assemble_*_tick_map``'s Db arm. Call ``close_snapshot_tx()`` after
+        ``build_paths`` to release the WAL snapshot.
 
         ``None``/cold-start (no pools) is NOT an error — the pump anchors on
         ``first_observed_block`` at resume.
+        """
+    def close_snapshot_tx(self) -> None:
+        """Commit + drop the held snapshot read transaction (epic ``XEANMB``).
+
+        Call after ``build_paths`` finishes so the WAL snapshot is released +
+        the ``pool_updater``'s checkpoint can reclaim ``-wal`` space for the
+        hot loop. After this, ``db_handle()`` returns ``None`` — the
+        ``assemble_*`` Db arm is gone for any late registrations (they'd need a
+        fresh handle). Idempotent on a not-loaded bot (no-op).
         """
     @property
     def snapshot_seed_block(self) -> int | None:

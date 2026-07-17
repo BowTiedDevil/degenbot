@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use alloy::primitives::{address, aliases::U112, U256};
 use degenbot::degenbot_balancer_math::{mul_down, ONE};
 use degenbot::degenbot_curve_math::{stableswap_get_d, DVariant};
-use degenbot::degenbot_db::connection::DegenbotDb;
+use degenbot::degenbot_db::snapshot_db::SnapshotDb;
 use degenbot::degenbot_solidly_math::{calc_d as solidly_calc_d, calc_f as solidly_calc_f};
 use degenbot::dex_identity::UNISWAP_V2;
 use degenbot::{bot_core::Bot, BotState, RegisterV2PoolParams};
@@ -39,12 +39,16 @@ fn fixture_db_path() -> PathBuf {
 ///
 /// Proves the end-state contract of epic P73ER6 with zero Python: a
 /// `cargo add degenbot` consumer can
-///   a. open a `DegenbotDb` (file-backed — here the `parity.db` fixture
+///   a. open a `SnapshotDb` (file-backed — here the `parity.db` fixture
+///      read handle with a held deferred read tx so `S` + per-pool reads
+///      share one frozen DB snapshot, epic `XEANMB`) from the bot's
+///      `-pl fixtures/parity.db` path,
 ///      shipped alongside `degenbot-db`, chain 8453, which carries an
 ///      `aerodrome_v3` exchange with V3 tick rows + an empty `uniswap_v4`
 ///      family),
 ///   b. construct a `Bot` for that chain,
-///   c. call `Bot::load_snapshot_from_db(&db, chain)` — pure Rust streaming
+///   c. call `Bot::load_snapshot_from_db(&snap, chain)` — pure Rust, reads `S`
+///      inside the held tx (no `SnapshotStore` materialization, epic `XEANMB`)
 ///      that emits `S = MIN(last_update_block)` over the V3/V4 `exchanges`
 ///      rows for the chain (here `S = 12_340_000` = min(V3 `12_345_000`, V4
 ///      `12_340_000`)); no tick dict ever crosses the FFI (the DB→SnapshotStore
@@ -68,11 +72,11 @@ fn fixture_db_path() -> PathBuf {
 /// sink/reorg/engine setup.
 fn fixture_snapshot_seed_block() -> Option<u64> {
     let db_path = fixture_db_path();
-    let db = DegenbotDb::open(&db_path)
+    let snap = SnapshotDb::open(&db_path)
         .unwrap_or_else(|e| panic!("open fixture DB at {}: {e}", db_path.display()));
     let snapshot_bot = Bot::new(8453);
     snapshot_bot
-        .load_snapshot_from_db(&db.0, 8453)
+        .load_snapshot_from_db(&snap.0, 8453)
         .expect("load_snapshot_from_db on the fixture DB returns Ok");
     let seed_block = snapshot_bot.state_arc().read().snapshot_seed_block();
     // Fixture DB has V3 ticks at chain 8453 (aerodrome_v3, last_update_block
@@ -86,7 +90,7 @@ fn fixture_snapshot_seed_block() -> Option<u64> {
         "fixture DB at chain 8453 has V3+V4 exchanges → S = MIN(12345000, 12340000) = 12_340_000"
     );
     drop(snapshot_bot);
-    drop(db);
+    drop(snap);
     seed_block
 }
 

@@ -3,7 +3,7 @@
 //! One free function per CL family (`assemble_v3_tick_map` /
 //! `assemble_v4_tick_map`) that probes a [`SnapshotStore`] (the bulk-loaded DB
 //! snapshot, consumed once per pool), then on a miss falls back to a per-pool
-//! `DegenbotDb::fetch_liquidity_map` read, then on a further miss falls back
+//! `TickMapDb::fetch_liquidity_map` read, then on a further miss falls back
 //! to the **Chain arm** — a sparse-RPC word read via
 //! [`TickBootstrapRpc`] (`Store → Db → Chain` precedence, epic `5NT2OC`).
 //!
@@ -28,7 +28,7 @@
 //! `build_paths`), so a guard held across an `SQLite` read or an RPC `eth_call`
 //! would block pump Mint/Burn applies for every pool registered. The closure
 //! sidesteps this: it runs under the guard, returns owned `(ticks, coverage)`,
-//! drops the guard, and the helper continues with the `Option<&DegenbotDb>` (a
+//! drops the guard, and the helper continues with the `Option<&dyn TickMapDb>` (a
 //! handle to a *separate* `Mutex<Connection>`, decoupled from `BotState`) and
 //! then the `Option<&dyn TickBootstrapRpc>` (an RPC trait object, also no
 //! `BotState` guard) — no `BotState` guard held across either subsequent read.
@@ -64,7 +64,6 @@ use std::collections::HashMap;
 
 use alloy::primitives::Address;
 
-use degenbot_db::connection::DegenbotDb;
 use degenbot_db::error::DbError;
 use degenbot_db::snapshot::{LiquidityAtTick, LiquidityMap};
 use degenbot_decoders::v4_swap_decoder::PoolId;
@@ -138,7 +137,7 @@ pub type TickMapAssemblyResult =
 )]
 pub fn assemble_v3_tick_map(
     store_probe: impl FnOnce() -> (HashMap<i32, TickInfo>, PoolTickCoverage),
-    db: Option<&DegenbotDb>,
+    db: Option<&dyn degenbot_db::snapshot::TickMapDb>,
     address: Address,
     tick: i32,
     tick_spacing: i32,
@@ -187,7 +186,7 @@ pub fn assemble_v3_tick_map(
 )]
 pub fn assemble_v4_tick_map(
     store_probe: impl FnOnce() -> (HashMap<i32, TickInfo>, PoolTickCoverage),
-    db: Option<&DegenbotDb>,
+    db: Option<&dyn degenbot_db::snapshot::TickMapDb>,
     pool_manager: Address,
     state_view: Address,
     pool_id: PoolId,
@@ -218,7 +217,10 @@ pub fn assemble_v4_tick_map(
 
 /// Db arm for V3: convert a `LiquidityMap` into the helper's hit/miss shape.
 /// Returns `Ok(None)` on an empty map (falls through to the Chain arm).
-fn fetch_v3_tick_map_from_db(db: &DegenbotDb, address: Address) -> TickMapAssemblyResult {
+fn fetch_v3_tick_map_from_db(
+    db: &dyn degenbot_db::snapshot::TickMapDb,
+    address: Address,
+) -> TickMapAssemblyResult {
     let Some(map) = db.fetch_liquidity_map(address)? else {
         return Ok(None);
     };
@@ -228,7 +230,7 @@ fn fetch_v3_tick_map_from_db(db: &DegenbotDb, address: Address) -> TickMapAssemb
 /// Db arm for V4: identical to V3 but routes through the V4 fetch.
 /// Returns `Ok(None)` on an empty map (falls through to the Chain arm).
 fn fetch_v4_tick_map_from_db(
-    db: &DegenbotDb,
+    db: &dyn degenbot_db::snapshot::TickMapDb,
     pool_manager: Address,
     pool_id: PoolId,
 ) -> TickMapAssemblyResult {

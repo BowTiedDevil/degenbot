@@ -14,6 +14,7 @@
 use std::collections::HashMap;
 
 use alloy::primitives::{Address, B256, U256};
+use rusqlite::Connection;
 
 use crate::connection::DegenbotDb;
 use crate::error::DbError;
@@ -80,74 +81,7 @@ impl DegenbotDb {
         pool_address: Address,
     ) -> Result<Option<LiquidityMap>, DbError> {
         let conn = self.lock();
-        // Mirror Python: `select(LiquidityPoolTable).where(address == pool_address)`.
-        // LIMIT 1 since (address, chain) is unique but address alone is not
-        // cross-chain; the oracle returns the first match.
-        let row: Option<(i64, String)> = conn
-            .query_row(
-                "SELECT id, kind FROM pools WHERE address = ?1 LIMIT 1",
-                rusqlite::params![pool_address.to_checksum(None)],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .map(Some)
-            .or_else(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => Ok(None),
-                other => Err(other),
-            })?;
-        let Some((pool_id, kind)) = row else {
-            return Ok(None);
-        };
-        if !is_v3_kind(&kind) {
-            return Ok(None);
-        }
-
-        let mut tick_bitmap: HashMap<i64, BitmapAtWord> = HashMap::new();
-        {
-            let mut stmt =
-                conn.prepare("SELECT word, bitmap FROM initialization_maps WHERE pool_id = ?1")?;
-            let rows = stmt.query_map(rusqlite::params![pool_id], |r| {
-                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
-            })?;
-            for r in rows {
-                let (word, bitmap_str) = r?;
-                tick_bitmap.insert(
-                    word,
-                    BitmapAtWord {
-                        bitmap: decode_u256(&bitmap_str)?,
-                    },
-                );
-            }
-        }
-
-        let mut tick_data: HashMap<i32, LiquidityAtTick> = HashMap::new();
-        {
-            let mut stmt = conn.prepare(
-                "SELECT tick, liquidity_gross, liquidity_net \
-                 FROM liquidity_positions WHERE pool_id = ?1",
-            )?;
-            let rows = stmt.query_map(rusqlite::params![pool_id], |r| {
-                Ok((
-                    r.get::<_, i32>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                ))
-            })?;
-            for r in rows {
-                let (tick, gross, net) = r?;
-                tick_data.insert(
-                    tick,
-                    LiquidityAtTick {
-                        liquidity_gross: decode_u256(&gross)?,
-                        liquidity_net: decode_i256(&net)?,
-                    },
-                );
-            }
-        }
-
-        Ok(Some(LiquidityMap {
-            tick_bitmap,
-            tick_data,
-        }))
+        fetch_liquidity_map_on_conn(&conn, pool_address)
     }
 
     /// The V4 [`LiquidityMap`] for a (pool manager, pool-hash) pair (mirrors
@@ -162,77 +96,7 @@ impl DegenbotDb {
         pool_id_hash: B256,
     ) -> Result<Option<LiquidityMap>, DbError> {
         let conn = self.lock();
-        // Mirror Python: select the UniswapV4PoolTable joined to its manager,
-        // matching on pool_hash hex + manager address.
-        let hash_hex = format!("{pool_id_hash}"); // B256 Display includes the 0x prefix
-        let row: Option<i64> = conn
-            .query_row(
-                "SELECT v4.managed_pool_id \
-                 FROM uniswap_v4_pools v4 \
-                 JOIN managed_pools mp ON mp.id = v4.managed_pool_id \
-                 JOIN pool_managers pm ON pm.id = mp.manager_id \
-                 WHERE v4.pool_hash = ?1 AND pm.address = ?2",
-                rusqlite::params![hash_hex, pool_manager.to_checksum(None)],
-                |r| r.get::<_, i64>(0),
-            )
-            .map(Some)
-            .or_else(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => Ok(None),
-                other => Err(other),
-            })?;
-        let Some(managed_pool_id) = row else {
-            return Ok(None);
-        };
-
-        let mut tick_bitmap: HashMap<i64, BitmapAtWord> = HashMap::new();
-        {
-            let mut stmt = conn.prepare(
-                "SELECT word, bitmap FROM managed_pool_initialization_maps \
-                 WHERE managed_pool_id = ?1",
-            )?;
-            let rows = stmt.query_map(rusqlite::params![managed_pool_id], |r| {
-                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
-            })?;
-            for r in rows {
-                let (word, bitmap_str) = r?;
-                tick_bitmap.insert(
-                    word,
-                    BitmapAtWord {
-                        bitmap: decode_u256(&bitmap_str)?,
-                    },
-                );
-            }
-        }
-
-        let mut tick_data: HashMap<i32, LiquidityAtTick> = HashMap::new();
-        {
-            let mut stmt = conn.prepare(
-                "SELECT tick, liquidity_gross, liquidity_net \
-                 FROM managed_pool_liquidity_positions WHERE managed_pool_id = ?1",
-            )?;
-            let rows = stmt.query_map(rusqlite::params![managed_pool_id], |r| {
-                Ok((
-                    r.get::<_, i32>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                ))
-            })?;
-            for r in rows {
-                let (tick, gross, net) = r?;
-                tick_data.insert(
-                    tick,
-                    LiquidityAtTick {
-                        liquidity_gross: decode_u256(&gross)?,
-                        liquidity_net: decode_i256(&net)?,
-                    },
-                );
-            }
-        }
-
-        Ok(Some(LiquidityMap {
-            tick_bitmap,
-            tick_data,
-        }))
+        fetch_liquidity_map_v4_on_conn(&conn, pool_manager, pool_id_hash)
     }
 
     /// All V3 or V4 tick data for a chain as a batch (mirrors Python
@@ -468,5 +332,231 @@ impl DegenbotDb {
             out.push(row?);
         }
         Ok(out)
+    }
+}
+
+// === _on_conn factored read bodies + TickMapDb trait =========================
+//
+// Extracted so a held-tx connection (see `SnapshotDb`) reuses the SAME SQL as
+// the per-call `DegenbotDb` reads — the tick-map assembly Db arm works against
+// either handle. Epic `XEANMB`: the held read transaction (`SnapshotDb`)
+// freezes the DB view across `build_paths`, replacing `SnapshotStore`.
+
+/// `fetch_liquidity_map` body taking a borrowed `&Connection` (works on either
+/// a freshly-locked `DegenbotDb` connection or a `SnapshotDb`'s held-tx
+/// connection).
+///
+/// # Errors
+/// [`DbError::Sqlite`] on a query failure or [`DbError::Decode`] on a malformed column.
+pub fn fetch_liquidity_map_on_conn(
+    conn: &Connection,
+    pool_address: Address,
+) -> Result<Option<LiquidityMap>, DbError> {
+    // Mirror Python: `select(LiquidityPoolTable).where(address == pool_address)`.
+    // LIMIT 1 since (address, chain) is unique but address alone is not
+    // cross-chain; the oracle returns the first match.
+    let row: Option<(i64, String)> = conn
+        .query_row(
+            "SELECT id, kind FROM pools WHERE address = ?1 LIMIT 1",
+            rusqlite::params![pool_address.to_checksum(None)],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(other),
+        })?;
+    let Some((pool_id, kind)) = row else {
+        return Ok(None);
+    };
+    if !is_v3_kind(&kind) {
+        return Ok(None);
+    }
+
+    let mut tick_bitmap: HashMap<i64, BitmapAtWord> = HashMap::new();
+    {
+        let mut stmt =
+            conn.prepare("SELECT word, bitmap FROM initialization_maps WHERE pool_id = ?1")?;
+        let rows = stmt.query_map(rusqlite::params![pool_id], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+        })?;
+        for r in rows {
+            let (word, bitmap_str) = r?;
+            tick_bitmap.insert(
+                word,
+                BitmapAtWord {
+                    bitmap: decode_u256(&bitmap_str)?,
+                },
+            );
+        }
+    }
+
+    let mut tick_data: HashMap<i32, LiquidityAtTick> = HashMap::new();
+    {
+        let mut stmt = conn.prepare(
+            "SELECT tick, liquidity_gross, liquidity_net \
+             FROM liquidity_positions WHERE pool_id = ?1",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![pool_id], |r| {
+            Ok((
+                r.get::<_, i32>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?;
+        for r in rows {
+            let (tick, gross, net) = r?;
+            tick_data.insert(
+                tick,
+                LiquidityAtTick {
+                    liquidity_gross: decode_u256(&gross)?,
+                    liquidity_net: decode_i256(&net)?,
+                },
+            );
+        }
+    }
+
+    Ok(Some(LiquidityMap {
+        tick_bitmap,
+        tick_data,
+    }))
+}
+
+/// `fetch_liquidity_map_v4` body taking a borrowed `&Connection`.
+///
+/// # Errors
+/// [`DbError::Sqlite`] on a query failure or [`DbError::Decode`] on a malformed column.
+pub fn fetch_liquidity_map_v4_on_conn(
+    conn: &Connection,
+    pool_manager: Address,
+    pool_id_hash: B256,
+) -> Result<Option<LiquidityMap>, DbError> {
+    // Mirror Python: select the UniswapV4PoolTable joined to its manager,
+    // matching on pool_hash hex + manager address.
+    let hash_hex = format!("{pool_id_hash}"); // B256 Display includes the 0x prefix
+    let row: Option<i64> = conn
+        .query_row(
+            "SELECT v4.managed_pool_id \
+             FROM uniswap_v4_pools v4 \
+             JOIN managed_pools mp ON mp.id = v4.managed_pool_id \
+             JOIN pool_managers pm ON pm.id = mp.manager_id \
+             WHERE v4.pool_hash = ?1 AND pm.address = ?2",
+            rusqlite::params![hash_hex, pool_manager.to_checksum(None)],
+            |r| r.get::<_, i64>(0),
+        )
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(other),
+        })?;
+    let Some(managed_pool_id) = row else {
+        return Ok(None);
+    };
+
+    let mut tick_bitmap: HashMap<i64, BitmapAtWord> = HashMap::new();
+    {
+        let mut stmt = conn.prepare(
+            "SELECT word, bitmap FROM managed_pool_initialization_maps \
+             WHERE managed_pool_id = ?1",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![managed_pool_id], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+        })?;
+        for r in rows {
+            let (word, bitmap_str) = r?;
+            tick_bitmap.insert(
+                word,
+                BitmapAtWord {
+                    bitmap: decode_u256(&bitmap_str)?,
+                },
+            );
+        }
+    }
+
+    let mut tick_data: HashMap<i32, LiquidityAtTick> = HashMap::new();
+    {
+        let mut stmt = conn.prepare(
+            "SELECT tick, liquidity_gross, liquidity_net \
+             FROM managed_pool_liquidity_positions WHERE managed_pool_id = ?1",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![managed_pool_id], |r| {
+            Ok((
+                r.get::<_, i32>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?;
+        for r in rows {
+            let (tick, gross, net) = r?;
+            tick_data.insert(
+                tick,
+                LiquidityAtTick {
+                    liquidity_gross: decode_u256(&gross)?,
+                    liquidity_net: decode_i256(&net)?,
+                },
+            );
+        }
+    }
+
+    Ok(Some(LiquidityMap {
+        tick_bitmap,
+        tick_data,
+    }))
+}
+
+/// The tick-map-DB surface the `assemble_*_tick_map` Db arm reads against.
+/// Implemented by [`DegenbotDb`] (per-call `lock()` — each read its own
+/// snapshot) AND [`crate::snapshot_db::SnapshotDb`] (held read transaction —
+/// every read shares one frozen DB view across `build_paths`, the consistency
+/// replacement for the retired `SnapshotStore`, epic `XEANMB`).
+///
+/// `fetch_newest_update_block` is included so the snapshot-seed block `S` can
+/// be read on the SAME held tx as the per-pool data (so `S` matches the data).
+pub trait TickMapDb: Send + Sync {
+    /// The V3 [`LiquidityMap`] for `pool_address` (mirrors
+    /// `DatabaseSnapshot.get_liquidity_map`).
+    ///
+    /// # Errors
+    /// [`DbError::Sqlite`] on a query failure or [`DbError::Decode`] on a malformed column.
+    fn fetch_liquidity_map(&self, pool_address: Address) -> Result<Option<LiquidityMap>, DbError>;
+
+    /// The V4 [`LiquidityMap`] for `(pool_manager, pool_id_hash)`.
+    ///
+    /// # Errors
+    /// [`DbError::Sqlite`] on a query failure or [`DbError::Decode`] on a malformed column.
+    fn fetch_liquidity_map_v4(
+        &self,
+        pool_manager: Address,
+        pool_id_hash: B256,
+    ) -> Result<Option<LiquidityMap>, DbError>;
+
+    /// Newest `exchanges.last_update_block` for the chain + family.
+    ///
+    /// # Errors
+    /// [`DbError::Sqlite`] on a query failure.
+    fn fetch_newest_update_block(
+        &self,
+        chain: i64,
+        family: ExchangeFamily,
+    ) -> Result<Option<i64>, DbError>;
+}
+
+impl TickMapDb for DegenbotDb {
+    fn fetch_liquidity_map(&self, pool_address: Address) -> Result<Option<LiquidityMap>, DbError> {
+        DegenbotDb::fetch_liquidity_map(self, pool_address)
+    }
+    fn fetch_liquidity_map_v4(
+        &self,
+        pool_manager: Address,
+        pool_id_hash: B256,
+    ) -> Result<Option<LiquidityMap>, DbError> {
+        DegenbotDb::fetch_liquidity_map_v4(self, pool_manager, pool_id_hash)
+    }
+    fn fetch_newest_update_block(
+        &self,
+        chain: i64,
+        family: ExchangeFamily,
+    ) -> Result<Option<i64>, DbError> {
+        DegenbotDb::fetch_newest_update_block(self, chain, family)
     }
 }
