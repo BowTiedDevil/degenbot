@@ -733,6 +733,37 @@ class PyBot:
         The DB path's ``load_snapshot_from_db`` already sets `S` itself.
         """
 
+    def assemble_v3_tick_map(
+        self, address: str
+    ) -> tuple[dict[int, tuple[int, int, int]], str] | None:
+        """Assemble a V3 pool's tick map with `Store → Db` precedence.
+
+        Probes the bulk-loaded `SnapshotStore` (consumed once per pool); on a
+        miss falls back to `DegenbotDb::fetch_liquidity_map`. Returns
+        `(tick_data, coverage)` on a hit, `None` on a miss (caller runs Branch
+        3 sparse RPC). Coverage is `"tracked"` on a hit.
+
+        `tick_data` has the same `{tick: (liquidity_gross, liquidity_net, block)}`
+        shape as `register_v3_pool`'s `tick_data` arg — pass it straight back.
+
+        Raises:
+            RuntimeError: on a Db read failure (Decision 8 (A)) — loud error
+                over silent degradation, deliberate behavior change from the
+                prior `contextlib.suppress(Exception)` Python swallow.
+
+        """
+
+    def assemble_v4_tick_map(
+        self,
+        pool_manager: str,
+        pool_id: str | bytes,
+    ) -> tuple[dict[int, tuple[int, int, int]], str] | None:
+        """Assemble a V4 pool's tick map — V4 twin of `assemble_v3_tick_map`.
+
+        `pool_id` is the V4 pool id — a 0x-prefixed 66-char hex `str` or 32-byte
+        `bytes`. Same precedence, miss, and error semantics as the V3 variant.
+        """
+
     def register_v2_pool(
         self,
         address: str,
