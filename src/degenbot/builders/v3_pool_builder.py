@@ -12,7 +12,6 @@ from degenbot.builders.tick_data_fetcher import (
 )
 from degenbot.builders.v3_builder_base import V3BuilderBase, V3DbValues
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger
 from degenbot.registry.pool_type import pool_type_registry
@@ -100,7 +99,6 @@ class V3PoolBuilder(V3BuilderBase):
 
         Raises:
             ValueError: If the operation fails.
-            DegenbotValueError: If the operation fails.
             LiquidityPoolError: If the operation fails.
 
         """
@@ -119,8 +117,6 @@ class V3PoolBuilder(V3BuilderBase):
         # prior SQLAlchemy lazy-load. Falls back to skipping when no `io` /
         # `database_path` is configured (mirrors `contextlib.suppress`).
         db_values = None
-        pool_id_db: int | None = None
-        pool_kind_db: str | None = None
         # Route the DB read through the Rust `PyBotIo` seam (QVMWQC). The
         # `contextlib.suppress` makes a missing/empty DB a skip, not an error.
         with contextlib.suppress(Exception):
@@ -146,8 +142,6 @@ class V3PoolBuilder(V3BuilderBase):
                         if exchange_row.deployer is not None
                         else None,
                     )
-                pool_id_db = pool_row.id
-                pool_kind_db = pool_row.kind
 
         # Get immutable values
         if db_values is not None:
@@ -196,73 +190,83 @@ class V3PoolBuilder(V3BuilderBase):
         except Exception as exc:
             raise LiquidityPoolError(message="Could not decode contract data") from exc
 
-        # Fetch initial tick bitmap and tick data
-        db_snapshot_loaded = False
+        # Fetch initial tick bitmap and tick data via the Rust `assemble_*`
+        # helper (UHPXSD cutover / epic Candidate 1 / Decision 6 (B)). One call
+        # — Storage take → Db precedence, both in Rust; on a hit, the returned
+        # `tick_rows` is already in `register_v3_pool`'s `tick_data` arg shape
+        # (`{tick: (liquidity_gross, liquidity_net, block)}`). On a miss, fall
+        # through to Branch 3 (sparse RPC) as before.
+        #
+        # QVMWQC: the tick-snapshot read stays routed through the Rust seam.
+        # The `contextlib.suppress(Exception)` swallow around the DB block is
+        # GONE — Db errors propagate as `RuntimeError` from the Rust helper
+        # (Decision 8 (A): loud failure over silent degrade, deliberate
+        # behavior change; a `database is locked` under the concurrent updater
+        # process now aborts pool registration where Python previously
+        # swallowed it and fell to sparse RPC).
+        #
+        # Branch 1 (caller-supplied `request.tick_bitmap` + `request.tick_data`)
+        # is collapsed into the assemble path — those `BuildPoolRequest` fields
+        # are now dead parameters (orphaned; cleanup is a separate task).
+        rust_rows: dict[int, tuple[int, int, int]] = {}
+        coverage = "sparse"
         working_tick_bitmap: dict[int, Any] = {}
-        working_tick_data: dict[int, Any] = {}
 
-        # Use provided tick data if given (snapshot or test fixtures)
-        if request.tick_bitmap is not None and request.tick_data is not None:
-            working_tick_bitmap = dict(request.tick_bitmap)
-            working_tick_data = dict(request.tick_data)
-            db_snapshot_loaded = True
-        elif request.tick_bitmap is not None or request.tick_data is not None:
-            raise DegenbotValueError(message="Provide both tick_bitmap and tick_data, or neither.")
+        assembled = self._py_bot.assemble_v3_tick_map(pool_address)
+        if assembled is not None:
+            # Helper hit (Store arm or Db arm) — `tick_rows` is already in the
+            # `register_v3_pool` arg shape; `coverage` is `"tracked"`.
+            rust_rows, coverage = assembled
         else:
-            # Try DB snapshot tables first — route the tick-snapshot read
-            # through the Rust `PyBotIo` seam (QVMWQC). The per-FK fetch
-            # methods mirror the prior `pool.initialization_maps` /
-            # `pool.liquidity_positions` lazy-loads; `liquidity_update_block`
-            # comes from the subclass row.
-            if pool_id_db is not None and pool_kind_db is not None:
-                with contextlib.suppress(Exception):
-                    init_maps = io.fetch_initialization_maps(pool_id_db)
-                    liq_positions = io.fetch_liquidity_positions(pool_id_db)
-                    update_block = None
-                    kind_row = io.fetch_pool_kind(kind=pool_kind_db, pool_id=pool_id_db)
-                    if kind_row is not None:
-                        update_block = kind_row.liquidity_update_block
-                    working_tick_bitmap, working_tick_data, db_snapshot_loaded = (
-                        V3BuilderBase.load_tick_snapshot_from_seam_rows(
-                            init_maps=init_maps,
-                            liq_positions=liq_positions,
-                            liquidity_update_block=update_block,
-                        )
+            # Branch 3 sparse RPC (unchanged) — fetch only the current bitmap
+            # word + its active ticks via the Rust `PyBotIo` seam.
+            working_tick_data: dict[int, Any] = {}
+            word, _ = cl_get_tick_word_and_bit_position(
+                tick=int(tick),
+                tick_spacing=tick_spacing_for_pool,
+            )
+
+            # ADR-005 slice 14t: delegate tick-bitmap + per-tick RPCs to Rust
+            # (PyBotIo is the only executor; the Python parity-gate fallback is retired).
+            bitmap_at_word = io.fetch_tick_bitmap(pool_address, word, block=state_block)
+
+            if bitmap_at_word != 0:
+                active_ticks = [
+                    ((word << 8) + i) * tick_spacing_for_pool
+                    for i in range(256)
+                    if bitmap_at_word & (1 << i) > 0
+                ]
+
+                for active_tick in active_ticks:
+                    liquidity_gross, liquidity_net = io.fetch_tick_data(
+                        pool_address,
+                        active_tick,
+                        block=state_block,
+                    )
+                    working_tick_data[active_tick] = LiquidityAtTick(
+                        liquidity_net=int(liquidity_net),
+                        liquidity_gross=int(liquidity_gross),
+                        block=state_block,
                     )
 
-            if not db_snapshot_loaded:
-                word, _ = cl_get_tick_word_and_bit_position(
-                    tick=int(tick),
-                    tick_spacing=tick_spacing_for_pool,
-                )
+            working_tick_bitmap[word] = BitmapAtWord(
+                bitmap=bitmap_at_word,
+                block=state_block,
+            )
 
-                # ADR-005 slice 14t: delegate tick-bitmap + per-tick RPCs to Rust
-                # (PyBotIo is the only executor; the Python parity-gate fallback is retired).
-                bitmap_at_word = io.fetch_tick_bitmap(pool_address, word, block=state_block)
-
-                if bitmap_at_word != 0:
-                    active_ticks = [
-                        ((word << 8) + i) * tick_spacing_for_pool
-                        for i in range(256)
-                        if bitmap_at_word & (1 << i) > 0
-                    ]
-
-                    for active_tick in active_ticks:
-                        liquidity_gross, liquidity_net = io.fetch_tick_data(
-                            pool_address,
-                            active_tick,
-                            block=state_block,
-                        )
-                        working_tick_data[active_tick] = LiquidityAtTick(
-                            liquidity_net=int(liquidity_net),
-                            liquidity_gross=int(liquidity_gross),
-                            block=state_block,
-                        )
-
-                working_tick_bitmap[word] = BitmapAtWord(
-                    bitmap=bitmap_at_word,
-                    block=state_block,
-                )
+            for t, info in working_tick_data.items():
+                if isinstance(info, LiquidityAtTick):
+                    rust_rows[int(t)] = (
+                        int(info.liquidity_gross),
+                        int(info.liquidity_net),
+                        int(info.block),
+                    )
+                else:
+                    rust_rows[int(t)] = (
+                        int(info[0]),
+                        int(info[1]),
+                        int(info[2]) if len(info) > 2 else 0,  # noqa: PLR2004
+                    )
 
         # Deployer / init-hash are resolved off the Rust handle by _from_py_pool
         # (Fork A, P62DKO) — the builder no longer computes them.
@@ -286,20 +290,6 @@ class V3PoolBuilder(V3BuilderBase):
         # CLOBBERED by the seed overwrite (lost update → verify failure).
         # ``apply_swap`` still anchors the reorg genesis delta at state_block
         # (mirrors the V2 builder writing reserves with update_block).
-        rust_rows: dict[int, tuple[int, int, int]] = {}
-        for t, info in working_tick_data.items():
-            if isinstance(info, LiquidityAtTick):
-                rust_rows[int(t)] = (
-                    int(info.liquidity_gross),
-                    int(info.liquidity_net),
-                    int(info.block),
-                )
-            else:
-                rust_rows[int(t)] = (
-                    int(info[0]),
-                    int(info[1]),
-                    int(info[2]) if len(info) > 2 else 0,  # noqa: PLR2004
-                )
         state_block_int = int(state_block) if state_block is not None else 0
         pool_id = self._py_bot.register_v3_pool(
             address=pool_address,
@@ -313,7 +303,7 @@ class V3PoolBuilder(V3BuilderBase):
             tick=int(tick),
             tick_data=rust_rows or None,
             update_block=state_block_int,
-            coverage="tracked" if db_snapshot_loaded else "sparse",
+            coverage=coverage,
             tick_data_fetcher=self._make_tick_data_fetcher(pool_address, chain_id, io=io),
         )
         py_pool_handle = self._py_bot.get_pool(pool_id)
@@ -338,7 +328,7 @@ class V3PoolBuilder(V3BuilderBase):
         # Sparse-liquidity-map flag: the companion infers from tick_data_snapshot,
         # but the builder knows the true coverage from the DB snapshot. Override
         # if the builder has more info.
-        pool._sparse_liquidity_map = not (db_snapshot_loaded and bool(working_tick_data))  # noqa: SLF001
+        pool._sparse_liquidity_map = not (coverage == "tracked" and bool(rust_rows))  # noqa: SLF001
         # Deployer / init-hash: read off the Rust handle (Fork A, P62DKO).
         # The builder resolved the JSON-sourced deployer (effective deployer,
         # covering PancakeSwap V3's separate deployer) + init_hash at
