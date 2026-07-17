@@ -59,11 +59,13 @@ pub struct BootstrapTickWord {
 }
 
 /// Why a [`TickBootstrapRpc`] call could not complete.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum BootstrapTickError {
     /// The fetch itself failed (RPC error, timeout, transport, revert).
+    #[error("rpc failure (transport, timeout, or revert)")]
     Rpc,
     /// Malformed return data (short bytes, bad ABI decode, type-tag mismatch).
+    #[error("malformed return data (short bytes or bad abi decode)")]
     InvalidReturn,
 }
 
