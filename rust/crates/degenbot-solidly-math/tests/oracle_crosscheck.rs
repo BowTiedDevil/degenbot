@@ -18,7 +18,8 @@ use std::path::Path;
 use alloy::primitives::U256;
 use degenbot_solidly_math::{
     calc_d, calc_exact_in_stable_camelot, calc_exact_in_stable_solidly, calc_exact_in_volatile,
-    calc_f, calc_k, f_camelot, get_y_camelot, get_y_solidly, k_camelot,
+    calc_exact_out_stable_solidly, calc_f, calc_k, f_camelot, get_y_camelot, get_y_solidly,
+    k_camelot,
 };
 use serde_json::Value;
 
@@ -242,5 +243,87 @@ fn cross_check_calc_exact_in_stable_camelot() {
                 .expect("camelot stable path must not revert in snapshot");
         let want = expected_u256(&case["result"]);
         assert_eq!(got, want, "calc_exact_in_stable_camelot(...)");
+    }
+}
+
+// ── calc_exact_out_stable_solidly roundtrip property (S5SJXF / LTLR2K) ──
+//
+// The exact-out leaf has no deployed-contract oracle (the Python `_calc_tokens_in_stable`
+// raised `NotImplementedError`). The §4.2 oracle is the property-based check
+// `exact_out` is the *inverse* of `exact_in` over the Python-oracle snapshot
+// corpus — the same (reserves, decimals, fee, token_in, amount_in) cases the
+// exact-in parity pins. For each case:
+//   1. out        = calc_exact_in_stable_solidly(amount_in, ...)
+//   2. recovered  = calc_exact_out_stable_solidly(out,   ...)
+// Asserts:
+//   - recovered ≤ amount_in (the exact-in amount over-paid or exactly paid
+//     for the floored output; the inverse returns the *minimum* input that
+//     produces ≥ out, so it can be strictly less than a snapshot amount_in
+//     that over-paid for a truncated output);
+//   - exact_in(recovered) ≥ out (correctness — the recovered input does
+//     produce at least the target output);
+//   - exact_in(recovered − 1) < out (tightness — recovered is the minimum:
+//     one wei less would not reach the target).
+
+#[test]
+fn cross_check_calc_exact_out_stable_solidly_roundtrip() {
+    let snap = load_snapshot();
+    let one = U256::from_limbs([1, 0, 0, 0]);
+    for case in snap["calc_exact_in_stable_solidly"].as_array().unwrap() {
+        let args = case["args"].as_array().unwrap();
+        let amount_in = args_as_u256(&args[0]);
+        let token_in: u8 = args_as_u8(&args[1]);
+        let r0 = args_as_u256(&args[2]);
+        let r1 = args_as_u256(&args[3]);
+        let d0 = args_as_u256(&args[4]);
+        let d1 = args_as_u256(&args[5]);
+        let fee_numer = args_as_u256(&args[6]);
+        let fee_denom = args_as_u256(&args[7]);
+
+        let out =
+            calc_exact_in_stable_solidly(amount_in, token_in, r0, r1, d0, d1, fee_numer, fee_denom)
+                .expect("exact_in must not revert in snapshot");
+        if out.is_zero() {
+            // A zero output (degenerate input) is not a meaningful roundtrip target.
+            continue;
+        }
+        let recovered =
+            calc_exact_out_stable_solidly(out, token_in, r0, r1, d0, d1, fee_numer, fee_denom)
+                .expect("exact_out must not revert for an in-range output");
+
+        // (a) The inverse returns the MINIMUM input producing ≥ out, so it is
+        //     ≤ the snapshot's amount_in (which over-paid or exactly paid for
+        //     the floored output).
+        assert!(
+            recovered <= amount_in,
+            "exact_out ({recovered}) > amount_in ({amount_in}) for out={out} \
+             (r0={r0}, r1={r1}, d0={d0}, d1={d1}, token_in={token_in})",
+        );
+        assert!(
+            recovered > U256::ZERO,
+            "exact_out returned 0 for a non-zero output (out={out})",
+        );
+
+        // (b) Correctness: the recovered input produces at least the target
+        //     output when fed back through exact-in.
+        let out_from_recovered =
+            calc_exact_in_stable_solidly(recovered, token_in, r0, r1, d0, d1, fee_numer, fee_denom)
+                .expect("exact_in(recovered) must not revert");
+        assert!(
+            out_from_recovered >= out,
+            "exact_in(recovered)={out_from_recovered} < out={out} — inversion is insufficient",
+        );
+
+        // (c) Tightness: one wei less than `recovered` no longer reaches `out`
+        //     (so `recovered` is the minimum — the true getAmountIn answer).
+        let just_below = recovered - one;
+        let out_below = calc_exact_in_stable_solidly(
+            just_below, token_in, r0, r1, d0, d1, fee_numer, fee_denom,
+        )
+        .expect("exact_in(just_below) must not revert");
+        assert!(
+            out_below < out,
+            "exact_in(recovered-1)={out_below} >= out={out} — recovered is not the minimum",
+        );
     }
 }

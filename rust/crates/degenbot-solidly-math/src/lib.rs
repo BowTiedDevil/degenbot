@@ -64,7 +64,8 @@ pub mod solidly;
 
 pub use camelot::{calc_exact_in_stable_camelot, f_camelot, get_y_camelot, k_camelot};
 pub use solidly::{
-    calc_d, calc_exact_in_stable_solidly, calc_exact_in_volatile, calc_f, calc_k, get_y_solidly,
+    calc_d, calc_exact_in_stable_solidly, calc_exact_in_volatile, calc_exact_out_stable_solidly,
+    calc_f, calc_k, get_y_solidly,
 };
 
 /// Errors raised by the Solidly / Camelot math ports.

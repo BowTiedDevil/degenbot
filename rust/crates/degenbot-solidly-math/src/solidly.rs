@@ -100,9 +100,18 @@ pub fn get_y_solidly(
     x0: U256,
     xy: U256,
     y_seed: U256,
+    // Decimals are retained on the signature for API stability + the
+    // Solidly `_get_y`'s deployed-contract callers that pass them through;
+    // they were previously fed to a `calc_k` edge-case probe that
+    // mis-scaled (the 1e18-scaled `x0`/`y_plus_one` were re-normalized by
+    // `calc_k`, producing a wrong `k_info` for non-18-decimal tokens and
+    // premature convergence on the up-walking branch). The Solidity-faithful
+    // probe is `calc_f(x0, y+1)` — a direct invariant check that needs no
+    // decimal normalization — so the decimals are now unused here.
     decimals_0: U256,
     decimals_1: U256,
 ) -> Result<U256, SolidlyMathError> {
+    let _ = (decimals_0, decimals_1);
     let mut y = y_seed;
     for _ in 0..255 {
         let k = calc_f(x0, y);
@@ -117,8 +126,11 @@ pub fn get_y_solidly(
                 let y_plus_one = y
                     .checked_add(U256::from(1u64))
                     .ok_or(SolidlyMathError::Overflow)?;
-                let k_info = calc_k(x0, y_plus_one, decimals_0, decimals_1)?;
-                if k_info > xy {
+                // Solidity-faithful probe: `_f(x0, y+1) > xy` (NOT a
+                // decimal-normalized `calc_k`, which mis-scales when `x0`/
+                // `y_plus_one` are already 1e18-scaled — the deployed-contract
+                // `_get_y` uses `_f` here, not `_k`).
+                if calc_f(x0, y_plus_one) > xy {
                     return Ok(y_plus_one);
                 }
                 y = y_plus_one;
@@ -252,4 +264,116 @@ pub fn calc_exact_in_stable_solidly(
     )?;
     let y = reserves_b.wrapping_sub(y_sol);
     Ok(y.wrapping_mul(out_decimals) / ONE)
+}
+
+/// `amountIn` for an exact-output swap to a Solidly / Aerodrome stable pool
+/// — the inverse of [`calc_exact_in_stable_solidly`]. Given a target
+/// `amount_out`, returns the `amount_in` required to produce it.
+///
+/// # Derivation (inversion via the invariant's symmetry)
+///
+/// The exact-in path fixes `x0 = reserves_a + amount_in_after_fee` and solves
+/// `f(x0, y_new) = xy` for `y_new` via [`get_y_solidly`]; the output is
+/// `reserves_b − y_new`. The exact-out path instead fixes the post-swap
+/// `y_target = reserves_b − amount_out` and solves `f(x0, y_target) = xy` for
+/// `x0`; the post-fee input is `x0 − reserves_a`.
+///
+/// Because `f(x0, y) = x0·y·(x0² + y²)` is **symmetric** in its two
+/// arguments, solving `f(x0, y_target) = xy` for `x0` is exactly the same
+/// Newton solve as [`get_y_solidly`]`(y_target, xy, seed = reserves_a)` —
+/// the solver returns the second argument, which by symmetry *is* `x0`.
+/// The fee is then inverted with ceiling division (the Uniswap
+/// `getAmountIn` convention: `amount_in = ⌈amount_in_after_fee ·
+/// fee_denom / (fee_denom − fee_numer)⌉` so the realized output is at least
+/// the requested target).
+///
+/// # Errors
+///
+/// - [`SolidlyMathError::InvalidTokenIn`] if `token_in` is not 0 or 1.
+/// - [`SolidlyMathError::Overflow`] on divide-by-zero (zero decimals /
+///   zero fee-keep / `amount_out` not smaller than the output reserve).
+/// - Propagates [`get_y_solidly`]'s revert on non-convergence.
+#[allow(clippy::too_many_arguments)]
+pub fn calc_exact_out_stable_solidly(
+    amount_out: U256,
+    token_in: u8,
+    reserves_0: U256,
+    reserves_1: U256,
+    decimals_0: U256,
+    decimals_1: U256,
+    fee_numer: U256,
+    fee_denom: U256,
+) -> Result<U256, SolidlyMathError> {
+    if token_in != 0 && token_in != 1 {
+        return Err(SolidlyMathError::InvalidTokenIn);
+    }
+    if decimals_0.is_zero() || decimals_1.is_zero() || fee_denom.is_zero() {
+        return Err(SolidlyMathError::Overflow);
+    }
+    // Retained post-fee fraction = fee_denom − fee_numer (e.g. 1000 − 3 =
+    // 997 for a 0.3% Solidly fee). Zero (a 100% fee) is degenerate.
+    let fee_keep = fee_denom.wrapping_sub(fee_numer);
+    if fee_keep.is_zero() {
+        return Err(SolidlyMathError::Overflow);
+    }
+
+    let xy = calc_k(reserves_0, reserves_1, decimals_0, decimals_1)?;
+
+    let scaled_reserves_0 = reserves_0.wrapping_mul(ONE) / decimals_0;
+    let scaled_reserves_1 = reserves_1.wrapping_mul(ONE) / decimals_1;
+
+    // reserves_a = in-side scaled reserve; reserves_b = out-side scaled
+    // reserve; in_decimals / out_decimals = the corresponding token decimals.
+    let (reserves_a, reserves_b, in_decimals, out_decimals) = if token_in == 0 {
+        (scaled_reserves_0, scaled_reserves_1, decimals_0, decimals_1)
+    } else {
+        (scaled_reserves_1, scaled_reserves_0, decimals_1, decimals_0)
+    };
+
+    // amount_out → 1e18-scaled → the target post-swap out-side reserve.
+    let amount_out_scaled = amount_out.wrapping_mul(ONE) / out_decimals;
+    if amount_out_scaled >= reserves_b {
+        // Output exceeds (or equals) the available reserve — Solidity revert
+        // (the Solidly `getAmountIn` reverts when `amountOut >= reserveOut`).
+        return Err(SolidlyMathError::Overflow);
+    }
+    let y_target = reserves_b.wrapping_sub(amount_out_scaled);
+
+    // Solve `f(x0, y_target) = xy` for x0. By the symmetry of f, this is the
+    // same Newton solve as get_y_solidly(y_target, xy, seed = reserves_a)
+    // — the solver returns the second-argument solution, which by symmetry
+    // equals the desired x0.
+    let x0_sol = get_y_solidly(y_target, xy, reserves_a, decimals_0, decimals_1)?;
+
+    // x0 = reserves_a + amount_in_after_fee → recover the post-fee input
+    // (1e18-scaled). The in-side reserve strictly increases (x0_sol >
+    // reserves_a for any non-zero output), so the subtraction is well-defined
+    // under wrapping.
+    let amount_in_after_fee_scaled = x0_sol.wrapping_sub(reserves_a);
+
+    // Invert the (fee, scale) chain BACKWARDS to the pre-fee native amount.
+    // The forward path is:
+    //   amount_in_after_fee_pre   = ceil(amount_in · fee_keep / fee_denom)
+    //   amount_in_after_fee_scaled = floor(amount_in_after_fee_pre · ONE / decimals_in)
+    // so the min `amount_in` with `amount_in_after_fee_scaled ≥ target_scaled`
+    // is derived in two ceiling steps:
+    //   M         = ceil(target_scaled · decimals_in / ONE)   (min native
+    //               post-fee that scales up to ≥ target_scaled)
+    //   amount_in = floor((M - 1) · fee_denom / fee_keep) + 1
+    // (the min amount_in with `ceil(amount_in · fee_keep / fee_denom) ≥ M`).
+    // Mirrors the Uniswap V2 `getAmountIn` rounding-up convention (a
+    // ceiling at each rounding site so the realized output is at least the
+    // requested amount).
+    let m = amount_in_after_fee_scaled
+        .wrapping_mul(in_decimals)
+        .wrapping_add(ONE)
+        .wrapping_sub(U256::from(1u64))
+        / ONE;
+    // M ≥ 1 for any non-zero target (amount_in_after_fee_scaled > 0 here).
+    let m_minus_one = m.checked_sub(U256::from(1u64)).unwrap_or(U256::ZERO);
+    let amount_in = m_minus_one
+        .wrapping_mul(fee_denom)
+        .wrapping_div(fee_keep)
+        .wrapping_add(U256::from(1u64));
+    Ok(amount_in)
 }
