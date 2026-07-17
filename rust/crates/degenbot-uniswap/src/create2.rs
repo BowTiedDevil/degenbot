@@ -131,6 +131,133 @@ pub fn compute_v3_address(
     create2_address(deployer, salt, init_hash)
 }
 
+// ---------------------------------------------------------------------------
+// Aerodrome EIP-1167 clone address derivation (S5SJXF/U43OVR)
+// ---------------------------------------------------------------------------
+
+/// The EIP-1167 minimal-proxy creation bytecode prefix (10 bytes):
+/// `0x3d602d80600a3d3981f3` (the constructor that returns the runtime code).
+const EIP1167_PREFIX: [u8; 20] = [
+    0x3d, 0x60, 0x2d, 0x80, 0x60, 0x0a, 0x3d, 0x39, 0x81, 0xf3, // 10-byte constructor
+    0x36, 0x3d, 0x3d, 0x37, 0x3d, 0x3d, 0x3d, 0x36, 0x3d, 0x73, // 10-byte runtime head
+];
+/// The EIP-1167 minimal-proxy creation bytecode suffix (15 bytes):
+/// `0x5af43d82803e903d91602b57fd5bf3` (the `DELEGATECALL` + return/revert tail).
+const EIP1167_SUFFIX: [u8; 15] = [
+    0x5a, 0xf4, 0x3d, 0x82, 0x80, 0x3e, 0x90, 0x3d, 0x91, 0x60, 0x2b, 0x57, 0xfd, 0x5b, 0xf3,
+];
+
+/// Build the 55-byte EIP-1167 minimal-proxy creation bytecode templated on
+/// `implementation`.
+///
+/// Layout: `0x3d602d80600a3d3981f3` (10) ++ `0x363d3d373d3d3d363d73` (10) ++
+/// `implementation` (20) ++ `0x5af43d82803e903d91602b57fd5bf3` (15). This is
+/// the init code the Aerodrome V2/V3 factories CREATE2-deploy as a clone of
+/// `implementation`.
+#[must_use]
+fn eip1167_init_code(implementation: Address) -> [u8; 55] {
+    let mut code = [0u8; 55];
+    code[..20].copy_from_slice(&EIP1167_PREFIX);
+    code[20..40].copy_from_slice(implementation.as_slice());
+    code[40..].copy_from_slice(&EIP1167_SUFFIX);
+    code
+}
+
+/// The CREATE2 init code hash for an EIP-1167 minimal-proxy clone of
+/// `implementation` — `keccak256(minimal_proxy_code)`.
+#[must_use]
+fn eip1167_init_code_hash(implementation: Address) -> B256 {
+    keccak256(eip1167_init_code(implementation))
+}
+
+/// Compute an Aerodrome V2-style EIP-1167 clone pool address.
+///
+/// `salt = keccak256(abi.encodePacked(token0_sorted, token1_sorted, stable))`
+/// — the two addresses (20 bytes each, no padding) packed with a 1-byte
+/// `stable` flag (41 bytes total). The pool address is then the CREATE2
+/// deployment of the EIP-1167 minimal-proxy bytecode templated on
+/// `implementation`:
+/// `keccak256(0xFF ++ deployer ++ salt ++ keccak256(minimal_proxy_code))[12:]`.
+///
+/// Mirrors `generate_aerodrome_v2_pool_address` in
+/// `src/degenbot/aerodrome/functions.py` (the Python parity oracle).
+///
+/// # Examples
+///
+/// ```
+/// use degenbot_uniswap::create2::compute_aerodrome_v2_address;
+/// use alloy::primitives::address;
+///
+/// let deployer = address!("420DD381b31aEf6683db6B902084cB0FFECe40Da");
+/// let implementation = address!("A4e46b4f701c62e14DF11B48dCe76A7d793CD6d7");
+/// let t0 = address!("4200000000000000000000000000000000000006"); // WETH
+/// let t1 = address!("940181a94a35a4569e4529a3cdfb74e38fd98631"); // AERO
+/// let _addr = compute_aerodrome_v2_address(deployer, t0, t1, false, implementation);
+/// ```
+#[must_use]
+pub fn compute_aerodrome_v2_address(
+    deployer: Address,
+    token0: Address,
+    token1: Address,
+    stable: bool,
+    implementation: Address,
+) -> Address {
+    let (t0, t1) = sorted_pair(token0, token1);
+    let mut packed = [0u8; 41];
+    packed[..20].copy_from_slice(t0.as_slice());
+    packed[20..40].copy_from_slice(t1.as_slice());
+    packed[40] = u8::from(stable);
+    let salt = keccak256(packed);
+    create2_address(deployer, salt, eip1167_init_code_hash(implementation))
+}
+
+/// Compute an Aerodrome V3 (Slipstream)-style EIP-1167 clone pool address.
+///
+/// `salt = keccak256(abi.encode(token0_sorted, token1_sorted, tick_spacing))`
+/// — standard ABI encoding (each value in a 32-byte word, 96 bytes total):
+/// `token0` right-aligned in word 0, `token1` right-aligned in word 1, and
+/// the `int24 tick_spacing` sign-extended to 256 bits in word 2. The pool
+/// address is the CREATE2 deployment of the EIP-1167 minimal-proxy bytecode
+/// templated on `implementation`.
+///
+/// Mirrors `generate_aerodrome_v3_pool_address` in
+/// `src/degenbot/aerodrome/functions.py` (the Python parity oracle).
+///
+/// # Examples
+///
+/// ```
+/// use degenbot_uniswap::create2::compute_aerodrome_v3_address;
+/// use alloy::primitives::address;
+///
+/// let deployer = address!("5e7BB104d84c7CB9B682AaC2F3d509f5F406809A");
+/// let implementation = address!("eC8E5342B19977B4eF8892e02D8DAEcfa1315831");
+/// let t0 = address!("4200000000000000000000000000000000000006");
+/// let t1 = address!("940181a94a35a4569e4529a3cdfb74e38fd98631");
+/// let _addr = compute_aerodrome_v3_address(deployer, t0, t1, 200, implementation);
+/// ```
+#[must_use]
+pub fn compute_aerodrome_v3_address(
+    deployer: Address,
+    token0: Address,
+    token1: Address,
+    tick_spacing: i32,
+    implementation: Address,
+) -> Address {
+    let (t0, t1) = sorted_pair(token0, token1);
+    let mut encoded = [0u8; 96];
+    // Word 0: address right-aligned (12 leading zeros).
+    encoded[12..32].copy_from_slice(t0.as_slice());
+    // Word 1: address right-aligned (12 leading zeros).
+    encoded[44..64].copy_from_slice(t1.as_slice());
+    // Word 2: int24 sign-extended to 256 bits (29 sign bytes + 3 low bytes).
+    let ts_be = tick_spacing.to_be_bytes(); // [u8; 4], sign-extended from i32
+    let sign_byte = if tick_spacing < 0 { 0xff } else { 0x00 };
+    encoded[64..93].fill(sign_byte);
+    encoded[93..96].copy_from_slice(&ts_be[1..]);
+    let salt = keccak256(encoded);
+    create2_address(deployer, salt, eip1167_init_code_hash(implementation))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,6 +336,191 @@ mod tests {
         assert_ne!(
             compute_v3_address(UNISWAP_V3_FACTORY, t0, t1, 500, UNISWAP_V3_INIT_HASH),
             compute_v3_address(UNISWAP_V3_FACTORY, t0, t1, 3000, UNISWAP_V3_INIT_HASH),
+        );
+    }
+
+    // --- Aerodrome EIP-1167 clone-address parity (S5SJXF/U43OVR) ---------
+    // Cross-checked byte-for-byte against the Python
+    // `generate_aerodrome_v2_pool_address` / `_v3_pool_address` parity oracle
+    // (`src/degenbot/aerodrome/functions.py`) over a Base-deployment fixture
+    // corpus (§4.2 red-green parity).
+
+    const AERODROME_V2_BASE_DEPLOYER: Address =
+        address!("420DD381b31aEf6683db6B902084cB0FFECe40Da");
+    const AERODROME_V2_BASE_IMPLEMENTATION: Address =
+        address!("A4e46b4f701c62e14DF11B48dCe76A7d793CD6d7");
+    const AERODROME_V3_BASE_DEPLOYER: Address =
+        address!("5e7BB104d84c7CB9B682AaC2F3d509f5F406809A");
+    const AERODROME_V3_BASE_IMPLEMENTATION: Address =
+        address!("eC8E5342B19977B4eF8892e02D8DAEcfa1315831");
+
+    const BASE_WETH: Address = address!("4200000000000000000000000000000000000006");
+    const BASE_AERO: Address = address!("940181a94a35a4569e4529a3cdfb74e38fd98631");
+    const BASE_USDC: Address = address!("833589fCD6eDb6E08f4c7C32D4f71b54bdA20429");
+    const BASE_DAI: Address = address!("50c5725949A6F0c72E6C4a641F24049A9Ee73273");
+
+    #[test]
+    fn aerodrome_v2_volatile_matches_python_oracle() {
+        // BASE_AERO_WETH_V2_POOL (the on-chain pool).
+        let expected = address!("7f670f78B17dEC44d5Ef68a48740b6f8849cc2e6");
+        assert_eq!(
+            compute_aerodrome_v2_address(
+                AERODROME_V2_BASE_DEPLOYER,
+                BASE_WETH,
+                BASE_AERO,
+                false,
+                AERODROME_V2_BASE_IMPLEMENTATION,
+            ),
+            expected,
+        );
+    }
+
+    #[test]
+    fn aerodrome_v2_token_order_is_irrelevant() {
+        // Reversing the token pair yields the same address (sorted internally).
+        assert_eq!(
+            compute_aerodrome_v2_address(
+                AERODROME_V2_BASE_DEPLOYER,
+                BASE_WETH,
+                BASE_AERO,
+                false,
+                AERODROME_V2_BASE_IMPLEMENTATION,
+            ),
+            compute_aerodrome_v2_address(
+                AERODROME_V2_BASE_DEPLOYER,
+                BASE_AERO,
+                BASE_WETH,
+                false,
+                AERODROME_V2_BASE_IMPLEMENTATION,
+            ),
+        );
+    }
+
+    #[test]
+    fn aerodrome_v2_stable_distinct_from_volatile() {
+        // The stable flag flips the salt → different address.
+        assert_ne!(
+            compute_aerodrome_v2_address(
+                AERODROME_V2_BASE_DEPLOYER,
+                BASE_USDC,
+                BASE_DAI,
+                false,
+                AERODROME_V2_BASE_IMPLEMENTATION,
+            ),
+            compute_aerodrome_v2_address(
+                AERODROME_V2_BASE_DEPLOYER,
+                BASE_USDC,
+                BASE_DAI,
+                true,
+                AERODROME_V2_BASE_IMPLEMENTATION,
+            ),
+        );
+    }
+
+    #[test]
+    fn aerodrome_v2_stable_matches_python_oracle() {
+        let expected = address!("54cca6582cD24EdEfc7220ab051a0521EF5e761e");
+        assert_eq!(
+            compute_aerodrome_v2_address(
+                AERODROME_V2_BASE_DEPLOYER,
+                BASE_USDC,
+                BASE_DAI,
+                true,
+                AERODROME_V2_BASE_IMPLEMENTATION,
+            ),
+            expected,
+        );
+    }
+
+    #[test]
+    fn aerodrome_v3_slipstream_matches_python_oracle() {
+        // BASE_AERO_WETH_V3_POOL tick_spacing=200 (the on-chain Slipstream pool).
+        let expected = address!("82321f3BEB69f503380D6B233857d5C43562e2D0");
+        assert_eq!(
+            compute_aerodrome_v3_address(
+                AERODROME_V3_BASE_DEPLOYER,
+                BASE_WETH,
+                BASE_AERO,
+                200,
+                AERODROME_V3_BASE_IMPLEMENTATION,
+            ),
+            expected,
+        );
+    }
+
+    #[test]
+    fn aerodrome_v3_tick_spacing_variations_match_python_oracle() {
+        assert_eq!(
+            compute_aerodrome_v3_address(
+                AERODROME_V3_BASE_DEPLOYER,
+                BASE_USDC,
+                BASE_WETH,
+                100,
+                AERODROME_V3_BASE_IMPLEMENTATION,
+            ),
+            address!("4D3808259846D87fe51F644255A650dBaBc4735F"),
+        );
+        assert_eq!(
+            compute_aerodrome_v3_address(
+                AERODROME_V3_BASE_DEPLOYER,
+                BASE_DAI,
+                BASE_USDC,
+                1,
+                AERODROME_V3_BASE_IMPLEMENTATION,
+            ),
+            address!("77B5D8F3F6fB802Af8C49f9Ff510Cb3A90f9ecCe"),
+        );
+        assert_eq!(
+            compute_aerodrome_v3_address(
+                AERODROME_V3_BASE_DEPLOYER,
+                BASE_AERO,
+                BASE_DAI,
+                10_000,
+                AERODROME_V3_BASE_IMPLEMENTATION,
+            ),
+            address!("3E9dc6341ee0D08d26044B7CC8590E9191E248e3"),
+        );
+    }
+
+    #[test]
+    fn aerodrome_v3_token_order_is_irrelevant() {
+        assert_eq!(
+            compute_aerodrome_v3_address(
+                AERODROME_V3_BASE_DEPLOYER,
+                BASE_AERO,
+                BASE_WETH,
+                200,
+                AERODROME_V3_BASE_IMPLEMENTATION,
+            ),
+            compute_aerodrome_v3_address(
+                AERODROME_V3_BASE_DEPLOYER,
+                BASE_WETH,
+                BASE_AERO,
+                200,
+                AERODROME_V3_BASE_IMPLEMENTATION,
+            ),
+        );
+    }
+
+    #[test]
+    fn aerodrome_implementation_swap_changes_address() {
+        // Templating on a different implementation yields a different clone.
+        let other_impl = address!("0000000000000000000000000000000000000001");
+        assert_ne!(
+            compute_aerodrome_v2_address(
+                AERODROME_V2_BASE_DEPLOYER,
+                BASE_WETH,
+                BASE_AERO,
+                false,
+                AERODROME_V2_BASE_IMPLEMENTATION,
+            ),
+            compute_aerodrome_v2_address(
+                AERODROME_V2_BASE_DEPLOYER,
+                BASE_WETH,
+                BASE_AERO,
+                false,
+                other_impl,
+            ),
         );
     }
 }

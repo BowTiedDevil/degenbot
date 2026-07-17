@@ -32,10 +32,20 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Address utilities (feature = "uniswap")
     #[cfg(feature = "uniswap")]
-    m.add_function(wrap_pyfunction!(
-        crate::uniswap::address::to_checksum_address,
-        m
-    )?)?;
+    {
+        m.add_function(wrap_pyfunction!(
+            crate::uniswap::address::to_checksum_address,
+            m
+        )?)?;
+        m.add_function(wrap_pyfunction!(
+            crate::uniswap::address::compute_aerodrome_v2_pool_address,
+            m
+        )?)?;
+        m.add_function(wrap_pyfunction!(
+            crate::uniswap::address::compute_aerodrome_v3_pool_address,
+            m
+        )?)?;
+    }
 
     // Solady LibZip (FastLZ) compress/decompress — lives in `degenbot-core`
     // (always a dependency), so no feature gate. Registered on a real

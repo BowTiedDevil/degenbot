@@ -215,6 +215,20 @@ class PathIterator:
 def to_checksum_address(address: str) -> str: ...
 @overload
 def to_checksum_address(address: bytes) -> str: ...
+def compute_aerodrome_v2_pool_address(
+    deployer_address: str,
+    token0: str,
+    token1: str,
+    stable: bool,
+    implementation_address: str,
+) -> str: ...
+def compute_aerodrome_v3_pool_address(
+    deployer_address: str,
+    token0: str,
+    token1: str,
+    tick_spacing: int,
+    implementation_address: str,
+) -> str: ...
 
 # ── ABI decoder/encoder (feature = "abi"). ──
 # Pure-math wrappers over the degenbot-abi leaf, registered on a real Python
@@ -1192,6 +1206,8 @@ __all__ = [
     "build_path_graph",
     "cancel",
     "cl_math",
+    "compute_aerodrome_v2_pool_address",
+    "compute_aerodrome_v3_pool_address",
     "contract",
     "curve_math",
     "db",
