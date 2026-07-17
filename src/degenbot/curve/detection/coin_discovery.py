@@ -17,11 +17,11 @@ from degenbot.provider.call_helpers import encode_function_calldata
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
-    from degenbot.builders.pool_io import PoolIO
+    from degenbot.bot import PyBotIo
 
 
 def discover_coins(
-    io: PoolIO,
+    io: PyBotIo,
     pool_address: ChecksumAddress,
     *,
     block_identifier: int,

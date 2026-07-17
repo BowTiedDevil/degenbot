@@ -7,7 +7,7 @@ Each builder owns:
 
 Builders do NOT own:
 - Pool type resolution (Bot's job)
-- I/O routing (received via PoolIO / AsyncPoolIOProtocol)
+- I/O routing (received via PyBotIo — the single Rust-backed executor)
 - Database lifecycle (received via DatabaseSessionManager)
 """
 
@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from degenbot.builders.pool_io import AsyncPoolIO, PoolIO
+    from degenbot.bot import PyBotIo
     from degenbot.builders.request import BuildRequest
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
 
@@ -29,6 +29,10 @@ class PoolBuilder(Protocol):
     parameter in ``update()``. Optional parameters are forwarded via
     ``request: BuildPoolRequest`` — builders read the fields they recognize
     and ignore the rest.
+
+    The ``io`` argument is a :class:`~degenbot._ffi.PyBotIo` — the single
+    construction-I/O executor (Rust-backed, 65 methods). There is no
+    sync/async fork; ``AsyncBot`` and the async builders are retired.
     """
 
     def build(
@@ -36,7 +40,7 @@ class PoolBuilder(Protocol):
         address: str,
         *,
         chain_id: int | None = None,
-        io: PoolIO,
+        io: PyBotIo,
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
         """Build a pool from on-chain data."""
@@ -46,36 +50,7 @@ class PoolBuilder(Protocol):
     def update(
         pool: AbstractLiquidityPool,
         *,
-        io: PoolIO | None = None,
-        block_number: int | None = None,
-    ) -> bool:
-        """Update the pool state from on-chain data."""
-        ...
-
-
-class AsyncPoolBuilder(Protocol):
-    """Async counterpart of PoolBuilder.
-
-    Satisfies the same interface but with async build/update methods.
-    Used by AsyncBot.
-    """
-
-    async def build(
-        self,
-        address: str,
-        *,
-        chain_id: int | None = None,
-        io: AsyncPoolIO,
-        request: BuildRequest,
-    ) -> AbstractLiquidityPool:
-        """Build a pool from on-chain data."""
-        ...
-
-    @staticmethod
-    async def update(
-        pool: AbstractLiquidityPool,
-        *,
-        io: AsyncPoolIO | None = None,
+        io: PyBotIo | None = None,
         block_number: int | None = None,
     ) -> bool:
         """Update the pool state from on-chain data."""

@@ -5,17 +5,14 @@ from __future__ import annotations
 import dataclasses
 from typing import TYPE_CHECKING, Any, cast
 
-from degenbot.abi import decode
-from degenbot.checksum_cache import get_checksum_address
 from degenbot.logging import logger
-from degenbot.provider.call_helpers import encode_function_calldata
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from eth_typing import ChecksumAddress
 
-    from degenbot.builders.pool_io import PoolIO
+    from degenbot.bot import PyBotIo
     from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
     from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
@@ -50,7 +47,7 @@ FetchedTickData = dict[int, tuple[int, int, int]]
 
 def make_tick_data_fetcher(
     pool_lookup: Callable[[int], UniswapV3Pool | UniswapV4Pool | None],
-    io: PoolIO,
+    io: PyBotIo,
     types: TickDataTypes,
     *,
     state_view_address: str | None = None,
@@ -139,7 +136,7 @@ def make_tick_data_fetcher(
 
 def _fetch_v3(
     *,
-    io: PoolIO,
+    io: PyBotIo,
     pool_ref: _PoolRef,
     word_position: int,
     block_number: int,
@@ -155,26 +152,12 @@ def _fetch_v3(
 
     """
     # ADR-005 slice 14j: when io is a PyBotIo, delegate tick RPC calls to Rust.
-    fetch_tick_bitmap = getattr(io, "fetch_tick_bitmap", None)
-    fetch_tick_data = getattr(io, "fetch_tick_data", None)
-
-    if fetch_tick_bitmap is not None:
-        try:
-            bitmap_value = fetch_tick_bitmap(pool_ref.address, word_position, block=block_number)
-        except Exception:  # noqa: BLE001
-            return False
-    else:
-        try:
-            (bitmap_value,) = decode(
-                types=["uint256"],
-                data=io.call(
-                    to=pool_ref.address,
-                    data=encode_function_calldata("tickBitmap(int16)", [word_position]),
-                    block=block_number,
-                ),
-            )
-        except Exception:  # noqa: BLE001
-            return False
+    # ADR-005 slice 14j: delegate tick RPC calls to Rust (PyBotIo is the only
+    # executor; the Python parity-gate fallback is retired).
+    try:
+        bitmap_value = io.fetch_tick_bitmap(pool_ref.address, word_position, block=block_number)
+    except Exception:  # noqa: BLE001
+        return False
 
     if bitmap_value != 0:
         active_ticks = [
@@ -184,39 +167,19 @@ def _fetch_v3(
         ]
 
         for active_tick in active_ticks:
-            if fetch_tick_data is not None:
-                try:
-                    liquidity_gross, liquidity_net = fetch_tick_data(
-                        pool_ref.address,
-                        active_tick,
-                        block=block_number,
-                    )
-                except Exception:  # noqa: BLE001
-                    logger.debug(
-                        "Failed to fetch tick data for tick %d",
-                        active_tick,
-                        exc_info=True,
-                    )
-                    continue
-            else:
-                try:
-                    result = io.call(
-                        to=pool_ref.address,
-                        data=encode_function_calldata("ticks(int24)", [active_tick]),
-                        block=block_number,
-                    )
-                except Exception:  # noqa: BLE001
-                    logger.debug(
-                        "Failed to fetch tick data for tick %d",
-                        active_tick,
-                        exc_info=True,
-                    )
-                    continue
-
-                liquidity_gross, liquidity_net, *_ = decode(
-                    types=types.tick_struct_types,
-                    data=result,
+            try:
+                liquidity_gross, liquidity_net = io.fetch_tick_data(
+                    pool_ref.address,
+                    active_tick,
+                    block=block_number,
                 )
+            except Exception:  # noqa: BLE001
+                logger.debug(
+                    "Failed to fetch tick data for tick %d",
+                    active_tick,
+                    exc_info=True,
+                )
+                continue
 
             fetched[active_tick] = types.liquidity_at_tick(
                 liquidity_net=int(liquidity_net),
@@ -228,7 +191,7 @@ def _fetch_v3(
 
 def _fetch_v4(
     *,
-    io: PoolIO,
+    io: PyBotIo,
     state_view_address: str,
     pool_id: bytes,
     pool_ref: _PoolRef,
@@ -243,35 +206,17 @@ def _fetch_v4(
         ``True`` if the bitmap RPC succeeded, ``False`` on failure.
 
     """
-    # ADR-005 slice 14k: when io is a PyBotIo, delegate V4 tick RPCs to Rust.
-    fetch_v4_tick_bitmap = getattr(io, "fetch_v4_tick_bitmap", None)
-    fetch_v4_tick_data = getattr(io, "fetch_v4_tick_data", None)
-
-    if fetch_v4_tick_bitmap is not None:
-        try:
-            bitmap_value = fetch_v4_tick_bitmap(
-                state_view_address,
-                pool_id,
-                word_position,
-                block=block_number,
-            )
-        except Exception:  # noqa: BLE001
-            return False
-    else:
-        try:
-            (bitmap_value,) = decode(
-                types=["uint256"],
-                data=io.call(
-                    to=get_checksum_address(state_view_address),
-                    data=encode_function_calldata(
-                        "getTickBitmap(bytes32,int16)",
-                        [pool_id, word_position],
-                    ),
-                    block=block_number,
-                ),
-            )
-        except Exception:  # noqa: BLE001
-            return False
+    # ADR-005 slice 14k: delegate V4 tick RPCs to Rust (PyBotIo is the only
+    # executor; the Python parity-gate fallback is retired).
+    try:
+        bitmap_value = io.fetch_v4_tick_bitmap(
+            state_view_address,
+            pool_id,
+            word_position,
+            block=block_number,
+        )
+    except Exception:  # noqa: BLE001
+        return False
 
     if bitmap_value != 0:
         active_ticks = [
@@ -281,43 +226,20 @@ def _fetch_v4(
         ]
 
         for active_tick in active_ticks:
-            if fetch_v4_tick_data is not None:
-                try:
-                    liquidity_gross, liquidity_net = fetch_v4_tick_data(
-                        state_view_address,
-                        pool_id,
-                        active_tick,
-                        block=block_number,
-                    )
-                except Exception:  # noqa: BLE001
-                    logger.debug(
-                        "Failed to fetch V4 tick data for tick %d",
-                        active_tick,
-                        exc_info=True,
-                    )
-                    continue
-            else:
-                try:
-                    result = io.call(
-                        to=state_view_address,
-                        data=encode_function_calldata(
-                            "getTickLiquidity(bytes32,int24)",
-                            [pool_id, active_tick],
-                        ),
-                        block=block_number,
-                    )
-                except Exception:  # noqa: BLE001
-                    logger.debug(
-                        "Failed to fetch V4 tick data for tick %d",
-                        active_tick,
-                        exc_info=True,
-                    )
-                    continue
-
-                liquidity_gross, liquidity_net = decode(
-                    types=types.tick_struct_types,
-                    data=result,
+            try:
+                liquidity_gross, liquidity_net = io.fetch_v4_tick_data(
+                    state_view_address,
+                    pool_id,
+                    active_tick,
+                    block=block_number,
                 )
+            except Exception:  # noqa: BLE001
+                logger.debug(
+                    "Failed to fetch V4 tick data for tick %d",
+                    active_tick,
+                    exc_info=True,
+                )
+                continue
 
             fetched[active_tick] = types.liquidity_at_tick(
                 liquidity_net=int(liquidity_net),

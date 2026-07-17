@@ -5,19 +5,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from degenbot.abi import decode
 from degenbot.builders.v2_builder_base import V2BuilderBase
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.logging import logger
-from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.types import dex_identity
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 
 if TYPE_CHECKING:
+    from degenbot.bot import PyBotIo
     from degenbot.builders.context import BuilderContext
-    from degenbot.builders.pool_io import PoolIO
     from degenbot.builders.request import BuildRequest
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
@@ -64,7 +62,7 @@ class V2PoolBuilder(V2BuilderBase):
         address: str,
         *,
         chain_id: ChainId | None = None,
-        io: PoolIO,
+        io: PyBotIo,
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
         """Fetch pool data from DB/RPC and construct an I/O-free V2-style pool.
@@ -186,7 +184,7 @@ class V2PoolBuilder(V2BuilderBase):
     def _fetch_camelot_state(
         pool_address: str,
         *,
-        io: PoolIO,
+        io: PyBotIo,
         state_block: int,
     ) -> CamelotStateFetch:
         """Fetch Camelot-specific on-chain state (4 non-standard calls).
@@ -200,52 +198,17 @@ class V2PoolBuilder(V2BuilderBase):
             A ``CamelotStateFetch`` with stable_swap + integer fee fields.
 
         """
-        # ADR-005 slice 14q: when io is a PyBotIo, delegate all 4 RPCs to Rust.
-        fetch_camelot_state = getattr(io, "fetch_camelot_state", None)
-        if fetch_camelot_state is not None:
-            stable_swap, fee_denominator, fee_token0, fee_token1 = fetch_camelot_state(
-                pool_address,
-                block=state_block,
-            )
-            return CamelotStateFetch(
-                stable_swap=stable_swap,
-                fee_token0=int(fee_token0),
-                fee_token1=int(fee_token1),
-                fee_denominator=int(fee_denominator),
-            )
-        stable_result = io.call(
-            to=pool_address,
-            data=encode_function_calldata("stableSwap()", None),
+        # ADR-005 slice 14q: delegate all 4 RPCs to Rust (PyBotIo is the only
+        # executor; the Python parity-gate fallback is retired).
+        stable_swap, fee_denominator, fee_token0, fee_token1 = io.fetch_camelot_state(
+            pool_address,
             block=state_block,
         )
-        (stable_swap,) = decode(types=["bool"], data=stable_result)
-
-        fee_denom_result = io.call(
-            to=pool_address,
-            data=encode_function_calldata("FEE_DENOMINATOR()", None),
-            block=state_block,
-        )
-        (fee_denominator,) = decode(types=["uint256"], data=fee_denom_result)
-
-        fee0_result = io.call(
-            to=pool_address,
-            data=encode_function_calldata("token0FeePercent()", None),
-            block=state_block,
-        )
-        (fee_token0,) = decode(types=["uint16"], data=fee0_result)
-
-        fee1_result = io.call(
-            to=pool_address,
-            data=encode_function_calldata("token1FeePercent()", None),
-            block=state_block,
-        )
-        (fee_token1,) = decode(types=["uint16"], data=fee1_result)
-
         return CamelotStateFetch(
             stable_swap=stable_swap,
-            fee_token0=fee_token0,
-            fee_token1=fee_token1,
-            fee_denominator=fee_denominator,
+            fee_token0=int(fee_token0),
+            fee_token1=int(fee_token1),
+            fee_denominator=int(fee_denominator),
         )
 
     @staticmethod
@@ -253,7 +216,7 @@ class V2PoolBuilder(V2BuilderBase):
         pool: AbstractLiquidityPool,
         *,
         block_number: BlockIdentifier | None = None,
-        io: PoolIO | None = None,
+        io: PyBotIo | None = None,
     ) -> bool:
         """Fetch current state from chain and push update to the pool.
 

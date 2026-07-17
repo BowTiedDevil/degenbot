@@ -12,15 +12,14 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.pools import LiquidityPoolTable, UniswapFeeMixin
 from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger
-from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.uniswap import resolve_deployer, resolve_v2_init_hash
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
     from hexbytes import HexBytes
 
+    from degenbot.bot import PyBotIo
     from degenbot.builders.context import BuilderContext
-    from degenbot.builders.pool_io import PoolIO
     from degenbot.erc20 import Erc20Token
     from degenbot.types.abstract import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
@@ -130,7 +129,7 @@ class V2BuilderBase:
         *,
         chain_id: ChainId,
         state_block: int,
-        io: PoolIO,
+        io: PyBotIo,
     ) -> V2CommonData:
         """Fetch data shared by all V2 variants.
 
@@ -150,111 +149,55 @@ class V2BuilderBase:
         # `PyBotIo` seam (QVMWQC). `fetch_pool_row` returns the scalar + FK-id
         # columns; the `exchange` / `token0/1` relationships + the V2 subclass
         # fees hydrate via per-FK fetches, mirroring the prior SQLAlchemy
-        # lazy-load. Falls back to skipping when no `io` / `database_path` is
-        # configured (mirrors `contextlib.suppress`).
+        # lazy-load. The `contextlib.suppress` makes a missing/empty DB a
+        # cold-start (no snapshot pools), not an error.
         pool_found_in_db = False
-        fetch_pool_row = getattr(io, "fetch_pool_row", None) if io is not None else None
-        # All PyBotIo DB-query methods are present together; bind them via
-        # `getattr(..., None)` so the static type checker doesn't flag the
-        # `PoolIO`-protocol access (`PyBotIo` defines them; `PoolIO` does not).
-        fetch_exchange = getattr(io, "fetch_exchange", None) if fetch_pool_row is not None else None
-        fetch_token_by_id = (
-            getattr(io, "fetch_token_by_id", None) if fetch_pool_row is not None else None
-        )
-        fetch_pool_kind = (
-            getattr(io, "fetch_pool_kind", None) if fetch_pool_row is not None else None
-        )
-        if (
-            fetch_pool_row is not None
-            and fetch_exchange is not None
-            and fetch_token_by_id is not None
-            and fetch_pool_kind is not None
-        ):
-            with contextlib.suppress(Exception):
-                pool_row = fetch_pool_row(chain_id=chain_id, address=pool_address)
-                if pool_row is not None:
-                    exchange_row = fetch_exchange(exchange_id=pool_row.exchange_id)
-                    token0_row = fetch_token_by_id(token_id=pool_row.token0_id)
-                    token1_row = fetch_token_by_id(token_id=pool_row.token1_id)
-                    if (
-                        exchange_row is not None
-                        and token0_row is not None
-                        and token1_row is not None
-                    ):
-                        factory = get_checksum_address(exchange_row.factory)
-                        token0_address = get_checksum_address(token0_row.address)
-                        token1_address = get_checksum_address(token1_row.address)
-                        # The V2 subclass row carries the fees
-                        # (UniswapFeeMixin); a fee-bearing subclass has a
-                        # non-zero `fee_denominator`. Pools whose subclass
-                        # lacks fees (or has no subclass row) fall back to
-                        # the 3/1000 default (mirrors the ORM
-                        # `isinstance(UniswapFeeMixin)` branch).
-                        kind_row = fetch_pool_kind(kind=pool_row.kind, pool_id=pool_row.id)
-                        if kind_row is not None and kind_row.fee_denominator:
-                            fee_token0 = Fraction(kind_row.fee_token0, kind_row.fee_denominator)
-                            fee_token1 = Fraction(kind_row.fee_token1, kind_row.fee_denominator)
-                        else:
-                            fee_token0 = Fraction(3, 1000)
-                            fee_token1 = Fraction(3, 1000)
-                        pool_found_in_db = True
+        with contextlib.suppress(Exception):
+            pool_row = io.fetch_pool_row(chain_id=chain_id, address=pool_address)
+            if pool_row is not None:
+                exchange_row = io.fetch_exchange(exchange_id=pool_row.exchange_id)
+                token0_row = io.fetch_token_by_id(token_id=pool_row.token0_id)
+                token1_row = io.fetch_token_by_id(token_id=pool_row.token1_id)
+                if exchange_row is not None and token0_row is not None and token1_row is not None:
+                    factory = get_checksum_address(exchange_row.factory)
+                    token0_address = get_checksum_address(token0_row.address)
+                    token1_address = get_checksum_address(token1_row.address)
+                    # The V2 subclass row carries the fees
+                    # (UniswapFeeMixin); a fee-bearing subclass has a
+                    # non-zero `fee_denominator`. Pools whose subclass
+                    # lacks fees (or has no subclass row) fall back to
+                    # the 3/1000 default (mirrors the ORM
+                    # `isinstance(UniswapFeeMixin)` branch).
+                    kind_row = io.fetch_pool_kind(kind=pool_row.kind, pool_id=pool_row.id)
+                    if kind_row is not None and kind_row.fee_denominator:
+                        fee_token0 = Fraction(kind_row.fee_token0, kind_row.fee_denominator)
+                        fee_token1 = Fraction(kind_row.fee_token1, kind_row.fee_denominator)
+                    else:
+                        fee_token0 = Fraction(3, 1000)
+                        fee_token1 = Fraction(3, 1000)
+                    pool_found_in_db = True
 
         # Get factory and token addresses
         if not pool_found_in_db:
-            # ADR-005 slice 14e: when io is a PyBotIo (Bot's build path),
-            # delegate the 3-call immutable RPC choreography to Rust. SyncPoolIO
-            # fallback keeps the Python implementation as a parity gate.
-            fetch_v2_immutable_data = getattr(io, "fetch_v2_immutable_data", None)
-            if fetch_v2_immutable_data is not None:
-                try:
-                    factory, token0_address, token1_address = fetch_v2_immutable_data(pool_address)
-                except Exception as exc:
-                    raise LiquidityPoolError(message="Could not decode contract data") from exc
-            else:
-                # Fetch immutable values from chain
-                try:
-                    factory_result = io.call(
-                        to=pool_address,
-                        data=encode_function_calldata("factory()", None),
-                    )
-                    token0_result = io.call(
-                        to=pool_address,
-                        data=encode_function_calldata("token0()", None),
-                    )
-                    token1_result = io.call(
-                        to=pool_address,
-                        data=encode_function_calldata("token1()", None),
-                    )
-                except Exception as exc:
-                    raise LiquidityPoolError(message="Could not decode contract data") from exc
-
-                factory, token0_address, token1_address = V2BuilderBase.decode_immutable_data(
-                    factory_result=factory_result,
-                    token0_result=token0_result,
-                    token1_result=token1_result,
+            # ADR-005 slice 14e: delegate the 3-call immutable RPC choreography
+            # to Rust (PyBotIo is the only executor; the Python parity-gate
+            # fallback is retired).
+            try:
+                factory, token0_address, token1_address = io.fetch_v2_immutable_data(
+                    pool_address,
                 )
+            except Exception as exc:
+                raise LiquidityPoolError(message="Could not decode contract data") from exc
 
             # Default fee for V2 pools
             fee_token0 = Fraction(3, 1000)
             fee_token1 = Fraction(3, 1000)
 
         # Fetch reserves
-        fetch_v2_reserves = getattr(io, "fetch_v2_reserves", None)
-        if fetch_v2_reserves is not None:
-            try:
-                reserves0, reserves1 = fetch_v2_reserves(pool_address, block=state_block)
-            except Exception as exc:
-                raise LiquidityPoolError(message="Could not decode contract data") from exc
-        else:
-            reserves_result = io.call(
-                to=pool_address,
-                data=encode_function_calldata("getReserves()", None),
-                block=state_block,
-            )
-            reserves0, reserves1 = decode(
-                types=["uint256", "uint256"],
-                data=reserves_result,
-            )
+        try:
+            reserves0, reserves1 = io.fetch_v2_reserves(pool_address, block=state_block)
+        except Exception as exc:
+            raise LiquidityPoolError(message="Could not decode contract data") from exc
 
         deployer, resolved_init_hash = V2BuilderBase.resolve_deployer_and_init_hash(
             chain_id=chain_id,
@@ -302,11 +245,11 @@ class V2BuilderBase:
     @staticmethod
     def _fetch_reserves(
         pool_address: str,
-        io: PoolIO,
+        io: PyBotIo,
         *,
         block_identifier: int,
     ) -> tuple[int, int]:
-        """Fetch current reserves from chain via PoolIO.
+        """Fetch current reserves from chain via PyBotIo.
 
         Returns:
             The computed value.
@@ -314,13 +257,4 @@ class V2BuilderBase:
         """
         pool_address = get_checksum_address(pool_address)
 
-        reserves_result = io.call(
-            to=pool_address,
-            data=encode_function_calldata("getReserves()", None),
-            block=block_identifier,
-        )
-        reserves0, reserves1 = decode(
-            types=["uint256", "uint256"],
-            data=reserves_result,
-        )
-        return reserves0, reserves1
+        return io.fetch_v2_reserves(pool_address, block=block_identifier)

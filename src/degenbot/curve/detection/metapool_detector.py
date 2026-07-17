@@ -21,7 +21,7 @@ from degenbot.provider.call_helpers import encode_function_calldata
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
-    from degenbot.builders.pool_io import PoolIO
+    from degenbot.bot import PyBotIo
 
 
 # 3Crv LP token — used as fallback base pool detection
@@ -30,7 +30,7 @@ _THREE_CRV_POOL_ADDRESS = get_checksum_address("0xbEbc44782C7dB0a1A60Cb6fe97d0b4
 
 
 def detect_metapool(
-    io: PoolIO,
+    io: PyBotIo,
     pool_address: ChecksumAddress,
     token_addresses: tuple[ChecksumAddress, ...],
     *,
@@ -112,7 +112,7 @@ def detect_metapool(
 
 
 def _resolve_base_pool_address(
-    io: PoolIO,
+    io: PyBotIo,
     pool_address: ChecksumAddress,
     token_addresses: tuple[ChecksumAddress, ...],
     registry_address: ChecksumAddress,
