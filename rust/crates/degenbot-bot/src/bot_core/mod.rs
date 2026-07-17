@@ -28,6 +28,7 @@ pub mod log_dispatcher;
 pub mod reorg_coordinator;
 pub mod snapshot_verify;
 pub mod solve_coordinator;
+pub mod tick_assembly;
 pub mod v3_state;
 
 // Re-export the merged V3/V4/Curve state types (ADR-003: BotState owns

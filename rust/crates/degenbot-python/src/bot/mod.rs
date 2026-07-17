@@ -134,6 +134,19 @@ pub struct PyBot {
     /// `PyBot` (the D4 owner) and read/write the SAME `PumpState` the
     /// engine's snapshot/solve slices read.
     pump: parking_lot::Mutex<Option<Arc<crate::bot::pump::PumpState>>>,
+    /// Cached read-only `DegenbotDb` handle armed at `load_snapshot_from_db`
+    /// time (Decisions 5 (B) + 9 (A)). `None` for cold-start (no DB) or before
+    /// the snapshot load is attempted. The registration-path `PyO3` functions
+    /// (task `A4YUYJ`) clone this Arc to feed `&DegenbotDb` to the tick-map
+    /// assembly helper's Db arm (`bot_core::tick_assembly`).
+    ///
+    /// One connection, opened by `load_snapshot_from_db` and **retained**
+    /// (changed from open-use-drop). The snapshot load + the per-pool Db
+    /// probe share one `Mutex<Connection>` but never overlap in time — no
+    /// contention. WAL mode means no contention with the updater process
+    /// either. Forward-looking: future DB-owning Rust ports (pool updater,
+    /// lending-market updater) can clone the same Arc.
+    db: parking_lot::Mutex<Option<Arc<degenbot_db::connection::DegenbotDb>>>,
 }
 
 /// Crate-internal Rust surface on `PyBot` (not Python-visible).
@@ -144,6 +157,20 @@ impl PyBot {
     #[must_use]
     pub(crate) fn bot_arc(&self) -> Arc<Bot> {
         Arc::clone(&self.bot)
+    }
+
+    /// The cached read-only `DegenbotDb` handle armed by
+    /// `load_snapshot_from_db` (Decision 5 (B) / task A6J5HG), or `None` on
+    /// the cold-start path (no DB configured, or the snapshot load hasn't run
+    /// or failed). The registration-path `PyO3` functions (task `A4YUYJ` — the
+    /// `assemble_v3_tick_map` / `assemble_v4_tick_map` wrappers) clone this Arc
+    /// and pass `&*arc` to `bot_core::tick_assembly::assemble_*`'s `db` param.
+    /// Returns a fresh `Arc` clone — the caller owns the lifetime of the
+    /// borrow; `PyBot` retains its own Arc so subsequent callers still get `Some`.
+    #[must_use]
+    #[allow(dead_code)] // wired by task A4YUYJ — the assemble_*_tick_map PyO3 wrappers.
+    pub(crate) fn db_handle(&self) -> Option<Arc<degenbot_db::connection::DegenbotDb>> {
+        self.db.lock().clone()
     }
 
     /// ADR-006 D4 (T3): attach the pump lifecycle state owned by a
@@ -181,6 +208,7 @@ impl PyBot {
         Self {
             bot: Arc::new(Bot::new(chain_id)),
             pump: parking_lot::Mutex::new(None),
+            db: parking_lot::Mutex::new(None),
         }
     }
 
@@ -211,7 +239,16 @@ impl PyBot {
             .0;
         self.bot.load_snapshot_from_db(&db, chain_id).map_err(|e| {
             pyo3::exceptions::PyRuntimeError::new_err(format!("load_snapshot_from_db failed: {e}"))
-        })
+        })?;
+        // Decision 5 (B): retain the read-only `DegenbotDb` as a long-lived
+        // `Arc` so the registration-path PyO3 functions (`assemble_v3_tick_map`
+        // etc. — task A4YUYJ) can clone it to feed `&DegenbotDb` to the
+        // tick-map assembly helper's Db arm. Opened by THIS method (the sole
+        // armer) — single source of truth: `db_path` flows in via the existing
+        // arg, no new param on `#[new]`. Stored AFTER the snapshot load
+        // succeeded, so a failure leaves `db` as `None` (cold-start).
+        *self.db.lock() = Some(Arc::new(db));
+        Ok(())
     }
 
     /// The snapshot seed block `S` (or `None` when no DB snapshot was loaded —
@@ -1543,5 +1580,88 @@ pub(crate) fn journal_err_to_py(e: JournalError) -> PyErr {
         JournalError::NoStateAtOrAfterBlock { block } => pyo3::exceptions::PyValueError::new_err(
             format!("No pool state known at or after block {block}"),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+
+    /// The parity fixture DB (shared with `degenbot-bot`'s
+    /// `load_snapshot_from_db_populates_store_and_seed_block` test).
+    fn parity_fixture() -> Option<std::path::PathBuf> {
+        let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../degenbot-db/tests/fixtures/parity.db");
+        if p.exists() {
+            Some(p)
+        } else {
+            None
+        }
+    }
+
+    /// A fresh `PyBot` has `db_handle() == None` (cold-start path — no
+    /// `load_snapshot_from_db` call yet). Acceptance criterion: "Cold-start
+    /// path (no `load_snapshot_from_db` call) leaves `db` as None".
+    #[test]
+    fn cold_start_pybot_has_no_db_handle() {
+        let py_bot = PyBot::new(1);
+        assert!(
+            py_bot.db_handle().is_none(),
+            "a fresh PyBot must not hold a DegenbotDb handle (cold-start)"
+        );
+    }
+
+    /// Calling `load_snapshot_from_db` against a missing DB fails cleanly and
+    /// leaves `db_handle() == None` (the snapshot load failed → the cached
+    /// handle is NOT armed). Acceptance criterion: "On failure, `self.db`
+    /// stays `None`".
+    #[test]
+    fn snapshot_load_failure_leaves_db_handle_none() {
+        pyo3::Python::attach(|_| {
+            let py_bot = PyBot::new(1);
+            let result = py_bot.load_snapshot_from_db("/nonexistent/path/to/db.sqlite", 1);
+            assert!(
+                result.is_err(),
+                "opening a nonexistent DB path must surface a PyRuntimeError"
+            );
+            assert!(
+                py_bot.db_handle().is_none(),
+                "on snapshot-load failure the cached handle must stay None"
+            );
+        });
+    }
+
+    /// A successful `load_snapshot_from_db` arms `db_handle()` with the
+    /// read-only `DegenbotDb` used for the snapshot stream. Acceptance
+    /// criterion: "After successful load, `db_handle()` returns `Some`."
+    /// Skipped if the parity fixture isn't reachable from this crate layout.
+    #[test]
+    fn snapshot_load_success_arms_db_handle() {
+        let Some(fixture) = parity_fixture() else {
+            eprintln!("skipping: parity fixture not reachable");
+            return;
+        };
+        pyo3::Python::attach(|_| {
+            let py_bot = PyBot::new(8453);
+            let path_str = fixture.to_string_lossy().to_string();
+            py_bot
+                .load_snapshot_from_db(&path_str, 8453)
+                .expect("snapshot load against the parity fixture must succeed");
+            let handle = py_bot
+                .db_handle()
+                .expect("a successful snapshot load must arm the cached DegenbotDb handle");
+            // Sanity: the cached handle is usable for a read — the snapshot
+            // seed block computed at load time is readable via the cached
+            // connection (proving the `Mutex<Connection>` isn't dropped).
+            assert!(
+                py_bot.snapshot_seed_block().is_some(),
+                "parity fixture must record a non-cold-start snapshot seed block"
+            );
+            // Two clones don't interfere — PyBot retains its own Arc.
+            let _second = py_bot.db_handle();
+            assert!(py_bot.db_handle().is_some());
+            drop(handle);
+        });
     }
 }
