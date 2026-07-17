@@ -196,7 +196,8 @@
       "family": null,
       "factory": "0x420DD381b31aEf6683db6B902084cB0FFECe40Da",
       "deployer": null,
-      "init_hash": null
+      "init_hash": null,
+      "implementation_address": "0xA4e46b4f701c62e14DF11B48dCe76A7d793CD6d7"
     },
     {
       "name": "Aerodrome V3",
@@ -207,7 +208,8 @@
       "family": null,
       "factory": "0x5e7BB104d84c7CB9B682AaC2F3d509f5F406809A",
       "deployer": null,
-      "init_hash": null
+      "init_hash": null,
+      "implementation_address": "0xeC8E5342B19977B4eF8892e02D8DAEcfa1315831"
     },
     {
       "name": "Balancer V2 Weighted Pool Factory - rev1",
