@@ -1,10 +1,9 @@
-"""Shared Python-handle teardown for ``Bot`` and ``AsyncBot``.
+"""Shared Python-handle teardown for ``Bot``.
 
-``Bot`` and ``AsyncBot`` are parallel single-chain facades (ADR-006 D5) with
-identical attribute shape (``_trackers``, ``pools``, ``tokens``,
-``managed_pools``, ``db``, ``_py_bot``, ``_provider``) but no shared base
-class. This module holds the teardown body in one place so both delegate to
-it rather than duplicating ~15 lines.
+``Bot`` is the single-chain facade (ADR-006 D5) with attribute shape
+(``_trackers``, ``pools``, ``tokens``, ``managed_pools``, ``db``,
+``_py_bot``, ``_provider``, ``_io``). This module holds the teardown body
+in one place so the facade delegates to it rather than inlining ~15 lines.
 
 Two entry points:
 
