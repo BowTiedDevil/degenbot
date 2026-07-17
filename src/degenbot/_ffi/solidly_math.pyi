@@ -30,6 +30,16 @@ def calc_exact_in_stable_solidly(
     fee_numer: int,
     fee_denom: int,
 ) -> int: ...
+def calc_exact_out_stable_solidly(
+    amount_out: int,
+    token_in: int,
+    reserves_0: int,
+    reserves_1: int,
+    decimals_0: int,
+    decimals_1: int,
+    fee_numer: int,
+    fee_denom: int,
+) -> int: ...
 def calc_exact_in_stable_camelot(
     amount_in: int,
     token_in: int,
@@ -46,6 +56,7 @@ __all__ = [
     "calc_exact_in_stable_camelot",
     "calc_exact_in_stable_solidly",
     "calc_exact_in_volatile",
+    "calc_exact_out_stable_solidly",
     "calc_f",
     "calc_k",
     "camelot_f",

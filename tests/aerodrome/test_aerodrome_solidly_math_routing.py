@@ -114,9 +114,11 @@ def calc_strategy_spies(monkeypatch) -> dict[str, _Spy]:
     spies = {
         "stable": _Spy(calc_mod._rs_calc_exact_in_stable_solidly),
         "volatile": _Spy(calc_mod._rs_calc_exact_in_volatile),
+        "stable_out": _Spy(calc_mod._rs_calc_exact_out_stable_solidly),
     }
     monkeypatch.setattr(calc_mod, "_rs_calc_exact_in_stable_solidly", spies["stable"])
     monkeypatch.setattr(calc_mod, "_rs_calc_exact_in_volatile", spies["volatile"])
+    monkeypatch.setattr(calc_mod, "_rs_calc_exact_out_stable_solidly", spies["stable_out"])
     return spies
 
 
@@ -142,3 +144,49 @@ class TestPoolCalcRouting:
         # `calc_exact_in_volatile`); the stable seam was NOT touched.
         assert len(calc_strategy_spies["volatile"].calls) == 1
         assert len(calc_strategy_spies["stable"].calls) == 0
+
+
+class TestStableExactOut:
+    """Aerodrome stable exact-out roundtrip — the inverse of the stable exact-in.
+
+    The stable exact-out (`calc_exact_out_stable_solidly`) was previously a
+    `NotImplementedError` stub (ergo S5SJXF / LTLR2K — a gap-fill, not a port:
+    the Python leaf never existed). The §4.2 oracle is the property-based
+    roundtrip over the Solidly/Aerodrome stable invariant: `exact_out` is the
+    MINIMUM input producing at least the requested output, so
+
+        exact_out(exact_in(amount_in) ) ≤ amount_in
+        exact_in(exact_out(out)        ) ≥ out
+        exact_in(exact_out(out) - 1     ) < out   (the minimum is tight)
+    """
+
+    def test_routes_through_rust(self, stable_pool, calc_strategy_spies) -> None:
+        t1 = stable_pool._token1  # the OUT token (exact-out direction)
+        stable_pool.calculate_tokens_in_from_tokens_out(1_000_000, t1)
+
+        # §4.5 delegation-detection: the stable exact-out strategy routed
+        # through the Rust `calc_exact_out_stable_solidly` seam.
+        assert len(calc_strategy_spies["stable_out"].calls) == 1
+        assert len(calc_strategy_spies["stable"].calls) == 0
+        assert len(calc_strategy_spies["volatile"].calls) == 0
+
+    def test_roundtrip_is_the_minimum_input(self, stable_pool) -> None:
+        t0 = stable_pool._token0
+        t1 = stable_pool._token1
+        amount_in = 1_000_000  # 1 USDC
+        out = stable_pool.calculate_tokens_out_from_tokens_in(t0, amount_in)
+        recovered = stable_pool.calculate_tokens_in_from_tokens_out(out, t1)
+
+        # (a) The inverse returns the MINIMUM input producing ≥ out, so it is
+        #     ≤ the seed amount_in (which over-paid or exactly paid for the
+        #     floored output).
+        assert 0 < recovered <= amount_in
+
+        # (b) Correctness: the recovered input produces at least the target
+        #     output when fed back through exact-in.
+        assert stable_pool.calculate_tokens_out_from_tokens_in(t0, recovered) >= out
+
+        # (c) Tightness: one wei less than `recovered` no longer reaches `out`
+        #     (so `recovered` is the true minimum — the getAmountIn answer).
+        if recovered > 1:
+            assert stable_pool.calculate_tokens_out_from_tokens_in(t0, recovered - 1) < out

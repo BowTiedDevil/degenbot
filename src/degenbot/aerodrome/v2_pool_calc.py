@@ -20,6 +20,9 @@ from degenbot.aerodrome.math import (
 from degenbot.aerodrome.math import (
     calc_exact_in_volatile as _rs_calc_exact_in_volatile,
 )
+from degenbot.aerodrome.math import (
+    calc_exact_out_stable_solidly as _rs_calc_exact_out_stable_solidly,
+)
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import (
     InvalidSwapInputAmount,
@@ -117,11 +120,29 @@ class AerodromeV2PoolCalc:
                 message=f"Requested amount out ({token_out_quantity}) >= pool reserves ({reserves_out})",  # noqa:E501
             )
 
+        # Canonical (token0, token1) reserves + decimals needed by the
+        # Solidly-stable exact-out leaf (the volatile path ignores them).
+        reserves_0 = (
+            override_state.reserves_token0 if override_state is not None else self.reserves_token0
+        )
+        reserves_1 = (
+            override_state.reserves_token1 if override_state is not None else self.reserves_token1
+        )
+        # token_in direction (0 or 1): the OPPOSITE side of token_out.
+        token_in: Literal[0, 1] = 0 if token_out == self._token1 else 1
+        decimals_0 = 10**self._token0.decimals
+        decimals_1 = 10**self._token1.decimals
+
         return self._calc_tokens_in_from_tokens_out(
             token_out_quantity=token_out_quantity,
             reserves_in=reserves_in,
             reserves_out=reserves_out,
             fee=self._fee,
+            reserves_0=reserves_0,
+            reserves_1=reserves_1,
+            decimals_0=decimals_0,
+            decimals_1=decimals_1,
+            token_in=token_in,
         )
 
     def calculate_tokens_out_from_tokens_in(
@@ -312,6 +333,12 @@ class AerodromeV2PoolCalc:
         reserves_in: int,
         reserves_out: int,
         fee: Fraction,
+        # Stable-only context (ignored by the volatile path).
+        reserves_0: int,  # noqa: ARG004
+        reserves_1: int,  # noqa: ARG004
+        decimals_0: int,  # noqa: ARG004
+        decimals_1: int,  # noqa: ARG004
+        token_in: Literal[0, 1],  # noqa: ARG004
     ) -> int:
         """Volatile (constant-product) exact-out calculation.
 
@@ -330,9 +357,34 @@ class AerodromeV2PoolCalc:
     def _calc_tokens_in_stable(
         *,
         token_out_quantity: int,
-        reserves_in: int,
-        reserves_out: int,
+        reserves_in: int,  # noqa: ARG004
+        reserves_out: int,  # noqa: ARG004
         fee: Fraction,
+        reserves_0: int,
+        reserves_1: int,
+        decimals_0: int,
+        decimals_1: int,
+        token_in: Literal[0, 1],
     ) -> int:
-        """Stable exact-out calculation — not yet implemented."""
-        raise NotImplementedError
+        """Stable (Solidly invariant) exact-out calculation.
+
+        Delegates to the Rust ``calc_exact_out_stable_solidly`` leaf — the
+        inverse of ``calc_exact_in_stable_solidly`` over the Solidly/Aerodrome
+        invariant ``f(x0, y) = x0*y*(x0**2 + y**2)``. The post-fee input is
+        recovered by inverting the invariant via the solver's symmetry and
+        then ceiling-dividing the fee (getAmountIn rounding convention).
+
+        Returns:
+            The computed integer value.
+
+        """
+        return _rs_calc_exact_out_stable_solidly(
+            token_out_quantity,
+            token_in,
+            reserves_0,
+            reserves_1,
+            decimals_0,
+            decimals_1,
+            fee.numerator,
+            fee.denominator,
+        )

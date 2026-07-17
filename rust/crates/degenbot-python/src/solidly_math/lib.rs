@@ -287,6 +287,40 @@ pub fn calc_exact_in_stable_solidly(
     u256_to_py_obj(py, result)
 }
 
+/// `calc_exact_out_stable_solidly` — Solidly / Aerodrome stable
+/// amount-in (the inverse of `calc_exact_in_stable_solidly`). Pre-baked
+/// variant using `calc_k` + `get_y_solidly`.
+///
+/// # Errors
+///
+/// Returns `ValueError` on invalid `token_in`, overflow, or non-convergence.
+#[pyfunction(signature = (amount_out, token_in, reserves_0, reserves_1, decimals_0, decimals_1, fee_numer, fee_denom))]
+#[allow(clippy::too_many_arguments)]
+pub fn calc_exact_out_stable_solidly(
+    amount_out: &Bound<'_, PyAny>,
+    token_in: u8,
+    reserves_0: &Bound<'_, PyAny>,
+    reserves_1: &Bound<'_, PyAny>,
+    decimals_0: &Bound<'_, PyAny>,
+    decimals_1: &Bound<'_, PyAny>,
+    fee_numer: &Bound<'_, PyAny>,
+    fee_denom: &Bound<'_, PyAny>,
+) -> PyResult<PyObject> {
+    let py = amount_out.py();
+    let result = degenbot_solidly_math::calc_exact_out_stable_solidly(
+        extract_u256(amount_out)?,
+        token_in,
+        extract_u256(reserves_0)?,
+        extract_u256(reserves_1)?,
+        extract_u256(decimals_0)?,
+        extract_u256(decimals_1)?,
+        extract_u256(fee_numer)?,
+        extract_u256(fee_denom)?,
+    )
+    .map_err(solidly_err)?;
+    u256_to_py_obj(py, result)
+}
+
 /// `calc_exact_in_stable_camelot` — Camelot stable amount-out.
 /// Pre-baked variant using `k_camelot` + `get_y_camelot`.
 ///
@@ -350,6 +384,7 @@ pub fn add_solidly_math_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     submod.add_function(wrap_pyfunction!(camelot_get_y_camelot, &submod)?)?;
     submod.add_function(wrap_pyfunction!(calc_exact_in_volatile, &submod)?)?;
     submod.add_function(wrap_pyfunction!(calc_exact_in_stable_solidly, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(calc_exact_out_stable_solidly, &submod)?)?;
     submod.add_function(wrap_pyfunction!(calc_exact_in_stable_camelot, &submod)?)?;
 
     m.add_submodule(&submod)?;
