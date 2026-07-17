@@ -90,6 +90,7 @@ class DeploymentRecord:
     factory: str
     deployer: str | None
     init_hash: str | None
+    implementation_address: str | None = None
 
 
 # ``pool_type`` string → Python companion class. This map lives in the loader
@@ -148,6 +149,12 @@ def _parse_record(raw: dict[str, object]) -> DeploymentRecord:
         raise ValueError(msg)
     init_hash_raw = raw.get("init_hash")
     init_hash = init_hash_raw if isinstance(init_hash_raw, str) and init_hash_raw else None
+    implementation_raw = raw.get("implementation_address")
+    implementation_address = (
+        get_checksum_address(implementation_raw)
+        if isinstance(implementation_raw, str) and implementation_raw
+        else None
+    )
     return DeploymentRecord(
         name=_require_str(raw, "name"),
         chain_id=_require_int(raw, "chain_id"),
@@ -158,6 +165,7 @@ def _parse_record(raw: dict[str, object]) -> DeploymentRecord:
         factory=get_checksum_address(_require_str(raw, "factory")),
         deployer=_optional_str(raw, "deployer"),
         init_hash=init_hash,
+        implementation_address=implementation_address,
     )
 
 
@@ -357,4 +365,5 @@ def register_from_deployments(records: list[DeploymentRecord], registry: PoolTyp
             family=family,
             variant=record.variant,
             dex_identity=identity,
+            implementation_address=record.implementation_address,
         )

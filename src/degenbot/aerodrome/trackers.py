@@ -12,6 +12,7 @@ from degenbot.aerodrome.functions import (
 )
 from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import LiquidityPoolError, PoolCreationFailed, PoolNotAssociated
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.types.abstract.pool_tracker import AbstractPoolTracker
@@ -97,8 +98,6 @@ class AerodromeV2PoolTracker(
     Tracks Uniswap V2 liquidity pool helpers or their child classes.
     """
 
-    POOL_IMPLEMENTATION_ADDRESS = get_checksum_address("0xA4e46b4f701c62e14DF11B48dCe76A7d793CD6d7")
-
     def __init__(
         self,
         *,
@@ -117,13 +116,18 @@ class AerodromeV2PoolTracker(
             chain_id = bot.chain_id
 
         deployment = pool_type_registry.get_deployment(chain_id, factory_address)
+        pool_implementation_address: str | None = None
         if deployment is not None:
             deployer_address = deployment.deployer
             pool_init_hash = deployment.pool_init_hash
+            pool_implementation_address = deployment.implementation_address
         else:
             # Non-JSON Aerodrome/V2 fork: the Rust resolver gives the factory
             # deployer + the Uniswap V2 mainnet fallback init hash (Fork A,
-            # NSAZ4X).
+            # NSAZ4X). The EIP-1167 implementation address has no fallback —
+            # only JSON-registered Aerodrome factories carry it (a non-JSON
+            # Aerodrome fork must be added to deployments.json to derive
+            # clone addresses).
             deployer_address = resolve_deployer(chain_id, factory_address)
             pool_init_hash = resolve_v2_init_hash(chain_id, factory_address)
 
@@ -132,6 +136,11 @@ class AerodromeV2PoolTracker(
         self._deployer_address = get_checksum_address(deployer_address)
         self._factory_address = factory_address
         self._pool_init_hash = pool_init_hash or ""
+        self._pool_implementation_address = (
+            get_checksum_address(pool_implementation_address)
+            if pool_implementation_address is not None
+            else None
+        )
         self._tracked_pools = {}
         self._untracked_pools: set[ChecksumAddress] = set()
 
@@ -162,7 +171,7 @@ class AerodromeV2PoolTracker(
         pool_address = generate_aerodrome_v2_pool_address(
             deployer_address=self._deployer_address,
             token_addresses=sorted(token_addresses),
-            implementation_address=self.POOL_IMPLEMENTATION_ADDRESS,
+            implementation_address=self._require_pool_implementation_address(),
             stable=True,
         )
 
@@ -190,7 +199,7 @@ class AerodromeV2PoolTracker(
         pool_address = generate_aerodrome_v2_pool_address(
             deployer_address=self._deployer_address,
             token_addresses=sorted(token_addresses),
-            implementation_address=self.POOL_IMPLEMENTATION_ADDRESS,
+            implementation_address=self._require_pool_implementation_address(),
             stable=False,
         )
 
@@ -200,6 +209,27 @@ class AerodromeV2PoolTracker(
             pool_class_kwargs=pool_class_kwargs,
         )
 
+    def _require_pool_implementation_address(self) -> ChecksumAddress:
+        """Return the EIP-1167 master implementation address, or raise.
+
+        Returns:
+            The checksummed implementation address.
+
+        Raises:
+            DegenbotValueError: If no implementation address was resolved for
+                this factory (the factory is not in ``deployments.json``).
+
+        """
+        if self._pool_implementation_address is None:
+            msg = (
+                f"No Aerodrome pool implementation address registered for "
+                f"factory {self._factory_address} on chain {self._chain_id}. "
+                "Add the factory to deployments.json with an "
+                "'implementation_address' row."
+            )
+            raise DegenbotValueError(message=msg)
+        return self._pool_implementation_address
+
 
 class AerodromeV3PoolTracker(
     AbstractUniswapV3PoolTracker[AerodromeV3Pool],
@@ -207,7 +237,38 @@ class AerodromeV3PoolTracker(
 ):
     """AerodromeV3PoolTracker class."""
 
-    POOL_IMPLEMENTATION_ADDRESS = get_checksum_address("0xeC8E5342B19977B4eF8892e02D8DAEcfa1315831")
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize the instance."""
+        super().__init__(*args, **kwargs)
+        # Resolve the EIP-1167 master implementation address the Slipstream
+        # factory clones (from deployments.json). None for non-JSON factories.
+        deployment = pool_type_registry.get_deployment(self._chain_id, self._factory_address)
+        self._pool_implementation_address = (
+            get_checksum_address(deployment.implementation_address)
+            if deployment is not None and deployment.implementation_address is not None
+            else None
+        )
+
+    def _require_pool_implementation_address(self) -> ChecksumAddress:
+        """Return the EIP-1167 master implementation address, or raise.
+
+        Returns:
+            The checksummed implementation address.
+
+        Raises:
+            DegenbotValueError: If no implementation address was resolved for
+                this factory (the factory is not in ``deployments.json``).
+
+        """
+        if self._pool_implementation_address is None:
+            msg = (
+                f"No Aerodrome V3 (Slipstream) pool implementation address "
+                f"registered for factory {self._factory_address} on chain "
+                f"{self._chain_id}. Add the factory to deployments.json with "
+                "an 'implementation_address' row."
+            )
+            raise DegenbotValueError(message=msg)
+        return self._pool_implementation_address
 
     def __repr__(self) -> str:  # pragma: no cover
         """Return the canonical string representation.
@@ -244,7 +305,7 @@ class AerodromeV3PoolTracker(
         pool_address = generate_aerodrome_v3_pool_address(
             deployer_address=self._deployer_address,
             token_addresses=sorted(token_addresses),
-            implementation_address=self.POOL_IMPLEMENTATION_ADDRESS,
+            implementation_address=self._require_pool_implementation_address(),
             tick_spacing=tick_spacing,
         )
 
