@@ -431,6 +431,104 @@ pub fn verify_v3_pool_address(
 // - `Err(AddressMismatch)` if the (chain, factory) is in the JSON with a
 //   CREATE2 init hash but the recomputed address != expected.
 
+/// Recompute an Aerodrome V2 EIP-1167 clone address for a pool registration
+/// against the JSON-sourced deployer + implementation address. Mirrors
+/// [`verify_v2_pool_address`] with the Aerodrome V2 salt (tokens + `stable`).
+///
+/// `Ok(())` on match or not-applicable (see [`verify_v2_pool_address`]);
+/// `Err(AddressMismatch)` on a verified mismatch. The reported `init_hash`
+/// field is the CREATE2 init code hash for the EIP-1167 clone —
+/// [`create2::eip1167_init_code_hash`] of the implementation — so the
+/// mismatch context reproduces the same derivation.
+///
+/// # Errors
+///
+/// Returns `Err(AddressMismatch)` only when the `(chain_id, factory)` is in
+/// the shipped JSON with an `implementation_address` AND the recomputed
+/// EIP-1167 clone address differs from `expected`. Returns `Ok(())` for
+/// non-applicable cases (Fork A follow-on, S5SJXF/WLJD2Y).
+#[must_use = "the verification result must be checked before registration proceeds"]
+pub fn verify_aerodrome_v2_pool_address(
+    chain_id: u64,
+    factory: Address,
+    expected: Address,
+    token0: Address,
+    token1: Address,
+    stable: bool,
+) -> Result<(), AddressMismatch> {
+    let Some(rec) = lookup(chain_id, factory) else {
+        return Ok(()); // not in JSON → skip (ad-hoc registration preserved)
+    };
+    let Some(implementation) = rec.implementation_address else {
+        return Ok(()); // row has no EIP-1167 clone path → skip
+    };
+    let deployer = rec.effective_deployer();
+    let computed =
+        create2::compute_aerodrome_v2_address(deployer, token0, token1, stable, implementation);
+    let init_hash = create2::eip1167_init_code_hash(implementation);
+    if computed == expected {
+        Ok(())
+    } else {
+        Err(AddressMismatch {
+            chain_id,
+            factory,
+            deployer,
+            init_hash,
+            expected,
+            computed,
+        })
+    }
+}
+
+/// Recompute an Aerodrome V3 (Slipstream) EIP-1167 clone address for a pool
+/// registration against the JSON-sourced deployer + implementation address.
+/// Mirrors [`verify_aerodrome_v2_pool_address`] with the V3 salt (tokens +
+/// `tick_spacing`).
+///
+/// # Errors
+///
+/// Returns `Err(AddressMismatch)` only when the `(chain_id, factory)` is in
+/// the shipped JSON with an `implementation_address` AND the recomputed
+/// EIP-1167 clone address differs from `expected`. Returns `Ok(())` for
+/// non-applicable cases (Fork A follow-on, S5SJXF/WLJD2Y).
+#[must_use = "the verification result must be checked before registration proceeds"]
+pub fn verify_aerodrome_v3_pool_address(
+    chain_id: u64,
+    factory: Address,
+    expected: Address,
+    token0: Address,
+    token1: Address,
+    tick_spacing: i32,
+) -> Result<(), AddressMismatch> {
+    let Some(rec) = lookup(chain_id, factory) else {
+        return Ok(()); // not in JSON → skip (ad-hoc registration preserved)
+    };
+    let Some(implementation) = rec.implementation_address else {
+        return Ok(()); // row has no EIP-1167 clone path → skip
+    };
+    let deployer = rec.effective_deployer();
+    let computed = create2::compute_aerodrome_v3_address(
+        deployer,
+        token0,
+        token1,
+        tick_spacing,
+        implementation,
+    );
+    let init_hash = create2::eip1167_init_code_hash(implementation);
+    if computed == expected {
+        Ok(())
+    } else {
+        Err(AddressMismatch {
+            chain_id,
+            factory,
+            deployer,
+            init_hash,
+            expected,
+            computed,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -672,5 +770,79 @@ mod tests {
         let v2 = lookup(1, UNISWAP_V2_MAINNET_FACTORY).expect("Uniswap V2 mainnet present");
         assert!(v2.implementation_address.is_none());
         assert!(implementation_address(1, UNISWAP_V2_MAINNET_FACTORY).is_none());
+    }
+
+    // --- Aerodrome register-time verification (S5SJXF/WLJD2Y) -------------
+
+    #[test]
+    fn verify_aerodrome_v2_round_trips() {
+        // The correct on-chain AERO/WETH V2 volatile address verifies.
+        let expected = address!("7f670f78B17dEC44d5Ef68a48740b6f8849cc2e6");
+        assert!(verify_aerodrome_v2_pool_address(
+            8453,
+            AERODROME_V2_BASE_FACTORY,
+            expected,
+            address!("4200000000000000000000000000000000000006"),
+            address!("940181a94a35a4569e4529a3cdfb74e38fd98631"),
+            false,
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn verify_aerodrome_v2_rejects_wrong_address() {
+        // A deliberately-wrong address must fail verification with a mismatch.
+        let wrong = address!("0000000000000000000000000000000000000001");
+        let err = verify_aerodrome_v2_pool_address(
+            8453,
+            AERODROME_V2_BASE_FACTORY,
+            wrong,
+            address!("4200000000000000000000000000000000000006"),
+            address!("940181a94a35a4569e4529a3cdfb74e38fd98631"),
+            false,
+        )
+        .expect_err("wrong Aerodrome V2 address must fail verification");
+        assert_eq!(err.expected, wrong);
+        assert_eq!(err.chain_id, 8453);
+        assert_eq!(err.factory, AERODROME_V2_BASE_FACTORY);
+        // The reported init_hash is the CREATE2 init code hash for the
+        // EIP-1167 clone of the implementation (keccak of the 55-byte
+        // minimal-proxy bytecode).
+        assert_eq!(
+            err.init_hash,
+            create2::eip1167_init_code_hash(AERODROME_V2_POOL_IMPLEMENTATION)
+        );
+    }
+
+    #[test]
+    fn verify_aerodrome_v2_stable_flag_changes_address() {
+        // The correct volatile address must NOT verify for the stable flag
+        // (the salt differs) — proving stable matters for verification.
+        let volatile = address!("7f670f78B17dEC44d5Ef68a48740b6f8849cc2e6");
+        assert!(verify_aerodrome_v2_pool_address(
+            8453,
+            AERODROME_V2_BASE_FACTORY,
+            volatile,
+            address!("4200000000000000000000000000000000000006"),
+            address!("940181a94a35a4569e4529a3cdfb74e38fd98631"),
+            true, // stable flag mismatch
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn verify_aerodrome_v2_skips_for_non_json_factory() {
+        // A non-JSON Aerodrome factory must skip verification (ad-hoc path).
+        let ad_hoc_factory = address!("1234567890123456789012345678901234567890");
+        let ad_hoc_addr = address!("0000000000000000000000000000000000000000");
+        assert!(verify_aerodrome_v2_pool_address(
+            8453,
+            ad_hoc_factory,
+            ad_hoc_addr,
+            address!("4200000000000000000000000000000000000006"),
+            address!("940181a94a35a4569e4529a3cdfb74e38fd98631"),
+            false,
+        )
+        .is_ok());
     }
 }

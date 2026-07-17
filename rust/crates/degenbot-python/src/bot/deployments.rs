@@ -170,3 +170,47 @@ pub(crate) fn verify_v3(
     deployments::verify_v3_pool_address(chain_id, factory, expected, token0, token1, fee)
         .map_err(map_mismatch)
 }
+
+/// Verify an Aerodrome V2 pool registration's declared address against the
+/// JSON-sourced EIP-1167 deployer + implementation address (the Aerodrome V2
+/// salt includes the `stable` flag). `Ok(())` if it matches or is not
+/// applicable; `Err(PyValueError)` on a verified mismatch.
+/// (Fork A follow-on, S5SJXF/WLJD2Y — the Aerodrome parity gap of JC6OFG.)
+pub(crate) fn verify_aerodrome_v2(
+    chain_id: u64,
+    factory: alloy::primitives::Address,
+    expected: alloy::primitives::Address,
+    token0: alloy::primitives::Address,
+    token1: alloy::primitives::Address,
+    stable: bool,
+) -> PyResult<()> {
+    deployments::verify_aerodrome_v2_pool_address(
+        chain_id, factory, expected, token0, token1, stable,
+    )
+    .map_err(map_mismatch)
+}
+
+/// Verify an Aerodrome V3 (Slipstream) pool registration's declared address
+/// against the JSON-sourced EIP-1167 deployer + implementation address (the
+/// V3 salt includes the `tick_spacing`). `Ok(())` if it matches or is not
+/// applicable; `Err(PyValueError)` on a verified mismatch.
+/// (Fork A follow-on, S5SJXF/WLJD2Y.)
+#[allow(dead_code)] // wired when a tick_spacing-aware register_aerodrome_v3 lands
+pub(crate) fn verify_aerodrome_v3(
+    chain_id: u64,
+    factory: alloy::primitives::Address,
+    expected: alloy::primitives::Address,
+    token0: alloy::primitives::Address,
+    token1: alloy::primitives::Address,
+    tick_spacing: i32,
+) -> PyResult<()> {
+    deployments::verify_aerodrome_v3_pool_address(
+        chain_id,
+        factory,
+        expected,
+        token0,
+        token1,
+        tick_spacing,
+    )
+    .map_err(map_mismatch)
+}

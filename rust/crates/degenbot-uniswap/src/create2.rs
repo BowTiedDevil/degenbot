@@ -164,9 +164,12 @@ fn eip1167_init_code(implementation: Address) -> [u8; 55] {
 }
 
 /// The CREATE2 init code hash for an EIP-1167 minimal-proxy clone of
-/// `implementation` — `keccak256(minimal_proxy_code)`.
+/// `implementation` — `keccak256(minimal_proxy_code)`. Exposed so the
+/// Aerodrome verification path can report it in an [`AddressMismatch`] (the
+/// CREATE2 init code hash for a clone deployment *is* the keccak of the
+/// 55-byte minimal-proxy bytecode templated on the implementation).
 #[must_use]
-fn eip1167_init_code_hash(implementation: Address) -> B256 {
+pub fn eip1167_init_code_hash(implementation: Address) -> B256 {
     keccak256(eip1167_init_code(implementation))
 }
 
