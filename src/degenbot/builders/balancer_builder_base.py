@@ -12,10 +12,9 @@ from degenbot.balancer.deployments import BALANCER_V2_VAULT_ADDRESS
 from degenbot.balancer.libraries.constants import ONE, PowVersion
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import DegenbotValueError, RpcError
-from degenbot.provider.call_helpers import encode_function_calldata
 
 if TYPE_CHECKING:
-    from degenbot.builders.pool_io import PoolIO
+    from degenbot.bot import PyBotIo
 
 
 class _BalancerPoolType(IntEnum):
@@ -52,7 +51,7 @@ class BalancerBuilderBase:
 
     Sync and async builders call these @staticmethod helpers
     without duplicating decode/extract logic. I/O helpers take
-    a PoolIO parameter — callers pass the io they receive.
+    a PyBotIo parameter — callers pass the io they receive.
     """
 
     INVARIANT_V1 = 1
@@ -159,114 +158,67 @@ class BalancerBuilderBase:
     # --- I/O helpers ---
 
     @staticmethod
-    def _fetch_pool_id(io: PoolIO, address: str, block: int) -> bytes:
-        fetcher = getattr(io, "fetch_balancer_pool_id", None)
-        if fetcher is not None:
-            return bytes(fetcher(address, block=block))
-        data = encode_function_calldata("getPoolId()", None)
-        result = io.call(to=address, data=data, block=block)
-        decoded = decode(["bytes32"], result)
-        return decoded[0]
+    def _fetch_pool_id(io: PyBotIo, address: str, block: int) -> bytes:
+        return bytes(io.fetch_balancer_pool_id(address, block=block))
 
     @staticmethod
     def _fetch_vault_tokens(
-        io: PoolIO,
+        io: PyBotIo,
         pool_id: bytes,
         block: int | None,
     ) -> tuple[list[str], list[int]]:
-        fetcher = getattr(io, "fetch_balancer_vault_tokens", None)
-        if fetcher is not None:
-            tokens, balances = fetcher(BALANCER_V2_VAULT_ADDRESS, pool_id, block=block)
-            return list(tokens), [int(b) for b in balances]
-        data = encode_function_calldata(
-            "getPoolTokens(bytes32)",
-            [pool_id],
-        )
-        result = io.call(
-            to=BALANCER_V2_VAULT_ADDRESS,
-            data=data,
+        tokens, balances = io.fetch_balancer_vault_tokens(
+            BALANCER_V2_VAULT_ADDRESS,
+            pool_id,
             block=block,
         )
-        decoded = decode(["address[]", "uint256[]", "uint256"], result)
-        return decoded[0], decoded[1]
+        return list(tokens), [int(b) for b in balances]
 
     @staticmethod
-    def _fetch_swap_fee(io: PoolIO, address: str, block: int) -> Fraction:
-        fetcher = getattr(io, "fetch_balancer_swap_fee", None)
-        if fetcher is not None:
-            return Fraction(fetcher(address, block=block), 10**18)
-        data = encode_function_calldata("getSwapFeePercentage()", None)
-        result = io.call(to=address, data=data, block=block)
-        decoded = decode(["uint256"], result)
-        return Fraction(decoded[0], 10**18)
+    def _fetch_swap_fee(io: PyBotIo, address: str, block: int) -> Fraction:
+        return Fraction(io.fetch_balancer_swap_fee(address, block=block), 10**18)
 
     @staticmethod
-    def _fetch_weights(io: PoolIO, address: str, block: int) -> list[int]:
-        fetcher = getattr(io, "fetch_balancer_weights", None)
-        if fetcher is not None:
-            return list(fetcher(address, block=block))
-        data = encode_function_calldata("getNormalizedWeights()", None)
-        result = io.call(to=address, data=data, block=block)
-        decoded = decode(["uint256[]"], result)
-        return list(decoded[0])
+    def _fetch_weights(io: PyBotIo, address: str, block: int) -> list[int]:
+        return list(io.fetch_balancer_weights(address, block=block))
 
     @staticmethod
-    def _fetch_amp(io: PoolIO, address: str, block: int) -> int:
-        fetcher = getattr(io, "fetch_balancer_amp", None)
-        if fetcher is not None:
-            return fetcher(address, block=block)
-        data = encode_function_calldata("getAmplificationParameter()", None)
-        result = io.call(to=address, data=data, block=block)
-        decoded = decode(["uint256", "bool"], result)
-        return decoded[0]
+    def _fetch_amp(io: PyBotIo, address: str, block: int) -> int:
+        return io.fetch_balancer_amp(address, block=block)
 
     @staticmethod
     def _fetch_rate_providers(
-        io: PoolIO,
+        io: PyBotIo,
         address: str,
         block: int,
     ) -> list[str]:
-        fetcher = getattr(io, "fetch_balancer_rate_providers", None)
-        if fetcher is not None:
-            try:
-                return list(fetcher(address, block=block))
-            except (RpcError, AbiDecodeError):
-                return []
+        # ADR-005 slice 14n: delegate to Rust. WeightedPool2Tokens and
+        # MetaStablePools may not have getRateProviders; the Rust impl returns
+        # an empty list there (mirrors the prior `except` -> []).
         try:
-            data = encode_function_calldata("getRateProviders()", None)
-            result = io.call(to=address, data=data, block=block)
-            decoded = decode(["address[]"], result)
-            return list(decoded[0])
+            return list(io.fetch_balancer_rate_providers(address, block=block))
         except (RpcError, AbiDecodeError):
-            # WeightedPool2Tokens and MetaStablePools may not have getRateProviders
             return []
 
     @staticmethod
     def _fetch_rates(
-        io: PoolIO,
+        io: PyBotIo,
         rate_providers: list[str],
         block: int,
     ) -> list[int]:
-        # ADR-005 slice 14n: when io is a PyBotIo, delegate each per-provider
-        # getRate() call to Rust. The zero-address sentinel check stays.
-        fetcher = getattr(io, "fetch_balancer_rate", None)
+        # ADR-005 slice 14n: delegate each per-provider getRate() to Rust.
+        # The zero-address sentinel check stays.
         rates: list[int] = []
         for provider in rate_providers:
             if provider == "0x0000000000000000000000000000000000000000":
                 rates.append(ONE)
                 continue
-            if fetcher is not None:
-                rates.append(int(fetcher(provider, block=block)))
-                continue
-            data = encode_function_calldata("getRate()", None)
-            result = io.call(to=provider, data=data, block=block)
-            decoded = decode(["uint256"], result)
-            rates.append(decoded[0])
+            rates.append(int(io.fetch_balancer_rate(provider, block=block)))
         return rates
 
     @staticmethod
     def _detect_pool_type(
-        io: PoolIO,
+        io: PyBotIo,
         address: str,
         block: int,
     ) -> _BalancerPoolType:
@@ -284,50 +236,20 @@ class BalancerBuilderBase:
             DegenbotValueError: If the operation fails.
 
         """
-        # ADR-005 slice 14n: when io is a PyBotIo, delegate both probes to Rust.
-        probe_balancer_pool_type = getattr(io, "probe_balancer_pool_type", None)
-        if probe_balancer_pool_type is not None:
-            try:
-                result = probe_balancer_pool_type(address, block=block)
-            except ValueError:
-                msg = (
-                    f"Cannot determine Balancer pool type for {address}. "
-                    "Neither getNormalizedWeights() nor "
-                    "getAmplificationParameter() responded. "
-                    "Linear pools are not yet supported."
-                )
-                raise DegenbotValueError(message=msg) from None
-            if result == "weighted":
-                return _BalancerPoolType.WEIGHTED
-            return _BalancerPoolType.STABLE
-
+        # ADR-005 slice 14n: delegate both probes to Rust
+        # (``PyBotIo.probe_balancer_pool_type``). PyBotIo is the only executor;
+        # the Python getNormalizedWeights/getAmplificationParameter probing
+        # fallback is retired.
         try:
-            data = encode_function_calldata("getNormalizedWeights()", None)
-        except (RpcError, AbiDecodeError):
-            pass
-        else:
-            try:
-                io.call(to=address, data=data, block=block)
-            except RpcError:
-                pass
-            else:
-                return _BalancerPoolType.WEIGHTED
-
-        try:
-            data = encode_function_calldata("getAmplificationParameter()", None)
-        except (RpcError, AbiDecodeError):
-            pass
-        else:
-            try:
-                io.call(to=address, data=data, block=block)
-            except RpcError:
-                pass
-            else:
-                return _BalancerPoolType.STABLE
-
-        msg = (
-            f"Cannot determine Balancer pool type for {address}. "
-            f"Neither getNormalizedWeights() nor getAmplificationParameter() responded. "
-            f"Linear pools are not yet supported."
-        )
-        raise DegenbotValueError(message=msg)
+            result = io.probe_balancer_pool_type(address, block=block)
+        except ValueError:
+            msg = (
+                f"Cannot determine Balancer pool type for {address}. "
+                "Neither getNormalizedWeights() nor "
+                "getAmplificationParameter() responded. "
+                "Linear pools are not yet supported."
+            )
+            raise DegenbotValueError(message=msg) from None
+        if result == "weighted":
+            return _BalancerPoolType.WEIGHTED
+        return _BalancerPoolType.STABLE

@@ -5,17 +5,15 @@ from __future__ import annotations
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
-from degenbot.abi import decode
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.aerodrome.types import AerodromeV2PoolExternalUpdate
 from degenbot.builders.v2_builder_base import V2BuilderBase
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.registry.pool_type import pool_type_registry
 
 if TYPE_CHECKING:
+    from degenbot.bot import PyBotIo
     from degenbot.builders.context import BuilderContext
-    from degenbot.builders.pool_io import PoolIO
     from degenbot.builders.request import BuildRequest
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
@@ -34,7 +32,7 @@ class AerodromeV2Builder(V2BuilderBase):
         address: str,
         *,
         chain_id: ChainId | None = None,
-        io: PoolIO,
+        io: PyBotIo,
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
         """Build.
@@ -75,29 +73,13 @@ class AerodromeV2Builder(V2BuilderBase):
         )
 
         # Aerodrome-specific: fetch stable flag and fee
-        # ADR-005 slice 14g: when io is a PyBotIo (Bot's build path),
-        # delegate the 2-call stable()+getFee choreography to Rust.
-        # SyncPoolIO fallback keeps the Python implementation as a parity gate.
-        fetch_aero = getattr(io, "fetch_aerodrome_v2_stable_and_fee", None)
-        if fetch_aero is not None:
-            stable, fee_raw = fetch_aero(pool_address, common.factory, block=state_block)
-        else:
-            stable_result = io.call(
-                to=pool_address,
-                data=encode_function_calldata("stable()", None),
-                block=state_block,
-            )
-            (stable,) = decode(types=["bool"], data=stable_result)
-
-            fee_result = io.call(
-                to=common.factory,
-                data=encode_function_calldata(
-                    "getFee(address,bool)",
-                    [pool_address, stable],
-                ),
-                block=state_block,
-            )
-            (fee_raw,) = decode(types=["uint256"], data=fee_result)
+        # ADR-005 slice 14g: delegate the 2-call stable()+getFee choreography to
+        # Rust (PyBotIo is the only executor; the Python parity-gate fallback is retired).
+        stable, fee_raw = io.fetch_aerodrome_v2_stable_and_fee(
+            pool_address,
+            common.factory,
+            block=state_block,
+        )
 
         fee = Fraction(fee_raw, AerodromeV2Pool.FEE_DENOMINATOR)
 
@@ -146,7 +128,7 @@ class AerodromeV2Builder(V2BuilderBase):
         pool: AbstractLiquidityPool,
         *,
         block_number: BlockIdentifier | None = None,
-        io: PoolIO | None = None,
+        io: PyBotIo | None = None,
     ) -> bool:
         """Update.
 

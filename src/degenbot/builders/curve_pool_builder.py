@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
-from degenbot.abi import decode
 from degenbot.builders.request import BuildPoolRequest, BuildRequest
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve._pool_strategies import resolve_pool_strategies
@@ -23,13 +22,12 @@ from degenbot.curve.detection.metapool_detector import detect_metapool
 from degenbot.curve.types import CurveDataProvider, CurveStableswapPoolExternalUpdate
 from degenbot.exceptions.pool import BrokenPool
 from degenbot.logging import logger
-from degenbot.provider.call_helpers import encode_function_calldata
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from degenbot.bot import PyBotIo
     from degenbot.builders.context import BuilderContext
-    from degenbot.builders.pool_io import PoolIO
     from degenbot.curve.detection.types import MetapoolDetectionResult
     from degenbot.curve.strategies import PoolStrategies
     from degenbot.erc20 import Erc20Token
@@ -63,7 +61,7 @@ class CurvePoolBuilder:
         address: str,
         *,
         chain_id: ChainId | None = None,
-        io: PoolIO,
+        io: PyBotIo,
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
         """Fetch pool data from RPC and construct an I/O-free CurveStableswapPool.
@@ -319,7 +317,7 @@ class CurvePoolBuilder:
         state_block: int,
         *,
         request: BuildRequest,
-        io: PoolIO,
+        io: PyBotIo,
     ) -> tuple[CurveStableswapPool | None, tuple[Erc20Token, ...] | None]:
         """Build base pool and underlying tokens for a metapool.
 
@@ -360,7 +358,7 @@ class CurvePoolBuilder:
         pool: AbstractLiquidityPool,
         *,
         block_number: BlockIdentifier | None = None,
-        io: PoolIO | None = None,
+        io: PyBotIo | None = None,
     ) -> bool:
         """Fetch current state from chain and push update to the pool.
 
@@ -382,31 +380,14 @@ class CurvePoolBuilder:
         )
 
         # Fetch balances for each token in the pool
-        # ADR-005 slice 14s: when io is a PyBotIo, delegate the full loop to Rust.
-        fetcher = getattr(io, "fetch_curve_balances", None)
-        if fetcher is not None:
-            balances_result = fetcher(pool.address, len(pool.tokens), block=block_number_)
-            new_balances = [int(b) for b in balances_result]
-        else:
-            new_balances = []
-            for i, _ in enumerate(pool.tokens):
-                (balance,) = cast(
-                    "tuple[int]",
-                    decode(
-                        types=["uint256"],
-                        data=io.call_raw(
-                            {
-                                "to": pool.address,
-                                "data": encode_function_calldata(
-                                    function_prototype="balances(uint256)",
-                                    function_arguments=[i],
-                                ),
-                            },
-                            block=block_number_,
-                        ),
-                    ),
-                )
-                new_balances.append(balance)
+        # ADR-005 slice 14s: delegate the full loop to Rust (PyBotIo is the
+        # only executor; the Python parity-gate fallback is retired).
+        balances_result = io.fetch_curve_balances(
+            pool.address,
+            len(pool.tokens),
+            block=block_number_,
+        )
+        new_balances = [int(b) for b in balances_result]
 
         if pool.balances == tuple(new_balances):
             return False
@@ -420,7 +401,7 @@ class CurvePoolBuilder:
 
 
 def _fetch_pool_params(
-    io: PoolIO,
+    io: PyBotIo,
     pool_address: str,
     *,
     block_identifier: int,
@@ -431,39 +412,7 @@ def _fetch_pool_params(
         The computed value.
 
     """
-    # ADR-005 slice 14r: when io is a PyBotIo, delegate all 3 RPCs to Rust.
-    fetcher = getattr(io, "fetch_curve_pool_params", None)
-    if fetcher is not None:
-        a, fee, admin_fee = fetcher(pool_address, block=block_identifier)
-        return int(a), int(fee), int(admin_fee)
-    a_result = io.call_raw(
-        {
-            "to": pool_address,
-            "data": encode_function_calldata(function_prototype="A()", function_arguments=[]),
-        },
-        block=block_identifier,
-    )
-    (a_coefficient,) = decode(types=["uint256"], data=a_result)
-
-    fee_result = io.call_raw(
-        {
-            "to": pool_address,
-            "data": encode_function_calldata(function_prototype="fee()", function_arguments=[]),
-        },
-        block=block_identifier,
-    )
-    (fee,) = decode(types=["uint256"], data=fee_result)
-
-    admin_fee_result = io.call_raw(
-        {
-            "to": pool_address,
-            "data": encode_function_calldata(
-                function_prototype="admin_fee()",
-                function_arguments=[],
-            ),
-        },
-        block=block_identifier,
-    )
-    (admin_fee,) = decode(types=["uint256"], data=admin_fee_result)
-
-    return a_coefficient, fee, admin_fee
+    # ADR-005 slice 14r: delegate all 3 RPCs to Rust (PyBotIo is the only
+    # executor; the Python parity-gate fallback is retired).
+    a, fee, admin_fee = io.fetch_curve_pool_params(pool_address, block=block_identifier)
+    return int(a), int(fee), int(admin_fee)

@@ -18,12 +18,12 @@ from degenbot.provider.call_helpers import encode_function_calldata
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
-    from degenbot.builders.pool_io import PoolIO
+    from degenbot.bot import PyBotIo
     from degenbot.erc20.erc20 import Erc20Token
 
 
 def detect_lending_tokens(
-    io: PoolIO,
+    io: PyBotIo,
     pool_address: ChecksumAddress,  # noqa: ARG001
     token_addresses: tuple[ChecksumAddress, ...],
     tokens: tuple[Erc20Token, ...],

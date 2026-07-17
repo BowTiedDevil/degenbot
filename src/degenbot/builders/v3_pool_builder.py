@@ -5,7 +5,6 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING, Any, cast
 
-from degenbot.abi import decode as abi_decode
 from degenbot.builders.tick_data_fetcher import (
     FetchedTickData,
     TickDataTypes,
@@ -16,7 +15,6 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger
-from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.math import (
@@ -31,8 +29,8 @@ from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from degenbot.bot import PyBotIo
     from degenbot.builders.context import BuilderContext
-    from degenbot.builders.pool_io import PoolIO
     from degenbot.builders.request import BuildRequest
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
@@ -63,7 +61,7 @@ class V3PoolBuilder(V3BuilderBase):
         self,
         pool_address: str,
         chain_id: int,
-        io: PoolIO,
+        io: PyBotIo,
     ) -> Callable[[int, int], FetchedTickData | None]:
         """Create a tick data fetcher callback for a V3 pool.
 
@@ -92,7 +90,7 @@ class V3PoolBuilder(V3BuilderBase):
         address: str,
         *,
         chain_id: ChainId | None = None,
-        io: PoolIO,
+        io: PyBotIo,
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
         """Fetch pool data from DB/RPC and construct an I/O-free V3-style pool.
@@ -123,45 +121,33 @@ class V3PoolBuilder(V3BuilderBase):
         db_values = None
         pool_id_db: int | None = None
         pool_kind_db: str | None = None
-        fetch_pool_row = getattr(io, "fetch_pool_row", None) if io is not None else None
-        if fetch_pool_row is not None:
-            # All PyBotIo DB-query methods are present together (gated on
-            # `fetch_pool_row`); bind them via `getattr(..., None)` so the
-            # static type checker doesn't flag the `PoolIO`-protocol access
-            # (`PyBotIo` defines them; `PoolIO` does not).
-            fetch_pool_kind = getattr(io, "fetch_pool_kind", None)
-            fetch_exchange = getattr(io, "fetch_exchange", None)
-            fetch_token_by_id = getattr(io, "fetch_token_by_id", None)
-            if (
-                fetch_pool_kind is not None
-                and fetch_exchange is not None
-                and fetch_token_by_id is not None
-            ):
-                with contextlib.suppress(Exception):
-                    pool_row = fetch_pool_row(chain_id=chain_id, address=pool_address)
-                    if pool_row is not None:
-                        kind_row = fetch_pool_kind(kind=pool_row.kind, pool_id=pool_row.id)
-                        exchange_row = fetch_exchange(exchange_id=pool_row.exchange_id)
-                        token0_row = fetch_token_by_id(token_id=pool_row.token0_id)
-                        token1_row = fetch_token_by_id(token_id=pool_row.token1_id)
-                        if (
-                            kind_row is not None
-                            and exchange_row is not None
-                            and token0_row is not None
-                            and token1_row is not None
-                        ):
-                            db_values = V3DbValues(
-                                factory=get_checksum_address(exchange_row.factory),
-                                token0_address=get_checksum_address(token0_row.address),
-                                token1_address=get_checksum_address(token1_row.address),
-                                fee=kind_row.fee_token0,
-                                tick_spacing=kind_row.tick_spacing,
-                                deployer_address=exchange_row.deployer
-                                if exchange_row.deployer is not None
-                                else None,
-                            )
-                        pool_id_db = pool_row.id
-                        pool_kind_db = pool_row.kind
+        # Route the DB read through the Rust `PyBotIo` seam (QVMWQC). The
+        # `contextlib.suppress` makes a missing/empty DB a skip, not an error.
+        with contextlib.suppress(Exception):
+            pool_row = io.fetch_pool_row(chain_id=chain_id, address=pool_address)
+            if pool_row is not None:
+                kind_row = io.fetch_pool_kind(kind=pool_row.kind, pool_id=pool_row.id)
+                exchange_row = io.fetch_exchange(exchange_id=pool_row.exchange_id)
+                token0_row = io.fetch_token_by_id(token_id=pool_row.token0_id)
+                token1_row = io.fetch_token_by_id(token_id=pool_row.token1_id)
+                if (
+                    kind_row is not None
+                    and exchange_row is not None
+                    and token0_row is not None
+                    and token1_row is not None
+                ):
+                    db_values = V3DbValues(
+                        factory=get_checksum_address(exchange_row.factory),
+                        token0_address=get_checksum_address(token0_row.address),
+                        token1_address=get_checksum_address(token1_row.address),
+                        fee=kind_row.fee_token0,
+                        tick_spacing=kind_row.tick_spacing,
+                        deployer_address=exchange_row.deployer
+                        if exchange_row.deployer is not None
+                        else None,
+                    )
+                pool_id_db = pool_row.id
+                pool_kind_db = pool_row.kind
 
         # Get immutable values
         if db_values is not None:
@@ -171,58 +157,19 @@ class V3PoolBuilder(V3BuilderBase):
             fee = db_values.fee
             tick_spacing_for_pool = db_values.tick_spacing
         else:
-            # ADR-005 slice 14f: when io is a PyBotIo (Bot's build path),
-            # delegate the 5-call immutable RPC choreography to Rust. SyncPoolIO
-            # fallback keeps the Python implementation as a parity gate.
-            fetch_v3_immutable_data = getattr(io, "fetch_v3_immutable_data", None)
-            if fetch_v3_immutable_data is not None:
-                try:
-                    (
-                        factory,
-                        token0_address,
-                        token1_address,
-                        fee,
-                        tick_spacing_for_pool,
-                    ) = fetch_v3_immutable_data(pool_address)
-                except Exception as exc:
-                    raise LiquidityPoolError(message="Could not decode contract data") from exc
-            else:
-                try:
-                    factory_result = io.call(
-                        to=pool_address,
-                        data=encode_function_calldata("factory()", None),
-                    )
-                    token0_result = io.call(
-                        to=pool_address,
-                        data=encode_function_calldata("token0()", None),
-                    )
-                    token1_result = io.call(
-                        to=pool_address,
-                        data=encode_function_calldata("token1()", None),
-                    )
-                    fee_result = io.call(
-                        to=pool_address,
-                        data=encode_function_calldata("fee()", None),
-                    )
-                    tick_spacing_result = io.call(
-                        to=pool_address,
-                        data=encode_function_calldata("tickSpacing()", None),
-                    )
-                except Exception as exc:
-                    raise LiquidityPoolError(message="Could not decode contract data") from exc
-
-                immutable = V3BuilderBase.decode_immutable_data(
-                    factory_result=factory_result,
-                    token0_result=token0_result,
-                    token1_result=token1_result,
-                    fee_result=fee_result,
-                    tick_spacing_result=tick_spacing_result,
-                )
-                factory = immutable.factory
-                token0_address = immutable.token0_address
-                token1_address = immutable.token1_address
-                fee = immutable.fee
-                tick_spacing_for_pool = immutable.tick_spacing
+            # ADR-005 slice 14f: delegate the 5-call immutable RPC choreography
+            # to Rust (PyBotIo is the only executor; the Python parity-gate
+            # fallback is retired).
+            try:
+                (
+                    factory,
+                    token0_address,
+                    token1_address,
+                    fee,
+                    tick_spacing_for_pool,
+                ) = io.fetch_v3_immutable_data(pool_address)
+            except Exception as exc:
+                raise LiquidityPoolError(message="Could not decode contract data") from exc
 
         # Build tokens
         token0 = self._erc20_builder.build(
@@ -240,34 +187,14 @@ class V3PoolBuilder(V3BuilderBase):
 
         # Fetch slot0 + liquidity
         # ADR-005 slice 14f: same delegation seam as the immutable-data block.
-        fetch_v3_slot0_liquidity = getattr(io, "fetch_v3_slot0_liquidity", None)
-        if fetch_v3_slot0_liquidity is not None:
-            try:
-                sqrt_price_x96, tick, liquidity = fetch_v3_slot0_liquidity(
-                    pool_address,
-                    block=state_block,
-                )
-            except Exception as exc:
-                raise LiquidityPoolError(message="Could not decode contract data") from exc
-        else:
-            try:
-                slot0_result = io.call(
-                    to=pool_address,
-                    data=encode_function_calldata("slot0()", None),
-                    block=state_block,
-                )
-                liquidity_result = io.call(
-                    to=pool_address,
-                    data=encode_function_calldata("liquidity()", None),
-                    block=state_block,
-                )
-            except Exception as exc:
-                raise LiquidityPoolError(message="Could not decode contract data") from exc
-
-            slot0_data = V3BuilderBase.decode_slot0(slot0_result)
-            sqrt_price_x96 = slot0_data.sqrt_price_x96
-            tick = slot0_data.tick
-            (liquidity,) = abi_decode(types=["uint128"], data=liquidity_result)
+        # PyBotIo is the only executor; the Python parity-gate fallback is retired.
+        try:
+            sqrt_price_x96, tick, liquidity = io.fetch_v3_slot0_liquidity(
+                pool_address,
+                block=state_block,
+            )
+        except Exception as exc:
+            raise LiquidityPoolError(message="Could not decode contract data") from exc
 
         # Fetch initial tick bitmap and tick data
         db_snapshot_loaded = False
@@ -287,31 +214,21 @@ class V3PoolBuilder(V3BuilderBase):
             # methods mirror the prior `pool.initialization_maps` /
             # `pool.liquidity_positions` lazy-loads; `liquidity_update_block`
             # comes from the subclass row.
-            if pool_id_db is not None:
-                # Same `getattr(..., None)` binding as the immutable-data
-                # read above (PyBotIo DB-query methods share presence).
-                fetch_init_maps = getattr(io, "fetch_initialization_maps", None)
-                fetch_liq_positions = getattr(io, "fetch_liquidity_positions", None)
-                fetch_pool_kind = getattr(io, "fetch_pool_kind", None)
-                if (
-                    fetch_init_maps is not None
-                    and fetch_liq_positions is not None
-                    and fetch_pool_kind is not None
-                ):
-                    with contextlib.suppress(Exception):
-                        init_maps = fetch_init_maps(pool_id_db)
-                        liq_positions = fetch_liq_positions(pool_id_db)
-                        update_block = None
-                        kind_row = fetch_pool_kind(kind=pool_kind_db, pool_id=pool_id_db)
-                        if kind_row is not None:
-                            update_block = kind_row.liquidity_update_block
-                        working_tick_bitmap, working_tick_data, db_snapshot_loaded = (
-                            V3BuilderBase.load_tick_snapshot_from_seam_rows(
-                                init_maps=init_maps,
-                                liq_positions=liq_positions,
-                                liquidity_update_block=update_block,
-                            )
+            if pool_id_db is not None and pool_kind_db is not None:
+                with contextlib.suppress(Exception):
+                    init_maps = io.fetch_initialization_maps(pool_id_db)
+                    liq_positions = io.fetch_liquidity_positions(pool_id_db)
+                    update_block = None
+                    kind_row = io.fetch_pool_kind(kind=pool_kind_db, pool_id=pool_id_db)
+                    if kind_row is not None:
+                        update_block = kind_row.liquidity_update_block
+                    working_tick_bitmap, working_tick_data, db_snapshot_loaded = (
+                        V3BuilderBase.load_tick_snapshot_from_seam_rows(
+                            init_maps=init_maps,
+                            liq_positions=liq_positions,
+                            liquidity_update_block=update_block,
                         )
+                    )
 
             if not db_snapshot_loaded:
                 word, _ = cl_get_tick_word_and_bit_position(
@@ -319,20 +236,9 @@ class V3PoolBuilder(V3BuilderBase):
                     tick_spacing=tick_spacing_for_pool,
                 )
 
-                # ADR-005 slice 14t: delegate tick-bitmap + per-tick RPCs to Rust.
-                fetch_tick_bitmap = getattr(io, "fetch_tick_bitmap", None)
-                fetch_tick_data = getattr(io, "fetch_tick_data", None)
-                if fetch_tick_bitmap is not None:
-                    bitmap_at_word = fetch_tick_bitmap(pool_address, word, block=state_block)
-                else:
-                    (bitmap_at_word,) = abi_decode(
-                        types=["uint256"],
-                        data=io.call(
-                            to=pool_address,
-                            data=encode_function_calldata("tickBitmap(int16)", [word]),
-                            block=state_block,
-                        ),
-                    )
+                # ADR-005 slice 14t: delegate tick-bitmap + per-tick RPCs to Rust
+                # (PyBotIo is the only executor; the Python parity-gate fallback is retired).
+                bitmap_at_word = io.fetch_tick_bitmap(pool_address, word, block=state_block)
 
                 if bitmap_at_word != 0:
                     active_ticks = [
@@ -342,31 +248,11 @@ class V3PoolBuilder(V3BuilderBase):
                     ]
 
                     for active_tick in active_ticks:
-                        if fetch_tick_data is not None:
-                            liquidity_gross, liquidity_net = fetch_tick_data(
-                                pool_address,
-                                active_tick,
-                                block=state_block,
-                            )
-                        else:
-                            result = io.call(
-                                to=pool_address,
-                                data=encode_function_calldata("ticks(int24)", [active_tick]),
-                                block=state_block,
-                            )
-                            liquidity_gross, liquidity_net, *_ = abi_decode(
-                                types=[
-                                    "uint128",
-                                    "int128",
-                                    "uint256",
-                                    "uint256",
-                                    "int56",
-                                    "uint160",
-                                    "uint32",
-                                    "bool",
-                                ],
-                                data=result,
-                            )
+                        liquidity_gross, liquidity_net = io.fetch_tick_data(
+                            pool_address,
+                            active_tick,
+                            block=state_block,
+                        )
                         working_tick_data[active_tick] = LiquidityAtTick(
                             liquidity_net=int(liquidity_net),
                             liquidity_gross=int(liquidity_gross),
@@ -486,7 +372,7 @@ class V3PoolBuilder(V3BuilderBase):
         pool: AbstractLiquidityPool,
         *,
         block_number: BlockIdentifier | None = None,
-        io: PoolIO | None = None,
+        io: PyBotIo | None = None,
     ) -> bool:
         """Fetch current state from chain and push update to the pool.
 
@@ -508,35 +394,13 @@ class V3PoolBuilder(V3BuilderBase):
         raw_block = block_number if block_number is not None else io.get_block_number()
         block_number_ = int(raw_block) if not isinstance(raw_block, int) else raw_block
 
-        # ADR-005 slice 14p: when io is a PyBotIo, delegate slot0+liquidity to Rust.
-        # Reuses the fetch_v3_slot0_liquidity seam from the build path (14f).
-        fetch_v3_slot0_liquidity = getattr(io, "fetch_v3_slot0_liquidity", None)
-        if fetch_v3_slot0_liquidity is not None:
-            sqrt_price_x96, tick, liquidity = fetch_v3_slot0_liquidity(
-                pool.address,
-                block=block_number_,
-            )
-        else:
-            slot0_result = io.call(
-                to=pool.address,
-                data=encode_function_calldata("slot0()", None),
-                block=block_number_,
-            )
-            slot0_data = V3BuilderBase.decode_slot0(slot0_result)
-            sqrt_price_x96 = slot0_data.sqrt_price_x96
-            tick = slot0_data.tick
-
-            (liquidity,) = cast(
-                "tuple[int]",
-                abi_decode(
-                    types=["uint256"],
-                    data=io.call(
-                        to=pool.address,
-                        data=encode_function_calldata("liquidity()", None),
-                        block=block_number_,
-                    ),
-                ),
-            )
+        # ADR-005 slice 14p: delegate slot0+liquidity to Rust (PyBotIo is the
+        # only executor; the Python parity-gate fallback is retired). Reuses
+        # the fetch_v3_slot0_liquidity seam from the build path (14f).
+        sqrt_price_x96, tick, liquidity = io.fetch_v3_slot0_liquidity(
+            pool.address,
+            block=block_number_,
+        )
 
         if (
             pool.sqrt_price_x96 == sqrt_price_x96

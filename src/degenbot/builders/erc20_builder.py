@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import contextlib
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
-from degenbot.abi import AbiDecodeError, decode, encode
+from degenbot.abi import AbiDecodeError
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.crypto import function_selector
 from degenbot.erc20 import EtherPlaceholder
 from degenbot.erc20.erc20 import (
     UNKNOWN_DECIMALS,
@@ -18,13 +17,9 @@ from degenbot.erc20.erc20 import (
 from degenbot.exceptions import RpcError
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.logging import logger
-from degenbot.provider.call_helpers import encode_function_calldata
 
 if TYPE_CHECKING:
-    from hexbytes import HexBytes
-
-    from degenbot.bot import PyBot
-    from degenbot.builders.pool_io import PoolIO
+    from degenbot.bot import PyBot, PyBotIo
     from degenbot.database.session_manager import DatabaseSessionManager
     from degenbot.registry import TokenRegistry
     from degenbot.types.aliases import ChainId
@@ -58,7 +53,7 @@ class Erc20Builder:
         *,
         chain_id: ChainId | None = None,
         silent: bool = False,
-        io: PoolIO | None = None,
+        io: PyBotIo | None = None,
     ) -> Erc20Token:
         """Fetch token metadata from DB/RPC and construct an I/O-free Erc20Token.
 
@@ -111,10 +106,9 @@ class Erc20Builder:
         # skipping the DB read when no `io`/`database_path` is configured
         # (mirrors the prior `contextlib.suppress(Exception)` skip).
         token_from_db = None
-        fetch_fn = getattr(io, "fetch_erc20_token", None) if io is not None else None
-        if fetch_fn is not None:
+        if io is not None:
             with contextlib.suppress(Exception):
-                token_from_db = fetch_fn(chain_id=chain_id, address=address)
+                token_from_db = io.fetch_erc20_token(chain_id=chain_id, address=address)
 
         name: str | None = None
         symbol: str | None = None
@@ -196,16 +190,14 @@ class Erc20Builder:
                 and token_from_db.decimals is None
                 and io is not None
             ):
-                update_fn = getattr(io, "update_erc20_token_metadata", None)
-                if update_fn is not None:
-                    with contextlib.suppress(Exception):
-                        update_fn(
-                            chain_id=chain_id,
-                            address=address,
-                            name=name,
-                            symbol=symbol,
-                            decimals=decimals,
-                        )
+                with contextlib.suppress(Exception):
+                    io.update_erc20_token_metadata(
+                        chain_id=chain_id,
+                        address=address,
+                        name=name,
+                        symbol=symbol,
+                        decimals=decimals,
+                    )
 
         py_token = self._py_bot.register_token(address, name, symbol, decimals, chain_id)
         token = Erc20Token._from_py_token(py_token)  # noqa: SLF001
@@ -224,7 +216,7 @@ class Erc20Builder:
         address: str,
         block_identifier: BlockIdentifier | None = None,
         *,
-        io: PoolIO | None = None,
+        io: PyBotIo | None = None,
     ) -> int:
         """Retrieve the ERC-20 balance for the given address.
 
@@ -242,25 +234,12 @@ class Erc20Builder:
         if (balance := token.get_cached_balance(address, block_number)) is not None:
             return balance
 
-        # ADR-005 slice 14d: when io is a PyBotIo (Bot's build path),
-        # delegate the balanceOf choreography to Rust. SyncPoolIO fallback
-        # keeps the Python implementation as a parity gate.
-        fetch_token_balance = getattr(io, "fetch_token_balance", None)
-        if fetch_token_balance is not None:
-            balance = fetch_token_balance(token.address, address, block=block_number)
-        else:
-            (balance,) = decode(
-                types=["uint256"],
-                data=io.call(
-                    to=token.address,
-                    data=function_selector("balanceOf(address)")
-                    + encode(types=["address"], args=[address]),
-                    block=block_number,
-                ),
-            )
+        # ADR-005 slice 14d: delegate the balanceOf choreography to Rust
+        # (PyBotIo is the only executor; the Python parity-gate fallback is retired).
+        balance = io.fetch_token_balance(token.address, address, block=block_number)
 
-        token.set_cached_balance(address, block_number, cast("int", balance))
-        return cast("int", balance)
+        token.set_cached_balance(address, block_number, balance)
+        return balance
 
     def get_token_approval(  # noqa: PLR6301
         self,
@@ -269,7 +248,7 @@ class Erc20Builder:
         spender: str,
         block_identifier: BlockIdentifier | None = None,
         *,
-        io: PoolIO | None = None,
+        io: PyBotIo | None = None,
     ) -> int:
         """Retrieve the amount that can be spent by `spender` on behalf of `owner`.
 
@@ -289,29 +268,17 @@ class Erc20Builder:
             return approval
 
         # ADR-005 slice 14d: same delegation seam as `get_token_balance`.
-        fetch_token_allowance = getattr(io, "fetch_token_allowance", None)
-        if fetch_token_allowance is not None:
-            approval = fetch_token_allowance(token.address, owner, spender, block=block_number)
-        else:
-            (approval,) = decode(
-                types=["uint256"],
-                data=io.call(
-                    to=token.address,
-                    data=function_selector("allowance(address,address)")
-                    + encode(types=["address", "address"], args=[owner, spender]),
-                    block=block_number,
-                ),
-            )
+        approval = io.fetch_token_allowance(token.address, owner, spender, block=block_number)
 
-        token.set_cached_approval(block_number, owner, spender, cast("int", approval))
-        return cast("int", approval)
+        token.set_cached_approval(block_number, owner, spender, approval)
+        return approval
 
     def get_token_total_supply(  # noqa: PLR6301
         self,
         token: Erc20Token,
         block_identifier: BlockIdentifier | None = None,
         *,
-        io: PoolIO | None = None,
+        io: PyBotIo | None = None,
     ) -> int:
         """Retrieve the total supply for this token.
 
@@ -329,20 +296,7 @@ class Erc20Builder:
             return total_supply
 
         # ADR-005 slice 14d: same delegation seam as `get_token_balance`.
-        fetch_token_total_supply = getattr(io, "fetch_token_total_supply", None)
-        if fetch_token_total_supply is not None:
-            total_supply = fetch_token_total_supply(token.address, block=block_number)
-        else:
-            (total_supply,) = decode(
-                types=["uint256"],
-                data=io.call(
-                    to=token.address,
-                    data=function_selector("totalSupply()"),
-                    block=block_number,
-                ),
-            )
-            total_supply = int(total_supply)
-        total_supply = int(total_supply)
+        total_supply = int(io.fetch_token_total_supply(token.address, block=block_number))
 
         token.set_cached_total_supply(block_number, total_supply)
         return total_supply
@@ -353,7 +307,7 @@ class Erc20Builder:
         address: str,
         block_identifier: BlockIdentifier | None = None,
         *,
-        io: PoolIO | None = None,
+        io: PyBotIo | None = None,
     ) -> int:
         """Retrieve the native ETH balance for the given address.
 
@@ -368,10 +322,10 @@ class Erc20Builder:
         return io.get_balance(address, block=block_number)
 
 
-# --- Package-level helpers (PoolIO equivalents of Erc20Token.fetch_*) ---
+# --- Package-level helpers (PyBotIo equivalents of Erc20Token.fetch_*) ---
 
 
-def _resolve_block_number(io: PoolIO, block_identifier: BlockIdentifier | None) -> int:
+def _resolve_block_number(io: PyBotIo, block_identifier: BlockIdentifier | None) -> int:
     """Resolve a block identifier to a block number.
 
     Returns:
@@ -386,68 +340,33 @@ def _resolve_block_number(io: PoolIO, block_identifier: BlockIdentifier | None) 
     return io.get_block_number()
 
 
-def _fetch_name_symbol_decimals_batched(*, address: str, io: PoolIO) -> tuple[str, str, int]:
-    """Fetch token name, symbol, and decimals via batched RPC calls.
+def _fetch_name_symbol_decimals_batched(*, address: str, io: PyBotIo) -> tuple[str, str, int]:
+    """Fetch token name/symbol/decimals via Rust batch fetch.
 
-    When ``io`` is a Rust :class:`~degenbot._ffi.PyBotIo` (the Bot's
-    build-path adapter -- ADR-005 slice 14a), the encode -> call (x3) -> decode
-    choreography is delegated to ``PyBotIo.fetch_erc20_metadata`` (Rust, slice
-    14c), not run in Python. Raw ``SyncPoolIO`` callers fork / offline tests
-    still exercise the Python implementation below -- a behavior-preserving
-    parity gate against the Rust impl. Returns `None` from the Rust impl on
-    provider error / decode failure (mirrors the caller's `except
-    (RpcError, AbiDecodeError)` fallback contract); a Python-raised error
-    from the fallback path is surfaced untouched.
+    The 3-call choreography is Rust-owned (``PyBotIo.fetch_erc20_metadata``,
+    ADR-005 slice 14c). PyBotIo is the only executor; the Python parity-gate
+    fallback is retired.
 
     Returns:
         The computed value.
 
     Raises:
-        AbiDecodeError: If the Rust batched path failed (provider revert or
-            decode failure) -- re-raised so the caller's `except
-            (RpcError, AbiDecodeError)` fallback kicks in identically.
+        AbiDecodeError: If the batched fetch failed (provider revert or
+            decode failure).
 
     """
-    # ADR-005 slice 14c: route through PyBotIo when available -- the
-    # choreography is Rust-owned. `hasattr` keeps the SyncPoolIO fallback path
-    # working without importing PyBotIo (which lives in the Rust ext).
-    fetch_metadata = getattr(io, "fetch_erc20_metadata", None)
-    if fetch_metadata is not None:
-        result = fetch_metadata(address)
-        if result is None:
-            msg = "batched fetch failed (provider revert or decode failure)"
-            raise AbiDecodeError(message=msg)
-        return cast("tuple[str, str, int]", result)
-
-    name_calldata = encode_function_calldata(
-        function_prototype="name()",
-        function_arguments=None,
-    )
-    symbol_calldata = encode_function_calldata(
-        function_prototype="symbol()",
-        function_arguments=None,
-    )
-    decimals_calldata = encode_function_calldata(
-        function_prototype="decimals()",
-        function_arguments=None,
-    )
-
-    name_result = io.call(to=address, data=name_calldata)
-    symbol_result = io.call(to=address, data=symbol_calldata)
-    decimals_result = io.call(to=address, data=decimals_calldata)
-
-    (name,) = decode(types=["string"], data=name_result)
-    (symbol,) = decode(types=["string"], data=symbol_result)
-    (decimals,) = decode(types=["uint256"], data=decimals_result)
-
-    return cast("str", name), cast("str", symbol), cast("int", decimals)
+    result = io.fetch_erc20_metadata(address)
+    if result is None:
+        msg = "batched fetch failed (provider revert or decode failure)"
+        raise AbiDecodeError(message=msg)
+    return result
 
 
-def _fetch_name(*, address: str, io: PoolIO, func_prototype: str = "name()") -> str:
-    """Fetch token name via RPC call.
+def _fetch_name(*, address: str, io: PyBotIo, func_prototype: str = "name()") -> str:
+    """Fetch token name via Rust string-field fetch.
 
-    When ``io`` is a Rust :class:`~degenbot._ffi.PyBotIo`, delegates
-    to ``PyBotIo.fetch_erc20_string_field`` (Rust, slice 14h).
+    Delegates to ``PyBotIo.fetch_erc20_string_field`` (ADR-005 slice 14h).
+    PyBotIo is the only executor; the Python parity-gate fallback is retired.
 
     Returns:
         The computed value.
@@ -456,34 +375,17 @@ def _fetch_name(*, address: str, io: PoolIO, func_prototype: str = "name()") -> 
         AbiDecodeError: If the field could not be decoded as string or bytes32.
 
     """
-    fetch_string_field = getattr(io, "fetch_erc20_string_field", None)
-    if fetch_string_field is not None:
-        try:
-            return fetch_string_field(address, func_prototype)
-        except ValueError as exc:
-            raise AbiDecodeError(message=str(exc)) from exc
-
-    result = io.call(
-        to=address,
-        data=encode_function_calldata(
-            function_prototype=func_prototype,
-            function_arguments=None,
-        ),
-    )
-
     try:
-        (name,) = decode(types=["string"], data=result)
-        return cast("str", name)
-    except AbiDecodeError:
-        (name,) = decode(types=["bytes32"], data=result)
-        return cast("HexBytes", name).decode("utf-8", errors="ignore").strip("\x00")
+        return io.fetch_erc20_string_field(address, func_prototype)
+    except ValueError as exc:
+        raise AbiDecodeError(message=str(exc)) from exc
 
 
-def _fetch_symbol(*, address: str, io: PoolIO, func_prototype: str = "symbol()") -> str:
-    """Fetch token symbol via RPC call.
+def _fetch_symbol(*, address: str, io: PyBotIo, func_prototype: str = "symbol()") -> str:
+    """Fetch token symbol via Rust string-field fetch.
 
-    When ``io`` is a Rust :class:`~degenbot._ffi.PyBotIo`, delegates
-    to ``PyBotIo.fetch_erc20_string_field`` (Rust, slice 14h).
+    Delegates to ``PyBotIo.fetch_erc20_string_field`` (ADR-005 slice 14h).
+    PyBotIo is the only executor; the Python parity-gate fallback is retired.
 
     Returns:
         The computed value.
@@ -492,34 +394,17 @@ def _fetch_symbol(*, address: str, io: PoolIO, func_prototype: str = "symbol()")
         AbiDecodeError: If the field could not be decoded as string or bytes32.
 
     """
-    fetch_string_field = getattr(io, "fetch_erc20_string_field", None)
-    if fetch_string_field is not None:
-        try:
-            return fetch_string_field(address, func_prototype)
-        except ValueError as exc:
-            raise AbiDecodeError(message=str(exc)) from exc
-
-    result = io.call(
-        to=address,
-        data=encode_function_calldata(
-            function_prototype=func_prototype,
-            function_arguments=None,
-        ),
-    )
-
     try:
-        (symbol,) = decode(types=["string"], data=result)
-        return cast("str", symbol)
-    except AbiDecodeError:
-        (symbol,) = decode(types=["bytes32"], data=result)
-        return cast("HexBytes", symbol).decode("utf-8", errors="ignore").strip("\x00")
+        return io.fetch_erc20_string_field(address, func_prototype)
+    except ValueError as exc:
+        raise AbiDecodeError(message=str(exc)) from exc
 
 
-def _fetch_decimals(*, address: str, io: PoolIO, func_prototype: str = "decimals()") -> int:
-    """Fetch token decimals via RPC call.
+def _fetch_decimals(*, address: str, io: PyBotIo, func_prototype: str = "decimals()") -> int:
+    """Fetch token decimals via Rust uint-field fetch.
 
-    When ``io`` is a Rust :class:`~degenbot._ffi.PyBotIo`, delegates
-    to ``PyBotIo.fetch_erc20_uint_field`` (Rust, slice 14h).
+    Delegates to ``PyBotIo.fetch_erc20_uint_field`` (ADR-005 slice 14h).
+    PyBotIo is the only executor; the Python parity-gate fallback is retired.
 
     Returns:
         The computed value.
@@ -528,21 +413,7 @@ def _fetch_decimals(*, address: str, io: PoolIO, func_prototype: str = "decimals
         AbiDecodeError: If the field could not be decoded as uint256.
 
     """
-    fetch_uint_field = getattr(io, "fetch_erc20_uint_field", None)
-    if fetch_uint_field is not None:
-        try:
-            return cast("int", fetch_uint_field(address, func_prototype))
-        except ValueError as exc:
-            raise AbiDecodeError(message=str(exc)) from exc
-
-    (result,) = decode(
-        types=["uint256"],
-        data=io.call(
-            to=address,
-            data=encode_function_calldata(
-                function_prototype=func_prototype,
-                function_arguments=None,
-            ),
-        ),
-    )
-    return cast("int", result)
+    try:
+        return io.fetch_erc20_uint_field(address, func_prototype)
+    except ValueError as exc:
+        raise AbiDecodeError(message=str(exc)) from exc
