@@ -16,7 +16,6 @@ use degenbot_db::discovery::{V3PoolRowInput, V4PoolRowInput};
 use degenbot_db::{ApplyBitmapAtWord, ApplyLiquidityAtTick};
 
 use super::{assemble_v3_tick_map, assemble_v4_tick_map, TickMapAssemblyError};
-use crate::bot_core::snapshot_verify::SnapshotStore;
 use crate::bot_core::{PoolTickCoverage, TickInfo};
 use degenbot_pools::tick_fetch::{BootstrapTickError, BootstrapTickWord, TickBootstrapRpc};
 
@@ -183,37 +182,7 @@ fn seed_v4_ticks(db: &DegenbotDb, managed_pool_id: i64, ticks: &[i32]) {
 }
 
 /// A no-op store probe that reports a miss (Sparse, empty ticks).
-fn store_miss() -> (HashMap<i32, TickInfo>, PoolTickCoverage) {
-    (HashMap::new(), PoolTickCoverage::Sparse)
-}
-
 // ── V3 tests ──────────────────────────────────────────────────────────────
-
-#[test]
-fn v3_store_hit_returns_tracked_ticks_and_consumes_entry() {
-    let (db, _pool_id) = v3_db_with_pool();
-    let store: SnapshotStore<Address> = SnapshotStore::new();
-    let addr = make_pool_addr();
-    let seed: HashMap<i32, TickInfo> = [(10, sample_tick_info(10))].into_iter().collect();
-    store.load({
-        let mut m = HashMap::new();
-        m.insert(addr, seed.clone());
-        m
-    });
-
-    let result =
-        assemble_v3_tick_map(|| store.take(&addr), Some(&db), addr, 0, 10, 0, None).unwrap();
-    let Some((ticks, coverage)) = result else {
-        panic!("Store hit should return Some");
-    };
-    assert_eq!(coverage, PoolTickCoverage::Tracked);
-    assert_eq!(ticks, seed);
-
-    // Store entry was consumed by `take` — a second probe returns Sparse.
-    let (again, cov) = store.take(&addr);
-    assert_eq!(cov, PoolTickCoverage::Sparse);
-    assert!(again.is_empty());
-}
 
 #[test]
 fn v3_store_miss_db_hit_non_empty_returns_tracked_ticks() {
@@ -221,7 +190,7 @@ fn v3_store_miss_db_hit_non_empty_returns_tracked_ticks() {
     seed_v3_ticks(&db, pool_id, &[10, 20]);
     let addr = make_pool_addr();
 
-    let result = assemble_v3_tick_map(store_miss, Some(&db), addr, 0, 10, 0, None).unwrap();
+    let result = assemble_v3_tick_map(Some(&db), addr, 0, 10, 0, None).unwrap();
     let Some((ticks, coverage)) = result else {
         panic!("Db hit should return Some");
     };
@@ -238,8 +207,7 @@ fn v3_store_miss_db_hit_empty_map_returns_miss() {
     // `if not init_maps or not liq_positions: return ..., False` heuristic).
     let (db, _pool_id) = v3_db_with_pool();
 
-    let result =
-        assemble_v3_tick_map(store_miss, Some(&db), make_pool_addr(), 0, 10, 0, None).unwrap();
+    let result = assemble_v3_tick_map(Some(&db), make_pool_addr(), 0, 10, 0, None).unwrap();
     assert!(result.is_none(), "empty LiquidityMap → miss");
 }
 
@@ -248,8 +216,7 @@ fn v3_store_miss_db_miss_pool_not_found_returns_miss() {
     // A fresh DB with no pools at all — `fetch_liquidity_map` returns Ok(None).
     let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
 
-    let result =
-        assemble_v3_tick_map(store_miss, Some(&db), make_pool_addr(), 0, 10, 0, None).unwrap();
+    let result = assemble_v3_tick_map(Some(&db), make_pool_addr(), 0, 10, 0, None).unwrap();
     assert!(result.is_none(), "pool not in DB → miss");
 }
 
@@ -270,7 +237,7 @@ fn v3_store_miss_db_error_is_propagated_not_swallowed() {
         .unwrap();
     }
 
-    let result = assemble_v3_tick_map(store_miss, Some(&db), make_pool_addr(), 0, 10, 0, None);
+    let result = assemble_v3_tick_map(Some(&db), make_pool_addr(), 0, 10, 0, None);
     assert!(
         result.is_err(),
         "Db error must propagate (Decision 8 (A)) — helper must NOT swallow"
@@ -286,68 +253,12 @@ fn v3_store_miss_db_error_is_propagated_not_swallowed() {
 }
 
 #[test]
-fn v3_db_none_cold_start_returns_store_result_only() {
-    // Cold-start path: no Db handle. A store hit still returns Some.
-    let store: SnapshotStore<Address> = SnapshotStore::new();
-    let addr = make_pool_addr();
-    let seed: HashMap<i32, TickInfo> = [(10, sample_tick_info(10))].into_iter().collect();
-    store.load({
-        let mut m = HashMap::new();
-        m.insert(addr, seed.clone());
-        m
-    });
-
-    let result = assemble_v3_tick_map(|| store.take(&addr), None, addr, 0, 10, 0, None).unwrap();
-    let Some((ticks, coverage)) = result else {
-        panic!("Store hit with db=None should still return Some");
-    };
-    assert_eq!(coverage, PoolTickCoverage::Tracked);
-    assert_eq!(ticks, seed);
-}
-
-#[test]
-fn v3_db_none_cold_start_store_empty_returns_miss() {
-    let result = assemble_v3_tick_map(store_miss, None, make_pool_addr(), 0, 10, 0, None).unwrap();
-    assert!(result.is_none(), "cold-start + empty store → miss");
+fn v3_db_none_cold_start_returns_miss() {
+    let result = assemble_v3_tick_map(None, make_pool_addr(), 0, 10, 0, None).unwrap();
+    assert!(result.is_none(), "cold-start (db=None, chain=None) → miss");
 }
 
 // ── V4 tests ──────────────────────────────────────────────────────────────
-
-#[test]
-fn v4_store_hit_returns_tracked_ticks_and_consumes_entry() {
-    let (db, _managed_id, pool_id) = v4_db_with_pool();
-    let store: SnapshotStore<(Address, [u8; 32])> = SnapshotStore::new();
-    let mgr = make_manager();
-    let key = (mgr, pool_id);
-    let seed: HashMap<i32, TickInfo> = [(10, sample_tick_info(10))].into_iter().collect();
-    store.load({
-        let mut m = HashMap::new();
-        m.insert(key, seed.clone());
-        m
-    });
-
-    let result = assemble_v4_tick_map(
-        || store.take(&key),
-        Some(&db),
-        mgr,
-        make_state_view(),
-        pool_id,
-        0,
-        10,
-        0,
-        None,
-    )
-    .unwrap();
-    let Some((ticks, coverage)) = result else {
-        panic!("Store hit should return Some");
-    };
-    assert_eq!(coverage, PoolTickCoverage::Tracked);
-    assert_eq!(ticks, seed);
-
-    let (again, cov) = store.take(&key);
-    assert_eq!(cov, PoolTickCoverage::Sparse);
-    assert!(again.is_empty());
-}
 
 #[test]
 fn v4_store_miss_db_hit_non_empty_returns_tracked_ticks() {
@@ -355,18 +266,8 @@ fn v4_store_miss_db_hit_non_empty_returns_tracked_ticks() {
     seed_v4_ticks(&db, managed_id, &[-10, 10]);
     let mgr = make_manager();
 
-    let result = assemble_v4_tick_map(
-        store_miss,
-        Some(&db),
-        mgr,
-        make_state_view(),
-        pool_id,
-        0,
-        10,
-        0,
-        None,
-    )
-    .unwrap();
+    let result =
+        assemble_v4_tick_map(Some(&db), mgr, make_state_view(), pool_id, 0, 10, 0, None).unwrap();
     let Some((ticks, coverage)) = result else {
         panic!("Db hit should return Some");
     };
@@ -380,7 +281,6 @@ fn v4_store_miss_db_hit_non_empty_returns_tracked_ticks() {
 fn v4_store_miss_db_hit_empty_map_returns_miss() {
     let (db, _managed_id, pool_id) = v4_db_with_pool();
     let result = assemble_v4_tick_map(
-        store_miss,
         Some(&db),
         make_manager(),
         make_state_view(),
@@ -399,7 +299,6 @@ fn v4_store_miss_db_miss_pool_not_found_returns_miss() {
     let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
     let pool_id = [0xee; 32];
     let result = assemble_v4_tick_map(
-        store_miss,
         Some(&db),
         make_manager(),
         make_state_view(),
@@ -428,7 +327,6 @@ fn v4_store_miss_db_error_is_propagated_not_swallowed() {
     }
 
     let result = assemble_v4_tick_map(
-        store_miss,
         Some(&db),
         make_manager(),
         make_state_view(),
@@ -450,10 +348,9 @@ fn v4_store_miss_db_error_is_propagated_not_swallowed() {
 }
 
 #[test]
-fn v4_db_none_cold_start_store_empty_returns_miss() {
+fn v4_db_none_cold_start_returns_miss() {
     let pool_id = [0xee; 32];
     let result = assemble_v4_tick_map(
-        store_miss,
         None,
         make_manager(),
         make_state_view(),
@@ -464,7 +361,7 @@ fn v4_db_none_cold_start_store_empty_returns_miss() {
         None,
     )
     .unwrap();
-    assert!(result.is_none(), "cold-start + empty store → miss");
+    assert!(result.is_none(), "cold-start (db=None, chain=None) → miss");
 }
 
 // ── Chain arm tests (epic 5NT2OC / task U4KLPV) ────────────────────────────
@@ -544,7 +441,7 @@ fn v3_chain_hit_after_store_db_miss_returns_sparse_ticks() {
         fail_rpc: false,
     };
 
-    let result = assemble_v3_tick_map(store_miss, Some(&db), addr, 10, 1, 100, Some(&rpc)).unwrap();
+    let result = assemble_v3_tick_map(Some(&db), addr, 10, 1, 100, Some(&rpc)).unwrap();
     let Some((ticks, coverage)) = result else {
         panic!("Chain hit should return Some");
     };
@@ -565,7 +462,7 @@ fn v3_chain_zero_bitmap_returns_none() {
         fail_rpc: false,
     };
 
-    let result = assemble_v3_tick_map(store_miss, Some(&db), addr, 10, 1, 100, Some(&rpc)).unwrap();
+    let result = assemble_v3_tick_map(Some(&db), addr, 10, 1, 100, Some(&rpc)).unwrap();
     assert!(result.is_none(), "all-zero bitmap → Ok(None)");
 }
 
@@ -580,7 +477,7 @@ fn v3_chain_rpc_error_is_propagated_not_swallowed() {
         fail_rpc: true,
     };
 
-    let result = assemble_v3_tick_map(store_miss, Some(&db), addr, 10, 1, 100, Some(&rpc));
+    let result = assemble_v3_tick_map(Some(&db), addr, 10, 1, 100, Some(&rpc));
     let err = result.expect_err("Chain Rpc error must propagate (Decision 8 (A))");
     assert!(
         matches!(err, TickMapAssemblyError::Chain(BootstrapTickError::Rpc)),
@@ -590,13 +487,13 @@ fn v3_chain_rpc_error_is_propagated_not_swallowed() {
 
 #[test]
 fn v3_chain_none_falls_through_returns_none() {
-    // (d) chain=None → Chain arm doesn't fire; Store + Db miss → Ok(None)
+    // (d) chain=None → Chain arm doesn't fire; Db miss → Ok(None)
     // (current behavior preserved).
     let (db, _pool_id) = v3_db_with_pool();
     let addr = make_pool_addr();
 
-    let result = assemble_v3_tick_map(store_miss, Some(&db), addr, 10, 1, 100, None).unwrap();
-    assert!(result.is_none(), "chain=None + Store+Db miss → Ok(None)");
+    let result = assemble_v3_tick_map(Some(&db), addr, 10, 1, 100, None).unwrap();
+    assert!(result.is_none(), "chain=None + Db miss → Ok(None)");
 }
 
 #[test]
@@ -616,7 +513,6 @@ fn v4_chain_hit_after_store_db_miss_returns_sparse_ticks() {
     };
 
     let result = assemble_v4_tick_map(
-        store_miss,
         Some(&db),
         mgr,
         make_state_view(),
@@ -647,7 +543,6 @@ fn v4_chain_rpc_error_is_propagated_not_swallowed() {
     };
 
     let result = assemble_v4_tick_map(
-        store_miss,
         Some(&db),
         mgr,
         make_state_view(),

@@ -133,10 +133,9 @@ pub type TickMapAssemblyResult =
 /// (A) — neither is swallowed).
 #[allow(
     clippy::too_many_arguments,
-    reason = "precedence helper composes 3 arms; a params struct would obscure the Store closure"
+    reason = "precedence helper composes 2 arms; a params struct would obscure it"
 )]
 pub fn assemble_v3_tick_map(
-    store_probe: impl FnOnce() -> (HashMap<i32, TickInfo>, PoolTickCoverage),
     db: Option<&dyn degenbot_db::snapshot::TickMapDb>,
     address: Address,
     tick: i32,
@@ -144,19 +143,15 @@ pub fn assemble_v3_tick_map(
     block: u64,
     chain: Option<&dyn TickBootstrapRpc>,
 ) -> TickMapAssemblyResult {
-    // 1. Store arm — closure holds the BotState read guard briefly.
-    let (ticks, coverage) = store_probe();
-    if coverage == PoolTickCoverage::Tracked {
-        return Ok(Some((ticks, coverage)));
-    }
-    // 2. Db arm — separate Mutex<Connection>, no BotState guard.
+    // 1. Db arm — held `SnapshotDb` tx (or per-call `DegenbotDb`), no BotState
+    // guard.
     if let Some(db) = db {
         if let Some(db_hit) = fetch_v3_tick_map_from_db(db, address)? {
             return Ok(Some(db_hit));
         }
     }
-    // 3. Chain arm — RPC trait object, no BotState guard. `chain=None` short-
-    // circuits (no RPC bootstrap wired — current behavior preserved).
+    // 2. Chain arm — RPC trait object, no BotState guard. `chain=None` short-
+    // circuits (no RPC bootstrap wired).
     let Some(chain) = chain else {
         return Ok(None);
     };
@@ -182,10 +177,9 @@ pub fn assemble_v3_tick_map(
 /// [`TickMapAssemblyError::Chain`] from `bootstrap_v4_tick_word`.
 #[allow(
     clippy::too_many_arguments,
-    reason = "precedence helper composes 3 arms; a params struct would obscure the Store closure"
+    reason = "precedence helper composes 2 arms; a params struct would obscure it"
 )]
 pub fn assemble_v4_tick_map(
-    store_probe: impl FnOnce() -> (HashMap<i32, TickInfo>, PoolTickCoverage),
     db: Option<&dyn degenbot_db::snapshot::TickMapDb>,
     pool_manager: Address,
     state_view: Address,
@@ -195,18 +189,13 @@ pub fn assemble_v4_tick_map(
     block: u64,
     chain: Option<&dyn TickBootstrapRpc>,
 ) -> TickMapAssemblyResult {
-    // 1. Store arm.
-    let (ticks, coverage) = store_probe();
-    if coverage == PoolTickCoverage::Tracked {
-        return Ok(Some((ticks, coverage)));
-    }
-    // 2. Db arm.
+    // 1. Db arm.
     if let Some(db) = db {
         if let Some(db_hit) = fetch_v4_tick_map_from_db(db, pool_manager, pool_id)? {
             return Ok(Some(db_hit));
         }
     }
-    // 3. Chain arm.
+    // 2. Chain arm.
     let Some(chain) = chain else {
         return Ok(None);
     };

@@ -777,7 +777,6 @@ impl PyBot {
             .map_err(|_| pyo3::exceptions::PyValueError::new_err("tick out of int24 range"))?;
         let spacing_i32 = i32::try_from(tick_spacing)
             .map_err(|_| pyo3::exceptions::PyValueError::new_err("tick_spacing out of range"))?;
-        let state = self.bot.state_arc();
         let db = self.db_handle();
         // NOD4PS: extract the native alloy provider from `io` + construct an
         // `AlloyTickBootstrapRpc` (Option B — pure-Rust choreography, no GIL
@@ -792,7 +791,6 @@ impl PyBot {
             });
         let result = py.detach(|| {
             degenbot_bot::bot_core::tick_assembly::assemble_v3_tick_map(
-                || state.read().v3_snapshot_store().take(&addr),
                 db.as_deref()
                     .map(|d| d as &dyn degenbot_db::snapshot::TickMapDb),
                 addr,
@@ -866,7 +864,6 @@ impl PyBot {
                 "pool_id must be a 0x-hex str or 32-byte bytes",
             ));
         };
-        let state = self.bot.state_arc();
         let db = self.db_handle();
         let pool_id_inner: degenbot_decoders::v4_swap_decoder::PoolId = pool_id_hash.0; // B256 = FixedBytes<32>; .0 is [u8; 32]
         let chain: Option<std::sync::Arc<dyn degenbot_pools::tick_fetch::TickBootstrapRpc>> =
@@ -878,7 +875,6 @@ impl PyBot {
             });
         let result = py.detach(|| {
             degenbot_bot::bot_core::tick_assembly::assemble_v4_tick_map(
-                || state.read().v4_snapshot_store().take(&(mgr, pool_id_inner)),
                 db.as_deref()
                     .map(|d| d as &dyn degenbot_db::snapshot::TickMapDb),
                 mgr,
