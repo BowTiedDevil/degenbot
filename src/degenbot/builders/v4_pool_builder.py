@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import contextlib
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 from hexbytes import HexBytes
 
@@ -20,9 +20,6 @@ from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
-from degenbot.uniswap.math import (
-    get_tick_word_and_bit_position as cl_get_tick_word_and_bit_position,
-)
 from degenbot.uniswap.v4_liquidity_pool import ProtocolFee, UniswapV4Pool
 from degenbot.uniswap.v4_types import (
     UniswapV4PoolExternalUpdate,
@@ -240,91 +237,37 @@ class V4PoolBuilder(V4BuilderBase):
         # miss-detection backfills missing words.
         #
         # QVMWQC: the tick-snapshot read stays routed through the Rust seam.
-        # The `contextlib.suppress(Exception)` swallow around the DB block is
-        # GONE — Db errors propagate as `RuntimeError` from the Rust helper
+        # Db + Chain errors propagate as `RuntimeError` from the Rust helper
         # (Decision 8 (A): loud failure over silent degrade, deliberate
-        # behavior change; a `database is locked` under the concurrent updater
-        # process now aborts pool registration where Python previously
-        # swallowed it and fell to sparse RPC).
+        # behavior change — a `database is locked` or RPC failure now aborts
+        # pool registration where Python previously swallowed it and fell to
+        # sparse RPC).
         #
-        # Branch 1 (caller-supplied `request.tick_bitmap` + `request.tick_data`)
-        # is collapsed into the assemble path — those `BuildPoolRequest` fields
-        # are now dead parameters (orphaned; cleanup is a separate task).
+        # Task XH5ID5: the Python Branch 3 inline sparse-RPC choreography is
+        # GONE — the Rust Chain arm owns it. `io=io` threads the
+        # `AlloyTickBootstrapRpc` through; `io=None` (cold-start, no `Bot`-bound
+        # provider) leaves the Chain arm off → `(tick_data=None,
+        # coverage="sparse")` registration (the defensive fallback).
         register_rows: dict[int, tuple[int, int, int]] | None = None
         coverage = "sparse"
         tick_map_is_tracked = False
-        working_tick_bitmap: dict[int, Any] = {}
 
         assembled = self._py_bot.assemble_v4_tick_map(
             pool_manager_address,
             pool_id_bytes,
+            state_view_address,
+            tick=int(slot0_data.tick),
+            tick_spacing=tick_spacing_for_pool,
+            block=int(state_block),
+            io=io,
         )
         if assembled is not None:
-            # Helper hit (Store arm or Db arm) — `tick_rows` is already in the
-            # `register_v4_pool` arg shape; `coverage` is `"tracked"`.
             rows, coverage = assembled
             tick_map_is_tracked = coverage == "tracked"
             register_rows = rows
-        else:
-            # Branch 3 sparse RPC (unchanged) — fetch only the current bitmap
-            # word + its active ticks via the Rust `PyBotIo` seam.
-            working_tick_data: dict[int, Any] = {}
-            word, _ = cl_get_tick_word_and_bit_position(
-                tick=int(slot0_data.tick),
-                tick_spacing=tick_spacing_for_pool,
-            )
-
-            assert state_view_address is not None
-            # ADR-005 slice 14t: delegate V4 tick-bitmap + per-tick RPCs to Rust
-            # (PyBotIo is the only executor; the Python parity-gate fallback is retired).
-            bitmap_at_word = io.fetch_v4_tick_bitmap(
-                state_view_address,
-                pool_id_bytes,
-                word,
-                block=state_block,
-            )
-
-            if bitmap_at_word != 0:
-                active_ticks = [
-                    ((word << 8) + i) * tick_spacing_for_pool
-                    for i in range(256)
-                    if bitmap_at_word & (1 << i) > 0
-                ]
-
-                for active_tick in active_ticks:
-                    liquidity_gross, liquidity_net = io.fetch_v4_tick_data(
-                        state_view_address,
-                        pool_id_bytes,
-                        active_tick,
-                        block=state_block,
-                    )
-                    working_tick_data[active_tick] = LiquidityAtTick(
-                        liquidity_net=int(liquidity_net),
-                        liquidity_gross=int(liquidity_gross),
-                        block=state_block,
-                    )
-
-            working_tick_bitmap[word] = BitmapAtWord(
-                bitmap=bitmap_at_word,
-                block=state_block,
-            )
-
-            if working_tick_data:
-                rows = {}
-                for t, info in working_tick_data.items():
-                    if isinstance(info, LiquidityAtTick):
-                        rows[int(t)] = (
-                            int(info.liquidity_gross),
-                            int(info.liquidity_net),
-                            int(info.block),
-                        )
-                    else:
-                        rows[int(t)] = (
-                            int(info[0]),
-                            int(info[1]),
-                            int(info[2]) if len(info) > 2 else 0,  # noqa: PLR2004
-                        )
-                register_rows = rows
+        # Cold-start fallback: when `io=None` the Chain arm is off →
+        # register_rows stays None + coverage stays "sparse" (matches the
+        # pre-cutover path).
 
         # If tick data was populated, pass both. Otherwise pass None (sparse mode).
         assert state_view_address is not None

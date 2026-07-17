@@ -171,9 +171,11 @@ pub fn assemble_v3_tick_map(
 /// V4 twin of [`assemble_v3_tick_map`]: the store is keyed by
 /// `(Address, PoolId)`, the Db arm calls
 /// `db.fetch_liquidity_map_v4(pool_manager, pool_id_hash)`, and the Chain arm
-/// calls [`TickBootstrapRpc::bootstrap_v4_tick_word`] with `(pool_manager,
-/// pool_id)`. Identical hit/miss/error semantics — see
-/// [`assemble_v3_tick_map`] for the full contract.
+/// calls [`TickBootstrapRpc::bootstrap_v4_tick_word`] with `(state_view,
+/// pool_id)` — `state_view` is the V4 `StateView` contract address (the contract
+/// exposing `getTickBitmap`/`getTickLiquidity`, NOT the `PoolManager`).
+/// Identical hit/miss/error semantics — see [`assemble_v3_tick_map`] for the
+/// full contract.
 ///
 /// # Errors
 ///
@@ -187,6 +189,7 @@ pub fn assemble_v4_tick_map(
     store_probe: impl FnOnce() -> (HashMap<i32, TickInfo>, PoolTickCoverage),
     db: Option<&DegenbotDb>,
     pool_manager: Address,
+    state_view: Address,
     pool_id: PoolId,
     tick: i32,
     tick_spacing: i32,
@@ -208,7 +211,7 @@ pub fn assemble_v4_tick_map(
     let Some(chain) = chain else {
         return Ok(None);
     };
-    let mgr_str = pool_manager.to_checksum(None);
+    let mgr_str = state_view.to_checksum(None);
     let chain_hit = chain.bootstrap_v4_tick_word(&mgr_str, &pool_id, tick, tick_spacing, block)?;
     Ok(chain_hit.map(|bt_word| (bt_word.ticks, PoolTickCoverage::Sparse)))
 }

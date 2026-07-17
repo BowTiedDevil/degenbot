@@ -779,10 +779,11 @@ impl PyBot {
     /// `RuntimeError` on Db error.
     ///
     /// Args:
-    ///   `pool_manager`: the V4 `PoolManager` contract address.
+    ///   `pool_manager`: the V4 `PoolManager` contract address (Db key).
     ///   `pool_id`: the V4 pool id as a 32-byte hex `str` (`0x...`) or `bytes`.
+    ///   `state_view`: the V4 `StateView` contract address (Chain-arm RPC target).
     ///   `tick`/`tick_spacing`/`block`/`io`: see [`Self::assemble_v3_tick_map`].
-    #[pyo3(signature = (pool_manager, pool_id, tick=0, tick_spacing=0, block=0, io=None))]
+    #[pyo3(signature = (pool_manager, pool_id, state_view, tick=0, tick_spacing=0, block=0, io=None))]
     #[allow(
         clippy::too_many_arguments,
         clippy::needless_pass_by_value,
@@ -793,12 +794,14 @@ impl PyBot {
         py: Python<'py>,
         pool_manager: &str,
         pool_id: &Bound<'_, PyAny>,
+        state_view: &str,
         tick: i64,
         tick_spacing: i64,
         block: u64,
         io: Option<pyo3::Bound<'_, crate::bot::py_bot_io::PyBotIo>>,
     ) -> PyResult<Option<(Bound<'py, PyDict>, String)>> {
         let mgr = parse_address(pool_manager)?;
+        let state_view_addr = parse_address(state_view)?;
         let tick_i32 = i32::try_from(tick)
             .map_err(|_| pyo3::exceptions::PyValueError::new_err("tick out of int24 range"))?;
         let spacing_i32 = i32::try_from(tick_spacing)
@@ -838,6 +841,7 @@ impl PyBot {
                 || state.read().v4_snapshot_store().take(&(mgr, pool_id_inner)),
                 db.as_deref(),
                 mgr,
+                state_view_addr,
                 pool_id_inner,
                 tick_i32,
                 spacing_i32,
@@ -1876,6 +1880,7 @@ mod tests {
                     py,
                     "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                     &pool_id_py,
+                    "0x7fffffffffffffffffffffffffffffffffffffff", // StateView address (dummy)
                     0,
                     10,
                     0,

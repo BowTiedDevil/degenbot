@@ -139,13 +139,13 @@ impl TickBootstrapRpc for AlloyTickBootstrapRpc {
     #[allow(clippy::cast_possible_wrap, reason = "bit index 0..256 fits in i32")]
     fn bootstrap_v4_tick_word(
         &self,
-        pool_manager: &str,
+        state_view: &str,
         pool_id: &[u8; 32],
         tick: i32,
         tick_spacing: i32,
         block: u64,
     ) -> Result<Option<BootstrapTickWord>, BootstrapTickError> {
-        let pool_mgr = parse_address(pool_manager)?;
+        let state_view_addr = parse_address(state_view)?;
 
         let provider = Arc::clone(&self.provider);
         get_runtime().block_on(async move {
@@ -156,9 +156,10 @@ impl TickBootstrapRpc for AlloyTickBootstrapRpc {
                 );
             let word_i16 = i16::try_from(word).expect("tick word fits in int16");
 
-            let bitmap = fetch_v4_tick_bitmap(&provider, &pool_mgr, pool_id, word_i16, Some(block))
-                .await
-                .map_err(map_provider_err)?;
+            let bitmap =
+                fetch_v4_tick_bitmap(&provider, &state_view_addr, pool_id, word_i16, Some(block))
+                    .await
+                    .map_err(map_provider_err)?;
 
             if bitmap.is_zero() {
                 return Ok(None);
@@ -168,10 +169,15 @@ impl TickBootstrapRpc for AlloyTickBootstrapRpc {
             for i in 0..=255u8 {
                 if bitmap.bit(i.into()) {
                     let active_tick = ((word << 8) + i32::from(i)) * tick_spacing;
-                    let (liquidity_gross, liquidity_net) =
-                        fetch_v4_tick_data(&provider, &pool_mgr, pool_id, active_tick, Some(block))
-                            .await
-                            .map_err(map_provider_err)?;
+                    let (liquidity_gross, liquidity_net) = fetch_v4_tick_data(
+                        &provider,
+                        &state_view_addr,
+                        pool_id,
+                        active_tick,
+                        Some(block),
+                    )
+                    .await
+                    .map_err(map_provider_err)?;
                     ticks.insert(
                         active_tick,
                         TickInfo {

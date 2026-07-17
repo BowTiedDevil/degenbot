@@ -768,6 +768,7 @@ class PyBot:
         self,
         pool_manager: str,
         pool_id: str | bytes,
+        state_view: str,
         *,
         tick: int = 0,
         tick_spacing: int = 0,
@@ -777,7 +778,9 @@ class PyBot:
         """Assemble a V4 pool's tick map — V4 twin of `assemble_v3_tick_map`.
 
         ``pool_id`` is the V4 pool id — a 0x-prefixed 66-char hex `str` or 32-byte
-        `bytes`. Same precedence, miss, and error semantics as the V3 variant.
+        `bytes`. ``state_view`` is the V4 StateView contract address (the
+        Chain-arm RPC target; distinct from the `PoolManager`). Same precedence,
+        miss, and error semantics as the V3 variant.
         """
 
     def register_v2_pool(
