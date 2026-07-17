@@ -4072,24 +4072,24 @@ impl Bot {
         Arc::clone(&self.state)
     }
 
-    /// Load V3 + V4 snapshot tick data from the DB into the core `SnapshotStore`s
-    /// and record the snapshot seed block `S` (B3OROH, epic P73ER6).
+    /// Record the snapshot seed block `S` on `BotState` from a held-tx DB
+    /// handle (epic `XEANMB`). The single entry point a standalone Rust
+    /// consumer and the pyo3 `PyBot` constructor both call.
     ///
-    /// The single entry point a standalone Rust consumer and the pyo3 `PyBot`
-    /// constructor both call; replaces the Python `stream_v3/v4_snapshot_to_engine`
-    /// `SQLAlchemy` forwarding for the DB path. Uses `DegenbotDb::stream_liquidity_maps`
-    /// (one pool at a time, no materialized `Vec`) + `SnapshotStore::insert`.
+    /// `db` is a [`degenbot_db::snapshot::TickMapDb`] — typically a
+    /// [`degenbot_db::snapshot_db::SnapshotDb`] opened with a held deferred
+    /// read transaction so `S` + every per-pool `fetch_liquidity_map` read
+    /// share one frozen DB snapshot across `build_paths` (the consistency
+    /// replacement for the retired `SnapshotStore`).
     ///
-    /// Records `S = min(fetch_newest_update_block(V3), V4)` on `BotState`. `None`
+    /// Records `S = min(fetch_newest_update_block(V3), V4)`. `None`
     /// for a family with no pools / NULL `last_update_block`; if BOTH families
     /// are `None`, `S` is `None` (cold-start path — the pump anchors on
     /// `first_observed_block`, no snapshot gap to backfill).
     ///
     /// # Errors
     ///
-    /// Returns [`SnapshotLoadError::Db`] on a DB read failure, [`Hex`] on a
-    /// V4 pool-hash decode failure, or [`Range`] on a liquidity value that
-    /// exceeds the on-chain `U128`/`I256` range (corrupt data).
+    /// Returns [`SnapshotLoadError::Db`] on a DB read failure.
     ///
     /// # Panics
     ///
@@ -4098,14 +4098,18 @@ impl Bot {
     /// on-chain block numbers are non-negative).
     pub fn load_snapshot_from_db(
         &self,
-        db: &degenbot_db::connection::DegenbotDb,
+        db: &dyn degenbot_db::snapshot::TickMapDb,
         chain_id: u64,
     ) -> Result<(), SnapshotLoadError> {
         let chain = i64::try_from(chain_id)
             .map_err(|_| SnapshotLoadError::Range(format!("chain_id {chain_id} exceeds i64")))?;
         let mut state = self.state.write();
-        let now_v3 = load_v3_family(db, chain, &state.v3_snapshot)?;
-        let now_v4 = load_v4_family(db, chain, &state.v4_snapshot)?;
+        let now_v3 = db
+            .fetch_newest_update_block(chain, degenbot_db::read::ExchangeFamily::V3)
+            .map_err(SnapshotLoadError::from)?;
+        let now_v4 = db
+            .fetch_newest_update_block(chain, degenbot_db::read::ExchangeFamily::V4)
+            .map_err(SnapshotLoadError::from)?;
         // S = min(fetch_newest_update_block(V3), V4), ignoring None families.
         let s = match (state.snapshot_seed_block, now_v3, now_v4) {
             (None, Some(v3), Some(v4)) => {
@@ -4207,115 +4211,6 @@ impl Bot {
     pub fn start(&self) {
         unimplemented!("BlockPump wiring lands in ADR-006 slice 5");
     }
-}
-
-// --- B3OROH: DB→store snapshot loading helpers (epic P73ER6) -------------
-
-/// Convert a DB `TickMap` (`tick → (liquidity_gross: U256, liquidity_net: U256)`)
-/// to a `HashMap<i32, TickInfo>` (`U128`/`I256`/block). The DB stores
-/// `VARCHAR(78)` decimals: valid on-chain liquidity always fits in `U128`/`I256`;
-/// a range failure is corrupt data, surfaced as [`SnapshotLoadError::Range`].
-/// `block` is `0` — the DB snapshot is state at `S`, with no per-tick block
-/// provenance carried (diagnostic only — the seed's `block` is unused by the
-/// solver math).
-fn convert_tick_map(ticks: &degenbot_db::snapshot::TickMap) -> HashMap<i32, TickInfo> {
-    let mut out = HashMap::with_capacity(ticks.len());
-    for (&tick, (gross, net)) in ticks {
-        let liquidity_gross = gross.to::<alloy::primitives::U128>();
-        // The DB stores `liquidity_net` as a signed `I256` (decode_i256) already.
-        let liquidity_net = *net;
-        out.insert(
-            tick,
-            TickInfo {
-                liquidity_gross,
-                liquidity_net,
-                block: 0,
-            },
-        );
-    }
-    out
-}
-
-/// Load all V3 pools from the DB into the V3 `SnapshotStore` (one pool at a
-/// time via `stream_liquidity_maps`), returning `fetch_newest_update_block(V3)`.
-/// A `begin_load` is issued; pools arrive in address order.
-fn load_v3_family(
-    db: &degenbot_db::connection::DegenbotDb,
-    chain: i64,
-    store: &crate::bot_core::snapshot_verify::SnapshotStore<Address>,
-) -> Result<Option<i64>, SnapshotLoadError> {
-    store.begin_load();
-    db.stream_liquidity_maps(
-        chain,
-        degenbot_db::read::ExchangeFamily::V3,
-        |key, ticks| {
-            if let degenbot_db::PoolKey::V3(addr) = key {
-                // Convertion errors are infieasible here (the closure can't return
-                // a Result without a side channel); collect via `store.insert`
-                // which returns `VerifyError` but for valid DB data is always Ok.
-                // The tick conversion is infallible for valid on-chain ranges.
-                let converted = convert_tick_map(ticks);
-                store
-                    .insert(addr, converted)
-                    .expect("begin_load issued; insert into a live stream must succeed");
-            }
-        },
-    )?;
-    db.fetch_newest_update_block(chain, degenbot_db::read::ExchangeFamily::V3)
-        .map_err(SnapshotLoadError::Db)
-}
-
-/// Load all V4 pools from the DB into the V4 `SnapshotStore`, returning
-/// `fetch_newest_update_block(V4)`. V4 store keys are `(Address, [u8;32])`;
-/// the DB `pool_hash` hex is decoded to the 32-byte pool id.
-fn load_v4_family(
-    db: &degenbot_db::connection::DegenbotDb,
-    chain: i64,
-    store: &crate::bot_core::snapshot_verify::SnapshotStore<(
-        Address,
-        degenbot_decoders::v4_swap_decoder::PoolId,
-    )>,
-) -> Result<Option<i64>, SnapshotLoadError> {
-    // Accumulate decode/conversion errors via a side channel (the streaming
-    // callback returns `()`). The first error short-circuits.
-    let mut error: Option<SnapshotLoadError> = None;
-    store.begin_load();
-    let stream_result = db.stream_liquidity_maps(
-        chain,
-        degenbot_db::read::ExchangeFamily::V4,
-        |key, ticks| {
-            if error.is_some() {
-                return;
-            }
-            let degenbot_db::PoolKey::V4 {
-                pool_manager,
-                pool_hash,
-            } = key
-            else {
-                return;
-            };
-            let pool_id = match degenbot_core::hex_utils::decode_32byte_hex(&pool_hash) {
-                Ok(id) => id,
-                Err(e) => {
-                    error = Some(SnapshotLoadError::Hex(e));
-                    return;
-                }
-            };
-            let converted = convert_tick_map(ticks);
-            if store.insert((pool_manager, pool_id), converted).is_err() {
-                // insert fails only on no-stream — shouldn't happen post begin_load.
-                error = Some(SnapshotLoadError::Range(
-                    "V4 snapshot insert failed (no stream?)".to_string(),
-                ));
-            }
-        },
-    );
-    stream_result.map_err(SnapshotLoadError::Db)?;
-    if let Some(e) = error {
-        return Err(e);
-    }
-    db.fetch_newest_update_block(chain, degenbot_db::read::ExchangeFamily::V4)
-        .map_err(SnapshotLoadError::Db)
 }
 
 #[cfg(test)]
@@ -7083,42 +6978,36 @@ mod tests {
             "second solve must NOT re-invoke the fetcher — the empty word survived in known_bitmap_words"
         );
     }
-    /// B3OROH: `Bot::load_snapshot_from_db` against the parity fixture DB
-    /// (`crates/degenbot-db/tests/fixtures/parity.db`) — loads V3/V4 ticks into
-    /// the core `SnapshotStore` and records `S = min(newest_update_block(V3), V4)`.
+    /// B3OROH / epic `XEANMB`: `Bot::load_snapshot_from_db` against the parity
+    /// fixture DB (`crates/degenbot-db/tests/fixtures/parity.db`) — opens a
+    /// `SnapshotDb` (held read tx) + records `S = min(newest_update_block(V3),
+    /// V4)` read INSIDE the held tx. The `SnapshotStore` is NOT populated
+    /// (the Store is retired by epic `XEANMB`; the held tx replaces it).
     #[test]
     fn load_snapshot_from_db_populates_store_and_seed_block() {
+        use degenbot_db::snapshot::TickMapDb;
         use std::path::PathBuf;
         let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../degenbot-db/tests/fixtures/parity.db");
         if !fixture.exists() {
-            // The fixture lives in the sibling crate; skip if absent (CI layout
-            // that flattens crates may move it). This is a parity gate, not a
-            // unit test — the degenbot-db parity tests cover the read path.
+            // The fixture lives in the sibling crate; skip if absent.
             eprintln!("skipping: parity fixture not at {}", fixture.display());
             return;
         }
-        let (db, _state) = degenbot_db::connection::DegenbotDb::open(&fixture).unwrap();
+        let (snap, _state) = degenbot_db::snapshot_db::SnapshotDb::open(&fixture).unwrap();
         let bot = Bot::new(8453);
-        bot.load_snapshot_from_db(&db, 8453).unwrap();
+        bot.load_snapshot_from_db(&snap, 8453).unwrap();
 
         let state = bot.state_arc();
         let core = state.read();
-        assert!(
-            core.v3_snapshot_store().is_loaded(),
-            "V3 snapshot store must be populated by load_snapshot_from_db"
-        );
-        assert!(
-            core.v4_snapshot_store().is_loaded(),
-            "V4 snapshot store must be populated by load_snapshot_from_db"
-        );
         // S = min(newest V3, newest V4). The parity fixture records both; the
         // exact S is whatever the fixture DB carries (we assert it's Some and
-        // matches the per-family min computed independently).
-        let v3 = db
+        // matches the per-family min computed independently inside the SAME
+        // held tx).
+        let v3 = snap
             .fetch_newest_update_block(8453, degenbot_db::read::ExchangeFamily::V3)
             .unwrap();
-        let v4 = db
+        let v4 = snap
             .fetch_newest_update_block(8453, degenbot_db::read::ExchangeFamily::V4)
             .unwrap();
         let expected_s = match (v3, v4) {
@@ -7137,13 +7026,13 @@ mod tests {
     /// S = None (cold-start path: the pump will anchor on `first_observed_block`).
     #[test]
     fn load_snapshot_from_db_empty_chain_is_cold_start() {
-        let (db, _state) = degenbot_db::connection::DegenbotDb::open_in_memory().unwrap();
+        let (snap, _state) = degenbot_db::snapshot_db::SnapshotDb::open_in_memory().unwrap();
         let bot = Bot::new(1);
-        bot.load_snapshot_from_db(&db, 1).unwrap();
+        bot.load_snapshot_from_db(&snap, 1).unwrap();
         let state = bot.state_arc();
         let core = state.read();
-        // No pools → no snapshot data, but the store IS marked loaded (begin_load
-        // ran). The seed block is None — the cold-start path.
+        // No pools → no seed block (cold-start path: the pump anchors on
+        // `first_observed_block`).
         assert_eq!(
             core.snapshot_seed_block(),
             None,

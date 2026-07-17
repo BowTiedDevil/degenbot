@@ -43,6 +43,7 @@ pub mod read;
 pub mod rows;
 pub mod schema;
 pub mod snapshot;
+pub mod snapshot_db;
 pub mod write;
 
 pub use aave::{

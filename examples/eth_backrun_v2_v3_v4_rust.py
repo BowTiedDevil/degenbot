@@ -725,6 +725,17 @@ class BackrunSession:
             retry_policy=cfg.verification_retry_policy,
         )
 
+        # 3b. Release the held snapshot read transaction (epic XEANMB).
+        # `load_snapshot_from_db` opened a deferred read tx so every
+        # `assemble_*_tick_map` Db-arm read during `build_paths` shared one
+        # frozen DB snapshot. Pool registration is done — commit the tx to
+        # release the WAL snapshot so the updater's checkpoint can reclaim
+        # `-wal` space for the hot loop. No-op for the cold-start path (no DB).
+        # `getattr` so test fakes (`_FakeBot`) without a real `_py_bot` skip.
+        _py_bot = getattr(self.bot, "_py_bot", None)
+        if _py_bot is not None:
+            _py_bot.close_snapshot_tx()
+
         # 3b. STARTUP batch verify REMOVED — redundant with the per-pool two-step
         # verify and racy at the moving head. Step-1 (seed @ snapshot block) runs
         # inside build_paths for each Tracked pool and proves the snapshot was
