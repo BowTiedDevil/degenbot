@@ -264,7 +264,8 @@ ADR-005 slices 3–15 (ergo `XQ5UX6`, all done) closed the **stateful** topology
 - Slice 13 — crate split (`degenbot-core`/`-python`/umbrella `degenbot` +
   `examples/standalone_consumer.rs`).
 - Slice 14 — `PyBotIo` stateful I/O struct (sync RPC choreography ported;
-  the Python `SyncPoolIO` stays as parity gate).
+  the Python `SyncPoolIO` parity gate has since been retired — `PyBotIo` is the
+  sole construction-I/O executor).
 - Slice 15 — pickle multiprocessing retired + Rust-side parallel solve fan-out.
 
 Blocked: ADR-003 `Bot`=state + engine=solving split; ADR-006 one `Bot` per
