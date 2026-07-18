@@ -270,6 +270,14 @@ impl PyBot {
     /// # Errors
     /// `PyRuntimeError` if the `COMMIT` fails.
     fn close_snapshot_tx(&self) -> PyResult<()> {
+        // Canary (epic XEANMB task 5.7): capture S_snapshot (read inside the
+        // held tx) before committing, then re-read S_live after COMMIT on the
+        // same connection (now seeing the live DB). If S_live > S_snapshot the
+        // pool_updater committed concurrently with startup — a discipline
+        // violation. Correctness was already preserved by the held tx; the
+        // canary only surfaces it.
+        let s_snapshot = self.bot.state_arc().read().snapshot_seed_block();
+        let chain_id = self.bot.chain_id();
         let snap = self.db.lock().take();
         if let Some(snap) = snap {
             // `Arc::try_unwrap` succeeds only if `assemble_*` calls released
@@ -278,7 +286,22 @@ impl PyBot {
             // remaining `Arc` is this one. A failure (clones remain) surfaces
             // as a `RuntimeError` rather than silently leaking the tx.
             match std::sync::Arc::try_unwrap(snap) {
-                Ok(snap) => snap.commit().map_err(|e| crate::db::db_err_to_py(&e))?,
+                Ok(snap) => {
+                    let chain = i64::try_from(chain_id).unwrap_or(0);
+                    let report = snap
+                        .close_with_canary(s_snapshot, chain)
+                        .map_err(|e| crate::db::db_err_to_py(&e))?;
+                    if report.advanced {
+                        log::warn!(
+                            "DB advanced during startup (S_snapshot={} → S_live={}) — \
+                             operator discipline violation (correctness preserved by \
+                             held snapshot tx); the pool_updater committed \
+                             concurrently with `build_paths`",
+                            report.s_snapshot.unwrap_or(0),
+                            report.s_live.unwrap_or(0),
+                        );
+                    }
+                }
                 Err(_) => {
                     return Err(pyo3::exceptions::PyRuntimeError::new_err(
                         "close_snapshot_tx: SnapshotDb Arc still held (clone leak — \

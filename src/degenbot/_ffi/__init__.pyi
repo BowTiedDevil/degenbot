@@ -728,6 +728,15 @@ class PyBot:
         hot loop. After this, ``db_handle()`` returns ``None`` — the
         ``assemble_*`` Db arm is gone for any late registrations (they'd need a
         fresh handle). Idempotent on a not-loaded bot (no-op).
+
+        Operator-discipline canary (task 5.7): after committing the held tx,
+        re-reads ``S_live = min(fetch_newest_update_block(V3), V4)`` in a fresh
+        autocommit tx on the same connection (now seeing the live DB). If
+        ``S_live > S_snapshot`` (captured at startup inside the held tx), emits
+        a ``log::warn!`` that the DB advanced during startup — the
+        ``pool_updater`` committed concurrently with ``build_paths``.
+        Correctness was already preserved by the held tx; the canary only
+        surfaces the discipline violation.
         """
     @property
     def snapshot_seed_block(self) -> int | None:

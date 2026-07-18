@@ -286,3 +286,102 @@ fn per_call_reads_see_concurrent_writer_advance() {
         "per-call read 2: sees writer's block 110 — the race (held tx would freeze at 100)"
     );
 }
+
+// ── Operator-discipline canary (epic XEANMB task 5.7) ──────────────────────
+//
+// `SnapshotDb::close_with_canary` commits the held tx, re-reads `S_live` in a
+// fresh autocommit tx on the same connection, and reports `advanced = s_live >
+// s_snapshot`. The two tests below pin the report end-to-end through the
+// `SnapshotDb` API (the surface `PyBot::close_snapshot_tx` reads through) — a
+// positive case (writer advanced during startup → `advanced == true`) and a
+// negative case (no concurrent commit → `advanced == false`). The `log::warn!`
+// wiring lives in the PyO3 wrapper; the canary's contract is pinned here.
+
+use degenbot_db::read::ExchangeFamily;
+use degenbot_db::snapshot::TickMapDb;
+use degenbot_db::snapshot_db::{CanaryReport, SnapshotDb};
+
+fn seed_canary_fixture(db_path: &std::path::Path) {
+    // Schema via the write-capable DegenbotDb (mirrors the updater writing
+    // rows before the bot starts). One V3 exchange at block 100 on chain 1.
+    let (w, _) = degenbot_db::connection::DegenbotDb::open_for_writes(db_path).unwrap();
+    let conn = w.lock();
+    conn.execute_batch("PRAGMA foreign_keys=OFF;").unwrap();
+    conn.execute_batch(
+        "INSERT OR IGNORE INTO erc20_tokens (id, chain, address, name, symbol, decimals) \
+         VALUES (0, 1, '0x0', 'T', 'T', 18);\
+         INSERT OR IGNORE INTO exchanges (id, chain_id, name, active, last_update_block, factory) \
+         VALUES (1, 1, 'uniswap_v3', 1, 100, '0x1F98431c8aD98523631AE4a59f267346ea31F984');\
+         INSERT OR IGNORE INTO pools (id, address, chain, kind, token0_id, token1_id, exchange_id) \
+         VALUES (10, '0xPool', 1, 'uniswap_v3', 0, 0, 1);\
+         INSERT OR IGNORE INTO liquidity_positions (id, pool_id, tick, liquidity_net, liquidity_gross) \
+         VALUES (1, 10, -100, '1000', '1000');",
+    )
+    .unwrap();
+}
+
+#[test]
+fn canary_flags_advancement_when_writer_committed_during_startup() {
+    let dir = tempfile::TempDir::new().expect("tmpdir");
+    let db_path = dir.path().join("canary_pos.sqlite");
+    seed_canary_fixture(&db_path);
+
+    // Open the SnapshotDb (held tx begins); capture s_snapshot via the held tx.
+    let (snap, _) = SnapshotDb::open(&db_path).unwrap();
+    let s_snapshot: Option<u64> = snap
+        .fetch_newest_update_block(1, ExchangeFamily::V3)
+        .unwrap()
+        .map(|b| u64::try_from(b).unwrap());
+    assert_eq!(s_snapshot, Some(100));
+
+    // Concurrent writer advances the exchange to block 110 (the discipline
+    // violation: pool_updater committed during build_paths).
+    {
+        let w = rusqlite::Connection::open(&db_path).unwrap();
+        w.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")
+            .unwrap();
+        w.execute(
+            "UPDATE exchanges SET last_update_block = 110 WHERE id = 1",
+            [],
+        )
+        .unwrap();
+    }
+
+    // Close + canary: the post-commit re-read sees 110 → advanced.
+    let report = snap.close_with_canary(s_snapshot, 1).unwrap();
+    assert_eq!(
+        report,
+        CanaryReport {
+            s_snapshot: Some(100),
+            s_live: Some(110),
+            advanced: true,
+        },
+        "a concurrent writer commit during startup must set advanced=true"
+    );
+}
+
+#[test]
+fn canary_quiet_when_no_concurrent_commit() {
+    let dir = tempfile::TempDir::new().expect("tmpdir");
+    let db_path = dir.path().join("canary_neg.sqlite");
+    seed_canary_fixture(&db_path);
+
+    let (snap, _) = SnapshotDb::open(&db_path).unwrap();
+    let s_snapshot = snap
+        .fetch_newest_update_block(1, ExchangeFamily::V3)
+        .unwrap()
+        .map(|b| u64::try_from(b).unwrap());
+    assert_eq!(s_snapshot, Some(100));
+
+    // NO concurrent writer. Close + canary: s_live still 100 → not advanced.
+    let report = snap.close_with_canary(s_snapshot, 1).unwrap();
+    assert_eq!(
+        report,
+        CanaryReport {
+            s_snapshot: Some(100),
+            s_live: Some(100),
+            advanced: false,
+        },
+        "no concurrent commit during startup → advanced=false"
+    );
+}
