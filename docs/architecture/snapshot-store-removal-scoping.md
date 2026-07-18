@@ -394,3 +394,29 @@ wal_snapshot_isolation.rs` confirms the model end-to-end.
 
 **Asking for approval:** Does Approach 1 + the six-task breakdown above look
 right to proceed with the removal tasks?
+
+## 7. Removal status (epic `XEANMB` complete)
+
+The Store is gone. Final task dispositions:
+
+- **5.1 (`QSV32Z`) done** — `SnapshotDb` held read-transaction lands the WAL
+  consistency mechanism + folds in 5.4 (the `load_v3_family`/`load_v4_family`
+  streaming into the Store is gone; `load_snapshot_from_db` reads `S` only).
+- **5.2 (`DPRVIP`) done** — `assemble_v3/v4_tick_map` collapsed to
+  `Db → Chain` (the `store_probe` closure param + Store arm removed).
+- **5.3 (`KRWT2Q`) done** — `SnapshotStore<K>` struct, the `BotState.v3/v4`
+  fields, `RegisterV3/V4PoolParams.seed_from_store`, the
+  `if params.seed_from_store` branch + all test fixtures deleted. The non-DB
+  ingestion surface (`load_*_from_py` / `clear_*_snapshot` PyO3 methods +
+  `with_v3_store` / `with_v4_store` helpers) is retired; `start()` now sets
+  `snapshot_seed_block` (S) before `subscribe()` so `after_subscribe`
+  advances the phase to `SnapshotLoaded`.
+- **5.5 (docs) done** — framing references updated (`Store → Db → Chain` →
+  `Db → Chain`; lock-protocol section rewritten; standalone_consumer +
+  register_v3_pool docstrings updated).
+- **5.6 (`DJOWLB`) done — KEEP `stream_liquidity_maps` /
+  `fetch_all_liquidity_maps`.** After 5.4 the only remaining callers are the
+  parity tests (`rust/crates/degenbot-db/tests/parity.rs`). They are clean
+  streaming APIs a future bulk-read consumer could use; retirement is not
+  required for correctness.
+- **5.7 (`ERZ5MS`) — optional operator-discipline canary, deferred.**
