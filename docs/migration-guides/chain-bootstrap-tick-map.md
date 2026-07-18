@@ -6,6 +6,18 @@
 > epic's downstream implementation tasks.
 >
 > **Status:** design (no code yet). Last updated 2026-07-17.
+>
+> **Post-`XEANMB` update (2026-07-17):** the `SnapshotStore` arm this design
+> describes as running first in the `Store → Db → Chain` precedence is now
+> RETIRED (`XEANMB` landed a WAL held read transaction that replaces the
+> Store's boot-time freeze; `assemble_*_tick_map` is `Db → Chain`). The
+> forward-looking consolidation notes in §6 (which reference the Store arm)
+> are historical — they were correct at design time; the post-removal path
+> (single `TickRpc` trait keyed by address that both the registration-time
+> bootstrap + the live-pump miss path use) remains a valid future
+> consolidation but no longer requires removing a Store arm. See
+> [`docs/architecture/snapshot-store-removal-scoping.md`](../architecture/snapshot-store-removal-scoping.md)
+> §7 for the removal's final task dispositions.
 
 ## 0. Problem statement
 
