@@ -20,6 +20,16 @@ deepening decisions crystallize.
 - **PyO3 wrapper** — `rust/crates/degenbot-python/src/<domain>/**`. `#[pyclass]`/`#[pyfunction]` only — arg extract → GIL release → core call → result wrap. No business logic.
 - **Python companion** — `src/degenbot/**`. User-facing API, docstrings, I/O orchestration, immutable config dual-tracking, `Fraction`-based display.
 
+### Pool structural families
+
+The seven `PoolEntry` variants fall into **three structural families**, grouped by state-field shape and delta shape — not by DEX. The family names are load-bearing vocabulary in architecture reviews and the `BotState` deepening.
+
+- **Reserve-pair** — `reserve0/1: U112`, `update_block`, full-state delta (`V2BlockDelta`). Members: V2, AerodromeV2 (Aerodrome's `AerodromeV2PoolState.journal` is literally `ReorgJournal<V2BlockDelta>` — the variant shares the V2 delta). Apply: `apply_*_sync` (overwrites reserves).
+- **Balance-vector** — `balances: Vec<U256>`, `update_block`, full-state delta (`BalancesBlockDelta` — the three nominally-distinct `CurveBlockDelta`/`BalancerWeightedBlockDelta`/`BalancerStableBlockDelta` structs are byte-identical and unify here). Members: Curve, Balancer-weighted, Balancer-stable. Apply: `apply_*_balance_update` (overwrites balances).
+- **Concentrated-liquidity (CL)** — slot0 scalars (`sqrt_price_x96`/`liquidity`/`tick`) + `tick_data: HashMap<i32, TickInfo>`, partial-prior delta (`V3BlockDelta` with `scalar_priors`/`tick_priors`). Members: V3, V4 (structurally near-identical; differ in identity shape and V4's `pool_key` nesting). Apply: `apply_swap` (changes slot0) / `apply_liquidity_update` (tick-only).
+
+**Trait discipline.** State-struct traits are adopted **only for the CL family** — `ConcentratedLiquidityPool` (read, rename of the legacy `V3FamilyPool`) + `ConcentratedLiquidityPoolMut` (write). V3 and V4 are two adapters behind the same per-pool interface, so by the two-adapter rule the seam is real. For reserve-pair and balance-vector, the duplication sits one layer down — on `ReorgJournal` / `BlockDelta` — and dedups there (unify the balance-vector deltas to `BalancesBlockDelta`; extend `BlockDelta` with `type RestoreState` + `landed()` to collapse five hand-duplicated `restore_*_before_block` impls into one generic `impl<D: BlockDelta> ReorgJournal<D>`). The V3 family keeps its own restore impl — `V3RestoreResult` + the scalar/tick-priors branches are a genuinely different algorithm, not a full-state delta. See ADR-014 for the formal record of the trait-vs-journal-layer split.
+
 ### Construction-I/O executor
 
 **Current shape — `PyBotIo`** (Rust `#[pyclass]`, `degenbot.bot.PyBotIo`)
@@ -77,8 +87,10 @@ in a follow-up (the builder-choreography port). Held-tx sharing between
 `DbConstruction`'s connection and `tick_assembly`'s `SnapshotDb` held-tx
 is a separate, later slice.
 
-Migration note: `docs/migration-guides/construction-io-trait.md`. ADR-014
-(the formal record of the trait + adapter pattern) lands after the slice.
+Migration note: `docs/migration-guides/construction-io-trait.md`. The formal
+record of the Construction-I/O trait + adapter pattern lands as a future
+ADR (the ADR-014 slot is taken by the pool-state-deepening decisions —
+see `docs/adr/ADR-014-pool-state-deepening-layer.md`).
 
 **Posture (Decision 8 (A), unified):** DB errors propagate at the trait;
 the choreography decides whether to degrade. This unifies the codebase
