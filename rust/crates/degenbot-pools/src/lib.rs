@@ -64,7 +64,7 @@
 //!   `BalancerRateProvider` + their error/return types + `StaticRateProvider`)
 //! - **leaf value modules** (`spec_bounds`, `state_history`, `tick_bitmap`,
 //!   `tick_map`)
-//! - **per-family state structs** + `PoolEntry` / `V3FamilyPool` / `TickInfo` /
+//! - **per-family state structs** + `PoolEntry` / `ConcentratedLiquidityPool` / `TickInfo` /
 //!   `TokenEntry` + `Register*Pool{Params,Error}`
 //! - **stateless swap sims** (`v3_simulate_swap`, `v4_simulate_swap`,
 //!   `SimulateSwapError`, `V3SwapOutcome`, the V2/Curve/Balancer dispatch)

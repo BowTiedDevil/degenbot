@@ -46,7 +46,7 @@ pub enum PoolEntry {
 /// config (`fee`/`tick_spacing`) lives on `V3PoolIdentity`/`V4PoolIdentity`;
 /// read it via [`BotState::get_v3_identity`]/[`BotState::get_v4_identity`].
 /// The dyn-dispatch surface is a `&VxPoolState` borrowed from the registry.
-pub trait V3FamilyPool {
+pub trait ConcentratedLiquidityPool {
     fn sqrt_price_x96(&self) -> U256;
     fn liquidity(&self) -> u128;
     fn tick(&self) -> i32;
@@ -54,7 +54,7 @@ pub trait V3FamilyPool {
     fn tick_data(&self) -> &HashMap<i32, TickInfo>;
 }
 
-impl V3FamilyPool for V3PoolState {
+impl ConcentratedLiquidityPool for V3PoolState {
     fn sqrt_price_x96(&self) -> U256 {
         self.sqrt_price_x96
     }
@@ -72,7 +72,7 @@ impl V3FamilyPool for V3PoolState {
     }
 }
 
-impl V3FamilyPool for V4PoolState {
+impl ConcentratedLiquidityPool for V4PoolState {
     fn sqrt_price_x96(&self) -> U256 {
         self.sqrt_price_x96
     }
