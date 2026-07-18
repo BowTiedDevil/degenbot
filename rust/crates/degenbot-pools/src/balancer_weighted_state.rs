@@ -50,48 +50,18 @@
 
 use alloy::primitives::{Address, U256};
 
-use crate::state_history::{BlockDelta, ReorgJournal};
+use crate::state_history::{BalancesBlockDelta, ReorgJournal};
 
 // ---------------------------------------------------------------------------
 // Block delta
 // ---------------------------------------------------------------------------
 
-/// Per-block delta for a Balancer V2 weighted pool.
-///
-/// Stores the **before** balances captured at the moment a block's
-/// `external_update` was applied — used for reorg rollback. Mirrors
-/// [`crate::state_history::V2BlockDelta`] and
-/// [`crate::CurveBlockDelta`]: a full-state delta (N balances +
-/// block), with `balances_before` redundant with the preceding delta's
-/// `balances_after` (retained for a self-describing record).
-///
-/// A genesis delta is pushed at registration (`before == after == registration
-/// balances`, at `block = update_block`) so `restore_before_block` can land on
-/// the registration state — the same anchor discipline as V2/Curve (the
-/// Balancer journal carries a genesis anchor; V3/V4 do not, because their
-/// first forward event's "before" IS the registration state).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BalancerWeightedBlockDelta {
-    /// Block number of this delta.
-    pub block: u64,
-    /// Balances *before* this block's update (redundant with the preceding
-    /// delta's `balances_after`; retained for a self-describing transition
-    /// record — matches `V2BlockDelta`'s `*_before` fields).
-    pub balances_before: Vec<U256>,
-    /// Balances *after* this block's update — the landed-at state for this
-    /// block, returned by `restore_before_block` when it lands here.
-    pub balances_after: Vec<U256>,
-}
-
-impl BlockDelta for BalancerWeightedBlockDelta {
-    fn block(&self) -> u64 {
-        self.block
-    }
-
-    // Same full-state delta shape as V2/Curve; the default no-op coalesce is
-    // correct (`restore_before_block` reads the surviving delta's
-    // `balances_after`).
-}
+// Per-block delta for a Balancer V2 weighted pool.
+//
+// ADR-014 D3a: the family-specific `BalancerWeightedBlockDelta` was a
+// byte-identical full-state delta to the Curve/Balancer-stable twins; it's
+// unified into the shared `BalancesBlockDelta` in `state_history.rs`. The
+// weighted pool journal is now `ReorgJournal<BalancesBlockDelta>`.
 
 // ---------------------------------------------------------------------------
 // Registration params + state struct
@@ -185,7 +155,7 @@ pub struct BalancerWeightedPoolState {
     pub update_block: u64,
 
     /// Reorg journal — balance priors for rollback.
-    pub journal: ReorgJournal<BalancerWeightedBlockDelta>,
+    pub journal: ReorgJournal<BalancesBlockDelta>,
 }
 
 impl BalancerWeightedPoolIdentity {
@@ -206,10 +176,10 @@ impl BalancerWeightedPoolState {
         params: RegisterBalancerWeightedPoolParams,
         journal_depth: usize,
     ) -> (BalancerWeightedPoolIdentity, BalancerWeightedPoolState) {
-        let mut journal = ReorgJournal::<BalancerWeightedBlockDelta>::new(journal_depth);
+        let mut journal = ReorgJournal::<BalancesBlockDelta>::new(journal_depth);
         // Genesis anchor: before == after == registration balances at
         // update_block. The "landed-at" registration point.
-        journal.push_delta(BalancerWeightedBlockDelta {
+        journal.push_delta(BalancesBlockDelta {
             block: params.update_block,
             balances_before: params.balances.clone(),
             balances_after: params.balances.clone(),
