@@ -22,9 +22,9 @@ deepening decisions crystallize.
 
 ### Construction-I/O executor
 
-**`PyBotIo`** (Rust `#[pyclass]`, `degenbot.bot.PyBotIo`) is the sole
-construction-I/O executor: every builder's `build()`/`update()` and the
-type-resolution + tick-fetcher paths receive `io: PyBotIo` and call
+**Current shape — `PyBotIo`** (Rust `#[pyclass]`, `degenbot.bot.PyBotIo`)
+is the sole construction-I/O executor: every builder's `build()`/`update()`
+and the type-resolution + tick-fetcher paths receive `io: PyBotIo` and call
 `io.fetch_X()` / `io.probe_X()` directly (ADR-005 slice 14). The Python
 `PoolIO`/`SyncPoolIO`/`AsyncPoolIO` protocols and the encode→call→decode
 parity-gate fallbacks are deleted; `AsyncBot` and the async builders are
@@ -33,6 +33,62 @@ also implements the 7-method generic RPC surface (`call`/`call_raw`/
 `get_block*`/`get_code`/`get_balance`) used by the Curve detection modules.
 `AsyncAlloyProvider` survives for the pump/subscribe/verify loop only —
 never for construction.
+
+**Shipped (slice A) — `ConstructionIo` core trait (architecture review,
+2025-07-18).** Construction-I/O is deepened behind a core trait owned by
+`Bot` (ADR-003: `Bot` is the single state owner; construction-I/O is part of
+its lifecycle, so the handle belongs on `Bot`, not a side-channel
+`#[pyclass]`). Two-trait split — one seam per concern, matching the
+`TickMapDb` / `TickBootstrapRpc` precedent:
+
+- **`DbConstruction`** — async trait, 12 methods covering the construction-
+  time DB reads/writes (`fetch_erc20_token`, `fetch_pool_row`,
+  `fetch_pool_kind`, `fetch_token_by_id`, `fetch_exchange`,
+  `fetch_liquidity_positions`, `fetch_initialization_maps`,
+  `fetch_pool_manager`, `fetch_v4_pool_by_pool_hash`,
+  `fetch_managed_liquidity_positions`, `fetch_managed_initialization_maps`,
+  `update_erc20_token_metadata`). Returns `degenbot_db::rows::*` core rows
+directly
+  (no `Py*` mirror at the trait). Propagates `DbError` **loudly** (Decision
+  8 (A) — the trait never swallows; the choreography decides whether to
+  degrade). Native adapter `DegenbotDbConstruction` holds a **persistent**
+  `DegenbotDb` (held connection, not per-call `DegenbotDb::open` — matches
+  XEANMB; deletes the 12×-open boilerplate).
+- **`RpcConstruction`** — async trait, 7 generic RPC methods
+  (`get_block_number`, `get_block`, `get_block_timestamp`, `get_code`,
+  `get_balance`, `call`, `call_raw`). Native adapter `AlloyRpcConstruction`
+  wraps `degenbot-rpc`'s `AlloyProvider`. **Alloy-only** — the legacy non-alloy
+  Python-provider fallback is dropped from the trait (the `PyBotIo` choreography
+  fallback retains it temporarily; deleted with the builder-choreography port).
+- **`ConstructionIo`** — composite handle (`Arc<dyn DbConstruction> + Arc<dyn
+  RpcConstruction>`) held by `Bot`. The no-DB path is a **`NoDb` adapter**
+  (every method returns `None`/empty), not an `Option` at the call site —
+  `ConstructionIo.db` is always `Some`. `NoDb` doubles as the first
+  in-memory test fake.
+
+`PyBotIo`'s 12 DB + 7 generic RPC methods now delegate through the trait
+objects (slice A); `PyBotIo` retires fully once the 27 choreography wrappers
+move core-side (the builder-choreography port). Builders receive
+`&ConstructionIo` (sourced from `Bot`), not a parallel I/O object. The 27
+choreographed encode→call→decode wrappers (the `fetch_v2_reserves` /
+`fetch_v3_slot0_*` / `fetch_balancer_*` family) stay on `PyBotIo` for this
+slice, composing over the trait's `call` / DB primitives; they move core-side
+in a follow-up (the builder-choreography port). Held-tx sharing between
+`DbConstruction`'s connection and `tick_assembly`'s `SnapshotDb` held-tx
+is a separate, later slice.
+
+Migration note: `docs/migration-guides/construction-io-trait.md`. ADR-014
+(the formal record of the trait + adapter pattern) lands after the slice.
+
+**Posture (Decision 8 (A), unified):** DB errors propagate at the trait;
+the choreography decides whether to degrade. This unifies the codebase
+under the posture `tick_assembly` already established as canonical —
+"Do NOT restore the swallow."
+
+**Breaking change (0.6.x):** non-alloy Python providers are no longer
+supported for construction. Migration note: supply a `PyAlloyProvider`.
+An ADR recording the I/O-seam-is-core / alloy-only / loud-error posture
+will land with the slice.
 
 ## The `_ffi` seam (Pydantic barrier — DECIDED)
 
