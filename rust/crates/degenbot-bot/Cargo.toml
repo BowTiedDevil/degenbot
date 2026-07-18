@@ -21,6 +21,11 @@ suspicious = "warn"
 
 [dependencies]
 alloy = { version = "^2.0", features = ["full", "transport-throttle"] }
+# `async_trait` makes the construction-I/O core traits dyn-compatible (they're
+# held as `Arc<dyn DbConstruction + Send + Sync>` on `ConstructionIo`). The
+# macro desugars `async fn` to `-> Pin<Box<dyn Future + Send>>` — the standard
+# pattern alloy itself uses for `dyn Provider`.
+async-trait = { version = "^0.1" }
 dashmap = { version = "^6.1" }
 degenbot-abi = { path = "../degenbot-abi" }
 degenbot-cl-math = { path = "../degenbot-cl-math" }

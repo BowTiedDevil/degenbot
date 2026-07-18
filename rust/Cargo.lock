@@ -1811,6 +1811,7 @@ name = "degenbot-bot"
 version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
+ "async-trait",
  "dashmap",
  "degenbot-abi",
  "degenbot-cl-math",

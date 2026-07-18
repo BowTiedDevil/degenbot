@@ -20,6 +20,7 @@ pub mod balancer_stable_state;
 pub mod balancer_weighted_state;
 pub mod block_clock;
 pub mod block_pump;
+pub mod construction_io;
 pub mod curve_state;
 pub mod drain_sink;
 pub mod engine;
@@ -3946,6 +3947,19 @@ pub struct Bot {
     /// [`dispatch_log`](Self::dispatch_log) per WS log; engine subscriber
     /// adapters attach via [`attach_engine`](Self::attach_engine).
     dispatcher: log_dispatcher::LogDispatcher,
+    /// The construction-I/O handle (architecture review 2025-07-18 / candidate 1).
+    /// `None` for a bare `Bot::new(chain_id)` (the test-fixture + standalone-
+    /// Rust-no-I/O path). The Python `Bot.__init__` path attaches one via
+    /// [`Bot::set_construction_io`] built from the extracted `AlloyProvider`
+    /// and an optional held `DegenbotDb`; the 7 generic RPC + 12 DB atomic
+    /// methods on `PyBotIo` delegate to this, the 27 choreography wrappers stay
+    /// on `PyBotIo` for now (deleted with the builder-choreography port).
+    ///
+    /// Interior-mutable (`RwLock`) so a `Bot` shared via `Arc` can have the
+    /// handle attached post-construction (the `PyBot` path: `PyBot::new(chain_id)`
+    /// happens before the provider is known, then `set_construction_io` attaches).
+    construction_io:
+        parking_lot::RwLock<Option<Arc<crate::bot_core::construction_io::ConstructionIo>>>,
 }
 
 /// Block metadata included in each `ResultBatch`.
@@ -3971,13 +3985,16 @@ impl Bot {
     ///
     /// ADR-006 slice 8b: the Python `Bot` facade is single-chain and passes the
     /// real `chain_id` via `PyBot::new(chain_id)`; `0` is the default for the
-    /// bare-fixture test path.
+    /// bare-fixture test path. The construction-I/O handle is `None` until
+    /// [`Bot::set_construction_io`] attaches one (the Python path does this at
+    /// `Bot.__init__` time).
     #[must_use]
     pub fn new(chain_id: u64) -> Self {
         Self {
             chain_id,
             state: Arc::new(parking_lot::RwLock::new(BotState::new())),
             dispatcher: log_dispatcher::LogDispatcher::with_uniswap_decoders(),
+            construction_io: parking_lot::RwLock::new(None),
         }
     }
 
@@ -3987,14 +4004,18 @@ impl Bot {
     /// gets the core via `UniswapEngine::with_core`, `BlockPump`'s `Bot`
     /// shares it, and `dispatch_log` writes flow through to the engine's reads.
     ///
-    /// The adopting path does not carry a `chain_id` (the original owner did);
-    /// `0` here is a placeholder for the standalone/no-pyo3 adoption path.
+    /// The adopting path does not carry a `chain_id` (the original owner did;
+    /// `0` here is a placeholder for the standalone/no-pyo3 adoption path) and
+    /// does not carry a `construction_io` handle (the original owner attached
+    /// one if needed; adopters that need I/O re-attach via
+    /// [`Bot::with_construction_io`]).
     #[must_use]
     pub fn with_core(core: Arc<parking_lot::RwLock<BotState>>) -> Self {
         Self {
             chain_id: 0,
             state: core,
             dispatcher: log_dispatcher::LogDispatcher::with_uniswap_decoders(),
+            construction_io: parking_lot::RwLock::new(None),
         }
     }
 
@@ -4004,6 +4025,28 @@ impl Bot {
     #[must_use]
     pub const fn chain_id(&self) -> u64 {
         self.chain_id
+    }
+
+    /// Attach a construction-I/O handle (architecture review 2025-07-18 /
+    /// candidate 1). The Python `Bot.__init__` path builds the handle from the
+    /// extracted `AlloyProvider` + an optional held `DegenbotDb` and attaches
+    /// it here; the standalone-Rust path builds + attaches directly.
+    ///
+    /// Idempotent: a second call replaces the prior handle.
+    pub fn set_construction_io(&self, io: crate::bot_core::construction_io::ConstructionIo) {
+        *self.construction_io.write() = Some(Arc::new(io));
+    }
+
+    /// Hand out a clone of the construction-I/O handle, when attached. `PyBotIo`'s
+    /// 7 generic RPC + 12 DB atomic methods reach this to delegate through the
+    /// trait objects (`Arc<dyn DbConstruction + Send + Sync>` /
+    /// `Arc<dyn RpcConstruction + Send + Sync>`); the 27 choreography wrappers
+    /// stay on `PyBotIo` this slice. `None` for a bare bot with no I/O attached.
+    #[must_use]
+    pub fn construction_io_arc(
+        &self,
+    ) -> Option<Arc<crate::bot_core::construction_io::ConstructionIo>> {
+        self.construction_io.read().clone()
     }
 
     /// Hand out a clone of the shared `Arc<RwLock<BotState>>` so a sibling
