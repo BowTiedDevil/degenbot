@@ -584,6 +584,12 @@ class PyBotIo:
     def __init__(
         self, provider: object, db: object | None = None, database_path: str | None = None
     ) -> None: ...
+    def attach_construction_io(self, py_bot: PyBot) -> None:
+        """Source the ``ConstructionIo`` handle from ``py_bot`` (slice A).
+
+        After this call the 12 DB + 7 generic RPC methods delegate through
+        the core trait objects; the 27 choreography wrappers stay unchanged.
+        """
     @property
     def provider(self) -> object: ...
     @property
@@ -755,6 +761,14 @@ class PyBot:
         min(newest_block)`` so the core auto-backfill inside
         ``BlockPump::resume_from_subscribe`` closes the snapshot→WS gap (J3FMDO).
         The DB path's ``load_snapshot_from_db`` already sets `S` itself.
+        """
+    def attach_construction_io(self, provider: object, database_path: str | None = None) -> None:
+        """Attach the core ``ConstructionIo`` handle to ``Bot`` (slice A).
+
+        Builds the native adapters from the extracted ``AlloyProvider`` + an
+        optional held ``DegenbotDbConstruction`` and attaches them to ``Bot``
+        via ``Bot::set_construction_io``. Soft-skip for non-alloy providers
+        (preserves the test-double path). A missing DB file → ``NoDb``.
         """
 
     def assemble_v3_tick_map(

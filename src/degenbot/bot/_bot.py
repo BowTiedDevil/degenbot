@@ -158,6 +158,17 @@ class Bot:
         self.db = DatabaseSessionManager(
             get_scoped_sqlite_session(database_path=config.database.path),
         )
+        # Architecture review 2025-07-18 / candidate 1: attach the core
+        # `ConstructionIo` handle to `PyBot` (built from the extracted
+        # `AlloyProvider` + an optional held `DegenbotDb`). The 7 generic RPC
+        # + 12 DB atomic methods on `PyBotIo` delegate through this; the 27
+        # choreography wrappers stay on `PyBotIo` for now (deleted with the
+        # builder-choreography port). Alloy-only — a non-alloy provider raises
+        # `RuntimeError`.
+        self._py_bot.attach_construction_io(
+            provider=self._provider,
+            database_path=str(config.database.path) if config.database.path else None,
+        )
         # The single I/O seam for this Bot (architecture review candidate #2):
         # built once here and reused by every build/update/balance method instead
         # of reconstructing PyBotIo per call. Swapping the I/O seam (fork tests,
@@ -167,6 +178,9 @@ class Bot:
             db=self.db,
             database_path=str(config.database.path),
         )
+        # Wire the `ConstructionIo` handle attached above onto `PyBotIo` so its
+        # 12 DB + 7 generic RPC methods delegate through the core trait objects.
+        self._io.attach_construction_io(self._py_bot)
         self.pools = PoolRegistry(py_bot=self._py_bot)
         self.tokens = TokenRegistry()
         self.managed_pools = ManagedPoolRegistry()
