@@ -270,9 +270,9 @@ impl BotState {
     /// Returns [`RegisterV3PoolError::SpecViolation`] when `sqrt_price_x96`,
     /// `tick`, `fee`, or `tick_spacing` violates its Solidity-bounded on-chain
     /// invariant (see [`spec_bounds`]). These checks fire *before* the
-    /// `seed_from_store` snapshot step — `seed_from_store` only overrides
-    /// `tick_data`/`coverage` (snapshot-derived) and never touches the immutable
-    /// config / current state scalars under validation here.
+    /// registration-time tick-data seeding (the Db arm of `assemble_*_tick_map`
+    /// supplies `tick_data`/`coverage` via the held snapshot tx) + never touch
+    /// the immutable config / current state scalars under validation here.
     pub fn register_v3_pool(
         &mut self,
         params: &RegisterV3PoolParams,

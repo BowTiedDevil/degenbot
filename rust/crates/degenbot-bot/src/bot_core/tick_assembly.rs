@@ -1,11 +1,14 @@
-//! Tick-map assembly: `Store → Db → Chain` precedence helper (epic `5NT2OC`).
+//! Tick-map assembly: `Db → Chain` precedence helper (epic `5NT2OC` /
+//! `XEANMB`).
 //!
 //! One free function per CL family (`assemble_v3_tick_map` /
-//! `assemble_v4_tick_map`) that probes a [`SnapshotStore`] (the bulk-loaded DB
-//! snapshot, consumed once per pool), then on a miss falls back to a per-pool
-//! `TickMapDb::fetch_liquidity_map` read, then on a further miss falls back
-//! to the **Chain arm** — a sparse-RPC word read via
-//! [`TickBootstrapRpc`] (`Store → Db → Chain` precedence, epic `5NT2OC`).
+//! `assemble_v4_tick_map`) that reads the tick map from a per-pool
+//! `TickMapDb::fetch_liquidity_map` read (the held `SnapshotDb` tx for the
+//! DB path, a per-call `DegenbotDb` otherwise), then on a miss falls back to
+//! the **Chain arm** — a sparse-RPC word read via [`TickBootstrapRpc`]
+//! (`Db → Chain` precedence). Epic `XEANMB` retired the former `Store` arm
+//! (the in-memory `SnapshotStore` is replaced by a WAL held read transaction
+//! so every per-pool read during `build_paths` shares one frozen DB cut).
 //!
 //! # Chain arm coverage semantics
 //!
@@ -17,24 +20,20 @@
 //! the current word — the caller registers with `tick_data=None,
 //! coverage="sparse"` (mirrors Python Branch 3 when `bitmap_at_word == 0`).
 //!
-//! # Lock protocol (A4YUYJ — must-read before editing)
+//! //! # Lock protocol (A4YUYJ — must-read before editing)
 //!
-//! The Store arm is a **closure** (`impl FnOnce() -> (HashMap<i32, TickInfo>,
-//! PoolTickCoverage)`) rather than `&SnapshotStore<K>`. This is deliberate:
-//! `SnapshotStore::take` is `&self` (interior mutability), so a `&store` borrow
-//! would tie the caller's `BotState` read guard to the helper's *entire* call
-//! — including the Db + Chain reads inside it. During `build_paths` the live
-//! pump holds `state.write()` on the same `BotState` (`resume()` precedes
-//! `build_paths`), so a guard held across an `SQLite` read or an RPC `eth_call`
-//! would block pump Mint/Burn applies for every pool registered. The closure
-//! sidesteps this: it runs under the guard, returns owned `(ticks, coverage)`,
-//! drops the guard, and the helper continues with the `Option<&dyn TickMapDb>` (a
-//! handle to a *separate* `Mutex<Connection>`, decoupled from `BotState`) and
-//! then the `Option<&dyn TickBootstrapRpc>` (an RPC trait object, also no
-//! `BotState` guard) — no `BotState` guard held across either subsequent read.
-//! Two-phase locking, hidden inside one Rust call so the `PyO3` caller sees a
-//! single `assemble_*` function. The Chain arm holds the same invariant: RPC
-//! I/O runs with NO `BotState` guard (A4YUYJ's protocol holds end-to-end).
+//! The Db arm reads through `Option<&dyn TickMapDb>` (a handle to a
+//! *separate* `Mutex<Connection>` — the `SnapshotDb` held-tx or a per-call
+//! `DegenbotDb`), decoupled from `BotState`. The Chain arm is an RPC trait
+//! object, also with no `BotState` guard. The former `Store` arm's closure
+//! (which briefly held a `BotState` read guard) is retired (XEANMB) — the
+//! per-pool `fetch_liquidity_map` reads the DB directly with no `BotState`
+//! guard held across an `SQLite` read or an RPC `eth_call`. During
+//! `build_paths` the live pump holds `state.write()` on the same `BotState`
+//! (`resume()` precedes `build_paths`), so NO `BotState` guard may be held
+//! across either the Db or Chain read. The Chain arm holds the same
+//! invariant: RPC I/O runs with NO `BotState` guard (A4YUYJ's protocol holds
+//! end-to-end).
 //!
 //! # Db error handling (Decision 8 (A) — behavior change)
 //!
