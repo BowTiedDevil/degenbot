@@ -733,16 +733,7 @@ impl BotState {
         let Some(PoolEntry::V2(_, state)) = self.pools.get_mut(&pool_id) else {
             return None;
         };
-        state.journal.push_delta(V2BlockDelta {
-            block: block_number,
-            reserve0_before: state.reserve0,
-            reserve1_before: state.reserve1,
-            reserve0_after: reserve0,
-            reserve1_after: reserve1,
-        });
-        state.reserve0 = reserve0;
-        state.reserve1 = reserve1;
-        state.update_block = block_number;
+        state.apply_sync(reserve0, reserve1, block_number);
         Some(pool_id)
     }
 
@@ -2520,16 +2511,7 @@ impl BotState {
         let Some(PoolEntry::AerodromeV2(_, state)) = self.pools.get_mut(&pool_id) else {
             return None;
         };
-        state.journal.push_delta(V2BlockDelta {
-            block: block_number,
-            reserve0_before: state.reserve0,
-            reserve1_before: state.reserve1,
-            reserve0_after: reserve0,
-            reserve1_after: reserve1,
-        });
-        state.reserve0 = reserve0;
-        state.reserve1 = reserve1;
-        state.update_block = block_number;
+        state.apply_sync(reserve0, reserve1, block_number);
         Some(pool_id)
     }
 

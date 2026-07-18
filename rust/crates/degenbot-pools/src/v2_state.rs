@@ -149,3 +149,83 @@ impl From<crate::spec_bounds::SpecViolation> for RegisterV2PoolError {
         Self::SpecViolation(v)
     }
 }
+
+impl V2PoolState {
+    /// Apply a V2 `Sync` event to this pool's reserves, capturing the prior
+    /// reserves into the reorg journal (ADR-014 D1 — relocated from
+    /// `BotState::apply_v2_sync_by_pool_id`).
+    ///
+    /// Pushes a full-state `V2BlockDelta` (`before` = pre-sync reserves,
+    /// `after` = the new reserves, at `block_number`), then overwrites
+    /// `reserve0`/`reserve1` and advances `update_block`. The genesis-anchor
+    /// discipline (registration's `before == after`) is what makes
+    /// `restore_before_block` land at registration.
+    pub fn apply_sync(&mut self, reserve0: U112, reserve1: U112, block_number: u64) {
+        self.journal.push_delta(V2BlockDelta {
+            block: block_number,
+            reserve0_before: self.reserve0,
+            reserve1_before: self.reserve1,
+            reserve0_after: reserve0,
+            reserve1_after: reserve1,
+        });
+        self.reserve0 = reserve0;
+        self.reserve1 = reserve1;
+        self.update_block = block_number;
+    }
+}
+
+// ===========================================================================
+// Tests for the relocated apply method (ADR-014 D1 — reserve-pair half of Q1).
+// ===========================================================================
+#[cfg(test)]
+mod apply_inherent_tests {
+    #![allow(unused_imports)]
+    use super::*;
+    use alloy::primitives::U256;
+
+    fn state_with_reserves(r0: u64, r1: u64) -> V2PoolState {
+        V2PoolState {
+            reserve0: U112::from(r0),
+            reserve1: U112::from(r1),
+            update_block: 0,
+            journal: ReorgJournal::<V2BlockDelta>::new(8),
+        }
+    }
+
+    #[test]
+    fn apply_sync_updates_reserves_advances_block_and_journals_priors() {
+        // What: apply_sync must (1) push a V2BlockDelta capturing the pre-sync
+        // reserves as `*_before` and the new reserves as `*_after`, (2) overwrite
+        // reserve0/reserve1, (3) advance update_block. The journal delta is the
+        // reverse-apply record restore_before_block pops on reorg.
+        let mut state = state_with_reserves(100, 200);
+        let before_len = state.journal.len();
+
+        state.apply_sync(U112::from(150), U112::from(250), 7);
+
+        // (1) journal gained exactly one delta at block 7, with before == old,
+        // after == new.
+        assert_eq!(state.journal.len(), before_len + 1);
+        assert_eq!(state.journal.newest_block(), Some(7));
+        // (2) reserves updated.
+        assert_eq!(state.reserve0, U112::from(150));
+        assert_eq!(state.reserve1, U112::from(250));
+        // (3) update_block advanced.
+        assert_eq!(state.update_block, 7);
+    }
+
+    #[test]
+    fn apply_sync_same_block_replaces_newest_delta() {
+        // Same-block push coalesces (full-state delta: wholesale replace).
+        let mut state = state_with_reserves(100, 200);
+        state.apply_sync(U112::from(150), U112::from(250), 7);
+        state.apply_sync(U112::from(160), U112::from(260), 7);
+        assert_eq!(
+            state.journal.len(),
+            1,
+            "same-block push replaces, not appends"
+        );
+        assert_eq!(state.reserve0, U112::from(160));
+        assert_eq!(state.reserve1, U112::from(260));
+    }
+}
