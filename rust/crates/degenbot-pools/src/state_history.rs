@@ -13,9 +13,6 @@
 //! V3 stores only modified tick priors (typically 0–4 entries per block)
 //! plus scalar fields, vastly outperforming full-tick-map cloning.
 
-use crate::balancer_stable_state::BalancerStableBlockDelta;
-use crate::balancer_weighted_state::BalancerWeightedBlockDelta;
-use crate::curve_state::CurveBlockDelta;
 use std::collections::VecDeque;
 
 // ---------------------------------------------------------------------------
@@ -121,6 +118,42 @@ impl BlockDelta for V2BlockDelta {
     fn block(&self) -> u64 {
         self.block
     }
+}
+
+// ---------------------------------------------------------------------------
+// Balances delta (ADR-014 D3a — unified balance-vector delta)
+// ---------------------------------------------------------------------------
+
+/// Per-block full-state delta for the balance-vector family (Curve, Balancer
+/// weighted, Balancer stable). ADR-014 D3a: the three former family-specific
+/// deltas were byte-identical `{ block, balances_before, balances_after }`
+/// full-state deltas with the default no-op coalesce; one `BalancesBlockDelta`
+/// now backs all three.
+///
+/// `balances_after` is the landed-at state `restore_before_block` returns when
+/// it lands on this delta; `balances_before` is retained for a self-describing
+/// transition record (redundant with the preceding delta's `after`, matches
+/// `V2BlockDelta`'s `*_before` fields).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BalancesBlockDelta {
+    /// Block number of this delta.
+    pub block: u64,
+    /// Balances *before* this block's update.
+    pub balances_before: Vec<alloy::primitives::U256>,
+    /// Balances *after* this block's update — the landed-at state for this
+    /// block, returned by `restore_before_block` when it lands here.
+    pub balances_after: Vec<alloy::primitives::U256>,
+}
+
+impl BlockDelta for BalancesBlockDelta {
+    fn block(&self) -> u64 {
+        self.block
+    }
+
+    // Full-state delta (balances_before/after, mirroring V2); the default
+    // no-op coalesce is correct — `restore_before_block` reads the surviving
+    // delta's `balances_after`, so collapsing to one entry per block loses
+    // nothing (same reasoning as `V2BlockDelta`).
 }
 
 // ---------------------------------------------------------------------------
@@ -582,14 +615,19 @@ impl ReorgJournal<V3BlockDelta> {
     }
 }
 
-impl ReorgJournal<CurveBlockDelta> {
+impl ReorgJournal<BalancesBlockDelta> {
     /// Restore to the state landed just **before** a target block.
     ///
     /// Landed-at semantics (ADR-005 slice 4): returns the `balances_after` of
     /// the largest-block delta strictly less than `block`, and pops every
     /// delta at/after `block` so the journal's new newest IS the landed-at
     /// state. Mirrors `ReorgJournal::<V2BlockDelta>::restore_before_block` —
-    /// Curve is a full-state delta (N balances), same shape as V2.
+    /// the balance-vector family (Curve, Balancer weighted/stable) is a
+    /// full-state delta (N balances), same shape as V2.
+    ///
+    /// ADR-014 D3a: the three former family-specific restore impls (one per
+    /// balance-vector family) were byte-identical and are unified here behind
+    /// the single `BalancesBlockDelta`.
     ///
     /// # Errors
     ///
@@ -602,133 +640,7 @@ impl ReorgJournal<CurveBlockDelta> {
     /// Panics only if the journal's internal invariants are violated (the
     /// `expect` after the pop loop is unreachable when the earliest-delta
     /// check above passes).
-    pub fn restore_curve_before_block(
-        &mut self,
-        block: u64,
-    ) -> Result<(Vec<alloy::primitives::U256>, u64), JournalError> {
-        if self.deltas.is_empty() {
-            return Err(JournalError::NoStatePriorToBlock { block });
-        }
-
-        let len = self.deltas.len();
-        let newest = &self.deltas[len - 1];
-        let newest_block = newest.block();
-
-        // No-op: newest is before the target → current state IS the landed-at
-        // state. Return `balances_after` (the current state).
-        if newest_block < block {
-            return Ok((newest.balances_after.clone(), newest_block));
-        }
-
-        // newest >= block: there's something to pop. If the earliest is at or
-        // after the target, no delta lands before it → rolling back past
-        // registration. Raise rather than silently returning registration.
-        let earliest_block = self.deltas[0].block();
-        if earliest_block >= block {
-            return Err(JournalError::NoStatePriorToBlock { block });
-        }
-
-        // Pop every delta at/after the target.
-        while !self.deltas.is_empty() && self.deltas[self.deltas.len() - 1].block() >= block {
-            self.deltas.pop_back();
-        }
-
-        let landed = self
-            .deltas
-            .back()
-            .expect("earliest < block guarantees a surviving delta");
-        let landed_block = landed.block();
-        Ok((landed.balances_after.clone(), landed_block))
-    }
-}
-
-impl ReorgJournal<BalancerWeightedBlockDelta> {
-    /// Restore to the state landed just **before** a target block.
-    ///
-    /// Landed-at semantics (ADR-005 slice 4): returns the `balances_after` of
-    /// the largest-block delta strictly less than `block`, and pops every
-    /// delta at/after `block` so the journal's new newest IS the landed-at
-    /// state. Mirrors `ReorgJournal::<CurveBlockDelta>::restore_curve_before_block`
-    /// — Balancer weighted is a full-state delta (N balances), same shape as
-    /// V2/Curve.
-    ///
-    /// ADR-005 slice 12a (weighted state port).
-    ///
-    /// # Errors
-    ///
-    /// - `NoStatePriorToBlock` if the journal is empty, or the target is at
-    ///   or before the registration (genesis) delta — no state exists before
-    ///   it.
-    ///
-    /// # Panics
-    ///
-    /// Panics only if the journal's internal invariants are violated (the
-    /// `expect` after the pop loop is unreachable when the earliest-delta
-    /// check above passes).
-    pub fn restore_balancer_weighted_before_block(
-        &mut self,
-        block: u64,
-    ) -> Result<(Vec<alloy::primitives::U256>, u64), JournalError> {
-        if self.deltas.is_empty() {
-            return Err(JournalError::NoStatePriorToBlock { block });
-        }
-
-        let len = self.deltas.len();
-        let newest = &self.deltas[len - 1];
-        let newest_block = newest.block();
-
-        // No-op: newest is before the target → current state IS the landed-at
-        // state. Return `balances_after` (the current state).
-        if newest_block < block {
-            return Ok((newest.balances_after.clone(), newest_block));
-        }
-
-        // newest >= block: there's something to pop. If the earliest is at or
-        // after the target, no delta lands before it → rolling back past
-        // registration. Raise rather than silently returning registration.
-        let earliest_block = self.deltas[0].block();
-        if earliest_block >= block {
-            return Err(JournalError::NoStatePriorToBlock { block });
-        }
-
-        // Pop every delta at/after the target.
-        while !self.deltas.is_empty() && self.deltas[self.deltas.len() - 1].block() >= block {
-            self.deltas.pop_back();
-        }
-
-        let landed = self
-            .deltas
-            .back()
-            .expect("earliest < block guarantees a surviving delta");
-        let landed_block = landed.block();
-        Ok((landed.balances_after.clone(), landed_block))
-    }
-}
-
-impl ReorgJournal<BalancerStableBlockDelta> {
-    /// Restore to the state landed just **before** a target block.
-    ///
-    /// Landed-at semantics (ADR-005 slice 4): returns the `balances_after` of
-    /// the largest-block delta strictly less than `block`, and pops every
-    /// delta at/after `block` so the journal's new newest IS the landed-at
-    /// state. Mirrors `ReorgJournal::<BalancerWeightedBlockDelta>::
-    /// restore_balancer_weighted_before_block` — Balancer stable is a
-    /// full-state delta (N balances), same shape as V2/Curve/BalancerWeighted.
-    ///
-    /// ADR-005 slice 12c (stable state port).
-    ///
-    /// # Errors
-    ///
-    /// - `NoStatePriorToBlock` if the journal is empty, or the target is at
-    ///   or before the registration (genesis) delta — no state exists before
-    ///   it.
-    ///
-    /// # Panics
-    ///
-    /// Panics only if the journal's internal invariants are violated (the
-    /// `expect` after the pop loop is unreachable when the earliest-delta
-    /// check above passes).
-    pub fn restore_balancer_stable_before_block(
+    pub fn restore_before_block(
         &mut self,
         block: u64,
     ) -> Result<(Vec<alloy::primitives::U256>, u64), JournalError> {
@@ -772,6 +684,7 @@ impl ReorgJournal<BalancerStableBlockDelta> {
 mod tests {
     use super::*;
     use alloy::primitives::aliases::U112;
+    use alloy::primitives::U256;
 
     fn genesis(block: u64, r0: u64, r1: u64) -> V2BlockDelta {
         // Registration delta: before == after == registration reserves.
@@ -1007,6 +920,69 @@ mod tests {
     #[test]
     fn restore_errors_on_empty_journal() {
         let mut j = ReorgJournal::<V2BlockDelta>::new(8);
+        let err = j.restore_before_block(5).unwrap_err();
+        assert!(matches!(
+            err,
+            JournalError::NoStatePriorToBlock { block: 5 }
+        ));
+    }
+
+    // --- BalancesBlockDelta (ADR-014 D3a — unified balance-vector delta) ---
+    // The three former family-specific full-state deltas (Curve / Balancer
+    // weighted / Balancer stable) were byte-identical; one BalancesBlockDelta
+    // now backs all three, with one restore_before_block returning
+    // (Vec<U256>, u64).
+
+    fn bal_genesis(block: u64, balances: &[u64]) -> BalancesBlockDelta {
+        let b: Vec<U256> = balances.iter().map(|&v| U256::from(v)).collect();
+        BalancesBlockDelta {
+            block,
+            balances_before: b.clone(),
+            balances_after: b,
+        }
+    }
+
+    fn bal_transition(block: u64, before: &[u64], after: &[u64]) -> BalancesBlockDelta {
+        BalancesBlockDelta {
+            block,
+            balances_before: before.iter().map(|&v| U256::from(v)).collect(),
+            balances_after: after.iter().map(|&v| U256::from(v)).collect(),
+        }
+    }
+
+    #[test]
+    fn balances_restore_lands_at_previous_delta_after_values() {
+        // What: restore_before_block(B) returns the balances_after of the
+        // largest-block delta strictly less than B, popping everything at/after B.
+        let mut j = ReorgJournal::<BalancesBlockDelta>::new(8);
+        j.push_delta(bal_genesis(1, &[10, 20]));
+        j.push_delta(bal_transition(2, &[10, 20], &[30, 40]));
+        j.push_delta(bal_transition(5, &[30, 40], &[50, 60]));
+
+        // Restore to before block 5 → lands at block 2's after-values.
+        let (balances, blk) = j.restore_before_block(5).expect("target within range");
+        assert_eq!(balances, vec![U256::from(30), U256::from(40)]);
+        assert_eq!(blk, 2);
+        assert_eq!(j.len(), 2);
+    }
+
+    #[test]
+    fn balances_restore_noop_when_newest_before_target() {
+        let mut j = ReorgJournal::<BalancesBlockDelta>::new(8);
+        j.push_delta(bal_genesis(1, &[10, 20]));
+        j.push_delta(bal_transition(7, &[10, 20], &[30, 40]));
+        // newest (block 7) is before target 10 → no-op, return current.
+        let (balances, blk) = j.restore_before_block(10).expect("no-op path");
+        assert_eq!(balances, vec![U256::from(30), U256::from(40)]);
+        assert_eq!(blk, 7);
+        assert_eq!(j.len(), 2);
+    }
+
+    #[test]
+    fn balances_restore_errors_when_rolling_past_registration() {
+        let mut j = ReorgJournal::<BalancesBlockDelta>::new(8);
+        j.push_delta(bal_genesis(5, &[10, 20]));
+        // earliest (block 5) >= target 5 → no delta lands before it.
         let err = j.restore_before_block(5).unwrap_err();
         assert!(matches!(
             err,

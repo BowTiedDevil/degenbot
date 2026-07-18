@@ -42,17 +42,14 @@ pub use ::degenbot_pools::rate_provider::{
     BalancerRateProvider, RateProviderError, StaticRateProvider,
 };
 pub use ::degenbot_pools::spec_bounds::{SpecValue, SpecViolation, UINT112_MAX};
+pub use ::degenbot_pools::state_history::BalancesBlockDelta;
 pub use balancer_stable_state::{
-    BalancerStableBlockDelta, BalancerStablePoolIdentity, BalancerStablePoolState,
-    RegisterBalancerStablePoolParams,
+    BalancerStablePoolIdentity, BalancerStablePoolState, RegisterBalancerStablePoolParams,
 };
 pub use balancer_weighted_state::{
-    BalancerWeightedBlockDelta, BalancerWeightedPoolIdentity, BalancerWeightedPoolState,
-    RegisterBalancerWeightedPoolParams,
+    BalancerWeightedPoolIdentity, BalancerWeightedPoolState, RegisterBalancerWeightedPoolParams,
 };
-pub use curve_state::{
-    CurveBlockDelta, CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams,
-};
+pub use curve_state::{CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams};
 pub use v3_state::{
     v3_simulate_swap, BufferedV3LiquidityUpdate, PoolTickCoverage, RegisterV3PoolError,
     RegisterV3PoolParams, SimulateSwapError, V3PoolIdentity, V3PoolState, V3SwapOutcome,
@@ -383,7 +380,7 @@ impl BotState {
             state.balances.len(),
             balances.len(),
         );
-        state.journal.push_delta(CurveBlockDelta {
+        state.journal.push_delta(BalancesBlockDelta {
             block: block_number,
             balances_before: state.balances.clone(),
             balances_after: balances.clone(),
@@ -496,7 +493,7 @@ impl BotState {
             state.balances.len(),
             balances.len(),
         );
-        state.journal.push_delta(BalancerWeightedBlockDelta {
+        state.journal.push_delta(BalancesBlockDelta {
             block: block_number,
             balances_before: state.balances.clone(),
             balances_after: balances.clone(),
@@ -620,7 +617,7 @@ impl BotState {
             state.balances.len(),
             balances.len(),
         );
-        state.journal.push_delta(BalancerStableBlockDelta {
+        state.journal.push_delta(BalancesBlockDelta {
             block: block_number,
             balances_before: state.balances.clone(),
             balances_after: balances.clone(),
@@ -2350,7 +2347,7 @@ impl BotState {
         let PoolEntry::Curve(_, state) = self.pools.get_mut(&pool_id)? else {
             return None;
         };
-        let (balances, blk) = match state.journal.restore_curve_before_block(block) {
+        let (balances, blk) = match state.journal.restore_before_block(block) {
             Ok(v) => v,
             Err(e) => return Some(Err(e)),
         };
@@ -2411,7 +2408,7 @@ impl BotState {
         let PoolEntry::BalancerWeighted(_, state) = self.pools.get_mut(&pool_id)? else {
             return None;
         };
-        let (balances, blk) = match state.journal.restore_balancer_weighted_before_block(block) {
+        let (balances, blk) = match state.journal.restore_before_block(block) {
             Ok(v) => v,
             Err(e) => return Some(Err(e)),
         };
@@ -2472,7 +2469,7 @@ impl BotState {
         let PoolEntry::BalancerStable(_, state) = self.pools.get_mut(&pool_id)? else {
             return None;
         };
-        let (balances, blk) = match state.journal.restore_balancer_stable_before_block(block) {
+        let (balances, blk) = match state.journal.restore_before_block(block) {
             Ok(v) => v,
             Err(e) => return Some(Err(e)),
         };

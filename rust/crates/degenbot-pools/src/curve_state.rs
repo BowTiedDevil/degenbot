@@ -40,48 +40,16 @@ use alloy::primitives::{Address, U256};
 use std::sync::Arc;
 
 use crate::curve_data_provider::CurveDataProvider;
-use crate::state_history::{BlockDelta, ReorgJournal};
+use crate::state_history::{BalancesBlockDelta, ReorgJournal};
 
 // ---------------------------------------------------------------------------
 // Block delta
 // ---------------------------------------------------------------------------
-
-/// Per-block delta for a Curve `StableSwap` pool.
-///
-/// Stores the **before** balances captured at the moment a block's
-/// `external_update` was applied — used for reorg rollback. Mirrors
-/// [`V2BlockDelta`](crate::state_history::V2BlockDelta): a full-state
-/// delta (N balances + block), with `balances_before` redundant with the
-/// preceding delta's `balances_after` (retained for a self-describing record).
-///
-/// A genesis delta is pushed at registration (`before == after == registration
-/// balances`, at `block = update_block`) so `restore_before_block` can land on
-/// the registration state — the same anchor discipline as V2 (the Curve journal
-/// carries a genesis anchor; V3/V4 do not, because their first forward event's
-/// "before" IS the registration state).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CurveBlockDelta {
-    /// Block number of this delta.
-    pub block: u64,
-    /// Balances *before* this block's update (redundant with the preceding
-    /// delta's `balances_after`; retained for a self-describing transition
-    /// record — matches `V2BlockDelta`'s `*_before` fields).
-    pub balances_before: Vec<U256>,
-    /// Balances *after* this block's update — the landed-at state for this
-    /// block, returned by `restore_before_block` when it lands here.
-    pub balances_after: Vec<U256>,
-}
-
-impl BlockDelta for CurveBlockDelta {
-    fn block(&self) -> u64 {
-        self.block
-    }
-
-    // Curve is a **full-state** delta (balances_before/after, mirroring V2);
-    // the default no-op coalesce is correct — `restore_before_block` reads
-    // the surviving delta's `balances_after`, so collapsing to one entry per
-    // block loses nothing (same reasoning as `V2BlockDelta`).
-}
+//
+// ADR-014 D3a: the Curve-specific `CurveBlockDelta` was a byte-identical
+// full-state delta to the Balancer family's; it's unified into the shared
+// `BalancesBlockDelta` in `state_history.rs`. The Curve journal is now
+// `ReorgJournal<BalancesBlockDelta>`.
 
 // ---------------------------------------------------------------------------
 // Registration params + state struct
@@ -289,7 +257,7 @@ pub struct CurvePoolState {
     pub update_block: u64,
 
     /// Reorg journal — balance priors for rollback.
-    pub journal: ReorgJournal<CurveBlockDelta>,
+    pub journal: ReorgJournal<BalancesBlockDelta>,
 
     /// Off-chain data provider (ADR-005 JFGCHJ). `None` ⇔ no I/O path.
     /// Stored on state (not immutable identity) because the provider is an
@@ -316,10 +284,10 @@ impl CurvePoolState {
         params: RegisterCurvePoolParams,
         journal_depth: usize,
     ) -> (CurvePoolIdentity, CurvePoolState) {
-        let mut journal = ReorgJournal::<CurveBlockDelta>::new(journal_depth);
+        let mut journal = ReorgJournal::<BalancesBlockDelta>::new(journal_depth);
         // Genesis anchor: before == after == registration balances at
         // update_block. The "landed-at" registration point.
-        journal.push_delta(CurveBlockDelta {
+        journal.push_delta(BalancesBlockDelta {
             block: params.update_block,
             balances_before: params.balances.clone(),
             balances_after: params.balances.clone(),
