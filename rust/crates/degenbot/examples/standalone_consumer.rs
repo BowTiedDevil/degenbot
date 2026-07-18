@@ -51,8 +51,8 @@ fn fixture_db_path() -> PathBuf {
 ///      inside the held tx (no `SnapshotStore` materialization, epic `XEANMB`)
 ///      that emits `S = MIN(last_update_block)` over the V3/V4 `exchanges`
 ///      rows for the chain (here `S = 12_340_000` = min(V3 `12_345_000`, V4
-///      `12_340_000`)); no tick dict ever crosses the FFI (the DB→SnapshotStore
-///      transfer is owned by `degenbot-db`/`degenbot-bot` after DADWUP).
+///      `12_340_000`)); no tick dict ever crosses the FFI (the DB read is owned
+///      by `degenbot-db`/`degenbot-bot` after DADWUP).
 ///
 /// The remaining two steps — (d) `BlockPump::subscribe(...)` and
 /// (e) `pump.resume_from_subscribe(state)` — close the S→W snapshot→WS
