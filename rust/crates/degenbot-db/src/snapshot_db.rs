@@ -62,6 +62,24 @@ pub struct SnapshotDb {
     conn: Mutex<Connection>,
 }
 
+/// Report from [`SnapshotDb::close_with_canary`] — the operator-discipline
+/// canary (epic `XEANMB` task 5.7). `advanced == true` means the DB advanced
+/// between bot startup (the held-tx snapshot `s_snapshot`) and end-of-
+/// `build_paths` (the fresh post-commit re-read `s_live`) — the
+/// `pool_updater` committed concurrently with startup. Correctness was
+/// already preserved by the held tx; the canary only surfaces the violation.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct CanaryReport {
+    /// The snapshot seed block `S` captured inside the held tx (read at bot
+    /// startup). `None` if no snapshot was loaded (cold-start).
+    pub s_snapshot: Option<u64>,
+    /// The live newest-update block re-read after `COMMIT` (the live DB
+    /// state at end-of-`build_paths`).
+    pub s_live: Option<u64>,
+    /// `true` iff `s_live > s_snapshot` (the DB advanced during startup).
+    pub advanced: bool,
+}
+
 impl SnapshotDb {
     /// Open a file-backed `SnapshotDb`: PRAGMAs + [`ensure_schema`] +
     /// `query_only=on` + `BEGIN` (deferred). The snapshot is established at
@@ -132,6 +150,56 @@ impl SnapshotDb {
         let conn = self.conn.into_inner();
         conn.execute_batch("COMMIT;")?;
         Ok(())
+    }
+
+    /// Commit the held read tx, then re-read `S_live =
+    /// min(fetch_newest_update_block(V3), V4)` on the same connection (now
+    /// in autocommit mode — the held snapshot was released by `COMMIT`, so
+    /// the next `SELECT` sees the live DB). Returns a [`CanaryReport`]
+    /// flagging whether the DB advanced during startup (`s_live >
+    /// s_snapshot`) — the operator-discipline canary (epic `XEANMB` task
+    /// 5.7).
+    ///
+    /// Correctness was already preserved by the held tx (every per-pool read
+    /// during `build_paths` shared the frozen `s_snapshot` cut); the canary
+    /// only surfaces that the `pool_updater` committed concurrently with
+    /// startup — a discipline violation an operator may want to know about.
+    /// The caller logs/acts on `report.advanced`.
+    ///
+    /// # Errors
+    /// [`DbError::Sqlite`] if the `COMMIT` or the post-commit re-read fails.
+    ///
+    /// # Panics
+    /// Panics if a `last_update_block` is negative — invalid DB state (`SQLite`
+    /// stores block numbers as signed `i64`, but on-chain block numbers are
+    /// non-negative). Mirrors `Bot::load_snapshot_from_db`'s contract.
+    pub fn close_with_canary(
+        self,
+        s_snapshot: Option<u64>,
+        chain: i64,
+    ) -> Result<CanaryReport, DbError> {
+        let conn = self.conn.into_inner();
+        conn.execute_batch("COMMIT;")?;
+        // Re-read in a fresh autocommit tx — snapshot released by COMMIT.
+        let now_v3 = fetch_newest_update_block_on_conn(&conn, chain, ExchangeFamily::V3)?;
+        let now_v4 = fetch_newest_update_block_on_conn(&conn, chain, ExchangeFamily::V4)?;
+        let s_live = match (now_v3, now_v4) {
+            (Some(v3), Some(v4)) => {
+                Some(u64::try_from(v3.min(v4)).expect("block number non-negative"))
+            }
+            (Some(v3), None) => Some(u64::try_from(v3).expect("block number non-negative")),
+            (None, Some(v4)) => Some(u64::try_from(v4).expect("block number non-negative")),
+            (None, None) => None,
+        };
+        let advanced = match (s_snapshot, s_live) {
+            (Some(snap), Some(live)) => live > snap,
+            _ => false,
+        };
+        Ok(CanaryReport {
+            s_snapshot,
+            s_live,
+            advanced,
+        })
     }
 
     /// Lock the underlying connection (for the `_on_conn` free functions).

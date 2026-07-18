@@ -419,4 +419,17 @@ The Store is gone. Final task dispositions:
   parity tests (`rust/crates/degenbot-db/tests/parity.rs`). They are clean
   streaming APIs a future bulk-read consumer could use; retirement is not
   required for correctness.
-- **5.7 (`ERZ5MS`) — optional operator-discipline canary, deferred.**
+- **5.7 (`ERZ5MS`) done** — operator-discipline canary landed.
+  `SnapshotDb::close_with_canary(s_snapshot, chain)` commits the held tx,
+  re-reads `S_live = min(fetch_newest_update_block(V3), V4)` in a fresh
+  autocommit tx on the same connection (the held snapshot was released by
+  `COMMIT`, so the next `SELECT` sees the live DB), and returns a
+  `CanaryReport { s_snapshot, s_live, advanced }`. `PyBot::close_snapshot_tx`
+  captures `s_snapshot` (read inside the held tx at bot startup) before
+  committing, then calls `close_with_canary` + `log::warn!`s if
+  `advanced == true` (the `pool_updater` committed concurrently with
+  `build_paths`). Correctness was already preserved by the held tx; the
+  canary only surfaces the discipline violation. Behavior tests:
+  `rust/crates/degenbot-db/tests/wal_snapshot_isolation.rs` (positive case:
+  writer advanced during startup → `advanced == true`; negative: no commit →
+  `advanced == false`).
