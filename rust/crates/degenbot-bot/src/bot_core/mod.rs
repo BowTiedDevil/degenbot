@@ -133,21 +133,6 @@ pub struct BotState {
     /// per pool — ADR-003 Option I: orientation derived at solve from
     /// `zero_for_one`, not stored as separate forward/reverse entries).
     v4_pool_ids: HashMap<(Address, degenbot_decoders::v4_swap_decoder::PoolId), u64>,
-    /// V3 snapshot tick-data store — the single source of snapshot tick
-    /// data for V3 pools. Loaded (DB or non-DB) into this core-owned store,
-    /// then consumed ONCE at registration time via `SnapshotStore::take`
-    /// when `RegisterV3PoolParams::seed_from_store` is set. Lives on
-    /// `BotState` (not the pyo3 `PyUniswapArbEngine`) so both `PyBot` and
-    /// the engine reach the same store via the shared `Arc<RwLock<BotState>>`,
-    /// and so the standalone-Rust consumer gets snapshot seeding with no
-    /// pyo3 (ADR-005 three-layer + standalone-core constraint).
-    v3_snapshot: crate::bot_core::snapshot_verify::SnapshotStore<Address>,
-    /// V4 snapshot tick-data store — the V4 twin of `v3_snapshot`, keyed by
-    /// `(pool_manager, pool_id)`.
-    v4_snapshot: crate::bot_core::snapshot_verify::SnapshotStore<(
-        Address,
-        degenbot_decoders::v4_swap_decoder::PoolId,
-    )>,
     /// The snapshot seed block `S = min(fetch_newest_update_block(V3), V4)`.
     /// Set by `Bot::load_snapshot_from_db` (or `load_snapshot_from_py`) when a
     /// snapshot is loaded; consumed by the auto-backfill (B1/J3FMDO) that
@@ -175,8 +160,6 @@ impl BotState {
             v3_buffer: ::degenbot_pools::liquidity_event_buffer::LiquidityEventBuffer::new(),
             v4_buffer: ::degenbot_pools::liquidity_event_buffer::LiquidityEventBuffer::new(),
             v4_pool_ids: HashMap::new(),
-            v3_snapshot: crate::bot_core::snapshot_verify::SnapshotStore::new(),
-            v4_snapshot: crate::bot_core::snapshot_verify::SnapshotStore::new(),
             snapshot_seed_block: None,
         }
     }
@@ -312,20 +295,10 @@ impl BotState {
         self.next_pool_id += 1;
         let address = params.address;
 
-        // When `seed_from_store`, consume the V3 `SnapshotStore` via
-        // `take(address)` — the store is the single source of snapshot tick
-        // data. A hit → Tracked + the store's ticks (pinned as `snapshot_seed`
-        // by `from_params`); a miss → Sparse (the snapshot didn't cover this
-        // pool). The params' `tick_data`/`coverage` are ignored in this path.
-        let params = if params.seed_from_store {
-            let (ticks, coverage) = self.v3_snapshot.take(&address);
-            let mut p = params.clone();
-            p.tick_data = ticks;
-            p.coverage = coverage;
-            p
-        } else {
-            params.clone()
-        };
+        // RUQ637/XEANMB: the `seed_from_store` path is retired — the DB
+        // seeding is handled by the Db arm of `assemble_v3_tick_map` (held
+        // snapshot tx). Just clone + flow the params through.
+        let params = params.clone();
         let (identity, state) = V3PoolState::from_params(params, self.journal_depth);
         self.pools.insert(pool_id, PoolEntry::V3(identity, state));
         self.pool_addresses.insert(address, pool_id);
@@ -1398,26 +1371,6 @@ impl BotState {
             .collect()
     }
 
-    /// The V3 snapshot tick-data store — the single source of snapshot tick
-    /// data for V3 pools. Loaded by `load_snapshot_from_db` (DB path) or
-    /// `load_v3_snapshot_from_py` (non-DB path) and consumed at registration
-    /// time via `take` when `RegisterV3PoolParams::seed_from_store` is set.
-    #[must_use]
-    pub fn v3_snapshot_store(&self) -> &crate::bot_core::snapshot_verify::SnapshotStore<Address> {
-        &self.v3_snapshot
-    }
-
-    /// The V4 snapshot tick-data store — V4 twin of [`Self::v3_snapshot_store`].
-    #[must_use]
-    pub fn v4_snapshot_store(
-        &self,
-    ) -> &crate::bot_core::snapshot_verify::SnapshotStore<(
-        Address,
-        degenbot_decoders::v4_swap_decoder::PoolId,
-    )> {
-        &self.v4_snapshot
-    }
-
     /// The snapshot seed block `S` — `min(fetch_newest_update_block(V3), V4)`
     /// across the loaded snapshots. `None` when no snapshot was loaded (the
     /// cold-start path pumps directly from `first_observed_block`). Set by
@@ -2002,7 +1955,6 @@ impl BotState {
                     tick_data: override_tick_data,
                     update_block: state.update_block,
                     coverage: PoolTickCoverage::Sparse,
-                    seed_from_store: false,
                     fetcher: None,
                 };
                 let (override_identity, mut override_state) =
@@ -2048,7 +2000,6 @@ impl BotState {
                     tick_data: override_tick_data,
                     update_block: state.update_block,
                     coverage: PoolTickCoverage::Sparse,
-                    seed_from_store: false,
                     fetcher: None,
                 };
                 let (override_identity, mut override_state) =
@@ -3083,18 +3034,10 @@ impl BotState {
         let pool_id = self.next_pool_id;
         self.next_pool_id += 1;
 
-        // When `seed_from_store`, consume the V4 `SnapshotStore` via
-        // `take((pool_manager, pool_id))` — V4 twin of the V3 seed path.
-        let params = if params.seed_from_store {
-            let key = (params.pool_manager, params.pool_id);
-            let (ticks, coverage) = self.v4_snapshot.take(&key);
-            let mut p = params.clone();
-            p.tick_data = ticks;
-            p.coverage = coverage;
-            p
-        } else {
-            params.clone()
-        };
+        // RUQ637/XEANMB: the `seed_from_store` path is retired — the DB
+        // seeding is handled by the Db arm of `assemble_v4_tick_map` (held
+        // snapshot tx). Just clone + flow the params through.
+        let params = params.clone();
         let (identity, state) = V4PoolState::from_params(params, self.journal_depth);
         self.pools.insert(pool_id, PoolEntry::V4(identity, state));
         self.v4_pool_ids.insert(key, pool_id);
@@ -4345,7 +4288,6 @@ mod tests {
                 tick_data: HashMap::new(),
                 update_block: 0,
                 coverage: PoolTickCoverage::Sparse,
-                seed_from_store: false,
                 fetcher: None,
             })
             .expect("V4 registration");
@@ -4663,7 +4605,6 @@ mod tests {
             tick_data: HashMap::new(),
             update_block,
             coverage: PoolTickCoverage::Sparse,
-            seed_from_store: false,
             fetcher: None,
             ..Default::default()
         })
@@ -4791,7 +4732,6 @@ mod tests {
             tick_data,
             update_block,
             coverage: PoolTickCoverage::Sparse,
-            seed_from_store: false,
             fetcher: None,
             ..Default::default()
         })
@@ -4972,7 +4912,6 @@ mod tests {
                 tick_data,
                 update_block: 0,
                 coverage: PoolTickCoverage::Sparse,
-                seed_from_store: false,
                 fetcher: None,
             })
             .expect("V4 pool registers");
@@ -5044,7 +4983,6 @@ mod tests {
                 tick_data: HashMap::new(),
                 update_block: 0,
                 coverage: PoolTickCoverage::Sparse,
-                seed_from_store: false,
                 fetcher: None,
             })
             .expect_err("hooked pool must be rejected");
@@ -5080,7 +5018,6 @@ mod tests {
                 tick_data: HashMap::new(),
                 update_block: 0,
                 coverage: PoolTickCoverage::Sparse,
-                seed_from_store: false,
                 fetcher: None,
             })
             .expect_err("dynamic-fee pool must be rejected");
@@ -5119,7 +5056,6 @@ mod tests {
             tick_data: HashMap::new(),
             update_block: 0,
             coverage: PoolTickCoverage::Sparse,
-            seed_from_store: false,
             fetcher: None,
         };
         core.register_v4_pool(&params)
@@ -5175,7 +5111,6 @@ mod tests {
             tick_data: HashMap::new(),
             update_block: 0,
             coverage: PoolTickCoverage::Sparse,
-            seed_from_store: false,
             fetcher: None,
         }
     }
@@ -5315,7 +5250,6 @@ mod tests {
             tick_data: HashMap::new(),
             update_block: 0,
             coverage: PoolTickCoverage::Sparse,
-            seed_from_store: false,
             fetcher: None,
         };
 
@@ -5415,7 +5349,6 @@ mod tests {
             tick_data,
             update_block: 0,
             coverage: PoolTickCoverage::Sparse,
-            seed_from_store: false,
             fetcher: None,
         };
 
@@ -5498,7 +5431,6 @@ mod tests {
             tick_data: HashMap::new(),
             update_block: 0,
             coverage: PoolTickCoverage::Sparse,
-            seed_from_store: false,
             fetcher: None,
         };
 
@@ -5606,7 +5538,6 @@ mod tests {
             tick_data,
             update_block: 0,
             coverage: PoolTickCoverage::Sparse,
-            seed_from_store: false,
             fetcher: None,
         };
 
@@ -5688,7 +5619,6 @@ mod tests {
                 tick_data: HashMap::new(),
                 update_block: 0,
                 coverage: PoolTickCoverage::Sparse,
-                seed_from_store: false,
                 fetcher: None,
                 ..Default::default()
             })
@@ -5840,7 +5770,6 @@ mod tests {
             tick_data: std::collections::HashMap::new(),
             update_block: 0,
             coverage: PoolTickCoverage::Sparse,
-            seed_from_store: false,
             fetcher: None,
             ..Default::default()
         }
@@ -5978,7 +5907,6 @@ mod tests {
                 tick_data: HashMap::new(),
                 update_block: 0,
                 coverage: PoolTickCoverage::Sparse,
-                seed_from_store: false,
                 fetcher: None,
                 ..Default::default()
             })
@@ -6041,7 +5969,6 @@ mod tests {
             tick_data: seed,
             update_block: 0,
             coverage: PoolTickCoverage::Tracked,
-            seed_from_store: false,
             fetcher: None,
             ..Default::default()
         })
@@ -6087,170 +6014,6 @@ mod tests {
         );
     }
 
-    /// RUQ637: when `seed_from_store` is set, `register_v3_pool` consumes the
-    /// V3 `SnapshotStore` via `take(address)`. The store is the single source
-    /// of snapshot tick data — the params' `tick_data`/`coverage` are ignored.
-    /// A hit → Tracked + the store's ticks (pinned as `snapshot_seed`); a miss
-    /// → Sparse (the snapshot didn't cover this pool).
-    #[test]
-    fn register_v3_pool_seeds_from_store_when_flagged() {
-        use alloy::primitives::{I256, U128};
-        let mut core = BotState::new();
-        let v3_addr = make_pool_addr();
-
-        // Load the store with ticks for v3_addr.
-        let liq: u128 = 1_000_000;
-        let liq_u128 = U256::from(liq).to::<U128>();
-        let mut store_ticks = HashMap::new();
-        store_ticks.insert(
-            -60,
-            TickInfo {
-                liquidity_gross: liq_u128,
-                liquidity_net: I256::try_from(i128::try_from(liq).unwrap()).unwrap(),
-                block: 0,
-            },
-        );
-        let expected_seed = store_ticks.clone();
-        core.v3_snapshot_store().load({
-            let mut m = HashMap::new();
-            m.insert(v3_addr, store_ticks);
-            m
-        });
-
-        // Register with seed_from_store=true. Pass EMPTY tick_data + Sparse —
-        // the store's ticks + Tracked must win.
-        let _ = core
-            .register_v3_pool(&RegisterV3PoolParams {
-                address: v3_addr,
-                token0: make_token0(),
-                token1: make_token1(),
-                fee: 3_000,
-                tick_spacing: 60,
-                factory: make_factory(),
-                sqrt_price_x96: U256::from(1u64) << 96,
-                liquidity: 0,
-                tick: 0,
-                tick_data: HashMap::new(),
-                update_block: 0,
-                coverage: PoolTickCoverage::Sparse,
-                seed_from_store: true,
-                fetcher: None,
-                ..Default::default()
-            })
-            .expect("test setup: V3 registration");
-
-        assert_eq!(
-            core.v3_snapshot_seed(v3_addr).cloned(),
-            Some(expected_seed),
-            "seed_from_store must pull ticks from the store and pin them"
-        );
-        // The store's entry is consumed (Taken) — a second registration of the
-        // same address can't re-seed from an empty store... but the address is
-        // already registered; instead verify the store slot is gone.
-        assert_eq!(
-            core.v3_snapshot_store().take(&v3_addr).1,
-            crate::bot_core::PoolTickCoverage::Sparse,
-            "take must remove the store entry on seed"
-        );
-    }
-
-    /// RUQ637: `seed_from_store=true` on a pool NOT in the store → Sparse, no
-    /// seed (the snapshot didn't cover this pool). No panic, no seed.
-    #[test]
-    fn register_v3_pool_seed_from_store_miss_is_sparse() {
-        let mut core = BotState::new();
-        let v3_addr = make_pool_addr();
-        // Store is empty (no entry for v3_addr).
-        let _ = core
-            .register_v3_pool(&RegisterV3PoolParams {
-                address: v3_addr,
-                token0: make_token0(),
-                token1: make_token1(),
-                fee: 3_000,
-                tick_spacing: 60,
-                factory: make_factory(),
-                sqrt_price_x96: U256::from(1u64) << 96,
-                liquidity: 0,
-                tick: 0,
-                tick_data: HashMap::new(),
-                update_block: 0,
-                coverage: PoolTickCoverage::Tracked,
-                seed_from_store: true,
-                fetcher: None,
-                ..Default::default()
-            })
-            .expect("test setup: V3 registration");
-        assert_eq!(
-            core.v3_snapshot_seed(v3_addr),
-            None,
-            "a pool not in the store registers Sparse with no seed"
-        );
-    }
-
-    /// RUQ637: when `seed_from_store=false`, explicit `tick_data` is used and
-    /// the store is NOT touched (escape hatch — tests, ad-hoc registration).
-    /// A store entry for the address must survive the non-seeding registration.
-    #[test]
-    fn register_v3_pool_explicit_tick_data_does_not_touch_store() {
-        use alloy::primitives::{I256, U128};
-        let mut core = BotState::new();
-        let v3_addr = make_pool_addr();
-        let mut store_ticks = HashMap::new();
-        store_ticks.insert(
-            -60,
-            TickInfo {
-                liquidity_gross: U256::from(1u64).to::<U128>(),
-                liquidity_net: I256::try_from(1i128).unwrap(),
-                block: 0,
-            },
-        );
-        core.v3_snapshot_store().load({
-            let mut m = HashMap::new();
-            m.insert(v3_addr, store_ticks);
-            m
-        });
-
-        let mut explicit = HashMap::new();
-        explicit.insert(
-            100,
-            TickInfo {
-                liquidity_gross: U256::from(7u64).to::<U128>(),
-                liquidity_net: I256::try_from(7i128).unwrap(),
-                block: 0,
-            },
-        );
-        let explicit_seed = explicit.clone();
-        let _ = core
-            .register_v3_pool(&RegisterV3PoolParams {
-                address: v3_addr,
-                token0: make_token0(),
-                token1: make_token1(),
-                fee: 3_000,
-                tick_spacing: 60,
-                factory: make_factory(),
-                sqrt_price_x96: U256::from(1u64) << 96,
-                liquidity: 0,
-                tick: 0,
-                tick_data: explicit,
-                update_block: 0,
-                coverage: PoolTickCoverage::Tracked,
-                seed_from_store: false,
-                fetcher: None,
-                ..Default::default()
-            })
-            .expect("test setup: V3 registration");
-        assert_eq!(
-            core.v3_snapshot_seed(v3_addr).cloned(),
-            Some(explicit_seed),
-            "seed_from_store=false uses the explicit tick_data"
-        );
-        assert_eq!(
-            core.v3_snapshot_store().take(&v3_addr).1,
-            crate::bot_core::PoolTickCoverage::Tracked,
-            "store entry must survive a non-seeding registration"
-        );
-    }
-
     /// Step-2 (post-drain) twin of `v3_snapshot_seed_survives_pump_liquidity_update`.
     /// The post-drain pin is captured atomically with `apply_buffer_v3`'s final
     /// drain and must be IMMUTABLE across a subsequent pump Mint/Burn — otherwise
@@ -6291,7 +6054,6 @@ mod tests {
             tick_data: seed,
             update_block: 0,
             coverage: PoolTickCoverage::Tracked,
-            seed_from_store: false,
             fetcher: None,
             ..Default::default()
         })
@@ -6354,7 +6116,6 @@ mod tests {
             tick_data: HashMap::new(),
             update_block: 0,
             coverage: PoolTickCoverage::Sparse,
-            seed_from_store: false,
             fetcher: None,
             ..Default::default()
         })
@@ -6431,7 +6192,6 @@ mod tests {
             tick_data: seed,
             update_block: snapshot_block,
             coverage: PoolTickCoverage::Tracked,
-            seed_from_store: false,
             fetcher: None,
             ..Default::default()
         })
@@ -6515,7 +6275,6 @@ mod tests {
             tick_data: seed,
             update_block: 0,
             coverage: PoolTickCoverage::Tracked,
-            seed_from_store: false,
             fetcher: None,
         })
         .expect("V4 pool registers");
@@ -6614,7 +6373,6 @@ mod tests {
             tick_data: seed,
             update_block: 0,
             coverage: PoolTickCoverage::Tracked,
-            seed_from_store: false,
             fetcher: None,
         })
         .expect("V4 pool registers");
@@ -6692,7 +6450,6 @@ mod tests {
             tick_data: HashMap::new(),
             update_block: 0,
             coverage: PoolTickCoverage::Sparse,
-            seed_from_store: false,
             fetcher: None,
         })
         .expect("V4 sparse pool registers");
@@ -6731,7 +6488,6 @@ mod tests {
                 tick_data: HashMap::new(),
                 update_block: 0,
                 coverage: PoolTickCoverage::Sparse,
-                seed_from_store: false,
                 fetcher: None,
             })
             .expect("V4 pool registers");
@@ -6761,7 +6517,6 @@ mod tests {
                 tick_data: HashMap::new(),
                 update_block: 0,
                 coverage: PoolTickCoverage::Sparse,
-                seed_from_store: false,
                 fetcher: None,
             })
             .expect("V4 re-register after unregister must succeed");
@@ -6814,7 +6569,6 @@ mod tests {
                 tick_data: HashMap::new(), // fully sparse — word 0 unknown
                 update_block: 0,
                 coverage: PoolTickCoverage::Sparse,
-                seed_from_store: false,
                 fetcher: Some(std::sync::Arc::new(FakeFetcher)),
                 ..Default::default()
             })
@@ -6893,7 +6647,6 @@ mod tests {
                 tick_data: HashMap::new(),
                 update_block: 0,
                 coverage: PoolTickCoverage::Sparse,
-                seed_from_store: false,
                 fetcher: Some(std::sync::Arc::new(FailingFetcher)),
                 ..Default::default()
             })
@@ -6954,7 +6707,6 @@ mod tests {
                 tick_data: HashMap::new(),
                 update_block: 0,
                 coverage: PoolTickCoverage::Sparse,
-                seed_from_store: false,
                 fetcher: Some(counter.clone() as Arc<dyn TickWordFetcher>),
                 ..Default::default()
             })

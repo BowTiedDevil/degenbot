@@ -1563,7 +1563,6 @@ mod tests {
             tick_data,
             update_block: 0,
             coverage: PoolTickCoverage::Tracked,
-            seed_from_store: false,
             fetcher: None,
             ..Default::default()
         });
@@ -1597,7 +1596,6 @@ mod tests {
                 tick_data: v4_tick_data,
                 update_block: 0,
                 coverage: PoolTickCoverage::Tracked,
-                seed_from_store: false,
                 fetcher: None,
             })
             .expect("V4 registration failed");
@@ -2423,7 +2421,6 @@ mod tests {
             tick_data,
             update_block: 0,
             coverage: PoolTickCoverage::Tracked,
-            seed_from_store: false,
             fetcher: None,
             ..Default::default()
         });
@@ -2505,7 +2502,6 @@ mod tests {
                 tick_data,
                 update_block: 0,
                 coverage: PoolTickCoverage::Tracked,
-                seed_from_store: false,
                 fetcher: None,
             })
             .expect("V4 registration failed");

@@ -1045,15 +1045,14 @@ class UniswapArbEngine:
 
     def __init__(self, py_bot: PyBot | None = None) -> None: ...
 
-    # ── Snapshot loading (single whole-dict crossing; DADWUP retired the
-    #    per-pool begin/insert/finish pyo3 surface). ──
-    def clear_v3_snapshot(self) -> None: ...
-    def clear_v4_snapshot(self) -> None: ...
-    def load_v3_snapshot_from_py(self, py_data: dict[str, dict[int, tuple[int, int]]]) -> None: ...
-    def load_v4_snapshot_from_py(
-        self,
-        py_data: dict[str, dict[str, dict[int, tuple[int, int]]]],
-    ) -> None: ...
+    # ── Snapshot ingestion surface RETIRED (epic XEANMB). ──
+    # The `load_*_from_py` / `clear_*_snapshot` methods are gone: the
+    # in-memory `SnapshotStore` they fed is replaced by a WAL held read
+    # transaction (`SnapshotDb`) for the DB path, + the Chain arm (RPC) for
+    # the non-DB path. `start()` now computes `S = min(newest_block)` + sets
+    # `snapshot_seed_block` before `subscribe()` (so `after_subscribe`
+    # advances the phase to `SnapshotLoaded`).
+
     @property
     def snapshot_seed_block(self) -> int | None:
         """The snapshot seed block `S` (set at `Bot.__init__` by `load_snapshot_from_db`).

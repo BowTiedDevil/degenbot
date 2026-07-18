@@ -660,7 +660,6 @@ mod tests {
                 tick_data,
                 update_block: 0,
                 coverage: PoolTickCoverage::Tracked,
-                seed_from_store: false,
                 fetcher: None,
                 ..Default::default()
             })

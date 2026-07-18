@@ -18,9 +18,6 @@
 //! `degenbot-python::bot::engine::register`.
 //!
 //! ## What's pure here
-//! - [`SnapshotStore<K>`] — a one-way tick-data transfer store
-//!   (`load`/`take`/`begin_load`/`insert`). `insert` returns [`VerifyError`]
-//!   (no `PyResult`).
 //! - [`register_with_cl_buffers`] — the CL pool-registration orchestration:
 //!   register → apply backfill buffer → capture backfill-boundary snapshot →
 //!   apply pump buffer, all under a single engine-lock acquisition (so the pump
@@ -33,7 +30,7 @@ use std::sync::Arc;
 use alloy::primitives::Address;
 use parking_lot::Mutex;
 
-use crate::bot_core::{PoolTickCoverage, TickInfo, V3PoolState, V4PoolState};
+use crate::bot_core::{TickInfo, V3PoolState, V4PoolState};
 
 /// Error from `Bot::load_snapshot_from_db` / non-DB snapshot-load paths
 /// (B3OROH) — wraps the DB read failure or the per-pool hex/tick decode
@@ -230,68 +227,6 @@ where
 ///
 /// Lifted verbatim from `py_binding.rs` (ADR-006 slice 5b); the only change is
 /// `insert` returns [`VerifyError`] instead of `PyResult`.
-pub struct SnapshotStore<K: Eq + std::hash::Hash> {
-    data: Mutex<Option<HashMap<K, HashMap<i32, TickInfo>>>>,
-}
-
-impl<K: Eq + std::hash::Hash + Clone> SnapshotStore<K> {
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            data: Mutex::new(None),
-        }
-    }
-
-    #[must_use]
-    pub fn is_loaded(&self) -> bool {
-        self.data.lock().is_some()
-    }
-
-    pub fn load(&self, data: HashMap<K, HashMap<i32, TickInfo>>) {
-        *self.data.lock() = Some(data);
-    }
-
-    pub fn begin_load(&self) {
-        *self.data.lock() = Some(HashMap::new());
-    }
-
-    /// Insert a pool's `tick_data` into the in-progress stream.
-    ///
-    /// # Errors
-    /// [`VerifyError::NoSnapshotStream`] if `begin_load`/`load` hasn't been called.
-    pub fn insert(&self, key: K, tick_data: HashMap<i32, TickInfo>) -> Result<(), VerifyError> {
-        let mut guard = self.data.lock();
-        let Some(ref mut map) = *guard else {
-            return Err(VerifyError::NoSnapshotStream);
-        };
-        map.insert(key, tick_data);
-        Ok(())
-    }
-
-    /// Remove a single pool's tick data from the store.
-    ///
-    /// Returns `Tracked` coverage if the key existed, otherwise `Sparse`.
-    pub fn take(&self, key: &K) -> (HashMap<i32, TickInfo>, PoolTickCoverage) {
-        let mut guard = self.data.lock();
-        if let Some(ref mut map) = *guard {
-            if let Some(tick_data) = map.remove(key) {
-                return (tick_data, PoolTickCoverage::Tracked);
-            }
-        }
-        (HashMap::new(), PoolTickCoverage::Sparse)
-    }
-
-    pub fn clear(&self) {
-        *self.data.lock() = None;
-    }
-}
-
-impl<K: Eq + std::hash::Hash + Clone> Default for SnapshotStore<K> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Helper that registers a CL pool, applies backfill/pump buffers, and captures
 /// a backfill-boundary snapshot while the engine lock is held.
 ///
@@ -409,56 +344,6 @@ mod tests {
             4,
             "all four phases ran exactly once"
         );
-    }
-
-    /// ADR-006 slice 5b: `SnapshotStore` is a one-way transfer — `load` then
-    /// `take` returns the data + `Tracked`; a second `take` is empty + `Sparse`.
-    #[test]
-    fn snapshot_store_one_way_transfer() {
-        let store: SnapshotStore<String> = SnapshotStore::new();
-        assert!(!store.is_loaded());
-        let mut ticks = HashMap::new();
-        ticks.insert(
-            -60,
-            TickInfo {
-                liquidity_gross: alloy::primitives::U128::ZERO,
-                liquidity_net: alloy::primitives::I256::ZERO,
-                block: 0,
-            },
-        );
-        let mut data = HashMap::new();
-        data.insert("0xpool".to_string(), ticks);
-        store.load(data);
-        assert!(store.is_loaded());
-
-        let (tick_data, coverage) = store.take(&"0xpool".to_string());
-        assert!(matches!(coverage, PoolTickCoverage::Tracked));
-        assert!(tick_data.contains_key(&-60));
-
-        // Second take — already consumed.
-        let (tick_data, coverage) = store.take(&"0xpool".to_string());
-        assert!(matches!(coverage, PoolTickCoverage::Sparse));
-        assert!(tick_data.is_empty());
-    }
-
-    /// ADR-006 slice 5b: `insert` without `begin_load`/`load` →
-    /// `NoSnapshotStream` (not a panic).
-    #[test]
-    fn snapshot_store_insert_without_stream_errors() {
-        let store: SnapshotStore<u64> = SnapshotStore::new();
-        let res = store.insert(1, HashMap::new());
-        assert!(matches!(res, Err(VerifyError::NoSnapshotStream)));
-
-        store.begin_load();
-        assert!(store.insert(1, HashMap::new()).is_ok());
-
-        // Reset + clear returns to the no-stream state.
-        store.clear();
-        assert!(!store.is_loaded());
-        assert!(matches!(
-            store.insert(2, HashMap::new()),
-            Err(VerifyError::NoSnapshotStream)
-        ));
     }
 
     // -----------------------------------------------------------------

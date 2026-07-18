@@ -72,7 +72,6 @@ mod tests {
             tick_data,
             update_block: 0,
             coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
-            seed_from_store: false,
             fetcher: None,
             ..Default::default()
         });
@@ -187,7 +186,6 @@ mod tests {
             tick_data,
             update_block: 0,
             coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
-            seed_from_store: false,
             fetcher: None,
             ..Default::default()
         });
@@ -230,7 +228,6 @@ mod tests {
             tick_data: HashMap::new(),
             update_block: 0,
             coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
-            seed_from_store: false,
             fetcher: None,
             ..Default::default()
         });
@@ -965,7 +962,6 @@ mod tests {
             tick_data: tick_data_a,
             update_block: 0,
             coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
-            seed_from_store: false,
             fetcher: None,
             ..Default::default()
         });
@@ -1009,7 +1005,6 @@ mod tests {
             tick_data: tick_data_b,
             update_block: 0,
             coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
-            seed_from_store: false,
             fetcher: None,
             ..Default::default()
         });
@@ -1079,7 +1074,6 @@ mod tests {
             tick_data,
             update_block: 0,
             coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
-            seed_from_store: false,
             fetcher: None,
             ..Default::default()
         });
@@ -1143,7 +1137,6 @@ mod tests {
             tick_data,
             update_block: 0,
             coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
-            seed_from_store: false,
             fetcher: None,
             ..Default::default()
         });
@@ -1258,7 +1251,6 @@ mod tests {
             tick_data: std::collections::HashMap::new(),
             update_block: 0,
             coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
-            seed_from_store: false,
             fetcher: None,
             ..Default::default()
         });
@@ -1290,7 +1282,6 @@ mod tests {
                 tick_data: std::collections::HashMap::new(),
                 update_block: 0,
                 coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
-                seed_from_store: false,
                 fetcher: None,
             })
             .expect("V4 registration failed");
@@ -1396,7 +1387,6 @@ mod tests {
             tick_data,
             update_block: 0,
             coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
-            seed_from_store: false,
             fetcher: None,
             ..Default::default()
         });
@@ -1420,7 +1410,6 @@ mod tests {
                 tick_data: HashMap::new(),
                 update_block: 0,
                 coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
-                seed_from_store: false,
                 fetcher: None,
             })
             .expect("V4 registration should succeed");
@@ -1523,7 +1512,6 @@ mod tests {
             tick_data: make_tick_data(),
             update_block: 0,
             coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
-            seed_from_store: false,
             fetcher: None,
             ..Default::default()
         });
@@ -1542,7 +1530,6 @@ mod tests {
             tick_data: make_tick_data(),
             update_block: 0,
             coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
-            seed_from_store: false,
             fetcher: None,
             ..Default::default()
         });
@@ -1561,7 +1548,6 @@ mod tests {
             tick_data: make_tick_data(),
             update_block: 0,
             coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
-            seed_from_store: false,
             fetcher: None,
             ..Default::default()
         });
@@ -1656,7 +1642,6 @@ mod tests {
             tick_data,
             update_block: 0,
             coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
-            seed_from_store: false,
             fetcher: None,
             ..Default::default()
         });
@@ -1863,7 +1848,6 @@ mod tests {
             tick_data,
             update_block: 0,
             coverage: PoolTickCoverage::Tracked,
-            seed_from_store: false,
             fetcher: None,
             ..Default::default()
         });
@@ -2112,7 +2096,6 @@ mod tests {
             tick_data: HashMap::new(),
             update_block: 0,
             coverage: PoolTickCoverage::Tracked,
-            seed_from_store: false,
             fetcher: None,
             ..Default::default()
         });

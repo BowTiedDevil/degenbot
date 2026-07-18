@@ -20,7 +20,12 @@ from degenbot import Bot, UniswapV2Pool
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.arbitrage import UniswapArbEngine
 from degenbot.logging import logger as bot_logger
-from degenbot.uniswap.snapshot_binary import _v3_snapshot_to_py_dict, _v4_snapshot_to_py_dict
+
+# XEANMB: the `load_*_from_py` ingestion surface + `_v3_snapshot_to_py_dict`
+# / `_v4_snapshot_to_py_dict` converters are retired (the in-memory
+# SnapshotStore is gone). Per-pool tick data is read via the Db arm (held tx) or
+# the Chain arm (RPC) at registration; `start()` only sets the snapshot seed
+# block `S`.
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
 from .hop_info import PathInfo, build_hops_from_pools
@@ -144,31 +149,20 @@ class EngineRegistry:
             anchor).
 
         """
-        backfill_target = self.engine.subscribe(node_ws)
-
-        # Stash the snapshot seed block S for the per-pool two-step verify
-        # (step-1 compares the pinned seed against on-chain@S; step-2 captures
-        # its OWN block atomically with the drain — see `register_v3_pool`).
-        # The snapshot→WS gap itself is closed inside `resume()` (J3FMDO) by the
-        # core `BlockPump::resume_from_subscribe` — this method no longer calls
-        # `backfill_from_snapshot` (the pyo3 backfill is retired for the DB
-        # path by 2SM4Y7; for the non-DB path the snapshot_seed_block stashed
-        # via `load_*_from_py` is what drives the core auto-backfill).
+        # Compute the snapshot seed block `S` BEFORE `subscribe()` so the
+        # core's `after_subscribe` phase transition sees `core_has_snapshot =
+        # true` and advances the engine phase to `SnapshotLoaded` (required by
+        # `resume()`). XEANMB: the non-DB path no longer fills a
+        # `SnapshotStore` via `load_*_from_py` (retired); per-pool tick data is
+        # read through the Db arm (held tx) or the Chain arm (RPC) at
+        # registration. `S` is the only thing stashed here — it drives the
+        # core auto-backfill inside `resume()` (J3FMDO) that closes the
+        # snapshot→WS gap.
         if v3_snapshot is not None or v4_snapshot is not None:
-            # Non-DB (file/memory) path — convert each snapshot to ONE Python
-            # dict and cross PyO3 a single time per family via load_*_from_py,
-            # which feeds the core SnapshotStore (DADWUP: the per-pool
-            # insert_*_pool_snapshot SQLAlchemy yield_per loops + the
-            # begin/insert/finish pyo3 surface are retired; the DB path loads
-            # eagerly at Bot.__init__ via load_snapshot_from_db).
-            if v3_snapshot is not None:
-                self.engine.load_v3_snapshot_from_py(
-                    _v3_snapshot_to_py_dict(v3_snapshot),
-                )
-            if v4_snapshot is not None:
-                self.engine.load_v4_snapshot_from_py(
-                    _v4_snapshot_to_py_dict(v4_snapshot),
-                )
+            # Non-DB (file/memory) path — `S = min(newest_block)` across the
+            # supplied snapshots. The tick-data dicts themselves are NOT
+            # ingested here (the Store is retired, epic XEANMB); per-pool tick
+            # data is fetched via the Chain arm (RPC) at registration.
             snapshot_block = min(
                 s.newest_block for s in (v3_snapshot, v4_snapshot) if s is not None
             )
@@ -180,12 +174,14 @@ class EngineRegistry:
         # Only set when a snapshot was supplied (else there's no seed).
         self._verify_snapshot_block = snapshot_block
         # 2SM4Y7: record S on the shared BotState so the core auto-backfill
-        # inside `resume()` (J3FMDO) closes the snapshot→WS gap for the non-DB
-        # path too (the pyo3 `backfill_from_snapshot` retired; the non-DB path
-        # sets S via the `snapshot_seed_block` property setter — the DB path's
+        # inside `resume()` (J3FMDO) closes the snapshot→WS gap (the pyo3
+        # `backfill_from_snapshot` is retired; the non-DB path sets S via the
+        # `snapshot_seed_block` property setter — the DB path's
         # `load_snapshot_from_db` already set S).
         if snapshot_block is not None:
             self.engine.snapshot_seed_block = snapshot_block
+
+        backfill_target = self.engine.subscribe(node_ws)
 
         # Verify config (consumer-safe: nothing emits yet).
         self.engine.set_verify_rpc_url(node_http)

@@ -201,10 +201,9 @@ def _registry_started_with_snapshots(
 ) -> tuple[runner.EngineRegistry, _RecordingVerifyEngine]:
     fake = _RecordingVerifyEngine()
     registry = runner.EngineRegistry(bot=None, engine=fake)
-    # Stub the stream fns (same as the start tests) — they need a full DB-backed
-    # snapshot; here we only exercise start()'s orchestration + drain/verify.
-    monkeypatch.setattr(runner, "_v3_snapshot_to_py_dict", lambda *a, **k: {})
-    monkeypatch.setattr(runner, "_v4_snapshot_to_py_dict", lambda *a, **k: {})
+    # XEANMB: `load_*_from_py` is retired; `start()` sets `snapshot_seed_block`
+    # from `min(newest_block)` directly (no dict ingestion). The stubs for the
+    # old `_v3_snapshot_to_py_dict` / `_v4_snapshot_to_py_dict` are gone.
     registry.start(
         "http://localhost:8545",
         "ws://localhost:8546",
