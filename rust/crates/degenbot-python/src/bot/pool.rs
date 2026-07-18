@@ -1188,7 +1188,7 @@ impl PyLiquidityPool {
         let spx = {
             let core = self.core.read();
             core.get_v3_or_v4_pool(self.pool_id)
-                .map(degenbot_bot::bot_core::V3FamilyPool::sqrt_price_x96)
+                .map(degenbot_bot::bot_core::ConcentratedLiquidityPool::sqrt_price_x96)
                 .unwrap_or_default()
         };
         Ok(crate::conversion::alloy::u256_to_py(py, &spx)?.unbind())
@@ -1200,7 +1200,7 @@ impl PyLiquidityPool {
         self.core
             .read()
             .get_v3_or_v4_pool(self.pool_id)
-            .map(degenbot_bot::bot_core::V3FamilyPool::liquidity)
+            .map(degenbot_bot::bot_core::ConcentratedLiquidityPool::liquidity)
             .unwrap_or_default()
     }
 
@@ -1210,7 +1210,7 @@ impl PyLiquidityPool {
         self.core
             .read()
             .get_v3_or_v4_pool(self.pool_id)
-            .map(degenbot_bot::bot_core::V3FamilyPool::tick)
+            .map(degenbot_bot::bot_core::ConcentratedLiquidityPool::tick)
             .unwrap_or_default()
     }
 

@@ -85,7 +85,7 @@ pub use block_clock::{BlockClock, BlockState, HeaderDecision, LogDecision};
 // Transient re-export — repointed at `degenbot_pools::*` natively by USPN7M/P2CKRL.
 // ---------------------------------------------------------------------------
 
-pub use ::degenbot_pools::registry::{PoolEntry, TokenEntry, V3FamilyPool};
+pub use ::degenbot_pools::registry::{ConcentratedLiquidityPool, PoolEntry, TokenEntry};
 pub use ::degenbot_pools::simulate_swap::simulate_swap;
 pub use ::degenbot_pools::v2_state::{
     RegisterV2PoolError, RegisterV2PoolParams, V2PoolIdentity, V2PoolState,
@@ -1029,7 +1029,7 @@ impl BotState {
             // Two arms (not an or-pattern) because `V3PoolState` and
             // `V4PoolState` are distinct structs — an or-pattern binding
             // `state` would require one type. The read path uses a `&dyn
-            // V3FamilyPool` trait object, but the trait is read-only (no
+            // ConcentratedLiquidityPool` trait object, but the trait is read-only (no
             // mutable tick_data accessor); the 4-line body is duplicated
             // rather than threading a mutable trait. Slice 9a reuses this for V4.
             PoolEntry::V3(identity, state) => {
@@ -1414,7 +1414,7 @@ impl BotState {
     /// Returns `None` for V2 or unregistered (the V3-only contract) — V2 has
     /// a different state shape and is read via the dedicated V2 getters.
     #[must_use]
-    pub fn get_v3_or_v4_pool(&self, pool_id: u64) -> Option<&dyn V3FamilyPool> {
+    pub fn get_v3_or_v4_pool(&self, pool_id: u64) -> Option<&dyn ConcentratedLiquidityPool> {
         match self.pools.get(&pool_id)? {
             PoolEntry::V3(_, state) => Some(state),
             PoolEntry::V4(_, state) => Some(state),
@@ -5312,7 +5312,7 @@ mod tests {
     /// which returns `None` for `PoolEntry::V4` — silently dropping V4 reads
     /// (the read-side twin of the RAJ3PP write-side bug). The fix is the
     /// family-dispatching `BotState::get_v3_or_v4_pool` accessor returning a
-    /// `&dyn V3FamilyPool`. This pins both halves of the AC: a V4 pool
+    /// `&dyn ConcentratedLiquidityPool`. This pins both halves of the AC: a V4 pool
     /// returns a non-`None` scalar view, and the scalars match a direct
     /// `apply_v4_swap` on the same inputs.
     #[test]
@@ -5374,7 +5374,7 @@ mod tests {
         assert_eq!(view_a.liquidity(), 9_000_000);
         assert_eq!(view_a.tick(), -240);
         assert_eq!(view_a.update_block(), block_b);
-        // Immutable V4 key fields surface from `pool_key` (the V3FamilyPool
+        // Immutable V4 key fields surface from `pool_key` (the ConcentratedLiquidityPool
         // reader trait was slimmed to mutable-only scalars in the V3/V4
         // identity/state split; identity reads go through the family-specific
         // getter rather than the dyn-dispatch view).
