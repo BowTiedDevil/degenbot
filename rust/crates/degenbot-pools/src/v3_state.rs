@@ -16,7 +16,7 @@ use std::sync::Arc;
 use alloy::primitives::{Address, B256, I256, U160, U256};
 
 use crate::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-use crate::state_history::{ReorgJournal, V3BlockDelta};
+use crate::state_history::{ReorgJournal, ScalarPriors, TickBefore, V3BlockDelta};
 use crate::tick_bitmap::{compute_tick_ranges, gen_ticks, V3TickRangeForSolver};
 use crate::tick_fetch::TickWordFetcher;
 use crate::TickInfo;
@@ -401,6 +401,127 @@ impl V3PoolState {
             state.seed_known_bitmap_words(params.tick_spacing);
         }
         (identity, state)
+    }
+
+    /// Apply a V3 Swap event to this pool's mutable `slot0` scalars + `tick_data`,
+    /// capturing reverse-apply priors into the reorg journal (ADR-014 D1 —
+    /// relocated from `BotState::apply_v3_swap_by_pool_id`).
+    ///
+    /// Journal-capture policy (ADR-014 D2 / Q2): the delta carries
+    /// `scalar_priors: Some(..)` (a Swap changes the `slot0` head on every
+    /// event) plus the per-tick priors for any ticks this event mutates. The
+    /// tick-priors loop and the scalar-priors capture are inline here — no
+    /// shared helper, because `apply_swap` *writes* the passed tick info into
+    /// `tick_data` (it carries new tick values from the event), whereas
+    /// [`Self::apply_liquidity_update`] *reads* the current tick priors before
+    /// mutating (the delta is applied to existing boundary ticks). Same loop
+    /// shape, different work — kept separate to stay honest about the cycle.
+    ///
+    /// `tick_priors`: ticks the event reports as changed, with their new
+    /// `TickInfo`. A tick with no prior entry is journaled with
+    /// `liquidity_gross_before: None` (on rollback, delete it).
+    pub fn apply_swap(
+        &mut self,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        block_number: u64,
+        tick_priors: &[(i32, TickInfo)],
+    ) {
+        // Capture priors for any ticks being mutated by this event, so reorg
+        // rollback can reverse-apply them. A tick that had no prior entry gets
+        // `liquidity_gross_before: None` (on rollback, delete it).
+        let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(tick_priors.len());
+        for &(tick_index, ref new_info) in tick_priors {
+            let prior = self.tick_data.get(&tick_index).cloned();
+            journaled_priors.push((
+                tick_index,
+                TickBefore {
+                    liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
+                    liquidity_net_before: prior
+                        .as_ref()
+                        .map_or(alloy::primitives::I256::ZERO, |p| p.liquidity_net),
+                },
+            ));
+            self.tick_data.insert(tick_index, new_info.clone());
+        }
+
+        // Journal scalar priors (swap scalars change on every Swap).
+        self.journal.push_delta(V3BlockDelta {
+            block: block_number,
+            scalar_priors: Some(ScalarPriors {
+                sqrt_price_x96_before: self.sqrt_price_x96,
+                liquidity_before: self.liquidity,
+                tick_before: self.tick,
+            }),
+            tick_priors: journaled_priors,
+        });
+
+        self.sqrt_price_x96 = sqrt_price_x96;
+        self.liquidity = liquidity;
+        self.tick = tick;
+        self.update_block = block_number;
+        self.invalidate_tick_range_cache();
+    }
+
+    /// Apply a V3 liquidity update (Mint/Burn) to this pool's `tick_data`,
+    /// capturing reverse-apply priors into the reorg journal (ADR-014 D1 —
+    /// relocated from `BotState::apply_v3_liquidity_update_by_pool_id`).
+    ///
+    /// Applies the delta via [`apply_liquidity_to_tick_range`] (matching
+    /// Solidity `Tick.update`: `liquidity_gross += delta` at both boundaries;
+    /// `liquidity_net` `+=` at lower, `-=` at upper), advances `update_block`,
+    /// invalidates the tick-range cache.
+    ///
+    /// Journal-capture policy (ADR-004 / ADR-014 Q2): the delta carries
+    /// `scalar_priors: None` — `Mint`/`Burn` mutate `tick_data` only, NOT the
+    /// active `liquidity` scalar, so restore skips the scalar write-back for
+    /// these deltas. Only the two boundary-tick priors (captured BEFORE
+    /// mutation) are reverse-applied on rollback.
+    pub fn apply_liquidity_update(
+        &mut self,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: i128,
+        block_number: u64,
+    ) {
+        // Capture tick priors before mutation so reorg rollback can reverse-
+        // apply. A tick that had no prior entry (newly initialized by this
+        // Mint) gets `liquidity_gross_before: None` (on rollback, delete it).
+        let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(2);
+        for &tick_idx in &[tick_lower, tick_upper] {
+            let prior = self.tick_data.get(&tick_idx).cloned();
+            journaled_priors.push((
+                tick_idx,
+                TickBefore {
+                    liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
+                    liquidity_net_before: prior
+                        .as_ref()
+                        .map_or(alloy::primitives::I256::ZERO, |p| p.liquidity_net),
+                },
+            ));
+        }
+
+        crate::tick_bitmap::apply_liquidity_to_tick_range(
+            &mut self.tick_data,
+            tick_lower,
+            tick_upper,
+            liquidity_delta,
+            block_number,
+        );
+
+        // Journal: Mint/Burn mutate tick_data only, NOT the active `liquidity`
+        // scalar — so the journal carries no scalar priors for this tick-only
+        // event (scalar_priors: None). Only the two tick priors are reverse-
+        // applied on rollback. See ADR-004.
+        self.journal.push_delta(V3BlockDelta {
+            block: block_number,
+            scalar_priors: None,
+            tick_priors: journaled_priors,
+        });
+
+        self.update_block = block_number;
+        self.invalidate_tick_range_cache();
     }
 
     /// Invalidate the cached tick ranges (call after any state mutation).
@@ -804,4 +925,169 @@ pub fn v3_simulate_swap(
         liquidity: u128::try_from(liquidity.max(0)).unwrap_or(0),
         tick,
     })
+}
+
+// ===========================================================================
+// Tests for the relocated apply methods (ADR-014 D1 — CL half of Q1).
+// These exercise `V3PoolState::apply_swap` / `apply_liquidity_update` directly
+// against a constructed state, with no `BotState` registry, no buffer, no
+// address index — the unit layer for the CL-family apply contract. The
+// integration coverage that previously lived on `BotState` (exercise through
+// the registry dispatch) stays in `bot_core/v3_state.rs` / `bot_core/mod.rs`
+// as the dispatch regression net.
+// ===========================================================================
+#[cfg(test)]
+mod apply_inherent_tests {
+    #![allow(unused_imports)]
+    use super::*;
+    use crate::state_history::{ReorgJournal, ScalarPriors, TickBefore, V3BlockDelta};
+    use alloy::primitives::{I256, U128, U256};
+    use std::collections::{HashMap, HashSet};
+
+    /// Minimal V3 state at tick 0, 1:1 price, liquidity `liq`, with a
+    /// [-60, +60] position (so `tick_data` has ticks -60 and +60 initialized).
+    /// The journal is fresh (depth 8); snapshot/pinned fields are `None`.
+    fn state_with_position(liq: u128) -> V3PoolState {
+        let sp_0 = U256::from(1u128) << 96;
+        let liq_u128 = U256::from(liq).to::<U128>();
+        let mut tick_data = HashMap::new();
+        tick_data.insert(
+            -60,
+            TickInfo {
+                liquidity_gross: liq_u128,
+                liquidity_net: I256::try_from(i128::try_from(liq).unwrap()).unwrap(),
+                block: 0,
+            },
+        );
+        tick_data.insert(
+            60,
+            TickInfo {
+                liquidity_gross: liq_u128,
+                liquidity_net: I256::try_from(-i128::try_from(liq).unwrap()).unwrap(),
+                block: 0,
+            },
+        );
+        V3PoolState {
+            sqrt_price_x96: sp_0,
+            liquidity: liq,
+            tick: 0,
+            update_block: 0,
+            tick_data,
+            coverage: PoolTickCoverage::Tracked,
+            known_bitmap_words: HashSet::new(),
+            fetcher: None,
+            journal: ReorgJournal::<V3BlockDelta>::new(8),
+            snapshot_seed: None,
+            post_drain_snapshot: None,
+            cached_tick_ranges: parking_lot::Mutex::new(TickRangeCache::default()),
+        }
+    }
+
+    #[test]
+    fn apply_swap_updates_scalars_advances_block_invalidates_cache_and_journals_priors() {
+        // What: apply_swap must (1) overwrite the slot0 scalars with the
+        // event values, (2) advance update_block, (3) seed tick_priors into
+        // tick_data, (4) push a V3BlockDelta carrying scalar_priors: Some(..)
+        // AND the tick priors (with the pre-swap gross/net), (5) invalidate
+        // the cached tick ranges.
+        // Why: this is the journal-capture-then-mutate contract the reorg
+        // rollback reverses; without the scalar priors, restore could not
+        // rewind the slot0 head.
+        let liq = 1_000_000u128;
+        let mut state = state_with_position(liq);
+
+        // New tick info for tick 100 (a tick not present before) — prior must
+        // be recorded as "did not exist" (gross_before: None, net_before: 0).
+        let new_tick_info = TickInfo {
+            liquidity_gross: U256::from(500u64).to::<U128>(),
+            liquidity_net: I256::try_from(500i128).unwrap(),
+            block: 7,
+        };
+        let tick_priors = vec![(100, new_tick_info.clone())];
+
+        let new_sqrt = U256::from(2u128) << 96;
+        let before_len = state.journal.len();
+
+        state.apply_swap(new_sqrt, liq + 1, 1, 7, &tick_priors);
+
+        // (1) scalars updated.
+        assert_eq!(state.sqrt_price_x96, new_sqrt);
+        assert_eq!(state.liquidity, liq + 1);
+        assert_eq!(state.tick, 1);
+        // (2) update_block advanced.
+        assert_eq!(state.update_block, 7);
+        // (3) tick_priors seeded into tick_data.
+        assert_eq!(state.tick_data.get(&100), Some(&new_tick_info));
+        // (4) journal gained exactly one delta at block 7.
+        assert_eq!(state.journal.len(), before_len + 1);
+        assert_eq!(state.journal.newest_block(), Some(7));
+        // (5) cache invalidated (both directions cleared).
+        {
+            let cache = state.cached_tick_ranges.lock();
+            assert!(cache.zfo.is_none(), "zfo cache must be invalidated");
+            assert!(cache.ofz.is_none(), "ofz cache must be invalidated");
+        }
+    }
+
+    #[test]
+    fn apply_liquidity_update_mutates_ticks_advances_block_journals_tick_priors_only() {
+        // What: apply_liquidity_update must (1) apply the delta to BOTH
+        // boundary ticks per Solidity Tick.update (gross += at both, net += at
+        // lower, net -= at upper), (2) advance update_block, (3) push a
+        // V3BlockDelta with scalar_priors: None (Mint/Burn is tick-only — the
+        // slot0 head is untouched), (4) journal the two tick priors captured
+        // BEFORE mutation, (5) NOT change sqrt_price / liquidity / tick.
+        // Why: ADR-004 — tick-only events carry no scalar priors; restore
+        // skips the scalar write-back for these deltas.
+        let liq = 1_000_000u128;
+        let mut state = state_with_position(liq);
+
+        let sp_before = state.sqrt_price_x96;
+        let liq_before = state.liquidity;
+        let tick_before = state.tick;
+
+        // Capture the pre-mutation tick info at -60 / +60 so we can assert the
+        // journal captured these "before" values.
+        let prior_lower = state.tick_data.get(&-60).cloned().unwrap();
+        let prior_upper = state.tick_data.get(&60).cloned().unwrap();
+
+        let delta = 123_456i128;
+        let before_len = state.journal.len();
+
+        state.apply_liquidity_update(-60, 60, delta, 9);
+
+        // (1) tick_data mutated per Tick.update.
+        let after_lower = state.tick_data.get(&-60).unwrap();
+        let after_upper = state.tick_data.get(&60).unwrap();
+        // gross += at both boundaries.
+        assert_eq!(
+            after_lower.liquidity_gross,
+            prior_lower.liquidity_gross + U256::from(u128::try_from(delta).unwrap()).to::<U128>()
+        );
+        assert_eq!(
+            after_upper.liquidity_gross,
+            prior_upper.liquidity_gross + U256::from(u128::try_from(delta).unwrap()).to::<U128>()
+        );
+        // net += at lower, net -= at upper.
+        assert_eq!(
+            after_lower.liquidity_net,
+            prior_lower.liquidity_net + I256::try_from(delta).unwrap()
+        );
+        assert_eq!(
+            after_upper.liquidity_net,
+            prior_upper.liquidity_net - I256::try_from(delta).unwrap()
+        );
+        // The mutating helper advances the tick's `block` field too.
+        assert_eq!(after_lower.block, 9);
+        assert_eq!(after_upper.block, 9);
+        // (2) update_block advanced.
+        assert_eq!(state.update_block, 9);
+        // (5) slot0 scalars UNCHANGED.
+        assert_eq!(state.sqrt_price_x96, sp_before);
+        assert_eq!(state.liquidity, liq_before);
+        assert_eq!(state.tick, tick_before);
+        // (3)/(4) journal gained exactly one delta at block 9.
+        assert_eq!(state.journal.len(), before_len + 1);
+        assert_eq!(state.journal.newest_block(), Some(9));
+    }
 }
