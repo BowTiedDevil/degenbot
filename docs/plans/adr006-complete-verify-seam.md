@@ -10,11 +10,11 @@ after D1 (shared `Arc<RwLock<BotState>>` — landed). Three sub-decisions never 
   are still present (`rust/crates/degenbot-python/src/bot/engine/register.rs:87/132/264`)
   and someone attached a `verify_on_register` gate to them.
 - **D4** said `subscribe`/`backfill_from_snapshot`/`resume`/verify plumbing move onto
-  `Bot`. They still live on `UniswapArbEngine` (`engine/register.rs:511/576/706`,
+  `Bot`. They still live on `ArbitrageEngine` (`engine/register.rs:511/576/706`,
   `engine/verify.rs`). `PyBot` owns only `register_v2/v3/v4_pool`.
 - The trapped pure helpers (`SnapshotStore`, `register_with_cl_buffers`, verify closures)
   were meant to move onto Bot/the chain pump — still on the engine
-  (`rust/crates/degenbot-bot/src/solvers/uniswap_engine/snapshot_verify.rs`).
+  (`rust/crates/degenbot-bot/src/solvers/arb_engine/snapshot_verify.rs`).
 
 Consequence: pool registration was rerouted through `PyBot.register_v*` (the builders,
 `src/degenbot/builders/*v[234]_pool_builder.py`) to avoid the duplicate-address panic
@@ -31,7 +31,7 @@ clobber's lost updates were only caught at the end, not at the offending pool.
 
 ## Goal
 
-Complete D3+D4: collapse the `Bot`/`UniswapArbEngine` overlap, relocate verify to the
+Complete D3+D4: collapse the `Bot`/`ArbitrageEngine` overlap, relocate verify to the
 pump drain seam (fail-fast, two-step), and add a hot-loop recurring verify so post-
 release / in-loop desyncs surface instead of trading silently. Delete the dead surface
 in one move rather than grafting verify onto a Python short-circuit.

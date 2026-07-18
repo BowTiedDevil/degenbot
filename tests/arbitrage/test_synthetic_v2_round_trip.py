@@ -5,7 +5,7 @@ Offline integration test of the registration surface. In-memory SQLite seeded
 with synthetic V2 pools (topology only — reserves live in a side dict so we
 can hand-craft a profitable cycle deterministically), fed to find_paths_async.
 The returned pools are built against a single shared PyBot (ADR-006 D1 shared
-core), registered with a real UniswapArbEngine, and a 2-hop WETH-A-WETH cycle
+core), registered with a real ArbitrageEngine, and a 2-hop WETH-A-WETH cycle
 is registered via register_path. The engine eager-solves it and surfaces the
 profitable result via latest_results.
 
@@ -23,7 +23,7 @@ import pytest
 from eth_typing import ChainId
 
 import examples.eth_backrun_v2_v3_v4_rust as runner
-from degenbot.arbitrage.engine_registry import UniswapArbEngine
+from degenbot.arbitrage.engine_registry import ArbitrageEngine
 from degenbot.bot import PyBot
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.database.models import Erc20TokenTable, UniswapV2PoolTable
@@ -202,7 +202,7 @@ async def test_synthetic_v2_round_trip_registers_and_eager_solves(db) -> None:
     # FakeBot test) — use the engine seam directly with a bare shared PyBot.
     registry = runner.EngineRegistry(
         bot=None,
-        engine=UniswapArbEngine(py_bot=shared_py_bot),
+        engine=ArbitrageEngine(py_bot=shared_py_bot),
     )
 
     # Register the discovered pools once (V2 path: just caches the shared

@@ -4,11 +4,11 @@ use alloy::primitives::{U256, U512};
 use rayon::prelude::*;
 
 use super::{
-    BlockMetadata, HashMap, HashSet, HopType, MixedPoolRef, ResolvedHop, ResolvedMixedPath,
-    SolidlyHopState, SolvePathResult, UniswapEngine, INT128_MAX,
+    ArbitrageEngine, BlockMetadata, HashMap, HashSet, HopType, MixedPoolRef, ResolvedHop,
+    ResolvedMixedPath, SolidlyHopState, SolvePathResult, INT128_MAX,
 };
 
-impl UniswapEngine {
+impl ArbitrageEngine {
     /// Re-resolve and re-solve only paths that contain updated pools.
     ///
     /// Uses the `pool_to_paths` reverse index to identify `affected_path_ids`,
@@ -791,7 +791,7 @@ impl UniswapEngine {
     }
 }
 
-impl Default for UniswapEngine {
+impl Default for ArbitrageEngine {
     fn default() -> Self {
         Self::new()
     }

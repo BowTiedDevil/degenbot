@@ -26,12 +26,12 @@ v2-core asserts at `UniswapV2Pair._update`.
   → `register_v2_pool(&RegisterV2PoolParams {…}).expect("test setup: V2
   registration");`. (All five are `#[cfg(test)]` helpers — no production
   `?`-cascade was needed.)
-- `rust/crates/degenbot-bot/src/solvers/uniswap_engine/mod.rs` —
-  `#[cfg(test)] UniswapEngine::register_v2_pool` engine test helper keeps
+- `rust/crates/degenbot-bot/src/solvers/arb_engine/mod.rs` —
+  `#[cfg(test)] ArbitrageEngine::register_v2_pool` engine test helper keeps
   `-> u64` transitively via `.expect("test setup: V2 registration")`
-  internally, so the ~50 test callsites in `uniswap_engine/tests.rs`
+  internally, so the ~50 test callsites in `arb_engine/tests.rs`
   stay unchanged.
-- `rust/crates/degenbot-bot/src/solvers/uniswap_engine/tests.rs` —
+- `rust/crates/degenbot-bot/src/solvers/arb_engine/tests.rs` —
   5 direct `core.write().register_v2_pool(&…)` sites (multi-line +
   single-line forms) → `.expect("test setup: V2 registration")`.
 - `rust/crates/degenbot-bot/src/bot_core/log_dispatcher.rs` — 2 statement-

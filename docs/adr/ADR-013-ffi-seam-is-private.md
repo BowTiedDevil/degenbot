@@ -18,7 +18,7 @@ an **inconsistent state**:
    (`tests/test_ffi_boundary.py`: `from degenbot._ffi import <Symbol>` is
    banned in leaf code), signalling the intent that `_ffi` is private.
 2. **An allowlist back-doors the ban** for 8 files that bridge flat-root
-   symbols (`PyBot`, `UniswapArbEngine`, `PyErc20Token`, `PyLiquidityPool`,
+   symbols (`PyBot`, `ArbitrageEngine`, `PyErc20Token`, `PyLiquidityPool`,
    the `Verification*Error`s, `to_checksum_address`, `find_paths_rust`) —
    because those symbols have **no typed submodule** and therefore no
    stable home.

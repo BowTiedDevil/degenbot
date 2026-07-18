@@ -255,8 +255,8 @@ load_v4_family' rust/crates/ src/` produces:
 |---|---|---|
 | `tick_assembly/tests.rs` Store-arm tests | `tick_assembly/tests.rs:19, 195, 291, 319` | construct `SnapshotStore` + probe — REWRITE as Db-arm tests (Store arm gone) |
 | `snapshot_verify.rs` store-methods tests | `snapshot_verify.rs:414-470` (unit tests on `load`/`insert`/`take`/`is_loaded`) | REMOVE with the type |
-| `uniswap_engine/tests.rs` `seed_from_store: false` lines | many (≈20 sites) | the field literal — REMOVE (field gone) |
-| `uniswap_engine/diagnostic.rs`, `log_dispatcher.rs`, `reorg_coordinator.rs` `seed_from_store: false` | several sites | same — REMOVE |
+| `arb_engine/tests.rs` `seed_from_store: false` lines | many (≈20 sites) | the field literal — REMOVE (field gone) |
+| `arb_engine/diagnostic.rs`, `log_dispatcher.rs`, `reorg_coordinator.rs` `seed_from_store: false` | several sites | same — REMOVE |
 | `mod.rs` tests `seed_from_store: true` cases | `mod.rs:6241, 6283` (`register_v3_pool_seed_from_store_*`) | REMOVE (the `true` path is gone) |
 | `load_snapshot_from_db_*` tests | `mod.rs:7090, 7139` (+ `degenbot-python` `:2070, 2101, 2121, 2135`) | UPDATE to assert "sets `S` but does NOT populate a Store" |
 

@@ -1,7 +1,7 @@
 """The canonical bot-startup orchestrator (Plan 102, slice 3).
 
 :class:`EngineRegistry` is the **one correct way to start** a
-:class:`~degenbot._ffi.UniswapArbEngine` operator: it runs the
+:class:`~degenbot._ffi.ArbitrageEngine` operator: it runs the
 pre-pump startup ritual (``subscribe`` → stream snapshots → ``backfill`` →
 verify config) and *stops before* ``resume()``, so the caller can attach its
 result consumer before any batches flow. It also maintains the Python pool ↔
@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 from degenbot import Bot, UniswapV2Pool
 from degenbot.aerodrome.pools import AerodromeV2Pool
-from degenbot.arbitrage import UniswapArbEngine
+from degenbot.arbitrage import ArbitrageEngine
 from degenbot.logging import logger as bot_logger
 
 # XEANMB: the `load_*_from_py` ingestion surface + `_v3_snapshot_to_py_dict`
@@ -42,7 +42,7 @@ __all__ = ["EngineRegistry"]
 
 
 class EngineRegistry:
-    """Thin wrapper over the Rust UniswapArbEngine.
+    """Thin wrapper over the Rust ArbitrageEngine.
 
     Maintains Python pool ↔ Rust key mappings so events can be routed
     to the right engine pool, and results can be mapped back to Python
@@ -60,7 +60,7 @@ class EngineRegistry:
         self,
         bot: Bot | None = None,
         *,
-        engine: UniswapArbEngine | None = None,
+        engine: ArbitrageEngine | None = None,
         path_predicate: PathCompositionPredicate | None = None,
     ) -> None:
         # ADR-006 D1+D4: the engine adopts the Bot's shared BotState, so the
@@ -76,7 +76,7 @@ class EngineRegistry:
             msg = "EngineRegistry requires either `engine` (test path) or `bot` (production)."
             raise ValueError(msg)
         else:
-            self.engine = UniswapArbEngine(py_bot=bot._py_bot)  # noqa: SLF001
+            self.engine = ArbitrageEngine(py_bot=bot._py_bot)  # noqa: SLF001
         self._v2_keys: dict[str, int] = {}  # address → pool_id (shared BotState)
         self._v3_keys: dict[str, int] = {}
         # V4 pools keyed by pool_id hex — for event routing from PoolManager logs

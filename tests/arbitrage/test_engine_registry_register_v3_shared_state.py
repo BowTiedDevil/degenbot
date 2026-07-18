@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 
-from degenbot.arbitrage.engine_registry import EngineRegistry, UniswapArbEngine
+from degenbot.arbitrage.engine_registry import EngineRegistry, ArbitrageEngine
 from degenbot.bot import PyBot
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v3_pool_factory import make_v3_pool
@@ -97,7 +97,7 @@ def test_register_v3_pool_drains_backfill_buffer_onto_snapshot_seed() -> None:
     (the tick's liquidity_net reflects the burn).
     """
     py_bot = PyBot()
-    engine = UniswapArbEngine(py_bot=py_bot)
+    engine = ArbitrageEngine(py_bot=py_bot)
     bot = _FakeBot(py_bot)
     registry = EngineRegistry(bot=bot, engine=engine)
 

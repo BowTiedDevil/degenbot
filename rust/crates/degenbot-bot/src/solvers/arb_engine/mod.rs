@@ -1,7 +1,9 @@
-//! Uniswap Engine — mixed V2/V3/V4 arbitrage engine.
+//! Arbitrage engine — multi-DEX cyclic arbitrage over a shared `BotState`.
 //!
-//! A unified engine that handles Uniswap V2, V3, and V4 pools in the same
-//! per-block lifecycle. Supports mixed paths (e.g., V2→V3, V3→V4, V4→V2 hops).
+//! A unified engine that handles Uniswap V2/V3/V4, Solidly-family
+//! (Aerodrome, Camelot) and (in progress) Curve + Balancer pools in the same
+//! per-block lifecycle. Supports mixed paths (e.g., V2→V3, V3→V4, V4→V2,
+//! V2→Solidly hops).
 //!
 //! # Design
 //!
@@ -16,7 +18,7 @@
 //! V4 pools share identical concentrated-liquidity math with V3. The solver
 //! treats V3 and V4 hops identically — both produce `IntV3TickRangeSequence`.
 //!
-//! On [`UniswapEngine::process_block`]:
+//! On [`ArbitrageEngine::process_block`]:
 //! 1. Decode Sync, V3 Swap, and V4 Swap events from logs
 //! 2. Route V2 Sync events to the V2 engine, V3 Swap events to the V3 engine,
 //!    V4 Swap events to the V4 engine
@@ -33,7 +35,7 @@
 //! | [`solver_dispatch`] | Path resolution, solver dispatch, rebuild logic |
 //! | [`result_channel`] | Result batch channel, diff computation, de-registration |
 //! | [`lifecycle`] | Path registration, buffer management, engine accessors |
-//! | [`py_binding`] | PyO3 wrapper (`PyUniswapArbEngine`) |
+//! | [`py_binding`] | PyO3 wrapper (`PyArbitrageEngine`) |
 //! | [`tests`] | Unit tests |
 
 use std::collections::{HashMap, HashSet};
@@ -45,7 +47,7 @@ use alloy::primitives::{Address, U256};
 
 use crate::bot_core::BotState;
 
-// Sub-modules — each contains `impl UniswapEngine` or `impl PyUniswapArbEngine` blocks.
+// Sub-modules — each contains `impl ArbitrageEngine` or `impl PyArbitrageEngine` blocks.
 #[allow(clippy::module_inception)]
 mod diagnostic;
 pub mod engine_handle;
@@ -112,7 +114,7 @@ pub enum EnginePhase {
 impl EnginePhase {
     /// Reconstruct a phase from its `u8` discriminant (the inverse of the
     /// `#[repr(u8)]` representation). Used by `PumpState` (ADR-006 D4) to read
-    /// the phase atomically across PyBot/PyUniswapArbEngine wrappers.
+    /// the phase atomically across PyBot/PyArbitrageEngine wrappers.
     /// Unknown discriminants fall back to `Created` (the safest default — any
     /// phase-gated method will re-validate via `require`/`require_before`).
     #[must_use]
@@ -286,7 +288,7 @@ pub struct MixedPoolRef {
     pub zero_for_one: bool,
 }
 
-/// A single hop in a path submitted to [`UniswapEngine::register_path`].
+/// A single hop in a path submitted to [`ArbitrageEngine::register_path`].
 ///
 /// The caller supplies the `BotState`-owned `pool_id` (obtained from
 /// `PyBot::register_v*_pool` / `BotState::register_v*_pool`) and the swap
@@ -436,7 +438,7 @@ pub struct ResolvedMixedPath {
 }
 
 // ---------------------------------------------------------------------------
-// UniswapEngine
+// ArbitrageEngine
 // ---------------------------------------------------------------------------
 
 /// Result from solving a single arbitrage path.
@@ -464,7 +466,7 @@ pub struct SolvePathResult {
 }
 
 // `BlockMetadata` lives in `bot_core` (general block data); re-exported here so
-// engine code + external references (`crate::solvers::uniswap_engine::BlockMetadata`)
+// engine code + external references (`crate::solvers::arb_engine::BlockMetadata`)
 // keep working (ADR-006 D4).
 pub use crate::bot_core::BlockMetadata;
 
@@ -538,10 +540,10 @@ pub struct ResultBatch {
 /// V2 pool state lives in [`BotState`] (ADR-003: the single Rust state owner,
 /// peer to this engine). The engine holds the shared `Arc<RwLock<BotState>>`
 /// (ADR-006 D1+D2 — `RwLock` on the core, shared with [`PyBot`] via
-/// [`UniswapEngine::with_core`]; `new()` standalone sugar allocates its own)
+/// [`ArbitrageEngine::with_core`]; `new()` standalone sugar allocates its own)
 /// and reads/writes pool state through it. Lock ordering when nested is
 /// **engine-then-core** — no code path ever nests core-then-engine.
-pub struct UniswapEngine {
+pub struct ArbitrageEngine {
     /// V2 + V3 + V4 pool state owner (ADR-003). The shared
     /// `Arc<RwLock<BotState>>` (ADR-006 D1+D2): read methods take a read guard,
     /// mutations a write guard. Lock ordering when nested is
@@ -600,7 +602,7 @@ pub struct UniswapEngine {
     /// Maximum profit (in wei) for a result to appear in the batch channel.
     /// Paths above this are likely solver defects or scam tokens.
     max_profit: U256,
-    /// Sender for the result batch channel. Created in `PyUniswapArbEngine::new()`.
+    /// Sender for the result batch channel. Created in `PyArbitrageEngine::new()`.
     result_tx: Option<tokio::sync::mpsc::UnboundedSender<ResultBatch>>,
     /// Sender for the block-notification channel (epic 6W35AI). The pump
     /// forwards every accepted `WsEvent::BlockHeader` here via
@@ -610,9 +612,9 @@ pub struct UniswapEngine {
     block_tx: Option<tokio::sync::mpsc::UnboundedSender<BlockNotification>>,
 }
 
-impl UniswapEngine {
+impl ArbitrageEngine {
     /// Create a new engine with its **own** standalone `BotState` (standard
-    /// allocation). ADR-006 D1: prefer [`UniswapEngine::with_core`] on the live
+    /// allocation). ADR-006 D1: prefer [`ArbitrageEngine::with_core`] on the live
     /// path so the engine shares one `Arc<RwLock<BotState>>` with `PyBot`/handles;
     /// this no-arg ctor is the standalone-Rust / no-`pyo3`-test convenience.
     #[must_use]
@@ -624,7 +626,7 @@ impl UniswapEngine {
     /// engine reads/writes pool state through the *same* core that
     /// `PyBot`/`PyLiquidityPool`/`PyErc20Token` share — dissolving the
     /// dual-`BotState` split the §17 stale-state caveat documented. Lock order
-    /// remains engine-then-core; the engine's `Mutex<UniswapEngine>` engine
+    /// remains engine-then-core; the engine's `Mutex<ArbitrageEngine>` engine
     /// state is still engine-local (ADR-006 D2 — engine keeps its own lock
     /// for path/solver state; only the core lock type/flavor changes).
     #[must_use]
@@ -676,7 +678,7 @@ impl UniswapEngine {
 /// same ergonomics the old production `register_v*_pool` methods had; they
 /// delegate straight to `BotState::register_*`.
 #[cfg(test)]
-impl UniswapEngine {
+impl ArbitrageEngine {
     /// Register a V2 pool into the engine's `BotState` and return its `pool_id`.
     ///
     /// # Panics
@@ -747,7 +749,7 @@ impl UniswapEngine {
 }
 
 #[cfg(test)]
-impl UniswapEngine {
+impl ArbitrageEngine {
     /// Test-only: are the V2 dirty sets empty? (ADR-006 slice 4 adapter tests.)
     #[must_use]
     pub fn dirty_v2_is_empty(&self) -> bool {

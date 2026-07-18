@@ -903,7 +903,7 @@ class PyBot:
     ) -> int: ...
 
     # ADR-006 D4 (T3+T4): pump lifecycle + verify plumbing drive the shared
-    # PumpState attached when a UniswapArbEngine(py_bot=...) is constructed.
+    # PumpState attached when a ArbitrageEngine(py_bot=...) is constructed.
     def subscribe(self, rpc_url: str) -> int: ...
     def resume(self) -> None: ...
     def stop(self) -> None: ...
@@ -1056,7 +1056,7 @@ class PyBot:
     def v2_discard_before_block(self, pool_id: int, block: int) -> None: ...
     def v2_restore_before_block(self, pool_id: int, block: int) -> tuple[int, int, int] | None: ...
 
-class UniswapArbEngine:
+class ArbitrageEngine:
     """Rust-side engine for Uniswap arbitrage path solving.
 
     ADR-006 D1+D4: ``py_bot`` adopts a shared ``PyBot``'s ``BotState`` so the
@@ -1153,7 +1153,7 @@ class UniswapArbEngine:
         rpc_url: str | None = None,
     ) -> dict[str, Any]: ...
     def block_stream(self) -> BlockStream: ...
-    def __aiter__(self) -> UniswapArbEngine: ...
+    def __aiter__(self) -> ArbitrageEngine: ...
     def __anext__(self) -> Coroutine[Any, Any, dict[str, Any]]: ...
 
     # ── Verify config (consumer-safe: nothing emits before resume). ──
@@ -1229,7 +1229,7 @@ class BlockStream:
     """Async iterator over `newHeads` block notifications from the pump.
 
     The authoritative block clock for the backrun bot (epic 6W35AI) —
-    obtained via `UniswapArbEngine.block_stream()`. Yields one dict per
+    obtained via `ArbitrageEngine.block_stream()`. Yields one dict per
     accepted block header: `number`, `timestamp`, `base_fee_per_gas`
     (int | None), `gas_used`, `gas_limit`. Raises `StopAsyncIteration` when
     the channel closes (pump stopped).
@@ -1330,6 +1330,7 @@ class DynamicFeePoolRejectedError(PoolRegistrationError):
 # Simulation seam (per-block profitability pipeline)
 # ------------------------------------------------------------------
 __all__ = [
+    "ArbitrageEngine",
     "AsyncContract",
     "BlockData",
     "BlockStream",
@@ -1344,7 +1345,6 @@ __all__ = [
     "PyLiquidityPool",
     "TransactionData",
     "TransactionReceiptData",
-    "UniswapArbEngine",
     "VerificationMismatchError",
     "VerificationRpcError",
     "aave",

@@ -54,7 +54,7 @@ explicit at each public candidate.
   `exact_mobius_solve`.
 - `solvers/mobius_v3_int.rs:1296` — mixed V2-V3 integer solver (uses the
   model-optimum output as an anchor for its own EVM-sim sweep).
-- `solvers/uniswap_engine/solver_dispatch.rs:367+389` — Solidly-bracketed
+- `solvers/arb_engine/solver_dispatch.rs:367+389` — Solidly-bracketed
   dispatcher (uses the model-optimum output to narrow a golden-section
   search bracket `[x*/5, 5·x*]`).
 - No standalone-Rust consumer (`standalone_consumer.rs`) reference (the

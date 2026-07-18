@@ -13,8 +13,8 @@ The `assert!` duplicate-address panic becomes `Err(RegisterV3PoolError::AlreadyR
 ## Cascade
 Same shape as MSTAT2 (V2). The `~50 test callsites` went through one of three paths:
 
-- `UniswapEngine::register_v3_pool` `#[cfg(test)]` engine helper: now `self.core.write().register_v3_pool(params).expect("test setup: V3 registration")`, preserving `-> u64`. ~30 test callsites in `uniswap_engine/tests.rs` + 2 in `diagnostic.rs` go through this helper and remain unchanged.
-- `BotState::register_v3_pool` direct test calls in `mod.rs` (14), `log_dispatcher.rs` (1), `reorg_coordinator.rs` (1), `uniswap_engine/tests.rs` (1): patched with `.expect("test setup: V3 registration")`. A Python-bracket-walk script handled the multi-line `&RegisterV3PoolParams { ... }` literal form + the helper-defn tail (no trailing `;`) specially.
+- `ArbitrageEngine::register_v3_pool` `#[cfg(test)]` engine helper: now `self.core.write().register_v3_pool(params).expect("test setup: V3 registration")`, preserving `-> u64`. ~30 test callsites in `arb_engine/tests.rs` + 2 in `diagnostic.rs` go through this helper and remain unchanged.
+- `BotState::register_v3_pool` direct test calls in `mod.rs` (14), `log_dispatcher.rs` (1), `reorg_coordinator.rs` (1), `arb_engine/tests.rs` (1): patched with `.expect("test setup: V3 registration")`. A Python-bracket-walk script handled the multi-line `&RegisterV3PoolParams { ... }` literal form + the helper-defn tail (no trailing `;`) specially.
 - PyO3 wrapper `degenbot_python::bot::mod::PyBot::register_v3_pool`: stop-gap `.map_err(|e| PyValueError::new_err(format!("V3 pool registration failed: {e:?}")))`. The typed `map_register_v3_err` Python exception hierarchy is task **F2EVV6** (it bumps the V3 wrapper, the V2 wrapper, and introduces the shared `PoolRegistrationError` base class all together).
 
 ## Red/Green

@@ -1,7 +1,7 @@
 """ACDWOC §4 parity gate: engine vs BrentSolver (SciPy) vs manual pool-walk.
 
 Ergo 6TLIJ5/ACDWOC: the f64 Möbius solver stack is deleted (redundant with the
-Rust `UniswapArbEngine`, which owns the EVM-exact U512 solve path via
+Rust `ArbitrageEngine`, which owns the EVM-exact U512 solve path via
 `register_and_solve_path` → `exact_mobius_solve`). This module is the
 correctness gate that proves the engine produces the same optimal_input /
 profit as two *independent* Python oracles:
@@ -27,7 +27,7 @@ from fractions import Fraction
 
 import pytest
 
-from degenbot.arbitrage.engine_registry import UniswapArbEngine
+from degenbot.arbitrage.engine_registry import ArbitrageEngine
 from degenbot.arbitrage.solvers.brent_solver import BrentSolver
 from degenbot.arbitrage.solvers.hop_types import SolveInput
 from degenbot.bot import PyBot
@@ -100,7 +100,7 @@ class TestEngineVsBrentVsPoolwalk:
         weth_usdc_cycle,
     ) -> None:
         bot, pools, pool_ids, zfos = weth_usdc_cycle
-        engine = UniswapArbEngine(py_bot=bot)
+        engine = ArbitrageEngine(py_bot=bot)
         path_id = engine.register_and_solve_path(list(zip(pool_ids, zfos, strict=True)))
         assert path_id == 1
 
@@ -124,7 +124,7 @@ class TestEngineVsBrentVsPoolwalk:
         weth_usdc_cycle,
     ) -> None:
         bot, pools, pool_ids, zfos = weth_usdc_cycle
-        engine = UniswapArbEngine(py_bot=bot)
+        engine = ArbitrageEngine(py_bot=bot)
         engine.register_and_solve_path(list(zip(pool_ids, zfos, strict=True)))
         results, _ = engine.latest_results()
         engine_optimal, engine_profit, _ = (
@@ -168,7 +168,7 @@ class TestEngineVsBrentVsPoolwalk:
         through the pool handle is immediately visible to the next solve.
         """
         bot, pools, pool_ids, zfos = weth_usdc_cycle
-        engine = UniswapArbEngine(py_bot=bot)
+        engine = ArbitrageEngine(py_bot=bot)
         path_id = engine.register_and_solve_path(list(zip(pool_ids, zfos, strict=True)))
         engine.solve_all_paths(1)
         results_before, _ = engine.latest_results()

@@ -12,7 +12,7 @@
 //!
 //! **Relocated** from `degenbot-bot/src/solvers/{mobius_int,
 //! mobius_int_exact, mobius_v3_int, affected_keys}.rs`. The
-//! `uniswap_engine/` I/O orchestrator (event subscription, BotState-driven
+//! `arb_engine/` I/O orchestrator (event subscription, BotState-driven
 //! pump, async/tokio, RPC) stays in `degenbot-bot` and imports the solver
 //! math from this crate.
 //!

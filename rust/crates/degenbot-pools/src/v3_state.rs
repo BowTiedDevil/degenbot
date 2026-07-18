@@ -1,7 +1,7 @@
 //! V3 concentrated-liquidity pool state — the single BotState-owned home for
 //! V3 pool data (ADR-003). Supersedes the engine-side `V3PoolState` that lived
 //! in `solvers/v3_block_engine.rs`; that engine is dissolved and V3 state
-//! is owned by [`crate::BotState`], peer to `UniswapEngine`.
+//! is owned by [`crate::BotState`], peer to `ArbitrageEngine`.
 //!
 //! This struct carries both the authoritative mutable state (`sqrt_price_x96`,
 //! `liquidity`, `tick`, `tick_data`), the snapshot-coverage flag, the lazy
@@ -37,8 +37,8 @@ use degenbot_cl_math::cl_lib::tick_math::{
 /// genuinely illiquid). `Sparse` means no snapshot data exists for this pool
 /// — solver results may contain errors or phantom profits.
 ///
-/// Moved from `solvers/uniswap_engine/mod.rs` to live with V3 state under
-/// ADR-003; re-exported from `uniswap_engine` for back-compat with callers.
+/// Moved from `solvers/arb_engine/mod.rs` to live with V3 state under
+/// ADR-003; re-exported from `arb_engine` for back-compat with callers.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PoolTickCoverage {
     /// Snapshot provided complete tick data. Solver results are trustworthy.

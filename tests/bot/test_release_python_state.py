@@ -19,7 +19,7 @@ import pathlib
 from threading import Lock
 from unittest.mock import MagicMock
 
-from degenbot.arbitrage.engine_registry import UniswapArbEngine
+from degenbot.arbitrage.engine_registry import ArbitrageEngine
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
@@ -209,7 +209,7 @@ class TestReleasePythonState:
         config = _make_test_config(tmp_path)
         bot = Bot(config, provider=_fake_provider(1))
         py_bot = bot._py_bot
-        engine = UniswapArbEngine(py_bot=py_bot)
+        engine = ArbitrageEngine(py_bot=py_bot)
 
         address = get_checksum_address("0x88e6A0c2dDD26FEEb64F039a2c41296Fcb3F5640")
         py_bot.register_v3_pool(

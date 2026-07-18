@@ -203,13 +203,13 @@ def test_start_skips_set_verify_state_view_when_none() -> None:
 def test_pybot_exposes_verify_methods_after_engine_attach() -> None:
     """T4 (ADR-006 D4): PyBot exposes set_verify_rpc_url, set_verify_state_view,
     verify_liquidity_maps, verify_v3_liquidity_maps, verify_v4_liquidity_maps as
-    delegating entry points once a UniswapArbEngine is constructed against it.
+    delegating entry points once a ArbitrageEngine is constructed against it.
     The batch verify still passes (same behavior, new home on PyBot)."""
-    from degenbot.arbitrage.engine_registry import UniswapArbEngine
+    from degenbot.arbitrage.engine_registry import ArbitrageEngine
     from degenbot.bot import PyBot
 
     bot = PyBot()
-    UniswapArbEngine(py_bot=bot)  # attaches shared PumpState
+    ArbitrageEngine(py_bot=bot)  # attaches shared PumpState
     for method in (
         "set_verify_rpc_url",
         "set_verify_state_view",
@@ -222,7 +222,7 @@ def test_pybot_exposes_verify_methods_after_engine_attach() -> None:
 
 def test_pybot_exposes_pump_lifecycle_methods_after_engine_attach() -> None:
     """T3 (ADR-006 D4): PyBot exposes subscribe/resume as delegating entry
-    points once a UniswapArbEngine is constructed against it (which attaches
+    points once a ArbitrageEngine is constructed against it (which attaches
     the shared PumpState). The Bot is the D4 pump owner; these methods drive
     the SAME PumpState the engine reads.
 
@@ -231,12 +231,12 @@ def test_pybot_exposes_pump_lifecycle_methods_after_engine_attach() -> None:
     (J3FMDO). The non-DB path uses the `snapshot_seed_block` setter to record
     `S` so the core auto-backfill picks it up.
     """
-    from degenbot.arbitrage.engine_registry import UniswapArbEngine
+    from degenbot.arbitrage.engine_registry import ArbitrageEngine
     from degenbot.bot import PyBot
 
     bot = PyBot()
     # Constructing the engine against the bot attaches the shared PumpState.
-    engine = UniswapArbEngine(py_bot=bot)
+    engine = ArbitrageEngine(py_bot=bot)
     for method in ("subscribe", "resume"):
         assert hasattr(bot, method), f"PyBot must expose {method} after engine attach"
     # 2SM4Y7: backfill_from_snapshot is retired.
@@ -247,7 +247,7 @@ def test_pybot_exposes_pump_lifecycle_methods_after_engine_attach() -> None:
     for method in ("subscribe", "resume"):
         assert hasattr(engine, method)
     assert not hasattr(engine, "backfill_from_snapshot"), (
-        "UniswapArbEngine::backfill_from_snapshot retired (2SM4Y7)"
+        "ArbitrageEngine::backfill_from_snapshot retired (2SM4Y7)"
     )
     # The non-DB path uses the snapshot_seed_block setter.
     assert hasattr(engine, "snapshot_seed_block")  # getter+setter (2SM4Y7)

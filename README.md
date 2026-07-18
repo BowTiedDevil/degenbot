@@ -1018,7 +1018,7 @@ except StaleRateResult:
 
 ### Uniswap Arbitrage
 
-Optimal arbitrage amounts for a cyclic pool sequence are computed by the Rust `UniswapArbEngine` (EVM-exact U512 solve), driven through `EngineRegistry` — the production solve surface that replaced both the deprecated `UniswapLpCycle` / `UniswapCurveCycle` and the since-retired Python `ArbitragePath` wrapper (ACDWOC):
+Optimal arbitrage amounts for a cyclic pool sequence are computed by the Rust `ArbitrageEngine` (EVM-exact U512 solve), driven through `EngineRegistry` — the production solve surface that replaced both the deprecated `UniswapLpCycle` / `UniswapCurveCycle` and the since-retired Python `ArbitragePath` wrapper (ACDWOC):
 
 ```python
 from degenbot.arbitrage.engine_registry import EngineRegistry
@@ -1039,7 +1039,7 @@ from degenbot.arbitrage.solvers import BrentSolver, SolveResult, SolverMethod
 assert SolverMethod.BRENT.value  # the oracle optimizer used in cross-validation
 ```
 
-> **Note:** The legacy `UniswapLpCycle` / `UniswapCurveCycle` and the Python `ArbitragePath` wrapper have all been retired — the Rust `UniswapArbEngine` (driven via `EngineRegistry`) is the production solve surface. Pool swap-amount construction is now local to each pool via `build_swap_amount()` on raw engine outputs (`optimal_input` / `hop_outputs` / `consumed_inputs`).
+> **Note:** The legacy `UniswapLpCycle` / `UniswapCurveCycle` and the Python `ArbitragePath` wrapper have all been retired — the Rust `ArbitrageEngine` (driven via `EngineRegistry`) is the production solve surface. Pool swap-amount construction is now local to each pool via `build_swap_amount()` on raw engine outputs (`optimal_input` / `hop_outputs` / `consumed_inputs`).
 
 #### Swap Encoding & On-Chain Execution
 

@@ -33,7 +33,7 @@ can pass them to the verify closures.
 # T2 — Relocate SnapshotStore + register_with_cl_buffers off the engine
 ## Goal
 ADR-006 D4: the trapped pure helpers `SnapshotStore`
-(`rust/crates/degenbot-bot/src/solvers/uniswap_engine/snapshot_verify.rs:205`) and
+(`rust/crates/degenbot-bot/src/solvers/arb_engine/snapshot_verify.rs:205`) and
 `register_with_cl_buffers` (`:279`) move onto `Bot`/the chain pump. They are pure
 (testable without pyo3) and were only on the engine for historical ADR-005 reasons.
 Move them to `rust/crates/degenbot-bot/src/bot_core/` (e.g. a new
@@ -42,7 +42,7 @@ Move them to `rust/crates/degenbot-bot/src/bot_core/` (e.g. a new
 `rust/crates/degenbot-python/src/bot/engine/mod.rs:52`.
 ## Acceptance
 - `SnapshotStore<K>`, `register_with_cl_buffers`, `run_cl_verification` compile from
-  `degenbot_bot::bot_core::*` (not `...solvers::uniswap_engine::*`).
+  `degenbot_bot::bot_core::*` (not `...solvers::arb_engine::*`).
 - The engine's `v3_snapshot`/`v4_snapshot` fields (`engine/register.rs:78-79`) stay
   for now (T3/T5 relocates them); only the *type definitions* move.
 - `cargo test -p degenbot-bot --lib` green; `run_cl_verification` unit tests
@@ -53,7 +53,7 @@ Move them to `rust/crates/degenbot-bot/src/bot_core/` (e.g. a new
 # T3 — Relocate subscribe/backfill_from_snapshot/resume onto PyBot
 ## Goal
 ADR-006 D4: `subscribe`, `backfill_from_snapshot`, `resume` are Bot-owned I/O, not
-engine concerns. Today they live on `UniswapArbEngine`
+engine concerns. Today they live on `ArbitrageEngine`
 (`rust/crates/degenbot-python/src/bot/engine/register.rs:511/576/706`). Move the pyo3
 methods onto `PyBot` (`rust/crates/degenbot-python/src/bot/mod.rs`). They already
 operate on the shared `Arc<RwLock<BotState>>` (D1), so the move is mechanical: same
@@ -61,7 +61,7 @@ bodies, different `#[pymethods]` impl block.
 ## Acceptance
 - `PyBot` exposes `subscribe`, `backfill_from_snapshot`, `resume` (matching today's
   signatures).
-- `UniswapArbEngine` no longer declares them.
+- `ArbitrageEngine` no longer declares them.
 - `EngineRegistry.start()` (`engine_registry.py:121,133,886`) calls
   `self.bot.subscribe(...)` / `self.bot.backfill_from_snapshot(...)` / `self.engine.resume()`
   paths updated to hit `PyBot`. (The registry already holds `self.bot`; the engine
@@ -113,7 +113,7 @@ production callers (only `diagnostic.rs` under `#[cfg(test)]`). Their
   (`engine_registry.py:103`) and the example call (`eth_backrun:885`).
 ## Acceptance
 - `grep -rn verify_on_register rust/ src/ examples/` returns nothing (docs excluded).
-- `UniswapArbEngine` pyo3 surface no longer has `register_v2/v3/v4_pool`.
+- `ArbitrageEngine` pyo3 surface no longer has `register_v2/v3/v4_pool`.
 - The rust core `BotCore`/`BotState` `register_v2/v3/v4_pool` (the live insert at
   `mod.rs:550/556/569`) is untouched — those stay (the builders call them via
   `PyBot.register_v*`).

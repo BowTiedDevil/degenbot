@@ -9,7 +9,7 @@ use alloy::dyn_abi::{DynSolType, DynSolValue};
 use alloy::primitives::{Address, Bytes, B256, I256, U256};
 use serde::{Deserialize, Serialize};
 
-use super::{HopType, MixedPoolRef, UniswapEngine};
+use super::{ArbitrageEngine, HopType, MixedPoolRef};
 use degenbot_rpc::multicall3::MulticallResult;
 
 /// A single typed field-level divergence between the engine's view of a pool
@@ -1274,7 +1274,7 @@ fn u128_to_hex(value: u128) -> String {
     format!("0x{value:x}")
 }
 
-impl UniswapEngine {
+impl ArbitrageEngine {
     /// Snapshot the engine-owned state for every hop in `path_id`.
     ///
     /// This method acquires the engine lock only long enough to copy the
@@ -1513,8 +1513,8 @@ mod tests {
     use super::{DiagnosticHop, DiagnosticPoolState};
     use crate::bot_core::RegisterV3PoolParams as V3Params;
     use crate::bot_core::{RegisterV4PoolParams as V4Params, V4PoolKey};
-    use crate::solvers::uniswap_engine::{
-        DiagnosticPathState, PoolHop, PoolTickCoverage, UniswapEngine,
+    use crate::solvers::arb_engine::{
+        ArbitrageEngine, DiagnosticPathState, PoolHop, PoolTickCoverage,
     };
 
     fn usdc(amount: u64) -> U112 {
@@ -1528,7 +1528,7 @@ mod tests {
     #[test]
     #[allow(clippy::too_many_lines)]
     fn diagnostic_path_state_captures_mixed_hops() {
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
 
         // V2 pool
         let v2_fwd = engine.register_v2_pool(
@@ -1654,7 +1654,7 @@ mod tests {
 
     #[test]
     fn diagnostic_path_state_returns_none_for_unknown_path() {
-        let engine = UniswapEngine::new();
+        let engine = ArbitrageEngine::new();
         assert!(engine.diagnostic_path_state(1234).is_none());
     }
 
@@ -1669,7 +1669,7 @@ mod tests {
     fn diagnostic_path_state_includes_engine_processed_block() {
         use crate::bot_core::BlockMetadata;
 
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
         let v2_fwd = engine.register_v2_pool(
             Address::from([0x11u8; 20]),
             usdc(1_500_000),
@@ -2388,7 +2388,7 @@ mod tests {
     /// is pure drift, not a solver-calc bug.
     #[test]
     fn recompute_v3_amount_out_returns_independent_simulate_output() {
-        let engine = UniswapEngine::new();
+        let engine = ArbitrageEngine::new();
         let mut tick_data = HashMap::new();
         tick_data.insert(
             60,
@@ -2464,7 +2464,7 @@ mod tests {
     /// `V4PoolState`, using V4's sign convention (`amount_specified` < 0 = exact input).
     #[test]
     fn recompute_v4_amount_out_returns_independent_simulate_output() {
-        let engine = UniswapEngine::new();
+        let engine = ArbitrageEngine::new();
         let mut tick_data = HashMap::new();
         tick_data.insert(
             10,

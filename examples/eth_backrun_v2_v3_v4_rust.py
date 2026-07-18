@@ -1,6 +1,6 @@
 """Ethereum mainnet backrun bot: Uniswap V2/V3/V4 arbitrage using the Rust engine.
 
-A thin Python orchestration layer over the Rust-owned UniswapArbEngine.
+A thin Python orchestration layer over the Rust-owned ArbitrageEngine.
 The Rust engine owns all pool state and path solving. Python does: pool
 construction, swap encoding, simulation, and transaction submission.
 

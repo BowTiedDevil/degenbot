@@ -1,7 +1,7 @@
 //! V4 concentrated-liquidity pool state — the single BotState-owned home for
 //! V4 pool data (ADR-003). Supersedes the engine-side `V4PoolState` that lived
 //! in `solvers/v4_block_engine.rs`; that engine's path/solve subsystem is
-//! deleted as orphan dead code (the unified `UniswapEngine` already handles V4
+//! deleted as orphan dead code (the unified `ArbitrageEngine` already handles V4
 //! paths via `HopType::V4` in its `register_path`/`solve_path`).
 //!
 //! V4 shares identical CL math with V3 (same tick structure, same

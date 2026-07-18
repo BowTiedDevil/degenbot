@@ -361,7 +361,7 @@ class Bot:
 
         The Rust ``PyBot`` is reference-counted; closing this Python wrapper
         only drops *this* Bot's ref. A running engine that took its own ref
-        (via ``EngineRegistry(bot=bot)`` → ``UniswapArbEngine(py_bot=...)``)
+        (via ``EngineRegistry(bot=bot)`` → ``ArbitrageEngine(py_bot=...)``)
         is unaffected.
 
         For the *mid-lifecycle* "drop redundant Python caches while the Bot

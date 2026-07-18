@@ -2,7 +2,7 @@
 
 ACDWOC retire: the f64 Möbius dispatcher (``ArbSolver``), ``MobiusSolver``,
 ``PiecewiseMobiusSolver``, and ``NewtonSolver`` are gone — the Rust
-``UniswapArbEngine`` owns the EVM-exact U512 solve path via
+``ArbitrageEngine`` owns the EVM-exact U512 solve path via
 ``register_and_solve_path`` (cross-validated against ``BrentSolver`` in
 ``tests/arbitrage/test_engine_vs_brent_parity.py``). The kept Python solvers
 cover the families the engine doesn't:

@@ -440,7 +440,7 @@ class TestBackrunSessionRunBlockStreamAcquiredOnce:
     Pre-fix `run()` called `engine.block_stream()` twice: once consumed inside
     the real `consume_result_batches` (which self-acquires when
     `block_stream=None`), and once at run() line 967 for the recurring-verify
-    ticker. The real `PyUniswapArbEngine.block_stream()` is once-only — the
+    ticker. The real `PyArbitrageEngine.block_stream()` is once-only — the
     second call raised `RuntimeError("block_stream() can only be called once")`
     entering the main loop, crashing every permutation run. This test uses an
     engine whose `block_stream()` raises on the second call (mimicking the real

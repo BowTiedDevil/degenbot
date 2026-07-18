@@ -5,7 +5,7 @@
 //! `Arc<dyn DrainSink>`; per drain tick / block boundary / reorg, the
 //! coordinator fans the call out to every attached [`Engine`] (each an
 //! `Arc<dyn Engine>` — the engine `Mutex` lives *inside* the trait object, so
-//! the coordinator never names `Mutex` or `UniswapEngine` directly).
+//! the coordinator never names `Mutex` or `ArbitrageEngine` directly).
 //!
 //! **Multi-engine honesty (ADR-006):** the seam is shaped so a second engine
 //! plugs in by registration. The *divergence machinery* (per-engine backfill

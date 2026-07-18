@@ -14,7 +14,7 @@
 //! registered as a `Weak<dyn PoolStateSubscriber>` so a dropped subscriber is
 //! silently skipped by `LogDispatcher::notify`'s `Weak::upgrade` (no leak, no
 //! panic). The difference is the lifetime anchor: the engine adapter's strong
-//! `Arc` lives on the shared `UniswapEngine`; THIS adapter's strong `Arc` lives
+//! `Arc` lives on the shared `ArbitrageEngine`; THIS adapter's strong `Arc` lives
 //! on a returned [`PySubscription`] handle Python holds — drop the handle
 //! (or call `.unsubscribe()`) → the Arc drops → the registered `Weak` goes dead
 //! (explicit unsubscribe, mirroring `PublisherMixin.unsubscribe`).

@@ -1,18 +1,18 @@
-//! `PyO3` wrapper for the `UniswapEngine`.
+//! `PyO3` wrapper for the `ArbitrageEngine`.
 //!
-//! [`PyUniswapArbEngine`] wraps [`UniswapEngine`] with a `parking_lot::Mutex`
+//! [`PyArbitrageEngine`] wraps [`ArbitrageEngine`] with a `parking_lot::Mutex`
 //! for safe access from the Tokio pump task. All Python-facing methods
 //! acquire the lock, perform their operation, and release it.
 
 //! # Layout
 //!
-//! - [`PyUniswapArbEngine`] (the `#[pyclass]`) is declared here; its
+//! - [`PyArbitrageEngine`] (the `#[pyclass]`) is declared here; its
 //!   `#[pymethods]` surface is split across [`register`], [`snapshot`],
 //!   [`verify`], [`solve`], [`result_channel`] (`PyO3` permits multiple
-//!   `#[pymethods] impl PyUniswapArbEngine` blocks). [`errors`] holds the
+//!   `#[pymethods] impl PyArbitrageEngine` blocks). [`errors`] holds the
 //!   `#[create_exception]` types.
 //! - Mirrors `polars-python/src/expr/`'s 17-file `PyExpr` split and the
-//!   existing `crates/degenbot-bot/src/solvers/uniswap_engine/` core split.
+//!   existing `crates/degenbot-bot/src/solvers/arb_engine/` core split.
 //!   (ergo UG6FKN task 74W2Z6.)
 
 mod errors;
@@ -43,25 +43,25 @@ pub(crate) use degenbot_bot::bot_core::{
     drain_sink::DrainSink, Bot, V3SwapUpdate, V4StateSync, V4SwapUpdate,
 };
 
-pub(crate) use degenbot_bot::solvers::uniswap_engine::engine_handle::EngineHandle;
+pub(crate) use degenbot_bot::solvers::arb_engine::engine_handle::EngineHandle;
 
-pub(crate) use degenbot_bot::solvers::uniswap_engine::{
-    BlockMetadata, BlockNotification, HopType, MixedPoolRef, PoolHop, ResultBatch, SolvePathResult,
-    UniswapEngine,
+pub(crate) use degenbot_bot::solvers::arb_engine::{
+    ArbitrageEngine, BlockMetadata, BlockNotification, HopType, MixedPoolRef, PoolHop, ResultBatch,
+    SolvePathResult,
 };
 
 /// Python-facing mixed V2/V3 arbitrage engine.
 ///
-/// Wraps [`UniswapEngine`] with a `parking_lot::Mutex` for safe access
+/// Wraps [`ArbitrageEngine`] with a `parking_lot::Mutex` for safe access
 /// from the Tokio pump task.
 #[pyclass(
-    name = "UniswapArbEngine",
+    name = "ArbitrageEngine",
     skip_from_py_object,
     module = "degenbot._ffi"
 )]
-pub struct PyUniswapArbEngine {
+pub struct PyArbitrageEngine {
     /// Shared engine state
-    engine: Arc<parking_lot::Mutex<UniswapEngine>>,
+    engine: Arc<parking_lot::Mutex<ArbitrageEngine>>,
     /// Retained `EngineHandle` — the ADR-006 cycle-free owner of the strong
     /// `EngineSubscriber`. `register_path`/`register_and_solve_path` draw a
     /// live `Weak` from this (see `subscriber_weak`) so `LogDispatcher::notify`
@@ -88,7 +88,7 @@ pub struct PyUniswapArbEngine {
     block_rx: Arc<parking_lot::Mutex<Option<mpsc::UnboundedReceiver<BlockNotification>>>>,
 }
 
-impl PyUniswapArbEngine {
+impl PyArbitrageEngine {
     /// Parse V2 Sync updates from a Python list of 3-tuples.
     pub(crate) fn parse_v2_updates(
         v2_sync_updates: &Bound<'_, PyList>,
@@ -277,10 +277,10 @@ pub(crate) fn hex_string_to_pool_id(
 }
 
 /// `#[pymethods]` slice for the JUCFCB snapshot-seed getter. `PyO3` allows
-/// multiple `#[pymethods] impl PyUniswapArbEngine { ... }` blocks; this is the
+/// multiple `#[pymethods] impl PyArbitrageEngine { ... }` blocks; this is the
 /// snapshot-seed surface (the phase / startup ritual lives in `pump.rs`/`solve.rs`).
 #[pymethods]
-impl PyUniswapArbEngine {
+impl PyArbitrageEngine {
     /// The snapshot seed block `S` (JUCFCB) — set at `Bot.__init__` time by
     /// `Bot::load_snapshot_from_db` for the DB path, OR via
     /// [`set_snapshot_seed_block`](Self::set_snapshot_seed_block) for the

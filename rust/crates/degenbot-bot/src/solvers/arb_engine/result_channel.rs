@@ -3,9 +3,9 @@
 use alloy::primitives::U256;
 use tokio::sync::mpsc;
 
-use super::{BlockMetadata, ResultBatch, SolvePathResult, UniswapEngine};
+use super::{ArbitrageEngine, BlockMetadata, ResultBatch, SolvePathResult};
 
-impl UniswapEngine {
+impl ArbitrageEngine {
     /// Set the sender for the result batch channel.
     pub fn set_result_channel(&mut self, tx: mpsc::UnboundedSender<ResultBatch>) {
         self.result_tx = Some(tx);
