@@ -107,10 +107,6 @@ pub struct RegisterV4PoolParams {
     pub tick_data: HashMap<i32, TickInfo>,
     pub update_block: u64,
     pub coverage: PoolTickCoverage,
-    /// When `true`, `register_v4_pool` consumes the V4 `SnapshotStore` via
-    /// `take((pool_manager, pool_id))` to obtain `tick_data` + refine
-    /// `coverage` — V4 twin of `RegisterV3PoolParams::seed_from_store`.
-    pub seed_from_store: bool,
     /// Sparse-tick backfill fetcher (stored on `V4PoolState` at registration;
     /// `None` for `Tracked` pools or when no Python fetcher was supplied).
     /// ADR-006 I/O trait object — same shape as V3.

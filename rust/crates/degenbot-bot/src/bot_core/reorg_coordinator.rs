@@ -455,7 +455,6 @@ mod tests {
                 tick_data: HashMap::new(),
                 update_block,
                 coverage: PoolTickCoverage::Sparse,
-                seed_from_store: false,
                 fetcher: None,
                 ..Default::default()
             })
@@ -665,7 +664,6 @@ mod tests {
                 tick_data: HashMap::new(),
                 update_block,
                 coverage: PoolTickCoverage::Sparse,
-                seed_from_store: false,
                 fetcher: None,
             })
             .expect("V4 pool registers");

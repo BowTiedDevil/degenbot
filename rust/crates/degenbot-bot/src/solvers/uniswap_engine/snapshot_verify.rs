@@ -11,5 +11,5 @@
 //! `degenbot-python::bot::engine::register`, so existing callers are
 //! unaffected.
 pub use crate::bot_core::snapshot_verify::{
-    register_with_cl_buffers, run_cl_verification, SnapshotStore, VerifyError, VerifyRpc,
+    register_with_cl_buffers, run_cl_verification, VerifyError, VerifyRpc,
 };

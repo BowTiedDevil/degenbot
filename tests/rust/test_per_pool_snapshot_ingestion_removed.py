@@ -45,13 +45,23 @@ def test_per_pool_snapshot_pyo3_method_removed(method: str) -> None:
     )
 
 
-@pytest.mark.parametrize("method", ["load_v3_snapshot_from_py", "load_v4_snapshot_from_py"])
-def test_whole_dict_load_methods_remain(method: str) -> None:
-    """The single-crossing whole-dict loaders stay (non-DB-only path)."""
-    assert hasattr(UniswapArbEngine, method), (
-        f"UniswapArbEngine.{method} must stay — it's the non-DB snapshot "
-        f"path's single whole-dict PyO3 crossing (DADWUP keeps it; only "
-        f"the per-pool insert/begin/finish surface retires)."
+@pytest.mark.parametrize(
+    "method",
+    [
+        "load_v3_snapshot_from_py",
+        "load_v4_snapshot_from_py",
+        "clear_v3_snapshot",
+        "clear_v4_snapshot",
+    ],
+)
+def test_whole_dict_load_methods_removed(method: str) -> None:
+    """The whole-dict ingestion surface is retired (epic XEANMB)."""
+    assert not hasattr(UniswapArbEngine, method), (
+        f"UniswapArbEngine.{method} must be gone — epic XEANMB retires the "
+        f"whole-dict `load_*_from_py` / `clear_*_snapshot` surface (the "
+        f"in-memory SnapshotStore they fed is replaced by a WAL held read "
+        f"transaction for the DB path + the Chain arm for the non-DB path). "
+        f"`start()` now sets `snapshot_seed_block` before `subscribe()`."
     )
 
 

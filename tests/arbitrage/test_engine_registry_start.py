@@ -143,15 +143,10 @@ def test_start_derives_snapshot_block_as_min_newest_block(monkeypatch) -> None:
     fake = FakeEngine()
     registry = runner.EngineRegistry(bot=None, engine=fake)
 
-    def record_v3_stream(snapshot) -> dict:
-        return {}
-
-    def record_v4_stream(snapshot, *, managed_pools=None) -> dict:
-        return {}
-
-    monkeypatch.setattr(runner, "_v3_snapshot_to_py_dict", record_v3_stream)
-    monkeypatch.setattr(runner, "_v4_snapshot_to_py_dict", record_v4_stream)
-
+    # XEANMB: `start()` no longer ingests snapshot dicts (the
+    # `load_*_from_py` surface is retired); it derives `S = min(newest_block)`
+    # + sets `snapshot_seed_block` BEFORE `subscribe()` so `after_subscribe`
+    # advances the phase to `SnapshotLoaded`.
     v3_snap = _FakeSnapshot(newest_block=18_000_100)
     v4_snap = _FakeSnapshot(newest_block=18_000_050)
 
@@ -165,14 +160,12 @@ def test_start_derives_snapshot_block_as_min_newest_block(monkeypatch) -> None:
     # J3FMDO: start() no longer calls backfill_from_snapshot — resume() drives
     # it via the core auto-backfill. So backfill_args stays empty.
     assert fake.backfill_args == []
-    # Streams ran for both snapshots, in order, then the non-DB seed-set (so
-    # the core auto-backfill inside resume picks up S=min(newest_block)), then
-    # verify-config.
+    # XEANMB: the snapshot seed block is set BEFORE subscribe (so the engine
+    # phase advances to SnapshotLoaded via after_subscribe), then
+    # verify-config. No stream/load_*_from_py calls remain.
     assert fake.calls == [
-        "subscribe",
-        "stream_v3",
-        "stream_v4",
         "set_snapshot_seed_block",
+        "subscribe",
         "set_verify_rpc_url",
     ]
     # The derived block (the min of the two newest_blocks) is set on the
@@ -269,12 +262,6 @@ def test_start_stashes_snapshot_and_backfill_blocks_for_two_step_verify(monkeypa
     No behavior change yet beyond setting the fields (T6 reads them)."""
     fake = FakeEngine()
     registry = runner.EngineRegistry(bot=None, engine=fake)
-
-    def _noop(*args, **kwargs) -> dict:
-        return {}
-
-    monkeypatch.setattr(runner, "_v3_snapshot_to_py_dict", _noop)
-    monkeypatch.setattr(runner, "_v4_snapshot_to_py_dict", _noop)
 
     v3_snap = _FakeSnapshot(newest_block=18_000_100)
     v4_snap = _FakeSnapshot(newest_block=18_000_050)

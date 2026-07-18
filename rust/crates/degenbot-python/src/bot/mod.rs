@@ -993,11 +993,6 @@ impl PyBot {
         let chain_id = self.bot.chain_id();
         let deployer = degenbot_uniswap::deployments::resolve_deployer(chain_id, fac);
         let init_hash_b256 = degenbot_uniswap::deployments::resolve_v3_init_hash(chain_id, fac);
-        // seed_from_store: when coverage is Tracked but no inline tick_data was
-        // passed, the core SnapshotStore must be the source (the DB snapshot
-        // loaded at Bot.__init__ feeds the store; register_v3_pool consumes it
-        // via `take()`). Inline tick_data (test fixtures / file snapshots) wins.
-        let seed_from_store = cov == PoolTickCoverage::Tracked && rust_tick_data.is_empty();
 
         self.bot
             .state_arc()
@@ -1017,7 +1012,6 @@ impl PyBot {
                 tick_data: rust_tick_data,
                 update_block,
                 coverage: cov,
-                seed_from_store,
                 fetcher: tick_data_fetcher
                     .filter(|f| !f.is_none())
                     .map(|f| crate::bot::pool::make_tick_fetcher(f.clone().unbind())),
@@ -1117,9 +1111,6 @@ impl PyBot {
                 )));
             }
         };
-        // seed_from_store: Tracked coverage + no inline tick_data → the core
-        // SnapshotStore is the source (DB snapshot loaded at Bot.__init__).
-        let seed_from_store = cov == PoolTickCoverage::Tracked && rust_tick_data.is_empty();
         self.bot
             .state_arc()
             .write()
@@ -1140,7 +1131,6 @@ impl PyBot {
                 tick_data: rust_tick_data,
                 update_block: block,
                 coverage: cov,
-                seed_from_store,
                 fetcher: tick_data_fetcher
                     .filter(|f| !f.is_none())
                     .map(|f| crate::bot::pool::make_tick_fetcher(f.clone().unbind())),

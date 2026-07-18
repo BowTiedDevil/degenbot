@@ -46,8 +46,8 @@ pub(crate) use degenbot_bot::bot_core::{
 pub(crate) use degenbot_bot::solvers::uniswap_engine::engine_handle::EngineHandle;
 
 pub(crate) use degenbot_bot::solvers::uniswap_engine::{
-    BlockMetadata, BlockNotification, EnginePhase, HopType, MixedPoolRef, PoolHop, ResultBatch,
-    SolvePathResult, UniswapEngine,
+    BlockMetadata, BlockNotification, HopType, MixedPoolRef, PoolHop, ResultBatch, SolvePathResult,
+    UniswapEngine,
 };
 
 /// Python-facing mixed V2/V3 arbitrage engine.
@@ -238,16 +238,6 @@ impl PyUniswapArbEngine {
             });
         }
         Ok(rust_v4)
-    }
-
-    /// Get the current engine phase.
-    pub(crate) fn current_phase(&self) -> EnginePhase {
-        self.pump.current_phase()
-    }
-
-    /// Set the engine phase (advancing only).
-    pub(crate) fn set_phase(&self, phase: EnginePhase) {
-        self.pump.set_phase(phase);
     }
 }
 
