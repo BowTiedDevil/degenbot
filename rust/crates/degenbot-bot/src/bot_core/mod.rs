@@ -939,42 +939,7 @@ impl BotState {
         let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&pool_id) else {
             return None;
         };
-
-        // Capture priors for any ticks being mutated by this event, so reorg
-        // rollback can reverse-apply them. A tick that had no prior entry gets
-        // `liquidity_gross_before: None` (on rollback, delete it).
-        let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(tick_priors.len());
-        for &(tick_index, ref new_info) in tick_priors {
-            let prior = state.tick_data.get(&tick_index).cloned();
-            journaled_priors.push((
-                tick_index,
-                TickBefore {
-                    liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
-                    liquidity_net_before: prior
-                        .as_ref()
-                        .map_or(alloy::primitives::I256::ZERO, |p| p.liquidity_net),
-                },
-            ));
-            state.tick_data.insert(tick_index, new_info.clone());
-        }
-
-        // Journal scalar priors (swap scalars change on every Swap).
-        state.journal.push_delta(V3BlockDelta {
-            block: block_number,
-            scalar_priors: Some(ScalarPriors {
-                sqrt_price_x96_before: state.sqrt_price_x96,
-                liquidity_before: state.liquidity,
-                tick_before: state.tick,
-            }),
-            tick_priors: journaled_priors,
-        });
-
-        state.sqrt_price_x96 = sqrt_price_x96;
-        state.liquidity = liquidity;
-        state.tick = tick;
-        state.update_block = block_number;
-        state.invalidate_tick_range_cache();
-
+        state.apply_swap(sqrt_price_x96, liquidity, tick, block_number, tick_priors);
         Some(pool_id)
     }
 
@@ -1033,44 +998,7 @@ impl BotState {
         let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&pool_id) else {
             return None;
         };
-
-        // Capture tick priors before mutation so reorg rollback can reverse-
-        // apply. A tick that had no prior entry (newly initialized by this
-        // Mint) gets `liquidity_gross_before: None` (on rollback, delete it).
-        let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(2);
-        for &tick_idx in &[tick_lower, tick_upper] {
-            let prior = state.tick_data.get(&tick_idx).cloned();
-            journaled_priors.push((
-                tick_idx,
-                TickBefore {
-                    liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
-                    liquidity_net_before: prior
-                        .as_ref()
-                        .map_or(alloy::primitives::I256::ZERO, |p| p.liquidity_net),
-                },
-            ));
-        }
-
-        ::degenbot_pools::tick_bitmap::apply_liquidity_to_tick_range(
-            &mut state.tick_data,
-            tick_lower,
-            tick_upper,
-            liquidity_delta,
-            block_number,
-        );
-
-        // Journal: Mint/Burn mutate tick_data only, NOT the active `liquidity`
-        // scalar — so the journal carries no scalar priors for this tick-only
-        // event (scalar_priors: None). Only the two tick priors are reverse-
-        // applied on rollback. See ADR-004.
-        state.journal.push_delta(V3BlockDelta {
-            block: block_number,
-            scalar_priors: None,
-            tick_priors: journaled_priors,
-        });
-
-        state.update_block = block_number;
-        state.invalidate_tick_range_cache();
+        state.apply_liquidity_update(tick_lower, tick_upper, liquidity_delta, block_number);
         Some(pool_id)
     }
 
@@ -3181,38 +3109,7 @@ impl BotState {
         let Some(PoolEntry::V4(_, state)) = self.pools.get_mut(&pool_id) else {
             return None;
         };
-
-        let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(tick_priors.len());
-        for &(tick_index, ref new_info) in tick_priors {
-            let prior = state.tick_data.get(&tick_index).cloned();
-            journaled_priors.push((
-                tick_index,
-                TickBefore {
-                    liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
-                    liquidity_net_before: prior
-                        .as_ref()
-                        .map_or(alloy::primitives::I256::ZERO, |p| p.liquidity_net),
-                },
-            ));
-            state.tick_data.insert(tick_index, new_info.clone());
-        }
-
-        state.journal.push_delta(V3BlockDelta {
-            block: block_number,
-            scalar_priors: Some(ScalarPriors {
-                sqrt_price_x96_before: state.sqrt_price_x96,
-                liquidity_before: state.liquidity,
-                tick_before: state.tick,
-            }),
-            tick_priors: journaled_priors,
-        });
-
-        state.sqrt_price_x96 = sqrt_price_x96;
-        state.liquidity = liquidity;
-        state.tick = tick;
-        state.update_block = block_number;
-        state.invalidate_tick_range_cache();
-
+        state.apply_swap(sqrt_price_x96, liquidity, tick, block_number, tick_priors);
         Some(pool_id)
     }
 
@@ -3238,37 +3135,7 @@ impl BotState {
         let Some(PoolEntry::V4(_, state)) = self.pools.get_mut(&pool_id) else {
             return None;
         };
-
-        let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(2);
-        for &tick_idx in &[tick_lower, tick_upper] {
-            let prior = state.tick_data.get(&tick_idx).cloned();
-            journaled_priors.push((
-                tick_idx,
-                TickBefore {
-                    liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
-                    liquidity_net_before: prior
-                        .as_ref()
-                        .map_or(alloy::primitives::I256::ZERO, |p| p.liquidity_net),
-                },
-            ));
-        }
-
-        ::degenbot_pools::tick_bitmap::apply_liquidity_to_tick_range(
-            &mut state.tick_data,
-            tick_lower,
-            tick_upper,
-            liquidity_delta,
-            block_number,
-        );
-
-        state.journal.push_delta(V3BlockDelta {
-            block: block_number,
-            scalar_priors: None,
-            tick_priors: journaled_priors,
-        });
-
-        state.update_block = block_number;
-        state.invalidate_tick_range_cache();
+        state.apply_liquidity_update(tick_lower, tick_upper, liquidity_delta, block_number);
         Some(pool_id)
     }
 
