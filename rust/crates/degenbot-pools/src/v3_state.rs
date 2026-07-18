@@ -940,6 +940,7 @@ pub fn v3_simulate_swap(
 mod apply_inherent_tests {
     #![allow(unused_imports)]
     use super::*;
+    use crate::registry::ConcentratedLiquidityPoolMut;
     use crate::state_history::{ReorgJournal, ScalarPriors, TickBefore, V3BlockDelta};
     use alloy::primitives::{I256, U128, U256};
     use std::collections::{HashMap, HashSet};
@@ -1089,5 +1090,71 @@ mod apply_inherent_tests {
         // (3)/(4) journal gained exactly one delta at block 9.
         assert_eq!(state.journal.len(), before_len + 1);
         assert_eq!(state.journal.newest_block(), Some(9));
+    }
+
+    #[test]
+    fn replace_tick_data_swaps_map_advances_block_seeds_words_invalidates_cache() {
+        // What: replace_tick_data must (1) wholesale-swaps tick_data,
+        // (2) advance update_block only if newer (monotonic), (3) re-seed
+        // known_bitmap_words from the new keys, (4) invalidate the cached
+        // tick ranges. Scalars are NOT touched.
+        let liq = 1_000_000u128;
+        let mut state = state_with_position(liq);
+        let sp_before = state.sqrt_price_x96;
+
+        // Pre-condition: known_bitmap_words is empty, update_block is 0.
+        assert!(state.known_bitmap_words.is_empty());
+        assert_eq!(state.update_block, 0);
+
+        // New tick_data: a single tick at 120 (word 2 at tick_spacing 60).
+        let mut new_data = std::collections::HashMap::new();
+        new_data.insert(
+            120,
+            TickInfo {
+                liquidity_gross: U256::from(7u64).to::<U128>(),
+                liquidity_net: I256::try_from(7i128).unwrap(),
+                block: 5,
+            },
+        );
+
+        state.replace_tick_data(new_data.clone(), 5, 60);
+
+        // (1) tick_data swapped (old -60/+60 gone, 120 present).
+        assert_eq!(
+            state.tick_data.get(&120).map(|t| t.liquidity_gross),
+            Some(U256::from(7u64).to::<U128>())
+        );
+        assert!(!state.tick_data.contains_key(&-60));
+        assert!(!state.tick_data.contains_key(&60));
+        // (2) update_block advanced to 5.
+        assert_eq!(state.update_block, 5);
+        // (3) known_bitmap_words seeded from the new keys (word of tick 120
+        // at spacing 60 = 120.div_euclid(60) >> 8 = 2 >> 8 = 0).
+        assert!(state
+            .known_bitmap_words
+            .contains(&V3PoolState::word_of(120, 60)));
+        // (4) cache invalidated.
+        {
+            let cache = state.cached_tick_ranges.lock();
+            assert!(cache.zfo.is_none());
+            assert!(cache.ofz.is_none());
+        }
+        // Scalars untouched.
+        assert_eq!(state.sqrt_price_x96, sp_before);
+    }
+
+    #[test]
+    fn replace_tick_data_does_not_rewind_block() {
+        // update_block must NOT rewind when the supplied block is older
+        // (monotonic — mirrors the sync_v3_pool_state contract).
+        let liq = 1_000_000u128;
+        let mut state = state_with_position(liq);
+        state.update_block = 10;
+        let empty: std::collections::HashMap<i32, TickInfo> = std::collections::HashMap::new();
+        state.replace_tick_data(empty, 3, 60);
+        assert_eq!(
+            state.update_block, 10,
+            "update_block must not rewind to an older block"
+        );
     }
 }

@@ -798,6 +798,7 @@ pub fn v4_simulate_swap(
 mod apply_inherent_tests {
     #![allow(unused_imports)]
     use super::*;
+    use crate::registry::ConcentratedLiquidityPoolMut;
     use crate::state_history::{ReorgJournal, V3BlockDelta};
     use crate::v3_state::PoolTickCoverage;
     use crate::TickInfo;
@@ -914,5 +915,35 @@ mod apply_inherent_tests {
         assert_eq!(state.tick, tick_before);
         assert_eq!(state.journal.len(), before_len + 1);
         assert_eq!(state.journal.newest_block(), Some(9));
+    }
+
+    #[test]
+    fn replace_tick_data_swaps_map_advances_block_and_invalidates_cache() {
+        // V4 twin of the V3 test — proves the trait method dispatches onto
+        // V4PoolState through dyn ConcentratedLiquidityPoolMut.
+        let liq = 1_000_000u128;
+        let mut state = state_with_position(liq);
+        assert_eq!(state.update_block, 0);
+
+        let mut new_data = std::collections::HashMap::new();
+        new_data.insert(
+            120,
+            TickInfo {
+                liquidity_gross: U256::from(7u64).to::<U128>(),
+                liquidity_net: I256::try_from(7i128).unwrap(),
+                block: 5,
+            },
+        );
+
+        state.replace_tick_data(new_data, 5, 60);
+
+        assert_eq!(state.update_block, 5);
+        assert!(state.tick_data.contains_key(&120));
+        assert!(!state.tick_data.contains_key(&-60));
+        {
+            let cache = state.cached_tick_ranges.lock();
+            assert!(cache.zfo.is_none());
+            assert!(cache.ofz.is_none());
+        }
     }
 }

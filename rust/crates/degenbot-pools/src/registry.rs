@@ -90,6 +90,68 @@ impl ConcentratedLiquidityPool for V4PoolState {
     }
 }
 
+/// Mutable CL-family trait — the write twin of [`ConcentratedLiquidityPool`]
+/// (ADR-014 D2b). Carries the CL mutators previously inlined twice in
+/// `BotState` (one arm per family); the body lives once in the trait impl.
+///
+/// `tick_spacing` is passed in (it lives on the identity slice, not the state
+/// struct) — the caller reads it off `V3PoolIdentity.tick_spacing` /
+/// `V4PoolIdentity.pool_key.tick_spacing` before dispatching, so the trait
+/// stays identity-agnostic and the two state-struct impls are byte-identical.
+pub trait ConcentratedLiquidityPoolMut: ConcentratedLiquidityPool {
+    /// Wholesale-replace the `tick_data` map, advance `update_block` if newer
+    /// (monotonic — no rewind), re-seed `known_bitmap_words` from the new
+    /// keys' word positions, and invalidate the cached tick ranges. Scalars
+    /// (`sqrt_price_x96`/`liquidity`/`tick`) are untouched.
+    ///
+    /// No journal delta — a wholesale replace has undefined rollback
+    /// semantics; the pump is the authority for event-derived ticks (mirrors
+    /// `sync_v3_pool_state`).
+    ///
+    /// Returns `true` (the CL mutator always succeeds; the dispatch site's
+    /// `false` return is reserved for V2 / non-CL / unregistered pools).
+    fn replace_tick_data(
+        &mut self,
+        tick_data: HashMap<i32, TickInfo>,
+        update_block: u64,
+        tick_spacing: i32,
+    ) -> bool;
+}
+
+impl ConcentratedLiquidityPoolMut for V3PoolState {
+    fn replace_tick_data(
+        &mut self,
+        tick_data: HashMap<i32, TickInfo>,
+        update_block: u64,
+        tick_spacing: i32,
+    ) -> bool {
+        self.tick_data = tick_data;
+        if update_block > self.update_block {
+            self.update_block = update_block;
+        }
+        self.seed_known_bitmap_words(tick_spacing);
+        self.invalidate_tick_range_cache();
+        true
+    }
+}
+
+impl ConcentratedLiquidityPoolMut for V4PoolState {
+    fn replace_tick_data(
+        &mut self,
+        tick_data: HashMap<i32, TickInfo>,
+        update_block: u64,
+        tick_spacing: i32,
+    ) -> bool {
+        self.tick_data = tick_data;
+        if update_block > self.update_block {
+            self.update_block = update_block;
+        }
+        self.seed_known_bitmap_words(tick_spacing);
+        self.invalidate_tick_range_cache();
+        true
+    }
+}
+
 /// ERC20 token metadata.
 #[derive(Clone, Debug)]
 pub struct TokenEntry {
