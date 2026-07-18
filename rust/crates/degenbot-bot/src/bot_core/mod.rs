@@ -85,7 +85,9 @@ pub use block_clock::{BlockClock, BlockState, HeaderDecision, LogDecision};
 // Transient re-export — repointed at `degenbot_pools::*` natively by USPN7M/P2CKRL.
 // ---------------------------------------------------------------------------
 
-pub use ::degenbot_pools::registry::{ConcentratedLiquidityPool, PoolEntry, TokenEntry};
+pub use ::degenbot_pools::registry::{
+    ConcentratedLiquidityPool, ConcentratedLiquidityPoolMut, PoolEntry, TokenEntry,
+};
 pub use ::degenbot_pools::simulate_swap::simulate_swap;
 pub use ::degenbot_pools::v2_state::{
     RegisterV2PoolError, RegisterV2PoolParams, V2PoolIdentity, V2PoolState,
@@ -1026,30 +1028,16 @@ impl BotState {
             return false;
         };
         match entry {
-            // Two arms (not an or-pattern) because `V3PoolState` and
-            // `V4PoolState` are distinct structs — an or-pattern binding
-            // `state` would require one type. The read path uses a `&dyn
-            // ConcentratedLiquidityPool` trait object, but the trait is read-only (no
-            // mutable tick_data accessor); the 4-line body is duplicated
-            // rather than threading a mutable trait. Slice 9a reuses this for V4.
+            // CL-family collapse (ADR-014 D2b): the 4-line replace body lives
+            // once in `ConcentratedLiquidityPoolMut::replace_tick_data`; each
+            // arm only reads its identity's `tick_spacing` (V3 carries it
+            // directly, V4 nests it in `pool_key`) and delegates. The
+            // `_ => false` arm is the single non-CL / unregistered no-op.
             PoolEntry::V3(identity, state) => {
-                state.tick_data = tick_data;
-                if update_block > state.update_block {
-                    state.update_block = update_block;
-                }
-                // tick_spacing read off the entry's identity (no separate lookup).
-                state.seed_known_bitmap_words(identity.tick_spacing);
-                state.invalidate_tick_range_cache();
-                true
+                state.replace_tick_data(tick_data, update_block, identity.tick_spacing)
             }
             PoolEntry::V4(identity, state) => {
-                state.tick_data = tick_data;
-                if update_block > state.update_block {
-                    state.update_block = update_block;
-                }
-                state.seed_known_bitmap_words(identity.pool_key.tick_spacing);
-                state.invalidate_tick_range_cache();
-                true
+                state.replace_tick_data(tick_data, update_block, identity.pool_key.tick_spacing)
             }
             PoolEntry::V2(..)
             | PoolEntry::Curve(..)
