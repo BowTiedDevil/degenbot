@@ -400,15 +400,10 @@ impl BotState {
     /// `None` for non-Curve pools (silent no-op).
     #[must_use]
     pub fn get_curve_pool(&self, pool_id: u64) -> Option<&CurvePoolState> {
-        match self.pools.get(&pool_id)? {
-            PoolEntry::Curve(_, state) => Some(state),
-            PoolEntry::V2(..)
-            | PoolEntry::V3(..)
-            | PoolEntry::V4(..)
-            | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..)
-            | PoolEntry::AerodromeV2(..) => None,
-        }
+        self.pools
+            .get(&pool_id)
+            .and_then(PoolEntry::curve)
+            .map(|(_, state)| state)
     }
 
     /// Look up a Curve pool's immutable registration identity (address,
@@ -416,15 +411,10 @@ impl BotState {
     /// Returns `None` if the pool is not registered or isn't a Curve pool.
     #[must_use]
     pub fn get_curve_identity(&self, pool_id: u64) -> Option<&CurvePoolIdentity> {
-        match self.pools.get(&pool_id)? {
-            PoolEntry::Curve(identity, _) => Some(identity),
-            PoolEntry::V2(..)
-            | PoolEntry::V3(..)
-            | PoolEntry::V4(..)
-            | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..)
-            | PoolEntry::AerodromeV2(..) => None,
-        }
+        self.pools
+            .get(&pool_id)
+            .and_then(PoolEntry::curve)
+            .map(|(identity, _)| identity)
     }
 
     // --- ADR-005 slice 12a: Balancer V2 weighted state port -------------
@@ -523,15 +513,10 @@ impl BotState {
     /// for non-Balancer-weighted pools (silent no-op).
     #[must_use]
     pub fn get_balancer_weighted_pool(&self, pool_id: u64) -> Option<&BalancerWeightedPoolState> {
-        match self.pools.get(&pool_id)? {
-            PoolEntry::BalancerWeighted(_, state) => Some(state),
-            PoolEntry::V2(..)
-            | PoolEntry::V3(..)
-            | PoolEntry::V4(..)
-            | PoolEntry::Curve(..)
-            | PoolEntry::BalancerStable(..)
-            | PoolEntry::AerodromeV2(..) => None,
-        }
+        self.pools
+            .get(&pool_id)
+            .and_then(PoolEntry::balancer_weighted)
+            .map(|(_, state)| state)
     }
 
     /// Look up a Balancer weighted pool's immutable registration identity
@@ -542,15 +527,10 @@ impl BotState {
         &self,
         pool_id: u64,
     ) -> Option<&BalancerWeightedPoolIdentity> {
-        match self.pools.get(&pool_id)? {
-            PoolEntry::BalancerWeighted(identity, _) => Some(identity),
-            PoolEntry::V2(..)
-            | PoolEntry::V3(..)
-            | PoolEntry::V4(..)
-            | PoolEntry::Curve(..)
-            | PoolEntry::BalancerStable(..)
-            | PoolEntry::AerodromeV2(..) => None,
-        }
+        self.pools
+            .get(&pool_id)
+            .and_then(PoolEntry::balancer_weighted)
+            .map(|(identity, _)| identity)
     }
 
     // --- ADR-005 slice 12c: Balancer V2 stable state port --------------
@@ -658,15 +638,10 @@ impl BotState {
     /// pools (silent no-op).
     #[must_use]
     pub fn get_balancer_stable_pool(&self, pool_id: u64) -> Option<&BalancerStablePoolState> {
-        match self.pools.get(&pool_id)? {
-            PoolEntry::BalancerStable(_, state) => Some(state),
-            PoolEntry::V2(..)
-            | PoolEntry::V3(..)
-            | PoolEntry::V4(..)
-            | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::AerodromeV2(..) => None,
-        }
+        self.pools
+            .get(&pool_id)
+            .and_then(PoolEntry::balancer_stable)
+            .map(|(_, state)| state)
     }
 
     /// Look up a Balancer stable pool's immutable registration identity
@@ -678,15 +653,10 @@ impl BotState {
         &self,
         pool_id: u64,
     ) -> Option<&BalancerStablePoolIdentity> {
-        match self.pools.get(&pool_id)? {
-            PoolEntry::BalancerStable(identity, _) => Some(identity),
-            PoolEntry::V2(..)
-            | PoolEntry::V3(..)
-            | PoolEntry::V4(..)
-            | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::AerodromeV2(..) => None,
-        }
+        self.pools
+            .get(&pool_id)
+            .and_then(PoolEntry::balancer_stable)
+            .map(|(identity, _)| identity)
     }
 
     /// Apply a V2 `Sync` event to a registered pool's state.
@@ -786,15 +756,10 @@ impl BotState {
     /// orientation-specific `IntHopState` at resolve time from `zero_for_one`.
     #[must_use]
     pub fn get_v2_pool_state(&self, pool_id: u64) -> Option<&V2PoolState> {
-        match self.pools.get(&pool_id)? {
-            PoolEntry::V2(_, state) => Some(state),
-            PoolEntry::V3(..)
-            | PoolEntry::V4(..)
-            | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..)
-            | PoolEntry::AerodromeV2(..) => None,
-        }
+        self.pools
+            .get(&pool_id)
+            .and_then(PoolEntry::v2)
+            .map(|(_, state)| state)
     }
 
     /// Return the pool-family tag for `pool_id` as a kebab-case string
@@ -824,15 +789,10 @@ impl BotState {
     /// pool is not registered or isn't a V2 pool.
     #[must_use]
     pub fn get_v2_identity(&self, pool_id: u64) -> Option<&V2PoolIdentity> {
-        match self.pools.get(&pool_id)? {
-            PoolEntry::V2(identity, _) => Some(identity),
-            PoolEntry::V3(..)
-            | PoolEntry::V4(..)
-            | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..)
-            | PoolEntry::AerodromeV2(..) => None,
-        }
+        self.pools
+            .get(&pool_id)
+            .and_then(PoolEntry::v2)
+            .map(|(identity, _)| identity)
     }
 
     /// Snapshot a V2 pool's current mutable state (reserves + block) under one
@@ -1241,15 +1201,10 @@ impl BotState {
     /// `build_int_v3_sequence(zfo, 10)` to build the per-hop state.
     #[must_use]
     pub fn get_v3_pool(&self, pool_id: u64) -> Option<&V3PoolState> {
-        match self.pools.get(&pool_id)? {
-            PoolEntry::V3(_, state) => Some(state),
-            PoolEntry::V2(..)
-            | PoolEntry::V4(..)
-            | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..)
-            | PoolEntry::AerodromeV2(..) => None,
-        }
+        self.pools
+            .get(&pool_id)
+            .and_then(PoolEntry::v3)
+            .map(|(_, state)| state)
     }
 
     /// Look up a V3 pool's immutable registration identity (address, tokens,
@@ -1257,15 +1212,10 @@ impl BotState {
     /// registered or isn't a V3 pool.
     #[must_use]
     pub fn get_v3_identity(&self, pool_id: u64) -> Option<&V3PoolIdentity> {
-        match self.pools.get(&pool_id)? {
-            PoolEntry::V3(identity, _) => Some(identity),
-            PoolEntry::V2(..)
-            | PoolEntry::V4(..)
-            | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..)
-            | PoolEntry::AerodromeV2(..) => None,
-        }
+        self.pools
+            .get(&pool_id)
+            .and_then(PoolEntry::v3)
+            .map(|(identity, _)| identity)
     }
 
     /// Snapshot all V3 pool state for verification (clones every V3 entry).
@@ -2590,30 +2540,20 @@ impl BotState {
     /// `None` if not registered or not an Aerodrome pool.
     #[must_use]
     pub fn get_aerodrome_identity(&self, pool_id: u64) -> Option<&AerodromeV2PoolIdentity> {
-        match self.pools.get(&pool_id)? {
-            PoolEntry::AerodromeV2(identity, _) => Some(identity),
-            PoolEntry::V2(..)
-            | PoolEntry::V3(..)
-            | PoolEntry::V4(..)
-            | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..) => None,
-        }
+        self.pools
+            .get(&pool_id)
+            .and_then(PoolEntry::aerodrome_v2)
+            .map(|(identity, _)| identity)
     }
 
     /// Read a registered Aerodrome V2 pool's state by `pool_id` (reserves +
     /// `update_block` + the reorg journal).
     #[must_use]
     pub fn get_aerodrome_pool(&self, pool_id: u64) -> Option<&AerodromeV2PoolState> {
-        match self.pools.get(&pool_id)? {
-            PoolEntry::AerodromeV2(_, state) => Some(state),
-            PoolEntry::V2(..)
-            | PoolEntry::V3(..)
-            | PoolEntry::V4(..)
-            | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..) => None,
-        }
+        self.pools
+            .get(&pool_id)
+            .and_then(PoolEntry::aerodrome_v2)
+            .map(|(_, state)| state)
     }
 
     /// Discard Aerodrome reorg journal deltas earlier than the given block.
@@ -3458,15 +3398,10 @@ impl BotState {
     /// Read a registered V4 pool's state by `pool_id`.
     #[must_use]
     pub fn get_v4_pool(&self, pool_id: u64) -> Option<&V4PoolState> {
-        match self.pools.get(&pool_id)? {
-            PoolEntry::V4(_, state) => Some(state),
-            PoolEntry::V2(..)
-            | PoolEntry::V3(..)
-            | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..)
-            | PoolEntry::AerodromeV2(..) => None,
-        }
+        self.pools
+            .get(&pool_id)
+            .and_then(PoolEntry::v4)
+            .map(|(_, state)| state)
     }
 
     /// Look up a V4 pool's immutable registration identity (`pool_manager`,
@@ -3474,15 +3409,10 @@ impl BotState {
     /// isn't a V4 pool.
     #[must_use]
     pub fn get_v4_identity(&self, pool_id: u64) -> Option<&V4PoolIdentity> {
-        match self.pools.get(&pool_id)? {
-            PoolEntry::V4(identity, _) => Some(identity),
-            PoolEntry::V2(..)
-            | PoolEntry::V3(..)
-            | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..)
-            | PoolEntry::AerodromeV2(..) => None,
-        }
+        self.pools
+            .get(&pool_id)
+            .and_then(PoolEntry::v4)
+            .map(|(identity, _)| identity)
     }
 
     /// Look up the pool ID for a registered `(pool_manager, pool_id)` pair.
