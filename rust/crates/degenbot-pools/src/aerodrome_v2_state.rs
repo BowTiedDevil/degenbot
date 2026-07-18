@@ -134,3 +134,59 @@ impl AerodromeV2PoolState {
         (identity, state)
     }
 }
+
+impl AerodromeV2PoolState {
+    /// Apply an Aerodrome `Sync` event to this pool's reserves, capturing the
+    /// prior reserves into the reorg journal (ADR-014 D1 — relocated from
+    /// `BotState::apply_aerodrome_sync_by_pool_id`). Aerodrome shares the
+    /// `V2BlockDelta` full-state delta with V2 (Solidly mirrors v2-core's
+    /// `Sync(uint112, uint112)`); the body is the same shape as
+    /// `V2PoolState::apply_sync`.
+    pub fn apply_sync(&mut self, reserve0: U112, reserve1: U112, block_number: u64) {
+        self.journal.push_delta(V2BlockDelta {
+            block: block_number,
+            reserve0_before: self.reserve0,
+            reserve1_before: self.reserve1,
+            reserve0_after: reserve0,
+            reserve1_after: reserve1,
+        });
+        self.reserve0 = reserve0;
+        self.reserve1 = reserve1;
+        self.update_block = block_number;
+    }
+}
+
+// ===========================================================================
+// Tests for the relocated apply method (ADR-014 D1 — reserve-pair half of Q1).
+// ===========================================================================
+#[cfg(test)]
+mod apply_inherent_tests {
+    #![allow(unused_imports)]
+    use super::*;
+    use alloy::primitives::U256;
+
+    fn state_with_reserves(r0: u64, r1: u64) -> AerodromeV2PoolState {
+        AerodromeV2PoolState {
+            reserve0: U112::from(r0),
+            reserve1: U112::from(r1),
+            update_block: 0,
+            journal: ReorgJournal::<V2BlockDelta>::new(8),
+        }
+    }
+
+    #[test]
+    fn apply_sync_updates_reserves_advances_block_and_journals_priors() {
+        // Aerodrome twin of the V2 test — Aerodrome shares V2BlockDelta +
+        // the same reserve shape (Solidly mirrors v2-core's Sync(uint112)).
+        let mut state = state_with_reserves(100, 200);
+        let before_len = state.journal.len();
+
+        state.apply_sync(U112::from(150), U112::from(250), 7);
+
+        assert_eq!(state.journal.len(), before_len + 1);
+        assert_eq!(state.journal.newest_block(), Some(7));
+        assert_eq!(state.reserve0, U112::from(150));
+        assert_eq!(state.reserve1, U112::from(250));
+        assert_eq!(state.update_block, 7);
+    }
+}
