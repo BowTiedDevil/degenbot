@@ -313,6 +313,80 @@ impl PyBot {
         Ok(())
     }
 
+    /// Attach a construction-I/O handle built from a Python provider + an
+    /// optional `database_path` (architecture review 2025-07-18 / candidate 1).
+    /// The Python `Bot.__init__` calls this after constructing `PyBot` so the
+    /// 7 generic RPC + 12 DB atomic methods on `PyBotIo` can delegate through
+    /// the core trait objects. Alloy-only — a non-alloy provider raises
+    /// `RuntimeError` (Q6-narrow; the 27 choreography wrappers keep their
+    /// Python-delegation fallback this slice, deleted with the builder-
+    /// choreography port).
+    ///
+    /// `database_path = None` → the DB half is `NoDb` (every read returns
+    /// `None`/empty, the no-DB path). `Some(path)` → a held `DegenbotDb` is
+    /// opened (WAL permits the concurrent connection) + wrapped in
+    /// `DegenbotDbConstruction`; construction DB reads route through this held
+    /// connection (no per-call `DegenbotDb::open`).
+    #[pyo3(signature = (provider, database_path=None))]
+    #[allow(clippy::unnecessary_wraps, clippy::needless_pass_by_value)]
+    fn attach_construction_io(
+        &self,
+        py: Python<'_>,
+        provider: Bound<'_, PyAny>,
+        database_path: Option<&str>,
+    ) -> PyResult<()> {
+        use crate::bot::py_bot_io::extract_native_alloy;
+        use degenbot_bot::bot_core::construction_io::{
+            AlloyRpcConstruction, ConstructionIo, DegenbotDbConstruction, NoDb,
+        };
+
+        // Q6-narrow: the trait is alloy-only. A non-alloy provider (legacy
+        // test doubles that exercise the choreography fallback) yields `None`
+        // here — we skip attaching, leaving `construction_io = None`. The 7
+        // RPC + 12 DB methods on `PyBotIo` then fall back to the `self.alloy` /
+        // Python path (the `None` branch in each). This preserves the
+        // choreography-test path; a production driver MUST supply an alloy
+        // provider to get the trait delegation (the migration note documents
+        // this; the fallback is deleted with the builder-choreography port).
+        let Some(alloy) = extract_native_alloy(&provider) else {
+            return Ok(());
+        };
+        let rpc = std::sync::Arc::new(AlloyRpcConstruction::new((*alloy).clone()));
+
+        let db: std::sync::Arc<
+            dyn degenbot_bot::bot_core::construction_io::DbConstruction + Send + Sync,
+        > = match database_path {
+            Some(path) => {
+                let path_buf = std::path::PathBuf::from(path);
+                // `open_for_writes` — the construction executor does reads
+                // AND the `update_erc20_token_metadata` write-back, so the
+                // held connection must be write-capable. A missing file
+                // (SQLAlchemy creates the DB lazily on first write) → fall
+                // back to `NoDb` so the DB methods return the no-DB shape
+                // (matching the original `database_path` cold-start skip);
+                // a `Bot` restart after the file exists picks it up.
+                match py.detach(|| degenbot_db::DegenbotDb::open_for_writes(&path_buf)) {
+                    Ok((db, _state)) => std::sync::Arc::new(DegenbotDbConstruction::new(db)),
+                    Err(e) => {
+                        log::debug!(
+                            "Construction-I/O DB open failed for {path}: {e}; \
+                                 falling back to NoDb (DB methods return None)"
+                        );
+                        std::sync::Arc::new(NoDb)
+                    }
+                }
+            }
+            None => std::sync::Arc::new(NoDb),
+        };
+
+        let io = ConstructionIo::new(db, rpc);
+        // Attach to the shared `Bot` (interior-mutable `construction_io` field);
+        // `Bot` is held as `Arc` by `PyBot`, so we mutate through the `RwLock`
+        // rather than adopting the `Arc` out.
+        self.bot.set_construction_io(io);
+        Ok(())
+    }
+
     /// The snapshot seed block `S` (or `None` when no DB snapshot was loaded —
     /// the cold-start path). Python reads this in `engine_registry.start()`
     /// to stash `_verify_snapshot_block` for the per-pool two-step verify.
