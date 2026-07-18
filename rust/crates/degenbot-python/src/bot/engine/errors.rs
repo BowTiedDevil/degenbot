@@ -1,4 +1,4 @@
-//! Distinct Python exception types for the `UniswapArbEngine` surface.
+//! Distinct Python exception types for the `ArbitrageEngine` surface.
 //!
 //! Split out of the former monolithic `py_binding.rs` (ergo UG6FKN task
 //! 74W2Z6). `create_exception!` registers the Rust type in *this* module

@@ -1,6 +1,6 @@
-//! `PoolStateSubscriber` adapter wrapping a shared `UniswapEngine` (ADR-006 D4).
+//! `PoolStateSubscriber` adapter wrapping a shared `ArbitrageEngine` (ADR-006 D4).
 //!
-//! The engine is shared as `Arc<Mutex<UniswapEngine>>` (the pump + Python both
+//! The engine is shared as `Arc<Mutex<ArbitrageEngine>>` (the pump + Python both
 //! hold clones). `EngineSubscriber` upgrades that to a subscriber: when
 //! `Bot`'s `LogDispatcher` notifies `on_pool_state_updated(pool_id)`, this
 //! adapter locks the engine **alone** (the `BotState` write guard is already
@@ -16,16 +16,16 @@ use std::sync::Weak;
 use parking_lot::Mutex;
 
 use crate::bot_core::log_dispatcher::PoolStateSubscriber;
-use crate::solvers::uniswap_engine::UniswapEngine;
+use crate::solvers::arb_engine::ArbitrageEngine;
 
-/// A `PoolStateSubscriber` backed by a shared `UniswapEngine`.
+/// A `PoolStateSubscriber` backed by a shared `ArbitrageEngine`.
 ///
-/// Constructed from a `Weak<Mutex<UniswapEngine>>` so a de-registered engine
+/// Constructed from a `Weak<Mutex<ArbitrageEngine>>` so a de-registered engine
 /// (all strong handles dropped) is silently skipped by the dispatcher's
 /// `Weak::upgrade` — no leak, no panic. `Bot.attach_engine` receives this as a
 /// `Weak<dyn PoolStateSubscriber>`.
 pub struct EngineSubscriber {
-    engine: Weak<Mutex<UniswapEngine>>,
+    engine: Weak<Mutex<ArbitrageEngine>>,
 }
 
 impl EngineSubscriber {
@@ -35,7 +35,7 @@ impl EngineSubscriber {
     /// `Weak` alive is owned by [`EngineHandle`] (the cycle-free home on the
     /// engine side, ADR-006) — see `EngineHandle::subscriber_weak`.
     #[must_use]
-    pub fn new(engine: Weak<Mutex<UniswapEngine>>) -> Self {
+    pub fn new(engine: Weak<Mutex<ArbitrageEngine>>) -> Self {
         Self { engine }
     }
 }
@@ -57,7 +57,7 @@ impl PoolStateSubscriber for EngineSubscriber {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::solvers::uniswap_engine::UniswapEngine;
+    use crate::solvers::arb_engine::ArbitrageEngine;
     use std::sync::Arc;
 
     /// RED→GREEN tracer (ADR-006 slice 4): the adapter forwards a notify to
@@ -66,7 +66,7 @@ mod tests {
     /// adapter must not panic and must upgrade the weak ref successfully.
     #[test]
     fn adapter_forwards_notify_to_engine_insert_dirty() {
-        let engine = Arc::new(Mutex::new(UniswapEngine::new()));
+        let engine = Arc::new(Mutex::new(ArbitrageEngine::new()));
         let subscriber = EngineSubscriber::new(Arc::downgrade(&engine));
 
         // Engine has no pools registered → insert_dirty is a no-op, but the
@@ -93,7 +93,7 @@ mod tests {
     #[test]
     fn adapter_silently_skips_dropped_engine() {
         let subscriber = {
-            let engine = Arc::new(Mutex::new(UniswapEngine::new()));
+            let engine = Arc::new(Mutex::new(ArbitrageEngine::new()));
             EngineSubscriber::new(Arc::downgrade(&engine))
             // engine drops here → weak goes dead.
         };

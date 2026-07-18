@@ -101,13 +101,13 @@ pub use degenbot_abi::{abi_decoder, abi_encoder, abi_types, signature_parser};
 pub use degenbot_rpc::{contract, provider, subscription};
 
 // The bot state (`BotState`, reorg journal, verifier, pump,
-// V2/V3/V4 state) + Möbius solvers + the unified `UniswapEngine` live in the
+// V2/V3/V4 state) + Möbius solvers + the unified `ArbitrageEngine` live in the
 // `degenbot-bot` workspace member — one crate by ADR-003 (the state/solver seam
 // is genuine domain coupling, not over-abstracted). Re-exported as
 // `crate::bot_core` / `crate::solvers` so every existing call site in the
 // binding layer keeps resolving. The `#[pyclass]`/`#[pyfunction]` wrappers
 // (`PyBot`, `PyLiquidityPool`, `PyErc20Token`, `PyDexIdentity`,
-// `PyUniswapArbEngine`, the `Verification*Error`/`*RejectedError` exception
+// `PyArbitrageEngine`, the `Verification*Error`/`*RejectedError` exception
 // types) live in the `bot` / `bot::pool` / `bot::token` /
 // `bot::dex_identity` modules and the `bot::engine` subdir (they need `conversion::alloy` / `conversion::cache`).
 #[cfg(feature = "bot")]

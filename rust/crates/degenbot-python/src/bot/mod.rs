@@ -119,7 +119,7 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 /// Python constructs a `PyBot` (or receives a shared handle), registers
 /// pools/tokens, then reads results. `PyBot` owns a [`Bot`] via `Arc` and hands
 /// out clones of its shared `Arc<RwLock<BotState>>` (`state_arc`) so
-/// `PyLiquidityPool` / `PyErc20Token` / `UniswapEngine` all reach ONE
+/// `PyLiquidityPool` / `PyErc20Token` / `ArbitrageEngine` all reach ONE
 /// Rust-owned `BotState`; `BlockPump` clones the same `Arc<Bot>` so its
 /// `dispatch_log` writes flow through to the engine's reads (N handles → one
 /// state — the Polars three-layer invariant, preserved + generalized by D4).
@@ -127,7 +127,7 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 pub struct PyBot {
     bot: Arc<Bot>,
     /// ADR-006 D4 (T3): the pump lifecycle state, shared with the
-    /// `PyUniswapArbEngine` this bot owns. `None` until an engine is
+    /// `PyArbitrageEngine` this bot owns. `None` until an engine is
     /// constructed against this bot (the engine attaches its `Arc<PumpState>`
     /// back here during `new()`). Once attached, the three pump methods —
     /// `subscribe`, `backfill_from_snapshot`, `resume` — are drivable from
@@ -174,8 +174,8 @@ impl PyBot {
     }
 
     /// ADR-006 D4 (T3): attach the pump lifecycle state owned by a
-    /// `PyUniswapArbEngine` constructed against this bot. Called from
-    /// `PyUniswapArbEngine::new` when `py_bot` is supplied. After this, the
+    /// `PyArbitrageEngine` constructed against this bot. Called from
+    /// `PyArbitrageEngine::new` when `py_bot` is supplied. After this, the
     /// pump methods on `PyBot` drive the same `PumpState` the engine reads.
     pub(crate) fn attach_pump_state(&self, pump: Arc<crate::bot::pump::PumpState>) {
         *self.pump.lock() = Some(pump);
@@ -188,7 +188,7 @@ impl PyBot {
     fn pump_state(&self) -> PyResult<Arc<crate::bot::pump::PumpState>> {
         self.pump.lock().clone().ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err(
-                "No engine attached to this Bot. Construct a UniswapArbEngine(py_bot=...) \
+                "No engine attached to this Bot. Construct a ArbitrageEngine(py_bot=...) \
                  before calling pump lifecycle methods on Bot.",
             )
         })
@@ -398,7 +398,7 @@ impl PyBot {
     /// Subscribe to the WS `newHeads` + logs streams (ADR-006 D4 T3).
     ///
     /// The Bot-owned pump entry point — delegates to the shared `PumpState`
-    /// attached when a `UniswapArbEngine` was constructed against this bot.
+    /// attached when a `ArbitrageEngine` was constructed against this bot.
     /// Blocks (sync, via the shared tokio runtime) until the first block is
     /// observed, then returns the first WS block number (the backfill target).
     ///
@@ -799,7 +799,7 @@ impl PyBot {
     /// handles aliasing to a different pool on recreate.
     ///
     /// V2/V3 path only — `PyBot` exposes `register_v2/v3_pool` (no V4;
-    /// V4 registration lives on `UniswapArbEngine`, and its symmetric
+    /// V4 registration lives on `ArbitrageEngine`, and its symmetric
     /// unregister belongs there too — see ADR-007 Consequences).
     ///
     /// Returns `True` if a pool was found and removed; `False` if the address
@@ -820,7 +820,7 @@ impl PyBot {
     fn unregister_pool(&self, address: &str, pool_id: Option<Vec<u8>>) -> PyResult<bool> {
         let addr = parse_address(address)?;
         // V4 on PyBot is intentionally not exposed: registration for V4 lives
-        // on UniswapArbEngine (bot::engine), so the symmetric V4 unregister
+        // on ArbitrageEngine (bot::engine), so the symmetric V4 unregister
         // belongs there too (ADR-007 Consequences / Deferred). A `Some` here
         // would be a caller bug — surface it rather than silently no-op.
         if pool_id.is_some() {

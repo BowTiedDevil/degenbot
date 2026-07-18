@@ -1,19 +1,19 @@
 //! Bot-owned pump / lifecycle state (ADR-006 D4).
 //!
 //! D4 relocates the pump lifecycle (`subscribe`, `backfill_from_snapshot`,
-//! `resume`) onto `PyBot`. Today these live on `PyUniswapArbEngine` and touch
+//! `resume`) onto `PyBot`. Today these live on `PyArbitrageEngine` and touch
 //! a cluster of fields also accessed by `snapshot.rs` (phase) and `solve.rs`
 //! (coordinator). Rather than move every fieldsite in one go, this module
-//! defines a shared [`PumpState`] that BOTH `PyBot` and `PyUniswapArbEngine`
+//! defines a shared [`PumpState`] that BOTH `PyBot` and `PyArbitrageEngine`
 //! hold — so the three pump methods can move to `PyBot` (owning the pump, per
 //! D4) while the engine's snapshot/solve slices keep reading the same shared
 //! state through their own `Arc<PumpState>` handle.
 //!
 //! `PumpState` is the lifecycle layer: engine phase, the pump handle, the
 //! subscribe state held between `subscribe` and `resume`, the solve coordinator
-//! + reorg coordinator + shutdown flag. The pure solve core (`Arc<Mutex<UniswapEngine>>`,
+//! + reorg coordinator + shutdown flag. The pure solve core (`Arc<Mutex<ArbitrageEngine>>`,
 //!   `BotState`, v3/v4 snapshot stores, verify config) stays on
-//!   `PyUniswapArbEngine`.
+//!   `PyArbitrageEngine`.
 
 use std::sync::Arc;
 
@@ -21,7 +21,7 @@ use degenbot_bot::bot_core::block_pump::{BlockPump, WsEvent};
 use degenbot_bot::bot_core::reorg_coordinator::ReorgCoordinator;
 use degenbot_bot::bot_core::solve_coordinator::SolveCoordinator;
 use degenbot_bot::bot_core::{drain_sink::DrainSink, Bot};
-use degenbot_bot::solvers::uniswap_engine::{EnginePhase, UniswapEngine};
+use degenbot_bot::solvers::arb_engine::{ArbitrageEngine, EnginePhase};
 use parking_lot::Mutex;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -39,7 +39,7 @@ pub(crate) struct PySubscribeState {
 
 /// Shared lifecycle state for the pump (ADR-006 D4).
 ///
-/// Held by both `PyBot` (the D4 pump owner) and `PyUniswapArbEngine` (whose
+/// Held by both `PyBot` (the D4 pump owner) and `PyArbitrageEngine` (whose
 /// snapshot/solve slices still read `phase` / `coordinator`). One allocation
 /// per chain — both wrappers carry `Arc<PumpState>` to the same instance.
 ///
@@ -51,7 +51,7 @@ pub(crate) struct PySubscribeState {
 /// + the `verify_*_block` fields; T6 re-stashes the blocks on the registry.)
 pub(crate) struct PumpState {
     /// Shared engine state (for `process_backfill_logs` / `last_processed_block`).
-    pub(crate) engine: Arc<parking_lot::Mutex<UniswapEngine>>,
+    pub(crate) engine: Arc<parking_lot::Mutex<ArbitrageEngine>>,
     /// The drain-point solve coordinator (ADR-006 D4, slice 6). Holds the
     /// engine as `Arc<dyn Engine>` (via `EngineHandle`) and fans drain-tick /
     /// send / finalize / reorg calls to it under a `drain_lock`.
@@ -84,7 +84,7 @@ impl PumpState {
     #[allow(clippy::too_many_arguments)]
     #[must_use]
     pub(crate) fn new(
-        engine: Arc<parking_lot::Mutex<UniswapEngine>>,
+        engine: Arc<parking_lot::Mutex<ArbitrageEngine>>,
         coordinator: Arc<SolveCoordinator>,
         reorg_coordinator: Arc<ReorgCoordinator>,
         bot: Arc<Bot>,
@@ -794,7 +794,7 @@ mod tests {
     // unblocks immediately), and be idempotent (a second call is a no-op
     // `Ok(())` because the handle is `take()`n on the first). Building a
     // real `PumpState` mirrors the standalone (no-`py_bot`) path of
-    // `PyUniswapArbEngine::new` — a fresh `Bot`/`BotState`/`UniswapEngine`/
+    // `PyArbitrageEngine::new` — a fresh `Bot`/`BotState`/`ArbitrageEngine`/
     // `SolveCoordinator`/`ReorgCoordinator`. No WS connection is opened;
     // the running-handle test installs a never-completing dummy task so
     // `stop()`'s abort path is exercised without the real pump.
@@ -803,15 +803,15 @@ mod tests {
     use degenbot_bot::bot_core::reorg_coordinator::ReorgCoordinator;
     use degenbot_bot::bot_core::solve_coordinator::SolveCoordinator;
     use degenbot_bot::bot_core::{Bot, BotState};
-    use degenbot_bot::solvers::uniswap_engine::engine_handle::EngineHandle;
-    use degenbot_bot::solvers::uniswap_engine::UniswapEngine;
+    use degenbot_bot::solvers::arb_engine::engine_handle::EngineHandle;
+    use degenbot_bot::solvers::arb_engine::ArbitrageEngine;
     use parking_lot::RwLock;
     use tokio::sync::mpsc;
 
     fn pump_state_for_test() -> std::sync::Arc<PumpState> {
         let core = std::sync::Arc::new(RwLock::new(BotState::new()));
         let bot = std::sync::Arc::new(Bot::with_core(std::sync::Arc::clone(&core)));
-        let mut engine = UniswapEngine::with_core(core);
+        let mut engine = ArbitrageEngine::with_core(core);
         let (result_tx, _result_rx) = mpsc::unbounded_channel();
         let (block_tx, _block_rx) = mpsc::unbounded_channel();
         engine.set_result_channel(result_tx);

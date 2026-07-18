@@ -116,10 +116,10 @@ Disposal rules:
   buffered `ModifyLiquidity` must not replay onto a re-created pool).
 
   **V4 on `PyBot`: deferred to the engine-side seam.** `PyBot` does not expose a V4
-  `register_v4_pool` today — V4 registration lives on `UniswapArbEngine`
+  `register_v4_pool` today — V4 registration lives on `ArbitrageEngine`
   (`rust/src/py_binding.rs:1332`, invoked via `EngineRegistry.register_v4_pool` where
   `pool.address` is the PoolManager), not on `PyBot`. So `PyBot::unregister_pool` handles only
-  the V2/V3 path; the V4 `(address=pool_manager, pool_id)` path lands on `UniswapArbEngine`
+  the V2/V3 path; the V4 `(address=pool_manager, pool_id)` path lands on `ArbitrageEngine`
   alongside the engine-side unregister that "Consequences" already defers — the V4 removal
   is the matching half of the V4 registration that lives on the engine.
 - **Return contract**: `true` if an entry was found and removed; `false` if the address/tuple was

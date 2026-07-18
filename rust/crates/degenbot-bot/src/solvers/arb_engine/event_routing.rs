@@ -6,9 +6,9 @@ use alloy::rpc::types::Log;
 use crate::bot_core::V3SwapUpdate;
 use crate::bot_core::V4SwapUpdate;
 
-use super::{BlockMetadata, HashSet, UniswapEngine};
+use super::{ArbitrageEngine, BlockMetadata, HashSet};
 
-impl UniswapEngine {
+impl ArbitrageEngine {
     /// Route a single WS log to the appropriate sub-engine.
     ///
     /// Decodes the topic and dispatches to the V2, V3, or V4 engine.
@@ -206,7 +206,7 @@ impl UniswapEngine {
     /// touched no registered pools, send an empty block-boundary batch so
     /// Python sees the advance.
     ///
-    /// This is the engine-side logic behind `UniswapEnginePump::finalize_if_dirty`.
+    /// This is the engine-side logic behind `ArbitrageEnginePump::finalize_if_dirty`.
     /// Holding it on the engine (rather than the pump) keeps it next to its
     /// siblings (`solve_dirty`, `send_result_batch`, `process_block_and_send`)
     /// and makes the metadata-threading contract unit-testable without a live
@@ -369,7 +369,7 @@ impl UniswapEngine {
     pub fn process_backfill_logs(&mut self, logs: &[Log], chunk_end: u64) {
         // ADR-003: state lives on BotState. The loop body was relocated to
         // `BotState::process_backfill_logs` so the core `BlockPump::
-        // backfill_from_snapshot` (no `UniswapEngine` in scope) reaches it via
+        // backfill_from_snapshot` (no `ArbitrageEngine` in scope) reaches it via
         // `self.bot`. This delegator preserves the engine's `last_processed_block`
         // stamp (mirrors `SolveCoordinator::last_drained_block`) for diagnostic /
         // snapshot readers (`engine_handle::last_processed_block`, diagnostic snapshot).

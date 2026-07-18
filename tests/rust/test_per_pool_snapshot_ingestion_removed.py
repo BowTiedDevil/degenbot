@@ -10,7 +10,7 @@ time via SQLAlchemy ``yield_per`` loops on the Python side — was the FFI bulk-
 data overhead DADWUP removes:
 
 - ``begin_v3_snapshot_stream`` / ``insert_v3_pool_snapshot`` / ``finish_v3_snapshot``
-  (+ V4 twins) on the ``UniswapArbEngine`` pyo3 surface.
+  (+ V4 twins) on the ``ArbitrageEngine`` pyo3 surface.
 - ``stream_v3_snapshot_to_engine`` / ``stream_v4_snapshot_to_engine`` in
   ``degenbot.uniswap.snapshot_binary`` (the SQLAlchemy ``yield_per`` loops
   that drove ``insert_*_pool_snapshot`` per pool).
@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot.arbitrage.engine_registry import UniswapArbEngine
+from degenbot.arbitrage.engine_registry import ArbitrageEngine
 
 _RETIRED_PYO3_METHODS = [
     "begin_v3_snapshot_stream",
@@ -37,8 +37,8 @@ _RETIRED_PYO3_METHODS = [
 @pytest.mark.parametrize("method", _RETIRED_PYO3_METHODS)
 def test_per_pool_snapshot_pyo3_method_removed(method: str) -> None:
     """Each per-pool ingestion crossing must be gone from the Python surface."""
-    assert not hasattr(UniswapArbEngine, method), (
-        f"UniswapArbEngine.{method} still exists — DADWUP retires the "
+    assert not hasattr(ArbitrageEngine, method), (
+        f"ArbitrageEngine.{method} still exists — DADWUP retires the "
         f"per-pool PyO3 ingestion surface (insert_* / begin_* / finish_*). "
         f"The DB path loads inside Bot::load_snapshot_from_db; the non-DB "
         f"path crosses once via load_*_from_py."
@@ -56,8 +56,8 @@ def test_per_pool_snapshot_pyo3_method_removed(method: str) -> None:
 )
 def test_whole_dict_load_methods_removed(method: str) -> None:
     """The whole-dict ingestion surface is retired (epic XEANMB)."""
-    assert not hasattr(UniswapArbEngine, method), (
-        f"UniswapArbEngine.{method} must be gone — epic XEANMB retires the "
+    assert not hasattr(ArbitrageEngine, method), (
+        f"ArbitrageEngine.{method} must be gone — epic XEANMB retires the "
         f"whole-dict `load_*_from_py` / `clear_*_snapshot` surface (the "
         f"in-memory SnapshotStore they fed is replaced by a WAL held read "
         f"transaction for the DB path + the Chain arm for the non-DB path). "

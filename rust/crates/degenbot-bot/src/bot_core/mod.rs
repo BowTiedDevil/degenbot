@@ -1386,7 +1386,7 @@ impl BotState {
     ///
     /// Production paths set `S` here in three ways:
     /// - DB path: `Bot::load_snapshot_from_db` sets `S = min(newest_update_block_v3, v4)`.
-    /// - Non-DB path: the `PyUniswapArbEngine::set_snapshot_seed_block` setter
+    /// - Non-DB path: the `PyArbitrageEngine::set_snapshot_seed_block` setter
     ///   (called by `engine_registry.start()` after `load_*_from_py`) records
     ///   `S = min(newest_block)` from the file/memory snapshot (2SM4Y7).
     /// - Tests: inject `S` directly to drive the `S≥W` / `S=0` no-op branches
@@ -3510,7 +3510,7 @@ impl BotState {
     /// phase invariant is "state advanced, no batches emitted".
     ///
     /// This is the BotState-level relocation of what was
-    /// `UniswapEngine::process_backfill_logs` (`solvers/uniswap_engine/
+    /// `ArbitrageEngine::process_backfill_logs` (`solvers/arb_engine/
     /// event_routing.rs`); the engine method is now a thin delegator +
     /// `last_processed_block` stamp. `BotState` owns the state (ADR-003);
     /// `BlockPump::backfill_from_snapshot` (core) reaches it via `self.bot`.
@@ -3930,7 +3930,7 @@ impl Default for BotState {
 /// `Vec<Box<dyn EventSink>>` of attached engines.
 ///
 /// `PyBot` owns a `Bot` outright (not behind a lock) and hands out clones of
-/// [`Bot::state_arc`] so `PyLiquidityPool` / `PyErc20Token` / `UniswapEngine`
+/// [`Bot::state_arc`] so `PyLiquidityPool` / `PyErc20Token` / `ArbitrageEngine`
 /// all reach ONE Rust-owned `BotState` (N handles → one state — the Polars
 /// three-layer invariant, preserved). The standalone-Rust path (D4) runs the
 /// whole bot through this facade without Python.
@@ -3999,9 +3999,9 @@ impl Bot {
     }
 
     /// Construct a `Bot` that **adopts** an existing shared `BotState` core + a
-    /// fresh `LogDispatcher` (ADR-006 D4). Used so a `Bot` + a `UniswapEngine`
+    /// fresh `LogDispatcher` (ADR-006 D4). Used so a `Bot` + a `ArbitrageEngine`
     /// (and a sibling `PyBot`) all read/write the SAME `BotState` — the engine
-    /// gets the core via `UniswapEngine::with_core`, `BlockPump`'s `Bot`
+    /// gets the core via `ArbitrageEngine::with_core`, `BlockPump`'s `Bot`
     /// shares it, and `dispatch_log` writes flow through to the engine's reads.
     ///
     /// The adopting path does not carry a `chain_id` (the original owner did;
@@ -4050,7 +4050,7 @@ impl Bot {
     }
 
     /// Hand out a clone of the shared `Arc<RwLock<BotState>>` so a sibling
-    /// consumer (`PyLiquidityPool` / `PyErc20Token` / `UniswapEngine`) reaches
+    /// consumer (`PyLiquidityPool` / `PyErc20Token` / `ArbitrageEngine`) reaches
     /// the SAME state this orchestrator owns. This is the Polars three-layer
     /// sharing seam (ADR-005, revised by ADR-006 D4).
     #[must_use]
@@ -4751,7 +4751,7 @@ mod tests {
     /// caller must buffer events on the SAME core before calling this.
     fn register_v3_on_core(core: &mut BotState, pool_addr: Address, update_block: u64) -> u64 {
         use crate::bot_core::{RegisterV3PoolParams, TickInfo};
-        use crate::solvers::uniswap_engine::PoolTickCoverage;
+        use crate::solvers::arb_engine::PoolTickCoverage;
         use alloy::primitives::{I256, U128};
         let mut tick_data = HashMap::new();
         tick_data.insert(
@@ -4909,7 +4909,7 @@ mod tests {
     #[test]
     fn apply_backfill_buffer_v4_journals_and_advances_update_block() {
         use crate::bot_core::{RegisterV4PoolParams, TickInfo, V4PoolKey};
-        use crate::solvers::uniswap_engine::PoolTickCoverage;
+        use crate::solvers::arb_engine::PoolTickCoverage;
         use alloy::primitives::{I256, U128};
 
         let pool_manager = Address::from([0x44u8; 20]);
@@ -5003,7 +5003,7 @@ mod tests {
     #[test]
     fn register_v4_pool_rejects_amount_modifying_hook_with_typed_error() {
         use crate::bot_core::{RegisterV4PoolError, RegisterV4PoolParams, V4PoolKey};
-        use crate::solvers::uniswap_engine::PoolTickCoverage;
+        use crate::solvers::arb_engine::PoolTickCoverage;
         use std::collections::HashMap;
 
         let mut core = BotState::new();
@@ -5039,7 +5039,7 @@ mod tests {
     #[test]
     fn register_v4_pool_rejects_dynamic_fee_with_typed_error() {
         use crate::bot_core::{RegisterV4PoolError, RegisterV4PoolParams, V4PoolKey};
-        use crate::solvers::uniswap_engine::PoolTickCoverage;
+        use crate::solvers::arb_engine::PoolTickCoverage;
         use std::collections::HashMap;
 
         let mut core = BotState::new();
@@ -5076,7 +5076,7 @@ mod tests {
     #[test]
     fn register_v4_pool_rejects_duplicate_with_already_registered_variant() {
         use crate::bot_core::{RegisterV4PoolError, RegisterV4PoolParams, V4PoolKey};
-        use crate::solvers::uniswap_engine::PoolTickCoverage;
+        use crate::solvers::arb_engine::PoolTickCoverage;
         use std::collections::HashMap;
 
         let pool_manager = Address::from([0x44u8; 20]);
@@ -5135,7 +5135,7 @@ mod tests {
     /// broken-on-one-field copy.
     fn make_v4_params_in_spec() -> crate::bot_core::RegisterV4PoolParams {
         use crate::bot_core::{RegisterV4PoolParams, V4PoolKey};
-        use crate::solvers::uniswap_engine::PoolTickCoverage;
+        use crate::solvers::arb_engine::PoolTickCoverage;
         use std::collections::HashMap;
         RegisterV4PoolParams {
             pool_manager: Address::from([0x44u8; 20]),
@@ -5270,7 +5270,7 @@ mod tests {
     #[test]
     fn apply_swap_by_pool_id_routes_to_v4_and_matches_apply_v4_swap() {
         use crate::bot_core::{RegisterV4PoolParams, V4PoolKey, V4SwapUpdate};
-        use crate::solvers::uniswap_engine::PoolTickCoverage;
+        use crate::solvers::arb_engine::PoolTickCoverage;
 
         let pool_manager = Address::from([0x44u8; 20]);
         let pool_id_bytes: degenbot_decoders::v4_swap_decoder::PoolId = [0x66u8; 32];
@@ -5358,7 +5358,7 @@ mod tests {
     #[test]
     fn apply_liquidity_update_by_pool_id_routes_to_v4_and_applies_ticks() {
         use crate::bot_core::{RegisterV4PoolParams, TickInfo, V4PoolKey};
-        use crate::solvers::uniswap_engine::PoolTickCoverage;
+        use crate::solvers::arb_engine::PoolTickCoverage;
         use alloy::primitives::{I256, U128};
 
         let pool_manager = Address::from([0x55u8; 20]);
@@ -5451,7 +5451,7 @@ mod tests {
     #[test]
     fn get_v3_or_v4_pool_reads_v4_scalars_matching_apply_v4_swap() {
         use crate::bot_core::{RegisterV4PoolParams, V4PoolKey, V4SwapUpdate};
-        use crate::solvers::uniswap_engine::PoolTickCoverage;
+        use crate::solvers::arb_engine::PoolTickCoverage;
 
         let pool_manager = Address::from([0x88u8; 20]);
         let pool_id_bytes: degenbot_decoders::v4_swap_decoder::PoolId = [0x99u8; 32];
@@ -5547,7 +5547,7 @@ mod tests {
     #[test]
     fn get_v3_or_v4_pool_reads_v4_tick_data_matching_apply_v4_liquidity_update() {
         use crate::bot_core::{RegisterV4PoolParams, TickInfo, V4PoolKey};
-        use crate::solvers::uniswap_engine::PoolTickCoverage;
+        use crate::solvers::arb_engine::PoolTickCoverage;
         use alloy::primitives::{I256, U128};
 
         let pool_manager = Address::from([0xaau8; 20]);
@@ -5645,7 +5645,7 @@ mod tests {
     #[test]
     fn v3_restore_before_block_after_same_block_multi_swap_lands_on_pre_block() {
         use crate::bot_core::RegisterV3PoolParams;
-        use crate::solvers::uniswap_engine::PoolTickCoverage;
+        use crate::solvers::arb_engine::PoolTickCoverage;
 
         let mut core = BotState::new();
         let pool_id = core
@@ -6507,7 +6507,7 @@ mod tests {
     #[test]
     fn unregister_v4_pool_by_tuple_key_discards_buffered_modify_liquidity() {
         use crate::bot_core::{RegisterV4PoolParams, V4PoolKey};
-        use crate::solvers::uniswap_engine::PoolTickCoverage;
+        use crate::solvers::arb_engine::PoolTickCoverage;
 
         let pool_manager = Address::from([0x44u8; 20]);
         let pool_id_bytes: degenbot_decoders::v4_swap_decoder::PoolId = [0xeeu8; 32];

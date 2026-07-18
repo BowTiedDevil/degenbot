@@ -2,7 +2,7 @@
 
 **Status: implemented (D1 landed at original slice landing; D2/D5 retained as decided; D3+D4 completed in a follow-up — see Update).** Recorded during the
 unify-the-two-Bots grilling, June 2026. Revises the "Rust Core" enumeration in
-ADR-005 and resolves ADR-005's deferred "UniswapEngine lock unification" item, and
+ADR-005 and resolves ADR-005's deferred "ArbitrageEngine lock unification" item, and
 supersedes the ADR-003 arrangement where the engine held its own `Arc<Mutex<Bot>>`.
 Implementation is a separate body of work; this ADR records the settled shape only.
 The `EventSink` / `on_block` interface signature is intentionally *not* specified here —
@@ -25,8 +25,8 @@ D3+D4 were completed in a follow-up (ergo epic OP7YLN):
   to `bot_core::snapshot_verify` (generic over the engine type); `subscribe`/
   `backfill_from_snapshot`/`resume` + `verify_liquidity_maps` and the
   `set_verify_*` config moved onto `PyBot` via a shared `PumpState` (co-owned by
-  `PyBot` + `PyUniswapArbEngine`); the engine keeps thin delegating wrappers.
-- **D3** — the orphaned `PyUniswapArbEngine::register_v2/v3/v4_pool` + the
+  `PyBot` + `PyArbitrageEngine`); the engine keeps thin delegating wrappers.
+- **D3** — the orphaned `PyArbitrageEngine::register_v2/v3/v4_pool` + the
   `verify_on_register` flag + `set_verify_on_register` were deleted (zero
   production callers; the live registration path is `PyBot.register_v*`).
 - A fail-fast two-step verify (snapshot block + backfill block) was re-seated at
@@ -105,8 +105,8 @@ to be load-bearing:
 
 1. **Two `Bot` instances.** `PyBot` holds `Arc<parking_lot::RwLock<Bot>>` (instance A —
    the library session, what `PyLiquidityPool`/`PyErc20Token` read through); the
-   `UniswapEngine` holds its *own* `Arc<parking_lot::Mutex<Bot>>` (instance B — a
-   separate `Bot::new()` at `uniswap_engine/mod.rs:401`, what the pump mutates). The two
+   `ArbitrageEngine` holds its *own* `Arc<parking_lot::Mutex<Bot>>` (instance B — a
+   separate `Bot::new()` at `arb_engine/mod.rs:401`, what the pump mutates). The two
    registries never share state. The backrun example registers the *same* pools into both
    (once via `bot.build_pool()` → Bot A, once via `engine.register_v2_pool()` reading the
    Python pool's reserves out → Bot B). The duplication is load-bearing for *correctness*
@@ -116,7 +116,7 @@ to be load-bearing:
    (`docs/architecture/rust-owned-bot.md` §17: "Encoding uses amounts from the same
    block (before dispatch); long-term fix is Rust-owned encoding" — encoding reads Bot A,
    the pump mutates Bot B).
-2. **The deferred "UniswapEngine lock unification."** ADR-005 deferred unifying the
+2. **The deferred "ArbitrageEngine lock unification."** ADR-005 deferred unifying the
    engine onto the *shared* `Arc<RwLock<Bot>>` "until the engine's access pattern is
    ready to give up its independent lock." The stale-state mitigation is now friction,
    not a placeholder — the trigger has been met.
@@ -146,24 +146,24 @@ Adopt five sub-decisions.
 
 ### D1 — One shared `Bot`; the `Arc<RwLock<Bot>>` is the canonical state owner
 
-`PyBot` and `UniswapEngine` adopt a clone of the *same* `Arc<parking_lot::RwLock<Bot>>`
+`PyBot` and `ArbitrageEngine` adopt a clone of the *same* `Arc<parking_lot::RwLock<Bot>>`
 instead of each constructing their own `Bot`. Constructed via two layered constructors
 neither of which is Python-privileged:
 
 - `Bot::new(chain_id, rpc_url)` — allocates the `Arc` and constructs a complete Bot
   (state + RPC + pump + engine vec). Standalone-Rust canonical path.
-- `UniswapEngine::with_core(core: Arc<RwLock<Bot>>)` — adopts an existing Arc.
+- `ArbitrageEngine::with_core(core: Arc<RwLock<Bot>>)` — adopts an existing Arc.
 - `PyBot::from_core(core: Arc<RwLock<Bot>>)` — adopts an existing Arc (mirrors the engine).
-- The no-arg `UniswapEngine::new()` / `PyBot::new()` sugar is **kept** for standalone
+- The no-arg `ArbitrageEngine::new()` / `PyBot::new()` sugar is **kept** for standalone
   no-pyo3 tests and the cold-start path, defined as `with_core` over a self-allocated
-  Arc. The ~10 `tests.rs` sites calling `UniswapEngine::new()` keep working.
+  Arc. The ~10 `tests.rs` sites calling `ArbitrageEngine::new()` keep working.
 
 On the *live* Python path, the session allocates the Arc once (via `PyBot`) and the engine
 adopts a clone. No branch on "which runtime am I in" — the shared-buffer pattern is a Rust
 pattern Python happens to participate in, matching Polars' `RwLock<DataFrame>` +
 `Arc`-shared storage.
 
-Resolves ADR-005's deferred "UniswapEngine lock unification." Supersedes ADR-003's
+Resolves ADR-005's deferred "ArbitrageEngine lock unification." Supersedes ADR-003's
 engine-holds-its-own-`Arc<Mutex<Bot>>` arrangement.
 
 ### D2 — Lock type `RwLock` on the shared core; engine keeps its own `Mutex`
@@ -173,7 +173,7 @@ The shared `Arc<RwLock<Bot>>` is `parking_lot::RwLock` (not `Mutex`), matching t
 during solves — concurrent readers under Python 3.13+ free-threading). The pump's
 brief `apply_*` write windows are the only exclusivity; Python reads stay concurrent.
 
-`UniswapEngine` **keeps** its own `parking_lot::Mutex<UniswapEngine>` for genuinely
+`ArbitrageEngine` **keeps** its own `parking_lot::Mutex<ArbitrageEngine>` for genuinely
 engine-level state (`path_pools`, `path_resolved`, `pool_to_paths`, `results`,
 `results_block`, `dirty_v2/v3/v4`, `delivered`, `deregistered`, `next_path_id`,
 `pending_new_paths`, `result_tx`, `min/max_profit`, `last_processed_block` — ~15 fields,
@@ -181,21 +181,21 @@ all solver-dispatch/result-batching/pump-coordination). ADR-003's peer-module sp
 *Bot owns pool/token state; engine owns path/solver state* — is preserved.
 
 Lock order is **unchanged**: engine-then-core. The pump's `engine.lock()` call sites
-(~10, in `uniswap_engine_pump.rs`) are untouched. The change is *inside* the engine: the
+(~10, in `arb_engine_pump.rs`) are untouched. The change is *inside* the engine: the
 ~30 `self.core.lock()` sites in `event_routing.rs`/`lifecycle.rs`/`solver_dispatch.rs`/
 `diagnostic.rs`/`mod.rs` become `self.core.read()` / `self.core.write()` (a mechanical
 classification — `apply_*`/`buffer_*`/`register_*` → write; `get_*`/`*_pool_count`/
 resolve/solve reads → read). No engine field acquisition changes.
 
 `PyBot`/`PyLiquidityPool` methods take the core `RwLock` *alone* and never touch the
-engine `Mutex`; the pump and `PyUniswapArbEngine` take engine-`Mutex` *then* core-`RwLock`.
+engine `Mutex`; the pump and `PyArbitrageEngine` take engine-`Mutex` *then* core-`RwLock`.
 ADR-003's deadlock-surface-empty rule stays intact.
 
 ### D3 — Pool construction is a `Bot` concern only; the engine never constructs pools
 
 The engine-level `register_v2_pool(params)` / `register_v3_pool(params)` /
 `register_v4_pool(params)` methods **are deleted** (the three currently at
-`uniswap_engine/mod.rs:448–494` that delegate to `self.core.lock().register_*`). Pool
+`arb_engine/mod.rs:448–494` that delegate to `self.core.lock().register_*`). Pool
 registration lives on `Bot` (`Bot::register_v2_pool` / `register_v3_pool` /
 `register_v4_pool`), where it already is. The engine discovers pools at `register_path`
 time by resolving `pool_id` against its associated `Bot`.
@@ -221,8 +221,8 @@ literally.
   engine validate that every pool in its paths shares its Bot's chain, and prevents
   cross-chain pool-ID collisions from going undetected once `Bot`s can be shared.
 - **The RPC `AlloyProvider` lives on `Bot`** (one — since one Bot = one chain).
-  `subscribe`/`start`/backfill are Bot-owned I/O. The `UniswapEnginePump`
-  (`uniswap_engine_pump.rs`) generalizes to a chain pump living on `Bot` (the per-block
+  `subscribe`/`start`/backfill are Bot-owned I/O. The `ArbitrageEnginePump`
+  (`arb_engine_pump.rs`) generalizes to a chain pump living on `Bot` (the per-block
   WS `newHeads`+`logs` loop, address filtering, gap/timeout backfill — unchanged
   mechanics, relocated owner).
 - **A `Vec<Box<dyn EventSink>>` on `Bot`** holds zero or more attached engines. Bot owns
@@ -249,12 +249,12 @@ surface. Per-helper modules under `bot_core/`:
 | `Bot` (the interface) | Owns `Arc<RwLock<BotState>>`, `chain_id`, the helpers; delegates. Thin facade. | no | — (calls through helpers) |
 | `BotState` (today's pure-data `Bot`) | Pool/token registries, per-pool swap math, reorg journal, V3/V4 liquidity-event buffers. | no | math-in-isolation tests, zero I/O |
 | `LogDispatcher` (decoder registry / event bus) | Holds `Vec<Box<dyn LogDecoder>>`; receives raw logs; produces typed events targeting state-subjects; owns the `StateSubscriber` (`Weak<dyn>`) registry; notifies subscribers after `BotState` mutation releases the core write lock. | no | give it logs + a fake `BotState`, assert notify ordering |
-| `BlockPump` (today's `uniswap_engine_pump.rs`, generalized) | WS `newHeads`+`logs` transport, Rust-side address/topic filtering, gap/timeout backfill, the drain loop. Owns the tokio task. | no | give it an in-memory provider, assert block delivery |
+| `BlockPump` (today's `arb_engine_pump.rs`, generalized) | WS `newHeads`+`logs` transport, Rust-side address/topic filtering, gap/timeout backfill, the drain loop. Owns the tokio task. | no | give it an in-memory provider, assert block delivery |
 | `SolveCoordinator` | The drain-point solve trigger + `SolvePolicy`. Subscribes to `BlockPump`'s drain tick and block-boundary; asks attached engines (each keeping its own per-pool-subject dirty-set, seeded by `LogDispatcher` notifications) to solve dirties per policy. | no (dirties live per-engine) | give it a fake sink + fake dirty-set, assert Eager vs Drain timing |
 | `ReorgCoordinator` | `removed`-flag handling, `restore_before_block` over `BotState`, snapshot/restore. | no | proptest on the journal, no I/O |
 
 The dirty-sets stay **on each engine** (an engine knows which pools are in *its* paths —
-today's `dirty_v2/v3/v4` on `UniswapEngine`), seeded by subscriber notifications from
+today's `dirty_v2/v3/v4` on `ArbitrageEngine`), seeded by subscriber notifications from
 `LogDispatcher`. `SolveCoordinator` fires the drain tick; each engine owns its own
 `solve_dirty`. `LogDispatcher` and `SolveCoordinator` stay distinct ("which-pool-changed"
 vs "when-to-solve") and don't collapse into one module. The helpers are not given `PyO3`
@@ -273,7 +273,7 @@ shrinks; the *positive* decision (Bot is the deep callable module) is taken deli
 ### D5 — One `Bot` per chain; multi-chain is N Bots
 
 A `Bot` is scoped to exactly one chain + one RPC. A user running two strategies on two
-chains — e.g. a mainnet V2/V3/V4 arbitrage `Bot` (via `UniswapArbEngine`) and a Polygon
+chains — e.g. a mainnet V2/V3/V4 arbitrage `Bot` (via `ArbitrageEngine`) and a Polygon
 Aave-liquidation `Bot` (via a future `AaveLiquidationEngine`) — instantiates two Bots.
 The Python `bot.py` "swallowed multi-chain connection manager, pool managers, token
 managers" is an accident to unwind: `bot.py` becomes a single-chain facade over one
@@ -289,14 +289,14 @@ Both strong → an `Arc` cycle neither can drop. Resolved by **dependency invers
 sink**:
 
 - **Bot → Engine:** only a `Box<dyn EventSink>` (a one-method trait). No strong
-  type-bound knowledge the sink is `UniswapArbEngine`.
+  type-bound knowledge the sink is `ArbitrageEngine`.
 - **Engine → Bot:** no strong ref. The `&Bot` the engine needs to read pool state is
   passed *in* with each `on_block` call by the pump. Ad-hoc I/O mid-solve (a one-off
   `eth_call`, backfill) goes through a passed `&dyn BotIo` trait or a `Weak<RwLock<Bot>>`
   resolved at call time — the Weak breaks the cycle in both directions.
 
 `on_block(&mut self, bot: &Bot, ...)` — the engine implements `EventSink`,
-`UniswapArbEngine` today; a future `AaveLiquidationEngine` implements the same trait with
+`ArbitrageEngine` today; a future `AaveLiquidationEngine` implements the same trait with
 no `Bot`/pump/`PyBot` change. This is the leverage: N strategies reuse one Bot topology;
 the blast radius of "add a new strategy" is one new `Engine` impl. Locality: a solving bug
 lives in the engine; a subscription/pump bug lives in Bot; never smeared across one.
@@ -377,10 +377,10 @@ this work.
 ## Related
 
 - **ADR-005** (Polars-Inspired Three-Layer Architecture) — this ADR revises the "Rust
-  Core" enumeration and resolves the "Deferred: UniswapEngine lock unification" item.
+  Core" enumeration and resolves the "Deferred: ArbitrageEngine lock unification" item.
   ADR-005's Py-prefix naming, the `PyBot`/`PyLiquidityPool`/`PyErc20Token` handle topology,
   and the wrapper-is-the-sharing-mechanism principle are **preserved**.
-- **ADR-003** (BotCore as the state layer, peer to UniswapEngine) — the *peer-module*
+- **ADR-003** (BotCore as the state layer, peer to ArbitrageEngine) — the *peer-module*
   split and *engine-then-core* lock order are preserved; the
   engine-holds-its-own-`Arc<Mutex<Bot>>` arrangement is superseded by D1+D2.
   gain forward pointers to this ADR; a new {EventSink} term records the decided concept.

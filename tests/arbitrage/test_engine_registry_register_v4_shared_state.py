@@ -1,7 +1,7 @@
 """EngineRegistry.register_v4_pool over a shared BotState (ADR-006 D1).
 
 Background — the engine adopts the bot's shared BotState
-(``UniswapArbEngine(py_bot=bot._py_bot)``). V4 pools built via
+(``ArbitrageEngine(py_bot=bot._py_bot)``). V4 pools built via
 ``bot.build_managed_pool`` / ``make_v4_pool`` are registered in that SAME
 BotState at build time (``py_bot.register_v4_pool`` in the V4 builder /
 ``make_v4_pool``). So a subsequent ``register_v4_pool`` from the registry must
@@ -16,7 +16,7 @@ every V4 hop in every discovered path. Because the Python ``_v4_keys`` cache
 was only set on success, the same pool tripped the error repeatedly.
 
 These tests pin the shared-state contract against a real ``PyBot`` + real
-``UniswapArbEngine`` (no RPC/anvil — same offline topology
+``ArbitrageEngine`` (no RPC/anvil — same offline topology
 ``test_shared_state_topology`` proves).
 """
 

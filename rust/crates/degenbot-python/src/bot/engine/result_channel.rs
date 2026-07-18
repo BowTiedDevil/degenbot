@@ -1,18 +1,18 @@
-//! `PyO3` wrapper for the `UniswapEngine` — `result_channel` `#[pymethods]` slice.
+//! `PyO3` wrapper for the `ArbitrageEngine` — `result_channel` `#[pymethods]` slice.
 //!
 //! Split out of the former monolithic `py_binding.rs` (ergo UG6FKN task 74W2Z6),
-//! mirroring `crates/degenbot-bot/src/solvers/uniswap_engine/`'s per-concern
-//! layout. `PyO3` allows multiple `#[pymethods] impl PyUniswapArbEngine { … }`
+//! mirroring `crates/degenbot-bot/src/solvers/arb_engine/`'s per-concern
+//! layout. `PyO3` allows multiple `#[pymethods] impl PyArbitrageEngine { … }`
 //! blocks per type, so each concern file contributes one slice.
 
 use super::{
-    mpsc, Address, Arc, BlockNotification, HopType, MixedPoolRef, PyDict, PyList,
-    PyStopAsyncIteration, PyUniswapArbEngine, ResultBatch, SolvePathResult, U256,
+    mpsc, Address, Arc, BlockNotification, HopType, MixedPoolRef, PyArbitrageEngine, PyDict,
+    PyList, PyStopAsyncIteration, ResultBatch, SolvePathResult, U256,
 };
 use crate::prelude::*;
 
 #[pymethods]
-impl PyUniswapArbEngine {
+impl PyArbitrageEngine {
     /// Read the last solved results and block number.
     ///
     /// Inspect a registered path by ID.
@@ -389,7 +389,7 @@ fn solve_result_to_py_tuple<'py>(
     )
         .into_pyobject(py)
 }
-/// One hop's view for [`PyUniswapArbEngine::inspect_path`], built from the
+/// One hop's view for [`PyArbitrageEngine::inspect_path`], built from the
 /// engine's sub-states before being projected into a Python dict by
 /// [`hop_info_to_pydict`].
 struct HopInfo {
@@ -433,13 +433,13 @@ fn hop_info_to_pydict<'py>(py: Python<'py>, hop: &HopInfo) -> PyResult<Bound<'py
 #[pyclass(name = "BlockStream", skip_from_py_object, module = "degenbot._ffi")]
 pub struct BlockStream {
     /// The block-notification receiver. `Option` + `put-back` mirrors
-    /// `PyUniswapArbEngine::result_rx` so the coroutine can re-share the
+    /// `PyArbitrageEngine::result_rx` so the coroutine can re-share the
     /// receiver across `__anext__` calls.
     block_rx: Arc<parking_lot::Mutex<Option<mpsc::UnboundedReceiver<BlockNotification>>>>,
 }
 
 impl BlockStream {
-    /// Construct from the receiver handed out by `PyUniswapArbEngine::block_stream`.
+    /// Construct from the receiver handed out by `PyArbitrageEngine::block_stream`.
     #[must_use]
     pub fn new(block_rx: mpsc::UnboundedReceiver<BlockNotification>) -> Self {
         Self {

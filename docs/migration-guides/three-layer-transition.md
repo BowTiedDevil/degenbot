@@ -258,7 +258,7 @@ ADR-005 slices 3–15 (ergo `XQ5UX6`, all done) closed the **stateful** topology
 - Slice 7 — V2 DEX subclass collapse (Sushi/Pancake/Swapbased/Camelot hollow
   subclasses deleted; `UniswapV2Pool` + `dex.variant`).
 - Slices 8–9 — V3/V4 companions over `PyLiquidityPool`.
-- Slice 10 — `UniswapEngine` lock unification onto shared `Arc<RwLock<Bot>>`.
+- Slice 10 — `ArbitrageEngine` lock unification onto shared `Arc<RwLock<Bot>>`.
 - Slices 11–12 — Curve + Balancer family ports (state + companion + pure-math
   leaves `degenbot-curve-math`/`degenbot-balancer-math`).
 - Slice 13 — crate split (`degenbot-core`/`-python`/umbrella `degenbot` +
@@ -397,7 +397,7 @@ The per-(chain,factory) CREATE2 deployer + init_hash moved from Python
 The Solidly stable invariant (`x³y + xy³ ≥ k`) solve — Aerodrome stable /
 volatile pools and Camelot `stable_swap` pools — moved from the Python
 `SolidlyStableSolver` (Möbius compose + Newton outer over the existing
-`degenbot-solidly-math` integer leaf) into the Rust `UniswapArbEngine`.
+`degenbot-solidly-math` integer leaf) into the Rust `ArbitrageEngine`.
 
 - **Two-tier solver (`DMPSNG`).** `solve_solidly_path_int` runs a Möbius
   precheck on a V2-equivalent approximation of the Solidly curve to bracket

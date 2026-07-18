@@ -2,8 +2,8 @@
 //!
 //! The trait object solves the reference problem ADR-006 names ("Bot → Engine:
 //! only a `Box<dyn EventSink>` — no strong type-bound knowledge the sink is
-//! `UniswapArbEngine`"). [`SolveCoordinator`](super::solve_coordinator::SolveCoordinator)
-//! holds `Vec<Arc<dyn Engine>>`; the concrete type (`UniswapEngine` via
+//! `ArbitrageEngine`"). [`SolveCoordinator`](super::solve_coordinator::SolveCoordinator)
+//! holds `Vec<Arc<dyn Engine>>`; the concrete type (`ArbitrageEngine` via
 //! `EngineHandle`) is known only at the wiring site (`py_binding.rs`).
 //!
 //! This is the leverage ADR-006 identifies: a future `AaveLiquidationEngine`
@@ -13,7 +13,7 @@
 //! `solve_coordinator.rs` docs for the preconditions that make this safe.
 //!
 //! All methods take `&self`: the engine `Mutex` lives *inside* the trait
-//! object (the `EngineHandle` wrapper owns `Mutex<UniswapEngine>` and locks
+//! object (the `EngineHandle` wrapper owns `Mutex<ArbitrageEngine>` and locks
 //! per-call), so the coordinator never names `Mutex` directly. Lock order
 //! `drain_lock` → `engine-Mutex` → `BotState` `RwLock` is preserved by the
 //! wrapper locking only the engine (the `BotState` write was released by

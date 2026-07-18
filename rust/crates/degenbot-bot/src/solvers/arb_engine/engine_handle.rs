@@ -1,16 +1,16 @@
 //! `EngineHandle` — the `Arc<dyn Engine>` wrapper for a shared
-//! `UniswapEngine` (ADR-006 D4, slice 6).
+//! `ArbitrageEngine` (ADR-006 D4, slice 6).
 //!
 //! [`SolveCoordinator`](crate::bot_core::solve_coordinator::SolveCoordinator)
-//! holds `Arc<dyn Engine>` and never names `Mutex` or `UniswapEngine`
+//! holds `Arc<dyn Engine>` and never names `Mutex` or `ArbitrageEngine`
 //! directly. This wrapper holds a strong clone of the shared
-//! `Arc<parking_lot::Mutex<UniswapEngine>>` (the same `Arc` that
-//! `PyUniswapArbEngine.engine` and the pump's strong handle both reference),
+//! `Arc<parking_lot::Mutex<ArbitrageEngine>>` (the same `Arc` that
+//! `PyArbitrageEngine.engine` and the pump's strong handle both reference),
 //! and implements [`Engine`](crate::bot_core::engine::Engine) by
 //! locking-then-forwarding — so the engine's lock is encapsulated behind the
 //! trait object.
 //!
-//! Replaces slice 5a's `EngineDrainSink` (a `Weak<Mutex<UniswapEngine>>`
+//! Replaces slice 5a's `EngineDrainSink` (a `Weak<Mutex<ArbitrageEngine>>`
 //! pass-through that held the concrete type leakily and impl'd `DrainSink`).
 //! The handle is the strong-owning, trait-erased counterpart: the coordinator
 //! sees only `Arc<dyn Engine>`.
@@ -28,17 +28,17 @@ use crate::bot_core::log_dispatcher::PoolStateSubscriber;
 use crate::bot_core::BlockMetadata;
 
 use super::engine_subscriber::EngineSubscriber;
-use super::UniswapEngine;
+use super::ArbitrageEngine;
 
-/// A `Arc<dyn Engine>` view over a shared `Arc<parking_lot::Mutex<UniswapEngine>>`.
+/// A `Arc<dyn Engine>` view over a shared `Arc<parking_lot::Mutex<ArbitrageEngine>>`.
 ///
 /// The strong handle the wiring layer (`py_binding.rs`) clones into the
-/// coordinator's engine vector. `PyUniswapArbEngine.engine` retains its own
+/// coordinator's engine vector. `PyArbitrageEngine.engine` retains its own
 /// strong clone for direct engine access (e.g. `register_path`,
 /// `latest_results`) not on the `Engine` drain trait; both clones reference
-/// the same underlying `UniswapEngine`.
+/// the same underlying `ArbitrageEngine`.
 pub struct EngineHandle {
-    engine: Arc<parking_lot::Mutex<UniswapEngine>>,
+    engine: Arc<parking_lot::Mutex<ArbitrageEngine>>,
     /// Strong owner of the `EngineSubscriber` (ADR-006 cycle-free topology:
     /// the strong lives on the engine side, co-owned with `engine`).
     /// `LogDispatcher::notify` holds only a `Weak<dyn PoolStateSubscriber>`;
@@ -57,7 +57,7 @@ impl EngineHandle {
     /// Builds and holds the strong `EngineSubscriber` (the cycle-free home
     /// for the dispatcher's `Weak`) — see [`subscriber_weak`](Self::subscriber_weak).
     #[must_use]
-    pub fn new(engine: Arc<parking_lot::Mutex<UniswapEngine>>) -> Self {
+    pub fn new(engine: Arc<parking_lot::Mutex<ArbitrageEngine>>) -> Self {
         let subscriber: Arc<dyn PoolStateSubscriber> =
             Arc::new(EngineSubscriber::new(Arc::downgrade(&engine)));
         Self { engine, subscriber }
@@ -80,7 +80,7 @@ impl EngineHandle {
     /// Construct an `Arc<dyn Engine>` from a strong clone — the convenience
     /// the wiring layer uses to populate `SolveCoordinator::new`.
     #[must_use]
-    pub fn arc_dyn(engine: Arc<parking_lot::Mutex<UniswapEngine>>) -> Arc<dyn Engine> {
+    pub fn arc_dyn(engine: Arc<parking_lot::Mutex<ArbitrageEngine>>) -> Arc<dyn Engine> {
         Arc::new(Self::new(engine))
     }
 }
@@ -92,7 +92,7 @@ impl Engine for EngineHandle {
     /// including the rayon `par_iter` solve in `rebuild_and_solve_affected`
     /// (~5-20ms for 100-200 affected paths). This is **acceptable**: Python's
     /// result hot path consumes batches via the unbounded `mpsc` channel
-    /// (`PyUniswapArbEngine::__anext__` → `rx.recv().await`), which never
+    /// (`PyArbitrageEngine::__anext__` → `rx.recv().await`), which never
     /// acquires the engine lock, so the hold does NOT block result delivery.
     /// The only cross-thread contenders during a solve are:
     ///   - `EngineSubscriber::insert_dirty` (queues a dirty marker for the
@@ -151,12 +151,12 @@ mod tests {
     use super::*;
 
     /// RED→GREEN tracer (slice 6): `EngineHandle` forwards each `Engine`
-    /// method to the underlying `UniswapEngine` without panic. Empty engine
+    /// method to the underlying `ArbitrageEngine` without panic. Empty engine
     /// → no dirty paths; `solve_dirty`/`send_result_batch` are no-ops but
     /// must not panic.
     #[test]
     fn engine_handle_forwards_calls_without_panic() {
-        let engine = Arc::new(parking_lot::Mutex::new(UniswapEngine::new()));
+        let engine = Arc::new(parking_lot::Mutex::new(ArbitrageEngine::new()));
         let handle = EngineHandle::new(engine);
         let metadata = BlockMetadata::default();
 
@@ -190,7 +190,7 @@ mod tests {
     #[test]
     fn subscriber_weak_stays_live_while_engine_handle_lives() {
         let weak = {
-            let engine = Arc::new(parking_lot::Mutex::new(UniswapEngine::new()));
+            let engine = Arc::new(parking_lot::Mutex::new(ArbitrageEngine::new()));
             let handle = EngineHandle::new(engine);
             handle.subscriber_weak() // handle drops at end of block
         };
@@ -201,7 +201,7 @@ mod tests {
         );
 
         // And the positive case: held alive → upgrade succeeds.
-        let engine = Arc::new(parking_lot::Mutex::new(UniswapEngine::new()));
+        let engine = Arc::new(parking_lot::Mutex::new(ArbitrageEngine::new()));
         let handle = EngineHandle::new(engine);
         let weak = handle.subscriber_weak();
         assert!(

@@ -7,10 +7,10 @@ mod tests {
 
     use crate::bot_core::RegisterV3PoolParams;
     use crate::bot_core::RegisterV4PoolParams;
-    use crate::solvers::uniswap_engine::ResolvedMixedPath;
-    use crate::solvers::uniswap_engine::{
-        BlockMetadata, EnginePhase, HopType, PoolHop, ResolvedHop, SolidlyHopState,
-        SolvePathResult, UniswapEngine, INT128_MAX,
+    use crate::solvers::arb_engine::ResolvedMixedPath;
+    use crate::solvers::arb_engine::{
+        ArbitrageEngine, BlockMetadata, EnginePhase, HopType, PoolHop, ResolvedHop,
+        SolidlyHopState, SolvePathResult, INT128_MAX,
     };
     use degenbot_uniswap::dex_identity::DexVariant;
 
@@ -27,7 +27,7 @@ mod tests {
 
     #[test]
     fn register_v2_and_v3_pools() {
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
 
         // Register a V2 pool
         let v2_fwd = engine.register_v2_pool(
@@ -71,7 +71,7 @@ mod tests {
             tick: 0,
             tick_data,
             update_block: 0,
-            coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+            coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
         });
@@ -106,7 +106,7 @@ mod tests {
 
     #[test]
     fn process_block_routes_logs_to_sub_engines() {
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
 
         // Register V2 pools
         let v2_addr = Address::ZERO;
@@ -141,7 +141,7 @@ mod tests {
 
     #[test]
     fn mixed_path_v2_to_v3_resolves() {
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
 
         // V2 pool
         let v2_fwd = engine.register_v2_pool(
@@ -185,7 +185,7 @@ mod tests {
             tick: 0,
             tick_data,
             update_block: 0,
-            coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+            coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
         });
@@ -212,7 +212,7 @@ mod tests {
 
     #[test]
     fn missing_v2_pool_makes_path_invalid() {
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
 
         // Only register V3 pool
         let v3_key = engine.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
@@ -227,7 +227,7 @@ mod tests {
             tick: 0,
             tick_data: HashMap::new(),
             update_block: 0,
-            coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+            coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
         });
@@ -253,7 +253,7 @@ mod tests {
 
     #[test]
     fn process_updates_applies_both_types() {
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
 
         // Register V2 pools
         let v2_addr = Address::from([0x11u8; 20]);
@@ -292,7 +292,7 @@ mod tests {
 
     #[test]
     fn register_path_after_start_succeeds() {
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
         let v2_addr = Address::from([0x11u8; 20]);
         let v2_fwd =
             engine.register_v2_pool(v2_addr, usdc(1_500_000), weth(800), GAMMA_03, FEE_DENOM_03);
@@ -333,7 +333,7 @@ mod tests {
 
     #[test]
     fn register_and_solve_path_eagerly_solves() {
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
 
         // Two V2 pools with price divergence
         let v2_addr_a = Address::from([0x11u8; 20]);
@@ -385,7 +385,7 @@ mod tests {
 
     #[test]
     fn pending_new_paths_survive_rebuild() {
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
 
         // Two V2 pools with price divergence
         let v2_addr_a = Address::from([0x11u8; 20]);
@@ -450,7 +450,7 @@ mod tests {
         // would poison the `fresh`/`expired` computation for the first real
         // pump-driven send (any path falsely marked "delivered" gets
         // silently omitted from the next batch's `fresh` list).
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
         // No set_result_channel call — mirrors `solve_all_paths`'s real
         // callers (every one in tests/ builds an engine and reads
         // `latest_results()`, none sets a channel).
@@ -523,7 +523,7 @@ mod tests {
         // (no channel set); this test pins the live half (channel set, solve
         // still must not fire it).
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
         engine.set_result_channel(tx);
 
         // Two mispriced V2 pools → a profitable V2→V2 arb at solve time.
@@ -603,7 +603,7 @@ mod tests {
         // fire (the case the previous test guards). This test pins the live
         // invariant; the previous test pins the cold-start one.
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
         engine.set_result_channel(tx);
         // Defaults already min_profit=0, max_profit=MAX (window fully open).
 
@@ -681,7 +681,7 @@ mod tests {
         // (the filter reads from there; the solver path is irrelevant to
         // this bound) and drive `compute_diff_and_send`.
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
         engine.set_result_channel(tx);
         // Defaults: min_profit = 0, max_profit = U256::MAX (cap fully open).
 
@@ -721,7 +721,7 @@ mod tests {
         //
         // Same injection strategy as the above-u64-max test.
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
         engine.set_result_channel(tx);
 
         let profit = U256::from(1_000_000u64);
@@ -755,7 +755,7 @@ mod tests {
         // unchanged by the max-bound inclusive fix. A result equal to
         // `min_profit` must be excluded.
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
         engine.set_result_channel(tx);
 
         let profit = U256::from(1_000_000u64);
@@ -796,7 +796,7 @@ mod tests {
         // compute `base_fee_next = next_base_fee(0,0,0) = 0` and broadcast an
         // underpriced transaction).
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
         engine.set_result_channel(tx);
 
         // Two V2 pools with price divergence → a profitable pure-V2 path
@@ -879,7 +879,7 @@ mod tests {
 
     #[test]
     fn pure_v2_path_finds_profitable_arb() {
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
 
         // V2 pool A: USDC/WETH with price ~1875 USDC/WETH
         let v2_addr_a = Address::from([0x11u8; 20]);
@@ -926,7 +926,7 @@ mod tests {
 
     #[test]
     fn pure_v3_path_finds_profitable_arb() {
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
 
         // V3 pool A at tick 0 (1:1), high liquidity, with tick boundaries
         let mut tick_data_a = HashMap::new();
@@ -961,7 +961,7 @@ mod tests {
             tick: 0,
             tick_data: tick_data_a,
             update_block: 0,
-            coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+            coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
         });
@@ -1004,7 +1004,7 @@ mod tests {
             tick: -60,
             tick_data: tick_data_b,
             update_block: 0,
-            coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+            coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
         });
@@ -1033,7 +1033,7 @@ mod tests {
 
     #[test]
     fn mixed_v2_to_v3_path_finds_arb() {
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
 
         // V2 pool: USDC/WETH
         let v2_addr = Address::from([0x11u8; 20]);
@@ -1073,7 +1073,7 @@ mod tests {
             tick: 0,
             tick_data,
             update_block: 0,
-            coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+            coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
         });
@@ -1101,7 +1101,7 @@ mod tests {
 
     #[test]
     fn mixed_v3_to_v2_path_resolves() {
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
 
         // V3 pool with tick data
         let mut tick_data = HashMap::new();
@@ -1136,7 +1136,7 @@ mod tests {
             tick: 0,
             tick_data,
             update_block: 0,
-            coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+            coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
         });
@@ -1170,7 +1170,7 @@ mod tests {
 
     #[test]
     fn rebuild_on_v2_update_changes_results() {
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
 
         // V2 pool A: USDC/WETH
         let v2_addr_a = Address::from([0x11u8; 20]);
@@ -1231,7 +1231,7 @@ mod tests {
     /// execute on-chain. The solver must not report such paths as profitable.
     #[test]
     fn v4_int128_overflow_path_rejected() {
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
 
         // V3 pool: normal pool at 1:1 price
         let v3_addr = Address::from([0x20u8; 20]);
@@ -1250,7 +1250,7 @@ mod tests {
             tick: 0,
             tick_data: std::collections::HashMap::new(),
             update_block: 0,
-            coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+            coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
         });
@@ -1281,7 +1281,7 @@ mod tests {
                 tick: -886_983,
                 tick_data: std::collections::HashMap::new(),
                 update_block: 0,
-                coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+                coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
                 fetcher: None,
             })
             .expect("V4 registration failed");
@@ -1304,7 +1304,7 @@ mod tests {
             let core = engine.core.read();
             for (&path_id, path) in &engine.path_pools {
                 let mut resolved = ResolvedMixedPath::default();
-                UniswapEngine::resolve_path(&core, &path.pools, &mut resolved);
+                ArbitrageEngine::resolve_path(&core, &path.pools, &mut resolved);
                 engine.path_resolved.insert(path_id, resolved);
             }
         }
@@ -1361,7 +1361,7 @@ mod tests {
 
     #[test]
     fn inspect_path_returns_hop_details() {
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
 
         // Register a V2 pool
         let v2_fwd = engine.register_v2_pool(
@@ -1386,7 +1386,7 @@ mod tests {
             tick: 0,
             tick_data,
             update_block: 0,
-            coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+            coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
         });
@@ -1409,7 +1409,7 @@ mod tests {
                 tick: 0,
                 tick_data: HashMap::new(),
                 update_block: 0,
-                coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+                coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
                 fetcher: None,
             })
             .expect("V4 registration should succeed");
@@ -1470,7 +1470,7 @@ mod tests {
     #[test]
     #[allow(clippy::too_many_lines)]
     fn solve_3hop_v3_v3_v3_path() {
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
 
         let sp_0 = U256::from(79_228_162_514_264_337_593_543_950_336_u128); // 1:1 price (tick 0)
 
@@ -1511,7 +1511,7 @@ mod tests {
             tick: 0,
             tick_data: make_tick_data(),
             update_block: 0,
-            coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+            coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
         });
@@ -1529,7 +1529,7 @@ mod tests {
             tick: 0,
             tick_data: make_tick_data(),
             update_block: 0,
-            coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+            coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
         });
@@ -1547,7 +1547,7 @@ mod tests {
             tick: 0,
             tick_data: make_tick_data(),
             update_block: 0,
-            coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+            coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
         });
@@ -1590,13 +1590,13 @@ mod tests {
         // Now the N-hop CL solver runs. With 3 pools at the same price but
         // different liquidity, the path is unlikely to be profitable after fees,
         // but the solver must not reject due to hop count.
-        let result = UniswapEngine::solve_path(resolved);
+        let result = ArbitrageEngine::solve_path(resolved);
         let _ = result; // No panic = test passes
     }
 
     #[test]
     fn solve_3hop_mixed_v2_v3_v2_path() {
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
 
         let sp_0 = U256::from(79_228_162_514_264_337_593_543_950_336_u128); // 1:1 price
 
@@ -1641,7 +1641,7 @@ mod tests {
             tick: 0,
             tick_data,
             update_block: 0,
-            coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+            coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
         });
@@ -1681,7 +1681,7 @@ mod tests {
         assert_eq!(resolved.hops[2].hop_type(), HopType::V2);
 
         // Key: previously this returned None due to hop_types.len() != 2
-        let result = UniswapEngine::solve_path(resolved);
+        let result = ArbitrageEngine::solve_path(resolved);
         let _ = result;
     }
 
@@ -1699,7 +1699,7 @@ mod tests {
         // inlining the restore + re-dirty the bulk path used to do in one call.
         use tokio::sync::mpsc;
 
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
 
         // Two balanced V2 pools forming a cycle (price ≈ 1:1875).
         let pool_a = Address::from([0x11u8; 20]);
@@ -1818,10 +1818,10 @@ mod tests {
         // first time (S2b). apply_v3_swap journals scalars; the restore path
         // pops them + reverse-applies tick priors.
         use crate::bot_core::TickInfo;
-        use crate::solvers::uniswap_engine::PoolTickCoverage;
+        use crate::solvers::arb_engine::PoolTickCoverage;
         use alloy::primitives::{I256, U128};
 
-        let engine = UniswapEngine::new();
+        let engine = ArbitrageEngine::new();
         let pool_addr = Address::from([0x55u8; 20]);
 
         // Register a V3 pool at tick 0, 1:1 price, one initialized tick at +60
@@ -1912,7 +1912,7 @@ mod tests {
         }
     }
 
-    /// ADR-006 Slice 1 (D1): `UniswapEngine::with_core` adopts an externally
+    /// ADR-006 Slice 1 (D1): `ArbitrageEngine::with_core` adopts an externally
     /// allocated `Arc<RwLock<BotState>>` so one shared `BotState` is read by both the
     /// engine and the `PyBot`/handle tree — dissolving the dual-`BotState` split
     /// (pump mutates `BotState` B; handles read `BotState` A). If the engine held its own
@@ -1946,7 +1946,7 @@ mod tests {
             .expect("test setup: V2 registration");
 
         // Engine adopts the SAME `Arc<RwLock<BotState>>` — NOT its own `BotState`.
-        let engine = UniswapEngine::with_core(Arc::clone(&core));
+        let engine = ArbitrageEngine::with_core(Arc::clone(&core));
 
         // If the engine held a separate `BotState`, this would be 0; shared => 1.
         assert_eq!(
@@ -1987,16 +1987,16 @@ mod tests {
             })
             .expect("test setup: V2 registration");
 
-        let mut engine = UniswapEngine::with_core(Arc::clone(&core));
+        let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
 
         // Bogus pool_id (never registered) — must Err.
         let bogus_id = real_pool_id + 1_000;
         let result = engine.register_path(vec![
-            crate::solvers::uniswap_engine::PoolHop {
+            crate::solvers::arb_engine::PoolHop {
                 pool_id: real_pool_id,
                 zero_for_one: true,
             },
-            crate::solvers::uniswap_engine::PoolHop {
+            crate::solvers::arb_engine::PoolHop {
                 pool_id: bogus_id,
                 zero_for_one: false,
             },
@@ -2026,7 +2026,7 @@ mod tests {
     #[test]
     #[allow(clippy::too_many_lines)]
     fn process_backfill_logs_stamps_per_log_block_number() {
-        use crate::solvers::uniswap_engine::PoolTickCoverage;
+        use crate::solvers::arb_engine::PoolTickCoverage;
         use alloy::primitives::{Bytes, B256};
         use alloy::rpc::types::Log;
         use degenbot_decoders::v3_swap_decoder::V3_SWAP_TOPIC;
@@ -2079,7 +2079,7 @@ mod tests {
             }
         }
 
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
         let pool_addr = Address::from([0x77u8; 20]);
         let base_sp = U256::from(79_228_162_514_264_337_593_543_950_336_u128); // ~1.0 price
 
@@ -2164,7 +2164,7 @@ mod tests {
         // restorability proof.
     }
 
-    /// ADR-006 slice 10 acceptance: `UniswapEngine::with_core` shares the
+    /// ADR-006 slice 10 acceptance: `ArbitrageEngine::with_core` shares the
     /// SAME `Arc<RwLock<BotState>>` as the peer `Bot`/`PyBot` — the structural
     /// unification that dissolves the dual-`BotState` split (the
     /// `rust-owned-bot.md` §17 stale-state root cause). Proven by pointer
@@ -2176,7 +2176,7 @@ mod tests {
         use parking_lot::RwLock;
 
         let core = Arc::new(RwLock::new(crate::bot_core::BotState::new()));
-        let engine = UniswapEngine::with_core(Arc::clone(&core));
+        let engine = ArbitrageEngine::with_core(Arc::clone(&core));
         // `Arc::ptr_eq` proves the engine + the peer hold the SAME allocation
         // — not a copy, not a fresh `BotState`. Writes through either side
         // are visible to the other (the §17 live-read payoff).
@@ -2189,7 +2189,7 @@ mod tests {
 
     /// ADR-006 slice 10 acceptance: characterize the engine-then-core lock
     /// ordering under concurrent access. Engine paths hold the engine
-    /// `Mutex<UniswapEngine>` and nest `core.write()`/`core.read()` inside;
+    /// `Mutex<ArbitrageEngine>` and nest `core.write()`/`core.read()` inside;
     /// core-only paths (`PyBot`/`PyLiquidityPool` getters) take `core` alone
     /// and never re-enter the engine — the ADR-003 rule keeping the deadlock
     /// surface empty. This test drives that contention concretely: the
@@ -2208,7 +2208,7 @@ mod tests {
         use crate::bot_core::BlockMetadata;
 
         let core = Arc::new(RwLock::new(crate::bot_core::BotState::new()));
-        let engine = UniswapEngine::with_core(Arc::clone(&core));
+        let engine = ArbitrageEngine::with_core(Arc::clone(&core));
         let pool_id = engine.register_v2_pool(
             Address::repeat_byte(0x11),
             usdc(2_000_000),
@@ -2279,7 +2279,7 @@ mod tests {
     //  solve output for the same input snapshot.
     #[test]
     fn solve_all_parallel_fanout_matches_per_path_eager_baseline() {
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
 
         // Register 8 V2-V2 paths on distinct pool pairs with stable price
         // divergence. Each eagerly solves at registration; we capture the
@@ -2367,7 +2367,7 @@ mod tests {
         use crate::bot_core::BlockMetadata;
 
         let core = Arc::new(RwLock::new(crate::bot_core::BotState::new()));
-        let mut engine = UniswapEngine::with_core(Arc::clone(&core));
+        let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
 
         // Register N paths so `solve_dirty` exercises a real par_iter batch.
         for i in 0u8..8 {
@@ -2470,7 +2470,7 @@ mod tests {
             gas_limit: 30_000_000,
         };
         let notif =
-            crate::solvers::uniswap_engine::BlockNotification::from_metadata(25_390_117, &metadata);
+            crate::solvers::arb_engine::BlockNotification::from_metadata(25_390_117, &metadata);
         assert_eq!(notif.number, 25_390_117);
         assert_eq!(notif.timestamp, metadata.timestamp);
         assert_eq!(notif.base_fee_per_gas, metadata.base_fee_per_gas);
@@ -2488,7 +2488,7 @@ mod tests {
         // leaves the block channel empty.
         let (block_tx, mut block_rx) = tokio::sync::mpsc::unbounded_channel();
         let (result_tx, _result_rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
         engine.set_block_channel(block_tx);
         engine.set_result_channel(result_tx);
 
@@ -2531,7 +2531,7 @@ mod tests {
         // metadata, onto `block_tx`. It must NOT also enqueue a result batch
         // (the block channel is the block clock, independent of solve state).
         let (block_tx, mut block_rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut engine = UniswapEngine::new();
+        let mut engine = ArbitrageEngine::new();
         engine.set_block_channel(block_tx);
 
         let metadata = BlockMetadata {
@@ -2665,7 +2665,7 @@ mod tests {
                 update_block: 0,
             });
 
-        let mut engine = UniswapEngine::with_core(Arc::clone(&core));
+        let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
         let path_id = engine
             .register_path(vec![
                 PoolHop {
@@ -2776,7 +2776,7 @@ mod tests {
             })
             .expect("test setup: V2 registration");
 
-        let mut engine = UniswapEngine::with_core(Arc::clone(&core));
+        let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
         let path_id = engine
             .register_path(vec![
                 PoolHop {
@@ -2852,7 +2852,7 @@ mod tests {
                 update_block: 0,
             });
 
-        let mut engine = UniswapEngine::with_core(Arc::clone(&core));
+        let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
         let path_id = engine
             .register_path(vec![
                 PoolHop {
@@ -2875,7 +2875,7 @@ mod tests {
     // 2-hop, (2) V2+Solidly mixed, (3) unprofitable → None (precheck),
     // (4) Solidly+CL → None (scope rejection).
     // -----------------------------------------------------------------
-    fn solidly_arb_engine() -> (UniswapEngine, u64, u64) {
+    fn solidly_arb_engine() -> (ArbitrageEngine, u64, u64) {
         // Two Aerodrome-stable pools with the same token pair but divergent
         // reserves — a profitable arb cycle. Reserves use "wei magnitude"
         // (1e18 == 1 token of an 18-dec token) so the solidly math's
@@ -2936,7 +2936,7 @@ mod tests {
                 reserve1: tokens(100),
                 update_block: 0,
             });
-        let engine = UniswapEngine::with_core(Arc::clone(&core));
+        let engine = ArbitrageEngine::with_core(Arc::clone(&core));
         (engine, aero_a, aero_b)
     }
 
@@ -2957,7 +2957,7 @@ mod tests {
             .expect("path registers");
         let resolved = engine.path_resolved.get(&path_id).expect("resolved");
         assert!(resolved.valid);
-        let result = UniswapEngine::solve_path(resolved).expect("profitable path solves");
+        let result = ArbitrageEngine::solve_path(resolved).expect("profitable path solves");
         assert!(!result.optimal_input.is_zero());
         assert!(!result.profit.is_zero());
         assert_eq!(result.hop_outputs.len(), 2);
@@ -2978,7 +2978,7 @@ mod tests {
         let mut grid_best_profit = U256::ZERO;
         let mut x = U256::from(1u64);
         while x <= max_reserve {
-            let out = UniswapEngine::simulate_solidly_path(x, &resolved.hops);
+            let out = ArbitrageEngine::simulate_solidly_path(x, &resolved.hops);
             let profit = out.saturating_sub(x);
             if profit > grid_best_profit {
                 grid_best_profit = profit;
@@ -3059,7 +3059,7 @@ mod tests {
                 ..Default::default()
             })
             .expect("test setup: V2 registration");
-        let mut engine = UniswapEngine::with_core(Arc::clone(&core));
+        let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
         let path_id = engine
             .register_path(vec![
                 PoolHop {
@@ -3074,7 +3074,7 @@ mod tests {
             .expect("mixed V2+Solidly path registers");
         let resolved = engine.path_resolved.get(&path_id).expect("resolved");
         assert!(resolved.valid);
-        let result = UniswapEngine::solve_path(resolved).expect("profitable mixed path solves");
+        let result = ArbitrageEngine::solve_path(resolved).expect("profitable mixed path solves");
         assert!(!result.profit.is_zero());
 
         // Grid scan parity check (Solidly hop uses the integer leaf, V2 hop
@@ -3084,7 +3084,8 @@ mod tests {
         let mut grid_best = U256::ZERO;
         let mut x = U256::from(1u64);
         while x <= max_reserve {
-            let profit = UniswapEngine::simulate_solidly_path(x, &resolved.hops).saturating_sub(x);
+            let profit =
+                ArbitrageEngine::simulate_solidly_path(x, &resolved.hops).saturating_sub(x);
             if profit > grid_best {
                 grid_best = profit;
             }
@@ -3118,7 +3119,7 @@ mod tests {
         let resolved = engine.path_resolved.get(&path_id).expect("resolved");
         assert!(resolved.valid);
         assert!(
-            UniswapEngine::solve_path(resolved).is_none(),
+            ArbitrageEngine::solve_path(resolved).is_none(),
             "round-trip through one pool is unprofitable"
         );
     }
@@ -3177,7 +3178,7 @@ mod tests {
                 ..Default::default()
             })
             .expect("test setup: V3 registration");
-        let mut engine = UniswapEngine::with_core(Arc::clone(&core));
+        let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
         let path_id = engine
             .register_path(vec![
                 PoolHop {
@@ -3192,7 +3193,7 @@ mod tests {
             .expect("path registers (resolve is per-arm)");
         let resolved = engine.path_resolved.get(&path_id).expect("resolved");
         // Solidly + CL is out of scope (p): solve_path returns None.
-        assert!(UniswapEngine::solve_path(resolved).is_none());
+        assert!(ArbitrageEngine::solve_path(resolved).is_none());
     }
     /// TJT63P: `allow_subscribe` accepts `Created` (legacy subscribe-first path)
     /// AND `SnapshotLoaded` (construction-time-load path: load snapshot, then

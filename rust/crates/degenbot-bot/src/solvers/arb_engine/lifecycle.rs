@@ -1,12 +1,12 @@
 //! Path registration, buffer management, and engine accessors.
 
 use super::{
-    Address, HashMap, HopType, MixedPath, MixedPoolRef, PoolHop, ResolvedMixedPath,
-    SolvePathResult, UniswapEngine,
+    Address, ArbitrageEngine, HashMap, HopType, MixedPath, MixedPoolRef, PoolHop,
+    ResolvedMixedPath, SolvePathResult,
 };
 use crate::bot_core::BotState;
 
-impl UniswapEngine {
+impl ArbitrageEngine {
     /// Derive a hop's family from the `BotState`'s `PoolEntry` variant.
     ///
     /// Returns `None` if `pool_id` isn't registered in `core` — the caller

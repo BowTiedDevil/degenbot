@@ -1,15 +1,15 @@
-//! `PyO3` wrapper for the `UniswapEngine` — verify `#[pymethods]` slice.
+//! `PyO3` wrapper for the `ArbitrageEngine` — verify `#[pymethods]` slice.
 //!
 //! Split out of the former monolithic `py_binding.rs` (ergo UG6FKN task 74W2Z6),
-//! mirroring `crates/degenbot-bot/src/solvers/uniswap_engine/`'s per-concern
-//! layout. `PyO3` allows multiple `#[pymethods] impl PyUniswapArbEngine { … }`
+//! mirroring `crates/degenbot-bot/src/solvers/arb_engine/`'s per-concern
+//! layout. `PyO3` allows multiple `#[pymethods] impl PyArbitrageEngine { … }`
 //! blocks per type, so each concern file contributes one slice.
 
-use super::{hex_string_to_pool_id, Address, PyUniswapArbEngine};
+use super::{hex_string_to_pool_id, Address, PyArbitrageEngine};
 use crate::prelude::*;
 
 #[pymethods]
-impl PyUniswapArbEngine {
+impl PyArbitrageEngine {
     /// Verify all V3 and V4 pool liquidity maps against on-chain state.
     ///
     /// Calls `TickLens` for V3 pools and `StateView` for V4 pools. Compares

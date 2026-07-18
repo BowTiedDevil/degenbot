@@ -25,7 +25,7 @@ class SolverMethod(Enum):
     """Solver algorithm used to produce a result."""
 
     # ACDWOC retire: MOBIUS / NEWTON / PIECEWISE_MOBIUS are gone with the
-    # deleted f64 solver stack (the Rust UniswapArbEngine owns the EVM-exact
+    # deleted f64 solver stack (the Rust ArbitrageEngine owns the EVM-exact
     # U512 solve path; the kept Python solvers below cover Solidly/Balancer
     # families + the Brent reference oracle).
     SOLIDLY_STABLE = auto()

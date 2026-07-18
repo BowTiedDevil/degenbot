@@ -2,14 +2,14 @@
 
 **Status: accepted.** Implemented for the `Bot`/`PyBot`/`PyLiquidityPool`/`PyErc20Token` family
 (`BotCore`→`Bot`, `PyBotCore`→`PyBot` rename + `Mutex`→`RwLock` in the PyO3-handle tier).
-The `UniswapEngine` unification is deferred — see "Deferred".
+The `ArbitrageEngine` unification is deferred — see "Deferred".
 
 ## Context
 
 degenbot mixes Python and Rust via PyO3 across two distinct questions:
 
 1. **(ADR-003)** *What owns runtime pool/token state?* — answered: the Rust `Bot`, as a
-   single owner peer to `UniswapEngine`.
+   single owner peer to `ArbitrageEngine`.
 2. **(this ADR)** *How do Python callers reach that Rust-owned state across the FFI
    without copying, while staying thread-safe under Python 3.13+ free-threading and the
    per-block hot loop?* — previously unanswered. ADR-003 mentions "thin `PyO3` handles
@@ -180,11 +180,11 @@ unconditionally, with no `name=` override. This is the template for future wrapp
 ## Considered options (rejected alternatives)
 
 - **Mutex everywhere (engine parity).** Keep `Arc<Mutex<Bot>>` on `PyBot` to match
-  `UniswapEngine`. **Rejected**: the Python-facing access pattern is read-heavy
+  `ArbitrageEngine`. **Rejected**: the Python-facing access pattern is read-heavy
   (per-pool calc reads, tick-data reads during solves, `PyLiquidityPool`/`PyErc20Token` property
   reads); a single write mutex would serialize all of them. `RwLock` allows concurrent
   readers under Python 3.13+ free-threading. Cost — marginally larger guard, slightly
-  slower writes — is justified by read dominance. (`UniswapEngine` retains `Mutex` today
+  slower writes — is justified by read dominance. (`ArbitrageEngine` retains `Mutex` today
   because its access pattern is engine-then-core under a pump, a different shape; see
   Deferred.)
 - **The Python `Bot` class *is* the `#[pyclass]`.** Drop the wrapper, make `Bot` itself
@@ -231,7 +231,7 @@ unconditionally, with no `name=` override. This is the template for future wrapp
   Python-facing wrapper tier, `Mutex` on the engine-internal tier. A future slice
   collapses this.
 - **The lock-ordering rule from ADR-003 is preserved**: Python-facing wrapper methods
-  take the core lock alone and never nest the `UniswapEngine` lock — the rule that
+  take the core lock alone and never nest the `ArbitrageEngine` lock — the rule that
   keeps the deadlock surface empty. This ADR does not change lock *order*, only the
   *type* of lock on the Python-facing tier.
 - **The standalone-core constraint is first-class.** Any new state, identity, or
@@ -245,7 +245,7 @@ unconditionally, with no `name=` override. This is the template for future wrapp
 ## Related
 
 - **ADR-003** (Bot as state layer) — **complementary, not overlapping.** ADR-003 answers
-  *what owns state* (the Rust `Bot`, peer to `UniswapEngine`); this ADR answers *how
+  *what owns state* (the Rust `Bot`, peer to `ArbitrageEngine`); this ADR answers *how
   Python reaches that state across FFI*. ADR-003's "thin `PyO3` handles over
   `Arc<Mutex<BotCore>>`" mentioned the handles + Arc but never canonized the lock type
   or the session-owns-wrapper topology — that canonization is this ADR.
@@ -287,14 +287,14 @@ Two targets are deferred, both consequences of this ADR's standalone-core direct
   preset registry lands in `degenbot-core` *now* (regardless of split timing) per the
   standalone-core consequence above, so the split never has to relocate it.
 
-- **`UniswapEngine` lock unification.** `UniswapEngine` holds its own
+- **`ArbitrageEngine` lock unification.** `ArbitrageEngine` holds its own
   `Arc<Mutex<Bot>>` (engine-then-core order, ADR-003). Unifying the engine onto the
   *shared* `Arc<RwLock<Bot>>` — so the engine and Python share one handle to one `Bot`
   — is a later slice. Requires resolving the nested lock-ordering question (currently
   engine-`Mutex`-then-core-`Mutex`; collapsing to a single core lock, or a different
   discipline) and is deferred until the engine's access pattern is ready to give up
   its independent lock. Until then, the Python `Bot`'s `PyBot` and the
-  `UniswapEngine`'s `Bot` are separate Rust-owned instances of the same struct.
+  `ArbitrageEngine`'s `Bot` are separate Rust-owned instances of the same struct.
 
 ## Achieved invariant: identity/state split
 

@@ -120,7 +120,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Uniswap mixed V2/V3/V4 engine (feature = "bot")
     #[cfg(feature = "bot")]
-    m.add_class::<crate::bot::engine::PyUniswapArbEngine>()?;
+    m.add_class::<crate::bot::engine::PyArbitrageEngine>()?;
     // Block-stream async iterator (epic 6W35AI) — the authoritative
     // `newHeads`-derived block clock, consumed by Python in parallel with
     // the result-batch iterator. See `engine::result_channel::BlockStream`.

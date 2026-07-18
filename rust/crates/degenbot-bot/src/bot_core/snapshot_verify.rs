@@ -7,14 +7,14 @@
 //!   [`VerifyError`] to `PyRuntimeError`.
 //!
 //! ## ADR-006 D4 relocation (this module's home)
-//! These helpers were trapped in `solvers/uniswap_engine` for historical
+//! These helpers were trapped in `solvers/arb_engine` for historical
 //! ADR-005 reasons. D4 moves them onto the Bot / chain-pump layer — i.e.
 //! `bot_core` — so the verify orchestrator is reachable from `PyBot` without
 //! routing through the solver. `register_with_cl_buffers` is generic over the
 //! engine type `E` (it never inspects the engine, only passes `&mut E` to the
 //! caller's closures), so it can live in the lower `bot_core` layer without a
-//! circular dependency on `solvers::uniswap_engine::UniswapEngine`. The
-//! concrete `E = UniswapEngine` is supplied by the call sites in
+//! circular dependency on `solvers::arb_engine::ArbitrageEngine`. The
+//! concrete `E = ArbitrageEngine` is supplied by the call sites in
 //! `degenbot-python::bot::engine::register`.
 //!
 //! ## What's pure here
@@ -240,7 +240,7 @@ where
 /// Generic over the engine type `E` (ADR-006 D4): the helper never inspects
 /// the engine, only forwards `&mut E` to the caller's closures, so it can live
 /// in `bot_core` without a circular dependency on
-/// `solvers::uniswap_engine::UniswapEngine`. The concrete `E = UniswapEngine`
+/// `solvers::arb_engine::ArbitrageEngine`. The concrete `E = ArbitrageEngine`
 /// is supplied at the call sites in `degenbot-python::bot::engine::register`.
 ///
 /// Returns the registration key + the captured backfill-boundary snapshot.
@@ -268,7 +268,7 @@ mod tests {
     /// A stand-in engine type — `register_with_cl_buffers` is generic over `E`
     /// and never inspects it, so a unit-struct suffices to exercise the
     /// ordering + lock-acquisition contract without pulling in the concrete
-    /// `UniswapEngine` (which lives in the higher `solvers` layer).
+    /// `ArbitrageEngine` (which lives in the higher `solvers` layer).
     #[derive(Default)]
     struct DummyEngine;
 

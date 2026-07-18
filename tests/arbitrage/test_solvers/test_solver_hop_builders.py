@@ -6,7 +6,7 @@ V2-V2, V2-V3, and V3-V3 pool configurations.
 
 Previously these tests exercised ``ArbSolver`` / ``MobiusSolver`` /
 ``ArbitragePath`` (the f64 Möbius dispatcher + event-driven path helper).
-ACDWOC retired that stack — the Rust ``UniswapArbEngine`` is the production
+ACDWOC retired that stack — the Rust ``ArbitrageEngine`` is the production
 solve surface (cross-validated against ``BrentSolver`` in
 ``test_engine_vs_brent_parity.py``), and ``BrentSolver`` is the kept Python
 reference oracle + the production solver for Solidly/Curve/Balancer families.

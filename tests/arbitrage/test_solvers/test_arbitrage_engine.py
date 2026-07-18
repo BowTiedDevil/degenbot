@@ -1,10 +1,10 @@
-"""Tests for UniswapArbEngine — mixed V2/V3 arbitrage engine."""
+"""Tests for ArbitrageEngine — mixed V2/V3 arbitrage engine."""
 
 from __future__ import annotations
 
 import pytest
 
-from degenbot.arbitrage.engine_registry import UniswapArbEngine
+from degenbot.arbitrage.engine_registry import ArbitrageEngine
 
 # sqrt price at tick 0 (1:1 price for 18-decimal tokens)
 SQRT_PRICE_TICK_0 = 79228162514264337593543950336
@@ -42,31 +42,31 @@ def _make_pool_id(suffix: int) -> str:
 
 class TestEventBufferControl:
     def test_set_event_buffer_max_age(self):
-        engine = UniswapArbEngine()
+        engine = ArbitrageEngine()
         engine.set_event_buffer_max_age(max_age=None)
         engine.set_event_buffer_max_age(max_age=100)
 
     def test_flush_event_buffer(self):
-        engine = UniswapArbEngine()
+        engine = ArbitrageEngine()
         engine.flush_event_buffer()
 
 
 class TestSubscribeResume:
     def test_subscribe_returns_block_number_type(self):
         """subscribe() should be callable (won't actually connect in tests)."""
-        engine = UniswapArbEngine()
+        engine = ArbitrageEngine()
         assert hasattr(engine, "subscribe")
         assert hasattr(engine, "resume")
 
     def test_resume_without_subscribe_raises(self):
         """resume() without subscribe() should raise RuntimeError."""
-        engine = UniswapArbEngine()
+        engine = ArbitrageEngine()
         with pytest.raises(RuntimeError, match="SnapshotLoaded|subscribe"):
             engine.resume()
 
     def test_double_subscribe_raises(self):
         """Calling subscribe() twice without resume() should raise."""
-        engine = UniswapArbEngine()
+        engine = ArbitrageEngine()
         import inspect
 
         sig = inspect.signature(engine.subscribe)

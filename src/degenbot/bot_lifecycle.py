@@ -18,7 +18,7 @@ Two entry points:
 
 The Rust ``PyBot`` is reference-counted; closing a Python wrapper only drops
 that wrapper's ref. A running engine that took its own ref (via
-``EngineRegistry(bot=bot)`` → ``UniswapArbEngine(py_bot=...)``) is unaffected.
+``EngineRegistry(bot=bot)`` → ``ArbitrageEngine(py_bot=...)``) is unaffected.
 """
 
 from __future__ import annotations

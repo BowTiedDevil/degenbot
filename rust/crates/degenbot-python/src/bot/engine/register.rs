@@ -1,18 +1,19 @@
-//! `PyO3` wrapper for the `UniswapEngine` — register `#[pymethods]` slice.
+//! `PyO3` wrapper for the `ArbitrageEngine` — register `#[pymethods]` slice.
 //!
 //! Split out of the former monolithic `py_binding.rs` (ergo UG6FKN task 74W2Z6),
-//! mirroring `crates/degenbot-bot/src/solvers/uniswap_engine/`'s per-concern
-//! layout. `PyO3` allows multiple `#[pymethods] impl PyUniswapArbEngine { … }`
+//! mirroring `crates/degenbot-bot/src/solvers/arb_engine/`'s per-concern
+//! layout. `PyO3` allows multiple `#[pymethods] impl PyArbitrageEngine { … }`
 //! blocks per type, so each concern file contributes one slice.
 
 use super::{
-    mpsc, Arc, Bot, DynamicFeePoolRejectedError, EngineHandle, HookedPoolRejectedError, PoolHop,
-    PyBot, PyList, PyUniswapArbEngine, ReorgCoordinator, SolveCoordinator, UniswapEngine,
+    mpsc, ArbitrageEngine, Arc, Bot, DynamicFeePoolRejectedError, EngineHandle,
+    HookedPoolRejectedError, PoolHop, PyArbitrageEngine, PyBot, PyList, ReorgCoordinator,
+    SolveCoordinator,
 };
 use crate::prelude::*;
 
 #[pymethods]
-impl PyUniswapArbEngine {
+impl PyArbitrageEngine {
     #[new]
     #[pyo3(signature = (py_bot=None))]
     #[allow(clippy::needless_pass_by_value)]
@@ -28,13 +29,13 @@ impl PyUniswapArbEngine {
         // a standalone core + wrap it in a fresh `Bot` (no-pyo3 / legacy path).
         let (engine, bot) = if let Some(bot) = py_bot_ref {
             let bot = bot.borrow(py).bot_arc();
-            (UniswapEngine::with_core(bot.state_arc()), bot)
+            (ArbitrageEngine::with_core(bot.state_arc()), bot)
         } else {
             let core = Arc::new(parking_lot::RwLock::new(
                 degenbot_bot::bot_core::BotState::new(),
             ));
             let bot = Arc::new(Bot::with_core(Arc::clone(&core)));
-            (UniswapEngine::with_core(core), bot)
+            (ArbitrageEngine::with_core(core), bot)
         };
         let mut engine = engine;
         engine.set_result_channel(result_tx);

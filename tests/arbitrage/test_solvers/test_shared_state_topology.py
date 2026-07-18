@@ -3,7 +3,7 @@
 Proves the ADR-006 single-``Bot``-per-chain topology end-to-end, the structural
 closure of the ``rust-owned-bot.md`` §17 stale-state caveat:
 
-- ``UniswapArbEngine(py_bot=core)`` adopts ``core``'s shared ``BotState`` (one
+- ``ArbitrageEngine(py_bot=core)`` adopts ``core``'s shared ``BotState`` (one
   state, not the engine's private copy).
 - Pools register ONCE — via ``PyBot.register_v2_pool`` (the same path
   ``Bot.build_pool`` takes). The engine does NOT re-register them; it reads
@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import threading
 
-from degenbot.arbitrage.engine_registry import UniswapArbEngine
+from degenbot.arbitrage.engine_registry import ArbitrageEngine
 from degenbot.bot import PyBot
 
 USDC = 10**6
@@ -45,7 +45,7 @@ V3_TICK = -76020
 V3_LIQUIDITY = 1_234_567_890
 
 # ─── V4 topology round-trip fixtures (RAJ3PP public-interface regression) ─
-# A V4 pool registered via UniswapArbEngine.register_v4_pool (with its core
+# A V4 pool registered via ArbitrageEngine.register_v4_pool (with its core
 # shared from a PyBot) and read back through a PyLiquidityPool handle. The
 # handle is family-agnostic — the same getters/apply methods used for V3.
 V4_POOL_MANAGER = "0x" + "ee" * 20
@@ -95,13 +95,13 @@ def _register_balanced_v2_pair(core: PyBot) -> tuple[int, int]:
 
 
 class TestSharedStateTopology:
-    """``UniswapArbEngine(py_bot=)`` shares the bot's ``BotState`` (ADR-006 D1+D4)."""
+    """``ArbitrageEngine(py_bot=)`` shares the bot's ``BotState`` (ADR-006 D1+D4)."""
 
     def test_engine_adopts_shared_bot_state(self) -> None:
         """The engine reads pools registered on the shared PyBot — no re-registration."""
         core = PyBot()
         pool_id_a, pool_id_b = _register_balanced_v2_pair(core)
-        engine = UniswapArbEngine(py_bot=core)
+        engine = ArbitrageEngine(py_bot=core)
 
         # The engine can build a path from pool_ids it never registered itself —
         # proof it reads the shared BotState, not a private copy.
@@ -119,7 +119,7 @@ class TestSharedStateTopology:
         """
         core = PyBot()
         pool_id_a, pool_id_b = _register_balanced_v2_pair(core)
-        engine = UniswapArbEngine(py_bot=core)
+        engine = ArbitrageEngine(py_bot=core)
         engine.register_and_solve_path([(pool_id_a, True), (pool_id_b, True)])
 
         engine.solve_all_paths(1)
@@ -157,7 +157,7 @@ class TestSharedStateTopology:
         """
         core = PyBot()
         pool_id_a, pool_id_b = _register_balanced_v2_pair(core)
-        engine = UniswapArbEngine(py_bot=core)
+        engine = ArbitrageEngine(py_bot=core)
         engine.register_and_solve_path([(pool_id_a, True), (pool_id_b, True)])
 
         engine.solve_all_paths(1)
@@ -653,7 +653,7 @@ class TestSharedStateTopologyV4:
     """
 
     @staticmethod
-    def _register_v4(core: PyBot, engine: UniswapArbEngine) -> int:
+    def _register_v4(core: PyBot, engine: ArbitrageEngine) -> int:
         """Register a V4 pool via the shared core; return its handle key.
 
         ADR-006 D3 (T5): deleted the unreachable ``engine.register_v4_pool``
@@ -688,7 +688,7 @@ class TestSharedStateTopologyV4:
         (``test_v3_handle_apply_swap_is_visible_to_handle_reads``).
         """
         core = PyBot()
-        engine = UniswapArbEngine(py_bot=core)
+        engine = ArbitrageEngine(py_bot=core)
         pool_id = self._register_v4(core, engine)
         handle = core.get_pool(pool_id)
         assert handle is not None
@@ -722,7 +722,7 @@ class TestSharedStateTopologyV4:
         (``test_v3_handle_apply_liquidity_update_inits_ticks``).
         """
         core = PyBot()
-        engine = UniswapArbEngine(py_bot=core)
+        engine = ArbitrageEngine(py_bot=core)
         pool_id = self._register_v4(core, engine)
         handle = core.get_pool(pool_id)
         assert handle is not None
@@ -762,7 +762,7 @@ class TestSharedStateTopologyV4:
         the RAJ3PP silent-drop footgun shape).
         """
         core = PyBot()
-        engine = UniswapArbEngine(py_bot=core)
+        engine = ArbitrageEngine(py_bot=core)
         pool_id = self._register_v4(core, engine)
         handle = core.get_pool(pool_id)
         assert handle is not None
@@ -811,7 +811,7 @@ class TestSharedStateTopologyConcurrency:
     """ADR-006 slice 10 acceptance: the deadlock surface + atomic-read invariant.
 
     The lock-ordering invariant is **engine-then-core**: every pump path holds
-    the engine ``Mutex<UniswapEngine>`` and nests ``core.write()``/``core.read()``
+    the engine ``Mutex<ArbitrageEngine>`` and nests ``core.write()``/``core.read()``
     inside; ``PyBot``/``PyLiquidityPool`` methods take ``core`` alone and never
     call into the engine (ADR-003's rule keeping the deadlock surface empty).
     These tests characterize that invariant under concurrent writer/reader
@@ -958,7 +958,7 @@ class TestSharedStateTopologyConcurrency:
         """
         core = PyBot()
         pool_id_a, pool_id_b = _register_balanced_v2_pair(core)
-        engine = UniswapArbEngine(py_bot=core)
+        engine = ArbitrageEngine(py_bot=core)
         engine.register_and_solve_path([(pool_id_a, True), (pool_id_b, True)])
 
         errors: list[BaseException] = []

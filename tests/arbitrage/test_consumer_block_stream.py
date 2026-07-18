@@ -256,7 +256,7 @@ class TestTeeBlockStream:
     `engine.block_stream()` twice (the real `consume_result_batches`
     self-acquires one when `block_stream=None`; `run()` line 967 acquired
     another for the recurring-verify ticker). The real
-    `PyUniswapArbEngine.block_stream()` is once-only (it moves the mpsc
+    `PyArbitrageEngine.block_stream()` is once-only (it moves the mpsc
     receiver out of a `Mutex<Option<rx>>`), so the second call raised
     `RuntimeError("block_stream() can only be called once")` entering the main
     loop — crashing every permutation run after `[startup] State trimmed …`.

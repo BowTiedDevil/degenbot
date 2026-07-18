@@ -1,18 +1,18 @@
-# ADR-003: BotCore as the state layer, peer to UniswapEngine
+# ADR-003: BotCore as the state layer, peer to ArbitrageEngine
 
-**Status: accepted.** Recorded during the BotCore/UniswapEngine separation-of-concerns grilling, June 2026. Implemented in full by Plan 100 (Slices 1–5): V2/V3/V4 state consolidated into `BotCore`; the `V2BlockEngine`/`V3BlockEngine`/`V4BlockEngine` are dissolved (single live pool-state owner; engine-then-core lock order); the legacy `RustPoolCache`/`ArbPoolCacheAdapter` mirror is deleted (Slice 4 Option D); `PyToken` is completed (Slice 5). Supersedes the implicit arrangement where each block engine owned a private pool-state `HashMap` and `BotCore` sat unused.
+**Status: accepted.** Recorded during the BotCore/ArbitrageEngine separation-of-concerns grilling, June 2026. Implemented in full by Plan 100 (Slices 1–5): V2/V3/V4 state consolidated into `BotCore`; the `V2BlockEngine`/`V3BlockEngine`/`V4BlockEngine` are dissolved (single live pool-state owner; engine-then-core lock order); the legacy `RustPoolCache`/`ArbPoolCacheAdapter` mirror is deleted (Slice 4 Option D); `PyToken` is completed (Slice 5). Supersedes the implicit arrangement where each block engine owned a private pool-state `HashMap` and `BotCore` sat unused.
 
 ## Context
 
 `BotCore` (`rust/src/bot_core/mod.rs`) was designed as the single Rust owner of all runtime pool/token state, with thin `PyPool`/`PyToken` handles over `Arc<Mutex<BotCore>>`. It is the only Rust struct with reorg-rollback journals (`v2/v3_restore_before_block`, scalar + per-tick priors) and the only one that ever returned `PyPool`/`PyToken` handles.
 
-`UniswapEngine` (`rust/src/optimizers/uniswap_engine/`) was prototyped as a mixed V2/V3/V4 arbitrage engine — a tracer bullet. In production it grew to own pool state directly: each of `V2BlockEngine`, `V3BlockEngine`, `V4BlockEngine` holds a private `HashMap` of pool state (reserves/tick_data/sqrt_price), and the PyO3 wrapper exposes ~40 methods, most of which are state registration/mutation/snapshot/verification rather than solving. `BotCore` is instantiated nowhere (production uses `UniswapArbEngine`; the library solve path uses `RustPoolCache` via `ArbPoolCacheAdapter`, a parallel Rust backend). Its V3 `calculate_tokens_out` is a stub returning `U256::ZERO`.
+`ArbitrageEngine` (`rust/src/optimizers/arb_engine/`) was prototyped as a mixed V2/V3/V4 arbitrage engine — a tracer bullet. In production it grew to own pool state directly: each of `V2BlockEngine`, `V3BlockEngine`, `V4BlockEngine` holds a private `HashMap` of pool state (reserves/tick_data/sqrt_price), and the PyO3 wrapper exposes ~40 methods, most of which are state registration/mutation/snapshot/verification rather than solving. `BotCore` is instantiated nowhere (production uses `ArbitrageEngine`; the library solve path uses `RustPoolCache` via `ArbPoolCacheAdapter`, a parallel Rust backend). Its V3 `calculate_tokens_out` is a stub returning `U256::ZERO`.
 
 The result is two parallel Rust state implementations of the same V2/V3 pools, plus a third live copy inside `RustPoolCache` for the legacy solver path.
 
 ## Decision
 
-Adopt **Option 1 — `BotCore` as a peer module.** `BotCore` becomes the single owner of pool and token state (V2, V3, and a new V4 variant). `UniswapEngine` keeps path registry, solver dispatch, result batching, the pump, and diagnostics — and reads/mutates state *through* `BotCore` via a shared `Arc<Mutex<BotCore>>`, not through private per-engine stores.
+Adopt **Option 1 — `BotCore` as a peer module.** `BotCore` becomes the single owner of pool and token state (V2, V3, and a new V4 variant). `ArbitrageEngine` keeps path registry, solver dispatch, result batching, the pump, and diagnostics — and reads/mutates state *through* `BotCore` via a shared `Arc<Mutex<BotCore>>`, not through private per-engine stores.
 
 The two lock in a fixed order when nested: **engine-then-core**. The pump (single Tokio task) holds the engine lock for its per-block coordination; resolve-time briefly acquires the core lock inside the engine lock to re-derive solve-ready hop states. No code path acquires them in the opposite order.
 
@@ -20,7 +20,7 @@ The two lock in a fixed order when nested: **engine-then-core**. The pump (singl
 
 ## Considered options
 
-- **Option 2 — State as a field of `UniswapEngine`.** One lock (`Mutex<UniswapEngine>`) covers state + solve coordination. Rejected: makes BotCore unusable without the engine, so the legacy `ArbPoolCacheAdapter` + `RustPoolCache` path can only retire by deletion of the Python side, leaving a parallel Rust store. Entangles state with pump coordination.
+- **Option 2 — State as a field of `ArbitrageEngine`.** One lock (`Mutex<ArbitrageEngine>`) covers state + solve coordination. Rejected: makes BotCore unusable without the engine, so the legacy `ArbPoolCacheAdapter` + `RustPoolCache` path can only retire by deletion of the Python side, leaving a parallel Rust store. Entangles state with pump coordination.
 - **Option 3 — `BotCore` as a field of the engine, same lock.** Same single-lock benefit as Option 2 with a cleaner internal seam. Still rejected for the same reason as Option 2: the legacy path cannot migrate onto it.
 - **Option 1 — peer modules.** Costs lock-ordering discipline and an extra critical section at resolve time. Chosen because (a) it is the only topology that retires the legacy `RustPoolCache` second Rust backend at all (see "Legacy solver path retirement" below — the retirement is by deletion, not migration), (b) it makes a future non-arb consumer of Rust state (sync calc, Curve port) possible without standing up the whole pump, and (c) the deadlock surface is empty in practice: the pump is single-writer on the engine lock during the hot loop; the only Python contender is `latest_results`, which reads engine-local `self.results` and does not touch the core lock.
 
@@ -65,7 +65,7 @@ The deadlock surface is empty in practice: the pump is single-writer on the engi
 
 A pool instance owns both its state and its single-pool swap math; the solve engine reads state **by reference** for path-level optimization (Mobius) or threads pool-to-pool by calling each pool's swap calc — but never mutates pool state arbitrarily during a solve. Pool state changes only through recognized event-application methods (`LiquidityMap::apply_swap`, `apply_liquidity_update`) that push a delta to the Reorg Journal.
 
-This mirrors the Python `ArbitragePath` pattern: the solver walks the ordered pools, calls `pool.calculate_tokens_out_from_tokens_in` per hop, threads `output → next input`, and never mutates a pool. The Rust consequence is the engine↔core read/write asymmetry: `UniswapEngine` reads `BotCore` state via reference-returning accessors (e.g. `core.v3_map.get_pool(&key)`); only `LiquidityMap.apply_*` methods mutate, and every mutation journals a delta. Without this rule, a future engine implementer could mutate pool internals mid-solve under the engine lock and corrupt the journal or the per-pool derivation cache.
+This mirrors the Python `ArbitragePath` pattern: the solver walks the ordered pools, calls `pool.calculate_tokens_out_from_tokens_in` per hop, threads `output → next input`, and never mutates a pool. The Rust consequence is the engine↔core read/write asymmetry: `ArbitrageEngine` reads `BotCore` state via reference-returning accessors (e.g. `core.v3_map.get_pool(&key)`); only `LiquidityMap.apply_*` methods mutate, and every mutation journals a delta. Without this rule, a future engine implementer could mutate pool internals mid-solve under the engine lock and corrupt the journal or the per-pool derivation cache.
 
 **Consequence for calc placement (Q8):**
 
@@ -75,7 +75,7 @@ This mirrors the Python `ArbitragePath` pattern: the solver walks the ordered po
 
 ## Legacy solver path retirement: delete, not migrate
 
-The legacy library solve path is `ArbitragePath` (Python) → `ArbSolver` (Python, holds a Rust `RustPoolCache`) → `RustPoolCache` (Rust PyO3 surface that mirrors Python pool reserves and clones per-path hop state). `ArbPoolCacheAdapter` (Python) subscribes to Python pool state updates and pushes reserves+fee into the Rust `RustPoolCache`. This is a **second Rust backend** alongside the production `BotCore`/`UniswapArbEngine` path.
+The legacy library solve path is `ArbitragePath` (Python) → `ArbSolver` (Python, holds a Rust `RustPoolCache`) → `RustPoolCache` (Rust PyO3 surface that mirrors Python pool reserves and clones per-path hop state). `ArbPoolCacheAdapter` (Python) subscribes to Python pool state updates and pushes reserves+fee into the Rust `RustPoolCache`. This is a **second Rust backend** alongside the production `BotCore`/`ArbitrageEngine` path.
 
 **Decision: delete the mirror.** Specifically:
 
@@ -86,17 +86,17 @@ The legacy library solve path is `ArbitragePath` (Python) → `ArbSolver` (Pytho
 
 ### Considered options
 
-- **M — migrate the mirror onto `BotCore`.** `ArbPoolCacheAdapter` would retarget from `RustPoolCache` to `PyBotCore`; the registered-path solve APIs would land on `BotCore`. **Rejected**: this re-pollutes `BotCore` with solver-shaped concerns (path registry, registered-path solve) that ADR-003 keeps on `UniswapEngine` — `BotCore` owns *state*, the engine owns *solving*. Migration isn't a clean retirement, it's moving the pollution to a new home. Worse, it would leave two Rust backends reading the same conceptual pool state through two different Python adapters.
+- **M — migrate the mirror onto `BotCore`.** `ArbPoolCacheAdapter` would retarget from `RustPoolCache` to `PyBotCore`; the registered-path solve APIs would land on `BotCore`. **Rejected**: this re-pollutes `BotCore` with solver-shaped concerns (path registry, registered-path solve) that ADR-003 keeps on `ArbitrageEngine` — `BotCore` owns *state*, the engine owns *solving*. Migration isn't a clean retirement, it's moving the pollution to a new home. Worse, it would leave two Rust backends reading the same conceptual pool state through two different Python adapters.
 - **K — keep as-is.** Leaves two parallel Rust backends indefinitely; the future architecture (one Rust core, one pump-driven engine, thin Python handles) never arrives. Rejected.
-- **D — delete the mirror.** Chosen. After deletion, Rust state lives in exactly one place (`BotCore` + its `LiquidityMap`s); Python reads through one handle family (`PyPool`/`PyToken`/`PyBotCore`); Python solves through one engine (`UniswapArbEngine`) or through the pure-Python `ArbSolver.solve(SolveInput)` for library consumers without a mirror.
+- **D — delete the mirror.** Chosen. After deletion, Rust state lives in exactly one place (`BotCore` + its `LiquidityMap`s); Python reads through one handle family (`PyPool`/`PyToken`/`PyBotCore`); Python solves through one engine (`ArbitrageEngine`) or through the pure-Python `ArbSolver.solve(SolveInput)` for library consumers without a mirror.
 
 ### Why D serves the long-term goal (Rust core + thin Python interface)
 
-M and K both preserve the *second* Rust backend indefinitely. D removes it today. When Curve ports to Rust, the question "does new Curve state live in `BotCore`'s `LiquidityMap` or in `RustPoolCache`?" has only one answer under D; under M/K it's ambiguous and the easier path is to keep using the mirror — perpetuating the split. D makes the architecture converge under its own gravity: one Rust core, one engine, thin handles, and a pure-Python fallback left in place for not-yet-ported families until their Rust-native equivalents under `UniswapArbEngine` arrive (at which point `ArbSolver.solve(SolveInput)` itself deletes).
+M and K both preserve the *second* Rust backend indefinitely. D removes it today. When Curve ports to Rust, the question "does new Curve state live in `BotCore`'s `LiquidityMap` or in `RustPoolCache`?" has only one answer under D; under M/K it's ambiguous and the easier path is to keep using the mirror — perpetuating the split. D makes the architecture converge under its own gravity: one Rust core, one engine, thin handles, and a pure-Python fallback left in place for not-yet-ported families until their Rust-native equivalents under `ArbitrageEngine` arrive (at which point `ArbSolver.solve(SolveInput)` itself deletes).
 
 ### Cost acknowledged
 
-`ArbitragePath` consumers lose the *unused* Rust-accelerated registered-path solve path. The drop is from a speed nobody gets (no library caller exercises `solve_registered`/`solve_cached` — verified: `ArbitragePath` calls only `solver.solve(SolveInput)`, the pure-Python f64 path) to a speed they were always going to get once the mirror retired. Production (`examples/eth_backrun_v2_v3_v4_rust.py`) uses `UniswapArbEngine` directly and never touches `RustPoolCache`/`ArbPoolCacheAdapter`/`ArbSolver`.
+`ArbitragePath` consumers lose the *unused* Rust-accelerated registered-path solve path. The drop is from a speed nobody gets (no library caller exercises `solve_registered`/`solve_cached` — verified: `ArbitragePath` calls only `solver.solve(SolveInput)`, the pure-Python f64 path) to a speed they were always going to get once the mirror retired. Production (`examples/eth_backrun_v2_v3_v4_rust.py`) uses `ArbitrageEngine` directly and never touches `RustPoolCache`/`ArbPoolCacheAdapter`/`ArbSolver`.
 
 ### Deletion-order caveat for the plan
 
@@ -120,8 +120,8 @@ Token state splits along the same line as pool state under ADR-003: **Rust owns 
 ## Consequences
 
 - The block engines lose their private pool-state `HashMap`s. They are **dissolved**: V2's engine (no non-state concerns) deletes entirely; the V3/V4 buffer-apply-verify trinity moves into `BotCore` as a first-class **`LiquidityMap`** concept (one per CL family, keyed by `Address` / `(Address, PoolId)`). Accurate pool state is a cross-cutting concern, not a solver-engine concern — diagnostics, verification, classifiers, and a future Curve port all consume it without going through the solve engine.
-- `UniswapEngine`'s `apply_log` becomes a *consumer* of `BotCore`'s `LiquidityMap`, not an owner; solver dispatch, path registry, result batching, the pump, and diagnostics stay on the engine. The 9 ad-hoc `liquidity_verifier::*` call sites in `py_binding.rs` collapse onto `LiquidityMap::verify_against_onchain`.
-- **Result batching stays on `UniswapEngine`** — `result_tx`, `delivered`, and `compute_diff_and_send` (incremental `ResultBatch` diffs) are solver-shaped (diffing the solver's `results` against what Python has `delivered`), not state-shaped. BotCore has no role in result batching.
+- `ArbitrageEngine`'s `apply_log` becomes a *consumer* of `BotCore`'s `LiquidityMap`, not an owner; solver dispatch, path registry, result batching, the pump, and diagnostics stay on the engine. The 9 ad-hoc `liquidity_verifier::*` call sites in `py_binding.rs` collapse onto `LiquidityMap::verify_against_onchain`.
+- **Result batching stays on `ArbitrageEngine`** — `result_tx`, `delivered`, and `compute_diff_and_send` (incremental `ResultBatch` diffs) are solver-shaped (diffing the solver's `results` against what Python has `delivered`), not state-shaped. BotCore has no role in result batching.
 - The eager-processing architecture is preserved literally: `apply_log` mutates BotCore immediately (no buffer, no lag), `solve_dirty` coalesces the re-derive+solve exactly as today.
 - Reorg rollback (`restore_before_block`) reaches the live hot path for the first time — currently the pump applies events forward only and **ignores the `eth_subscribe` `removed: bool` flag** on log events (the canonical reorg signal). Wiring this is a new behavior, not a mechanical port.
 - `RustPoolCache` / `ArbPoolCacheAdapter` are retired by **deletion** (see "Legacy solver path retirement" below) — their third live copy dissolves along with the Rust `RustPoolCache` PyO3 surface itself.

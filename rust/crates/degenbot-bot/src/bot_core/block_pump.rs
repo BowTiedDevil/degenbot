@@ -1,7 +1,7 @@
 //! `BlockPump` — `Bot`'s WS transport + drain loop (ADR-006 D4).
 //!
 //! Generalized from the `BlockPump`: holds `Arc<Bot>` +
-//! `Arc<dyn DrainSink>` instead of `Arc<Mutex<UniswapEngine>>`. Per WS log,
+//! `Arc<dyn DrainSink>` instead of `Arc<Mutex<ArbitrageEngine>>`. Per WS log,
 //! the pump calls `bot.dispatch_log(log)` (slice 4: decode → apply to
 //! `BotState` → notify the `EngineSubscriber`, which dirties the engine). At
 //! block boundaries / drain ticks / reorg the pump drives the `DrainSink`

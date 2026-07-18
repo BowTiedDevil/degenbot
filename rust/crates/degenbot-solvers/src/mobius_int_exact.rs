@@ -228,7 +228,7 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
 /// This function is also used by the mixed V2-V3 integer solver
 /// (`mobius_v3_int::exact_solve_mixed_v2_v3_sequence`) and the
 /// Solidly-bracketed dispatcher
-/// (`uniswap_engine::solver_dispatch::solve_solidly`), each of which uses the
+/// (`arb_engine::solver_dispatch::solve_solidly`), each of which uses the
 /// model-optimum output as an anchor for its own discrete search
 /// (golden-section for the latter, ±[1,N] EVM-sim sweep for the mixed path).
 pub fn compute_mobius_model_optimal_input(coeffs: &IntMobiusCoefficients) -> U256 {
