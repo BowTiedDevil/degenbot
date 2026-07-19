@@ -2130,6 +2130,7 @@ name = "degenbot-solvers"
 version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
+ "criterion",
  "degenbot-balancer-math",
  "degenbot-cl-math",
  "degenbot-curve-math",
