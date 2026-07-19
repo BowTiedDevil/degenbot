@@ -2130,8 +2130,12 @@ name = "degenbot-solvers"
 version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
+ "degenbot-balancer-math",
  "degenbot-cl-math",
+ "degenbot-curve-math",
  "degenbot-pools",
+ "degenbot-solidly-math",
+ "degenbot-uniswap",
  "degenbot-v2-math",
  "proptest",
  "thiserror 2.0.18",
