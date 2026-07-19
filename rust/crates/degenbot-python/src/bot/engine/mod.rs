@@ -46,9 +46,9 @@ pub(crate) use degenbot_bot::bot_core::{
 pub(crate) use degenbot_bot::solvers::arb_engine::engine_handle::EngineHandle;
 
 pub(crate) use degenbot_bot::solvers::arb_engine::{
-    ArbitrageEngine, BlockMetadata, BlockNotification, HopType, MixedPoolRef, PoolHop, ResultBatch,
-    SolvePathResult,
+    ArbitrageEngine, BlockMetadata, BlockNotification, ResultBatch,
 };
+pub(crate) use degenbot_solvers::mixed::{HopType, MixedPoolRef, PoolHop, SolvePathResult};
 
 /// Python-facing mixed V2/V3 arbitrage engine.
 ///

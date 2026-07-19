@@ -41,6 +41,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use ::degenbot_solvers::mixed::{HopType, MixedPath, ResolvedMixedPath, SolvePathResult};
 #[cfg(test)]
 use alloy::primitives::aliases::U112;
 use alloy::primitives::{Address, U256};
@@ -228,15 +229,12 @@ impl EnginePhase {
 pub use crate::bot_core::PoolTickCoverage;
 
 // ADR-015: the path/snapshot/hop-state value types + INT128_MAX constant
-// relocated to `degenbot-solvers::mixed` (the solver's intake contract).
-// Re-exported here so existing `use super::{...}` and
-// `crate::solvers::arb_engine::...` import sites compile unchanged during
-// the staged relocation. The re-exports are dropped in a later task.
-pub use ::degenbot_solvers::mixed::{
-    BalancerStableHopState, BalancerWeightedHopState, CurveStableswapHopState, HopType, MixedPath,
-    MixedPoolRef, PoolHop, ResolvedHop, ResolvedMixedPath, SolidlyHopState, SolvePathResult,
-    V3SnapshotData, V4SnapshotData, INT128_MAX,
-};
+// now live in `degenbot-solvers::mixed` (the solver's intake contract). The
+// re-export shim that lived here during the staged relocation has been
+// dropped — callers import the solver types directly from
+// `::degenbot_solvers::mixed::{...}`. `BlockMetadata`, `PoolTickCoverage`,
+// `V3SnapshotData`/`V4SnapshotData` (if needed) resolve to their original
+// homes (`bot_core`, `degenbot_solvers::mixed`).
 
 // `BlockMetadata` lives in `bot_core` (general block data); re-exported here so
 // engine code + external references (`crate::solvers::arb_engine::BlockMetadata`)

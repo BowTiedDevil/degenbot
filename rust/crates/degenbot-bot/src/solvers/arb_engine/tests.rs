@@ -7,10 +7,10 @@ mod tests {
 
     use crate::bot_core::RegisterV3PoolParams;
     use crate::bot_core::RegisterV4PoolParams;
-    use crate::solvers::arb_engine::ResolvedMixedPath;
-    use crate::solvers::arb_engine::{
-        ArbitrageEngine, BlockMetadata, EnginePhase, HopType, PoolHop, ResolvedHop,
-        SolidlyHopState, SolvePathResult, INT128_MAX,
+    use crate::solvers::arb_engine::{ArbitrageEngine, BlockMetadata, EnginePhase};
+    use ::degenbot_solvers::mixed::{
+        HopType, PoolHop, ResolvedHop, ResolvedMixedPath, SolidlyHopState, SolvePathResult,
+        INT128_MAX,
     };
     use degenbot_uniswap::dex_identity::DexVariant;
 
@@ -1992,11 +1992,11 @@ mod tests {
         // Bogus pool_id (never registered) — must Err.
         let bogus_id = real_pool_id + 1_000;
         let result = engine.register_path(vec![
-            crate::solvers::arb_engine::PoolHop {
+            ::degenbot_solvers::mixed::PoolHop {
                 pool_id: real_pool_id,
                 zero_for_one: true,
             },
-            crate::solvers::arb_engine::PoolHop {
+            ::degenbot_solvers::mixed::PoolHop {
                 pool_id: bogus_id,
                 zero_for_one: false,
             },

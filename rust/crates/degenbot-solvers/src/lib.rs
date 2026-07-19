@@ -1,9 +1,12 @@
 #![allow(clippy::doc_markdown)]
-//! Value-only multi-hop Möbius solver math — computes optimal arbitrage
+//! Value-only multi-hop arbitrage solver math — computes optimal arbitrage
 //! inputs + simulates multi-hop swap paths purely from in-memory hop states
-//! (V2 constant-product via `degenbot-v2-math::IntHopState`, V3
-//! concentrated-liquidity via `degenbot-pools::IntV3TickRangeHop`), with no
-//! chain / registry / async / tokio.
+//! (V2 constant-product via `degenbot-v2-math::IntHopState`, V3/V4
+//! concentrated-liquidity via `degenbot-pools::IntV3TickRangeHop`, Balancer
+//! weighted/stable + Curve + Solidly via their math leaves), with no chain /
+//! registry / async / tokio. Also holds the QuantAMM closed-form N-token
+//! basket solver (`basket`) and the hop-state intake contract (`mixed` —
+//! ADR-015).
 //!
 //! Every constant-product swap `y = (γ·s·x)/(r + γ·x)` is a Möbius
 //! transformation that fixes the origin. An n-hop path composes into

@@ -1,10 +1,10 @@
 //! Path registration, buffer management, and engine accessors.
 
-use super::{
-    Address, ArbitrageEngine, HashMap, HopType, MixedPath, MixedPoolRef, PoolHop,
-    ResolvedMixedPath, SolvePathResult,
-};
+use super::{Address, ArbitrageEngine, HashMap};
 use crate::bot_core::BotState;
+use ::degenbot_solvers::mixed::{
+    HopType, MixedPath, MixedPoolRef, PoolHop, ResolvedMixedPath, SolvePathResult,
+};
 
 impl ArbitrageEngine {
     /// Derive a hop's family from the `BotState`'s `PoolEntry` variant.

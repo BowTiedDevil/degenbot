@@ -9,7 +9,8 @@ use alloy::dyn_abi::{DynSolType, DynSolValue};
 use alloy::primitives::{Address, Bytes, B256, I256, U256};
 use serde::{Deserialize, Serialize};
 
-use super::{ArbitrageEngine, HopType, MixedPoolRef};
+use super::ArbitrageEngine;
+use ::degenbot_solvers::mixed::{HopType, MixedPoolRef};
 use degenbot_rpc::multicall3::MulticallResult;
 
 /// A single typed field-level divergence between the engine's view of a pool
@@ -1380,9 +1381,9 @@ impl ArbitrageEngine {
 /// recompute for V3/V4 stays `None` (needs the full tick map — heavy RPC).
 fn thread_solver_result_and_recompute(
     snapshot: &mut DiagnosticPathState,
-    solve_result: Option<&super::SolvePathResult>,
+    solve_result: Option<&::degenbot_solvers::mixed::SolvePathResult>,
     core: &crate::bot_core::BotState,
-    pool_refs: &[super::MixedPoolRef],
+    pool_refs: &[::degenbot_solvers::mixed::MixedPoolRef],
 ) {
     let Some(result) = solve_result else {
         return;
@@ -1401,31 +1402,35 @@ fn thread_solver_result_and_recompute(
         let expected_out_engine = pool_refs
             .get(i)
             .and_then(|pool_ref| match pool_ref.hop_type {
-                super::HopType::V3 => core.get_v3_pool(pool_ref.pool_key).and_then(|state| {
-                    let identity = core.get_v3_identity(pool_ref.pool_key)?;
-                    recompute_v3_amount_out(
-                        state,
-                        identity.fee,
-                        identity.tick_spacing,
-                        pool_ref.zero_for_one,
-                        amount_in,
-                    )
-                }),
-                super::HopType::V4 => core.get_v4_pool(pool_ref.pool_key).and_then(|state| {
-                    let identity = core.get_v4_identity(pool_ref.pool_key)?;
-                    recompute_v4_amount_out(
-                        state,
-                        identity.pool_key.fee,
-                        identity.pool_key.tick_spacing,
-                        pool_ref.zero_for_one,
-                        amount_in,
-                    )
-                }),
-                super::HopType::V2
-                | super::HopType::SolidlyStable
-                | super::HopType::BalancerWeighted
-                | super::HopType::BalancerStable
-                | super::HopType::CurveStableswap => None,
+                ::degenbot_solvers::mixed::HopType::V3 => {
+                    core.get_v3_pool(pool_ref.pool_key).and_then(|state| {
+                        let identity = core.get_v3_identity(pool_ref.pool_key)?;
+                        recompute_v3_amount_out(
+                            state,
+                            identity.fee,
+                            identity.tick_spacing,
+                            pool_ref.zero_for_one,
+                            amount_in,
+                        )
+                    })
+                }
+                ::degenbot_solvers::mixed::HopType::V4 => {
+                    core.get_v4_pool(pool_ref.pool_key).and_then(|state| {
+                        let identity = core.get_v4_identity(pool_ref.pool_key)?;
+                        recompute_v4_amount_out(
+                            state,
+                            identity.pool_key.fee,
+                            identity.pool_key.tick_spacing,
+                            pool_ref.zero_for_one,
+                            amount_in,
+                        )
+                    })
+                }
+                ::degenbot_solvers::mixed::HopType::V2
+                | ::degenbot_solvers::mixed::HopType::SolidlyStable
+                | ::degenbot_solvers::mixed::HopType::BalancerWeighted
+                | ::degenbot_solvers::mixed::HopType::BalancerStable
+                | ::degenbot_solvers::mixed::HopType::CurveStableswap => None,
             });
         populate_v3v4_recompute_full(hop, amount_in, solver_out, expected_out_engine);
     }
@@ -1523,9 +1528,8 @@ mod tests {
     use super::{DiagnosticHop, DiagnosticPoolState};
     use crate::bot_core::RegisterV3PoolParams as V3Params;
     use crate::bot_core::{RegisterV4PoolParams as V4Params, V4PoolKey};
-    use crate::solvers::arb_engine::{
-        ArbitrageEngine, DiagnosticPathState, PoolHop, PoolTickCoverage,
-    };
+    use crate::solvers::arb_engine::{ArbitrageEngine, DiagnosticPathState, PoolTickCoverage};
+    use ::degenbot_solvers::mixed::PoolHop;
 
     fn usdc(amount: u64) -> U112 {
         (U256::from(amount) * U256::from(10u64).pow(U256::from(6))).to::<U112>()
@@ -2035,7 +2039,7 @@ mod tests {
         });
 
         let hop_outputs = vec![expected_v2_out, U256::from(123_u64)];
-        let solve_result = super::super::SolvePathResult {
+        let solve_result = ::degenbot_solvers::mixed::SolvePathResult {
             optimal_input: amount_in,
             profit: U256::from(1_u64),
             hop_outputs: hop_outputs.clone(),
