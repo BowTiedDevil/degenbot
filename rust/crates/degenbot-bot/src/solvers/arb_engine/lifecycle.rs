@@ -42,6 +42,8 @@ impl ArbitrageEngine {
             Some(HopType::V4)
         } else if core.get_balancer_weighted_pool(pool_id).is_some() {
             Some(HopType::BalancerWeighted)
+        } else if core.get_balancer_stable_pool(pool_id).is_some() {
+            Some(HopType::BalancerStable)
         } else {
             None
         }

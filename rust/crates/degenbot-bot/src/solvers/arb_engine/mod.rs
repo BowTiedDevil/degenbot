@@ -264,6 +264,9 @@ pub enum HopType {
     /// (Möbius precheck + golden-section over the
     /// `degenbot-balancer-math` weighted leaf) — not concentrated-liquidity.
     BalancerWeighted,
+    /// Balancer V2 stable pool hop (`StableSwap` invariant). Owns its own
+    /// solve branch — not concentrated-liquidity.
+    BalancerStable,
 }
 
 impl HopType {
@@ -391,6 +394,35 @@ pub struct BalancerWeightedHopState {
     pub scaling_factor_out: U256,
 }
 
+/// Resolved state for a Balancer V2 stable pool hop (`StableSwap` invariant),
+/// ready for the stable solve branch.
+///
+/// Balances are upscaled to 18-decimal fixed-point and BPT-skipped (for
+/// `ComposableStablePools`). The invariant `D` is pre-computed at resolve
+/// time (one-shot under the core lock) — never recomputed per search
+/// iteration.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BalancerStableHopState {
+    /// Amplification coefficient `amp` (deployed convention, includes
+    /// `AMP_PRECISION=1000`).
+    pub amp: U256,
+    /// BPT-skipped upscaled balances (all non-BPT tokens).
+    pub balances: Vec<U256>,
+    /// Token index of the input (in the BPT-skipped list).
+    pub token_index_in: usize,
+    /// Token index of the output (in the BPT-skipped list).
+    pub token_index_out: usize,
+    /// Pre-computed invariant `D` (via `calculate_invariant` or
+    /// `calculate_invariant_deployed`).
+    pub invariant: U256,
+    /// Swap fee as a fraction of `ONE = 1e18`.
+    pub swap_fee: U256,
+    /// Scaling factor for the input token (`10^(18 - decimals_in)`).
+    pub scaling_factor_in: U256,
+    /// Scaling factor for the output token.
+    pub scaling_factor_out: U256,
+}
+
 /// Resolved state for a single hop in a mixed path.
 ///
 /// Each variant bundles only the data its hop type needs — no parallel
@@ -423,6 +455,10 @@ pub enum ResolvedHop {
     /// concentrated-liquidity, so `as_int_sequence()` returns `None`.
     /// See [`BalancerWeightedHopState`].
     BalancerWeighted { state: BalancerWeightedHopState },
+    /// Balancer V2 stable hop (`StableSwap`). Owns its own solve branch —
+    /// NOT concentrated-liquidity, so `as_int_sequence()` returns `None`.
+    /// See [`BalancerStableHopState`].
+    BalancerStable { state: BalancerStableHopState },
 }
 
 impl ResolvedHop {
@@ -436,6 +472,7 @@ impl ResolvedHop {
             Self::V4 { .. } => HopType::V4,
             Self::SolidlyStable { .. } => HopType::SolidlyStable,
             Self::BalancerWeighted { .. } => HopType::BalancerWeighted,
+            Self::BalancerStable { .. } => HopType::BalancerStable,
         }
     }
 
@@ -455,7 +492,10 @@ impl ResolvedHop {
     ) -> Option<&::degenbot_solvers::mobius_v3_int::IntV3TickRangeSequence> {
         match self {
             Self::V3 { int_seq, .. } | Self::V4 { int_seq, .. } => Some(int_seq),
-            Self::V2 { .. } | Self::SolidlyStable { .. } | Self::BalancerWeighted { .. } => None,
+            Self::V2 { .. }
+            | Self::SolidlyStable { .. }
+            | Self::BalancerWeighted { .. }
+            | Self::BalancerStable { .. } => None,
         }
     }
 
