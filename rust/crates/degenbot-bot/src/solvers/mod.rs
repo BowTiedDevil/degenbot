@@ -14,10 +14,8 @@
 //! - [`arb_engine`] — the multi-DEX engine (V2/V3/V4/Solidly; Curve + Balancer
 //!   in progress), owning the per-block lifecycle, path registry, and solve
 //!   dispatch
-//! - [`mobius_int`] — U512/U256 integer-exact Möbius recurrence + simulation
-//! - [`mobius_int_exact`] — closed-form U512-native solver (`exact_mobius_solve`)
-//! - [`mobius_v3_int`] — integer V3 tick-range types, crossing, CL solvers
-//! - [`balancer_weighted_basket`] — `QuantAMM` closed-form N-token basket solver
+//! - `mobius_int` / `mobius_int_exact` / `mobius_v3_int` — relocated to the
+//!   `degenbot-solvers` crate (value-only Möbius solver math).
+//! - `balancer_weighted_basket` (`QuantAMM`) — relocated to `degenbot-solvers::basket`.
 
 pub mod arb_engine;
-pub mod balancer_weighted_basket;

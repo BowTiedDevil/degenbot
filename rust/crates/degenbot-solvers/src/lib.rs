@@ -21,6 +21,8 @@
 //! PyO3 driver shell.
 pub mod affected_keys;
 #[allow(clippy::doc_markdown)]
+pub mod basket;
+#[allow(clippy::doc_markdown)]
 pub mod mixed;
 #[allow(clippy::doc_markdown)]
 pub mod mobius_int;
