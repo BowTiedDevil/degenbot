@@ -1,6 +1,6 @@
 [package]
 name = "degenbot-solvers"
-description = "Value-only multi-hop Möbius solver math (V2 constant-product + V3 concentrated-liquidity path solving)."
+description = "Value-only multi-hop arbitrage solver math — Möbius closed-form (V2/CL) + golden-section (Solidly/Curve/Balancer) + QuantAMM basket, with the hop-state intake contract (ADR-015)."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

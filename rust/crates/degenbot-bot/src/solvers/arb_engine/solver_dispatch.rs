@@ -3,10 +3,10 @@
 use alloy::primitives::U256;
 use rayon::prelude::*;
 
-use super::{
-    ArbitrageEngine, BalancerStableHopState, BalancerWeightedHopState, BlockMetadata,
-    CurveStableswapHopState, HashMap, HashSet, HopType, MixedPoolRef, ResolvedHop,
-    ResolvedMixedPath, SolidlyHopState, SolvePathResult,
+use super::{ArbitrageEngine, BlockMetadata, HashMap, HashSet};
+use ::degenbot_solvers::mixed::{
+    BalancerStableHopState, BalancerWeightedHopState, CurveStableswapHopState, HopType,
+    MixedPoolRef, ResolvedHop, ResolvedMixedPath, SolidlyHopState, SolvePathResult,
 };
 
 impl ArbitrageEngine {

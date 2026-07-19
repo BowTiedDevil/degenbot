@@ -3,7 +3,8 @@
 use alloy::primitives::U256;
 use tokio::sync::mpsc;
 
-use super::{ArbitrageEngine, BlockMetadata, ResultBatch, SolvePathResult};
+use super::{ArbitrageEngine, BlockMetadata, ResultBatch};
+use ::degenbot_solvers::mixed::SolvePathResult;
 
 impl ArbitrageEngine {
     /// Set the sender for the result batch channel.
