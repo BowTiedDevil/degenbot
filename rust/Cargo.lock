@@ -1919,6 +1919,7 @@ dependencies = [
  "async-trait",
  "dashmap",
  "degenbot-abi",
+ "degenbot-balancer-math",
  "degenbot-cl-math",
  "degenbot-core",
  "degenbot-db",

@@ -260,6 +260,10 @@ pub enum HopType {
     /// branch (Möbius precheck + golden-section over the
     /// `degenbot-solidly-math` leaf) — not concentrated-liquidity.
     SolidlyStable,
+    /// Balancer V2 weighted pool hop (∏xᵂⁱ ≥ k). Owns its own solve branch
+    /// (Möbius precheck + golden-section over the
+    /// `degenbot-balancer-math` weighted leaf) — not concentrated-liquidity.
+    BalancerWeighted,
 }
 
 impl HopType {
@@ -352,6 +356,41 @@ pub struct SolidlyHopState {
     pub variant: degenbot_uniswap::dex_identity::DexVariant,
 }
 
+/// Resolved state for a Balancer V2 weighted pool hop, ready for the
+/// weighted solve branch. Carries everything the
+/// `degenbot-balancer-math::weighted_math::calc_out_given_in` leaf needs.
+///
+/// The fee is stored as a fraction of `ONE = 1e18` (the Balancer fixed-point
+/// convention): `amount_in_after_fee = amount_in - amount_in * swap_fee / ONE`.
+/// The `PowVersion` selects `FixedPoint::pow` fast paths (V1 general / V2
+/// fast paths for y ∈ {1, 2, 4}).
+///
+/// For the V2-equivalent Möbius precheck, `gamma_numer` / `fee_denom` give
+/// the retained fraction `gamma_numer / fee_denom` = `(ONE - swap_fee) / ONE`
+/// scaled to a `u64` pair (the `IntHopState` fee convention).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BalancerWeightedHopState {
+    /// Balance of the input token (upscaled to 18-decimal fixed-point).
+    pub balance_in: U256,
+    /// Balance of the output token (upscaled to 18-decimal fixed-point).
+    pub balance_out: U256,
+    /// Normalized weight of the input token (18-decimal, e.g. 5e17 for 50%).
+    pub weight_in: U256,
+    /// Normalized weight of the output token (18-decimal).
+    pub weight_out: U256,
+    /// Swap fee as a fraction of `ONE = 1e18` (e.g. 3e15 for 0.3%).
+    pub swap_fee: U256,
+    /// `PowVersion` discriminator — selects `FixedPoint::pow` fast paths.
+    pub pow_version: degenbot_balancer_math::PowVersion,
+    /// Scaling factor for the input token (`10^(18 - decimals_in)`).
+    /// The input amount (in native decimals) is multiplied by this before
+    /// passing to the math leaf, and the math result is divided by the
+    /// output's scaling factor to downscale back to native decimals.
+    pub scaling_factor_in: U256,
+    /// Scaling factor for the output token (`10^(18 - decimals_out)`).
+    pub scaling_factor_out: U256,
+}
+
 /// Resolved state for a single hop in a mixed path.
 ///
 /// Each variant bundles only the data its hop type needs — no parallel
@@ -380,6 +419,10 @@ pub enum ResolvedHop {
     /// branch — NOT concentrated-liquidity, so `as_int_sequence()` returns
     /// `None`. See [`SolidlyHopState`].
     SolidlyStable { state: SolidlyHopState },
+    /// Balancer V2 weighted hop. Owns its own solve branch — NOT
+    /// concentrated-liquidity, so `as_int_sequence()` returns `None`.
+    /// See [`BalancerWeightedHopState`].
+    BalancerWeighted { state: BalancerWeightedHopState },
 }
 
 impl ResolvedHop {
@@ -392,6 +435,7 @@ impl ResolvedHop {
             Self::V3 { .. } => HopType::V3,
             Self::V4 { .. } => HopType::V4,
             Self::SolidlyStable { .. } => HopType::SolidlyStable,
+            Self::BalancerWeighted { .. } => HopType::BalancerWeighted,
         }
     }
 
@@ -411,7 +455,7 @@ impl ResolvedHop {
     ) -> Option<&::degenbot_solvers::mobius_v3_int::IntV3TickRangeSequence> {
         match self {
             Self::V3 { int_seq, .. } | Self::V4 { int_seq, .. } => Some(int_seq),
-            Self::V2 { .. } | Self::SolidlyStable { .. } => None,
+            Self::V2 { .. } | Self::SolidlyStable { .. } | Self::BalancerWeighted { .. } => None,
         }
     }
 
