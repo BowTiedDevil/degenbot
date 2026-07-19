@@ -1,9 +1,11 @@
 """Arbitrage path construction, swap encoding, and solver integration.
 
-The Rust-backed ``ArbitrageEngine`` pyclass is re-exported here (bridged
+The Rust-backed ``ArbitrageEngine`` pyclass and the
+``solve_balancer_weighted_basket`` pyfunction are re-exported here (bridged
 from ``_ffi``) so consumers import ``from degenbot.arbitrage import
-ArbitrageEngine`` rather than reaching into ``_ffi`` (ADR-013: the
-Pydantic barrier — ``_ffi`` only in ``__init__.py``).
+ArbitrageEngine`` / ``solve_balancer_weighted_basket`` rather than reaching
+into ``_ffi`` (ADR-013: the Pydantic barrier — ``_ffi`` only in
+``__init__.py``).
 
 The engine-facing orchestrator (:mod:`.engine_registry`), hop descriptors
 (:mod:`.hop_info`), and path policies (:mod:`.policy`) are intentionally NOT
@@ -17,7 +19,7 @@ time, creating a cycle). Import them directly from their submodules instead:
     from degenbot.arbitrage.policy import PathPolicy, ...
 """
 
-from degenbot._ffi import ArbitrageEngine
+from degenbot._ffi import ArbitrageEngine, solve_balancer_weighted_basket
 
 from .encoding import (
     ApprovalStrategy,
@@ -39,4 +41,5 @@ __all__ = (
     "PayloadComposer",
     "V4PoolKey",
     "generate_payloads",
+    "solve_balancer_weighted_basket",
 )

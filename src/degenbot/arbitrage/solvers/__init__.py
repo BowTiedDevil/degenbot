@@ -11,6 +11,11 @@ cover the families the engine doesn't:
   ``hop.swap_fn`` simulator (reference oracle for engine cross-validation +
   the production solver for Solidly/Curve/Balancer).
 - ``BalancerMultiTokenSolver`` — N-token Balancer weighted-basket arb.
+  Now a **delegating shell** (ADR-005) over the Rust core
+  ``degenbot._ffi.solve_balancer_weighted_basket`` (QuantAMM Equation 9);
+  the Python ``balancer_weighted.py`` math is retired. The delegation wiring
+  is gated by ``tests/rust/test_quantamm_basket_parity.py``; the math itself
+  by the Rust ``#[cfg(test)]`` corpus in ``balancer_weighted_basket.rs``.
 """
 
 from degenbot.arbitrage.solvers.balancer_multi_token_solver import BalancerMultiTokenSolver

@@ -1329,6 +1329,30 @@ class DynamicFeePoolRejectedError(PoolRegistrationError):
 # ------------------------------------------------------------------
 # Simulation seam (per-block profitability pipeline)
 # ------------------------------------------------------------------
+
+# ------------------------------------------------------------------
+# QuantAMM closed-form N-token Balancer weighted basket solver (feature = "bot").
+# Thin PyO3 wrapper over `degenbot_bot::solvers::balancer_weighted_basket`.
+# ------------------------------------------------------------------
+def solve_balancer_weighted_basket(
+    reserves: list[int],
+    weights: list[int],
+    fee_numer: int,
+    fee_denom: int,
+    decimals: list[int],
+    market_prices: list[float],
+    max_input: float | None = None,
+) -> tuple[list[int], float, bool, list[int], int]:
+    """Closed-form N-token Balancer weighted basket arbitrage (QuantAMM Eq. 9).
+
+    Returns ``(trades, profit, success, signature, iterations)``. ``trades``
+    are integer native-token amounts (positive = deposit, negative =
+    withdraw). FFI boundary over the Rust core
+    `degenbot-bot::solvers::balancer_weighted_basket::solve_balancer_weighted`;
+    see `degenbot.arbitrage.solve_balancer_weighted_basket` for the stable
+    re-export (ADR-013).
+    """
+
 __all__ = [
     "ArbitrageEngine",
     "AsyncContract",
@@ -1369,6 +1393,7 @@ __all__ = [
     "simulation",
     "solady",
     "solidly_math",
+    "solve_balancer_weighted_basket",
     "submission",
     "subscriber",
     "to_checksum_address",
