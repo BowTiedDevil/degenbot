@@ -189,6 +189,30 @@ constraints, so a future review does not re-derive them:
    Either is strictly worse than project-once-read-many on an immutable
    snapshot.
 
+   > **Empirically revised (2026-07-19 spike, ergo 77LOQT):** the
+   > "~25× per solve" framing above was *wrong* — `BalancerStableHopState`.
+   > `invariant` and `CurveStableswapHopState.xp` are baked in **once at
+   > resolve**, never recomputed per golden-section iteration (the solve
+   > reads the frozen hop-state field). The digest is paid once per *path*
+   > per resolve, not once per golden-section probe. Measured
+   > (`rust/crates/degenbot-solvers/benches/digest.rs`, criterion): Balancer
+   > stable `D` = 1.0–1.6 µs/pool, Curve `xp` = 63–114 ns/pool; vs Phase B
+   > solve = 82 µs (balancer) / 144 µs (curve) per 2-hop path. The digest is
+   > **0.04–4% of the per-path budget** — solve dominates entirely. CL is
+   > the one family that caches, and justifiably: its `compute_tick_ranges`
+   > is an O(N log N) scan over thousands of ticks + ~30 TickMath calls —
+   > an order of magnitude+ heavier than balancer's `D` (the existence of
+   > `cached_tick_ranges` is the proof it pays). The candidate-family
+   > "extend CL's memoization" optimization is **empirically rejected**:
+   > the ~1% wall-time ceiling on hot pools does not justify the reorg-
+   > invalidation correctness risk (stale digest → wrong arb, silently) for
+   > balancer, and Curve's 63 ns is dwarfed by the `Mutex`+`Arc` overhead
+   > caching would add. The digest-cost argument is now **off the table**
+   > as a motivation for any hop-shape change; constraint #5 (lock-free
+   > solve: guard drops before `solve_path`) is the only surviving reason
+   > for the per-solve frozen snapshot, and it is about *where the digest
+   > lives* (shared mutable state behind `RwLock`), not *what it costs*.
+
 2. **Consistency across hops in a multi-hop path requires an immutable
    snapshot or a read-guard held across the whole multi-hop solve.** Hop N
    at block B and hop N+1 at block B+1 is an inconsistent path → wrong

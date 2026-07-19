@@ -32,3 +32,9 @@ degenbot-uniswap = { path = "../degenbot-uniswap" }
 
 [dev-dependencies]
 proptest = "^1.0"
+criterion = { version = "^0.5", default-features = false, features = ["cargo_bench_support"] }
+
+
+[[bench]]
+name = "digest"
+harness = false
