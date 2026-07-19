@@ -1922,6 +1922,7 @@ dependencies = [
  "degenbot-balancer-math",
  "degenbot-cl-math",
  "degenbot-core",
+ "degenbot-curve-math",
  "degenbot-db",
  "degenbot-decoders",
  "degenbot-pools",

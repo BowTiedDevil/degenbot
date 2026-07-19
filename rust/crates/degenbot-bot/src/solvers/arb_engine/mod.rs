@@ -267,6 +267,9 @@ pub enum HopType {
     /// Balancer V2 stable pool hop (`StableSwap` invariant). Owns its own
     /// solve branch — not concentrated-liquidity.
     BalancerStable,
+    /// Curve stableswap pool hop (`StableSwap` y-iteration). Owns its own
+    /// solve branch — not concentrated-liquidity.
+    CurveStableswap,
 }
 
 impl HopType {
@@ -423,6 +426,43 @@ pub struct BalancerStableHopState {
     pub scaling_factor_out: U256,
 }
 
+/// Resolved state for a Curve stableswap pool hop, ready for the curve
+/// solve branch.
+///
+/// Carries everything needed to simulate a swap: the rate-adjusted XP
+/// array, the input/output token indices, amp (with `A_PRECISION` baked in),
+/// fee, and the y/d variant discriminators.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CurveStableswapHopState {
+    /// `amp = a_coefficient * A_PRECISION` (Curve convention).
+    pub amp: U256,
+    /// `A_PRECISION` (100 for standard pools).
+    pub a_precision: U256,
+    /// Rate-adjusted balances `xp[i] = balances[i] * rate_multipliers[i] / PRECISION`.
+    /// Pre-computed at resolve time.
+    pub xp: Vec<U256>,
+    /// Token index of the input.
+    pub token_index_in: usize,
+    /// Token index of the output.
+    pub token_index_out: usize,
+    /// Number of coins (== `xp.len()`).
+    pub n_coins: U256,
+    /// Swap fee in `FEE_DENOMINATOR = 1e10` units.
+    pub fee: U256,
+    /// `FEE_DENOMINATOR = 10^10`.
+    pub fee_denom: U256,
+    /// `PRECISION = 10^18`.
+    pub precision: U256,
+    /// Rate multiplier for the input token.
+    pub rate_multiplier_in: U256,
+    /// Rate multiplier for the output token.
+    pub rate_multiplier_out: U256,
+    /// y-iteration variant.
+    pub y_variant: degenbot_curve_math::stableswap::YVariant,
+    /// d-iteration variant.
+    pub d_variant: degenbot_curve_math::stableswap::DVariant,
+}
+
 /// Resolved state for a single hop in a mixed path.
 ///
 /// Each variant bundles only the data its hop type needs — no parallel
@@ -459,6 +499,8 @@ pub enum ResolvedHop {
     /// NOT concentrated-liquidity, so `as_int_sequence()` returns `None`.
     /// See [`BalancerStableHopState`].
     BalancerStable { state: BalancerStableHopState },
+    /// Curve stableswap hop. See [`CurveStableswapHopState`].
+    CurveStableswap { state: CurveStableswapHopState },
 }
 
 impl ResolvedHop {
@@ -473,6 +515,7 @@ impl ResolvedHop {
             Self::SolidlyStable { .. } => HopType::SolidlyStable,
             Self::BalancerWeighted { .. } => HopType::BalancerWeighted,
             Self::BalancerStable { .. } => HopType::BalancerStable,
+            Self::CurveStableswap { .. } => HopType::CurveStableswap,
         }
     }
 
@@ -495,7 +538,8 @@ impl ResolvedHop {
             Self::V2 { .. }
             | Self::SolidlyStable { .. }
             | Self::BalancerWeighted { .. }
-            | Self::BalancerStable { .. } => None,
+            | Self::BalancerStable { .. }
+            | Self::CurveStableswap { .. } => None,
         }
     }
 
