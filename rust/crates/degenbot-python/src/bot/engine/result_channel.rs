@@ -132,6 +132,17 @@ impl PyArbitrageEngine {
                         tick_spacing: None,
                     });
                 }
+                HopType::BalancerStable => {
+                    let id = core.get_balancer_stable_identity(pool_ref.pool_key);
+                    hops.push(HopInfo {
+                        hop_type: "BalS".to_string(),
+                        address: id.map(|i| format!("{}", i.address)),
+                        pool_id: None,
+                        zero_for_one: pool_ref.zero_for_one,
+                        fee: None,
+                        tick_spacing: None,
+                    });
+                }
             }
         }
 

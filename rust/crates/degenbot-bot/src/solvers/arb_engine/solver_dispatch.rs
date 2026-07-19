@@ -4,8 +4,9 @@ use alloy::primitives::{U256, U512};
 use rayon::prelude::*;
 
 use super::{
-    ArbitrageEngine, BalancerWeightedHopState, BlockMetadata, HashMap, HashSet, HopType,
-    MixedPoolRef, ResolvedHop, ResolvedMixedPath, SolidlyHopState, SolvePathResult, INT128_MAX,
+    ArbitrageEngine, BalancerStableHopState, BalancerWeightedHopState, BlockMetadata, HashMap,
+    HashSet, HopType, MixedPoolRef, ResolvedHop, ResolvedMixedPath, SolidlyHopState,
+    SolvePathResult, INT128_MAX,
 };
 
 impl ArbitrageEngine {
@@ -144,6 +145,10 @@ impl ArbitrageEngine {
     #[allow(clippy::unused_self)]
     #[allow(clippy::too_many_lines)]
     pub fn solve_path(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
+        // An invalid (partially-resolved) path has hops missing — don't solve.
+        if !resolved.valid {
+            return None;
+        }
         let all_v2 = resolved
             .hops
             .iter()
@@ -167,6 +172,16 @@ impl ArbitrageEngine {
             matches!(
                 h,
                 ResolvedHop::V2 { .. } | ResolvedHop::BalancerWeighted { .. }
+            )
+        });
+        let has_balancer_stable = resolved
+            .hops
+            .iter()
+            .any(|h| matches!(h, ResolvedHop::BalancerStable { .. }));
+        let all_v2_or_stable = resolved.hops.iter().all(|h| {
+            matches!(
+                h,
+                ResolvedHop::V2 { .. } | ResolvedHop::BalancerStable { .. }
             )
         });
 
@@ -258,6 +273,15 @@ impl ArbitrageEngine {
         } else if has_balancer_weighted {
             // A weighted hop alongside a CL hop — out of scope (same
             // rationale as Solidly+CL).
+            None
+        } else if all_v2_or_stable && has_balancer_stable {
+            // All-V2-or-Balancer-stable with ≥1 stable hop — the
+            // Möbius precheck + golden-section solve over the Balancer
+            // stable math leaf. Scope: stable mixed with CL or weighted is
+            // rejected below.
+            Self::solve_balancer_stable_path_int(resolved)
+        } else if has_balancer_stable {
+            // A stable hop alongside a CL or weighted hop — out of scope.
             None
         } else {
             // Mixed V2 + CL (V3 or V4)
@@ -757,6 +781,29 @@ impl ArbitrageEngine {
         }
     }
 
+    /// V2-equivalent [`IntHopState`] for a Balancer stable hop. Used by the
+    /// Möbius precheck to narrow the golden-section bracket. `StableSwap` ≠
+    /// constant product, but at high amplification it's locally V2-like.
+    fn balancer_stable_hop_v2_equiv(hop: &ResolvedHop) -> Option<degenbot_v2_math::IntHopState> {
+        use degenbot_v2_math::IntHopState;
+        match hop {
+            ResolvedHop::V2 { state } => Some(state.clone()),
+            ResolvedHop::BalancerStable { state } => {
+                let one_e18 = U256::from(10u64).pow(U256::from(18u64));
+                let gamma = one_e18.saturating_sub(state.swap_fee);
+                let gn: u64 = gamma.try_into().ok()?;
+                let fd: u64 = one_e18.try_into().ok()?;
+                Some(IntHopState::new(
+                    state.balances[state.token_index_in],
+                    state.balances[state.token_index_out],
+                    gn,
+                    fd,
+                ))
+            }
+            _ => None,
+        }
+    }
+
     /// Integer verification: scan `±SOLIDLY_INTEGER_SEARCH_RADIUS` candidates
     /// around `center` and pick the max-profit input. Mirrors
     /// `solidly_brute_force_best`'s sweep.
@@ -871,6 +918,214 @@ impl ArbitrageEngine {
             return U256::ZERO;
         }
         amount_out_upscaled / hop.scaling_factor_out
+    }
+
+    /// Balancer stable solve — Möbius precheck + golden-section search,
+    /// mirroring `solve_balancer_weighted_path_int` with the stable math
+    /// leaf (`calc_out_given_in` with pre-computed invariant).
+    #[allow(clippy::too_many_lines)]
+    fn solve_balancer_stable_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
+        use ::degenbot_solvers::mobius_int::compute_int_mobius_coefficients;
+        use ::degenbot_solvers::mobius_int_exact::compute_mobius_model_optimal_input;
+        use degenbot_v2_math::IntHopState;
+
+        let hops = &resolved.hops;
+
+        // V2-equivalent IntHopState per hop: stable hops use
+        // balances[idx_in]/balances[idx_out] + the retained fee fraction;
+        // V2 hops pass through unchanged.
+        let v2_equiv: Vec<IntHopState> = hops
+            .iter()
+            .map(Self::balancer_stable_hop_v2_equiv)
+            .collect::<Option<Vec<_>>>()?;
+
+        let coeffs = compute_int_mobius_coefficients(&v2_equiv).ok()?;
+        if !coeffs.is_profitable {
+            return None;
+        }
+        let x_mobius = compute_mobius_model_optimal_input(&coeffs);
+
+        let one = U256::from(1u64);
+        let five = U256::from(5u64);
+        let max_reserve = v2_equiv
+            .iter()
+            .map(|h| h.reserve_in)
+            .max()
+            .unwrap_or(U256::ZERO);
+        if max_reserve.is_zero() {
+            return None;
+        }
+        let mut x_low = one;
+        let mut x_high = max_reserve;
+        if !x_mobius.is_zero() {
+            let x_center = x_mobius.min(x_high);
+            x_low = x_low.max(x_center / five);
+            x_high = x_high.min(x_center.saturating_mul(five));
+        }
+        if x_high <= x_low {
+            // Degenerate bracket — fall back to a single-point verification.
+            let best_input = Self::balancer_stable_brute_force_best(hops, x_low)?;
+            let best_profit =
+                Self::simulate_balancer_stable_path(best_input, hops).saturating_sub(best_input);
+            if best_profit.is_zero() {
+                return None;
+            }
+            let hop_outputs = Self::simulate_balancer_stable_path_outputs(best_input, hops);
+            let consumed_inputs: Vec<U256> = std::iter::once(best_input)
+                .chain(
+                    hop_outputs
+                        .iter()
+                        .take(hop_outputs.len().saturating_sub(1))
+                        .copied(),
+                )
+                .collect();
+            return Some(SolvePathResult {
+                optimal_input: best_input,
+                profit: best_profit,
+                hop_outputs,
+                consumed_inputs,
+            });
+        }
+
+        let phi_num = U256::from(6_180_339_887_498_949u64);
+        let phi_den = U256::from(10_000_000_000_000_000u64);
+        let phi_span = |lo: U256, hi: U256| -> U256 {
+            let d = U512::from(hi - lo);
+            let scaled = d * U512::from(phi_num) / U512::from(phi_den);
+            ::degenbot_solvers::mobius_int_exact::u512_to_u256_internal(scaled)
+        };
+        let mut x1 = x_high - phi_span(x_low, x_high);
+        let mut x2 = x_low + phi_span(x_low, x_high);
+        let mut p1 = Self::simulate_balancer_stable_path(x1, hops).saturating_sub(x1);
+        let mut p2 = Self::simulate_balancer_stable_path(x2, hops).saturating_sub(x2);
+
+        for _ in 0..Self::SOLIDLY_GOLDEN_SECTION_ITERATIONS {
+            if p1 < p2 {
+                x_low = x1;
+                x1 = x2;
+                p1 = p2;
+                x2 = x_low + phi_span(x_low, x_high);
+                p2 = Self::simulate_balancer_stable_path(x2, hops).saturating_sub(x2);
+            } else {
+                x_high = x2;
+                x2 = x1;
+                p2 = p1;
+                x1 = x_high - phi_span(x_low, x_high);
+                p1 = Self::simulate_balancer_stable_path(x1, hops).saturating_sub(x1);
+            }
+        }
+
+        let x_opt = (x_low + x_high) / U256::from(2u64);
+        let best_input = Self::balancer_stable_brute_force_best(hops, x_opt)?;
+        let best_profit =
+            Self::simulate_balancer_stable_path(best_input, hops).saturating_sub(best_input);
+        if best_profit.is_zero() {
+            return None;
+        }
+        let hop_outputs = Self::simulate_balancer_stable_path_outputs(best_input, hops);
+        let consumed_inputs: Vec<U256> = std::iter::once(best_input)
+            .chain(
+                hop_outputs
+                    .iter()
+                    .take(hop_outputs.len().saturating_sub(1))
+                    .copied(),
+            )
+            .collect();
+        Some(SolvePathResult {
+            optimal_input: best_input,
+            profit: best_profit,
+            hop_outputs,
+            consumed_inputs,
+        })
+    }
+
+    /// Simulate the full path and return the final output.
+    fn simulate_balancer_stable_path(x: U256, hops: &[ResolvedHop]) -> U256 {
+        let outputs = Self::simulate_balancer_stable_path_outputs(x, hops);
+        outputs.last().copied().unwrap_or(U256::ZERO)
+    }
+
+    /// Simulate the full path and return each hop's output.
+    fn simulate_balancer_stable_path_outputs(x: U256, hops: &[ResolvedHop]) -> Vec<U256> {
+        let mut amount = x;
+        let mut outputs = Vec::with_capacity(hops.len());
+        for hop in hops {
+            if amount.is_zero() {
+                outputs.push(U256::ZERO);
+                continue;
+            }
+            let out = match hop {
+                ResolvedHop::V2 { state } => state.swap(amount).unwrap_or(U256::ZERO),
+                ResolvedHop::BalancerStable { state } => {
+                    Self::simulate_balancer_stable_hop(amount, state)
+                }
+                _ => U256::ZERO,
+            };
+            outputs.push(out);
+            amount = out;
+        }
+        outputs
+    }
+
+    /// Simulate a single Balancer stable hop (upscaling, fee, math,
+    /// downscaling).
+    fn simulate_balancer_stable_hop(amount_in: U256, hop: &BalancerStableHopState) -> U256 {
+        use degenbot_balancer_math::fixed_point::mul_up;
+        use degenbot_balancer_math::stable_math::calc_out_given_in;
+        if amount_in.is_zero() {
+            return U256::ZERO;
+        }
+        let amount_in_upscaled = amount_in.saturating_mul(hop.scaling_factor_in);
+        let Ok(fee_amount) = mul_up(amount_in_upscaled, hop.swap_fee) else {
+            return U256::ZERO;
+        };
+        let amount_in_after_fee = amount_in_upscaled.saturating_sub(fee_amount);
+        let Ok(amount_out_upscaled) = calc_out_given_in(
+            hop.amp,
+            &hop.balances,
+            hop.token_index_in,
+            hop.token_index_out,
+            amount_in_after_fee,
+            hop.invariant,
+        ) else {
+            return U256::ZERO;
+        };
+        if hop.scaling_factor_out.is_zero() {
+            return U256::ZERO;
+        }
+        amount_out_upscaled / hop.scaling_factor_out
+    }
+
+    /// ±3 integer brute-force verify sweep (matches the Solidly/weighted
+    /// template — ensures the golden-section result is a local max).
+    /// Returns `Some(input)` only if profit > 0.
+    fn balancer_stable_brute_force_best(hops: &[ResolvedHop], start: U256) -> Option<U256> {
+        let mut best_profit =
+            Self::simulate_balancer_stable_path(start, hops).saturating_sub(start);
+        let mut best_input = start;
+        for delta in 1u64..=3 {
+            let cand_up = best_input.saturating_add(U256::from(delta));
+            let profit_up =
+                Self::simulate_balancer_stable_path(cand_up, hops).saturating_sub(cand_up);
+            if profit_up > best_profit {
+                best_profit = profit_up;
+                best_input = cand_up;
+            }
+            if best_input >= U256::from(delta) {
+                let cand_dn = best_input - U256::from(delta);
+                let profit_dn =
+                    Self::simulate_balancer_stable_path(cand_dn, hops).saturating_sub(cand_dn);
+                if profit_dn > best_profit {
+                    best_profit = profit_dn;
+                    best_input = cand_dn;
+                }
+            }
+        }
+        if best_profit.is_zero() {
+            None
+        } else {
+            Some(best_input)
+        }
     }
 
     ///
@@ -1094,6 +1349,73 @@ impl ArbitrageEngine {
                             pow_version,
                             scaling_factor_in: sf_in,
                             scaling_factor_out: sf_out,
+                        },
+                    });
+                }
+                HopType::BalancerStable => {
+                    let Some(id) = core.get_balancer_stable_identity(pool_ref.pool_key) else {
+                        return; // Missing pool → invalid
+                    };
+                    let Some(state) = core.get_balancer_stable_pool(pool_ref.pool_key) else {
+                        return; // Missing pool → invalid
+                    };
+                    if id.n_tokens() < 2 {
+                        return; // Can't form a pairwise hop
+                    }
+                    let (raw_idx_in, raw_idx_out) = if pool_ref.zero_for_one {
+                        (0, 1)
+                    } else {
+                        (1, 0)
+                    };
+                    let skip_bpt = |idx: usize| -> usize {
+                        match id.bpt_idx {
+                            Some(bpt) if idx >= bpt => idx - 1,
+                            _ => idx,
+                        }
+                    };
+                    let token_index_in = skip_bpt(raw_idx_in);
+                    let token_index_out = skip_bpt(raw_idx_out);
+                    let upscaled_balances: Vec<U256> = {
+                        let mut ub = Vec::with_capacity(id.n_tokens());
+                        for (i, &bal) in state.balances.iter().enumerate() {
+                            if id.bpt_idx.is_some_and(|bpt| bpt == i) {
+                                continue;
+                            }
+                            ub.push(bal.saturating_mul(id.scaling_factors[i]));
+                        }
+                        ub
+                    };
+                    if token_index_in >= upscaled_balances.len()
+                        || token_index_out >= upscaled_balances.len()
+                    {
+                        return;
+                    }
+                    let amp_u256 = U256::from(id.amp);
+                    let invariant = if id.invariant_version == 1 {
+                        degenbot_balancer_math::stable_math::calculate_invariant(
+                            amp_u256,
+                            &upscaled_balances,
+                        )
+                    } else {
+                        degenbot_balancer_math::stable_math::calculate_invariant_deployed(
+                            amp_u256,
+                            &upscaled_balances,
+                            true,
+                        )
+                    };
+                    let Ok(invariant) = invariant else {
+                        return;
+                    };
+                    resolved.hops.push(ResolvedHop::BalancerStable {
+                        state: BalancerStableHopState {
+                            amp: amp_u256,
+                            balances: upscaled_balances,
+                            token_index_in,
+                            token_index_out,
+                            invariant,
+                            swap_fee: U256::from(id.swap_fee),
+                            scaling_factor_in: id.scaling_factors[raw_idx_in],
+                            scaling_factor_out: id.scaling_factors[raw_idx_out],
                         },
                     });
                 }
