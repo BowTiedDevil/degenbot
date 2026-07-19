@@ -129,7 +129,7 @@ impl ArbitrageEngine {
         // Eagerly solve the newly registered path
         if let Some(resolved) = self.path_resolved.get(&path_id) {
             if resolved.valid {
-                if let Some(solve_result) = Self::solve_path(resolved) {
+                if let Some(solve_result) = ::degenbot_solvers::mixed::solve_path(resolved) {
                     if !solve_result.optimal_input.is_zero() && !solve_result.profit.is_zero() {
                         self.results.insert(path_id, solve_result);
                         self.pending_new_paths.insert(path_id);
