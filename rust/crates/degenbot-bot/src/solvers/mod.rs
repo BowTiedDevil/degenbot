@@ -17,5 +17,7 @@
 //! - [`mobius_int`] — U512/U256 integer-exact Möbius recurrence + simulation
 //! - [`mobius_int_exact`] — closed-form U512-native solver (`exact_mobius_solve`)
 //! - [`mobius_v3_int`] — integer V3 tick-range types, crossing, CL solvers
+//! - [`balancer_weighted_basket`] — `QuantAMM` closed-form N-token basket solver
 
 pub mod arb_engine;
+pub mod balancer_weighted_basket;
