@@ -163,6 +163,18 @@ fns do not call `par_iter`.
 
 ## DEFERRED — the hop-shape deepening (constraints for the resuming session)
 
+**Status (2026-07-19): CLOSED — hop stays as `enum ResolvedHop`.**
+
+The deeper review (whether `ResolvedHop` dissolves behind a `trait
+PathHopSnapshot { simulate; mobius_shape }`) was evaluated against the
+concentrated post-BDZHCG layer and **settled as a negative**: the hop earns
+its keep, the enum + match classifier is the right shape, and `dyn
+PathHopSnapshot` is a wash-to-loss. The closure is recorded at the end of
+this section; the original constraints are retained below as the reasoning
+trail so the question is not re-derived.
+
+--- (original findings retained) ---
+
 The grilling session that produced this ADR tested whether the hop type
 needs to exist at all, and whether the solver could instead read live pool
 state behind an `RwLock`. The deeper review (whether `ResolvedHop`
@@ -280,3 +292,86 @@ constraints, so a future review does not re-derive them:
   it as cache-on-state with cross-`apply_*` invalidation; blocks concurrent
   writers for the solve duration; the snapshot's clone is the projected
   minimal form (tens of bytes), not the pool state.
+
+## CLOSURE — the hop-shape deepening (2026-07-19)
+
+Evaluated against the concentrated post-BDZHCG layer. **Verdict: the hop
+stays as `enum ResolvedHop` + match-based classifier.** Three negative
+findings settle the question end-to-end:
+
+1. **Digest-prework motivation: retired.** The "re-paid ~25× per solve"
+   framing (constraint #1 above) was empirically wrong — the digest is
+   baked into the hop-state struct **once at resolve**, never recomputed
+   per golden-section iteration. The digest bench
+   (`rust/crates/degenbot-solvers/benches/digest.rs`, ergo 77LOQT)
+   measured Balancer stable `D` at 1.0–1.6 µs and Curve `xp` at 63–114 ns
+   vs Phase B solves of 82/144 µs — **digest is 0.04–4% of the per-path
+   budget**. The cross-path memoization candidate is empirically rejected
+   (CL caches justifiably: its O(N log N) tick walk is 10×+ heavier; the
+   light families don't amortize, and a stale-digest reorg bug is worse
+   than ~1% wall time). The only surviving reason for the per-solve
+   frozen snapshot is constraint #5 (lock-free solve), which is about
+   *where the digest lives*, not *what it costs*.
+
+2. **Composition-classifier motivation: settled as a negative (constraint #4).**
+   The trait shape (`dyn PathHopSnapshot { simulate; mobius_shape; cl_shape }`)
+   eliminates `enum ResolvedHop` but **does not dissolve the work**: the
+   9-way `solve_path` composition classifier survives as capability-query
+   chains over trait objects, with the same 9 branches and the same
+   information. The per-composition search algorithms (`exact_mobius_solve`,
+   `int_solve_cl_path`, four golden-section arms, the mixed arm) are
+   per-*path-composition* strategies, not per-hop plug-ins — a hop-level
+   trait can't replace that dispatch. The one genuine consolidation
+   (per-family `simulate_*_hop` free fns → `impl PathHopSnapshot::simulate`)
+   is real but small and captured as the cheap inner simulate (sub-µs),
+   not the search (82 µs+). Net: same complexity, more machinery (trait +
+   dyn dispatch + `Box<dyn>` heap-alloc per hop at resolve vs inline enum
+   payload), zero perf gain. Wash-to-loss on depth, clear loss on runtime.
+
+3. **Extensibility motivation: not in favor of the trait.** Adding a DEX
+   family under the enum is three local edits (new variant + new solve
+   arm + new simulate leaf, classifier extends by one branch). Under the
+   trait it's *more* touch points (implement the trait for the new state
+   struct + extend the capability queries + new solve arm + extend the
+   classifier's `if` chain), because the trait's capability surface has to
+   grow alongside the struct. The enum is the lower-friction shape.
+
+### What the hop type still earns
+
+- One aggregate type for the path's hop list (`Vec<ResolvedHop>`, stack-
+  allocated, variant payloads inline — no heap per hop, no vtable indirection
+  on the 25-iter golden-section simulate loop).
+- One classifier site (`solve_path`) where the composition decision lives
+  genuinely — not a leak, the decision itself.
+- The composition dispatch (closed-form Möbius vs CL closed-form vs four
+  golden-section arms vs mixed) is exactly the work a hop-level trait can't
+  replace; the enum makes that dispatch explicit and branch-predictable.
+
+### Candidate future improvement (NOT the dyn trait)
+
+The one genuinely good property of the trait shape — collapsing per-family
+`simulate_*_hop` free functions behind one method signature — is available
+*without* the dyn-dispatch/heap-alloc cost via a private internal trait
+`trait HopSimulate { fn simulate(&self, amount_in: U256) -> U256; }`
+implemented for each hop-state struct and called via static dispatch.
+Even that is cosmetic: the 4 free fns are private to the module and
+already share the identical signature shape. Not pursued.
+
+### Resolution of the original session questions
+
+- *"Accept write contention for faster simultaneous reads (RwLock)?"*
+  Rejected (constraint #3): pump↔solve are sequential within one task,
+  steady-state write contention is near-zero, the `RwLock` exists for
+  cross-task writers (construction, snapshot-verify, Python registration),
+  not pump-write-vs-solve-read. The framing mis-located the cost.
+- *"Memoize digests on state structs across hot pools?"* Rejected (spike
+  77LOQT): the digests are light and invalidate per-swap; the cache would
+  pay reorg-invalidation correctness risk for ~1% wall-time ceiling.
+- *"Remove the hop for structural depth?"* Rejected (this section): the
+  classifier survives any trait shape as capability queries; the enum is
+  lower-friction for DEX-family extensibility; `dyn PathHopSnapshot` adds
+  heap alloc + vtable dispatch for zero perf gain.
+
+The hop-removal research is **closed**. ADR-015 stands as decided
+(relocation complete); the deferred deeper review is resolved here, not
+re-deferred.
