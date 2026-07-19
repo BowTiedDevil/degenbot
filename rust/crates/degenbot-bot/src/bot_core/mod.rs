@@ -11,8 +11,7 @@ use alloy::primitives::{aliases::U112, Address, I256, U256};
 
 use crate::bot_core::snapshot_verify::SnapshotLoadError;
 use ::degenbot_pools::state_history::{
-    JournalError, ReorgJournal, ScalarPriors, TickBefore, V2BlockDelta, V3BlockDelta,
-    V3RestoreResult,
+    JournalError, ScalarPriors, TickBefore, V2BlockDelta, V3BlockDelta, V3RestoreResult,
 };
 use degenbot_uniswap::v2_encoding::{encode_v2_swap, EncodedCall};
 
@@ -197,63 +196,14 @@ impl BotState {
         let pool_id = self.next_pool_id;
         self.next_pool_id += 1;
 
-        let RegisterV2PoolParams {
-            address,
-            token0,
-            token1,
-            reserve0,
-            reserve1,
-            fee_token0,
-            fee_token1,
-            factory,
-            deployer,
-            init_hash,
-            update_block,
-            variant,
-            stable_swap,
-            fee_denominator,
-            ..
-        } = *params;
+        // Construct (identity, state) + genesis journal delta on the state
+        // struct (ADR-014 D6/Q7 — V2 joins its 6 siblings; the construction
+        // + genesis-delta push moved out of `register_v2_pool` into
+        // `V2PoolState::from_params`).
+        let (identity, state) = V2PoolState::from_params(params, self.journal_depth);
 
-        // Seed the reorg journal with a genesis delta (ADR-005 slice 4): the
-        // registration reserves at `update_block`. A `before`-only journal
-        // cannot express "land at registration" or "current state"; the
-        // genesis anchor (before == after == registration reserves) is what
-        // makes `restore_before_block` land on it.
-        let mut journal = ReorgJournal::<V2BlockDelta>::new(self.journal_depth);
-        journal.push_delta(V2BlockDelta {
-            block: update_block,
-            reserve0_before: reserve0,
-            reserve1_before: reserve1,
-            reserve0_after: reserve0,
-            reserve1_after: reserve1,
-        });
-
-        self.pools.insert(
-            pool_id,
-            PoolEntry::V2(
-                V2PoolIdentity {
-                    address,
-                    token0,
-                    token1,
-                    fee_token0,
-                    fee_token1,
-                    factory,
-                    deployer,
-                    init_hash,
-                    variant,
-                    stable_swap,
-                    fee_denominator,
-                },
-                V2PoolState {
-                    reserve0,
-                    reserve1,
-                    update_block,
-                    journal,
-                },
-            ),
-        );
-        self.pool_addresses.insert(address, pool_id);
+        self.pools.insert(pool_id, PoolEntry::V2(identity, state));
+        self.pool_addresses.insert(params.address, pool_id);
 
         Ok(pool_id)
     }
