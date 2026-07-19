@@ -34,6 +34,7 @@ degenbot-db = { path = "../degenbot-db" }
 degenbot-decoders = { path = "../degenbot-decoders" }
 degenbot-rpc = { path = "../degenbot-rpc" }
 degenbot-solidly-math = { path = "../degenbot-solidly-math" }
+degenbot-balancer-math = { path = "../degenbot-balancer-math" }
 degenbot-pools = { path = "../degenbot-pools" }
 degenbot-solvers = { path = "../degenbot-solvers" }
 degenbot-uniswap = { path = "../degenbot-uniswap" }

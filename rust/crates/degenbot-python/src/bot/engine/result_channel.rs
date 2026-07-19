@@ -28,6 +28,7 @@ impl PyArbitrageEngine {
     ///     - "`tick_spacing"`: int (V3/V4 only)
     ///   Returns None if the `path_id` is not found.
     #[pyo3(signature = (path_id))]
+    #[allow(clippy::too_many_lines)]
     fn inspect_path(&self, path_id: u64, py: Python<'_>) -> PyResult<Option<Py<PyDict>>> {
         // Phase 1: Collect pool refs from the path
         let pool_refs: Vec<MixedPoolRef> = {
@@ -114,6 +115,17 @@ impl PyArbitrageEngine {
                     hops.push(HopInfo {
                         hop_type: "Solidly".to_string(),
                         address: None,
+                        pool_id: None,
+                        zero_for_one: pool_ref.zero_for_one,
+                        fee: None,
+                        tick_spacing: None,
+                    });
+                }
+                HopType::BalancerWeighted => {
+                    let id = core.get_balancer_weighted_identity(pool_ref.pool_key);
+                    hops.push(HopInfo {
+                        hop_type: "BalW".to_string(),
+                        address: id.map(|i| format!("{}", i.address)),
                         pool_id: None,
                         zero_for_one: pool_ref.zero_for_one,
                         fee: None,
