@@ -97,7 +97,7 @@ Run hooks on demand with `uv run prek run` / `uv run prek run --all-files`. For 
 
 ## Architecture & Domain Knowledge
 **Start with the [Architectural Vision](#architectural-vision) above** — it states the long-term goal and the canonical references for the three-layer architecture. This section is the index into the remaining focused docs; read the relevant one before naming, editing, or extending a module.
-- **[ADR records](docs/adr/)** — ADR-001 I/O-free pools, ADR-002 pool-type registry singleton, ADR-003 Bot as state owner, ADR-004 CL tickmap typed boundary, ADR-005 Polars-inspired three-layer FFI, ADR-006 per-chain bot orchestrator, ADR-007 pool unregister seam, ADR-008 block state machine, ADR-009 single-source-of-truth versioning, ADR-010 Alembic retention + Rust schema cutover, ADR-011 Auto-healed Alembic retirement (dump-and-restore cutover)
+- **[ADR records](docs/adr/)** — ADR-001 I/O-free pools, ADR-002 pool-type registry singleton, ADR-003 Bot as state owner, ADR-004 CL tickmap typed boundary, ADR-005 Polars-inspired three-layer FFI, ADR-006 per-chain bot orchestrator, ADR-007 pool unregister seam, ADR-008 block state machine, ADR-009 single-source-of-truth versioning, ADR-010 Alembic retention + Rust schema cutover, ADR-011 Auto-healed Alembic retirement (dump-and-restore cutover), ADR-012 spec-bound pool admission, ADR-013 FFI seam is private, ADR-014 pool-state deepening layer, ADR-015 solver-seam relocation (resolve→solve boundary)
 - **[`docs/architecture/`](docs/architecture/)** — long-form architecture
 
 ### Schema ownership & Alembic retention (see [ADR-010](docs/adr/ADR-010-alembic-retention-and-rust-schema-cutover.md))
