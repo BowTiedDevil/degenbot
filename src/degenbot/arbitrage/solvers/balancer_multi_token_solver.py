@@ -1,42 +1,57 @@
-"""Closed-form solver for N-token Balancer weighted pool basket arbitrage."""
+"""Delegating shell for N-token Balancer weighted pool basket arbitrage.
+
+This solver is a **thin driver** over the Rust core
+(``degenbot.arbitrage.solve_balancer_weighted_basket``, re-exported from
+``degenbot._ffi`` per ADR-013) — no math lives here. The closed-form
+(QuantAMM Equation 9, Willetts & Harrington 2024) is owned by
+``degenbot-bot::solvers::balancer_weighted_basket`` and exposed via the PyO3
+wrapper in ``rust/crates/degenbot-python/src/c_api.rs`` (ADR-005 three-layer
+architecture).
+
+The shell does only: ``Solver`` ABC dispatch → arg extraction from
+``BalancerMultiTokenHop`` → GIL-released Rust call → ``SolveResult`` shaping.
+"""
 
 import time
 from typing import override
 
-from degenbot.arbitrage.solvers.balancer_weighted import (
-    BalancerMultiTokenState,
-    solve_balancer_weighted,
-)
+from degenbot.arbitrage import solve_balancer_weighted_basket
 from degenbot.arbitrage.solvers.hop_types import SolveInput, Solver, SolveResult, SolverMethod
 from degenbot.exceptions import OptimizationError
 from degenbot.types.hop_types import BalancerMultiTokenHop, PoolInvariant
 
 
 class BalancerMultiTokenSolver(Solver):
-    """Closed-form solver for N-token Balancer weighted pool basket arbitrage.
+    """Delegating shell for N-token Balancer weighted pool basket arbitrage.
 
-    Uses the QuantAMM closed-form solution (Equation 9) from Willetts &
-    Harrington's paper for optimal multi-token trades on geometric mean
-    market makers.
-
-    Performance:
-    - N=3: ~12μs (12 signatures)
-    - N=4: ~50μs (50 signatures)
-    - N=5: ~180μs (180 signatures)
+    All solve math is owned by the Rust core
+    (``degenbot-bot::solvers::balancer_weighted_basket::solve_balancer_weighted``,
+    QuantAMM Equation 9). This class marshals a ``BalancerMultiTokenHop``
+    into the ``degenbot.arbitrage.solve_balancer_weighted_basket`` call and
+    shapes the integer-trade tuple into a ``SolveResult``.
 
     Unlike pairwise solvers, this finds optimal basket trades where
     multiple tokens can be deposited/withdrawn simultaneously.
 
     Usage:
     -----
+    >>> from fractions import Fraction
     >>> from degenbot.arbitrage.solvers import (
     ...     BalancerMultiTokenSolver,
     ...     SolveInput,
     ... )
     >>> from degenbot.types.hop_types import BalancerMultiTokenHop
     >>> hop = BalancerMultiTokenHop(
-    ...     reserves=(100e18, 2e12, 1e12),  # WETH, USDC, DAI in wei
-    ...     weights=(5e17, 25e16, 25e16),  # 50%, 25%, 25%
+    ...     reserves=(
+    ...         100_000_000_000_000_000_000,
+    ...         2_000_000_000_000,
+    ...         1_000_000_000_000,
+    ...     ),  # WETH, USDC, DAI in wei
+    ...     weights=(
+    ...         500_000_000_000_000_000,
+    ...         250_000_000_000_000_000,
+    ...         250_000_000_000_000_000,
+    ...     ),  # 50%, 25%, 25%
     ...     fee=Fraction(3, 1000),
     ...     market_prices=(2000.0, 1.0, 1.0),  # In USD
     ... )
@@ -73,42 +88,40 @@ class BalancerMultiTokenSolver(Solver):
                 method=SolverMethod.BALANCER_MULTI_TOKEN.name,
             )
 
-        pool = BalancerMultiTokenState(
-            reserves=hop.reserves,
-            weights=hop.weights,
-            fee=hop.fee,
-            decimals=hop.decimals,
-        )
-
         max_input: float | None = None
         if solve_input.max_input is not None:
             max_input = float(solve_input.max_input)
 
-        result = solve_balancer_weighted(pool, hop.market_prices, max_input=max_input)
+        # Delegating shell (ADR-005): extract hop args → Rust core call.
+        # Reserves/weights may arrive as floats (e.g. 100e18 in doctest
+        # fixtures) — coerce to int for the u128/u64 PyO3 boundary.
+        trades, profit, success, _signature, iterations = solve_balancer_weighted_basket(
+            reserves=[int(r) for r in hop.reserves],
+            weights=[int(w) for w in hop.weights],
+            fee_numer=hop.fee.numerator,
+            fee_denom=hop.fee.denominator,
+            decimals=list(hop.decimals),
+            market_prices=list(hop.market_prices),
+            max_input=max_input,
+        )
 
         elapsed_ns = time.perf_counter_ns() - start_ns
 
-        if not result.success:
+        if not success:
             raise OptimizationError(
                 message="No profitable basket trade found",
-                iterations=result.iterations,
+                iterations=iterations,
                 method=SolverMethod.BALANCER_MULTI_TOKEN.name,
             )
 
         # For basket trades, "optimal_input" is the total deposit value
         # and "profit" is the total withdrawal value minus deposits
-        total_deposit = sum(max(0, t) * hop.market_prices[i] for i, t in enumerate(result.trades))
-        profit = result.profit
+        total_deposit = sum(max(0, t) * hop.market_prices[i] for i, t in enumerate(trades))
 
         return SolveResult(
             optimal_input=int(total_deposit),
             profit=int(profit),
-            iterations=result.iterations,
+            iterations=iterations,
             method=SolverMethod.BALANCER_MULTI_TOKEN,
             solve_time_ns=elapsed_ns,
         )
-
-
-# ---------------------------------------------------------------------------
-# ArbSolver — the dispatcher
-# ---------------------------------------------------------------------------
