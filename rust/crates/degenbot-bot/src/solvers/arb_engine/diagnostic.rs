@@ -1316,6 +1316,7 @@ impl ArbitrageEngine {
                 HopType::SolidlyStable => "Solidly",
                 HopType::BalancerWeighted => "BalW",
                 HopType::BalancerStable => "BalS",
+                HopType::CurveStableswap => "Crv",
             })
             .collect();
         snapshot.path_type = type_tags.join("-");
@@ -1423,7 +1424,8 @@ fn thread_solver_result_and_recompute(
                 super::HopType::V2
                 | super::HopType::SolidlyStable
                 | super::HopType::BalancerWeighted
-                | super::HopType::BalancerStable => None,
+                | super::HopType::BalancerStable
+                | super::HopType::CurveStableswap => None,
             });
         populate_v3v4_recompute_full(hop, amount_in, solver_out, expected_out_engine);
     }
@@ -1500,7 +1502,10 @@ fn build_engine_pool_state(
         // (task 2OWLDL/DMPSNG). Until then, a Solidly hop records a
         // "not yet wired" placeholder; same for Balancer stable and weighted
         // — the path is still solvable via the other hops' diagnostic data.
-        HopType::SolidlyStable | HopType::BalancerWeighted | HopType::BalancerStable => None,
+        HopType::SolidlyStable
+        | HopType::BalancerWeighted
+        | HopType::BalancerStable
+        | HopType::CurveStableswap => None,
     }
 }
 

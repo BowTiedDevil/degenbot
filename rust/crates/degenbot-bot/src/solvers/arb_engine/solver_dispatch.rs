@@ -4,9 +4,9 @@ use alloy::primitives::{U256, U512};
 use rayon::prelude::*;
 
 use super::{
-    ArbitrageEngine, BalancerStableHopState, BalancerWeightedHopState, BlockMetadata, HashMap,
-    HashSet, HopType, MixedPoolRef, ResolvedHop, ResolvedMixedPath, SolidlyHopState,
-    SolvePathResult, INT128_MAX,
+    ArbitrageEngine, BalancerStableHopState, BalancerWeightedHopState, BlockMetadata,
+    CurveStableswapHopState, HashMap, HashSet, HopType, MixedPoolRef, ResolvedHop,
+    ResolvedMixedPath, SolidlyHopState, SolvePathResult, INT128_MAX,
 };
 
 impl ArbitrageEngine {
@@ -184,6 +184,16 @@ impl ArbitrageEngine {
                 ResolvedHop::V2 { .. } | ResolvedHop::BalancerStable { .. }
             )
         });
+        let has_curve = resolved
+            .hops
+            .iter()
+            .any(|h| matches!(h, ResolvedHop::CurveStableswap { .. }));
+        let all_v2_or_curve = resolved.hops.iter().all(|h| {
+            matches!(
+                h,
+                ResolvedHop::V2 { .. } | ResolvedHop::CurveStableswap { .. }
+            )
+        });
 
         let result = if all_v2 {
             let int_hops: Vec<_> = resolved
@@ -282,6 +292,13 @@ impl ArbitrageEngine {
             Self::solve_balancer_stable_path_int(resolved)
         } else if has_balancer_stable {
             // A stable hop alongside a CL or weighted hop — out of scope.
+            None
+        } else if all_v2_or_curve && has_curve {
+            // All-V2-or-Curve with ≥1 Curve hop — the Möbius precheck +
+            // golden-section solve over the Curve stableswap math leaf.
+            Self::solve_curve_path_int(resolved)
+        } else if has_curve {
+            // A Curve hop alongside a CL or Balancer hop — out of scope.
             None
         } else {
             // Mixed V2 + CL (V3 or V4)
@@ -1128,6 +1145,216 @@ impl ArbitrageEngine {
         }
     }
 
+    /// Curve stableswap solve — Möbius precheck + golden-section search,
+    /// mirroring the Balancer stable solve with the Curve stableswap math
+    /// leaf (`stableswap_get_y` + fee/rate conversion).
+    #[allow(clippy::too_many_lines)]
+    fn solve_curve_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
+        use ::degenbot_solvers::mobius_int::compute_int_mobius_coefficients;
+        use ::degenbot_solvers::mobius_int_exact::compute_mobius_model_optimal_input;
+        use degenbot_v2_math::IntHopState;
+
+        let hops = &resolved.hops;
+
+        // V2-equivalent IntHopState per hop: Curve hops use xp[idx_in]/xp[idx_out]
+        // + the retained fee fraction; V2 hops pass through unchanged.
+        let v2_equiv: Vec<IntHopState> = hops
+            .iter()
+            .map(Self::curve_hop_v2_equiv)
+            .collect::<Option<Vec<_>>>()?;
+
+        let coeffs = compute_int_mobius_coefficients(&v2_equiv).ok()?;
+        if !coeffs.is_profitable {
+            return None;
+        }
+        let x_mobius = compute_mobius_model_optimal_input(&coeffs);
+
+        let one = U256::from(1u64);
+        let five = U256::from(5u64);
+        let max_reserve = v2_equiv
+            .iter()
+            .map(|h| h.reserve_in)
+            .max()
+            .unwrap_or(U256::ZERO);
+        if max_reserve.is_zero() {
+            return None;
+        }
+        let mut x_low = one;
+        let mut x_high = max_reserve;
+        if !x_mobius.is_zero() {
+            let x_center = x_mobius.min(x_high);
+            x_low = x_low.max(x_center / five);
+            x_high = x_high.min(x_center.saturating_mul(five));
+        }
+        if x_high <= x_low {
+            let best_input = Self::curve_brute_force_best(hops, x_low)?;
+            return Self::curve_build_result(hops, best_input);
+        }
+
+        let phi_num = U256::from(6_180_339_887_498_949u64);
+        let phi_den = U256::from(10_000_000_000_000_000u64);
+        let phi_span = |lo: U256, hi: U256| -> U256 {
+            let d = U512::from(hi - lo);
+            let scaled = d * U512::from(phi_num) / U512::from(phi_den);
+            ::degenbot_solvers::mobius_int_exact::u512_to_u256_internal(scaled)
+        };
+        let mut x1 = x_high - phi_span(x_low, x_high);
+        let mut x2 = x_low + phi_span(x_low, x_high);
+        let mut p1 = Self::simulate_curve_path(x1, hops).saturating_sub(x1);
+        let mut p2 = Self::simulate_curve_path(x2, hops).saturating_sub(x2);
+
+        for _ in 0..Self::SOLIDLY_GOLDEN_SECTION_ITERATIONS {
+            if p1 < p2 {
+                x_low = x1;
+                x1 = x2;
+                p1 = p2;
+                x2 = x_low + phi_span(x_low, x_high);
+                p2 = Self::simulate_curve_path(x2, hops).saturating_sub(x2);
+            } else {
+                x_high = x2;
+                x2 = x1;
+                p2 = p1;
+                x1 = x_high - phi_span(x_low, x_high);
+                p1 = Self::simulate_curve_path(x1, hops).saturating_sub(x1);
+            }
+        }
+
+        let x_opt = (x_low + x_high) / U256::from(2u64);
+        let best_input = Self::curve_brute_force_best(hops, x_opt)?;
+        Self::curve_build_result(hops, best_input)
+    }
+
+    /// Build the full `SolvePathResult` from the best input.
+    fn curve_build_result(hops: &[ResolvedHop], best_input: U256) -> Option<SolvePathResult> {
+        let best_profit = Self::simulate_curve_path(best_input, hops).saturating_sub(best_input);
+        if best_profit.is_zero() {
+            return None;
+        }
+        let hop_outputs = Self::simulate_curve_path_outputs(best_input, hops);
+        let consumed_inputs: Vec<U256> = std::iter::once(best_input)
+            .chain(
+                hop_outputs
+                    .iter()
+                    .take(hop_outputs.len().saturating_sub(1))
+                    .copied(),
+            )
+            .collect();
+        Some(SolvePathResult {
+            optimal_input: best_input,
+            profit: best_profit,
+            hop_outputs,
+            consumed_inputs,
+        })
+    }
+
+    /// V2-equivalent [`IntHopState`] for a Curve stableswap hop.
+    fn curve_hop_v2_equiv(hop: &ResolvedHop) -> Option<degenbot_v2_math::IntHopState> {
+        use degenbot_v2_math::IntHopState;
+        match hop {
+            ResolvedHop::V2 { state } => Some(state.clone()),
+            ResolvedHop::CurveStableswap { state } => {
+                // Curve fee is fee/fee_denom; gamma = 1 - fee/fee_denom.
+                // IntHopState wants gamma_numer/fee_denom.
+                let gn: u64 = state.fee_denom.saturating_sub(state.fee).try_into().ok()?;
+                let fd: u64 = state.fee_denom.try_into().ok()?;
+                Some(IntHopState::new(
+                    state.xp[state.token_index_in],
+                    state.xp[state.token_index_out],
+                    gn,
+                    fd,
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    /// Simulate the full path and return the final output.
+    fn simulate_curve_path(x: U256, hops: &[ResolvedHop]) -> U256 {
+        let outputs = Self::simulate_curve_path_outputs(x, hops);
+        outputs.last().copied().unwrap_or(U256::ZERO)
+    }
+
+    /// Simulate the full path and return each hop's output.
+    fn simulate_curve_path_outputs(x: U256, hops: &[ResolvedHop]) -> Vec<U256> {
+        let mut amount = x;
+        let mut outputs = Vec::with_capacity(hops.len());
+        for hop in hops {
+            if amount.is_zero() {
+                outputs.push(U256::ZERO);
+                continue;
+            }
+            let out = match hop {
+                ResolvedHop::V2 { state } => state.swap(amount).unwrap_or(U256::ZERO),
+                ResolvedHop::CurveStableswap { state } => Self::simulate_curve_hop(amount, state),
+                _ => U256::ZERO,
+            };
+            outputs.push(out);
+            amount = out;
+        }
+        outputs
+    }
+
+    /// Simulate a single Curve stableswap hop (rate-adjusted XP, `get_y`,
+    /// fee+rate conversion).
+    fn simulate_curve_hop(amount_in: U256, hop: &CurveStableswapHopState) -> U256 {
+        use degenbot_curve_math::stableswap::stableswap_get_y;
+        if amount_in.is_zero() {
+            return U256::ZERO;
+        }
+        let i = hop.token_index_in;
+        let j = hop.token_index_out;
+        // Rate-adjust the input: x = xp[i] + dx * rate_in / PRECISION
+        let x = hop.xp[i]
+            .saturating_add(amount_in.saturating_mul(hop.rate_multiplier_in) / hop.precision);
+        let Ok(y) = stableswap_get_y(
+            i,
+            j,
+            x,
+            &hop.xp,
+            hop.amp,
+            hop.n_coins,
+            hop.a_precision,
+            hop.y_variant,
+            hop.d_variant,
+        ) else {
+            return U256::ZERO;
+        };
+        // dy = xp[j] - y - 1
+        let dy_raw = hop.xp[j].saturating_sub(y).saturating_sub(U256::from(1u64));
+        // Fee on dy, then rate convert: (dy - fee) * PRECISION / rate_out
+        let fee = dy_raw.saturating_mul(hop.fee) / hop.fee_denom;
+        let dy_after_fee = dy_raw.saturating_sub(fee);
+        // Rate-convert from XP-space to native token space
+        dy_after_fee.saturating_mul(hop.precision) / hop.rate_multiplier_out
+    }
+
+    /// ±3 integer brute-force verify sweep.
+    fn curve_brute_force_best(hops: &[ResolvedHop], start: U256) -> Option<U256> {
+        let mut best_profit = Self::simulate_curve_path(start, hops).saturating_sub(start);
+        let mut best_input = start;
+        for delta in 1u64..=3 {
+            let cand_up = best_input.saturating_add(U256::from(delta));
+            let profit_up = Self::simulate_curve_path(cand_up, hops).saturating_sub(cand_up);
+            if profit_up > best_profit {
+                best_profit = profit_up;
+                best_input = cand_up;
+            }
+            if best_input >= U256::from(delta) {
+                let cand_dn = best_input - U256::from(delta);
+                let profit_dn = Self::simulate_curve_path(cand_dn, hops).saturating_sub(cand_dn);
+                if profit_dn > best_profit {
+                    best_profit = profit_dn;
+                    best_input = cand_dn;
+                }
+            }
+        }
+        if best_profit.is_zero() {
+            None
+        } else {
+            Some(best_input)
+        }
+    }
+
     ///
     /// `core` is the locked [`BotState`] snapshot to read V2 state from
     /// (ADR-003). V3/V4 hops still read the per-family block engines; their
@@ -1416,6 +1643,65 @@ impl ArbitrageEngine {
                             swap_fee: U256::from(id.swap_fee),
                             scaling_factor_in: id.scaling_factors[raw_idx_in],
                             scaling_factor_out: id.scaling_factors[raw_idx_out],
+                        },
+                    });
+                }
+                HopType::CurveStableswap => {
+                    let Some(id) = core.get_curve_identity(pool_ref.pool_key) else {
+                        return; // Missing pool → invalid
+                    };
+                    let Some(state) = core.get_curve_pool(pool_ref.pool_key) else {
+                        return; // Missing pool → invalid
+                    };
+                    if id.tokens.len() < 2 {
+                        return; // Can't form a pairwise hop
+                    }
+                    let (raw_idx_in, raw_idx_out) = if pool_ref.zero_for_one {
+                        (0, 1)
+                    } else {
+                        (1, 0)
+                    };
+                    // Curve constants
+                    let precision = U256::from(10u64).pow(U256::from(18u64));
+                    let fee_denom = U256::from(10u64).pow(U256::from(10u64));
+                    let a_precision = U256::from(100u64);
+                    let amp = U256::from(id.a_coefficient).saturating_mul(a_precision);
+                    let n_coins = U256::from(id.tokens.len() as u64);
+                    // Build rate-adjusted XP: xp[i] = balances[i] * rate_multipliers[i] / PRECISION
+                    let xp: Vec<U256> = state
+                        .balances
+                        .iter()
+                        .zip(id.rate_multipliers.iter())
+                        .map(|(b, rm)| b.saturating_mul(*rm) / precision)
+                        .collect();
+                    if raw_idx_in >= xp.len() || raw_idx_out >= xp.len() {
+                        return;
+                    }
+                    let Some(y_variant) =
+                        degenbot_curve_math::stableswap::YVariant::try_from_u8(id.y_variant)
+                    else {
+                        return;
+                    };
+                    let Some(d_variant) =
+                        degenbot_curve_math::stableswap::DVariant::try_from_u8(id.d_variant)
+                    else {
+                        return;
+                    };
+                    resolved.hops.push(ResolvedHop::CurveStableswap {
+                        state: CurveStableswapHopState {
+                            amp,
+                            a_precision,
+                            xp,
+                            token_index_in: raw_idx_in,
+                            token_index_out: raw_idx_out,
+                            n_coins,
+                            fee: U256::from(id.fee),
+                            fee_denom,
+                            precision,
+                            rate_multiplier_in: id.rate_multipliers[raw_idx_in],
+                            rate_multiplier_out: id.rate_multipliers[raw_idx_out],
+                            y_variant,
+                            d_variant,
                         },
                     });
                 }

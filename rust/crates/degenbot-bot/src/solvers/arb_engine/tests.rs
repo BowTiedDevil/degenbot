@@ -1774,7 +1774,10 @@ mod tests {
                 HopType::V4 => {
                     engine.dirty_v4.insert(pool_key);
                 }
-                HopType::SolidlyStable | HopType::BalancerWeighted | HopType::BalancerStable => {
+                HopType::SolidlyStable
+                | HopType::BalancerWeighted
+                | HopType::BalancerStable
+                | HopType::CurveStableswap => {
                     // No dirty set for Solidly/Balancer until the pump wires
                     // it; matches the resolve short-circuit.
                 }
@@ -3839,6 +3842,231 @@ mod tests {
         assert!(
             ArbitrageEngine::solve_path(resolved).is_none(),
             "Balancer stable + CL must not solve"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Curve stableswap solve branch (RPDDWH)
+    // -----------------------------------------------------------------------
+
+    /// Two-token Curve stableswap pool params (standard, raw balances, no
+    /// rates, no lending). amp=100 (raw), fee=4e6 (0.04% of 1e10).
+    fn curve_stable_params(
+        addr: Address,
+        balance0: u128,
+        balance1: u128,
+    ) -> crate::bot_core::RegisterCurvePoolParams {
+        let one_e18 = U256::from(10u64).pow(U256::from(18u64));
+        let precision = one_e18; // PRECISION = 1e18
+        crate::bot_core::RegisterCurvePoolParams {
+            address: addr,
+            tokens: vec![Address::repeat_byte(0x01), Address::repeat_byte(0x02)],
+            a_coefficient: 10,
+            fee: 4_000_000, // 0.04% of 1e10
+            admin_fee: 0,
+            rate_multipliers: vec![precision, precision], // identity rates
+            balances: vec![
+                U256::from(balance0) * one_e18,
+                U256::from(balance1) * one_e18,
+            ],
+            update_block: 0,
+            swap_style: 0,         // STANDARD
+            lending_rate_style: 0, // NONE
+            d_variant: 1,          // Standard
+            y_variant: 1,          // Standard
+            yd_variant: 1,
+            base_pool: None,
+            initial_a_coefficient: None,
+            future_a_coefficient: None,
+            initial_a_coefficient_time: None,
+            future_a_coefficient_time: None,
+            create_timestamp: None,
+            fee_gamma: None,
+            mid_fee: None,
+            offpeg_fee_multiplier: None,
+            out_fee: None,
+            gamma: None,
+            lp_token: None,
+            use_lending: vec![false, false],
+            precision_multipliers: vec![precision, precision],
+            tokens_underlying: None,
+            metapool_rate_style: 0,
+            metapool_underlying_style: 0,
+            data_provider: None,
+        }
+    }
+
+    #[test]
+    fn curve_stable_finds_profitable_arb() {
+        let mut engine = ArbitrageEngine::new();
+
+        let pool_a = engine
+            .core
+            .write()
+            .register_curve_pool(&curve_stable_params(
+                Address::from([0xe1u8; 20]),
+                1000,
+                2000,
+            ));
+        let pool_b = engine
+            .core
+            .write()
+            .register_curve_pool(&curve_stable_params(
+                Address::from([0xe2u8; 20]),
+                1000,
+                1950,
+            ));
+
+        engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: pool_a,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: pool_b,
+                    zero_for_one: false,
+                },
+            ])
+            .unwrap();
+
+        let results = engine.solve_all();
+        eprintln!("results: {}", results.len());
+        assert!(
+            !results.is_empty(),
+            "should find profitable Curve stableswap arb"
+        );
+        let r = results.values().next().unwrap();
+        assert!(
+            !r.optimal_input.is_zero(),
+            "optimal input should be non-zero"
+        );
+        assert!(!r.profit.is_zero(), "profit should be non-zero");
+    }
+
+    #[test]
+    fn curve_stable_unprofitable_path_returns_none() {
+        let mut engine = ArbitrageEngine::new();
+
+        let pool_a = engine
+            .core
+            .write()
+            .register_curve_pool(&curve_stable_params(
+                Address::from([0xf1u8; 20]),
+                1000,
+                2000,
+            ));
+        let pool_b = engine
+            .core
+            .write()
+            .register_curve_pool(&curve_stable_params(
+                Address::from([0xf2u8; 20]),
+                1000,
+                2000,
+            ));
+
+        engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: pool_a,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: pool_b,
+                    zero_for_one: false,
+                },
+            ])
+            .unwrap();
+
+        let results = engine.solve_all();
+        assert!(
+            results.is_empty(),
+            "identical Curve pools should not produce an arb"
+        );
+    }
+
+    #[test]
+    fn curve_stable_mixed_with_v2_finds_arb() {
+        let mut engine = ArbitrageEngine::new();
+        let one_e18 = U256::from(10u64).pow(U256::from(18u64));
+
+        let v2 = engine.register_v2_pool(
+            Address::from([0xa5u8; 20]),
+            (U256::from(1000u64) * one_e18).to::<U112>(),
+            (U256::from(2000u64) * one_e18).to::<U112>(),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let cs = engine
+            .core
+            .write()
+            .register_curve_pool(&curve_stable_params(
+                Address::from([0xa6u8; 20]),
+                1000,
+                1500,
+            ));
+
+        engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: v2,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: cs,
+                    zero_for_one: false,
+                },
+            ])
+            .unwrap();
+
+        let results = engine.solve_all();
+        assert!(!results.is_empty(), "should find V2+Curve mixed arb");
+    }
+
+    #[test]
+    fn curve_stable_rejects_mixed_with_cl() {
+        use std::sync::Arc;
+        let core = Arc::new(parking_lot::RwLock::new(crate::bot_core::BotState::new()));
+
+        let cs = core.write().register_curve_pool(&curve_stable_params(
+            Address::from([0xb4u8; 20]),
+            1000,
+            2000,
+        ));
+        let v3 = core
+            .write()
+            .register_v3_pool(&RegisterV3PoolParams {
+                address: Address::from([0xc4u8; 20]),
+                token0: Address::repeat_byte(0x01),
+                token1: Address::repeat_byte(0x02),
+                fee: 500,
+                tick_spacing: 10,
+                sqrt_price_x96: U256::from(1u64) << 96,
+                tick: 0,
+                liquidity: 1_000_000,
+                tick_data: HashMap::new(),
+                update_block: 0,
+                ..Default::default()
+            })
+            .expect("test setup: V3 registration");
+
+        let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
+        let path_id = engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: cs,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v3,
+                    zero_for_one: false,
+                },
+            ])
+            .expect("path registers (resolve succeeds per-arm)");
+        let resolved = &engine.path_resolved[&path_id];
+        assert!(
+            ArbitrageEngine::solve_path(resolved).is_none(),
+            "Curve + CL must not solve"
         );
     }
 }
