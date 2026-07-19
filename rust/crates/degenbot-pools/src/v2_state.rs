@@ -151,6 +151,51 @@ impl From<crate::spec_bounds::SpecViolation> for RegisterV2PoolError {
 }
 
 impl V2PoolState {
+    /// Construct `(identity, state)` from registration params + journal depth
+    /// (ADR-014 D6/Q7 — V2 joins its 6 siblings).
+    ///
+    /// Builds the immutable [`V2PoolIdentity`] from params + the mutable
+    /// [`V2PoolState`] (reserves + `update_block` + journal), and seeds the
+    /// journal with a genesis anchor (`before == after == registration`
+    /// reserves, at `update_block`) so [`ReorgJournal::restore_before_block`]
+    /// can land on the registration state — the same anchor discipline as
+    /// the other 6 families. `register_v2_pool` delegates here after
+    /// spec-validation + dedup + `pool_id` assignment.
+    #[must_use]
+    pub fn from_params(
+        params: &RegisterV2PoolParams,
+        journal_depth: usize,
+    ) -> (V2PoolIdentity, V2PoolState) {
+        let identity = V2PoolIdentity {
+            address: params.address,
+            token0: params.token0,
+            token1: params.token1,
+            fee_token0: params.fee_token0,
+            fee_token1: params.fee_token1,
+            factory: params.factory,
+            deployer: params.deployer,
+            init_hash: params.init_hash,
+            variant: params.variant,
+            stable_swap: params.stable_swap,
+            fee_denominator: params.fee_denominator,
+        };
+        let mut journal = ReorgJournal::<V2BlockDelta>::new(journal_depth);
+        journal.push_delta(V2BlockDelta {
+            block: params.update_block,
+            reserve0_before: params.reserve0,
+            reserve1_before: params.reserve1,
+            reserve0_after: params.reserve0,
+            reserve1_after: params.reserve1,
+        });
+        let state = Self {
+            reserve0: params.reserve0,
+            reserve1: params.reserve1,
+            update_block: params.update_block,
+            journal,
+        };
+        (identity, state)
+    }
+
     /// Apply a V2 `Sync` event to this pool's reserves, capturing the prior
     /// reserves into the reorg journal (ADR-014 D1 — relocated from
     /// `BotState::apply_v2_sync_by_pool_id`).
@@ -227,5 +272,39 @@ mod apply_inherent_tests {
         );
         assert_eq!(state.reserve0, U112::from(160));
         assert_eq!(state.reserve1, U112::from(260));
+    }
+
+    #[test]
+    fn from_params_builds_identity_state_and_genesis_journal() {
+        // What: V2PoolState::from_params must (1) return an identity whose
+        // fields match params, (2) return a state whose reserves + update_block
+        // match params, (3) seed a genesis V2BlockDelta (before == after ==
+        // registration reserves) at update_block — the anchor
+        // restore_before_block lands on. V2 joins its 6 siblings (Q7).
+        let params = RegisterV2PoolParams {
+            address: Address::repeat_byte(0xAB),
+            token0: Address::repeat_byte(0x01),
+            token1: Address::repeat_byte(0x02),
+            reserve0: U112::from(1_000u64),
+            reserve1: U112::from(2_000u64),
+            update_block: 42,
+            variant: DexVariant::UniswapV2,
+            ..RegisterV2PoolParams::default()
+        };
+
+        let (identity, state) = V2PoolState::from_params(&params, 8);
+
+        // (1) identity matches params.
+        assert_eq!(identity.address, params.address);
+        assert_eq!(identity.token0, params.token0);
+        assert_eq!(identity.token1, params.token1);
+        assert_eq!(identity.variant, params.variant);
+        // (2) state matches params.
+        assert_eq!(state.reserve0, U112::from(1_000u64));
+        assert_eq!(state.reserve1, U112::from(2_000u64));
+        assert_eq!(state.update_block, 42);
+        // (3) genesis journal delta at update_block, before == after.
+        assert_eq!(state.journal.len(), 1);
+        assert_eq!(state.journal.newest_block(), Some(42));
     }
 }
