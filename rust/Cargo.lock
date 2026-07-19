@@ -2199,6 +2199,7 @@ dependencies = [
  "degenbot-rpc",
  "degenbot-simulation",
  "degenbot-solidly-math",
+ "degenbot-solvers",
  "degenbot-submission",
  "degenbot-uniswap",
  "futures-util",
