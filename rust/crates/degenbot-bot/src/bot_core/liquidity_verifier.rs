@@ -24,10 +24,13 @@
 
 use std::collections::HashMap;
 
-use alloy::dyn_abi::DynSolValue;
-use alloy::primitives::{Address, Bytes, B256, I256, U256};
+use alloy::primitives::{Address, Bytes, U256};
 
 use crate::bot_core::{TickMap, V3PoolIdentity, V3PoolState, V4PoolIdentity, V4PoolState};
+use degenbot_rpc::abi::{
+    decode_tick_bitmap, decode_tick_data, decode_v4_tick_bitmap, decode_v4_tick_data,
+    encode_tick_bitmap, encode_tick_data, encode_v4_tick_bitmap, encode_v4_tick_data,
+};
 use degenbot_rpc::multicall3::{multicall3_batch, MulticallResult};
 use degenbot_rpc::provider::AlloyProvider;
 
@@ -97,22 +100,12 @@ impl From<VerificationMismatch> for LiquidityVerifyError {
     }
 }
 
-// ---------------------------------------------------------------------------
-// ABI selectors
-// ---------------------------------------------------------------------------
-
-/// `ticks(int24)` — returns (uint128, int128, uint256, uint256, uint256, uint256, uint256, uint256)
-const V3_TICKS_SELECTOR: [u8; 4] = [0xf3, 0x0d, 0xba, 0x93];
-
-/// `tickBitmap(int16)` — returns uint256
-const V3_TICK_BITMAP_SELECTOR: [u8; 4] = [0x53, 0x39, 0xc2, 0x96];
-
-/// `getTickBitmap(bytes32,int16)` — returns uint256
-const STATE_VIEW_GET_TICK_BITMAP_SELECTOR: [u8; 4] = [0x1c, 0x7c, 0xcb, 0x4c];
-
-/// `getTickLiquidity(bytes32,int24)` — returns (uint128, int128)
-const STATE_VIEW_GET_TICK_LIQUIDITY_SELECTOR: [u8; 4] = [0xca, 0xed, 0xab, 0x54];
-
+// ── ABI encode/decode primitives live in `degenbot_rpc::abi` (the single deep
+// home for onchain pool-state probing — see CONTEXT.md "Onchain pool-state
+// probe"). This module keeps only the per-consumer adapter: `require_success`
+// + the `ProviderError::DecodingError → LiquidityVerifyError::Mismatch` map
+// (the revert-vs-mismatch distinction lives in `result.success`, inspected
+// before decode, so it survives delegation unchanged).
 // ---------------------------------------------------------------------------
 // Tick math helpers (matching Uniswap V4 Solidity)
 // ---------------------------------------------------------------------------
@@ -176,18 +169,7 @@ pub async fn verify_v3_liquidity_map<S: std::hash::BuildHasher>(
     ticks.sort_unstable();
     let ticks_calls: Vec<(Address, Bytes)> = ticks
         .iter()
-        .map(|&tick_idx| {
-            (
-                pool_address,
-                encode_calldata(
-                    V3_TICKS_SELECTOR,
-                    &[DynSolValue::Int(
-                        I256::unchecked_from(i128::from(tick_idx)),
-                        24,
-                    )],
-                ),
-            )
-        })
+        .map(|&tick_idx| (pool_address, Bytes::from(encode_tick_data(tick_idx))))
         .collect();
     let results = multicall3_batch(provider, &ticks_calls, Some(block_number))
         .await
@@ -257,13 +239,7 @@ pub async fn verify_v4_liquidity_map<S: std::hash::BuildHasher>(
         .map(|&tick_idx| {
             (
                 state_view,
-                encode_calldata(
-                    STATE_VIEW_GET_TICK_LIQUIDITY_SELECTOR,
-                    &[
-                        DynSolValue::FixedBytes(B256::from(pool_id), 32),
-                        DynSolValue::Int(I256::unchecked_from(i128::from(tick_idx)), 24),
-                    ],
-                ),
+                Bytes::from(encode_v4_tick_data(&pool_id, tick_idx)),
             )
         })
         .collect();
@@ -365,18 +341,7 @@ async fn verify_v3_pool<T: TickMap + ?Sized>(
     // genuine RPC/contract trouble, not a zero bitmap).
     let bitmap_calls: Vec<(Address, Bytes)> = words
         .iter()
-        .map(|&word| {
-            (
-                pool_addr,
-                encode_calldata(
-                    V3_TICK_BITMAP_SELECTOR,
-                    &[DynSolValue::Int(
-                        I256::unchecked_from(i128::from(i64::from(word))),
-                        16,
-                    )],
-                ),
-            )
-        })
+        .map(|&word| (pool_addr, Bytes::from(encode_tick_bitmap(word))))
         .collect();
     let bitmap_results = multicall3_batch(provider, &bitmap_calls, block_number)
         .await
@@ -417,18 +382,7 @@ async fn verify_v3_pool<T: TickMap + ?Sized>(
     ticks.sort_unstable();
     let ticks_calls: Vec<(Address, Bytes)> = ticks
         .iter()
-        .map(|&tick_idx| {
-            (
-                pool_addr,
-                encode_calldata(
-                    V3_TICKS_SELECTOR,
-                    &[DynSolValue::Int(
-                        I256::unchecked_from(i128::from(tick_idx)),
-                        24,
-                    )],
-                ),
-            )
-        })
+        .map(|&tick_idx| (pool_addr, Bytes::from(encode_tick_data(tick_idx))))
         .collect();
     let ticks_results = multicall3_batch(provider, &ticks_calls, block_number)
         .await
@@ -516,15 +470,14 @@ fn decode_v3_bitmap_result(
             ),
         });
     }
-    if result.return_data.len() < 32 {
-        return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
+    decode_tick_bitmap(&result.return_data).map_err(|_| {
+        LiquidityVerifyError::Mismatch(VerificationMismatch {
             message: format!(
                 "V3 pool {pool_addr} {block_tag}: tickBitmap({word}) returned {} bytes, expected at least 32",
                 result.return_data.len()
             ),
-        }));
-    }
-    Ok(decode_uint256(&result.return_data[0..32]))
+        })
+    })
 }
 
 /// Decode a `ticks(tick)` `Multicall3` sub-call result into
@@ -545,22 +498,17 @@ fn decode_v3_ticks_result(
             ),
         });
     }
-    // ticks() returns (uint128 liquidityGross, int128 liquidityNet, ...)
-    // We only need the first two fields.
-    if result.return_data.len() < 64 {
-        return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
+    let (gross, net) = decode_tick_data(&result.return_data).map_err(|_| {
+        LiquidityVerifyError::Mismatch(VerificationMismatch {
             message: format!(
                 "V3 pool {pool_addr} {block_tag}: ticks({tick}) returned {} bytes, expected at least 64",
                 result.return_data.len()
             ),
-        }));
-    }
-    let lg = decode_uint128(&result.return_data[0..32]);
-    let ln = decode_int128(&result.return_data[32..64]);
-    Ok((lg, ln))
+        })
+    })?;
+    Ok((gross.to(), net.try_into().unwrap_or_default()))
 }
 
-/// Call `StateView.getTickLiquidity(bytes32,int24)` and return `(liquidityGross, liquidityNet)`.
 /// Decode a `StateView.getTickBitmap(poolId, word)` Multicall3 sub-call result
 /// into the bitmap word. Preserves the hard-error contract: a reverted
 /// sub-call (`success == false`) is a hard `Rpc` error (the verifier is a hard
@@ -580,15 +528,14 @@ fn decode_v4_bitmap_result(
             ),
         });
     }
-    if result.return_data.len() < 32 {
-        return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
+    decode_v4_tick_bitmap(&result.return_data).map_err(|_| {
+        LiquidityVerifyError::Mismatch(VerificationMismatch {
             message: format!(
                 "V4 pool 0x{pool_id_hex} {block_tag}: getTickBitmap({word}) returned {} bytes, expected at least 32",
                 result.return_data.len()
             ),
-        }));
-    }
-    Ok(decode_uint256(&result.return_data[0..32]))
+        })
+    })
 }
 
 /// Decode a `StateView.getTickLiquidity(poolId, tick)` Multicall3 sub-call
@@ -608,17 +555,15 @@ fn decode_v4_tick_liquidity_result(
             ),
         });
     }
-    if result.return_data.len() < 64 {
-        return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
+    let (gross, net) = decode_v4_tick_data(&result.return_data).map_err(|_| {
+        LiquidityVerifyError::Mismatch(VerificationMismatch {
             message: format!(
                 "V4 pool 0x{pool_id_hex} {block_tag}: getTickLiquidity({tick}) returned {} bytes, expected 64",
                 result.return_data.len()
             ),
-        }));
-    }
-    let gross = decode_uint128(&result.return_data[0..32]);
-    let net = decode_int128(&result.return_data[32..64]);
-    Ok((gross, net))
+        })
+    })?;
+    Ok((gross.to(), net.try_into().unwrap_or_default()))
 }
 
 // ---------------------------------------------------------------------------
@@ -695,13 +640,7 @@ async fn verify_v4_pool<T: TickMap + ?Sized>(
         .map(|&word| {
             (
                 state_view,
-                encode_calldata(
-                    STATE_VIEW_GET_TICK_BITMAP_SELECTOR,
-                    &[
-                        DynSolValue::FixedBytes(B256::from(pool_id_bytes), 32),
-                        DynSolValue::Int(I256::unchecked_from(i128::from(i64::from(word))), 16),
-                    ],
-                ),
+                Bytes::from(encode_v4_tick_bitmap(&pool_id_bytes, word)),
             )
         })
         .collect();
@@ -751,13 +690,7 @@ async fn verify_v4_pool<T: TickMap + ?Sized>(
         .map(|&tick_idx| {
             (
                 state_view,
-                encode_calldata(
-                    STATE_VIEW_GET_TICK_LIQUIDITY_SELECTOR,
-                    &[
-                        DynSolValue::FixedBytes(B256::from(pool_id_bytes), 32),
-                        DynSolValue::Int(I256::unchecked_from(i128::from(tick_idx)), 24),
-                    ],
-                ),
+                Bytes::from(encode_v4_tick_data(&pool_id_bytes, tick_idx)),
             )
         })
         .collect();
@@ -842,44 +775,6 @@ fn collect_bitmap_words<S: std::hash::BuildHasher>(
 }
 
 // ---------------------------------------------------------------------------
-// ABI encoding helper
-// ---------------------------------------------------------------------------
-
-/// Build calldata = selector + ABI-encoded params using Alloy's `DynSolValue`.
-/// This ensures correct sign-extension for negative integers (int16, int24).
-fn encode_calldata(selector: [u8; 4], params: &[DynSolValue]) -> Bytes {
-    let mut out = Vec::with_capacity(4 + 32 * params.len());
-    out.extend_from_slice(&selector);
-    for param in params {
-        out.extend_from_slice(&param.abi_encode());
-    }
-    Bytes::from(out)
-}
-
-// ---------------------------------------------------------------------------
-// ABI decoding helpers
-// ---------------------------------------------------------------------------
-
-/// Decode a uint256 from a 32-byte ABI word.
-fn decode_uint256(word: &[u8]) -> U256 {
-    U256::from_be_bytes::<32>(word.try_into().unwrap_or([0u8; 32]))
-}
-
-/// Decode a uint128 from a 32-byte ABI word (upper 16 bytes ignored).
-fn decode_uint128(word: &[u8]) -> u128 {
-    let mut buf = [0u8; 16];
-    buf.copy_from_slice(&word[16..32]);
-    u128::from_be_bytes(buf)
-}
-
-/// Decode an int128 from a 32-byte ABI word (upper 16 bytes are sign extension).
-fn decode_int128(word: &[u8]) -> i128 {
-    let mut buf = [0u8; 16];
-    buf.copy_from_slice(&word[16..32]);
-    i128::from_be_bytes(buf)
-}
-
-// ---------------------------------------------------------------------------
 // Tests — tick bitmap word/bit calculation
 // ---------------------------------------------------------------------------
 
@@ -887,6 +782,7 @@ fn decode_int128(word: &[u8]) -> i128 {
 mod tests {
     use super::*;
     use crate::bot_core::TickInfo;
+    use alloy::dyn_abi::DynSolValue;
     use alloy::transports::mock::Asserter;
     use std::sync::Arc;
 
@@ -1196,6 +1092,16 @@ mod tests {
     fn ticks_return(gross: u128, net: i128) -> Vec<u8> {
         let mut buf = vec![0u8; 64];
         buf[16..32].copy_from_slice(&gross.to_be_bytes());
+        // ABI sign-extend `int128` to its 256-bit word (the real on-chain
+        // return shape `ticks()` produces). High 16 bytes are the sign
+        // extension: 0xFF for negative, 0x00 otherwise. The home's
+        // `decode_tick_data` reads the full 32-byte word as an `I256`;
+        // a non-sign-extended mock (the pre-slice-A shape) would decode
+        // negative nets as huge positives and trip `try_into::<i128>()`.
+        let sign = if net < 0 { 0xff } else { 0x00 };
+        for b in &mut buf[32..48] {
+            *b = sign;
+        }
         buf[48..64].copy_from_slice(&net.to_be_bytes());
         buf
     }
