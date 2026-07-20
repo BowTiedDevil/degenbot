@@ -81,6 +81,7 @@ pub mod curve_state;
 pub mod int_v3_hop;
 pub mod liquidity_event;
 pub mod liquidity_event_buffer;
+pub mod pool;
 pub mod rate_provider;
 pub mod registry;
 pub mod simulate_swap;
@@ -105,6 +106,8 @@ pub use tick_fetch::{
     BootstrapTickError, BootstrapTickWord, FetchTickWordError, FetchedTickWord, TickBootstrapRpc,
     TickWordFetcher,
 };
+
+pub use pool::{Identity, Pool, ReservePairVariant, ReservePairView, Structure};
 
 /// Liquidity data at an initialized tick.
 ///

@@ -2853,3 +2853,132 @@ fn extract_tick_data(
         })
         .collect())
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Prototype structural `Pool` handle (`PyPool`) — V2 only for now.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Thin Python handle to a pool, exposing a structural (not identity-based)
+/// interface that mirrors the Rust [`degenbot_pools::Pool`] handle.
+#[pyclass(skip_from_py_object, module = "degenbot._ffi")]
+pub struct PyPool {
+    core: Arc<parking_lot::RwLock<BotState>>,
+    pool_id: u64,
+}
+
+impl PyPool {
+    #[allow(dead_code)]
+    pub(crate) const fn new(core: Arc<parking_lot::RwLock<BotState>>, pool_id: u64) -> Self {
+        Self { core, pool_id }
+    }
+
+    fn with_pool<T>(&self, f: impl FnOnce(degenbot_pools::Pool<'_>) -> T) -> T {
+        let core = self.core.read();
+        let entry = core
+            .pool_entry(self.pool_id)
+            .expect("PyPool references a registered pool");
+        f(degenbot_pools::Pool::new(entry))
+    }
+}
+
+#[pymethods]
+impl PyPool {
+    /// Structural family: one of ``"reserve_pair"``, ``"concentrated_liquidity"``,
+    /// ``"balance_vector"``.
+    fn structure(&self) -> String {
+        self.with_pool(|pool| match pool.structure() {
+            degenbot_pools::Structure::ReservePair => "reserve_pair".to_string(),
+            degenbot_pools::Structure::ConcentratedLiquidity => {
+                "concentrated_liquidity".to_string()
+            }
+            degenbot_pools::Structure::BalanceVector => "balance_vector".to_string(),
+        })
+    }
+
+    /// Identity as a simple tuple. For reserve-pair pools:
+    /// ``("reserve_pair", variant)`` where ``variant`` is ``"uniswap_v2"`` or
+    /// ``"aerodrome_v2"``. Other families return their family name only.
+    fn identity(&self) -> (String, Option<String>) {
+        self.with_pool(|pool| match pool.identity() {
+            degenbot_pools::Identity::ReservePair { variant } => (
+                "reserve_pair".to_string(),
+                Some(match variant {
+                    degenbot_pools::ReservePairVariant::UniswapV2 => "uniswap_v2".to_string(),
+                    degenbot_pools::ReservePairVariant::AerodromeV2 { stable } => {
+                        format!(
+                            "aerodrome_v2_{}",
+                            if stable { "stable" } else { "volatile" }
+                        )
+                    }
+                }),
+            ),
+            degenbot_pools::Identity::ConcentratedLiquidity => {
+                ("concentrated_liquidity".to_string(), None)
+            }
+            degenbot_pools::Identity::BalanceVector => ("balance_vector".to_string(), None),
+        })
+    }
+
+    /// Reserve-pair structural view. Raises ``ValueError`` for non-reserve-pair pools.
+    fn reserve_pair(&self) -> PyResult<PyReservePairView> {
+        self.with_pool(|pool| match pool.reserve_pair() {
+            Some(view) => Ok(PyReservePairView {
+                token0: address_utils::address_to_checksum_string(&view.token0()),
+                token1: address_utils::address_to_checksum_string(&view.token1()),
+                reserve0: view.reserve0(),
+                reserve1: view.reserve1(),
+            }),
+            None => Err(pyo3::exceptions::PyValueError::new_err(
+                "pool is not a reserve-pair pool",
+            )),
+        })
+    }
+
+    /// Exact-input swap: return output amount, or ``None`` if not computable.
+    fn calculate_tokens_out(
+        &self,
+        py: Python<'_>,
+        zero_for_one: bool,
+        amount_in: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        let amount_in = crate::conversion::alloy::extract_python_u256(amount_in)?;
+        let out = self.with_pool(|pool| pool.calculate_tokens_out(zero_for_one, amount_in));
+        Ok(out.map(|v| {
+            crate::conversion::alloy::u256_to_py(py, &v)
+                .unwrap()
+                .unbind()
+        }))
+    }
+}
+
+/// Read-only reserve-pair view exposed to Python.
+#[pyclass(module = "degenbot._ffi")]
+pub struct PyReservePairView {
+    token0: String,
+    token1: String,
+    reserve0: U256,
+    reserve1: U256,
+}
+
+#[pymethods]
+impl PyReservePairView {
+    #[getter]
+    fn token0(&self) -> String {
+        self.token0.clone()
+    }
+
+    #[getter]
+    fn token1(&self) -> String {
+        self.token1.clone()
+    }
+
+    #[getter]
+    fn reserve0(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        crate::conversion::alloy::u256_to_py(py, &self.reserve0).map(pyo3::Bound::unbind)
+    }
+
+    #[getter]
+    fn reserve1(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        crate::conversion::alloy::u256_to_py(py, &self.reserve1).map(pyo3::Bound::unbind)
+    }
+}

@@ -650,6 +650,64 @@ impl PyBot {
             .map_err(map_register_v2_err)
     }
 
+    /// Prototype test-only V2 registration that bypasses CREATE2 verification.
+    /// Wire to a new method on Python so tests can build a synthetic V2 pool.
+    #[allow(dead_code)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn register_v2_pool_test_only(
+        &self,
+        address: &str,
+        token0: &str,
+        token1: &str,
+        reserve0: &Bound<'_, PyAny>,
+        reserve1: &Bound<'_, PyAny>,
+        gamma_numer0: u64,
+        fee_denom0: u64,
+        gamma_numer1: u64,
+        fee_denom1: u64,
+        factory: &str,
+        update_block: u64,
+        variant: &str,
+        stable_swap: bool,
+        fee_denominator: Option<u64>,
+    ) -> PyResult<u64> {
+        let addr = parse_address(address)?;
+        let t0 = parse_address(token0)?;
+        let t1 = parse_address(token1)?;
+        let fac = parse_address(factory)?;
+        let r0 = narrow_reserve(
+            crate::conversion::alloy::extract_python_u256(reserve0)?,
+            "reserve0",
+        )?;
+        let r1 = narrow_reserve(
+            crate::conversion::alloy::extract_python_u256(reserve1)?,
+            "reserve1",
+        )?;
+        let variant_enum = DexVariant::from_kebab(variant).ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(format!("unknown variant: {variant}"))
+        })?;
+        self.bot
+            .state_arc()
+            .write()
+            .register_v2_pool(&RegisterV2PoolParams {
+                address: addr,
+                token0: t0,
+                token1: t1,
+                reserve0: r0,
+                reserve1: r1,
+                fee_token0: (gamma_numer0, fee_denom0),
+                fee_token1: (gamma_numer1, fee_denom1),
+                factory: fac,
+                deployer: fac,
+                init_hash: alloy::primitives::B256::default(),
+                update_block,
+                variant: variant_enum,
+                stable_swap,
+                fee_denominator,
+            })
+            .map_err(map_register_v2_err)
+    }
+
     /// Update a V2 pool's reserves from a Sync event.
     #[pyo3(signature = (address, reserve0, reserve1, block_number))]
     fn update_v2_pool(
@@ -785,6 +843,15 @@ impl PyBot {
     fn get_pool(&self, pool_id: u64) -> Option<PyLiquidityPool> {
         if self.bot.state_arc().read().has_pool(pool_id) {
             Some(PyLiquidityPool::new(self.bot.state_arc(), pool_id))
+        } else {
+            None
+        }
+    }
+
+    /// Prototype structural pool handle (V2 slice).
+    fn py_pool(&self, pool_id: u64) -> Option<crate::bot::pool::PyPool> {
+        if self.bot.state_arc().read().has_pool(pool_id) {
+            Some(crate::bot::pool::PyPool::new(self.bot.state_arc(), pool_id))
         } else {
             None
         }

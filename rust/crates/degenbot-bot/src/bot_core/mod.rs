@@ -147,6 +147,13 @@ impl BotState {
         Self::with_journal_depth(32)
     }
 
+    /// Borrow a registered pool entry by ID. Used by the structural `Pool`
+    /// handle prototype (V2 slice) to present a family-agnostic interface.
+    #[must_use]
+    pub fn pool_entry(&self, pool_id: u64) -> Option<&PoolEntry> {
+        self.pools.get(&pool_id)
+    }
+
     /// Create a new, empty `BotState` with a custom reorg journal depth.
     #[must_use]
     pub fn with_journal_depth(journal_depth: usize) -> Self {
