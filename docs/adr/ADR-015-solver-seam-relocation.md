@@ -375,3 +375,43 @@ already share the identical signature shape. Not pursued.
 The hop-removal research is **closed**. ADR-015 stands as decided
 (relocation complete); the deferred deeper review is resolved here, not
 re-deferred.
+
+### ArcSwap / synchronization-primitive audit — CLOSED (2026-07-19)
+
+Surfaced from the session's opening question ("accept write contention for
+faster simultaneous reads via RwLock?") and the digest-spike's
+primitive-cost estimate. Two separate investigations, both closed:
+
+**1. ArcSwap for the digest cache (rejected).** The spike (77LOQT) retired
+the digest-cost motivation before the primitive choice mattered: even at
+ArcSwap's ~5 ns lock-free read, the light families' digests (1 µs balancer
+`D`, 63 ns Curve `xp`) don't amortize against their 82–144 µs solves, and
+the stale-read window ArcSwap introduces is a correctness hazard for an
+arbitrage-bounding digest that `Mutex`'s block-on-write behavior protects
+against in the reorg case. CL is the one family that caches justifiably
+(O(N log N) tick walk, 10×+ heavier); `parking_lot::Mutex<TickRangeCache>`
+stays. ArcSwap would be the right primitive for a *heavy-digest,
+high-read-contention* family that doesn't exist today.
+
+**2. ArcSwap for `Bot.construction_io` (closed — stays as-is).** The slot
+(`parking_lot::RwLock<Option<Arc<ConstructionIo>>>`) is the one site in
+`degenbot-bot` whose shape (publish-once-at-init, read-many) genuinely fits
+`ArcSwapOption`. But the evaluation cascaded: if the slot is truly
+write-once, *no* primitive is needed at all — the construction-seam redesign
+(make IO a `Bot::new` constructor arg) would drop interior mutability
+entirely. That's blocked by `PyBot::new` happening before the provider is
+known. Three options (merge seam / `OnceLock` / `ArcSwap`) all have
+poor effort-to-value: the slot is uncontended, reads are I/O-dominated,
+no profile points at it, no lock-ordering near-miss. Disposition:
+**stays-as-is** until a forcing function (runtime IO re-attachment) lands.
+
+**Broader audit.** Three other `parking_lot` sites in `degenbot-bot`
+(`Arc<RwLock<BotState>>`, `Arc<Mutex<ArbitrageEngine>>`,
+`Mutex<HashMap<…subscribers…>>`) are **incrementally-mutated state**, not
+publish-snapshots — the wrong model for ArcSwap (would require COW-cloning
+whole state per mutation). No candidate fits. `arc-swap 1.9.2` stays
+transitive-only in `Cargo.lock`; no `degenbot-*` crate pulls it directly.
+
+Recorded in `CONTEXT.md` ("Synchronization primitive for
+`construction_io`") so these threads aren't re-litigated without a
+forcing function.
