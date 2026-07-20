@@ -22,11 +22,10 @@
 //! `PySubmitCandidate`), it is **not** a pyclass — A4 uses the core `SimResult`
 //! directly. No type is exposed that the cockpit doesn't read.
 
-use crate::executor::{path_info_to_py, HopTypes};
 use crate::hex_utils::encode_hex;
 use crate::prelude::*;
 use crate::submission::submit::PySubmitCandidate;
-use degenbot_executor::composers::PathInfo;
+use degenbot_executor::composers::{HopInfo, PathInfo};
 use degenbot_simulation::dispatch_profitable::DispatchOutcome;
 use degenbot_simulation::{FailBuckets, SimFailure};
 use degenbot_submission::SubmitCandidate;
@@ -189,22 +188,98 @@ impl PyDispatchOutcome {
     }
 
     /// The input candidates' `PathInfo` keyed by `path_id` — `{path_id:
-    /// PathInfo}`. Populated from the INPUT batch (every candidate passed in,
+    /// dict}`. Populated from the INPUT batch (every candidate passed in,
     /// not filtered to survivors). The `[profit]` hop-detail log looks up
     /// `path_infos[cand.path_id]` per survivor; preserved here (Decision 1=B,
     /// A5) so the cockpit doesn't thread a separate map.
     ///
-    /// Lazily converts each Rust `PathInfo` to the Python `PathInfo` dataclass
-    /// on access (the converter is the reverse of `extract_path_info`).
+    /// Each value is a plain `dict` (WEFVGE — the Python `hop_info`
+    /// dataclass render type retired):
+    ///   - `path_type` (`str`) — the combined pool-type label,
+    ///   - `hops` (`list[dict]`) — one dict per hop, carrying a `family`
+    ///     discriminator (`"V2"`/`"V3"`/`"V4"`) + that variant's fields.
+    ///
+    /// Built directly from the Rust `HopInfo`s (no Python dataclass
+    /// reconstruction — `path_info_to_py`/`hop_to_py` retired).
     #[getter]
     fn path_infos<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let dict = PyDict::new(py);
-        let types = HopTypes::load(py)?;
         for (pid, path) in &self.path_info_by_id {
-            dict.set_item(*pid, path_info_to_py(py, path, &types)?)?;
+            dict.set_item(*pid, path_info_to_py_dict(py, path)?)?;
         }
         Ok(dict)
     }
+}
+
+/// Build a plain-Python-dict view of a `PathInfo` (the render shape, WEFVGE).
+///
+/// `path_type` is the combined pool-type label (`"V2-V3"`, `"V4-V2"`, …);
+/// `hops` is a list of per-hop dicts built by [`hop_to_py_dict`]. No Python
+/// dataclass is reconstructed — the cockpit reads the dict fields directly.
+fn path_info_to_py_dict<'py>(py: Python<'py>, path: &PathInfo) -> PyResult<Bound<'py, PyDict>> {
+    let dict = PyDict::new(py);
+    let mut type_names: Vec<&'static str> = Vec::with_capacity(path.hops.len());
+    let hops_list = PyList::empty(py);
+    for hop in &path.hops {
+        let (family, hop_dict) = hop_to_py_dict(py, hop)?;
+        type_names.push(family);
+        hops_list.append(hop_dict)?;
+    }
+    dict.set_item("path_type", type_names.join("-"))?;
+    dict.set_item("hops", hops_list)?;
+    Ok(dict)
+}
+
+/// Build a plain-Python-dict view of a `HopInfo` (the per-hop render shape).
+///
+/// Returns the `family` discriminator alongside the dict so the caller
+/// (`path_info_to_py_dict`) can assemble the `path_type` label without reading
+/// the dict back. The dict carries that variant's display fields; addresses
+/// are EIP-55 checksummed strings (alloy `Address::Display`) — matches the
+/// pre-flatten `hop_to_py` output. Kept in `simulation/outcome.rs` (the render
+/// home); the executor seam's `hop_to_py`/`path_info_to_py` dataclass
+/// constructors are retired.
+fn hop_to_py_dict<'py>(
+    py: Python<'py>,
+    hop: &HopInfo,
+) -> PyResult<(&'static str, Bound<'py, PyDict>)> {
+    let dict = PyDict::new(py);
+    let family = match hop {
+        HopInfo::V2(v2) => {
+            dict.set_item("family", "V2")?;
+            dict.set_item("pool_address", format!("{}", v2.pool_address))?;
+            dict.set_item("token0_address", format!("{}", v2.token0_address))?;
+            dict.set_item("token1_address", format!("{}", v2.token1_address))?;
+            dict.set_item("fee", v2.fee)?;
+            dict.set_item("zfo", v2.zfo)?;
+            "V2"
+        }
+        HopInfo::V3(v3) => {
+            dict.set_item("family", "V3")?;
+            dict.set_item("pool_address", format!("{}", v3.pool_address))?;
+            dict.set_item("token0_address", format!("{}", v3.token0_address))?;
+            dict.set_item("token1_address", format!("{}", v3.token1_address))?;
+            dict.set_item("fee", v3.fee)?;
+            dict.set_item("zfo", v3.zfo)?;
+            "V3"
+        }
+        HopInfo::V4(v4) => {
+            dict.set_item("family", "V4")?;
+            dict.set_item(
+                "pool_manager_address",
+                format!("{}", v4.pool_manager_address),
+            )?;
+            dict.set_item("pool_id_hex", v4.pool_id_hex.clone())?;
+            dict.set_item("currency0_address", format!("{}", v4.currency0_address))?;
+            dict.set_item("currency1_address", format!("{}", v4.currency1_address))?;
+            dict.set_item("fee", v4.fee)?;
+            dict.set_item("tick_spacing", v4.tick_spacing)?;
+            dict.set_item("hook_address", format!("{}", v4.hook_address))?;
+            dict.set_item("zfo", v4.zfo)?;
+            "V4"
+        }
+    };
+    Ok((family, dict))
 }
 
 // `BTreeMap` import removed: `FailBuckets` holds its bucket map

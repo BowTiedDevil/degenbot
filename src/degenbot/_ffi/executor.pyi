@@ -3,26 +3,19 @@
 Created at runtime by ``add_executor_module`` in the PyO3 wrapper crate
 (``degenbot-python/src/executor/mod.rs``). Holds the command-stream encoding
 + storage-slot helper functions over the ``degenbot-executor`` core crate.
+
+WEFVGE: the standalone ``encode_cmd_stream`` / ``v4_input_is_native`` /
+``v4_output_is_native`` pyfunctions are retired — the encode path moved to the
+Rust core (``dispatch_profitable_py`` calls ``composers::encode_cmd_stream``
+internally per A5), and the candidate resolves its ``composers::PathInfo``
+from a registered ``path_id`` via ``PyArbitrageEngine.path_info_for_core``
+(NXM2BF). No Python ``PathInfo`` dataclass crosses this seam anymore.
 """
 
 from typing import Any
 
-from degenbot.arbitrage.hop_info import PathInfo
-
-type BytesOrNone = bytes | None
 type WarmupDict = dict[str, dict[str, Any]]
 
-def encode_cmd_stream(
-    path_info: PathInfo,
-    optimal_input: int,
-    hop_outputs: list[int],
-    executor_address: str,
-    pool_manager_address: str,
-    weth_address: str,
-    *,
-    erc6909_profit: bool = ...,
-    use_v4_batch: bool = ...,
-) -> BytesOrNone: ...
 def compute_simulation_warmup_slots(
     executor_address: str,
     weth_address: str,
@@ -64,19 +57,10 @@ def mapping_slot(base_slot: int, key: int) -> int:
 def nested_mapping_slot(base_slot: int, key1: int, key2: int) -> int:
     """Compute a nested Solidity mapping storage slot."""
 
-def v4_input_is_native(hop: object) -> bool:
-    """Return whether the V4 hop's input currency is native ETH (address(0))."""
-
-def v4_output_is_native(hop: object) -> bool:
-    """Return whether the V4 hop's output currency is native ETH (address(0))."""
-
 __all__ = [
     "compute_simulation_warmup_slots",
-    "encode_cmd_stream",
     "mapping_slot",
     "nested_mapping_slot",
     "pack_config",
     "pack_expected_balance",
-    "v4_input_is_native",
-    "v4_output_is_native",
 ]

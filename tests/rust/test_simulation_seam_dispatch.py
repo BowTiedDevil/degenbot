@@ -28,7 +28,6 @@ from degenbot._ffi.simulation import (
 )
 from degenbot._ffi.submission import PyDispatcher, PySubmitCandidate
 from degenbot.arbitrage.engine_registry import ArbitrageEngine
-from degenbot.arbitrage.hop_info import V2HopInfo
 
 # Canonical mainnet addresses (parity corpus constants — match the A2 test
 # scaffolding in tests/rust/test_simulation_seam_classes.py).
@@ -255,24 +254,28 @@ class TestDispatchWithCandidateButNoRpc:
         # by path_id) even though the path was suppressed pre-sim — the
         # `[profit]` hop-detail log looks up `path_infos[cand.path_id]` per
         # survivor, so the map is populated from the input batch, not filtered
-        # to survivors. Exercises the Rust->Python PathInfo converter (Rust
-        # V2HopInfo -> Python V2HopInfo) end-to-end WITHOUT an RPC.
+        # to survivors. Exercises the Rust->Python PathInfo converter
+        # (Rust V2HopInfo -> plain dict) end-to-end WITHOUT an RPC.
         #
         # NXM2BF: the candidate resolved its `PathInfo` from `path_id` via
         # `path_info_for_core` at `__new__` time — the 2-hop V2 cycle the
         # fixture registered projects to two `V2HopInfo`s (`fee=30`,
-        # `zfo=(True, False)`).
+        # `zfo=(True, False)`). WEFVGE: `path_infos` returns plain dicts
+        # (`{path_type, hops: [hop_dict, …]}`), not the retired `*HopInfo`
+        # dataclasses.
         assert isinstance(outcome.path_infos, dict)
         assert set(outcome.path_infos.keys()) == {path_id}
         pi = outcome.path_infos[path_id]
-        assert len(pi.hops) == 2
-        hop0, hop1 = pi.hops
-        assert isinstance(hop0, V2HopInfo)
-        assert isinstance(hop1, V2HopInfo)
+        assert isinstance(pi, dict)
+        assert pi["path_type"] == "V2-V2"
+        assert len(pi["hops"]) == 2
+        hop0, hop1 = pi["hops"]
+        assert hop0["family"] == "V2"
+        assert hop1["family"] == "V2"
         # EIP-55 checksummed (alloy Address Display) — matches the Python
         # cockpit's `h.pool_address` form. Both hops carry the 0.3% fee (30
         # bips) the projection derives from `(gamma=997, denom=1000)`.
-        assert hop0.fee == 30
-        assert hop1.fee == 30
-        assert hop0.zfo is True
-        assert hop1.zfo is False
+        assert hop0["fee"] == 30
+        assert hop1["fee"] == 30
+        assert hop0["zfo"] is True
+        assert hop1["zfo"] is False
