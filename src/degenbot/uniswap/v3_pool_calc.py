@@ -9,8 +9,6 @@ These methods match the Uniswap V3 contract's math:
   degenbot interface (delegated to the Rust-routed
   simulate_exact_input_swap / simulate_exact_output_swap)
 - get_absolute_price / get_absolute_exchange_rate / get_nominal_price / get_nominal_rate: pricing
-- extract_fee: fee extraction for hop building
-- _get_tick_ranges / _compute_tick_ranges: bounded-product optimization
 
 See: contract_reference/uniswap/V3/UniswapV3Factory.sol
 (UniswapV3Pool swap, Oracle, Tick, TickBitmap, SqrtPriceMath, SwapMath)
@@ -239,12 +237,3 @@ class UniswapV3PoolCalc:
             if token == self._token0
             else Fraction(10**self._token0.decimals, 10**self._token1.decimals)
         )
-
-    def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001, ARG002
-        """Extract fee.
-
-        Returns:
-            The fee as a Fraction.
-
-        """
-        return Fraction(self._fee, self.FEE_DENOMINATOR)

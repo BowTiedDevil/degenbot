@@ -4,8 +4,8 @@ ADR-005 slice 7 step 4b: the hollow ``CamelotLiquidityPool`` subclass is
 deleted — the canonical ``UniswapV2Pool`` is registered for the Camelot
 factory, keyed on the ``camelot-v2-volatile`` DexIdentity preset (variant
 tag, reserves ABI shape, default fees) + the ``variant="camelot"`` override
-(preserves the ``camelot_v2`` DB kind). Camelot's solidly-stable calc +
-stable ``to_hop_state`` branch were folded into ``UniswapV2Pool`` in step 4a.
+(preserves the ``camelot_v2`` DB kind). Camelot's solidly-stable calc was
+folded into ``UniswapV2Pool`` in step 4a.
 
 The builder (``V2PoolBuilder.build``, slice 7 step 4b) resolves the per-pool
 ``stableSwap()`` flag on-chain + switches to the ``camelot-v2-stable`` preset

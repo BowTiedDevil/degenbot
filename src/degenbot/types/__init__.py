@@ -18,8 +18,6 @@ from .hop_types import (
     V3TickRangeInfo,
 )
 from .pool_protocols import (
-    ArbitrageCapablePool,
-    ArbitragePathPool,
     MultiTokenSwapCalculation,
     PoolSimulation,
     ReverseSimulatablePool,
@@ -30,8 +28,6 @@ from .pool_protocols import (
 
 __all__ = (
     "AddressComparable",
-    "ArbitrageCapablePool",
-    "ArbitragePathPool",
     "BalancerMultiTokenHop",
     "BalancerWeightedHop",
     "BoundedCache",

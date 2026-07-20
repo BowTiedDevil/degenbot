@@ -7,7 +7,6 @@ plain pools, metapools, lending pools, and crypto pools.
 import contextlib
 import dataclasses
 from collections.abc import Iterable, Sequence
-from fractions import Fraction
 from typing import TYPE_CHECKING, Any, Self
 from weakref import WeakSet
 
@@ -59,7 +58,6 @@ from degenbot.types.concrete import (
     PublisherMixin,
     Subscriber,
 )
-from degenbot.types.hop_types import CurveStableswapHop, HopType, PoolInvariant
 from degenbot.types.pool_protocols import SimulationResult
 from degenbot.types.rpc_types import BlockIdentifier
 
@@ -1307,83 +1305,6 @@ class CurveStableswapPool(
             amount_out=amount_out,
             initial_state=initial_state,
             final_state=initial_state,
-        )
-
-    def extract_fee(
-        self,
-        *,
-        zero_for_one: bool,  # ruff: ignore[ARG002]
-    ) -> Fraction:
-        """Extract fee.
-
-        Returns:
-            The computed value.
-
-        """
-        return Fraction(self.fee, self.FEE_DENOMINATOR)
-
-    def to_hop_state(
-        self,
-        zero_for_one: bool,  # noqa: FBT001
-        state_override: CurveStableswapPoolState | None = None,
-        *,
-        token_in: Erc20Token | None = None,
-        token_out: Erc20Token | None = None,
-    ) -> HopType:
-        """Create a hop state for this pool.
-
-        For 2-token pools, zero_for_one maps to token[0] -> token[1] direction.
-        For N-token pools, pass token_in/token_out to select the pair.
-
-        NOTE: swap_fn is not pickleable. Build hop states in the
-        subprocess from pool IDs for parallel solve fan-out.
-
-        Returns:
-            The computed value.
-
-        Raises:
-            DegenbotValueError: See function documentation.
-
-        """
-        state = state_override or self.state
-        balances = state.balances
-
-        if token_in is not None and token_out is not None:
-            try:
-                i = self.tokens.index(token_in)
-            except ValueError:
-                msg = f"token_in ({token_in}) is not a top-level pool token"
-                raise DegenbotValueError(message=msg) from None
-            try:
-                j = self.tokens.index(token_out)
-            except ValueError:
-                msg = f"token_out ({token_out}) is not a top-level pool token"
-                raise DegenbotValueError(message=msg) from None
-        elif token_in is not None or token_out is not None:
-            msg = "token_in and token_out must both be provided, or both omitted"
-            raise DegenbotValueError(message=msg)
-        elif zero_for_one:
-            i, j = 0, 1
-        else:
-            i, j = 1, 0
-
-        # Create swap_fn closure wrapping get_dy
-        # NOTE: This closure captures `self` and is not pickleable!
-        def swap_fn(dx: int) -> int:
-            return self.get_dy(i=i, j=j, dx=dx, override_state=state_override)
-
-        return CurveStableswapHop(
-            reserve_in=balances[i],
-            reserve_out=balances[j],
-            fee=Fraction(self.fee, self.FEE_DENOMINATOR),
-            curve_a=self.a_coefficient,
-            curve_n_coins=len(self._tokens),
-            curve_d=0,  # D is computed dynamically in get_dy via _get_y
-            token_index_in=i,
-            token_index_out=j,
-            precisions=self.precision_multipliers,
-            swap_fn=swap_fn,
-            invariant=PoolInvariant.CURVE_STABLESWAP,
         )
 
 

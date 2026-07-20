@@ -26,7 +26,6 @@ from degenbot.balancer.math import (
 from degenbot.balancer.math import (
     weighted_subtract_swap_fee_amount as _rs_subtract_swap_fee_amount,
 )
-from degenbot.balancer.swap_amounts import BalancerV2SwapAmounts
 from degenbot.balancer.types import (
     BalancerV2PoolState,
     BalancerV2PoolStateUpdated,
@@ -39,10 +38,7 @@ from degenbot.exceptions import DegenbotValueError
 from degenbot.types import PyLiquidityPool
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.concrete import PublisherMixin, Subscriber
-from degenbot.types.hop_types import BalancerWeightedHop, HopType
 from degenbot.types.pool_protocols import SimulationResult
-
-_MAX_TWO_TOKEN_COUNT = 2
 
 # Hex representation of the TWO constant (2e18 = 0x1bc16d674ec80000)
 # This value only appears in the bytecode of V2 WeightedPool contracts that include
@@ -368,15 +364,6 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
             final_state=initial_state,
         )
 
-    def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001, ARG002
-        """Return the pool fee regardless of direction.
-
-        Returns:
-            The computed value.
-
-        """
-        return self.fee
-
     def external_update(
         self,
         update: BalancerV2WeightedPoolExternalUpdate,
@@ -415,112 +402,4 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         )
         self._notify_subscribers(
             BalancerV2PoolStateUpdated(state=new_state),
-        )
-
-    def to_hop_state(
-        self,
-        zero_for_one: bool,  # noqa: FBT001
-        state_override: BalancerV2PoolState | None = None,
-        *,
-        token_in: Erc20Token | None = None,
-        token_out: Erc20Token | None = None,
-    ) -> HopType:
-        """Create a hop state for this pool.
-
-        For 2-token pools, zero_for_one maps to token[0] -> token[1] direction.
-        For N-token pools, pass token_in/token_out to select the pair.
-
-        Returns:
-            The computed value.
-
-        Raises:
-            DegenbotValueError: See function documentation.
-
-        """
-        state = state_override or self.state
-
-        if token_in is not None and token_out is not None:
-            try:
-                i = self._tokens.index(token_in)
-            except ValueError:
-                msg = f"token_in ({token_in}) is not a pool token"
-                raise DegenbotValueError(message=msg) from None
-            try:
-                j = self._tokens.index(token_out)
-            except ValueError:
-                msg = f"token_out ({token_out}) is not a pool token"
-                raise DegenbotValueError(message=msg) from None
-        elif token_in is not None or token_out is not None:
-            msg = "token_in and token_out must both be provided, or both omitted"
-            raise DegenbotValueError(message=msg)
-        elif zero_for_one:
-            i, j = 0, 1
-        else:
-            i, j = 1, 0
-
-        # Build swap_fn wrapping the pool's calculate_tokens_out_from_tokens_in.
-        # This provides integer-accurate evaluation in mixed-path solvers.
-        def swap_fn(amount_in: int) -> int:
-            return self.calculate_tokens_out_from_tokens_in(
-                token_in=self._tokens[i],
-                token_out=self._tokens[j],
-                token_in_quantity=amount_in,
-                override_state=state_override,
-            )
-
-        return BalancerWeightedHop(
-            reserve_in=state.balances[i],
-            reserve_out=state.balances[j],
-            fee=self.fee,
-            weight_in=self.weights[i],
-            weight_out=self.weights[j],
-            swap_fn=swap_fn,
-        )
-
-    def build_swap_amount(
-        self,
-        zero_for_one: bool,  # noqa: FBT001
-        amount_in: int,
-        amount_out: int,
-        *,
-        token_in: Erc20Token | None = None,
-        token_out: Erc20Token | None = None,
-    ) -> BalancerV2SwapAmounts:
-        """Build a BalancerV2SwapAmounts for this pool's swap.
-
-        For N > 2 token pools, token_in and token_out must be provided.
-        Use BalancerPairView for ArbitragePathPool conformance.
-
-        Returns:
-            The computed value.
-
-        Raises:
-            DegenbotValueError: See function documentation.
-
-        """
-        # Resolve token pair
-        if token_in is not None and token_out is not None:
-            pass  # Use caller-specified pair
-        elif len(self._tokens) > _MAX_TWO_TOKEN_COUNT:
-            msg = (
-                f"Pool {self.address} has {len(self._tokens)} tokens. "
-                f"build_swap_amount requires token_in and token_out for N > 2 pools. "
-                f"Use BalancerPairView for ArbitragePathPool conformance."
-            )
-            raise DegenbotValueError(message=msg)
-        elif zero_for_one:
-            token_in = self._tokens[0]
-            token_out = self._tokens[1]
-        else:
-            token_in = self._tokens[1]
-            token_out = self._tokens[0]
-
-        return BalancerV2SwapAmounts(
-            pool_id=self.pool_id,
-            vault=self.vault,
-            zero_for_one=zero_for_one,
-            amount_in=amount_in,
-            amount_out=amount_out,
-            token_in=token_in.address,
-            token_out=token_out.address,
         )

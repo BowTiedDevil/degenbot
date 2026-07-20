@@ -108,12 +108,3 @@ class UniswapV4PoolCalc:
             if token == self._token0
             else Fraction(10**self._token0.decimals, 10**self._token1.decimals)
         )
-
-    def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001, ARG002
-        """Extract fee.
-
-        Returns:
-            The fee as a Fraction.
-
-        """
-        return Fraction(self.fee, self.FEE_DENOMINATOR)

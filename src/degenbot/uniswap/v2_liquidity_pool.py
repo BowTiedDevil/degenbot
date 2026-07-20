@@ -10,7 +10,6 @@ from eth_typing import ChecksumAddress
 from degenbot.aerodrome.math import (
     calc_exact_in_stable_camelot as _rs_calc_exact_in_stable_camelot,
 )
-from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
@@ -19,7 +18,6 @@ from degenbot.types import DexIdentity, PyLiquidityPool
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import PublisherMixin, Subscriber
-from degenbot.types.hop_types import ConstantProductHop, HopType, SolidlyStableHop
 from degenbot.types.pool_protocols import SimulationResult
 from degenbot.uniswap.v2_pool_calc import UniswapV2PoolCalc
 from degenbot.uniswap.v2_pool_state import V2PoolState
@@ -39,7 +37,7 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
     # Camelot solidly-stable strategy (ADR-005 slice 7 step 4a fold). The
     # companion sets these as INSTANCE attrs off the `PyLiquidityPool` handle's
     # `V2PoolDescriptor` (see `_from_py_pool`) — `stable_swap` selects the
-    # stable calc + SolidlyStableHop branch for Camelot stable pools; False
+    # stable calc branch for Camelot stable pools; False
     # otherwise. ``fee_denominator`` carries Camelot's integer fee scaling
     # (used by the stable math); None for non-Camelot V2 (volatile calc ignores
     # it). The class-level defaults are the read path ONLY for instances that
@@ -554,93 +552,4 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
             precision_multiplier_token1,
             fee.numerator,
             fee.denominator,
-        )
-
-    def to_hop_state(
-        self,
-        *,
-        zero_for_one: bool,
-        state_override: UniswapV2PoolState | None = None,
-        token_in: Erc20Token | None = None,  # noqa: ARG002
-        token_out: Erc20Token | None = None,  # noqa: ARG002
-    ) -> HopType:
-        """Convert to hop state.
-
-        Returns:
-            A ``SolidlyStableHop`` for Camelot stable pools (``stable_swap``),
-            else a ``ConstantProductHop`` carrying the directional
-            ``fee_out`` (Camelot allows asymmetric fees per direction).
-
-        """
-        # token_in/token_out unused — 2-token pools determine pair from zero_for_one.
-        # Callers should ensure these match pool.token0/pool.token1 if provided.
-        state = state_override if state_override is not None else self.state
-        fee_in = self.extract_fee(zero_for_one=zero_for_one)
-        if zero_for_one:
-            reserve_in = state.reserves_token0
-            reserve_out = state.reserves_token1
-            decimals_in = self.token0.decimals
-            decimals_out = self.token1.decimals
-        else:
-            reserve_in = state.reserves_token1
-            reserve_out = state.reserves_token0
-            decimals_in = self.token1.decimals
-            decimals_out = self.token0.decimals
-
-        if self.stable_swap:
-
-            def _camelot_stable_swap_fn(
-                amount_in: int,
-                /,
-                _reserves0: int = state.reserves_token0,
-                _reserves1: int = state.reserves_token1,
-                _decimals0: int = 10**self.token0.decimals,
-                _decimals1: int = 10**self.token1.decimals,
-                _fee: Fraction = fee_in,
-                _token_in: int = 0 if zero_for_one else 1,
-            ) -> int:
-                return _rs_calc_exact_in_stable_camelot(
-                    amount_in,
-                    _token_in,
-                    _reserves0,
-                    _reserves1,
-                    _decimals0,
-                    _decimals1,
-                    _fee.numerator,
-                    _fee.denominator,
-                )
-
-            return SolidlyStableHop(
-                reserve_in=reserve_in,
-                reserve_out=reserve_out,
-                fee=fee_in,
-                decimals_in=decimals_in,
-                decimals_out=decimals_out,
-                swap_fn=_camelot_stable_swap_fn,
-            )
-
-        fee_out = self.fee_token1 if zero_for_one else self.fee_token0
-        return ConstantProductHop(
-            reserve_in=reserve_in,
-            reserve_out=reserve_out,
-            fee=fee_in,
-            fee_out=fee_out,
-        )
-
-    def build_swap_amount(
-        self,
-        zero_for_one: bool,  # noqa: FBT001
-        amount_in: int,
-        amount_out: int,
-    ) -> UniswapV2PoolSwapAmounts:
-        """Build swap amount.
-
-        Returns:
-            The swap amounts object for encoding.
-
-        """
-        return UniswapV2PoolSwapAmounts(
-            pool=self.address,
-            amounts_in=(amount_in, 0) if zero_for_one else (0, amount_in),
-            amounts_out=(0, amount_out) if zero_for_one else (amount_out, 0),
         )

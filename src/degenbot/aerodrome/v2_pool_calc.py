@@ -257,19 +257,6 @@ class AerodromeV2PoolCalc:
             else Fraction(10**self._token0.decimals, 10**self._token1.decimals)
         )
 
-    def extract_fee(
-        self,
-        *,
-        zero_for_one: bool,  # ruff: ignore[ARG002]
-    ) -> Fraction:
-        """Extract fee.
-
-        Returns:
-            The computed value.
-
-        """
-        return self._fee
-
     # ── Private: calculation strategy methods ──
 
     @staticmethod
