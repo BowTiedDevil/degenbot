@@ -33,6 +33,21 @@ pub use degenbot_core::{address_utils, errors, hex_utils, runtime};
 /// state, plus the Möbius solvers + the unified `ArbitrageEngine`.
 pub use degenbot_bot::{bot_core, solvers};
 
+/// Value-only pool identity/state structs + stateless swap simulation
+/// (`PoolEntry`, `*PoolIdentity`/`*PoolState`, `v3_simulate_swap`/`v4_simulate_swap`,
+/// the V2 constant-product dispatch, the spec-bound validators) + the
+/// `TickWordFetcher`/`CurveDataProvider`/`BalancerRateProvider` *interface*
+/// traits (ADR-005 standalone-by-design pool value/trait layer).
+pub use degenbot_pools;
+
+/// Pathfinding graph (`PathGraph`) + edge graph.
+pub use degenbot_pathfinding;
+
+/// Möbius solver math (`basket` / `mixed`) relocated out of
+/// `degenbot_bot::solvers` into this standalone crate. `degenbot_bot::solvers`
+/// re-exports only `arb_engine`; the relocated solver math lives here.
+pub use degenbot_solvers;
+
 /// Uniswap-protocol domain — `DexIdentity` / `DexVariant` / `ReservesAbi`
 /// value objects + `pub const` per-DEX presets, and the V2 swap-call encoder.
 pub use degenbot_uniswap::{dex_identity, v2_encoding};
@@ -81,13 +96,30 @@ pub use degenbot_rpc;
 /// feature).
 pub use degenbot_db;
 
+/// Aave V3 domain — the updater chunk-loop + the position-analysis math
+/// (health-factor / LTV / eMode / isolation). Standalone-Rust core: a
+/// `cargo add degenbot` consumer runs `run_aave_update` with no Python.
+pub use degenbot_aave;
+
+/// Anvil fork lifecycle + dev-RPC core (`AnvilFork`, `evm_mine`,
+/// `anvil_reset`, `anvil_snapshot`, ...). Standalone-Rust core: a Rust-only
+/// consumer spins an anvil fork with no Python (the `anvil` binary must be
+/// in `$PATH` at runtime).
+pub use degenbot_fork;
+
+/// Pool-updater chunk-loop RPC + decode bridge (`run_pool_update`,
+/// `apply_chunk_writes_on_conn`, on-chain `verify_v3/v4_liquidity_map`).
+/// Standalone-Rust core mirroring the Aave updater shape.
+pub use degenbot_pool_updater;
+
 // ---------------------------------------------------------------------------
 // Convenience top-level re-exports of the most-used types (mirrors how the
 // `polars` umbrella re-exports `DataFrame`/`Series` at the crate root).
 // ---------------------------------------------------------------------------
 
 pub use degenbot_bot::bot_core::{
-    BotState, PoolEntry, RegisterV2PoolParams, RegisterV3PoolParams, V2PoolState,
+    BotState, PoolEntry, RegisterV2PoolParams, RegisterV3PoolParams, RegisterV4PoolParams,
+    V2PoolState, V4PoolKey,
 };
 pub use degenbot_uniswap::dex_identity::{
     preset_for_variant, DexIdentity, DexVariant, ReservesAbi, UNISWAP_V2,

@@ -33,6 +33,7 @@ degenbot-cl-math = { path = "../degenbot-cl-math" }
 degenbot-abi = { path = "../degenbot-abi" }
 degenbot-uniswap = { path = "../degenbot-uniswap" }
 degenbot-pathfinding = { path = "../degenbot-pathfinding" }
+degenbot-pools = { path = "../degenbot-pools" }
 degenbot-rpc = { path = "../degenbot-rpc" }
 degenbot-decoders = { path = "../degenbot-decoders" }
 degenbot-curve-math = { path = "../degenbot-curve-math" }
@@ -45,7 +46,11 @@ degenbot-executor = { path = "../degenbot-executor" }
 degenbot-submission = { path = "../degenbot-submission" }
 degenbot-simulation = { path = "../degenbot-simulation" }
 degenbot-bot = { path = "../degenbot-bot" }
+degenbot-solvers = { path = "../degenbot-solvers" }
 degenbot-db = { path = "../degenbot-db" }
+degenbot-aave = { path = "../degenbot-aave" }
+degenbot-fork = { path = "../degenbot-fork" }
+degenbot-pool-updater = { path = "../degenbot-pool-updater" }
 
 [dev-dependencies]
 alloy = { version = "^2.0" }

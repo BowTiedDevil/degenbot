@@ -1855,6 +1855,7 @@ name = "degenbot"
 version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
+ "degenbot-aave",
  "degenbot-abi",
  "degenbot-balancer-math",
  "degenbot-bot",
@@ -1865,11 +1866,15 @@ dependencies = [
  "degenbot-decoders",
  "degenbot-evm-math",
  "degenbot-executor",
+ "degenbot-fork",
  "degenbot-pathfinding",
+ "degenbot-pool-updater",
+ "degenbot-pools",
  "degenbot-price",
  "degenbot-rpc",
  "degenbot-simulation",
  "degenbot-solidly-math",
+ "degenbot-solvers",
  "degenbot-submission",
  "degenbot-uniswap",
  "degenbot-v2-math",
