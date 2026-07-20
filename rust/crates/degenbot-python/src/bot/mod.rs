@@ -1029,7 +1029,7 @@ impl PyBot {
             ));
         };
         let db = self.db_handle();
-        let pool_id_inner: degenbot_decoders::v4_swap_decoder::PoolId = pool_id_hash.0; // B256 = FixedBytes<32>; .0 is [u8; 32]
+        let pool_id_inner: degenbot_decoders::v4_swap_decoder::V4PoolId = pool_id_hash.0; // B256 = FixedBytes<32>; .0 is [u8; 32]
         let chain: Option<std::sync::Arc<dyn degenbot_pools::tick_fetch::TickBootstrapRpc>> =
             io.as_ref().and_then(|io_bound| {
                 io_bound

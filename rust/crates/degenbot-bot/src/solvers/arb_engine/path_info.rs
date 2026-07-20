@@ -133,7 +133,7 @@ fn build_hop_info(core: &BotState, pool_ref: &MixedPoolRef) -> Result<HopInfo, P
                     pool_id: pool_ref.pool_key,
                 },
             )?;
-            // `0x` + 64 lowercase hex chars — the canonical `PoolId` form,
+            // `0x` + 64 lowercase hex chars — the canonical `V4PoolId` form,
             // matching `diagnostic::format_v4_pool_id` + the Python
             // `pool.pool_id.to_0x_hex()`. The encoder parses this back to the
             // 32-byte salted pool id.
@@ -185,7 +185,7 @@ mod tests {
 
     use crate::bot_core::{PoolTickCoverage, RegisterV3PoolParams, RegisterV4PoolParams};
     use crate::solvers::arb_engine::ArbitrageEngine;
-    use ::degenbot_decoders::v4_swap_decoder::PoolId;
+    use ::degenbot_decoders::v4_swap_decoder::V4PoolId;
     use ::degenbot_pools::v4_state::V4PoolKey;
     use ::degenbot_solvers::mixed::PoolHop;
 
@@ -310,7 +310,7 @@ mod tests {
     #[test]
     fn v4_path_projects_to_hop_info_with_pool_id_hex() {
         let mut engine = ArbitrageEngine::new();
-        let pool_id_bytes: PoolId = [0xabu8; 32];
+        let pool_id_bytes: V4PoolId = [0xabu8; 32];
         let pool_id = engine
             .register_v4_pool(&RegisterV4PoolParams {
                 pool_manager: Address::from([0x44u8; 20]),

@@ -99,8 +99,8 @@ pub fn unregister_pool(&self, address: &str, pool_id: Option<Vec<u8>>) -> PyResu
 
 (The V4 `pool_id: Some` arm is in `BotState` for when the engine-side unregister lands;
 `PyBot` itself only takes the V2/V3 path — see above — and returns `PyResult<bool>`
-matching `PoolRegistry.remove`'s silent-on-miss contract. `PoolId` is
-`degenbot_decoders::v4_swap_decoder::PoolId` — the V4 `[u8; 32]` pool-id type.)
+matching `PoolRegistry.remove`'s silent-on-miss contract. `V4PoolId` is
+`degenbot_decoders::v4_swap_decoder::V4PoolId` — the V4 `[u8; 32]` pool-id type.)
 
 Disposal rules:
 

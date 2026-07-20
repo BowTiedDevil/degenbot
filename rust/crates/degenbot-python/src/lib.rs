@@ -116,7 +116,7 @@ pub use degenbot_bot::{bot_core, solvers};
 // The pure Uniswap V2/V3/V4 event-log decoders live in the `degenbot-decoders`
 // workspace member (Plan 104) — an alloy-only leaf (no pyo3/tokio/degenbot-core).
 // No `pub use` re-export: the binding layer reaches the lone type it needs
-// (`degenbot_decoders::v4_swap_decoder::PoolId`) via the direct path dependency
+// (`degenbot_decoders::v4_swap_decoder::V4PoolId`) via the direct path dependency
 // in `bot::engine`. The state-coupled dispatch layer (`LogDecoder`,
 // `DecodedPoolEvent`, `LogDispatcher`) stays in `degenbot-bot`'s
 // `bot_core::log_dispatcher`.

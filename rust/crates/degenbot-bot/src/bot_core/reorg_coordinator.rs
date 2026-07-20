@@ -639,7 +639,7 @@ mod tests {
     /// tick = 0.
     fn bot_with_v4(
         pool_manager: Address,
-        pool_id: degenbot_decoders::v4_swap_decoder::PoolId,
+        pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
         update_block: u64,
     ) -> (Arc<Bot>, u64, Arc<CountingSubscriber>) {
         use crate::bot_core::{PoolTickCoverage, RegisterV4PoolParams, V4PoolKey};
@@ -682,7 +682,7 @@ mod tests {
     #[allow(clippy::too_many_arguments)]
     fn make_v4_swap_log(
         pool_manager: Address,
-        pool_id: degenbot_decoders::v4_swap_decoder::PoolId,
+        pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
         sqrt_price_x96: U256,
         liquidity: u128,
         tick: i32,
@@ -734,7 +734,7 @@ mod tests {
     #[test]
     fn dispatch_reorg_log_v4_single_delta_at_target_restores_to_registration() {
         let pool_manager = Address::from([0x44u8; 20]);
-        let pool_id_bytes: degenbot_decoders::v4_swap_decoder::PoolId = [0xeeu8; 32];
+        let pool_id_bytes: degenbot_decoders::v4_swap_decoder::V4PoolId = [0xeeu8; 32];
         let (bot, pool_id, sub) = bot_with_v4(pool_manager, pool_id_bytes, 5);
         let count = || *sub.notifies.lock().unwrap();
 
@@ -791,7 +791,7 @@ mod tests {
     #[test]
     fn dispatch_reorg_log_v4_empty_journal_is_too_deep() {
         let pool_manager = Address::from([0x44u8; 20]);
-        let pool_id_bytes: degenbot_decoders::v4_swap_decoder::PoolId = [0xefu8; 32];
+        let pool_id_bytes: degenbot_decoders::v4_swap_decoder::V4PoolId = [0xefu8; 32];
         let (bot, pool_id, _sub) = bot_with_v4(pool_manager, pool_id_bytes, 5);
         assert!(bot
             .state

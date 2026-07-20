@@ -65,7 +65,7 @@ use alloy::primitives::Address;
 
 use degenbot_db::error::DbError;
 use degenbot_db::snapshot::{LiquidityAtTick, LiquidityMap};
-use degenbot_decoders::v4_swap_decoder::PoolId;
+use degenbot_decoders::v4_swap_decoder::V4PoolId;
 // `PoolTickCoverage` + `TickInfo` live in `degenbot_pools` but aren't at its
 // crate root; `bot_core::mod` re-exports them via `pub use v3_state::…` +
 // `pub use ::degenbot_pools::TickInfo`. Use those re-exports to avoid coupling
@@ -162,7 +162,7 @@ pub fn assemble_v3_tick_map(
 /// Assemble a V4 pool's tick map with `Store → Db → Chain` precedence.
 ///
 /// V4 twin of [`assemble_v3_tick_map`]: the store is keyed by
-/// `(Address, PoolId)`, the Db arm calls
+/// `(Address, V4PoolId)`, the Db arm calls
 /// `db.fetch_liquidity_map_v4(pool_manager, pool_id_hash)`, and the Chain arm
 /// calls [`TickBootstrapRpc::bootstrap_v4_tick_word`] with `(state_view,
 /// pool_id)` — `state_view` is the V4 `StateView` contract address (the contract
@@ -182,7 +182,7 @@ pub fn assemble_v4_tick_map(
     db: Option<&dyn degenbot_db::snapshot::TickMapDb>,
     pool_manager: Address,
     state_view: Address,
-    pool_id: PoolId,
+    pool_id: V4PoolId,
     tick: i32,
     tick_spacing: i32,
     block: u64,
@@ -220,9 +220,9 @@ fn fetch_v3_tick_map_from_db(
 fn fetch_v4_tick_map_from_db(
     db: &dyn degenbot_db::snapshot::TickMapDb,
     pool_manager: Address,
-    pool_id: PoolId,
+    pool_id: V4PoolId,
 ) -> TickMapAssemblyResult {
-    // `fetch_liquidity_map_v4` takes a `B256`; `PoolId` is `[u8; 32]` and
+    // `fetch_liquidity_map_v4` takes a `B256`; `V4PoolId` is `[u8; 32]` and
     // `B256` is `FixedBytes<32>` — same layout, so the conversion is infallible.
     let pool_id_hash = alloy::primitives::B256::from(pool_id);
     let Some(map) = db.fetch_liquidity_map_v4(pool_manager, pool_id_hash)? else {

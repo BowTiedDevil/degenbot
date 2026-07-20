@@ -404,7 +404,7 @@ pub fn decode_v4_liquidity_log_with_pool(log: &Log) -> Option<(String, Liquidity
     }
     let block_number = log.block_number?;
     let log_index = log.log_index?;
-    // `PoolId` is `[u8; 32]`; widen to `B256` for the `0x`-hex `Display`
+    // `V4PoolId` is `[u8; 32]`; widen to `B256` for the `0x`-hex `Display`
     // (matches the Python `HexBytes(pool_id).to_0x_hex()` + the DB column form).
     let pool_hash = B256::from(event.pool_id).to_string();
     Some((

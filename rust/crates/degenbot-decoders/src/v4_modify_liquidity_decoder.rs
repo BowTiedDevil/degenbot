@@ -7,7 +7,7 @@
 //!
 //! ```text
 //! event ModifyLiquidity(
-//!     PoolId indexed id,       // bytes32
+//!     V4PoolId indexed id,       // bytes32
 //!     address indexed sender,
 //!     int24 tickLower,
 //!     int24 tickUpper,
@@ -16,7 +16,7 @@
 //! )
 //!
 //! topic[0] = 0xf208f4912782fd25c7f114ca3723a2d5dd6f3bcc3ac8db5af63baa85f711d5ec
-//! topic[1] = PoolId (indexed bytes32)
+//! topic[1] = V4PoolId (indexed bytes32)
 //! topic[2] = sender (indexed address)
 //! data    = abi.encode(int24 tickLower, int24 tickUpper, int256 liquidityDelta, bytes32 salt)
 //!         = 4 × 32 bytes = 128 bytes
@@ -29,13 +29,13 @@
 //! Key differences from V3 Mint/Burn:
 //! - `tickLower` and `tickUpper` are in the data (not indexed)
 //! - `liquidityDelta` is `int256` (signed), not `uint128`
-//! - V4 uses `PoolId` (bytes32) instead of pool contract address
+//! - V4 uses `V4PoolId` (bytes32) instead of pool contract address
 //! - The event is emitted by `PoolManager`, not by individual pool contracts
 
 use alloy::primitives::{Address, B256, I256};
 use alloy::rpc::types::Log;
 
-use crate::v4_swap_decoder::PoolId;
+use crate::v4_swap_decoder::V4PoolId;
 use crate::uniswap_tick_range::extract_int24_from_word;
 
 /// Keccak256 of `ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)`.
@@ -48,7 +48,7 @@ pub const V4_MODIFY_LIQUIDITY_TOPIC: B256 = B256::new([
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct V4ModifyLiquidityEvent {
     /// The pool ID (bytes32 from topic[1]).
-    pub pool_id: PoolId,
+    pub pool_id: V4PoolId,
     /// The sender (from topic[2]).
     pub sender: Address,
     /// The lower tick of the position (from data).
@@ -76,14 +76,14 @@ pub fn decode_v4_modify_liquidity_log(log: &Log) -> Option<V4ModifyLiquidityEven
         return None;
     }
 
-    // Need 3 topics: event sig + PoolId + sender
+    // Need 3 topics: event sig + V4PoolId + sender
     let topics = log.topics();
     if topics.len() < 3 {
         return None;
     }
 
-    // Decode PoolId from topic[1] (indexed bytes32)
-    let pool_id: PoolId = topics[1].0;
+    // Decode V4PoolId from topic[1] (indexed bytes32)
+    let pool_id: V4PoolId = topics[1].0;
 
     // Decode sender from topic[2] (indexed address)
     let sender = Address::from_word(topics[2]);
@@ -127,7 +127,7 @@ mod tests {
     use alloy::primitives::Bytes;
 
     fn make_v4_modify_liquidity_log(
-        pool_id: PoolId,
+        pool_id: V4PoolId,
         sender: Address,
         tick_lower: i32,
         tick_upper: i32,
@@ -284,7 +284,7 @@ mod tests {
         let pool_id = [0u8; 32];
         // sender not needed for insufficient-topics test
 
-        // Only 2 topics — need 3 (sig + PoolId + sender)
+        // Only 2 topics — need 3 (sig + V4PoolId + sender)
         let inner = alloy::primitives::Log::new_unchecked(
             Address::ZERO,
             vec![V4_MODIFY_LIQUIDITY_TOPIC, B256::from(pool_id)],
