@@ -46,8 +46,7 @@ __all__ = [
     "touched_tokens",
 ]
 
-#: The concrete pool union ``register_path`` accepts (mirrors
-#: ``hop_info.build_hops_from_pools``'s accepted pool types).
+#: The concrete pool union ``register_path`` accepts.
 type ArbPathPool = UniswapV2Pool | UniswapV3Pool | UniswapV4Pool
 
 

@@ -16,6 +16,7 @@
 //!   (ergo UG6FKN task 74W2Z6.)
 
 mod errors;
+mod path_info;
 mod register;
 mod result_channel;
 mod snapshot;

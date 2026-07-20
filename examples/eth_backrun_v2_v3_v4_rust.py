@@ -1385,24 +1385,24 @@ async def _dispatch_profitable(
     """
     candidates: list[DispatchCandidate] = []
     for pid, inp, prof, ho, _ci, sb in results:
-        path_info = engine_registry.paths.get(pid)
-        if path_info is None:
-            bot_logger.debug(f"[sim-none] path={pid}: path_info missing")
-            continue
-        if len(ho) != len(path_info.hops):
-            bot_logger.debug(
-                f"[dispatch] skip path={pid}: hop_outputs length "
-                f"({len(ho)}) != hops ({len(path_info.hops)})",
-            )
+        # NXM2BF: the candidate resolves its `composers::PathInfo` from
+        # `path_id` via `PyArbitrageEngine.path_info_for_core` (Rust-side, over
+        # the shared `BotState`) — no Python `PathInfo` dataclass round-trip.
+        # The `hop_outputs` length-vs-hops guard moved Rust-side too
+        # (`PyDispatchCandidate.__new__` raises `ValueError` on mismatch); skip
+        # a path with no hop_outputs defensively (mirrors the pre-flatten
+        # `any(x <= 0 ...)` guard the encode seam keeps).
+        if not ho:
+            bot_logger.debug(f"[sim-none] path={pid}: empty hop_outputs")
             continue
         candidates.append(
             DispatchCandidate(
+                engine=engine_registry.engine,
                 path_id=pid,
                 optimal_input=inp,
                 engine_profit=prof,
                 hop_outputs=list(ho),
                 solve_block=sb,
-                path_info=path_info,
             ),
         )
 

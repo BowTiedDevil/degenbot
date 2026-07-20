@@ -17,8 +17,12 @@ from __future__ import annotations
 import pytest
 
 from degenbot._ffi.provider import AlloyProvider, AsyncAlloyProvider
-from degenbot._ffi.simulation import PyDispatchCandidate, PyDispatchOutcome, PySimulateContext
-from degenbot.arbitrage.hop_info import PathInfo, V2HopInfo
+from degenbot._ffi.simulation import (
+    PyDispatchCandidate,
+    PyDispatchOutcome,
+    PySimulateContext,
+)
+from degenbot.arbitrage.engine_registry import ArbitrageEngine
 
 # Canonical mainnet addresses (parity corpus constants).
 OWNER = "0x9c56a29c7231974c269e24f9fb3c29203039089e"
@@ -40,72 +44,91 @@ def _make_async_provider() -> AsyncAlloyProvider:
     return AsyncAlloyProvider(sync)
 
 
-@pytest.fixture
-def v2_path_info() -> PathInfo:
-    return PathInfo(
-        hops=[
-            V2HopInfo(
-                pool_address="0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc",
-                token0_address=WETH,
-                token1_address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-                fee=30,
-                zfo=False,
-            )
-        ]
-    )
-
-
 class TestPyDispatchCandidate:
-    """The per-path builder — field extraction + the encode-options flags."""
+    """The per-path builder — `path_id` resolution + the encode-options flags.
 
-    def test_constructs_from_engine_result_and_path_info(self, v2_path_info: PathInfo) -> None:
+    NXM2BF: the candidate resolves its `composers::PathInfo` from a registered
+    `path_id` via `PyArbitrageEngine::path_info_for_core` — no Python `PathInfo`
+    dataclass is threaded. The fixture builds a 2-hop V2 cycle (the engine's
+    `register_and_solve_path` requires a ≥2-hop cycle); `hop_outputs` must match
+    the path's hop count (2) or `__new__` raises `ValueError`.
+    """
+
+    def test_constructs_from_engine_and_path_id(
+        self, nxm2bf_v2_engine_and_path: tuple[PyArbitrageEngine, int]
+    ) -> None:
+        engine, path_id = nxm2bf_v2_engine_and_path
         candidate = PyDispatchCandidate(
-            path_id=42,
+            engine=engine,
+            path_id=path_id,
             optimal_input=1_000_000_000_000_000_000,
             engine_profit=2_000_000_000_000_000_000,
-            hop_outputs=[1_500_000_000_000_000_000],
+            hop_outputs=[1_500_000_000_000_000_000, 1_400_000_000_000_000_000],
             solve_block=19_000_000,
-            path_info=v2_path_info,
         )
         # No public fields yet (A4 reads `inner`); construction-not-erroring
-        # is the contract. The presence of the instance confirms the hop
-        # extraction dispatched to the V2 branch without raising.
+        # is the contract. The instance confirms the projection resolved the
+        # 2-hop V2 path's `PathInfo` without raising.
         assert isinstance(candidate, PyDispatchCandidate)
 
-    def test_encode_options_default_to_false(self, v2_path_info: PathInfo) -> None:
+    def test_encode_options_default_to_false(
+        self, nxm2bf_v2_engine_and_path: tuple[PyArbitrageEngine, int]
+    ) -> None:
+        engine, path_id = nxm2bf_v2_engine_and_path
         # Both flags default False; construction must accept no kwargs.
         candidate = PyDispatchCandidate(
-            path_id=0,
+            engine=engine,
+            path_id=path_id,
             optimal_input=1,
             engine_profit=1,
-            hop_outputs=[1],
+            hop_outputs=[1, 1],
             solve_block=0,
-            path_info=v2_path_info,
         )
         assert isinstance(candidate, PyDispatchCandidate)
 
-    def test_encode_options_kw_flags_accepted(self, v2_path_info: PathInfo) -> None:
+    def test_encode_options_kw_flags_accepted(
+        self, nxm2bf_v2_engine_and_path: tuple[PyArbitrageEngine, int]
+    ) -> None:
+        engine, path_id = nxm2bf_v2_engine_and_path
         candidate = PyDispatchCandidate(
-            path_id=0,
+            engine=engine,
+            path_id=path_id,
             optimal_input=1,
             engine_profit=1,
-            hop_outputs=[1],
+            hop_outputs=[1, 1],
             solve_block=0,
-            path_info=v2_path_info,
             erc6909_profit=True,
             use_v4_batch=True,
         )
         assert isinstance(candidate, PyDispatchCandidate)
 
-    def test_non_path_info_raises(self) -> None:
-        with pytest.raises((TypeError, AttributeError)):
+    def test_unregistered_path_id_raises_value_error(
+        self, nxm2bf_v2_engine_and_path: tuple[PyArbitrageEngine, int]
+    ) -> None:
+        engine, _path_id = nxm2bf_v2_engine_and_path
+        with pytest.raises(ValueError, match="not registered"):
             PyDispatchCandidate(
-                path_id=0,
+                engine=engine,
+                path_id=999_999,  # never registered
+                optimal_input=1,
+                engine_profit=1,
+                hop_outputs=[1, 1],
+                solve_block=0,
+            )
+
+    def test_hop_outputs_length_mismatch_raises_value_error(
+        self, nxm2bf_v2_engine_and_path: tuple[PyArbitrageEngine, int]
+    ) -> None:
+        engine, path_id = nxm2bf_v2_engine_and_path
+        # The path is 2-hop; passing 1 hop_output is a solver/stale-path_id defect.
+        with pytest.raises(ValueError, match="hop_outputs length"):
+            PyDispatchCandidate(
+                engine=engine,
+                path_id=path_id,
                 optimal_input=1,
                 engine_profit=1,
                 hop_outputs=[1],
                 solve_block=0,
-                path_info=object(),  # type: ignore[arg-type]
             )
 
 

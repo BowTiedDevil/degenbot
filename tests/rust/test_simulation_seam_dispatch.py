@@ -27,7 +27,8 @@ from degenbot._ffi.simulation import (
     dispatch_profitable_py,
 )
 from degenbot._ffi.submission import PyDispatcher, PySubmitCandidate
-from degenbot.arbitrage.hop_info import PathInfo, V2HopInfo
+from degenbot.arbitrage.engine_registry import ArbitrageEngine
+from degenbot.arbitrage.hop_info import V2HopInfo
 
 # Canonical mainnet addresses (parity corpus constants — match the A2 test
 # scaffolding in tests/rust/test_simulation_seam_classes.py).
@@ -58,20 +59,6 @@ def _make_ctx(*, inject_code: bool = False) -> PySimulateContext:
         inject_code=inject_code,
         executor_runtime_bytecode=b"\xde\xad\xbe\xef",
         injected_address=EXECUTOR if inject_code else None,
-    )
-
-
-def _v2_path_info() -> PathInfo:
-    return PathInfo(
-        hops=[
-            V2HopInfo(
-                pool_address="0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc",
-                token0_address=WETH,
-                token1_address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-                fee=30,
-                zfo=False,
-            )
-        ]
     )
 
 
@@ -232,19 +219,22 @@ class TestDispatchWithCandidateButNoRpc:
     level; this test proves the seam propagates `suppressed_count` through to
     the outcome)."""
 
-    async def test_suppressed_candidate_is_dropped_pre_sim(self) -> None:
+    async def test_suppressed_candidate_is_dropped_pre_sim(
+        self, nxm2bf_v2_engine_and_path: tuple[PyArbitrageEngine, int]
+    ) -> None:
+        engine, path_id = nxm2bf_v2_engine_and_path
         ctx = _make_ctx()
         dispatcher = PyDispatcher.for_block(100)
-        # Manually suppress path 7 past the threshold (10 failures).
+        # Manually suppress this path past the threshold (10 failures).
         for _ in range(10):
-            dispatcher.record_failure(7)
+            dispatcher.record_failure(path_id)
         candidate = PyDispatchCandidate(
-            path_id=7,
+            engine=engine,
+            path_id=path_id,
             optimal_input=1_000_000_000_000_000_000,
             engine_profit=2_000_000_000_000_000_000,
-            hop_outputs=[1_500_000_000_000_000_000],
+            hop_outputs=[1_500_000_000_000_000_000, 1_400_000_000_000_000_000],
             solve_block=100,
-            path_info=_v2_path_info(),
         )
         outcome = await dispatch_profitable_py(
             candidates=[candidate],
@@ -267,14 +257,22 @@ class TestDispatchWithCandidateButNoRpc:
         # survivor, so the map is populated from the input batch, not filtered
         # to survivors. Exercises the Rust->Python PathInfo converter (Rust
         # V2HopInfo -> Python V2HopInfo) end-to-end WITHOUT an RPC.
+        #
+        # NXM2BF: the candidate resolved its `PathInfo` from `path_id` via
+        # `path_info_for_core` at `__new__` time — the 2-hop V2 cycle the
+        # fixture registered projects to two `V2HopInfo`s (`fee=30`,
+        # `zfo=(True, False)`).
         assert isinstance(outcome.path_infos, dict)
-        assert set(outcome.path_infos.keys()) == {7}
-        pi = outcome.path_infos[7]
-        assert len(pi.hops) == 1
-        hop = pi.hops[0]
-        assert isinstance(hop, V2HopInfo)
+        assert set(outcome.path_infos.keys()) == {path_id}
+        pi = outcome.path_infos[path_id]
+        assert len(pi.hops) == 2
+        hop0, hop1 = pi.hops
+        assert isinstance(hop0, V2HopInfo)
+        assert isinstance(hop1, V2HopInfo)
         # EIP-55 checksummed (alloy Address Display) — matches the Python
-        # cockpit's `h.pool_address` form.
-        assert hop.pool_address == "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc"
-        assert hop.zfo is False
-        assert hop.fee == 30
+        # cockpit's `h.pool_address` form. Both hops carry the 0.3% fee (30
+        # bips) the projection derives from `(gamma=997, denom=1000)`.
+        assert hop0.fee == 30
+        assert hop1.fee == 30
+        assert hop0.zfo is True
+        assert hop1.zfo is False

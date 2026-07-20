@@ -10,6 +10,7 @@ from typing import Any
 
 from degenbot._ffi.provider import AsyncAlloyProvider
 from degenbot._ffi.submission import PyDispatcher, PySubmitCandidate
+from degenbot.arbitrage.engine_registry import ArbitrageEngine
 from degenbot.arbitrage.hop_info import PathInfo
 
 class PySimulateContext:
@@ -37,16 +38,23 @@ class PySimulateContext:
     def rpc_url(self) -> str: ...
 
 class PyDispatchCandidate:
-    """Pre-simulation candidate builder (engine result + resolved ``PathInfo``)."""
+    """Pre-simulation candidate builder (engine result + resolved ``PathInfo``).
+
+    NXM2BF: the candidate resolves its ``composers::PathInfo`` from a
+    registered ``path_id`` via ``PyArbitrageEngine.path_info_for_core`` — no
+    Python ``PathInfo`` dataclass is threaded. ``engine`` is the
+    ``ArbitrageEngine`` that owns ``path_id`` (the same engine that produced
+    ``engine_profit`` / ``hop_outputs``).
+    """
 
     def __init__(
         self,
+        engine: ArbitrageEngine,
         path_id: int,
         optimal_input: int,
         engine_profit: int,
         hop_outputs: list[int],
         solve_block: int,
-        path_info: PathInfo,
         *,
         erc6909_profit: bool = False,
         use_v4_batch: bool = False,

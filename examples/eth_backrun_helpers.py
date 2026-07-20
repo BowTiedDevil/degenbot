@@ -12,7 +12,6 @@ from degenbot.arbitrage.hop_info import (
     V2HopInfo,
     V3HopInfo,
     V4HopInfo,
-    build_hops_from_pools,
 )
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import resolve_rpc_uris

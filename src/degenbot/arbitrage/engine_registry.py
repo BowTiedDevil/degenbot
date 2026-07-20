@@ -28,7 +28,6 @@ from degenbot.logging import logger as bot_logger
 # block `S`.
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
-from .hop_info import PathInfo, build_hops_from_pools
 from .policy import NoOpPathPredicate, PathCompositionPredicate
 
 if TYPE_CHECKING:
@@ -81,7 +80,11 @@ class EngineRegistry:
         self._v3_keys: dict[str, int] = {}
         # V4 pools keyed by pool_id hex — for event routing from PoolManager logs
         self._v4_keys: dict[str, int] = {}  # pool_id_hex → pool_id
-        self.paths: dict[int, PathInfo] = {}
+        # NXM2BF: the Python `PathInfo` relay is retired. `register_path`
+        # returns the Rust `path_id`; `PyDispatchCandidate` resolves the
+        # encoder's `composers::PathInfo` from that `path_id` via
+        # `PyArbitrageEngine.path_info_for_core`. The `[profit]` hop-detail
+        # render reads `outcome.path_infos` (Rust→Py), not a stored Python copy.
         # ADR-006 D4 + D7KMQO: a pluggable path-composition predicate enforces
         # deployment policy (token denylist/allowlist, hop-count bounds,
         # min-liquidity, duplicate-pool guard) BEFORE hop building + engine
@@ -582,10 +585,14 @@ class EngineRegistry:
     ) -> int:
         """Register a path from concrete pool objects + per-hop directions.
 
-        ``HopInfo`` is built via ``build_hops_from_pools`` from pool
-        attributes; each pool's engine key is resolved from this registry's
-        key maps. Uses ``register_and_solve_path`` for eager solving so the
-        path is immediately included in the next result batch.
+        Each pool's engine key is resolved from this registry's key maps +
+        dispatched as a ``(key, zero_for_one)`` tuple to the engine's
+        ``register_and_solve_path`` (eager solve — the path is immediately
+        included in the next result batch). NXM2BF: the Python ``PathInfo``
+        relay is retired — ``PyDispatchCandidate`` resolves the encoder's
+        ``composers::PathInfo`` from the returned ``path_id`` via
+        ``PyArbitrageEngine.path_info_for_core`` (no Python hop build, no
+        stored copy).
 
         Returns:
             The registered path's ``path_id``.
@@ -606,7 +613,6 @@ class EngineRegistry:
         # raises a PathRejectedError subtype and never reaches the engine —
         # mirrors how V4 admission (HookedPoolRejectedError) is typed.
         self.path_predicate.evaluate(pools_and_zfos)
-        hops = build_hops_from_pools(pools_and_zfos)
         engine_hops: list[tuple[int, bool]] = []
         for pool, zfo in pools_and_zfos:
             if isinstance(pool, UniswapV4Pool):
@@ -631,6 +637,4 @@ class EngineRegistry:
             # shim is gone — Bot is 1-id-per-pool post-ADR-003).
             engine_hops.append((key, zfo))
 
-        path_id = self.engine.register_and_solve_path(engine_hops)
-        self.paths[path_id] = PathInfo(hops=hops)
-        return path_id
+        return self.engine.register_and_solve_path(engine_hops)
