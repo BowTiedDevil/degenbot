@@ -36,6 +36,7 @@ use alloy::primitives::{Address, B256, I256};
 use alloy::rpc::types::Log;
 
 use crate::v4_swap_decoder::PoolId;
+use crate::uniswap_tick_range::extract_int24_from_word;
 
 /// Keccak256 of `ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)`.
 pub const V4_MODIFY_LIQUIDITY_TOPIC: B256 = B256::new([
@@ -94,20 +95,14 @@ pub fn decode_v4_modify_liquidity_log(log: &Log) -> Option<V4ModifyLiquidityEven
         return None;
     }
 
-    // Decode tickLower (int24, sign-extended to int256 in 32 bytes)
-    // The int24 value is in the last 4 bytes of the first 32-byte word
-    let tick_lower_bytes: [u8; 4] = data[28..32].try_into().ok()?;
-    let tick_lower = i32::from_be_bytes(tick_lower_bytes);
-    if !(-887_272..=887_272).contains(&tick_lower) {
-        return None;
-    }
+    // Decode tickLower (int24, sign-extended to int256 in the first 32-byte
+    // data word; range-checked against the Uniswap V3 tick bounds by the
+    // shared helper).
+    let tick_lower = extract_int24_from_word(&data[0..32])?;
 
-    // Decode tickUpper (int24, sign-extended to int256 in 32 bytes)
-    let tick_upper_bytes: [u8; 4] = data[60..64].try_into().ok()?;
-    let tick_upper = i32::from_be_bytes(tick_upper_bytes);
-    if !(-887_272..=887_272).contains(&tick_upper) {
-        return None;
-    }
+    // Decode tickUpper (int24, sign-extended to int256 in the second 32-byte
+    // data word).
+    let tick_upper = extract_int24_from_word(&data[32..64])?;
 
     // Decode liquidityDelta (int256, bytes 64..96)
     let liquidity_delta = I256::from_be_bytes::<32>(data[64..96].try_into().ok()?);

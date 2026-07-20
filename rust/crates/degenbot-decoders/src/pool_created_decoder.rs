@@ -98,6 +98,7 @@
 use alloy::primitives::{Address, B256, U256};
 use alloy::rpc::types::Log;
 
+use crate::uniswap_tick_range::extract_int24_from_word;
 use crate::v4_swap_decoder::PoolId;
 
 // ── topic constants ───────────────────────────────────────────────────────
@@ -364,21 +365,6 @@ pub fn decode_v4_initialize_log(log: &Log) -> Option<V4InitializeEvent> {
     })
 }
 
-/// Extract an int24 from a 32-byte word (sign-extended to int256 in the ABI).
-///
-/// Returns `None` if the value is outside the valid int24 range
-/// `[-887272, 887272]`.
-fn extract_int24_from_word(word: &[u8]) -> Option<i32> {
-    if word.len() < 32 {
-        return None;
-    }
-    let last4: [u8; 4] = word[28..32].try_into().ok()?;
-    let value = i32::from_be_bytes(last4);
-    if !(-887_272..=887_272).contains(&value) {
-        return None;
-    }
-    Some(value)
-}
 
 #[cfg(test)]
 #[allow(clippy::unreadable_literal, clippy::unwrap_used)]

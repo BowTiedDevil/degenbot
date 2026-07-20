@@ -24,6 +24,7 @@
 //!           (5 × 32-byte words, left-padded)
 //! ```
 
+use crate::uniswap_tick_range::extract_int24_from_word;
 use alloy::primitives::{Address, B256, I256, U128, U256};
 use alloy::rpc::types::Log;
 
@@ -99,14 +100,10 @@ pub fn decode_v3_swap_log(log: &Log) -> Option<V3SwapEvent> {
     // Decode liquidity (uint128, bytes 96..128)
     let liquidity = U128::from_be_bytes::<16>(data[112..128].try_into().ok()?);
 
-    // Decode tick (int24, bytes 128..160 — sign-extended to 256 bits in ABI)
-    // The actual value fits in the last 4 bytes; read as i32 directly.
-    // int24 range: [-887_272, 887272]
-    let tick_bytes: [u8; 4] = data[156..160].try_into().ok()?;
-    let tick = i32::from_be_bytes(tick_bytes);
-    if !(-887_272..=887_272).contains(&tick) {
-        return None;
-    }
+    // Decode tick (int24, bytes 128..160 — sign-extended to int256 in the ABI;
+    // the value occupies the last 4 bytes of the 32-byte word). Range-checked
+    // against the Uniswap V3 tick bounds by the shared helper.
+    let tick = extract_int24_from_word(&data[128..160])?;
 
     Some(V3SwapEvent {
         pool_address: log.address(),
