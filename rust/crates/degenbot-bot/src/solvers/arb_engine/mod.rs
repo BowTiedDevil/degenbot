@@ -55,7 +55,7 @@ pub mod engine_handle;
 pub mod engine_subscriber;
 mod event_routing;
 mod lifecycle;
-mod path_info;
+pub mod path_info;
 mod result_channel;
 pub mod snapshot_verify;
 mod solver_dispatch;

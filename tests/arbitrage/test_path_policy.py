@@ -298,7 +298,7 @@ def test_register_path_default_predicate_accepts() -> None:
     path_id = registry.register_path([(v2, True)])
 
     assert fake.calls == [[(100, True)]]
-    assert path_id in registry.paths
+    assert isinstance(path_id, int)
 
 
 def test_register_path_custom_predicate_injection() -> None:

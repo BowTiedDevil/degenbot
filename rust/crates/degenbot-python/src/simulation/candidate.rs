@@ -2,25 +2,29 @@
 //! arb path before handing the batch to `dispatch_profitable_py` (A4).
 //!
 //! Mirrors [`PySubmitCandidate`]'s `#[new]` shape (a builder pyclass holding
-//! the core [`DispatchCandidate`]). The `path_info` arrives as the Python
-//! `PathInfo` dataclass + is extracted to the Rust [`PathInfo`] via the SAME
-//! [`crate::executor::extract_path_info`] the encode seam uses — DRY: the
-//! candidate the cockpit hands to `dispatch_profitable_py` must encode
-//! byte-for-byte identically to what `encode_cmd_stream` would produce.
+//! the core [`DispatchCandidate`]). The candidate resolves its
+//! [`composers::PathInfo`] directly from `path_id` via the
+//! [`PyArbitrageEngine::path_info_for_core`] projection over the shared
+//! `BotState` — no Python `PathInfo` dataclass round-trip (NXM2BF, the
+//! encode-relay flatten).
 //!
 //! The `EncodeOptions` (`erc6909_profit` / `use_v4_batch`) come in as bool
 //! kw-flags (mirrors the encode seam's signature).
 //!
 //! # GIL discipline
 //!
-//! `#[new]` runs under the GIL (it must iterate the Python `hops` list +
-//! dispatch `is_instance` on each hop). The A4 pyfunction then extracts the
-//! held `DispatchCandidate` (clone) into the async block + releases the GIL.
+//! `#[new]` runs under the GIL: it locks the engine, runs the projection
+//! (a `BotState` read lock nested engine-then-core — the same order as
+//! `register_path`), clones the resolved `PathInfo`, and releases. The A4
+//! pyfunction then extracts the held `DispatchCandidate` (clone) into the
+//! async block + releases the GIL.
 
-use crate::executor::{extract_path_info, HopTypes};
+use crate::bot::engine::PyArbitrageEngine;
 use crate::prelude::*;
+use degenbot_bot::solvers::arb_engine::path_info::PathInfoBuildError;
 use degenbot_executor::composers::{EncodeOptions, PathInfo};
 use degenbot_simulation::dispatch_profitable::DispatchCandidate;
+use pyo3::exceptions::PyValueError;
 
 /// The pre-simulation candidate builder — the engine result + the resolved
 /// `PathInfo` + the encode options.
@@ -42,9 +46,15 @@ pub struct PyDispatchCandidate {
 
 #[pymethods]
 impl PyDispatchCandidate {
-    /// Build a candidate from the engine result + the resolved path info.
+    /// Build a candidate from the engine result + a registered `path_id`.
+    ///
+    /// The candidate resolves its `composers::PathInfo` from `path_id` via
+    /// the engine's `path_info_for_core` projection over the shared
+    /// `BotState` — no Python `PathInfo` dataclass is threaded (NXM2BF).
     ///
     /// Args:
+    ///     `engine`: the `ArbitrageEngine` that owns `path_id` (the same
+    ///         engine that produced `engine_profit`/`hop_outputs`).
     ///     `path_id`: the unique arb path identifier.
     ///     `optimal_input`: the solver's optimal swap input (u128).
     ///     `engine_profit`: the solver's expected gross profit (u128) — used
@@ -52,32 +62,50 @@ impl PyDispatchCandidate {
     ///         (that's `SimResult::gross_profit`).
     ///     `hop_outputs`: the per-hop solver outputs (`list[int]`).
     ///     `solve_block`: the block the solver produced the result on.
-    ///     `path_info`: the Python `PathInfo` dataclass (`hops` list of
-    ///         `V2HopInfo`/`V3HopInfo`/`V4HopInfo`).
     ///     `erc6909_profit`: encode the V4 profit as an ERC6909 transfer
     ///         (default `False`).
     ///     `use_v4_batch`: encode V4 hops as a batched `unlock`-callback
     ///         (default `False`).
     ///
     /// # Errors
-    /// `TypeError`: if `path_info` is not a `PathInfo` or a hop is not
-    ///         `V2HopInfo`/`V3HopInfo`/`V4HopInfo`.
+    /// `ValueError`: if `path_id` is not registered in `engine`, or a hop
+    ///         has no command-stream encoder arm (Solidly / Balancer / Curve).
     #[new]
-    #[pyo3(signature = (path_id, optimal_input, engine_profit, hop_outputs, solve_block, path_info, *, erc6909_profit=false, use_v4_batch=false))]
+    #[pyo3(signature = (engine, path_id, optimal_input, engine_profit, hop_outputs, solve_block, *, erc6909_profit=false, use_v4_batch=false))]
     #[allow(clippy::too_many_arguments, clippy::needless_pass_by_value)]
     fn new(
         py: Python<'_>,
+        engine: Py<PyArbitrageEngine>,
         path_id: u64,
         optimal_input: u128,
         engine_profit: u128,
         hop_outputs: Vec<u128>,
         solve_block: u64,
-        path_info: &Bound<'_, PyAny>,
         erc6909_profit: bool,
         use_v4_batch: bool,
     ) -> PyResult<Self> {
-        let types = HopTypes::load(py)?;
-        let rust_path: PathInfo = extract_path_info(path_info, &types)?;
+        let rust_path: PathInfo = engine
+            .borrow(py)
+            .path_info_for_core(path_id)
+            .ok_or_else(|| {
+                PyValueError::new_err(format!(
+                    "path_id {path_id} is not registered in this engine"
+                ))
+            })
+            .and_then(|r| {
+                r.map_err(|e: PathInfoBuildError| PyValueError::new_err(format!("{e}")))
+            })?;
+        // The solver returns one hop_output per hop; a mismatch is a solver
+        // defect or a stale path_id. Surface as ValueError so the cockpit's
+        // per-candidate try/except can skip (mirrors the pre-flatten Python
+        // `len(hop_outputs) != len(path_info.hops)` guard, now Rust-side).
+        if hop_outputs.len() != rust_path.hops.len() {
+            return Err(PyValueError::new_err(format!(
+                "hop_outputs length ({}) != path {path_id} hops ({})",
+                hop_outputs.len(),
+                rust_path.hops.len()
+            )));
+        }
         let opts = EncodeOptions {
             erc6909_profit,
             use_v4_batch,

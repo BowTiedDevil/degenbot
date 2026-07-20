@@ -1,10 +1,14 @@
 """Integration tests for EngineRegistry.register_path pool-driven API.
 
-register_path takes a sequence of (pool, zero_for_one) pairs, builds HopInfo
-via build_hops_from_pools, resolves each pool's engine key from the registry's
-key maps, dispatches (key, zfo) pairs to the engine, and stores the built
-PathInfo. These tests use a Fake engine (AGENTS.md prefers Fakes over mocks)
-and seed the key maps directly, so no live Rust engine / BotState is needed.
+register_path takes a sequence of (pool, zero_for_one) pairs, resolves each
+pool's engine key from the registry's key maps, + dispatches (key, zfo) pairs
+to the engine's register_and_solve_path. NXM2BF: the Python PathInfo relay is
+retired — register_path no longer builds/stores a Python PathInfo; the candidate
+resolves the encoder's composers::PathInfo from the returned path_id via
+PyArbitrageEngine.path_info_for_core. These tests assert the key-dispatch
+contract (the Python-side responsibility that remains). They use a Fake engine
+(AGENTS.md prefers Fakes over mocks) + seed the key maps directly, so no live
+Rust engine / BotState is needed.
 """
 
 from __future__ import annotations
@@ -14,7 +18,6 @@ import pytest
 import examples.eth_backrun_v2_v3_v4_rust as runner
 from degenbot.arbitrage.engine_registry import ArbitrageEngine
 from degenbot.bot import PyBot
-from examples.eth_backrun_helpers import build_hops_from_pools
 from tests.types.test_concrete_pool_construction import (
     _make_uniswap_v2_pool,
     _make_uniswap_v3_pool,
@@ -36,9 +39,10 @@ class FakeArbitrageEngine:
         return path_id
 
 
-def test_register_path_dispatches_keys_and_stores_built_hops() -> None:
-    """register_path maps each pool to its engine key + direction and stores
-    the HopInfo list built from pool attributes."""
+def test_register_path_dispatches_keys_and_directions() -> None:
+    """register_path maps each pool to its engine key + direction. NXM2BF: no
+    Python PathInfo is built/stored — the returned path_id is the handle the
+    candidate resolves composers::PathInfo from."""
     fake = FakeArbitrageEngine()
     registry = runner.EngineRegistry(bot=None, engine=fake)
 
@@ -52,7 +56,9 @@ def test_register_path_dispatches_keys_and_stores_built_hops() -> None:
     path_id = registry.register_path(pools_and_zfos)
 
     assert fake.calls == [[(100, True), (200, False)]]
-    assert registry.paths[path_id].hops == build_hops_from_pools(pools_and_zfos)
+    assert isinstance(path_id, int)
+    # NXM2BF: the Python PathInfo relay is retired — no `paths` attribute.
+    assert not hasattr(registry, "paths")
 
 
 def test_register_path_v4_keyed_by_pool_id_hex() -> None:
@@ -67,7 +73,7 @@ def test_register_path_v4_keyed_by_pool_id_hex() -> None:
     path_id = registry.register_path([(v4, True)])
 
     assert fake.calls == [[(999, True)]]
-    assert registry.paths[path_id].hops[0].pool_id_hex == pool_id_hex
+    assert isinstance(path_id, int)
 
 
 class _FakeBot:
@@ -116,18 +122,18 @@ def test_bot_supplies_py_bot_to_real_engine() -> None:
     assert registry.engine.v2_pool_count() == 1
 
 
-def test_register_path_dispatches_aerodrome_solidly_hop() -> None:
-    """An Aerodrome stable pool routes its shared-core key as a Solidly hop.
+def test_register_path_dispatches_aerodrome_key() -> None:
+    """An Aerodrome pool routes its shared-core key through register_path.
 
     register_aerodrome_pool caches the pool_id (the engine's derive_hop_type
     classifies it as HopType::SolidlyStable at register_path time, so no engine-
-    side tag passes through the (key, zfo) tuple). The stored PathInfo's hop is
-    a SolidlyHopInfo with variant 'aerodrome-v2-stable' and stable=True.
+    side tag passes through the (key, zfo) tuple). NXM2BF: the Solidly HopInfo
+    build moved to the Rust projection (path_info_for_core returns
+    UnsupportedHopType for Solidly — matching the pre-flatten encode gap), so
+    the Python relay no longer classifies the hop family. Key-dispatch only.
     """
     from fractions import Fraction
 
-    from degenbot.aerodrome.pools import AerodromeV2Pool
-    from examples.eth_backrun_helpers import SolidlyHopInfo
     from tests.helpers.aerodrome_pool_factory import make_aerodrome_v2_pool
     from tests.types.test_concrete_pool_construction import _make_usdc, _make_weth
 
@@ -155,12 +161,4 @@ def test_register_path_dispatches_aerodrome_solidly_hop() -> None:
     # The fake engine received the shared-core key + direction (no Solidly tag
     # — the engine derives the family from the BotState identity).
     assert fake.calls == [[(aero_key, False)]]
-    # The stored PathInfo's hop is a SolidlyHopInfo.
-    hops = registry.paths[path_id].hops
-    assert len(hops) == 1
-    hop = hops[0]
-    assert isinstance(hop, SolidlyHopInfo)
-    assert isinstance(aero, AerodromeV2Pool)  # sanity check
-    assert hop.stable is True
-    assert hop.variant == "aerodrome-v2-stable"
-    assert hop.zfo is False
+    assert isinstance(path_id, int)
