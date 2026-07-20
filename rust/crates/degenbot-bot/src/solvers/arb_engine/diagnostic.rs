@@ -5,12 +5,15 @@
 //! and comparing engine state against on-chain state. All access is
 //! synchronous and does not mutate engine state.
 
-use alloy::dyn_abi::{DynSolType, DynSolValue};
-use alloy::primitives::{Address, Bytes, B256, I256, U256};
+use alloy::primitives::{Address, Bytes, I256, U256};
 use serde::{Deserialize, Serialize};
 
 use super::ArbitrageEngine;
 use ::degenbot_solvers::mixed::{HopType, MixedPoolRef};
+use degenbot_rpc::abi::{
+    decode_get_reserves, decode_get_slot0, decode_liquidity, decode_slot0, encode_get_liquidity,
+    encode_get_reserves, encode_get_slot0, encode_liquidity, encode_slot0,
+};
 use degenbot_rpc::multicall3::MulticallResult;
 
 /// A single typed field-level divergence between the engine's view of a pool
@@ -945,45 +948,6 @@ impl FetchOutcome {
 }
 
 // ---------------------------------------------------------------------------
-// ABI helpers
-// ---------------------------------------------------------------------------
-
-/// Compute the first 4 bytes of `keccak256(signature)`.
-fn fn_selector(signature: &str) -> [u8; 4] {
-    let hash = alloy::primitives::keccak256(signature.as_bytes());
-    [hash[0], hash[1], hash[2], hash[3]]
-}
-
-/// Build calldata = selector + ABI-encoded params.
-fn encode_call(selector: [u8; 4], params: &[DynSolValue]) -> Bytes {
-    let mut out = Vec::with_capacity(4 + 32 * params.len());
-    out.extend_from_slice(&selector);
-    for param in params {
-        out.extend_from_slice(&param.abi_encode());
-    }
-    Bytes::from(out)
-}
-
-/// Extract a `U256` from an ABI-decoded uint value with the expected bit width.
-fn uint_value(value: &DynSolValue, expected_bits: usize) -> Option<U256> {
-    let (v, bits) = value.as_uint()?;
-    if bits == expected_bits || bits == 256 {
-        Some(v)
-    } else {
-        None
-    }
-}
-
-/// Extract an `i32` from an ABI-decoded int value with the expected bit width.
-fn int_value_to_i32(value: &DynSolValue, expected_bits: usize) -> Option<i32> {
-    let (v, bits) = value.as_int()?;
-    if bits != expected_bits && bits != 256 {
-        return None;
-    }
-    v.try_into().ok()
-}
-
-// ---------------------------------------------------------------------------
 // Per-family on-chain fetch
 // ---------------------------------------------------------------------------
 
@@ -999,9 +963,7 @@ fn build_v2_calls(
             .map_err(|e| degenbot_core::errors::ProviderError::Other {
                 message: format!("invalid V2 pool address {address}: {e}"),
             })?;
-    let selector = fn_selector("getReserves()");
-    let calldata = encode_call(selector, &[]);
-    Ok(vec![(pool_address, calldata)])
+    Ok(vec![(pool_address, Bytes::from(encode_get_reserves()))])
 }
 
 /// Decode the V2 `getReserves()` sub-call result (from the cross-hop
@@ -1014,31 +976,7 @@ fn decode_v2_results(
     gamma_numer: &str,
 ) -> Result<FetchOutcome, degenbot_core::errors::ProviderError> {
     let raw = require_success(result, "getReserves")?;
-    let return_type = DynSolType::Tuple(vec![
-        DynSolType::Uint(112),
-        DynSolType::Uint(112),
-        DynSolType::Uint(32),
-    ]);
-    let decoded = return_type.abi_decode(raw).map_err(|e| {
-        degenbot_core::errors::ProviderError::SerializationError {
-            message: format!("failed to decode getReserves result: {e}"),
-        }
-    })?;
-    let DynSolValue::Tuple(values) = decoded else {
-        return Err(degenbot_core::errors::ProviderError::SerializationError {
-            message: "getReserves result is not a tuple".to_string(),
-        });
-    };
-    let reserve0 = uint_value(&values[0], 112).ok_or_else(|| {
-        degenbot_core::errors::ProviderError::SerializationError {
-            message: "getReserves reserve0 decode mismatch".to_string(),
-        }
-    })?;
-    let reserve1 = uint_value(&values[1], 112).ok_or_else(|| {
-        degenbot_core::errors::ProviderError::SerializationError {
-            message: "getReserves reserve1 decode mismatch".to_string(),
-        }
-    })?;
+    let (reserve0, reserve1) = decode_get_reserves(raw)?;
     let (chain_reserve_in, chain_reserve_out) = if zero_for_one {
         (reserve0, reserve1)
     } else {
@@ -1066,13 +1004,11 @@ fn build_v3_calls(
             .map_err(|e| degenbot_core::errors::ProviderError::Other {
                 message: format!("invalid V3 pool address {address}: {e}"),
             })?;
-    // slot0() -> (sqrtPriceX96, tick, observationIndex, observationCardinality, observationCardinalityNext, feeProtocol, unlocked)
-    let slot0_selector = fn_selector("slot0()");
-    // liquidity() -> uint128
-    let liquidity_selector = fn_selector("liquidity()");
+    // slot0() -> (sqrtPriceX96, tick, ...) + liquidity() -> uint128, in that
+    // order — `decode_v3_results` reads them as `results[0]` and `results[1]`.
     Ok(vec![
-        (pool_address, encode_call(slot0_selector, &[])),
-        (pool_address, encode_call(liquidity_selector, &[])),
+        (pool_address, Bytes::from(encode_slot0())),
+        (pool_address, Bytes::from(encode_liquidity())),
     ])
 }
 
@@ -1089,51 +1025,10 @@ fn decode_v3_results(
     tick_spacing: i32,
 ) -> Result<FetchOutcome, degenbot_core::errors::ProviderError> {
     let raw_slot0 = require_success(slot0_result, "slot0")?;
-    let slot0_type = DynSolType::Tuple(vec![
-        DynSolType::Uint(160),
-        DynSolType::Int(24),
-        DynSolType::Uint(16),
-        DynSolType::Uint(16),
-        DynSolType::Uint(16),
-        DynSolType::Uint(8),
-        DynSolType::Bool,
-    ]);
-    let decoded_slot0 = slot0_type.abi_decode(raw_slot0).map_err(|e| {
-        degenbot_core::errors::ProviderError::SerializationError {
-            message: format!("failed to decode slot0 result: {e}"),
-        }
-    })?;
-    let DynSolValue::Tuple(slot0_values) = decoded_slot0 else {
-        return Err(degenbot_core::errors::ProviderError::SerializationError {
-            message: "slot0 result is not a tuple".to_string(),
-        });
-    };
-
-    let chain_sqrt_price_x96 = uint_value(&slot0_values[0], 160).ok_or_else(|| {
-        degenbot_core::errors::ProviderError::SerializationError {
-            message: "slot0 sqrtPriceX96 decode mismatch".to_string(),
-        }
-    })?;
-    let chain_tick = int_value_to_i32(&slot0_values[1], 24).ok_or_else(|| {
-        degenbot_core::errors::ProviderError::SerializationError {
-            message: "slot0 tick decode mismatch".to_string(),
-        }
-    })?;
+    let (chain_sqrt_price_x96, chain_tick) = decode_slot0(raw_slot0)?;
 
     let raw_liquidity = require_success(liquidity_result, "liquidity")?;
-    let liquidity_type = DynSolType::Uint(128);
-    let decoded_liquidity = liquidity_type.abi_decode(raw_liquidity).map_err(|e| {
-        degenbot_core::errors::ProviderError::SerializationError {
-            message: format!("failed to decode liquidity result: {e}"),
-        }
-    })?;
-    let chain_liquidity = uint_value(&decoded_liquidity, 128)
-        .ok_or_else(
-            || degenbot_core::errors::ProviderError::SerializationError {
-                message: "liquidity decode mismatch".to_string(),
-            },
-        )?
-        .to::<u128>();
+    let chain_liquidity = decode_liquidity(raw_liquidity)?.to::<u128>();
 
     let outcome = FetchOutcome::new(DiagnosticPoolState::V3 {
         address: address.to_string(),
@@ -1142,7 +1037,7 @@ fn decode_v3_results(
         fee,
         tick_spacing,
         sqrt_price_x96: u256_to_hex(chain_sqrt_price_x96),
-        tick: chain_tick,
+        tick: chain_tick.try_into().unwrap_or_default(),
         liquidity: u128_to_hex(chain_liquidity),
     });
 
@@ -1162,19 +1057,11 @@ fn build_v4_calls(
             message: format!("invalid V4 pool_id {pool_id}: {e}"),
         }
     })?;
-    let pool_id_value = DynSolValue::FixedBytes(B256::from(pool_id_bytes), 32);
-    // StateView.getSlot0(bytes32 poolId) -> (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 swapFee)
-    let slot0_selector = fn_selector("getSlot0(bytes32)");
-    // StateView.getLiquidity(bytes32 poolId) -> uint128
-    let liquidity_selector = fn_selector("getLiquidity(bytes32)");
     Ok(vec![
+        (state_view, Bytes::from(encode_get_slot0(&pool_id_bytes))),
         (
             state_view,
-            encode_call(slot0_selector, std::slice::from_ref(&pool_id_value)),
-        ),
-        (
-            state_view,
-            encode_call(liquidity_selector, std::slice::from_ref(&pool_id_value)),
+            Bytes::from(encode_get_liquidity(&pool_id_bytes)),
         ),
     ])
 }
@@ -1195,48 +1082,10 @@ fn decode_v4_results(
     hooks: &str,
 ) -> Result<FetchOutcome, degenbot_core::errors::ProviderError> {
     let raw_slot0 = require_success(slot0_result, "StateView.getSlot0")?;
-    let slot0_type = DynSolType::Tuple(vec![
-        DynSolType::Uint(160),
-        DynSolType::Int(24),
-        DynSolType::Uint(24),
-        DynSolType::Uint(24),
-    ]);
-    let decoded_slot0 = slot0_type.abi_decode(raw_slot0).map_err(|e| {
-        degenbot_core::errors::ProviderError::SerializationError {
-            message: format!("failed to decode StateView.getSlot0 result: {e}"),
-        }
-    })?;
-    let DynSolValue::Tuple(slot0_values) = decoded_slot0 else {
-        return Err(degenbot_core::errors::ProviderError::SerializationError {
-            message: "StateView.getSlot0 result is not a tuple".to_string(),
-        });
-    };
-
-    let chain_sqrt_price_x96 = uint_value(&slot0_values[0], 160).ok_or_else(|| {
-        degenbot_core::errors::ProviderError::SerializationError {
-            message: "getSlot0 sqrtPriceX96 decode mismatch".to_string(),
-        }
-    })?;
-    let chain_tick = int_value_to_i32(&slot0_values[1], 24).ok_or_else(|| {
-        degenbot_core::errors::ProviderError::SerializationError {
-            message: "getSlot0 tick decode mismatch".to_string(),
-        }
-    })?;
+    let (chain_sqrt_price_x96, chain_tick, _protocol_fee, _lp_fee) = decode_get_slot0(raw_slot0)?;
 
     let raw_liquidity = require_success(liquidity_result, "StateView.getLiquidity")?;
-    let liquidity_type = DynSolType::Uint(128);
-    let decoded_liquidity = liquidity_type.abi_decode(raw_liquidity).map_err(|e| {
-        degenbot_core::errors::ProviderError::SerializationError {
-            message: format!("failed to decode StateView.getLiquidity result: {e}"),
-        }
-    })?;
-    let chain_liquidity = uint_value(&decoded_liquidity, 128)
-        .ok_or_else(
-            || degenbot_core::errors::ProviderError::SerializationError {
-                message: "getLiquidity decode mismatch".to_string(),
-            },
-        )?
-        .to::<u128>();
+    let chain_liquidity = decode_liquidity(raw_liquidity)?.to::<u128>();
 
     let outcome = FetchOutcome::new(DiagnosticPoolState::V4 {
         pool_manager: pool_manager.to_string(),
@@ -1248,7 +1097,7 @@ fn decode_v4_results(
         hook_flags,
         hooks: hooks.to_string(),
         sqrt_price_x96: u256_to_hex(chain_sqrt_price_x96),
-        tick: chain_tick,
+        tick: chain_tick.try_into().unwrap_or_default(),
         liquidity: u128_to_hex(chain_liquidity),
     });
 
