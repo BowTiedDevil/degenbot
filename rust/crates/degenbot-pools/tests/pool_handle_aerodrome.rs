@@ -42,8 +42,11 @@ fn aerodrome_pool_handle_exposes_structure_identity_and_reserve_pair() {
     assert_eq!(rp.token0(), Address::from([0xAAu8; 20]));
     assert_eq!(rp.token1(), Address::from([0xBBu8; 20]));
 
-    // Aerodrome swap math is not yet dispatched from simulate_swap, so the
-    // prototype returns the "not-yet-Rust-side" sentinel of U256::ZERO.
-    let out = pool.calculate_tokens_out(true, U256::from(1_000_000));
-    assert_eq!(out, Some(U256::ZERO));
+    // Aerodrome volatile swap math dispatches through the Rust solidly math
+    // (`calc_exact_in_volatile`) — pure constant-product math, no decimals
+    // needed.
+    let out = pool
+        .calculate_tokens_out(true, U256::from(1_000_000))
+        .expect("computable");
+    assert!(out > U256::ZERO);
 }

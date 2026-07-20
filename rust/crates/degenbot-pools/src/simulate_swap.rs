@@ -119,6 +119,34 @@ pub fn simulate_swap(
                 outcome.amount0
             })
         }
+        PoolEntry::AerodromeV2(id, state) => {
+            if amount_in.is_zero() {
+                return Ok(U256::ZERO);
+            }
+            // Solidly volatile (constant-product) math — direct port via
+            // `calc_exact_in_volatile`. The Aerodrome fee is a unidirectional
+            // ``(fee_numer, fee_denom)`` fraction (the fee taken from the
+            // input), matching `calc_exact_in_volatile`'s convention exactly.
+            if !id.stable {
+                let token_in: u8 = u8::from(!zero_for_one);
+                let (fee_numer, fee_denom) = id.fee;
+                return degenbot_solidly_math::calc_exact_in_volatile(
+                    amount_in,
+                    token_in,
+                    state.reserve0.to::<U256>(),
+                    state.reserve1.to::<U256>(),
+                    U256::from(fee_numer),
+                    U256::from(fee_denom),
+                )
+                .map_err(|_| SimulateSwapError::NotComputable);
+            }
+            // Stable mode: the Solidly stable invariant (`x^3y+y^3x >= k`)
+            // needs per-token decimals, which the Aerodrome state-port
+            // slice does not yet carry. The Python companion keeps doing its
+            // own math via `swap_fn` until the decimals-ports slice lands,
+            // so this Rust core path returns the not-yet-Rust-side sentinel.
+            Ok(U256::ZERO)
+        }
         // Curve (11a) + Balancer weighted (12a) + Balancer stable (12c): the
         // stableswap / weighted-product / stable-invariant math is NOT ported in
         // their state-port sub-slices. The Python companions keep doing their
@@ -126,9 +154,8 @@ pub fn simulate_swap(
         // the `swap_fn` returned by `to_hop_state`; this Rust core path
         // returns 0 (the "not-yet-Rust-side" sentinel — same as an
         // unregistered pool). Curve ported in 11c; Balancer weighted stable in 12e.
-        PoolEntry::Curve(..)
-        | PoolEntry::BalancerWeighted(..)
-        | PoolEntry::BalancerStable(..)
-        | PoolEntry::AerodromeV2(..) => Ok(U256::ZERO),
+        PoolEntry::Curve(..) | PoolEntry::BalancerWeighted(..) | PoolEntry::BalancerStable(..) => {
+            Ok(U256::ZERO)
+        }
     }
 }

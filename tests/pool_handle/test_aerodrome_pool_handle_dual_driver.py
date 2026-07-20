@@ -42,9 +42,11 @@ def test_reserve_pair_view(aerodrome_pool) -> None:
     assert rp.reserve1 == 2_000_000_000
 
 
-def test_calculate_tokens_out_returns_sentinel(aerodrome_pool) -> None:
-    # Aerodrome swap math is not yet dispatched from simulate_swap.
+def test_calculate_tokens_out(aerodrome_pool) -> None:
+    # Aerodrome volatile swap math dispatches through the Rust solidly math
+    # (`calc_exact_in_volatile`) — pure constant-product math, no decimals
+    # needed.
     out = aerodrome_pool.calculate_tokens_out(True, 1_000_000)
 
     assert out is not None
-    assert out == 0
+    assert out > 0
