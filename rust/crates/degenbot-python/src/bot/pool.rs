@@ -2855,7 +2855,7 @@ fn extract_tick_data(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Prototype structural `Pool` handle (`PyPool`) — V2 only for now.
+// Prototype structural `Pool` handle (`PyPool`) — all families.
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Thin Python handle to a pool, exposing a structural (not identity-based)
@@ -2867,7 +2867,6 @@ pub struct PyPool {
 }
 
 impl PyPool {
-    #[allow(dead_code)]
     pub(crate) const fn new(core: Arc<parking_lot::RwLock<BotState>>, pool_id: u64) -> Self {
         Self { core, pool_id }
     }
@@ -2895,9 +2894,11 @@ impl PyPool {
         })
     }
 
-    /// Identity as a simple tuple. For reserve-pair pools:
-    /// ``("reserve_pair", variant)`` where ``variant`` is ``"uniswap_v2"`` or
-    /// ``"aerodrome_v2"``. Other families return their family name only.
+    /// Identity as a simple tuple ``(family, variant)``.
+    ///
+    /// * reserve-pair: ``("reserve_pair", "uniswap_v2" | "aerodrome_v2_stable" | "aerodrome_v2_volatile")``
+    /// * concentrated-liquidity: ``("concentrated_liquidity", "uniswap_v3" | "uniswap_v4")``
+    /// * balance-vector: ``("balance_vector", "curve" | "balancer_weighted" | "balancer_stable")``
     fn identity(&self) -> (String, Option<String>) {
         self.with_pool(|pool| match pool.identity() {
             degenbot_pools::Identity::ReservePair { variant } => (
@@ -2912,10 +2913,29 @@ impl PyPool {
                     }
                 }),
             ),
-            degenbot_pools::Identity::ConcentratedLiquidity => {
-                ("concentrated_liquidity".to_string(), None)
-            }
-            degenbot_pools::Identity::BalanceVector => ("balance_vector".to_string(), None),
+            degenbot_pools::Identity::ConcentratedLiquidity { variant } => (
+                "concentrated_liquidity".to_string(),
+                Some(match variant {
+                    degenbot_pools::ConcentratedLiquidityVariant::UniswapV3 => {
+                        "uniswap_v3".to_string()
+                    }
+                    degenbot_pools::ConcentratedLiquidityVariant::UniswapV4 => {
+                        "uniswap_v4".to_string()
+                    }
+                }),
+            ),
+            degenbot_pools::Identity::BalanceVector { variant } => (
+                "balance_vector".to_string(),
+                Some(match variant {
+                    degenbot_pools::BalanceVectorVariant::Curve => "curve".to_string(),
+                    degenbot_pools::BalanceVectorVariant::BalancerWeighted => {
+                        "balancer_weighted".to_string()
+                    }
+                    degenbot_pools::BalanceVectorVariant::BalancerStable => {
+                        "balancer_stable".to_string()
+                    }
+                }),
+            ),
         })
     }
 
@@ -2930,6 +2950,41 @@ impl PyPool {
             }),
             None => Err(pyo3::exceptions::PyValueError::new_err(
                 "pool is not a reserve-pair pool",
+            )),
+        })
+    }
+
+    /// Concentrated-liquidity structural view. Raises ``ValueError`` for non-CL pools.
+    fn concentrated_liquidity(&self) -> PyResult<PyConcentratedLiquidityView> {
+        self.with_pool(|pool| match pool.concentrated_liquidity() {
+            Some(view) => Ok(PyConcentratedLiquidityView {
+                token0: address_utils::address_to_checksum_string(&view.token0()),
+                token1: address_utils::address_to_checksum_string(&view.token1()),
+                fee: view.fee(),
+                tick_spacing: view.tick_spacing(),
+                sqrt_price_x96: view.sqrt_price_x96(),
+                liquidity: view.liquidity(),
+                tick: view.tick(),
+            }),
+            None => Err(pyo3::exceptions::PyValueError::new_err(
+                "pool is not a concentrated-liquidity pool",
+            )),
+        })
+    }
+
+    /// Balance-vector structural view. Raises ``ValueError`` for non-balance-vector pools.
+    fn balance_vector(&self) -> PyResult<PyBalanceVectorView> {
+        self.with_pool(|pool| match pool.balance_vector() {
+            Some(view) => Ok(PyBalanceVectorView {
+                tokens: view
+                    .tokens()
+                    .iter()
+                    .map(address_utils::address_to_checksum_string)
+                    .collect(),
+                balances: view.balances().to_vec(),
+            }),
+            None => Err(pyo3::exceptions::PyValueError::new_err(
+                "pool is not a balance-vector pool",
             )),
         })
     }
@@ -2980,5 +3035,87 @@ impl PyReservePairView {
     #[getter]
     fn reserve1(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         crate::conversion::alloy::u256_to_py(py, &self.reserve1).map(pyo3::Bound::unbind)
+    }
+}
+
+/// Read-only concentrated-liquidity view exposed to Python.
+#[pyclass(module = "degenbot._ffi")]
+pub struct PyConcentratedLiquidityView {
+    token0: String,
+    token1: String,
+    fee: u32,
+    tick_spacing: i32,
+    sqrt_price_x96: U256,
+    liquidity: u128,
+    tick: i32,
+}
+
+#[pymethods]
+impl PyConcentratedLiquidityView {
+    #[getter]
+    fn token0(&self) -> String {
+        self.token0.clone()
+    }
+
+    #[getter]
+    fn token1(&self) -> String {
+        self.token1.clone()
+    }
+
+    #[getter]
+    fn fee(&self) -> u32 {
+        self.fee
+    }
+
+    #[getter]
+    fn tick_spacing(&self) -> i32 {
+        self.tick_spacing
+    }
+
+    #[getter]
+    fn sqrt_price_x96(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        crate::conversion::alloy::u256_to_py(py, &self.sqrt_price_x96).map(pyo3::Bound::unbind)
+    }
+
+    #[getter]
+    fn liquidity(&self) -> u128 {
+        self.liquidity
+    }
+
+    #[getter]
+    fn tick(&self) -> i32 {
+        self.tick
+    }
+}
+
+/// Read-only balance-vector view exposed to Python.
+#[pyclass(module = "degenbot._ffi")]
+pub struct PyBalanceVectorView {
+    tokens: Vec<String>,
+    balances: Vec<U256>,
+}
+
+#[pymethods]
+impl PyBalanceVectorView {
+    #[getter]
+    fn tokens(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        Ok(pyo3::types::PyList::new(py, self.tokens.clone())?
+            .into_any()
+            .unbind())
+    }
+
+    #[getter]
+    fn balances(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let py_vals: Vec<Py<PyAny>> = self
+            .balances
+            .iter()
+            .map(|b| crate::conversion::alloy::u256_to_py(py, b).map(pyo3::Bound::unbind))
+            .collect::<PyResult<_>>()?;
+        Ok(pyo3::types::PyList::new(py, py_vals)?.into_any().unbind())
+    }
+
+    #[getter]
+    fn n_tokens(&self) -> usize {
+        self.tokens.len()
     }
 }
