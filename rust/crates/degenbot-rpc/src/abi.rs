@@ -612,7 +612,8 @@ fn widen_int24(tick: i32) -> I256 {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use alloy::primitives::{address, hex_literal::hex, U256};
+    use alloy::dyn_abi::DynSolValue;
+    use alloy::primitives::{address, I256, U128, U256};
 
     // Reference vectors computed independently with `eth_abi` +
     // `eth_utils.keccak` in a throwaway Python probe — a DIFFERENT ABI encoder
@@ -681,8 +682,11 @@ mod tests {
     /// `getSlot0(bytes32)` calldata: selector + the 32-byte poolId.
     #[test]
     fn get_slot0_calldata_is_selector_plus_pool_id() {
-        let pool_id: [u8; 32] =
-            hex!("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20");
+        let pool_id: [u8; 32] = [
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+            0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c,
+            0x1d, 0x1e, 0x1f, 0x20,
+        ];
         let calldata = encode_get_slot0(&pool_id);
         let expected_sel = alloy::primitives::keccak256(b"getSlot0(bytes32)");
         assert_eq!(&calldata[0..4], &expected_sel[..4]);
@@ -693,8 +697,11 @@ mod tests {
     /// `getLiquidity(bytes32)` calldata.
     #[test]
     fn get_liquidity_calldata_is_selector_plus_pool_id() {
-        let pool_id: [u8; 32] =
-            hex!("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20");
+        let pool_id: [u8; 32] = [
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+            0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c,
+            0x1d, 0x1e, 0x1f, 0x20,
+        ];
         let calldata = encode_get_liquidity(&pool_id);
         let expected_sel = alloy::primitives::keccak256(b"getLiquidity(bytes32)");
         assert_eq!(&calldata[0..4], &expected_sel[..4]);
@@ -786,5 +793,172 @@ mod tests {
         assert_eq!(a, U256::from(99u64));
         let t = decode_total_supply(&U256::from(1_234_567u64).to_be_bytes::<32>()).unwrap();
         assert_eq!(t, U256::from(1_234_567u64));
+    }
+
+    // ── tick_data / tick_bitmap (V3 + V4) — independent-oracle tests ──
+    //
+    // Migrated from `degenbot-pool-updater/src/verify.rs` (slice A, commit #1)
+    // to fill the home's gap: `decode_tick_data` / `decode_tick_bitmap` /
+    // `decode_v4_tick_data` / `decode_v4_tick_bitmap` had NO unit tests here
+    // before this commit. The reference payloads are built with an
+    // INDEPENDENT encoder path (`DynSolValue::abi_encode` of a hand-built
+    // tuple) than the sol!-macro decoder under test — a different encoder than
+    // alloy's `sol!`, stronger than a same-encoder roundtrip. This is the
+    // independent-oracle discipline the pool-updater tests established; it now
+    // guards the home decode every consumer (diagnostic, liquidity_verifier,
+    // pool-updater) routes through.
+
+    /// Independently ABI-encode a V3 `ticks()` return tuple — built with
+    /// `DynSolValue::abi_encode`, a DIFFERENT encoder path than the
+    /// `IUniswapV3Pool::ticksCall` sol! macro `decode_tick_data` uses.
+    fn encode_ticks_return_ref(gross: u128, net: i128) -> Vec<u8> {
+        let val = DynSolValue::Tuple(vec![
+            DynSolValue::Uint(U256::from(gross), 128),
+            DynSolValue::Int(I256::try_from(net).unwrap(), 128),
+            DynSolValue::Uint(U256::ZERO, 256),
+            DynSolValue::Uint(U256::ZERO, 256),
+            DynSolValue::Int(I256::ZERO, 56),
+            DynSolValue::Uint(U256::ZERO, 160),
+            DynSolValue::Uint(U256::ZERO, 32),
+            DynSolValue::Bool(false),
+        ]);
+        val.abi_encode()
+    }
+
+    /// Independently ABI-encode a `uint256` return (the `tickBitmap` shape).
+    fn encode_uint256_return_ref(word: U256) -> Vec<u8> {
+        DynSolValue::Uint(word, 256).abi_encode()
+    }
+
+    #[test]
+    fn decode_tick_data_matches_ref_encoder() {
+        let payload = encode_ticks_return_ref(500, -100);
+        let (gross, net) = decode_tick_data(&payload).expect("decode");
+        assert_eq!(gross, U128::from(500u64));
+        assert_eq!(net, I256::try_from(-100i64).unwrap());
+    }
+
+    #[test]
+    fn decode_tick_data_drained_tick_is_zeros() {
+        // An uninitialized tick returns gross=0, net=0.
+        let payload = encode_ticks_return_ref(0, 0);
+        let (gross, net) = decode_tick_data(&payload).expect("decode");
+        assert_eq!(gross, U128::ZERO);
+        assert_eq!(net, I256::ZERO);
+    }
+
+    #[test]
+    fn decode_tick_data_too_short_is_err() {
+        assert!(decode_tick_data(&[0u8; 10]).is_err());
+    }
+
+    #[test]
+    fn decode_tick_bitmap_matches_ref_encoder() {
+        let word = U256::from_be_bytes::<32>([0x01; 32]);
+        let payload = encode_uint256_return_ref(word);
+        let decoded = decode_tick_bitmap(&payload).expect("decode");
+        assert_eq!(decoded, word);
+    }
+
+    #[test]
+    fn decode_tick_bitmap_too_short_is_err() {
+        assert!(decode_tick_bitmap(&[0u8; 10]).is_err());
+    }
+
+    // V4 tick decoders share the V3 byte layout (`decode_v4_tick_data` /
+    // `decode_v4_tick_bitmap` delegate to the V3 path). Re-assert the shape
+    // against the same independent encoder so the V4 wrappers are not
+    // untested wrapping.
+
+    #[test]
+    fn decode_v4_tick_data_matches_ref_encoder() {
+        let payload = encode_ticks_return_ref(7, -7);
+        let (gross, net) = decode_v4_tick_data(&payload).expect("decode");
+        assert_eq!(gross, U128::from(7u64));
+        assert_eq!(net, I256::try_from(-7i64).unwrap());
+    }
+
+    #[test]
+    fn decode_v4_tick_bitmap_matches_ref_encoder() {
+        let word = U256::from_be_bytes::<32>([0xab; 32]);
+        let payload = encode_uint256_return_ref(word);
+        let decoded = decode_v4_tick_bitmap(&payload).expect("decode");
+        assert_eq!(decoded, word);
+    }
+
+    // ── encode: calldata sign-extension for tick args ──
+    // `encode_tick_data` / `encode_tick_bitmap` take `i32` / `i16` and must
+    // sign-extend into the 32-byte ABI word. Independently re-derive the
+    // selectors (`keccak256("ticks(int24)") = 0xf30dba93`,
+    // `keccak256("tickBitmap(int16)") = 0x5339c296`) so a spec bug in the
+    // sol! ABI signature cannot silently pass encode + decode.
+
+    #[test]
+    fn encode_tick_data_positive_tick() {
+        let cd = encode_tick_data(100);
+        assert_eq!(cd.len(), 36);
+        let expected_sel = alloy::primitives::keccak256(b"ticks(int24)");
+        assert_eq!(&cd[..4], &expected_sel[..4]);
+        // arg = 0x00..00 00 00 00 64 (100)
+        assert!(cd[4..32].iter().all(|&b| b == 0));
+        assert_eq!(&cd[32..36], &[0, 0, 0, 100]);
+    }
+
+    #[test]
+    fn encode_tick_data_negative_tick_is_sign_extended() {
+        let cd = encode_tick_data(-100);
+        let expected_sel = alloy::primitives::keccak256(b"ticks(int24)");
+        assert_eq!(&cd[..4], &expected_sel[..4]);
+        assert!(cd[4..32].iter().all(|&b| b == 0xff), "high bytes 0xff");
+        // low 4 bytes = -100 as i32 = 0xffffff9c
+        assert_eq!(&cd[32..36], &[0xff, 0xff, 0xff, 0x9c]);
+    }
+
+    #[test]
+    fn encode_tick_bitmap_sign_extends_negative_word() {
+        let cd = encode_tick_bitmap(-1);
+        let expected_sel = alloy::primitives::keccak256(b"tickBitmap(int16)");
+        assert_eq!(&cd[..4], &expected_sel[..4]);
+        assert!(cd[4..32].iter().all(|&b| b == 0xff));
+        assert_eq!(
+            U256::from_be_bytes::<32>(cd[4..36].try_into().unwrap()),
+            U256::MAX
+        );
+    }
+
+    #[test]
+    fn encode_v4_tick_data_includes_pool_id_and_selector() {
+        let pool_id: [u8; 32] = [
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+            0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c,
+            0x1d, 0x1e, 0x1f, 0x20,
+        ];
+        let cd = encode_v4_tick_data(&pool_id, 100);
+        // selector(4) + pool_id(32) + int24 tick(32) = 68 bytes
+        assert_eq!(cd.len(), 68);
+        let expected_sel = alloy::primitives::keccak256(b"getTickLiquidity(bytes32,int24)");
+        assert_eq!(&cd[..4], &expected_sel[..4]);
+        assert_eq!(&cd[4..36], &pool_id[..]);
+        // tick arg occupies the final 32-byte word; 100 sign-extended → bytes
+        // [36..67] are 0x00, last byte [67] is 100.
+        assert!(cd[36..67].iter().all(|&b| b == 0));
+        assert_eq!(cd[67], 100);
+    }
+
+    #[test]
+    fn encode_v4_tick_bitmap_includes_pool_id_and_selector() {
+        let pool_id: [u8; 32] = [
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+            0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c,
+            0x1d, 0x1e, 0x1f, 0x20,
+        ];
+        let cd = encode_v4_tick_bitmap(&pool_id, -1);
+        // selector(4) + pool_id(32) + int16 word(32) = 68 bytes
+        assert_eq!(cd.len(), 68);
+        let expected_sel = alloy::primitives::keccak256(b"getTickBitmap(bytes32,int16)");
+        assert_eq!(&cd[..4], &expected_sel[..4]);
+        assert_eq!(&cd[4..36], &pool_id[..]);
+        // word -1 sign-extended: bytes [36..68) all 0xff
+        assert!(cd[36..68].iter().all(|&b| b == 0xff));
     }
 }
