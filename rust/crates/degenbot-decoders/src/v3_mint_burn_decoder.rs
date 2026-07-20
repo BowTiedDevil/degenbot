@@ -210,7 +210,6 @@ pub fn decode_v3_burn_log(log: &Log) -> Option<V3BurnEvent> {
     })
 }
 
-
 #[cfg(test)]
 #[allow(clippy::unreadable_literal, clippy::unwrap_used)]
 mod tests {

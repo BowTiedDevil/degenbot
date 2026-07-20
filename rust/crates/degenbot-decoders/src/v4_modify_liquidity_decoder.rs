@@ -35,8 +35,8 @@
 use alloy::primitives::{Address, B256, I256};
 use alloy::rpc::types::Log;
 
-use crate::v4_swap_decoder::V4PoolId;
 use crate::uniswap_tick_range::extract_int24_from_word;
+use crate::v4_swap_decoder::V4PoolId;
 
 /// Keccak256 of `ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)`.
 pub const V4_MODIFY_LIQUIDITY_TOPIC: B256 = B256::new([

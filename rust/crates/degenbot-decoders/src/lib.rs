@@ -42,9 +42,9 @@
 //!   helper consumed by every V3/V4 int24-tick decoder.
 
 pub mod aave_event_decoder;
-pub mod uniswap_tick_range;
 pub mod pool_created_decoder;
 pub mod revert;
+pub mod uniswap_tick_range;
 pub mod v2_sync_decoder;
 pub mod v3_mint_burn_decoder;
 pub mod v3_swap_decoder;
