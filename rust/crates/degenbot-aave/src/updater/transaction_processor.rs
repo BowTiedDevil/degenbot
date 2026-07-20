@@ -1157,7 +1157,7 @@ impl<'a> GhoDiscountContext<'a> {
         gho_vtoken_address: Option<Address>,
     ) -> Self {
         use degenbot_decoders::aave_event_decoder::{
-            DEFICIT_CREATED_TOPIC, DISCOUNT_PERCENT_UPDATED_TOPIC,
+            AAVE_DEFICIT_CREATED_TOPIC, AAVE_DISCOUNT_PERCENT_UPDATED_TOPIC,
         };
         let mut updates_by_log_index: HashMap<Address, Vec<(u64, U256)>> = HashMap::new();
         let mut bad_debt_users: HashSet<Address> = HashSet::new();
@@ -1166,7 +1166,7 @@ impl<'a> GhoDiscountContext<'a> {
             if topics.is_empty() {
                 continue;
             }
-            if topics[0] == DISCOUNT_PERCENT_UPDATED_TOPIC && topics.len() >= 2 {
+            if topics[0] == AAVE_DISCOUNT_PERCENT_UPDATED_TOPIC && topics.len() >= 2 {
                 // DiscountPercentUpdated(user indexed, oldDiscountPercent).
                 // topics[1] = the user; data word 0 = the OLD discount.
                 let user = topic_to_address(topics[1]);
@@ -1175,7 +1175,7 @@ impl<'a> GhoDiscountContext<'a> {
                     .entry(user)
                     .or_default()
                     .push((log.log_index.unwrap_or(0), old_discount));
-            } else if topics[0] == DEFICIT_CREATED_TOPIC && topics.len() >= 2 {
+            } else if topics[0] == AAVE_DEFICIT_CREATED_TOPIC && topics.len() >= 2 {
                 // DeficitCreated(user indexed, debtAsset indexed, amount).
                 // topics[1] = the user whose debt is written off.
                 let user = topic_to_address(topics[1]);
@@ -2070,7 +2070,7 @@ mod tests {
     #[test]
     fn extract_pool_amount_word0_reads_data_word_0() {
         // data = [amount=0x1000 (4096), padding...] → word 0 = 4096.
-        use degenbot_decoders::aave_event_decoder::SUPPLY_TOPIC;
+        use degenbot_decoders::aave_event_decoder::AAVE_SUPPLY_TOPIC;
         let amount = U256::from(4_096u64);
         let mut data = vec![0u8; 64];
         amount
@@ -2084,7 +2084,7 @@ mod tests {
             0,
             Address::from([0xAA; 20]),
             vec![
-                SUPPLY_TOPIC,
+                AAVE_SUPPLY_TOPIC,
                 B256::left_padding_from(Address::from([0x01; 20]).as_slice()),
                 B256::left_padding_from(Address::from([0x02; 20]).as_slice()),
                 B256::ZERO,
@@ -2099,11 +2099,11 @@ mod tests {
     /// `scaled_event` `logIndex`.
     #[test]
     fn operation_sort_key_uses_pool_event_log_index() {
-        use degenbot_decoders::aave_event_decoder::SUPPLY_TOPIC;
+        use degenbot_decoders::aave_event_decoder::AAVE_SUPPLY_TOPIC;
         let pool_log = make_log(
             5,
             Address::ZERO,
-            vec![SUPPLY_TOPIC, B256::ZERO, B256::ZERO, B256::ZERO],
+            vec![AAVE_SUPPLY_TOPIC, B256::ZERO, B256::ZERO, B256::ZERO],
             Bytes::default(),
         );
         // Mirror an Operation with a pool_event at logIndex 5.
@@ -2140,7 +2140,7 @@ mod tests {
     /// collateral`.
     #[test]
     fn extract_pool_amount_word1_reads_data_word_1() {
-        use degenbot_decoders::aave_event_decoder::LIQUIDATION_CALL_TOPIC;
+        use degenbot_decoders::aave_event_decoder::AAVE_LIQUIDATION_CALL_TOPIC;
         // LiquidationCall data = [debtToCover=1000, liquidatedCollateralAmount=500, liquidator, receiveAToken].
         let debt_to_cover = U256::from(1_000u64);
         let liquidated_collateral = U256::from(500u64);
@@ -2163,7 +2163,7 @@ mod tests {
             0,
             Address::from([0xAA; 20]),
             vec![
-                LIQUIDATION_CALL_TOPIC,
+                AAVE_LIQUIDATION_CALL_TOPIC,
                 B256::left_padding_from(Address::from([0x01; 20]).as_slice()),
                 B256::left_padding_from(Address::from([0x02; 20]).as_slice()),
                 B256::left_padding_from(Address::from([0x03; 20]).as_slice()),
@@ -2198,7 +2198,7 @@ mod tests {
 
     /// Build a synthetic `DISCOUNT_PERCENT_UPDATED` log.
     fn make_discount_updated_log(idx: u64, user: Address, old_discount: u64) -> Log {
-        use degenbot_decoders::aave_event_decoder::DISCOUNT_PERCENT_UPDATED_TOPIC;
+        use degenbot_decoders::aave_event_decoder::AAVE_DISCOUNT_PERCENT_UPDATED_TOPIC;
         let mut data = vec![0u8; 32];
         let val = U256::from(old_discount);
         val.to_be_bytes::<32>()
@@ -2212,7 +2212,7 @@ mod tests {
         make_log(
             idx,
             Address::ZERO,
-            vec![DISCOUNT_PERCENT_UPDATED_TOPIC, B256::from(user_topic)],
+            vec![AAVE_DISCOUNT_PERCENT_UPDATED_TOPIC, B256::from(user_topic)],
             Bytes::from(data),
         )
     }
@@ -2233,7 +2233,7 @@ mod tests {
             idx,
             Address::ZERO,
             vec![
-                degenbot_decoders::aave_event_decoder::DEFICIT_CREATED_TOPIC,
+                degenbot_decoders::aave_event_decoder::AAVE_DEFICIT_CREATED_TOPIC,
                 B256::from(user_topic),
             ],
             Bytes::from(data),
@@ -2383,7 +2383,7 @@ mod tests {
             log_idx,
             vtoken,
             vec![
-                degenbot_decoders::aave_event_decoder::MINT_TOPIC,
+                degenbot_decoders::aave_event_decoder::AAVE_MINT_TOPIC,
                 B256::left_padding_from(user.as_slice()),
                 B256::left_padding_from(user.as_slice()),
             ],
@@ -2487,8 +2487,8 @@ mod tests {
     #[test]
     fn dispatch_deficit_coverage_pairs_erc20_transfer_with_paired_balance_transfer() {
         use degenbot_core::address_utils::address_to_checksum_string;
-        use degenbot_decoders::aave_event_decoder::BALANCE_TRANSFER_TOPIC;
-        use degenbot_decoders::aave_event_decoder::BURN_TOPIC;
+        use degenbot_decoders::aave_event_decoder::AAVE_BALANCE_TRANSFER_TOPIC;
+        use degenbot_decoders::aave_event_decoder::AAVE_BURN_TOPIC;
         use degenbot_evm_math::RAY;
         use rusqlite::params;
         let db = fresh_db_with_asset();
@@ -2579,7 +2579,7 @@ mod tests {
             216,
             a_token,
             vec![
-                BALANCE_TRANSFER_TOPIC,
+                AAVE_BALANCE_TRANSFER_TOPIC,
                 B256::left_padding_from(user.as_slice()),
                 B256::left_padding_from(recipient.as_slice()),
             ],
@@ -2628,7 +2628,7 @@ mod tests {
             217,
             a_token,
             vec![
-                BURN_TOPIC,
+                AAVE_BURN_TOPIC,
                 B256::left_padding_from(user.as_slice()),
                 B256::left_padding_from(user.as_slice()),
             ],
@@ -2768,7 +2768,7 @@ mod tests {
             idx,
             Address::from([0x99; 20]), // the Pool address (irrelevant here)
             vec![
-                degenbot_decoders::aave_event_decoder::LIQUIDATION_CALL_TOPIC,
+                degenbot_decoders::aave_event_decoder::AAVE_LIQUIDATION_CALL_TOPIC,
                 B256::left_padding_from(collateral_asset.as_slice()),
                 B256::left_padding_from(debt_asset.as_slice()),
                 B256::left_padding_from(user.as_slice()),
@@ -2797,7 +2797,7 @@ mod tests {
             log_idx,
             vtoken,
             vec![
-                degenbot_decoders::aave_event_decoder::BURN_TOPIC,
+                degenbot_decoders::aave_event_decoder::AAVE_BURN_TOPIC,
                 B256::left_padding_from(user.as_slice()),
                 B256::left_padding_from(Address::ZERO.as_slice()),
             ],
@@ -2840,7 +2840,7 @@ mod tests {
             log_idx,
             vtoken,
             vec![
-                degenbot_decoders::aave_event_decoder::MINT_TOPIC,
+                degenbot_decoders::aave_event_decoder::AAVE_MINT_TOPIC,
                 B256::left_padding_from(user.as_slice()),
                 B256::left_padding_from(user.as_slice()),
             ],
@@ -3170,7 +3170,7 @@ mod tests {
     #[test]
     fn dispatch_liquidation_resets_gho_debt_burn_on_bad_debt() {
         use degenbot_core::address_utils::address_to_checksum_string;
-        use degenbot_decoders::aave_event_decoder::DEFICIT_CREATED_TOPIC;
+        use degenbot_decoders::aave_event_decoder::AAVE_DEFICIT_CREATED_TOPIC;
         use rusqlite::params;
 
         let db = fresh_db_with_asset();
@@ -3255,7 +3255,7 @@ mod tests {
             666,
             Address::from([0xAB; 20]),
             vec![
-                DEFICIT_CREATED_TOPIC,
+                AAVE_DEFICIT_CREATED_TOPIC,
                 B256::left_padding_from(user.as_slice()),
             ],
             Bytes::default(),

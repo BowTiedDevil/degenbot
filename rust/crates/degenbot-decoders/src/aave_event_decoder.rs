@@ -115,135 +115,135 @@ use alloy::rpc::types::Log;
 
 // ── topic constants (34 — keccak256 of the canonical event signatures) ─────
 
-pub const BORROW_TOPIC: B256 = B256::new([
+pub const AAVE_BORROW_TOPIC: B256 = B256::new([
     0xb3, 0xd0, 0x84, 0x82, 0x0f, 0xb1, 0xa9, 0xde, 0xcf, 0xfb, 0x17, 0x64, 0x36, 0xbd, 0x02, 0x55,
     0x8d, 0x15, 0xfa, 0xc9, 0xb0, 0xdd, 0xfe, 0xd8, 0xc4, 0x65, 0xbc, 0x73, 0x59, 0xd7, 0xdc, 0xe0,
 ]);
-pub const DEFICIT_CREATED_TOPIC: B256 = B256::new([
+pub const AAVE_DEFICIT_CREATED_TOPIC: B256 = B256::new([
     0x2b, 0xcc, 0xfb, 0x3f, 0xad, 0x37, 0x6d, 0x59, 0xd7, 0xac, 0xcf, 0x97, 0x05, 0x15, 0xeb, 0x77,
     0xb2, 0xf2, 0x7b, 0x08, 0x2c, 0x90, 0xed, 0x0f, 0xb1, 0x55, 0x83, 0xdd, 0x5a, 0x94, 0x26, 0x99,
 ]);
-pub const LIQUIDATION_CALL_TOPIC: B256 = B256::new([
+pub const AAVE_LIQUIDATION_CALL_TOPIC: B256 = B256::new([
     0xe4, 0x13, 0xa3, 0x21, 0xe8, 0x68, 0x1d, 0x83, 0x1f, 0x4d, 0xbc, 0xcb, 0xca, 0x79, 0x0d, 0x29,
     0x52, 0xb5, 0x6f, 0x97, 0x79, 0x08, 0xe4, 0x5b, 0xe3, 0x73, 0x35, 0x53, 0x3e, 0x00, 0x52, 0x86,
 ]);
-pub const MINTED_TO_TREASURY_TOPIC: B256 = B256::new([
+pub const AAVE_MINTED_TO_TREASURY_TOPIC: B256 = B256::new([
     0xbf, 0xa2, 0x1a, 0xa5, 0xd5, 0xf9, 0xa1, 0xf0, 0x12, 0x0a, 0x95, 0xe7, 0xc0, 0x74, 0x9f, 0x38,
     0x98, 0x63, 0xcb, 0xdb, 0xff, 0xf5, 0x31, 0xaa, 0x73, 0x39, 0x07, 0x7a, 0x5b, 0xc9, 0x19, 0xde,
 ]);
-pub const REPAY_TOPIC: B256 = B256::new([
+pub const AAVE_REPAY_TOPIC: B256 = B256::new([
     0xa5, 0x34, 0xc8, 0xdb, 0xe7, 0x1f, 0x87, 0x1f, 0x9f, 0x35, 0x30, 0xe9, 0x7a, 0x74, 0x60, 0x1f,
     0xea, 0x17, 0xb4, 0x26, 0xca, 0xe0, 0x2e, 0x1c, 0x5a, 0xee, 0x42, 0xc9, 0x6c, 0x78, 0x40, 0x51,
 ]);
-pub const RESERVE_DATA_UPDATED_TOPIC: B256 = B256::new([
+pub const AAVE_RESERVE_DATA_UPDATED_TOPIC: B256 = B256::new([
     0x80, 0x4c, 0x9b, 0x84, 0x2b, 0x27, 0x48, 0xa2, 0x2b, 0xb6, 0x4b, 0x34, 0x54, 0x53, 0xa3, 0xde,
     0x7c, 0xa5, 0x4a, 0x6c, 0xa4, 0x5c, 0xe0, 0x0d, 0x41, 0x58, 0x94, 0x97, 0x9e, 0x22, 0x89, 0x7a,
 ]);
-pub const RESERVE_USED_AS_COLLATERAL_DISABLED_TOPIC: B256 = B256::new([
+pub const AAVE_RESERVE_USED_AS_COLLATERAL_DISABLED_TOPIC: B256 = B256::new([
     0x44, 0xc5, 0x8d, 0x81, 0x36, 0x5b, 0x66, 0xdd, 0x4b, 0x1a, 0x7f, 0x36, 0xc2, 0x5a, 0xa9, 0x7b,
     0x8c, 0x71, 0xc3, 0x61, 0xee, 0x49, 0x37, 0xad, 0xc1, 0xa0, 0x00, 0x00, 0x22, 0x7d, 0xb5, 0xdd,
 ]);
-pub const RESERVE_USED_AS_COLLATERAL_ENABLED_TOPIC: B256 = B256::new([
+pub const AAVE_RESERVE_USED_AS_COLLATERAL_ENABLED_TOPIC: B256 = B256::new([
     0x00, 0x05, 0x8a, 0x56, 0xea, 0x94, 0x65, 0x3c, 0xdf, 0x4f, 0x15, 0x2d, 0x22, 0x7a, 0xce, 0x22,
     0xd4, 0xc0, 0x0a, 0xd9, 0x9e, 0x2a, 0x43, 0xf5, 0x8c, 0xb7, 0xd9, 0xe3, 0xfe, 0xb2, 0x95, 0xf2,
 ]);
-pub const SUPPLY_TOPIC: B256 = B256::new([
+pub const AAVE_SUPPLY_TOPIC: B256 = B256::new([
     0x2b, 0x62, 0x77, 0x36, 0xbc, 0xa1, 0x5c, 0xd5, 0x38, 0x1d, 0xcf, 0x80, 0xb0, 0xbf, 0x11, 0xfd,
     0x19, 0x7d, 0x01, 0xa0, 0x37, 0xc5, 0x2b, 0x92, 0x7a, 0x88, 0x1a, 0x10, 0xfb, 0x73, 0xba, 0x61,
 ]);
-pub const USER_E_MODE_SET_TOPIC: B256 = B256::new([
+pub const AAVE_USER_E_MODE_SET_TOPIC: B256 = B256::new([
     0xd7, 0x28, 0xda, 0x87, 0x5f, 0xc8, 0x89, 0x44, 0xcb, 0xf1, 0x76, 0x38, 0xbc, 0xbe, 0x4a, 0xf0,
     0xee, 0xda, 0xef, 0x63, 0xbe, 0xcd, 0x1d, 0x1c, 0x57, 0xcc, 0x09, 0x7e, 0xb4, 0x60, 0x8d, 0x84,
 ]);
-pub const WITHDRAW_TOPIC: B256 = B256::new([
+pub const AAVE_WITHDRAW_TOPIC: B256 = B256::new([
     0x31, 0x15, 0xd1, 0x44, 0x9a, 0x7b, 0x73, 0x2c, 0x98, 0x6c, 0xba, 0x18, 0x24, 0x4e, 0x89, 0x7a,
     0x45, 0x0f, 0x61, 0xe1, 0xbb, 0x8d, 0x58, 0x9c, 0xd2, 0xe6, 0x9e, 0x6c, 0x89, 0x24, 0xf9, 0xf7,
 ]);
-pub const BALANCE_TRANSFER_TOPIC: B256 = B256::new([
+pub const AAVE_BALANCE_TRANSFER_TOPIC: B256 = B256::new([
     0x4b, 0xec, 0xcb, 0x90, 0xf9, 0x94, 0xc3, 0x1a, 0xce, 0xd7, 0xa2, 0x3b, 0x56, 0x11, 0x02, 0x07,
     0x28, 0xa2, 0x3d, 0x8e, 0xc5, 0xcd, 0xdd, 0x1a, 0x3e, 0x9d, 0x97, 0xb9, 0x6f, 0xda, 0x86, 0x66,
 ]);
-pub const BURN_TOPIC: B256 = B256::new([
+pub const AAVE_BURN_TOPIC: B256 = B256::new([
     0x4c, 0xf2, 0x5b, 0xc1, 0xd9, 0x91, 0xc1, 0x75, 0x29, 0xc2, 0x52, 0x13, 0xd3, 0xcc, 0x0c, 0xda,
     0x29, 0x5e, 0xea, 0xad, 0x5f, 0x13, 0xf3, 0x61, 0x96, 0x9b, 0x12, 0xea, 0x48, 0x01, 0x5f, 0x90,
 ]);
-pub const MINT_TOPIC: B256 = B256::new([
+pub const AAVE_MINT_TOPIC: B256 = B256::new([
     0x45, 0x8f, 0x5f, 0xa4, 0x12, 0xd0, 0xf6, 0x9b, 0x08, 0xdd, 0x84, 0x87, 0x2b, 0x02, 0x15, 0x67,
     0x5c, 0xc6, 0x7b, 0xc1, 0xd5, 0xb6, 0xfd, 0x93, 0x30, 0x0a, 0x1c, 0x38, 0x78, 0xb8, 0x61, 0x96,
 ]);
-pub const ADDRESS_SET_TOPIC: B256 = B256::new([
+pub const AAVE_ADDRESS_SET_TOPIC: B256 = B256::new([
     0x9e, 0xf0, 0xe8, 0xc8, 0xe5, 0x27, 0x43, 0xbb, 0x38, 0xb8, 0x3b, 0x17, 0xd9, 0x42, 0x91, 0x41,
     0xd4, 0x94, 0xb8, 0x04, 0x1c, 0xa6, 0xd6, 0x16, 0xa6, 0xc7, 0x7c, 0xeb, 0xae, 0x9c, 0xd8, 0xb7,
 ]);
-pub const ASSET_COLLATERAL_IN_EMODE_CHANGED_TOPIC: B256 = B256::new([
+pub const AAVE_ASSET_COLLATERAL_IN_EMODE_CHANGED_TOPIC: B256 = B256::new([
     0x79, 0x40, 0x91, 0x90, 0x10, 0x8b, 0x26, 0xfc, 0xb0, 0xe4, 0x57, 0x0f, 0x8e, 0x24, 0x0f, 0x62,
     0x7b, 0xf1, 0x8f, 0xd0, 0x1a, 0x55, 0xf7, 0x51, 0x01, 0x02, 0x24, 0xd5, 0xbd, 0x48, 0x60, 0x98,
 ]);
-pub const COLLATERAL_CONFIGURATION_CHANGED_TOPIC: B256 = B256::new([
+pub const AAVE_COLLATERAL_CONFIGURATION_CHANGED_TOPIC: B256 = B256::new([
     0x63, 0x7f, 0xeb, 0xbd, 0xa9, 0x27, 0x5a, 0xea, 0x2e, 0x85, 0xc0, 0xff, 0x69, 0x04, 0x44, 0xc8,
     0xd8, 0x7e, 0xb2, 0xe8, 0x33, 0x9b, 0xbe, 0xde, 0x97, 0x15, 0xab, 0xcc, 0x89, 0xcb, 0x09, 0x95,
 ]);
-pub const EMODE_ASSET_CATEGORY_CHANGED_TOPIC: B256 = B256::new([
+pub const AAVE_EMODE_ASSET_CATEGORY_CHANGED_TOPIC: B256 = B256::new([
     0x5b, 0xb6, 0x97, 0x95, 0xb6, 0xa2, 0xea, 0x22, 0x2d, 0x73, 0xa5, 0xf8, 0x93, 0x9c, 0x23, 0x47,
     0x1a, 0x1f, 0x85, 0xa9, 0x9c, 0x7c, 0xa4, 0x3c, 0x20, 0x7f, 0x1b, 0x71, 0xf1, 0x0c, 0x62, 0x64,
 ]);
-pub const EMODE_CATEGORY_ADDED_TOPIC: B256 = B256::new([
+pub const AAVE_EMODE_CATEGORY_ADDED_TOPIC: B256 = B256::new([
     0x0a, 0xcf, 0x8b, 0x4a, 0x3c, 0xac, 0xe1, 0x07, 0x79, 0x79, 0x8a, 0x89, 0xa2, 0x06, 0xa0, 0xae,
     0x73, 0xa7, 0x1b, 0x63, 0xac, 0xdd, 0x3b, 0xe2, 0x80, 0x1d, 0x39, 0xc2, 0xef, 0x7a, 0xb3, 0xcb,
 ]);
-pub const POOL_CONFIGURATOR_UPDATED_TOPIC: B256 = B256::new([
+pub const AAVE_POOL_CONFIGURATOR_UPDATED_TOPIC: B256 = B256::new([
     0x89, 0x32, 0x89, 0x25, 0x69, 0xeb, 0xa5, 0x9c, 0x83, 0x82, 0xa0, 0x89, 0xd9, 0xb7, 0x32, 0xd1,
     0xf4, 0x92, 0x72, 0x87, 0x87, 0x75, 0x23, 0x57, 0x61, 0xa2, 0xa6, 0xb0, 0x30, 0x9c, 0xd4, 0x65,
 ]);
-pub const POOL_DATA_PROVIDER_UPDATED_TOPIC: B256 = B256::new([
+pub const AAVE_POOL_DATA_PROVIDER_UPDATED_TOPIC: B256 = B256::new([
     0xc8, 0x53, 0x97, 0x4c, 0xfb, 0xf8, 0x14, 0x87, 0xa1, 0x4a, 0x23, 0x56, 0x59, 0x17, 0xbe, 0xe6,
     0x3f, 0x52, 0x78, 0x53, 0xbc, 0xb5, 0xfa, 0x54, 0xf2, 0xae, 0x1c, 0xdf, 0x8a, 0x38, 0x35, 0x6d,
 ]);
-pub const POOL_UPDATED_TOPIC: B256 = B256::new([
+pub const AAVE_POOL_UPDATED_TOPIC: B256 = B256::new([
     0x90, 0xaf, 0xfc, 0x16, 0x3f, 0x1a, 0x2d, 0xfe, 0xdc, 0xd3, 0x6a, 0xa0, 0x2e, 0xd9, 0x92, 0xee,
     0xeb, 0xa8, 0x10, 0x0a, 0x40, 0x14, 0xf0, 0xb4, 0xcd, 0xc2, 0x0e, 0xa2, 0x65, 0xa6, 0x66, 0x27,
 ]);
-pub const PRICE_ORACLE_UPDATED_TOPIC: B256 = B256::new([
+pub const AAVE_PRICE_ORACLE_UPDATED_TOPIC: B256 = B256::new([
     0x56, 0xb5, 0xf8, 0x0d, 0x8c, 0xac, 0x14, 0x79, 0x69, 0x8a, 0xa7, 0xd0, 0x16, 0x05, 0xfd, 0x61,
     0x11, 0xe9, 0x0b, 0x15, 0xfc, 0x4d, 0x2b, 0x37, 0x74, 0x17, 0xf4, 0x60, 0x34, 0x87, 0x6c, 0xbd,
 ]);
-pub const PROXY_CREATED_TOPIC: B256 = B256::new([
+pub const AAVE_PROXY_CREATED_TOPIC: B256 = B256::new([
     0x4a, 0x46, 0x5a, 0x9b, 0xd8, 0x19, 0xd9, 0x66, 0x25, 0x63, 0xc1, 0xe1, 0x1a, 0xe9, 0x58, 0xf8,
     0x10, 0x9e, 0x43, 0x7e, 0x7f, 0x4b, 0xf1, 0xc6, 0xef, 0x0b, 0x9a, 0x7b, 0x3f, 0x35, 0xd4, 0x78,
 ]);
-pub const RESERVE_INITIALIZED_TOPIC: B256 = B256::new([
+pub const AAVE_RESERVE_INITIALIZED_TOPIC: B256 = B256::new([
     0x3a, 0x0c, 0xa7, 0x21, 0xfc, 0x36, 0x44, 0x24, 0x56, 0x63, 0x85, 0xa1, 0xaa, 0x27, 0x1e, 0xd5,
     0x08, 0xcc, 0x2c, 0x09, 0x49, 0xc2, 0x27, 0x25, 0x75, 0xfb, 0x30, 0x13, 0xa1, 0x63, 0xa4, 0x5f,
 ]);
-pub const UPGRADED_TOPIC: B256 = B256::new([
+pub const AAVE_UPGRADED_TOPIC: B256 = B256::new([
     0xbc, 0x7c, 0xd7, 0x5a, 0x20, 0xee, 0x27, 0xfd, 0x9a, 0xde, 0xba, 0xb3, 0x20, 0x41, 0xf7, 0x55,
     0x21, 0x4d, 0xbc, 0x6b, 0xff, 0xa9, 0x0c, 0xc0, 0x22, 0x5b, 0x39, 0xda, 0x2e, 0x5c, 0x2d, 0x3b,
 ]);
-pub const DISCOUNT_PERCENT_UPDATED_TOPIC: B256 = B256::new([
+pub const AAVE_DISCOUNT_PERCENT_UPDATED_TOPIC: B256 = B256::new([
     0x74, 0xab, 0x96, 0x65, 0xe7, 0xc3, 0x6c, 0x29, 0xdd, 0xb7, 0x8e, 0xf8, 0x8a, 0x3e, 0x2e, 0xac,
     0x73, 0xd3, 0x5b, 0x8b, 0x16, 0xde, 0x7b, 0xc5, 0x73, 0xe3, 0x13, 0xe3, 0x20, 0x10, 0x49, 0x56,
 ]);
-pub const DISCOUNT_RATE_STRATEGY_UPDATED_TOPIC: B256 = B256::new([
+pub const AAVE_DISCOUNT_RATE_STRATEGY_UPDATED_TOPIC: B256 = B256::new([
     0x19, 0x4b, 0xd5, 0x9f, 0x47, 0xb2, 0x30, 0xed, 0xcc, 0xcc, 0xc2, 0xbe, 0x58, 0xb9, 0x2d, 0xde,
     0x3a, 0x5d, 0xad, 0xd8, 0x35, 0x75, 0x1a, 0x62, 0x1a, 0xf5, 0x90, 0x06, 0x92, 0x8b, 0xcc, 0xef,
 ]);
-pub const DISCOUNT_TOKEN_UPDATED_TOPIC: B256 = B256::new([
+pub const AAVE_DISCOUNT_TOKEN_UPDATED_TOPIC: B256 = B256::new([
     0x6b, 0x48, 0x9e, 0x1d, 0xbf, 0xbe, 0x36, 0xf5, 0x5c, 0x51, 0x1c, 0x09, 0x8b, 0xcc, 0x9d, 0x92,
     0xfe, 0xc7, 0xf0, 0x4f, 0x74, 0xce, 0xb7, 0x50, 0x18, 0x69, 0x7a, 0xb6, 0x8f, 0x7d, 0x35, 0x29,
 ]);
-pub const REDEEM_TOPIC: B256 = B256::new([
+pub const AAVE_REDEEM_TOPIC: B256 = B256::new([
     0x3f, 0x69, 0x3f, 0xff, 0x03, 0x8b, 0xb8, 0xa0, 0x46, 0xaa, 0x76, 0xd9, 0x51, 0x61, 0x90, 0xac,
     0x74, 0x44, 0xf7, 0xd6, 0x9c, 0xf9, 0x52, 0xc4, 0xcb, 0xdc, 0x08, 0x6f, 0xde, 0xf2, 0xd6, 0xfc,
 ]);
-pub const STAKED_TOPIC: B256 = B256::new([
+pub const AAVE_STAKED_TOPIC: B256 = B256::new([
     0x6c, 0x86, 0xf3, 0xfd, 0x51, 0x18, 0xb3, 0xaa, 0x8b, 0xb4, 0xf3, 0x89, 0xa6, 0x17, 0x04, 0x6d,
     0xe0, 0xa3, 0xd3, 0xd4, 0x77, 0xde, 0x1a, 0x16, 0x73, 0xd2, 0x27, 0xf8, 0x02, 0xf6, 0x16, 0xdc,
 ]);
-pub const REWARDS_CLAIMED_TOPIC: B256 = B256::new([
+pub const AAVE_REWARDS_CLAIMED_TOPIC: B256 = B256::new([
     0xc0, 0x52, 0x13, 0x0b, 0xc4, 0xef, 0x84, 0x58, 0x0d, 0xb5, 0x05, 0x78, 0x34, 0x84, 0xb0, 0x67,
     0xea, 0x8b, 0x71, 0xb3, 0xbc, 0xa7, 0x8a, 0x7e, 0x12, 0xdb, 0x7a, 0xea, 0x86, 0x58, 0xf0, 0x04,
 ]);
-pub const ASSET_SOURCE_UPDATED_TOPIC: B256 = B256::new([
+pub const AAVE_ASSET_SOURCE_UPDATED_TOPIC: B256 = B256::new([
     0x22, 0xc5, 0xb7, 0xb2, 0xd8, 0x56, 0x1d, 0x39, 0xf7, 0xf2, 0x10, 0xb6, 0xb3, 0x26, 0xa1, 0xaa,
     0x69, 0xf1, 0x53, 0x11, 0x16, 0x30, 0x82, 0x30, 0x8a, 0xc4, 0x87, 0x7d, 0xb6, 0x33, 0x9d, 0xc1,
 ]);
@@ -836,7 +836,7 @@ pub fn decode_supply(log: &Log) -> Option<SupplyEvent> {
     // 3 indexed params → 4 topics: [sig, reserve(topic1), onBehalfOf(topic2),
     // referralCode(topic3)]. Non-indexed data: [user, amount] = 2 words = 64 bytes.
     let topics = log_topics(log)?;
-    if topics.first()? != &SUPPLY_TOPIC {
+    if topics.first()? != &AAVE_SUPPLY_TOPIC {
         return None;
     }
     let reserve = topic_address(topics, 1)?;
@@ -869,7 +869,7 @@ pub fn decode_borrow(log: &Log) -> Option<BorrowEvent> {
     // referralCode(topic3)]. Non-indexed data: [user, amount, mode, borrowRate]
     // = 4 words = 128 bytes.
     let topics = log_topics(log)?;
-    if topics.first()? != &BORROW_TOPIC {
+    if topics.first()? != &AAVE_BORROW_TOPIC {
         return None;
     }
     let reserve = topic_address(topics, 1)?;
@@ -898,7 +898,7 @@ pub fn decode_borrow(log: &Log) -> Option<BorrowEvent> {
 #[must_use]
 pub fn decode_repay(log: &Log) -> Option<RepayEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &REPAY_TOPIC {
+    if topics.first()? != &AAVE_REPAY_TOPIC {
         return None;
     }
     let reserve = topic_address(topics, 1)?;
@@ -926,7 +926,7 @@ pub fn decode_repay(log: &Log) -> Option<RepayEvent> {
 #[must_use]
 pub fn decode_withdraw(log: &Log) -> Option<WithdrawEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &WITHDRAW_TOPIC {
+    if topics.first()? != &AAVE_WITHDRAW_TOPIC {
         return None;
     }
     let reserve = topic_address(topics, 1)?;
@@ -952,7 +952,7 @@ pub fn decode_withdraw(log: &Log) -> Option<WithdrawEvent> {
 #[must_use]
 pub fn decode_liquidation_call(log: &Log) -> Option<LiquidationCallEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &LIQUIDATION_CALL_TOPIC {
+    if topics.first()? != &AAVE_LIQUIDATION_CALL_TOPIC {
         return None;
     }
     let collateral_asset = topic_address(topics, 1)?;
@@ -985,7 +985,7 @@ pub fn decode_liquidation_call(log: &Log) -> Option<LiquidationCallEvent> {
 #[must_use]
 pub fn decode_minted_to_treasury(log: &Log) -> Option<MintedToTreasuryEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &MINTED_TO_TREASURY_TOPIC {
+    if topics.first()? != &AAVE_MINTED_TO_TREASURY_TOPIC {
         return None;
     }
     let reserve = topic_address(topics, 1)?;
@@ -1007,7 +1007,7 @@ pub fn decode_minted_to_treasury(log: &Log) -> Option<MintedToTreasuryEvent> {
 #[must_use]
 pub fn decode_deficit_created(log: &Log) -> Option<DeficitCreatedEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &DEFICIT_CREATED_TOPIC {
+    if topics.first()? != &AAVE_DEFICIT_CREATED_TOPIC {
         return None;
     }
     let user = topic_address(topics, 1)?;
@@ -1031,7 +1031,7 @@ pub fn decode_deficit_created(log: &Log) -> Option<DeficitCreatedEvent> {
 #[must_use]
 pub fn decode_reserve_data_updated(log: &Log) -> Option<ReserveDataUpdatedEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &RESERVE_DATA_UPDATED_TOPIC {
+    if topics.first()? != &AAVE_RESERVE_DATA_UPDATED_TOPIC {
         return None;
     }
     let reserve = topic_address(topics, 1)?;
@@ -1065,7 +1065,7 @@ pub fn decode_reserve_used_as_collateral_enabled(
     log: &Log,
 ) -> Option<ReserveUsedAsCollateralEnabledEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &RESERVE_USED_AS_COLLATERAL_ENABLED_TOPIC {
+    if topics.first()? != &AAVE_RESERVE_USED_AS_COLLATERAL_ENABLED_TOPIC {
         return None;
     }
     let reserve = topic_address(topics, 1)?;
@@ -1084,7 +1084,7 @@ pub fn decode_reserve_used_as_collateral_disabled(
     log: &Log,
 ) -> Option<ReserveUsedAsCollateralDisabledEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &RESERVE_USED_AS_COLLATERAL_DISABLED_TOPIC {
+    if topics.first()? != &AAVE_RESERVE_USED_AS_COLLATERAL_DISABLED_TOPIC {
         return None;
     }
     let reserve = topic_address(topics, 1)?;
@@ -1101,7 +1101,7 @@ pub fn decode_reserve_used_as_collateral_disabled(
 #[must_use]
 pub fn decode_user_e_mode_set(log: &Log) -> Option<UserEModeSetEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &USER_E_MODE_SET_TOPIC {
+    if topics.first()? != &AAVE_USER_E_MODE_SET_TOPIC {
         return None;
     }
     let user = topic_address(topics, 1)?;
@@ -1124,7 +1124,7 @@ pub fn decode_user_e_mode_set(log: &Log) -> Option<UserEModeSetEvent> {
 #[must_use]
 pub fn decode_scaled_token_mint(log: &Log) -> Option<ScaledTokenMintEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &MINT_TOPIC {
+    if topics.first()? != &AAVE_MINT_TOPIC {
         return None;
     }
     let caller = topic_address(topics, 1)?;
@@ -1153,7 +1153,7 @@ pub fn decode_scaled_token_mint(log: &Log) -> Option<ScaledTokenMintEvent> {
 #[must_use]
 pub fn decode_scaled_token_burn(log: &Log) -> Option<ScaledTokenBurnEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &BURN_TOPIC {
+    if topics.first()? != &AAVE_BURN_TOPIC {
         return None;
     }
     let from = topic_address(topics, 1)?;
@@ -1182,7 +1182,7 @@ pub fn decode_scaled_token_burn(log: &Log) -> Option<ScaledTokenBurnEvent> {
 #[must_use]
 pub fn decode_scaled_token_balance_transfer(log: &Log) -> Option<ScaledTokenBalanceTransferEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &BALANCE_TRANSFER_TOPIC {
+    if topics.first()? != &AAVE_BALANCE_TRANSFER_TOPIC {
         return None;
     }
     let from = topic_address(topics, 1)?;
@@ -1210,7 +1210,7 @@ pub fn decode_collateral_configuration_changed(
     log: &Log,
 ) -> Option<CollateralConfigurationChangedEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &COLLATERAL_CONFIGURATION_CHANGED_TOPIC {
+    if topics.first()? != &AAVE_COLLATERAL_CONFIGURATION_CHANGED_TOPIC {
         return None;
     }
     let asset = topic_address(topics, 1)?;
@@ -1241,7 +1241,7 @@ pub fn decode_collateral_configuration_changed(
 #[must_use]
 pub fn decode_e_mode_category_added(log: &Log) -> Option<EModeCategoryAddedEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &EMODE_CATEGORY_ADDED_TOPIC {
+    if topics.first()? != &AAVE_EMODE_CATEGORY_ADDED_TOPIC {
         return None;
     }
     let category_id = topic_u8(topics, 1)?;
@@ -1293,7 +1293,7 @@ pub fn decode_e_mode_category_added(log: &Log) -> Option<EModeCategoryAddedEvent
 #[must_use]
 pub fn decode_e_mode_asset_category_changed(log: &Log) -> Option<EModeAssetCategoryChangedEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &EMODE_ASSET_CATEGORY_CHANGED_TOPIC {
+    if topics.first()? != &AAVE_EMODE_ASSET_CATEGORY_CHANGED_TOPIC {
         return None;
     }
     let asset = topic_address(topics, 1)?;
@@ -1320,7 +1320,7 @@ pub fn decode_asset_collateral_in_emode_changed(
     log: &Log,
 ) -> Option<AssetCollateralInEModeChangedEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &ASSET_COLLATERAL_IN_EMODE_CHANGED_TOPIC {
+    if topics.first()? != &AAVE_ASSET_COLLATERAL_IN_EMODE_CHANGED_TOPIC {
         return None;
     }
     let asset = topic_address(topics, 1)?;
@@ -1344,7 +1344,7 @@ pub fn decode_asset_collateral_in_emode_changed(
 #[must_use]
 pub fn decode_reserve_initialized(log: &Log) -> Option<ReserveInitializedEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &RESERVE_INITIALIZED_TOPIC {
+    if topics.first()? != &AAVE_RESERVE_INITIALIZED_TOPIC {
         return None;
     }
     let asset = topic_address(topics, 1)?;
@@ -1373,7 +1373,7 @@ pub fn decode_reserve_initialized(log: &Log) -> Option<ReserveInitializedEvent> 
 #[must_use]
 pub fn decode_pool_updated(log: &Log) -> Option<PoolUpdatedEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &POOL_UPDATED_TOPIC {
+    if topics.first()? != &AAVE_POOL_UPDATED_TOPIC {
         return None;
     }
     let old_address = topic_address(topics, 1)?;
@@ -1390,7 +1390,7 @@ pub fn decode_pool_updated(log: &Log) -> Option<PoolUpdatedEvent> {
 #[must_use]
 pub fn decode_pool_configurator_updated(log: &Log) -> Option<ConfigAddressPairEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &POOL_CONFIGURATOR_UPDATED_TOPIC {
+    if topics.first()? != &AAVE_POOL_CONFIGURATOR_UPDATED_TOPIC {
         return None;
     }
     let old_address = topic_address(topics, 1)?;
@@ -1407,7 +1407,7 @@ pub fn decode_pool_configurator_updated(log: &Log) -> Option<ConfigAddressPairEv
 #[must_use]
 pub fn decode_pool_data_provider_updated(log: &Log) -> Option<ConfigAddressPairEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &POOL_DATA_PROVIDER_UPDATED_TOPIC {
+    if topics.first()? != &AAVE_POOL_DATA_PROVIDER_UPDATED_TOPIC {
         return None;
     }
     let old_address = topic_address(topics, 1)?;
@@ -1424,7 +1424,7 @@ pub fn decode_pool_data_provider_updated(log: &Log) -> Option<ConfigAddressPairE
 #[must_use]
 pub fn decode_price_oracle_updated(log: &Log) -> Option<ConfigAddressPairEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &PRICE_ORACLE_UPDATED_TOPIC {
+    if topics.first()? != &AAVE_PRICE_ORACLE_UPDATED_TOPIC {
         return None;
     }
     let old_address = topic_address(topics, 1)?;
@@ -1441,7 +1441,7 @@ pub fn decode_price_oracle_updated(log: &Log) -> Option<ConfigAddressPairEvent> 
 #[must_use]
 pub fn decode_proxy_created(log: &Log) -> Option<ProxyCreatedEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &PROXY_CREATED_TOPIC {
+    if topics.first()? != &AAVE_PROXY_CREATED_TOPIC {
         return None;
     }
     let id = topic_b256(topics, 1)?;
@@ -1460,7 +1460,7 @@ pub fn decode_proxy_created(log: &Log) -> Option<ProxyCreatedEvent> {
 #[must_use]
 pub fn decode_address_set(log: &Log) -> Option<AddressSetEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &ADDRESS_SET_TOPIC {
+    if topics.first()? != &AAVE_ADDRESS_SET_TOPIC {
         return None;
     }
     let id = topic_b256(topics, 1)?;
@@ -1479,7 +1479,7 @@ pub fn decode_address_set(log: &Log) -> Option<AddressSetEvent> {
 #[must_use]
 pub fn decode_upgraded(log: &Log) -> Option<UpgradedEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &UPGRADED_TOPIC {
+    if topics.first()? != &AAVE_UPGRADED_TOPIC {
         return None;
     }
     let implementation = topic_address(topics, 1)?;
@@ -1494,7 +1494,7 @@ pub fn decode_upgraded(log: &Log) -> Option<UpgradedEvent> {
 #[must_use]
 pub fn decode_discount_percent_updated(log: &Log) -> Option<DiscountPercentUpdatedEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &DISCOUNT_PERCENT_UPDATED_TOPIC {
+    if topics.first()? != &AAVE_DISCOUNT_PERCENT_UPDATED_TOPIC {
         return None;
     }
     let user = topic_address(topics, 1)?;
@@ -1520,7 +1520,7 @@ pub fn decode_discount_rate_strategy_updated(
     log: &Log,
 ) -> Option<DiscountRateStrategyUpdatedEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &DISCOUNT_RATE_STRATEGY_UPDATED_TOPIC {
+    if topics.first()? != &AAVE_DISCOUNT_RATE_STRATEGY_UPDATED_TOPIC {
         return None;
     }
     let old_strategy = topic_address(topics, 1)?;
@@ -1537,7 +1537,7 @@ pub fn decode_discount_rate_strategy_updated(
 #[must_use]
 pub fn decode_discount_token_updated(log: &Log) -> Option<DiscountTokenUpdatedEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &DISCOUNT_TOKEN_UPDATED_TOPIC {
+    if topics.first()? != &AAVE_DISCOUNT_TOKEN_UPDATED_TOPIC {
         return None;
     }
     let old_discount_token = topic_address(topics, 1)?;
@@ -1554,7 +1554,7 @@ pub fn decode_discount_token_updated(log: &Log) -> Option<DiscountTokenUpdatedEv
 #[must_use]
 pub fn decode_staked(log: &Log) -> Option<StakedEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &STAKED_TOPIC {
+    if topics.first()? != &AAVE_STAKED_TOPIC {
         return None;
     }
     let from = topic_address(topics, 1)?;
@@ -1578,7 +1578,7 @@ pub fn decode_staked(log: &Log) -> Option<StakedEvent> {
 #[must_use]
 pub fn decode_redeem(log: &Log) -> Option<RedeemEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &REDEEM_TOPIC {
+    if topics.first()? != &AAVE_REDEEM_TOPIC {
         return None;
     }
     let from = topic_address(topics, 1)?;
@@ -1602,7 +1602,7 @@ pub fn decode_redeem(log: &Log) -> Option<RedeemEvent> {
 #[must_use]
 pub fn decode_rewards_claimed(log: &Log) -> Option<RewardsClaimedEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &REWARDS_CLAIMED_TOPIC {
+    if topics.first()? != &AAVE_REWARDS_CLAIMED_TOPIC {
         return None;
     }
     let user = topic_address(topics, 1)?;
@@ -1630,7 +1630,7 @@ pub fn decode_rewards_claimed(log: &Log) -> Option<RewardsClaimedEvent> {
 #[must_use]
 pub fn decode_asset_source_updated(log: &Log) -> Option<AssetSourceUpdatedEvent> {
     let topics = log_topics(log)?;
-    if topics.first()? != &ASSET_SOURCE_UPDATED_TOPIC {
+    if topics.first()? != &AAVE_ASSET_SOURCE_UPDATED_TOPIC {
         return None;
     }
     let asset = topic_address(topics, 1)?;
@@ -1686,75 +1686,75 @@ pub fn decode_erc20_transfer(log: &Log) -> Option<Erc20TransferEvent> {
 pub fn decode_aave_log(log: &Log) -> Option<DecodedAaveEvent> {
     let topic = log.topics().first()?;
     Some(match *topic {
-        SUPPLY_TOPIC => DecodedAaveEvent::Supply(decode_supply(log)?),
-        BORROW_TOPIC => DecodedAaveEvent::Borrow(decode_borrow(log)?),
-        REPAY_TOPIC => DecodedAaveEvent::Repay(decode_repay(log)?),
-        WITHDRAW_TOPIC => DecodedAaveEvent::Withdraw(decode_withdraw(log)?),
-        LIQUIDATION_CALL_TOPIC => DecodedAaveEvent::LiquidationCall(decode_liquidation_call(log)?),
-        MINTED_TO_TREASURY_TOPIC => {
+        AAVE_SUPPLY_TOPIC => DecodedAaveEvent::Supply(decode_supply(log)?),
+        AAVE_BORROW_TOPIC => DecodedAaveEvent::Borrow(decode_borrow(log)?),
+        AAVE_REPAY_TOPIC => DecodedAaveEvent::Repay(decode_repay(log)?),
+        AAVE_WITHDRAW_TOPIC => DecodedAaveEvent::Withdraw(decode_withdraw(log)?),
+        AAVE_LIQUIDATION_CALL_TOPIC => DecodedAaveEvent::LiquidationCall(decode_liquidation_call(log)?),
+        AAVE_MINTED_TO_TREASURY_TOPIC => {
             DecodedAaveEvent::MintedToTreasury(decode_minted_to_treasury(log)?)
         }
-        DEFICIT_CREATED_TOPIC => DecodedAaveEvent::DeficitCreated(decode_deficit_created(log)?),
-        RESERVE_DATA_UPDATED_TOPIC => {
+        AAVE_DEFICIT_CREATED_TOPIC => DecodedAaveEvent::DeficitCreated(decode_deficit_created(log)?),
+        AAVE_RESERVE_DATA_UPDATED_TOPIC => {
             DecodedAaveEvent::ReserveDataUpdated(decode_reserve_data_updated(log)?)
         }
-        RESERVE_USED_AS_COLLATERAL_ENABLED_TOPIC => {
+        AAVE_RESERVE_USED_AS_COLLATERAL_ENABLED_TOPIC => {
             DecodedAaveEvent::ReserveUsedAsCollateralEnabled(
                 decode_reserve_used_as_collateral_enabled(log)?,
             )
         }
-        RESERVE_USED_AS_COLLATERAL_DISABLED_TOPIC => {
+        AAVE_RESERVE_USED_AS_COLLATERAL_DISABLED_TOPIC => {
             DecodedAaveEvent::ReserveUsedAsCollateralDisabled(
                 decode_reserve_used_as_collateral_disabled(log)?,
             )
         }
-        USER_E_MODE_SET_TOPIC => DecodedAaveEvent::UserEModeSet(decode_user_e_mode_set(log)?),
-        MINT_TOPIC => DecodedAaveEvent::ScaledTokenMint(decode_scaled_token_mint(log)?),
-        BURN_TOPIC => DecodedAaveEvent::ScaledTokenBurn(decode_scaled_token_burn(log)?),
-        BALANCE_TRANSFER_TOPIC => {
+        AAVE_USER_E_MODE_SET_TOPIC => DecodedAaveEvent::UserEModeSet(decode_user_e_mode_set(log)?),
+        AAVE_MINT_TOPIC => DecodedAaveEvent::ScaledTokenMint(decode_scaled_token_mint(log)?),
+        AAVE_BURN_TOPIC => DecodedAaveEvent::ScaledTokenBurn(decode_scaled_token_burn(log)?),
+        AAVE_BALANCE_TRANSFER_TOPIC => {
             DecodedAaveEvent::ScaledTokenBalanceTransfer(decode_scaled_token_balance_transfer(log)?)
         }
-        COLLATERAL_CONFIGURATION_CHANGED_TOPIC => DecodedAaveEvent::CollateralConfigurationChanged(
+        AAVE_COLLATERAL_CONFIGURATION_CHANGED_TOPIC => DecodedAaveEvent::CollateralConfigurationChanged(
             decode_collateral_configuration_changed(log)?,
         ),
-        EMODE_CATEGORY_ADDED_TOPIC => {
+        AAVE_EMODE_CATEGORY_ADDED_TOPIC => {
             DecodedAaveEvent::EModeCategoryAdded(decode_e_mode_category_added(log)?)
         }
-        EMODE_ASSET_CATEGORY_CHANGED_TOPIC => {
+        AAVE_EMODE_ASSET_CATEGORY_CHANGED_TOPIC => {
             DecodedAaveEvent::EModeAssetCategoryChanged(decode_e_mode_asset_category_changed(log)?)
         }
-        ASSET_COLLATERAL_IN_EMODE_CHANGED_TOPIC => DecodedAaveEvent::AssetCollateralInEModeChanged(
+        AAVE_ASSET_COLLATERAL_IN_EMODE_CHANGED_TOPIC => DecodedAaveEvent::AssetCollateralInEModeChanged(
             decode_asset_collateral_in_emode_changed(log)?,
         ),
-        RESERVE_INITIALIZED_TOPIC => {
+        AAVE_RESERVE_INITIALIZED_TOPIC => {
             DecodedAaveEvent::ReserveInitialized(decode_reserve_initialized(log)?)
         }
-        POOL_UPDATED_TOPIC => DecodedAaveEvent::PoolUpdated(decode_pool_updated(log)?),
-        POOL_CONFIGURATOR_UPDATED_TOPIC => {
+        AAVE_POOL_UPDATED_TOPIC => DecodedAaveEvent::PoolUpdated(decode_pool_updated(log)?),
+        AAVE_POOL_CONFIGURATOR_UPDATED_TOPIC => {
             DecodedAaveEvent::PoolConfiguratorUpdated(decode_pool_configurator_updated(log)?)
         }
-        POOL_DATA_PROVIDER_UPDATED_TOPIC => {
+        AAVE_POOL_DATA_PROVIDER_UPDATED_TOPIC => {
             DecodedAaveEvent::PoolDataProviderUpdated(decode_pool_data_provider_updated(log)?)
         }
-        PRICE_ORACLE_UPDATED_TOPIC => {
+        AAVE_PRICE_ORACLE_UPDATED_TOPIC => {
             DecodedAaveEvent::PriceOracleUpdated(decode_price_oracle_updated(log)?)
         }
-        PROXY_CREATED_TOPIC => DecodedAaveEvent::ProxyCreated(decode_proxy_created(log)?),
-        ADDRESS_SET_TOPIC => DecodedAaveEvent::AddressSet(decode_address_set(log)?),
-        UPGRADED_TOPIC => DecodedAaveEvent::Upgraded(decode_upgraded(log)?),
-        DISCOUNT_PERCENT_UPDATED_TOPIC => {
+        AAVE_PROXY_CREATED_TOPIC => DecodedAaveEvent::ProxyCreated(decode_proxy_created(log)?),
+        AAVE_ADDRESS_SET_TOPIC => DecodedAaveEvent::AddressSet(decode_address_set(log)?),
+        AAVE_UPGRADED_TOPIC => DecodedAaveEvent::Upgraded(decode_upgraded(log)?),
+        AAVE_DISCOUNT_PERCENT_UPDATED_TOPIC => {
             DecodedAaveEvent::DiscountPercentUpdated(decode_discount_percent_updated(log)?)
         }
-        DISCOUNT_RATE_STRATEGY_UPDATED_TOPIC => DecodedAaveEvent::DiscountRateStrategyUpdated(
+        AAVE_DISCOUNT_RATE_STRATEGY_UPDATED_TOPIC => DecodedAaveEvent::DiscountRateStrategyUpdated(
             decode_discount_rate_strategy_updated(log)?,
         ),
-        DISCOUNT_TOKEN_UPDATED_TOPIC => {
+        AAVE_DISCOUNT_TOKEN_UPDATED_TOPIC => {
             DecodedAaveEvent::DiscountTokenUpdated(decode_discount_token_updated(log)?)
         }
-        STAKED_TOPIC => DecodedAaveEvent::Staked(decode_staked(log)?),
-        REDEEM_TOPIC => DecodedAaveEvent::Redeem(decode_redeem(log)?),
-        REWARDS_CLAIMED_TOPIC => DecodedAaveEvent::RewardsClaimed(decode_rewards_claimed(log)?),
-        ASSET_SOURCE_UPDATED_TOPIC => {
+        AAVE_STAKED_TOPIC => DecodedAaveEvent::Staked(decode_staked(log)?),
+        AAVE_REDEEM_TOPIC => DecodedAaveEvent::Redeem(decode_redeem(log)?),
+        AAVE_REWARDS_CLAIMED_TOPIC => DecodedAaveEvent::RewardsClaimed(decode_rewards_claimed(log)?),
+        AAVE_ASSET_SOURCE_UPDATED_TOPIC => {
             DecodedAaveEvent::AssetSourceUpdated(decode_asset_source_updated(log)?)
         }
         ERC20_TRANSFER_TOPIC => DecodedAaveEvent::Erc20Transfer(decode_erc20_transfer(log)?),
@@ -1827,135 +1827,135 @@ mod tests {
         // (Rust constant, Python `events.py` topic0 hex string).
         let cases: [(&B256, &str); 34] = [
             (
-                &BORROW_TOPIC,
+                &AAVE_BORROW_TOPIC,
                 "b3d084820fb1a9decffb176436bd02558d15fac9b0ddfed8c465bc7359d7dce0",
             ),
             (
-                &DEFICIT_CREATED_TOPIC,
+                &AAVE_DEFICIT_CREATED_TOPIC,
                 "2bccfb3fad376d59d7accf970515eb77b2f27b082c90ed0fb15583dd5a942699",
             ),
             (
-                &LIQUIDATION_CALL_TOPIC,
+                &AAVE_LIQUIDATION_CALL_TOPIC,
                 "e413a321e8681d831f4dbccbca790d2952b56f977908e45be37335533e005286",
             ),
             (
-                &MINTED_TO_TREASURY_TOPIC,
+                &AAVE_MINTED_TO_TREASURY_TOPIC,
                 "bfa21aa5d5f9a1f0120a95e7c0749f389863cbdbfff531aa7339077a5bc919de",
             ),
             (
-                &REPAY_TOPIC,
+                &AAVE_REPAY_TOPIC,
                 "a534c8dbe71f871f9f3530e97a74601fea17b426cae02e1c5aee42c96c784051",
             ),
             (
-                &RESERVE_DATA_UPDATED_TOPIC,
+                &AAVE_RESERVE_DATA_UPDATED_TOPIC,
                 "804c9b842b2748a22bb64b345453a3de7ca54a6ca45ce00d415894979e22897a",
             ),
             (
-                &RESERVE_USED_AS_COLLATERAL_DISABLED_TOPIC,
+                &AAVE_RESERVE_USED_AS_COLLATERAL_DISABLED_TOPIC,
                 "44c58d81365b66dd4b1a7f36c25aa97b8c71c361ee4937adc1a00000227db5dd",
             ),
             (
-                &RESERVE_USED_AS_COLLATERAL_ENABLED_TOPIC,
+                &AAVE_RESERVE_USED_AS_COLLATERAL_ENABLED_TOPIC,
                 "00058a56ea94653cdf4f152d227ace22d4c00ad99e2a43f58cb7d9e3feb295f2",
             ),
             (
-                &SUPPLY_TOPIC,
+                &AAVE_SUPPLY_TOPIC,
                 "2b627736bca15cd5381dcf80b0bf11fd197d01a037c52b927a881a10fb73ba61",
             ),
             (
-                &USER_E_MODE_SET_TOPIC,
+                &AAVE_USER_E_MODE_SET_TOPIC,
                 "d728da875fc88944cbf17638bcbe4af0eedaef63becd1d1c57cc097eb4608d84",
             ),
             (
-                &WITHDRAW_TOPIC,
+                &AAVE_WITHDRAW_TOPIC,
                 "3115d1449a7b732c986cba18244e897a450f61e1bb8d589cd2e69e6c8924f9f7",
             ),
             (
-                &BALANCE_TRANSFER_TOPIC,
+                &AAVE_BALANCE_TRANSFER_TOPIC,
                 "4beccb90f994c31aced7a23b5611020728a23d8ec5cddd1a3e9d97b96fda8666",
             ),
             (
-                &BURN_TOPIC,
+                &AAVE_BURN_TOPIC,
                 "4cf25bc1d991c17529c25213d3cc0cda295eeaad5f13f361969b12ea48015f90",
             ),
             (
-                &MINT_TOPIC,
+                &AAVE_MINT_TOPIC,
                 "458f5fa412d0f69b08dd84872b0215675cc67bc1d5b6fd93300a1c3878b86196",
             ),
             (
-                &ADDRESS_SET_TOPIC,
+                &AAVE_ADDRESS_SET_TOPIC,
                 "9ef0e8c8e52743bb38b83b17d9429141d494b8041ca6d616a6c77cebae9cd8b7",
             ),
             (
-                &ASSET_COLLATERAL_IN_EMODE_CHANGED_TOPIC,
+                &AAVE_ASSET_COLLATERAL_IN_EMODE_CHANGED_TOPIC,
                 "79409190108b26fcb0e4570f8e240f627bf18fd01a55f751010224d5bd486098",
             ),
             (
-                &COLLATERAL_CONFIGURATION_CHANGED_TOPIC,
+                &AAVE_COLLATERAL_CONFIGURATION_CHANGED_TOPIC,
                 "637febbda9275aea2e85c0ff690444c8d87eb2e8339bbede9715abcc89cb0995",
             ),
             (
-                &EMODE_ASSET_CATEGORY_CHANGED_TOPIC,
+                &AAVE_EMODE_ASSET_CATEGORY_CHANGED_TOPIC,
                 "5bb69795b6a2ea222d73a5f8939c23471a1f85a99c7ca43c207f1b71f10c6264",
             ),
             (
-                &EMODE_CATEGORY_ADDED_TOPIC,
+                &AAVE_EMODE_CATEGORY_ADDED_TOPIC,
                 "0acf8b4a3cace10779798a89a206a0ae73a71b63acdd3be2801d39c2ef7ab3cb",
             ),
             (
-                &POOL_CONFIGURATOR_UPDATED_TOPIC,
+                &AAVE_POOL_CONFIGURATOR_UPDATED_TOPIC,
                 "8932892569eba59c8382a089d9b732d1f49272878775235761a2a6b0309cd465",
             ),
             (
-                &POOL_DATA_PROVIDER_UPDATED_TOPIC,
+                &AAVE_POOL_DATA_PROVIDER_UPDATED_TOPIC,
                 "c853974cfbf81487a14a23565917bee63f527853bcb5fa54f2ae1cdf8a38356d",
             ),
             (
-                &POOL_UPDATED_TOPIC,
+                &AAVE_POOL_UPDATED_TOPIC,
                 "90affc163f1a2dfedcd36aa02ed992eeeba8100a4014f0b4cdc20ea265a66627",
             ),
             (
-                &PRICE_ORACLE_UPDATED_TOPIC,
+                &AAVE_PRICE_ORACLE_UPDATED_TOPIC,
                 "56b5f80d8cac1479698aa7d01605fd6111e90b15fc4d2b377417f46034876cbd",
             ),
             (
-                &PROXY_CREATED_TOPIC,
+                &AAVE_PROXY_CREATED_TOPIC,
                 "4a465a9bd819d9662563c1e11ae958f8109e437e7f4bf1c6ef0b9a7b3f35d478",
             ),
             (
-                &RESERVE_INITIALIZED_TOPIC,
+                &AAVE_RESERVE_INITIALIZED_TOPIC,
                 "3a0ca721fc364424566385a1aa271ed508cc2c0949c2272575fb3013a163a45f",
             ),
             (
-                &UPGRADED_TOPIC,
+                &AAVE_UPGRADED_TOPIC,
                 "bc7cd75a20ee27fd9adebab32041f755214dbc6bffa90cc0225b39da2e5c2d3b",
             ),
             (
-                &DISCOUNT_PERCENT_UPDATED_TOPIC,
+                &AAVE_DISCOUNT_PERCENT_UPDATED_TOPIC,
                 "74ab9665e7c36c29ddb78ef88a3e2eac73d35b8b16de7bc573e313e320104956",
             ),
             (
-                &DISCOUNT_RATE_STRATEGY_UPDATED_TOPIC,
+                &AAVE_DISCOUNT_RATE_STRATEGY_UPDATED_TOPIC,
                 "194bd59f47b230edccccc2be58b92dde3a5dadd835751a621af59006928bccef",
             ),
             (
-                &DISCOUNT_TOKEN_UPDATED_TOPIC,
+                &AAVE_DISCOUNT_TOKEN_UPDATED_TOPIC,
                 "6b489e1dbfbe36f55c511c098bcc9d92fec7f04f74ceb75018697ab68f7d3529",
             ),
             (
-                &REDEEM_TOPIC,
+                &AAVE_REDEEM_TOPIC,
                 "3f693fff038bb8a046aa76d9516190ac7444f7d69cf952c4cbdc086fdef2d6fc",
             ),
             (
-                &STAKED_TOPIC,
+                &AAVE_STAKED_TOPIC,
                 "6c86f3fd5118b3aa8bb4f389a617046de0a3d3d477de1a1673d227f802f616dc",
             ),
             (
-                &REWARDS_CLAIMED_TOPIC,
+                &AAVE_REWARDS_CLAIMED_TOPIC,
                 "c052130bc4ef84580db505783484b067ea8b71b3bca78a7e12db7aea8658f004",
             ),
             (
-                &ASSET_SOURCE_UPDATED_TOPIC,
+                &AAVE_ASSET_SOURCE_UPDATED_TOPIC,
                 "22c5b7b2d8561d39f7f210b6b326a1aa69f15311163082308ac4877db6339dc1",
             ),
             (
@@ -2001,7 +2001,7 @@ mod tests {
         let log = make_log(
             pool,
             vec![
-                SUPPLY_TOPIC,
+                AAVE_SUPPLY_TOPIC,
                 addr_word(reserve),            // topic[1] = reserve
                 addr_word(on_behalf_of),       // topic[2] = onBehalfOf
                 B256::new(u16_word(referral)), // topic[3] = referralCode
@@ -2051,7 +2051,7 @@ mod tests {
         let log = make_log(
             pool,
             vec![
-                BORROW_TOPIC,
+                AAVE_BORROW_TOPIC,
                 addr_word(reserve),            // topic[1] = reserve
                 addr_word(on_behalf_of),       // topic[2] = onBehalfOf
                 B256::new(u16_word(referral)), // topic[3] = referralCode
@@ -2083,7 +2083,7 @@ mod tests {
         let log = make_log(
             pool,
             vec![
-                REPAY_TOPIC,
+                AAVE_REPAY_TOPIC,
                 addr_word(reserve),
                 addr_word(user),
                 addr_word(repayer),
@@ -2109,7 +2109,7 @@ mod tests {
         let log = make_log(
             pool,
             vec![
-                WITHDRAW_TOPIC,
+                AAVE_WITHDRAW_TOPIC,
                 addr_word(reserve),
                 addr_word(user),
                 addr_word(to),
@@ -2144,7 +2144,7 @@ mod tests {
         let log = make_log(
             pool,
             vec![
-                LIQUIDATION_CALL_TOPIC,
+                AAVE_LIQUIDATION_CALL_TOPIC,
                 addr_word(collateral_asset),
                 addr_word(debt_asset),
                 addr_word(user),
@@ -2180,7 +2180,7 @@ mod tests {
 
         let log = make_log(
             pool,
-            vec![RESERVE_DATA_UPDATED_TOPIC, addr_word(reserve)],
+            vec![AAVE_RESERVE_DATA_UPDATED_TOPIC, addr_word(reserve)],
             data,
         );
         let event = decode_reserve_data_updated(&log).unwrap();
@@ -2208,7 +2208,7 @@ mod tests {
 
         let log = make_log(
             token,
-            vec![MINT_TOPIC, addr_word(caller), addr_word(on_behalf_of)],
+            vec![AAVE_MINT_TOPIC, addr_word(caller), addr_word(on_behalf_of)],
             data,
         );
         let event = decode_scaled_token_mint(&log).unwrap();
@@ -2236,7 +2236,7 @@ mod tests {
 
         let log = make_log(
             token,
-            vec![BURN_TOPIC, addr_word(from), addr_word(target)],
+            vec![AAVE_BURN_TOPIC, addr_word(from), addr_word(target)],
             data,
         );
         let event = decode_scaled_token_burn(&log).unwrap();
@@ -2261,7 +2261,7 @@ mod tests {
 
         let log = make_log(
             token,
-            vec![BALANCE_TRANSFER_TOPIC, addr_word(from), addr_word(to)],
+            vec![AAVE_BALANCE_TRANSFER_TOPIC, addr_word(from), addr_word(to)],
             data,
         );
         let event = decode_scaled_token_balance_transfer(&log).unwrap();
@@ -2289,7 +2289,7 @@ mod tests {
         let log = make_log(
             configurator,
             vec![
-                RESERVE_INITIALIZED_TOPIC,
+                AAVE_RESERVE_INITIALIZED_TOPIC,
                 addr_word(asset),
                 addr_word(a_token),
             ],
@@ -2311,7 +2311,7 @@ mod tests {
 
         let log = make_log(
             pool,
-            vec![USER_E_MODE_SET_TOPIC, addr_word(user)],
+            vec![AAVE_USER_E_MODE_SET_TOPIC, addr_word(user)],
             u8_word(category_id).to_vec(),
         );
         let event = decode_user_e_mode_set(&log).unwrap();
@@ -2328,7 +2328,7 @@ mod tests {
         let log = make_log(
             pool,
             vec![
-                RESERVE_USED_AS_COLLATERAL_ENABLED_TOPIC,
+                AAVE_RESERVE_USED_AS_COLLATERAL_ENABLED_TOPIC,
                 addr_word(reserve),
                 addr_word(user),
             ],
@@ -2348,7 +2348,7 @@ mod tests {
 
         let log = make_log(
             stk,
-            vec![STAKED_TOPIC, addr_word(from), addr_word(on_behalf_of)],
+            vec![AAVE_STAKED_TOPIC, addr_word(from), addr_word(on_behalf_of)],
             u256_word(amount).to_vec(),
         );
         let event = decode_staked(&log).unwrap();
@@ -2367,7 +2367,7 @@ mod tests {
 
         let log = make_log(
             stk,
-            vec![REDEEM_TOPIC, addr_word(from), addr_word(to)],
+            vec![AAVE_REDEEM_TOPIC, addr_word(from), addr_word(to)],
             u256_word(amount).to_vec(),
         );
         let event = decode_redeem(&log).unwrap();
@@ -2386,7 +2386,7 @@ mod tests {
         let log = make_log(
             v_token,
             vec![
-                DISCOUNT_PERCENT_UPDATED_TOPIC,
+                AAVE_DISCOUNT_PERCENT_UPDATED_TOPIC,
                 addr_word(user),
                 B256::new(u256_word(new_percent)),
             ],
@@ -2449,7 +2449,7 @@ mod tests {
 
         let log = make_log(
             configurator,
-            vec![EMODE_CATEGORY_ADDED_TOPIC, B256::new(u8_word(category_id))],
+            vec![AAVE_EMODE_CATEGORY_ADDED_TOPIC, B256::new(u8_word(category_id))],
             data,
         );
         let event = decode_e_mode_category_added(&log).unwrap();
@@ -2484,7 +2484,7 @@ mod tests {
         // Supply expects ≥ 64 bytes; give it 32.
         let log = make_log(
             Address::ZERO,
-            vec![SUPPLY_TOPIC, B256::ZERO, B256::ZERO, B256::ZERO, B256::ZERO],
+            vec![AAVE_SUPPLY_TOPIC, B256::ZERO, B256::ZERO, B256::ZERO, B256::ZERO],
             vec![0u8; 32],
         );
         assert!(decode_supply(&log).is_none(), "truncated data → None");
@@ -2495,7 +2495,7 @@ mod tests {
         // Pool decoder shouldn't match a Supply topic.
         let log = make_log(
             Address::ZERO,
-            vec![SUPPLY_TOPIC, B256::ZERO, B256::ZERO, B256::ZERO, B256::ZERO],
+            vec![AAVE_SUPPLY_TOPIC, B256::ZERO, B256::ZERO, B256::ZERO, B256::ZERO],
             vec![0u8; 64],
         );
         assert!(decode_borrow(&log).is_none(), "wrong topic → None");
