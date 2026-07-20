@@ -37,8 +37,12 @@
 //!   fields; id resolution is the orchestrator's job.
 //! - [`revert`] — revert-data taxonomy (`classify_revert`): bytes → stable
 //!   label for the `[sim]` summary + engine revert tallies.
+//! - [`uniswap_tick_range`] — the shared Uniswap V3 tick bounds
+//!   (`UNISWAP_V3_MIN_TICK`/`UNISWAP_V3_MAX_TICK`) + the `extract_int24_from_word`
+//!   helper consumed by every V3/V4 int24-tick decoder.
 
 pub mod aave_event_decoder;
+pub mod uniswap_tick_range;
 pub mod pool_created_decoder;
 pub mod revert;
 pub mod v2_sync_decoder;

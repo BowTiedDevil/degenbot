@@ -30,6 +30,7 @@
 //! 2. Amounts are `int128` (not `int256`), and a `fee` field is present.
 //! 3. The event is emitted by `PoolManager`, not by individual pool contracts.
 
+use crate::uniswap_tick_range::extract_int24_from_word;
 use alloy::primitives::{Address, B256, I256, U128, U256};
 use alloy::rpc::types::Log;
 
@@ -111,12 +112,9 @@ pub fn decode_v4_swap_log(log: &Log) -> Option<V4SwapEvent> {
     // Decode liquidity (uint128, bytes 96..128)
     let liquidity = U128::from_be_bytes::<16>(data[112..128].try_into().ok()?);
 
-    // Decode tick (int24, bytes 128..160 — sign-extended to 256 bits in ABI)
-    let tick_bytes: [u8; 4] = data[156..160].try_into().ok()?;
-    let tick = i32::from_be_bytes(tick_bytes);
-    if !(-887_272..=887_272).contains(&tick) {
-        return None;
-    }
+    // Decode tick (int24, bytes 128..160 — sign-extended to int256 in the ABI;
+    // range-checked against the Uniswap V3 tick bounds by the shared helper).
+    let tick = extract_int24_from_word(&data[128..160])?;
 
     // Decode fee (uint24, bytes 160..192)
     let fee_bytes: [u8; 4] = data[188..192].try_into().ok()?;

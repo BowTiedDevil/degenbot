@@ -46,6 +46,7 @@
 //!         = 3 × 32 bytes = 96 bytes
 //! ```
 
+use crate::uniswap_tick_range::extract_int24_from_word;
 use alloy::primitives::{Address, B256, U128, U256};
 use alloy::rpc::types::Log;
 
@@ -123,8 +124,8 @@ pub fn decode_v3_mint_log(log: &Log) -> Option<V3MintEvent> {
     }
 
     let owner = Address::from_word(topics[1]);
-    let tick_lower = extract_tick_from_topic(&topics[2])?;
-    let tick_upper = extract_tick_from_topic(&topics[3])?;
+    let tick_lower = extract_int24_from_word(&topics[2].0)?;
+    let tick_upper = extract_int24_from_word(&topics[3].0)?;
 
     // data = abi.encode(address sender, uint128 amount, uint256 amount0, uint256 amount1)
     // = 4 × 32 bytes = 128 bytes minimum
@@ -179,8 +180,8 @@ pub fn decode_v3_burn_log(log: &Log) -> Option<V3BurnEvent> {
     }
 
     let owner = Address::from_word(topics[1]);
-    let tick_lower = extract_tick_from_topic(&topics[2])?;
-    let tick_upper = extract_tick_from_topic(&topics[3])?;
+    let tick_lower = extract_int24_from_word(&topics[2].0)?;
+    let tick_upper = extract_int24_from_word(&topics[3].0)?;
 
     // data = abi.encode(uint128 amount, uint256 amount0, uint256 amount1)
     // = 3 × 32 bytes = 96 bytes minimum
@@ -209,21 +210,6 @@ pub fn decode_v3_burn_log(log: &Log) -> Option<V3BurnEvent> {
     })
 }
 
-/// Extract an int24 tick value from an indexed topic.
-///
-/// Indexed int24 values are stored as a full 32-byte word (sign-extended
-/// to uint256 / int256 in the ABI). The actual value is in the last 4 bytes.
-///
-/// Returns `None` if the tick is outside the valid int24 range [-887272, 887272].
-fn extract_tick_from_topic(topic: &B256) -> Option<i32> {
-    // The int24 value is in the last 4 bytes of the 32-byte word
-    let tick_bytes: [u8; 4] = topic[28..32].try_into().ok()?;
-    let tick = i32::from_be_bytes(tick_bytes);
-    if !(-887_272..=887_272).contains(&tick) {
-        return None;
-    }
-    Some(tick)
-}
 
 #[cfg(test)]
 #[allow(clippy::unreadable_literal, clippy::unwrap_used)]
