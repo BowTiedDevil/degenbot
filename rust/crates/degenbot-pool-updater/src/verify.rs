@@ -11,14 +11,18 @@
 //! single `eth_call` round trip (cheaper than V3). See
 //! [`docs/architecture/v4_poolmanager_storage_layout.md`] for the slot layout.
 //!
-//! Pure encode/decode/compare helpers (`ticks_calldata`, `tick_bitmap_calldata`,
-//! `decode_ticks_return`, `decode_tick_bitmap_return`, `compare_tick`,
+//! V3 encode/decode (`ticks(int24)`, `tickBitmap(int16)`) and the selector
+//! constants live in `degenbot_rpc::abi` — the single deep home for onchain
+//! pool-state probing (see CONTEXT.md "Onchain pool-state probe"). This module
+//! keeps only the V3 per-consumer adapter (`decode_ticks_result` /
+//! `decode_bitmap_result`, mapping a reverted / too-short `MulticallResult` to
+//! `None`), the V4 `extsload` path (a separate mechanism — direct storage-slot
+//! reads, not ABI calls), and the divergence surface (`compare_tick`,
 //! `compare_bitmap_word`, `v4_*_slot`, `encode_extsload_call`,
-//! `decode_extsload_return`) are offline-unit-tested (no RPC): the reference
-//! return payloads + slot vectors are built with an INDEPENDENT encoder
-//! (`cast keccak` for slot math, alloy `DynSolValue` ABI encode for returns) so
-//! the decoder is checked against a different oracle than the one used to build
-//! the inputs.
+//! `decode_extsload_return`). The V4 slot-derive + extsload helpers remain
+//! offline-unit-tested here (no RPC): the reference slot vectors are built
+//! with an INDEPENDENT `cast keccak` oracle so the slot math is checked
+//! against a different keccak than this crate's alloy `keccak256`.
 //!
 //! Zero `pyo3` (enforced by `just check-no-pyo3-in-cores`).
 
@@ -26,16 +30,21 @@ use alloy::dyn_abi::{DynSolType, DynSolValue};
 use alloy::primitives::{keccak256, Address, Bytes, B256, I256, U128, U256};
 use degenbot_core::errors::ProviderError;
 use degenbot_db::{ApplyLiquidityAtTick, ComputedLiquidityUpdate};
+use degenbot_rpc::abi::{
+    decode_tick_bitmap, decode_tick_data, encode_tick_bitmap, encode_tick_data,
+};
 use degenbot_rpc::multicall3::{multicall3_batch, MulticallResult};
 use degenbot_rpc::provider::AlloyProvider;
 use std::str::FromStr;
 
 use crate::run::RunError;
 
-/// `keccak256("ticks(int24)")[0..4]` = `0xf30dba93`.
-const TICKS_SELECTOR: [u8; 4] = [0xf3, 0x0d, 0xba, 0x93];
-/// `keccak256("tickBitmap(int16)")[0..4]` = `0x5339c296`.
-const TICK_BITMAP_SELECTOR: [u8; 4] = [0x53, 0x39, 0xc2, 0x96];
+// V3 ABI selectors + `ticks`/`tickBitmap` calldata builders / return
+// decoders live in `degenbot_rpc::abi` (the single deep home for onchain
+// pool-state probing — see CONTEXT.md "Onchain pool-state probe"). This
+// module keeps only the per-consumer adapter: `decode_ticks_result` /
+// `decode_bitmap_result` map a reverted / too-short `MulticallResult` to
+// `None` (the V3 verify path treats a revert as a divergence, not an error).
 
 /// A named, bisect-able divergence between the in-memory map and on-chain
 /// truth. Empty list = GREEN.
@@ -70,76 +79,26 @@ pub enum LiquidityDivergence {
     BitmapCallReverted { word: i32 },
 }
 
-/// Build the 36-byte calldata `selector(4) + int24 sign-extended to 32 bytes`.
-fn ticks_calldata(tick: i32) -> Bytes {
-    int_selector_calldata(TICKS_SELECTOR, tick)
-}
-
-/// Build the 36-byte calldata `selector(4) + int16 sign-extended to 32 bytes`.
-fn tick_bitmap_calldata(word: i32) -> Bytes {
-    int_selector_calldata(TICK_BITMAP_SELECTOR, word)
-}
-
-/// `selector(4) + intX value sign-extended to a 32-byte word`. `key` is an
-/// `i32` holding an `int24`/`int16`; its 4-byte big-endian representation
-/// already carries the sign bit in the high byte, so filling `[4..32]` with
-/// `0xff` for negatives correctly sign-extends to `int256`.
-fn int_selector_calldata(selector: [u8; 4], key: i32) -> Bytes {
-    let mut buf = [0u8; 36];
-    buf[..4].copy_from_slice(&selector);
-    if key < 0 {
-        buf[4..32].fill(0xff);
-    }
-    buf[32..36].copy_from_slice(&key.to_be_bytes());
-    Bytes::copy_from_slice(&buf)
-}
-
-/// Decode a V3 `ticks(int24)` return into `(liquidityGross, liquidityNet)`.
-///
-/// The return is the tuple
-/// `(uint128, int128, uint256, uint256, int56, uint160, uint32, bool)`;
-/// `liquidityGross` is the low 128 bits of word 0, `liquidityNet` is word 1
-/// (int128 ABI-sign-extended to 256 bits). Returns `None` when the payload is
-/// shorter than 64 bytes (decode failure — caller treats it as a revert).
-fn decode_ticks_return(bytes: &[u8]) -> Option<(U128, I256)> {
-    if bytes.len() < 64 {
-        return None;
-    }
-    let mut gross_word = [0u8; 32];
-    gross_word.copy_from_slice(&bytes[0..32]);
-    let mut net_word = [0u8; 32];
-    net_word.copy_from_slice(&bytes[32..64]);
-    let gross_low: [u8; 16] = gross_word[16..32].try_into().expect("16 bytes");
-    let gross = U128::from_be_bytes(gross_low);
-    let net = I256::from_be_bytes::<32>(net_word);
-    Some((gross, net))
-}
-
-/// Decode a V3 `tickBitmap(int16)` return (`uint256`) into a `U256`. Returns
-/// `None` when shorter than 32 bytes.
-fn decode_tick_bitmap_return(bytes: &[u8]) -> Option<U256> {
-    if bytes.len() < 32 {
-        return None;
-    }
-    let mut word = [0u8; 32];
-    word.copy_from_slice(&bytes[0..32]);
-    Some(U256::from_be_bytes::<32>(word))
-}
-
 /// Decode a `MulticallResult` (ticks call) into `Some((gross, net))` or `None`
-/// on revert / short return.
+/// on revert / short return. Delegates the byte decode to the home
+/// `decode_tick_data`; a `< 64`-byte payload surfaces there as
+/// `DecodingError`, mapped to `None` here (caller treats it as a revert /
+/// divergence — V3 `ticks()` never reverts for a valid int24, it returns
+/// zeros, so a `None` here is genuine RPC/contract trouble surfaced as a
+/// divergence).
 fn decode_ticks_result(r: &MulticallResult) -> Option<(U128, I256)> {
     if r.success {
-        decode_ticks_return(r.return_data.as_ref())
+        decode_tick_data(r.return_data.as_ref()).ok()
     } else {
         None
     }
 }
 
-/// Decode a `MulticallResult` (tickBitmap call) into `Some(word)` or `None`.
+/// Decode a `MulticallResult` (tickBitmap call) into `Some(word)` or `None`
+/// on revert / short return. Delegates to the home `decode_tick_bitmap`.
 fn decode_bitmap_result(r: &MulticallResult) -> Option<U256> {
     if r.success {
-        decode_tick_bitmap_return(r.return_data.as_ref())
+        decode_tick_bitmap(r.return_data.as_ref()).ok()
     } else {
         None
     }
@@ -220,11 +179,18 @@ pub async fn verify_v3_liquidity_map_on_chain(
 
     let mut calls: Vec<(Address, Bytes)> = Vec::with_capacity(ticks.len() + words.len());
     for &tick in &ticks {
-        calls.push((pool_address, ticks_calldata(tick)));
+        calls.push((pool_address, Bytes::from(encode_tick_data(tick))));
     }
     let tick_count = ticks.len();
     for &word in &words {
-        calls.push((pool_address, tick_bitmap_calldata(word)));
+        // Bitmap word positions are `int16`; the in-memory `tick_bitmap` keys
+        // them as `i32` for arithmetic, so the `as i16` narrowing is lossless
+        // for any valid word (the old `int_selector_calldata` path treated the
+        // same `i32` as its low-2-byte int16). Suppress `cast_possible_truncation`
+        // because the narrowing is the documented semantic, not an accident.
+        #[allow(clippy::cast_possible_truncation)]
+        let word_i16 = word as i16;
+        calls.push((pool_address, Bytes::from(encode_tick_bitmap(word_i16))));
     }
 
     let results = multicall3_batch(provider, &calls, Some(block_number)).await?;
@@ -622,9 +588,11 @@ pub(crate) fn is_final_chunk(chunk_end: u64, last_block: u64, max_chunks_hit: bo
 
 #[cfg(test)]
 /// Independently ABI-encode a V3 `ticks()` return tuple — built with a
-/// DIFFERENT encoder path (`DynSolValue::abi_encode`) than the byte-slicing
-/// `decode_ticks_return`, so the decoder's correctness is checked against a
-/// second encoder.
+/// DIFFERENT encoder path (`DynSolValue::abi_encode`) than the home's
+/// `degenbot_rpc::abi::decode_tick_data`, so the home decoder's correctness
+/// is checked against a second encoder. Used by the V3 verify integration
+/// test (the home's own decode is independently-oracle-tested in
+/// `degenbot-rpc::abi::tests`).
 #[cfg(test)]
 fn encode_ticks_return_ref(gross: u128, net: i128) -> Vec<u8> {
     let val = DynSolValue::Tuple(vec![
@@ -653,79 +621,6 @@ mod tests {
     use alloy::primitives::{I256, U128, U256};
     use degenbot_db::ApplyBitmapAtWord as BitmapAtWord;
     use std::collections::HashMap;
-
-    // ── selectors (independently re-derived with cast: `ticks(int24)`
-    //    0xf30dba93, `tickBitmap(int16)` 0x5339c296) ──
-
-    #[test]
-    fn selectors_match_known_cast_values() {
-        assert_eq!(alloy::hex::encode(TICKS_SELECTOR), "f30dba93");
-        assert_eq!(alloy::hex::encode(TICK_BITMAP_SELECTOR), "5339c296");
-    }
-
-    // ── calldata sign-extension ──
-
-    #[test]
-    fn ticks_calldata_positive_tick() {
-        let cd = ticks_calldata(100);
-        assert_eq!(cd.len(), 36);
-        assert_eq!(&cd[..4], &TICKS_SELECTOR);
-        // arg = 0x00..00 00 00 00 64 (100)
-        assert!(cd[4..32].iter().all(|&b| b == 0));
-        assert_eq!(&cd[32..36], &[0, 0, 0, 100]);
-    }
-
-    #[test]
-    fn ticks_calldata_negative_tick_is_sign_extended() {
-        let cd = ticks_calldata(-100);
-        assert_eq!(&cd[..4], &TICKS_SELECTOR);
-        assert!(cd[4..32].iter().all(|&b| b == 0xff), "high bytes 0xff");
-        // low 4 bytes = -100 as i32 = 0xffffff9c
-        assert_eq!(&cd[32..36], &[0xff, 0xff, 0xff, 0x9c]);
-    }
-
-    #[test]
-    fn tick_bitmap_calldata_sign_extends_negative_word() {
-        let cd = tick_bitmap_calldata(-1);
-        assert_eq!(&cd[..4], &TICK_BITMAP_SELECTOR);
-        assert!(cd[4..32].iter().all(|&b| b == 0xff));
-        assert_eq!(
-            U256::from_be_bytes::<32>(cd[4..36].try_into().unwrap()),
-            U256::MAX
-        );
-    }
-
-    // ── decode against an independent alloy DynSolValue encoder ──
-
-    #[test]
-    fn decode_ticks_return_matches_ref_encoder() {
-        let payload = encode_ticks_return_ref(500, -100);
-        let (gross, net) = decode_ticks_return(&payload).expect("decode");
-        assert_eq!(gross, U128::from(500u64));
-        assert_eq!(net, I256::try_from(-100i64).unwrap());
-    }
-
-    #[test]
-    fn decode_ticks_return_drained_tick_is_zeros() {
-        // An uninitialized tick returns gross=0, net=0, initialized=false.
-        let payload = encode_ticks_return_ref(0, 0);
-        let (gross, net) = decode_ticks_return(&payload).expect("decode");
-        assert_eq!(gross, U128::ZERO);
-        assert_eq!(net, I256::ZERO);
-    }
-
-    #[test]
-    fn decode_ticks_return_too_short_is_none() {
-        assert!(decode_ticks_return(&[0u8; 10]).is_none());
-    }
-
-    #[test]
-    fn decode_tick_bitmap_return_matches_ref_encoder() {
-        let word = U256::from_be_bytes::<32>([0x01; 32]);
-        let payload = encode_uint256_return_ref(word);
-        let decoded = decode_tick_bitmap_return(&payload).expect("decode");
-        assert_eq!(decoded, word);
-    }
 
     // ── compare: the divergence surface ──
 
