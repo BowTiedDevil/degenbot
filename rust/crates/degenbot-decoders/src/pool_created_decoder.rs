@@ -98,6 +98,8 @@
 use alloy::primitives::{Address, B256, U256};
 use alloy::rpc::types::Log;
 
+use crate::v4_swap_decoder::PoolId;
+
 // ── topic constants ───────────────────────────────────────────────────────
 
 /// Keccak256 of `PairCreated(address,address,address,uint256)` — the
@@ -201,8 +203,11 @@ pub struct V3PoolCreatedEvent {
 pub struct V4InitializeEvent {
     /// The `PoolManager` that emitted the event (the log emitter).
     pub pool_manager_address: Address,
-    /// The pool ID (from topic[1] — a bytes32).
-    pub pool_id: B256,
+    /// The pool ID (from topic[1] — a bytes32). Typed as the V4 [`PoolId`]
+    /// alias so every V4 decoded event shares one `pool_id` type, matching
+    /// [`crate::v4_swap_decoder::V4SwapEvent`] and
+    /// [`crate::v4_modify_liquidity_decoder::V4ModifyLiquidityEvent`].
+    pub pool_id: PoolId,
     /// Currency0 (from topic[2]).
     pub currency0: Address,
     /// Currency1 (from topic[3]).
@@ -335,7 +340,7 @@ pub fn decode_v4_initialize_log(log: &Log) -> Option<V4InitializeEvent> {
     if topics.len() < 4 {
         return None;
     }
-    let pool_id = topics[1];
+    let pool_id: PoolId = topics[1].0;
     let currency0 = Address::from_word(topics[2]);
     let currency1 = Address::from_word(topics[3]);
     // data = abi.encode(uint24 fee, int24 tickSpacing, address hooks, ...)
@@ -674,7 +679,7 @@ mod tests {
         );
         let event = decode_v4_initialize_log(&log).unwrap();
         assert_eq!(event.pool_manager_address, pool_manager);
-        assert_eq!(event.pool_id, pool_id);
+        assert_eq!(B256::from(event.pool_id), pool_id);
         assert_eq!(event.currency0, currency0);
         assert_eq!(event.currency1, currency1);
         assert_eq!(event.fee, fee);
