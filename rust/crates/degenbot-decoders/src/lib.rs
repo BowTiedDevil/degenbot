@@ -1,4 +1,4 @@
-//! Pure-Rust Uniswap V2/V3/V4 event-log decoders.
+//! Pure-Rust event-log + revert-data decoders for Uniswap V2/V3/V4 and Aave V3.
 //!
 //! This crate is an **alloy-only leaf** — it has no `pyo3`, no `tokio`, no
 //! `degenbot-core`, and no `degenbot-abi`. Each decoder hand-slices the EVM
@@ -11,10 +11,10 @@
 //! `DecodedPoolEvent`, `LogDispatcher` bus, `PoolStateSubscriber`) stays in
 //! `degenbot-bot`'s `bot_core::log_dispatcher` — those reach `BotState`. This
 //! crate holds only the leaf decode functions + their plain return structs +
-//! the six topic constants.
+//! the keccak256 topic constants (one per decoded event signature).
 //!
-//! Extension seam: a future Curve/Aave event decoder lands here alongside the
-//! Uniswap ones; `LogDispatcher::register_decoder` consumes any
+//! Extension seam: a future Curve/Pendle event decoder lands here alongside
+//! the Uniswap and Aave ones; `LogDispatcher::register_decoder` consumes any
 //! `impl LogDecoder` without `Bot` knowing the event shape.
 //!
 //! # Modules
@@ -28,6 +28,13 @@
 //!   (the pool-discovery events the chunk-loop fetcher consumes; epic
 //!   `2SFL6I`, task SBICJJ). Pure leaf — produces decoder-native structs;
 //!   mapping to `degenbot-db` row-input types is the chunk loop's job.
+//! - [`aave_event_decoder`] — Aave V3 events (Supply/Borrow/Repay/Withdraw/
+//!   LiquidationCall/MintedToTreasury/ReserveDataUpdated/ScaledToken Mint-Burn-
+//!   BalanceTransfer/EMode/Discount/ProxyCreated/Upgraded/ERC20 Transfer —
+//!   34 events across 8 decoded families). The dispatch fn
+//!   [`aave_event_decoder::decode_aave_log`] returns a `DecodedAaveEvent`;
+//!   epic `AZGJUN`, task `ECFB5C`. Pure leaf — emits raw `Address`/`U256`
+//!   fields; id resolution is the orchestrator's job.
 //! - [`revert`] — revert-data taxonomy (`classify_revert`): bytes → stable
 //!   label for the `[sim]` summary + engine revert tallies.
 
