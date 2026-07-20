@@ -20,6 +20,7 @@
 
 use alloy::primitives::{I256, U256};
 use degenbot_balancer_math::fixed_point::{div_down, mul_down};
+use degenbot_balancer_math::stable_math;
 use degenbot_balancer_math::weighted_math;
 use degenbot_balancer_math::PowVersion;
 use degenbot_v2_math::IntHopState;
@@ -153,14 +154,16 @@ pub fn simulate_swap(
         PoolEntry::BalancerWeighted(id, state) => {
             simulate_balancer_weighted_swap(id, state, zero_for_one, amount_in)
         }
-        // Curve (11a) + Balancer stable (12c): the pure math is ported
-        // (`degenbot-curve-math` slice 11c, `degenbot-balancer-math` stable
-        // slice 12e), but the full `get_dy` / ComposableStable wiring —
-        // variant dispatch, rate-multiplier `xp` scaling, invariant + BPT-index
-        // adjustment — is non-trivial enough that the Python companion keeps
-        // doing its own math via `swap_fn` until the dedicated wiring slices
-        // land. This Rust core path returns the not-yet-Rust-side sentinel.
-        PoolEntry::Curve(..) | PoolEntry::BalancerStable(..) => Ok(U256::ZERO),
+        PoolEntry::BalancerStable(id, state) => {
+            simulate_balancer_stable_swap(id, state, zero_for_one, amount_in)
+        }
+        // Curve (11a): the stableswap pure math (`stableswap_get_y`) is ported
+        // in `degenbot-curve-math` (slice 11c), but the full `get_dy` flow —
+        // variant dispatch, rate-multiplier `xp` scaling, A precision, admin-fee
+        // split — is non-trivial enough that the Python companion keeps doing
+        // its own math via `swap_fn` until the dedicated wiring slice lands. This
+        // Rust core path returns the not-yet-Rust-side sentinel.
+        PoolEntry::Curve(..) => Ok(U256::ZERO),
     }
 }
 
@@ -179,25 +182,110 @@ fn simulate_balancer_weighted_swap(
     let (idx_in, idx_out) = if zero_for_one { (0, 1) } else { (1, 0) };
     let sf_in = id.scaling_factors[idx_in];
     let sf_out = id.scaling_factors[idx_out];
+    // Fee is subtracted from the RAW amount, then upscaled (matches the
+    // Python companion `BalancerV2Pool.calculate_tokens_out_from_tokens_in`).
+    let amount_in_less_fee =
+        weighted_math::subtract_swap_fee_amount(amount_in, U256::from(id.swap_fee))
+            .map_err(|_| SimulateSwapError::NotComputable)?;
     let scaled_balance_in =
         mul_down(state.balances[idx_in], sf_in).map_err(|_| SimulateSwapError::NotComputable)?;
     let scaled_balance_out =
         mul_down(state.balances[idx_out], sf_out).map_err(|_| SimulateSwapError::NotComputable)?;
     let scaled_amount_in =
-        mul_down(amount_in, sf_in).map_err(|_| SimulateSwapError::NotComputable)?;
-    let amount_in_less_fee =
-        weighted_math::subtract_swap_fee_amount(scaled_amount_in, U256::from(id.swap_fee))
-            .map_err(|_| SimulateSwapError::NotComputable)?;
+        mul_down(amount_in_less_fee, sf_in).map_err(|_| SimulateSwapError::NotComputable)?;
     let scaled_amount_out = weighted_math::calc_out_given_in(
         scaled_balance_in,
         id.weights[idx_in],
         scaled_balance_out,
         id.weights[idx_out],
-        amount_in_less_fee,
+        scaled_amount_in,
         PowVersion::V2,
     )
     .map_err(|_| SimulateSwapError::NotComputable)?;
     let amount_out =
         div_down(scaled_amount_out, sf_out).map_err(|_| SimulateSwapError::NotComputable)?;
     Ok(amount_out)
+}
+
+/// Balancer V2 stable exact-input swap. Mirrors the Python companion
+/// `BalancerV2StablePool.calculate_tokens_out_from_tokens_in`:
+///   1. Subtract swap fee from the RAW amount.
+///   2. Upscale balances (drop BPT for `ComposableStable` pools) + amount.
+///   3. Compute invariant per `invariant_version` (V1 roundDown `D_P`,
+///      V2 roundUp `P_D`).
+///   4. `calc_out_given_in` in scaled space with BPT-skipped indices.
+///   5. Downscale the output (divDown).
+fn simulate_balancer_stable_swap(
+    id: &crate::balancer_stable_state::BalancerStablePoolIdentity,
+    state: &crate::balancer_stable_state::BalancerStablePoolState,
+    zero_for_one: bool,
+    amount_in: U256,
+) -> Result<U256, SimulateSwapError> {
+    if amount_in.is_zero() {
+        return Ok(U256::ZERO);
+    }
+    let (idx_in, idx_out) = if zero_for_one { (0, 1) } else { (1, 0) };
+    let sf_in = id.scaling_factors[idx_in];
+    let sf_out = id.scaling_factors[idx_out];
+    // Step 1: subtract fee from the raw amount.
+    let amount_in_less_fee =
+        weighted_math::subtract_swap_fee_amount(amount_in, U256::from(id.swap_fee))
+            .map_err(|_| SimulateSwapError::NotComputable)?;
+    // Step 2: upscale balances + amount; drop BPT for ComposableStable pools.
+    let upscaled_balances: Vec<U256> = state
+        .balances
+        .iter()
+        .zip(id.scaling_factors.iter())
+        .map(|(&b, &sf)| mul_down(b, sf).map_err(|_| SimulateSwapError::NotComputable))
+        .collect::<Result<_, _>>()?;
+    let scaled_amount_in =
+        mul_down(amount_in_less_fee, sf_in).map_err(|_| SimulateSwapError::NotComputable)?;
+    // Adjust indices/balances to skip the BPT token (ComposableStable).
+    let (inv_balances, adj_in, adj_out) = skip_bpt(&upscaled_balances, id.bpt_idx, idx_in, idx_out);
+    // Step 3: invariant per deployed version (V1 always-roundDown `D_P`,
+    // V2 `P_D` with round_up).
+    let amp = U256::from(id.amp);
+    let invariant = if id.invariant_version == 1 {
+        stable_math::calculate_invariant(amp, &inv_balances)
+    } else {
+        stable_math::calculate_invariant_deployed(amp, &inv_balances, true)
+    }
+    .map_err(|_| SimulateSwapError::NotComputable)?;
+    // Step 4: outGivenIn in scaled space.
+    let scaled_amount_out = stable_math::calc_out_given_in(
+        amp,
+        &inv_balances,
+        adj_in,
+        adj_out,
+        scaled_amount_in,
+        invariant,
+    )
+    .map_err(|_| SimulateSwapError::NotComputable)?;
+    // Step 5: downscale.
+    let amount_out =
+        div_down(scaled_amount_out, sf_out).map_err(|_| SimulateSwapError::NotComputable)?;
+    Ok(amount_out)
+}
+
+/// Drop the BPT entry and rebase in/out indices to the compressed list.
+/// Mirrors `BalancerV2StablePool._skip_bpt_index` / `_non_bpt_indices`.
+fn skip_bpt(
+    balances: &[U256],
+    bpt_idx: Option<usize>,
+    idx_in: usize,
+    idx_out: usize,
+) -> (Vec<U256>, usize, usize) {
+    match bpt_idx {
+        None => (balances.to_vec(), idx_in, idx_out),
+        Some(b) => {
+            let adj = |i: usize| if i > b { i - 1 } else { i };
+            let v: Vec<U256> = balances
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != b)
+                .map(|(_, &x)| x)
+                .collect();
+            (v, adj(idx_in), adj(idx_out))
+        }
+    }
 }

@@ -89,20 +89,25 @@ fn make_balancer_weighted_pool() -> PoolEntry {
 }
 
 fn make_balancer_stable_pool() -> PoolEntry {
+    // 2-token MetaStable (bpt_idx = None), A=100 (amp = 100*1000 on-chain),
+    // 18-decimal tokens (sf = ONE, identity scaling), ZERO fee, equal
+    // balances. Swap of 1_000 into equal reserves yields 989 — cross-checked
+    // against the independent pure-Python `BalancerV2StablePool` companion
+    // (same pure-math leaf, independent marshalling) which also returns 989.
     let params = RegisterBalancerStablePoolParams {
         address: Address::from([0x44u8; 20]),
         vault: Address::from([0x55u8; 20]),
-        pool_id: [0u8; 32],
+        pool_id: [0x44u8; 32],
         tokens: vec![Address::from([0xAAu8; 20]), Address::from([0xBBu8; 20])],
-        amp: 1_000,
+        amp: 100 * 1000,
         scaling_factors: vec![
             U256::from(1_000_000_000_000_000_000u64),
             U256::from(1_000_000_000_000_000_000u64),
         ],
-        swap_fee: 1_000_000_000_000_000_000u128 / 100, // 1%
+        swap_fee: 0,
         bpt_idx: None,
-        invariant_version: 1,
-        balances: vec![U256::from(1_000_000_000u64), U256::from(2_000_000_000u64)],
+        invariant_version: 2,
+        balances: vec![U256::from(1_000_000u64), U256::from(1_000_000u64)],
         update_block: 100,
         rate_provider: None,
     };
@@ -175,5 +180,32 @@ fn balancer_stable_pool_handle_exposes_balance_vector_structure() {
 
     let bv = pool.balance_vector().expect("balance vector view");
     assert_eq!(bv.n_tokens(), 2);
-    assert_eq!(bv.balances()[0], U256::from(1_000_000_000));
+    assert_eq!(bv.balances()[0], U256::from(1_000_000u64));
+    assert_eq!(bv.balances()[1], U256::from(1_000_000u64));
+}
+
+#[test]
+fn balancer_stable_pool_swap_matches_companion_oracle() {
+    // No closed form for StableMath; the recorded constant 989 is cross-checked
+    // against the independent pure-Python `BalancerV2StablePool` companion
+    // (same pure-math leaf, independent marshalling) for the same fixture.
+    // Symmetry (equal pools → equal reverse swaps) + monotonicity are the
+    // weaker-oracle sanity checks (ADR-005 Tier 2 non-closed-form shape).
+    let entry = make_balancer_stable_pool();
+    let pool = Pool::new(&entry);
+    let out = pool
+        .calculate_tokens_out(true, U256::from(1_000u64))
+        .expect("computable");
+    assert_eq!(out, U256::from(989u64));
+    // Symmetry: swapping the same amount the other way yields the same output
+    // (both reserves are equal).
+    let out_rev = pool
+        .calculate_tokens_out(false, U256::from(1_000u64))
+        .expect("computable");
+    assert_eq!(out_rev, out);
+    // Monotonicity: a larger input yields a larger output.
+    let out_bigger = pool
+        .calculate_tokens_out(true, U256::from(10_000u64))
+        .expect("computable");
+    assert!(out_bigger > out);
 }

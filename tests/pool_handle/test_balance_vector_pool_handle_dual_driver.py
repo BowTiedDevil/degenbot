@@ -91,3 +91,59 @@ def test_balancer_weighted_swap_matches_closed_form(balancer_weighted_pool) -> N
 
     assert out is not None
     assert out == 999
+
+
+@pytest.fixture
+def balancer_stable_pool():
+    bot = PyBot(1)
+    bot.register_token(
+        "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "A", "A", 18, 1
+    )
+    bot.register_token(
+        "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "B", "B", 18, 1
+    )
+    pool_id = bot.register_balancer_stable_pool(
+        address="0x4444444444444444444444444444444444444444",
+        vault="0x5555555555555555555555555555555555555555",
+        pool_id_hex="0x44" + "00" * 31,
+        tokens=[
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        ],
+        amp=100 * 1000,
+        scaling_factors=[ONE, ONE],
+        swap_fee=0,
+        bpt_idx=None,
+        invariant_version=2,
+        balances=[1_000_000, 1_000_000],
+        update_block=100,
+    )
+    return bot.py_pool(pool_id)
+
+
+def test_balancer_stable_structure_and_identity(balancer_stable_pool) -> None:
+    assert balancer_stable_pool.structure() == "balance_vector"
+    identity, variant = balancer_stable_pool.identity()
+    assert identity == "balance_vector"
+    assert variant == "balancer_stable"
+
+
+def test_balancer_stable_swap_matches_companion_oracle(balancer_stable_pool) -> None:
+    # No closed form for StableMath; the recorded constant 989 is cross-checked
+    # against the independent pure-Python BalancerV2StablePool companion (same
+    # pure-math leaf, independent marshalling) for the same fixture. Symmetry
+    # (equal pools → equal reverse swaps) + monotonicity are the weaker-oracle
+    # sanity checks (ADR-005 Tier 2 non-closed-form shape).
+    out = balancer_stable_pool.calculate_tokens_out(True, 1_000)
+
+    assert out is not None
+    assert out == 989
+    # Symmetry
+    out_rev = balancer_stable_pool.calculate_tokens_out(False, 1_000)
+
+    assert out_rev == out
+    # Monotonicity
+    out_bigger = balancer_stable_pool.calculate_tokens_out(True, 10_000)
+
+    assert out_bigger > out
+
