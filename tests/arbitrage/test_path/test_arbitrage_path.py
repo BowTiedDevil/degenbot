@@ -2,131 +2,15 @@
 
 ACDWOC deleted ``ArbitragePath`` and the f64 Möbius solver stack — the
 construction/validation/calculate/close classes that exercised the deleted
-``ArbitragePath`` API went with it. This file keeps the primitives coverage
-that survives the retirement: ``SwapVector``, pool ``to_hop_state`` /
-``extract_fee``, and ``v3_libraries.functions.v3_virtual_reserves`` integer
-math. The engine is the production solve surface, cross-validated against
-``BrentSolver`` in ``tests/arbitrage/test_engine_vs_brent_parity.py``.
+``ArbitragePath`` API went with it. The hop-state conversion surface
+(``to_hop_state`` / ``extract_fee`` / ``build_swap_amount``) was retired in
+the hop/encoding relay retirement (epic `6Y2PBF`) once the Rust engine
+became the sole solve/encode surface. What survives here is the pure-integer
+``v3_libraries.functions.v3_virtual_reserves`` math coverage.
 """
 
-from fractions import Fraction
-
-import pytest
-
-from degenbot import UniswapV2Pool
-from degenbot.exceptions.arbitrage import IncompatiblePoolInvariant
-from degenbot.types.hop_types import BoundedProductHop, ConstantProductHop
 from degenbot.uniswap.v3_libraries.constants import Q96
 from degenbot.uniswap.v3_libraries.functions import v3_virtual_reserves as _v3_virtual_reserves
-
-from .conftest import (
-    _make_aerodrome_pool,
-    _make_token,
-    _make_v2_pool,
-    _make_v3_pool,
-)
-
-FEE_03 = Fraction(3, 1000)
-
-
-class TestPoolCompatibility:
-    def test_v2_compatible(self):
-        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-        pool = _make_v2_pool(t0, t1)
-        pool.to_hop_state(zero_for_one=True)  # should not raise
-
-    def test_v3_compatible(self):
-        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-        pool = _make_v3_pool(t0, t1)
-        pool.to_hop_state(zero_for_one=True)  # should not raise
-
-    def test_v4_compatible(self):
-        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-        pool = _make_v3_pool(t0, t1)
-        pool.to_hop_state(zero_for_one=True)  # should not raise
-
-    def test_aerodrome_volatile_compatible(self):
-        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-        pool = _make_aerodrome_pool(t0, t1, stable=False)
-        pool.to_hop_state(zero_for_one=True)  # should not raise
-
-    def test_aerodrome_stable_compatible(self):
-        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-        pool = _make_aerodrome_pool(t0, t1, stable=True)
-        pool.to_hop_state(zero_for_one=True)  # should not raise
-
-    def test_unknown_incompatible(self):
-        class _UnknownPool:
-            pass
-
-        with pytest.raises((IncompatiblePoolInvariant, AttributeError)):
-            _UnknownPool().to_hop_state(zero_for_one=True)
-
-
-class TestFeeExtraction:
-    def test_v3_fee(self):
-        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-        pool = _make_v3_pool(t0, t1, fee=3000)
-        fee = pool.extract_fee(zero_for_one=True)
-        assert fee == Fraction(3000, 1_000_000)
-
-    def test_v2_fee_zero_for_one(self):
-        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-        pool = _make_v2_pool(t0, t1, fee=Fraction(3, 1000))
-        fee = pool.extract_fee(zero_for_one=True)
-        assert fee == Fraction(3, 1000)
-
-    def test_v2_fee_one_for_zero(self):
-        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-        pool = _make_v2_pool(
-            t0,
-            t1,
-            fee=Fraction(3, 1000),
-            # Production pools use the same fee for both directions
-            # when fee_token0 == fee_token1. To test asymmetric fees,
-            # we'd need to pass different fee_token0/fee_token1.
-        )
-        fee = pool.extract_fee(zero_for_one=False)
-        assert fee == Fraction(3, 1000)
-
-
-class TestPoolToHopState:
-    def test_v2_produces_constant_product_hop(self):
-        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-        pool = _make_v2_pool(t0, t1)
-        hop = pool.to_hop_state(zero_for_one=True)
-        assert isinstance(hop, ConstantProductHop)
-        assert hop.reserve_in == 10**18
-        assert hop.reserve_out == 2 * 10**18
-        assert hop.fee == FEE_03
-
-    def test_v3_produces_bounded_product_hop(self):
-        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-        pool = _make_v3_pool(t0, t1)
-        hop = pool.to_hop_state(zero_for_one=True)
-        assert isinstance(hop, BoundedProductHop)
-
-    def test_v2_direction(self):
-        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-        pool: UniswapV2Pool = _make_v2_pool(t0, t1, reserve0=1000, reserve1=2000)
-        hop_forward: ConstantProductHop = pool.to_hop_state(zero_for_one=True)
-        assert hop_forward.reserve_in == 1000
-        assert hop_forward.reserve_out == 2000
-
-        hop_reverse = pool.to_hop_state(zero_for_one=False)
-        assert hop_reverse.reserve_in == 2000
-        assert hop_reverse.reserve_out == 1000
 
 
 class TestV3VirtualReservesIntegerMath:

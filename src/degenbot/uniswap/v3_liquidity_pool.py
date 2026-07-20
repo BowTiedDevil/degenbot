@@ -30,7 +30,6 @@ from weakref import WeakSet
 
 from eth_typing import ChecksumAddress
 
-from degenbot.arbitrage.types import UniswapV3PoolSwapAmounts
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
@@ -43,22 +42,12 @@ from degenbot.types import PyLiquidityPool
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import PublisherMixin, Subscriber
-from degenbot.types.hop_types import BoundedProductHop, HopType, V3TickRangeInfo
 from degenbot.types.pool_protocols import SimulationResult
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.math import (
     get_tick_word_and_bit_position as cl_get_tick_word_and_bit_position,
 )
 from degenbot.uniswap.types import UniswapPoolSwapVector
-from degenbot.uniswap.v3_libraries import (
-    MAX_SQRT_RATIO,
-    MAX_TICK,
-    MIN_SQRT_RATIO,
-    MIN_TICK,
-    get_sqrt_ratio_at_tick,
-)
-from degenbot.uniswap.v3_libraries.functions import v3_virtual_reserves
-from degenbot.uniswap.v3_libraries.tick_bitmap import gen_ticks
 from degenbot.uniswap.v3_pool_calc import UniswapV3PoolCalc
 from degenbot.uniswap.v3_pool_state import V3PoolState
 from degenbot.uniswap.v3_types import (
@@ -935,181 +924,4 @@ class UniswapV3Pool(
             amount_out=amount_out,
             initial_state=result.initial_state,
             final_state=result.final_state,
-        )
-
-    _TICK_RANGE_CACHE: dict[tuple[str, int, bool], tuple[tuple[V3TickRangeInfo, ...], int] | None]
-    _MAX_TICK_RANGE_CACHE_SIZE: int = 128
-
-    def _get_tick_ranges(
-        self,
-        zero_for_one: bool,  # noqa: FBT001
-        max_ranges: int = 3,
-    ) -> tuple[tuple[V3TickRangeInfo, ...], int] | None:
-        if not hasattr(self, "_TICK_RANGE_CACHE"):
-            self._TICK_RANGE_CACHE = {}
-
-        cache_key = (str(self.address), self.tick, zero_for_one)
-
-        if cache_key in self._TICK_RANGE_CACHE:
-            return self._TICK_RANGE_CACHE[cache_key]
-
-        result = self._compute_tick_ranges(zero_for_one=zero_for_one, max_ranges=max_ranges)
-
-        if len(self._TICK_RANGE_CACHE) >= self._MAX_TICK_RANGE_CACHE_SIZE:
-            self._TICK_RANGE_CACHE.clear()
-
-        self._TICK_RANGE_CACHE[cache_key] = result
-        return result
-
-    def _compute_tick_ranges(
-        self,
-        *,
-        zero_for_one: bool,
-        max_ranges: int = 3,
-    ) -> tuple[tuple[V3TickRangeInfo, ...], int] | None:
-        if getattr(self, "sparse_liquidity_map", True):
-            return None
-
-        tick_data = getattr(self, "tick_data", None)
-        tick_bitmap = getattr(self, "tick_bitmap", None)
-        tick_spacing = getattr(self, "tick_spacing", 0)
-
-        if tick_data is None or tick_bitmap is None or tick_spacing == 0:
-            return None
-
-        current_tick = self.tick
-        less_than_or_equal = not zero_for_one
-
-        try:
-            ticks_along_path = gen_ticks(
-                tick_data=tick_data,
-                starting_tick=current_tick,
-                tick_spacing=tick_spacing,
-                less_than_or_equal=less_than_or_equal,
-            )
-        except (ValueError, KeyError, IndexError):
-            return None
-
-        initialized_ticks: list[int] = []
-        try:  # noqa: PLW0717
-            for tick, is_initialized in ticks_along_path:
-                clamped_tick = max(MIN_TICK, tick) if less_than_or_equal else min(MAX_TICK, tick)
-                if clamped_tick != tick:
-                    break
-                if len(initialized_ticks) >= max_ranges + 1:
-                    break
-
-                if is_initialized or tick == current_tick:
-                    initialized_ticks.append(tick)
-        except StopIteration:
-            pass
-
-        if len(initialized_ticks) < 2:  # noqa: PLR2004
-            return None
-
-        ranges: list[V3TickRangeInfo] = []
-        current_idx = 0
-
-        for i in range(len(initialized_ticks) - 1):
-            if zero_for_one:
-                tick_lower = initialized_ticks[i + 1]
-                tick_upper = initialized_ticks[i]
-            else:
-                tick_lower = initialized_ticks[i]
-                tick_upper = initialized_ticks[i + 1]
-
-            tick_info = tick_data.get(tick_lower if zero_for_one else tick_upper)
-            liquidity = tick_info.liquidity_net if tick_info else self.liquidity
-
-            sqrt_price_lower = int(get_sqrt_ratio_at_tick(tick_lower))
-            sqrt_price_upper = int(get_sqrt_ratio_at_tick(tick_upper))
-
-            ranges.append(
-                V3TickRangeInfo(
-                    tick_lower=tick_lower,
-                    tick_upper=tick_upper,
-                    liquidity=liquidity,
-                    sqrt_price_lower=sqrt_price_lower,
-                    sqrt_price_upper=sqrt_price_upper,
-                ),
-            )
-
-            if tick_lower <= current_tick < tick_upper:
-                current_idx = i
-
-        if len(ranges) < 1:
-            return None
-
-        return (tuple(ranges), current_idx)
-
-    def to_hop_state(
-        self,
-        zero_for_one: bool,  # noqa: FBT001
-        state_override: UniswapV3PoolState | None = None,
-        *,
-        token_in: Erc20Token | None = None,  # noqa: ARG002
-        token_out: Erc20Token | None = None,  # noqa: ARG002
-    ) -> HopType:
-        """Convert to hop state.
-
-        Returns:
-            A BoundedProductHop for the solver.
-
-        """
-        # token_in/token_out unused — 2-token pools determine pair from zero_for_one.
-        # Callers should ensure these match pool.token0/pool.token1 if provided.
-        state = state_override or self.state
-        fee = self.extract_fee(zero_for_one=zero_for_one)
-        reserve_in, reserve_out = v3_virtual_reserves(
-            liquidity=state.liquidity,
-            sqrt_price_x96=state.sqrt_price_x96,
-            zero_for_one=zero_for_one,
-        )
-
-        if state_override is None:
-            tick_ranges = self._get_tick_ranges(zero_for_one)
-            if tick_ranges is not None:
-                ranges, current_idx = tick_ranges
-                return BoundedProductHop(
-                    reserve_in=reserve_in,
-                    reserve_out=reserve_out,
-                    fee=fee,
-                    liquidity=state.liquidity,
-                    sqrt_price=state.sqrt_price_x96,
-                    tick_lower=state.tick,
-                    tick_upper=state.tick,
-                    tick_ranges=ranges,
-                    current_range_index=current_idx,
-                )
-
-        return BoundedProductHop(
-            reserve_in=reserve_in,
-            reserve_out=reserve_out,
-            fee=fee,
-            liquidity=state.liquidity,
-            sqrt_price=state.sqrt_price_x96,
-            tick_lower=state.tick,
-            tick_upper=state.tick,
-        )
-
-    def build_swap_amount(
-        self,
-        zero_for_one: bool,  # noqa: FBT001
-        amount_in: int,
-        amount_out: int,
-    ) -> UniswapV3PoolSwapAmounts:
-        """Build swap amount.
-
-        Returns:
-            The swap amounts object for encoding.
-
-        """
-        limit = MIN_SQRT_RATIO + 1 if zero_for_one else MAX_SQRT_RATIO - 1
-        return UniswapV3PoolSwapAmounts(
-            pool=self.address,
-            amount_in=amount_in,
-            amount_out=amount_out,
-            amount_specified=amount_in,
-            zero_for_one=zero_for_one,
-            sqrt_price_limit_x96=limit,
         )

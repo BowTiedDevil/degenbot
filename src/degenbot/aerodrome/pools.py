@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Self, cast
 from weakref import WeakSet
 
 from degenbot.abi import decode as abi_decode
-from degenbot.aerodrome.math import (
-    calc_exact_in_stable_solidly as _calc_exact_in_stable_solidly,
-)
 from degenbot.aerodrome.types import (
     AerodromeV2PoolExternalUpdate,
     AerodromeV2PoolState,
@@ -18,7 +15,6 @@ from degenbot.aerodrome.types import (
 )
 from degenbot.aerodrome.v2_pool_calc import AerodromeV2PoolCalc
 from degenbot.aerodrome.v2_pool_state import AerodromeV2PoolState as AerodromeV2PoolStateMixin
-from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
@@ -29,7 +25,6 @@ from degenbot.exceptions.pool import (
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.concrete import PublisherMixin, Subscriber
-from degenbot.types.hop_types import ConstantProductHop, HopType, SolidlyStableHop
 from degenbot.types.pool_protocols import SimulationResult
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
@@ -445,97 +440,6 @@ class AerodromeV2Pool(
             amount_out=amount_out,
             initial_state=initial_state,
             final_state=initial_state,
-        )
-
-    def to_hop_state(
-        self,
-        zero_for_one: bool,  # noqa: FBT001
-        state_override: AerodromeV2PoolState | None = None,
-        *,
-        token_in: Erc20Token | None = None,
-        token_out: Erc20Token | None = None,  # noqa: ARG002
-    ) -> HopType:
-        """Convert to hop state.
-
-        Returns:
-            The computed value.
-
-        """
-        # token_in/token_out unused — 2-token pools determine pair from zero_for_one.
-        # Callers should ensure these match pool.token0/pool.token1 if provided.
-        state = state_override or self.state
-        fee = self.extract_fee(zero_for_one=zero_for_one)
-
-        if zero_for_one:
-            reserve_in = state.reserves_token0
-            reserve_out = state.reserves_token1
-            decimals_in = self._token0.decimals
-            decimals_out = self._token1.decimals
-        else:
-            reserve_in = state.reserves_token1
-            reserve_out = state.reserves_token0
-            decimals_in = self._token1.decimals
-            decimals_out = self._token0.decimals
-
-        if self._stable_calc_mode:
-            reserves0 = state.reserves_token0
-            reserves1 = state.reserves_token1
-            decimals0 = 10**self._token0.decimals
-            decimals1 = 10**self._token1.decimals
-            token_in: Literal[0, 1] = 0 if zero_for_one else 1
-
-            def _stable_swap_fn(
-                amount_in: int,
-                /,
-                _reserves0: int = reserves0,
-                _reserves1: int = reserves1,
-                _decimals0: int = decimals0,
-                _decimals1: int = decimals1,
-                _fee: Fraction = fee,
-                _token_in: Literal[0, 1] = token_in,
-            ) -> int:
-                return _calc_exact_in_stable_solidly(
-                    amount_in,
-                    _token_in,
-                    _reserves0,
-                    _reserves1,
-                    _decimals0,
-                    _decimals1,
-                    _fee.numerator,
-                    _fee.denominator,
-                )
-
-            return SolidlyStableHop(
-                reserve_in=reserve_in,
-                reserve_out=reserve_out,
-                fee=fee,
-                decimals_in=decimals_in,
-                decimals_out=decimals_out,
-                swap_fn=_stable_swap_fn,
-            )
-
-        return ConstantProductHop(
-            reserve_in=reserve_in,
-            reserve_out=reserve_out,
-            fee=fee,
-        )
-
-    def build_swap_amount(
-        self,
-        zero_for_one: bool,  # noqa: FBT001
-        amount_in: int,
-        amount_out: int,
-    ) -> UniswapV2PoolSwapAmounts:
-        """Build swap amount.
-
-        Returns:
-            The computed value.
-
-        """
-        return UniswapV2PoolSwapAmounts(
-            pool=self.address,
-            amounts_in=(amount_in, 0) if zero_for_one else (0, amount_in),
-            amounts_out=(0, amount_out) if zero_for_one else (amount_out, 0),
         )
 
 

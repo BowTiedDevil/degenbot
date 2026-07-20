@@ -2,19 +2,15 @@
 
 Verifies that existing pool classes structurally satisfy the defined
 protocols once they implement the required methods (simulate_swap,
-to_hop_state, extract_fee).
+subscribe, unsubscribe).
 """
-
-from fractions import Fraction
 
 import pytest
 from eth_typing import ChecksumAddress
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.types.abstract import AbstractPoolState
-from degenbot.types.hop_types import ConstantProductHop, HopType
 from degenbot.types.pool_protocols import (
-    ArbitrageCapablePool,
     PoolSimulation,
     ReverseSimulatablePool,
     SimulationResult,
@@ -50,22 +46,6 @@ class FakePoolSimulation:
         self._subscribers.discard(subscriber)
 
 
-class FakeArbitragePool(FakePoolSimulation):
-    """Extends FakePoolSimulation with arbitrage capability."""
-
-    def to_hop_state(self, zero_for_one, state_override=None, *, token_in=None, token_out=None):
-
-        return ConstantProductHop(
-            reserve_in=1000,
-            reserve_out=2000,
-            fee=Fraction(3, 1000),
-        )
-
-    def extract_fee(self, zero_for_one):
-
-        return Fraction(3, 1000)
-
-
 class TestPoolSimulation:
     def test_fake_pool_satisfies_protocol(self):
         pool = FakePoolSimulation()
@@ -89,25 +69,6 @@ class TestPoolSimulation:
         assert subscriber in pool._subscribers
         pool.unsubscribe(subscriber)
         assert subscriber not in pool._subscribers
-
-
-class TestArbitrageCapablePool:
-    def test_fake_arbitrage_pool_satisfies_protocol(self):
-        pool = FakeArbitragePool()
-        assert isinstance(pool, ArbitrageCapablePool)
-
-    def test_to_hop_state_returns_hop_type(self):
-        pool = FakeArbitragePool()
-        hop = pool.to_hop_state(zero_for_one=True)
-
-        assert isinstance(hop, HopType)
-        assert isinstance(hop, ConstantProductHop)
-
-    def test_extract_fee_returns_fraction(self):
-        pool = FakeArbitragePool()
-
-        fee = pool.extract_fee(zero_for_one=True)
-        assert isinstance(fee, Fraction)
 
 
 class TestReverseSimulatablePool:

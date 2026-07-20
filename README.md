@@ -1039,98 +1039,38 @@ from degenbot.arbitrage.solvers import BrentSolver, SolveResult, SolverMethod
 assert SolverMethod.BRENT.value  # the oracle optimizer used in cross-validation
 ```
 
-> **Note:** The legacy `UniswapLpCycle` / `UniswapCurveCycle` and the Python `ArbitragePath` wrapper have all been retired — the Rust `ArbitrageEngine` (driven via `EngineRegistry`) is the production solve surface. Pool swap-amount construction is now local to each pool via `build_swap_amount()` on raw engine outputs (`optimal_input` / `hop_outputs` / `consumed_inputs`).
+> **Note:** The legacy `UniswapLpCycle` / `UniswapCurveCycle`, the Python
+> `ArbitragePath` wrapper, and the Python `SwapAmounts` /
+> `generate_payloads` encoding mirror have all been retired. The Rust
+> `ArbitrageEngine` (driven via `EngineRegistry`) is the production solve
+> surface, and on-chain calldata is produced Rust-side by
+> `degenbot_executor::composers::encode_cmd_stream` /
+> `dispatch_profitable`. There is no Python swap-amount encoding layer.
 
 #### Swap Encoding & On-Chain Execution
 
-Each `SwapAmounts` subclass (V2, V3, V4, Curve) encodes its own per-hop calldata via `encode(recipient=)` that produces an `EncodedCall(to, data, value)`. Generic amount extraction is available via `input_amount()` / `output_amount()` methods on the base class. Pool classes implement `build_swap_amount()` from the `ArbitragePathPool` protocol, keeping per-pool swap-amount construction local. The `generate_payloads()` function wires a three-layer pipeline:
+On-chain calldata for a solved arb path is produced entirely in the Rust
+core. The Python `SwapAmounts` / `generate_payloads` / `EncodedCall` mirror
+was retired (epic `6Y2PBF`) once `dispatch_profitable` became the sole
+encode/dispatch surface — there is no Python encoding pipeline to call.
 
-1. **Per-hop encoding** — `SwapAmounts.encode()` (pool-type-specific ABI encoding)
-2. **Approval injection** — `ApprovalStrategy` protocol (default: `NoApprovals`)
-3. **Call composition** — `PayloadComposer` protocol (default: `FlatComposer`)
+The Rust encoding flow:
 
-```python
-from degenbot.arbitrage.encoding import (
-    generate_payloads,
-    EncodedCall,
-    ApprovalStrategy,
-    PayloadComposer,
-)
-```
+1. **Resolve** — `EngineRegistry.register_path(...)` builds a `path_id`
+   against the `BotState`-owned pool identities.
+2. **Solve** — the Rust `ArbitrageEngine` produces `optimal_input` /
+   `hop_outputs` / `consumed_inputs` for the registered path.
+3. **Encode** — `degenbot_executor::composers::encode_cmd_stream` emits the
+   per-hop calldata (V2 `swap()`, V3 `swap()`, V4 PoolManager `swap()`, Curve
+   `exchange()`/`exchange_underlying()`), composed into the bot's executor
+   envelope (`dispatch_profitable`), with V4 BalanceDelta `int128` overflow
+   guarded Rust-side by `composers::fits_int128`.
+4. **Submit** — the resulting `execute_calldata` is handed to the submission
+   layer (Rust-owned in the end state).
 
-<!-- invisible-code-block: python
-from degenbot.arbitrage.types import AbstractSwapAmounts
-
-class _FakeSwapAmounts(AbstractSwapAmounts):
-    def input_amount(self):
-        return 1000
-    def output_amount(self):
-        return 2000
-    def encode(self, *, recipient):
-        return EncodedCall(
-            to='0x0000000000000000000000000000000000000001',
-            data=b'\x00\x01',
-            value=0,
-        )
-
-swap_amounts = [_FakeSwapAmounts()]
-bot_address = '0x0000000000000000000000000000000000000001'
--->
-
-```python
-# Encode swap amounts into on-chain calldata
-payloads = generate_payloads(
-    swap_amounts,
-    recipient=bot_address,
-)
-# Returns list[EncodedCall] — each has .to, .data, .value
-assert len(payloads) == 1
-assert payloads[0].to == '0x0000000000000000000000000000000000000001'
-
-
-# With a custom approval strategy (e.g., ERC-20 approvals)
-class ExactApproval:
-    def approvals_for(self, swap_amounts, calls):
-        # Return approval calls to prepend before each swap
-        return []
-
-
-payloads = generate_payloads(
-    swap_amounts,
-    recipient=bot_address,
-    approval_strategy=ExactApproval(),
-)
-assert len(payloads) == 1
-
-
-# With a custom composer (e.g., wrapping in Multicall3)
-class Multicall3Composer:
-    def compose(self, calls):
-        # Aggregate calls into Multicall3 format
-        return calls  # placeholder
-
-
-payloads = generate_payloads(
-    swap_amounts,
-    recipient=bot_address,
-    composer=Multicall3Composer(),
-)
-assert len(payloads) == 1
-```
-
-**Supported pool types for encoding:**
-- Uniswap V2: `swap(uint256,uint256,address,bytes)`
-- Uniswap V3: `swap(address,bool,int256,uint160,bytes)`
-- Curve V1: `exchange(int128,int128,uint256,uint256)` / `exchange_underlying(...)`
-- Uniswap V4: requires a custom `PayloadComposer` (V4 uses an unlock/swap callback pattern). The `V4PoolKey` dataclass is available on `UniswapV4PoolSwapAmounts.pool_key` for V4 dispatch.
-
-**Pluggable layers:**
-
-| Layer | Protocol | Default | Purpose |
-|-------|----------|---------|--------|
-| Per-hop encoding | `SwapAmounts.encode()` | Pool-type-specific ABI encoding | V2 `swap()`, V3 `swap()`, Curve `exchange()` |
-| Approval injection | `ApprovalStrategy` | `NoApprovals` | Add ERC-20 `approve()` calls before swaps |
-| Call composition | `PayloadComposer` | `FlatComposer` | Wrap calls for target contract (Multicall3, custom executor, flash loan) |
+`EngineRegistry` and the example bot driver consume `DispatchCandidate` /
+`PyDispatchOutcome` (carrying `path_info` / `hop_outputs`) — never a Python
+`SwapAmounts` object.
 
 ## Bot API Reference
 
