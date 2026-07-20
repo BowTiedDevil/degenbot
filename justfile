@@ -20,8 +20,16 @@ version:
 
 # ========== Rust Development ==========
 
+# Run the standalone-Rust-consumer smoke (ADR-005 standalone claim). Proves a
+# `cargo add degenbot` consumer reaches BotState/DexIdentity/calc math with no
+# Python in the build graph. `examples/standalone_consumer.rs` panic!s on any
+# check failure, so this is the standalone-consumer gate. The example is a
+# `cargo add degenbot` showcase binary AND a CI-runnable assertion.
+test-standalone:
+    cargo run --manifest-path rust/Cargo.toml -p degenbot --example standalone_consumer
+
 # Run Rust tests
-test-rust:
+test-rust: test-standalone
     #!/usr/bin/env bash
     python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -50,7 +58,7 @@ fmt-check:
 check-no-pyo3-in-cores:
     #!/usr/bin/env bash
     set -euo pipefail
-    for crate in degenbot-core degenbot-cl-math degenbot-v2-math degenbot-curve-math degenbot-balancer-math degenbot-abi degenbot-rpc degenbot-bot degenbot-decoders degenbot-uniswap degenbot-pathfinding degenbot degenbot-solidly-math degenbot-evm-math degenbot-price degenbot-db degenbot-pool-updater degenbot-aave-updater degenbot-executor degenbot-submission degenbot-simulation degenbot-pools degenbot-solvers; do
+    for crate in degenbot-core degenbot-cl-math degenbot-v2-math degenbot-curve-math degenbot-balancer-math degenbot-abi degenbot-rpc degenbot-bot degenbot-decoders degenbot-uniswap degenbot-pathfinding degenbot degenbot-solidly-math degenbot-evm-math degenbot-price degenbot-db degenbot-pool-updater degenbot-aave degenbot-executor degenbot-submission degenbot-simulation degenbot-pools degenbot-solvers; do
         if cargo tree --manifest-path rust/Cargo.toml -p "$crate" 2>/dev/null | grep -qi 'pyo3 v'; then
             echo "ERROR: $crate pulls pyo3 under default features (must be feature-gated)." >&2
             exit 1
