@@ -658,20 +658,20 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
             .copied()
             .ok_or_else(|| ParseError::Substrate("pool_event has no topic".into()))?;
         // Match by topic — use the decoder's topic constants to dispatch.
-        if topic == aave_event_decoder::SUPPLY_TOPIC {
+        if topic == aave_event_decoder::AAVE_SUPPLY_TOPIC {
             self.create_supply_operation(operation_id, pool_event, scaled_events, assigned_indices)
-        } else if topic == aave_event_decoder::WITHDRAW_TOPIC {
+        } else if topic == aave_event_decoder::AAVE_WITHDRAW_TOPIC {
             self.create_withdraw_operation(
                 operation_id,
                 pool_event,
                 scaled_events,
                 assigned_indices,
             )
-        } else if topic == aave_event_decoder::BORROW_TOPIC {
+        } else if topic == aave_event_decoder::AAVE_BORROW_TOPIC {
             self.create_borrow_operation(operation_id, pool_event, scaled_events, assigned_indices)
-        } else if topic == aave_event_decoder::REPAY_TOPIC {
+        } else if topic == aave_event_decoder::AAVE_REPAY_TOPIC {
             self.create_repay_operation(operation_id, pool_event, scaled_events, assigned_indices)
-        } else if topic == aave_event_decoder::LIQUIDATION_CALL_TOPIC {
+        } else if topic == aave_event_decoder::AAVE_LIQUIDATION_CALL_TOPIC {
             // HQF5NQ-B: the real liquidation engine (the
             // SINGLE/COMBINED_BURN/SEPARATE_BURNS pattern detection + the
             // `_analyze_liquidation_scenarios` / `_analyze_user_liquidation_
@@ -683,7 +683,7 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
                 all_events,
                 assigned_indices,
             )
-        } else if topic == aave_event_decoder::DEFICIT_CREATED_TOPIC {
+        } else if topic == aave_event_decoder::AAVE_DEFICIT_CREATED_TOPIC {
             Ok(self.create_deficit_operation(operation_id, pool_event))
         } else {
             Err(ParseError::Substrate(format!(
@@ -1705,7 +1705,7 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
         let mut counts: HashMap<(Address, Address), usize> = HashMap::new();
         for ev in all_events {
             let topics = ev.topics();
-            if topics.first() != Some(&aave_event_decoder::LIQUIDATION_CALL_TOPIC) {
+            if topics.first() != Some(&aave_event_decoder::AAVE_LIQUIDATION_CALL_TOPIC) {
                 continue;
             }
             if topics.len() < 4 {
@@ -1737,7 +1737,7 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
         let mut counts: HashMap<Address, usize> = HashMap::new();
         for ev in all_events {
             let topics = ev.topics();
-            if topics.first() != Some(&aave_event_decoder::LIQUIDATION_CALL_TOPIC) {
+            if topics.first() != Some(&aave_event_decoder::AAVE_LIQUIDATION_CALL_TOPIC) {
                 continue;
             }
             if topics.len() < 4 {
@@ -2054,7 +2054,7 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
         let this_log_index = log_idx_value(liquidation_event);
         let mut liquidation_position = 0usize;
         for ev in all_events {
-            if ev.topics().first() != Some(&aave_event_decoder::LIQUIDATION_CALL_TOPIC) {
+            if ev.topics().first() != Some(&aave_event_decoder::AAVE_LIQUIDATION_CALL_TOPIC) {
                 continue;
             }
             if ev.topics().len() < 4 {
@@ -2347,19 +2347,19 @@ fn is_pool_event_log(log: &Log) -> bool {
         return false;
     };
     [
-        aave_event_decoder::SUPPLY_TOPIC,
-        aave_event_decoder::WITHDRAW_TOPIC,
-        aave_event_decoder::BORROW_TOPIC,
-        aave_event_decoder::REPAY_TOPIC,
-        aave_event_decoder::LIQUIDATION_CALL_TOPIC,
-        aave_event_decoder::DEFICIT_CREATED_TOPIC,
+        aave_event_decoder::AAVE_SUPPLY_TOPIC,
+        aave_event_decoder::AAVE_WITHDRAW_TOPIC,
+        aave_event_decoder::AAVE_BORROW_TOPIC,
+        aave_event_decoder::AAVE_REPAY_TOPIC,
+        aave_event_decoder::AAVE_LIQUIDATION_CALL_TOPIC,
+        aave_event_decoder::AAVE_DEFICIT_CREATED_TOPIC,
     ]
     .contains(t)
 }
 
 /// `true` if the log is a `MintedToTreasury` event.
 fn is_minted_to_treasury_log(log: &Log) -> bool {
-    log.topics().first() == Some(&aave_event_decoder::MINTED_TO_TREASURY_TOPIC)
+    log.topics().first() == Some(&aave_event_decoder::AAVE_MINTED_TO_TREASURY_TOPIC)
 }
 
 /// `true` if the log is a plain ERC20 `Transfer` event.
@@ -2707,7 +2707,7 @@ mod tests {
         // pool_event + scaled_events + transfer_events + balance_transfer_events
         // — the parse() loop uses this to track which logs have been
         // consumed so subsequent operations skip them.
-        let pool_log = test_log(1, &aave_event_decoder::SUPPLY_TOPIC, &[]);
+        let pool_log = test_log(1, &aave_event_decoder::AAVE_SUPPLY_TOPIC, &[]);
         let mut op = Operation {
             operation_id: 0,
             operation_type: OperationType::Supply,
@@ -2752,7 +2752,7 @@ mod tests {
     // (U5YIBG) is the consumer).
 
     /// Construct a LiquidationCall-shape Log for tests: 4 topics
-    /// (`LIQUIDATION_CALL_TOPIC`, `collateralAsset`, `debtAsset`, `user`) + a 4-word
+    /// (`AAVE_LIQUIDATION_CALL_TOPIC`, `collateralAsset`, `debtAsset`, `user`) + a 4-word
     /// data payload whose first word is `debt_to_cover`.
     fn liquidation_call_log(
         idx: u64,
@@ -2763,7 +2763,7 @@ mod tests {
     ) -> Log {
         use alloy::primitives::{Bytes, Log as AlloyLog, B256};
         let topics = vec![
-            aave_event_decoder::LIQUIDATION_CALL_TOPIC,
+            aave_event_decoder::AAVE_LIQUIDATION_CALL_TOPIC,
             B256::left_padding_from(collateral.as_slice()),
             B256::left_padding_from(debt.as_slice()),
             B256::left_padding_from(user.as_slice()),
@@ -2804,7 +2804,7 @@ mod tests {
         // `collect_collateral_events`); pass a synthetic placeholder for the lifetime.
         let log = Box::leak(Box::new(test_log(
             log_idx,
-            &aave_event_decoder::SUPPLY_TOPIC,
+            &aave_event_decoder::AAVE_SUPPLY_TOPIC,
             &[],
         )));
         ScaledTokenEvent {
@@ -2843,7 +2843,7 @@ mod tests {
     ) -> ScaledTokenEvent<'static> {
         let log = Box::leak(Box::new(test_log(
             log_idx,
-            &aave_event_decoder::SUPPLY_TOPIC,
+            &aave_event_decoder::AAVE_SUPPLY_TOPIC,
             &[],
         )));
         ScaledTokenEvent {
@@ -3391,12 +3391,12 @@ mod tests {
     }
 
     /// Compose a synthetic `MintedToTreasury` Pool log: topics[0] = the
-    /// `MINTED_TO_TREASURY_TOPIC`, topics[1] = reserve (WETH mainnet);
+    /// `AAVE_MINTED_TO_TREASURY_TOPIC`, topics[1] = reserve (WETH mainnet);
     /// data word 0 = `amountMinted` (the raw underlying amount).
     fn make_minted_to_treasury_log(idx: u64, reserve: Address, amount_minted: U256) -> Log {
         use alloy::primitives::{Bytes, Log as AlloyLog, B256};
         let topics = vec![
-            aave_event_decoder::MINTED_TO_TREASURY_TOPIC,
+            aave_event_decoder::AAVE_MINTED_TO_TREASURY_TOPIC,
             B256::left_padding_from(reserve.as_slice()),
         ];
         let mut data = vec![0u8; 32];
@@ -3442,7 +3442,7 @@ mod tests {
     ) -> ScaledTokenEvent<'static> {
         let log = Box::leak(Box::new(test_log(
             log_idx,
-            &aave_event_decoder::MINT_TOPIC,
+            &aave_event_decoder::AAVE_MINT_TOPIC,
             &[],
         )));
         ScaledTokenEvent {

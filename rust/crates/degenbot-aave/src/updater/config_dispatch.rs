@@ -828,7 +828,7 @@ pub async fn build_discount_snapshot(
     market_id: i64,
     conn: &Connection,
 ) -> Result<HashMap<Address, U256>, ConfigDispatchError> {
-    use degenbot_decoders::aave_event_decoder::{BURN_TOPIC, MINT_TOPIC};
+    use degenbot_decoders::aave_event_decoder::{AAVE_BURN_TOPIC, AAVE_MINT_TOPIC};
 
     let Some(vtoken_addr) = gho_vtoken_address else {
         return Ok(HashMap::new());
@@ -844,10 +844,10 @@ pub async fn build_discount_snapshot(
         if topics.is_empty() || log.address() != vtoken_addr {
             continue;
         }
-        let user = if topics[0] == MINT_TOPIC && topics.len() >= 3 {
+        let user = if topics[0] == AAVE_MINT_TOPIC && topics.len() >= 3 {
             // Mint: topics[2] = onBehalfOf (the user).
             topic_to_address(topics[2])
-        } else if topics[0] == BURN_TOPIC && topics.len() >= 2 {
+        } else if topics[0] == AAVE_BURN_TOPIC && topics.len() >= 2 {
             // Burn: topics[1] = from (the user).
             topic_to_address(topics[1])
         } else {
@@ -1802,8 +1802,8 @@ mod tests {
         let vtoken_addr =
             Address::from([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3]);
         let user_addr = Address::repeat_byte(0x42);
-        // MINT_TOPIC — the mint event with topic[2] = onBehalfOf (the user).
-        let mint_topic = degenbot_decoders::aave_event_decoder::MINT_TOPIC;
+        // AAVE_MINT_TOPIC — the mint event with topic[2] = onBehalfOf (the user).
+        let mint_topic = degenbot_decoders::aave_event_decoder::AAVE_MINT_TOPIC;
         let inner = AlloyLog::new_unchecked(
             vtoken_addr,
             vec![mint_topic, B256::ZERO, pad_address(&user_addr)],
@@ -1868,7 +1868,7 @@ mod tests {
         let vtoken_addr =
             Address::from([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3]);
         let fresh_user = Address::repeat_byte(0x77);
-        let mint_topic = degenbot_decoders::aave_event_decoder::MINT_TOPIC;
+        let mint_topic = degenbot_decoders::aave_event_decoder::AAVE_MINT_TOPIC;
         let inner = AlloyLog::new_unchecked(
             vtoken_addr,
             vec![mint_topic, B256::ZERO, pad_address(&fresh_user)],

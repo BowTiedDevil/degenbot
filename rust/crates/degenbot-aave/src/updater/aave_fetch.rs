@@ -32,16 +32,16 @@ use alloy::rpc::types::Log;
 use degenbot_core::address_utils::address_to_checksum_string;
 use degenbot_core::errors::ProviderResult;
 use degenbot_decoders::aave_event_decoder::{
-    ADDRESS_SET_TOPIC, ASSET_COLLATERAL_IN_EMODE_CHANGED_TOPIC, ASSET_SOURCE_UPDATED_TOPIC,
-    BALANCE_TRANSFER_TOPIC, BORROW_TOPIC, BURN_TOPIC, COLLATERAL_CONFIGURATION_CHANGED_TOPIC,
-    DEFICIT_CREATED_TOPIC, DISCOUNT_PERCENT_UPDATED_TOPIC, DISCOUNT_RATE_STRATEGY_UPDATED_TOPIC,
-    DISCOUNT_TOKEN_UPDATED_TOPIC, EMODE_ASSET_CATEGORY_CHANGED_TOPIC, EMODE_CATEGORY_ADDED_TOPIC,
-    ERC20_TRANSFER_TOPIC, LIQUIDATION_CALL_TOPIC, MINTED_TO_TREASURY_TOPIC, MINT_TOPIC,
-    POOL_CONFIGURATOR_UPDATED_TOPIC, POOL_DATA_PROVIDER_UPDATED_TOPIC, POOL_UPDATED_TOPIC,
-    PRICE_ORACLE_UPDATED_TOPIC, PROXY_CREATED_TOPIC, REDEEM_TOPIC, REPAY_TOPIC,
-    RESERVE_DATA_UPDATED_TOPIC, RESERVE_INITIALIZED_TOPIC,
-    RESERVE_USED_AS_COLLATERAL_DISABLED_TOPIC, RESERVE_USED_AS_COLLATERAL_ENABLED_TOPIC,
-    STAKED_TOPIC, SUPPLY_TOPIC, UPGRADED_TOPIC, USER_E_MODE_SET_TOPIC, WITHDRAW_TOPIC,
+    AAVE_ADDRESS_SET_TOPIC, AAVE_ASSET_COLLATERAL_IN_EMODE_CHANGED_TOPIC, AAVE_ASSET_SOURCE_UPDATED_TOPIC,
+    AAVE_BALANCE_TRANSFER_TOPIC, AAVE_BORROW_TOPIC, AAVE_BURN_TOPIC, AAVE_COLLATERAL_CONFIGURATION_CHANGED_TOPIC,
+    AAVE_DEFICIT_CREATED_TOPIC, AAVE_DISCOUNT_PERCENT_UPDATED_TOPIC, AAVE_DISCOUNT_RATE_STRATEGY_UPDATED_TOPIC,
+    AAVE_DISCOUNT_TOKEN_UPDATED_TOPIC, AAVE_EMODE_ASSET_CATEGORY_CHANGED_TOPIC, AAVE_EMODE_CATEGORY_ADDED_TOPIC,
+    ERC20_TRANSFER_TOPIC, AAVE_LIQUIDATION_CALL_TOPIC, AAVE_MINTED_TO_TREASURY_TOPIC, AAVE_MINT_TOPIC,
+    AAVE_POOL_CONFIGURATOR_UPDATED_TOPIC, AAVE_POOL_DATA_PROVIDER_UPDATED_TOPIC, AAVE_POOL_UPDATED_TOPIC,
+    AAVE_PRICE_ORACLE_UPDATED_TOPIC, AAVE_PROXY_CREATED_TOPIC, AAVE_REDEEM_TOPIC, AAVE_REPAY_TOPIC,
+    AAVE_RESERVE_DATA_UPDATED_TOPIC, AAVE_RESERVE_INITIALIZED_TOPIC,
+    AAVE_RESERVE_USED_AS_COLLATERAL_DISABLED_TOPIC, AAVE_RESERVE_USED_AS_COLLATERAL_ENABLED_TOPIC,
+    AAVE_STAKED_TOPIC, AAVE_SUPPLY_TOPIC, AAVE_UPGRADED_TOPIC, AAVE_USER_E_MODE_SET_TOPIC, AAVE_WITHDRAW_TOPIC,
 };
 use degenbot_rpc::provider::LogFetcher;
 
@@ -90,17 +90,17 @@ pub async fn fetch_pool_logs(
     pool_address: Address,
 ) -> ProviderResult<Vec<Log>> {
     let topic0 = [
-        BORROW_TOPIC,
-        DEFICIT_CREATED_TOPIC,
-        LIQUIDATION_CALL_TOPIC,
-        MINTED_TO_TREASURY_TOPIC,
-        REPAY_TOPIC,
-        RESERVE_DATA_UPDATED_TOPIC,
-        RESERVE_USED_AS_COLLATERAL_DISABLED_TOPIC,
-        RESERVE_USED_AS_COLLATERAL_ENABLED_TOPIC,
-        SUPPLY_TOPIC,
-        USER_E_MODE_SET_TOPIC,
-        WITHDRAW_TOPIC,
+        AAVE_BORROW_TOPIC,
+        AAVE_DEFICIT_CREATED_TOPIC,
+        AAVE_LIQUIDATION_CALL_TOPIC,
+        AAVE_MINTED_TO_TREASURY_TOPIC,
+        AAVE_REPAY_TOPIC,
+        AAVE_RESERVE_DATA_UPDATED_TOPIC,
+        AAVE_RESERVE_USED_AS_COLLATERAL_DISABLED_TOPIC,
+        AAVE_RESERVE_USED_AS_COLLATERAL_ENABLED_TOPIC,
+        AAVE_SUPPLY_TOPIC,
+        AAVE_USER_E_MODE_SET_TOPIC,
+        AAVE_WITHDRAW_TOPIC,
     ];
     fetch_single_address_multi_topic(fetcher, from_block, to_block, pool_address, &topic0).await
 }
@@ -117,11 +117,11 @@ pub async fn fetch_reserve_init_logs(
     configurator_address: Address,
 ) -> ProviderResult<Vec<Log>> {
     let topic0 = [
-        ASSET_COLLATERAL_IN_EMODE_CHANGED_TOPIC,
-        COLLATERAL_CONFIGURATION_CHANGED_TOPIC,
-        EMODE_ASSET_CATEGORY_CHANGED_TOPIC,
-        EMODE_CATEGORY_ADDED_TOPIC,
-        RESERVE_INITIALIZED_TOPIC,
+        AAVE_ASSET_COLLATERAL_IN_EMODE_CHANGED_TOPIC,
+        AAVE_COLLATERAL_CONFIGURATION_CHANGED_TOPIC,
+        AAVE_EMODE_ASSET_CATEGORY_CHANGED_TOPIC,
+        AAVE_EMODE_CATEGORY_ADDED_TOPIC,
+        AAVE_RESERVE_INITIALIZED_TOPIC,
     ];
     fetch_single_address_multi_topic(fetcher, from_block, to_block, configurator_address, &topic0)
         .await
@@ -148,11 +148,11 @@ pub async fn fetch_scaled_token_logs(
         .map(address_to_checksum_string)
         .collect();
     let topic0 = [
-        DISCOUNT_PERCENT_UPDATED_TOPIC,
-        UPGRADED_TOPIC,
-        BALANCE_TRANSFER_TOPIC,
-        BURN_TOPIC,
-        MINT_TOPIC,
+        AAVE_DISCOUNT_PERCENT_UPDATED_TOPIC,
+        AAVE_UPGRADED_TOPIC,
+        AAVE_BALANCE_TRANSFER_TOPIC,
+        AAVE_BURN_TOPIC,
+        AAVE_MINT_TOPIC,
         ERC20_TRANSFER_TOPIC,
     ];
     let topic_filter = Some(vec![topic0.iter().map(B256::to_string).collect::<Vec<_>>()]);
@@ -173,7 +173,7 @@ pub async fn fetch_stk_aave_logs(
     let Some(token) = discount_token else {
         return Ok(Vec::new());
     };
-    let topic0 = [REDEEM_TOPIC, STAKED_TOPIC, ERC20_TRANSFER_TOPIC];
+    let topic0 = [AAVE_REDEEM_TOPIC, AAVE_STAKED_TOPIC, ERC20_TRANSFER_TOPIC];
     fetch_single_address_multi_topic(fetcher, from_block, to_block, token, &topic0).await
 }
 
@@ -187,12 +187,12 @@ pub async fn fetch_address_provider_logs(
     address_provider_address: Address,
 ) -> ProviderResult<Vec<Log>> {
     let topic0 = [
-        ADDRESS_SET_TOPIC,
-        POOL_CONFIGURATOR_UPDATED_TOPIC,
-        POOL_DATA_PROVIDER_UPDATED_TOPIC,
-        POOL_UPDATED_TOPIC,
-        PRICE_ORACLE_UPDATED_TOPIC,
-        PROXY_CREATED_TOPIC,
+        AAVE_ADDRESS_SET_TOPIC,
+        AAVE_POOL_CONFIGURATOR_UPDATED_TOPIC,
+        AAVE_POOL_DATA_PROVIDER_UPDATED_TOPIC,
+        AAVE_POOL_UPDATED_TOPIC,
+        AAVE_PRICE_ORACLE_UPDATED_TOPIC,
+        AAVE_PROXY_CREATED_TOPIC,
     ];
     fetch_single_address_multi_topic(
         fetcher,
@@ -213,8 +213,8 @@ pub async fn fetch_discount_config_logs(
     to_block: u64,
 ) -> ProviderResult<Vec<Log>> {
     let topic0 = [
-        DISCOUNT_RATE_STRATEGY_UPDATED_TOPIC,
-        DISCOUNT_TOKEN_UPDATED_TOPIC,
+        AAVE_DISCOUNT_RATE_STRATEGY_UPDATED_TOPIC,
+        AAVE_DISCOUNT_TOKEN_UPDATED_TOPIC,
     ];
     let topic_filter = Some(vec![topic0.iter().map(B256::to_string).collect::<Vec<_>>()]);
     fetcher
@@ -232,7 +232,7 @@ pub async fn fetch_oracle_logs(
     to_block: u64,
     oracle_address: Option<Address>,
 ) -> ProviderResult<Vec<Log>> {
-    let topic0 = [ASSET_SOURCE_UPDATED_TOPIC];
+    let topic0 = [AAVE_ASSET_SOURCE_UPDATED_TOPIC];
     let topic_filter = Some(vec![topic0.iter().map(B256::to_string).collect::<Vec<_>>()]);
     let addresses = oracle_address.map(|a| vec![address_to_checksum_string(&a)]);
     fetcher
@@ -423,28 +423,28 @@ mod tests {
 
         // fetch_pool_events: 11 topics.
         let pool_topics = [
-            BORROW_TOPIC,
-            DEFICIT_CREATED_TOPIC,
-            LIQUIDATION_CALL_TOPIC,
-            MINTED_TO_TREASURY_TOPIC,
-            REPAY_TOPIC,
-            RESERVE_DATA_UPDATED_TOPIC,
-            RESERVE_USED_AS_COLLATERAL_DISABLED_TOPIC,
-            RESERVE_USED_AS_COLLATERAL_ENABLED_TOPIC,
-            SUPPLY_TOPIC,
-            USER_E_MODE_SET_TOPIC,
-            WITHDRAW_TOPIC,
+            AAVE_BORROW_TOPIC,
+            AAVE_DEFICIT_CREATED_TOPIC,
+            AAVE_LIQUIDATION_CALL_TOPIC,
+            AAVE_MINTED_TO_TREASURY_TOPIC,
+            AAVE_REPAY_TOPIC,
+            AAVE_RESERVE_DATA_UPDATED_TOPIC,
+            AAVE_RESERVE_USED_AS_COLLATERAL_DISABLED_TOPIC,
+            AAVE_RESERVE_USED_AS_COLLATERAL_ENABLED_TOPIC,
+            AAVE_SUPPLY_TOPIC,
+            AAVE_USER_E_MODE_SET_TOPIC,
+            AAVE_WITHDRAW_TOPIC,
         ];
         assert_eq!(pool_topics.len(), 11, "fetch_pool_events has 11 topics");
 
         // fetch_reserve_initialization_events: 5 topics.
         assert_eq!(
             [
-                ASSET_COLLATERAL_IN_EMODE_CHANGED_TOPIC,
-                COLLATERAL_CONFIGURATION_CHANGED_TOPIC,
-                EMODE_ASSET_CATEGORY_CHANGED_TOPIC,
-                EMODE_CATEGORY_ADDED_TOPIC,
-                RESERVE_INITIALIZED_TOPIC,
+                AAVE_ASSET_COLLATERAL_IN_EMODE_CHANGED_TOPIC,
+                AAVE_COLLATERAL_CONFIGURATION_CHANGED_TOPIC,
+                AAVE_EMODE_ASSET_CATEGORY_CHANGED_TOPIC,
+                AAVE_EMODE_CATEGORY_ADDED_TOPIC,
+                AAVE_RESERVE_INITIALIZED_TOPIC,
             ]
             .len(),
             5,
@@ -454,11 +454,11 @@ mod tests {
         // fetch_scaled_token_events: 6 topics (incl ERC20 Transfer).
         assert_eq!(
             [
-                DISCOUNT_PERCENT_UPDATED_TOPIC,
-                UPGRADED_TOPIC,
-                BALANCE_TRANSFER_TOPIC,
-                BURN_TOPIC,
-                MINT_TOPIC,
+                AAVE_DISCOUNT_PERCENT_UPDATED_TOPIC,
+                AAVE_UPGRADED_TOPIC,
+                AAVE_BALANCE_TRANSFER_TOPIC,
+                AAVE_BURN_TOPIC,
+                AAVE_MINT_TOPIC,
                 ERC20_TRANSFER_TOPIC,
             ]
             .len(),
@@ -468,7 +468,7 @@ mod tests {
 
         // fetch_stk_aave_events: 3 topics.
         assert_eq!(
-            [REDEEM_TOPIC, STAKED_TOPIC, ERC20_TRANSFER_TOPIC].len(),
+            [AAVE_REDEEM_TOPIC, AAVE_STAKED_TOPIC, ERC20_TRANSFER_TOPIC].len(),
             3,
             "fetch_stk_aave has 3 topics"
         );
@@ -476,12 +476,12 @@ mod tests {
         // fetch_address_provider_events: 6 topics.
         assert_eq!(
             [
-                ADDRESS_SET_TOPIC,
-                POOL_CONFIGURATOR_UPDATED_TOPIC,
-                POOL_DATA_PROVIDER_UPDATED_TOPIC,
-                POOL_UPDATED_TOPIC,
-                PRICE_ORACLE_UPDATED_TOPIC,
-                PROXY_CREATED_TOPIC,
+                AAVE_ADDRESS_SET_TOPIC,
+                AAVE_POOL_CONFIGURATOR_UPDATED_TOPIC,
+                AAVE_POOL_DATA_PROVIDER_UPDATED_TOPIC,
+                AAVE_POOL_UPDATED_TOPIC,
+                AAVE_PRICE_ORACLE_UPDATED_TOPIC,
+                AAVE_PROXY_CREATED_TOPIC,
             ]
             .len(),
             6,
@@ -491,8 +491,8 @@ mod tests {
         // fetch_discount_config_events: 2 topics.
         assert_eq!(
             [
-                DISCOUNT_RATE_STRATEGY_UPDATED_TOPIC,
-                DISCOUNT_TOKEN_UPDATED_TOPIC,
+                AAVE_DISCOUNT_RATE_STRATEGY_UPDATED_TOPIC,
+                AAVE_DISCOUNT_TOKEN_UPDATED_TOPIC,
             ]
             .len(),
             2,
@@ -501,7 +501,7 @@ mod tests {
 
         // fetch_oracle_events: 1 topic.
         assert_eq!(
-            [ASSET_SOURCE_UPDATED_TOPIC].len(),
+            [AAVE_ASSET_SOURCE_UPDATED_TOPIC].len(),
             1,
             "fetch_oracle has 1 topic"
         );
