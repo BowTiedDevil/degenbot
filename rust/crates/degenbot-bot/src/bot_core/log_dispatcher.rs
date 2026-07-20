@@ -75,7 +75,7 @@ pub enum DecodedPoolEvent {
     /// V4 `Swap` — `(pool_manager, pool_id, sqrt_price_x96, liquidity, tick)`.
     V4Swap {
         pool_manager: alloy::primitives::Address,
-        pool_id: degenbot_decoders::v4_swap_decoder::PoolId,
+        pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
         sqrt_price_x96: alloy::primitives::U256,
         liquidity: alloy::primitives::U256,
         tick: i32,
@@ -84,7 +84,7 @@ pub enum DecodedPoolEvent {
     /// V4 `ModifyLiquidity` — `(pool_manager, pool_id, tick_lower, tick_upper, delta)`.
     V4Liquidity {
         pool_manager: alloy::primitives::Address,
-        pool_id: degenbot_decoders::v4_swap_decoder::PoolId,
+        pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
         tick_lower: i32,
         tick_upper: i32,
         liquidity_delta: alloy::primitives::I256,

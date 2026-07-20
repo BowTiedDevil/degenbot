@@ -26,7 +26,7 @@ use degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v4;
 use degenbot_cl_math::cl_lib::tick_math::{
     get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal,
 };
-use degenbot_decoders::v4_swap_decoder::PoolId;
+use degenbot_decoders::v4_swap_decoder::V4PoolId;
 
 // ---------------------------------------------------------------------------
 // Hook filtering constants
@@ -93,7 +93,7 @@ impl LiquidityEvent for BufferedV4LiquidityUpdate {
 #[derive(Clone, Debug)]
 pub struct RegisterV4PoolParams {
     pub pool_manager: Address,
-    pub pool_id: PoolId,
+    pub pool_id: V4PoolId,
     pub pool_key: V4PoolKey,
     /// Pre-decoded hook flags bitmask. Pools with amount-modifying hooks
     /// (`hook_flags & 0xCC != 0`) or dynamic fees (`fee == 0x100000`) are
@@ -132,7 +132,7 @@ pub enum RegisterV4PoolError {
     /// categories. Surfaces as a plain `PyValueError`.
     AlreadyRegistered {
         pool_manager: Address,
-        pool_id: PoolId,
+        pool_id: V4PoolId,
     },
     /// An out-of-spec field (`sqrt_price_x96` / `tick` / V4 `fee` /
     /// `tick_spacing`) — wraps a [`spec_bounds::SpecViolation`] from the
@@ -173,7 +173,7 @@ pub struct V4StateSync {
 #[derive(Clone, Debug)]
 pub struct V4SwapUpdate {
     pub pool_manager: Address,
-    pub pool_id: PoolId,
+    pub pool_id: V4PoolId,
     pub sqrt_price_x96: U256,
     pub liquidity: u128,
     pub tick: i32,
@@ -199,7 +199,7 @@ struct TickRangeCache {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct V4PoolIdentity {
     pub pool_manager: Address,
-    pub pool_id: PoolId,
+    pub pool_id: V4PoolId,
     pub pool_key: V4PoolKey,
 }
 

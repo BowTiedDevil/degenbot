@@ -254,10 +254,10 @@ pub(crate) fn make_tick_info(
     }
 }
 
-/// Helper to decode a hex string (e.g. "0xabcd...") to a V4 `PoolId` ([u8; 32]).
+/// Helper to decode a hex string (e.g. "0xabcd...") to a V4 `V4PoolId` ([u8; 32]).
 pub(crate) fn hex_string_to_pool_id(
     hex_str: &str,
-) -> PyResult<degenbot_decoders::v4_swap_decoder::PoolId> {
+) -> PyResult<degenbot_decoders::v4_swap_decoder::V4PoolId> {
     let hex_str = hex_str.strip_prefix("0x").unwrap_or(hex_str);
     if hex_str.len() != 64 {
         let msg = format!(
