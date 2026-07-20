@@ -222,3 +222,6 @@ jobs:
 
       - name: Build and install Rust extension
         run: just dev
+
+      - name: Run Tests
+        run: just test-python
