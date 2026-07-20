@@ -1,30 +1,32 @@
 //! `PyO3` seam for the `degenbot_executor` core crate (feature = `"executor"`).
 //!
 //! Thin `#[pyfunction]` wrappers over the Rust command-stream encoding core:
-//! [`encode_cmd_stream`], [`compute_simulation_warmup_slots`], [`pack_config`],
-//! [`pack_expected_balance`], [`mapping_slot`], [`nested_mapping_slot`],
-//! [`v4_input_is_native`], [`v4_output_is_native`].
+//! [`compute_simulation_warmup_slots`], [`pack_config`],
+//! [`pack_expected_balance`], [`mapping_slot`], [`nested_mapping_slot`].
 //!
 //! Architecture (ADR-005 §3.2): each wrapper extracts Python args → releases
 //! the GIL via `py.detach()` for the encode/warmup compute → calls the core →
 //! wraps the result into `bytes`/`dict`/`int`. No business logic lives here.
 //!
-//! The Python encoder (`examples/eth_backrun_helpers.py::encode_cmd_stream` +
-//! `examples/cmd_stream.py`) was deleted in the §4.3 oracle-retirement
-//! cutover after byte-for-byte parity (§4.2) passed 80/80 cases. The frozen
-//! `.rs` golden-file tests (`cargo test -p degenbot-executor`, 59 fns) pin
-//! the Rust core output. The §4.5 `_DelegateSpy` test
-//! (`tests/rust-seam/test_executor_delegate_spy.py`) proves the example
-//! routes through `degenbot_rs.*` (Rust-bound builtins), not deleted Python.
+//! WEFVGE: the standalone `encode_cmd_stream` / `v4_input_is_native` /
+//! `v4_output_is_native` `PyO3` pyfunctions + their `HopTypes` /
+//! `extract_hop` / `extract_path_info` / `hop_to_py` / `path_info_to_py`
+//! helpers are RETIRED. The encode path moved to the Rust core
+//! (`dispatch_profitable_py` calls `composers::encode_cmd_stream` internally —
+//! A5 "now called internally by the seam, not from the example"), and the
+//! candidate resolves its `composers::PathInfo` from a registered `path_id`
+//! via `PyArbitrageEngine::path_info_for_core` (NXM2BF). The `[profit]`
+//! hop-detail render reads `outcome.path_infos` as plain `dict`s (built in
+//! `simulation/outcome.rs`). The Python `hop_info` dataclasses are deleted.
+//! No Python caller reaches `encode_cmd_stream` / `v4_*` on `degenbot_rs`
+//! anymore — the §4.5 `_DelegateSpy` test pinned them as Rust-bound builtins,
+//! but the example never invoked them post-A5.
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::U256;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyInt, PyModule, PyType};
+use pyo3::types::{PyDict, PyInt, PyModule};
 
-use degenbot_executor::composers::{
-    self, EncodeOptions, HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo,
-};
 use degenbot_executor::config::{self, ConfigError};
 use degenbot_executor::{
     compute_simulation_warmup_slots as core_warmup_slots, mapping_slot as core_mapping_slot,
@@ -35,38 +37,8 @@ use crate::address_utils::{parse_address, to_checksum_address_str};
 use crate::conversion::alloy::u256_to_py;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Python → Rust HopInfo extraction
+// Python → Rust arg extraction
 // ═══════════════════════════════════════════════════════════════════════════
-
-/// Cached references to the three Python [`HopInfo`] dataclass [`PyType`] objects.
-///
-/// Built once via `PyModule::import("degenbot.arbitrage.hop_info")` and
-/// `isinstance`-checked to dispatch a Python hop dataclass to the right Rust
-/// `HopInfo` variant. Mirrors the polars-python pattern for lazy conversion
-/// of arbitrary Python objects.
-///
-/// `pub(crate)` so the simulation seam (`crate::simulation`) reuses the same
-/// extraction for `PyDispatchCandidate` — DRY: there is exactly one place that
-/// translates a Python `PathInfo` dataclass to the Rust `PathInfo` (the
-/// candidate + the encode seam must agree byte-for-byte).
-pub(crate) struct HopTypes {
-    v2: Py<PyType>,
-    v3: Py<PyType>,
-    v4: Py<PyType>,
-    path_info: Py<PyType>,
-}
-
-impl HopTypes {
-    pub(crate) fn load(py: Python<'_>) -> PyResult<Self> {
-        let module = PyModule::import(py, "degenbot.arbitrage.hop_info")?;
-        Ok(Self {
-            v2: module.getattr("V2HopInfo")?.extract()?,
-            v3: module.getattr("V3HopInfo")?.extract()?,
-            v4: module.getattr("V4HopInfo")?.extract()?,
-            path_info: module.getattr("PathInfo")?.extract()?,
-        })
-    }
-}
 
 /// Extract a `U256` from a Python int-like object (`int`, `float`, `str`).
 fn extract_u256(obj: &Bound<'_, PyAny>) -> PyResult<U256> {
@@ -96,220 +68,9 @@ fn extract_u256(obj: &Bound<'_, PyAny>) -> PyResult<U256> {
     Err(PyTypeError::new_err("expected int/str for U256"))
 }
 
-/// Extract an `Address` from a Python object (hex string or bytes).
-fn extract_address(obj: &Bound<'_, PyAny>) -> PyResult<Address> {
-    if let Ok(s) = obj.extract::<String>() {
-        return parse_address(&s).map_err(|e| PyValueError::new_err(e.to_string()));
-    }
-    if let Ok(b) = obj.extract::<Vec<u8>>() {
-        if b.len() != 20 {
-            return Err(PyValueError::new_err(format!(
-                "address must be 20 bytes, got {}",
-                b.len()
-            )));
-        }
-        return Ok(Address::from_slice(&b));
-    }
-    Err(PyTypeError::new_err("expected str/bytes for address"))
-}
-
-/// Extract a Rust `HopInfo` from a Python `V2HopInfo`/`V3HopInfo`/`V4HopInfo`
-/// dataclass instance.
-///
-/// Dispatches on `isinstance` to the live Python types from
-/// `degenbot.arbitrage.hop_info`, extracting the fields each variant needs.
-fn extract_hop(hop: &Bound<'_, PyAny>, types: &HopTypes) -> PyResult<HopInfo> {
-    let py = hop.py();
-    if hop.is_instance(types.v2.bind(py))? {
-        return Ok(HopInfo::V2(V2HopInfo {
-            pool_address: extract_address(&hop.getattr("pool_address")?)?,
-            token0_address: extract_address(&hop.getattr("token0_address")?)?,
-            token1_address: extract_address(&hop.getattr("token1_address")?)?,
-            fee: hop.getattr("fee")?.extract::<u16>()?,
-            zfo: hop.getattr("zfo")?.extract::<bool>()?,
-        }));
-    }
-    if hop.is_instance(types.v3.bind(py))? {
-        return Ok(HopInfo::V3(V3HopInfo {
-            pool_address: extract_address(&hop.getattr("pool_address")?)?,
-            token0_address: extract_address(&hop.getattr("token0_address")?)?,
-            token1_address: extract_address(&hop.getattr("token1_address")?)?,
-            fee: hop.getattr("fee")?.extract::<u32>()?,
-            zfo: hop.getattr("zfo")?.extract::<bool>()?,
-        }));
-    }
-    if hop.is_instance(types.v4.bind(py))? {
-        return Ok(HopInfo::V4(V4HopInfo {
-            pool_manager_address: extract_address(&hop.getattr("pool_manager_address")?)?,
-            pool_id_hex: hop.getattr("pool_id_hex")?.extract::<String>()?,
-            currency0_address: extract_address(&hop.getattr("currency0_address")?)?,
-            currency1_address: extract_address(&hop.getattr("currency1_address")?)?,
-            fee: hop.getattr("fee")?.extract::<u32>()?,
-            tick_spacing: hop.getattr("tick_spacing")?.extract::<i32>()?,
-            hook_address: extract_address(&hop.getattr("hook_address")?)?,
-            zfo: hop.getattr("zfo")?.extract::<bool>()?,
-        }));
-    }
-    Err(PyTypeError::new_err(
-        "hop must be V2HopInfo/V3HopInfo/V4HopInfo",
-    ))
-}
-
-/// Extract a Rust `PathInfo` from a Python `PathInfo` dataclass, iterating
-/// its `hops` list and dispatching each via [`extract_hop`].
-///
-/// `pub(crate)` so the simulation seam reuses the exact same extraction —
-/// the candidate the cockpit hands to `dispatch_profitable_py` must encode
-/// identically to the one the encode seam produces.
-pub(crate) fn extract_path_info(
-    path_info: &Bound<'_, PyAny>,
-    types: &HopTypes,
-) -> PyResult<PathInfo> {
-    let hops_iter = path_info.getattr("hops")?.try_iter()?;
-    let mut hops = Vec::new();
-    for hop in hops_iter {
-        hops.push(extract_hop(&hop?, types)?);
-    }
-    Ok(PathInfo::new(hops))
-}
-
-/// Build a Python `V2HopInfo`/`V3HopInfo`/`V4HopInfo` dataclass instance from
-/// a Rust [`HopInfo`] — the reverse of [`extract_hop`]. The address fields
-/// are emitted as EIP-55 checksummed strings (alloy `Address::Display`),
-/// matching the Python cockpit's `h.pool_address` form.
-///
-/// `pub(crate)` so the simulation seam's `PyDispatchOutcome.path_infos`
-/// getter (Decision 1=B, A5) can reconstruct `PathInfo` for the `[profit]`
-/// hop-detail log without the cockpit threading a separate map.
-pub(crate) fn hop_to_py<'py>(
-    py: Python<'py>,
-    hop: &HopInfo,
-    types: &HopTypes,
-) -> PyResult<Bound<'py, PyAny>> {
-    Ok(match hop {
-        HopInfo::V2(v2) => types
-            .v2
-            .bind(py)
-            .call1((
-                format!("{}", v2.pool_address),
-                format!("{}", v2.token0_address),
-                format!("{}", v2.token1_address),
-                v2.fee,
-                v2.zfo,
-            ))?
-            .into_any(),
-        HopInfo::V3(v3) => types
-            .v3
-            .bind(py)
-            .call1((
-                format!("{}", v3.pool_address),
-                format!("{}", v3.token0_address),
-                format!("{}", v3.token1_address),
-                v3.fee,
-                v3.zfo,
-            ))?
-            .into_any(),
-        HopInfo::V4(v4) => types
-            .v4
-            .bind(py)
-            .call1((
-                format!("{}", v4.pool_manager_address),
-                v4.pool_id_hex.clone(),
-                format!("{}", v4.currency0_address),
-                format!("{}", v4.currency1_address),
-                v4.fee,
-                v4.tick_spacing,
-                format!("{}", v4.hook_address),
-                v4.zfo,
-            ))?
-            .into_any(),
-    })
-}
-
-/// Build a Python `PathInfo` dataclass from a Rust [`PathInfo`] — the reverse
-/// of [`extract_path_info`]. Iterates the hops via [`hop_to_py`], collects them
-/// into a Python list, and constructs `PathInfo(hops=...)`.
-pub(crate) fn path_info_to_py<'py>(
-    py: Python<'py>,
-    path: &PathInfo,
-    types: &HopTypes,
-) -> PyResult<Bound<'py, PyAny>> {
-    let hops_list = pyo3::types::PyList::empty(py);
-    for hop in &path.hops {
-        hops_list.append(hop_to_py(py, hop, types)?)?;
-    }
-    types.path_info.bind(py).call1((hops_list,))
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // PyO3 wrapper functions
 // ═══════════════════════════════════════════════════════════════════════════
-
-/// `degenbot_rs.encode_cmd_stream(path_info, optimal_input, hop_outputs,
-/// executor_address, pool_manager_address, weth_address, *,
-/// erc6909_profit=False, use_v4_batch=False) -> bytes | None`
-///
-/// Encode an arbitrage path as a `cmd_executor` command stream. Thin wrapper
-/// over [`composers::encode_cmd_stream`] — extracts the Python `PathInfo` →
-/// Rust `PathInfo`, releases the GIL for the encode compute, wraps the result
-/// as `bytes` (or `None` if the path type doesn't encode).
-#[pyfunction]
-#[pyo3(signature = (
-    path_info, optimal_input, hop_outputs, executor_address, pool_manager_address, weth_address,
-    *, erc6909_profit=false, use_v4_batch=false
-))]
-#[allow(clippy::too_many_arguments, clippy::needless_pass_by_value)]
-fn encode_cmd_stream<'py>(
-    py: Python<'py>,
-    path_info: &Bound<'_, PyAny>,
-    optimal_input: u128,
-    hop_outputs: Vec<u128>,
-    executor_address: &str,
-    pool_manager_address: &str,
-    weth_address: &str,
-    erc6909_profit: bool,
-    use_v4_batch: bool,
-) -> PyResult<Bound<'py, PyAny>> {
-    // `u128` is non-negative by construction; the `== 0` guard mirrors the
-    // Python oracle's `any(x <= 0 for x in hop_outputs)`. The composers' own
-    // `contains(&0)` guard repeats it defensively.
-    if hop_outputs.contains(&0) {
-        return Ok(py.None().into_bound(py));
-    }
-
-    let types = HopTypes::load(py)?;
-    let rust_path = extract_path_info(path_info, &types)?;
-    let executor = parse_address(executor_address)
-        .map_err(|e| PyValueError::new_err(format!("Invalid executor address: {e}")))?;
-    let pm = parse_address(pool_manager_address)
-        .map_err(|e| PyValueError::new_err(format!("Invalid pool manager address: {e}")))?;
-    let weth = parse_address(weth_address)
-        .map_err(|e| PyValueError::new_err(format!("Invalid weth address: {e}")))?;
-    let opts = EncodeOptions {
-        erc6909_profit,
-        use_v4_batch,
-    };
-
-    // GIL released for the encode compute (no Python access in the core).
-    let result = py.detach(|| {
-        composers::encode_cmd_stream(
-            &rust_path,
-            optimal_input,
-            &hop_outputs,
-            executor,
-            pm,
-            weth,
-            opts,
-        )
-    });
-    Ok(match result {
-        Some(bytes) => {
-            let b = PyBytes::new(py, &bytes);
-            b.into_any()
-        }
-        None => py.None().into_bound(py),
-    })
-}
 
 /// `degenbot_rs.compute_simulation_warmup_slots(executor_address,
 /// weth_address, pool_manager_address) -> dict`
@@ -450,34 +211,6 @@ fn nested_mapping_slot<'py>(
     u256_to_py(py, &result)
 }
 
-/// `degenbot_rs.v4_input_is_native(hop) -> bool`
-///
-/// True if the V4 hop's input currency is native ETH (address(0)). Thin
-/// wrapper over [`composers::v4_input_is_native`].
-#[pyfunction]
-fn v4_input_is_native(py: Python<'_>, hop: &Bound<'_, PyAny>) -> PyResult<bool> {
-    let types = HopTypes::load(py)?;
-    let rust_hop = extract_hop(hop, &types)?;
-    Ok(match rust_hop {
-        HopInfo::V4(ref h) => py.detach(|| composers::v4_input_is_native(h)),
-        _ => false,
-    })
-}
-
-/// `degenbot_rs.v4_output_is_native(hop) -> bool`
-///
-/// True if the V4 hop's output currency is native ETH (address(0)). Thin
-/// wrapper over [`composers::v4_output_is_native`].
-#[pyfunction]
-fn v4_output_is_native(py: Python<'_>, hop: &Bound<'_, PyAny>) -> PyResult<bool> {
-    let types = HopTypes::load(py)?;
-    let rust_hop = extract_hop(hop, &types)?;
-    Ok(match rust_hop {
-        HopInfo::V4(ref h) => py.detach(|| composers::v4_output_is_native(h)),
-        _ => false,
-    })
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // Helpers
 // ═══════════════════════════════════════════════════════════════════════════
@@ -500,14 +233,11 @@ fn config_err_to_py(err: ConfigError) -> PyErr {
 pub fn add_executor_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = m.py();
     let submod = PyModule::new(py, "degenbot._ffi.executor")?;
-    submod.add_function(wrap_pyfunction!(encode_cmd_stream, &submod)?)?;
     submod.add_function(wrap_pyfunction!(compute_simulation_warmup_slots, &submod)?)?;
     submod.add_function(wrap_pyfunction!(pack_config, &submod)?)?;
     submod.add_function(wrap_pyfunction!(pack_expected_balance, &submod)?)?;
     submod.add_function(wrap_pyfunction!(mapping_slot, &submod)?)?;
     submod.add_function(wrap_pyfunction!(nested_mapping_slot, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(v4_input_is_native, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(v4_output_is_native, &submod)?)?;
     m.add_submodule(&submod)?;
     py.import("sys")?
         .getattr("modules")?

@@ -1,4 +1,4 @@
-"""§4.5 DelegateSpy test: prove the example routes encode_cmd_stream through
+"""§4.5 DelegateSpy test: prove the example routes encoding through
 the Rust seam, not the retired Python encoder.
 
 After §4.3 oracle-retirement, the Python `encode_cmd_stream` /
@@ -7,6 +7,15 @@ After §4.3 oracle-retirement, the Python `encode_cmd_stream` /
 from `examples/eth_backrun_helpers.py` and `examples/cmd_stream.py`. The
 example (`examples/eth_backrun_v2_v3_v4_rust.py`) must source these from the
 Rust extension `degenbot_rs`.
+
+WEFVGE: the standalone `encode_cmd_stream` / `v4_input_is_native` /
+`v4_output_is_native` PyO3 pyfunctions are retired too — the encode path
+moved to the Rust core (`dispatch_profitable_py` calls
+`composers::encode_cmd_stream` internally per A5), and the candidate
+resolves its `composers::PathInfo` from `path_id` via `path_info_for_core`
+(NXM2BF). The seam now exposes only the warmup/config/slot helpers; the
+DelegateSpy pins those as Rust-bound. The Python `hop_info` dataclasses are
+deleted (no consumer remains — `path_infos` returns plain dicts).
 
 This test does NOT exercise the encode values (that's the Rust-side golden-
 file parity in `cargo test -p degenbot-executor`). It proves the **seam**:
@@ -73,16 +82,22 @@ class TestPythonEncoderRetired:
 
 
 class TestRustSeamPresent:
-    """The Rust extension must expose every retired symbol."""
+    """The Rust extension must expose every kept seam symbol.
+
+    WEFVGE: the standalone ``encode_cmd_stream`` / ``v4_input_is_native`` /
+    ``v4_output_is_native`` pyfunctions are retired (the encode path moved
+    to the Rust core — ``dispatch_profitable_py`` calls
+    ``composers::encode_cmd_stream`` internally per A5; the candidate
+    resolves ``composers::PathInfo`` from ``path_id`` via
+    ``path_info_for_core`` per NXM2BF). Only the warmup/config/slot helpers
+    remain on the seam.
+    """
 
     @pytest.fixture(autouse=True)
     def _import_rs(self) -> None:
         from degenbot._ffi import executor as _ffi_executor
 
         self.rs = _ffi_executor
-
-    def test_encode_cmd_stream(self) -> None:
-        assert hasattr(self.rs, "encode_cmd_stream")
 
     def test_compute_simulation_warmup_slots(self) -> None:
         assert hasattr(self.rs, "compute_simulation_warmup_slots")
@@ -96,11 +111,16 @@ class TestRustSeamPresent:
     def test_mapping_slot(self) -> None:
         assert hasattr(self.rs, "mapping_slot")
 
-    def test_v4_input_is_native(self) -> None:
-        assert hasattr(self.rs, "v4_input_is_native")
+    def test_nested_mapping_slot(self) -> None:
+        assert hasattr(self.rs, "nested_mapping_slot")
 
-    def test_v4_output_is_native(self) -> None:
-        assert hasattr(self.rs, "v4_output_is_native")
+    def test_retired_encode_symbols_absent(self) -> None:
+        """WEFVGE: the standalone encode/v4 pyfunctions are gone."""
+        for retired in ("encode_cmd_stream", "v4_input_is_native", "v4_output_is_native"):
+            assert not hasattr(self.rs, retired), (
+                f"degenbot_rs.{retired} must be retired (WEFVGE — encode moved "
+                f"to the Rust core; the candidate resolves PathInfo from path_id)"
+            )
 
 
 # ── §4.5: prove the example import graph reaches degenbot_rs ─────────────────
@@ -180,10 +200,14 @@ class TestExampleRoutesThroughRust:
 
         The example must NOT define the retired Python sim functions — their
         logic moved to the ``degenbot_simulation`` Rust crate
-        (``dispatch_profitable_py`` owns simulate + the encode/warmup/payload
-        helpers ``encode_cmd_stream`` / ``compute_simulation_warmup_slots`` /
-        ``pack_expected_balance`` / ``v4_input_is_native`` / ``mapping_slot``,
-        now called INTERNALLY by the seam, not from the example).
+        (``dispatch_profitable_py`` owns simulate + the warmup/payload
+        helpers ``compute_simulation_warmup_slots`` /
+        ``pack_expected_balance`` / ``mapping_slot``, now called INTERNALLY
+        by the seam, not from the example). WEFVGE: the standalone
+        ``encode_cmd_stream`` / ``v4_input_is_native`` /
+        ``v4_output_is_native`` PyO3 pyfunctions are retired too (the encode
+        path is core-internal; the candidate resolves ``composers::PathInfo``
+        from ``path_id`` via ``path_info_for_core`` per NXM2BF).
         ``format_failure_breakdown`` is kept (a pure renderer
         ``_render_sim_summary`` plugs into).
         """
@@ -224,32 +248,13 @@ class TestExampleRoutesThroughRust:
 
 
 class TestDelegateSpyEncodeCall:
-    """Monkey-patch `_ffi_executor.encode_cmd_stream` and confirm the example
-    actually calls it when encoding a path — proving delegation, not just
-    import graph shape.
+    """Confirm the kept seam symbols are Rust-bound builtins (not Python
+    re-implementations) — proving delegation to the Rust core.
 
-    Since the example has heavy import deps, we instead spy on the seam
-    directly: call `_ffi_executor.encode_cmd_stream` through a patched sentinel
-    and confirm the patched function is invoked.
+    WEFVGE: the ``encode_cmd_stream`` spy case is retired (the standalone
+    pyfunction is gone — the encode path moved to the Rust core per A5).
+    The remaining warmup/config/slot helpers stay Rust-bound.
     """
-
-    def test_encode_cmd_stream_is_the_rust_bound_function(self) -> None:
-        """The `encode_cmd_stream` symbol on `degenbot_rs` is a built-in
-        (Rust extension function), not a Python function — proving it
-        delegates to the Rust core, not a Python re-implementation.
-        """
-        from degenbot._ffi import executor as _ffi_executor
-
-        fn = _ffi_executor.encode_cmd_stream
-        # PyO3-bound functions are builtin_function_or_method, not Python defs.
-        assert fn.__class__.__name__ in (
-            "builtin_function_or_method",
-            "method_descriptor",
-            "builtin_function",
-        ), (
-            f"encode_cmd_stream must be a Rust-bound builtin, not a Python function "
-            f"(got {fn.__class__.__name__})"
-        )
 
     def test_compute_simulation_warmup_slots_is_rust_bound(self) -> None:
         from degenbot._ffi import executor as _ffi_executor

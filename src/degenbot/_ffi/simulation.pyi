@@ -11,7 +11,6 @@ from typing import Any
 from degenbot._ffi.provider import AsyncAlloyProvider
 from degenbot._ffi.submission import PyDispatcher, PySubmitCandidate
 from degenbot.arbitrage.engine_registry import ArbitrageEngine
-from degenbot.arbitrage.hop_info import PathInfo
 
 class PySimulateContext:
     """Session-static config bag for :func:`dispatch_profitable_py`.
@@ -82,7 +81,7 @@ class PyDispatchOutcome:
     @property
     def failures(self) -> list[dict[str, Any]]: ...
     @property
-    def path_infos(self) -> dict[int, PathInfo]: ...
+    def path_infos(self) -> dict[int, dict[str, Any]]: ...
 
 def dispatch_profitable_py(
     candidates: list[PyDispatchCandidate],

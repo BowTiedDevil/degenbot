@@ -48,7 +48,6 @@ from eth_typing import ChainId, ChecksumAddress
 
 from degenbot import Bot, UniswapV2Pool, UniswapV3Pool, get_checksum_address
 from degenbot.arbitrage.engine_registry import EngineRegistry
-from degenbot.arbitrage.hop_info import HopInfo, V2HopInfo, V3HopInfo, V4HopInfo
 from degenbot.arbitrage.verification_retry import (
     VerificationRetryPolicy,
     retry_verification_call,
@@ -383,24 +382,28 @@ def _load_executor_runtime_bytecode() -> str:
     return _runtime_bytecode_cache
 
 
-def _hop_display_addr(hop: HopInfo) -> str:
-    """Return a short display address for logging."""
-    if isinstance(hop, V2HopInfo):
-        return hop.pool_address
-    if isinstance(hop, V3HopInfo):
-        return hop.pool_address
-    return hop.pool_id_hex
+def _hop_display_addr(hop: dict[str, Any]) -> str:
+    """Return a short display address for logging (WEFVGE: plain-dict hop)."""
+    family = hop["family"]
+    if family in ("V2", "V3"):
+        return hop["pool_address"]
+    return hop["pool_id_hex"]
 
 
-def _hop_token_summary(hops: list[HopInfo] | tuple[HopInfo, ...]) -> str:
-    """One-line summary of hop input→output tokens for sim-fail diagnostics."""
+def _hop_token_summary(hops: list[dict[str, Any]] | tuple[dict[str, Any], ...]) -> str:
+    """One-line summary of hop input→output tokens for sim-fail diagnostics.
+
+    WEFVGE: reads plain dicts (the `outcome.path_infos` render shape) instead
+    of the retired `*HopInfo` dataclasses.
+    """
     parts: list[str] = []
     for h in hops:
-        if isinstance(h, (V2HopInfo, V3HopInfo)):
-            t0, t1 = h.token0_address, h.token1_address
+        family = h["family"]
+        if family in ("V2", "V3"):
+            t0, t1 = h["token0_address"], h["token1_address"]
         else:
-            t0, t1 = h.currency0_address, h.currency1_address
-        parts.append(f"{t0}→{t1}{'↗' if h.zfo else '↘'}")
+            t0, t1 = h["currency0_address"], h["currency1_address"]
+        parts.append(f"{t0}→{t1}{'↗' if h['zfo'] else '↘'}")
     return " ".join(parts)
 
 
@@ -1498,29 +1501,31 @@ def _render_profit_logs(outcome: DispatchOutcome) -> None:
         path_info = outcome.path_infos.get(cand.path_id)
         hop_details = []
         if path_info is not None:
-            for i, h in enumerate(path_info.hops):
-                if isinstance(h, V2HopInfo):
+            for i, h in enumerate(path_info["hops"]):
+                family = h["family"]
+                if family == "V2":
                     hop_details.append(
-                        f"  hop[{i}] V2 addr={h.pool_address} "
-                        f"t0={h.token0_address} t1={h.token1_address} "
-                        f"fee={h.fee} zfo={h.zfo}",
+                        f"  hop[{i}] V2 addr={h['pool_address']} "
+                        f"t0={h['token0_address']} t1={h['token1_address']} "
+                        f"fee={h['fee']} zfo={h['zfo']}",
                     )
-                elif isinstance(h, V3HopInfo):
+                elif family == "V3":
                     hop_details.append(
-                        f"  hop[{i}] V3 addr={h.pool_address} "
-                        f"t0={h.token0_address} t1={h.token1_address} "
-                        f"fee={h.fee} zfo={h.zfo}",
+                        f"  hop[{i}] V3 addr={h['pool_address']} "
+                        f"t0={h['token0_address']} t1={h['token1_address']} "
+                        f"fee={h['fee']} zfo={h['zfo']}",
                     )
-                elif isinstance(h, V4HopInfo):
+                elif family == "V4":
                     hop_details.append(
-                        f"  hop[{i}] V4 pm={h.pool_manager_address} "
-                        f"pid={h.pool_id_hex} "
-                        f"c0={h.currency0_address} c1={h.currency1_address} "
-                        f"fee={h.fee} ts={h.tick_spacing} zfo={h.zfo}",
+                        f"  hop[{i}] V4 pm={h['pool_manager_address']} "
+                        f"pid={h['pool_id_hex']} "
+                        f"c0={h['currency0_address']} c1={h['currency1_address']} "
+                        f"fee={h['fee']} ts={h['tick_spacing']} zfo={h['zfo']}",
                     )
         hops_str = "\n".join(hop_details)
         bot_logger.info(
-            f"[profit] path={cand.path_id} {path_info.path_type if path_info else '?'} "
+            f"[profit] path={cand.path_id} "
+            f"{path_info['path_type'] if path_info else '?'} "
             f"gross={cand.gross_profit / 1e18:.6f}ETH ({cand.gross_profit // 10**9}gwei) "
             f"net={cand.net_profit / 1e18:.6f}ETH ({cand.net_profit // 10**9}gwei) "
             f"gas={cand.gas_used} prio={cand.priority_fee // 10**9}gwei\n{hops_str}",
@@ -1555,9 +1560,9 @@ def _render_sim_failures(outcome: DispatchOutcome) -> None:
         fail_idx = rec["fail_index"]
         revert_hex = rec["revert_data"]
         path_info = path_infos.get(path_id)
-        path_type = path_info.path_type if path_info is not None else "?"
+        path_type = path_info["path_type"] if path_info is not None else "?"
         hops = (
-            _hop_token_summary(path_info.hops) if path_info is not None else "(path_info missing)"
+            _hop_token_summary(path_info["hops"]) if path_info is not None else "(path_info missing)"
         )
         bot_logger.info(
             f"[sim-fail] path={path_id} type={path_type} bucket={bucket} "

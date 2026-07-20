@@ -10,7 +10,9 @@ path reverted against WHICH pools.
 These tests stub the ``PyDispatchOutcome`` shape (the PyO3 pyclass is too
 heavy to instantiate without a full simulate round-trip; the renderer only
 reads the two attributes — ``failures: list[dict]`` and ``path_infos:
-dict[int, PathInfo]`` — so a ``SimpleNamespace`` is sufficient).
+dict[int, dict]`` — so a ``SimpleNamespace`` is sufficient). WEFVGE:
+``path_infos`` values are plain dicts (``{path_type, hops: [hop_dict, …]}``),
+not the retired ``*HopInfo`` dataclasses.
 """
 
 from __future__ import annotations
@@ -18,7 +20,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
-from degenbot.arbitrage.hop_info import V2HopInfo
 from examples.eth_backrun_v2_v3_v4_rust import _render_sim_failures
 
 if TYPE_CHECKING:
@@ -30,29 +31,36 @@ WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
 
 
-def _hops() -> list[Any]:
-    """A 2-hop WETH→USDC→WETH path for the hop-token-summary check."""
+def _hops() -> list[dict[str, Any]]:
+    """A 2-hop WETH→USDC→WETH path for the hop-token-summary check.
+
+    WEFVGE: plain dicts (the ``outcome.path_infos`` render shape) — the
+    retired ``V2HopInfo`` dataclass is gone. The renderer reads ``family``
+    + ``token0/1_address`` / ``zfo`` off the dict directly.
+    """
     return [
-        V2HopInfo(
-            pool_address="0x" + "b1" * 20,
-            token0_address=WETH,
-            token1_address=USDC,
-            fee=30,
-            zfo=True,
-        ),
-        V2HopInfo(
-            pool_address="0x" + "b2" * 20,
-            token0_address=USDC,
-            token1_address=WETH,
-            fee=30,
-            zfo=False,
-        ),
+        {
+            "family": "V2",
+            "pool_address": "0x" + "b1" * 20,
+            "token0_address": WETH,
+            "token1_address": USDC,
+            "fee": 30,
+            "zfo": True,
+        },
+        {
+            "family": "V2",
+            "pool_address": "0x" + "b2" * 20,
+            "token0_address": USDC,
+            "token1_address": WETH,
+            "fee": 30,
+            "zfo": False,
+        },
     ]
 
 
 def _outcome(failures: list[dict[str, Any]]) -> Any:
     """A stub ``PyDispatchOutcome`` exposing only the renderer-read attrs."""
-    path_info = SimpleNamespace(path_type="V2-V2", hops=_hops())
+    path_info = {"path_type": "V2-V2", "hops": _hops()}
     return SimpleNamespace(
         failures=failures,
         path_infos={1: path_info, 2: path_info},

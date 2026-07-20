@@ -6,13 +6,6 @@ import warnings
 from collections.abc import Mapping
 
 from degenbot.arbitrage.verification_retry import VerificationRetryPolicy
-from degenbot.arbitrage.hop_info import (
-    PathInfo,
-    SolidlyHopInfo,
-    V2HopInfo,
-    V3HopInfo,
-    V4HopInfo,
-)
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import resolve_rpc_uris
 from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
