@@ -115,7 +115,7 @@ pub enum ConfigDispatchError {
 pub fn dispatch_reserve_data_updated(
     market_id: i64,
     block_number: u64,
-    decoded: &degenbot_decoders::aave_event_decoder::ReserveDataUpdatedEvent,
+    decoded: &degenbot_decoders::aave_event_decoder::AaveV3ReserveDataUpdatedEvent,
     conn: &Connection,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
     let addr_str = checksum(&decoded.reserve);
@@ -140,7 +140,7 @@ pub fn dispatch_reserve_data_updated(
 pub fn dispatch_user_e_mode_set(
     market_id: i64,
     block_number: u64,
-    decoded: &degenbot_decoders::aave_event_decoder::UserEModeSetEvent,
+    decoded: &degenbot_decoders::aave_event_decoder::AaveV3UserEModeSetEvent,
     conn: &Connection,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
     let addr_str = checksum(&decoded.user);
@@ -186,7 +186,7 @@ pub fn dispatch_reserve_used_as_collateral(
 /// INSERT-not-UPDATE guard).
 pub fn dispatch_price_oracle_updated(
     market_id: i64,
-    decoded: &degenbot_decoders::aave_event_decoder::ConfigAddressPairEvent,
+    decoded: &degenbot_decoders::aave_event_decoder::AaveV3ConfigAddressPairEvent,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
     Ok(AaveChunkEvent::PriceOracleUpdated {
         market_id,
@@ -198,7 +198,7 @@ pub fn dispatch_price_oracle_updated(
 /// Mirrors `_process_asset_source_updated_event`.
 pub fn dispatch_asset_source_updated(
     market_id: i64,
-    decoded: &degenbot_decoders::aave_event_decoder::AssetSourceUpdatedEvent,
+    decoded: &degenbot_decoders::aave_event_decoder::AaveV3AssetSourceUpdatedEvent,
     conn: &Connection,
 ) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
     let asset_str = checksum(&decoded.asset);
@@ -229,7 +229,7 @@ pub fn dispatch_asset_source_updated(
 #[allow(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
 pub fn dispatch_e_mode_category_added(
     market_id: i64,
-    decoded: &degenbot_decoders::aave_event_decoder::EModeCategoryAddedEvent,
+    decoded: &degenbot_decoders::aave_event_decoder::AaveV3EModeCategoryAddedEvent,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
     Ok(AaveChunkEvent::EModeCategoryAdded {
         market_id,
@@ -263,7 +263,7 @@ pub fn dispatch_e_mode_category_added(
 /// zero means "clear".
 pub fn dispatch_e_mode_asset_category_changed(
     market_id: i64,
-    decoded: &degenbot_decoders::aave_event_decoder::EModeAssetCategoryChangedEvent,
+    decoded: &degenbot_decoders::aave_event_decoder::AaveV3EModeAssetCategoryChangedEvent,
     conn: &Connection,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
     let asset_str = checksum(&decoded.asset);
@@ -285,7 +285,7 @@ pub fn dispatch_e_mode_asset_category_changed(
 /// variant).
 pub fn dispatch_asset_collateral_in_emode_changed(
     market_id: i64,
-    decoded: &degenbot_decoders::aave_event_decoder::AssetCollateralInEModeChangedEvent,
+    decoded: &degenbot_decoders::aave_event_decoder::AaveV3AssetCollateralInEModeChangedEvent,
     conn: &Connection,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
     let asset_str = checksum(&decoded.asset);
@@ -313,7 +313,7 @@ pub fn dispatch_asset_collateral_in_emode_changed(
 pub fn dispatch_discount_percent_updated(
     market_id: i64,
     block_number: u64,
-    decoded: &degenbot_decoders::aave_event_decoder::DiscountPercentUpdatedEvent,
+    decoded: &degenbot_decoders::aave_event_decoder::AaveV3DiscountPercentUpdatedEvent,
     conn: &Connection,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
     let user_str = checksum(&decoded.user);
@@ -353,7 +353,7 @@ pub fn dispatch_discount_percent_updated(
 pub fn dispatch_stk_aave_transfer(
     market_id: i64,
     block_number: u64,
-    decoded: &degenbot_decoders::aave_event_decoder::Erc20TransferEvent,
+    decoded: &degenbot_decoders::aave_event_decoder::AaveV3Erc20TransferEvent,
     gho_asset: Option<&AaveGhoAsset>,
     conn: &Connection,
 ) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
@@ -440,7 +440,7 @@ pub(crate) async fn dispatch_stk_aave_transfer_with_backfill(
     market_id: i64,
     chain_id: i64,
     block_number: u64,
-    decoded: &degenbot_decoders::aave_event_decoder::Erc20TransferEvent,
+    decoded: &degenbot_decoders::aave_event_decoder::AaveV3Erc20TransferEvent,
     gho_asset: Option<&AaveGhoAsset>,
 ) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
     // None-guard: no GHO market row at tx start — skip (a chain-wide fetch can
@@ -560,7 +560,7 @@ pub(crate) async fn backfill_user_stk_aave_balance_if_none(
 /// `gho_asset.v_token_address`. The apply fn never sees the skip.
 pub fn dispatch_discount_token_updated(
     gho_asset: &AaveGhoAsset,
-    decoded: &degenbot_decoders::aave_event_decoder::DiscountTokenUpdatedEvent,
+    decoded: &degenbot_decoders::aave_event_decoder::AaveV3DiscountTokenUpdatedEvent,
 ) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
     if gho_asset.v_token_address.as_deref() != Some(&checksum(&decoded.v_token_address)) {
         return Ok(None);
@@ -580,7 +580,7 @@ pub fn dispatch_discount_token_updated(
 /// apply identically (ULDUAC / divergence #2).
 pub fn dispatch_discount_rate_strategy_updated(
     gho_asset: &AaveGhoAsset,
-    decoded: &degenbot_decoders::aave_event_decoder::DiscountRateStrategyUpdatedEvent,
+    decoded: &degenbot_decoders::aave_event_decoder::AaveV3DiscountRateStrategyUpdatedEvent,
 ) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
     if gho_asset.v_token_address.as_deref() != Some(&checksum(&decoded.v_token_address)) {
         return Ok(None);
@@ -602,7 +602,7 @@ pub fn dispatch_discount_rate_strategy_updated(
 /// = skip).
 fn dispatch_discount_token_updated_with_fresh_resolution(
     gho_asset: Option<&AaveGhoAsset>,
-    ev: &degenbot_decoders::aave_event_decoder::DiscountTokenUpdatedEvent,
+    ev: &degenbot_decoders::aave_event_decoder::AaveV3DiscountTokenUpdatedEvent,
     conn: &Connection,
     chain_id: i64,
 ) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
@@ -631,7 +631,7 @@ fn dispatch_discount_token_updated_with_fresh_resolution(
 /// [`dispatch_discount_token_updated_with_fresh_resolution`] — see its docs.
 fn dispatch_discount_rate_strategy_updated_with_fresh_resolution(
     gho_asset: Option<&AaveGhoAsset>,
-    ev: &degenbot_decoders::aave_event_decoder::DiscountRateStrategyUpdatedEvent,
+    ev: &degenbot_decoders::aave_event_decoder::AaveV3DiscountRateStrategyUpdatedEvent,
     conn: &Connection,
     chain_id: i64,
 ) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
@@ -657,7 +657,7 @@ fn dispatch_discount_rate_strategy_updated_with_fresh_resolution(
 pub async fn resolve_collateral_configuration(
     provider: &AlloyProvider,
     pool_address: Address,
-    decoded: &degenbot_decoders::aave_event_decoder::CollateralConfigurationChangedEvent,
+    decoded: &degenbot_decoders::aave_event_decoder::AaveV3CollateralConfigurationChangedEvent,
     market_id: i64,
     block_number: u64,
     conn: &Connection,
@@ -706,7 +706,7 @@ pub async fn resolve_collateral_configuration(
 #[allow(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
 pub async fn resolve_reserve_initialized(
     provider: &AlloyProvider,
-    decoded: &degenbot_decoders::aave_event_decoder::ReserveInitializedEvent,
+    decoded: &degenbot_decoders::aave_event_decoder::AaveV3ReserveInitializedEvent,
     market_id: i64,
     chain_id: i64,
     oracle_address: Address,
@@ -1434,7 +1434,7 @@ pub(crate) struct ProxyCreationResolution {
 ///    all users' `gho_discount` to 0 (the apply fn does the writes).
 async fn resolve_upgraded(
     provider: &AlloyProvider,
-    decoded: &degenbot_decoders::aave_event_decoder::UpgradedEvent,
+    decoded: &degenbot_decoders::aave_event_decoder::AaveV3UpgradedEvent,
     market_id: i64,
     gho_asset: Option<&AaveGhoAsset>,
     block_number: u64,
@@ -1663,7 +1663,7 @@ mod tests {
     use alloy::rpc::types::Log;
     use degenbot_db::connection::DegenbotDb;
     use degenbot_decoders::aave_event_decoder::{
-        DiscountRateStrategyUpdatedEvent, DiscountTokenUpdatedEvent,
+        AaveV3DiscountRateStrategyUpdatedEvent, AaveV3DiscountTokenUpdatedEvent,
     };
     use rusqlite::params;
     use std::path::Path;
@@ -1918,7 +1918,7 @@ mod tests {
         let conn = db.lock();
         let underlying =
             Address::from([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
-        let ev = degenbot_decoders::aave_event_decoder::ReserveDataUpdatedEvent {
+        let ev = degenbot_decoders::aave_event_decoder::AaveV3ReserveDataUpdatedEvent {
             pool_address: Address::ZERO,
             reserve: underlying,
             liquidity_rate: U256::from(100),
@@ -1952,7 +1952,7 @@ mod tests {
     fn dispatch_reserve_data_updated_missing_asset_errors() {
         let (db, _) = db_seeded();
         let conn = db.lock();
-        let ev = degenbot_decoders::aave_event_decoder::ReserveDataUpdatedEvent {
+        let ev = degenbot_decoders::aave_event_decoder::AaveV3ReserveDataUpdatedEvent {
             pool_address: Address::ZERO,
             reserve: Address::repeat_byte(0xff), // no asset at this underlying.
             liquidity_rate: U256::ZERO,
@@ -1973,7 +1973,7 @@ mod tests {
     fn dispatch_asset_source_updated_missing_asset_skips_returns_none() {
         let (db, _) = db_seeded();
         let conn = db.lock();
-        let ev = degenbot_decoders::aave_event_decoder::AssetSourceUpdatedEvent {
+        let ev = degenbot_decoders::aave_event_decoder::AaveV3AssetSourceUpdatedEvent {
             oracle_address: Address::repeat_byte(0x99),
             asset: Address::repeat_byte(0xff), // no asset at this underlying.
             source: Address::repeat_byte(0x81),
@@ -1994,7 +1994,7 @@ mod tests {
         let conn = db.lock();
         let underlying =
             Address::from([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
-        let ev = degenbot_decoders::aave_event_decoder::AssetSourceUpdatedEvent {
+        let ev = degenbot_decoders::aave_event_decoder::AaveV3AssetSourceUpdatedEvent {
             oracle_address: Address::repeat_byte(0x99),
             asset: underlying, // db_seeded's asset id 1.
             source: Address::repeat_byte(0x81),
@@ -2017,7 +2017,7 @@ mod tests {
         let (db, _) = db_seeded();
         let conn = db.lock();
         let fresh_user = Address::repeat_byte(0xab);
-        let ev = degenbot_decoders::aave_event_decoder::UserEModeSetEvent {
+        let ev = degenbot_decoders::aave_event_decoder::AaveV3UserEModeSetEvent {
             pool_address: Address::ZERO,
             user: fresh_user,
             category_id: 2,
@@ -2032,7 +2032,7 @@ mod tests {
     #[test]
     fn dispatch_price_oracle_updated_emits_new_address() {
         let new_oracle = Address::repeat_byte(0x55);
-        let ev = degenbot_decoders::aave_event_decoder::ConfigAddressPairEvent {
+        let ev = degenbot_decoders::aave_event_decoder::AaveV3ConfigAddressPairEvent {
             address_provider: Address::ZERO,
             old_address: Address::ZERO,
             new_address: new_oracle,
@@ -2053,7 +2053,7 @@ mod tests {
     #[test]
     fn dispatch_e_mode_category_added_emits_full_fields() {
         let oracle = Address::repeat_byte(0x33);
-        let ev = degenbot_decoders::aave_event_decoder::EModeCategoryAddedEvent {
+        let ev = degenbot_decoders::aave_event_decoder::AaveV3EModeCategoryAddedEvent {
             pool_configurator_address: Address::ZERO,
             category_id: 1,
             ltv: U256::from(8000),
@@ -2097,7 +2097,7 @@ mod tests {
         // Without this, Rust stores NULL — a 1-row byte-divergence vs Python
         // gold on `aave_v3_emode_categories.price_source` (surfaced by the
         // full-schema-diff at the 16591070 parity gate).
-        let ev = degenbot_decoders::aave_event_decoder::EModeCategoryAddedEvent {
+        let ev = degenbot_decoders::aave_event_decoder::AaveV3EModeCategoryAddedEvent {
             pool_configurator_address: Address::ZERO,
             category_id: 1,
             ltv: U256::from(8000),
@@ -2124,7 +2124,7 @@ mod tests {
         let (db, _) = db_seeded();
         let conn = db.lock();
         let user = Address::repeat_byte(0x42);
-        let ev = degenbot_decoders::aave_event_decoder::DiscountPercentUpdatedEvent {
+        let ev = degenbot_decoders::aave_event_decoder::AaveV3DiscountPercentUpdatedEvent {
             v_token_address: Address::ZERO,
             user,
             old_discount_percent: U256::from(10),
@@ -2307,7 +2307,7 @@ mod tests {
             [],
         )
         .unwrap();
-        let ev = DiscountTokenUpdatedEvent {
+        let ev = AaveV3DiscountTokenUpdatedEvent {
             v_token_address: gho_vtoken,       // the GHO vToken emitter
             old_discount_token: Address::ZERO, // the INITIAL set (old=None)
             new_discount_token,
@@ -2340,7 +2340,7 @@ mod tests {
             0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb,
             0xb, 0xb, 0xb,
         ]);
-        let ev = DiscountTokenUpdatedEvent {
+        let ev = AaveV3DiscountTokenUpdatedEvent {
             v_token_address: off_emitter,
             old_discount_token: Address::ZERO,
             new_discount_token: Address::from([0xc; 20]),
@@ -2354,7 +2354,7 @@ mod tests {
     fn dispatch_discount_token_updated_returns_none_when_vtoken_fk_missing() {
         // gho_asset.v_token is None — the Python's first guard.
         let gho_asset = sample_gho_asset(None);
-        let ev = DiscountTokenUpdatedEvent {
+        let ev = AaveV3DiscountTokenUpdatedEvent {
             v_token_address: Address::from([0xa0; 20]),
             old_discount_token: Address::ZERO,
             new_discount_token: Address::from([0xc; 20]),
@@ -2369,7 +2369,7 @@ mod tests {
         let gho_vtoken = Address::from([0xa0; 20]);
         let gho_asset = sample_gho_asset(Some(&checksum(&gho_vtoken)));
         let new_tok = Address::from([0xc; 20]);
-        let ev = DiscountTokenUpdatedEvent {
+        let ev = AaveV3DiscountTokenUpdatedEvent {
             v_token_address: gho_vtoken,
             old_discount_token: Address::ZERO,
             new_discount_token: new_tok,
@@ -2394,7 +2394,7 @@ mod tests {
         let gho_vtoken = Address::from([0xa0; 20]);
         let gho_asset = sample_gho_asset(Some(&checksum(&gho_vtoken)));
         let off_emitter = Address::from([0xb; 20]);
-        let ev = DiscountRateStrategyUpdatedEvent {
+        let ev = AaveV3DiscountRateStrategyUpdatedEvent {
             v_token_address: off_emitter,
             old_strategy: Address::ZERO,
             new_strategy: Address::from([0xd; 20]),
@@ -2409,7 +2409,7 @@ mod tests {
         let gho_vtoken = Address::from([0xa0; 20]);
         let gho_asset = sample_gho_asset(Some(&checksum(&gho_vtoken)));
         let new_strat = Address::from([0xd; 20]);
-        let ev = DiscountRateStrategyUpdatedEvent {
+        let ev = AaveV3DiscountRateStrategyUpdatedEvent {
             v_token_address: gho_vtoken,
             old_strategy: Address::ZERO,
             new_strategy: new_strat,

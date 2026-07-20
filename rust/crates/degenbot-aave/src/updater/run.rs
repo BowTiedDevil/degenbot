@@ -1381,7 +1381,7 @@ pub fn run_aave_update(
         let known: HashSet<Address> = spec.scaled_token_addresses.iter().copied().collect();
         let mut new_tokens: Vec<Address> = Vec::new();
         for log in &logs {
-            if let Some(ev) = degenbot_decoders::aave_event_decoder::decode_reserve_initialized(log)
+            if let Some(ev) = degenbot_decoders::aave_event_decoder::decode_aave_reserve_initialized_log(log)
             {
                 if !known.contains(&ev.a_token) {
                     new_tokens.push(ev.a_token);
@@ -1436,7 +1436,7 @@ pub fn run_aave_update(
         let mut discount_token_from_event: Option<Address> = None;
         for log in &logs {
             if let Some(ev) =
-                degenbot_decoders::aave_event_decoder::decode_discount_token_updated(log)
+                degenbot_decoders::aave_event_decoder::decode_aave_discount_token_updated_log(log)
             {
                 discount_token_from_event = Some(ev.new_discount_token);
             }

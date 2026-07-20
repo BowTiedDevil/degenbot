@@ -72,8 +72,8 @@ use alloy::rpc::types::Log;
 use degenbot_core::address_utils::address_to_checksum_string;
 use degenbot_db::DegenbotDb;
 use degenbot_decoders::aave_event_decoder::{
-    self, DecodedAaveEvent, Erc20TransferEvent, ScaledTokenBalanceTransferEvent,
-    ScaledTokenBurnEvent, ScaledTokenMintEvent,
+    self, DecodedAaveEvent, AaveV3Erc20TransferEvent, AaveV3ScaledTokenBalanceTransferEvent,
+    AaveV3ScaledTokenBurnEvent, AaveV3ScaledTokenMintEvent,
 };
 
 use rusqlite::OptionalExtension;
@@ -240,7 +240,7 @@ impl<'a> TransactionOperationsParser<'a> {
     /// ECFB5C + classifies by emitter-address → [`ScaledTokenEventType`]
     /// (`GhoDebtMint` if the emitter is `gho_vtoken_address`; `CollateralMint` if
     /// aToken; `DebtMint` if vToken).
-    fn decode_mint_event(&self, log: &'a Log, ev: &ScaledTokenMintEvent) -> ScaledTokenEvent<'a> {
+    fn decode_mint_event(&self, log: &'a Log, ev: &AaveV3ScaledTokenMintEvent) -> ScaledTokenEvent<'a> {
         let token_address = ev.token_address;
         let event_type = self.classify_mint_burn(token_address, "mint");
         ScaledTokenEvent {
@@ -267,7 +267,7 @@ impl<'a> TransactionOperationsParser<'a> {
 
     /// Mirrors `_decode_burn_event`. Decodes a `ScaledTokenBurn` log +
     /// classifies by emitter-address (`GhoDebtBurn` / `CollateralBurn` / `DebtBurn`).
-    fn decode_burn_event(&self, log: &'a Log, ev: &ScaledTokenBurnEvent) -> ScaledTokenEvent<'a> {
+    fn decode_burn_event(&self, log: &'a Log, ev: &AaveV3ScaledTokenBurnEvent) -> ScaledTokenEvent<'a> {
         let token_address = ev.token_address;
         let event_type = self.classify_mint_burn(token_address, "burn");
         ScaledTokenEvent {
@@ -301,7 +301,7 @@ impl<'a> TransactionOperationsParser<'a> {
     fn decode_balance_transfer_event(
         &self,
         log: &'a Log,
-        ev: &ScaledTokenBalanceTransferEvent,
+        ev: &AaveV3ScaledTokenBalanceTransferEvent,
     ) -> ScaledTokenEvent<'a> {
         let token_address = ev.token_address;
         let event_type = self.classify_transfer(token_address);
@@ -335,7 +335,7 @@ impl<'a> TransactionOperationsParser<'a> {
     fn decode_transfer_event(
         &self,
         log: &'a Log,
-        ev: &Erc20TransferEvent,
+        ev: &AaveV3Erc20TransferEvent,
     ) -> Option<ScaledTokenEvent<'a>> {
         let token_address = ev.token_address;
         let event_type = if self.gho_vtoken_address == Some(token_address) {
