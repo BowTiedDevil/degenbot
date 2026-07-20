@@ -38,6 +38,7 @@ degenbot-balancer-math = { path = "../degenbot-balancer-math" }
 degenbot-curve-math = { path = "../degenbot-curve-math" }
 degenbot-pools = { path = "../degenbot-pools" }
 degenbot-solvers = { path = "../degenbot-solvers" }
+degenbot-executor = { path = "../degenbot-executor" }
 degenbot-uniswap = { path = "../degenbot-uniswap" }
 degenbot-v2-math = { path = "../degenbot-v2-math" }
 futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }

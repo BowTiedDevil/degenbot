@@ -1930,6 +1930,7 @@ dependencies = [
  "degenbot-curve-math",
  "degenbot-db",
  "degenbot-decoders",
+ "degenbot-executor",
  "degenbot-pools",
  "degenbot-rpc",
  "degenbot-solidly-math",
