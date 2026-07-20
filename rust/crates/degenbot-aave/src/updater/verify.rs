@@ -20,6 +20,7 @@
 
 use alloy::primitives::{Address, Bytes, U256};
 use degenbot_db::{DbError, DegenbotDb};
+use degenbot_rpc::abi::decode_uint256;
 use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::Connection;
 
@@ -216,16 +217,6 @@ fn build_call_data(selector: [u8; 4], user: Address) -> Bytes {
     Bytes::copy_from_slice(&buf)
 }
 
-/// Decode a 32-byte ABI-encoded uint256 return value.
-fn decode_uint256_return(bytes: &Bytes) -> Option<U256> {
-    if bytes.len() < 32 {
-        return None;
-    }
-    let mut buf = [0u8; 32];
-    buf.copy_from_slice(&bytes[0..32]);
-    Some(U256::from_be_bytes::<32>(buf))
-}
-
 const DEAD_ADDRESS: Address =
     alloy::primitives::address!("0x000000000000000000000000000000000000dEaD");
 const ZERO_ADDRESS: Address = Address::ZERO;
@@ -325,10 +316,15 @@ pub async fn verify_touched_positions_on_conn(
 /// Map a Multicall3 sub-call result to a U256: a successful call with a
 /// decodable 32-byte return decodes; anything else (revert, short return) is
 /// `U256::ZERO` — matching the prior per-call
-/// `eth_call().ok().and_then(decode).unwrap_or(ZERO)` semantics.
+/// `eth_call().ok().and_then(decode).unwrap_or(ZERO)` semantics. Delegates the
+/// byte decode to the home `degenbot_rpc::abi::decode_uint256` (the single
+/// deep home for onchain pool-state probing — see CONTEXT.md) — Aave's
+/// `scaledBalanceOf` / `getPreviousIndex` / `balanceOf` returns are all
+/// generic `uint256` words, so the method-named `decode_balance_of` would be
+/// a semantic lie here.
 fn result_to_u256(result: &MulticallResult) -> U256 {
     if result.success {
-        decode_uint256_return(&result.return_data).unwrap_or(U256::ZERO)
+        decode_uint256(&result.return_data).unwrap_or(U256::ZERO)
     } else {
         U256::ZERO
     }
@@ -869,20 +865,10 @@ mod tests {
         assert_eq!(data.len(), 36);
     }
 
-    /// `decode_uint256_return` decodes a 32-byte big-endian U256.
-    #[test]
-    fn decode_uint256_return_decodes_32_byte_be() {
-        // 0x00...2a (42).
-        let mut buf = vec![0u8; 32];
-        buf[31] = 0x2a;
-        let bytes = Bytes::copy_from_slice(&buf);
-        assert_eq!(decode_uint256_return(&bytes), Some(U256::from(42u64)));
-        // < 32 bytes → None.
-        assert_eq!(
-            decode_uint256_return(&Bytes::copy_from_slice(&[0u8; 16])),
-            None
-        );
-    }
+    /// Decode is delegated to the home (`degenbot_rpc::abi::decode_uint256`);
+    /// the local helper + its test were deleted in slice A. The home carries the
+    /// independent-oracle test. Kept below: the calldata-encode test for
+    /// `scaledBalanceOf(address)` / `getPreviousIndex(address)`.
 
     // ── verification-policy predicates ─────────────────────────────────
 

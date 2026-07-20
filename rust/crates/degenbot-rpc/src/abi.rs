@@ -504,6 +504,31 @@ pub fn decode_balance_of(bytes: &[u8]) -> ProviderResult<U256> {
     Ok(r)
 }
 
+/// Decode a generic `uint256` ABI return (a single 32-byte big-endian word).
+///
+/// This is the generic form that `decode_balance_of` / `decode_total_supply` /
+/// `decode_allowance` (and any other single-`uint256` return — e.g. Aave's
+/// `scaledBalanceOf` / `getPreviousIndex`) reduce to. Provided as a first-class
+/// entry point so callers probing a non-ERC20 `uint256` return do not have to
+/// reach for a method-named decoder that would mislabel their call
+/// (`decode_balance_of` for a `scaledBalanceOf` return is a semantic lie even
+/// though the ABI shape is identical).
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] if `bytes` is shorter than 32 bytes
+/// or does not decode as a `uint256`.
+pub fn decode_uint256(bytes: &[u8]) -> ProviderResult<U256> {
+    if bytes.len() < 32 {
+        return Err(ProviderError::DecodingError {
+            message: format!("uint256 decode: expected >= 32 bytes, got {}", bytes.len()),
+        });
+    }
+    let mut word = [0u8; 32];
+    word.copy_from_slice(&bytes[0..32]);
+    Ok(U256::from_be_bytes::<32>(word))
+}
+
 /// Fetch an ERC-20 `balanceOf(address)`.
 ///
 /// # Errors
@@ -793,6 +818,29 @@ mod tests {
         assert_eq!(a, U256::from(99u64));
         let t = decode_total_supply(&U256::from(1_234_567u64).to_be_bytes::<32>()).unwrap();
         assert_eq!(t, U256::from(1_234_567u64));
+    }
+
+    // ── decode_uint256 — generic single-word decoder ──
+
+    #[test]
+    fn decode_uint256_decodes_32_byte_be_word() {
+        // 0x00..2a (42) — independent of any method-named decoder.
+        let mut buf = [0u8; 32];
+        buf[31] = 0x2a;
+        assert_eq!(decode_uint256(&buf).unwrap(), U256::from(42u64));
+    }
+
+    #[test]
+    fn decode_uint256_max_word_round_trips() {
+        let word = U256::MAX;
+        let bytes = word.to_be_bytes::<32>();
+        assert_eq!(decode_uint256(&bytes).unwrap(), U256::MAX);
+    }
+
+    #[test]
+    fn decode_uint256_short_input_is_err() {
+        assert!(decode_uint256(&[0u8; 16]).is_err());
+        assert!(decode_uint256(&[]).is_err());
     }
 
     // ── tick_data / tick_bitmap (V3 + V4) — independent-oracle tests ──
