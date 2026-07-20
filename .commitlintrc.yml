@@ -34,6 +34,7 @@ rules:
       - camelot
       - balancer
       - arbitrage
+      - decoders
       - adr
       - builders
       - database
