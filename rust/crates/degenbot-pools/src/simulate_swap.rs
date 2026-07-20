@@ -19,6 +19,9 @@
 //! `&PoolEntry` then delegates here.
 
 use alloy::primitives::{I256, U256};
+use degenbot_balancer_math::fixed_point::{div_down, mul_down};
+use degenbot_balancer_math::weighted_math;
+use degenbot_balancer_math::PowVersion;
 use degenbot_v2_math::IntHopState;
 
 use crate::registry::PoolEntry;
@@ -147,15 +150,54 @@ pub fn simulate_swap(
             // so this Rust core path returns the not-yet-Rust-side sentinel.
             Ok(U256::ZERO)
         }
-        // Curve (11a) + Balancer weighted (12a) + Balancer stable (12c): the
-        // stableswap / weighted-product / stable-invariant math is NOT ported in
-        // their state-port sub-slices. The Python companions keep doing their
-        // own math via `DyCalculator` / `WeightedMath` / `StableMath` through
-        // the `swap_fn` returned by `to_hop_state`; this Rust core path
-        // returns 0 (the "not-yet-Rust-side" sentinel — same as an
-        // unregistered pool). Curve ported in 11c; Balancer weighted stable in 12e.
-        PoolEntry::Curve(..) | PoolEntry::BalancerWeighted(..) | PoolEntry::BalancerStable(..) => {
-            Ok(U256::ZERO)
+        PoolEntry::BalancerWeighted(id, state) => {
+            simulate_balancer_weighted_swap(id, state, zero_for_one, amount_in)
         }
+        // Curve (11a) + Balancer stable (12c): the pure math is ported
+        // (`degenbot-curve-math` slice 11c, `degenbot-balancer-math` stable
+        // slice 12e), but the full `get_dy` / ComposableStable wiring —
+        // variant dispatch, rate-multiplier `xp` scaling, invariant + BPT-index
+        // adjustment — is non-trivial enough that the Python companion keeps
+        // doing its own math via `swap_fn` until the dedicated wiring slices
+        // land. This Rust core path returns the not-yet-Rust-side sentinel.
+        PoolEntry::Curve(..) | PoolEntry::BalancerStable(..) => Ok(U256::ZERO),
     }
+}
+
+/// Balancer V2 weighted exact-input swap. Mirrors the Vault's
+/// `_swapMinimalInfoGivenIn`: upscale balances + amount (mulDown), subtract
+/// swap fee (mulUp on the scaled amount), compute, downscale output (divDown).
+fn simulate_balancer_weighted_swap(
+    id: &crate::balancer_weighted_state::BalancerWeightedPoolIdentity,
+    state: &crate::balancer_weighted_state::BalancerWeightedPoolState,
+    zero_for_one: bool,
+    amount_in: U256,
+) -> Result<U256, SimulateSwapError> {
+    if amount_in.is_zero() {
+        return Ok(U256::ZERO);
+    }
+    let (idx_in, idx_out) = if zero_for_one { (0, 1) } else { (1, 0) };
+    let sf_in = id.scaling_factors[idx_in];
+    let sf_out = id.scaling_factors[idx_out];
+    let scaled_balance_in =
+        mul_down(state.balances[idx_in], sf_in).map_err(|_| SimulateSwapError::NotComputable)?;
+    let scaled_balance_out =
+        mul_down(state.balances[idx_out], sf_out).map_err(|_| SimulateSwapError::NotComputable)?;
+    let scaled_amount_in =
+        mul_down(amount_in, sf_in).map_err(|_| SimulateSwapError::NotComputable)?;
+    let amount_in_less_fee =
+        weighted_math::subtract_swap_fee_amount(scaled_amount_in, U256::from(id.swap_fee))
+            .map_err(|_| SimulateSwapError::NotComputable)?;
+    let scaled_amount_out = weighted_math::calc_out_given_in(
+        scaled_balance_in,
+        id.weights[idx_in],
+        scaled_balance_out,
+        id.weights[idx_out],
+        amount_in_less_fee,
+        PowVersion::V2,
+    )
+    .map_err(|_| SimulateSwapError::NotComputable)?;
+    let amount_out =
+        div_down(scaled_amount_out, sf_out).map_err(|_| SimulateSwapError::NotComputable)?;
+    Ok(amount_out)
 }

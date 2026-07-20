@@ -79,9 +79,9 @@ fn make_balancer_weighted_pool() -> PoolEntry {
             U256::from(1_000_000_000_000_000_000u64),
             U256::from(1_000_000_000_000_000_000u64),
         ],
-        swap_fee: 1_000_000_000_000_000_000u128 / 100, // 1%
+        swap_fee: 0,
         pow_version: 2,
-        balances: vec![U256::from(1_000_000_000u64), U256::from(2_000_000_000u64)],
+        balances: vec![U256::from(1_000_000u64), U256::from(1_000_000u64)],
         update_block: 100,
     };
     let (identity, state) = BalancerWeightedPoolState::from_params(params, 8);
@@ -143,8 +143,22 @@ fn balancer_weighted_pool_handle_exposes_balance_vector_structure() {
 
     let bv = pool.balance_vector().expect("balance vector view");
     assert_eq!(bv.n_tokens(), 2);
-    assert_eq!(bv.balances()[0], U256::from(1_000_000_000));
-    assert_eq!(bv.balances()[1], U256::from(2_000_000_000));
+    assert_eq!(bv.balances()[0], U256::from(1_000_000u64));
+    assert_eq!(bv.balances()[1], U256::from(1_000_000u64));
+}
+
+#[test]
+fn balancer_weighted_pool_swap_matches_closed_form() {
+    // Equal weights + zero fee → Balancer weighted reduces to constant-product:
+    //   out = B_out * amount_in / (B_in + amount_in)
+    // With B_in = B_out = 1_000_000 and amount_in = 1_000 the exact integer
+    // output is floor(1_000_000_000 / 1_001_000) = 999.
+    let entry = make_balancer_weighted_pool();
+    let pool = Pool::new(&entry);
+    let out = pool
+        .calculate_tokens_out(true, U256::from(1_000u64))
+        .expect("computable");
+    assert_eq!(out, U256::from(999u64));
 }
 
 #[test]
