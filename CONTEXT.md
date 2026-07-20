@@ -128,6 +128,90 @@ Three options surfaced: (A) merge the seam — make IO a constructor arg of `Bot
 
 **Broader ArcSwap audit (closed alongside).** Surveyed the other `parking_lot::{Mutex,RwLock}` sites in `degenbot-bot` for ArcSwap fit. The result: three of four candidate sites are **incrementally-mutated state** (`Arc<RwLock<BotState>>` — `apply_swap` mutates one pool's reserves per log; `Arc<Mutex<ArbitrageEngine>>` — `solve_dirty` mutates dirty sets + builds paths + solves; `Mutex<HashMap<…subscribers…>>` in `LogDispatcher` — `subscribe` appends), which is the wrong model for ArcSwap (a publish-snapshot primitive that swaps a whole `Arc<T>` atomically — would require COW-cloning the entire state per mutation). Only `construction_io` fit the shape, and it isn't worth touching. `arc-swap 1.9.2` remains transitive-only in `Cargo.lock` (no `degenbot-*` crate pulls it directly); formalizing it as a direct dep is deferred until a genuinely-fitting, contended publish-snapshot site lands.
 
+### Onchain pool-state probe — `degenbot-rpc::abi` (DECIDED, (A) planned 2026-07-20)
+
+**Decision: `degenbot-rpc::src/abi.rs` is the single deep home for onchain
+pool-state probing.** An architecture review surfaced that one deep module
+already exists — `encode_*` / `decode_*` / `fetch_*` for every probe shape
+(V2 `getReserves`, V3/V4 `slot0`/`liquidity`, V3/V4 `tickBitmap`/`tickLiquidity`,
+`balanceOf`/`allowance`/`totalSupply`) — but three consumers circumvented it and
+reinvented the primitives from scratch. The reference adapter proving the seam is
+real is `PyBotIo` (`degenbot-python/src/bot/py_bot_io.rs`), which delegates every
+fetch through the home.
+
+**The stragglers (the hygiene work — "slice A"):**
+
+- `solvers/arb_engine/diagnostic.rs` — `fn_selector`/`encode_call`/`build_v2/3/4_calls`/`decode_v2/3/4_results`/`uint_value`/`int_value_to_i32` (alloy `DynSolValue` directly, bypassing the sol! macro path the home uses).
+- `bot_core/liquidity_verifier.rs` — `encode_calldata`/`decode_uint256/128`/`decode_int128`/`decode_v3/v4_*_result`.
+- `pool-updater/src/verify.rs` — `ticks_calldata`/`tick_bitmap_calldata`/`int_selector_calldata`/`decode_ticks_return`/`decode_tick_bitmap_return` (V3 half only).
+- `aave/src/updater/verify.rs` — `decode_uint256_return`.
+
+Each routes through the home; the reinventions delete. **Error shape:** a
+per-consumer `From<ProviderError>` adapter at the call site maps the home's
+`ProviderError::DecodingError` to the consumer's error enum (`LiquidityVerifyError::Mismatch`,
+`RunError::Provider`, etc.); the home's interface is **not** extended with a
+richer `DecodeOrRevert` (the revert-vs-mismatch distinction lives in
+`require_success` inspecting `MulticallResult.success` *before* decode, so it
+survives delegation unchanged).
+
+**Test discipline (load-bearing).** The home's existing `mod tests` carries the
+independent-oracle discipline ("reference vectors computed independently with
+`eth_abi` + `eth_utils.keccak` in a throwaway Python probe — a DIFFERENT ABI
+encoder than alloy's `sol!`"), but **has no tests for `decode_tick_data` /
+`decode_tick_bitmap` / `decode_v4_tick_*`** — the gap the stragglers' tests
+(`pool-updater/verify.rs::decode_ticks_return_matches_ref_encoder` etc., built
+with `cast keccak` + hand-rolled `DynSolValue`) currently fill. Slice A migrates
+those independent-oracle tests to the home **first** (Red+Green against the
+existing home decode, proving the home correct before any straggler touches it),
+then reroutes the stragglers in four independent per-consumer commits. This is a
+Tier-2-style strengthen: the home's test surface grows, then consumers reroute
+behind it.
+
+**Out of scope for slice A — `extsload` (V4 storage-slot reads).**
+`pool-updater/verify.rs`'s V4 path probes `PoolManager` storage slots via
+`extsload(bytes32[])` (selector `0xdbd035ff`), NOT an ABI method call. The home
+has no extsload surface. This is a genuinely different probe mechanism (direct
+storage reads vs ABI calls) and is **not** force-unified into the home —
+deferred to the batch-probe extraction (slice B), where its shape decides
+whether it joins a `ProbeRequest` enum or stays a peer.
+
+**Slice B (batch-multicall orchestration) — DEFERRED indefinitely (2026-07-20).**
+What each straggler *also* reinvents is the cross-hop / all-ticks multicall3
+batch build + heterogeneous-result decode (a layer the home's single-call
+`fetch_*` does not cover). An architecture review (B-grilling) surfaced that the
+three multicall3-batch shapes (diagnostic's cross-hop heterogeneous, verifier's
+two-phase discover-then-verify, pool-updater's mixed-type index-split) plus the
+V4 `extsload` single-`eth_call` path differ on too many axes (dispatch mechanism,
+phase count, output type) to unify behind one `ProbeRequest` enum without
+re-introducing the ADR-014 trap (a unified trait that no-ops on shapes it doesn't
+fit). Extracting only the narrow plumbing (`ProbeBatch` over a single-call enum,
+extsload excluded) was weighed against the ADR-014 lesson.
+
+**Disposition: deferred indefinitely.** After slice A, the dangerous
+duplication (byte-identical encode/decode copies with divergent bug surfaces) is
+fully eliminated — that's the class that caused silent misclassifications. The
+residual is **structural scaffolding duplication, not logic duplication**: three
+consumers each write ~30 lines of the same `build Vec<(Addr,Bytes)>` →
+`multicall3_batch` → `zip + decode-by-index` loop with their own index
+bookkeeping (`HopFetch { start, n }` in diagnostic, the `tick_count` split in
+pool-updater V3, the two-batch split in verifier) + their own `require_success`
+adapter (~90 lines total across 3 consumers). Not a bug-hiding class today — a
+noise + off-by-one-in-one-consumer risk. `multicall3_batch` dispatch itself was
+never duplicated (it lives in `degenbot-rpc::multicall3`; all consumers already
+call it).
+
+**Revisit only on a forcing function:** (a) a 4th multicall3-batch consumer
+lands (the scaffold copies a 4th time, dedup pays), or (b) an off-by-one bug in
+one consumer's index split that the others don't have (the bug-hiding risk
+becomes real). Neither exists today. Re-litigating without that forcing function
+re-raises the ADR-014 trap.
+
+**ADR alignment:** no conflict — ADR-003 names the onchain probe as
+cross-consumer infrastructure ("diagnostics, verification … all consume it");
+this decision *realizes* that for the single-call layer. No new crate deps
+(all four straggler crates already depend on `degenbot-rpc`), no pyo3-in-cores
+violation, no behaviour change.
+
 ## The `_ffi` seam (Pydantic barrier — DECIDED)
 
 **Decision:** `degenbot._ffi` is **private** — a raw Rust extension imported by ONE barrier per domain, never by leaf code. Model: pydantic-core (`_pydantic_core` is imported only by `pydantic_core/__init__.py`; the companion `pydantic` never touches it). Replaces degenbot's prior mixed state (ban test + allowlist back-door + direct `_ffi.<sub>` leaf imports).
