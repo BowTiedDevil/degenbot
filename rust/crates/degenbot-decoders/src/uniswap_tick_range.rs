@@ -72,7 +72,10 @@ mod tests {
 
     #[test]
     fn extracts_negative_tick_at_min_bound() {
-        assert_eq!(extract_int24_from_word(&int24_word(-887_272)), Some(-887_272));
+        assert_eq!(
+            extract_int24_from_word(&int24_word(-887_272)),
+            Some(-887_272)
+        );
     }
 
     #[test]

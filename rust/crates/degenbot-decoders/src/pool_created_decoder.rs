@@ -365,7 +365,6 @@ pub fn decode_v4_initialize_log(log: &Log) -> Option<V4InitializeEvent> {
     })
 }
 
-
 #[cfg(test)]
 #[allow(clippy::unreadable_literal, clippy::unwrap_used)]
 mod tests {
