@@ -251,6 +251,10 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "bot")]
     m.add_class::<crate::bot::pool::PyReservePairView>()?;
     #[cfg(feature = "bot")]
+    m.add_class::<crate::bot::pool::PyConcentratedLiquidityView>()?;
+    #[cfg(feature = "bot")]
+    m.add_class::<crate::bot::pool::PyBalanceVectorView>()?;
+    #[cfg(feature = "bot")]
     m.add_class::<crate::bot::token::PyErc20Token>()?;
     #[cfg(feature = "bot")]
     m.add_class::<crate::bot::py_bot_io::PyBotIo>()?;

@@ -107,7 +107,10 @@ pub use tick_fetch::{
     TickWordFetcher,
 };
 
-pub use pool::{Identity, Pool, ReservePairVariant, ReservePairView, Structure};
+pub use pool::{
+    BalanceVectorVariant, BalanceVectorView, ConcentratedLiquidityVariant,
+    ConcentratedLiquidityView, Identity, Pool, ReservePairVariant, ReservePairView, Structure,
+};
 
 /// Liquidity data at an initialized tick.
 ///
