@@ -116,6 +116,18 @@ supported for construction. Migration note: supply a `PyAlloyProvider`.
 An ADR recording the I/O-seam-is-core / alloy-only / loud-error posture
 will land with the slice.
 
+### Synchronization primitive for `construction_io` — CLOSED (2026-07-19)
+
+**Decision: leave it as `parking_lot::RwLock<Option<Arc<ConstructionIo>>>`; no change.**
+
+Investigated whether to swap the RwLock on `Bot.construction_io` for `ArcSwapOption` (the slot is publish-once-at-init, read on RPC/DB delegation paths — a shape ArcSwap is purpose-built for). The evaluation cascaded to a sharper question: if the slot is truly write-once, *no* sync primitive is needed at all — a plain field set in `Bot::new` suffices (the thread-spawn creates the happens-before edge). That's blocked only by the construction seam: `PyBot::new(chain_id)` happens before the provider is known, so `set_construction_io(&self)` runs post-construction through `&self`, which forces interior mutability.
+
+Three options surfaced: (A) merge the seam — make IO a constructor arg of `Bot::new`, drop the primitive entirely (cleanest, but a real refactor of the Python `__init__` ordering + `extract_native_alloy` choreography); (B) `OnceLock<Arc<…>>` (std, no new dep, init-once semantics, exits the D2 lock-ordering discipline — but loses the idempotent-replace path); (C) `ArcSwapOption<…>` (supports runtime re-publication, over-machinery if replace is dead).
+
+**Disposition: stays-as-is.** Effort-to-value is poor in every direction. The slot is uncontended (one publish at `__init__`, reads on I/O-dominated paths where a ~10 ns read-guard is invisible against network/SQLite). No measured contention, no profile pointing at it, no lock-ordering near-miss (the write happens before any reader is active). Retiring the primitive is cosmetic work on a cold path. The forcing function that would make it worth doing — actual runtime mutation (hot-reloading a provider, swapping a DB, a multi-engine bot re-attaching IO) — does not exist today. Recorded here so the candidate isn't re-litigated without that forcing function.
+
+**Broader ArcSwap audit (closed alongside).** Surveyed the other `parking_lot::{Mutex,RwLock}` sites in `degenbot-bot` for ArcSwap fit. The result: three of four candidate sites are **incrementally-mutated state** (`Arc<RwLock<BotState>>` — `apply_swap` mutates one pool's reserves per log; `Arc<Mutex<ArbitrageEngine>>` — `solve_dirty` mutates dirty sets + builds paths + solves; `Mutex<HashMap<…subscribers…>>` in `LogDispatcher` — `subscribe` appends), which is the wrong model for ArcSwap (a publish-snapshot primitive that swaps a whole `Arc<T>` atomically — would require COW-cloning the entire state per mutation). Only `construction_io` fit the shape, and it isn't worth touching. `arc-swap 1.9.2` remains transitive-only in `Cargo.lock` (no `degenbot-*` crate pulls it directly); formalizing it as a direct dep is deferred until a genuinely-fitting, contended publish-snapshot site lands.
+
 ## The `_ffi` seam (Pydantic barrier — DECIDED)
 
 **Decision:** `degenbot._ffi` is **private** — a raw Rust extension imported by ONE barrier per domain, never by leaf code. Model: pydantic-core (`_pydantic_core` is imported only by `pydantic_core/__init__.py`; the companion `pydantic` never touches it). Replaces degenbot's prior mixed state (ban test + allowlist back-door + direct `_ffi.<sub>` leaf imports).
