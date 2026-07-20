@@ -338,7 +338,7 @@ fn log_topics(log: &Log) -> Option<&[B256]> {
 
 /// Decoded Aave V3 `Supply` event.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SupplyEvent {
+pub struct AaveV3SupplyEvent {
     /// The Pool contract (the log emitter).
     pub pool_address: Address,
     /// `reserve` (topic[1]) — the underlying asset.
@@ -355,7 +355,7 @@ pub struct SupplyEvent {
 
 /// Decoded Aave V3 `Borrow` event.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BorrowEvent {
+pub struct AaveV3BorrowEvent {
     pub pool_address: Address,
     /// `reserve` (topic[1]).
     pub reserve: Address,
@@ -373,7 +373,7 @@ pub struct BorrowEvent {
 
 /// Decoded Aave V3 `Repay` event.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RepayEvent {
+pub struct AaveV3RepayEvent {
     pub pool_address: Address,
     /// `reserve` (topic[1]).
     pub reserve: Address,
@@ -389,7 +389,7 @@ pub struct RepayEvent {
 
 /// Decoded Aave V3 `Withdraw` event.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct WithdrawEvent {
+pub struct AaveV3WithdrawEvent {
     pub pool_address: Address,
     /// `reserve` (topic[1]).
     pub reserve: Address,
@@ -403,7 +403,7 @@ pub struct WithdrawEvent {
 
 /// Decoded Aave V3 `LiquidationCall` event.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LiquidationCallEvent {
+pub struct AaveV3LiquidationCallEvent {
     pub pool_address: Address,
     /// `collateralAsset` (topic[1]).
     pub collateral_asset: Address,
@@ -423,7 +423,7 @@ pub struct LiquidationCallEvent {
 
 /// Decoded Aave V3 `MintedToTreasury` event.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MintedToTreasuryEvent {
+pub struct AaveV3MintedToTreasuryEvent {
     /// The aToken contract (the log emitter).
     pub a_token_address: Address,
     /// `reserve` (topic[1]).
@@ -434,7 +434,7 @@ pub struct MintedToTreasuryEvent {
 
 /// Decoded Aave V3 `DeficitCreated` event.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DeficitCreatedEvent {
+pub struct AaveV3DeficitCreatedEvent {
     pub pool_address: Address,
     /// `user` (topic[1]).
     pub user: Address,
@@ -446,7 +446,7 @@ pub struct DeficitCreatedEvent {
 
 /// Decoded Aave V3 `ReserveDataUpdated` event.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ReserveDataUpdatedEvent {
+pub struct AaveV3ReserveDataUpdatedEvent {
     pub pool_address: Address,
     /// `reserve` (topic[1]).
     pub reserve: Address,
@@ -465,7 +465,7 @@ pub struct ReserveDataUpdatedEvent {
 
 /// Decoded Aave V3 `ReserveUsedAsCollateralEnabled` event.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ReserveUsedAsCollateralEnabledEvent {
+pub struct AaveV3ReserveUsedAsCollateralEnabledEvent {
     pub pool_address: Address,
     /// `reserve` (topic[1]).
     pub reserve: Address,
@@ -475,7 +475,7 @@ pub struct ReserveUsedAsCollateralEnabledEvent {
 
 /// Decoded Aave V3 `ReserveUsedAsCollateralDisabled` event.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ReserveUsedAsCollateralDisabledEvent {
+pub struct AaveV3ReserveUsedAsCollateralDisabledEvent {
     pub pool_address: Address,
     pub reserve: Address,
     pub user: Address,
@@ -483,7 +483,7 @@ pub struct ReserveUsedAsCollateralDisabledEvent {
 
 /// Decoded Aave V3 `UserEModeSet` event.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct UserEModeSetEvent {
+pub struct AaveV3UserEModeSetEvent {
     pub pool_address: Address,
     /// `user` (topic[1]).
     pub user: Address,
@@ -494,7 +494,7 @@ pub struct UserEModeSetEvent {
 /// Decoded Aave V3 `ScaledToken` `Mint` event (aToken or vToken — disambiguated
 /// by the orchestrator via the emitter contract address).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ScaledTokenMintEvent {
+pub struct AaveV3ScaledTokenMintEvent {
     /// The aToken/vToken contract (the log emitter).
     pub token_address: Address,
     /// `caller` (topic[1]).
@@ -511,7 +511,7 @@ pub struct ScaledTokenMintEvent {
 
 /// Decoded Aave V3 `ScaledToken` `Burn` event (aToken or vToken).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ScaledTokenBurnEvent {
+pub struct AaveV3ScaledTokenBurnEvent {
     pub token_address: Address,
     /// `from` (topic[1]).
     pub from: Address,
@@ -528,7 +528,7 @@ pub struct ScaledTokenBurnEvent {
 /// Decoded Aave V3 `ScaledToken` `BalanceTransfer` event (aToken-only — there's
 /// no vToken `BalanceTransfer` in Aave V3).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ScaledTokenBalanceTransferEvent {
+pub struct AaveV3ScaledTokenBalanceTransferEvent {
     /// The aToken contract (the log emitter).
     pub token_address: Address,
     /// `from` (topic[1]).
@@ -550,7 +550,7 @@ pub struct ScaledTokenBalanceTransferEvent {
 /// `_process_collateral_configuration_changed_event` port (CXRGX4's purview)
 /// decides whether to use them.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CollateralConfigurationChangedEvent {
+pub struct AaveV3CollateralConfigurationChangedEvent {
     pub pool_configurator_address: Address,
     /// `asset` (topic[1]).
     pub asset: Address,
@@ -564,7 +564,7 @@ pub struct CollateralConfigurationChangedEvent {
 
 /// Decoded Aave V3 `EModeCategoryAdded` event.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EModeCategoryAddedEvent {
+pub struct AaveV3EModeCategoryAddedEvent {
     pub pool_configurator_address: Address,
     /// `categoryId` (topic[1] — uint8, sign-extended to uint256).
     pub category_id: u8,
@@ -585,7 +585,7 @@ pub struct EModeCategoryAddedEvent {
 
 /// Decoded Aave V3 `EModeAssetCategoryChanged` event (older Aave versions).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EModeAssetCategoryChangedEvent {
+pub struct AaveV3EModeAssetCategoryChangedEvent {
     pub pool_configurator_address: Address,
     /// `asset` (topic[1]).
     pub asset: Address,
@@ -597,7 +597,7 @@ pub struct EModeAssetCategoryChangedEvent {
 
 /// Decoded Aave V3 `AssetCollateralInEModeChanged` event (newer Aave 3.4+).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AssetCollateralInEModeChangedEvent {
+pub struct AaveV3AssetCollateralInEModeChangedEvent {
     pub pool_configurator_address: Address,
     /// `asset` (topic[1]).
     pub asset: Address,
@@ -609,7 +609,7 @@ pub struct AssetCollateralInEModeChangedEvent {
 
 /// Decoded Aave V3 `ReserveInitialized` event.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ReserveInitializedEvent {
+pub struct AaveV3ReserveInitializedEvent {
     pub pool_configurator_address: Address,
     /// `asset` (topic[1]) — the underlying.
     pub asset: Address,
@@ -626,7 +626,7 @@ pub struct ReserveInitializedEvent {
 
 /// Decoded Aave V3 configurator `PoolUpdated` event.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PoolUpdatedEvent {
+pub struct AaveV3PoolUpdatedEvent {
     pub address_provider: Address,
     /// `oldAddress` (topic[1]).
     pub old_address: Address,
@@ -638,7 +638,7 @@ pub struct PoolUpdatedEvent {
 /// `PriceOracleUpdated` events share an identical shape (the `old/new` pair);
 /// one struct covers them. Disambiguated by topic via [`DecodedAaveEvent`].
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ConfigAddressPairEvent {
+pub struct AaveV3ConfigAddressPairEvent {
     pub address_provider: Address,
     pub old_address: Address,
     pub new_address: Address,
@@ -646,7 +646,7 @@ pub struct ConfigAddressPairEvent {
 
 /// Decoded Aave V3 `ProxyCreated` event.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ProxyCreatedEvent {
+pub struct AaveV3ProxyCreatedEvent {
     pub address_provider: Address,
     /// `id` (topic[1] — bytes32; the contract identifier e.g.
     /// `keccak256("POOL")`, NOT necessarily a packed-ascii string).
@@ -659,7 +659,7 @@ pub struct ProxyCreatedEvent {
 
 /// Decoded Aave V3 `AddressSet` event.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AddressSetEvent {
+pub struct AaveV3AddressSetEvent {
     pub address_provider: Address,
     /// `id` (topic[1] — bytes32; the contract identifier; the Python decodes
     /// as ascii-stripped nul bytes — the decoder emits the raw bytes32, the
@@ -673,7 +673,7 @@ pub struct AddressSetEvent {
 
 /// Decoded Aave V3 `Upgraded` event (emitted on aToken/vToken upgrade).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct UpgradedEvent {
+pub struct AaveV3UpgradedEvent {
     /// The proxy contract (aToken/vToken/etc.) — the log emitter.
     pub proxy_address: Address,
     /// `implementation` (topic[1]).
@@ -682,7 +682,7 @@ pub struct UpgradedEvent {
 
 /// Decoded Aave V3 GHO `DiscountPercentUpdated` event.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DiscountPercentUpdatedEvent {
+pub struct AaveV3DiscountPercentUpdatedEvent {
     /// The GHO vToken contract (the log emitter).
     pub v_token_address: Address,
     /// `user` (topic[1]).
@@ -695,7 +695,7 @@ pub struct DiscountPercentUpdatedEvent {
 
 /// Decoded Aave V3 GHO `DiscountRateStrategyUpdated` event.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DiscountRateStrategyUpdatedEvent {
+pub struct AaveV3DiscountRateStrategyUpdatedEvent {
     pub v_token_address: Address,
     /// `oldDiscountRateStrategy` (topic[1]).
     pub old_strategy: Address,
@@ -705,7 +705,7 @@ pub struct DiscountRateStrategyUpdatedEvent {
 
 /// Decoded Aave V3 GHO `DiscountTokenUpdated` event.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DiscountTokenUpdatedEvent {
+pub struct AaveV3DiscountTokenUpdatedEvent {
     pub v_token_address: Address,
     /// `oldDiscountToken` (topic[1]).
     pub old_discount_token: Address,
@@ -715,7 +715,7 @@ pub struct DiscountTokenUpdatedEvent {
 
 /// Decoded Aave V3 `Staked` event (stkAAVE token).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct StakedEvent {
+pub struct AaveV3StakedEvent {
     /// The stkAAVE token contract (the log emitter).
     pub stk_aave_address: Address,
     /// `from` (topic[1] — the staker; usually zero addr on a true stake).
@@ -728,7 +728,7 @@ pub struct StakedEvent {
 
 /// Decoded Aave V3 `Redeem` event (stkAAVE token).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RedeemEvent {
+pub struct AaveV3RedeemEvent {
     pub stk_aave_address: Address,
     /// `from` (topic[1] — the redeemer).
     pub from: Address,
@@ -740,7 +740,7 @@ pub struct RedeemEvent {
 
 /// Decoded Aave V3 `RewardsController` `RewardsClaimed` event.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RewardsClaimedEvent {
+pub struct AaveV3RewardsClaimedEvent {
     /// The `RewardsController` contract (the log emitter).
     pub rewards_controller_address: Address,
     /// `user` (topic[1]).
@@ -757,7 +757,7 @@ pub struct RewardsClaimedEvent {
 
 /// Decoded Aave V3 Oracle `AssetSourceUpdated` event.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AssetSourceUpdatedEvent {
+pub struct AaveV3AssetSourceUpdatedEvent {
     /// The `AaveOracle` contract (the log emitter).
     pub oracle_address: Address,
     /// `asset` (topic[1]).
@@ -769,7 +769,7 @@ pub struct AssetSourceUpdatedEvent {
 /// Decoded standard ERC20 `Transfer` event (used for aToken/vToken/stkAAVE
 /// balance tracking where the `ScaledToken` `BalanceTransfer` doesn't fire).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Erc20TransferEvent {
+pub struct AaveV3Erc20TransferEvent {
     /// The token contract (the log emitter).
     pub token_address: Address,
     /// `from` (topic[1] — zero address on a mint).
@@ -788,40 +788,40 @@ pub struct Erc20TransferEvent {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(clippy::module_name_repetitions)]
 pub enum DecodedAaveEvent {
-    Supply(SupplyEvent),
-    Borrow(BorrowEvent),
-    Repay(RepayEvent),
-    Withdraw(WithdrawEvent),
-    LiquidationCall(LiquidationCallEvent),
-    MintedToTreasury(MintedToTreasuryEvent),
-    DeficitCreated(DeficitCreatedEvent),
-    ReserveDataUpdated(ReserveDataUpdatedEvent),
-    ReserveUsedAsCollateralEnabled(ReserveUsedAsCollateralEnabledEvent),
-    ReserveUsedAsCollateralDisabled(ReserveUsedAsCollateralDisabledEvent),
-    UserEModeSet(UserEModeSetEvent),
-    ScaledTokenMint(ScaledTokenMintEvent),
-    ScaledTokenBurn(ScaledTokenBurnEvent),
-    ScaledTokenBalanceTransfer(ScaledTokenBalanceTransferEvent),
-    CollateralConfigurationChanged(CollateralConfigurationChangedEvent),
-    EModeCategoryAdded(EModeCategoryAddedEvent),
-    EModeAssetCategoryChanged(EModeAssetCategoryChangedEvent),
-    AssetCollateralInEModeChanged(AssetCollateralInEModeChangedEvent),
-    ReserveInitialized(ReserveInitializedEvent),
-    PoolUpdated(PoolUpdatedEvent),
-    PoolConfiguratorUpdated(ConfigAddressPairEvent),
-    PoolDataProviderUpdated(ConfigAddressPairEvent),
-    PriceOracleUpdated(ConfigAddressPairEvent),
-    ProxyCreated(ProxyCreatedEvent),
-    AddressSet(AddressSetEvent),
-    Upgraded(UpgradedEvent),
-    DiscountPercentUpdated(DiscountPercentUpdatedEvent),
-    DiscountRateStrategyUpdated(DiscountRateStrategyUpdatedEvent),
-    DiscountTokenUpdated(DiscountTokenUpdatedEvent),
-    Staked(StakedEvent),
-    Redeem(RedeemEvent),
-    RewardsClaimed(RewardsClaimedEvent),
-    AssetSourceUpdated(AssetSourceUpdatedEvent),
-    Erc20Transfer(Erc20TransferEvent),
+    Supply(AaveV3SupplyEvent),
+    Borrow(AaveV3BorrowEvent),
+    Repay(AaveV3RepayEvent),
+    Withdraw(AaveV3WithdrawEvent),
+    LiquidationCall(AaveV3LiquidationCallEvent),
+    MintedToTreasury(AaveV3MintedToTreasuryEvent),
+    DeficitCreated(AaveV3DeficitCreatedEvent),
+    ReserveDataUpdated(AaveV3ReserveDataUpdatedEvent),
+    ReserveUsedAsCollateralEnabled(AaveV3ReserveUsedAsCollateralEnabledEvent),
+    ReserveUsedAsCollateralDisabled(AaveV3ReserveUsedAsCollateralDisabledEvent),
+    UserEModeSet(AaveV3UserEModeSetEvent),
+    ScaledTokenMint(AaveV3ScaledTokenMintEvent),
+    ScaledTokenBurn(AaveV3ScaledTokenBurnEvent),
+    ScaledTokenBalanceTransfer(AaveV3ScaledTokenBalanceTransferEvent),
+    CollateralConfigurationChanged(AaveV3CollateralConfigurationChangedEvent),
+    EModeCategoryAdded(AaveV3EModeCategoryAddedEvent),
+    EModeAssetCategoryChanged(AaveV3EModeAssetCategoryChangedEvent),
+    AssetCollateralInEModeChanged(AaveV3AssetCollateralInEModeChangedEvent),
+    ReserveInitialized(AaveV3ReserveInitializedEvent),
+    PoolUpdated(AaveV3PoolUpdatedEvent),
+    PoolConfiguratorUpdated(AaveV3ConfigAddressPairEvent),
+    PoolDataProviderUpdated(AaveV3ConfigAddressPairEvent),
+    PriceOracleUpdated(AaveV3ConfigAddressPairEvent),
+    ProxyCreated(AaveV3ProxyCreatedEvent),
+    AddressSet(AaveV3AddressSetEvent),
+    Upgraded(AaveV3UpgradedEvent),
+    DiscountPercentUpdated(AaveV3DiscountPercentUpdatedEvent),
+    DiscountRateStrategyUpdated(AaveV3DiscountRateStrategyUpdatedEvent),
+    DiscountTokenUpdated(AaveV3DiscountTokenUpdatedEvent),
+    Staked(AaveV3StakedEvent),
+    Redeem(AaveV3RedeemEvent),
+    RewardsClaimed(AaveV3RewardsClaimedEvent),
+    AssetSourceUpdated(AaveV3AssetSourceUpdatedEvent),
+    Erc20Transfer(AaveV3Erc20TransferEvent),
 }
 
 // ── per-event decode fns ───────────────────────────────────────────────────
@@ -829,7 +829,7 @@ pub enum DecodedAaveEvent {
 /// Decode a `Supply` event. Returns `None` on topic mismatch, < 5 topics, or
 /// data < 64 bytes.
 #[must_use]
-pub fn decode_supply(log: &Log) -> Option<SupplyEvent> {
+pub fn decode_aave_supply_log(log: &Log) -> Option<AaveV3SupplyEvent> {
     // Real Aave V3 Supply signature (verified on mainnet, block 16496817):
     //   Supply(address indexed reserve, address user, address indexed onBehalfOf,
     //          uint256 amount, uint16 indexed referralCode)
@@ -847,7 +847,7 @@ pub fn decode_supply(log: &Log) -> Option<SupplyEvent> {
         return None;
     }
     let amount = data_u256(data, 1)?;
-    Some(SupplyEvent {
+    Some(AaveV3SupplyEvent {
         pool_address: log.address(),
         reserve,
         on_behalf_of,
@@ -859,7 +859,7 @@ pub fn decode_supply(log: &Log) -> Option<SupplyEvent> {
 /// Decode a `Borrow` event. Returns `None` on topic mismatch, < 5 topics, or
 /// data < 128 bytes.
 #[must_use]
-pub fn decode_borrow(log: &Log) -> Option<BorrowEvent> {
+pub fn decode_aave_borrow_log(log: &Log) -> Option<AaveV3BorrowEvent> {
     // Real Aave V3 Borrow signature (verified on mainnet: block 16497464
     // referralCode=64, block 16498172 referralCode=6671):
     //   Borrow(address indexed reserve, address user, address indexed onBehalfOf,
@@ -882,7 +882,7 @@ pub fn decode_borrow(log: &Log) -> Option<BorrowEvent> {
     let amount = data_u256(data, 1)?;
     let interest_rate_mode = data_u8(data, 2)?;
     let borrow_rate = data_u256(data, 3)?;
-    Some(BorrowEvent {
+    Some(AaveV3BorrowEvent {
         pool_address: log.address(),
         reserve,
         on_behalf_of,
@@ -896,7 +896,7 @@ pub fn decode_borrow(log: &Log) -> Option<BorrowEvent> {
 /// Decode a `Repay` event. Returns `None` on topic mismatch, < 4 topics, or
 /// data < 64 bytes.
 #[must_use]
-pub fn decode_repay(log: &Log) -> Option<RepayEvent> {
+pub fn decode_aave_repay_log(log: &Log) -> Option<AaveV3RepayEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_REPAY_TOPIC {
         return None;
@@ -911,7 +911,7 @@ pub fn decode_repay(log: &Log) -> Option<RepayEvent> {
     }
     let amount = data_u256(data, 0)?;
     let use_a_tokens = data_bool(data, 1)?;
-    Some(RepayEvent {
+    Some(AaveV3RepayEvent {
         pool_address: log.address(),
         reserve,
         user,
@@ -924,7 +924,7 @@ pub fn decode_repay(log: &Log) -> Option<RepayEvent> {
 /// Decode a `Withdraw` event. Returns `None` on topic mismatch, < 4 topics,
 /// or data < 32 bytes.
 #[must_use]
-pub fn decode_withdraw(log: &Log) -> Option<WithdrawEvent> {
+pub fn decode_aave_withdraw_log(log: &Log) -> Option<AaveV3WithdrawEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_WITHDRAW_TOPIC {
         return None;
@@ -938,7 +938,7 @@ pub fn decode_withdraw(log: &Log) -> Option<WithdrawEvent> {
         return None;
     }
     let amount = data_u256(data, 0)?;
-    Some(WithdrawEvent {
+    Some(AaveV3WithdrawEvent {
         pool_address: log.address(),
         reserve,
         user,
@@ -950,7 +950,7 @@ pub fn decode_withdraw(log: &Log) -> Option<WithdrawEvent> {
 /// Decode a `LiquidationCall` event. Returns `None` on topic mismatch, < 4
 /// topics, or data < 128 bytes.
 #[must_use]
-pub fn decode_liquidation_call(log: &Log) -> Option<LiquidationCallEvent> {
+pub fn decode_aave_liquidation_call_log(log: &Log) -> Option<AaveV3LiquidationCallEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_LIQUIDATION_CALL_TOPIC {
         return None;
@@ -968,7 +968,7 @@ pub fn decode_liquidation_call(log: &Log) -> Option<LiquidationCallEvent> {
     let liquidated_collateral_amount = data_u256(data, 1)?;
     let liquidator = data_address(data, 2)?;
     let receive_a_token = data_bool(data, 3)?;
-    Some(LiquidationCallEvent {
+    Some(AaveV3LiquidationCallEvent {
         pool_address: log.address(),
         collateral_asset,
         debt_asset,
@@ -983,7 +983,7 @@ pub fn decode_liquidation_call(log: &Log) -> Option<LiquidationCallEvent> {
 /// Decode a `MintedToTreasury` event. Returns `None` on topic mismatch, < 2
 /// topics, or data < 32 bytes.
 #[must_use]
-pub fn decode_minted_to_treasury(log: &Log) -> Option<MintedToTreasuryEvent> {
+pub fn decode_aave_minted_to_treasury_log(log: &Log) -> Option<AaveV3MintedToTreasuryEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_MINTED_TO_TREASURY_TOPIC {
         return None;
@@ -995,7 +995,7 @@ pub fn decode_minted_to_treasury(log: &Log) -> Option<MintedToTreasuryEvent> {
         return None;
     }
     let amount_minted = data_u256(data, 0)?;
-    Some(MintedToTreasuryEvent {
+    Some(AaveV3MintedToTreasuryEvent {
         a_token_address: log.address(),
         reserve,
         amount_minted,
@@ -1005,7 +1005,7 @@ pub fn decode_minted_to_treasury(log: &Log) -> Option<MintedToTreasuryEvent> {
 /// Decode a `DeficitCreated` event. Returns `None` on topic mismatch, < 3
 /// topics, or data < 32 bytes.
 #[must_use]
-pub fn decode_deficit_created(log: &Log) -> Option<DeficitCreatedEvent> {
+pub fn decode_aave_deficit_created_log(log: &Log) -> Option<AaveV3DeficitCreatedEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_DEFICIT_CREATED_TOPIC {
         return None;
@@ -1018,7 +1018,7 @@ pub fn decode_deficit_created(log: &Log) -> Option<DeficitCreatedEvent> {
         return None;
     }
     let amount_created = data_u256(data, 0)?;
-    Some(DeficitCreatedEvent {
+    Some(AaveV3DeficitCreatedEvent {
         pool_address: log.address(),
         user,
         debt_asset,
@@ -1029,7 +1029,7 @@ pub fn decode_deficit_created(log: &Log) -> Option<DeficitCreatedEvent> {
 /// Decode a `ReserveDataUpdated` event. Returns `None` on topic mismatch, < 2
 /// topics, or data < 160 bytes.
 #[must_use]
-pub fn decode_reserve_data_updated(log: &Log) -> Option<ReserveDataUpdatedEvent> {
+pub fn decode_aave_reserve_data_updated_log(log: &Log) -> Option<AaveV3ReserveDataUpdatedEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_RESERVE_DATA_UPDATED_TOPIC {
         return None;
@@ -1047,7 +1047,7 @@ pub fn decode_reserve_data_updated(log: &Log) -> Option<ReserveDataUpdatedEvent>
     let variable_borrow_rate = data_u256(data, 2)?;
     let liquidity_index = data_u256(data, 3)?;
     let variable_borrow_index = data_u256(data, 4)?;
-    Some(ReserveDataUpdatedEvent {
+    Some(AaveV3ReserveDataUpdatedEvent {
         pool_address: log.address(),
         reserve,
         liquidity_rate,
@@ -1061,16 +1061,16 @@ pub fn decode_reserve_data_updated(log: &Log) -> Option<ReserveDataUpdatedEvent>
 /// Decode a `ReserveUsedAsCollateralEnabled` event. Returns `None` on topic
 /// mismatch or < 3 topics (no data field — both args are indexed).
 #[must_use]
-pub fn decode_reserve_used_as_collateral_enabled(
+pub fn decode_aave_reserve_used_as_collateral_enabled_log(
     log: &Log,
-) -> Option<ReserveUsedAsCollateralEnabledEvent> {
+) -> Option<AaveV3ReserveUsedAsCollateralEnabledEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_RESERVE_USED_AS_COLLATERAL_ENABLED_TOPIC {
         return None;
     }
     let reserve = topic_address(topics, 1)?;
     let user = topic_address(topics, 2)?;
-    Some(ReserveUsedAsCollateralEnabledEvent {
+    Some(AaveV3ReserveUsedAsCollateralEnabledEvent {
         pool_address: log.address(),
         reserve,
         user,
@@ -1080,16 +1080,16 @@ pub fn decode_reserve_used_as_collateral_enabled(
 /// Decode a `ReserveUsedAsCollateralDisabled` event. Returns `None` on topic
 /// mismatch or < 3 topics (no data field).
 #[must_use]
-pub fn decode_reserve_used_as_collateral_disabled(
+pub fn decode_aave_reserve_used_as_collateral_disabled_log(
     log: &Log,
-) -> Option<ReserveUsedAsCollateralDisabledEvent> {
+) -> Option<AaveV3ReserveUsedAsCollateralDisabledEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_RESERVE_USED_AS_COLLATERAL_DISABLED_TOPIC {
         return None;
     }
     let reserve = topic_address(topics, 1)?;
     let user = topic_address(topics, 2)?;
-    Some(ReserveUsedAsCollateralDisabledEvent {
+    Some(AaveV3ReserveUsedAsCollateralDisabledEvent {
         pool_address: log.address(),
         reserve,
         user,
@@ -1099,7 +1099,7 @@ pub fn decode_reserve_used_as_collateral_disabled(
 /// Decode a `UserEModeSet` event. Returns `None` on topic mismatch, < 2
 /// topics, or data < 32 bytes.
 #[must_use]
-pub fn decode_user_e_mode_set(log: &Log) -> Option<UserEModeSetEvent> {
+pub fn decode_aave_user_e_mode_set_log(log: &Log) -> Option<AaveV3UserEModeSetEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_USER_E_MODE_SET_TOPIC {
         return None;
@@ -1111,7 +1111,7 @@ pub fn decode_user_e_mode_set(log: &Log) -> Option<UserEModeSetEvent> {
         return None;
     }
     let category_id = data_u8(data, 0)?;
-    Some(UserEModeSetEvent {
+    Some(AaveV3UserEModeSetEvent {
         pool_address: log.address(),
         user,
         category_id,
@@ -1122,7 +1122,7 @@ pub fn decode_user_e_mode_set(log: &Log) -> Option<UserEModeSetEvent> {
 /// orchestrator). Returns `None` on topic mismatch, < 3 topics, or data < 96
 /// bytes.
 #[must_use]
-pub fn decode_scaled_token_mint(log: &Log) -> Option<ScaledTokenMintEvent> {
+pub fn decode_aave_scaled_token_mint_log(log: &Log) -> Option<AaveV3ScaledTokenMintEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_MINT_TOPIC {
         return None;
@@ -1138,7 +1138,7 @@ pub fn decode_scaled_token_mint(log: &Log) -> Option<ScaledTokenMintEvent> {
     let value = data_u256(data, 0)?;
     let balance_increase = data_u256(data, 1)?;
     let index = data_u256(data, 2)?;
-    Some(ScaledTokenMintEvent {
+    Some(AaveV3ScaledTokenMintEvent {
         token_address: log.address(),
         caller,
         on_behalf_of,
@@ -1151,7 +1151,7 @@ pub fn decode_scaled_token_mint(log: &Log) -> Option<ScaledTokenMintEvent> {
 /// Decode a `ScaledToken` `Burn` event. Returns `None` on topic mismatch, < 3
 /// topics, or data < 96 bytes.
 #[must_use]
-pub fn decode_scaled_token_burn(log: &Log) -> Option<ScaledTokenBurnEvent> {
+pub fn decode_aave_scaled_token_burn_log(log: &Log) -> Option<AaveV3ScaledTokenBurnEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_BURN_TOPIC {
         return None;
@@ -1167,7 +1167,7 @@ pub fn decode_scaled_token_burn(log: &Log) -> Option<ScaledTokenBurnEvent> {
     let value = data_u256(data, 0)?;
     let balance_increase = data_u256(data, 1)?;
     let index = data_u256(data, 2)?;
-    Some(ScaledTokenBurnEvent {
+    Some(AaveV3ScaledTokenBurnEvent {
         token_address: log.address(),
         from,
         target,
@@ -1180,7 +1180,7 @@ pub fn decode_scaled_token_burn(log: &Log) -> Option<ScaledTokenBurnEvent> {
 /// Decode a `ScaledToken` `BalanceTransfer` event. Returns `None` on topic
 /// mismatch, < 3 topics, or data < 64 bytes.
 #[must_use]
-pub fn decode_scaled_token_balance_transfer(log: &Log) -> Option<ScaledTokenBalanceTransferEvent> {
+pub fn decode_aave_scaled_token_balance_transfer_log(log: &Log) -> Option<AaveV3ScaledTokenBalanceTransferEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_BALANCE_TRANSFER_TOPIC {
         return None;
@@ -1194,7 +1194,7 @@ pub fn decode_scaled_token_balance_transfer(log: &Log) -> Option<ScaledTokenBala
     }
     let value = data_u256(data, 0)?;
     let index = data_u256(data, 1)?;
-    Some(ScaledTokenBalanceTransferEvent {
+    Some(AaveV3ScaledTokenBalanceTransferEvent {
         token_address: log.address(),
         from,
         to,
@@ -1206,9 +1206,9 @@ pub fn decode_scaled_token_balance_transfer(log: &Log) -> Option<ScaledTokenBala
 /// Decode a `CollateralConfigurationChanged` event. Returns `None` on topic
 /// mismatch, < 2 topics, or data < 96 bytes.
 #[must_use]
-pub fn decode_collateral_configuration_changed(
+pub fn decode_aave_collateral_configuration_changed_log(
     log: &Log,
-) -> Option<CollateralConfigurationChangedEvent> {
+) -> Option<AaveV3CollateralConfigurationChangedEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_COLLATERAL_CONFIGURATION_CHANGED_TOPIC {
         return None;
@@ -1223,7 +1223,7 @@ pub fn decode_collateral_configuration_changed(
     let ltv = data_u256(data, 0)?;
     let liquidation_threshold = data_u256(data, 1)?;
     let liquidation_bonus = data_u256(data, 2)?;
-    Some(CollateralConfigurationChangedEvent {
+    Some(AaveV3CollateralConfigurationChangedEvent {
         pool_configurator_address: log.address(),
         asset,
         ltv,
@@ -1239,7 +1239,7 @@ pub fn decode_collateral_configuration_changed(
 /// topic mismatch, < 2 topics, or data too short to hold the fixed fields +
 /// the string offset.
 #[must_use]
-pub fn decode_e_mode_category_added(log: &Log) -> Option<EModeCategoryAddedEvent> {
+pub fn decode_aave_e_mode_category_added_log(log: &Log) -> Option<AaveV3EModeCategoryAddedEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_EMODE_CATEGORY_ADDED_TOPIC {
         return None;
@@ -1277,7 +1277,7 @@ pub fn decode_e_mode_category_added(log: &Log) -> Option<EModeCategoryAddedEvent
     // Lossy UTF-8 (the Python does `contract_id_bytes.decode("ascii").strip`
     // — ASCII subset; this is more permissive but lossless for valid UTF-8).
     let label = String::from_utf8_lossy(label_bytes).into_owned();
-    Some(EModeCategoryAddedEvent {
+    Some(AaveV3EModeCategoryAddedEvent {
         pool_configurator_address: log.address(),
         category_id,
         ltv,
@@ -1291,7 +1291,7 @@ pub fn decode_e_mode_category_added(log: &Log) -> Option<EModeCategoryAddedEvent
 /// Decode a `EModeAssetCategoryChanged` event. Returns `None` on topic
 /// mismatch, < 2 topics, or data < 64 bytes.
 #[must_use]
-pub fn decode_e_mode_asset_category_changed(log: &Log) -> Option<EModeAssetCategoryChangedEvent> {
+pub fn decode_aave_e_mode_asset_category_changed_log(log: &Log) -> Option<AaveV3EModeAssetCategoryChangedEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_EMODE_ASSET_CATEGORY_CHANGED_TOPIC {
         return None;
@@ -1305,7 +1305,7 @@ pub fn decode_e_mode_asset_category_changed(log: &Log) -> Option<EModeAssetCateg
     }
     let old_category_id = data_u8(data, 0)?;
     let new_category_id = data_u8(data, 1)?;
-    Some(EModeAssetCategoryChangedEvent {
+    Some(AaveV3EModeAssetCategoryChangedEvent {
         pool_configurator_address: log.address(),
         asset,
         old_category_id,
@@ -1316,9 +1316,9 @@ pub fn decode_e_mode_asset_category_changed(log: &Log) -> Option<EModeAssetCateg
 /// Decode a `AssetCollateralInEModeChanged` event. Returns `None` on topic
 /// mismatch, < 2 topics, or data < 64 bytes.
 #[must_use]
-pub fn decode_asset_collateral_in_emode_changed(
+pub fn decode_aave_asset_collateral_in_emode_changed_log(
     log: &Log,
-) -> Option<AssetCollateralInEModeChangedEvent> {
+) -> Option<AaveV3AssetCollateralInEModeChangedEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_ASSET_COLLATERAL_IN_EMODE_CHANGED_TOPIC {
         return None;
@@ -1331,7 +1331,7 @@ pub fn decode_asset_collateral_in_emode_changed(
     }
     let category_id = data_u8(data, 0)?;
     let collateral = data_bool(data, 1)?;
-    Some(AssetCollateralInEModeChangedEvent {
+    Some(AaveV3AssetCollateralInEModeChangedEvent {
         pool_configurator_address: log.address(),
         asset,
         category_id,
@@ -1342,7 +1342,7 @@ pub fn decode_asset_collateral_in_emode_changed(
 /// Decode a `ReserveInitialized` event. Returns `None` on topic mismatch, < 3
 /// topics, or data < 96 bytes.
 #[must_use]
-pub fn decode_reserve_initialized(log: &Log) -> Option<ReserveInitializedEvent> {
+pub fn decode_aave_reserve_initialized_log(log: &Log) -> Option<AaveV3ReserveInitializedEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_RESERVE_INITIALIZED_TOPIC {
         return None;
@@ -1358,7 +1358,7 @@ pub fn decode_reserve_initialized(log: &Log) -> Option<ReserveInitializedEvent> 
     let stable_debt_token = data_address(data, 0)?;
     let variable_debt_token = data_address(data, 1)?;
     let interest_rate_strategy_address = data_address(data, 2)?;
-    Some(ReserveInitializedEvent {
+    Some(AaveV3ReserveInitializedEvent {
         pool_configurator_address: log.address(),
         asset,
         a_token,
@@ -1371,14 +1371,14 @@ pub fn decode_reserve_initialized(log: &Log) -> Option<ReserveInitializedEvent> 
 /// Decode a `PoolUpdated` event. Returns `None` on topic mismatch or < 3
 /// topics (no data field).
 #[must_use]
-pub fn decode_pool_updated(log: &Log) -> Option<PoolUpdatedEvent> {
+pub fn decode_aave_pool_updated_log(log: &Log) -> Option<AaveV3PoolUpdatedEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_POOL_UPDATED_TOPIC {
         return None;
     }
     let old_address = topic_address(topics, 1)?;
     let new_address = topic_address(topics, 2)?;
-    Some(PoolUpdatedEvent {
+    Some(AaveV3PoolUpdatedEvent {
         address_provider: log.address(),
         old_address,
         new_address,
@@ -1388,14 +1388,14 @@ pub fn decode_pool_updated(log: &Log) -> Option<PoolUpdatedEvent> {
 /// Decode a `PoolConfiguratorUpdated` event. Returns `None` on topic mismatch
 /// or < 3 topics.
 #[must_use]
-pub fn decode_pool_configurator_updated(log: &Log) -> Option<ConfigAddressPairEvent> {
+pub fn decode_aave_pool_configurator_updated_log(log: &Log) -> Option<AaveV3ConfigAddressPairEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_POOL_CONFIGURATOR_UPDATED_TOPIC {
         return None;
     }
     let old_address = topic_address(topics, 1)?;
     let new_address = topic_address(topics, 2)?;
-    Some(ConfigAddressPairEvent {
+    Some(AaveV3ConfigAddressPairEvent {
         address_provider: log.address(),
         old_address,
         new_address,
@@ -1405,14 +1405,14 @@ pub fn decode_pool_configurator_updated(log: &Log) -> Option<ConfigAddressPairEv
 /// Decode a `PoolDataProviderUpdated` event. Returns `None` on topic mismatch
 /// or < 3 topics.
 #[must_use]
-pub fn decode_pool_data_provider_updated(log: &Log) -> Option<ConfigAddressPairEvent> {
+pub fn decode_aave_pool_data_provider_updated_log(log: &Log) -> Option<AaveV3ConfigAddressPairEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_POOL_DATA_PROVIDER_UPDATED_TOPIC {
         return None;
     }
     let old_address = topic_address(topics, 1)?;
     let new_address = topic_address(topics, 2)?;
-    Some(ConfigAddressPairEvent {
+    Some(AaveV3ConfigAddressPairEvent {
         address_provider: log.address(),
         old_address,
         new_address,
@@ -1422,14 +1422,14 @@ pub fn decode_pool_data_provider_updated(log: &Log) -> Option<ConfigAddressPairE
 /// Decode a `PriceOracleUpdated` event. Returns `None` on topic mismatch or < 3
 /// topics.
 #[must_use]
-pub fn decode_price_oracle_updated(log: &Log) -> Option<ConfigAddressPairEvent> {
+pub fn decode_aave_price_oracle_updated_log(log: &Log) -> Option<AaveV3ConfigAddressPairEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_PRICE_ORACLE_UPDATED_TOPIC {
         return None;
     }
     let old_address = topic_address(topics, 1)?;
     let new_address = topic_address(topics, 2)?;
-    Some(ConfigAddressPairEvent {
+    Some(AaveV3ConfigAddressPairEvent {
         address_provider: log.address(),
         old_address,
         new_address,
@@ -1439,7 +1439,7 @@ pub fn decode_price_oracle_updated(log: &Log) -> Option<ConfigAddressPairEvent> 
 /// Decode a `ProxyCreated` event. Returns `None` on topic mismatch or < 4
 /// topics (no data field — all 3 args are indexed).
 #[must_use]
-pub fn decode_proxy_created(log: &Log) -> Option<ProxyCreatedEvent> {
+pub fn decode_aave_proxy_created_log(log: &Log) -> Option<AaveV3ProxyCreatedEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_PROXY_CREATED_TOPIC {
         return None;
@@ -1447,7 +1447,7 @@ pub fn decode_proxy_created(log: &Log) -> Option<ProxyCreatedEvent> {
     let id = topic_b256(topics, 1)?;
     let proxy_address = topic_address(topics, 2)?;
     let implementation_address = topic_address(topics, 3)?;
-    Some(ProxyCreatedEvent {
+    Some(AaveV3ProxyCreatedEvent {
         address_provider: log.address(),
         id,
         proxy_address,
@@ -1458,7 +1458,7 @@ pub fn decode_proxy_created(log: &Log) -> Option<ProxyCreatedEvent> {
 /// Decode an `AddressSet` event. Returns `None` on topic mismatch or < 4
 /// topics (no data field — all 3 args are indexed).
 #[must_use]
-pub fn decode_address_set(log: &Log) -> Option<AddressSetEvent> {
+pub fn decode_aave_address_set_log(log: &Log) -> Option<AaveV3AddressSetEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_ADDRESS_SET_TOPIC {
         return None;
@@ -1466,7 +1466,7 @@ pub fn decode_address_set(log: &Log) -> Option<AddressSetEvent> {
     let id = topic_b256(topics, 1)?;
     let old_address = topic_address(topics, 2)?;
     let new_address = topic_address(topics, 3)?;
-    Some(AddressSetEvent {
+    Some(AaveV3AddressSetEvent {
         address_provider: log.address(),
         id,
         old_address,
@@ -1477,13 +1477,13 @@ pub fn decode_address_set(log: &Log) -> Option<AddressSetEvent> {
 /// Decode an `Upgraded` event. Returns `None` on topic mismatch or < 2 topics
 /// (no data field — the single arg is indexed).
 #[must_use]
-pub fn decode_upgraded(log: &Log) -> Option<UpgradedEvent> {
+pub fn decode_aave_upgraded_log(log: &Log) -> Option<AaveV3UpgradedEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_UPGRADED_TOPIC {
         return None;
     }
     let implementation = topic_address(topics, 1)?;
-    Some(UpgradedEvent {
+    Some(AaveV3UpgradedEvent {
         proxy_address: log.address(),
         implementation,
     })
@@ -1492,7 +1492,7 @@ pub fn decode_upgraded(log: &Log) -> Option<UpgradedEvent> {
 /// Decode a GHO `DiscountPercentUpdated` event. Returns `None` on topic
 /// mismatch, < 3 topics, or data < 32 bytes.
 #[must_use]
-pub fn decode_discount_percent_updated(log: &Log) -> Option<DiscountPercentUpdatedEvent> {
+pub fn decode_aave_discount_percent_updated_log(log: &Log) -> Option<AaveV3DiscountPercentUpdatedEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_DISCOUNT_PERCENT_UPDATED_TOPIC {
         return None;
@@ -1505,7 +1505,7 @@ pub fn decode_discount_percent_updated(log: &Log) -> Option<DiscountPercentUpdat
         return None;
     }
     let old_discount_percent = data_u256(data, 0)?;
-    Some(DiscountPercentUpdatedEvent {
+    Some(AaveV3DiscountPercentUpdatedEvent {
         v_token_address: log.address(),
         user,
         old_discount_percent,
@@ -1516,16 +1516,16 @@ pub fn decode_discount_percent_updated(log: &Log) -> Option<DiscountPercentUpdat
 /// Decode a GHO `DiscountRateStrategyUpdated` event. Returns `None` on topic
 /// mismatch or < 3 topics (no data field — both args are indexed).
 #[must_use]
-pub fn decode_discount_rate_strategy_updated(
+pub fn decode_aave_discount_rate_strategy_updated_log(
     log: &Log,
-) -> Option<DiscountRateStrategyUpdatedEvent> {
+) -> Option<AaveV3DiscountRateStrategyUpdatedEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_DISCOUNT_RATE_STRATEGY_UPDATED_TOPIC {
         return None;
     }
     let old_strategy = topic_address(topics, 1)?;
     let new_strategy = topic_address(topics, 2)?;
-    Some(DiscountRateStrategyUpdatedEvent {
+    Some(AaveV3DiscountRateStrategyUpdatedEvent {
         v_token_address: log.address(),
         old_strategy,
         new_strategy,
@@ -1535,14 +1535,14 @@ pub fn decode_discount_rate_strategy_updated(
 /// Decode a GHO `DiscountTokenUpdated` event. Returns `None` on topic mismatch
 /// or < 3 topics (no data field).
 #[must_use]
-pub fn decode_discount_token_updated(log: &Log) -> Option<DiscountTokenUpdatedEvent> {
+pub fn decode_aave_discount_token_updated_log(log: &Log) -> Option<AaveV3DiscountTokenUpdatedEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_DISCOUNT_TOKEN_UPDATED_TOPIC {
         return None;
     }
     let old_discount_token = topic_address(topics, 1)?;
     let new_discount_token = topic_address(topics, 2)?;
-    Some(DiscountTokenUpdatedEvent {
+    Some(AaveV3DiscountTokenUpdatedEvent {
         v_token_address: log.address(),
         old_discount_token,
         new_discount_token,
@@ -1552,7 +1552,7 @@ pub fn decode_discount_token_updated(log: &Log) -> Option<DiscountTokenUpdatedEv
 /// Decode a `Staked` event (stkAAVE token). Returns `None` on topic mismatch,
 /// < 3 topics, or data < 32 bytes.
 #[must_use]
-pub fn decode_staked(log: &Log) -> Option<StakedEvent> {
+pub fn decode_aave_staked_log(log: &Log) -> Option<AaveV3StakedEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_STAKED_TOPIC {
         return None;
@@ -1565,7 +1565,7 @@ pub fn decode_staked(log: &Log) -> Option<StakedEvent> {
         return None;
     }
     let amount = data_u256(data, 0)?;
-    Some(StakedEvent {
+    Some(AaveV3StakedEvent {
         stk_aave_address: log.address(),
         from,
         on_behalf_of,
@@ -1576,7 +1576,7 @@ pub fn decode_staked(log: &Log) -> Option<StakedEvent> {
 /// Decode a `Redeem` event (stkAAVE token). Returns `None` on topic mismatch,
 /// < 3 topics, or data < 32 bytes.
 #[must_use]
-pub fn decode_redeem(log: &Log) -> Option<RedeemEvent> {
+pub fn decode_aave_redeem_log(log: &Log) -> Option<AaveV3RedeemEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_REDEEM_TOPIC {
         return None;
@@ -1589,7 +1589,7 @@ pub fn decode_redeem(log: &Log) -> Option<RedeemEvent> {
         return None;
     }
     let amount = data_u256(data, 0)?;
-    Some(RedeemEvent {
+    Some(AaveV3RedeemEvent {
         stk_aave_address: log.address(),
         from,
         to,
@@ -1600,7 +1600,7 @@ pub fn decode_redeem(log: &Log) -> Option<RedeemEvent> {
 /// Decode a `RewardsController` `RewardsClaimed` event. Returns `None` on topic
 /// mismatch, < 4 topics, or data < 64 bytes.
 #[must_use]
-pub fn decode_rewards_claimed(log: &Log) -> Option<RewardsClaimedEvent> {
+pub fn decode_aave_rewards_claimed_log(log: &Log) -> Option<AaveV3RewardsClaimedEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_REWARDS_CLAIMED_TOPIC {
         return None;
@@ -1615,7 +1615,7 @@ pub fn decode_rewards_claimed(log: &Log) -> Option<RewardsClaimedEvent> {
     }
     let claimer = data_address(data, 0)?;
     let amount = data_u256(data, 1)?;
-    Some(RewardsClaimedEvent {
+    Some(AaveV3RewardsClaimedEvent {
         rewards_controller_address: log.address(),
         user,
         reward,
@@ -1628,14 +1628,14 @@ pub fn decode_rewards_claimed(log: &Log) -> Option<RewardsClaimedEvent> {
 /// Decode an `AaveOracle` `AssetSourceUpdated` event. Returns `None` on topic
 /// mismatch or < 3 topics (no data field — both args are indexed).
 #[must_use]
-pub fn decode_asset_source_updated(log: &Log) -> Option<AssetSourceUpdatedEvent> {
+pub fn decode_aave_asset_source_updated_log(log: &Log) -> Option<AaveV3AssetSourceUpdatedEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &AAVE_ASSET_SOURCE_UPDATED_TOPIC {
         return None;
     }
     let asset = topic_address(topics, 1)?;
     let source = topic_address(topics, 2)?;
-    Some(AssetSourceUpdatedEvent {
+    Some(AaveV3AssetSourceUpdatedEvent {
         oracle_address: log.address(),
         asset,
         source,
@@ -1645,7 +1645,7 @@ pub fn decode_asset_source_updated(log: &Log) -> Option<AssetSourceUpdatedEvent>
 /// Decode a standard ERC20 `Transfer` event. Returns `None` on topic mismatch,
 /// < 3 topics, or data < 32 bytes.
 #[must_use]
-pub fn decode_erc20_transfer(log: &Log) -> Option<Erc20TransferEvent> {
+pub fn decode_aave_erc20_transfer_log(log: &Log) -> Option<AaveV3Erc20TransferEvent> {
     let topics = log_topics(log)?;
     if topics.first()? != &ERC20_TRANSFER_TOPIC {
         return None;
@@ -1658,7 +1658,7 @@ pub fn decode_erc20_transfer(log: &Log) -> Option<Erc20TransferEvent> {
         return None;
     }
     let value = data_u256(data, 0)?;
-    Some(Erc20TransferEvent {
+    Some(AaveV3Erc20TransferEvent {
         token_address: log.address(),
         from,
         to,
@@ -1686,78 +1686,78 @@ pub fn decode_erc20_transfer(log: &Log) -> Option<Erc20TransferEvent> {
 pub fn decode_aave_log(log: &Log) -> Option<DecodedAaveEvent> {
     let topic = log.topics().first()?;
     Some(match *topic {
-        AAVE_SUPPLY_TOPIC => DecodedAaveEvent::Supply(decode_supply(log)?),
-        AAVE_BORROW_TOPIC => DecodedAaveEvent::Borrow(decode_borrow(log)?),
-        AAVE_REPAY_TOPIC => DecodedAaveEvent::Repay(decode_repay(log)?),
-        AAVE_WITHDRAW_TOPIC => DecodedAaveEvent::Withdraw(decode_withdraw(log)?),
-        AAVE_LIQUIDATION_CALL_TOPIC => DecodedAaveEvent::LiquidationCall(decode_liquidation_call(log)?),
+        AAVE_SUPPLY_TOPIC => DecodedAaveEvent::Supply(decode_aave_supply_log(log)?),
+        AAVE_BORROW_TOPIC => DecodedAaveEvent::Borrow(decode_aave_borrow_log(log)?),
+        AAVE_REPAY_TOPIC => DecodedAaveEvent::Repay(decode_aave_repay_log(log)?),
+        AAVE_WITHDRAW_TOPIC => DecodedAaveEvent::Withdraw(decode_aave_withdraw_log(log)?),
+        AAVE_LIQUIDATION_CALL_TOPIC => DecodedAaveEvent::LiquidationCall(decode_aave_liquidation_call_log(log)?),
         AAVE_MINTED_TO_TREASURY_TOPIC => {
-            DecodedAaveEvent::MintedToTreasury(decode_minted_to_treasury(log)?)
+            DecodedAaveEvent::MintedToTreasury(decode_aave_minted_to_treasury_log(log)?)
         }
-        AAVE_DEFICIT_CREATED_TOPIC => DecodedAaveEvent::DeficitCreated(decode_deficit_created(log)?),
+        AAVE_DEFICIT_CREATED_TOPIC => DecodedAaveEvent::DeficitCreated(decode_aave_deficit_created_log(log)?),
         AAVE_RESERVE_DATA_UPDATED_TOPIC => {
-            DecodedAaveEvent::ReserveDataUpdated(decode_reserve_data_updated(log)?)
+            DecodedAaveEvent::ReserveDataUpdated(decode_aave_reserve_data_updated_log(log)?)
         }
         AAVE_RESERVE_USED_AS_COLLATERAL_ENABLED_TOPIC => {
             DecodedAaveEvent::ReserveUsedAsCollateralEnabled(
-                decode_reserve_used_as_collateral_enabled(log)?,
+                decode_aave_reserve_used_as_collateral_enabled_log(log)?,
             )
         }
         AAVE_RESERVE_USED_AS_COLLATERAL_DISABLED_TOPIC => {
             DecodedAaveEvent::ReserveUsedAsCollateralDisabled(
-                decode_reserve_used_as_collateral_disabled(log)?,
+                decode_aave_reserve_used_as_collateral_disabled_log(log)?,
             )
         }
-        AAVE_USER_E_MODE_SET_TOPIC => DecodedAaveEvent::UserEModeSet(decode_user_e_mode_set(log)?),
-        AAVE_MINT_TOPIC => DecodedAaveEvent::ScaledTokenMint(decode_scaled_token_mint(log)?),
-        AAVE_BURN_TOPIC => DecodedAaveEvent::ScaledTokenBurn(decode_scaled_token_burn(log)?),
+        AAVE_USER_E_MODE_SET_TOPIC => DecodedAaveEvent::UserEModeSet(decode_aave_user_e_mode_set_log(log)?),
+        AAVE_MINT_TOPIC => DecodedAaveEvent::ScaledTokenMint(decode_aave_scaled_token_mint_log(log)?),
+        AAVE_BURN_TOPIC => DecodedAaveEvent::ScaledTokenBurn(decode_aave_scaled_token_burn_log(log)?),
         AAVE_BALANCE_TRANSFER_TOPIC => {
-            DecodedAaveEvent::ScaledTokenBalanceTransfer(decode_scaled_token_balance_transfer(log)?)
+            DecodedAaveEvent::ScaledTokenBalanceTransfer(decode_aave_scaled_token_balance_transfer_log(log)?)
         }
         AAVE_COLLATERAL_CONFIGURATION_CHANGED_TOPIC => DecodedAaveEvent::CollateralConfigurationChanged(
-            decode_collateral_configuration_changed(log)?,
+            decode_aave_collateral_configuration_changed_log(log)?,
         ),
         AAVE_EMODE_CATEGORY_ADDED_TOPIC => {
-            DecodedAaveEvent::EModeCategoryAdded(decode_e_mode_category_added(log)?)
+            DecodedAaveEvent::EModeCategoryAdded(decode_aave_e_mode_category_added_log(log)?)
         }
         AAVE_EMODE_ASSET_CATEGORY_CHANGED_TOPIC => {
-            DecodedAaveEvent::EModeAssetCategoryChanged(decode_e_mode_asset_category_changed(log)?)
+            DecodedAaveEvent::EModeAssetCategoryChanged(decode_aave_e_mode_asset_category_changed_log(log)?)
         }
         AAVE_ASSET_COLLATERAL_IN_EMODE_CHANGED_TOPIC => DecodedAaveEvent::AssetCollateralInEModeChanged(
-            decode_asset_collateral_in_emode_changed(log)?,
+            decode_aave_asset_collateral_in_emode_changed_log(log)?,
         ),
         AAVE_RESERVE_INITIALIZED_TOPIC => {
-            DecodedAaveEvent::ReserveInitialized(decode_reserve_initialized(log)?)
+            DecodedAaveEvent::ReserveInitialized(decode_aave_reserve_initialized_log(log)?)
         }
-        AAVE_POOL_UPDATED_TOPIC => DecodedAaveEvent::PoolUpdated(decode_pool_updated(log)?),
+        AAVE_POOL_UPDATED_TOPIC => DecodedAaveEvent::PoolUpdated(decode_aave_pool_updated_log(log)?),
         AAVE_POOL_CONFIGURATOR_UPDATED_TOPIC => {
-            DecodedAaveEvent::PoolConfiguratorUpdated(decode_pool_configurator_updated(log)?)
+            DecodedAaveEvent::PoolConfiguratorUpdated(decode_aave_pool_configurator_updated_log(log)?)
         }
         AAVE_POOL_DATA_PROVIDER_UPDATED_TOPIC => {
-            DecodedAaveEvent::PoolDataProviderUpdated(decode_pool_data_provider_updated(log)?)
+            DecodedAaveEvent::PoolDataProviderUpdated(decode_aave_pool_data_provider_updated_log(log)?)
         }
         AAVE_PRICE_ORACLE_UPDATED_TOPIC => {
-            DecodedAaveEvent::PriceOracleUpdated(decode_price_oracle_updated(log)?)
+            DecodedAaveEvent::PriceOracleUpdated(decode_aave_price_oracle_updated_log(log)?)
         }
-        AAVE_PROXY_CREATED_TOPIC => DecodedAaveEvent::ProxyCreated(decode_proxy_created(log)?),
-        AAVE_ADDRESS_SET_TOPIC => DecodedAaveEvent::AddressSet(decode_address_set(log)?),
-        AAVE_UPGRADED_TOPIC => DecodedAaveEvent::Upgraded(decode_upgraded(log)?),
+        AAVE_PROXY_CREATED_TOPIC => DecodedAaveEvent::ProxyCreated(decode_aave_proxy_created_log(log)?),
+        AAVE_ADDRESS_SET_TOPIC => DecodedAaveEvent::AddressSet(decode_aave_address_set_log(log)?),
+        AAVE_UPGRADED_TOPIC => DecodedAaveEvent::Upgraded(decode_aave_upgraded_log(log)?),
         AAVE_DISCOUNT_PERCENT_UPDATED_TOPIC => {
-            DecodedAaveEvent::DiscountPercentUpdated(decode_discount_percent_updated(log)?)
+            DecodedAaveEvent::DiscountPercentUpdated(decode_aave_discount_percent_updated_log(log)?)
         }
         AAVE_DISCOUNT_RATE_STRATEGY_UPDATED_TOPIC => DecodedAaveEvent::DiscountRateStrategyUpdated(
-            decode_discount_rate_strategy_updated(log)?,
+            decode_aave_discount_rate_strategy_updated_log(log)?,
         ),
         AAVE_DISCOUNT_TOKEN_UPDATED_TOPIC => {
-            DecodedAaveEvent::DiscountTokenUpdated(decode_discount_token_updated(log)?)
+            DecodedAaveEvent::DiscountTokenUpdated(decode_aave_discount_token_updated_log(log)?)
         }
-        AAVE_STAKED_TOPIC => DecodedAaveEvent::Staked(decode_staked(log)?),
-        AAVE_REDEEM_TOPIC => DecodedAaveEvent::Redeem(decode_redeem(log)?),
-        AAVE_REWARDS_CLAIMED_TOPIC => DecodedAaveEvent::RewardsClaimed(decode_rewards_claimed(log)?),
+        AAVE_STAKED_TOPIC => DecodedAaveEvent::Staked(decode_aave_staked_log(log)?),
+        AAVE_REDEEM_TOPIC => DecodedAaveEvent::Redeem(decode_aave_redeem_log(log)?),
+        AAVE_REWARDS_CLAIMED_TOPIC => DecodedAaveEvent::RewardsClaimed(decode_aave_rewards_claimed_log(log)?),
         AAVE_ASSET_SOURCE_UPDATED_TOPIC => {
-            DecodedAaveEvent::AssetSourceUpdated(decode_asset_source_updated(log)?)
+            DecodedAaveEvent::AssetSourceUpdated(decode_aave_asset_source_updated_log(log)?)
         }
-        ERC20_TRANSFER_TOPIC => DecodedAaveEvent::Erc20Transfer(decode_erc20_transfer(log)?),
+        ERC20_TRANSFER_TOPIC => DecodedAaveEvent::Erc20Transfer(decode_aave_erc20_transfer_log(log)?),
         _ => return None,
     })
 }
@@ -2008,7 +2008,7 @@ mod tests {
             ],
             data,
         );
-        let event = decode_supply(&log).unwrap();
+        let event = decode_aave_supply_log(&log).unwrap();
         assert_eq!(event.pool_address, pool);
         assert_eq!(event.reserve, reserve);
         assert_eq!(event.on_behalf_of, on_behalf_of);
@@ -2058,7 +2058,7 @@ mod tests {
             ],
             data,
         );
-        let event = decode_borrow(&log).unwrap();
+        let event = decode_aave_borrow_log(&log).unwrap();
         assert_eq!(event.reserve, reserve);
         assert_eq!(event.on_behalf_of, on_behalf_of);
         assert_eq!(event.amount, amount);
@@ -2090,7 +2090,7 @@ mod tests {
             ],
             data,
         );
-        let event = decode_repay(&log).unwrap();
+        let event = decode_aave_repay_log(&log).unwrap();
         assert_eq!(event.reserve, reserve);
         assert_eq!(event.user, user);
         assert_eq!(event.repayer, repayer);
@@ -2116,7 +2116,7 @@ mod tests {
             ],
             u256_word(amount).to_vec(),
         );
-        let event = decode_withdraw(&log).unwrap();
+        let event = decode_aave_withdraw_log(&log).unwrap();
         assert_eq!(event.reserve, reserve);
         assert_eq!(event.user, user);
         assert_eq!(event.to, to);
@@ -2151,7 +2151,7 @@ mod tests {
             ],
             data,
         );
-        let event = decode_liquidation_call(&log).unwrap();
+        let event = decode_aave_liquidation_call_log(&log).unwrap();
         assert_eq!(event.collateral_asset, collateral_asset);
         assert_eq!(event.debt_asset, debt_asset);
         assert_eq!(event.user, user);
@@ -2183,7 +2183,7 @@ mod tests {
             vec![AAVE_RESERVE_DATA_UPDATED_TOPIC, addr_word(reserve)],
             data,
         );
-        let event = decode_reserve_data_updated(&log).unwrap();
+        let event = decode_aave_reserve_data_updated_log(&log).unwrap();
         assert_eq!(event.reserve, reserve);
         assert_eq!(event.liquidity_rate, liquidity_rate);
         assert_eq!(event.stable_borrow_rate, stable_borrow_rate);
@@ -2211,7 +2211,7 @@ mod tests {
             vec![AAVE_MINT_TOPIC, addr_word(caller), addr_word(on_behalf_of)],
             data,
         );
-        let event = decode_scaled_token_mint(&log).unwrap();
+        let event = decode_aave_scaled_token_mint_log(&log).unwrap();
         assert_eq!(event.token_address, token);
         assert_eq!(event.caller, caller);
         assert_eq!(event.on_behalf_of, on_behalf_of);
@@ -2239,7 +2239,7 @@ mod tests {
             vec![AAVE_BURN_TOPIC, addr_word(from), addr_word(target)],
             data,
         );
-        let event = decode_scaled_token_burn(&log).unwrap();
+        let event = decode_aave_scaled_token_burn_log(&log).unwrap();
         assert_eq!(event.from, from);
         assert_eq!(event.target, target);
         assert_eq!(event.value, value);
@@ -2264,7 +2264,7 @@ mod tests {
             vec![AAVE_BALANCE_TRANSFER_TOPIC, addr_word(from), addr_word(to)],
             data,
         );
-        let event = decode_scaled_token_balance_transfer(&log).unwrap();
+        let event = decode_aave_scaled_token_balance_transfer_log(&log).unwrap();
         assert_eq!(event.token_address, token);
         assert_eq!(event.from, from);
         assert_eq!(event.to, to);
@@ -2295,7 +2295,7 @@ mod tests {
             ],
             data,
         );
-        let event = decode_reserve_initialized(&log).unwrap();
+        let event = decode_aave_reserve_initialized_log(&log).unwrap();
         assert_eq!(event.asset, asset);
         assert_eq!(event.a_token, a_token);
         assert_eq!(event.stable_debt_token, stable_debt);
@@ -2314,7 +2314,7 @@ mod tests {
             vec![AAVE_USER_E_MODE_SET_TOPIC, addr_word(user)],
             u8_word(category_id).to_vec(),
         );
-        let event = decode_user_e_mode_set(&log).unwrap();
+        let event = decode_aave_user_e_mode_set_log(&log).unwrap();
         assert_eq!(event.user, user);
         assert_eq!(event.category_id, category_id);
     }
@@ -2334,7 +2334,7 @@ mod tests {
             ],
             vec![],
         );
-        let event = decode_reserve_used_as_collateral_enabled(&log).unwrap();
+        let event = decode_aave_reserve_used_as_collateral_enabled_log(&log).unwrap();
         assert_eq!(event.reserve, reserve);
         assert_eq!(event.user, user);
     }
@@ -2351,7 +2351,7 @@ mod tests {
             vec![AAVE_STAKED_TOPIC, addr_word(from), addr_word(on_behalf_of)],
             u256_word(amount).to_vec(),
         );
-        let event = decode_staked(&log).unwrap();
+        let event = decode_aave_staked_log(&log).unwrap();
         assert_eq!(event.stk_aave_address, stk);
         assert_eq!(event.from, from);
         assert_eq!(event.on_behalf_of, on_behalf_of);
@@ -2370,7 +2370,7 @@ mod tests {
             vec![AAVE_REDEEM_TOPIC, addr_word(from), addr_word(to)],
             u256_word(amount).to_vec(),
         );
-        let event = decode_redeem(&log).unwrap();
+        let event = decode_aave_redeem_log(&log).unwrap();
         assert_eq!(event.from, from);
         assert_eq!(event.to, to);
         assert_eq!(event.amount, amount);
@@ -2392,7 +2392,7 @@ mod tests {
             ],
             u256_word(old_percent).to_vec(),
         );
-        let event = decode_discount_percent_updated(&log).unwrap();
+        let event = decode_aave_discount_percent_updated_log(&log).unwrap();
         assert_eq!(event.user, user);
         assert_eq!(event.old_discount_percent, old_percent);
         assert_eq!(event.new_discount_percent, new_percent);
@@ -2410,7 +2410,7 @@ mod tests {
             vec![ERC20_TRANSFER_TOPIC, addr_word(from), addr_word(to)],
             u256_word(value).to_vec(),
         );
-        let event = decode_erc20_transfer(&log).unwrap();
+        let event = decode_aave_erc20_transfer_log(&log).unwrap();
         assert_eq!(event.token_address, token);
         assert_eq!(event.from, from);
         assert_eq!(event.to, to);
@@ -2452,7 +2452,7 @@ mod tests {
             vec![AAVE_EMODE_CATEGORY_ADDED_TOPIC, B256::new(u8_word(category_id))],
             data,
         );
-        let event = decode_e_mode_category_added(&log).unwrap();
+        let event = decode_aave_e_mode_category_added_log(&log).unwrap();
         assert_eq!(event.category_id, category_id);
         assert_eq!(event.ltv, ltv);
         assert_eq!(event.liquidation_threshold, lt);
@@ -2487,7 +2487,7 @@ mod tests {
             vec![AAVE_SUPPLY_TOPIC, B256::ZERO, B256::ZERO, B256::ZERO, B256::ZERO],
             vec![0u8; 32],
         );
-        assert!(decode_supply(&log).is_none(), "truncated data → None");
+        assert!(decode_aave_supply_log(&log).is_none(), "truncated data → None");
     }
 
     #[test]
@@ -2498,6 +2498,6 @@ mod tests {
             vec![AAVE_SUPPLY_TOPIC, B256::ZERO, B256::ZERO, B256::ZERO, B256::ZERO],
             vec![0u8; 64],
         );
-        assert!(decode_borrow(&log).is_none(), "wrong topic → None");
+        assert!(decode_aave_borrow_log(&log).is_none(), "wrong topic → None");
     }
 }
