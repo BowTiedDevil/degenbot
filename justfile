@@ -35,6 +35,21 @@ test-rust: test-standalone
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     cargo test --manifest-path rust/Cargo.toml --workspace
 
+# Run Rust tests via cargo-nextest (dev only; CI uses `test-rust` above because
+# the CI runner does not install nextest). ~20% faster build+run than cargo test
+# via execution parallelism (see rust/PERF_RESULTS.md lever #3). Falls back to
+# cargo test if cargo-nextest is not installed (e.g. outside the devcontainer).
+test-rust-nextest: test-standalone
+    #!/usr/bin/env bash
+    python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+    export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    if cargo nextest --version >/dev/null 2>&1; then
+        cargo nextest run --manifest-path rust/Cargo.toml --workspace
+    else
+        echo "cargo-nextest not installed; falling back to cargo test" >&2
+        cargo test --manifest-path rust/Cargo.toml --workspace
+    fi
+
 # Run wrapped Rust Python tests
 test-rust-python:
     uv run pytest tests/rust -x -q --no-header
