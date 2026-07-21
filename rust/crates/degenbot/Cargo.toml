@@ -54,3 +54,5 @@ degenbot-pool-updater = { path = "../degenbot-pool-updater" }
 
 [dev-dependencies]
 alloy = { version = "^2.0" }
+serde = { version = "^1.0", features = ["derive"] }
+serde_json = { version = "^1.0" }

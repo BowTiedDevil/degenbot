@@ -1,0 +1,28 @@
+{
+  "_doc": "Shared canonical V3 concentrated-liquidity swap fixture for the ADR-005 Tier-2 dual-driver parity tests. Loaded by BOTH rust/crates/degenbot/tests/parity_v3_swap.rs (Rust consumer, BotState directly) AND tests/standalone_parity/test_v3_swap_dual_driver.py (Python consumer, PyBot). A 1:1-price V3 pool (sqrt_price_x96 = 2^96, tick 0), liquidity 1e12, fee 3000 (0.3%), tick_spacing 60, tick 0 seeded + Tracked coverage so the swap stays in-tick (no MissingTickWord). amount_in = 1e9 -> deterministic output 996006981 (symmetric for zfo/ofz at the 1:1 price). A deliberately-wrong edit to THIS file fails BOTH sides (the mechanical link the copied constants lacked).",
+  "_oracle_note": "V3 CL swap math has no simple closed form (v3_simulate_swap routes through compute_swap_step_v3 + the tick walk). The expected output is a recorded constant; the per-side tests add monotonicity + direction-symmetry sanity checks. This is the weaker-oracle shape documented in AGENTS.md's Known gap (a non-circular re-derivation is its own TDD task).",
+  "fixture": {
+    "token0": "0x000000000000000000000000000000000000000a",
+    "token1": "0x000000000000000000000000000000000000000b",
+    "pool": "0x000000000000000000000000000000000000000c",
+    "factory": "0x000000000000000000000000000000000000000f",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "sqrt_price_x96": "79228162514264337593543950336",
+    "_sqrt_price_x96_note": "2^96, the Q96.32 repr of 1.0 (a 1:1 price).",
+    "liquidity": "1000000000000",
+    "tick": 0,
+    "tick_0_net_liquidity": "0",
+    "coverage": "tracked",
+    "update_block": 0
+  },
+  "probe": {
+    "amount_in": "1000000000",
+    "_amount_in_note": "1e9, small relative to liquidity -> stays in the active tick (no MissingTickWord).",
+    "zero_for_one": true
+  },
+  "expected": {
+    "amount_out_zfo": "996006981",
+    "_amount_out_zfo_note": "Deterministic from the fixture above. Symmetric for zfo/ofz at the 1:1 price (no directional asymmetry at balance). Both consumers MUST reproduce this exact value; divergence = a lossy FFI seam on the CL swap path."
+  }
+}

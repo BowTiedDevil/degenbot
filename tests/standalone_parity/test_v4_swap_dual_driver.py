@@ -2,59 +2,67 @@
 
 The behavioral companion to the Rust `parity_v4_swap.rs` test. Proves the
 **same** canonical V4 fixture driven through the **Python consumer** (`PyBot`,
-the PyO3 binding) produces the **same** `amount_out` as the Rust consumer.
+the PyO3 binding) produces the **same** `amount_out` as the Rust consumer
+(`BotState` directly). The V4 path is the sign-flipped twin of V3
+(`calculate_tokens_out` inverts `zero_for_one` before delegating to
+`v4_simulate_swap`); this fixture exercises that inversion.
 
-V4 uses the **same CL math** as V3 but the `amountSpecified` sign convention
-flips (V4 exact-input is *negative*, opposite to V3's positive). So this
-exercises a distinct FFI-seam path from the V3 seed: the Rust core's sign
-flip in `simulate_swap` + the V4 `register_v4_pool` admission (pool_manager +
-pool_id_hex + currency0/1/fee/tick_spacing/hook_flags). Divergence between the
-Rust and Python consumers = a lossy seam on the V4 path.
+## The shared contract (HRT356 — single source of truth)
 
-## The shared contract
+The fixture + expected output are loaded from the SHARED file
+`tests/standalone_parity/fixtures/v4_swap.json`, which the Rust parity test
+(`rust/crates/degenbot/tests/parity_v4_swap.rs`) ALSO loads. A fixture edit
+that drifts the expected output fails BOTH sides mechanically — closing the
+V3/V4 fixture-drift gap documented in AGENTS.md "Known gap — V3/V4 fixture
+drift" (the V4 constants were previously copied between the two sides with no
+mechanical link).
 
-The fixture constants below MUST mirror `rust/crates/degenbot/tests/
-parity_v4_swap.rs` exactly. A 1:1-price V4 pool (sqrt_price_x96 = 2^96,
-tick 0), liquidity 1e12, fee 500 (0.05% — V4 default-low, **distinct from
-the V3 seed's 3000**, ruling out an accidental hardcoding), tick_spacing 10,
-no hooks (`hook_flags = 0`), tick 0 seeded + `"tracked"` coverage.
-`amount_in = 1_000_000_000` → deterministic output `998_501_997`.
+## pool_manager reconciliation
+
+This shared fixture canonicalizes `pool_manager` to `0x…0044` (the value the
+Rust side previously used). The Python side previously used
+`0x4444…4444` (forty 4s) — a drift neither test could catch because
+`pool_manager` is non-load-bearing for the swap output (V4 admits pools by
+`pool_id`, not CREATE2). The shared fixture forces agreement.
 """
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from degenbot.bot import PyBot
 
-# ---- the shared canonical fixture (mirror in the Rust parity test) ----
-_POOL_MANAGER = "0x" + "4" * 40
-_CURRENCY0 = "0x" + "0" * 40  # native (address(0))
-_CURRENCY1 = "0x" + "0" * 39 + "1"
-_HOOKS = "0x" + "0" * 40  # no hooks
+# ---- the shared canonical fixture (loaded, not copied) ----
+_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "v4_swap.json"
+_FIXTURE = json.loads(_FIXTURE_PATH.read_text())
+_F = _FIXTURE["fixture"]
+_P = _FIXTURE["probe"]
+_E = _FIXTURE["expected"]
 
-_FEE = 500  # 0.05% (V4 default-low tier — distinct from V3's 3000)
-_TICK_SPACING = 10
-# `pool_id_hex` — a 0x-prefixed 32-byte hex string. The Rust core derives the
-# pool's identity key from this; the value is arbitrary for the in-spec
-# admission path (no CREATE2 check on V4 — the pool_id IS the key).
-_POOL_ID_HEX = "0x" + "ee" * 32
-# A 1:1 price: sqrt_price_x96 = 2^96 (the Q96.32 repr of 1.0).
-_SQRT_PRICE_1TO1 = 1 << 96
-_LIQUIDITY = 1_000_000_000_000  # 1e12
-_TICK = 0
+_POOL_MANAGER = _F["pool_manager"]
+_CURRENCY0 = _F["currency0"]
+_CURRENCY1 = _F["currency1"]
+_HOOKS = _F["hooks"]
+_POOL_ID_HEX = _F["pool_id_hex"]
+_FEE = _F["fee"]
+_TICK_SPACING = _F["tick_spacing"]
+_SQRT_PRICE_1TO1 = int(_F["sqrt_price_x96"])  # 2^96, the Q96.32 repr of 1.0
+_LIQUIDITY = int(_F["liquidity"])
+_TICK = _F["tick"]
 
-_AMOUNT_IN = 1_000_000_000  # 1e9 — small, stays in-tick
-_ZERO_FOR_ONE = True  # currency0 → currency1
+_AMOUNT_IN = int(_P["amount_in"])
+_ZERO_FOR_ONE = _P["zero_for_one"]
 
-# Canonical V4 swap output, deterministic from the fixture above. Symmetric
-# for zfo/ofz at the 1:1 price. Both consumers MUST reproduce this.
-_EXPECTED_AMOUNT_OUT_ZFO = 998_501_997
+_EXPECTED_AMOUNT_OUT_ZFO = int(_E["amount_out_zfo"])
 
 
 def _register_canonical_v4_pool(py_bot: PyBot) -> int:
     """Register the canonical V4 pool through the Python consumer path.
 
-    Mirrors the Rust test's inline registration — same fixture, same
-    `Tracked` coverage, same tick-0 seed. Returns the deterministic pool id (1).
+    Mirrors the Rust test's inline registration — same fixture (loaded from the
+    same shared file), same `Tracked` coverage, same tick-0 seed. Returns the
+    deterministic pool id (1).
     """
     tick_data = {_TICK: (_LIQUIDITY, 0, 0)}
     return py_bot.register_v4_pool(
@@ -78,9 +86,10 @@ def test_python_consumer_v4_swap_matches_recorded_constant() -> None:
     """The PyBot Python driver reproduces the recorded V4 swap constant.
 
     Python side of the Tier-2 dual-driver gate (V4 CL path). The Rust side
-    (`rust/crates/degenbot/tests/parity_v4_swap.rs`) drives the same fixture
-    through `BotState` directly; both MUST equal `_EXPECTED_AMOUNT_OUT_ZFO`.
-    Catches a lossy FFI seam on the V4 sign-flipped path.
+    (`rust/crates/degenbot/tests/parity_v4_swap.rs`) loads the same fixture file
+    and drives it through `BotState` directly; both MUST equal
+    `_EXPECTED_AMOUNT_OUT_ZFO`. Catches a lossy FFI seam on the V4 sign-flipped
+    path.
     """
     py_bot = PyBot()
     pool_id = _register_canonical_v4_pool(py_bot)
@@ -105,9 +114,7 @@ def test_python_consumer_v4_swap_matches_recorded_constant() -> None:
     )
 
     # Direction symmetry at the 1:1 price (catches a V4 sign-flip regression).
-    ofz_out = py_bot.calculate_tokens_out(
-        pool_id, zero_for_one=False, amount_in=_AMOUNT_IN
-    )
+    ofz_out = py_bot.calculate_tokens_out(pool_id, zero_for_one=False, amount_in=_AMOUNT_IN)
     assert ofz_out == amount_out, (
         f"1:1-price V4 swap must be direction-symmetric (zfo {amount_out} != ofz {ofz_out})"
     )

@@ -1879,6 +1879,8 @@ dependencies = [
  "degenbot-submission",
  "degenbot-uniswap",
  "degenbot-v2-math",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

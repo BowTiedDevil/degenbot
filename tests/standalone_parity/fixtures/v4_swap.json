@@ -1,0 +1,32 @@
+{
+  "_doc": "Shared canonical V4 concentrated-liquidity swap fixture for the ADR-005 Tier-2 dual-driver parity tests. Loaded by BOTH rust/crates/degenbot/tests/parity_v4_swap.rs (Rust consumer, BotState directly) AND tests/standalone_parity/test_v4_swap_dual_driver.py (Python consumer, PyBot). A 1:1-price V4 pool (sqrt_price_x96 = 2^96, tick 0), liquidity 1e12, fee 500 (0.05%, the V4 default-low tier \u2014 distinct from V3's 3000), tick_spacing 10, tick 0 seeded + Tracked coverage. amount_in = 1e9 -> deterministic output 998501997. The V4 path is the sign-flipped twin of V3 (calculate_tokens_out inverts zero_for_one before delegating to v4_simulate_swap); this fixture exercises that inversion. A deliberately-wrong edit to THIS file fails BOTH sides (the mechanical link the copied constants lacked).",
+  "_oracle_note": "V4 CL swap math has no simple closed form. The expected output is a recorded constant; the per-side tests add monotonicity + direction-symmetry sanity checks (weaker-oracle shape, AGENTS.md Known gap).",
+  "_reconciliation_note": "This fixture canonicalizes pool_manager to 0x\u20260044 (the value the Rust side previously used). The Python side previously used 0x440000\u20260044 ( forty 4s) \u2014 a drift between the two sides that neither test could catch (pool_manager is non-load-bearing for the swap output because V4 admits pools by pool_id, not CREATE2; still, the shared fixture forces agreement).",
+  "fixture": {
+    "pool_manager": "0x0000000000000000000000000000000000000044",
+    "currency0": "0x0000000000000000000000000000000000000000",
+    "_currency0_note": "address(0) \u2014 the native currency sentinel in V4.",
+    "currency1": "0x0000000000000000000000000000000000000001",
+    "hooks": "0x0000000000000000000000000000000000000000",
+    "pool_id_hex": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "_pool_id_hex_note": "32 bytes of 0xee.",
+    "fee": 500,
+    "tick_spacing": 10,
+    "sqrt_price_x96": "79228162514264337593543950336",
+    "_sqrt_price_x96_note": "2^96, the Q96.32 repr of 1.0 (a 1:1 price).",
+    "liquidity": "1000000000000",
+    "tick": 0,
+    "tick_0_net_liquidity": "0",
+    "coverage": "tracked",
+    "update_block": 0
+  },
+  "probe": {
+    "amount_in": "1000000000",
+    "_amount_in_note": "1e9, small relative to liquidity -> stays in the active tick.",
+    "zero_for_one": true
+  },
+  "expected": {
+    "amount_out_zfo": "998501997",
+    "_amount_out_zfo_note": "Deterministic from the fixture above. The V4 path sign-flips zero_for_one before delegating; both consumers MUST reproduce this exact value, divergence = a lossy FFI seam on the V4 (sign-flipped) path."
+  }
+}
