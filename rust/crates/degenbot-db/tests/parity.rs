@@ -38,10 +38,18 @@ fn fixture_db_path() -> PathBuf {
 }
 
 fn fixture_expected() -> Expected {
-    let path = PathBuf::from(FIXTURE_DIR).join("parity_expected.json");
+    let path = fixture_expected_path();
     let text =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     serde_json::from_str(&text).expect("parity_expected.json is well-formed")
+}
+
+/// Path to the frozen `parity_expected.json` oracle — shared by the typed
+/// [`fixture_expected`] reader and the raw-order order-assertion tests
+/// (ADTUMQ) that parse the JSON as a `serde_json::Value` to preserve object
+/// key order.
+fn fixture_expected_path() -> PathBuf {
+    PathBuf::from(FIXTURE_DIR).join("parity_expected.json")
 }
 
 #[derive(Debug, Deserialize)]
@@ -287,6 +295,65 @@ fn fetch_all_liquidity_maps_v3_matches_python_oracle() {
     }
 }
 
+/// ADTUMQ order contract: `fetch_all_liquidity_maps` V3 must return pools in
+/// the SQL `ORDER BY p.address` sequence (binary collation on the stored
+/// EIP-55-checksummed strings), NOT a client-side re-sort. The redundancy has
+/// been removed; this test pins the contract so a regression that re-introduces
+/// a `to_checksum(None)` re-sort or a `HashMap` round-trip is caught. With a
+/// single-pool fixture the assertion is trivially satisfied but encodes the
+/// contract for when the fixture grows a multi-pool V3 set.
+///
+/// The link is mechanical: the Rust Vec's checksummed-address sequence is
+/// asserted byte-identical to the raw `parity_expected.json` object's key
+/// sequence. `serde_json::Value` deserializes objects into a `BTreeMap` (sorted
+/// ascending), whose ordering is identical to `SQLite`'s BINARY collation on
+/// the ASCII checksummed strings — so JSON key order == SQL `ORDER BY` order.
+#[test]
+fn fetch_all_liquidity_maps_v3_address_sequence_matches_json_key_order() {
+    let (db, _state) = DegenbotDb::open(&fixture_db_path()).unwrap();
+    let exp = fixture_expected();
+    let all = db
+        .fetch_all_liquidity_maps(exp.chain_id, ExchangeFamily::V3)
+        .expect("V3 liquidity maps should load");
+
+    // Parse the frozen JSON raw to preserve object key order (BTreeMap-sorted).
+    let raw_text = std::fs::read_to_string(fixture_expected_path())
+        .expect("parity_expected.json should be readable");
+    let raw: serde_json::Value =
+        serde_json::from_str(&raw_text).expect("parity_expected.json is well-formed");
+    let json_keys: Vec<String> = raw["v3_all_liquidity_maps"]
+        .as_object()
+        .expect("v3_all_liquidity_maps should be an object")
+        .keys()
+        .cloned()
+        .collect();
+
+    let rust_addrs: Vec<String> = all
+        .iter()
+        .map(|(key, _)| match key {
+            degenbot_db::PoolKey::V3(a) => a.to_checksum(None),
+            degenbot_db::PoolKey::V4 { .. } => panic!("expected V3 pool key, got V4"),
+        })
+        .collect();
+
+    assert_eq!(
+        rust_addrs, json_keys,
+        "V3 address sequence must equal the JSON key order (the SQL ORDER BY contract)"
+    );
+
+    // Redundant guard: re-derive ascending order directly from the Rust Vec
+    // (independent of JSON) — catches any client-side re-sort that reorders
+    // away from ascending checksummed-string byte order.
+    for w in rust_addrs.windows(2) {
+        assert!(
+            w[0] <= w[1],
+            "V3 addresses not ascending: {} before {}",
+            w[0],
+            w[1]
+        );
+    }
+}
+
 #[test]
 fn fetch_all_liquidity_maps_v4_matches_python_oracle() {
     let (db, _state) = DegenbotDb::open(&fixture_db_path()).unwrap();
@@ -331,6 +398,44 @@ fn fetch_all_liquidity_maps_v4_matches_python_oracle() {
             assert_eq!(*net, parse_i256(&want_pair[1]), "V4 net {pm}/{hash}/{tick}");
         }
     }
+}
+
+/// ADTUMQ order contract for V4: `fetch_all_liquidity_maps` V4 returns pools in
+/// the SQL `ORDER BY pm.address, v4.pool_hash, lp.tick` sequence (the streaming
+/// `current` accumulator relies on this). Pins the Rust Vec's `(pm_address,
+/// pool_hash)` sequence byte-identical to the frozen `parity_expected.json`
+/// array's order — a mechanical link that catches any future client-side
+/// re-sort or `HashMap` round-trip regression. Like the V3 variant, trivially
+/// satisfied on the single-pool fixture but scales when the fixture grows.
+#[test]
+fn fetch_all_liquidity_maps_v4_sequence_matches_json_array_order() {
+    let (db, _state) = DegenbotDb::open(&fixture_db_path()).unwrap();
+    let exp = fixture_expected();
+    let all = db
+        .fetch_all_liquidity_maps(exp.chain_id, ExchangeFamily::V4)
+        .expect("V4 liquidity maps should load");
+
+    let rust_seq: Vec<(String, String)> = all
+        .iter()
+        .map(|(key, _)| match key {
+            degenbot_db::PoolKey::V4 {
+                pool_manager,
+                pool_hash,
+            } => (pool_manager.to_checksum(None), pool_hash.clone()),
+            degenbot_db::PoolKey::V3(_) => panic!("expected V4 pool key, got V3"),
+        })
+        .collect();
+
+    let json_seq: Vec<(String, String)> = exp
+        .v4_all_liquidity_maps
+        .iter()
+        .map(|e| (e.pool_manager.clone(), e.pool_hash.clone()))
+        .collect();
+
+    assert_eq!(
+        rust_seq, json_seq,
+        "V4 (pool_manager, pool_hash) sequence must equal the JSON array order (the SQL ORDER BY contract)"
+    );
 }
 
 #[test]

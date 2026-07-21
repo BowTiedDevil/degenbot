@@ -2715,13 +2715,15 @@ fn existing_emode_category(
     market_id: i64,
     category_id: i64,
 ) -> Result<Option<i64>, DbError> {
-    Ok(conn
-        .query_row(
-            "SELECT id FROM aave_v3_emode_categories \
-             WHERE market_id = ?1 AND category_id = ?2",
-            params![market_id, category_id],
-            |r| r.get(0),
-        )
+    // OONKWO: prepare_cached caches the compiled statement across calls (spike-7
+    // measured ~4× over query_row for this constant-SQL single-row shape). Block-
+    // scoped: the `s` drops at the fn boundary, releasing back to the cache before
+    // any commit. FN signature UNCHANGED.
+    let mut s = conn.prepare_cached(
+        "SELECT id FROM aave_v3_emode_categories \
+         WHERE market_id = ?1 AND category_id = ?2",
+    )?;
+    Ok(s.query_row(params![market_id, category_id], |r| r.get(0))
         .optional()?)
 }
 
@@ -2729,13 +2731,9 @@ fn existing_asset_config(
     conn: &rusqlite::Connection,
     asset_id: i64,
 ) -> Result<Option<i64>, DbError> {
-    Ok(conn
-        .query_row(
-            "SELECT id FROM aave_v3_asset_configs WHERE asset_id = ?1",
-            params![asset_id],
-            |r| r.get(0),
-        )
-        .optional()?)
+    // OONKWO: prepare_cached caches the compiled statement across calls.
+    let mut s = conn.prepare_cached("SELECT id FROM aave_v3_asset_configs WHERE asset_id = ?1")?;
+    Ok(s.query_row(params![asset_id], |r| r.get(0)).optional()?)
 }
 
 /// Lookup `aave_v3_assets.id` by the `(market_id, underlying_asset_id)`
@@ -2746,14 +2744,15 @@ fn existing_aave_v3_asset(
     market_id: i64,
     underlying_asset_id: i64,
 ) -> Result<Option<i64>, DbError> {
-    Ok(conn
-        .query_row(
-            "SELECT id FROM aave_v3_assets \
-             WHERE market_id = ?1 AND underlying_asset_id = ?2",
-            params![market_id, underlying_asset_id],
-            |r| r.get(0),
-        )
-        .optional()?)
+    // OONKWO: prepare_cached caches the compiled statement across calls.
+    let mut s = conn.prepare_cached(
+        "SELECT id FROM aave_v3_assets \
+         WHERE market_id = ?1 AND underlying_asset_id = ?2",
+    )?;
+    Ok(
+        s.query_row(params![market_id, underlying_asset_id], |r| r.get(0))
+            .optional()?,
+    )
 }
 
 fn existing_user_collateral_config(
@@ -2761,13 +2760,12 @@ fn existing_user_collateral_config(
     user_id: i64,
     asset_id: i64,
 ) -> Result<Option<i64>, DbError> {
-    Ok(conn
-        .query_row(
-            "SELECT id FROM aave_v3_user_collateral_configs \
-             WHERE user_id = ?1 AND asset_id = ?2",
-            params![user_id, asset_id],
-            |r| r.get(0),
-        )
+    // OONKWO: prepare_cached caches the compiled statement across calls.
+    let mut s = conn.prepare_cached(
+        "SELECT id FROM aave_v3_user_collateral_configs \
+         WHERE user_id = ?1 AND asset_id = ?2",
+    )?;
+    Ok(s.query_row(params![user_id, asset_id], |r| r.get(0))
         .optional()?)
 }
 
@@ -2776,12 +2774,10 @@ fn existing_user(
     market_id: i64,
     address: &str,
 ) -> Result<Option<i64>, DbError> {
-    Ok(conn
-        .query_row(
-            "SELECT id FROM aave_v3_users WHERE market_id = ?1 AND address = ?2",
-            params![market_id, address],
-            |r| r.get(0),
-        )
+    // OONKWO: prepare_cached caches the compiled statement across calls.
+    let mut s =
+        conn.prepare_cached("SELECT id FROM aave_v3_users WHERE market_id = ?1 AND address = ?2")?;
+    Ok(s.query_row(params![market_id, address], |r| r.get(0))
         .optional()?)
 }
 
@@ -2794,14 +2790,13 @@ fn existing_gho_token(
     chain_id: i64,
     token_address: &str,
 ) -> Result<Option<i64>, DbError> {
-    Ok(conn
-        .query_row(
-            "SELECT g.id FROM aave_gho_tokens g
-             JOIN erc20_tokens t ON t.id = g.token_id
-             WHERE t.chain = ?1 AND t.address = ?2",
-            params![chain_id, token_address],
-            |r| r.get(0),
-        )
+    // OONKWO: prepare_cached caches the compiled statement across calls.
+    let mut s = conn.prepare_cached(
+        "SELECT g.id FROM aave_gho_tokens g
+         JOIN erc20_tokens t ON t.id = g.token_id
+         WHERE t.chain = ?1 AND t.address = ?2",
+    )?;
+    Ok(s.query_row(params![chain_id, token_address], |r| r.get(0))
         .optional()?)
 }
 
@@ -2810,12 +2805,13 @@ fn existing_erc20_token(
     chain: i64,
     address: &str,
 ) -> Result<Option<i64>, DbError> {
-    Ok(conn
-        .query_row(
-            "SELECT id FROM erc20_tokens WHERE chain = ?1 AND address = ?2",
-            params![chain, address],
-            |r| r.get(0),
-        )
+    // OONKWO: prepare_cached caches the compiled statement across calls. The only
+    // PRODUCTION caller today (discovery.rs per-pool get_or_create_erc20_token)
+    // is cold/sparse; this banks the ~4× for when the Aave migration ports the
+    // Python event handlers to these Rust get_or_create_* paths.
+    let mut s =
+        conn.prepare_cached("SELECT id FROM erc20_tokens WHERE chain = ?1 AND address = ?2")?;
+    Ok(s.query_row(params![chain, address], |r| r.get(0))
         .optional()?)
 }
 
