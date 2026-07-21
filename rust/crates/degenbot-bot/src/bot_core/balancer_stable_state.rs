@@ -70,7 +70,7 @@ mod tests {
         // invariant_version round-trip — V1.
         assert_eq!(id.invariant_version, 1);
         // Genesis anchor pushed.
-        assert_eq!(core.balance_vector_journal_len(pool_id), Some(1));
+        assert_eq!(core.pool_journal_len(pool_id), Some(1));
     }
 
     #[test]
@@ -115,7 +115,7 @@ mod tests {
         );
         assert_eq!(s.update_block, 12);
         // Genesis + the new transition delta.
-        assert_eq!(core.balance_vector_journal_len(pool_id), Some(2));
+        assert_eq!(core.pool_journal_len(pool_id), Some(2));
     }
 
     #[test]
@@ -164,7 +164,7 @@ mod tests {
         // Restore to before block 12 via the balance-vector trait dispatcher
         // (ADR-016 ReorgPoolState); the landed-at values are read back through
         // the state projection.
-        core.restore_balance_vector_before_block(pool_id, 12)
+        core.restore_pool_before_block(pool_id, 12)
             .expect("Some on a registered Balancer stable pool")
             .expect("Ok (target > genesis block)");
         let s = core
@@ -188,7 +188,7 @@ mod tests {
         ));
         // Target at the registration block → rolling back past registration.
         let res = core
-            .restore_balance_vector_before_block(pool_id, 10)
+            .restore_pool_before_block(pool_id, 10)
             .expect("Some on registered pool");
         assert!(
             res.is_err(),

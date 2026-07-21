@@ -2148,89 +2148,29 @@ impl BotState {
         let pool_ids: Vec<u64> = self.pools.keys().copied().collect();
         let mut restored = 0usize;
         for pool_id in pool_ids {
-            // Peek the per-pool journal depth without a mutable borrow. Only
-            // pools with a delta at/after the reorg target need rollback;
-            // untouched pools keep their current state (idempotent restore).
-            let needs_restore = match self.pools.get(&pool_id) {
-                Some(PoolEntry::V2(_, state)) => {
-                    state.journal.newest_block().is_some_and(|b| b >= target)
-                }
-                Some(PoolEntry::V3(_, state)) => {
-                    state.journal.newest_block().is_some_and(|b| b >= target)
-                }
-                Some(PoolEntry::V4(_, state)) => {
-                    state.journal.newest_block().is_some_and(|b| b >= target)
-                }
-                Some(PoolEntry::Curve(_, state)) => {
-                    state.journal.newest_block().is_some_and(|b| b >= target)
-                }
-                Some(PoolEntry::BalancerWeighted(_, state)) => {
-                    state.journal.newest_block().is_some_and(|b| b >= target)
-                }
-                Some(PoolEntry::BalancerStable(_, state)) => {
-                    state.journal.newest_block().is_some_and(|b| b >= target)
-                }
-                Some(PoolEntry::AerodromeV2(_, state)) => {
-                    state.journal.newest_block().is_some_and(|b| b >= target)
-                }
-                None => false,
-            };
+            // Peek the per-pool newest delta block without a mutable borrow
+            // (ADR-016). Only pools with a delta at/after the reorg target
+            // need rollback; untouched pools keep their current state
+            // (idempotent restore). The peek also guards the CL family's
+            // panic-on-empty journal: an empty journal reports `None` → skip.
+            let needs_restore = self
+                .pools
+                .get(&pool_id)
+                .and_then(PoolEntry::as_reorg_state)
+                .and_then(ReorgPoolState::newest_block)
+                .is_some_and(|b| b >= target);
             if !needs_restore {
                 continue;
             }
 
-            let did_restore = match self.pools.get_mut(&pool_id) {
-                Some(PoolEntry::V2(_, state)) => {
-                    // Landed-at restore: on Ok, apply the landed-at state; on
-                    // Err (target at/before registration) skip the pool
-                    // (idempotent — a reorg doesn't touch pools that didn't
-                    // exist before the fork target).
-                    match state.journal.restore_before_block(target) {
-                        Ok((r0, r1, blk)) => {
-                            state.reserve0 = r0;
-                            state.reserve1 = r1;
-                            state.update_block = blk;
-                            true
-                        }
-                        Err(_) => false,
-                    }
-                }
-                Some(PoolEntry::V3(..)) => {
-                    // Reuse the existing V3 restore path: scalars + reverse-
-                    // applied tick priors + cache invalidation.
-                    self.v3_restore_before_block(pool_id, target).is_some()
-                }
-                Some(PoolEntry::V4(..)) => {
-                    // V4 restore: same V3BlockDelta shape (scalar + per-tick
-                    // priors); delegated to `v4_restore_before_block`.
-                    self.v4_restore_before_block(pool_id, target).is_some()
-                }
-                Some(
-                    PoolEntry::Curve(..)
-                    | PoolEntry::BalancerWeighted(..)
-                    | PoolEntry::BalancerStable(..),
-                ) => {
-                    // Balance-vector restore (Curve + Balancer weighted +
-                    // stable, shared full-state delta shape); delegated to the
-                    // balance-vector trait dispatcher (ADR-016 ReorgPoolState).
-                    self.restore_balance_vector_before_block(pool_id, target)
-                        .is_some()
-                }
-                Some(PoolEntry::AerodromeV2(_, state)) => {
-                    // Aerodrome restore: V2-shaped delta (two reserves);
-                    // mirror the V2 inline path.
-                    match state.journal.restore_before_block(target) {
-                        Ok((r0, r1, blk)) => {
-                            state.reserve0 = r0;
-                            state.reserve1 = r1;
-                            state.update_block = blk;
-                            true
-                        }
-                        Err(_) => false,
-                    }
-                }
-                None => false,
-            };
+            // Dispatch through the unified trait path. On `Ok`, the trait
+            // impl wrote the landed-at state into the struct's own fields; on
+            // `Err` (target at/before registration), skip the pool
+            // (idempotent — a reorg doesn't touch pools that didn't exist
+            // before the fork target).
+            let did_restore = self
+                .restore_pool_before_block(pool_id, target)
+                .is_some_and(|r| r.is_ok());
             if did_restore {
                 restored += 1;
             }
@@ -2238,69 +2178,69 @@ impl BotState {
         restored
     }
 
-    // --- Balance-vector reorg dispatch (ADR-016 ReorgPoolState) ---
-    // ADR-016 collapses the per-family balance-vector restore/discard/
-    // journal_len dispatchers onto one trait-dispatching method per op.
-    // The trait impls on the balance-vector state structs (Curve + Balancer
-    // weighted + stable) absorb the field-write; restore returns `()`. These
-    // three methods replace the nine per-family `curve_*` / `balancer_weighted_*`
-    // / `balancer_stable_*` reorg dispatchers.
+    // --- Unified reorg dispatch (ADR-016 ReorgPoolState) ---
+    // One trait-dispatching method per op over all 7 `PoolEntry` variants,
+    // via `PoolEntry::as_reorg_state(_mut)`. The trait impls on each state
+    // struct absorb the field-write; restore returns `()` so `V3RestoreResult`
+    // and the per-family restore-return types stay internal to the impls and
+    // never escape. These three methods replace the per-family `v2_*` /
+    // `aerodrome_*` / `v3_*` / `v4_*` / `curve_*` / `balancer_weighted_*` /
+    // `balancer_stable_*` reorg dispatchers.
 
-    /// Restore a balance-vector pool's state to the landed-at state strictly
-    /// before `block`, via the `ReorgPoolState` trait. Returns `None` if the
-    /// pool ID is not registered or is not a balance-vector pool.
+    /// Restore `pool_id`'s state to the landed-at state strictly before
+    /// `block`, dispatching through `ReorgPoolState::restore_before_block`.
+    /// Returns `None` if the pool is not registered.
+    ///
+    /// A caller needing the restored values (the `PyO3` wrapper, which marshals
+    /// a tuple to Python) reads the struct's current fields after restore —
+    /// the post-restore fields ARE the landed-at (before) values the
+    /// per-family return types previously carried.
     ///
     /// # Errors
     ///
     /// `NoStatePriorToBlock` if the target is at/before the registration
-    /// (genesis) delta.
-    pub fn restore_balance_vector_before_block(
+    /// (genesis) delta. The CL family's journal panics on empty instead —
+    /// callers must pre-check [`has_state_prior_to`](Self::has_state_prior_to).
+    pub fn restore_pool_before_block(
         &mut self,
         pool_id: u64,
         block: u64,
     ) -> Option<Result<(), JournalError>> {
-        let state: &mut dyn ReorgPoolState = match self.pools.get_mut(&pool_id)? {
-            PoolEntry::Curve(_, state) => state,
-            PoolEntry::BalancerWeighted(_, state) => state,
-            PoolEntry::BalancerStable(_, state) => state,
-            _ => return None,
-        };
-        Some(state.restore_before_block(block))
+        Some(
+            self.pools
+                .get_mut(&pool_id)?
+                .as_reorg_state_mut()?
+                .restore_before_block(block),
+        )
     }
 
-    /// Discard balance-vector reorg journal deltas earlier than `block`, via
-    /// the `ReorgPoolState` trait. Returns `None` if the pool ID is not
-    /// registered or is not a balance-vector pool.
+    /// Discard reorg journal deltas earlier than `block`, dispatching through
+    /// `ReorgPoolState::discard_before_block`. Returns `None` if the pool is
+    /// not registered. Does NOT mutate the live state fields (only trims old
+    /// history).
     ///
     /// # Errors
     ///
     /// `NoStateAtOrAfterBlock` if the target is past the newest delta.
-    pub fn discard_balance_vector_before_block(
+    pub fn discard_pool_before_block(
         &mut self,
         pool_id: u64,
         block: u64,
     ) -> Option<Result<(), JournalError>> {
-        let state: &mut dyn ReorgPoolState = match self.pools.get_mut(&pool_id)? {
-            PoolEntry::Curve(_, state) => state,
-            PoolEntry::BalancerWeighted(_, state) => state,
-            PoolEntry::BalancerStable(_, state) => state,
-            _ => return None,
-        };
-        Some(state.discard_before_block(block))
+        Some(
+            self.pools
+                .get_mut(&pool_id)?
+                .as_reorg_state_mut()?
+                .discard_before_block(block),
+        )
     }
 
-    /// Number of deltas in the reorg journal for a balance-vector pool, via
-    /// the `ReorgPoolState` trait. Returns `None` if the pool ID is not
-    /// registered or is not a balance-vector pool.
+    /// Number of deltas in the reorg journal, dispatching through
+    /// `ReorgPoolState::journal_len`. Returns `None` if the pool is not
+    /// registered.
     #[must_use]
-    pub fn balance_vector_journal_len(&self, pool_id: u64) -> Option<usize> {
-        let state: &dyn ReorgPoolState = match self.pools.get(&pool_id)? {
-            PoolEntry::Curve(_, state) => state,
-            PoolEntry::BalancerWeighted(_, state) => state,
-            PoolEntry::BalancerStable(_, state) => state,
-            _ => return None,
-        };
-        Some(state.journal_len())
+    pub fn pool_journal_len(&self, pool_id: u64) -> Option<usize> {
+        Some(self.pools.get(&pool_id)?.as_reorg_state()?.journal_len())
     }
 
     // --- Aerodrome V2 journal + registration methods ---
@@ -2443,51 +2383,6 @@ impl BotState {
             return Ok(());
         };
         state.journal.discard_before_block(block)
-    }
-
-    /// Restore V3 pool state prior to a target block.
-    ///
-    /// Pops reorg journal deltas at/after the target block, restores
-    /// scalar "before" values into the current state, and reverse-applies
-    /// tick priors to the current `tick_data` map.
-    ///
-    /// Restore `pool_id`'s state to just before `block` (ADR-006 slice 7).
-    ///
-    /// Single-pool dispatch: routes V2→`v2_restore_before_block`,
-    /// V3→`v3_restore_before_block`, V4→`v4_restore_before_block`. Writes the
-    /// journal's landed-at state into the current mutable fields, releases, then
-    /// `ReorgCoordinator` notifies subscribers. Pools whose newest delta is
-    /// already before `block` are no-ops (idempotent restore).
-    ///
-    /// **Pre-check [`has_state_prior_to`](Self::has_state_prior_to) first** —
-    /// the V3/V4 `restore_before_block` panics on an empty journal; the
-    /// pre-check avoids that and returns `Err` uniformly so the pump shuts down
-    /// gracefully on a too-deep reorg.
-    pub fn restore_pool_before_block(&mut self, pool_id: u64, block: u64) {
-        // V2 returns Result; ignore the Err here (too-deep was pre-checked).
-        // V3/V4 return Option (None for unregistered / non-matching family).
-        match self.pools.get_mut(&pool_id) {
-            Some(PoolEntry::V2(..)) => {
-                let _ = self.v2_restore_before_block(pool_id, block);
-            }
-            Some(PoolEntry::V3(..)) => {
-                let _ = self.v3_restore_before_block(pool_id, block);
-            }
-            Some(PoolEntry::V4(..)) => {
-                let _ = self.v4_restore_before_block(pool_id, block);
-            }
-            Some(
-                PoolEntry::Curve(..)
-                | PoolEntry::BalancerWeighted(..)
-                | PoolEntry::BalancerStable(..),
-            ) => {
-                let _ = self.restore_balance_vector_before_block(pool_id, block);
-            }
-            Some(PoolEntry::AerodromeV2(..)) => {
-                let _ = self.aerodrome_restore_before_block(pool_id, block);
-            }
-            None => {}
-        }
     }
 
     /// Does `pool_id`'s journal have state at or before `block`? (ADR-006
@@ -3735,7 +3630,9 @@ impl Bot {
     /// Pre-check [`has_state_prior_to`](Self::has_state_prior_to) first — the
     /// V3/V4 journal `restore_before_block` panics on an empty journal.
     pub fn restore_pool_before_block(&self, pool_id: u64, block: u64) {
-        self.state.write().restore_pool_before_block(pool_id, block);
+        // Discard the trait result — the reorg coordinator path is fire-and-
+        // forget (too-deep was pre-checked via `has_state_prior_to`).
+        let _ = self.state.write().restore_pool_before_block(pool_id, block);
     }
 
     /// Does `pool_id`'s journal have state at or before `block`? (ADR-006
