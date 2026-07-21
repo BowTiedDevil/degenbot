@@ -8,7 +8,7 @@
 //! alongside V2/V3/V4/Curve/BalancerWeighted (which landed in 12a).
 //!
 //! Scope of THIS sub-slice: the Rust state struct +
-//! `register_balancer_stable_pool` + `apply_balancer_stable_balance_update_by_pool_id`
+//! `register_balancer_stable_pool` + `apply_balance_update_by_pool_id`
 //! + journal restore/discard + `PyBot.register_balancer_stable_pool` +
 //!   Balancer stable read getters on `PyLiquidityPool`
 //!   (`balancer_stable_balances`, `balancer_stable_update_block`,
@@ -66,7 +66,9 @@
 use alloy::primitives::{Address, U256};
 
 use crate::rate_provider::BalancerRateProvider;
-use crate::state_history::{BalancesBlockDelta, JournalError, ReorgJournal, ReorgPoolState};
+use crate::state_history::{
+    BalanceVectorPoolState, BalancesBlockDelta, JournalError, ReorgJournal, ReorgPoolState,
+};
 
 use std::sync::Arc;
 
@@ -192,7 +194,7 @@ pub struct BalancerStablePoolIdentity {
 /// state-port sub-slice (ADR-005 slice 12c): the Python `BalancerV2StablePool`
 /// companion (12d) reads `balances`/`update_block` from this struct via
 /// `PyLiquidityPool` getters and delegates `external_update` to
-/// `apply_balancer_stable_balance_update_by_pool_id`.
+/// `apply_balance_update_by_pool_id`.
 #[derive(Clone, Debug)]
 pub struct BalancerStablePoolState {
     // --- Mutable state (authoritative) ---
@@ -284,5 +286,25 @@ impl ReorgPoolState for BalancerStablePoolState {
 
     fn newest_block(&self) -> Option<u64> {
         self.journal.newest_block()
+    }
+}
+
+// ADR-017 D1 — forward-apply twin of `ReorgPoolState`. Byte-identical to the
+// Curve / BalancerWeighted impls modulo the struct name + assert message.
+impl BalanceVectorPoolState for BalancerStablePoolState {
+    fn apply_balance_update(&mut self, balances: Vec<U256>, block_number: u64) {
+        assert!(
+            balances.len() == self.balances.len(),
+            "Balancer stable balance length mismatch: pool has {} tokens, update has {}",
+            self.balances.len(),
+            balances.len(),
+        );
+        self.journal.push_delta(BalancesBlockDelta {
+            block: block_number,
+            balances_before: self.balances.clone(),
+            balances_after: balances.clone(),
+        });
+        self.balances = balances;
+        self.update_block = block_number;
     }
 }
