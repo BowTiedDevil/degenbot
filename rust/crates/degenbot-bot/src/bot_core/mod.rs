@@ -602,17 +602,27 @@ impl BotState {
     /// backing. Returns the affected `pool_id`, or `None` if not registered /
     /// not a V2 pool (no-op). Journals the prior reserves then lands the new.
     #[must_use]
-    pub fn apply_v2_sync_by_pool_id(
+    /// Apply a reserve-pair `Sync` event keyed by the handle's `pool_id`,
+    /// dispatching through `ReservePairPoolState::apply_sync` (ADR-017 D3 —
+    /// replaces the two per-family `apply_v2_sync_by_pool_id` /
+    /// `apply_aerodrome_sync_by_pool_id` dispatchers, whose bodies were
+    /// byte-identical modulo the variant name). Covers both V2 and Aerodrome
+    /// pools (Solidly mirrors v2-core's `Sync(uint112, uint112)`).
+    ///
+    /// Returns `Some(pool_id)` if the pool is a reserve-pair family
+    /// (V2 / `AerodromeV2`); `None` otherwise (silent no-op — a CL / Curve /
+    /// Balancer `pool_id` yields `None`).
+    pub fn apply_sync_by_pool_id(
         &mut self,
         pool_id: u64,
         reserve0: U112,
         reserve1: U112,
         block_number: u64,
     ) -> Option<u64> {
-        let Some(PoolEntry::V2(_, state)) = self.pools.get_mut(&pool_id) else {
-            return None;
-        };
-        state.apply_sync(reserve0, reserve1, block_number);
+        let entry = self.pools.get_mut(&pool_id)?;
+        entry
+            .as_reserve_pair_mut()?
+            .apply_sync(reserve0, reserve1, block_number);
         Some(pool_id)
     }
 
@@ -2082,24 +2092,6 @@ impl BotState {
         pool_id
     }
 
-    /// Apply an Aerodrome V2 `Sync` event by `pool_id`: journals the prior
-    /// reserves, then lands the new reserves + `update_block`. Returns the
-    /// affected `pool_id`, or `None` if not registered / not an Aerodrome pool.
-    #[must_use]
-    pub fn apply_aerodrome_sync_by_pool_id(
-        &mut self,
-        pool_id: u64,
-        reserve0: U112,
-        reserve1: U112,
-        block_number: u64,
-    ) -> Option<u64> {
-        let Some(PoolEntry::AerodromeV2(_, state)) = self.pools.get_mut(&pool_id) else {
-            return None;
-        };
-        state.apply_sync(reserve0, reserve1, block_number);
-        Some(pool_id)
-    }
-
     /// Look up an Aerodrome V2 pool's immutable registration identity. Returns
     /// `None` if not registered or not an Aerodrome pool.
     #[must_use]
@@ -3458,7 +3450,7 @@ mod tests {
     #[test]
     fn aerodrome_reserve_mutation_and_reorg_rollback() {
         // Aerodrome V2 reserves + reorg journal live in Rust (ADR-005
-        // Aerodrome state port): `apply_aerodrome_sync_by_pool_id` journals
+        // Aerodrome state port): `apply_sync_by_pool_id` journals
         // the prior reserves then lands the new; `aerodrome_restore_before_block`
         // pops back to the landed-at state at the target block.
         use crate::bot_core::RegisterAerodromeV2PoolParams;
@@ -3492,12 +3484,8 @@ mod tests {
         assert_eq!(state.journal.len(), 1);
 
         // Apply a Sync at block 20 (journals prior reserves, lands new).
-        let applied = core.apply_aerodrome_sync_by_pool_id(
-            pool_id,
-            U112::from(1_500u64),
-            U112::from(2_500u64),
-            20,
-        );
+        let applied =
+            core.apply_sync_by_pool_id(pool_id, U112::from(1_500u64), U112::from(2_500u64), 20);
         assert_eq!(applied, Some(pool_id));
         let state = core.get_aerodrome_pool(pool_id).expect("aerodrome state");
         assert_eq!(state.reserve0, U112::from(1_500u64));
@@ -3514,13 +3502,16 @@ mod tests {
         assert_eq!(state.reserve1, U112::from(2_000u64));
         assert_eq!(state.update_block, 10);
 
-        // A non-Aerodrome pool_id is a silent no-op for apply + restore.
+        // With ADR-017 slice 5 the Aerodrome + V2 `apply_sync` paths are
+        // one dispatcher (`apply_sync_by_pool_id` across both reserve-pair
+        // families), so a V2 pool_id now lands too — the cross-family isolation
+        // that the old per-family method provided is gone by design.
         let v2_id = core
             .register_v2_pool(&make_params(U112::from(100), U112::from(200)))
             .expect("test setup: V2 registration");
         assert_eq!(
-            core.apply_aerodrome_sync_by_pool_id(v2_id, U112::ZERO, U112::ZERO, 99),
-            None
+            core.apply_sync_by_pool_id(v2_id, U112::ZERO, U112::ZERO, 99),
+            Some(v2_id)
         );
         // The no-mutate-on-wrong-family guard for restore moved to the PyO3
         // wrapper layer (ADR-016); BotState's unified restore dispatches

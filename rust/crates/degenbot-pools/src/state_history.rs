@@ -15,7 +15,7 @@
 
 use std::collections::VecDeque;
 
-use alloy::primitives::U256;
+use alloy::primitives::{aliases::U112, U256};
 
 // ---------------------------------------------------------------------------
 // BlockDelta trait
@@ -402,6 +402,32 @@ pub trait BalanceVectorPoolState: ReorgPoolState {
     /// Panics if `balances.len() != self.balances.len()` (an arity mismatch —
     /// a builder/event-decode wiring error; the message is family-specific).
     fn apply_balance_update(&mut self, balances: Vec<U256>, block_number: u64);
+}
+
+// ---------------------------------------------------------------------------
+// ReservePairPoolState trait — forward-apply twin of ReorgPoolState (ADR-017)
+// ---------------------------------------------------------------------------
+
+/// A reserve-pair pool that owns its own forward-apply (event-replay)
+/// field-write — the apply twin of [`ReorgPoolState`] (which owns the
+/// restore/rollback half). Covers the two reserve-pair structs
+/// (`V2PoolState`, `AerodromeV2PoolState`), whose `apply_sync` bodies were
+/// byte-identical inherent methods (both push a full-state [`V2BlockDelta`],
+/// overwrite the two reserves, advance `update_block`) and whose `BotState`
+/// dispatchers (`apply_v2_sync_by_pool_id` / `apply_aerodrome_sync_by_pool_id`)
+/// were two byte-identical wrappers. ADR-014 D3 rejected a reserve-pair
+/// state-struct trait as "too short to justify a trait + dyn" — ADR-016
+/// overturned that for the restore twin and ADR-017 D4 overturns it here for
+/// the apply twin for the same reason: the `()`-return dissolves the no-op
+/// trap, the bodies are the pool's own field-mutation logic, and the
+/// `BotState` dispatcher collapse (2->1) is the forward-apply mirror of
+/// ADR-016 D2.
+pub trait ReservePairPoolState: ReorgPoolState {
+    /// Apply a `Sync(uint112, uint112)` event: capture the prior reserves into
+    /// the reorg journal as a full-state [`V2BlockDelta`] (`before` = pre-sync,
+    /// `after` = new, at `block_number`), then overwrite `reserve0`/`reserve1`
+    /// and advance `update_block`.
+    fn apply_sync(&mut self, reserve0: U112, reserve1: U112, block_number: u64);
 }
 
 // ---------------------------------------------------------------------------

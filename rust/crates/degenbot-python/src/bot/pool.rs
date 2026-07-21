@@ -1368,10 +1368,10 @@ impl PyLiquidityPool {
             "reserve1",
         )
         .map_err(|sv| crate::bot::engine::SpecViolationError::new_err(format!("{sv}")))?;
-        let _ =
-            self.core
-                .write()
-                .apply_aerodrome_sync_by_pool_id(self.pool_id, r0, r1, block_number);
+        let _ = self
+            .core
+            .write()
+            .apply_sync_by_pool_id(self.pool_id, r0, r1, block_number);
         Ok(())
     }
 
@@ -1504,7 +1504,7 @@ impl PyLiquidityPool {
         let _ = self
             .core
             .write()
-            .apply_v2_sync_by_pool_id(self.pool_id, r0, r1, block_number);
+            .apply_sync_by_pool_id(self.pool_id, r0, r1, block_number);
         Ok(())
     }
 

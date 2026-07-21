@@ -6,7 +6,9 @@ use crate::aerodrome_v2_state::{AerodromeV2PoolIdentity, AerodromeV2PoolState};
 use crate::balancer_stable_state::{BalancerStablePoolIdentity, BalancerStablePoolState};
 use crate::balancer_weighted_state::{BalancerWeightedPoolIdentity, BalancerWeightedPoolState};
 use crate::curve_state::{CurvePoolIdentity, CurvePoolState};
-use crate::state_history::{BalanceVectorPoolState, ScalarPriors, TickBefore, V3BlockDelta};
+use crate::state_history::{
+    BalanceVectorPoolState, ReservePairPoolState, ScalarPriors, TickBefore, V3BlockDelta,
+};
 use crate::v2_state::{V2PoolIdentity, V2PoolState};
 use crate::v3_state::{V3PoolIdentity, V3PoolState};
 use crate::v4_state::{V4PoolIdentity, V4PoolState};
@@ -247,6 +249,24 @@ impl PoolEntry {
             | PoolEntry::V3(..)
             | PoolEntry::V4(..)
             | PoolEntry::AerodromeV2(..) => None,
+        }
+    }
+
+    /// Project to `&mut dyn ReservePairPoolState` (ADR-017 D3) — the
+    /// forward-apply view over the two reserve-pair families (V2 /
+    /// `AerodromeV2`). Used by `BotState`'s unified `apply_sync_by_pool_id`
+    /// dispatcher to reach the trait method without a per-family variant
+    /// match. Returns `None` for the five non-reserve-pair families.
+    #[must_use]
+    pub fn as_reserve_pair_mut(&mut self) -> Option<&mut dyn ReservePairPoolState> {
+        match self {
+            PoolEntry::V2(_, s) => Some(s),
+            PoolEntry::AerodromeV2(_, s) => Some(s),
+            PoolEntry::V3(..)
+            | PoolEntry::V4(..)
+            | PoolEntry::Curve(..)
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::BalancerStable(..) => None,
         }
     }
 }

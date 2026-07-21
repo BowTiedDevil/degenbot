@@ -17,7 +17,9 @@
 
 use alloy::primitives::{aliases::U112, Address};
 
-use crate::state_history::{JournalError, ReorgJournal, ReorgPoolState, V2BlockDelta};
+use crate::state_history::{
+    JournalError, ReorgJournal, ReorgPoolState, ReservePairPoolState, V2BlockDelta,
+};
 use degenbot_uniswap::dex_identity::DexVariant;
 
 // ---------------------------------------------------------------------------
@@ -136,13 +138,14 @@ impl AerodromeV2PoolState {
 }
 
 impl AerodromeV2PoolState {
-    /// Apply an Aerodrome `Sync` event to this pool's reserves, capturing the
-    /// prior reserves into the reorg journal (ADR-014 D1 — relocated from
-    /// `BotState::apply_aerodrome_sync_by_pool_id`). Aerodrome shares the
-    /// `V2BlockDelta` full-state delta with V2 (Solidly mirrors v2-core's
-    /// `Sync(uint112, uint112)`); the body is the same shape as
-    /// `V2PoolState::apply_sync`.
-    pub fn apply_sync(&mut self, reserve0: U112, reserve1: U112, block_number: u64) {
+    // Apply `Sync` is on `ReservePairPoolState` (ADR-017 slice 5 —
+    // byte-identical to the V2 impl modulo the struct name). Aerodrome
+    // shares the `V2BlockDelta` full-state delta with V2 (Solidly mirrors
+    // v2-core's `Sync(uint112, uint112)`).
+}
+
+impl ReservePairPoolState for AerodromeV2PoolState {
+    fn apply_sync(&mut self, reserve0: U112, reserve1: U112, block_number: u64) {
         self.journal.push_delta(V2BlockDelta {
             block: block_number,
             reserve0_before: self.reserve0,
