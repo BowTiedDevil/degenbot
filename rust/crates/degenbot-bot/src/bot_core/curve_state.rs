@@ -79,7 +79,7 @@ mod tests {
     fn apply_balance_update_journals_and_lands_new_balances() {
         let mut core = BotState::new();
         let pool_id = core.register_curve_pool(&three_coin_params(10, &[1_000, 2_000, 3_000]));
-        let affected = core.apply_curve_balance_update_by_pool_id(
+        let affected = core.apply_balance_update_by_pool_id(
             pool_id,
             vec![U256::from(1_500), U256::from(2_500), U256::from(3_500)],
             12,
@@ -116,7 +116,7 @@ mod tests {
                 ..Default::default()
             })
             .expect("test setup: V2 registration");
-        let affected = core.apply_curve_balance_update_by_pool_id(v2, vec![U256::from(1_500)], 5);
+        let affected = core.apply_balance_update_by_pool_id(v2, vec![U256::from(1_500)], 5);
         assert!(
             affected.is_none(),
             "Curve apply on a V2 pool must be a silent no-op"
@@ -128,7 +128,7 @@ mod tests {
         let mut core = BotState::new();
         let pool_id = core.register_curve_pool(&three_coin_params(10, &[1_000, 2_000, 3_000]));
         // Block 12: balances change.
-        let _ = core.apply_curve_balance_update_by_pool_id(
+        let _ = core.apply_balance_update_by_pool_id(
             pool_id,
             vec![U256::from(1_500), U256::from(2_500), U256::from(3_500)],
             12,

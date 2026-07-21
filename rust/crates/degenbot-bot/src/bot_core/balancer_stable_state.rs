@@ -100,7 +100,7 @@ mod tests {
             Some(2),
             1,
         ));
-        let affected = core.apply_balancer_stable_balance_update_by_pool_id(
+        let affected = core.apply_balance_update_by_pool_id(
             pool_id,
             vec![U256::from(1_500), U256::from(2_500), U256::from(3_500)],
             12,
@@ -139,8 +139,7 @@ mod tests {
                 ..Default::default()
             })
             .expect("test setup: V2 registration");
-        let affected =
-            core.apply_balancer_stable_balance_update_by_pool_id(v2, vec![U256::from(1_500)], 5);
+        let affected = core.apply_balance_update_by_pool_id(v2, vec![U256::from(1_500)], 5);
         assert!(
             affected.is_none(),
             "Balancer stable apply on a V2 pool must be a silent no-op"
@@ -156,7 +155,7 @@ mod tests {
             Some(2),
             1,
         ));
-        let _ = core.apply_balancer_stable_balance_update_by_pool_id(
+        let _ = core.apply_balance_update_by_pool_id(
             pool_id,
             vec![U256::from(1_500), U256::from(2_500), U256::from(3_500)],
             12,

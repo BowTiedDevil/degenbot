@@ -323,28 +323,29 @@ impl BotState {
     /// count — a wiring/programming error (the builder always passes an
     /// `Exchange`-decoded balance tuple of the right arity).
     #[must_use]
-    pub fn apply_curve_balance_update_by_pool_id(
+    /// Apply a balance-vector update (a Curve `Exchange` event or a Balancer
+    /// Vault `PoolBalanceChanged` event) keyed by the handle's `pool_id`,
+    /// dispatching through `BalanceVectorPoolState::apply_balance_update`
+    /// (ADR-017 D1 — replaces the three per-family
+    /// `apply_curve_balance_update_by_pool_id` /
+    /// `apply_balancer_weighted_balance_update_by_pool_id` /
+    /// `apply_balancer_stable_balance_update_by_pool_id` methods, whose bodies
+    /// were byte-identical modulo the arity `assert!` message).
+    ///
+    /// Returns `Some(pool_id)` if the pool is a balance-vector family
+    /// (Curve / `BalancerWeighted` / `BalancerStable`); `None` otherwise (silent
+    /// no-op — mirrors the per-family silent-no-op contract on a non-matching
+    /// family, e.g. a V2 `pool_id`).
+    pub fn apply_balance_update_by_pool_id(
         &mut self,
         pool_id: u64,
         balances: Vec<U256>,
         block_number: u64,
     ) -> Option<u64> {
-        let Some(PoolEntry::Curve(_, state)) = self.pools.get_mut(&pool_id) else {
-            return None;
-        };
-        assert!(
-            balances.len() == state.balances.len(),
-            "Curve balance length mismatch: pool has {} tokens, update has {}",
-            state.balances.len(),
-            balances.len(),
-        );
-        state.journal.push_delta(BalancesBlockDelta {
-            block: block_number,
-            balances_before: state.balances.clone(),
-            balances_after: balances.clone(),
-        });
-        state.balances = balances;
-        state.update_block = block_number;
+        let entry = self.pools.get_mut(&pool_id)?;
+        entry
+            .as_balance_vector_mut()?
+            .apply_balance_update(balances, block_number);
         Some(pool_id)
     }
 
@@ -419,46 +420,6 @@ impl BotState {
         self.pool_addresses.insert(params.address, pool_id);
 
         pool_id
-    }
-
-    /// Apply a Balancer weighted `external_update` (new balances from a Vault
-    /// `PoolBalanceChanged` event) by `pool_id` — the
-    /// `PyLiquidityPool.apply_balancer_weighted_balance_update` backing.
-    ///
-    /// Journals the prior balances (genesis-anchor V2-style discipline), then
-    /// lands the new balances + `update_block`. Returns the affected `pool_id`,
-    /// or `None` if not registered / not a Balancer weighted pool (silent
-    /// no-op — don't corrupt a V2/V3/V4/Curve pool).
-    ///
-    /// # Panics
-    ///
-    /// Panics if `balances.len()` doesn't match the registered pool's token
-    /// count — a wiring error (the builder always passes a balance tuple of
-    /// the right arity).
-    #[must_use]
-    pub fn apply_balancer_weighted_balance_update_by_pool_id(
-        &mut self,
-        pool_id: u64,
-        balances: Vec<U256>,
-        block_number: u64,
-    ) -> Option<u64> {
-        let Some(PoolEntry::BalancerWeighted(_, state)) = self.pools.get_mut(&pool_id) else {
-            return None;
-        };
-        assert!(
-            balances.len() == state.balances.len(),
-            "Balancer weighted balance length mismatch: pool has {} tokens, update has {}",
-            state.balances.len(),
-            balances.len(),
-        );
-        state.journal.push_delta(BalancesBlockDelta {
-            block: block_number,
-            balances_before: state.balances.clone(),
-            balances_after: balances.clone(),
-        });
-        state.balances = balances;
-        state.update_block = block_number;
-        Some(pool_id)
     }
 
     /// Read a registered Balancer weighted pool's state by `pool_id`.
@@ -543,46 +504,6 @@ impl BotState {
         self.pool_addresses.insert(params.address, pool_id);
 
         pool_id
-    }
-
-    /// Apply a Balancer stable `external_update` (new balances from a Vault
-    /// `PoolBalanceChanged` event) by `pool_id` — the
-    /// `PyLiquidityPool.apply_balancer_stable_balance_update` backing.
-    ///
-    /// Journals the prior balances (genesis-anchor V2-style discipline), then
-    /// lands the new balances + `update_block`. Returns the affected `pool_id`,
-    /// or `None` if not registered / not a Balancer stable pool (silent
-    /// no-op — don't corrupt a V2/V3/V4/Curve/BalancerWeighted pool).
-    ///
-    /// # Panics
-    ///
-    /// Panics if `balances.len()` doesn't match the registered pool's token
-    /// count — a wiring error (the builder always passes a balance tuple of
-    /// the right arity).
-    #[must_use]
-    pub fn apply_balancer_stable_balance_update_by_pool_id(
-        &mut self,
-        pool_id: u64,
-        balances: Vec<U256>,
-        block_number: u64,
-    ) -> Option<u64> {
-        let Some(PoolEntry::BalancerStable(_, state)) = self.pools.get_mut(&pool_id) else {
-            return None;
-        };
-        assert!(
-            balances.len() == state.balances.len(),
-            "Balancer stable balance length mismatch: pool has {} tokens, update has {}",
-            state.balances.len(),
-            balances.len(),
-        );
-        state.journal.push_delta(BalancesBlockDelta {
-            block: block_number,
-            balances_before: state.balances.clone(),
-            balances_after: balances.clone(),
-        });
-        state.balances = balances;
-        state.update_block = block_number;
-        Some(pool_id)
     }
 
     /// Read a registered Balancer stable pool's state by `pool_id`.

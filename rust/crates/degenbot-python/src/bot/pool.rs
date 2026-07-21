@@ -2486,7 +2486,7 @@ impl PyLiquidityPool {
         Ok(self
             .core
             .write()
-            .apply_curve_balance_update_by_pool_id(self.pool_id, bal, block_number)
+            .apply_balance_update_by_pool_id(self.pool_id, bal, block_number)
             .is_some())
     }
 
@@ -2578,7 +2578,7 @@ impl PyLiquidityPool {
         Ok(self
             .core
             .write()
-            .apply_balancer_weighted_balance_update_by_pool_id(self.pool_id, bal, block_number)
+            .apply_balance_update_by_pool_id(self.pool_id, bal, block_number)
             .is_some())
     }
 
@@ -2838,7 +2838,7 @@ impl PyLiquidityPool {
         Ok(self
             .core
             .write()
-            .apply_balancer_stable_balance_update_by_pool_id(self.pool_id, bal, block_number)
+            .apply_balance_update_by_pool_id(self.pool_id, bal, block_number)
             .is_some())
     }
 }

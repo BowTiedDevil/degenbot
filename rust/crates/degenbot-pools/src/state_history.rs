@@ -15,6 +15,8 @@
 
 use std::collections::VecDeque;
 
+use alloy::primitives::U256;
+
 // ---------------------------------------------------------------------------
 // BlockDelta trait
 // ---------------------------------------------------------------------------
@@ -369,6 +371,37 @@ pub trait ReorgPoolState {
     /// before the reorg target (idempotent no-op). See ADR-016.
     #[must_use]
     fn newest_block(&self) -> Option<u64>;
+}
+
+// ---------------------------------------------------------------------------
+// BalanceVectorPoolState trait — forward-apply twin of ReorgPoolState (ADR-017)
+// ---------------------------------------------------------------------------
+
+/// A balance-vector pool that owns its own forward-apply (event-replay)
+/// field-write — the apply twin of [`ReorgPoolState`] (which owns the
+/// restore/rollback half). Covers the three balance-vector structs
+/// (`CurvePoolState`, `BalancerWeightedPoolState`, `BalancerStablePoolState`),
+/// whose `apply_*_balance_update` bodies were byte-identical modulo the arity
+/// `assert!` message and previously lived inline in `BotState` (ADR-017 D1).
+///
+/// The trait returns `()` — the `Option<u64>` a `BotState` dispatcher returns
+/// (wrong-family ⇒ `None`) is a variant-dispatch concern, mirroring how
+/// ADR-016 D2 keeps `restore_pool_before_block` returning `Option<Result<(),_>>`
+/// on `BotState` while the trait returns `Result<(),_>`. The arity `assert!`
+/// (with its family-specific diagnostic message) lives inside each struct's
+/// impl, per the AGENTS.md "keep strings whole" guideline. The three impls
+/// are byte-identical modulo the struct name + assert message.
+pub trait BalanceVectorPoolState: ReorgPoolState {
+    /// Apply a balances-vector update (a Curve `Exchange` event or a Balancer
+    /// Vault `PoolBalanceChanged` event): capture the prior balances into the
+    /// reorg journal as a full-state [`BalancesBlockDelta`], then overwrite the
+    /// live `balances` and advance `update_block`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `balances.len() != self.balances.len()` (an arity mismatch —
+    /// a builder/event-decode wiring error; the message is family-specific).
+    fn apply_balance_update(&mut self, balances: Vec<U256>, block_number: u64);
 }
 
 // ---------------------------------------------------------------------------

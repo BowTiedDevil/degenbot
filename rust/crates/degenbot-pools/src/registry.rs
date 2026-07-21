@@ -6,7 +6,7 @@ use crate::aerodrome_v2_state::{AerodromeV2PoolIdentity, AerodromeV2PoolState};
 use crate::balancer_stable_state::{BalancerStablePoolIdentity, BalancerStablePoolState};
 use crate::balancer_weighted_state::{BalancerWeightedPoolIdentity, BalancerWeightedPoolState};
 use crate::curve_state::{CurvePoolIdentity, CurvePoolState};
-use crate::state_history::{ScalarPriors, TickBefore, V3BlockDelta};
+use crate::state_history::{BalanceVectorPoolState, ScalarPriors, TickBefore, V3BlockDelta};
 use crate::v2_state::{V2PoolIdentity, V2PoolState};
 use crate::v3_state::{V3PoolIdentity, V3PoolState};
 use crate::v4_state::{V4PoolIdentity, V4PoolState};
@@ -229,6 +229,25 @@ impl PoolEntry {
             PoolEntry::BalancerStable(_, s) => s,
             PoolEntry::AerodromeV2(_, s) => s,
         })
+    }
+
+    /// Project to `&mut dyn BalanceVectorPoolState` (ADR-017 D1) — the
+    /// forward-apply view over the three balance-vector families
+    /// (Curve / `BalancerWeighted` / `BalancerStable`). Used by `BotState`'s
+    /// unified `apply_balance_update_by_pool_id` dispatcher to reach the
+    /// trait method without a per-family variant match. Returns `None` for
+    /// the four non-balance-vector families.
+    #[must_use]
+    pub fn as_balance_vector_mut(&mut self) -> Option<&mut dyn BalanceVectorPoolState> {
+        match self {
+            PoolEntry::Curve(_, s) => Some(s),
+            PoolEntry::BalancerWeighted(_, s) => Some(s),
+            PoolEntry::BalancerStable(_, s) => Some(s),
+            PoolEntry::V2(..)
+            | PoolEntry::V3(..)
+            | PoolEntry::V4(..)
+            | PoolEntry::AerodromeV2(..) => None,
+        }
     }
 }
 

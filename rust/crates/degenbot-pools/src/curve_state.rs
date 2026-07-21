@@ -10,7 +10,7 @@
 //! ruling holds: a sample-of-one is not a pattern).
 //!
 //! Scope of THIS sub-slice: the Rust state struct + `register_curve_pool` +
-//! `apply_curve_balance_update_by_pool_id` + journal restore/discard +
+//! `apply_balance_update_by_pool_id` + journal restore/discard +
 //! `PyBot.register_curve_pool` + Curve read getters on `PyLiquidityPool`
 //! (`balances`, `n_coins`, `update_block`, `snapshot_curve`). The Python
 //! `CurveStableswapPool` companion rewrite (delegating `self._state.balances`
@@ -40,7 +40,9 @@ use alloy::primitives::{Address, U256};
 use std::sync::Arc;
 
 use crate::curve_data_provider::CurveDataProvider;
-use crate::state_history::{BalancesBlockDelta, JournalError, ReorgJournal, ReorgPoolState};
+use crate::state_history::{
+    BalanceVectorPoolState, BalancesBlockDelta, JournalError, ReorgJournal, ReorgPoolState,
+};
 
 // ---------------------------------------------------------------------------
 // Block delta
@@ -247,7 +249,7 @@ pub struct CurvePoolIdentity {
 /// sub-slice (ADR-005 slice 11a): the Python `CurveStableswapPool` companion
 /// (11b) reads `balances`/`update_block` from this struct via `PyLiquidityPool`
 /// getters and delegates `external_update` to
-/// `apply_curve_balance_update_by_pool_id`.
+/// `apply_balance_update_by_pool_id`.
 #[derive(Clone, Debug)]
 pub struct CurvePoolState {
     // --- Mutable state (authoritative) ---
@@ -356,5 +358,29 @@ impl ReorgPoolState for CurvePoolState {
 
     fn newest_block(&self) -> Option<u64> {
         self.journal.newest_block()
+    }
+}
+
+// ADR-017 D1 — forward-apply twin of `ReorgPoolState`. The field-write
+// previously inlined in `BotState::apply_balance_update_by_pool_id` is
+// absorbed into the state struct; the trait returns `()` (the `Option<u64>`
+// is a `BotState` variant-dispatch concern). Byte-identical to the
+// BalancerWeighted / BalancerStable impls modulo the struct name + assert
+// message.
+impl BalanceVectorPoolState for CurvePoolState {
+    fn apply_balance_update(&mut self, balances: Vec<U256>, block_number: u64) {
+        assert!(
+            balances.len() == self.balances.len(),
+            "Curve balance length mismatch: pool has {} tokens, update has {}",
+            self.balances.len(),
+            balances.len(),
+        );
+        self.journal.push_delta(BalancesBlockDelta {
+            block: block_number,
+            balances_before: self.balances.clone(),
+            balances_after: balances.clone(),
+        });
+        self.balances = balances;
+        self.update_block = block_number;
     }
 }
