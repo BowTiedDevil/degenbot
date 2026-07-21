@@ -28,29 +28,30 @@ suspicious = "warn"
 # built from `crates/degenbot-python/`) is a separate workspace member that
 # DOES pull pyo3; the umbrella never depends on it.
 [dependencies]
-degenbot-core = { path = "../degenbot-core" }
-degenbot-cl-math = { path = "../degenbot-cl-math" }
-degenbot-abi = { path = "../degenbot-abi" }
-degenbot-uniswap = { path = "../degenbot-uniswap" }
-degenbot-pathfinding = { path = "../degenbot-pathfinding" }
-degenbot-pools = { path = "../degenbot-pools" }
-degenbot-rpc = { path = "../degenbot-rpc" }
-degenbot-decoders = { path = "../degenbot-decoders" }
-degenbot-curve-math = { path = "../degenbot-curve-math" }
-degenbot-balancer-math = { path = "../degenbot-balancer-math" }
-degenbot-solidly-math = { path = "../degenbot-solidly-math" }
-degenbot-v2-math = { path = "../degenbot-v2-math" }
-degenbot-evm-math = { path = "../degenbot-evm-math" }
-degenbot-price = { path = "../degenbot-price" }
-degenbot-executor = { path = "../degenbot-executor" }
-degenbot-submission = { path = "../degenbot-submission" }
-degenbot-simulation = { path = "../degenbot-simulation" }
-degenbot-bot = { path = "../degenbot-bot" }
-degenbot-solvers = { path = "../degenbot-solvers" }
-degenbot-db = { path = "../degenbot-db" }
 degenbot-aave = { path = "../degenbot-aave" }
+degenbot-abi = { path = "../degenbot-abi" }
+degenbot-balancer-math = { path = "../degenbot-balancer-math" }
+degenbot-bot = { path = "../degenbot-bot" }
+degenbot-cl-math = { path = "../degenbot-cl-math" }
+degenbot-core = { path = "../degenbot-core" }
+degenbot-curve-math = { path = "../degenbot-curve-math" }
+degenbot-db = { path = "../degenbot-db" }
+degenbot-decoders = { path = "../degenbot-decoders" }
+degenbot-evm = { path = "../degenbot-evm" }
+degenbot-evm-math = { path = "../degenbot-evm-math" }
+degenbot-executor = { path = "../degenbot-executor" }
 degenbot-fork = { path = "../degenbot-fork" }
+degenbot-pathfinding = { path = "../degenbot-pathfinding" }
 degenbot-pool-updater = { path = "../degenbot-pool-updater" }
+degenbot-pools = { path = "../degenbot-pools" }
+degenbot-price = { path = "../degenbot-price" }
+degenbot-rpc = { path = "../degenbot-rpc" }
+degenbot-simulation = { path = "../degenbot-simulation" }
+degenbot-solidly-math = { path = "../degenbot-solidly-math" }
+degenbot-solvers = { path = "../degenbot-solvers" }
+degenbot-submission = { path = "../degenbot-submission" }
+degenbot-uniswap = { path = "../degenbot-uniswap" }
+degenbot-v2-math = { path = "../degenbot-v2-math" }
 
 [dev-dependencies]
 alloy = { version = "^2.0" }

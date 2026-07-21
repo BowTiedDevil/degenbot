@@ -1,0 +1,46 @@
+[package]
+name = "degenbot-evm"
+description = "Pure-Rust in-process EVM execution over revm — CacheDB<BotStateDb<AlloyDB>> composition fed by Rust-owned bot state (pyo3-free core)."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+complexity = "warn"
+correctness = "warn"
+pedantic = "warn"
+perf = "warn"
+style = "warn"
+suspicious = "warn"
+
+[dependencies]
+# revm — the canonical Rust EVM (audited, used by Reth/Foundry/many L2s).
+# `default-features = true` brings std + secp256k1 + c-kzg + blst + portable +
+# tracer (all mainnet precompiles — keep). `alloydb` enables `AlloyDB` (the
+# RPC-backed DatabaseAsyncRef). `asyncdb` enables `DatabaseAsyncRef` +
+# `WrapDatabaseAsync` (the async→sync Database bridge). `dev` is NOT enabled —
+# owner-funding uses explicit `CacheDB::insert_account_info` (the owner is
+# genuinely credited), keeping the sim a faithful mainnet execution (no
+# balance-check bypass).
+#
+# Spike QGJGWI pinned this version+feature set: revm 41.0.0 builds cleanly
+# against the workspace's resolved alloy (alloy-provider 2.2.0,
+# alloy-primitives 1.6.1 — both satisfy revm's `^2.0`/`^1.5.2`).
+revm = { version = "41.0.0", default-features = true, features = ["alloydb", "asyncdb"] }
+# The alloy umbrella (single source, matches degenbot-rpc's convention). The
+# umbrella's `DynProvider`/`Provider`/`Ethereum` are the same types revm's
+# `AlloyDB<N, P>` consumes (cargo unifies revm's granular alloy-provider 2.0
+# → 2.2.0). `full` brings the RPC types + provider-http the PoC verified.
+alloy = { version = "^2.0", features = ["full"] }
+degenbot-core = { path = "../degenbot-core" }
+thiserror = { version = "^2.0" }
+# `tokio` is required by `WrapDatabaseAsync` (it blocks the async `AlloyDB`
+# `DatabaseAsyncRef` calls on a runtime — `WrapDatabaseAsync::new` needs a
+# current-thread tokio handle). `rt` enables the blocking-spawn path.
+tokio = { version = "^1.52", features = ["rt"] }
