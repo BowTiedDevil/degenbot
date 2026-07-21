@@ -1392,33 +1392,18 @@ impl BotState {
     pub fn merge_tick_word(
         &mut self,
         pool_id: u64,
-        fetched: ::degenbot_pools::tick_fetch::FetchedTickWord,
+        fetched: &::degenbot_pools::tick_fetch::FetchedTickWord,
     ) -> bool {
+        // ADR-017 slice 1: dispatch through `ConcentratedLiquidityPoolMut`
+        // (the body lived inlined in V3/V4 arms here; the trait dedups the
+        // two). The `bool` wraps the trait's always-`true` return: `false`
+        // for non-CL / unregistered pools (the non-CL no-op).
         let Some(entry) = self.pools.get_mut(&pool_id) else {
             return false;
         };
-        match entry {
-            PoolEntry::V3(_, state) => {
-                for (tick, info) in fetched.ticks {
-                    state.tick_data.insert(tick, info);
-                }
-                state.known_bitmap_words.insert(fetched.word);
-                state.invalidate_tick_range_cache();
-                true
-            }
-            PoolEntry::V4(_, state) => {
-                for (tick, info) in fetched.ticks {
-                    state.tick_data.insert(tick, info);
-                }
-                state.known_bitmap_words.insert(fetched.word);
-                state.invalidate_tick_range_cache();
-                true
-            }
-            PoolEntry::V2(..)
-            | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..)
-            | PoolEntry::AerodromeV2(..) => false,
+        match entry.as_cl_mut() {
+            Some(cl) => cl.merge_tick_word(fetched),
+            None => false,
         }
     }
 
@@ -1470,7 +1455,7 @@ impl BotState {
                     };
                     match fetcher.fetch_missing_tick_word(pool_id, word, block) {
                         Ok(data) => {
-                            self.merge_tick_word(pool_id, data);
+                            self.merge_tick_word(pool_id, &data);
                         }
                         Err(_) => return U256::ZERO,
                     }
@@ -1575,7 +1560,7 @@ impl BotState {
                     let fetcher = fetcher.as_ref()?;
                     match fetcher.fetch_missing_tick_word(pool_id, word, block) {
                         Ok(data) => {
-                            self.merge_tick_word(pool_id, data);
+                            self.merge_tick_word(pool_id, &data);
                         }
                         Err(_) => return None,
                     }
@@ -1677,7 +1662,7 @@ impl BotState {
                     let fetcher = fetcher.as_ref()?;
                     match fetcher.fetch_missing_tick_word(pool_id, word, block) {
                         Ok(data) => {
-                            self.merge_tick_word(pool_id, data);
+                            self.merge_tick_word(pool_id, &data);
                         }
                         Err(_) => return None,
                     }
@@ -1791,7 +1776,9 @@ impl BotState {
                             }
                             let fetcher = fetcher.as_ref()?;
                             match fetcher.fetch_missing_tick_word(pool_id, word, block) {
-                                Ok(data) => override_state.merge_tick_word(&data),
+                                Ok(data) => {
+                                    override_state.merge_tick_word(&data);
+                                }
                                 Err(_) => return None,
                             }
                         }
@@ -1836,7 +1823,9 @@ impl BotState {
                             }
                             let fetcher = fetcher.as_ref()?;
                             match fetcher.fetch_missing_tick_word(pool_id, word, block) {
-                                Ok(data) => override_state.merge_tick_word(&data),
+                                Ok(data) => {
+                                    override_state.merge_tick_word(&data);
+                                }
                                 Err(_) => return None,
                             }
                         }
