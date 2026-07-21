@@ -315,6 +315,57 @@ pub struct V3RestoreResult {
 }
 
 // ---------------------------------------------------------------------------
+// ReorgPoolState trait — pool-owned reorg rollback (ADR-014 D3 refinement)
+// ---------------------------------------------------------------------------
+
+/// A pool state struct that owns its own reorg rollback.
+///
+/// The state struct absorbs the "write the landed-at state into my own
+/// mutable fields" step that ADR-014 left duplicated across per-family
+/// `BotState::*_restore_before_block` dispatchers. Each method returns a
+/// **family-agnostic** `Result<(), JournalError>` — there is no per-family
+/// restore-return type (`(U112, U112, u64)` / `(Vec<U256>, u64)` /
+/// `V3RestoreResult`). Returning `()` is the lever: it dissolves the no-op
+/// trap that defeated ADR-014's cross-family `PoolFamilyReg`, because every
+/// family satisfies the identical signature.
+///
+/// The family-specific field-write (which reserve pair, which balances vector,
+/// which slot0 scalars) lives *inside* each struct's impl — same category as
+/// ADR-014 D1's `apply_swap`/`apply_liquidity_update` on the state structs.
+/// A caller needing the restored values (the `PyO3` wrapper, which must marshal
+/// a tuple to Python) reads the struct's current fields after restore rather
+/// than receiving a typed return.
+///
+/// Balance-vector family: the three impls (Curve + Balancer weighted + stable)
+/// are byte-identical; V2/Aerodrome (reserve-pair) and V3/V4 (CL) adopt the
+/// trait in follow-on slices (V3 keeps `V3RestoreResult` *internally* — it
+/// never escapes the impl).
+pub trait ReorgPoolState {
+    /// Restore own mutable fields to the landed-at state strictly before
+    /// `block`. Pops deltas at/after `block`; the surviving newest delta's
+    /// `*_after` is the new current state.
+    ///
+    /// # Errors
+    ///
+    /// `NoStatePriorToBlock` if the target is at/before the registration
+    /// (genesis) delta — the pre-registration state does not exist.
+    fn restore_before_block(&mut self, block: u64) -> Result<(), JournalError>;
+
+    /// Discard deltas strictly earlier than `block` from the journal front.
+    /// Does NOT mutate the live state fields (only trims old history).
+    ///
+    /// # Errors
+    ///
+    /// `NoStateAtOrAfterBlock` if the target is past the newest delta (would
+    /// drop every known state).
+    fn discard_before_block(&mut self, block: u64) -> Result<(), JournalError>;
+
+    /// Number of deltas currently held in the reorg journal.
+    #[must_use]
+    fn journal_len(&self) -> usize;
+}
+
+// ---------------------------------------------------------------------------
 // Reorg journal
 // ---------------------------------------------------------------------------
 
