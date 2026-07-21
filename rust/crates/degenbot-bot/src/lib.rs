@@ -11,6 +11,14 @@
 //! generic against this sample-of-one, so the two live in one crate here
 //! rather than behind an artificial shared-trait seam.
 //!
+//! This fusion is **tracked debt** (ADR-018): the solve surface is not
+//! reachable standalone (a `cargo add degenbot` consumer wanting only the
+//! V2/V3/V4 solve math must take this crate + `degenbot-rpc` +
+//! `degenbot-db` + `tokio` + `rayon` + `dashmap`). The extraction trigger
+//! is a **second engine family** joining (e.g. an `AaveLiquidationEngine`
+//! or a split `SolidlyEngine`); until then, the cross-references are the
+//! cost of one engine family and one state owner co-evolving.
+//!
 //! # `PyO3` boundary
 //!
 //! The pure core (this crate's default features) has **no `pyo3` dependency**.

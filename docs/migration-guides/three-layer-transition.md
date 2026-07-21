@@ -99,6 +99,37 @@ If `rg` shows the symbol is referenced only by parity/equivalence tests
 against a Rust implementation, it is `partial` with the Python port retained
 as the oracle — see §4.3 for the oracle-retirement protocol.
 
+### 2.4 Disposition entries (applied)
+
+Applied rubric entries for modules whose disposition is non-`done`. Each
+entry names the module, the disposition, the trigger (if `partial` or
+`stays-python`), and the owning ADR.
+
+#### `degenbot-bot::solvers` — `partial` (tracked debt)
+
+The `ArbitrageEngine` composition layer (path registry, solver dispatch,
+result batching, the Möbius intake) is Rust-owned and lives in
+`degenbot-bot::solvers`, but it is **fused to `BotState`** (~30
+ cross-references each way; ADR-003 refused to extract a `LiquidityMap`
+generic against the sample-of-one). The pure swap-math leaves
+(`degenbot-v2-math`, `degenbot-cl-math`, `degenbot-balancer-math`,
+`degenbot-curve-math`, `degenbot-solidly-math`) **are** standalone and
+reachable without `degenbot-bot`; the gap is the engine layer that sits
+between the pure leaves and a standalone consumer.
+
+- **Disposition:** `partial` — the solve surface is Rust-owned but not
+  reachable standalone (a `cargo add degenbot` consumer wanting only the
+  V2/V3/V4 solve math must take `degenbot-bot` + `degenbot-rpc` +
+  `degenbot-db` + `tokio` + `rayon` + `dashmap`).
+- **Trigger:** extraction fires when a **second engine family** joins
+  (e.g. an `AaveLiquidationEngine`, or a split `SolidlyEngine` from a
+  future Solidly rename/separation). At that point the engine-reads-state
+  coupling is no longer sample-of-one and a `solvers-core` crate +
+  `LiquidityMap` trait (or a generic `ArbitrageEngine<S>`) becomes
+  justified.
+- **Owning ADR:** ADR-018 (the tracked-debt record). `rust/crates/
+  degenbot-bot/src/lib.rs` references it.
+
 ## 3. Moving responsibility from Python to Rust
 
 The cutover discipline (from ADR-005 slice 11 "Curve family port", the
