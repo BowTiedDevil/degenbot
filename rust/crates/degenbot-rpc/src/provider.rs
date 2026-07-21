@@ -125,6 +125,170 @@ where
     }
 }
 
+/// Compute the transaction hash locally from a raw signed (RLP-encoded)
+/// transaction payload (J3RIFU). Broadcasting via `eth_sendRawTransaction`
+/// can lose the response to a timeout / connection drop AFTER the body
+/// reached the node — so reconciliation via `get_transaction_receipt` needs
+/// the hash, and it must be computable without the broadcast response.
+///
+/// Returns the keccak256 of the RLP-encoded envelope (the on-chain tx hash).
+///
+/// # Errors
+///
+/// Returns `ProviderError::DecodingError` if `encoded_tx` is not a valid
+/// RLP-encoded signed transaction envelope.
+pub(crate) fn compute_tx_hash_from_signed_payload(encoded_tx: &[u8]) -> ProviderResult<B256> {
+    use alloy::rlp::Decodable as _;
+    let envelope =
+        TxEnvelope::decode(&mut &encoded_tx[..]).map_err(|e| ProviderError::DecodingError {
+            message: format!(
+                "Failed to decode signed transaction envelope for tx-hash computation: {e}"
+            ),
+        })?;
+    Ok(*envelope.hash())
+}
+
+/// Broadcast-aware reconciliation loop for `eth_sendRawTransaction` (J3RIFU).
+///
+/// Broadcast is NOT idempotent: a `Timeout` / `ConnectionFailed` after the
+/// body was sent may have delivered the tx to the mempool, so blindly
+/// re-sending the identical signed payload (the previous behavior — routing
+/// through `retry_with_backoff`) risks double-inclusion on rebroadcast. This
+/// loop reconciles the outcome before rebroadcasting.
+///
+/// Outcome branches:
+/// - `Ok(hash)` → return the hash (success).
+/// - `RateLimited` → back off and rebroadcast (the request never reached the
+///   node; the mempool never saw it, so rebroadcast is safe).
+/// - `Timeout` / `ConnectionFailed` (ambiguous: body may have reached the
+///   node) → reconcile via `reconcile_receipt()`: if the receipt is present,
+///   return `tx_hash` (already broadcast + mined); if absent, back off and
+///   rebroadcast.
+/// - `RpcError` / any other non-retryable error → surface immediately. The
+///   tx was seen and rejected by the node's validation ("already known",
+///   "nonce too low", "replacement underpriced"); retrying the identical
+///   payload won't change the outcome.
+///
+/// Extracted from `AlloyProvider::eth_send_raw_transaction` (delegating
+/// `self.call_timeout`, `self.max_attempts`, `tx_hash`, the broadcast op, and
+/// the receipt-reconcile op) so the decision logic is unit-testable without
+/// a live provider — the tests inject closures simulating each branch.
+pub(crate) async fn send_raw_transaction_with_reconciliation<F, Fut, G, FutR>(
+    tx_hash: B256,
+    broadcast: F,
+    reconcile_receipt: G,
+    max_attempts: u32,
+) -> ProviderResult<B256>
+where
+    F: Fn() -> Fut + Send + Sync,
+    Fut: std::future::Future<Output = ProviderResult<B256>> + Send,
+    G: Fn() -> FutR + Send + Sync,
+    FutR: std::future::Future<Output = ProviderResult<bool>> + Send,
+{
+    let mut attempt = 0;
+    let mut delay_ms = INITIAL_RETRY_DELAY_MS;
+
+    loop {
+        match broadcast().await {
+            Ok(returned_hash) => return Ok(returned_hash),
+            Err(e) => match &e {
+                // Ambiguous: the body may have reached the node's mempool.
+                // Reconcile via the receipt before deciding to rebroadcast.
+                ProviderError::Timeout { .. } | ProviderError::ConnectionFailed { .. } => {
+                    match reconcile_receipt().await {
+                        Ok(true) => {
+                            // Receipt present → the tx was already broadcast
+                            // (and mined). Return the locally-computed hash;
+                            // do NOT rebroadcast.
+                            log::debug!(
+                                target: "degenbot_rpc::provider",
+                                "eth_sendRawTransaction: ambiguous outcome ({e}) reconciled — receipt present, returning tx_hash {tx_hash}"
+                            );
+                            return Ok(tx_hash);
+                        }
+                        Ok(false) => {
+                            // Receipt absent → the body did NOT reach the node
+                            // (or hasn't been mined). Rebroadcast after backoff.
+                            log::warn!(
+                                target: "degenbot_rpc::provider",
+                                "eth_sendRawTransaction: ambiguous outcome ({e}) — receipt absent, rebroadcasting"
+                            );
+                            // fall through to the shared backoff/retry block below
+                            attempt += 1;
+                            if attempt >= max_attempts {
+                                log::error!(
+                                    target: "degenbot_rpc::provider",
+                                    "eth_sendRawTransaction: retries exhausted after {attempt}/{max_attempts} rebroadcasts; last error: {e}"
+                                );
+                                return Err(e);
+                            }
+                            let jitter = rand::rng().random_range(0..MAX_JITTER_MS);
+                            let sleep_ms = delay_ms + jitter;
+                            tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
+                            delay_ms = std::cmp::min(
+                                delay_ms.saturating_mul(BACKOFF_MULTIPLIER),
+                                MAX_RETRY_DELAY_MS,
+                            );
+                        }
+                        Err(reconcile_err) => {
+                            // Reconciliation itself failed (e.g. a transient
+                            // RPC error on get_transaction_receipt). Treat as
+                            // "absent / unknown" and rebroadcast — a missed
+                            // receipt-probe must not strand the broadcast.
+                            log::warn!(
+                                target: "degenbot_rpc::provider",
+                                "eth_sendRawTransaction: ambiguous outcome ({e}); reconcile probe failed ({reconcile_err}) — rebroadcasting"
+                            );
+                            attempt += 1;
+                            if attempt >= max_attempts {
+                                log::error!(
+                                    target: "degenbot_rpc::provider",
+                                    "eth_sendRawTransaction: retries exhausted after {attempt}/{max_attempts} rebroadcasts; last error: {e}"
+                                );
+                                return Err(e);
+                            }
+                            let jitter = rand::rng().random_range(0..MAX_JITTER_MS);
+                            let sleep_ms = delay_ms + jitter;
+                            tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
+                            delay_ms = std::cmp::min(
+                                delay_ms.saturating_mul(BACKOFF_MULTIPLIER),
+                                MAX_RETRY_DELAY_MS,
+                            );
+                        }
+                    }
+                }
+                // Rate-limited: the request never reached the node. The
+                // mempool never saw it, so rebroadcast is safe + necessary.
+                ProviderError::RateLimited { .. } => {
+                    attempt += 1;
+                    if attempt >= max_attempts {
+                        log::error!(
+                            target: "degenbot_rpc::provider",
+                            "eth_sendRawTransaction: retries exhausted after {attempt}/{max_attempts} rebroadcasts; last error: {e}"
+                        );
+                        return Err(e);
+                    }
+                    log::warn!(
+                        target: "degenbot_rpc::provider",
+                        "eth_sendRawTransaction: rate-limited — rebroadcasting (attempt {attempt}/{max_attempts})"
+                    );
+                    let jitter = rand::rng().random_range(0..MAX_JITTER_MS);
+                    let sleep_ms = delay_ms + jitter;
+                    tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
+                    delay_ms = std::cmp::min(
+                        delay_ms.saturating_mul(BACKOFF_MULTIPLIER),
+                        MAX_RETRY_DELAY_MS,
+                    );
+                }
+                // RpcError / ExecutionReverted / InvalidParams / etc.: the tx
+                // was seen and rejected by the node's validation. Retrying the
+                // identical payload won't change the outcome — surface immediately.
+                _ => return Err(e),
+            },
+        }
+    }
+}
+
 /// Maximum allowed concurrent requests in `LogFetcher`.
 ///
 /// Prevents file-descriptor exhaustion and RPC rate-limit bans from
@@ -1198,18 +1362,56 @@ impl AlloyProvider {
     /// the bytes for; this fn returns the resulting `TxHash` (the transport
     /// primitive — receipt monitoring is owned upstream).
     ///
+    /// # Broadcast-aware reconciliation (J3RIFU)
+    ///
+    /// Broadcast is NOT idempotent: a timeout / connection drop after the body
+    /// was sent may have delivered the tx to the mempool, so blindly retrying
+    /// via `retry_with_backoff` risks double-inclusion on rebroadcast. This fn
+    /// uses [`send_raw_transaction_with_reconciliation`] instead: on ambiguous
+    /// outcomes (`Timeout` / `ConnectionFailed`) it reconciles via
+    /// [`get_transaction_receipt`](Self::get_transaction_receipt) before
+    /// rebroadcasting; on `RateLimited` it rebroadcasts (the request never
+    /// reached the node); on `RpcError` ("already known" / "nonce too low" /
+    /// "replacement underpriced") it surfaces immediately — the tx was seen and
+    /// rejected, retrying won't help. The tx hash is computed locally from the
+    /// signed payload so reconciliation works even when the broadcast response
+    /// was lost.
+    ///
     /// # Errors
     ///
-    /// Returns `ProviderError::RpcError` if the RPC call fails.
+    /// Returns `ProviderError::RpcError` if the RPC call fails or the tx is
+    /// rejected.
     pub async fn eth_send_raw_transaction(&self, encoded_tx: &[u8]) -> ProviderResult<B256> {
-        self.retry_with_backoff(|| async {
-            let pending = self
-                .inner
-                .send_raw_transaction(encoded_tx)
-                .await
-                .map_err(|e| e.into_provider_error("eth_sendRawTransaction failed"))?;
-            Ok(*pending.tx_hash())
-        })
+        // Compute the hash locally so reconciliation can proceed even when the
+        // broadcast response was lost to a timeout / connection drop.
+        let tx_hash = compute_tx_hash_from_signed_payload(encoded_tx)?;
+        let max_attempts = self.max_attempts;
+        let inner = Arc::clone(&self.inner);
+        let inner_for_reconcile = Arc::clone(&self.inner);
+
+        send_raw_transaction_with_reconciliation(
+            tx_hash,
+            move || {
+                let inner = Arc::clone(&inner);
+                async move {
+                    let pending = inner
+                        .send_raw_transaction(encoded_tx)
+                        .await
+                        .map_err(|e| e.into_provider_error("eth_sendRawTransaction failed"))?;
+                    Ok(*pending.tx_hash())
+                }
+            },
+            move || {
+                let inner = Arc::clone(&inner_for_reconcile);
+                async move {
+                    let receipt = inner.get_transaction_receipt(tx_hash).await.map_err(|e| {
+                        e.into_provider_error("reconcile get_transaction_receipt failed")
+                    })?;
+                    Ok(receipt.is_some())
+                }
+            },
+            max_attempts,
+        )
         .await
     }
 
@@ -1406,6 +1608,7 @@ impl LogFetcher {
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     // ── Revert classification ───────────────────────────────────────────
 
@@ -1747,7 +1950,6 @@ mod tests {
     #[tokio::test]
     async fn test_retry_returns_ok_immediately() {
         // Successful operations should return on the first attempt
-        use std::sync::atomic::{AtomicU32, Ordering};
 
         let call_count = Arc::new(AtomicU32::new(0));
         let count_clone = Arc::clone(&call_count);
@@ -2037,7 +2239,6 @@ mod tests {
     /// `is_retryable()`), the backoff applies, and a fast retry wins.
     #[tokio::test]
     async fn retry_with_backoff_loop_recovers_after_timeout_then_success() {
-        use std::sync::atomic::{AtomicU32, Ordering};
         // Short timeout so the first (hung) attempt is cut off quickly.
         let call_timeout = Duration::from_millis(20);
         let max_attempts: u32 = 3;
@@ -2505,5 +2706,280 @@ mod tests {
         // The param tuple shape: [hex] — matches `eth_sendRawTransaction`.
         let params = serde_json::json!([hex]);
         assert_eq!(params, serde_json::json!(["0x02f8700107"]));
+    }
+
+    // ── J3RIFU: local tx-hash computation + broadcast-aware reconciliation ─
+
+    /// A real signed type-2 transaction broadcast by anvil key 0 (cast send
+    /// of 1 wei to the zero address), and its on-chain hash as returned by the
+    /// node. Used to prove `compute_tx_hash_from_signed_payload` derives the
+    /// SAME hash the node assigned — the foundation of broadcast
+    /// reconciliation (if the locally-computed hash didn't match the node's,
+    /// receipt reconciliation would look up the wrong hash).
+    ///
+    /// Captured via `anvil` + `cast rpc debug_getRawTransaction` (chainId 31337).
+    const J3RIFU_SIGNED_TX_HEX: &str =
+        "0x02f868827a698001843b9aca008252089400000000000000000000000000000000000000000180c080a06dabac39e44552d8164c7e95c996ea7d8dee13ecdf3c34bf74a32a70616f8bc2a07d2cacb344c39f8a9b5f1739803f6373ccf0aa25808998032e735351c6200b28";
+    const J3RIFU_EXPECTED_TX_HASH: &str =
+        "0xdf7c749bc5e7a46561d43676ba826807352aa32ee7573f815337970e97c3ffc5";
+
+    #[test]
+    fn compute_tx_hash_from_signed_payload_matches_node_assigned_hash() {
+        let signed_bytes = alloy::hex::decode(J3RIFU_SIGNED_TX_HEX).unwrap();
+        let computed = compute_tx_hash_from_signed_payload(&signed_bytes).unwrap();
+        let expected = B256::from_str(J3RIFU_EXPECTED_TX_HASH).unwrap();
+        assert_eq!(
+            computed, expected,
+            "locally-computed tx hash must match the node-assigned hash so receipt reconciliation looks up the right tx"
+        );
+    }
+
+    #[test]
+    fn compute_tx_hash_from_signed_payload_rejects_invalid_rlp() {
+        // Not a valid RLP-encoded envelope → DecodingError, not a panic.
+        let garbage: &[u8] = &[0x00, 0xff, 0x42];
+        let result = compute_tx_hash_from_signed_payload(garbage);
+        assert!(
+            matches!(result, Err(ProviderError::DecodingError { .. })),
+            "invalid envelope must surface DecodingError, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_raw_transaction_reconciliation_success_on_first_try_no_rebroadcast() {
+        // Broadcast succeeds on the first attempt → returns the hash, no
+        // reconcile probe, no rebroadcast.
+        let tx_hash = B256::from_str(J3RIFU_EXPECTED_TX_HASH).unwrap();
+        let broadcast_count = Arc::new(AtomicU32::new(0));
+        let reconcile_count = Arc::new(AtomicU32::new(0));
+        let bc = broadcast_count.clone();
+        let rc = reconcile_count.clone();
+
+        let result = send_raw_transaction_with_reconciliation(
+            tx_hash,
+            move || {
+                let bc = bc.clone();
+                async move {
+                    bc.fetch_add(1, Ordering::SeqCst);
+                    Ok(tx_hash)
+                }
+            },
+            move || {
+                let rc = rc.clone();
+                async move {
+                    rc.fetch_add(1, Ordering::SeqCst);
+                    // Should NOT be called on success.
+                    Ok(false)
+                }
+            },
+            5,
+        )
+        .await;
+
+        assert_eq!(result.unwrap(), tx_hash);
+        assert_eq!(
+            broadcast_count.load(Ordering::SeqCst),
+            1,
+            "success on first try must broadcast exactly once"
+        );
+        assert_eq!(
+            reconcile_count.load(Ordering::SeqCst),
+            0,
+            "reconcile must NOT be called on a successful broadcast"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_raw_transaction_reconciliation_rate_limited_retries_then_succeeds() {
+        // RateLimited on attempt 1 → rebroadcast (the request never reached
+        // the node) → success on attempt 2.
+        let tx_hash = B256::from_str(J3RIFU_EXPECTED_TX_HASH).unwrap();
+        let broadcast_count = Arc::new(AtomicU32::new(0));
+        let reconcile_count = Arc::new(AtomicU32::new(0));
+        let bc = broadcast_count.clone();
+        let rc = reconcile_count.clone();
+
+        let result = send_raw_transaction_with_reconciliation(
+            tx_hash,
+            move || {
+                let bc = bc.clone();
+                async move {
+                    let n = bc.fetch_add(1, Ordering::SeqCst);
+                    if n == 0 {
+                        Err(ProviderError::RateLimited {
+                            message: "rate limited".to_string(),
+                        })
+                    } else {
+                        Ok(tx_hash)
+                    }
+                }
+            },
+            move || {
+                let rc = rc.clone();
+                async move {
+                    rc.fetch_add(1, Ordering::SeqCst);
+                    Ok(false)
+                }
+            },
+            5,
+        )
+        .await;
+
+        assert_eq!(result.unwrap(), tx_hash);
+        assert_eq!(
+            broadcast_count.load(Ordering::SeqCst),
+            2,
+            "rate-limited then success = exactly 2 broadcasts"
+        );
+        assert_eq!(
+            reconcile_count.load(Ordering::SeqCst),
+            0,
+            "reconcile must NOT be called for RateLimited (request never reached the node)"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_raw_transaction_reconciliation_timeout_receipt_present_returns_without_rebroadcast(
+    ) {
+        // Timeout on the broadcast (ambiguous: body may have reached the node)
+        // → reconcile; receipt present → return tx_hash WITHOUT rebroadcast.
+        let tx_hash = B256::from_str(J3RIFU_EXPECTED_TX_HASH).unwrap();
+        let broadcast_count = Arc::new(AtomicU32::new(0));
+        let reconcile_count = Arc::new(AtomicU32::new(0));
+        let bc = broadcast_count.clone();
+        let rc = reconcile_count.clone();
+
+        let result = send_raw_transaction_with_reconciliation(
+            tx_hash,
+            move || {
+                let bc = bc.clone();
+                async move {
+                    bc.fetch_add(1, Ordering::SeqCst);
+                    Err(ProviderError::Timeout {
+                        message: "broadcast timed out".to_string(),
+                    })
+                }
+            },
+            move || {
+                let rc = rc.clone();
+                async move {
+                    rc.fetch_add(1, Ordering::SeqCst);
+                    // Receipt IS present → the tx was already broadcast.
+                    Ok(true)
+                }
+            },
+            5,
+        )
+        .await;
+
+        // Returns the locally-computed hash (NOT a rebroadcast).
+        assert_eq!(result.unwrap(), tx_hash);
+        assert_eq!(
+            broadcast_count.load(Ordering::SeqCst),
+            1,
+            "must NOT rebroadcast when the receipt is present"
+        );
+        assert_eq!(
+            reconcile_count.load(Ordering::SeqCst),
+            1,
+            "reconcile must be called exactly once on a Timeout"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_raw_transaction_reconciliation_timeout_receipt_absent_rebroadcasts() {
+        // Timeout → reconcile; receipt absent → rebroadcast → success.
+        let tx_hash = B256::from_str(J3RIFU_EXPECTED_TX_HASH).unwrap();
+        let broadcast_count = Arc::new(AtomicU32::new(0));
+        let reconcile_count = Arc::new(AtomicU32::new(0));
+        let bc = broadcast_count.clone();
+        let rc = reconcile_count.clone();
+
+        let result = send_raw_transaction_with_reconciliation(
+            tx_hash,
+            move || {
+                let bc = bc.clone();
+                async move {
+                    let n = bc.fetch_add(1, Ordering::SeqCst);
+                    if n == 0 {
+                        Err(ProviderError::Timeout {
+                            message: "broadcast timed out".to_string(),
+                        })
+                    } else {
+                        Ok(tx_hash)
+                    }
+                }
+            },
+            move || {
+                let rc = rc.clone();
+                async move {
+                    rc.fetch_add(1, Ordering::SeqCst);
+                    Ok(false)
+                }
+            },
+            5,
+        )
+        .await;
+
+        assert_eq!(result.unwrap(), tx_hash);
+        assert_eq!(
+            broadcast_count.load(Ordering::SeqCst),
+            2,
+            "timeout then receipt-absent then success = exactly 2 broadcasts"
+        );
+        assert_eq!(
+            reconcile_count.load(Ordering::SeqCst),
+            1,
+            "reconcile called once after the first timeout"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_raw_transaction_reconciliation_rpc_error_surfaces_immediately_no_retry() {
+        // RpcError "already known" (-32000) → the tx was seen and rejected;
+        // surfacing immediately, no retry, no reconcile.
+        let tx_hash = B256::from_str(J3RIFU_EXPECTED_TX_HASH).unwrap();
+        let broadcast_count = Arc::new(AtomicU32::new(0));
+        let reconcile_count = Arc::new(AtomicU32::new(0));
+        let bc = broadcast_count.clone();
+        let rc = reconcile_count.clone();
+
+        let result = send_raw_transaction_with_reconciliation(
+            tx_hash,
+            move || {
+                let bc = bc.clone();
+                async move {
+                    bc.fetch_add(1, Ordering::SeqCst);
+                    Err(ProviderError::RpcError {
+                        code: -32000,
+                        message: "already known".to_string(),
+                    })
+                }
+            },
+            move || {
+                let rc = rc.clone();
+                async move {
+                    rc.fetch_add(1, Ordering::SeqCst);
+                    Ok(false)
+                }
+            },
+            5,
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(ProviderError::RpcError { code: -32000, .. })),
+            "RpcError \"already known\" must surface immediately, got {result:?}"
+        );
+        assert_eq!(
+            broadcast_count.load(Ordering::SeqCst),
+            1,
+            "RpcError must NOT retry the identical payload"
+        );
+        assert_eq!(
+            reconcile_count.load(Ordering::SeqCst),
+            0,
+            "reconcile must NOT be called for a definitive RpcError rejection"
+        );
     }
 }
