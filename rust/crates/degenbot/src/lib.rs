@@ -73,6 +73,8 @@ pub use degenbot_price;
 
 /// cmd-executor domain — simulation warmup-slot storage math (pure-Rust leaf).
 pub use degenbot_executor;
+/// Transaction submission pipeline — fee sizing, signer, dispatcher, and the
+/// pending-tx receipt monitor (pure-Rust leaf).
 pub use degenbot_submission;
 
 /// `eth_simulateV1` `stateOverrides` construction — code injection + ETH/WETH
@@ -82,6 +84,9 @@ pub use degenbot_simulation;
 
 /// Concentrated-liquidity math (`cl_lib`, `tick_math`).
 pub use degenbot_cl_math;
+/// Uniswap V2 constant-product (`x·y=k`) single-hop swap math (`IntHopState`,
+/// `int_simulate_path`) — the shared primitive for the V2 pool family + the
+/// Solidly/Camelot/Aerodrome volatile V2-equivalent hop.
 pub use degenbot_v2_math;
 
 /// ABI encode/decode (`abi_decoder`, `abi_encoder`).
