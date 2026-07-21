@@ -65,6 +65,13 @@ pub mod state_override;
 /// contracts. The move that makes the engine state *be* the EVM's `Database`.
 pub mod bot_state_db;
 
+/// V4 PoolManager transient-storage seeder (EIP-1153) — seeds the built EVM's
+/// `journaled_state.inner.transient_storage` from `V4PoolState` before
+/// `transact`, since V4 pools have no persistent on-chain storage at fixed
+/// slots. The V4 slot-layout mapping is a follow-up sub-step (revm's
+/// transient-storage capability is verified).
+pub mod v4_transient;
+
 /// EIP-2930 access-list emission from the revm `State` journal — retires
 /// `eth_createAccessList`. Reads the touched address + slot set from
 /// `transact`'s `ResultAndState.state`.

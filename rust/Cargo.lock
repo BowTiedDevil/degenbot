@@ -2147,8 +2147,11 @@ name = "degenbot-evm"
 version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
+ "degenbot-bot",
  "degenbot-core",
+ "degenbot-decoders",
  "degenbot-executor",
+ "degenbot-pools",
  "revm",
  "thiserror 2.0.19",
  "tokio",

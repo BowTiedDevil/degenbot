@@ -39,10 +39,18 @@ revm = { version = "41.0.0", default-features = true, features = ["alloydb", "as
 # → 2.2.0). `full` brings the RPC types + provider-http the PoC verified.
 alloy = { version = "^2.0", features = ["full"] }
 degenbot-core = { path = "../degenbot-core" }
-# `WarmupSlots` + `compute_simulation_warmup_slots` — the warmup slot addresses
-# crossed from the executor leaf (same pyo3-free core layer). The state-override
-# adaptor (RBCQTQ) consumes the slot keys directly; no logic duplication.
+# `WarmupSlots` + `compute_simulation_warmup_slots` + `mapping_slot` — the warmup
+# slot addresses + Solidity mapping-slot math crossed from the executor leaf.
 degenbot-executor = { path = "../degenbot-executor" }
+# `BotState` (ADR-003 state owner; ADR-005 standalone-core) — the snapshot
+# surface (`v3_pools_snapshot` / `v4_pools_snapshot`) + the typed pool-state
+# structs BotStateDb reads. Depends on `degenbot-pools` (state structs) +
+# `degenbot-uniswap` (DexIdentity). Added in EGMSNS (option B).
+degenbot-bot = { path = "../degenbot-bot" }
+degenbot-pools = { path = "../degenbot-pools" }
+# `V4PoolId` — the V4 pool identifier type (crossed from the decoders leaf for
+# the v4_transient seeder's pool-key lookup).
+degenbot-decoders = { path = "../degenbot-decoders" }
 thiserror = { version = "^2.0" }
 # `tokio` is required by `WrapDatabaseAsync` (it blocks the async `AlloyDB`
 # `DatabaseAsyncRef` calls on a runtime — `WrapDatabaseAsync::new` needs a
