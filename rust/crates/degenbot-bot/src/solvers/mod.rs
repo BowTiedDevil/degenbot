@@ -14,8 +14,10 @@
 //! - [`arb_engine`] — the multi-DEX engine (V2/V3/V4/Solidly; Curve + Balancer
 //!   in progress), owning the per-block lifecycle, path registry, and solve
 //!   dispatch
-//! - `mobius_int` / `mobius_int_exact` / `mobius_v3_int` — relocated to the
-//!   `degenbot-solvers` crate (value-only Möbius solver math).
-//! - `balancer_weighted_basket` (`QuantAMM`) — relocated to `degenbot-solvers::basket`.
+//! - [`degenbot_solvers::mobius_int`] / [`degenbot_solvers::mobius_int_exact`] /
+//!   [`degenbot_solvers::mobius_v3_int`] — value-only Möbius solver math, relocated
+//!   to the `degenbot-solvers` crate.
+//! - [`degenbot_solvers::basket`] — the `QuantAMM` N-token Balancer weighted
+//!   basket solver, relocated to `degenbot-solvers`.
 
 pub mod arb_engine;

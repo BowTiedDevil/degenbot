@@ -424,21 +424,6 @@ impl ArbitrageEngine {
             block_tx: None,
         }
     }
-
-    /// Create a new engine with a custom event buffer max age for the V4
-    /// sub-engine (V3 buffer lives on `BotState` — ADR-003).
-    #[must_use]
-    pub fn new_with_buffer_max_age(event_buffer_max_age: Option<u64>) -> Self {
-        let core = Arc::new(parking_lot::RwLock::new(BotState::new()));
-        if let Some(age) = event_buffer_max_age {
-            core.write().set_v3_buffer_max_age(Some(age));
-            core.write().set_v4_buffer_max_age(Some(age));
-        }
-        Self {
-            core,
-            ..Self::new()
-        }
-    }
 }
 
 /// Test-only registration helpers (ADR-006 D3).
