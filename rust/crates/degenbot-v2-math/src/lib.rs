@@ -38,8 +38,6 @@
 //! `IntHopState` hops into multi-hop arbitrage paths) and re-exported by the
 //! `degenbot` umbrella for standalone Rust consumers.
 //!
-//! ## Contents (added incrementally)
-//!
 //! ## Contents
 //!
 //! The primitive surface lives in the [`hop_state`] submodule: [`IntHopState`]
