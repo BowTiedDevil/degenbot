@@ -1,0 +1,34 @@
+{
+  "chain_id": 1,
+  "block": 24407242,
+  "address": "0xF3a605DA753e9dE545841de10EA8bFfBd1Da9C75",
+  "pool_id": "0xf3a605da753e9de545841de10ea8bffbd1da9c75000200000000000000000035",
+  "vault": "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+  "name": "sdvecrv_crv_90_10",
+  "desc": "sdveCRV/CRV 90/10, 0.20% fee",
+  "tokens": [
+    {
+      "address": "0x478bBC744811eE8310B461514BDc29D03739084D",
+      "name": "veCRV Stake DAO",
+      "symbol": "sdveCRV-DAO",
+      "decimals": 18
+    },
+    {
+      "address": "0xD533a949740bb3306d119CC777fa900bA034cd52",
+      "name": "Curve DAO Token",
+      "symbol": "CRV",
+      "decimals": 18
+    }
+  ],
+  "balances": [
+    41208735953821876390358,
+    3138381844682200448256
+  ],
+  "fee": "1/500",
+  "weights": [
+    900000000000000000,
+    100000000000000000
+  ],
+  "pow_version": "v1",
+  "n_tokens": 2
+}

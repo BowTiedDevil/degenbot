@@ -1,30 +1,31 @@
 [build-system]
-requires = ["maturin ~= 1.12"]
+requires = ["maturin >= 1.0,<2.0"]
 build-backend = "maturin"
 
 [project]
 name = "degenbot"
-version = "0.6.0a2"
+# Version is supplied by maturin at build time from the `_ffi` binding
+# crate's [package].version, which is inherited from [workspace.package] in
+# rust/Cargo.toml (ADR-009 single-source-of-truth versioning). The single
+# literal lives on the Rust side; maturin bridges it into the wheel and
+# normalizes the semver form to PEP 440 (e.g. 0.6.0-alpha.3 -> 0.6.0a3).
+dynamic = ["version"]
 authors = [
     { name="BowTiedDevil", email="devil@bowtieddevil.com" },
 ]
-description = "Python classes to aid rapid development of Uniswap (V2, V3, V4), Curve V1, and Solidly V2 arbitrage bots on EVM-compatible blockchains"
+description = "Python + Rust building blocks for Uniswap (V2, V3, V4), Curve V1, Solidly V2, Balancer V2 & Aave V3 arbitrage and liquidation bots on EVM-compatible blockchains"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "alembic ~= 1.18",
-    "click ~= 8.3",
-    "cvxpy ~= 1.8",
-    "networkx ~= 3.6",
-    "pydantic ~= 2.12",
-    "pydantic-settings ~= 2.13",
-    "scipy ~= 1.17",
+    "click ~= 8.4",
+    "pydantic ~= 2.13",
+    "pydantic-settings ~= 2.14",
     "sqlalchemy ~= 2.0",
     "tenacity ~= 9.1",
-    "tomlkit ~= 0.14",
+    "tomlkit ~= 0.15",
     "tqdm ~= 4.67",
-    "ujson ~= 5.12",
-    "web3 ~= 7.14",
+    "ujson ~= 5.12",    
 ]
 license = {text = "MIT"}
 license-files = ["LICENSE"]
@@ -63,25 +64,9 @@ exclude_also = [
 source = ["src/degenbot"]
 parallel = true
 branch = true
-
-[tool.mypy]
-plugins = ["pydantic.mypy"]
-files=["src/degenbot"]
-python_version = "3.12"
-python_executable = ".venv/bin/python"
-untyped_calls_exclude = "cvxpy"
-
-[[tool.mypy.overrides]]
-module="degenbot.*"
-strict = true
-
-[[tool.mypy.overrides]]
-module=[
-    "scipy.*",
-    "tqdm.*",
-    "networkx.*",
+omit = [
+    "**/migrations/**/*.py",
 ]
-ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 100
@@ -89,10 +74,11 @@ indent-width = 4
 target-version = "py312"
 preview = true
 
+[tool.ruff.format]
+docstring-code-format = true
+
 [tool.ruff.lint]
-select = [
-#    "DOC",      # pydoclint
-#    "D",        # pydocstyle
+extend-select = [
     "ERA",      # eradicate
     "ANN",      # flake8-annotations
     "ASYNC",    # flake8-async
@@ -129,6 +115,8 @@ select = [
     "N",        # pep8-naming
     "PERF",     # perflint
     "E", "W",   # pycodestyle
+    "DOC",      # pydoclint
+    "D",        # pydocstyle
     "F",        # pyflakes
     "PL",       # pylint
     "UP",       # pyupgrade
@@ -137,8 +125,11 @@ select = [
     "TRY",      # tryceratops
 ]
 ignore = [
-    "COM812",   # trailing commas are handled by the formatter
+    "D203",     # incorrect-blank-line-before-class
+    "D213",     # multi-line-summary-second-line
+    "COM812",   # trailing-commas
     "N818",     # error-suffix-on-exception-name
+    "PLR0904",  # too-many-public-methods
     "PLR0911",  # too-many-return-statements
     "PLR0912",  # too-many-branches
     "PLR0913",  # too-many-arguments
@@ -157,38 +148,80 @@ logger-objects = [
 allow-star-arg-any = true
 
 [tool.ruff.lint.per-file-ignores]
+"scripts/aave_replay_diff.py" = [
+    "ANN401",   # the drive/compare JSON-report dicts are dict[str, Any]
+    "ARG001",   # CLI dispatchers take unused `args` for argparse's set_defaults
+    "D",        # docstring strictness (Returns:/Raises:/imperative) not enforced on the CLI
+    "DOC",      # pydoclint Returns:/Raises: sections not enforced on the CLI
+    "EM102",    # short f-string error messages are fine in a script
+    "PLC0415",  # lazy imports avoid circular dependency with degenbot.provider
+    "PLW0717",  # the drive fn's broad try/except is intentional (log+re-raise)
+    "PLR1702",  # the bisect loop nests deeply by design
+    "PTH",      # os.path + os.makedirs are fine for the bisect's file-copy logic
+    "PLW1514",  # the JSON-dump file writes use utf-8 implicitly
+    "RET504",   # unnecessary-assign for clarity in the drive fn
+    "S105",     # "DEGENBOT_RPC_HTTP_CHAINID_1" is an envvar NAME, not a password
+    "S110",     # the optional event-fetcher import's try/except/pass is intentional
+    "S608",     # the table-name is from a hardcoded _TABLE_ORDER list, not user input
+    "SIM",      # the compare dict-comprehensions are clarity over comprehension
+    "SLF001",   # sqlalchemy's `row._mapping` is the documented dict-access API
+    "TRY003",   # raise-vanilla-args on the SystemExit messages
+    "TRY301",   # re-raising the worker-thread error from within the try is intentional
+    "T201",     # the CLI prints its summary to stdout by design
+]
 "tests/*" = [
     "ANN",      # type annotations for tests are low priority
-    "C90",      # high complexity tests are acceptable
+    "ARG",
+    "D",
+    "DOC",
+    "ICN001",   # benchmark scripts may import networkx without alias
+    "INP001",   # benchmark scripts are not part of a package
+    "PLC0415",  # benchmark scripts may import conditionally
     "PLC2701",  # tests may need to import private modules
-    "PLR0904",  # don't restrict the number of methods for class-based patterns
-    "PLR2004",  # many tests compare results against arbitrary values — transforming to named constants is not worthwhile
-    "PLR6301",  # allow tests using class-based patterns 
-    "S",        # asserts are expected for testing
-    "SLF",      # tests may need to access private attributes to test implementation
-    "T20",      # many tests use print
+    "PLR",
+    "S301",
+    "S311",
+    "S403",
+    "SLF001",   # tests may need to access private attributes to test implementation
+    "T201",     # print
+]
+"src/degenbot/provider/factory.py" = [
+    "PLC0415",  # lazy import avoids circular dependency with degenbot.provider.__init__
+]
+"src/degenbot/registry/deployment_loader.py" = [
+    "PLC0415",  # lazy imports avoid circular dependency (pool classes → uniswap → this module)
+]
+"src/degenbot/uniswap/deployments.py" = [
+    "PLC0415",  # lazy import avoids circular dependency (deployment_loader → pool classes → this module)
 ]
 
 [tool.pytest.ini_options]
 addopts = [
-    "--numprocesses", "4",
-    "--dist", "worksteal",
+    "--numprocesses", "auto",
+    "--dist", "loadgroup",
     "--import-mode", "importlib",
     "--cov", "src/degenbot",
     "--cov-branch",
     "--cov-report", "html",
-    "--random-order"
+    "-m", "not slow and not base and not online_rpc",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-pythonpath = "src"
+pythonpath = ["src", ".", "examples"]
 python_files = "test_*.py"
-testpaths = "tests"
-filterwarnings = ["ignore::DeprecationWarning:websockets.legacy"]
+testpaths = ["tests", "README.md"]
+norecursedirs = ["archive", ".hypothesis"]
+filterwarnings = [
+    "error", # Fail on all warnings by default
+    "ignore::DeprecationWarning:websockets.legacy",
+]
 markers = [
     "arbitrum: tests requiring an Arbitrum One mainnet RPC",
     "base: tests requiring a Base mainnet RPC",
     "ethereum: tests requiring an Ethereum mainnet RPC",
+    "slow: tests that are too slow for routine local runs (e.g. pathfinding)",
+    "onchain_oracle: on-chain parity test whose oracle truth is read from a golden file (tests/golden); offline in CI — see docs/architecture/golden-onchain-parity.md",
+    "online_rpc: test requiring a live external RPC (mainnet/arbitrum/base archive node) — skipped in CI by default; run on-demand with `-m online_rpc`. See docs/architecture/golden-onchain-parity.md.",
 ]
 
 [dependency-groups]
@@ -196,33 +229,69 @@ dev = [
     "coverage",
     "hypothesis",
     "maturin",
-    "mypy",
+    "pre-commit",
+    "prek",
     "pytest-asyncio",
-    "pytest-benchmark",
     "pytest-cov",
-    "pytest-random-order",
+    "pytest-order",
+    "pytest-randomly",
     "pytest-xdist",
     "pytest",
     "python-dotenv",
     "ruff",
+    "scipy",
+    "sybil",
+    "ty",
+    "vyper",
+    "web3",
+    "vulture",
 ]
+
+[tool.ty.environment]
+python-version = "3.12"
+extra-paths = ["examples"]
+
+[tool.vulture]
+# Dead-code detector. Output is a triage list, not a gate: each hit
+# needs a human call (rg for refs) before deletion — vulture is static
+# and can't see FFI-seam callers (Rust core) or framework dispatch
+# (pydantic validators, SQLAlchemy TypeDecorator signatures, protocol
+# params). 80% confidence is the operating point — the 60% tier is
+# mostly framework-dispatched methods (validators, properties on
+# models, enum members referenced dynamically).
+min_confidence = 80
+paths = ["src/degenbot"]
+exclude = ["src/degenbot/migrations"]  # Alembic, retention-gated per ADR-010
 
 [tool.uv]
 exclude-newer = "14 days"
 link-mode = "copy"
 cache-keys = [
-    {file = "pyproject.toml"}, 
-    {file = "rust/Cargo.toml"}, 
-    {file = "rust/src/**/*.rs"},
+    {file = "rust/**/Cargo.toml"},
+    {file = "rust/crates/*/src/**/*.rs"},
 ]
 
 [tool.maturin]
-manifest-path = "rust/Cargo.toml"
+manifest-path = "rust/crates/degenbot-python/Cargo.toml"
 python-source = "src"
-module-name = "degenbot.degenbot_rs"
+module-name = "degenbot._ffi"
 bindings = "pyo3"
-profile = "release"
-features = ["pyo3/extension-module"]
+# Dev/agent loop builds in the `dev` profile (opt-level 0, no LTO) so the
+# uv-sync cdylib rebuild that fires on every Rust edit (via [tool.uv]
+# cache-keys) is ~5x faster: 149s (release) → ~30s (dev). This setting is
+# consumed ONLY by the local editable-install build path (`uv sync` /
+# `maturin develop`); the published wheel is built by the PyO3/maturin-action
+# in .github/workflows/publish-to-pypi.yaml, which passes `--release`
+# explicitly and OVERRIDES the features list — so the shipped artifact is
+# unaffected by this setting and stays fully optimized. See
+# rust/PERF_RESULTS.md "dev-vs-release profile" lever.
+profile = "dev"
+# Dev builds compile hotpath in (toggle at runtime via DEGENBOT_HOTPATH=1 —
+# see rust/crates/degenbot-bot/src/profiling.rs). Release wheels override this
+# list with `--features pyo3/extension-module` (see
+# .github/workflows/publish-to-pypi.yaml) so the shipped artifact excludes
+# hotpath — macros are no-op `lib_off`, zero runtime penalty.
+features = ["pyo3/extension-module", "degenbot-bot/hotpath"]
 python-packages = ["degenbot"]
 
 [tool.alembic]

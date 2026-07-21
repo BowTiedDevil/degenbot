@@ -1,0 +1,56 @@
+[package]
+name = "degenbot"
+description = "Umbrella Rust crate: re-exports the pyo3-free degenbot core surface (Bot state, DexIdentity presets, calc math) for standalone Rust consumers."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+complexity = "warn"
+correctness = "warn"
+pedantic = "warn"
+perf = "warn"
+style = "warn"
+suspicious = "warn"
+
+# The umbrella is pure-Rust: it pulls ONLY the pyo3-free core crates and
+# re-exports them. It has NO `pyo3` dependency (verified by
+# `rg 'use pyo3' rust/crates/degenbot` — empty). A standalone Rust consumer
+# `cargo add degenbot` gets `BotState`/`DexIdentity`/presets/calc with zero
+# Python in the build graph (ADR-005 standalone claim, made concrete by
+# `examples/standalone_consumer.rs`). The binding layer (`degenbot_rs` cdylib,
+# built from `crates/degenbot-python/`) is a separate workspace member that
+# DOES pull pyo3; the umbrella never depends on it.
+[dependencies]
+degenbot-core = { path = "../degenbot-core" }
+degenbot-cl-math = { path = "../degenbot-cl-math" }
+degenbot-abi = { path = "../degenbot-abi" }
+degenbot-uniswap = { path = "../degenbot-uniswap" }
+degenbot-pathfinding = { path = "../degenbot-pathfinding" }
+degenbot-pools = { path = "../degenbot-pools" }
+degenbot-rpc = { path = "../degenbot-rpc" }
+degenbot-decoders = { path = "../degenbot-decoders" }
+degenbot-curve-math = { path = "../degenbot-curve-math" }
+degenbot-balancer-math = { path = "../degenbot-balancer-math" }
+degenbot-solidly-math = { path = "../degenbot-solidly-math" }
+degenbot-v2-math = { path = "../degenbot-v2-math" }
+degenbot-evm-math = { path = "../degenbot-evm-math" }
+degenbot-price = { path = "../degenbot-price" }
+degenbot-executor = { path = "../degenbot-executor" }
+degenbot-submission = { path = "../degenbot-submission" }
+degenbot-simulation = { path = "../degenbot-simulation" }
+degenbot-bot = { path = "../degenbot-bot" }
+degenbot-solvers = { path = "../degenbot-solvers" }
+degenbot-db = { path = "../degenbot-db" }
+degenbot-aave = { path = "../degenbot-aave" }
+degenbot-fork = { path = "../degenbot-fork" }
+degenbot-pool-updater = { path = "../degenbot-pool-updater" }
+
+[dev-dependencies]
+alloy = { version = "^2.0" }

@@ -1,4 +1,4 @@
-"""drop deployer column
+"""drop deployer column.
 
 Revision ID: 901adb947000
 Revises: 04f858f979a9
@@ -19,7 +19,6 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-
     with op.batch_alter_table("aerodrome_v2_pools", schema=None) as batch_op:
         batch_op.drop_column("deployer")
 

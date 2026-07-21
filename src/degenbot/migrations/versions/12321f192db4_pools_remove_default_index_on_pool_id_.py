@@ -1,4 +1,4 @@
-"""Pools: remove default index on pool ID foreign key
+"""Pools: remove default index on pool ID foreign key.
 
 Revision ID: 12321f192db4
 Revises: 66930706257e
@@ -19,7 +19,6 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-
     with op.batch_alter_table("initialization_maps", schema=None) as batch_op:
         batch_op.drop_index(batch_op.f("ix_initialization_maps_pool_id"))
 

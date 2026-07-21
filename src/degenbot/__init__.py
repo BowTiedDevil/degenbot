@@ -1,48 +1,29 @@
-from .abi_adapter import (
-    AbiAdapter,
-    AbiBackend,
+"""degenbot: Ethereum DEX helper library."""
+
+from .abi import (
     AbiDecodeError,
     AbiEncodeError,
-    AbiUnsupportedOperation,
-    get_default_adapter,
-    get_default_backend,
 )
-from .abi_adapter import decode as abi_decode
-from .abi_adapter import decode_single as abi_decode_single
-from .abi_adapter import encode as abi_encode
+from .abi import decode as abi_decode
+from .abi import decode_single as abi_decode_single
+from .abi import encode as abi_encode
+from .bot import Bot
 from .checksum_cache import get_checksum_address
-from .config import settings
-from .connection import (
-    async_connection_manager,
-    connection_manager,
-    get_async_web3,
-    get_web3,
-    set_async_web3,
-    set_web3,
-)
-from .degenbot_rs import (
-    decode_return_data,
-    encode_function_call,
-    get_function_selector,
-    get_sqrt_ratio_at_tick,
-    get_tick_at_sqrt_ratio,
-    to_checksum_address,
-)
 from .version import __version__
 
 # isort: split
 
+from . import (
+    camelot as camelot,
+)
 from .aerodrome import (
     AerodromeV2Pool,
-    AerodromeV2PoolManager,
     AerodromeV2PoolState,
+    AerodromeV2PoolTracker,
     AerodromeV3Pool,
-    AerodromeV3PoolManager,
     AerodromeV3PoolState,
+    AerodromeV3PoolTracker,
 )
-from .anvil_fork import AnvilFork
-from .arbitrage import ArbitrageCalculationResult, UniswapCurveCycle, UniswapLpCycle
-from .camelot import CamelotLiquidityPool
 from .chainlink import ChainlinkPriceContract
 from .curve import (
     CurveStableswapPool,
@@ -50,86 +31,92 @@ from .curve import (
     CurveStableswapPoolState,
     CurveStableSwapPoolStateUpdated,
 )
-from .erc20 import Erc20Token, Erc20TokenManager, EtherPlaceholder
+from .erc20 import Erc20Token, EtherPlaceholder
+from .fork import AnvilFork
 from .logging import logger
 from .pancakeswap import (
-    PancakeswapV2Pool,
-    PancakeswapV2PoolManager,
     PancakeswapV3Pool,
-    PancakeswapV3PoolManager,
+    PancakeswapV3PoolTracker,
 )
-from .registry import pool_registry, token_registry
+from .registry import (
+    ManagedPoolRegistry,
+    PoolRegistry,
+    PoolTypeRegistry,
+    TokenRegistry,
+    pool_type_registry,
+)
+
+# Populate the pool-type registry from the shipped deployments JSON
+# (single source of DEX deployment data — ADR-005). This replaces the
+# per-module `_register_*_deployments()` inline tuples that previously
+# lived in each DEX `__init__.py`. Runs once after all DEX classes are
+# imported. A user overlay may be declared in ``[deployments]`` in
+# ``~/.config/degenbot/config.toml``.
+from .registry.deployment_loader import (
+    load_deployments as _load_deployments,
+)
+from .registry.deployment_loader import (
+    register_from_deployments as _register_from_deployments,
+)
 from .sushiswap import (
-    SushiswapV2Pool,
-    SushiswapV2PoolManager,
-    SushiswapV3Pool,
-    SushiswapV3PoolManager,
+    SushiswapV3PoolTracker,
 )
-from .swapbased import SwapbasedV2Pool, SwapbasedV2PoolManager
 from .uniswap import (
     UniswapV2Pool,
     UniswapV2PoolExternalUpdate,
-    UniswapV2PoolManager,
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
+    UniswapV2PoolTracker,
     UniswapV3LiquiditySnapshot,
     UniswapV3Pool,
     UniswapV3PoolExternalUpdate,
-    UniswapV3PoolManager,
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
+    UniswapV3PoolTracker,
     UniswapV4LiquiditySnapshot,
     UniswapV4Pool,
     UniswapV4PoolExternalUpdate,
     UniswapV4PoolState,
 )
 
+_register_from_deployments(_load_deployments(), pool_type_registry)
+
 __all__ = (
-    "AbiAdapter",
-    "AbiBackend",
     "AbiDecodeError",
     "AbiEncodeError",
-    "AbiUnsupportedOperation",
     "AerodromeV2Pool",
-    "AerodromeV2PoolManager",
     "AerodromeV2PoolState",
+    "AerodromeV2PoolTracker",
     "AerodromeV3Pool",
-    "AerodromeV3PoolManager",
     "AerodromeV3PoolState",
+    "AerodromeV3PoolTracker",
     "AnvilFork",
-    "ArbitrageCalculationResult",
-    "CamelotLiquidityPool",
+    "Bot",
     "ChainlinkPriceContract",
     "CurveStableSwapPoolStateUpdated",
     "CurveStableswapPool",
     "CurveStableswapPoolSimulationResult",
     "CurveStableswapPoolState",
     "Erc20Token",
-    "Erc20TokenManager",
     "EtherPlaceholder",
-    "PancakeswapV2Pool",
-    "PancakeswapV2PoolManager",
+    "ManagedPoolRegistry",
     "PancakeswapV3Pool",
-    "PancakeswapV3PoolManager",
-    "SushiswapV2Pool",
-    "SushiswapV2PoolManager",
-    "SushiswapV3Pool",
-    "SushiswapV3PoolManager",
-    "SwapbasedV2Pool",
-    "SwapbasedV2PoolManager",
-    "UniswapCurveCycle",
-    "UniswapLpCycle",
+    "PancakeswapV3PoolTracker",
+    "PoolRegistry",
+    "PoolTypeRegistry",
+    "SushiswapV3PoolTracker",
+    "TokenRegistry",
     "UniswapV2Pool",
     "UniswapV2PoolExternalUpdate",
-    "UniswapV2PoolManager",
     "UniswapV2PoolSimulationResult",
     "UniswapV2PoolState",
+    "UniswapV2PoolTracker",
     "UniswapV3LiquiditySnapshot",
     "UniswapV3Pool",
     "UniswapV3PoolExternalUpdate",
-    "UniswapV3PoolManager",
     "UniswapV3PoolSimulationResult",
     "UniswapV3PoolState",
+    "UniswapV3PoolTracker",
     "UniswapV4LiquiditySnapshot",
     "UniswapV4Pool",
     "UniswapV4PoolExternalUpdate",
@@ -138,23 +125,7 @@ __all__ = (
     "abi_decode",
     "abi_decode_single",
     "abi_encode",
-    "async_connection_manager",
-    "connection_manager",
-    "decode_return_data",
-    "encode_function_call",
-    "get_async_web3",
     "get_checksum_address",
-    "get_default_adapter",
-    "get_default_backend",
-    "get_function_selector",
-    "get_sqrt_ratio_at_tick",
-    "get_tick_at_sqrt_ratio",
-    "get_web3",
     "logger",
-    "pool_registry",
-    "set_async_web3",
-    "set_web3",
-    "settings",
-    "to_checksum_address",
-    "token_registry",
+    "pool_type_registry",
 )

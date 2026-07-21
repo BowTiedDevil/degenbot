@@ -1,0 +1,103 @@
+//! `PoolStateSubscriber` adapter wrapping a shared `ArbitrageEngine` (ADR-006 D4).
+//!
+//! The engine is shared as `Arc<Mutex<ArbitrageEngine>>` (the pump + Python both
+//! hold clones). `EngineSubscriber` upgrades that to a subscriber: when
+//! `Bot`'s `LogDispatcher` notifies `on_pool_state_updated(pool_id)`, this
+//! adapter locks the engine **alone** (the `BotState` write guard is already
+//! released by `dispatch`) and calls `engine.insert_dirty(pool_id)`.
+//!
+//! **Lock order (D2):** engine-then-core is preserved *by not nesting* — the
+//! core write was released before notify fired, so the engine lock here is
+//! taken with no core lock held. `insert_dirty` takes a *read* guard on core
+//! (engine-then-core-read), which is the same order `apply_log` already uses.
+
+use std::sync::Weak;
+
+use parking_lot::Mutex;
+
+use crate::bot_core::log_dispatcher::PoolStateSubscriber;
+use crate::solvers::arb_engine::ArbitrageEngine;
+
+/// A `PoolStateSubscriber` backed by a shared `ArbitrageEngine`.
+///
+/// Constructed from a `Weak<Mutex<ArbitrageEngine>>` so a de-registered engine
+/// (all strong handles dropped) is silently skipped by the dispatcher's
+/// `Weak::upgrade` — no leak, no panic. `Bot.attach_engine` receives this as a
+/// `Weak<dyn PoolStateSubscriber>`.
+pub struct EngineSubscriber {
+    engine: Weak<Mutex<ArbitrageEngine>>,
+}
+
+impl EngineSubscriber {
+    /// Construct from a weak reference to the shared engine.
+    ///
+    /// The strong `Arc<dyn PoolStateSubscriber>` that keeps the dispatcher's
+    /// `Weak` alive is owned by [`EngineHandle`] (the cycle-free home on the
+    /// engine side, ADR-006) — see `EngineHandle::subscriber_weak`.
+    #[must_use]
+    pub fn new(engine: Weak<Mutex<ArbitrageEngine>>) -> Self {
+        Self { engine }
+    }
+}
+
+impl PoolStateSubscriber for EngineSubscriber {
+    fn on_pool_state_updated(&self, pool_id: u64) {
+        // Upgrade the weak engine ref. If all strong handles dropped (engine
+        // de-registered), silently no-op — the dispatcher already skips dead
+        // Weaks, but this guards the race where the last handle drops between
+        // the dispatcher's `upgrade` and this call.
+        let Some(engine) = self.engine.upgrade() else {
+            return;
+        };
+        // Lock the engine ALONE (core write already released by `dispatch`).
+        engine.lock().insert_dirty(pool_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::solvers::arb_engine::ArbitrageEngine;
+    use std::sync::Arc;
+
+    /// RED→GREEN tracer (ADR-006 slice 4): the adapter forwards a notify to
+    /// `engine.insert_dirty`, dirtying the pool in the engine's set. The
+    /// engine's own `core` is empty here so `insert_dirty` is a no-op, but the
+    /// adapter must not panic and must upgrade the weak ref successfully.
+    #[test]
+    fn adapter_forwards_notify_to_engine_insert_dirty() {
+        let engine = Arc::new(Mutex::new(ArbitrageEngine::new()));
+        let subscriber = EngineSubscriber::new(Arc::downgrade(&engine));
+
+        // Engine has no pools registered → insert_dirty is a no-op, but the
+        // adapter must upgrade + lock + call without panic.
+        subscriber.on_pool_state_updated(42);
+
+        // Dirty sets remain empty (pool 42 isn't registered).
+        let engine_guard = engine.lock();
+        assert!(
+            engine_guard.dirty_v2_is_empty(),
+            "unregistered pool must not dirty v2"
+        );
+        assert!(
+            engine_guard.dirty_v3_is_empty(),
+            "unregistered pool must not dirty v3"
+        );
+        assert!(
+            engine_guard.dirty_v4_is_empty(),
+            "unregistered pool must not dirty v4"
+        );
+    }
+
+    /// A dead weak (engine dropped) → `on_pool_state_updated` silently no-ops.
+    #[test]
+    fn adapter_silently_skips_dropped_engine() {
+        let subscriber = {
+            let engine = Arc::new(Mutex::new(ArbitrageEngine::new()));
+            EngineSubscriber::new(Arc::downgrade(&engine))
+            // engine drops here → weak goes dead.
+        };
+        // Must not panic.
+        subscriber.on_pool_state_updated(42);
+    }
+}

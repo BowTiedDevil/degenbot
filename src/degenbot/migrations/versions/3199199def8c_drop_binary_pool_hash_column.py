@@ -1,4 +1,4 @@
-"""Drop binary pool hash column
+"""Drop binary pool hash column.
 
 Revision ID: 3199199def8c
 Revises: 5c8805573ab3

@@ -1,0 +1,232 @@
+// degenbot devcontainer — committed in-repo. VSCode auto-discovers this file.
+//
+// Usage:
+//   1. One-time: set "dev.containers.dockerPath": "podman" in VSCode user settings.
+//   2. Open this repo in VSCode → "Dev Containers: Reopen in Container".
+//
+// First build builds the Dockerfile (the dnf layer is the slow part), then
+// runs post-create.sh (venv + uv sync; foundry and pi are baked into the
+// Dockerfile image). Subsequent starts reuse the named container VSCode
+// created — instant.
+//
+// Podman note: mounts are plain type=bind (no consistency=cached, which is
+// Docker-Desktop-only). VSCode's podman dockerPath handles the runtime.
+//
+// ─────────────────────────────────────────────────────────────────────────
+// LAUNCH-PATH COVERAGE — which fields apply when the container is STARTED vs
+// when it was CREATED. Not all fields below apply on every entry point:
+//
+//   • VSCode 'Reopen in Container' / .devcontainer/rebuild.sh — this whole
+//     file is honored: build, runArgs, mounts, containerEnv, remoteEnv (if
+//     any), the vscode customizations, AND the lifecycle hooks
+//     (postCreateCommand etc.).
+//
+//   • .devcontainer/attach.sh — does plain `podman start` + `podman exec`.
+//     It has no knowledge of this file at RUN time, but it is NOT barren,
+//     because two field classes are BAKED into the container config at
+//     create time and survive stop/start:
+//
+//       CREATE-TIME fields (baked once at `devcontainer up`; reused on every
+//       `podman start`, so attach.sh DOES see them):
+//         - build.dockerfile            (the image itself; always honored)
+//         - runArgs                     (e.g. --pids-limit=-1 is live)
+//         - mounts                      (the ~/.agents, ~/.config/degenbot,
+//                                        ~/.foundry, ~/.pi bind mounts)
+//         - containerEnv                (LOCAL_BIN, FOUNDRY_DIR,
+//                                        UV_PROJECT_ENVIRONMENT,
+//                                        PYTHONPYCACHEPREFIX, the RPC URIs,
+//                                        TZ). This is why containerEnv is used
+//                                        instead of remoteEnv — containerEnv
+//                                        is baked into Config.Env and visible
+//                                        to `podman exec` shells; remoteEnv is
+//                                        only injected by the VSCode runtime
+//                                        into shells IT spawns, so it is
+//                                        invisible to attach.sh (useless for
+//                                        the terminal-only workflow).
+//         - remoteUser                  (attach.sh redundantly also passes
+//                                        --user dev)
+//
+//       ATTACH/RUNTIME-TIME fields (re-applied by the VSCode runtime on EVERY
+//       attach; attach.sh NEVER gets them):
+//         - postCreateCommand           (runs ONCE at create via devcontainer;
+//                                        `podman start` does NOT re-fire it.
+//                                        attach.sh warns if the resulting
+//                                        venv — created by post-create.sh — is
+//                                        missing. If you add/repair something
+//                                        here, a rebuild via rebuild.sh is
+//                                        required to run it.)
+//         - postStartCommand / postAttachCommand  (not declared; if added,
+//                                        attach.sh would similarly miss them)
+//         - remoteEnv                   (not declared, intentionally — see the
+//                                        containerEnv comment above)
+//         - customizations.vscode.*     (editor-only: extension auto-install
+//                                        and in-editor settings. attach.sh is a
+//                                        plain terminal session and ignores
+//                                        these; they're irrelevant to it)
+//         - workspaceFolder              (tells VSCode which folder to open;
+//                                        attach.sh lands in the exec user's
+//                                        home instead. Not a bug — just unused)
+//         - shutdownAction              (VSCode-disconnect behavior; attach.sh
+//                                        doesn't trigger it. Net effect here
+//                                        is the same: container keeps running
+//                                        after detach, since attach.sh does
+//                                        `podman start` which left it running)
+//
+//   EDIT-DRIFT WARNING (the subtle trap): create-time fields are frozen at
+//   whatever THIS FILE said at the moment of the last `devcontainer up`. An
+//   edit to mounts / runArgs / containerEnv / build committed AFTER the last
+//   rebuild is invisible on the attach path until rebuild.sh is run. Example:
+//   the /etc/localtime bind-mount entry was added in a later commit than the
+//   container was created, so it was never baked — the attach path stayed on
+//   Etc/UTC. attach.sh carries its own host-zone resolution / self-heal /
+//   --env TZ forwarding precisely to cover this gap (see the timezone block
+//   in attach.sh). Any future create-time edit should be pair-reviewed with
+//   "does the attach path need a rebuild to see this, and is there an
+//   attach.sh-side fallback in the meantime?"
+// ─────────────────────────────────────────────────────────────────────────
+{
+  "name": "degenbot",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "runArgs": [
+    // Removing the default cgroup PID cap so heavy test spawning 
+    // (cargo, pytest, forge) never hits the limit.
+    "--pids-limit=-1"
+  ],
+  "remoteUser": "dev",
+  "workspaceFolder": "/workspaces/degenbot",
+  "shutdownAction": "none", // keep the container running if VSCode disconnects
+  // No devcontainer features — python, rust, node, just, uv, tmux, git are all
+  // baked into the Dockerfile via dnf (fedora:latest). foundry (foundryup)
+  // and pi (npm i -g) are ALSO baked into the image — they used to live in
+  // post-create.sh but were promoted into the Dockerfile because the 
+  // entry point (attach.sh) does `podman start`+`exec`, which does NOT
+  // run postCreateCommand, so post-create-installed tools went missing after
+  // any container recreate.
+  // Bind-mount the host's /etc/localtime (read-only) so the container's
+  // timezone matches the host. glibc resolves the zone through this file/
+  // symlink, so every process (date, logs, Python datetime.now()) reports
+  // host-local time without needing a separate TZ env var. The TZ env var
+  // below is also forwarded for tools that prefer it; on hosts without TZ
+  // exported it resolves to empty and falls back to /etc/localtime.
+  "mounts": [
+    "source=/etc/localtime,target=/etc/localtime,type=bind,readonly=true",
+    "source=${localEnv:HOME}/code/executor,target=/workspaces/executor,type=bind,readonly=true",
+    "source=${localEnv:HOME}/.agents,target=/home/dev/.agents,type=bind",
+    "source=${localEnv:HOME}/.config/degenbot,target=/home/dev/.config/degenbot,type=bind",
+    "source=${localEnv:HOME}/.foundry,target=/home/dev/.foundry,type=bind",
+    "source=${localEnv:HOME}/.pi,target=/home/dev/.pi,type=bind"
+  ],
+  // PATH additions for the npm-global pi binary (~/.local/bin; npm prefix
+  // in the Dockerfile makes `npm i -g` land there) and foundry
+  // (~/.foundry/bin, curl-installed in the Dockerfile). Both are baked into the
+  // image; these remoteEnv/containerEnv entries just ensure they're on PATH for
+  // VSCode-launched shells too. cargo/just/node/python/uv are in /usr/bin from
+  // dnf and already on the default PATH.
+  // Network (host.containers.internal, see comment above) gives the dev
+  // container host-loopback access to the local Ethereum node, so tests.env
+  // points at host.containers.internal:8545/8546. Pod membership and
+  // `--network=container:mainnet_node` were both attempted and rejected by
+  // podman — details in the runArgs/network comment above.
+  // All environment variables live in containerEnv (baked into the image's
+  // Config.Env, visible to EVERY process including `podman exec` shells from
+  // attach.sh) rather than remoteEnv (only injected by the VSCode runtime
+  // into shells IT spawns — invisible to podman exec, so useless for the
+  // terminal-only workflow this container serves). PATH augmentation for foundry/pi
+  // is set directly in the Dockerfile via `ENV PATH=...`, not here.
+  "containerEnv": {
+    "LOCAL_BIN": "/home/dev/.local/bin",
+    "FOUNDRY_DIR": "/home/dev/.foundry",
+    // UV_PROJECT_ENVIRONMENT points uv at a container-local venv (outside the
+    // bind-mounted repo) instead of the in-repo .venv. This is the fix for the
+    // shared-venv poisoning between host (/home/btd/...) and container
+    // (/workspaces/...): uv bakes the venv's absolute path into pyvenv.cfg and
+    // every console-script shebang (.venv/bin/pytest, etc.), so a single shared
+    // .venv alternates between working and broken as each side runs `uv sync`.
+    // A container-local venv has self-consistent /home/dev/.venvs/... paths and
+    // is never read by the host. It lives in the container's writable layer
+    // (survives podman stop/start, wiped on --remove-existing-container) —
+    // post-create.sh recreates it via `uv sync` on every rebuild.
+    "UV_PROJECT_ENVIRONMENT": "/home/dev/.venvs/degenbot",
+    // PYTHONPYCACHEPREFIX isolates bytecache per environment. Even with separate
+    // venvs (above), the SOURCE TREE (__pycache__ under src/, tests/, conftest
+    // files) is still bind-mounted and shared. CPython bakes the absolute
+    // compile-time path (co_filename) into every .pyc; a pyc built in the
+    // container then loaded on the host carries /workspaces/... paths that break
+    // Sybil's pytest_collect_file (README.md tests vanish) and any tooling that
+    // reads co_filename. Redirecting pycs to a per-environment prefix keeps each
+    // side's bytecache self-consistent while preserving the import-speedup
+    // benefit. The prefix differs from the host's
+    // (/tmp/degenbot-pycache-host, set in the justfile) so the two environments
+    // never share a bytecache.
+    "PYTHONPYCACHEPREFIX": "/tmp/degenbot-pycache-container",
+    // Forward host TZ (if exported) for tools that read the env var directly.
+    // Empty on hosts without TZ exported — falls back to bind-mounted
+    // /etc/localtime above.
+    //
+    // NOTE: this containerEnv + the /etc/localtime mount entry above ONLY apply
+    // when the container is created via VSCode's 'Reopen in Container' or
+    // `devcontainer up` (rebuild.sh). The primary attach path (.devcontainer/
+    // attach.sh) does `podman start` + `podman exec`, which never reads this
+    // file — so neither the mount nor this TZ forward takes effect there.
+    // attach.sh carries its own host-zone resolution + self-heal + --env TZ
+    // forwarding to cover that path; see the timezone block in attach.sh.
+    "TZ": "${localEnv:TZ}",
+    // Ethereum RPC URIs. The host's tests.env points these at localhost:8545
+    // (the local anvil node, reachable via pasta port-forwarding). Inside the
+    // container "localhost" is the container's own loopback, not the host's —
+    // so these containerEnv entries override the shared tests.env values to
+    // host.containers.internal:8545, which podman resolves to the host
+    // loopback where anvil listens. Precedence (envvar > tests.env > default)
+    // is implemented in tests/conftest.py:_rpc, so containerEnv always wins
+    // here without editing the bind-mounted tests.env.
+    "ETHEREUM_ARCHIVE_NODE_HTTP_URI": "http://host.containers.internal:8545/",
+    "ETHEREUM_ARCHIVE_NODE_WS_URI": "ws://host.containers.internal:8546/",
+    "ETHEREUM_FULL_NODE_HTTP_URI": "http://host.containers.internal:8545/",
+    "ETHEREUM_FULL_NODE_WS_URI": "ws://host.containers.internal:8546/",
+    // Canonical degenbot RPC cascade for chain 1 (Ethereum mainnet). The
+    // library/provider-factory resolver (`resolve_rpc_uris`, see
+    // docs/migration-guides/rpc-uri-cascade.md) is chain-id-discriminated — it
+    // consults `DEGENBOT_RPC_{HTTP,WS}_CHAINID_{cid}` (NOT the test-scoped
+    // ETHEREUM_*_NODE_*_URI pair above) before reading config.toml. Setting
+    // them here reuses the same host anvil endpoint so a plain `uv run degenbot
+    // ...` CLI run resolves to host.containers.internal instead of the
+    // container's own loopback (`rpc[1]=http://localhost:8545` in config.toml).
+    "DEGENBOT_RPC_HTTP_CHAINID_1": "http://host.containers.internal:8545",
+    "DEGENBOT_RPC_WS_CHAINID_1": "ws://host.containers.internal:8546"
+  },
+  // Extensions auto-installed into the container on first launch. The interpreter
+  // is pinned to the container-local venv (UV_PROJECT_ENVIRONMENT above), NOT the
+  // in-repo .venv — .vscode/settings.json pins the host venv; these container
+  // settings override it inside the devcontainer.
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "astral-sh.ty",
+        "bierner.markdown-mermaid",
+        "charliermarsh.ruff",
+        "davidanson.vscode-markdownlint",
+        "github.vscode-github-actions",
+        "huff-language.huff-language",
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "pkief.material-icon-theme",
+        "rust-lang.rust-analyzer",
+        "tintinweb.vscode-vyper"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/home/dev/.venvs/degenbot/bin/python",
+        "python.venvPath": "/home/dev/.venvs",
+        // Isolate rust-analyzer's build artifacts into target/rust-analyzer so
+        // it does not invalidate (or be invalidated by) `cargo build` /
+        // `uv sync` fingerprint state in target/. Without this, a `uv sync`
+        // cdylib rebuild or a `cargo build` flip-flops rust-analyzer into a
+        // full recheck (~19s first-check tax; see rust/PERF_RESULTS.md
+        // lever #4). `true` resolves to target/rust-analyzer.
+        "rust-analyzer.cargo.targetDir": true
+      }
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh"
+}

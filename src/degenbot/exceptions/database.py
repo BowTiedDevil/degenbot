@@ -1,13 +1,24 @@
-import pathlib
+"""Rust-raised database-schema exception, re-exported under a companion name.
 
-from degenbot.exceptions.base import DegenbotError
+:class:`DatabaseSchemaStale` is raised by the Rust ``degenbot-db`` PyO3 seam
+when a database's schema is older than the version the Rust core expects —
+the caller must upgrade before the core can open it. It subclasses
+:class:`ValueError` so broad ``except ValueError`` handlers still catch it.
 
+.. note::
 
-class BackupExists(DegenbotError):
-    """
-    Raised by `degenbot database backup` if a file exists at the target path.
-    """
+    This is a **direct alias re-export** of the Rust ``#[pyclass]`` type
+    (``from degenbot.db import DatabaseSchemaStale``), not a Python
+    subclass. The Rust engine *raises* the ``degenbot._ffi.db`` pyclass
+    instance, so Python-side ``except DatabaseSchemaStale:`` matching must
+    hit the exact type the Rust side raises. A subclass re-export would
+    silently break that catch. The companion's only job is to give the type
+    a stable home in ``degenbot.exceptions`` so CLI / driver code does not
+    import ``degenbot._ffi``.
+"""
 
-    def __init__(self, path: pathlib.Path) -> None:
-        self.path = path
-        super().__init__(message=f"A backup at {path} already exists.")
+from degenbot.db import DatabaseSchemaStale
+
+__all__ = [
+    "DatabaseSchemaStale",
+]

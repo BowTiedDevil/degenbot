@@ -50,7 +50,7 @@ V4 uses a **centralized pool manager** (instead of per-pool contracts) with hook
 - **Hooks**: Customizable behavior at pool boundaries
 - **ModifyLiquidity**: Single event type for liquidity operations
 
-V4 uses separate `ManagedPool` database tables with pool manager references.
+V4 uses separate `ManagedPool` database tables with PoolManager contract references.
 
 ## Commands
 
@@ -236,13 +236,7 @@ Blocks are processed in chunks to limit memory usage and enable incremental comm
 Events are processed in block number, then log index order to ensure chronological processing within blocks:
 
 ```python
-sorted(
-    all_events, 
-    key=operator.itemgetter(
-        "blockNumber", 
-        "logIndex"
-    )
-)
+sorted(all_events, key=operator.itemgetter("blockNumber", "logIndex"))
 ```
 
 Invariants enforced by assertions:

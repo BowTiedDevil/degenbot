@@ -1,4 +1,4 @@
-"""Rename column
+"""Rename column.
 
 Revision ID: 6a77c4e07151
 Revises: 082ee8a3d339
@@ -19,7 +19,6 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-
     with op.batch_alter_table("pools", recreate="always", schema=None) as batch_op:
         batch_op.drop_index(batch_op.f("ix_pools_token0_id_"))
         batch_op.drop_index(batch_op.f("ix_pools_token1_id_"))

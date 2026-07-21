@@ -1,23 +1,38 @@
 # Degenbot
 
-Python classes to aid rapid development of Uniswap (V2, V3, V4), Curve V1, Solidly V2, Balancer V2, and Aave V3 integrations on EVM-compatible blockchains.
+A Rust MEV-bot core with a first-class Python driver shell, for Uniswap (V2, V3, V4), Curve V1, Solidly V2, Balancer V2, and Aave V3 integrations on EVM-compatible blockchains.
+
+Degenbot has two equally first-class consumers sharing one Rust core:
+
+- **Pure-Rust MEV bot** — `cargo add degenbot` (the umbrella crate re-exporting the cores) and build a fully functional MEV bot in Rust only.
+- **Python-driven MEV bot** — drive the same Rust core from Python through a thin [PyO3](https://pyo3.rs) layer that translates Python calls into Rust calls.
+
+The Rust core is the engine; Python is a driver shell, not a co-implementation. Pool/token state, swap math, event decoding, solvers, the pump loop, and swap encoding all live in Rust core crates; the Python layer provides the user-facing API, orchestration, and immutable config dual-tracking. See [`AGENTS.md`](AGENTS.md) and [`docs/adr/ADR-005-polars-inspired-three-layer-architecture.md`](docs/adr/ADR-005-polars-inspired-three-layer-architecture.md) for the full architectural vision.
 
 ## Contents
 
 - [Overview](#overview)
+- [Architecture: The Python-Rust Split](#architecture-the-python-rust-split)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Supported Protocols](#supported-protocols)
+- [Core Concepts](#core-concepts)
+  - [I/O-Free Architecture](#io-free-architecture)
+  - [The Bot Class](#the-bot-class)
 - [Examples](#examples)
+  - [Using the Bot Class](#using-the-bot-class-recommended)
   - [Uniswap V2 Liquidity Pools](#uniswap-v2-liquidity-pools)
   - [Uniswap V3 Liquidity Pools](#uniswap-v3-liquidity-pools)
   - [Uniswap V4 Liquidity Pools](#uniswap-v4-liquidity-pools)
   - [Forking With Anvil](#forking-with-anvil)
+  - [Curve StableSwap Pools](#curve-stableswap-pools-io-free)
+  - [Balancer V2 Weighted Pools](#balancer-v2-weighted-pools)
   - [Uniswap Arbitrage](#uniswap-arbitrage)
   - [Chainlink Price Feeds](#chainlink-price-feeds)
+- [Bot API Reference](#bot-api-reference)
 - [CLI Reference](#cli-reference)
 - [Configuration](#configuration)
-- [Rust Extension](#rust-extension)
+- [The Rust Core](#the-rust-core-degenbot_rs-rust-crate-degenbot_ffi-python-module)
 - [Documentation](#documentation)
 - [Contributing](#contributing)
 - [License](#license)
@@ -25,9 +40,45 @@ Python classes to aid rapid development of Uniswap (V2, V3, V4), Curve V1, Solid
 
 ## Overview
 
-Degenbot is a set of Python classes that abstract many of the implementation details of Uniswap liquidity pools and their underlying ERC-20 tokens. It uses [web3.py](https://github.com/ethereum/web3.py/) for communication with an EVM blockchain through the standard JSON-RPC interface.
+Degenbot abstracts the implementation details of Uniswap liquidity pools and their underlying ERC-20 tokens into a set of Rust core crates exposed to Python through a thin PyO3 binding layer. The Rust core owns all performance-critical and stateful logic — pool/token state, swap math, event decoding, solvers, the pump loop, and swap encoding — while the Python companion provides the user-facing API, docstrings, and I/O orchestration.
+
+Today the Python layer still owns some infrastructure (database via SQLAlchemy, RPC via web3.py, publisher/subscriber, price oracles, the DB-aware updaters, simulation, and transaction submission); each of these is on the migration path into the Rust core, moved one piece at a time.
 
 These classes serve as building blocks for the lessons published by [BowTiedDevil](https://twitter.com/BowTiedDevil) on [Degen Code](https://www.degencode.com/).
+
+## Architecture: The Python-Rust Split
+
+Degenbot follows a Polars-inspired three-layer architecture (ADR-005). Every concern belongs to exactly one layer:
+
+| Layer | Where it lives | Holds |
+|-------|----------------|-------|
+| **Rust core** | `rust/crates/degenbot-{core,-cl-math,-curve-math,-balancer-math,-abi,-decoders,-uniswap,-rpc,-bot,-pools,-solvers,…}` — **zero `pyo3`** by default | data + state-machine logic + pure math + protocols (DexIdentity, encoders, decoders) |
+| **PyO3 wrapper** | `rust/crates/degenbot-python/src/<domain>/**` (the `degenbot._ffi` extension module) | `#[pyclass]`/`#[pyfunction]` only — arg extraction → GIL release → core call → result wrap. **No business logic.** |
+| **Python companion** | `src/degenbot/**` | user-facing API, docstrings, I/O orchestration, immutable config dual-tracking, `Fraction`-based display |
+
+**The standalone-Rust-core constraint:** anything a standalone Rust consumer (`cargo add degenbot`) needs to build an MEV bot lives in a core crate from day one — never stranded on the Python side. The no-pyo3-in-cores invariant is enforced by `just check-no-pyo3-in-cores`.
+
+### Rust Core Crates
+
+The Rust workspace under `rust/crates/` exposes focused, independently consumable crates:
+
+| Crate | Responsibility |
+|-------|----------------|
+| `degenbot-core` | Shared types, `DexIdentity`, protocols |
+| `degenbot-v2-math` / `degenbot-cl-math` / `degenbot-curve-math` / `degenbot-balancer-math` / `degenbot-solidly-math` / `degenbot-evm-math` | Per-protocol pure swap/invariant math |
+| `degenbot-pools` | I/O-free pool state machines |
+| `degenbot-decoders` / `degenbot-abi` | Event + ABI decode/encode |
+| `degenbot-uniswap` | Uniswap V2/V3/V4 domain types |
+| `degenbot-rpc` / `degenbot-fork` | RPC interaction + anvil forking |
+| `degenbot-solvers` / `degenbot-pathfinding` | Arbitrage solving + path discovery |
+| `degenbot-bot` | The `Bot` state owner + pump/engine lifecycle |
+| `degenbot-db` | Rust-owned schema (cutover target, ADR-010) |
+| `degenbot-pool-updater` / `degenbot-aave-updater` | DB-aware state updaters |
+| `degenbot-price` / `degenbot-executor` / `degenbot-submission` / `degenbot-simulation` | Oracles, executor, tx submission, simulation |
+| `degenbot-python` | The PyO3 binding layer (`degenbot._ffi` Python module, `degenbot_rs` Rust crate) |
+| `degenbot` | Umbrella crate re-exporting the cores for `cargo add degenbot` |
+
+Full component map and pump/engine lifecycle in [`docs/architecture/rust-owned-bot.md`](docs/architecture/rust-owned-bot.md).
 
 ## Installation
 
@@ -52,31 +103,190 @@ uv sync  # or: pip install -e .
 
 ## Quick Start
 
-```python
-import web3
+### Modern Bot-Based Approach (Recommended)
+
+The `Bot` class is the central session object for all degenbot operations. It manages connections, registries, and provides factory methods for creating pools and tokens:
+
+<!-- invisible-code-block: python
 import degenbot
+from degenbot.config import DegenbotConfig
+from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI as RPC_URL
+-->
 
-# Connect to an Ethereum RPC endpoint
-w3 = web3.Web3(web3.HTTPProvider("https://eth-mainnet.example.com"))
+```python
+# Initialize Bot from config file or explicit settings
+bot = degenbot.Bot(
+    config=DegenbotConfig(
+        default_chain_id=1,
+        rpc={1: RPC_URL},
+        database={"path": "~/.config/degenbot/degenbot.db"},
+    )
+)
 
-# Verify connection
-assert w3.is_connected()
+# Bot constructs the RPC provider from config and enforces its
+# eth_chainId matches default_chain_id (fail-fast). No manual provider
+# registration is needed.
+```
 
-# Create a Uniswap V3 pool helper from an address
-pool = degenbot.UniswapV3Pool("0x8ad599c3a0ff1de082011efddc58f1908eb6e6d8")
+```
+# Create pools and tokens through Bot (I/O-free when possible)
+pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
+token = bot.build_erc20token("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")  # WETH
 
-# Inspect pool state
+# Pools are I/O-free - all data injected at construction
 print(f"Pool: {pool.name}")
-print(f"Token 0: {pool.token0.symbol}")
-print(f"Token 1: {pool.token1.symbol}")
-print(f"Liquidity: {pool.liquidity}")
+print(f"Token: {token}")
 
-# Calculate swap outputs
+# Calculate swaps without any network calls
 amount_out = pool.calculate_tokens_out_from_tokens_in(
     token_in=pool.token0,
-    token_in_quantity=10**18,  # 1 token (18 decimals)
+    token_in_quantity=10**18,
 )
 print(f"Output: {amount_out}")
+```
+
+### Direct Pool Construction (Advanced)
+
+Pool classes cannot be constructed from an address alone — all state must be provided as keyword arguments. Use `Bot.build_pool()` instead:
+
+```python
+# Do NOT do this — will raise AttributeError:
+# pool = degenbot.UniswapV3Pool("0x...")  ← BROKEN!
+
+# Instead, always use Bot to construct pools:
+pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
+```
+
+<!-- clear-namespace -->
+
+## Core Concepts
+
+### I/O-Free Architecture
+
+Degenbot pools follow an **I/O-free architecture** where on-chain data is fetched at construction time and injected into pool objects. After construction, pools are pure calculation objects with no network dependencies. Construction is handled by typed **Builder** classes (`V2PoolBuilder`, `V3PoolBuilder`, `V4PoolBuilder`, `CurvePoolBuilder`, `Erc20Builder`) that own the full I/O choreography: DB lookup → RPC fetch → decode → construct pool → register.
+
+**Benefits:**
+- **Testability**: Easy to create test fixtures with mocked data
+- **Performance**: Swap calculations are pure math, no network calls
+- **Reliability**: No async complexity in pool logic
+- **State Management**: Pools can be snapshotted, pickled, and restored
+
+**Current status:** All pool types (Curve, V2, V3, V4, Aerodrome, Camelot) are fully I/O-free — no pool class imports `ProviderAdapter` or carries provider-dependent methods. Construction and updates flow through builders, and all state changes enter pools via `external_update()`. Builder `update()` methods are `@staticmethod` — all I/O flows through the `io` parameter, enforced by the `PoolBuilder`/`AsyncPoolBuilder` protocol type signatures. Curve calculators receive a `DyCalculationInputs` frozen dataclass carrying pre-resolved data, eliminating all private member access (no `pool._xxx` patterns).
+
+### The Bot Class
+
+`Bot` is the central session object that owns all runtime state:
+
+<!-- invisible-code-block: python
+from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI as RPC_URL
+-->
+
+```python
+import degenbot
+from degenbot.config import DegenbotConfig
+
+# Bot manages connections, registries, and provides factory methods
+bot = degenbot.Bot(
+    config=DegenbotConfig(
+        default_chain_id=1,
+        rpc={1: RPC_URL},
+        database={"path": ":memory:"},
+    )
+)
+# The RPC provider is built from config; eth_chainId is enforced to equal
+# default_chain_id at construction.
+bot.provider  # ProviderAdapter for chain 1
+bot.chain_id  # 1
+```
+
+```python
+# All pool/token creation flows through Bot
+pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
+token = bot.build_erc20token("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+
+# Bot provides token utilities with caching
+balance = bot.get_token_balance(token, "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
+approval = bot.get_token_approval(token, owner="0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", spender="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45")
+```
+
+**Bot properties:**
+- `bot.chain_id` - the configured chain ID for this single-chain session
+- `bot.provider` - ProviderAdapter for the chain (chain_id enforced at construction)
+- `bot.pools` - PoolRegistry for created pools
+- `bot.tokens` - TokenRegistry for created tokens
+- `bot.managed_pools` - ManagedPoolRegistry for V4 pools
+- `bot.db` - DatabaseSessionManager for state snapshots
+
+Builders are internal to Bot and not exposed publicly. All pool/token creation goes through `Bot.build_pool()`.
+
+### Pool Types and Builders
+
+`build_pool(address)` is the universal entry point that auto-resolves pool type from DB, registry, and on-chain probing:
+
+| Pool Type | Method | Supports |
+|-----------|--------|----------|
+| Uniswap V2 | `bot.build_pool(address)` | Standard AMM, Camelot, other forks |
+| Uniswap V3 | `bot.build_pool(address)` | Full tick data, range orders |
+| Uniswap V4 | `bot.build_managed_pool(address, pool_id=...)` | Singleton architecture with hooks |
+| Curve V1 | `bot.build_pool(address)` | StableSwap, metapools, lending pools |
+
+When `build_pool` is called, type resolution proceeds in order: (1) pool registry for existing pools, (2) database `kind` column, (3) pool type registry mapping `(chain_id, factory_address) → pool class`, (4) on-chain probing via `slot0()`, `getReserves()`, or `coins()`.
+
+### External Updates
+
+Pools receive state updates via `external_update()` — a pure-logic method that validates the update and transitions pool state. The builder handles all I/O (fetching reserves, slot0, etc. from RPC), constructs an `ExternalUpdate` message, and pushes it to the pool:
+
+<!-- invisible-code-block: python
+from degenbot._ffi import PyBot
+_PY_BOT = PyBot()
+from tests.helpers.erc20_factory import make_erc20
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
+from degenbot.erc20.erc20 import Erc20Token
+from tests.helpers.v2_pool_factory import make_v2_pool
+from fractions import Fraction
+
+_wbtc = make_erc20(_PY_BOT,
+    address='0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
+    name='Wrapped BTC',
+    symbol='WBTC',
+    decimals=8,
+    chain_id=1,
+)
+_weth = make_erc20(_PY_BOT,
+    address='0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+    name='Wrapped Ether',
+    symbol='WETH',
+    decimals=18,
+    chain_id=1,
+)
+pool = make_v2_pool(
+    '0xBb2b8038a1640196FbE3e38816F3e67Cba72D940',
+    token0=_wbtc,
+    token1=_weth,
+    factory='0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f',
+    fee_token0=Fraction(3, 1000),
+    fee_token1=Fraction(3, 1000),
+    reserves_token0=10732489743,
+    reserves_token1=2056834999904002274711,
+    chain_id=1,
+)
+block_number = 100
+reserves0 = 10732455184
+reserves1 = 2056841643098872755548
+-->
+
+```python
+# Builder fetches state from chain (I/O), constructs update, pushes to pool
+update = UniswapV2PoolExternalUpdate(
+    block_number=block_number,
+    reserves_token0=reserves0,
+    reserves_token1=reserves1,
+)
+pool.external_update(update)  # Pure logic — no I/O
+
+# Pool.simulate_swap() previews swaps without state change
+# Pool.calculate_tokens_out_from_tokens_in() is pure math after construction
 ```
 
 ## Supported Protocols
@@ -91,7 +301,7 @@ print(f"Output: {amount_out}")
 | SushiSwap | V2, V3 | Ethereum, Base |
 | Curve | V1 | Ethereum |
 | Solidly | V2 | Ethereum, Base | *(utility functions only, no pool class)*
-| Balancer | V2 | Ethereum | *(internal, not in public API)* |
+| Balancer | V2 | Ethereum | Weighted & stable pools, PowVersion detection, StableMath V1/V2 invariant |
 | Camelot | V2 | Arbitrum |
 | SwapBased | V2 | Base |
 
@@ -110,178 +320,282 @@ print(f"Output: {amount_out}")
 
 ## Examples
 
-The following snippets assume a connected `Web3` instance with a working provider on Ethereum mainnet (chain ID #1), and the classes imported under the `degenbot` namespace.
+The following examples demonstrate the recommended **Bot-based approach** for pool and token construction.
+
+### Using the Bot Class (Recommended)
+
+All pool and token creation should flow through the `Bot` class for proper registry management and I/O handling:
+
+```python
+import degenbot
+from degenbot.config import DegenbotConfig
+
+# Initialize Bot (handles config, connections, registries)
+bot = degenbot.Bot(
+    config=DegenbotConfig(
+        default_chain_id=1,
+        rpc={1: RPC_URL},
+        database={"path": ":memory:"},
+    )
+)
+```
+
+```python
+# Build tokens (fetches from DB/RPC, cached in registry)
+weth = bot.build_erc20token("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+usdc = bot.build_erc20token("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+
+# Build pools (fetches all state from DB/RPC, returns I/O-free pool objects)
+v3_pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
+v2_pool = bot.build_pool("0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc")
+curve_pool = bot.build_pool("0xbEbc44782C7db0a1A60Cb6fe97d0b483032FF1C7")  # 3Crv
+
+# Universal builder -- auto-resolves pool type
+pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")  # V3, detected automatically
+
+# Token utilities with automatic caching
+balance = bot.get_token_balance(usdc, "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
+approval = bot.get_token_approval(usdc, owner="0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", spender="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45")
+
+# Pools are I/O-free after construction - pure calculations
+amount_out = v3_pool.calculate_tokens_out_from_tokens_in(
+    token_in=v3_pool.token0,
+    token_in_quantity=1000_000000,  # 1000 USDC
+)
+```
+
+### Direct Pool Construction (Advanced)
+
+Pool classes cannot be constructed from an address alone — all state must be provided as keyword arguments. Use `Bot.build_pool()` instead:
+
+```python
+# Do NOT do this — will raise AttributeError:
+# pool = degenbot.UniswapV3Pool("0x...")  ← BROKEN!
+
+# Instead, always use Bot to construct pools:
+pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
+```
+
+---
 
 ### Uniswap V2 Liquidity Pools
 
+V2 pools use the constant-product invariant (x·y=k) with directional fees:
+
+<!-- invisible-code-block: python
+from degenbot._ffi import PyBot
+_PY_BOT = PyBot()
+from tests.helpers.erc20_factory import make_erc20
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
+from degenbot.erc20.erc20 import Erc20Token
+from tests.helpers.v2_pool_factory import make_v2_pool
+from fractions import Fraction
+
+_wbtc = make_erc20(_PY_BOT,
+    address='0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
+    name='Wrapped BTC',
+    symbol='WBTC',
+    decimals=8,
+    chain_id=1,
+)
+_weth = make_erc20(_PY_BOT,
+    address='0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+    name='Wrapped Ether',
+    symbol='WETH',
+    decimals=18,
+    chain_id=1,
+)
+lp = make_v2_pool(
+    '0xBb2b8038a1640196FbE3e38816F3e67Cba72D940',
+    token0=_wbtc,
+    token1=_weth,
+    factory='0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f',
+    fee_token0=Fraction(3, 1000),
+    fee_token1=Fraction(3, 1000),
+    reserves_token0=10732489743,
+    reserves_token1=2056834999904002274711,
+    chain_id=1,
+)
+-->
+
 ```python
-# Create `UniswapV2Pool` object from on-chain data at the given address and 
-# current chain height
->>> lp = degenbot.UniswapV2Pool('0xBb2b8038a1640196FbE3e38816F3e67Cba72D940')
-• WBTC (Wrapped BTC)
-• WETH (Wrapped Ether)
-• Token 0: WBTC - Reserves: 10732489743
-• Token 1: WETH - Reserves: 2056834999904002274711
+# Construct an I/O-free V2 pool (all state injected at construction)
+# Tokens and reserves are provided directly — no RPC calls
+assert lp.token0.symbol == 'WBTC'
+assert lp.token1.symbol == 'WETH'
+assert lp.reserves_token0 == 10732489743
+assert lp.reserves_token1 == 2056834999904002274711
 
-# Inspect the tokens held by the pool
->>> lp.token0
-Erc20Token(
-    address=0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599, 
-    symbol='WBTC', 
-    name='Wrapped BTC', 
-    decimals=8
-)
+# V2 directional fees (may differ per direction)
+assert lp.fee_token0 == Fraction(3, 1000)
+assert lp.fee_token1 == Fraction(3, 1000)
 
->>> lp.token1
-Erc20Token(
-    address=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2, 
-    symbol='WETH', 
-    name='Wrapped Ether', 
-    decimals=18
-)
-
->>> lp.fee_token0
-Fraction(3, 1000)
-
->>> lp.fee_token1
-Fraction(3, 1000)
-
-# Predict the input and output values for swaps through the pool, accounting for fees
->>> lp.calculate_tokens_out_from_tokens_in(
-    token_in=lp.token1, 
+# Calculate swap outputs - pure math, no I/O
+assert lp.calculate_tokens_out_from_tokens_in(
+    token_in=lp.token1,
     token_in_quantity=1*10**18
-)
-5199789
+) == 5199789
 
->>> lp.calculate_tokens_in_from_tokens_out(
-    token_out=lp.token0, 
+assert lp.calculate_tokens_in_from_tokens_out(
+    token_out=lp.token0,
     token_out_quantity=5199789
+) == 999999992817074189
+
+# Pools are I/O-free: updates flow through external_update()
+# The builder (internal to Bot) fetches state and pushes updates
+update = UniswapV2PoolExternalUpdate(
+    block_number=100,
+    reserves_token0=10732455184,
+    reserves_token1=2056841643098872755548,
 )
-999999992817074189
+lp.external_update(update)
 
-# Update the current reserves from the live blockchain
->>> lp.auto_update(silent=False)
-[WBTC-WETH (V2, 0.30%)]
-WBTC: 10732455184
-WETH: 2056841643098872755548
-       
->>> lp.reserves_token0
-10732455184
-
->>> lp.reserves_token1
-2056841643098872755548
+# Reserves are updated in-place
+assert lp.reserves_token0 == 10732455184
+assert lp.reserves_token1 == 2056841643098872755548
 ```
 
 ### Uniswap V3 Liquidity Pools
 
+V3 pools use concentrated liquidity with tick-based positions. The V3 pool uses a **sparse tick data fetcher** for on-demand liquidity loading:
+
+<!-- invisible-code-block: python
+from degenbot._ffi import PyBot
+_PY_BOT = PyBot()
+from tests.helpers.erc20_factory import make_erc20
+import json
+from pathlib import Path
+from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from degenbot.erc20.erc20 import Erc20Token
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
+
+_wbtc = make_erc20(_PY_BOT,
+    address='0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
+    name='Wrapped BTC',
+    symbol='WBTC',
+    decimals=8,
+    chain_id=1,
+)
+_weth = make_erc20(_PY_BOT,
+    address='0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+    name='Wrapped Ether',
+    symbol='WETH',
+    decimals=18,
+    chain_id=1,
+)
+_data_file = Path('tests/fixtures/chain_data/1/block_24947230.json')
+with _data_file.open() as _f:
+    _data = json.load(_f)
+_pk = 'v3_0xcbcdf9626bc03e24f779434178a73a0b4bad62ed'
+_tbm_raw = _data.get(f'{_pk}_tick_bitmap', {})
+_td_raw = _data.get(f'{_pk}_tick_data', {})
+_tick_bitmap = {int(k): BitmapAtWord(bitmap=int(v['bitmap']), block=v['block']) for k, v in _tbm_raw.items()}
+_tick_data = {int(k): LiquidityAtTick(liquidity_gross=int(v['liquidity_gross']), liquidity_net=int(v['liquidity_net']), block=v['block']) for k, v in _td_raw.items()}
+from tests.helpers.v3_pool_factory import make_v3_pool
+lp = make_v3_pool(
+    '0xCBCdF9626bC03E24f779434178A73a0B4bad62eD',
+    token0=_wbtc,
+    token1=_weth,
+    factory='0x1F98431c8aD98523631AE4a59f267346ea31F984',
+    fee=3000,
+    tick_spacing=60,
+    sqrt_price_x96=34048891009198980752047510166697902,
+    tick=259432,
+    liquidity=544425151051415575,
+    state_block=24947230,
+    tick_bitmap=_tick_bitmap,
+    tick_data=_tick_data,
+)
+-->
+
 ```python
->>> lp = degenbot.UniswapV3Pool('0xCBCdF9626bC03E24f779434178A73a0B4bad62eD')
-WBTC-WETH (V3, 0.30%)
-• Token 0: WBTC
-• Token 1: WETH
-• Fee: 3000
-• Liquidity: 544425151051415575
-• SqrtPrice: 34048891009198980752047510166697902
-• Tick: 259432
+# Construct an I/O-free V3 pool (all state injected at construction)
+assert lp.token0.symbol == 'WBTC'
+assert lp.token1.symbol == 'WETH'
+assert lp.fee == 3000
+assert lp.liquidity == 544425151051415575
+assert lp.sqrt_price_x96 == 34048891009198980752047510166697902
+assert lp.tick == 259432
 
-# Calculate inputs and outputs
->>> lp.calculate_tokens_out_from_tokens_in(
-    token_in=lp.token1, 
+# Calculate inputs and outputs - pure math, no I/O
+assert lp.calculate_tokens_out_from_tokens_in(
+    token_in=lp.token1,
     token_in_quantity=1*10**18
-)
-5398169
+) == 5398169
 
->>> lp.calculate_tokens_in_from_tokens_out(
-    token_out=lp.token0, 
-    token_out_quantity=5398169
-)
-999999871563434214
-
-# Inspect the known liquidity positions
->>> lp.tick_bitmap
-{
-    0: UniswapV3BitmapAtWord(
-        bitmap=1,
-        block=18517665
-        ),
-    16: UniswapV3BitmapAtWord(
-        bitmap=115792089237316195423570985008687907853268655437644779123584680198630541352072,
-        block=18517670
-        )
-}
-
-# The V3 liquidity pool helper is optimized for fast instantiation, and will lazy-load 
-# liquidity data for positions outside of the current range as needed.
->>> lp.tick_data
-{
-    0: UniswapV3LiquidityAtTick(
-        liquidityNet=10943161472679, 
-        liquidityGross=10943161472679, 
-        block=18517665
-    ),
-    261060: UniswapV3LiquidityAtTick(
-        liquidityNet=-910396189679465, 
-        liquidityGross=910396189679465, 
-        block=18517670
-    ),
-    261000: UniswapV3LiquidityAtTick(
-        liquidityNet=-3774266260841234, 
-        liquidityGross=3774266260841234, 
-        block=18517670
-    ),
-    ...
-}
+# Tick bitmap and tick data are injected at construction
+assert 0 in lp.tick_bitmap
+assert 0 in lp.tick_data
 ```
 
 ### Uniswap V4 Liquidity Pools
 
-Uniswap V4 introduces hooks and a new pool manager architecture. The `UniswapV4Pool` class provides access to V4 pools with support for the new features.
+V4 uses a singleton pool manager with hooks. Pools are identified by `pool_id` instead of address:
+
+<!-- invisible-code-block: python
+from degenbot._ffi import PyBot
+_PY_BOT = PyBot()
+from tests.helpers.erc20_factory import make_erc20
+from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool, UniswapV4PoolKey
+from degenbot.erc20.erc20 import Erc20Token
+
+_eth = make_erc20(_PY_BOT,
+    address='0x0000000000000000000000000000000000000000',
+    name='Ether',
+    symbol='ETH',
+    decimals=18,
+    chain_id=8453,
+)
+_usdc = make_erc20(_PY_BOT,
+    address='0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+    name='USD Coin',
+    symbol='USDC',
+    decimals=6,
+    chain_id=8453,
+)
+from tests.helpers.v4_pool_factory import make_v4_pool
+lp = make_v4_pool(
+    pool_id='0x96d4b53a38337a5733179751781178a2613306063c511b78cd02684739288c0a',
+    pool_manager_address='0x498581fF718922c3f8e6A244956aF099B2652b2b',
+    token0=_eth,
+    token1=_usdc,
+    fee=500,
+    tick_spacing=10,
+    state_view_address='0xA3c0c9b65baD0b08107Aa264b0f3dB444b867A71',
+    sqrt_price_x96=4220772448119892035402666,
+    tick=-196812,
+    liquidity=60429069420043934,
+    protocol_fee_zero_for_one=0,
+    protocol_fee_one_for_zero=0,
+    lp_fee=500,
+)
+-->
 
 ```python
->>> lp = degenbot.UniswapV4Pool(
-...     pool_id='0x96d4b53a38337a5733179751781178a2613306063c511b78cd02684739288c0a',
-...     pool_manager_address='0x498581fF718922c3f8e6A244956aF099B2652b2b',
-...     state_view_address='0xA3c0c9b65baD0b08107Aa264b0f3dB444b867A71',
-...     tokens=[
-...         '0x0000000000000000000000000000000000000000', 
-...         '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-...     ],
-...     fee=500,
-...     tick_spacing=10
-... )
-ETH-USDC (UniswapV4Pool, id=0x96d4b53a38337a5733179751781178a2613306063c511b78cd02684739288c0a)
-• ID: 0x96d4b53a38337a5733179751781178a2613306063c511b78cd02684739288c0a
-• Token 0: ETH
-• Token 1: USDC
-• Liquidity: 60429069420043934
-• SqrtPrice: 4220772448119892035402666
-• Tick: -196812
+# Construct an I/O-free V4 pool (all state injected at construction)
+assert lp.token0.symbol == 'ETH'
+assert lp.token1.symbol == 'USDC'
+assert lp.liquidity == 60429069420043934
+assert lp.sqrt_price_x96 == 4220772448119892035402666
+assert lp.tick == -196812
 
-# Calculate output for a 1 ETH swap
->>> lp.calculate_tokens_out_from_tokens_in(
-...     token_in=lp.token0, 
-...     token_in_quantity=1*10**18,
-... )
-2834164215
-
-# Inspect active hooks
->>> lp.active_hooks
-frozenset()
-
-# Get pool key information
->>> lp.pool_key
-UniswapV4PoolKey(
+# V4 features: hooks, protocol fees, dynamic LP fees
+assert lp.active_hooks == frozenset()
+assert lp.pool_key == UniswapV4PoolKey(
     currency0='0x0000000000000000000000000000000000000000',
     currency1='0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     fee=500,
     tick_spacing=10,
-    hooks='0x0000000000000000000000000000000000000000'
+    hooks='0x0000000000000000000000000000000000000000',
 )
 ```
 
 ### Forking With Anvil
 
 The `AnvilFork` class is used to launch a fork with `anvil` from the [Foundry](https://github.com/foundry-rs/foundry) toolkit. The object provides a `w3` attribute, connected to an IPC socket, which can be used to communicate with the fork like a typical RPC.
+
+<!-- skip: start "requires running anvil process" -->
 
 ```python
 >>> fork = degenbot.AnvilFork(fork_url='http://localhost:8545')
@@ -290,10 +604,10 @@ The `AnvilFork` class is used to launch a fork with `anvil` from the [Foundry](h
 >>> fork.w3.eth.block_number
 22675736
 
-# The `AnvilFork` instance also exposes HTTP and WS endpoints that can be used to make a 
+# The `AnvilFork` instance also exposes HTTP and WS endpoints that can be used to make a
 # separate connection from a remote machine.
 >>> import web3
->>> _w3 = web3.Web3(web3.HTTPProvider(fork.http))
+>>> _w3 = web3.Web3(web3.HTTPProvider(fork.http_url))
 >>> _w3.is_connected()
 True
 >>> _w3 = web3.Web3(web3.LegacyWebSocketProvider(fork.ws_url))
@@ -318,8 +632,8 @@ True
 >>> fork.w3.eth.block_number
 22675800
 
-# The fork can also be reset to an imaginary block after a specific transaction 
-# hash. See the [Anvil reference](https://getfoundry.sh/anvil/reference/) for the 
+# The fork can also be reset to an imaginary block after a specific transaction
+# hash. See the [Anvil reference](https://getfoundry.sh/anvil/reference/) for the
 # associated `--fork-transaction-hash` option.
 >>> fork.reset(
     fork_url='http://localhost:8545',
@@ -335,7 +649,7 @@ True
 
 # Byte code can be set for an arbitrary address.
 >>> fork.set_code(
-    address='0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045', 
+    address='0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
     bytecode=bytes.fromhex('45')
 )
 >>> fork.w3.eth.get_code('0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045')
@@ -344,9 +658,9 @@ HexBytes('0x45')
 
 #### Anvil Options
 
-The Anvil client offers [many options](https://getfoundry.sh/anvil/reference/anvil/). The most common ones are exposed by constructor options to `AnvilFork`. 
+The Anvil client offers [many options](https://getfoundry.sh/anvil/reference/anvil/). The most common ones are exposed by constructor options to `AnvilFork`.
 
-Users wanting fine-grained control over **all** client options may pass them through the `anvil_opts` argument, which takes a list of strings. These will be passed directly to the client after all of the managed options. 
+Users wanting fine-grained control over **all** client options may pass them through the `anvil_opts` argument, which takes a list of strings. These will be passed directly to the client after all of the managed options.
 
 ```python
 # Launch with the Optimism feature set, which enables special transaction types.
@@ -355,7 +669,7 @@ Users wanting fine-grained control over **all** client options may pass them thr
     anvil_opts=['--optimism']
 )
 
-# Launch with a non-default hardfork, which may be necessary for accurate simulation on a 
+# Launch with a non-default hardfork, which may be necessary for accurate simulation on a
 # historical block.
 >>> fork = degenbot.AnvilFork(
     fork_url='http://localhost:8545',
@@ -380,102 +694,532 @@ Users wanting fine-grained control over **all** client options may pass them thr
 )
 ```
 
-### Uniswap Arbitrage
+<!-- skip: end -->
 
-Several classes are provided to simplify the calculation of optimal arbitrage amounts for a given sequence of pools.
+### Curve StableSwap Pools (I/O-Free)
+
+Curve pools follow the I/O-free architecture with a single `CurveDataProvider` seam. The Bot handles metapool detection, lending token identification, and data provider injection:
+
+<!-- invisible-code-block: python
+from degenbot._ffi import PyBot
+_PY_BOT = PyBot()
+from tests.helpers.erc20_factory import make_erc20
+from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
+from degenbot.erc20.erc20 import Erc20Token
+
+_dai = make_erc20(_PY_BOT,
+    address='0x6B175474E89094C44Da98b954EedeAC495271d0F',
+    name='Dai Stablecoin',
+    symbol='DAI',
+    decimals=18,
+    chain_id=1,
+)
+_usdc = make_erc20(_PY_BOT,
+    address='0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+    name='USD Coin',
+    symbol='USDC',
+    decimals=6,
+    chain_id=1,
+)
+_usdt = make_erc20(_PY_BOT,
+    address='0xdAC17F958D2ee523a2206206994597C13D831ec7',
+    name='Tether USD',
+    symbol='USDT',
+    decimals=6,
+    chain_id=1,
+)
+_3crv = make_erc20(_PY_BOT,
+    address='0x6c3F90f043a72FA6529E0151d6e9a6e37df9E3e5',
+    name='Curve 3Pool Token',
+    symbol='3Crv',
+    decimals=18,
+    chain_id=1,
+)
+from tests.helpers.curve_pool_factory import make_curve_pool
+tripool = make_curve_pool(
+    '0xbEbc44782C7db0a1A60Cb6fe97d0b483032FF1C7',
+    tokens=[_dai, _usdc, _usdt],
+    lp_token=_3crv,
+    a_coefficient=2000,
+    fee=4000000,
+    admin_fee=5000000000,
+    balances=[29792690991444656395059310, 27440491064, 27440490397],
+    state_block=18900000,
+    precision_multipliers=[1000000000000000000, 1000000000000, 1000000000000],
+)
+-->
 
 ```python
->>> v2_lp = degenbot.UniswapV2Pool('0xBb2b8038a1640196FbE3e38816F3e67Cba72D940')
-• WBTC (Wrapped BTC)
-• WETH (Wrapped Ether)
-• Token 0: WBTC - Reserves: 6390612659
-• Token 1: WETH - Reserves: 2534027291379197003140
+# Construct an I/O-free Curve StableSwap pool
+assert [t.symbol for t in tripool.tokens] == ['DAI', 'USDC', 'USDT']
+assert tripool.a_coefficient == 2000
+assert tripool.fee == 4000000
 
->>> v3_lp = degenbot.UniswapV3Pool('0xCBCdF9626bC03E24f779434178A73a0B4bad62eD')
-WBTC-WETH (UniswapV3Pool, 0.30%)
-• Address: 0xCBCdF9626bC03E24f779434178A73a0B4bad62eD           
-• Token 0: WBTC           
-• Token 1: WETH
-• Fee: 3000               
-• Liquidity: 261799575241796322         
-• SqrtPrice: 49883600179466982678044042954714957         
-• Tick: 267070              
-• State Block (Initial): 22676748
-                                                                       
->>> weth = v2_lp.token1 
+# For lending pools (cTokens), rates are resolved before calculation
+# Pool's get_dy() pre-resolves all I/O via CurveDataProvider, then passes
+# pre-resolved data to calculators via DyCalculationInputs (pure math, no private access)
+```
 
->>> arb = degenbot.UniswapLpCycle(
-    id="test", 
-    input_token=weth, 
-    swap_pools=[v2_lp, v3_lp]
+### Balancer V2 Weighted Pools
+
+Balancer V2 weighted pools use the weighted product invariant with configurable token weights and a singleton Vault architecture. The math libraries are ported from the [Balancer V2 Solidity monorepo](https://github.com/balancer/balancer-v2-monorepo) with exact integer-level matching against on-chain results.
+
+Key design points:
+- **PowVersion detection**: Different deployed pool contracts embed different versions of the FixedPoint library. `WeightedPool2Tokens` (V1) uses the general LogExpMath path with error bounds; `WeightedPool` (V2) includes fast paths for y == ONE/TWO/FOUR. The version is detected from bytecode at construction time.
+- **Rounding direction**: GIVEN_IN rounds down (seller gets less), GIVEN_OUT rounds up (buyer pays more).
+- **Fee ordering**: GIVEN_OUT applies downscale-up first, then add swap fee — matching Solidity's exact operation order.
+- **Scaling**: Tokens with non-18 decimals are normalized via scaling factors computed as `ONE * 10**(18 - decimals)`.
+
+<!-- invisible-code-block: python
+from degenbot._ffi import PyBot
+_PY_BOT = PyBot()
+from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.balancer_pool_factory import make_balancer_weighted_pool
+from fractions import Fraction
+
+_bal = make_erc20(_PY_BOT,
+    address='0xba100000625a3754423978a60c9317c58a424e3D',
+    name='Balancer',
+    symbol='BAL',
+    decimals=18,
+    chain_id=1,
+)
+_weth = make_erc20(_PY_BOT,
+    address='0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+    name='Wrapped Ether',
+    symbol='WETH',
+    decimals=18,
+    chain_id=1,
+)
+# The real mainnet "80 BAL 20 WETH" WeightedPool2Tokens
+# (0x5c6Ee304399DBdB9C8Ef030aB642B10820DB8F56). State injected offline so
+# the block below is pure math — `Bot.build_pool()` runs the same registration
+# in production against live RPC + on-chain bytecode for `pow_version`.
+weighted_pool = make_balancer_weighted_pool(
+    address='0x5c6Ee304399DBdB9C8Ef030aB642B10820DB8F56',
+    pool_id=bytes.fromhex(
+        '5c6ee304399dbdb9c8ef030ab642b10820db8f56000200000000000000000014'
+    ),
+    vault='0xBA12222222228d8Ba445958a75a0704d566BF2C8',
+    tokens=[_bal, _weth],
+    balances=[1_000_000 * 10**18, 4_000_000 * 10**18],
+    fee=Fraction(1, 100),         # 1% swap fee
+    weights=[8 * 10**17, 2 * 10**17],  # 80 BAL / 20 WETH
+    pow_version=1,               # WeightedPool2Tokens → V1 (general LogExpMath path)
+)
+-->
+
+```python
+from degenbot.balancer.pools import BalancerV2Pool, detect_pow_version
+from degenbot.balancer.libraries.constants import PowVersion
+
+# `detect_pow_version(bytecode)` resolves the PowVersion from deployed pool
+# bytecode: V2 (WeightedPool) embeds the FixedPoint TWO fast-path constant
+# (0x1bc16d674ec80000) for y == ONE/TWO/FOUR fast paths; V1 (WeightedPool2Tokens)
+# omits it and uses the general LogExpMath path. `Bot.build_pool()` runs this
+# internally; here it is exercised directly so the example stays I/O-free.
+v1_bytecode = bytes(range(0, 32)).hex()          # arbitrary V1 bytecode (no TWO constant)
+assert detect_pow_version(v1_bytecode) == PowVersion.V1
+v2_bytecode = '1bc16d674ec80000' + '00' * 16     # V2 bytecode: TWO constant present
+assert detect_pow_version(v2_bytecode) == PowVersion.V2
+
+# `weighted_pool` was built offline by the fixture above; production code uses
+# `bot.build_pool(address)` which runs the same registration against live RPC.
+assert isinstance(weighted_pool, BalancerV2Pool)
+assert weighted_pool.address == '0x5c6Ee304399DBdB9C8Ef030aB642B10820DB8F56'
+assert weighted_pool.vault == '0xBA12222222228d8Ba445958a75a0704d566BF2C8'
+assert [t.symbol for t in weighted_pool.tokens] == ['BAL', 'WETH']
+assert weighted_pool.fee == Fraction(1, 100)                 # 1% swap fee
+assert weighted_pool.weights == (8 * 10**17, 2 * 10**17)    # 80 BAL / 20 WETH
+assert weighted_pool.pow_version == PowVersion.V1           # WeightedPool2Tokens
+
+# GIVEN_IN rounds DOWN (seller gets less) — pure math, no I/O
+amount_out = weighted_pool.calculate_tokens_out_from_tokens_in(
+    token_in=weighted_pool.tokens[1],   # WETH in
+    token_out=weighted_pool.tokens[0],  # BAL out
+    token_in_quantity=10**18,
+)
+assert amount_out == 61874980427000000  # ≈ 0.0619 BAL per WETH at 80/20 + 1% fee
+
+# GIVEN_OUT rounds UP (buyer pays more): input needed for a target output
+amount_in = weighted_pool.calculate_tokens_in_from_tokens_out(
+    token_in=weighted_pool.tokens[1],   # WETH in
+    token_out=weighted_pool.tokens[0],  # BAL out
+    token_out_quantity=100 * 10**18,
+)
+assert amount_in == 1616565737428323232324
+```
+
+Contract addresses and broken pool filters are centralized in `degenbot.balancer.deployments`:
+
+```python
+from degenbot.balancer.deployments import (
+    BALANCER_V2_VAULT_ADDRESS,
+    BALANCERQUERIES_CONTRACT_ADDRESS,
+    BROKEN_BALANCER_V2_POOLS,
 )
 
-# The minimum rate of exchange for a profitable arbitrage is 1.0. The pool states at
-# a given block are likely to be less, so override the minimum for illustration.
-# The `ArbitrageCalculationResult` must be encoded as a properly-formed transaction 
-# by the user and broadcast to the network to secure the opportunity.
->>> arb.calculate(min_rate_of_exchange=0.8)
-ArbitrageCalculationResult(
-    id='test', 
-    input_token=Erc20Token(
-        address=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2, 
-        symbol='WETH', 
-        name='Wrapped Ether', 
-        decimals=18
-    ), 
-    profit_token=Erc20Token(
-        address=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2, 
-        symbol='WETH', 
-        name='Wrapped Ether', 
-        decimals=18
-    ), 
-    input_amount=69600394635598,
-    profit_amount=-623178922742, 
-    swap_amounts=(
-        UniswapV2PoolSwapAmounts(
-            pool='0xBb2b8038a1640196FbE3e38816F3e67Cba72D940', 
-            amounts_in=(0, 69600394635598), 
-            amounts_out=(175, 0), 
-            recipient=None
-        ), 
-        UniswapV3PoolSwapAmounts(
-            pool='0xCBCdF9626bC03E24f779434178A73a0B4bad62eD',
-            amount_specified=175,
-            zero_for_one=True, 
-            sqrt_price_limit_x96=4295128740, 
-            recipient=None
-        )
-    ), 
-    state_block=22676748
+# Canonical Vault + BalancerQueries addresses
+assert BALANCER_V2_VAULT_ADDRESS == '0xBA12222222228d8Ba445958a75a0704d566BF2C8'
+assert BALANCERQUERIES_CONTRACT_ADDRESS == '0xE39B5e3B6D74016b2F6A9673D7d7493B6DF549d5'
+
+# BROKEN_BALANCER_V2_POOLS is a frozenset of pools with swaps disabled on-chain
+# (BAL#327 SWAPS_DISABLED). Filter before constructing:
+broken = '0x753BD6a5bF0b14ae7e5d2877e5cD6a3398aA2AAB'  # YUME/WETH 1/99
+assert broken in BROKEN_BALANCER_V2_POOLS
+assert weighted_pool.address not in BROKEN_BALANCER_V2_POOLS  # 80 BAL 20 WETH is healthy
+```
+
+### Balancer V2 Stable Pools
+
+Balancer V2 stable pools (MetaStablePool and ComposableStablePool) use the StableSwap invariant with rate caching. The math libraries are ported from deployed contracts with exact integer-level matching against on-chain results.
+
+Key design points:
+- **MetaStablePool**: 2-token stable pool with rate providers. No BPT token. Uses V2 invariant (`round_up=True` for swaps). Near-static rates produce exact 0-wei matching without a rate provider.
+- **ComposableStablePool**: Multi-token stable pool including its own BPT token. Uses V1 invariant (always-roundDown). Time-varying rates (e.g., bb-a-* yield tokens) require a `BalancerRateProvider` for exact matching; without one, `StaleRateResult` is raised.
+- **Cache-aware rate resolution**: The `CacheAwareRateProvider` replicates the on-chain `_cacheTokenRateIfNecessary` flow exactly — reads `getTokenRateCache()`, checks cache expiry against block timestamp, and only calls `getRate()` when the cache has expired. This produces exact 0-wei matching against on-chain `querySwap` results.
+- **Invariant versions**: Deployed contracts use two different StableMath implementations. V1 (`INVARIANT_V1`) always rounds down with D_P accumulation — matches the monorepo `_calculate_invariant`. V2 (`INVARIANT_V2`) has a `roundUp` parameter with P_D accumulation — matches `_calculate_invariant_deployed`. Using the wrong version gives a systematic 1-wei error.
+- **BPT handling**: ComposableStablePools include their own BPT token in the token list. The `bpt_idx` parameter identifies the BPT position so it can be dropped from invariant and swap calculations. `bpt_idx=None` (MetaStable) vs `bpt_idx=int` (Composable).
+
+<!-- invisible-code-block: python
+from degenbot._ffi import PyBot
+from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
+from degenbot.balancer.libraries.constants import ONE
+from degenbot.balancer.stable_pools import INVARIANT_V1, INVARIANT_V2
+
+# --- MetaStablePool (2-token, no BPT, V2 invariant, wstETH/WETH 1.1 rate) ---
+_PY_BOT = PyBot()
+_wsteth = make_erc20(_PY_BOT,
+    address='0x7f39C581F595B53c5Cb19bD0b3f8dA6c935E2Ca0',
+    name='Wrapped liquid staked Ether 2.0',
+    symbol='wstETH',
+    decimals=18,
+    chain_id=1,
 )
+_weth = make_erc20(_PY_BOT,
+    address='0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+    name='Wrapped Ether',
+    symbol='WETH',
+    decimals=18,
+    chain_id=1,
+)
+meta_pool = make_balancer_stable_pool(
+    address='0x32296969Ef14EB0c6d29669C550D4a0449130230',
+    pool_id=bytes.fromhex(
+        '32296969ef14eb0c6d29669c550d4a0449130230000200000000000000000049'
+    ),
+    vault='0xBA12222222228d8Ba445958a75a0704d566BF2C8',
+    tokens=[_wsteth, _weth],
+    balances=[100_000 * 10**18, 110_000 * 10**18],
+    fee=Fraction(4, 10000),         # 0.04% swap fee
+    amp=50_000,                      # amp = 50 * AMP_PRECISION (1000)
+    scaling_factors=[11 * 10**17, ONE],  # wstETH rate 1.1, WETH rate 1.0
+    invariant_version=INVARIANT_V2,
+)
+
+# --- ComposableStablePool (3-token incl BPT, V1 invariant, static rates) ---
+_PY_BOT2 = PyBot()
+_bpt_addr = '0x53BC3cBa3832ebeCBFa002c12023F8ab1AA3a3a0'
+_tusd = make_erc20(_PY_BOT2,
+    address='0xdAC17F958D2ee523a2206206994597C13D831ec7',
+    name='TrueUSD',
+    symbol='TUSD',
+    decimals=18,
+    chain_id=1,
+)
+_bpt = make_erc20(_PY_BOT2,
+    address=_bpt_addr,
+    name='Balancer 50TUSD 50USDC',
+    symbol='50TUSD50USDC',
+    decimals=18,
+    chain_id=1,
+)
+_usdc = make_erc20(_PY_BOT2,
+    address='0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+    name='USD Coin',
+    symbol='USDC',
+    decimals=6,
+    chain_id=1,
+)
+# pool_id = 20-byte address + 2-byte specialization (0x0002) + 10-byte misc
+comp_pool_id = bytes.fromhex(_bpt_addr[2:].lower() + '0002' + '0' * 18 + '37')
+comp_pool = make_balancer_stable_pool(
+    address=_bpt_addr,
+    pool_id=comp_pool_id,
+    vault='0xBA12222222228d8Ba445958a75a0704d566BF2C8',
+    tokens=[_tusd, _bpt, _usdc],
+    balances=[100_000 * 10**18, 10_000_000 * 10**18, 200_000 * 10**6],
+    fee=Fraction(3, 10000),         # 0.03% swap fee
+    amp=600_000,
+    scaling_factors=[ONE, ONE, ONE * 10**(18 - 6)],  # base scaling from decimals
+    bpt_idx=1,                       # BPT sits at index 1
+    invariant_version=INVARIANT_V1,
+)
+-->
+
+```python
+from degenbot.balancer.stable_pools import BalancerV2StablePool, INVARIANT_V1, INVARIANT_V2
+from degenbot.exceptions.pool import StaleRateResult
+
+# MetaStablePool: V2 invariant, no BPT, near-static rates → no rate provider needed.
+assert isinstance(meta_pool, BalancerV2StablePool)
+assert [t.symbol for t in meta_pool.tokens] == ['wstETH', 'WETH']
+assert meta_pool.bpt_idx is None                 # MetaStable has no BPT
+assert meta_pool.invariant_version == INVARIANT_V2
+assert meta_pool.fee == Fraction(4, 10000)        # 0.04%
+assert meta_pool.amp == 50_000
+# scaling factors embed the near-static wstETH:ETH rate (1.1)
+assert meta_pool.scaling_factors == (11 * 10**17, 10**18)
+
+# Exact 0-wei swap math — no rate provider, no live RPC
+amount_out = meta_pool.calculate_tokens_out_from_tokens_in(
+    token_in=meta_pool.tokens[1],   # WETH in
+    token_out=meta_pool.tokens[0],  # wstETH out
+    token_in_quantity=10**18,
+)
+assert amount_out == 908727110808623404  # ≈ 0.9087 wstETH per WETH @ 1.1 rate
+
+# ComposableStablePool: V1 invariant, BPT in the token list (dropped from
+# invariant/swap math via bpt_idx), time-varying rates → a live rate provider
+# is required for exact matching. Without one, swaps raise StaleRateResult.
+assert isinstance(comp_pool, BalancerV2StablePool)
+assert [t.symbol for t in comp_pool.tokens] == ['TUSD', '50TUSD50USDC', 'USDC']
+assert comp_pool.bpt_idx == 1                      # BPT at index 1
+assert comp_pool.invariant_version == INVARIANT_V1
+assert comp_pool.fee == Fraction(3, 10000)         # 0.03%
+
+try:
+    comp_pool.calculate_tokens_out_from_tokens_in(
+        token_in=comp_pool.tokens[0],   # TUSD in
+        token_out=comp_pool.tokens[2],  # USDC out
+        token_in_quantity=10**18,
+    )
+except StaleRateResult as e:
+    # StaleRateResult wraps the approximate result so callers can still read it
+    assert e.amount_in == 10**18
+    assert e.amount_out == 1001103
+
+# For exact 0-wei matching on a ComposableStablePool, construct with a live
+# `BalancerRateProvider` (e.g. ``CacheAwareRateProvider``) and pass
+# ``block_identifier`` so rates resolve at that block. With a *static* rate
+# provider (or none at all, as here) the call raises regardless:
+try:
+    comp_pool.calculate_tokens_out_from_tokens_in(
+        token_in=comp_pool.tokens[0],
+        token_out=comp_pool.tokens[2],
+        token_in_quantity=10**18,
+        block_identifier=18_900_000,
+    )
+    raise AssertionError("expected StaleRateResult without a live rate provider")
+except StaleRateResult:
+    pass  # exact matching requires a non-static BalancerRateProvider
+```
+
+### Uniswap Arbitrage
+
+Optimal arbitrage amounts for a cyclic pool sequence are computed by the Rust `ArbitrageEngine` (EVM-exact U512 solve), driven through `EngineRegistry` — the production solve surface that replaced both the deprecated `UniswapLpCycle` / `UniswapCurveCycle` and the since-retired Python `ArbitragePath` wrapper (ACDWOC):
+
+```python
+from degenbot.arbitrage.engine_registry import EngineRegistry
+
+# EngineRegistry is the one canonical entry point: it runs the pre-pump
+# startup ritual (subscribe -> backfill from snapshot -> verify config) and
+# registers cyclic paths against a Bot's shared BotState. The Rust engine
+# owns the EVM-exact U512 solve and re-solves affected paths on each block.
+#
+#     registry = EngineRegistry(bot=bot)
+#     path_id = registry.register_path(
+#         pools_and_zfos=[(v2_pool, True), (v3_pool, False)],
+#     )
+#     results = registry.engine.latest_results().get(path_id)
+#
+# The Python `BrentSolver` reference oracle and the legacy
+# `tests/arbitrage/test_engine_vs_brent_parity.py` cross-validation test
+# were retired alongside the f64 hop-state taxonomy (ergo 6C32UV / LMM2NB);
+# the Rust `ArbitrageEngine` is now the sole solve surface and its own
+# regression corpus is the oracle.
+
+assert EngineRegistry is not None  # the one canonical solve entry point
+```
+
+> **Note:** The legacy `UniswapLpCycle` / `UniswapCurveCycle`, the Python
+> `ArbitragePath` wrapper, the Python `BrentSolver` reference oracle, and
+> the Python `SwapAmounts` / `generate_payloads` encoding mirror have all
+> been retired. The Rust `ArbitrageEngine` (driven via `EngineRegistry`) is
+> the production solve surface, and on-chain calldata is produced Rust-side
+> by `degenbot_executor::composers::encode_cmd_stream` /
+> `dispatch_profitable`. There is no Python swap-amount encoding layer.
+
+#### Swap Encoding & On-Chain Execution
+
+On-chain calldata for a solved arb path is produced entirely in the Rust
+core. The Python `SwapAmounts` / `generate_payloads` / `EncodedCall` mirror
+was retired (epic `6Y2PBF`) once `dispatch_profitable` became the sole
+encode/dispatch surface — there is no Python encoding pipeline to call.
+
+The Rust encoding flow:
+
+1. **Resolve** — `EngineRegistry.register_path(...)` builds a `path_id`
+   against the `BotState`-owned pool identities.
+2. **Solve** — the Rust `ArbitrageEngine` produces `optimal_input` /
+   `hop_outputs` / `consumed_inputs` for the registered path.
+3. **Encode** — `degenbot_executor::composers::encode_cmd_stream` emits the
+   per-hop calldata (V2 `swap()`, V3 `swap()`, V4 PoolManager `swap()`, Curve
+   `exchange()`/`exchange_underlying()`), composed into the bot's executor
+   envelope (`dispatch_profitable`), with V4 BalanceDelta `int128` overflow
+   guarded Rust-side by `composers::fits_int128`.
+4. **Submit** — the resulting `execute_calldata` is handed to the submission
+   layer (Rust-owned in the end state).
+
+`EngineRegistry` and the example bot driver consume `DispatchCandidate` /
+`PyDispatchOutcome` (carrying `path_info` / `hop_outputs`) — never a Python
+`SwapAmounts` object.
+
+## Bot API Reference
+
+The `Bot` class is the primary entry point for degenbot usage. Access factories, registries, and utilities through Bot.
+
+### Initialization
+
+```python
+import degenbot
+from degenbot.config import DegenbotConfig
+
+# With explicit config
+bot = degenbot.Bot(
+    config=DegenbotConfig(
+        default_chain_id=1,
+        rpc={
+            1: RPC_URL,
+        },
+        database={"path": "~/.config/degenbot/degenbot.db"},
+    )
+)
+# The RPC provider is built from the config and its eth_chainId is enforced
+# to equal default_chain_id at construction — no manual registration needed.
+```
+
+### Universal Pool Builder
+
+```python
+# Universal builder — auto-resolves pool type from DB, registry, or on-chain probing
+pool = bot.build_pool(
+    "0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8",
+    state_block=18900000,  # Optional, defaults to current block
+)
+```
+
+<!-- skip: start "requires Base chain RPC node" -->
+
+```python
+# For V4 pools, use build_managed_pool with the PoolManager address + pool_id
+pool = bot.build_managed_pool(
+    "0x...",  # PoolManager address
+    pool_id="0x...",
+)
+```
+
+<!-- skip: end -->
+
+### Pool Construction by Type
+
+```python
+# V2 pool (auto-detected from factory)
+pool = bot.build_pool(
+    "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc",
+    state_block=18900000,  # Optional, defaults to current block
+)
+
+# V3 pool (auto-detected from factory)
+pool = bot.build_pool(
+    "0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8",
+)
+
+# Curve pool (auto-detected from on-chain probing)
+pool = bot.build_pool(
+    "0xbEbc44782C7db0a1A60Cb6fe97d0b483032FF1C7",
+)
+```
+
+<!-- skip: start "requires Base chain RPC node" -->
+
+```python
+# V4 pool (singleton architecture with pool_id)
+pool = bot.build_managed_pool(
+    "0x...",  # PoolManager address
+    pool_id="0x...",
+    state_view_address="0x...",
+    tokens=["0x...", "0x..."],
+    fee=500,
+    tick_spacing=10,
+)
+```
+
+<!-- skip: end -->
+
+### Token Factory
+
+```python
+# ERC-20 token (fetches name, symbol, decimals from DB/RPC)
+token = bot.build_erc20token("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+
+# Token lookup (from registry if cache hit)
+token = bot.get_token("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+```
+
+### Token Utilities (With Caching)
+
+```python
+# Get balance at block (cached per-bot)
+balance = bot.get_token_balance(token, "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
+balance_at_block = bot.get_token_balance(token, "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", block_identifier=10000000)
+
+# Get approval amount (cached)
+approval = bot.get_token_approval(token, owner="0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", spender="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45")
+
+# Get total supply (cached)
+total_supply = bot.get_token_total_supply(token)
+
+# Get native ETH balance
+eth_balance = bot.get_ether_balance(address="0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
+```
+
+### Accessing Bot Components
+
+```python
+# RPC provider (built from config; chain_id enforced at construction)
+provider = bot.provider
+
+# Registries (check if already created)
+existing_pool = bot.pools.get(chain_id=1, pool_address="0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
+existing_token = bot.tokens.get(token_address="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", chain_id=1)
+
+# Database session
+with bot.db() as session:
+    # SQLAlchemy operations
+    pass
 ```
 
 ### Chainlink Price Feeds
 
 Chainlink price feeds provide reliable oracle data for various assets. The `ChainlinkPriceContract` class simplifies access to these feeds.
 
+<!-- invisible-code-block: python
+import degenbot
+price_feed = degenbot.ChainlinkPriceContract(
+    '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419',
+    decimals=8,
+)
+-->
+
 ```python
-# Load the price feed for ETH/USD 
->>> price_feed = degenbot.ChainlinkPriceContract(
-...     '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419'
-... )
+# Load the price feed for ETH/USD
+# decimals can be provided to avoid a live RPC call
+assert price_feed.address == '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419'
+assert price_feed.decimals == 8
 
->>> price_feed.price
-2836.68731709
-
-# Check the decimals used by the price feed
->>> price_feed.decimals
-8
-
-# Call an arbitrary function `latestRoundData` on the underlying contract
->>> price_feed.w3_contract.functions.latestRoundData().call()
-[
-    129127208515966883788, 
-    283668731709, 
-    1766031970, 
-    1766031983, 
-    129127208515966883788
-]
+# price_feed.price requires a Bot instance with RPC access for live data
 ```
 
 ## CLI Reference
@@ -577,6 +1321,11 @@ DEGENBOT_DEBUG=1 python my_script.py
 Degenbot uses a TOML configuration file located at `~/.config/degenbot/config.toml`:
 
 ```toml
+# The chain this Bot session targets (required). One Bot per chain — see ADR-006.
+# Must match a chain ID key in [rpc]; the connected RPC's eth_chainId is
+# enforced to match at construction (fail-fast)
+default_chain_id = 1
+
 [rpc]
 # Chain ID to RPC endpoint mapping
 1 = "https://eth-mainnet.example.com"
@@ -587,9 +1336,15 @@ Degenbot uses a TOML configuration file located at `~/.config/degenbot/config.to
 path = "/path/to/degenbot.db"
 ```
 
-## Rust Extension
+`default_chain_id` (required) selects the single chain this `Bot` targets — a
+`Bot` refuses to construct without it, and the connected RPC's `eth_chainId`
+is enforced to match it at construction.
 
-Degenbot includes a high-performance Rust extension module (`degenbot_rs`) that provides optimized implementations of performance-critical operations. The extension is built automatically during installation using [maturin](https://www.maturin.rs/).
+## The Rust Core (`degenbot_rs` Rust crate, `degenbot._ffi` Python module)
+
+The Rust core is the engine of degenbot — it owns all performance-critical and stateful logic. Python reaches it through the `degenbot._ffi` extension module, a thin PyO3 binding layer (`rust/crates/degenbot-python/`) that translates Python calls into Rust calls with no business logic of its own. The underlying core crates are pyo3-free by default and are also consumable directly from pure Rust via `cargo add degenbot`.
+
+The extension is built automatically during installation using [maturin](https://www.maturin.rs/) (or `uv sync`, which invokes maturin under the hood).
 
 ### Key Dependencies
 
@@ -610,7 +1365,7 @@ Degenbot includes a high-performance Rust extension module (`degenbot_rs`) that 
 Uniswap V3 tick-to-price conversions:
 
 ```python
-from degenbot import get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio
+from degenbot.uniswap.v3_libraries import get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio
 
 # Convert tick to sqrt price (X96 format)
 sqrt_price = get_sqrt_ratio_at_tick(253320)  # Returns: 56736275128821120...
@@ -624,15 +1379,15 @@ tick = get_tick_at_sqrt_ratio(56736275128821120)  # Returns: 253320
 High-performance ABI decoding for contract data:
 
 ```python
-from degenbot import decode, decode_single
+from degenbot._ffi.abi import decode, decode_single, encode
 
-# Decode multiple values
+# Encode then decode multiple values
 types = ["address", "uint256", "uint256"]
-data = bytes.fromhex("...")
+data = encode(types, ["0x0000000000000000000000000000000000000001", 100, 200])
 values = decode(types, data)  # Returns list of decoded values
 
 # Decode a single value
-address = decode_single("address", bytes.fromhex("..."))
+address = decode_single("address", data[:32])
 ```
 
 #### Address Utilities
@@ -640,9 +1395,9 @@ address = decode_single("address", bytes.fromhex("..."))
 EIP-55 checksummed address conversion:
 
 ```python
-from degenbot import to_checksum_address
+from degenbot import get_checksum_address
 
-checksummed = to_checksum_address("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+checksummed = get_checksum_address("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
 # Returns: "0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF"
 ```
 
@@ -651,43 +1406,61 @@ checksummed = to_checksum_address("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
 Encode function calls and compute selectors:
 
 ```python
-from degenbot import encode_function_call, get_function_selector, decode_return_data
+from degenbot.contract import encode_function_call, get_function_selector, decode_return_data
+```
 
+<!-- invisible-code-block: python
+from degenbot.contract import encode_function_call, get_function_selector, decode_return_data
+-->
+
+```python
 # Get a 4-byte function selector
 selector = get_function_selector("transfer(address,uint256)")
-# Returns: "0xa9059cbb"
+assert selector == "0xa9059cbb"
 
 # Encode a function call (selector + encoded args)
-calldata = encode_function_call("transfer(address,uint256)", ["0x...", "100"])
+calldata = encode_function_call(
+    "transfer(address,uint256)",
+    ["0x0000000000000000000000000000000000000001", "100"],
+)
 
 # Decode return data from a contract call
-values = decode_return_data(bytes.fromhex("..."), ["uint256", "address"])
+values = decode_return_data(calldata[4:], ["address", "uint256"])
 ```
 
 ### Provider Classes
 
 The extension includes synchronous and async Ethereum RPC providers:
 
-```python
-from degenbot.degenbot_rs import AlloyProvider, Contract
+<!-- invisible-code-block: python
+from degenbot._ffi.contract import Contract
+from degenbot._ffi.provider import AlloyProvider
+from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI as RPC_URL
+-->
 
+```python
 # Create provider with connection pooling
-provider = AlloyProvider(
-    rpc_url="https://eth-mainnet.example.com",
-    max_connections=10,
-    timeout=30.0,
-    max_retries=10,
-    max_blocks_per_request=5000,
+provider = AlloyProvider(RPC_URL)
+
+# Contract interaction
+contract = Contract(
+    "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    provider_url=RPC_URL,
 )
 
 # Query blockchain
 block_number = provider.get_block_number()
 chain_id = provider.get_chain_id()
-logs = provider.get_logs(from_block=1000000, to_block=1000100, addresses=["0x..."])
-
-# Contract interaction
-contract = Contract("0x...", provider_url="https://...")
-result = contract.call("balanceOf(address)", ["0x..."])
+logs = provider.get_logs(
+    from_block=block_number - 10,
+    to_block=block_number,
+    addresses=["0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"],
+)
+result = contract.call(
+    "balanceOf(address)",
+    ["0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"],
+    block_number,
+)
 
 provider.close()
 ```
@@ -696,8 +1469,11 @@ provider.close()
 
 The extension also includes async wrappers for use with `asyncio`:
 
+<!-- skip: start "await outside async; uses placeholder addresses" -->
+
 ```python
-from degenbot.degenbot_rs import AsyncAlloyProvider, AsyncContract
+from degenbot._ffi.contract import AsyncContract
+from degenbot._ffi.provider import AsyncAlloyProvider
 
 # Create an async provider
 async_provider = await AsyncAlloyProvider.create(
@@ -716,17 +1492,19 @@ results = await async_contract.batch_call(
 )
 ```
 
+<!-- skip: end -->
+
 #### Log Filtering
 
 ```python
-from degenbot.degenbot_rs import LogFilter
+from degenbot._ffi.provider import LogFilter
 
 # Build a log filter
 log_filter = LogFilter(
     from_block=1000000,
     to_block=1000100,
-    addresses=["0x..."],
-    topics=[["0x..."]],
+    addresses=["0x0000000000000000000000000000000000000001"],
+    topics=[["0x0000000000000000000000000000000000000000000000000000000000000001"]],
 )
 ```
 
@@ -758,10 +1536,27 @@ just dev  # Build and install Python extension
 
 Additional documentation is available in the [`docs/`](docs/) directory:
 
+- **[Architecture](docs/architecture/)**: High-level architectural patterns
+  - [I/O-Free Pool Architecture](docs/architecture/io-free-pools.md) — The CurveDataProvider seam for decoupled I/O
+  - [Rust-Owned Backrun Bot](docs/architecture/rust-owned-bot.md) — V2/V3/V4 arbitrage engine, dual-subscription pump, integer-exact Möbius solver, executor contract, and Python orchestration layer
+  - [Semantic Matching](docs/architecture/semantic-matching.md) — Event processing patterns for Aave
 - **[Aave V3](docs/aave/)**: Comprehensive control flow diagrams and amount transformations for Aave operations
 - **[Arbitrage](docs/arbitrage/)**: Multi-pool cycle testing documentation
 - **[CLI](docs/cli/)**: Detailed CLI command reference
 - **[Configuration](docs/config.md)**: Configuration options
+
+### Contract Reference
+
+Verified Solidity source code for all supported protocols is in [`contract_reference/`](contract_reference/README.md):
+
+| Protocol | Path | Contents |
+|----------|------|----------|
+| Uniswap V2 | `contract_reference/uniswap/V2/` | Factory, Pair, ERC20, SafeMath, Math, UQ112x112 |
+| Uniswap V3 | `contract_reference/uniswap/V3/` | Factory, Pool, Oracle, Tick, TickBitmap, SqrtPriceMath, SwapMath, TickMath, FullMath, Position, etc. |
+| Uniswap V4 | `contract_reference/uniswap/V4/` | PoolManager, Pool, Hooks, TickBitmap, SqrtPriceMath, SwapMath, ProtocolFeeLibrary, LPFeeLibrary, ERC6909, etc. |
+| Aave V3 | `contract_reference/aave/` | Pool (10 revisions), AToken (5 revisions), VariableDebtToken, GhoVariableDebtToken (6 revisions), GhoDiscountRateStrategy, AaveOracle, stkAAVE, RewardsController |
+
+These are the ground truth for matching on-chain behavior in Python. See [`contract_reference/README.md`](contract_reference/README.md) for the full index.
 
 ## Contributing
 
@@ -776,10 +1571,6 @@ uv sync
 
 # Run tests
 uv run pytest
-
-# Run linting
-uv run ruff check
-uv run mypy
 ```
 
 ## License

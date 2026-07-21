@@ -1,0 +1,136 @@
+//! Value-only pool identity/state structs + stateless swap simulation for the
+//! degenbot pool families — pure-Rust, `pyo3`-free.
+//!
+//! This crate owns the **pure-data, pure-math** layer of the pool subsystem:
+//! the per-family `*PoolIdentity` / `*PoolState` value structs, the
+//! `PoolEntry` sum type, the per-family `Register*PoolParams` /
+//! `Register*PoolError` DTOs, the reorg-journal *data* (`ReorgJournal`,
+//! `*BlockDelta`), the spec-bound validators, and the **stateless** swap
+//! simulators (`v3_simulate_swap`, `v4_simulate_swap`, the V2 constant-product
+//! dispatch, and the Curve/Balancer sims) that compute a swap outcome purely
+//! from in-memory pool state with no chain / registry / async / tokio.
+//!
+//! Nothing here performs I/O. The I/O-shaped *interface* traits
+//! (`TickWordFetcher`, `CurveDataProvider`, `BalancerRateProvider`) are defined
+//! in this crate — but their RPC/DB *implementations* live in
+//! `degenbot-bot`, exactly as `std::io::Read` defines an interface in the
+//! standard library while its implementors (`File`, `BufReader`, …) live
+//! elsewhere. This is the `std::io::Read` precedent: defining a capability
+//! trait pulls no I/O and avoids a cyclic dependency (`pools` must not depend
+//! on `degenbot-bot` or `degenbot-rpc`).
+//!
+//! ## Dividing line (per ADR-003 / ADR-005)
+//!
+//! > *Given all pool state in memory, can this compute deterministically with
+//! > no chain / registry / async / tokio?* **Yes →** this crate
+//! > (`degenbot-pools`). **No →** `degenbot-bot` (the `Bot`/`BotState` registry,
+//! > the block pump, the reorg *coordinator*, the fetch-retry shells, the
+//! > RPC/DB trait impls, the engine, the solvers).
+//!
+//! Concretely, the `BotState::simulate_swap_with_override` retry shell stays
+//! in `degenbot-bot`: it looks up `self.pools.get(id)` (`PoolEntry`), calls the
+//! stateless sim in this crate, and — for V3/V4 — catches a
+//! `MissingTickWord(word)` *value* error, fetches the tick word via the (state
+//! crate's) `TickWordFetcher` trait impl that the bot registered, and retries.
+//! This is "Pattern B": the value crate returns a `MissingTickWord(i32)` value
+//! error; the fetch-and-retry loop lives one layer up in the bot.
+//!
+//! ## Why this is a standalone crate (ADR-005 "standalone constraint")
+//!
+//! Previously these value types + stateless sims lived inline in
+//! `degenbot-bot/src/bot_core/mod.rs` (a ~7500-line module) and its 22
+//! submodules, inside the engine crate. That stranded standalone-usable pool
+//! *data* and pool-family *swap math* inside the bot's I/O/registry surface —
+//! a `cargo add degenbot` consumer wanting pool state + swap sims pulled the
+//! engine, the block pump, RPC clients, and the solvers. Moving the value-only
+//! layer out gives a clean Rust core that a standalone consumer (or the
+//! `degenbot` umbrella) can depend on without the I/O umbrella, while
+//! `degenbot-bot`'s `BotState` becomes a thin registry-lookup wrapper that
+//! delegates each method to the value core in this crate.
+//!
+//! This crate is `pyo3`-free under its default features (enforced by `just
+//! check-no-pyo3-in-cores`); it depends on `alloy`, `thiserror`, and the
+//! per-family math leaf crates (`degenbot-v2-math`, `degenbot-cl-math`,
+//! `degenbot-curve-math`, `degenbot-balancer-math`, `degenbot-solidly-math`)
+//! plus `degenbot-uniswap` (for `DexVariant`). It is consumed by
+//! `degenbot-bot` and re-exported by the `degenbot` umbrella for standalone
+//! Rust consumers.
+//!
+//! ## Contents (added incrementally)
+//!
+//! The crate is populated by the `USPN7M` epic, one task per concern:
+//!
+//! - **trait definitions** (`TickWordFetcher`, `CurveDataProvider`,
+//!   `BalancerRateProvider` + their error/return types + `StaticRateProvider`)
+//! - **leaf value modules** (`spec_bounds`, `state_history`, `tick_bitmap`,
+//!   `tick_map`)
+//! - **per-family state structs** + `PoolEntry` / `ConcentratedLiquidityPool` / `TickInfo` /
+//!   `TokenEntry` + `Register*Pool{Params,Error}`
+//! - **stateless swap sims** (`v3_simulate_swap`, `v4_simulate_swap`,
+//!   `SimulateSwapError`, `V3SwapOutcome`, the V2/Curve/Balancer dispatch)
+
+pub mod aerodrome_v2_state;
+pub mod balancer_stable_state;
+pub mod balancer_weighted_state;
+pub mod curve_data_provider;
+pub mod curve_state;
+// Domain-math prose (sqrtPriceX96, Solidity, …) moved verbatim from
+// `degenbot-bot/src/solvers/mobius_v3_int.rs`; mirrors the `#[allow]` on that
+// module in `degenbot-bot/src/solvers/mod.rs`.
+#[allow(clippy::doc_markdown)]
+pub mod int_v3_hop;
+pub mod liquidity_event;
+pub mod liquidity_event_buffer;
+pub mod pool;
+pub mod rate_provider;
+pub mod registry;
+pub mod simulate_swap;
+pub mod spec_bounds;
+pub mod state_history;
+pub mod tick_bitmap;
+pub mod tick_fetch;
+pub mod tick_map;
+pub mod v2_state;
+pub mod v3_state;
+pub mod v4_state;
+
+// Re-export the seam traits + their value-only error/return types at the crate
+// root, so `degenbot-bot`'s transient shim modules can write
+// `::degenbot_pools::{TickWordFetcher, …}` and so standalone consumers get a
+// flat surface.
+pub use curve_data_provider::{CurveDataProvider, CurveDataProviderError};
+pub use rate_provider::{BalancerRateProvider, RateProviderError, StaticRateProvider};
+pub use spec_bounds::{SpecValue, SpecViolation};
+pub use state_history::ReorgPoolState;
+pub use tick_bitmap::V3TickRangeForSolver;
+pub use tick_fetch::{
+    BootstrapTickError, BootstrapTickWord, FetchTickWordError, FetchedTickWord, TickBootstrapRpc,
+    TickWordFetcher,
+};
+
+pub use pool::{
+    BalanceVectorVariant, BalanceVectorView, ConcentratedLiquidityVariant,
+    ConcentratedLiquidityView, Identity, Pool, ReservePairVariant, ReservePairView, Structure,
+};
+
+/// Liquidity data at an initialized tick.
+///
+/// Mirrors the Python `LiquidityAtTick` from `concentrated/types.py`. Used by
+/// the V3/V4 pool-state structs and by [`tick_fetch::FetchedTickWord`]. Pulled
+/// into this crate ahead of the full state-struct move (USPN7M/LTZ3TP)
+/// because the `TickWordFetcher` seam returns `HashMap<i32, TickInfo>`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TickInfo {
+    /// The total liquidity that references this tick.
+    pub liquidity_gross: alloy::primitives::U128,
+    /// The liquidity delta for ticks entered from left to right.
+    /// Positive for lower ticks, negative for upper ticks.
+    pub liquidity_net: alloy::primitives::I256,
+    /// The block at which this tick was last mutated (Mint/Burn event block,
+    /// or the pool's registration block for genesis-seeded ticks). Mirrors the
+    /// Python ``LiquidityAtTick.block`` field; preserved through the FFI
+    /// round-trip (``update_tick_data`` writes it, ``tick_data_snapshot``
+    /// reads it). The simulation math does NOT read this — it's diagnostic
+    /// metadata + the snapshot round-trip's per-tick block contract.
+    pub block: u64,
+}

@@ -7,6 +7,22 @@ on:
       - 'test-*'
 
 jobs:
+  validate-branch:
+    name: Verify tag is on main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check tag is on main
+        run: |
+          if ! git merge-base --is-ancestor ${{ github.sha }} origin/main; then
+            echo "Tag ${{ github.ref_name }} is not on main branch"
+            exit 1
+          fi
+          echo "Tag ${{ github.ref_name }} is on main branch"
+
   build-wheels:
     name: Build wheels on ${{ matrix.os }} (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
@@ -47,7 +63,12 @@ jobs:
         with:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
-          args: --release --out dist ${{ matrix.args }}
+          # `--features pyo3/extension-module` OVERRIDES the dev `[tool.maturin]
+          # features` list (which adds `degenbot-bot/hotpath` for local profiling)
+          # so the shipped wheel excludes hotpath — its `#[hotpath::measure]`
+          # macros expand to no-op `lib_off` stubs, zero runtime penalty. See
+          # rust/crates/degenbot-bot/src/profiling.rs.
+          args: --release --out dist --features pyo3/extension-module ${{ matrix.args }}
           sccache: 'true'
           working-directory: .
 
@@ -79,7 +100,7 @@ jobs:
   publish-to-test-pypi:
     name: Publish to Test PyPI
     if: startsWith(github.ref, 'refs/tags/test-')
-    needs: [build-wheels, build-sdist]
+    needs: [validate-branch, build-wheels, build-sdist]
     runs-on: ubuntu-latest
     environment:
       name: testpypi
@@ -106,7 +127,7 @@ jobs:
   publish-to-pypi:
     name: Publish to PyPI
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-wheels, build-sdist]
+    needs: [validate-branch, build-wheels, build-sdist]
     runs-on: ubuntu-latest
     environment:
       name: pypi

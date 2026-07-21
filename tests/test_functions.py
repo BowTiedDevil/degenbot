@@ -3,16 +3,16 @@ from eth_typing import Hash32, HexStr
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
-from degenbot.anvil_fork import AnvilFork
+from degenbot.calculations.evm_math import next_base_fee
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import set_web3
+from degenbot.contract.addresses import create2_address
 from degenbot.exceptions import DegenbotValueError
-from degenbot.functions import (
-    create2_address,
+from degenbot.fork import AnvilFork
+from degenbot.provider import AlloyProvider
+from degenbot.provider.block_helpers import get_number_for_block_identifier
+from degenbot.provider.call_helpers import (
     encode_function_calldata,
     extract_argument_types_from_function_prototype,
-    get_number_for_block_identifier,
-    next_base_fee,
     raw_call,
 )
 from degenbot.types.aliases import BlockNumber
@@ -51,20 +51,21 @@ def test_encode_function_calldata():
             26535330612692929974,
         ],
     ) == HexBytes(
-        "0xa9059cbb000000000000000000000000a69babef1ca67a37ffaf7a485dfff3382056e78c00000000000000000000000000000000000000000000000170406e9a1f1c4db6"
+        "0xa9059cbb000000000000000000000000a69babef1ca67a37ffaf7a485dfff3382056e78c00000000000000000000000000000000000000000000000170406e9a1f1c4db6",
     )
 
 
+@pytest.mark.online_rpc
 def test_low_level_call_for_factory_address(fork_mainnet_full: AnvilFork):
-    set_web3(fork_mainnet_full.w3)
+    provider = fork_mainnet_full.provider
 
     pool_address = get_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
 
     function_prototype = "factory()"
 
     (result,) = raw_call(
-        w3=fork_mainnet_full.w3,
-        block_identifier=fork_mainnet_full.w3.eth.block_number,
+        provider=provider,
+        block_identifier=fork_mainnet_full.provider.get_block_number(),
         address=pool_address,
         calldata=encode_function_calldata(
             function_prototype=function_prototype,
@@ -73,15 +74,12 @@ def test_low_level_call_for_factory_address(fork_mainnet_full: AnvilFork):
         return_types=["address"],
     )
     assert get_checksum_address(result) == get_checksum_address(
-        "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+        "0x1F98431c8aD98523631AE4a59f267346ea31F984",
     )
 
 
 def test_create2():
-    """
-    Tests taken from https://eips.ethereum.org/EIPS/eip-1014
-    """
-
+    """Tests taken from https://eips.ethereum.org/EIPS/eip-1014"""
     assert (
         create2_address(
             deployer="0x0000000000000000000000000000000000000000",
@@ -127,27 +125,25 @@ def test_create2():
             deployer="0x00000000000000000000000000000000deadbeef",
             salt="0x00000000000000000000000000000000000000000000000000000000cafebabe",
             init_code_hash=keccak(
-                hexstr="0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+                hexstr="0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
             ),
         )
         == "0x1d8bfDC5D46DC4f61D6b6115972536eBE6A8854C"
     )
 
 
+@pytest.mark.online_rpc
 def test_converting_block_identifier_to_int(fork_mainnet_full: AnvilFork):
-    """
-    Check that all inputs for web3 type `BlockIdentifier` can be converted to an integer
-    """
-
+    """Check that all inputs for web3 type `BlockIdentifier` can be converted to an integer"""
     w3 = fork_mainnet_full.w3
-    set_web3(w3)
+    provider = AlloyProvider.from_web3(w3)
 
     # Known string literals
-    latest_block = get_number_for_block_identifier("latest", w3)
-    earliest_block = get_number_for_block_identifier("earliest", w3)
-    pending_block = get_number_for_block_identifier("pending", w3)
-    safe_block = get_number_for_block_identifier("safe", w3)
-    finalized_block = get_number_for_block_identifier("finalized", w3)
+    latest_block = get_number_for_block_identifier("latest", provider)
+    earliest_block = get_number_for_block_identifier("earliest", provider)
+    pending_block = get_number_for_block_identifier("pending", provider)
+    safe_block = get_number_for_block_identifier("safe", provider)
+    finalized_block = get_number_for_block_identifier("finalized", provider)
 
     assert BlockNumber.__value__ is int
     assert isinstance(latest_block, BlockNumber.__value__)
@@ -160,36 +156,37 @@ def test_converting_block_identifier_to_int(fork_mainnet_full: AnvilFork):
 
     # BlockNumber
     assert isinstance(
-        get_number_for_block_identifier(1, w3),
+        get_number_for_block_identifier(1, provider),
         BlockNumber.__value__,
     )
 
     # Hash32
     assert isinstance(
-        get_number_for_block_identifier(Hash32((1).to_bytes(length=32, byteorder="big")), w3),
+        get_number_for_block_identifier(Hash32((1).to_bytes(length=32, byteorder="big")), provider),
         BlockNumber.__value__,
     )
 
     # HexStr
     assert isinstance(
         get_number_for_block_identifier(
-            HexStr("0x" + (128).to_bytes(32, byteorder="big").hex()), w3
+            HexStr("0x" + (128).to_bytes(32, byteorder="big").hex()),
+            provider,
         ),
         BlockNumber.__value__,
     )
 
     # HexBytes
-    assert isinstance(get_number_for_block_identifier(HexBytes(1), w3), BlockNumber.__value__)
+    assert isinstance(get_number_for_block_identifier(HexBytes(1), provider), BlockNumber.__value__)
 
     # int
-    assert isinstance(get_number_for_block_identifier(1, w3), BlockNumber.__value__)
+    assert isinstance(get_number_for_block_identifier(1, provider), BlockNumber.__value__)
 
     for invalid_tag in ["Latest", "latest ", "next", "previous"]:
         with pytest.raises(DegenbotValueError):
-            get_number_for_block_identifier(invalid_tag, w3)  # type: ignore[arg-type]
+            get_number_for_block_identifier(invalid_tag, provider)
 
     with pytest.raises(DegenbotValueError):
-        get_number_for_block_identifier(1.0, w3)  # type: ignore[arg-type]
+        get_number_for_block_identifier(1.0, provider)
 
 
 def test_fee_calcs():

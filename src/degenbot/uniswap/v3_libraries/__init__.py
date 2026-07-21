@@ -1,34 +1,34 @@
+"""Uniswap V3 library functions.
+
+Stand-alone tick-math primitives re-exported from the Rust
+``degenbot-cl-math`` core. These are the **stateless pure conversions**
+(tick ↔ √P and the CL boundary constants) that a driver or pool class
+needs without holding any pool state — e.g. to set a price-limit by tick.
+
+The CL swap-step machinery (``compute_swap_step``,
+``get_next_sqrt_price_from_*``, ``add_delta``, ``get_amount0/1_delta``,
+``max/min_usable_tick``, ``div_rounding_up``) is intentionally **not**
+re-exported here: that machinery is the guts of the CL swap-step loop,
+which the Rust core owns and runs end-to-end inside ``PyLiquidityPool``.
+Re-exporting it at the package surface would advertise a driver API that
+reaches below the abstraction and that no consumer uses. The underlying
+``cl_*`` FFI pyfunctions remain available to internal callers; they are
+just not promoted as a public surface.
+
+The leaf submodules (``.full_math``, ``.bit_math``, ``.tick``,
+``.tick_bitmap``, ``.functions``) are the Solidity-matching surface that
+adds input validation and ``EVMRevertError`` conversion on top of the
+``cl_*`` primitives.
 """
-Uniswap V3 library functions.
 
-This module provides both Python and Rust implementations.
-Python is the default for compatibility; use _rs suffix for Rust versions.
-
-Example:
-    >>> from degenbot.uniswap.v3_libraries import get_sqrt_ratio_at_tick
-    >>> # Uses Python implementation (default)
-
-    >>> from degenbot.uniswap.v3_libraries import get_sqrt_ratio_at_tick_rs
-    >>> # Uses Rust implementation (faster)
-"""
-
-# Rust implementations (faster, from private module)
-from degenbot.degenbot_rs import get_sqrt_ratio_at_tick as get_sqrt_ratio_at_tick_rs
-from degenbot.degenbot_rs import get_tick_at_sqrt_ratio as get_tick_at_sqrt_ratio_rs
-
-# Python implementations (kept for backward compatibility during CI/CD transition)
-from .tick_math import (
+from degenbot.uniswap.math import (
     MAX_SQRT_RATIO,
     MAX_TICK,
     MIN_SQRT_RATIO,
     MIN_TICK,
+    get_sqrt_ratio_at_tick,
+    get_tick_at_sqrt_ratio,
 )
-from .tick_math import get_sqrt_ratio_at_tick as get_sqrt_ratio_at_tick_py
-from .tick_math import get_tick_at_sqrt_ratio as get_tick_at_sqrt_ratio_py
-
-# Default to Python for backward compatibility
-get_sqrt_ratio_at_tick = get_sqrt_ratio_at_tick_py
-get_tick_at_sqrt_ratio = get_tick_at_sqrt_ratio_py
 
 __all__ = [
     "MAX_SQRT_RATIO",
@@ -36,9 +36,5 @@ __all__ = [
     "MIN_SQRT_RATIO",
     "MIN_TICK",
     "get_sqrt_ratio_at_tick",
-    "get_sqrt_ratio_at_tick_py",
-    "get_sqrt_ratio_at_tick_rs",
     "get_tick_at_sqrt_ratio",
-    "get_tick_at_sqrt_ratio_py",
-    "get_tick_at_sqrt_ratio_rs",
 ]

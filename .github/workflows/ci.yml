@@ -2,15 +2,73 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
   workflow_call:
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  commitlint:
+    name: Commit Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Lint commit messages
+        # On push: lint only the commits being pushed (before..after).
+        # On PRs: lint all commits in the PR (merge-base..HEAD).
+        # Fallback: lint the last 20 commits on the branch.
+        run: |
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            FROM="${{ github.event.before }}"
+            # A force push rewrites history and orphans the `before` SHA: a fresh
+            # checkout (fetch-depth:0 fetches only objects reachable from refs)
+            # won't contain it, so commitlint throws "Invalid revision range".
+            # Fall back to a guaranteed-present range that still covers the
+            # rewritten commits (HEAD history is fully fetched).
+            if ! git rev-parse --verify --quiet "${FROM}^{commit}" >/dev/null 2>&1; then
+              echo "::warning::Push 'before' SHA ${FROM} is absent (likely a force push); using fallback range."
+              n=$(git rev-list --count HEAD)
+              if [ "$n" -gt 200 ]; then n=200; fi
+              if [ "$n" -ge 1 ]; then FROM="HEAD~$((n - 1))"; else FROM="HEAD"; fi
+            fi
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            FROM=$(git merge-base origin/main HEAD)
+          else
+            FROM=HEAD~20
+          fi
+          # An empty range makes commitlint throw "Invalid revision range".
+          if [ "$(git rev-list --count "${FROM}..HEAD" 2>/dev/null || echo 0)" -eq 0 ]; then
+            echo "No commits in range ${FROM}..HEAD; nothing to lint."
+            exit 0
+          fi
+          echo "Linting commits from $FROM to HEAD"
+          npx --yes @commitlint/cli --from="$FROM" --to=HEAD
+
+  markdownlint:
+    name: Markdown Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Lint Markdown
+        run: npx markdownlint-cli2 --fix "**/*.md" "!node_modules/**" "!.opencode/node_modules/**" "!.venv/**"
+
   rust-check:
     name: Rust Lint
     runs-on: ubuntu-latest
@@ -20,7 +78,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
 
       - name: Cache Cargo
         uses: actions/cache@v5
@@ -33,6 +91,9 @@ jobs:
 
       - name: Install just
         uses: extractions/setup-just@v4
+
+      - name: Check formatting
+        run: just fmt-check
 
       - name: Run Clippy
         run: just lint-rust
@@ -57,6 +118,9 @@ jobs:
 
       - name: Install just
         uses: extractions/setup-just@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
 
       - name: Run Tests
         run: just test-rust
@@ -84,6 +148,41 @@ jobs:
 
       - name: Build
         run: just build-rust-extension
+
+  python-lint:
+    name: Python Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install just
+        uses: extractions/setup-just@v4
+
+      - name: Build and install Rust extension
+        run: just dev
+
+      - name: Check formatting
+        run: just fmt-check-python
+
+      - name: Run Python linters
+        run: just lint-python
 
   python-test:
     name: Python Tests
@@ -123,3 +222,6 @@ jobs:
 
       - name: Build and install Rust extension
         run: just dev
+
+      - name: Run Tests
+        run: just test-python

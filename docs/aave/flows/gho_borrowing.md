@@ -235,7 +235,7 @@ function executeBorrow(
         params.amount   // liquidityTaken (for GHO this triggers mint)
     );
     
-    // For GHO: underlying is minted via facilitator, not transferred from pool
+    // For GHO: underlying is minted via facilitator, not transferred from Pool contract
     // The AToken calls the GHO facilitator to mint GHO to the borrower
     IAToken(reserveCache.aTokenAddress).transferUnderlyingTo(
         params.user,
@@ -479,7 +479,7 @@ Result: User's debt balance is 1100 GHO
 
 ### Key Differences from Regular Variable Debt
 
-1. **No Actual Underlying Transfer**: GHO is minted by the facilitator, not transferred from the pool
+1. **No Actual Underlying Transfer**: GHO is minted by the facilitator, not transferred from the **Pool contract**
 2. **Fixed Rate via Governance**: GHO interest rate is set by Aave governance, not by an algorithmic strategy
 3. **Facilitator Model**: The AToken for GHO has special logic to mint GHO via the GHO facilitator contract
 4. **Virtual Accounting**: GHO operates with virtual accounting enabled

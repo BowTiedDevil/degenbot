@@ -1,4 +1,4 @@
-"""Add exchange table
+"""Add exchange table.
 
 Revision ID: 3eb6b82dc42d
 Revises: b781499591ed

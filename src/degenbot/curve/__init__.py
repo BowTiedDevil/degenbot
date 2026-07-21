@@ -1,7 +1,7 @@
-from . import (
-    abi as abi,
-)  # excluded from __all__ so it doesn't bubble back up to the top level package namespace
+"""Curve StableSwap pools, trackers, and simulation types."""
+
 from .curve_stableswap_liquidity_pool import CurveStableswapPool
+from .trackers import CurveStableswapPoolTracker
 from .types import (
     CurveStableswapPoolSimulationResult,
     CurveStableswapPoolState,
@@ -13,4 +13,5 @@ __all__ = (
     "CurveStableswapPool",
     "CurveStableswapPoolSimulationResult",
     "CurveStableswapPoolState",
+    "CurveStableswapPoolTracker",
 )

@@ -1,4 +1,4 @@
-"""Transform pool hash to lowercase
+"""Transform pool hash to lowercase.
 
 Revision ID: bd7ca13a7d39
 Revises: d1f98e2c3b18
@@ -23,7 +23,7 @@ def upgrade() -> None:
         """
         UPDATE uniswap_v4_pools
         SET pool_hash = LOWER(pool_hash)
-        """
+        """,
     )
 
 

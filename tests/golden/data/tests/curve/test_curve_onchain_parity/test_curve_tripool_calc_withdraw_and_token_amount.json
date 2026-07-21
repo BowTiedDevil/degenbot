@@ -1,0 +1,61 @@
+{
+  "block_number": 24407242,
+  "chain_id": 1,
+  "entries": {
+    "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7|calc_token_amount|deposit|i=0|271371211003721406218240": {
+      "value": 261084866672328246353275
+    },
+    "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7|calc_token_amount|deposit|i=0|2713712110037214129291264": {
+      "value": 2610743600407688123249188
+    },
+    "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7|calc_token_amount|deposit|i=0|6784280275093034786357248": {
+      "value": 6526501776154994410919992
+    },
+    "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7|calc_token_amount|deposit|i=1|276624711585": {
+      "value": 266134277019553090342840
+    },
+    "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7|calc_token_amount|deposit|i=1|2766247115855": {
+      "value": 2661239013503263906355149
+    },
+    "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7|calc_token_amount|deposit|i=1|6915617789638": {
+      "value": 6652744511740957901790952
+    },
+    "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7|calc_token_amount|deposit|i=2|1082986444091": {
+      "value": 1041166330592826349169004
+    },
+    "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7|calc_token_amount|deposit|i=2|10829864440912": {
+      "value": 10411428958403682026428936
+    },
+    "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7|calc_token_amount|deposit|i=2|27074661102282": {
+      "value": 26027553146016753090868391
+    },
+    "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7|calc_withdraw_one_coin|i=0|271371211003721406218240": {
+      "value": 282033525105097189825641
+    },
+    "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7|calc_withdraw_one_coin|i=0|2713712110037214129291264": {
+      "value": 2820188709408418233622656
+    },
+    "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7|calc_withdraw_one_coin|i=0|6784280275093034786357248": {
+      "value": 7049662488813481310731185
+    },
+    "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7|calc_withdraw_one_coin|i=1|276624711585": {
+      "value": 0
+    },
+    "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7|calc_withdraw_one_coin|i=1|2766247115855": {
+      "value": 2
+    },
+    "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7|calc_withdraw_one_coin|i=1|6915617789638": {
+      "value": 7
+    },
+    "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7|calc_withdraw_one_coin|i=2|1082986444091": {
+      "value": 1
+    },
+    "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7|calc_withdraw_one_coin|i=2|10829864440912": {
+      "value": 11
+    },
+    "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7|calc_withdraw_one_coin|i=2|27074661102282": {
+      "value": 28
+    }
+  },
+  "recorded_at": "2026-06-27T08:05:02+00:00"
+}

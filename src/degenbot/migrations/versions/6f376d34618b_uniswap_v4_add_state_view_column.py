@@ -1,4 +1,4 @@
-"""Uniswap V4: Add state view column
+"""Uniswap V4: Add state view column.
 
 Revision ID: 6f376d34618b
 Revises: 4c5e6157714b
@@ -20,7 +20,6 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-
     with op.batch_alter_table("pool_managers", schema=None) as batch_op:
         batch_op.add_column(sa.Column("state_view", sa.String(length=42), nullable=True))
 

@@ -1,0 +1,54 @@
+[package]
+name = "degenbot-submission"
+description = "Pure-Rust EIP-1559 transaction signing + fee finalization — operator-key holding LocalSigner + TxEnvelope/Typed2718 type-2 encoding."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+complexity = "warn"
+correctness = "warn"
+pedantic = "warn"
+perf = "warn"
+style = "warn"
+suspicious = "warn"
+
+[dependencies]
+alloy = { version = "^2.0", features = ["full", "signer-local", "network"] }
+degenbot-core = { path = "../degenbot-core" }
+# `AlloyProvider` (the typed `eth_sendRawTransaction`/`eth_feeHistory`/
+# `eth_createAccessList` surfaces the N6 submit orchestration consumes —
+# ZUZANP typed, no `make_request` escape hatch).
+degenbot-rpc = { path = "../degenbot-rpc" }
+thiserror = { version = "^2.0" }
+# Async runtime for the dispatcher's `active_tasks` `JoinSet` (auto-discards
+# completed tasks) + the by-reference `current_block` `Mutex<u64>` clock read
+# across consumer/monitor task boundaries (ADR-005 standalone core).
+tokio = { version = "^1.52", features = ["rt", "sync", "time", "macros"] }
+
+# Gated (not default) so pure-Rust consumers build without pulling pyo3.
+# Enables `impl From<degenbot_submission::SubmissionError> for pyo3::PyErr` so
+# the `degenbot-python` binding layer can `?`-propagate signing/fee errors as a
+# `PyErr` (mirrors `degenbot-core`/`degenbot-price`'s `pyo3` feature).
+pyo3 = { version = "^0.29", features = ["abi3-py312", "serde"], optional = true }
+
+[dev-dependencies]
+# `test-utils` gates `AlloyProvider::from_provider` (the mock-transport
+# constructor) so the §4.2 wire-shape tests can drive the submit orchestration
+# without a live RPC. Production builds (the umbrella, the cdylib) never
+# enable this feature.
+degenbot-rpc = { path = "../degenbot-rpc", features = ["test-utils"] }
+serde_json = { version = "^1.0" }
+proptest = "^1.10"
+
+[features]
+default = []
+# Enables `impl From<SubmissionError> for pyo3::PyErr`. Enabled by the
+# `degenbot-python` binding crate; never enabled by the umbrella.
+pyo3 = ["dep:pyo3"]

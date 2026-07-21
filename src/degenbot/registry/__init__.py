@@ -1,10 +1,17 @@
-from .pool import PoolRegistry
+"""Address registry classes for pool and token bookkeeping."""
+
+from .base import AbstractAddressRegistry, AddressRegistry, MultiKeyAddressRegistry
+from .pool import ManagedPoolRegistry, PoolRegistry
+from .pool_type import PoolTypeRegistry, pool_type_registry
 from .token import TokenRegistry
 
-pool_registry = PoolRegistry()
-token_registry = TokenRegistry()
-
 __all__ = (
-    "pool_registry",
-    "token_registry",
+    "AbstractAddressRegistry",
+    "AddressRegistry",
+    "ManagedPoolRegistry",
+    "MultiKeyAddressRegistry",
+    "PoolRegistry",
+    "PoolTypeRegistry",
+    "TokenRegistry",
+    "pool_type_registry",
 )

@@ -168,15 +168,12 @@ cython_debug/
 # VSCode
 .vscode
 
-# Planning files
-plans
-research
-
 # Opencode
 .opencode/*
 .opencode/plans
 .opencode/skills
 .opencode/tmp
+.opencode/*
 .ignore
 
 # SQLite
@@ -185,6 +182,22 @@ research
 *.db-shm
 *.db-wal
 *.sqlite
+# Committed degenbot-db parity fixtures — built by tests/fixtures/generate_*.py and
+# intentionally checked in (see the "Outputs (committed)" notes in those scripts).
+# The catch-all *.db rule above would otherwise drop them from every fresh clone,
+# breaking the Rust tests that open them (aave_parity / parity / pathfinding /
+# liquidity_updater_parity) on CI.
+!rust/crates/degenbot-db/tests/fixtures/*.db
 
 # Foundry build artifacts (Aave test contracts)
-tests/aave/libraries/contracts/.foundry
+tests/aave/libraries/contracts/.foundryrust/proptest-regressions/
+
+# Permutation test logs and run artifacts
+logs/*
+
+# Local task tracking
+.ergo/*
+
+# Pi extensions
+.pi/autoresearch
+.pi/mega-compact

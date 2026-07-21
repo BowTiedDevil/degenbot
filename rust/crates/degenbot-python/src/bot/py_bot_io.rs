@@ -1,0 +1,2437 @@
+//! `PyBotIo` — the Rust `#[pyclass]` I/O façade that pool builders receive in
+//! place of the Python `SyncPoolIO` adapter (ADR-005 slice 14a).
+//!
+//! ## Why a Rust pyclass at all?
+//!
+//! Per slice 14, `Bot.build_pool`'s I/O choreography moves into Rust. The
+//! first step is a single `#[pyclass]` `PyBotIo` that the builders receive as
+//! their `io` parameter (replacing `io = SyncPoolIO(self.provider)`). `PyBotIo`
+//! exposes the 7-method [`PoolIO`] surface defined by the Python protocol; for
+//! slice 14a it does so by **delegating** to the held Python `provider` — the
+//! same `ProviderAdapter` the `Bot` was constructed with (so web3-backed,
+//! alloy-backed, and offline-backed providers all work without a Rust rewrite
+//! of each).
+//!
+//! ## Why delegation now (and not a pure Rust provider)?
+//!
+//! `ProviderAdapter` is a Python façade over three backends
+//! (`_Web3Adapter` / `_AlloyAdapter` / `_OfflineAdapter`). Only the alloy
+//! backend is already in Rust (`crate::rpc::provider::PyAlloyProvider`); the
+//! web3 + offline backends aren't. Delegating lets `PyBotIo` serve every
+//! backend today, and positions 14b/14c to move the delegation *into* Rust for
+//! the alloy backend (swap the held `Py<PyAny>` provider for a direct
+//! `AlloyProvider` field + native method bodies, no Python round-trip).
+//!
+//! ## `PoolIO` surface mirrored exactly
+//!
+//! `get_block_number`, `get_block`, `get_block_timestamp`, `get_code`,
+//! `get_balance`, `call`, `call_raw` — method-by-method mirrors of
+//! `degenbot/builders/pool_io.py::SyncPoolIO`, including its calling
+//! convention. `chain_id` stays a builder `build()` kwarg (mirrors `pool_io.py`'s
+//! deliberate exclusion of `chain_id` as a config value, not an I/O operation).
+//!
+//! [PoolIO]: degenbot/builders/pool_io.py
+
+use pyo3::prelude::*;
+use pyo3::types::{PyBytes, PyDict, PyList, PyString, PyTuple};
+use std::fmt::Write as _;
+use std::sync::Arc;
+
+use crate::conversion::rpc_types::block_to_py_dict;
+use crate::provider::AlloyProvider;
+use crate::rpc::provider::PyAlloyProvider;
+use crate::rpc::revert_to_pyerr;
+use degenbot_core::errors::ProviderError;
+use degenbot_core::runtime::get_runtime;
+
+/// Immutable data tuple returned by [`PyBotIo::fetch_v2_immutable_data`]:
+/// `(factory, token0, token1, fee, tick_spacing)`.
+type V2ImmutableData = (String, String, String, Py<PyAny>, Py<PyAny>);
+
+/// Slot0 + liquidity state tuple returned by
+/// [`PyBotIo::fetch_v4_slot0_liquidity`]:
+/// `(sqrtPriceX96, tick, protocolFee, lpFee, liquidity)`.
+type Slot0LiquidityState = (Py<PyAny>, Py<PyAny>, Py<PyAny>, Py<PyAny>, Py<PyAny>);
+
+/// Aerodrome stable/fee state tuple: `(stable, fee, token0, token1)`.
+type StableFeeTuple = (bool, Py<PyAny>, Py<PyAny>, Py<PyAny>);
+
+/// The Rust I/O façade for pool builders (ADR-005 slice 14a).
+///
+/// Construct with an existing `ProviderAdapter` (the `Bot.provider`):
+/// ```python
+/// io = PyBotIo(provider=bot.provider, db=bot.db)
+/// ```
+/// then pass `io` where a builder expects an `io: PoolIO`.
+///
+/// Holds the optional `db` (`DatabaseSessionManager`) handle too; 14a stores
+/// it so the `PyBotIo` surface mirrors `BuilderContext`'s dependencies, but
+/// does not yet route DB queries through it (the DB-query choreography ports
+/// in slice 14c).
+/// A typed ERC-20 token DB row returned by [`PyBotIo::fetch_erc20_token`]
+/// (QVMWQC). Mirrors the `SQLAlchemy` `Erc20TokenTable` ORM object's
+/// attributes (`.id` / `.chain` / `.address` / `.name` / `.symbol` /
+/// `.decimals`) so the builder's downstream attribute reads stay unchanged
+/// after the cutover from `session.scalar(select(Erc20TokenTable)...)`.
+#[cfg(feature = "db")]
+#[pyclass(name = "Erc20TokenRow", module = "degenbot._ffi")]
+pub struct PyErc20TokenRow {
+    id: i64,
+    chain: i64,
+    address: String,
+    name: Option<String>,
+    symbol: Option<String>,
+    decimals: Option<i64>,
+}
+
+#[cfg(feature = "db")]
+impl PyErc20TokenRow {
+    fn from(row: degenbot_db::rows::Erc20TokenRow) -> Self {
+        Self {
+            id: row.id,
+            chain: row.chain,
+            address: row.address.to_checksum(None),
+            name: row.name,
+            symbol: row.symbol,
+            decimals: row.decimals,
+        }
+    }
+}
+
+#[cfg(feature = "db")]
+#[pymethods]
+impl PyErc20TokenRow {
+    #[getter]
+    fn id(&self) -> i64 {
+        self.id
+    }
+
+    #[getter]
+    fn chain(&self) -> i64 {
+        self.chain
+    }
+
+    #[getter]
+    fn address(&self) -> String {
+        self.address.clone()
+    }
+
+    #[getter]
+    fn name(&self) -> Option<String> {
+        self.name.clone()
+    }
+
+    #[getter]
+    fn symbol(&self) -> Option<String> {
+        self.symbol.clone()
+    }
+
+    #[getter]
+    fn decimals(&self) -> Option<i64> {
+        self.decimals
+    }
+}
+
+/// The Rust `#[pyclass]` I/O façade pool builders receive in place of the
+/// Python `SyncPoolIO` adapter — delegates the 7-method `PoolIO` surface to
+/// the held Python `provider` (see module docs). Exposed to Python as
+/// `degenbot._ffi.PyBotIo`.
+#[pyclass(name = "PyBotIo", module = "degenbot._ffi")]
+pub struct PyBotIo {
+    /// Native Rust `AlloyProvider` extracted from the held Python provider
+    /// when it is `PyAlloyProvider`-backed (live alloy or the O2 `OfflineProvider`
+    /// shell). When `Some`, the `fetch_*` choreography methods + the `PoolIO`
+    /// surface run entirely in Rust via this arc (no GIL round-trip) —
+    /// `forward_call_to_provider` becomes a native `eth_call`, and
+    /// `get_block_timestamp` derives from `get_block(n).header.timestamp`.
+    /// `None` for non-alloy Python providers (legacy test doubles), which fall
+    /// back to the Python delegation path — retired by O3.
+    ///
+    /// After the construction-I/O cutover (architecture review 2025-07-18 /
+    /// candidate 1), the 7 generic RPC methods + 12 DB methods delegate through
+    /// [`construction_io`][Self::construction_io] instead; `alloy` survives only
+    /// for the 27 choreography wrappers' `forward_call_to_provider` fast path
+    /// (temporary — deleted with the builder-choreography port).
+    alloy: Option<Arc<AlloyProvider>>,
+    provider: Py<PyAny>,
+    db: Option<Py<PyAny>>,
+    /// The on-disk `SQLite` database path (QVMWQC). Retained for the `getter`
+    /// (Python introspection) + the `database_path` is now opened ONCE at
+    /// `attach_construction_io` time into a held `DegenbotDbConstruction`; the
+    /// 12 DB methods no longer per-call `DegenbotDb::open` from here.
+    database_path: Option<String>,
+    /// The core construction-I/O handle (architecture review 2025-07-18).
+    /// `Some` after `PyBot.attach_construction_io` runs (the Python `Bot.__init__`
+    /// path); the 12 DB + 7 generic RPC methods delegate through this. `None`
+    /// for the bare test fixtures that construct `PyBotIo(provider=…)` without
+    /// a `Bot` — those methods return the no-DB / error-degrade shape.
+    /// Interior-mutable (`Mutex`) because `PyBotIo` is constructed before the
+    /// `ConstructionIo` is attached (the `Bot.__init__` sequence: construct
+    /// `PyBot` → attach I/O → construct `PyBotIo` → attach I/O to `PyBotIo`).
+    construction_io:
+        parking_lot::Mutex<Option<Arc<degenbot_bot::bot_core::construction_io::ConstructionIo>>>,
+}
+
+#[pymethods]
+impl PyBotIo {
+    /// Construct the I/O façade over a Python `ProviderAdapter` (+ optional DB).
+    ///
+    /// `provider` is the `ProviderAdapter` the `Bot` was constructed with —
+    /// any backend (web3 / alloy / offline) works, because `PyBotIo` delegates
+    /// to its 7 `PoolIO` methods rather than re-implementing them.
+    ///
+    /// `db`, when provided, is the `DatabaseSessionManager` handle; it's stored
+    /// so the `PyBotIo` surface mirrors `BuilderContext`, and accessed via the
+    /// [`db` getter][Self::db].
+    ///
+    /// `database_path` (QVMWQC) is the on-disk `SQLite` path; when set, the
+    /// DB-query methods (`fetch_erc20_token`, `update_erc20_token_metadata`, …)
+    /// open a `degenbot_db::DegenbotDb` handle from it + route the
+    /// construction-time DB reads/writes through Rust (the `SQLAlchemy`
+    /// `session.scalar(select(...))` / `session.commit()` bodies retire).
+    #[new]
+    #[pyo3(signature = (provider, db=None, database_path=None))]
+    pub(crate) fn new(
+        py: Python<'_>,
+        provider: Py<PyAny>,
+        db: Option<Py<PyAny>>,
+        database_path: Option<String>,
+    ) -> Self {
+        // Extract a native Rust `AlloyProvider` when the held Python provider
+        // is `PyAlloyProvider`-backed (live alloy or the offline shell). Non-
+        // alloy providers (legacy test doubles) yield `None` → Python fallback.
+        let alloy = extract_native_alloy(provider.bind(py));
+        // Architecture review 2025-07-18: when `database_path` is set + the
+        // provider is alloy-backed, eagerly construct a `ConstructionIo` from
+        // them so the 12 DB methods delegate through the held connection (no
+        // per-call `DegenbotDb::open`). A `PyBot`-attached I/O via
+        // [`attach_construction_io`] replaces this at `Bot.__init__` time. The
+        // bare `PyBotIo(provider=…, database_path=…)` test fixtures still work
+        // standalone: `database_path` constructs a `DegenbotDbConstruction`,
+        // the alloy provider constructs an `AlloyRpcConstruction`. Non-alloy +
+        // no DB → `construction_io` stays `None` (the methods degrade to the
+        // `self.alloy` / Python fallback path).
+        let construction_io = match (&alloy, &database_path) {
+            (Some(provider), Some(path)) => {
+                let path_buf = std::path::PathBuf::from(path);
+                // `open_for_writes` — the construction executor does reads AND
+                // the `update_erc20_token_metadata` write-back, so the held
+                // `DegenbotDbConstruction` connection must be write-capable
+                // (the read-only `open` would reject the write-back).
+                match py.detach(|| degenbot_db::DegenbotDb::open_for_writes(&path_buf)) {
+                    Ok((db, _state)) => {
+                        use degenbot_bot::bot_core::construction_io::{
+                            AlloyRpcConstruction, ConstructionIo, DegenbotDbConstruction,
+                        };
+                        Some(std::sync::Arc::new(ConstructionIo::new(
+                            std::sync::Arc::new(DegenbotDbConstruction::new(db)),
+                            std::sync::Arc::new(AlloyRpcConstruction::new((**provider).clone())),
+                        )))
+                    }
+                    // DB open failure (e.g. missing Alembic stamp on a
+                    // write-cold fixture) — leave `None`; the methods return
+                    // the no-DB shape (`attach_construction_io` can replace).
+                    Err(_) => None,
+                }
+            }
+            _ => None,
+        };
+        Self {
+            alloy,
+            provider,
+            db,
+            database_path,
+            construction_io: parking_lot::Mutex::new(construction_io),
+        }
+    }
+
+    /// Attach the core `ConstructionIo` handle sourced from `PyBot` (architecture
+    /// review 2025-07-18 / candidate 1). After this call the 12 DB + 7 generic
+    /// RPC methods delegate through the trait objects; the 27 choreography
+    /// wrappers stay unchanged. The Python `Bot.__init__` calls this right after
+    /// `PyBot.attach_construction_io` so the two stay in lockstep.
+    #[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+    fn attach_construction_io(&self, py_bot: &Bound<'_, crate::bot::PyBot>) -> PyResult<()> {
+        *self.construction_io.lock() = py_bot.borrow().bot.construction_io_arc();
+        Ok(())
+    }
+
+    /// The held `ProviderAdapter` (round-trips for tests + introspection).
+    #[getter]
+    fn provider(&self, py: Python<'_>) -> Py<PyAny> {
+        self.provider.clone_ref(py)
+    }
+
+    /// The held `DatabaseSessionManager`, if any (None when the `Bot` has no DB).
+    #[getter]
+    fn db(&self, py: Python<'_>) -> Option<Py<PyAny>> {
+        self.db.as_ref().map(|h| h.clone_ref(py))
+    }
+
+    /// The on-disk `SQLite` database path, if any (QVMWQC). The DB-query methods
+    /// open a `degenbot_db::DegenbotDb` handle from this path; `None` when the
+    /// `Bot` has no DB.
+    #[getter]
+    fn database_path(&self) -> Option<String> {
+        self.database_path.clone()
+    }
+
+    /// Fetch an ERC-20 token row from the DB by `(chain_id, address)` — the
+    /// construction-time read in `Erc20Builder.build` (QVMWQC). Replaces the
+    /// `SQLAlchemy` `session.scalar(select(Erc20TokenTable).where(...))` call.
+    ///
+    /// Returns a [`PyErc20TokenRow`] with `(id, chain, address, name, symbol,
+    /// decimals)`, or `None` when the row is absent (mirrors the Python
+    /// `get_token_from_database` returning `None`). Returns `None` (no error)
+    /// when no `database_path` is configured (the `Bot` has no DB — matches
+    /// the prior `contextlib.suppress(Exception)` skip). DB failures propagate
+    /// as `ValueError` (the Python caller wraps the read in
+    /// `contextlib.suppress(Exception)`).
+    #[pyo3(signature = (chain_id, address))]
+    #[cfg(feature = "db")]
+    fn fetch_erc20_token(
+        &self,
+        py: Python<'_>,
+        chain_id: i64,
+        address: &str,
+    ) -> PyResult<Option<Py<PyErc20TokenRow>>> {
+        let Some(io) = self.construction_io() else {
+            return Ok(None);
+        };
+        let addr = parse_address_for_call(address)?;
+        let row = py
+            .detach(|| {
+                get_runtime().block_on(async {
+                    io.fetch_erc20_token(chain_id, alloy::primitives::Address::from(addr))
+                        .await
+                })
+            })
+            .map_err(|e| crate::db::db_err_to_py(&e))?
+            .map(PyErc20TokenRow::from);
+        match row {
+            Some(r) => Ok(Some(Py::new(py, r)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Write back an ERC-20 token row's metadata (`name` / `symbol` / `decimals`)
+    /// by `(chain_id, address)` — the construction-time write-back in
+    /// `Erc20Builder.build` (QVMWQC). Replaces the `SQLAlchemy`
+    /// `token_from_db.decimals = …; token_from_db.name = …;
+    /// token_from_db.symbol = …; session.commit()` block. Each `None` field
+    /// writes `NULL` (matches the ORM attribute assignment).
+    ///
+    /// No-op when no `database_path` is configured. DB failures propagate as
+    /// `ValueError`. A no-row match is a benign no-op (the caller
+    /// only reaches the write-back when the row was already fetched).
+    #[pyo3(signature = (chain_id, address, name, symbol, decimals))]
+    #[cfg(feature = "db")]
+    fn update_erc20_token_metadata(
+        &self,
+        py: Python<'_>,
+        chain_id: i64,
+        address: &str,
+        name: Option<&str>,
+        symbol: Option<&str>,
+        decimals: Option<i64>,
+    ) -> PyResult<()> {
+        let Some(io) = self.construction_io() else {
+            return Ok(());
+        };
+        py.detach(|| {
+            get_runtime().block_on(async {
+                io.update_erc20_token_metadata(chain_id, address, name, symbol, decimals)
+                    .await
+            })
+        })
+        .map_err(|e| crate::db::db_err_to_py(&e))
+    }
+
+    /// Fetch a `pools` row by `(chain_id, address)` — the pool builder's
+    /// construction-time read (QVMWQC). Replaces the `SQLAlchemy`
+    /// `session.scalar(select(LiquidityPoolTable).where(...))`. Returns a
+    /// [`PyLiquidityPoolRow`] carrying the scalar + FK-id columns
+    /// (`exchange_id` / `token0_id` / `token1_id` / `kind`); the caller hydrates
+    /// the relationships via [`Self::fetch_pool_kind`] / [`Self::fetch_token_by_id`]
+    /// / [`Self::fetch_exchange`].
+    ///
+    /// `None` when the row is absent or no `database_path` is configured (mirrors
+    /// the prior `contextlib.suppress(Exception)` skip).
+    #[pyo3(signature = (chain_id, address))]
+    #[cfg(feature = "db")]
+    fn fetch_pool_row(
+        &self,
+        py: Python<'_>,
+        chain_id: i64,
+        address: &str,
+    ) -> PyResult<Option<Py<crate::db::PyLiquidityPoolRow>>> {
+        let Some(io) = self.construction_io() else {
+            return Ok(None);
+        };
+        let addr = parse_address_for_call(address)?;
+        let row = py
+            .detach(|| {
+                get_runtime().block_on(async {
+                    io.fetch_pool_row(chain_id, alloy::primitives::Address::from(addr))
+                        .await
+                })
+            })
+            .map_err(|e| crate::db::db_err_to_py(&e))?
+            .map(crate::db::PyLiquidityPoolRow::from);
+        match row {
+            Some(r) => Ok(Some(Py::new(py, r)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Fetch the per-DEX subclass row for a pool (QVMWQC). `kind` is the
+    /// `pools.kind` discriminator; `pool_id` the `pools.id`. Returns a
+    /// [`PyPoolKindRow`] (V2 fees / V3 `tick_spacing` + liquidity-update marker /
+    /// V4 pool-hash + hooks + currencies). `None` when absent or no path.
+    #[pyo3(signature = (kind, pool_id))]
+    #[cfg(feature = "db")]
+    fn fetch_pool_kind(
+        &self,
+        py: Python<'_>,
+        kind: &str,
+        pool_id: i64,
+    ) -> PyResult<Option<Py<crate::db::PyPoolKindRow>>> {
+        let Some(io) = self.construction_io() else {
+            return Ok(None);
+        };
+        let kind_owned = kind.to_string();
+        let row = py
+            .detach(|| {
+                get_runtime().block_on(async { io.fetch_pool_kind(&kind_owned, pool_id).await })
+            })
+            .map_err(|e| crate::db::db_err_to_py(&e))?
+            .map(crate::db::PyPoolKindRow::from);
+        match row {
+            Some(r) => Ok(Some(Py::new(py, r)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Fetch an `erc20_tokens` row by its FK id (QVMWQC) — hydrates the
+    /// `pool.token0` / `pool.token1` relationships. `None` when absent or no
+    /// path.
+    #[pyo3(signature = (token_id))]
+    #[cfg(feature = "db")]
+    fn fetch_token_by_id(
+        &self,
+        py: Python<'_>,
+        token_id: i64,
+    ) -> PyResult<Option<Py<PyErc20TokenRow>>> {
+        let Some(io) = self.construction_io() else {
+            return Ok(None);
+        };
+        let row = py
+            .detach(|| get_runtime().block_on(async { io.fetch_token_by_id(token_id).await }))
+            .map_err(|e| crate::db::db_err_to_py(&e))?
+            .map(PyErc20TokenRow::from);
+        match row {
+            Some(r) => Ok(Some(Py::new(py, r)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Fetch an `exchanges` row by its FK id (QVMWQC) — hydrates the
+    /// `pool.exchange` relationship (`factory` / `deployer`). `None` when absent
+    /// or no path.
+    #[pyo3(signature = (exchange_id))]
+    #[cfg(feature = "db")]
+    fn fetch_exchange(
+        &self,
+        py: Python<'_>,
+        exchange_id: i64,
+    ) -> PyResult<Option<Py<crate::db::PyExchangeRow>>> {
+        let Some(io) = self.construction_io() else {
+            return Ok(None);
+        };
+        let row = py
+            .detach(|| get_runtime().block_on(async { io.fetch_exchange(exchange_id).await }))
+            .map_err(|e| crate::db::db_err_to_py(&e))?
+            .map(crate::db::PyExchangeRow::from);
+        match row {
+            Some(r) => Ok(Some(Py::new(py, r)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Fetch all V3 `liquidity_positions` for a pool (QVMWQC) — hydrates the
+    /// `pool.liquidity_positions` relationship for the tick snapshot. Empty when
+    /// absent or no path.
+    #[pyo3(signature = (pool_id))]
+    #[cfg(feature = "db")]
+    fn fetch_liquidity_positions(
+        &self,
+        py: Python<'_>,
+        pool_id: i64,
+    ) -> PyResult<Vec<Py<crate::db::PyLiquidityPositionRow>>> {
+        let Some(io) = self.construction_io() else {
+            return Ok(Vec::new());
+        };
+        let rows = py
+            .detach(|| {
+                get_runtime().block_on(async { io.fetch_liquidity_positions(pool_id).await })
+            })
+            .map_err(|e| crate::db::db_err_to_py(&e))?;
+        rows.into_iter()
+            .map(|r| Py::new(py, crate::db::PyLiquidityPositionRow::new(py, &r)?))
+            .collect()
+    }
+
+    /// Fetch all V3 `initialization_maps` for a pool (QVMWQC) — hydrates the
+    /// `pool.initialization_maps` relationship for the tick snapshot. Empty when
+    /// absent or no path.
+    #[pyo3(signature = (pool_id))]
+    #[cfg(feature = "db")]
+    fn fetch_initialization_maps(
+        &self,
+        py: Python<'_>,
+        pool_id: i64,
+    ) -> PyResult<Vec<Py<crate::db::PyInitializationMapRow>>> {
+        let Some(io) = self.construction_io() else {
+            return Ok(Vec::new());
+        };
+        let rows = py
+            .detach(|| get_runtime().block_on(async { io.fetch_initialization_map(pool_id).await }))
+            .map_err(|e| crate::db::db_err_to_py(&e))?;
+        rows.into_iter()
+            .map(|r| Py::new(py, crate::db::PyInitializationMapRow::new(py, &r)?))
+            .collect()
+    }
+
+    /// Fetch a `pool_managers` row by `(chain_id, address)` (QVMWQC) — the V4
+    /// builder resolves its pool manager to obtain the `id` (for the V4 pool join)
+    /// + the `state_view` contract address. `None` when absent or no path.
+    #[pyo3(signature = (chain_id, address))]
+    #[cfg(feature = "db")]
+    fn fetch_pool_manager(
+        &self,
+        py: Python<'_>,
+        chain_id: i64,
+        address: &str,
+    ) -> PyResult<Option<Py<crate::db::PyPoolManagerRow>>> {
+        let Some(io) = self.construction_io() else {
+            return Ok(None);
+        };
+        let addr = parse_address_for_call(address)?;
+        let row = py
+            .detach(|| {
+                get_runtime().block_on(async {
+                    io.fetch_pool_manager(chain_id, alloy::primitives::Address::from(addr))
+                        .await
+                })
+            })
+            .map_err(|e| crate::db::db_err_to_py(&e))?
+            .map(crate::db::PyPoolManagerRow::from);
+        match row {
+            Some(r) => Ok(Some(Py::new(py, r)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Fetch a V4 pool subclass row by its `pool_hash` (0x-prefixed hex)
+    /// (QVMWQC). The V4 builder resolves its pool row by `pool_hash` (the V4
+    /// `bytes32` unique key). Returns a [`PyPoolKindRow`] (variant `"v4"`),
+    /// carrying `managed_pool_id` / `hooks` / `currency0_id` / `currency1_id` /
+    /// fees / `tick_spacing` / liquidity-update marker. `None` when absent or
+    /// no path.
+    #[pyo3(signature = (pool_hash_hex))]
+    #[cfg(feature = "db")]
+    fn fetch_v4_pool_by_pool_hash(
+        &self,
+        py: Python<'_>,
+        pool_hash_hex: &str,
+    ) -> PyResult<Option<Py<crate::db::PyPoolKindRow>>> {
+        let Some(io) = self.construction_io() else {
+            return Ok(None);
+        };
+        let hex = pool_hash_hex.to_string();
+        let row = py
+            .detach(|| get_runtime().block_on(async { io.fetch_v4_pool_by_pool_hash(&hex).await }))
+            .map_err(|e| crate::db::db_err_to_py(&e))?
+            .map(degenbot_db::rows::PoolKindRow::V4)
+            .map(crate::db::PyPoolKindRow::from);
+        match row {
+            Some(r) => Ok(Some(Py::new(py, r)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Fetch all V4 `managed_pool_liquidity_positions` for a managed pool
+    /// (QVMWQC) — hydrates the V4 `pool.liquidity_positions` relationship for
+    /// the tick snapshot. Empty when absent or no path.
+    #[pyo3(signature = (managed_pool_id))]
+    #[cfg(feature = "db")]
+    fn fetch_managed_liquidity_positions(
+        &self,
+        py: Python<'_>,
+        managed_pool_id: i64,
+    ) -> PyResult<Vec<Py<crate::db::PyLiquidityPositionRow>>> {
+        let Some(io) = self.construction_io() else {
+            return Ok(Vec::new());
+        };
+        let rows = py
+            .detach(|| {
+                get_runtime()
+                    .block_on(async { io.fetch_managed_liquidity_positions(managed_pool_id).await })
+            })
+            .map_err(|e| crate::db::db_err_to_py(&e))?;
+        rows.into_iter()
+            .map(|r| Py::new(py, crate::db::PyLiquidityPositionRow::from_managed(py, &r)?))
+            .collect()
+    }
+
+    /// Fetch all V4 `managed_pool_initialization_maps` for a managed pool
+    /// (QVMWQC) — hydrates the V4 `pool.initialization_maps` relationship for
+    /// the tick snapshot. Empty when absent or no path.
+    #[pyo3(signature = (managed_pool_id))]
+    #[cfg(feature = "db")]
+    fn fetch_managed_initialization_maps(
+        &self,
+        py: Python<'_>,
+        managed_pool_id: i64,
+    ) -> PyResult<Vec<Py<crate::db::PyInitializationMapRow>>> {
+        let Some(io) = self.construction_io() else {
+            return Ok(Vec::new());
+        };
+        let rows = py
+            .detach(|| {
+                get_runtime()
+                    .block_on(async { io.fetch_managed_initialization_map(managed_pool_id).await })
+            })
+            .map_err(|e| crate::db::db_err_to_py(&e))?;
+        rows.into_iter()
+            .map(|r| Py::new(py, crate::db::PyInitializationMapRow::from_managed(py, &r)?))
+            .collect()
+    }
+
+    /// Return the current block number. Native path: direct `AlloyProvider`
+    /// call (no GIL round-trip). Fallback: delegates to the held Python
+    /// provider's `get_block_number()` for non-alloy providers.
+    fn get_block_number(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        // Construction-I/O path (architecture review 2025-07-18): delegate
+        // through the core trait when attached (alloy-only — no Python
+        // fallback); else fall back to the inlined `self.alloy` path for the
+        // bare test fixtures that construct `PyBotIo(provider=…)` without a `Bot`.
+        if let Some(io) = self.construction_io() {
+            let n = py
+                .detach(|| get_runtime().block_on(async { io.get_block_number().await }))
+                .map_err(Into::<PyErr>::into)?;
+            return crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(n))
+                .map(pyo3::Bound::into_any)
+                .map(pyo3::Bound::unbind);
+        }
+        if let Some(alloy) = &self.alloy {
+            let alloy = Arc::clone(alloy);
+            let n = py
+                .detach(|| get_runtime().block_on(async { alloy.get_block_number().await }))
+                .map_err(Into::<PyErr>::into)?;
+            return crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(n))
+                .map(pyo3::Bound::into_any)
+                .map(pyo3::Bound::unbind);
+        }
+        self.call_kw(py, "get_block_number", &[])
+    }
+
+    /// Return block data for the given identifier. Native path: direct
+    /// `AlloyProvider.get_block(n)` for integer ids (returns a full block dict,
+    /// including `number` + `timestamp`). Fallback: delegates to
+    /// `provider.get_block(block_identifier)` (positional, mirrors `SyncPoolIO`).
+    fn get_block(
+        &self,
+        py: Python<'_>,
+        block_identifier: &Bound<'_, PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        // Construction-I/O path: delegate through the core trait when attached.
+        if let Some(io) = self.construction_io() {
+            if let Ok(n) = block_identifier.extract::<u64>() {
+                let block = py
+                    .detach(|| get_runtime().block_on(async { io.get_block(n).await }))
+                    .map_err(Into::<PyErr>::into)?;
+                return match block {
+                    Some(b) => Ok(block_to_py_dict(py, &b)?.into_any().unbind()),
+                    None => Ok(py.None()),
+                };
+            }
+            // Non-integer identifier — the trait has no tag support; fall
+            // through to the inlined path below (which itself falls back to
+            // Python for tags).
+        }
+        if let Some(alloy) = &self.alloy {
+            if let Ok(n) = block_identifier.extract::<u64>() {
+                let alloy = Arc::clone(alloy);
+                let block = py
+                    .detach(|| get_runtime().block_on(async { alloy.get_block(n).await }))
+                    .map_err(Into::<PyErr>::into)?;
+                return match block {
+                    Some(b) => Ok(block_to_py_dict(py, &b)?.into_any().unbind()),
+                    None => Ok(py.None()),
+                };
+            }
+            // Non-integer identifier (e.g. "latest") — fall back to Python.
+        }
+        // SyncPoolIO forwards positionally: provider.get_block(block_identifier)
+        let method = self.provider.bind(py).getattr("get_block")?;
+        let args = PyTuple::new(py, [block_identifier])?;
+        Ok(method.call(args, None)?.unbind())
+    }
+
+    /// Return the timestamp for the given block. Native path: derives from
+    /// `AlloyProvider.get_block(n).header.timestamp` (no separate RPC). Fallback:
+    /// delegates to `provider.get_block_timestamp(block=block)`.
+    #[pyo3(signature = (block=None))]
+    fn get_block_timestamp(
+        &self,
+        py: Python<'_>,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        // Construction-I/O path: delegate through the core trait when attached.
+        if let Some(io) = self.construction_io() {
+            let n = match block {
+                None => py
+                    .detach(|| get_runtime().block_on(async { io.get_block_number().await }))
+                    .map_err(Into::<PyErr>::into)?,
+                Some(b) => match b.extract::<u64>() {
+                    Ok(n) => n,
+                    Err(_) => {
+                        // Non-integer tag — the trait has no tag support; fall
+                        // through to the inlined path below (which falls back
+                        // to Python for tags).
+                        return self.call_kw(py, "get_block_timestamp", &[("block", block)]);
+                    }
+                },
+            };
+            let ts = py
+                .detach(|| get_runtime().block_on(async { io.get_block_timestamp(n).await }))
+                .map_err(Into::<PyErr>::into)?
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(format!("Block {n} not found"))
+                })?;
+            return crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(ts))
+                .map(pyo3::Bound::into_any)
+                .map(pyo3::Bound::unbind);
+        }
+        if let Some(alloy) = &self.alloy {
+            let n = match block {
+                None => {
+                    let a = Arc::clone(alloy);
+                    py.detach(|| get_runtime().block_on(async { a.get_block_number().await }))
+                        .map_err(Into::<PyErr>::into)?
+                }
+                Some(b) => match b.extract::<u64>() {
+                    Ok(n) => n,
+                    Err(_) => {
+                        // Non-integer block tag (e.g. "latest") — fall back to
+                        // the Python provider which accepts the tag directly.
+                        return self.call_kw(py, "get_block_timestamp", &[("block", block)]);
+                    }
+                },
+            };
+            let alloy = Arc::clone(alloy);
+            let block_opt = py
+                .detach(|| get_runtime().block_on(async { alloy.get_block(n).await }))
+                .map_err(Into::<PyErr>::into)?;
+            let ts = block_opt
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(format!("Block {n} not found"))
+                })?
+                .header
+                .inner
+                .timestamp;
+            return crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(ts))
+                .map(pyo3::Bound::into_any)
+                .map(pyo3::Bound::unbind);
+        }
+        self.call_kw(py, "get_block_timestamp", &[("block", block)])
+    }
+
+    /// Return the code at the given address. Native path: direct
+    /// `AlloyProvider.get_code(addr, block)`. Fallback: delegates to
+    /// `provider.get_code(address, block=block)` (mirrors `SyncPoolIO`).
+    #[pyo3(signature = (address, block=None))]
+    fn get_code(
+        &self,
+        py: Python<'_>,
+        address: &Bound<'_, PyAny>,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        // Construction-I/O path: delegate through the core trait when attached.
+        if let Some(io) = self.construction_io() {
+            if let (Ok(addr_str), Ok(block_num)) =
+                (address.extract::<String>(), extract_block_u64(block))
+            {
+                let addr = alloy::primitives::Address::from(parse_address_for_call(&addr_str)?);
+                let code = py
+                    .detach(|| get_runtime().block_on(async { io.get_code(addr, block_num).await }))
+                    .map_err(Into::<PyErr>::into)?;
+                return crate::conversion::cache::create_hexbytes(py, code.as_ref())
+                    .map(pyo3::Bound::into_any)
+                    .map(pyo3::Bound::unbind);
+            }
+        }
+        if let Some(alloy) = &self.alloy {
+            if let (Ok(addr_str), Ok(block_num)) =
+                (address.extract::<String>(), extract_block_u64(block))
+            {
+                let addr = alloy::primitives::Address::from(parse_address_for_call(&addr_str)?);
+                let alloy = Arc::clone(alloy);
+                let code = py
+                    .detach(|| {
+                        get_runtime().block_on(async { alloy.get_code(&addr, block_num).await })
+                    })
+                    .map_err(Into::<PyErr>::into)?;
+                return crate::conversion::cache::create_hexbytes(py, code.as_ref())
+                    .map(pyo3::Bound::into_any)
+                    .map(pyo3::Bound::unbind);
+            }
+            // Address/block shape not native-compatible — fall back to Python.
+        }
+        let method = self.provider.bind(py).getattr("get_code")?;
+        let kwargs = build_block_kw(py, block)?;
+        let args = PyTuple::new(py, [address])?;
+        Ok(method.call(args, kwargs.as_ref())?.unbind())
+    }
+
+    /// Return the ETH balance at the given address. Native path: direct
+    /// `AlloyProvider.get_balance(addr, block)`. Fallback: delegates to
+    /// `provider.get_balance(address, block=block)` (mirrors `SyncPoolIO`).
+    #[pyo3(signature = (address, block=None))]
+    fn get_balance(
+        &self,
+        py: Python<'_>,
+        address: &Bound<'_, PyAny>,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        // Construction-I/O path: delegate through the core trait when attached.
+        if let Some(io) = self.construction_io() {
+            if let (Ok(addr_str), Ok(block_num)) =
+                (address.extract::<String>(), extract_block_u64(block))
+            {
+                let addr = alloy::primitives::Address::from(parse_address_for_call(&addr_str)?);
+                let balance = py
+                    .detach(|| {
+                        get_runtime().block_on(async { io.get_balance(addr, block_num).await })
+                    })
+                    .map_err(Into::<PyErr>::into)?;
+                return crate::conversion::alloy::u256_to_py(py, &balance)
+                    .map(pyo3::Bound::into_any)
+                    .map(pyo3::Bound::unbind);
+            }
+        }
+        if let Some(alloy) = &self.alloy {
+            if let (Ok(addr_str), Ok(block_num)) =
+                (address.extract::<String>(), extract_block_u64(block))
+            {
+                let addr = alloy::primitives::Address::from(parse_address_for_call(&addr_str)?);
+                let alloy = Arc::clone(alloy);
+                let balance = py
+                    .detach(|| {
+                        get_runtime().block_on(async { alloy.get_balance(&addr, block_num).await })
+                    })
+                    .map_err(Into::<PyErr>::into)?;
+                return crate::conversion::alloy::u256_to_py(py, &balance)
+                    .map(pyo3::Bound::into_any)
+                    .map(pyo3::Bound::unbind);
+            }
+            // Address/block shape not native-compatible — fall back to Python.
+        }
+        let method = self.provider.bind(py).getattr("get_balance")?;
+        let kwargs = build_block_kw(py, block)?;
+        let args = PyTuple::new(py, [address])?;
+        Ok(method.call(args, kwargs.as_ref())?.unbind())
+    }
+
+    /// Perform an `eth_call` and return the result. Native path: direct
+    /// `AlloyProvider.eth_call(to, data, block)` (reverts map to
+    /// `ContractLogicError`, matching the alloy revert path). Fallback:
+    /// delegates to `provider.call(to=to, data=data, block=block)` (kw-only,
+    /// mirrors `SyncPoolIO` exactly).
+    ///
+    /// `OfflineProvider.call(*, to, data, block_number)` has a keyword-only
+    /// signature, and test doubles (`MagicMock(side_effect=mock_call)` where
+    /// `mock_call(*, to, data, block=None)`) are designed against `SyncPoolIO`'s
+    /// kw-call shape — both work unchanged because the forward is kw-only.
+    #[pyo3(signature = (to, data, block=None))]
+    fn call(
+        &self,
+        py: Python<'_>,
+        to: &Bound<'_, PyAny>,
+        data: &Bound<'_, PyAny>,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        // Construction-I/O path: delegate through the core trait when attached.
+        if let Some(io) = self.construction_io() {
+            if let (Ok(to_str), Ok(data_bytes), Ok(block_num)) = (
+                to.extract::<String>(),
+                data.extract::<&[u8]>(),
+                extract_block_u64(block),
+            ) {
+                let addr = alloy::primitives::Address::from(parse_address_for_call(&to_str)?);
+                let data_b = alloy::primitives::Bytes::from(data_bytes.to_vec());
+                let result = py.detach(|| {
+                    get_runtime().block_on(async { io.call(addr, data_b, block_num).await })
+                });
+                return match result {
+                    Ok(bytes) => crate::conversion::cache::create_hexbytes(py, bytes.as_ref())
+                        .map(pyo3::Bound::into_any)
+                        .map(pyo3::Bound::unbind),
+                    Err(ProviderError::ExecutionReverted { message, .. }) => {
+                        Err(revert_to_pyerr(py, &to_str, &message))
+                    }
+                    Err(e) => Err(e.into()),
+                };
+            }
+            // `to`/`data`/`block` shape not native-compatible — fall back.
+        }
+        if let Some(alloy) = &self.alloy {
+            if let (Ok(to_str), Ok(data_bytes), Ok(block_num)) = (
+                to.extract::<String>(),
+                data.extract::<&[u8]>(),
+                extract_block_u64(block),
+            ) {
+                let addr = alloy::primitives::Address::from(parse_address_for_call(&to_str)?);
+                let data_b = alloy::primitives::Bytes::from(data_bytes.to_vec());
+                let alloy = Arc::clone(alloy);
+                let result = py.detach(|| {
+                    get_runtime().block_on(async { alloy.eth_call(&addr, data_b, block_num).await })
+                });
+                return match result {
+                    Ok(bytes) => crate::conversion::cache::create_hexbytes(py, bytes.as_ref())
+                        .map(pyo3::Bound::into_any)
+                        .map(pyo3::Bound::unbind),
+                    Err(ProviderError::ExecutionReverted { message, .. }) => {
+                        Err(revert_to_pyerr(py, &to_str, &message))
+                    }
+                    Err(e) => Err(e.into()),
+                };
+            }
+            // `to`/`data`/`block` shape not native-compatible — fall back.
+        }
+        self.call_kw(
+            py,
+            "call",
+            &[("to", Some(to)), ("data", Some(data)), ("block", block)],
+        )
+    }
+
+    /// Perform a raw `eth_call` and return the result. Native path: reuses
+    /// the native `call` body above by extracting `to`/`data` from the tx
+    /// dict. Fallback: delegates to `provider.call_raw(tx, block=block)` (tx
+    /// positional, block kw, mirrors `SyncPoolIO`).
+    ///
+    /// `tx` is a web3 `TxParams` dict; `PyBotIo` forwards it verbatim (the
+    /// builder assembles it; this is a pass-through, not a tx-builder).
+    #[pyo3(signature = (tx, block=None))]
+    fn call_raw(
+        &self,
+        py: Python<'_>,
+        tx: &Bound<'_, PyAny>,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        // `call_raw` reuses the `call` body; the construction-I/O branch there
+        // gates both. (`call_raw`'s native path extracts `to`/`data` from the
+        // tx dict + routes through `self.call`, which delegates to
+        // `ConstructionIo.call` when attached.)
+        if let Some(_alloy) = &self.alloy {
+            // The native path needs `to` + `data` from the tx dict; forward
+            // through the native `call` body when extractable. A bare
+            // `PyAlloyProvider` has no `call_raw`, so the native path is
+            // mandatory here (no Python fallback).
+            if let (Ok(to), Ok(data)) = (tx.get_item("to"), tx.get_item("data")) {
+                return self.call(py, &to, &data, block);
+            }
+            // tx dict shape not native-compatible — fall back.
+        }
+        let method = self.provider.bind(py).getattr("call_raw")?;
+        let kwargs = build_block_kw(py, block)?;
+        let args = PyTuple::new(py, [tx])?;
+        Ok(method.call(args, kwargs.as_ref())?.unbind())
+    }
+
+    /// Fetch the factory address for a V2-style pool, performing the full
+    /// encode -> call -> decode -> checksum choreography in Rust (ADR-005 slice 14b).
+    ///
+    /// Mirrors `degenbot/builders/type_resolution.py::fetch_factory_from_chain`:
+    /// encode `factory()`, `eth_call` the pool, ABI-decode the right-aligned
+    /// 20-byte `address`, EIP-55 checksum it. The RPC primitive (`call`)
+    /// still delegates to the held provider (the native-alloy swap is a later
+    /// slice); the *choreography* now lives in Rust — slice 14's
+    /// "methods for the builder I/O choreography … moved here, called from
+    /// Python via `PyBotIo`".
+    ///
+    /// Returns `None` on any provider error, decode failure, or short result —
+    /// mirrors the Python impl's `except (Web3Exception, DecodingError): return None`
+    /// contract (a pool whose `factory()` reverts yields `None`, not an error).
+    #[pyo3(signature = (address))]
+    fn fetch_factory_address(&self, py: Python<'_>, address: &str) -> Option<String> {
+        // Delegate the encode→call→decode→checksum to the shared no-arg
+        // address-returning helper, then swallow any error into `None` here
+        // to preserve the `None`-on-failure contract this method promises in
+        // 14b (mirrors the Python `except (Web3Exception, DecodingError): return None`).
+        self.fetch_address_returning_method(py, b"factory()", address, None)
+            .ok()
+    }
+
+    /// Fetch ERC-20 token name / symbol / decimals via batched RPC calls,
+    /// performing the full encode -> call (x3) -> decode choreography in Rust
+    /// (ADR-005 slice 14c).
+    ///
+    /// Mirrors `degenbot/builders/erc20_builder.py::_fetch_name_symbol_decimals_batched`:
+    /// encode the 4-byte selectors for `name()`, `symbol()`, `decimals()`, fire
+    /// three `eth_call`s at the token address, ABI-decode each as `string`,
+    /// `string`, `uint256` respectively. Returns the `(name, symbol, decimals)`
+    /// tuple on success.
+    ///
+    /// Returns `None` on any provider error or decode failure — mirrors the
+    /// Python batched impl's caller-side `except (Web3Exception, DecodingError)`
+    /// contract, which falls back to per-call `bytes32` alternate prototypes when
+    /// the batched path fails. (The Rust impl surfaces the same `None` signal so
+    /// the caller's fallback kicks in identically.)
+    #[pyo3(signature = (address))]
+    fn fetch_erc20_metadata(&self, py: Python<'_>, address: &str) -> Option<(String, String, u64)> {
+        use alloy::dyn_abi::{DynSolType, DynSolValue};
+
+        // Encode the three selectors at compile time.
+        let name_selector = selector(b"name()");
+        let symbol_selector = selector(b"symbol()");
+        let decimals_selector = selector(b"decimals()");
+
+        let address_obj = pyo3::types::PyString::new(py, address);
+
+        // Fire the three calls; any error -> None.
+        let Ok(name_result) = self.call_kw(
+            py,
+            "call",
+            &[
+                ("to", Some(address_obj.as_any())),
+                (
+                    "data",
+                    Some(pyo3::types::PyBytes::new(py, &name_selector).as_any()),
+                ),
+                ("block", None),
+            ],
+        ) else {
+            return None;
+        };
+        let Ok(symbol_result) = self.call_kw(
+            py,
+            "call",
+            &[
+                ("to", Some(address_obj.as_any())),
+                (
+                    "data",
+                    Some(pyo3::types::PyBytes::new(py, &symbol_selector).as_any()),
+                ),
+                ("block", None),
+            ],
+        ) else {
+            return None;
+        };
+        let Ok(decimals_result) = self.call_kw(
+            py,
+            "call",
+            &[
+                ("to", Some(address_obj.as_any())),
+                (
+                    "data",
+                    Some(pyo3::types::PyBytes::new(py, &decimals_selector).as_any()),
+                ),
+                ("block", None),
+            ],
+        ) else {
+            return None;
+        };
+
+        // Extract &[u8] from each HexBytes/bytes result.
+        let name_bytes: &[u8] = match name_result.bind(py).extract::<&[u8]>() {
+            Ok(b) => b,
+            Err(_) => return None,
+        };
+        let symbol_bytes: &[u8] = match symbol_result.bind(py).extract::<&[u8]>() {
+            Ok(b) => b,
+            Err(_) => return None,
+        };
+        let decimals_bytes: &[u8] = match decimals_result.bind(py).extract::<&[u8]>() {
+            Ok(b) => b,
+            Err(_) => return None,
+        };
+
+        // Decode dynamic `string`, `string`, and `uint256`. Any decode error -> None
+        // (mirror the Python `except DecodingError`).
+        let Ok(DynSolValue::String(name)) = DynSolType::String.abi_decode(name_bytes) else {
+            return None;
+        };
+        let Ok(DynSolValue::String(symbol)) = DynSolType::String.abi_decode(symbol_bytes) else {
+            return None;
+        };
+        let decimals = match DynSolType::Uint(256).abi_decode(decimals_bytes) {
+            Ok(DynSolValue::Uint(n, _)) => n.to::<u64>(),
+            _ => return None,
+        };
+
+        Some((name, symbol, decimals))
+    }
+
+    /// Fetch a V2-style pool's immutable data — `factory()`, `token0()`, `token1()` —
+    /// performing the 3-call encode -> call -> decode choreography in Rust
+    /// (ADR-005 slice 14e).
+    ///
+    /// Mirrors the immutable-RPC block of `v2_builder_base.py::V2BuilderBase.
+    /// _fetch_v2_common_data` (the fallback path when the DB lookup misses).
+    /// Each of the 3 calls is a no-arg address-returning read, fulfilled by
+    /// [`Self::fetch_address_returning_method`] (shared with `fetch_factory_address`).
+    /// Returns `(factory, token0, token1)` as EIP-55 checksummed strings.
+    ///
+    /// Errors propagate: any provider call revert surfaces as `PyErr`(no
+    /// swallowing) — matches the Python `except Exception: raise
+    /// LiquidityPoolError` contract (the caller wraps in its own exception).
+    #[pyo3(signature = (pool_address, block=None))]
+    fn fetch_v2_immutable_data(
+        &self,
+        py: Python<'_>,
+        pool_address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<(String, String, String)> {
+        let factory = self.fetch_address_returning_method(py, b"factory()", pool_address, block)?;
+        let token0 = self.fetch_address_returning_method(py, b"token0()", pool_address, block)?;
+        let token1 = self.fetch_address_returning_method(py, b"token1()", pool_address, block)?;
+        Ok((factory, token0, token1))
+    }
+
+    /// Fetch a V2-style pool's reserves via `getReserves()`, performing the
+    /// encode -> call -> decode choreography in Rust (ADR-005 slice 14e).
+    ///
+    /// Mirrors the reserves-RPC block of `V2BuilderBase._fetch_v2_common_data`.
+    /// Selector `0x0902f1ac`; no args; ABI-decodes a `(uint256, uint256)` tuple.
+    /// Returns `(reserves0, reserves1)` as Python ints (preserved through
+    /// [`crate::conversion::alloy::u256_to_py`] — large values stay exact).
+    ///
+    /// Errors propagate (see [`Self::fetch_v2_immutable_data`]).
+    #[pyo3(signature = (pool_address, block=None))]
+    fn fetch_v2_reserves(
+        &self,
+        py: Python<'_>,
+        pool_address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
+        // Calldata + return decode sourced from the `sol!`-generated ABI in
+        // `degenbot_rpc::abi` (B2) — no hand-rolled selector/`DynSolType` here.
+        let calldata = degenbot_rpc::abi::encode_get_reserves();
+        let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        let (r0, r1) = degenbot_rpc::abi::decode_get_reserves(bytes)?;
+        Ok((
+            crate::conversion::alloy::u256_to_py(py, &r0)?.unbind(),
+            crate::conversion::alloy::u256_to_py(py, &r1)?.unbind(),
+        ))
+    }
+
+    /// Fetch a V3-style pool's immutable data — `factory()`, `token0()`, `token1()`,
+    /// `fee()`, `tickSpacing()` — the 5-call encode -> call -> decode choreography
+    /// in Rust (ADR-005 slice 14f).
+    ///
+    /// Mirrors the immutable-RPC block of `v3_pool_builder.py::V3PoolBuilder.build`'s
+    /// DB-miss fallback path. The first 3 calls are no-arg address-returning reads
+    /// (re-use [`Self::fetch_address_returning_method`]); the last 2 are no-arg
+    /// numeric reads (`fee` as `uint24`, `tickSpacing` as `int24`).
+    ///
+    /// Returns `(factory, token0, token1, fee, tick_spacing)` with addresses
+    /// EIP-55 checksummed; `fee`/`tick_spacing` returned as Python ints (small
+    /// values, safe lossless conversion).
+    ///
+    /// Errors propagate (see [`Self::fetch_v2_immutable_data`]).
+    #[pyo3(signature = (pool_address, block=None))]
+    fn fetch_v3_immutable_data(
+        &self,
+        py: Python<'_>,
+        pool_address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<V2ImmutableData> {
+        use alloy::dyn_abi::DynSolType;
+
+        let factory = self.fetch_address_returning_method(py, b"factory()", pool_address, block)?;
+        let token0 = self.fetch_address_returning_method(py, b"token0()", pool_address, block)?;
+        let token1 = self.fetch_address_returning_method(py, b"token1()", pool_address, block)?;
+
+        // fee() -> uint24, no args.
+        let fee =
+            self.fetch_no_arg_uint(py, b"fee()", pool_address, block, &DynSolType::Uint(24))?;
+        // tickSpacing() -> int24, no args.
+        let tick_spacing = self.fetch_no_arg_int(
+            py,
+            b"tickSpacing()",
+            pool_address,
+            block,
+            &DynSolType::Int(24),
+        )?;
+
+        Ok((factory, token0, token1, fee, tick_spacing))
+    }
+
+    /// Fetch a V3-style pool's `slot0()` + `liquidity()` state — the 2-call
+    /// encode -> call -> decode choreography in Rust (ADR-005 slice 14f).
+    ///
+    /// Mirrors `V3PoolBuilder.build`'s slot0+liquidity RPC block. `slot0()`
+    /// returns `(uint160 sqrtPriceX96, int24 tick, uint16, uint16, uint16, uint8,
+    /// bool)` — only the first two values are needed (the rest are ignored,
+    /// matching Python `decode_slot0`). `liquidity()` returns `uint128`.
+    ///
+    /// Returns `(sqrt_price_x96, tick, liquidity)`: sqrtPriceX96 + liquidity as
+    /// Python ints (via [`crate::conversion::alloy::u256_to_py`] —> large values
+    /// stay exact); tick as a Python int (`int24` sign-extended, preserved
+    /// through `I256` -> `i64` -> Python int).
+    ///
+    /// Errors propagate.
+    #[pyo3(signature = (pool_address, block=None))]
+    fn fetch_v3_slot0_liquidity(
+        &self,
+        py: Python<'_>,
+        pool_address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<(Py<PyAny>, Py<PyAny>, Py<PyAny>)> {
+        // Calldata + return decode from `degenbot_rpc::abi` (B2).
+        let slot0_obj = self.forward_call_to_provider(
+            py,
+            pool_address,
+            &degenbot_rpc::abi::encode_slot0(),
+            block,
+        )?;
+        let slot0_bytes: &[u8] = slot0_obj.bind(py).extract::<&[u8]>()?;
+        let (sqrt_price_x96, tick_i256) = degenbot_rpc::abi::decode_slot0(slot0_bytes)?;
+
+        let liq_obj = self.forward_call_to_provider(
+            py,
+            pool_address,
+            &degenbot_rpc::abi::encode_liquidity(),
+            block,
+        )?;
+        let liq_bytes: &[u8] = liq_obj.bind(py).extract::<&[u8]>()?;
+        let liquidity = degenbot_rpc::abi::decode_liquidity(liq_bytes)?;
+
+        Ok((
+            crate::conversion::alloy::u256_to_py(py, &sqrt_price_x96)?.unbind(),
+            // int24 sign-extended: convert through i256_to_py (handles
+            // negatives; no precision loss since int24 fits in i32).
+            crate::conversion::alloy::i256_to_py(py, &tick_i256)?.unbind(),
+            crate::conversion::alloy::u256_to_py(py, &liquidity)?.unbind(),
+        ))
+    }
+
+    /// Fetch a V4 pool's slot0 + liquidity via `getSlot0(bytes32)` +
+    /// `getLiquidity(bytes32)` on the state-view contract (ADR-005 slice 14o).
+    ///
+    /// Mirrors `degenbot/builders/v4_pool_builder.py`'s slot0/liquidity RPC
+    /// block in `_build_pool`. V4 differs from V3 (slice 14f) in two ways:
+    /// 1. Methods take a `bytes32 pool_id` prefix argument (like the V4 tick
+    ///    RPCs from slices 14j/14k).
+    /// 2. `getSlot0` returns `(uint160 sqrtPriceX96, int24 tick, uint24
+    ///    protocolFee, uint24 lpFee)` — 4 fields, not 6. The protocolFee word
+    ///    packs two uint12 fees; we return the raw `uint24` and leave that
+    ///    interpretation to Python's `decode_slot0` callers.
+    ///
+    /// Returns a 5-tuple `(sqrtPriceX96, tick, protocolFee, lpFee, liquidity)`.
+    ///
+    /// Errors propagate.
+    #[pyo3(signature = (state_view_address, pool_id, block=None))]
+    fn fetch_v4_slot0_liquidity(
+        &self,
+        py: Python<'_>,
+        state_view_address: &str,
+        pool_id: &[u8],
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Slot0LiquidityState> {
+        // Calldata + return decode from `degenbot_rpc::abi` (B2).
+        let pool_id_arr: [u8; 32] = pool_id
+            .try_into()
+            .map_err(|_| pyo3::exceptions::PyValueError::new_err("pool_id must be 32 bytes"))?;
+
+        let slot0_obj = self.forward_call_to_provider(
+            py,
+            state_view_address,
+            &degenbot_rpc::abi::encode_get_slot0(&pool_id_arr),
+            block,
+        )?;
+        let slot0_bytes: &[u8] = slot0_obj.bind(py).extract::<&[u8]>()?;
+        let (sqrt_price_x96, tick_i256, protocol_fee, lp_fee) =
+            degenbot_rpc::abi::decode_get_slot0(slot0_bytes)?;
+
+        let liq_obj = self.forward_call_to_provider(
+            py,
+            state_view_address,
+            &degenbot_rpc::abi::encode_get_liquidity(&pool_id_arr),
+            block,
+        )?;
+        let liq_bytes: &[u8] = liq_obj.bind(py).extract::<&[u8]>()?;
+        let liquidity = degenbot_rpc::abi::decode_liquidity(liq_bytes)?;
+
+        Ok((
+            crate::conversion::alloy::u256_to_py(py, &sqrt_price_x96)?.unbind(),
+            crate::conversion::alloy::i256_to_py(py, &tick_i256)?.unbind(),
+            crate::conversion::alloy::u256_to_py(py, &protocol_fee)?.unbind(),
+            crate::conversion::alloy::u256_to_py(py, &lp_fee)?.unbind(),
+            crate::conversion::alloy::u256_to_py(py, &liquidity)?.unbind(),
+        ))
+    }
+
+    /// Fetch Camelot pool state via four no-arg RPCs, returning
+    /// (`stable_swap`, `fee_denominator`, `fee_token0`, `fee_token1`) (ADR-005 slice 14q).
+    ///
+    /// Mirrors `v2_pool_builder.py::_fetch_camelot_state`. The four calls run
+    /// sequentially in their original order, though they have no data
+    /// dependencies (independent probes — a batched multicall would be a future
+    /// optimization):
+    /// - `stableSwap()` → `bool`
+    /// - `FEE_DENOMINATOR()` → `uint256`
+    /// - `token0FeePercent()` → `uint16`
+    /// - `token1FeePercent()` → `uint16`
+    ///
+    /// The bool decode extracts the low byte of word 0 (1 = True, 0 = False).
+    /// The uint16/uint256 decodes treat the value as right-aligned in its
+    /// 32-byte word. Errors propagate.
+    #[pyo3(signature = (pool_address, block=None))]
+    fn fetch_camelot_state(
+        &self,
+        py: Python<'_>,
+        pool_address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<StableFeeTuple> {
+        use alloy::dyn_abi::{DynSolType, DynSolValue};
+        use alloy::primitives::U256;
+
+        // stableSwap() → bool
+        let stable_calldata = selector(b"stableSwap()");
+        let stable_obj =
+            self.forward_call_to_provider(py, pool_address, &stable_calldata, block)?;
+        let stable_bytes: &[u8] = stable_obj.bind(py).extract::<&[u8]>()?;
+        let Ok(DynSolValue::Bool(stable)) = DynSolType::Bool.abi_decode(stable_bytes) else {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "invalid stableSwap() decode",
+            ));
+        };
+
+        // FEE_DENOMINATOR() → uint256
+        let denom_calldata = selector(b"FEE_DENOMINATOR()");
+        let denom_obj = self.forward_call_to_provider(py, pool_address, &denom_calldata, block)?;
+        let denom_bytes: &[u8] = denom_obj.bind(py).extract::<&[u8]>()?;
+        if denom_bytes.len() < 32 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "FEE_DENOMINATOR result < 32 bytes",
+            ));
+        }
+        let denom = U256::from_be_slice(&denom_bytes[0..32]);
+
+        // token0FeePercent() → uint16
+        let fee0_calldata = selector(b"token0FeePercent()");
+        let fee0_obj = self.forward_call_to_provider(py, pool_address, &fee0_calldata, block)?;
+        let fee0_bytes: &[u8] = fee0_obj.bind(py).extract::<&[u8]>()?;
+        if fee0_bytes.len() < 32 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "token0FeePercent result < 32 bytes",
+            ));
+        }
+        let fee0 = U256::from_be_slice(&fee0_bytes[0..32]);
+
+        // token1FeePercent() → uint16
+        let fee1_calldata = selector(b"token1FeePercent()");
+        let fee1_obj = self.forward_call_to_provider(py, pool_address, &fee1_calldata, block)?;
+        let fee1_bytes: &[u8] = fee1_obj.bind(py).extract::<&[u8]>()?;
+        if fee1_bytes.len() < 32 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "token1FeePercent result < 32 bytes",
+            ));
+        }
+        let fee1 = U256::from_be_slice(&fee1_bytes[0..32]);
+
+        Ok((
+            stable,
+            crate::conversion::alloy::u256_to_py(py, &denom)?.unbind(),
+            crate::conversion::alloy::u256_to_py(py, &fee0)?.unbind(),
+            crate::conversion::alloy::u256_to_py(py, &fee1)?.unbind(),
+        ))
+    }
+
+    /// Fetch Curve pool params via 3 no-arg `uint256`-returning calls (ADR-005
+    /// slice 14r).
+    ///
+    /// Mirrors `curve_pool_builder.py::_fetch_pool_params`. The Python original
+    /// uses `io.call_raw({"to": ..., "data": ...}, block=...)`; the result is
+    /// identical to a `.call(to=..., data=..., block=...)` because `SyncPoolIO`
+    /// routes both forms to the same underlying provider. So we reuse the `call`
+    /// kw-form via `forward_call_to_provider`.
+    ///
+    /// Returns `(A, fee, admin_fee)`. Each is a `uint256`. Errors propagate.
+    #[pyo3(signature = (pool_address, block=None))]
+    fn fetch_curve_pool_params(
+        &self,
+        py: Python<'_>,
+        pool_address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<(Py<PyAny>, Py<PyAny>, Py<PyAny>)> {
+        use alloy::primitives::U256;
+
+        let fetch_no_arg_uint = |sig: &[u8]| -> PyResult<Py<PyAny>> {
+            let calldata = selector(sig);
+            let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
+            let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+            if bytes.len() < 32 {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "{sig:?} result < 32 bytes"
+                )));
+            }
+            let val = U256::from_be_slice(&bytes[0..32]);
+            crate::conversion::alloy::u256_to_py(py, &val).map(pyo3::Bound::unbind)
+        };
+
+        let a = fetch_no_arg_uint(b"A()")?;
+        let fee = fetch_no_arg_uint(b"fee()")?;
+        let admin_fee = fetch_no_arg_uint(b"admin_fee()")?;
+        Ok((a, fee, admin_fee))
+    }
+
+    /// Fetch all Curve pool balances via `balances(uint256)` in a loop
+    /// (ADR-005 slice 14s).
+    ///
+    /// Mirrors `curve_pool_builder.py::_fetch_balances`'s snapshot-update loop.
+    /// Issues `count` RPCs, indexing 0..count, gathering `uint256` results into
+    /// a Python list. New pattern: unsigned-integer-arg encoding (the index is
+    /// ABI-encoded as a 32-byte big-endian `uint256` word).
+    ///
+    /// Errors propagate.
+    #[pyo3(signature = (pool_address, count, block=None))]
+    fn fetch_curve_balances(
+        &self,
+        py: Python<'_>,
+        pool_address: &str,
+        count: usize,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        use alloy::primitives::U256;
+
+        let sel = selector(b"balances(uint256)");
+        let list = PyList::empty(py);
+        for idx in 0..count {
+            // ABI-encode the index as a uint256 (32-byte big-endian word).
+            let mut calldata = Vec::with_capacity(36);
+            calldata.extend_from_slice(&sel);
+            let mut arg = [0u8; 32];
+            arg[24..].copy_from_slice(&(idx as u64).to_be_bytes());
+            calldata.extend_from_slice(&arg);
+
+            let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
+            let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+            if bytes.len() < 32 {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "balances({idx}) result < 32 bytes"
+                )));
+            }
+            let val = U256::from_be_slice(&bytes[0..32]);
+            list.append(crate::conversion::alloy::u256_to_py(py, &val)?.unbind())?;
+        }
+        Ok(list.into())
+    }
+
+    /// Fetch an ERC-20 token balance via `balanceOf(address)`, performing the
+    /// full encode -> call -> decode choreography in Rust (ADR-005 slice 14d).
+    ///
+    /// Mirrors `degenbot/builders/erc20_builder.py::Erc20Builder.get_token_balance`'s
+    /// I/O call path (cache + checksum are out of scope; the caller still owns
+    /// those). The `balanceOf(address)` selector (`0x70a08231`) + ABI-encoded
+    /// `address` arg and the `uint256` return decode are sourced from the
+    /// `sol!`-generated definitions in `degenbot_rpc::abi` (B2).
+    ///
+    /// Errors propagate: a provider call revert or decode failure surfaces as a
+    /// `PyErr` to the caller (no swallowing) — matches the Python impl's no-
+    /// try/except contract, which trusts the caller to handle.
+    #[pyo3(signature = (token, owner, block=None))]
+    fn fetch_token_balance(
+        &self,
+        py: Python<'_>,
+        token: &str,
+        owner: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let owner_addr = alloy::primitives::Address::from(parse_address_for_call(owner)?);
+        let calldata = degenbot_rpc::abi::encode_balance_of(&owner_addr);
+        let result_obj = self.forward_call_to_provider(py, token, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        let n = degenbot_rpc::abi::decode_balance_of(bytes)?;
+        crate::conversion::alloy::u256_to_py(py, &n).map(pyo3::Bound::unbind)
+    }
+
+    /// Fetch an ERC-20 token allowance via `allowance(address,address)`, the
+    /// two-address-arg parameterized-call pattern (ADR-005 slice 14d).
+    ///
+    /// Mirrors `Erc20Builder.get_token_approval`'s I/O path. Selector
+    /// `0xdd62ed3e`; two ABI-encoded `address` args; decoded `uint256` result.
+    /// Errors propagate (see [`Self::fetch_token_balance`]).
+    #[pyo3(signature = (token, owner, spender, block=None))]
+    fn fetch_token_allowance(
+        &self,
+        py: Python<'_>,
+        token: &str,
+        owner: &str,
+        spender: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let owner_addr = alloy::primitives::Address::from(parse_address_for_call(owner)?);
+        let spender_addr = alloy::primitives::Address::from(parse_address_for_call(spender)?);
+        let calldata = degenbot_rpc::abi::encode_allowance(&owner_addr, &spender_addr);
+        let result_obj = self.forward_call_to_provider(py, token, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        let n = degenbot_rpc::abi::decode_allowance(bytes)?;
+        crate::conversion::alloy::u256_to_py(py, &n).map(pyo3::Bound::unbind)
+    }
+
+    /// Fetch an ERC-20 token's total supply via `totalSupply()`, the no-arg
+    /// uint256-returning call pattern (ADR-005 slice 14d).
+    ///
+    /// Mirrors `Erc20Builder.get_token_total_supply`'s I/O path. Selector
+    /// `0x18160ddd`; no args; decoded `uint256` result. Errors propagate.
+    #[pyo3(signature = (token, block=None))]
+    fn fetch_token_total_supply(
+        &self,
+        py: Python<'_>,
+        token: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let calldata = degenbot_rpc::abi::encode_total_supply();
+        let result_obj = self.forward_call_to_provider(py, token, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        let n = degenbot_rpc::abi::decode_total_supply(bytes)?;
+        crate::conversion::alloy::u256_to_py(py, &n).map(pyo3::Bound::unbind)
+    }
+
+    /// Fetch Aerodrome V2 pool's `stable()` flag and factory `getFee(address,bool)`
+    /// — the 2-call choreography with a data dependency (ADR-005 slice 14g).
+    ///
+    /// Mirrors `aerodrome_v2_builder.py::AerodromeV2PoolBuilder.build`'s
+    /// Aerodrome-specific RPC block. First call: `stable()` on the pool address
+    /// (no-arg, returns `bool`). Second call: `getFee(address,bool)` on the
+    /// factory address, with the pool address and the first call's `stable`
+    /// result as ABI-encoded arguments. Returns `(stable, fee_raw)`.
+    ///
+    /// New pattern introduced: mixed-type ABI encoding (address + bool in a
+    /// single calldata), and a data dependency between the two calls (the `stable`
+    /// result from call 1 is an argument to call 2).
+    ///
+    /// Errors propagate: any provider revert surfaces as `PyErr`.
+    #[pyo3(signature = (pool_address, factory_address, block=None))]
+    fn fetch_aerodrome_v2_stable_and_fee(
+        &self,
+        py: Python<'_>,
+        pool_address: &str,
+        factory_address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<(bool, Py<PyAny>)> {
+        use alloy::dyn_abi::{DynSolType, DynSolValue};
+
+        // Call 1: stable() on the pool — no-arg, decode as bool.
+        let stable_calldata = selector(b"stable()");
+        let stable_result =
+            self.forward_call_to_provider(py, pool_address, &stable_calldata, block)?;
+        let stable_bytes: &[u8] = stable_result.bind(py).extract::<&[u8]>()?;
+        let Ok(DynSolValue::Bool(stable)) = DynSolType::Bool.abi_decode(stable_bytes) else {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "invalid stable decode",
+            ));
+        };
+
+        // Call 2: getFee(address,bool) on the factory — ABI-encode pool address
+        // (right-padded 32-byte word 0) + stable bool (32-byte word 1).
+        let pool_addr = parse_address_for_call(pool_address)?;
+        let get_fee_sel = selector(b"getFee(address,bool)");
+        let mut calldata = Vec::with_capacity(4 + 64);
+        calldata.extend_from_slice(&get_fee_sel);
+        calldata.extend_from_slice(&[0u8; 12]);
+        calldata.extend_from_slice(pool_addr.as_slice());
+        calldata.extend_from_slice(&[0u8; 31]);
+        calldata.push(u8::from(stable));
+
+        let fee_result = self.forward_call_to_provider(py, factory_address, &calldata, block)?;
+        let fee_bytes: &[u8] = fee_result.bind(py).extract::<&[u8]>()?;
+        let Ok(DynSolValue::Uint(fee, _)) = DynSolType::Uint(256).abi_decode(fee_bytes) else {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "invalid fee decode",
+            ));
+        };
+
+        Ok((
+            stable,
+            crate::conversion::alloy::u256_to_py(py, &fee)?.unbind(),
+        ))
+    }
+
+    /// Fetch an ERC-20 uint field (`decimals()` / `DECIMALS()`) -- the
+    /// dynamic-signature no-arg uint-returning choreography (ADR-005 slice 14h).
+    ///
+    /// Mirrors `erc20_builder.py::_fetch_decimals`: the caller passes the
+    /// signature dynamically (`"decimals()"` vs `"DECIMALS()"`) and the method
+    /// encodes the selector, calls, and decodes `uint256`. Errors propagate.
+    #[pyo3(signature = (address, signature, block=None))]
+    fn fetch_erc20_uint_field(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        signature: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        self.fetch_no_arg_uint(
+            py,
+            signature.as_bytes(),
+            address,
+            block,
+            &alloy::dyn_abi::DynSolType::Uint(256),
+        )
+    }
+
+    /// Fetch an ERC-20 string field (`name()` / `symbol()` / `NAME()` etc.) --
+    /// performs the encode -> call -> decode choreography in Rust with a
+    /// string-or-bytes32 fallback (ADR-005 slice 14h).
+    ///
+    /// Mirrors `erc20_builder.py::_fetch_name` / `_fetch_symbol`: try `string`
+    /// ABI-decode first; on decode failure, fall back to `bytes32` decode
+    /// (UTF-8 with errors ignored, leading/trailing null bytes stripped).
+    /// The `signature` parameter is dynamic (e.g. `"name()"` vs `"NAME()"`)
+    /// so the caller can try alternate prototypes in a loop.
+    ///
+    /// Errors propagate: provider revert or total decode failure (neither
+    /// `string` nor `bytes32` could decode) surfaces as `PyErr` -- the Python
+    /// caller catches it in its `except (Web3Exception, DecodingError)` loop.
+    #[pyo3(signature = (address, signature, block=None))]
+    fn fetch_erc20_string_field(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        signature: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<String> {
+        use alloy::dyn_abi::{DynSolType, DynSolValue};
+
+        let calldata = selector(signature.as_bytes());
+        let result_obj = self.forward_call_to_provider(py, address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+
+        // Try string decode first.
+        if let Ok(DynSolValue::String(s)) = DynSolType::String.abi_decode(bytes) {
+            return Ok(s);
+        }
+
+        // Fallback: bytes32 decode (some tokens use bytes32 for name/symbol).
+        if let Ok(DynSolValue::FixedBytes(fb, _)) = DynSolType::FixedBytes(32).abi_decode(bytes) {
+            return Ok(String::from_utf8_lossy(fb.as_slice())
+                .trim_matches('\0')
+                .to_string());
+        }
+
+        Err(pyo3::exceptions::PyValueError::new_err(
+            "could not decode ERC-20 string field as string or bytes32",
+        ))
+    }
+
+    /// Probe a pool's type by trying method calls in order (ADR-005 slice 14i).
+    ///
+    /// Mirrors `type_resolution.py::resolve_pool_type_by_probing`: tries V3
+    /// (`slot0()`), then V2 (`getReserves()`), then Balancer (`getPoolId()` +
+    /// `getNormalizedWeights()` sub-probe). Returns a string tag identifying
+    /// which probe succeeded so the Python caller can construct a
+    /// `PoolTypeDescriptor` from the registry.
+    ///
+    /// Returns one of:
+    /// - `"slot0"` — V3 concentrated-liquidity pool.
+    /// - `"getReserves"` — V2 constant-product pool.
+    /// - `"balancer_weighted"` — Balancer weighted pool.
+    /// - `"balancer_stable"` — Balancer stable pool.
+    /// - `"stableswap"` — Curve fallback (all probes reverted).
+    ///
+    /// Each probe is a fire-and-forget `call` — the result is not decoded, only
+    /// whether the call succeeded or reverted matters. Reverts (any `PyErr`)
+    /// are caught and the next probe is tried.
+    #[pyo3(signature = (address, block=None))]
+    fn probe_pool_type(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> String {
+        // Helper: try a no-arg call, return true if it succeeded.
+        let try_call = |sig: &[u8]| -> bool {
+            let calldata = selector(sig);
+            self.forward_call_to_provider(py, address, &calldata, block)
+                .is_ok()
+        };
+
+        // Probe 1: slot0() → V3.
+        if try_call(b"slot0()") {
+            return "slot0".to_string();
+        }
+        // Probe 2: getReserves() → V2.
+        if try_call(b"getReserves()") {
+            return "getReserves".to_string();
+        }
+        // Probe 3: getPoolId() → Balancer (weighted or stable).
+        if try_call(b"getPoolId()") {
+            if try_call(b"getNormalizedWeights()") {
+                return "balancer_weighted".to_string();
+            }
+            return "balancer_stable".to_string();
+        }
+        // Fallback: Curve stableswap.
+        "stableswap".to_string()
+    }
+
+    /// Fetch a V3 pool's tick bitmap word via `tickBitmap(int16)`, performing
+    /// the encode -> call -> decode choreography in Rust (ADR-005 slice 14j).
+    ///
+    /// Calldata + return decode from `degenbot_rpc::abi` (B2) — no hand-rolled
+    /// `selector` / `sign_extend_to_32_bytes` here. The encode/decode helpers
+    /// are shared with `AlloyTickBootstrapRpc` (the standalone-Rust `cargo add
+    /// degenbot` consumer path), so the choreography stays byte-identical
+    /// across the pyo3 adapter and the alloy impl (5NT2OC epic / Y5MHJV).
+    ///
+    /// Errors propagate: provider revert surfaces as `PyErr` (the Python
+    /// caller's `except Exception: return` handles it).
+    #[pyo3(signature = (pool_address, word_position, block=None))]
+    fn fetch_tick_bitmap(
+        &self,
+        py: Python<'_>,
+        pool_address: &str,
+        word_position: i64,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let word_i16 = i16::try_from(word_position).map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err("word_position out of int16 range")
+        })?;
+        let calldata = degenbot_rpc::abi::encode_tick_bitmap(word_i16);
+
+        let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        let bitmap = degenbot_rpc::abi::decode_tick_bitmap(bytes)?;
+        crate::conversion::alloy::u256_to_py(py, &bitmap).map(pyo3::Bound::unbind)
+    }
+
+    /// Fetch a V3 pool's tick liquidity data via `ticks(int24)`, performing
+    /// the encode -> call -> decode choreography in Rust (ADR-005 slice 14j).
+    ///
+    /// Calldata + return decode from `degenbot_rpc::abi` (B2). The result's
+    /// first two fields (`liquidity_gross: uint128`, `liquidity_net: int128`)
+    /// are right-aligned in their 32-byte ABI words; `decode_tick_data` reads
+    /// those 64 bytes directly.
+    ///
+    /// Errors propagate (see [`Self::fetch_tick_bitmap`]).
+    #[pyo3(signature = (pool_address, tick, block=None))]
+    fn fetch_tick_data(
+        &self,
+        py: Python<'_>,
+        pool_address: &str,
+        tick: i64,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
+        let tick_i32 = i32::try_from(tick)
+            .map_err(|_| pyo3::exceptions::PyValueError::new_err("tick out of int24 range"))?;
+        let calldata = degenbot_rpc::abi::encode_tick_data(tick_i32);
+
+        let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        let (gross, net) = degenbot_rpc::abi::decode_tick_data(bytes)?;
+
+        Ok((
+            crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(gross))?
+                .unbind(),
+            crate::conversion::alloy::i256_to_py(py, &net)?.unbind(),
+        ))
+    }
+
+    /// Fetch a V4 pool's tick bitmap via `getTickBitmap(bytes32,int16)` on the
+    /// state-view contract (ADR-005 slice 14k).
+    ///
+    /// Calldata + return decode from `degenbot_rpc::abi` (B2). V4 adds a
+    /// `pool_id` (`bytes32`) prefix argument before the `int16` word position.
+    ///
+    /// Errors propagate.
+    #[pyo3(signature = (state_view_address, pool_id, word_position, block=None))]
+    fn fetch_v4_tick_bitmap(
+        &self,
+        py: Python<'_>,
+        state_view_address: &str,
+        pool_id: &[u8],
+        word_position: i64,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let word_i16 = i16::try_from(word_position).map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err("word_position out of int16 range")
+        })?;
+        let pool_id_arr: [u8; 32] = pool_id
+            .try_into()
+            .map_err(|_| pyo3::exceptions::PyValueError::new_err("pool_id must be 32 bytes"))?;
+        let calldata = degenbot_rpc::abi::encode_v4_tick_bitmap(&pool_id_arr, word_i16);
+
+        let result_obj = self.forward_call_to_provider(py, state_view_address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        let bitmap = degenbot_rpc::abi::decode_v4_tick_bitmap(bytes)?;
+        crate::conversion::alloy::u256_to_py(py, &bitmap).map(pyo3::Bound::unbind)
+    }
+
+    /// Fetch a V4 pool's tick liquidity via `getTickLiquidity(bytes32,int24)`
+    /// on the state-view contract (ADR-005 slice 14k).
+    ///
+    /// Calldata + return decode from `degenbot_rpc::abi` (B2). V4 adds a
+    /// `pool_id` (`bytes32`) prefix argument before the `int24` tick. The V4
+    /// tick return is just `(uint128, int128)` — exactly 2 fields.
+    ///
+    /// Errors propagate.
+    #[pyo3(signature = (state_view_address, pool_id, tick, block=None))]
+    fn fetch_v4_tick_data(
+        &self,
+        py: Python<'_>,
+        state_view_address: &str,
+        pool_id: &[u8],
+        tick: i64,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
+        let tick_i32 = i32::try_from(tick)
+            .map_err(|_| pyo3::exceptions::PyValueError::new_err("tick out of int24 range"))?;
+        let pool_id_arr: [u8; 32] = pool_id
+            .try_into()
+            .map_err(|_| pyo3::exceptions::PyValueError::new_err("pool_id must be 32 bytes"))?;
+        let calldata = degenbot_rpc::abi::encode_v4_tick_data(&pool_id_arr, tick_i32);
+
+        let result_obj = self.forward_call_to_provider(py, state_view_address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        let (gross, net) = degenbot_rpc::abi::decode_v4_tick_data(bytes)?;
+
+        Ok((
+            crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(gross))?
+                .unbind(),
+            crate::conversion::alloy::i256_to_py(py, &net)?.unbind(),
+        ))
+    }
+
+    /// Fetch a Balancer pool's `pool_id` via `getPoolId()` (ADR-005 slice 14l).
+    ///
+    /// Mirrors `balancer_builder_base.py::_fetch_pool_id`. Returns the raw
+    /// 32-byte `bytes32` value (no decode — bytes32 is already 32 bytes).
+    ///
+    /// Errors propagate.
+    #[pyo3(signature = (address, block=None))]
+    fn fetch_balancer_pool_id(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let calldata = selector(b"getPoolId()");
+        let result_obj = self.forward_call_to_provider(py, address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        if bytes.len() < 32 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "getPoolId result < 32 bytes",
+            ));
+        }
+        Ok(PyBytes::new(py, &bytes[0..32]).into())
+    }
+
+    /// Fetch a Balancer pool's swap fee via `getSwapFeePercentage()`
+    /// (ADR-005 slice 14l).
+    ///
+    /// Mirrors `balancer_builder_base.py::_fetch_swap_fee`. Returns `uint256`.
+    ///
+    /// Errors propagate.
+    #[pyo3(signature = (address, block=None))]
+    fn fetch_balancer_swap_fee(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        use alloy::primitives::U256;
+
+        let calldata = selector(b"getSwapFeePercentage()");
+        let result_obj = self.forward_call_to_provider(py, address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        if bytes.len() < 32 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "getSwapFeePercentage result < 32 bytes",
+            ));
+        }
+        let val = U256::from_be_slice(&bytes[0..32]);
+        crate::conversion::alloy::u256_to_py(py, &val).map(pyo3::Bound::unbind)
+    }
+
+    /// Fetch a Balancer pool's amplification parameter via
+    /// `getAmplificationParameter()` (ADR-005 slice 14l).
+    ///
+    /// Mirrors `balancer_builder_base.py::_fetch_amp`. The full struct is
+    /// `(uint256, bool, uint256)`; we only need the first word (amp value).
+    ///
+    /// Errors propagate.
+    #[pyo3(signature = (address, block=None))]
+    fn fetch_balancer_amp(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        use alloy::primitives::U256;
+
+        let calldata = selector(b"getAmplificationParameter()");
+        let result_obj = self.forward_call_to_provider(py, address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        if bytes.len() < 32 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "getAmplificationParameter result < 32 bytes",
+            ));
+        }
+        let val = U256::from_be_slice(&bytes[0..32]);
+        crate::conversion::alloy::u256_to_py(py, &val).map(pyo3::Bound::unbind)
+    }
+
+    /// Fetch a Balancer weighted pool's normalized weights via
+    /// `getNormalizedWeights()` (ADR-005 slice 14l).
+    ///
+    /// Mirrors `balancer_builder_base.py::_fetch_weights`. Returns `uint256[]`
+    /// as a Python list of ints. New decode pattern: ABI-encoded dynamic array
+    /// = offset (32) + length (32) + N 32-byte elements.
+    ///
+    /// Errors propagate.
+    #[pyo3(signature = (address, block=None))]
+    fn fetch_balancer_weights(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        use alloy::primitives::U256;
+
+        let calldata = selector(b"getNormalizedWeights()");
+        let result_obj = self.forward_call_to_provider(py, address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        let elements = decode_dynamic_array_words(bytes)?;
+        let list = PyList::empty(py);
+        for word in elements {
+            let val = U256::from_be_slice(word);
+            list.append(crate::conversion::alloy::u256_to_py(py, &val)?.unbind())?;
+        }
+        Ok(list.into())
+    }
+
+    /// Fetch a Balancer pool's rate providers via `getRateProviders()`
+    /// (ADR-005 slice 14l).
+    ///
+    /// Mirrors `balancer_builder_base.py::_fetch_rate_providers`. Returns
+    /// `address[]` as a Python list of lowercase hex strings. Reverts propagate
+    /// (the Python caller's `except (Web3Exception, DecodingError): return []`
+    /// handles `WeightedPool2Tokens` / `MetaStablePools` that don't expose this).
+    ///
+    /// Errors propagate.
+    #[pyo3(signature = (address, block=None))]
+    fn fetch_balancer_rate_providers(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let calldata = selector(b"getRateProviders()");
+        let result_obj = self.forward_call_to_provider(py, address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        let elements = decode_dynamic_array_words(bytes)?;
+        let list = PyList::empty(py);
+        for word in elements {
+            // Each address is the last 20 bytes of its 32-byte word.
+            let addr = &word[12..32];
+            let mut hex = String::with_capacity(42);
+            hex.push_str("0x");
+            for b in addr {
+                let _ = write!(hex, "{b:02x}");
+            }
+            list.append(hex)?;
+        }
+        Ok(list.into())
+    }
+
+    /// Fetch a Balancer vault's pool tokens + balances via `getPoolTokens(
+    /// bytes32)` on the vault contract (ADR-005 slice 14m).
+    ///
+    /// Mirrors `balancer_builder_base.py::_fetch_vault_tokens`. The hardest
+    /// Balancer decode: an ABI-encoded tuple `(address[], uint256[], uint256)`
+    /// — a tuple with TWO nested dynamic arrays and one static field. We only
+    /// return the first two members (tokens, balances); the third (last
+    /// block number) is dropped because the Python caller ignores it.
+    ///
+    /// Uses alloy's `DynSolType::Tuple` decoder for the full tuple, then walks
+    /// the decoded `DynSolValue::Tuple` to extract the two arrays.
+    ///
+    /// Errors propagate.
+    #[pyo3(signature = (vault_address, pool_id, block=None))]
+    fn fetch_balancer_vault_tokens(
+        &self,
+        py: Python<'_>,
+        vault_address: &str,
+        pool_id: &[u8],
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
+        use alloy::primitives::U256;
+
+        let sel = selector(b"getPoolTokens(bytes32)");
+        let mut calldata = Vec::with_capacity(36);
+        calldata.extend_from_slice(&sel);
+        calldata.extend_from_slice(pool_id);
+
+        let result_obj = self.forward_call_to_provider(py, vault_address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+
+        // Tuple (address[], uint256[], uint256). Head is 3 words (96 bytes):
+        // word 0 = offset to address[] data
+        // word 1 = offset to uint256[] data
+        // word 2 = static uint256 value (last block number — ignored)
+        if bytes.len() < 96 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "getPoolTokens result < 96 bytes",
+            ));
+        }
+        let addr_offset = read_u256_as_usize(&bytes[0..32])
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("address[] offset overflow"))?;
+        let uints_offset = read_u256_as_usize(&bytes[32..64])
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("uint256[] offset overflow"))?;
+
+        // Length at addr_offset; N addresses follow.
+        let n_tokens = read_u256_as_usize(
+            bytes
+                .get(addr_offset..addr_offset + 32)
+                .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("address[] length OOB"))?,
+        )
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("address[] length overflow"))?;
+        let n_balances = read_u256_as_usize(
+            bytes
+                .get(uints_offset..uints_offset + 32)
+                .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("uint256[] length OOB"))?,
+        )
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("uint256[] length overflow"))?;
+
+        let tokens_list = PyList::empty(py);
+        let tokens_data_start = addr_offset + 32;
+        for i in 0..n_tokens {
+            let start = tokens_data_start + i * 32;
+            let end = start + 32;
+            let word = bytes
+                .get(start..end)
+                .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("token address OOB"))?;
+            let addr = &word[12..32];
+            let mut hex = String::with_capacity(42);
+            hex.push_str("0x");
+            for b in addr {
+                let _ = write!(hex, "{b:02x}");
+            }
+            tokens_list.append(hex)?;
+        }
+
+        let balances_list = PyList::empty(py);
+        let balances_data_start = uints_offset + 32;
+        for i in 0..n_balances {
+            let start = balances_data_start + i * 32;
+            let end = start + 32;
+            let word = bytes
+                .get(start..end)
+                .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("balance OOB"))?;
+            let val = U256::from_be_slice(word);
+            balances_list.append(crate::conversion::alloy::u256_to_py(py, &val)?.unbind())?;
+        }
+
+        Ok((
+            tokens_list.into_any().unbind(),
+            balances_list.into_any().unbind(),
+        ))
+    }
+
+    /// Fetch a single Balancer rate provider's rate via `getRate()` (ADR-005
+    /// slice 14n).
+    ///
+    /// Mirrors the per-provider loop body of `balancer_builder_base.py::
+    /// _fetch_rates`. Each rate provider exposes a `getRate()` no-arg call
+    /// returning `uint256`. The sentinel check (zero address → `ONE`) stays
+    /// Python-side.
+    ///
+    /// Errors propagate.
+    #[pyo3(signature = (provider_address, block=None))]
+    fn fetch_balancer_rate(
+        &self,
+        py: Python<'_>,
+        provider_address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        use alloy::primitives::U256;
+
+        let calldata = selector(b"getRate()");
+        let result_obj = self.forward_call_to_provider(py, provider_address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        if bytes.len() < 32 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "getRate result < 32 bytes",
+            ));
+        }
+        let val = U256::from_be_slice(&bytes[0..32]);
+        crate::conversion::alloy::u256_to_py(py, &val).map(pyo3::Bound::unbind)
+    }
+
+    /// Probe a Balancer pool's sub-type by trying `getNormalizedWeights()` and
+    /// `getAmplificationParameter()` in order (ADR-005 slice 14n).
+    ///
+    /// Mirrors `balancer_builder_base.py::_detect_pool_type`. By the time this
+    /// runs, the pool is already known to be Balancer (via `probe_pool_type`,
+    /// 14i). This sub-probe distinguishes weighted vs stable.
+    ///
+    /// Returns:
+    /// - `"weighted"` — `getNormalizedWeights()` succeeded.
+    /// - `"stable"` — `getAmplificationParameter()` succeeded (and
+    ///   getNormalizedWeights reverted).
+    ///
+    /// Errors:
+    /// - `PyValueError` — neither method responded (raises so the Python
+    ///   caller can wrap as `DegenbotValueError`; linear pools unsupported).
+    #[pyo3(signature = (address, block=None))]
+    fn probe_balancer_pool_type(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<String> {
+        // Probe 1: getNormalizedWeights() → WEIGHTED.
+        let weights_calldata = selector(b"getNormalizedWeights()");
+        if self
+            .forward_call_to_provider(py, address, &weights_calldata, block)
+            .is_ok()
+        {
+            return Ok("weighted".to_string());
+        }
+        // Probe 2: getAmplificationParameter() → STABLE.
+        let amp_calldata = selector(b"getAmplificationParameter()");
+        if self
+            .forward_call_to_provider(py, address, &amp_calldata, block)
+            .is_ok()
+        {
+            return Ok("stable".to_string());
+        }
+        // Neither method responded — Linear pools not yet supported.
+        Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Cannot determine Balancer pool type for {address}. \
+             Neither getNormalizedWeights() nor getAmplificationParameter() responded. \
+             Linear pools are not yet supported."
+        )))
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let has_db = self.db.is_some();
+        let provider_repr = self.provider.bind(py).repr()?.to_str()?.to_string();
+        Ok(format!("PyBotIo(provider={provider_repr}, db={has_db})"))
+    }
+}
+
+impl PyBotIo {
+    /// The native Rust `AlloyProvider`, if the held Python provider is
+    /// `PyAlloyProvider`-backed (live alloy or the offline shell). `None` for
+    /// non-alloy providers (legacy test doubles).
+    ///
+    /// Used by the Chain-arm wiring (5NT2OC / NOD4PS) to construct an
+    /// [`AlloyTickBootstrapRpc`] without a GIL round-trip per RPC call — the
+    /// pure-Rust impl owns the tick-bitmap + tick-data choreography directly.
+    #[must_use]
+    pub(crate) fn alloy_provider(&self) -> Option<std::sync::Arc<AlloyProvider>> {
+        self.alloy.clone()
+    }
+
+    /// Borrow the attached `ConstructionIo` (or `None`). The 12 DB + 7 RPC
+    /// methods use this to delegate through the core trait objects; returns
+    /// `None` for bare test fixtures that construct `PyBotIo(provider=…)` without
+    /// a `Bot` (the methods then degrade to the no-DB / error shape).
+    #[must_use]
+    fn construction_io(
+        &self,
+    ) -> Option<std::sync::Arc<degenbot_bot::bot_core::construction_io::ConstructionIo>> {
+        self.construction_io.lock().clone()
+    }
+
+    /// Call `method_name` on the held provider with the given keyword arguments.
+    ///
+    /// Single delegation seam for the kw-only forward shape (`call`,
+    /// `get_block_timestamp`). Slice 14b/14c's "move delegation into Rust"
+    /// strategy swaps the body per-method without touching the `#[pymethods]`
+    /// signature.
+    fn call_kw(
+        &self,
+        py: Python<'_>,
+        method_name: &str,
+        kwargs: &[(&str, Option<&Bound<'_, PyAny>>)],
+    ) -> PyResult<Py<PyAny>> {
+        let method = self.provider.bind(py).getattr(method_name)?;
+        let kw_dict = PyDict::new(py);
+        for (name, value) in kwargs {
+            if let Some(v) = value {
+                kw_dict.set_item(*name, v)?;
+            }
+        }
+        Ok(method.call((), Some(&kw_dict))?.unbind())
+    }
+
+    /// Build a `call(to=token, data=calldata, block=None)` forward to the held
+    /// provider -- the common skeleton the choreography methods (`fetch_factory_address`,
+    /// `fetch_erc20_metadata`, `fetch_token_*`) share. Returns the raw result
+    /// `Py<PyAny>` without extraction so callers can decide what to decode.
+    ///
+    /// Single seam: changing the call-forward strategy (e.g. native-alloy swap
+    /// in a later slice) is localized to this helper.
+    /// Shared skeleton for no-arg, address-returning pool read methods
+    /// (`factory()`, `token0()`, `token1()`): build selector, call, decode
+    /// right-aligned 20-byte address, checksum. Errors propagate
+    /// (unlike `fetch_factory_address` which swallows them — different contract:
+    /// the immutable-data choreography in `_fetch_v2_common_data` wants the
+    /// underlying exception so the Python caller wraps it in
+    /// `LiquidityPoolError`).
+    /// Shared skeleton for no-arg, unsigned-int-returning pool read methods
+    /// (`fee()` returns `uint24`, `liquidity()` returns `uint128`): build
+    /// selector, call, decode the full ABI word as `DynSolType` `ty` (typically
+    /// `Uint(bits)`), convert to a Python `int` via `u256_to_py` (large values
+    /// preserved). Errors propagate.
+    fn fetch_no_arg_uint(
+        &self,
+        py: Python<'_>,
+        signature: &[u8],
+        pool_address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+        ty: &alloy::dyn_abi::DynSolType,
+    ) -> PyResult<Py<PyAny>> {
+        use alloy::dyn_abi::DynSolValue;
+
+        let calldata = selector(signature);
+        let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        let Ok(DynSolValue::Uint(n, _)) = ty.abi_decode(bytes) else {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "invalid uint decode for no-arg read",
+            ));
+        };
+        crate::conversion::alloy::u256_to_py(py, &n).map(pyo3::Bound::unbind)
+    }
+
+    /// Shared skeleton for no-arg, signed-int-returning pool read methods
+    /// (`tickSpacing()` returns `int24`): build selector, call, decode the full
+    /// ABI word as the given `DynSolType` (typically `Int(bits)`), convert to a
+    /// Python `int` via `i256_to_py` (negative values preserved through the
+    /// sign-extended decode). Errors propagate.
+    fn fetch_no_arg_int(
+        &self,
+        py: Python<'_>,
+        signature: &[u8],
+        pool_address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+        ty: &alloy::dyn_abi::DynSolType,
+    ) -> PyResult<Py<PyAny>> {
+        use alloy::dyn_abi::DynSolValue;
+
+        let calldata = selector(signature);
+        let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        let Ok(DynSolValue::Int(n, _)) = ty.abi_decode(bytes) else {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "invalid int decode for no-arg read",
+            ));
+        };
+        crate::conversion::alloy::i256_to_py(py, &n).map(pyo3::Bound::unbind)
+    }
+
+    fn fetch_address_returning_method(
+        &self,
+        py: Python<'_>,
+        signature: &[u8],
+        pool_address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<String> {
+        let calldata = selector(signature);
+        let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        if bytes.len() < 32 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "address-returning call returned <32 bytes",
+            ));
+        }
+        let addr_bytes = &bytes[12..32];
+        degenbot_core::address_utils::to_checksum_address_bytes(addr_bytes)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("invalid address: {e}")))
+    }
+
+    fn forward_call_to_provider(
+        &self,
+        py: Python<'_>,
+        token: &str,
+        calldata: &[u8],
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        // Native fast path: a real Rust `AlloyProvider` answers the `eth_call`
+        // directly (no GIL round-trip). Reverts map to `ContractLogicError`
+        // (matching `PyAlloyProvider::call`'s revert handling).
+        if let Some(alloy) = &self.alloy {
+            if let Ok(block_num) = extract_block_u64(block) {
+                let addr = alloy::primitives::Address::from(parse_address_for_call(token)?);
+                let data = alloy::primitives::Bytes::from(calldata.to_vec());
+                let alloy = Arc::clone(alloy);
+                let result = py.detach(|| {
+                    get_runtime().block_on(async { alloy.eth_call(&addr, data, block_num).await })
+                });
+                return match result {
+                    Ok(bytes) => crate::conversion::cache::create_hexbytes(py, bytes.as_ref())
+                        .map(pyo3::Bound::into_any)
+                        .map(pyo3::Bound::unbind),
+                    Err(ProviderError::ExecutionReverted { message, .. }) => {
+                        Err(revert_to_pyerr(py, token, &message))
+                    }
+                    Err(e) => Err(e.into()),
+                };
+            }
+            // Non-integer block tag — fall back to the Python provider, which
+            // accepts the tag directly.
+        }
+        // Fallback: forward `call(to=token, data=calldata, block=…)` to the
+        // held Python provider (legacy doubles). Single seam: the call-forward
+        // strategy is localized to this helper.
+        let address_obj = PyString::new(py, token);
+        let data_obj = PyBytes::new(py, calldata);
+        self.call_kw(
+            py,
+            "call",
+            &[
+                ("to", Some(address_obj.as_any())),
+                ("data", Some(data_obj.as_any())),
+                ("block", block),
+            ],
+        )
+    }
+}
+
+/// Extract a native Rust `AlloyProvider` from the held Python provider when
+/// it is `PyAlloyProvider`-backed (live alloy or the O2 `OfflineProvider`
+/// shell). Returns `None` for non-alloy providers (legacy test doubles), which
+/// fall back to the Python delegation path.
+///
+/// Tries, in order: (1) the provider *is* a `PyAlloyProvider`; (2) the provider
+/// exposes `to_alloy_provider()` returning a `PyAlloyProvider` (the Python
+/// `AlloyProvider` wrapper + the `OfflineProvider` shell both do).
+pub(crate) fn extract_native_alloy(provider: &Bound<'_, PyAny>) -> Option<Arc<AlloyProvider>> {
+    if let Ok(pyap) = provider.extract::<PyRef<'_, PyAlloyProvider>>() {
+        return Some(Arc::clone(&pyap.provider));
+    }
+    if let Ok(method) = provider.getattr("to_alloy_provider") {
+        if let Ok(result) = method.call0() {
+            if let Ok(pyap) = result.extract::<PyRef<'_, PyAlloyProvider>>() {
+                return Some(Arc::clone(&pyap.provider));
+            }
+        }
+    }
+    None
+}
+
+/// Extract an optional block number from the `block` kw-sentinel.
+/// `Ok(None)` when absent; `Ok(Some(n))` when an integer; `Err` when present
+/// but not an integer (caller falls back to the Python provider for tags).
+fn extract_block_u64(block: Option<&Bound<'_, PyAny>>) -> PyResult<Option<u64>> {
+    match block {
+        None => Ok(None),
+        Some(b) => b.extract::<u64>().map(Some),
+    }
+}
+
+/// Parse a 20-byte address from a hex string, returning a borrowed 20-byte array
+/// view for ABI-encoding. Internally uses the core `parse_address` so input
+/// validation matches every other Rust pyclass (e.g. `PyAlloyProvider::get_balance`).
+pub(crate) fn parse_address_for_call(address: &str) -> PyResult<[u8; 20]> {
+    use degenbot_core::address_utils::parse_address;
+    parse_address(address)
+        .map(alloy::primitives::Address::into_array)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid address: {e}")))
+}
+
+/// Build `Some(dict{block: …})` when `block` is present, `None` otherwise —
+/// mirrors `SyncPoolIO`'s conditional kwargs (it omits `block=` when None).
+fn build_block_kw<'py>(
+    py: Python<'py>,
+    block: Option<&Bound<'_, PyAny>>,
+) -> PyResult<Option<Bound<'py, PyDict>>> {
+    match block {
+        Some(b) => {
+            let d = PyDict::new(py);
+            d.set_item("block", b)?;
+            Ok(Some(d))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Compute a 4-byte Solidity function selector (`keccak256(signature)[..4]`).
+///
+/// Same construction as `alloy_sol_types::sol!` would emit at compile time.
+/// Used by `fetch_factory_address` and `fetch_erc20_metadata` to build the
+/// 4-byte calldata prefixes that router-style pool/token read methods (e.g.
+/// `factory()`, `name()`, `symbol()`, `decimals()`) expect.
+fn selector(signature: &[u8]) -> [u8; 4] {
+    use alloy::primitives::keccak256;
+    let hash = keccak256(signature);
+    let mut s = [0u8; 4];
+    s.copy_from_slice(&hash[..4]);
+    s
+}
+
+/// Decode an ABI-encoded top-level dynamic array into an iterator of 32-byte
+/// element words.
+///
+/// Layout: `offset (32) + length (32) + N × 32` where `offset` is the byte
+/// offset from the start of the encoding to where the array data begins.
+/// For a single top-level dynamic value, this is always `0x20` (32).
+///
+/// Returns the N 32-byte element slices (without the length word).
+///
+/// Read a 32-byte big-endian word as a `usize` if it fits.
+fn read_u256_as_usize(word: &[u8]) -> Option<usize> {
+    use alloy::primitives::U256;
+    let val = U256::from_be_slice(&word[..32]);
+    if val > U256::from(usize::MAX) {
+        return None;
+    }
+    let mut buf = [0u8; 8];
+    let bytes = val.to_be_bytes::<32>();
+    buf.copy_from_slice(&bytes[24..32]);
+    Some(usize::from_be_bytes(buf))
+}
+
+fn decode_dynamic_array_words(bytes: &[u8]) -> PyResult<Vec<&[u8]>> {
+    use std::cmp::min;
+    if bytes.len() < 64 {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "dynamic array result < 64 bytes",
+        ));
+    }
+    // Word 0: offset (we read it but assume standard layout).
+    let offset = read_u256_as_usize(&bytes[0..32]).unwrap_or(32);
+    let length_offset = min(offset, bytes.len().saturating_sub(32));
+    let n = read_u256_as_usize(&bytes[length_offset..length_offset + 32])
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("array length overflow"))?;
+    let data_start = length_offset + 32;
+    if data_start.checked_mul(0).is_none() || data_start > bytes.len() {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "array data out of bounds",
+        ));
+    }
+    let available = bytes.len() - data_start;
+    let needed = n
+        .checked_mul(32)
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("array size overflow"))?;
+    if available < needed {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "array data shorter than length",
+        ));
+    }
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        out.push(&bytes[data_start + i * 32..data_start + (i + 1) * 32]);
+    }
+    Ok(out)
+}

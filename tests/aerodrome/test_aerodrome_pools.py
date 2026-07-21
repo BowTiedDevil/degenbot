@@ -1,5 +1,5 @@
+import dataclasses
 import pathlib
-import pickle
 from typing import Any
 
 import pydantic_core
@@ -7,39 +7,48 @@ import pytest
 
 from degenbot.aerodrome.abi import AERODROME_V2_POOL_ABI
 from degenbot.aerodrome.functions import generate_aerodrome_v2_pool_address
-from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
 from degenbot.aerodrome.types import (
     AerodromeV2PoolExternalUpdate,
-    AerodromeV2PoolState,
     AerodromeV3PoolState,
 )
-from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import set_web3
 from degenbot.exceptions import DegenbotError
-from degenbot.exceptions.liquidity_pool import ExternalUpdateError, LateUpdateError
-from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
+from degenbot.exceptions.pool import ExternalUpdateError
+from degenbot.fork import AnvilFork
+from degenbot.uniswap.v3_libraries import MAX_SQRT_RATIO, MIN_SQRT_RATIO
+from tests.helpers.bot_factory import make_bot_with_provider
+from tests.helpers.w3_contract import make_contract
 
-WETH_CONTRACT_ADDRESS = get_checksum_address("0x4200000000000000000000000000000000000006")
-CBETH_CONTRACT_ADDRESS = get_checksum_address("0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22")
-
-AERODROME_V2_FACTORY_ADDRESS = get_checksum_address("0x420DD381b31aEf6683db6B902084cB0FFECe40Da")
-AERODROME_V2_POOL_IMPLEMENTATION_ADDRESS = get_checksum_address(
-    "0xA4e46b4f701c62e14DF11B48dCe76A7d793CD6d7"
+WETH_CONTRACT_ADDRESS = get_checksum_address(
+    "0x4200000000000000000000000000000000000006",
+)
+CBETH_CONTRACT_ADDRESS = get_checksum_address(
+    "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22",
 )
 
-AERODROME_V3_FACTORY_ADDRESS = get_checksum_address("0x5e7BB104d84c7CB9B682AaC2F3d509f5F406809A")
-AERODROME_V3_QUOTER_ADDRESS = get_checksum_address("0x254cF9E1E6e233aa1AC962CB9B05b2cfeAaE15b0")
+AERODROME_V2_FACTORY_ADDRESS = get_checksum_address(
+    "0x420DD381b31aEf6683db6B902084cB0FFECe40Da",
+)
+AERODROME_V2_POOL_IMPLEMENTATION_ADDRESS = get_checksum_address(
+    "0xA4e46b4f701c62e14DF11B48dCe76A7d793CD6d7",
+)
+
+AERODROME_V3_FACTORY_ADDRESS = get_checksum_address(
+    "0x5e7BB104d84c7CB9B682AaC2F3d509f5F406809A",
+)
+AERODROME_V3_QUOTER_ADDRESS = get_checksum_address(
+    "0x254cF9E1E6e233aa1AC962CB9B05b2cfeAaE15b0",
+)
 AERODROME_V3_TBTC_USDBC_POOL_ADDRESS = get_checksum_address(
-    "0x723AEf6543aecE026a15662Be4D3fb3424D502A9"
+    "0x723AEf6543aecE026a15662Be4D3fb3424D502A9",
 )
 AERODROME_V3_CBETH_WETH_POOL_ADDRESS = get_checksum_address(
-    "0x47cA96Ea59C13F72745928887f84C9F52C3D7348"
+    "0x47cA96Ea59C13F72745928887f84C9F52C3D7348",
 )
 AERODROME_V3_QUOTER_ABI = pydantic_core.from_json(
     """
     [{"inputs":[{"internalType":"address","name":"_factory","type":"address"},{"internalType":"address","name":"_WETH9","type":"address"}],"stateMutability":"nonpayable","type":"constructor"},{"inputs":[],"name":"WETH9","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"factory","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes","name":"path","type":"bytes"},{"internalType":"uint256","name":"amountIn","type":"uint256"}],"name":"quoteExactInput","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"},{"internalType":"uint160[]","name":"sqrtPriceX96AfterList","type":"uint160[]"},{"internalType":"uint32[]","name":"initializedTicksCrossedList","type":"uint32[]"},{"internalType":"uint256","name":"gasEstimate","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"components":[{"internalType":"address","name":"tokenIn","type":"address"},{"internalType":"address","name":"tokenOut","type":"address"},{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"int24","name":"tickSpacing","type":"int24"},{"internalType":"uint160","name":"sqrtPriceLimitX96","type":"uint160"}],"internalType":"struct IQuoterV2.QuoteExactInputSingleParams","name":"params","type":"tuple"}],"name":"quoteExactInputSingle","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"},{"internalType":"uint160","name":"sqrtPriceX96After","type":"uint160"},{"internalType":"uint32","name":"initializedTicksCrossed","type":"uint32"},{"internalType":"uint256","name":"gasEstimate","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes","name":"path","type":"bytes"},{"internalType":"uint256","name":"amountOut","type":"uint256"}],"name":"quoteExactOutput","outputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"uint160[]","name":"sqrtPriceX96AfterList","type":"uint160[]"},{"internalType":"uint32[]","name":"initializedTicksCrossedList","type":"uint32[]"},{"internalType":"uint256","name":"gasEstimate","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"components":[{"internalType":"address","name":"tokenIn","type":"address"},{"internalType":"address","name":"tokenOut","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"},{"internalType":"int24","name":"tickSpacing","type":"int24"},{"internalType":"uint160","name":"sqrtPriceLimitX96","type":"uint160"}],"internalType":"struct IQuoterV2.QuoteExactOutputSingleParams","name":"params","type":"tuple"}],"name":"quoteExactOutputSingle","outputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"uint160","name":"sqrtPriceX96After","type":"uint160"},{"internalType":"uint32","name":"initializedTicksCrossed","type":"uint32"},{"internalType":"uint256","name":"gasEstimate","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"int256","name":"amount0Delta","type":"int256"},{"internalType":"int256","name":"amount1Delta","type":"int256"},{"internalType":"bytes","name":"path","type":"bytes"}],"name":"uniswapV3SwapCallback","outputs":[],"stateMutability":"view","type":"function"}]
-    """  # noqa:E501
+    """
 )
 
 
@@ -72,46 +81,37 @@ def test_aerodrome_v2_address_generator():
     )
 
 
-def test_pickle_pool(
-    fork_base_full: AnvilFork,
-):
-    set_web3(fork_base_full.w3)
+def test_bot_update_state(fork_base_full: AnvilFork):
 
-    lp = AerodromeV2Pool(
-        address=AERODROME_V3_TBTC_USDBC_POOL_ADDRESS,
-    )
-    pickle.dumps(lp)
+    bot = make_bot_with_provider(fork_base_full.provider)
+    lp = bot.build_pool(AERODROME_V3_TBTC_USDBC_POOL_ADDRESS)
 
-
-def test_auto_update(
-    fork_base_full: AnvilFork,
-):
-    set_web3(fork_base_full.w3)
-    lp = AerodromeV2Pool(
-        address=AERODROME_V3_TBTC_USDBC_POOL_ADDRESS,
-    )
-    lp.auto_update()
-
-    # Hand-modify the state to force a positive update
-    lp._state = AerodromeV2PoolState(
-        address=lp.address,
+    # Force the pool's current cached state to disagree with the on-chain
+    # reserves so ``bot.update`` detects a positive change. The state lives in
+    # the pool's ``StateCache`` (the current entry is what ``reserves_token0``
+    # reads); writing a bare ``_state`` attribute is a no-op against the
+    # cache, so we replace the cache's current entry directly.
+    modified = dataclasses.replace(
+        lp.state,
         reserves_token0=lp.state.reserves_token0 - 1,
         reserves_token1=lp.state.reserves_token1 + 1,
-        block=None,
     )
-    lp.auto_update()
+    with lp._state_cache.lock():
+        lp._state_cache._cache[-1] = modified
+    # The hand-modified reserves now differ from what's on-chain, so the next
+    # update should detect and revert to the actual reserves (positive change).
+    changed = bot.update(lp)
+    assert changed is True
 
-    with pytest.raises(LateUpdateError):
-        lp.auto_update(block_number=lp.update_block - 10)
+    # Updating again at the same block should indicate no change
+    changed = bot.update(lp)
+    assert changed is False
 
 
-def test_external_update(
-    fork_base_full: AnvilFork,
-):
-    set_web3(fork_base_full.w3)
-    lp = AerodromeV2Pool(
-        address=AERODROME_V3_TBTC_USDBC_POOL_ADDRESS,
-    )
+def test_external_update(fork_base_full: AnvilFork):
+
+    bot = make_bot_with_provider(fork_base_full.provider)
+    lp = bot.build_pool(AERODROME_V3_TBTC_USDBC_POOL_ADDRESS)
 
     current_state = lp.state
 
@@ -120,7 +120,7 @@ def test_external_update(
             block_number=lp.update_block + 1,
             reserves_token0=int(1.1 * lp.reserves_token0),
             reserves_token1=int(0.9 * lp.reserves_token1),
-        )
+        ),
     )
 
     assert lp.state.reserves_token0 == int(current_state.reserves_token0 * 1.1)
@@ -131,7 +131,7 @@ def test_external_update(
             block_number=lp.update_block + 1,
             reserves_token0=lp.reserves_token0,
             reserves_token1=lp.reserves_token1,
-        )
+        ),
     )
 
     with pytest.raises(ExternalUpdateError):
@@ -140,23 +140,23 @@ def test_external_update(
                 block_number=lp.update_block - 10,
                 reserves_token0=lp.reserves_token0,
                 reserves_token1=lp.reserves_token1,
-            )
+            ),
         )
 
 
 def test_create_pool(fork_base_full: AnvilFork):
-    set_web3(fork_base_full.w3)
 
-    lp = AerodromeV2Pool(
-        address=AERODROME_V3_TBTC_USDBC_POOL_ADDRESS,
-    )
+    bot = make_bot_with_provider(fork_base_full.provider)
+    lp = bot.build_pool(AERODROME_V3_TBTC_USDBC_POOL_ADDRESS)
     assert lp.address == AERODROME_V3_TBTC_USDBC_POOL_ADDRESS
     assert lp.factory == AERODROME_V2_FACTORY_ADDRESS
     assert lp.deployer_address == AERODROME_V2_FACTORY_ADDRESS
 
 
+@pytest.mark.slow
 def test_calculation_volatile(fork_base_full: AnvilFork, test_pools: list[Any]):
-    set_web3(fork_base_full.w3)
+
+    bot = make_bot_with_provider(fork_base_full.provider)
 
     token_amount_multipliers = [
         0.000000001,
@@ -175,14 +175,12 @@ def test_calculation_volatile(fork_base_full: AnvilFork, test_pools: list[Any]):
     ]
 
     for pool_address in [pool["pool_address"] for pool in test_pools if pool["stable"] is False]:
-        lp = AerodromeV2Pool(address=pool_address)
+        lp = bot.build_pool(pool_address)
 
         max_reserves_token0 = lp.reserves_token0
         max_reserves_token1 = lp.reserves_token1
 
-        w3_contract = fork_base_full.w3.eth.contract(
-            address=pool_address, abi=AERODROME_V2_POOL_ABI
-        )
+        w3_contract = make_contract(fork_base_full.http_url, pool_address, AERODROME_V2_POOL_ABI)
 
         if max_reserves_token1 >= 2:
             for token_mult in token_amount_multipliers:
@@ -228,8 +226,10 @@ def test_calculation_volatile(fork_base_full: AnvilFork, test_pools: list[Any]):
                     assert contract_amount_out == helper_amount_out, f"{pool_address=}"
 
 
+@pytest.mark.slow
 def test_calculation_stable(fork_base_full: AnvilFork, test_pools: list[Any]):
-    set_web3(fork_base_full.w3)
+
+    bot = make_bot_with_provider(fork_base_full.provider)
 
     token_amount_multipliers = [
         0.000000001,
@@ -248,14 +248,12 @@ def test_calculation_stable(fork_base_full: AnvilFork, test_pools: list[Any]):
     ]
 
     for pool_address in [pool["pool_address"] for pool in test_pools if pool["stable"] is True]:
-        lp = AerodromeV2Pool(address=pool_address)
+        lp = bot.build_pool(pool_address)
 
         max_reserves_token0 = lp.reserves_token0
         max_reserves_token1 = lp.reserves_token1
 
-        w3_contract = fork_base_full.w3.eth.contract(
-            address=pool_address, abi=AERODROME_V2_POOL_ABI
-        )
+        w3_contract = make_contract(fork_base_full.http_url, pool_address, AERODROME_V2_POOL_ABI)
 
         if max_reserves_token1 >= 2:
             for token_mult in token_amount_multipliers:
@@ -299,27 +297,28 @@ def test_calculation_stable(fork_base_full: AnvilFork, test_pools: list[Any]):
 
 
 def test_aerodrome_v3_pool_creation(fork_base_full: AnvilFork) -> None:
-    set_web3(fork_base_full.w3)
-    AerodromeV3Pool(address=AERODROME_V3_CBETH_WETH_POOL_ADDRESS)
+
+    bot = make_bot_with_provider(fork_base_full.provider)
+    bot.build_pool(AERODROME_V3_CBETH_WETH_POOL_ADDRESS)
 
 
 def test_aerodrome_v3_state(fork_base_full: AnvilFork) -> None:
-    set_web3(fork_base_full.w3)
 
-    lp = AerodromeV3Pool(address=AERODROME_V3_CBETH_WETH_POOL_ADDRESS)
+    bot = make_bot_with_provider(fork_base_full.provider)
+    lp = bot.build_pool(AERODROME_V3_CBETH_WETH_POOL_ADDRESS)
     assert isinstance(lp.state, AerodromeV3PoolState), f"{type(lp.state)=}"
 
 
 def test_aerodrome_v3_pool_calculation(fork_base_full: AnvilFork) -> None:
-    set_web3(fork_base_full.w3)
 
-    quoter = fork_base_full.w3.eth.contract(
-        address=AERODROME_V3_QUOTER_ADDRESS, abi=AERODROME_V3_QUOTER_ABI
+    quoter = make_contract(
+        fork_base_full.http_url, AERODROME_V3_QUOTER_ADDRESS, AERODROME_V3_QUOTER_ABI
     )
-    lp = AerodromeV3Pool(address="0x98c7A2338336d2d354663246F64676009c7bDa97")
+    bot = make_bot_with_provider(fork_base_full.provider)
+    lp = bot.build_pool("0x98c7A2338336d2d354663246F64676009c7bDa97")
 
-    max_reserves_token0 = lp.token0.get_balance(lp.address)
-    max_reserves_token1 = lp.token1.get_balance(lp.address)
+    max_reserves_token0 = bot.get_token_balance(lp.token0, lp.address)
+    max_reserves_token1 = bot.get_token_balance(lp.token1, lp.address)
 
     token_amount_multipliers = [
         0.000000001,

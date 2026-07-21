@@ -1,4 +1,4 @@
-"""Uniswap V4: add exchange foreign key
+"""Uniswap V4: add exchange foreign key.
 
 Revision ID: 39e331854eb2
 Revises: 901adb947000
@@ -20,7 +20,6 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-
     with op.batch_alter_table("pool_managers", schema=None) as batch_op:
         batch_op.add_column(sa.Column("exchange_id", sa.Integer(), nullable=False))
         batch_op.create_foreign_key("fk_exchange", "exchanges", ["exchange_id"], ["id"])

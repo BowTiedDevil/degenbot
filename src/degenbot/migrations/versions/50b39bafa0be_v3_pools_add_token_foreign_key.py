@@ -1,4 +1,4 @@
-"""V3 pools: convert token0/token1 to foreign keys
+"""V3 pools: convert token0/token1 to foreign keys.
 
 Revision ID: 50b39bafa0be
 Revises: b8e0b921299a
@@ -15,11 +15,11 @@ from sqlalchemy.orm import Session
 
 from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.database.models.pools import (
-    AbstractUniswapV3Pool,
     AerodromeV3PoolTable,
     PancakeswapV3PoolTable,
     SushiswapV3PoolTable,
     UniswapV3PoolTable,
+    UniswapV3PoolTableBase,
 )
 
 # revision identifiers, used by Alembic.
@@ -31,7 +31,6 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-
     connection = op.get_bind()
     session = Session(bind=connection)
 
@@ -45,7 +44,7 @@ def upgrade() -> None:
         UniswapV3PoolTable,
     ]:
         if TYPE_CHECKING:
-            assert isinstance(table, AbstractUniswapV3Pool)
+            assert isinstance(table, UniswapV3PoolTableBase)
 
         tokens.update(session.query(table.chain, table.token0).all())
         tokens.update(session.query(table.chain, table.token1).all())
@@ -55,10 +54,10 @@ def upgrade() -> None:
                 sa.select(Erc20TokenTable.id).where(
                     Erc20TokenTable.chain == chain_id,
                     Erc20TokenTable.address == token_address,
-                )
+                ),
             )
             for chain_id, token_address in tokens
-        }
+        }  # type: ignore
 
         with op.batch_alter_table(table.__tablename__, schema=None) as batch_op:
             batch_op.add_column(sa.Column("token0_id", sa.Integer(), nullable=True))
@@ -67,7 +66,7 @@ def upgrade() -> None:
             batch_op.create_foreign_key("fk_token1_id", "erc20_tokens", ["token1_id"], ["id"])
 
         for pool_id, token0, token1 in connection.execute(
-            sa.text(f"SELECT pool_id,token0,token1 FROM {table.__tablename__}")  # noqa: S608
+            sa.text(f"SELECT pool_id,token0,token1 FROM {table.__tablename__}"),  # noqa: S608
         ).fetchall():
             pool_chain = session.scalar(sa.select(table.chain).where(table.pool_id == pool_id))
             connection.execute(
@@ -75,7 +74,7 @@ def upgrade() -> None:
                     f"""
                     UPDATE {table.__tablename__}\
                     SET token0_id = :token0_value, token1_id = :token1_value\
-                    WHERE pool_id = :pool_id"""  # noqa: S608
+                    WHERE pool_id = :pool_id""",  # noqa: S608
                 ),
                 {
                     "pool_id": pool_id,

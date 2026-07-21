@@ -1,13 +1,6 @@
-import pickle
 from typing import Any
 
 from degenbot.types.concrete import BoundedCache
-
-
-def test_pickle_bounded_cache():
-    bounded_cache: BoundedCache[Any, Any] = BoundedCache(max_items=5)
-    pickled_cache = pickle.dumps(bounded_cache)
-    pickle.loads(pickled_cache)
 
 
 def test_bounded_cache_max_items():

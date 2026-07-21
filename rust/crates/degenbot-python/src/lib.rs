@@ -1,0 +1,184 @@
+//! Rust extension for degenbot.
+//!
+//! This crate provides high-performance Rust implementations of common operations
+//! used by the degenbot Python package.
+//!
+//! # Modules
+//!
+//! - [`abi_types`] - Unified ABI type/value representation (`AbiType`, `AbiValue`, `CachedAbiTypes`)
+//! - [`abi_decoder`] - High-performance ABI decoding
+//! - [`abi_encoder`] - High-performance ABI encoding
+//! - [`conversion`] - Shared PyO3-dependent converters (U256/I256 ↔ Python `int`, cached refs, JSON/RPC type → Python)
+//! - [`address_utils`] - Ethereum address utilities (EIP-55 checksumming)
+//! - [`errors`] - Centralized error types with `thiserror`
+//! - [`provider`] - Ethereum RPC provider with Alloy (HTTP, WS, IPC)
+//! - [`rpc::provider`] - `PyO3` bindings for sync provider
+//! - [`rpc::async_provider`] - Async Ethereum provider wrapper
+//! - [`contract`] - Smart contract interface with ABI encoding/decoding
+//! - [`rpc::contract`] - `PyO3` bindings for contract
+//! - [`rpc::async_contract`] - Async contract wrapper with batch calls
+//! - [`signature_parser`] - Robust function signature parsing
+//! - [`runtime`] - Shared Tokio runtime singleton
+//! - [`hex_utils`] - Pure-Rust hex encoding/decoding (no `PyO3` dependency)
+//!
+//! See individual module documentation for usage examples.
+
+/// PyO3 seam for the `degenbot-aave` chunk loop (`run_aave_update`).
+#[cfg(feature = "aave-updater")]
+pub mod aave_updater;
+#[cfg(feature = "abi")]
+pub mod abi;
+#[cfg(feature = "balancer-math")]
+pub mod balancer_math;
+#[cfg(feature = "bot")]
+pub mod bot;
+pub mod c_api;
+/// `CancelHandle` — the cooperative cancel flag for the updater loops.
+/// Gated on `any(pool, aave-updater)` (whichever seam needs it).
+#[cfg(any(feature = "pool", feature = "aave-updater"))]
+pub mod cancel;
+#[cfg(feature = "cl-math")]
+pub mod cl_math;
+pub mod conversion;
+#[cfg(feature = "curve-math")]
+pub mod curve_math;
+#[cfg(feature = "db")]
+pub mod db;
+#[cfg(feature = "executor")]
+pub mod executor;
+#[cfg(feature = "fork")]
+pub mod fork;
+#[cfg(feature = "pathfinding")]
+pub mod pathfinding;
+#[cfg(feature = "pool")]
+pub mod pool;
+pub mod prelude;
+#[cfg(feature = "price")]
+pub mod price;
+#[cfg(feature = "rpc")]
+pub mod rpc;
+#[cfg(feature = "simulation")]
+pub mod simulation;
+pub mod solady;
+#[cfg(feature = "solidly-math")]
+pub mod solidly_math;
+#[cfg(feature = "submission")]
+pub mod submission;
+#[cfg(feature = "uniswap")]
+pub mod uniswap;
+
+// The foundational core modules live in the `degenbot-core` workspace member.
+// Re-exported here as `crate::errors` / `crate::hex_utils` / etc. so every
+// existing `crate::errors::` call site in the binding layer keeps resolving
+// through the re-export, with zero edits to call sites. Pure-Rust consumers
+// depend on `degenbot-core` directly (default features, no pyo3).
+pub use degenbot_core::{address_utils, errors, hex_utils, runtime};
+
+// The concentrated-liquidity math library lives in the `degenbot-cl-math`
+// workspace member. Re-exported as `crate::cl_lib` so every existing
+// `crate::cl_lib::` call site in the binding layer keeps resolving through the
+// re-export. Pure-Rust consumers depend on `degenbot-cl-math` directly.
+#[cfg(feature = "cl-math")]
+pub use degenbot_cl_math::cl_lib;
+
+// The ABI type/decode/encode + signature-parsing core lives in the
+// `degenbot-abi` workspace member. Re-exported as `crate::abi_types` /
+// `crate::abi_decoder` / `crate::abi_encoder` / `crate::signature_parser` so
+// every existing call site in the binding layer (`contract`, `rpc::contract`,
+// `conversion::alloy`, `degenbot-uniswap::v2_encoding`) keeps resolving. The `#[pyfunction]`
+// wrappers (`decode`/`encode`) live in `abi::decoder` / `abi::encoder`.
+#[cfg(feature = "abi")]
+pub use degenbot_abi::{abi_decoder, abi_encoder, abi_types, signature_parser};
+
+// The RPC provider / contract / subscription core lives in the
+// `degenbot-rpc` workspace member. Re-exported as `crate::provider` /
+// `crate::contract` / `crate::subscription` so every existing call site in the
+// binding layer (`rpc::provider`, `rpc::contract`, `rpc::subscription`,
+// `rpc::async_provider`, `rpc::async_contract`) keeps resolving. The `#[pyfunction]`
+// wrappers + the GIL-bound `drain_buffer`/`DrainResult` stay in the root
+// `*_py` modules (they need `conversion::cache` / `conversion::rpc_types`).
+#[cfg(feature = "rpc")]
+pub use degenbot_rpc::{contract, provider, subscription};
+
+// The bot state (`BotState`, reorg journal, verifier, pump,
+// V2/V3/V4 state) + Möbius solvers + the unified `ArbitrageEngine` live in the
+// `degenbot-bot` workspace member — one crate by ADR-003 (the state/solver seam
+// is genuine domain coupling, not over-abstracted). Re-exported as
+// `crate::bot_core` / `crate::solvers` so every existing call site in the
+// binding layer keeps resolving. The `#[pyclass]`/`#[pyfunction]` wrappers
+// (`PyBot`, `PyLiquidityPool`, `PyErc20Token`, `PyDexIdentity`,
+// `PyArbitrageEngine`, the `Verification*Error`/`*RejectedError` exception
+// types) live in the `bot` / `bot::pool` / `bot::token` /
+// `bot::dex_identity` modules and the `bot::engine` subdir (they need `conversion::alloy` / `conversion::cache`).
+#[cfg(feature = "bot")]
+pub use degenbot_bot::{bot_core, solvers};
+
+// The pure Uniswap V2/V3/V4 event-log decoders live in the `degenbot-decoders`
+// workspace member (Plan 104) — an alloy-only leaf (no pyo3/tokio/degenbot-core).
+// No `pub use` re-export: the binding layer reaches the lone type it needs
+// (`degenbot_decoders::v4_swap_decoder::V4PoolId`) via the direct path dependency
+// in `bot::engine`. The state-coupled dispatch layer (`LogDecoder`,
+// `DecodedPoolEvent`, `LogDispatcher`) stays in `degenbot-bot`'s
+// `bot_core::log_dispatcher`.
+
+// The Uniswap-protocol domain crate `degenbot-uniswap` (Plan 105) holds the
+// DEX identity presets (`DexIdentity`/`DexVariant`/`ReservesAbi`) and the V2
+// swap callldata encoder (`encode_v2_swap`/`EncodedCall`). No `pub use`
+// re-export: the binding layer reaches these via the direct path dependency in
+// `bot::dex_identity` (and `bot_core` reaches `v2_encoding` directly).
+
+// Re-export commonly used items at the crate root
+pub use address_utils::{parse_address, to_checksum_address_bytes, to_checksum_address_str};
+pub use hex_utils::{decode_hex, encode_hex, HexError};
+#[cfg(feature = "uniswap")]
+pub use uniswap::address::to_checksum_address;
+
+#[cfg(feature = "cl-math")]
+pub use cl_lib::tick_math::{
+    get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MAX_SQRT_RATIO,
+    MIN_SQRT_RATIO,
+};
+#[cfg(feature = "cl-math")]
+pub use cl_lib::{
+    bit_math, full_math, functions, liquidity_math, sqrt_price_math, swap_math, unsafe_math,
+};
+#[cfg(feature = "cl-math")]
+pub use cl_math::tick_math::{get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio};
+pub use errors::{AbiDecodeError, AddressError, ClMathError, ProviderError, TickMathError};
+
+/// Ensure Python is initialized before the test harness spawns threads.
+///
+/// Without this, multiple test threads racing to call `Python::attach()` can
+/// trigger `Py_InitializeEx()` concurrently. CPython's `Py_InitializeEx()` sets
+/// `Py_IsInitialized()` before completing all setup (e.g. importing site.py),
+/// so a second thread that sees the flag and proceeds can hit
+/// `_PyImport_Init: global import state already initialized`.
+///
+/// The `ctor` attribute runs this before `main()`, guaranteeing single-threaded
+/// initialization regardless of how many threads the test harness later spawns.
+///
+/// # Safety
+///
+/// This is safe because `Python::initialize()` uses a `std::sync::Once` guard
+/// internally and only calls `Py_InitializeEx()` when the interpreter is not
+/// yet running, making multiple calls harmless.
+#[cfg(test)]
+#[ctor::ctor(unsafe)]
+fn init_python_before_test_threads() {
+    pyo3::Python::initialize();
+}
+
+use pyo3::prelude::*;
+
+#[pymodule]
+fn _ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Initialize logging bridge from Rust to Python. Stays in the module init
+    // (not `c_api::register`) because it is module-lifecycle setup rather than
+    // symbol registration.
+    pyo3_log::init();
+
+    // Register every `#[pyfunction]`/`#[pyclass]` surface on the module.
+    // See `c_api.rs` (ergo UG6FKN task KFVI5F) — mirrors polars-python's
+    // `c_api/mod.rs` registration site.
+    c_api::register(m)
+}

@@ -1,6 +1,6 @@
 # Flash Loan Simple Flow
 
-End-to-end execution flow for simple flash loans in Aave V3 (single asset only).
+End-to-end execution flow for simple flash loans in Aave V3 (single Asset only).
 
 ## Quick Reference
 
@@ -127,9 +127,9 @@ function flashLoanSimple(
 ```
 
 **Key difference from `flashLoan`:**
-- `flashLoanSimple` handles a single asset (no arrays)
+- `flashLoanSimple` handles a single Asset (no arrays)
 - Simpler interface with direct parameters instead of arrays
-- Lower gas overhead for single-asset flash loans
+- Lower gas overhead for single-Asset flash loans
 
 ### 2. Execute Flash Loan Simple
 

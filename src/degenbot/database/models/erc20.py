@@ -1,3 +1,5 @@
+"""SQLAlchemy model for ERC-20 token metadata."""
+
 from sqlalchemy import Index
 from sqlalchemy.orm import Mapped
 
@@ -6,6 +8,8 @@ from .types import PrimaryKeyInt
 
 
 class Erc20TokenTable(Base):
+    """Erc20TokenTable class."""
+
     __tablename__ = "erc20_tokens"
 
     id: Mapped[PrimaryKeyInt]
@@ -16,6 +20,12 @@ class Erc20TokenTable(Base):
     decimals: Mapped[int | None]
 
     def __repr__(self) -> str:
+        """Return a string representation.
+
+        Returns:
+            A string representation of the object.
+
+        """
         return (
             f"{self.__class__.__name__}("
             f"chain={self.chain!r}, "
@@ -31,4 +41,11 @@ Index(
     Erc20TokenTable.address,
     Erc20TokenTable.chain,
     unique=True,
+)
+
+# Supports queries filtering by chain without also filtering on address
+Index(
+    "ix_erc20_tokens_chain",
+    Erc20TokenTable.chain,
+    unique=False,
 )

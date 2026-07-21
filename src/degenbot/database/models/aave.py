@@ -1,3 +1,5 @@
+"""SQLAlchemy model for Aave positions."""
+
 from typing import TYPE_CHECKING, Annotated
 
 from sqlalchemy import ForeignKey, Index
@@ -11,6 +13,8 @@ if TYPE_CHECKING:
 
 
 class AaveV3Market(Base):
+    """AaveV3Market class."""
+
     __tablename__ = "aave_v3_markets"
 
     id: Mapped[PrimaryKeyInt]
@@ -42,6 +46,12 @@ class AaveV3Market(Base):
     )
 
     def __repr__(self) -> str:
+        """Return a string representation.
+
+        Returns:
+            A string representation of the object.
+
+        """
         return (
             f"{self.__class__.__name__}("
             f"id={self.id}, "
@@ -59,8 +69,7 @@ ForeignKeyAaveMarketId = Annotated[
 
 
 class AaveV3EModeCategory(Base):
-    """
-    eMode category configuration for correlated assets.
+    """eMode category configuration for correlated assets.
 
     Users in eMode get better LTV and liquidation terms for assets in the
     same category. Liquidators need this to calculate effective thresholds.
@@ -91,6 +100,12 @@ class AaveV3EModeCategory(Base):
     )
 
     def __repr__(self) -> str:
+        """Return a string representation.
+
+        Returns:
+            A string representation of the object.
+
+        """
         return f"{self.__class__.__name__}(category_id={self.category_id!r}, label={self.label!r})"
 
 
@@ -109,6 +124,8 @@ ForeignKeyAaveEModeCategoryId = Annotated[
 
 
 class AaveV3Contract(Base):
+    """AaveV3Contract class."""
+
     __tablename__ = "aave_v3_contracts"
 
     id: Mapped[PrimaryKeyInt]
@@ -126,6 +143,8 @@ class AaveV3Contract(Base):
 
 
 class AaveV3User(Base):
+    """AaveV3User class."""
+
     __tablename__ = "aave_v3_users"
 
     id: Mapped[PrimaryKeyInt]
@@ -178,6 +197,12 @@ class AaveV3User(Base):
         return self.isolation_mode_collateral_asset_id is not None
 
     def __repr__(self) -> str:
+        """Return a string representation.
+
+        Returns:
+            A string representation of the object.
+
+        """
         return (
             f"{self.__class__.__name__}("
             f"market={self.market!r}, "
@@ -202,6 +227,8 @@ Index(
 
 
 class AaveV3Asset(Base):
+    """AaveV3Asset class."""
+
     __tablename__ = "aave_v3_assets"
 
     id: Mapped[PrimaryKeyInt]
@@ -296,6 +323,12 @@ class AaveV3Asset(Base):
         return self.asset_config.isolation_mode if self.asset_config else False
 
     def __repr__(self) -> str:
+        """Return a string representation.
+
+        Returns:
+            A string representation of the object.
+
+        """
         return (
             f"{self.__class__.__name__}("
             f"market={self.market!r}, "
@@ -320,8 +353,7 @@ ForeignKeyAaveAssetId = Annotated[
 
 
 class AaveV3AssetConfig(Base):
-    """
-    Asset configuration for liquidation monitoring.
+    """Asset configuration for liquidation monitoring.
 
     Stores durable configuration values that affect liquidation calculations:
     LTV, liquidation threshold, liquidation bonus, and feature flags.
@@ -356,6 +388,12 @@ class AaveV3AssetConfig(Base):
     )
 
     def __repr__(self) -> str:
+        """Return a string representation.
+
+        Returns:
+            A string representation of the object.
+
+        """
         return (
             f"{self.__class__.__name__}("
             f"asset={self.asset!r}, "
@@ -373,6 +411,8 @@ Index(
 
 
 class AaveV3CollateralPosition(Base):
+    """AaveV3CollateralPosition class."""
+
     __tablename__ = "aave_v3_collateral_positions"
 
     id: Mapped[PrimaryKeyInt]
@@ -395,6 +435,12 @@ class AaveV3CollateralPosition(Base):
     )
 
     def __repr__(self) -> str:
+        """Return a string representation.
+
+        Returns:
+            A string representation of the object.
+
+        """
         return (
             f"{self.__class__.__name__}("
             f"user={self.user!r}, "
@@ -413,6 +459,8 @@ Index(
 
 
 class AaveV3DebtPosition(Base):
+    """AaveV3DebtPosition class."""
+
     __tablename__ = "aave_v3_debt_positions"
 
     id: Mapped[PrimaryKeyInt]
@@ -435,6 +483,12 @@ class AaveV3DebtPosition(Base):
     )
 
     def __repr__(self) -> str:
+        """Return a string representation.
+
+        Returns:
+            A string representation of the object.
+
+        """
         return (
             f"{self.__class__.__name__}("
             f"user={self.user!r}, "
@@ -453,8 +507,7 @@ Index(
 
 
 class AaveV3UserCollateralConfig(Base):
-    """
-    Tracks which assets each user has enabled as collateral.
+    """Tracks which assets each user has enabled as collateral.
 
     A user can hold aTokens for an asset but choose not to use it as collateral.
     This table tracks that preference state, updated by
@@ -480,6 +533,12 @@ class AaveV3UserCollateralConfig(Base):
     )
 
     def __repr__(self) -> str:
+        """Return a string representation.
+
+        Returns:
+            A string representation of the object.
+
+        """
         return (
             f"{self.__class__.__name__}("
             f"user={self.user!r}, "
@@ -503,8 +562,7 @@ Index(
 
 
 class AaveGhoToken(Base):
-    """
-    GHO token attributes for Aave V3 markets.
+    """GHO token attributes for Aave V3 markets.
 
     GHO tokens are chain-unique: multiple markets on the same chain share the same GHO token.
     This table stores global GHO configuration (discount token, discount rate strategy) that

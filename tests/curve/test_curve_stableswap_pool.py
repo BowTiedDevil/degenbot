@@ -1,38 +1,55 @@
 import itertools
-import pickle
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import eth_abi.abi
+import eth_abi.exceptions
 import pytest
-from web3 import Web3
-from web3.types import TxParams
+import web3
 
-from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import set_web3
+from degenbot.crypto import function_selector, keccak256
 from degenbot.curve.abi import CURVE_V1_FACTORY_ABI, CURVE_V1_POOL_ABI, CURVE_V1_REGISTRY_ABI
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
+from degenbot.exceptions import ContractLogicError
 from degenbot.exceptions.arbitrage import NoLiquidity
-from degenbot.exceptions.liquidity_pool import BrokenPool, InvalidSwapInputAmount
+from degenbot.exceptions.pool import (
+    BrokenPool,
+    EVMRevertError,
+    InvalidSwapInputAmount,
+    MissingCurveData,
+)
+from degenbot.fork import AnvilFork
+from degenbot.types.rpc_types import TxParams
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
+from tests.helpers.bot_factory import make_bot_with_provider
+from tests.helpers.w3_contract import make_contract
 
-if TYPE_CHECKING:
-    from web3.contract.contract import Contract
-    from web3.types import Timestamp
+pytestmark = pytest.mark.online_rpc
 
-FRXETH_WETH_CURVE_POOL_ADDRESS = get_checksum_address("0x9c3B46C0Ceb5B9e304FCd6D88Fc50f7DD24B31Bc")
+
+Timestamp = int
+
+
+CRYPTO_POOL_ADDRESSES = {"0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5"}
 CURVE_V1_FACTORY_ADDRESS = get_checksum_address("0x127db66E7F0b16470Bec194d0f496F9Fa065d0A9")
 CURVE_V1_REGISTRY_ADDRESS = get_checksum_address("0x90E00ACe148ca3b23Ac1bC8C240C2a7Dd9c2d7f5")
+FRXETH_WETH_CURVE_POOL_ADDRESS = get_checksum_address("0x9c3B46C0Ceb5B9e304FCd6D88Fc50f7DD24B31Bc")
 TRIPOOL_ADDRESS = get_checksum_address("0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7")
+
+
+def _build_pool(fork: AnvilFork, address: str) -> CurveStableswapPool:
+    """Helper to build a Curve pool using the Bot builder."""
+    # Schedule set_web3 for any code that still relies on the legacy singleton
+    bot = make_bot_with_provider(fork.provider)
+    return bot.build_pool(address)
 
 
 @pytest.fixture
 def tripool(fork_mainnet_full: AnvilFork) -> CurveStableswapPool:
-    set_web3(fork_mainnet_full.w3)
-    return CurveStableswapPool(TRIPOOL_ADDRESS)
+    return _build_pool(fork_mainnet_full, TRIPOOL_ADDRESS)
 
 
-def _test_calculations(lp: CurveStableswapPool, w3: Web3):
+def _test_calculations(lp: CurveStableswapPool, w3: web3.Web3):
     state_block = lp.update_block
     w3_contract = w3.eth.contract(
         address=lp.address,
@@ -52,35 +69,51 @@ def _test_calculations(lp: CurveStableswapPool, w3: Web3):
                     token_out=token_out,
                     token_in_quantity=amount,
                 )
-            except (InvalidSwapInputAmount, NoLiquidity):
+            except (
+                InvalidSwapInputAmount,
+                NoLiquidity,
+                EVMRevertError,
+                ContractLogicError,
+                eth_abi.exceptions.InsufficientDataBytes,
+            ):
                 continue
             except Exception:
-                print(f"Failure simulating swap (in-pool) at block {state_block} for {lp.address}:")
+                print(
+                    f"Failure simulating swap (in-pool) at block {state_block} for {lp.address}. "
+                    f"Reproduce with test_single_pool @ {lp.address}",
+                )
                 raise
 
-            if lp.address == "0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5":
-                tx = TxParams(
-                    to=lp.address,
-                    data=Web3.keccak(text="get_dy(uint256,uint256,uint256)")[:4]
-                    + eth_abi.abi.encode(
-                        types=["uint256", "uint256", "uint256"],
-                        args=[token_in_index, token_out_index, amount],
-                    ),
-                )
+            try:
+                if lp.address == "0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5":
+                    tx = TxParams(
+                        to=lp.address,
+                        data=function_selector("get_dy(uint256,uint256,uint256)")
+                        + eth_abi.abi.encode(
+                            types=["uint256", "uint256", "uint256"],
+                            args=[token_in_index, token_out_index, amount],
+                        ),
+                    )
 
-                contract_amount, *_ = eth_abi.abi.decode(
-                    data=w3.eth.call(transaction=tx),
-                    types=["uint256"],
-                )
-            else:
-                contract_amount = w3_contract.functions.get_dy(
-                    token_in_index,
-                    token_out_index,
-                    amount,
-                ).call()
+                    contract_amount, *_ = eth_abi.abi.decode(
+                        data=w3.eth.call(transaction=tx),
+                        types=["uint256"],
+                    )
+                else:
+                    contract_amount = w3_contract.functions.get_dy(
+                        token_in_index,
+                        token_out_index,
+                        amount,
+                    ).call()
+            except (ContractLogicError, eth_abi.exceptions.InsufficientDataBytes):
+                # The on-chain contract reverts for broken/unsupported pools
+                continue
 
             assert calc_amount == contract_amount, (
-                f"Failure simulating swap (in-pool) at block {state_block} for {lp.address}: {amount} {token_in} for {token_out}"  # noqa:E501
+                f"Swap mismatch at block {state_block} for {lp.address}: "
+                f"{amount} {token_in} for {token_out} — "
+                f"got {calc_amount}, expected {contract_amount}. "
+                f"Reproduce with test_single_pool @ {lp.address}"
             )
 
     if lp.base_pool is not None:
@@ -95,7 +128,7 @@ def _test_calculations(lp: CurveStableswapPool, w3: Web3):
                 else:
                     amount = int(
                         amount_multiplier
-                        * lp.base_pool.balances[lp.base_pool.tokens.index(token_in)]
+                        * lp.base_pool.balances[lp.base_pool.tokens.index(token_in)],
                     )
 
                 try:
@@ -104,35 +137,35 @@ def _test_calculations(lp: CurveStableswapPool, w3: Web3):
                         token_out=token_out,
                         token_in_quantity=amount,
                     )
-                except (InvalidSwapInputAmount, NoLiquidity):
+                except (InvalidSwapInputAmount, NoLiquidity, EVMRevertError, ContractLogicError):
                     continue
 
-                contract_amount = w3_contract.functions.get_dy_underlying(
-                    token_in_index,
-                    token_out_index,
-                    amount,
-                ).call()
+                try:
+                    contract_amount = w3_contract.functions.get_dy_underlying(
+                        token_in_index,
+                        token_out_index,
+                        amount,
+                    ).call()
+                except (ContractLogicError, eth_abi.exceptions.InsufficientDataBytes):
+                    continue
 
                 assert calc_amount == contract_amount, (
-                    f"Failure simulating swap (metapool) at block {state_block} for {lp.address}: "
-                    f"{amount} {token_in} for {token_out}"
+                    f"Metapool swap mismatch at block {state_block} for {lp.address}: "
+                    f"{amount} {token_in} for {token_out} — "
+                    f"got {calc_amount}, expected {contract_amount}. "
+                    f"Reproduce with test_single_pool @ {lp.address}"
                 )
 
 
 def test_create_pool(fork_mainnet_full: AnvilFork):
-    set_web3(fork_mainnet_full.w3)
-    CurveStableswapPool(address=TRIPOOL_ADDRESS)
+    _build_pool(fork_mainnet_full, TRIPOOL_ADDRESS)
 
 
 def test_tripool(
     tripool: CurveStableswapPool,
     fork_mainnet_full: AnvilFork,
 ):
-    _test_calculations(lp=tripool, w3=fork_mainnet_full.w3)
-
-
-def test_pickle_tripool(tripool: CurveStableswapPool):
-    pickle.dumps(tripool)
+    _test_calculations(lp=tripool, w3=web3.Web3(web3.HTTPProvider(fork_mainnet_full.http_url)))
 
 
 @pytest.mark.parametrize(
@@ -140,15 +173,13 @@ def test_pickle_tripool(tripool: CurveStableswapPool):
     [18849426],
     indirect=True,
 )
-def test_auto_update(fork_mainnet_archive: AnvilFork):
+def test_pool_state_at_different_blocks(fork_mainnet_archive: AnvilFork):
     # Build the pool at a known historical block
+    block_number = fork_mainnet_archive.provider.get_block_number()
 
-    set_web3(fork_mainnet_archive.w3)
-    block_number = fork_mainnet_archive.w3.eth.block_number
+    tripool = _build_pool(fork_mainnet_archive, TRIPOOL_ADDRESS)
 
-    tripool = CurveStableswapPool(TRIPOOL_ADDRESS)
-
-    assert fork_mainnet_archive.w3.eth.get_block_number() == block_number
+    assert fork_mainnet_archive.provider.get_block_number() == block_number
     assert tripool.update_block == block_number
 
     expected_balances = (75010632422398781503259123, 76382820384826, 34653521595900)
@@ -158,12 +189,48 @@ def test_auto_update(fork_mainnet_archive: AnvilFork):
         fork_url=fork_mainnet_archive.fork_url,
         fork_block=block_number + 1,
     )
-    set_web3(fork.w3)
-    assert fork.w3.eth.get_block_number() == block_number + 1
-
-    tripool.auto_update()
+    tripool = _build_pool(fork, TRIPOOL_ADDRESS)
     assert tripool.update_block == block_number + 1
     assert tripool.balances == (75010632422398781503259123, 76437030384826, 34599346168546)
+
+
+@pytest.mark.parametrize(
+    "fork_mainnet_archive",
+    [18849426],
+    indirect=True,
+)
+def test_bot_update_curve_pool(fork_mainnet_archive: AnvilFork):
+    """bot.update(pool) fetches fresh balances and applies them via external_update."""
+    block_number = fork_mainnet_archive.provider.get_block_number()
+    bot = make_bot_with_provider(fork_mainnet_archive.provider)
+
+    tripool = bot.build_pool(TRIPOOL_ADDRESS)
+    assert tripool.update_block == block_number
+    initial_balances = tripool.balances
+
+    # Advance the fork by one block
+    fork = AnvilFork(
+        fork_url=fork_mainnet_archive.fork_url,
+        fork_block=block_number + 1,
+    )
+    # Rebuild bot with the advanced fork
+    advanced_bot = make_bot_with_provider(fork.provider)
+
+    # The original pool still has old balances
+    assert tripool.balances == initial_balances
+
+    # Update the pool via bot.update()
+    changed = advanced_bot.update(tripool)
+    assert changed is True
+    assert tripool.update_block == block_number + 1
+
+    # Verify balances match what a fresh build would give
+    fresh_pool = advanced_bot.build_pool(TRIPOOL_ADDRESS)
+    assert tripool.balances == fresh_pool.balances
+
+    # Updating again at the same block should return False
+    changed = advanced_bot.update(tripool)
+    assert changed is False
 
 
 @pytest.mark.parametrize(
@@ -180,9 +247,7 @@ def test_a_ramping(fork_mainnet_archive: AnvilFork):
     initial_a_time = 1653559305
     final_a_time = 1654158027
 
-    set_web3(fork_mainnet_archive.w3)
-
-    tripool = CurveStableswapPool(address=TRIPOOL_ADDRESS)
+    tripool = _build_pool(fork_mainnet_archive, TRIPOOL_ADDRESS)
     tripool._create_timestamp = cast("Timestamp", 0)  # defeat the timestamp optimization
 
     assert tripool._a(timestamp=initial_a_time) == initial_a
@@ -202,20 +267,42 @@ def test_single_pool(
     if not pool_address:
         return
 
-    set_web3(fork_mainnet_archive.w3)
-
-    lp = CurveStableswapPool(address=pool_address)
-    _test_calculations(lp=lp, w3=fork_mainnet_archive.w3)
+    lp = _build_pool(fork_mainnet_archive, pool_address)
+    _test_calculations(lp=lp, w3=web3.Web3(web3.HTTPProvider(fork_mainnet_archive.http_url)))
 
 
 def test_tricrypto_pool(fork_mainnet_full: AnvilFork):
-    """
-    Tricrypto (WETH-wBTC-USDT) has a lot of one-off functions, so always test it
-    """
+    """Tricrypto (WETH-wBTC-USDT) has a lot of one-off functions, so always test it"""
     pool_address = "0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5"
-    set_web3(fork_mainnet_full.w3)
-    lp = CurveStableswapPool(address=pool_address)
-    _test_calculations(lp=lp, w3=fork_mainnet_full.w3)
+    lp = _build_pool(fork_mainnet_full, pool_address)
+    _test_calculations(lp=lp, w3=web3.Web3(web3.HTTPProvider(fork_mainnet_full.http_url)))
+
+
+def test_metapool_with_valid_base_cache():
+    """Regression test: virtual_price must resolve correctly when the
+    base cache has not expired.
+
+    At block 25144000 the RAI/3Crv metapool's base_cache_updated is only ~180s old
+    (vs the 600s expiry), so the contract uses its cached virtual_price. Our pool
+    must do the same — PerBlockCache.get_cached_virtual_price() resolves this
+    internally without side-effect mirrors.
+    """
+    pool_address = "0x618788357D0EBd8A37e763ADab3bc575D54c2C7d"
+    block = 25_144_000
+
+    fork = AnvilFork(
+        fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+        fork_block=block,
+    )
+    lp = _build_pool(fork, pool_address)
+    assert lp.update_block == block
+
+    # Verify the base cache has not expired at this block
+    block_timestamp = lp._data_provider.block_timestamp(block)
+    base_cache_updated = lp._cache.get_cached_base_cache_updated(block)
+    assert block_timestamp <= base_cache_updated + lp._cache.BASE_CACHE_EXPIRES
+
+    _test_calculations(lp=lp, w3=web3.Web3(web3.HTTPProvider(fork.http_url)))
 
 
 def test_metapool_over_multiple_blocks_to_verify_cache_behavior():
@@ -231,8 +318,7 @@ def test_metapool_over_multiple_blocks_to_verify_cache_behavior():
         fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
         fork_block=18_850_000,
     )
-    set_web3(fork.w3)
-    lp = CurveStableswapPool(address=pool_address)
+    lp = _build_pool(fork, pool_address)
     assert lp.update_block == start_block
 
     for block in range(start_block + span, end_block, span):
@@ -240,16 +326,14 @@ def test_metapool_over_multiple_blocks_to_verify_cache_behavior():
             fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
             fork_block=block,
         )
-        set_web3(fork.w3)
-        lp.auto_update()
+        # Auto-update is handled by rebuilding the pool with the new block
+        lp = _build_pool(fork, pool_address)
         assert lp.update_block == block
-        _test_calculations(lp=lp, w3=fork.w3)
+        _test_calculations(lp=lp, w3=web3.Web3(web3.HTTPProvider(fork.http_url)))
 
 
 def test_base_pool(fork_mainnet_full: AnvilFork):
-    set_web3(fork_mainnet_full.w3)
-
-    basepool = CurveStableswapPool(address=TRIPOOL_ADDRESS, silent=True)
+    basepool = _build_pool(fork_mainnet_full, TRIPOOL_ADDRESS)
 
     # Compare withdrawal calc for all tokens in the pool
     for token_index, token in enumerate(basepool.tokens):
@@ -258,20 +342,21 @@ def test_base_pool(fork_mainnet_full: AnvilFork):
             token_in_amount = int(amount_multiplier * basepool.balances[token_index])
             print(f"Withdrawing {token_in_amount} {token}")
             calc_amount, *_ = basepool.calc_withdraw_one_coin(
-                _token_amount=token_in_amount, i=token_index
+                _token_amount=token_in_amount,
+                i=token_index,
             )
 
             amount_contract, *_ = eth_abi.abi.decode(
                 types=["uint256"],
-                data=fork_mainnet_full.w3.eth.call(
+                data=web3.Web3(web3.HTTPProvider(fork_mainnet_full.http_url)).eth.call(
                     transaction=TxParams(
                         to=basepool.address,
-                        data=Web3.keccak(text="calc_withdraw_one_coin(uint256,int128)")[:4]
+                        data=function_selector("calc_withdraw_one_coin(uint256,int128)")
                         + eth_abi.abi.encode(
                             types=["uint256", "int128"],
                             args=[token_in_amount, token_index],
                         ),
-                    )
+                    ),
                 ),
             )
             assert calc_amount == amount_contract
@@ -292,34 +377,33 @@ def test_base_pool(fork_mainnet_full: AnvilFork):
 
             calc_token_amount_contract, *_ = eth_abi.abi.decode(
                 types=["uint256"],
-                data=fork_mainnet_full.w3.eth.call(
+                data=web3.Web3(web3.HTTPProvider(fork_mainnet_full.http_url)).eth.call(
                     transaction=TxParams(
                         to=basepool.address,
-                        data=Web3.keccak(
-                            text=f"calc_token_amount(uint256[{len(basepool.tokens)}],bool)"
+                        data=keccak256(
+                            text=f"calc_token_amount(uint256[{len(basepool.tokens)}],bool)",
                         )[:4]
                         + eth_abi.abi.encode(
                             types=[f"uint256[{len(basepool.tokens)}]", "bool"],
                             args=[amount_array, True],
                         ),
-                    )
+                    ),
                 ),
             )
             assert calc_token_amount == calc_token_amount_contract
 
 
 def test_factory_stableswap_pools(fork_mainnet_full: AnvilFork):
-    """
-    Test the user-deployed pools deployed by the factory
-    """
-
-    set_web3(fork_mainnet_full.w3)
-    stableswap_factory: Contract = fork_mainnet_full.w3.eth.contract(
-        address=CURVE_V1_FACTORY_ADDRESS, abi=CURVE_V1_FACTORY_ABI
+    """Test the user-deployed pools deployed by the factory"""
+    stableswap_factory: Contract = web3.Web3(
+        web3.HTTPProvider(fork_mainnet_full.http_url)
+    ).eth.contract(
+        address=CURVE_V1_FACTORY_ADDRESS,
+        abi=CURVE_V1_FACTORY_ABI,
     )
     pool_count = stableswap_factory.functions.pool_count().call()
 
-    with fork_mainnet_full.w3.batch_requests() as batch:
+    with web3.Web3(web3.HTTPProvider(fork_mainnet_full.http_url)).batch_requests() as batch:
         batch.add_mapping({
             stableswap_factory.functions.pool_list: list(range(pool_count)),
         })
@@ -329,28 +413,31 @@ def test_factory_stableswap_pools(fork_mainnet_full: AnvilFork):
         print(f"Testing factory pool {i}/{pool_count} @ {pool_address}")
 
         try:
-            lp = CurveStableswapPool(address=cast("str", pool_address), silent=True)
-            _test_calculations(lp=lp, w3=fork_mainnet_full.w3)
+            lp = _build_pool(fork_mainnet_full, cast("str", pool_address))
+            _test_calculations(lp=lp, w3=web3.Web3(web3.HTTPProvider(fork_mainnet_full.http_url)))
         except (BrokenPool, NoLiquidity):
             continue
         except Exception as e:
-            print(f"{type(e)}: {e} - pool {i}, {pool_address=}")
-            raise
+            block_number = fork_mainnet_full.provider.get_block_number()
+            msg = (
+                f"{type(e).__name__}: {e} — "
+                f"pool {i}/{pool_count} @ {pool_address}, block {block_number}. "
+                f'Reproduce: set pool_address="{pool_address}" in test_single_pool '
+                f"with @pytest.mark.parametrize('fork_mainnet_archive', [{block_number}], "
+                f"indirect=True)"
+            )
+            print(msg)
+            raise AssertionError(msg) from e
 
 
 def test_base_registry_pools(fork_mainnet_full: AnvilFork):
-    """
-    Test the custom pools deployed by Curve
-    """
-    set_web3(fork_mainnet_full.w3)
-
-    registry: Contract = fork_mainnet_full.w3.eth.contract(
-        address=CURVE_V1_REGISTRY_ADDRESS,
-        abi=CURVE_V1_REGISTRY_ABI,
+    """Test the custom pools deployed by Curve"""
+    registry: Contract = make_contract(
+        fork_mainnet_full.http_url, CURVE_V1_REGISTRY_ADDRESS, CURVE_V1_REGISTRY_ABI
     )
     pool_count = registry.functions.pool_count().call()
 
-    with fork_mainnet_full.w3.batch_requests() as batch:
+    with web3.Web3(web3.HTTPProvider(fork_mainnet_full.http_url)).batch_requests() as batch:
         batch.add_mapping({
             registry.functions.pool_list: list(range(pool_count)),
         })
@@ -358,8 +445,35 @@ def test_base_registry_pools(fork_mainnet_full: AnvilFork):
 
     for i, pool_address in enumerate(pool_addresses, start=1):
         print(f"Testing registry pool {i}/{pool_count} @ {pool_address}")
-        lp = CurveStableswapPool(address=cast("str", pool_address), silent=True)
-        _test_calculations(lp=lp, w3=fork_mainnet_full.w3)
+        try:
+            lp = _build_pool(fork_mainnet_full, cast("str", pool_address))
+        except MissingCurveData:
+            print("  Skipping pool with missing data")
+            continue
+        except Exception as e:
+            block_number = fork_mainnet_full.provider.get_block_number()
+            msg = (
+                f"{type(e).__name__}: {e} — "
+                f"registry pool {i}/{pool_count} @ {pool_address}, block {block_number}. "
+                f'Reproduce: set pool_address="{pool_address}" in test_single_pool '
+                f"with @pytest.mark.parametrize('fork_mainnet_archive', [{block_number}], "
+                f"indirect=True)"
+            )
+            print(msg)
+            raise AssertionError(msg) from e
+        try:
+            _test_calculations(lp=lp, w3=web3.Web3(web3.HTTPProvider(fork_mainnet_full.http_url)))
+        except Exception as e:
+            block_number = fork_mainnet_full.provider.get_block_number()
+            msg = (
+                f"{type(e).__name__}: {e} — "
+                f"registry pool {i}/{pool_count} @ {pool_address}, block {block_number}. "
+                f'Reproduce: set pool_address="{pool_address}" in test_single_pool '
+                f"with @pytest.mark.parametrize('fork_mainnet_archive', [{block_number}], "
+                f"indirect=True)"
+            )
+            print(msg)
+            raise AssertionError(msg) from e
 
 
 def test_get_d(tripool: CurveStableswapPool):

@@ -1,0 +1,72 @@
+{
+  "chain_id": 1,
+  "block": 24407242,
+  "address": "0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5",
+  "name": "Curve Tricrypto (WETH/WBTC/USDT)",
+  "tokens": [
+    {
+      "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+      "name": "Tether USD",
+      "symbol": "USDT",
+      "decimals": 6
+    },
+    {
+      "address": "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+      "name": "Wrapped BTC",
+      "symbol": "WBTC",
+      "decimals": 8
+    },
+    {
+      "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "name": "Wrapped Ether",
+      "symbol": "WETH",
+      "decimals": 18
+    }
+  ],
+  "balances": [
+    87415844442,
+    129348722,
+    43137143734068899114
+  ],
+  "a_coefficient": 3645,
+  "fee": 17271073,
+  "admin_fee": 0,
+  "use_lending": [
+    false,
+    false,
+    false
+  ],
+  "virtual_price": 1046705300073861469,
+  "block_timestamp": 1770494987,
+  "d": 286349051375261364933634,
+  "gamma": 69999999999999,
+  "price_scale": [
+    75804766119084417938595,
+    2345740822056210128261
+  ],
+  "fee_gamma": 10000000000000000,
+  "mid_fee": 4000000,
+  "out_fee": 40000000,
+  "offpeg_fee_multiplier": 0,
+  "initial_a": null,
+  "future_a": null,
+  "initial_a_time": null,
+  "future_a_time": null,
+  "create_timestamp": 1770494987,
+  "strategies": {
+    "d_variant": 1,
+    "y_variant": 1,
+    "yd_variant": 1,
+    "swap_style": 4,
+    "metapool_rate_style": 1,
+    "metapool_underlying_style": 1,
+    "lending_rate_style": 1
+  },
+  "lp_token": {
+    "address": "0xcA3d75aC011BF5aD07a98d02f18225F9bD9A6BDF",
+    "name": "Curve.fi USD-BTC-ETH",
+    "symbol": "crvTricrypto",
+    "decimals": 18
+  },
+  "lp_token_total_supply": 162165285657078344750
+}

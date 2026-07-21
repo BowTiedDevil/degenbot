@@ -1,4 +1,4 @@
-"""V4 pools: add token foreign key
+"""V4 pools: add token foreign key.
 
 Revision ID: 8b29ed99a2ac
 Revises: 50b39bafa0be
@@ -22,7 +22,6 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-
     with op.batch_alter_table(UniswapV4PoolTable.__tablename__, schema=None) as batch_op:
         batch_op.add_column(sa.Column("currency0_id", sa.Integer(), nullable=False))
         batch_op.add_column(sa.Column("currency1_id", sa.Integer(), nullable=False))

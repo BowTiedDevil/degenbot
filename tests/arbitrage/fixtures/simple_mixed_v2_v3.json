@@ -1,0 +1,43 @@
+{
+  "id": "simple_mixed_v2_v3",
+  "cycle_type": "v2_v3",
+  "pool_states": {
+    "0x0000000000000000000000000000000000000009": {
+      "type": "v2",
+      "address": "0x0000000000000000000000000000000000000009",
+      "block": 0,
+      "reserves_token0": 31622776601,
+      "reserves_token1": 31622776601
+    },
+    "0x000000000000000000000000000000000000000A": {
+      "type": "v3",
+      "address": "0x000000000000000000000000000000000000000A",
+      "block": 0,
+      "liquidity": 1000000000000000000,
+      "sqrt_price_x96": 78518343518507372664916416552,
+      "tick": -180,
+      "tick_bitmap": {
+        "-1": {
+          "bitmap": 87112285931760246646623899502532662198272,
+          "block": 0
+        }
+      },
+      "tick_data": {
+        "-240": {
+          "liquidity_net": 1000000000000000000,
+          "liquidity_gross": 1000000000000000000,
+          "block": 0
+        },
+        "-120": {
+          "liquidity_net": -1000000000000000000,
+          "liquidity_gross": 1000000000000000000,
+          "block": 0
+        }
+      }
+    }
+  },
+  "input_token_address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+  "expected_optimal_input": 0,
+  "expected_profit": 0,
+  "profit_tolerance_bps": 10
+}

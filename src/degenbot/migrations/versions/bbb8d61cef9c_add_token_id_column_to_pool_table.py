@@ -1,4 +1,4 @@
-"""Add token ID column to pool table
+"""Add token ID column to pool table.
 
 Revision ID: bbb8d61cef9c
 Revises: 03e723f439dc
@@ -20,7 +20,6 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-
     with op.batch_alter_table("pools", schema=None) as batch_op:
         batch_op.add_column(sa.Column("token0_id_", sa.Integer(), nullable=True))
         batch_op.add_column(sa.Column("token1_id_", sa.Integer(), nullable=True))

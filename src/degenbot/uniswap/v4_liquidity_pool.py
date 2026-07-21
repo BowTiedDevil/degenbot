@@ -1,96 +1,68 @@
-# ruff: noqa: PLR0904
+"""UniswapV4Pool: concentrated liquidity AMM companion over a PyLiquidityPool handle.
 
+ADR-005 slice 9b — the V4 companion rewritten over the same `PyLiquidityPool`
+handle topology as the V3 companion. Rust `BotState` is the single source of
+truth for V4 mutable state (scalars, tick data, reorg journal); this companion
+reads it through `self._py_pool` (atomic `snapshot_v3()` for scalars — already
+V3/V4-generic via `get_v3_or_v4_pool` — + `tick_data_snapshot()`/
+`tick_bitmap_snapshot()` for the tick maps) and delegates
+`external_update` (Swap) / `update_liquidity_map` (ModifyLiquidity) /
+`update_tick_data` (sparse-map backfill) / discard / restore to the handle.
+
+`_state_mgr` / `_state_cache` / `state_cache_depth` are dropped — the
+`StateCache` temporal-navigation layer lives in Rust now (journal +
+discard/restore). V3 already has none; V4 follows.
+
+V4-specific identity (pool_id, pool_manager_address, pool_key, hook_address,
+protocol_fee, lp_fee, state_view_address) stays Python-side — matches V3
+keeping tokens/factory/fee Python-side. The hook admission floor (reject
+amount-modifying hooks + dynamic fees) lives in Rust
+(`BotState::register_v4_pool`), surfaced at `PyBot.register_v4_pool` (ADR-005
+slice 9a) so the companion never holds a hooked pool.
+
+`_bitmap_override` mirrors V3: the verbatim tick_bitmap words the
+builder/snapshot/fetcher passed via `update_tick_data`, overlaid on the
+Rust-derived bitmap so a snapshot's on-chain bitmap is preserved verbatim AND
+a fetcher-checked empty word is seen as present-but-zero.
+"""
 
 import dataclasses
-from collections import deque
-from collections.abc import Sequence
 from enum import Enum
-from fractions import Fraction
-from threading import Lock
-from typing import TYPE_CHECKING, Any, Final, cast
+from typing import Any, Self
 from weakref import WeakSet
 
-import eth_abi.abi
-from eth_abi.exceptions import DecodingError
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
-from sqlalchemy import select
-from sqlalchemy.orm import Session, scoped_session
-from web3 import Web3
-from web3.exceptions import ContractLogicError
-from web3.types import BlockIdentifier, TxParams
 
+from degenbot.abi import encode
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import connection_manager
-from degenbot.constants import MAX_INT256, MIN_INT256, ZERO_ADDRESS
-from degenbot.database import db_session
-from degenbot.database.models.pools import (
-    AbstractUniswapV4Pool,
-    PoolManagerTable,
-    UniswapV4PoolTable,
-)
-from degenbot.erc20 import Erc20Token, Erc20TokenManager
+from degenbot.constants import ZERO_ADDRESS
+from degenbot.crypto import keccak256
+from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.evm import EVMRevertError
-from degenbot.exceptions.liquidity_pool import (
+from degenbot.exceptions.pool import (
     ExternalUpdateError,
+    HookedPoolResult,
     IncompleteSwap,
-    LateUpdateError,
-    LiquidityMapWordMissing,
     LiquidityPoolError,
     NoPoolStateAvailable,
-    PossibleInaccurateResult,
 )
-from degenbot.functions import encode_function_calldata, raw_call
-from degenbot.logging import logger
-from degenbot.registry import pool_registry
-from degenbot.types.abstract import AbstractArbitrage, AbstractLiquidityPool
-from degenbot.types.aliases import BlockNumber, ChainId
-from degenbot.types.concrete import (
-    AbstractPublisherMessage,
-    Publisher,
-    PublisherMixin,
-    Subscriber,
+from degenbot.types import PyLiquidityPool
+from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
+from degenbot.types.aliases import BlockNumber
+from degenbot.types.concrete import PublisherMixin, Subscriber
+from degenbot.types.pool_protocols import SimulationResult
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
+from degenbot.uniswap.math import (
+    get_tick_word_and_bit_position as cl_get_tick_word_and_bit_position,
 )
 from degenbot.uniswap.types import UniswapPoolSwapVector
-from degenbot.uniswap.v3_functions import (
-    exchange_rate_from_sqrt_price_x96,
-    get_tick_word_and_bit_position,
-)
-from degenbot.uniswap.v3_types import (
-    BitmapWord,
-    Liquidity,
-    LiquidityGross,
-    LiquidityNet,
-    Pip,
-    SqrtPriceX96,
-    Tick,
-)
-from degenbot.uniswap.v4_libraries.swap_math import (
-    MAX_SWAP_FEE,
-    compute_swap_step,
-    get_sqrt_price_target,
-)
-from degenbot.uniswap.v4_libraries.tick_bitmap import (
-    flip_tick,
-    gen_ticks,
-    next_initialized_tick_within_one_word,
-)
-from degenbot.uniswap.v4_libraries.tick_math import (
-    MAX_SQRT_PRICE,
-    MAX_TICK,
-    MIN_SQRT_PRICE,
-    MIN_TICK,
-    get_sqrt_price_at_tick,
-    get_tick_at_sqrt_price,
-)
+from degenbot.uniswap.v4_pool_calc import UniswapV4PoolCalc
+from degenbot.uniswap.v4_pool_state import V4PoolState
 from degenbot.uniswap.v4_types import (
-    FeeToProtocol,
     InitializedTickMap,
     LiquidityMap,
-    SwapFee,
-    UniswapV4BitmapAtWord,
-    UniswapV4LiquidityAtTick,
+    Pip,
     UniswapV4PoolExternalUpdate,
     UniswapV4PoolKey,
     UniswapV4PoolLiquidityMappingUpdate,
@@ -101,6 +73,8 @@ from degenbot.uniswap.v4_types import (
 
 @dataclasses.dataclass(slots=True)
 class SwapResult:
+    """SwapResult class."""
+
     sqrt_price_x96: int
     tick: int
     liquidity: int
@@ -108,56 +82,34 @@ class SwapResult:
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class SwapDelta:
+    """SwapDelta class."""
+
     currency0: int
     currency1: int
 
     @property
     def amount_in(self) -> int:
-        "The deposited token amount."
+        """The deposited token amount."""
         return -min(self.currency0, self.currency1)
 
     @property
     def amount_out(self) -> int:
-        "The withdrawn token amount."
+        """The withdrawn token amount."""
         return max(self.currency0, self.currency1)
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
-class LiquidityRangeCacheKey:
-    """
-    Cache key for liquidity range swap calculations.
-    """
-
-    exact_input: bool
-    tick_lower: int
-    tick_upper: int
-    liquidity: int
-    zero_for_one: bool
-    price_start: SqrtPriceX96
-    price_end: SqrtPriceX96
-
-
-@dataclasses.dataclass(slots=True, frozen=True)
-class LiquidityRangeCacheValue:
-    """
-    Cached result of a complete liquidity range consumption.
-    """
-
-    amount_in: int
-    amount_out: int
-    fee_amount: int
-    price_end: SqrtPriceX96
-    amount_required: int  # Total amount needed to consume this range
-
-
-@dataclasses.dataclass(slots=True, frozen=True)
 class ProtocolFee:
+    """ProtocolFee class."""
+
     zero_for_one: int
     one_for_zero: int
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class Slot0:
+    """Slot0 class."""
+
     sqrt_price_x96: int
     tick: int
     protocol_fee: ProtocolFee
@@ -169,6 +121,8 @@ NATIVE_CURRENCY_ADDRESS = ZERO_ADDRESS
 
 
 class Hooks(Enum):
+    """Hooks class."""
+
     # ref: https://github.com/Uniswap/v4-core/blob/main/src/libraries/Hooks.sol
     BEFORE_INITIALIZE = 1 << 13
     AFTER_INITIALIZE = 1 << 12
@@ -186,52 +140,34 @@ class Hooks(Enum):
     AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA = 1 << 0
 
 
-def get_pool_from_database(
-    pool_hash: HexBytes,
-    pool_manager_address: ChecksumAddress,
-    chain_id: int,
-    session: Session | scoped_session[Session] = db_session,
-) -> AbstractUniswapV4Pool | None:
-    pool_manager_in_db = session.scalar(
-        select(PoolManagerTable).where(
-            PoolManagerTable.address == pool_manager_address,
-            PoolManagerTable.chain == chain_id,
-        )
-    )
-    if pool_manager_in_db is None:
-        return None
+class UniswapV4Pool(
+    PublisherMixin,
+    V4PoolState,
+    UniswapV4PoolCalc,
+    AbstractLiquidityPool,
+):
+    """A Uniswap V4 concentrated-liquidity pool companion over a ``PyLiquidityPool`` handle.
 
-    return session.scalar(
-        select(UniswapV4PoolTable).where(
-            UniswapV4PoolTable.pool_hash == pool_hash.to_0x_hex(),
-            UniswapV4PoolTable.manager.has(id=pool_manager_in_db.id),
-        )
-    )
+    Rust owns the mutable state (scalars + tick data + reorg journal) as
+    ``V4PoolState``; this companion reads it through ``self._py_pool`` (one
+    atomic ``snapshot_v3()`` for scalars — already V3/V4-generic via
+    ``get_v3_or_v4_pool`` — + ``tick_data_snapshot()`` /
+    ``tick_bitmap_snapshot()`` for the tick maps) and delegates
+    ``external_update`` (Swap) / ``update_liquidity_map`` (ModifyLiquidity) /
+    ``update_tick_data`` (sparse-map backfill) / discard / restore to the
+    handle. V4-specific identity (pool_id, pool_manager, pool_key, hooks,
+    protocol_fee, lp_fee, state_view_address) stays Python-side — matches V3.
 
+    Construct via the V4 builder (which registers in Rust and hands the handle
+    here); tests use ``make_v4_pool``.
 
-@dataclasses.dataclass(slots=True)
-class SwapState:
-    amount_specified_remaining: int
-    amount_calculated: int
-    sqrt_price_x96: int
-    tick: int
-    liquidity: int
+    Hook admission floor: pools with amount-modifying hooks (`hook_flags & 0xCC
+    != 0`) or dynamic fees (`fee == 0x100000`) are rejected in Rust
+    (`BotState::register_v4_pool`), surfaced at `PyBot.register_v4_pool` as
+    typed exceptions — so this companion never holds a hooked/dynamic-fee pool.
+    """
 
-
-@dataclasses.dataclass(slots=True)
-class StepComputations:
-    sqrt_price_start_x96: int = 0
-    sqrt_price_next_x96: int = 0
-    tick_next: int = 0
-    initialized: bool = False
-    amount_in: int = 0
-    amount_out: int = 0
-    fee_amount: int = 0
-    fee_growth_global_x128: int | None = None  # unused
-
-
-class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
-    _state_cache: deque[UniswapV4PoolState]
+    type PoolState = UniswapV4PoolState
 
     SLOT0_STRUCT_TYPES = (
         "uint160",  # sqrtPriceX96
@@ -244,118 +180,121 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         "int128",  # liquidityNet
     )
 
-    FEE_DENOMINATOR = 1_000_000
+    # Instance attributes set in `_from_py_pool` (the only construction seam).
+    _py_pool: PyLiquidityPool
+    _pool_id: HexBytes
+    _pool_manager_address: ChecksumAddress
+    hook_address: ChecksumAddress
+    _state_view_address: ChecksumAddress
+    active_hooks: frozenset["Hooks"]
+    _token0: Erc20Token
+    _token1: Erc20Token
+    _pool_key: UniswapV4PoolKey
+    name: str
+    protocol_fee: ProtocolFee
+    lp_fee: int
+    _initial_state_block: int
+    _sparse_liquidity_map: bool
+    _bitmap_override: dict[int, Any]
+    _tick_data_fetcher: Any
+    _subscribers: WeakSet[Subscriber]
 
-    def __init__(
-        self,
-        *,
-        pool_id: bytes | str,
-        pool_manager_address: str,
-        state_view_address: str | None = None,
-        tokens: Sequence[str] | None = None,
-        fee: Pip | None = None,
-        tick_spacing: int | None = None,
-        hook_address: str | None = None,
-        chain_id: ChainId | None = None,
-        tick_data: dict[Tick, dict[str, Any] | UniswapV4LiquidityAtTick] | None = None,
-        tick_bitmap: dict[BitmapWord, dict[str, Any] | UniswapV4BitmapAtWord] | None = None,
-        state_block: BlockNumber | int | None = None,
-        silent: bool = False,
-        state_cache_depth: int = 8,
-    ) -> None:
-        self._chain_id: Final[int] = (
-            chain_id if chain_id is not None else connection_manager.default_chain_id
+    def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+        """Direct construction is forbidden.
+
+        ``UniswapV4Pool`` is a Python companion over a Rust-owned
+        ``PyLiquidityPool`` handle. The handle can only be produced by
+        registering a pool in a ``PyBot`` — there is no way for a caller to
+        hand-build one. Use the registered entry points instead:
+
+        - Production: ``Bot.build_pool(address)``
+        - Tests: ``make_v4_pool(...)``
+
+        Both register the pool in Rust, obtain the ``PyLiquidityPool``
+        handle, and wrap it via :meth:`_from_py_pool` (mirroring Polars'
+        ``_from_pydf`` seam).
+
+        Raises:
+            TypeError: Always. Direct construction is not supported.
+
+        """
+        msg = (
+            f"{type(self).__name__} cannot be constructed directly. "
+            "Use Bot.build_pool(address) (production) or make_v4_pool(...) "
+            "(tests) to register the pool in Rust and obtain the "
+            "PyLiquidityPool handle to wrap."
         )
-        w3 = connection_manager.get_web3(self.chain_id)
-        state_block = state_block if state_block is not None else w3.eth.block_number
-        self._initial_state_block = state_block
+        raise TypeError(msg)
 
-        self._pool_manager_address = get_checksum_address(pool_manager_address)
+    @classmethod
+    def _from_py_pool(cls, py_pool: PyLiquidityPool) -> Self:
+        """Wrap a Rust-owned ``PyLiquidityPool`` handle as a Python companion.
 
-        pool_id = HexBytes(pool_id)
+        Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). The
+        handle is self-describing: every identity field (pool_manager,
+        pool_id, pool_key, hooks, tokens, fee, tick_spacing) is read off it
+        — no identity is passed as constructor args. Rust owns the mutable
+        state (slot0 + tick_data + reorg journal) as ``V4PoolState`` and the
+        immutable registration metadata as ``V4PoolIdentity``; this companion
+        reads both through ``self._py_pool``.
 
-        pool_from_db = get_pool_from_database(
-            pool_hash=pool_id,
-            pool_manager_address=self._pool_manager_address,
-            chain_id=self.chain_id,
-        )
-        if pool_from_db is not None:
-            currency0_address = pool_from_db.currency0.address
-            currency1_address = pool_from_db.currency1.address
-            self.hook_address = get_checksum_address(pool_from_db.hooks)
-            tick_spacing = pool_from_db.tick_spacing
-            assert pool_from_db.fee_currency0 == pool_from_db.fee_currency1
-            fee = pool_from_db.fee_currency0
-            state_view_address = pool_from_db.manager.state_view
-        else:
-            if state_view_address is None:
-                msg = (
-                    "A state view contract address must be provided for a pool not in the database."
-                )
-                raise DegenbotValueError(msg)
-            if fee is None:
-                msg = "A fee must be provided for a pool not in the database."
-                raise DegenbotValueError(msg)
-            if tick_spacing is None:
-                msg = "A tick spacing must be provided for a pool not in the database."
-                raise DegenbotValueError(msg)
-            if tokens is None:
-                msg = "Token addresses must be provided for a pool not in the database."
-                raise DegenbotValueError(msg)
+        Protocol fee / LP fee / state_view_address are builder-supplied
+        values the seam defaults; the builder overrides them after
+        ``_from_py_pool`` (matches V3's deployer/init_hash override).
 
-            currency0_address, currency1_address = sorted(
-                [get_checksum_address(token) for token in tokens],
-                key=lambda token: token.lower(),
+        Returns:
+            A ``cls`` instance wrapping ``py_pool``.
+
+        Raises:
+            DegenbotValueError: If the handle is not a V4-family pool.
+
+        """
+        self = cls.__new__(cls)
+        self._py_pool = py_pool
+
+        # Variant-family guard.
+        if py_pool.pool_family != "v4":
+            msg = (
+                "PyLiquidityPool handle is not a V4-family pool "
+                f"(got pool_family {py_pool.pool_family!r}); "
+                "UniswapV4Pool._from_py_pool requires a handle "
+                "registered via register_v4_pool"
             )
-            assert currency0_address != currency1_address
-            self.hook_address = (
-                get_checksum_address(hook_address) if hook_address is not None else ZERO_ADDRESS
-            )
+            raise DegenbotValueError(message=msg)
 
-        self._state_view_address = get_checksum_address(state_view_address)
-
-        token_manager = Erc20TokenManager(chain_id=self.chain_id)
-        self.token0: Final[Erc20Token] = token_manager.get_erc20token(
-            address=currency0_address,
-            silent=silent,
-        )
-        self.token1: Final[Erc20Token] = token_manager.get_erc20token(
-            address=currency1_address,
-            silent=silent,
-        )
-
-        self.active_hooks: frozenset[Hooks] = frozenset(
+        # Identity — all read off the handle (no shadow kwargs).
+        self._pool_id = HexBytes(bytes.fromhex(py_pool.pool_id_hex.removeprefix("0x")))
+        self._pool_manager_address = get_checksum_address(py_pool.pool_manager_address)
+        raw_hook = py_pool.hook_address
+        self.hook_address = get_checksum_address(raw_hook) if raw_hook else ZERO_ADDRESS
+        self._state_view_address = ZERO_ADDRESS
+        self.active_hooks = frozenset(
             hook for hook in Hooks if int(self.hook_address, 16) & hook.value != 0
         )
 
-        # Construct the PoolKey
+        py_token0 = py_pool.get_token0()
+        py_token1 = py_pool.get_token1()
+        if py_token0 is None or py_token1 is None:
+            msg = (
+                "pool tokens must be registered in the same Bot as the pool "
+                "(ADR-006): get_token0/get_token1 returned None"
+            )
+            raise DegenbotValueError(message=msg)
+        self._token0 = Erc20Token._from_py_token(py_token0)  # noqa: SLF001
+        self._token1 = Erc20Token._from_py_token(py_token1)  # noqa: SLF001
+
         self._pool_key = UniswapV4PoolKey(
-            currency0=self.token0.address,
-            currency1=self.token1.address,
-            fee=fee,
-            tick_spacing=tick_spacing,
+            currency0=self._token0.address,
+            currency1=self._token1.address,
+            fee=py_pool.fee,
+            tick_spacing=py_pool.tick_spacing,
             hooks=self.hook_address,
         )
 
-        self._pool_id: Final[HexBytes] = pool_id
-        self.name = f"{self.token0}-{self.token1} ({self.__class__.__name__}, id={self.pool_id.to_0x_hex()})"  # noqa:E501
-
-        try:
-            working_slot0, working_liquidity = self._get_state_values(
-                w3=w3, state_block=state_block
-            )
-            working_sqrt_price_x96 = working_slot0.sqrt_price_x96
-            working_tick = working_slot0.tick
-            self.lp_fee = working_slot0.lp_fee
-            self.protocol_fee = working_slot0.protocol_fee
-        except (ContractLogicError, DecodingError) as exc:
-            # Contracts differ slightly across Uniswap V3 forks, so decoding may fail. Catch this
-            # here and raise as a pool-specific exception
-            raise LiquidityPoolError(message="Could not decode contract data") from exc
-
+        # Verify pool ID — the handle's pool_id is authoritative (Rust-stored).
         assert self.pool_id == (
-            calculated_id := Web3.keccak(
-                eth_abi.abi.encode(
+            calculated_id := keccak256(
+                encode(
                     types=["address", "address", "uint24", "int24", "address"],
                     args=[
                         self.pool_key.currency0,
@@ -364,509 +303,80 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
                         self.pool_key.tick_spacing,
                         self.pool_key.hooks,
                     ],
-                )
+                ),
             )
         ), (
-            f"Supplied pool ID {self.pool_id.to_0x_hex()} does not match calculated ID {calculated_id.to_0x_hex()}, {self.pool_key=}"  # noqa
+            f"Supplied pool ID {self.pool_id.to_0x_hex()} does not match calculated ID {calculated_id.to_0x_hex()}, {self.pool_key=}"  # noqa:E501
         )
 
-        # If liquidity info was not provided, treat the mapping as sparse
-        self.sparse_liquidity_map = tick_bitmap is None or tick_data is None
+        self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, id={self.pool_id.to_0x_hex()})"  # noqa:E501
 
-        working_tick_bitmap = {}
-        working_tick_data = {}
+        # Protocol fee / LP fee / initial state block — builder-supplied values
+        # the seam defaults; the builder overrides after _from_py_pool.
+        self.protocol_fee = ProtocolFee(zero_for_one=0, one_for_zero=0)
+        self.lp_fee = self.pool_key.fee
+        self._initial_state_block = self._py_pool.update_block
 
-        if tick_bitmap is not None:
-            # transform dict to UniswapV4BitmapAtWord
-            working_tick_bitmap.update({
-                int(word): (
-                    UniswapV4BitmapAtWord(**bitmap_at_word)
-                    if not isinstance(
-                        bitmap_at_word,
-                        UniswapV4BitmapAtWord,
-                    )
-                    else bitmap_at_word
-                )
-                for word, bitmap_at_word in tick_bitmap.items()
-            })
+        self._sparse_liquidity_map = len(self._py_pool.tick_data_snapshot()) == 0
 
-        if tick_data is not None:
-            working_tick_data.update({
-                int(tick): (
-                    # transform dict to UniswapV4LiquidityAtTick
-                    UniswapV4LiquidityAtTick(**liquidity_at_tick)
-                    if not isinstance(
-                        liquidity_at_tick,
-                        UniswapV4LiquidityAtTick,
-                    )
-                    else liquidity_at_tick
-                )
-                for tick, liquidity_at_tick in tick_data.items()
-            })
-
-        if tick_bitmap is None and tick_data is None:
-            word, _ = get_tick_word_and_bit_position(
-                tick=working_tick, tick_spacing=self.tick_spacing
-            )
-            self._fetch_and_populate_initialized_ticks(
-                word_position=word,
-                tick_bitmap=working_tick_bitmap,
-                tick_data=working_tick_data,
-                block_number=state_block,
-            )
-
-        initial_state = UniswapV4PoolState(
-            id=self.pool_id,
-            address=self._pool_manager_address,
-            liquidity=working_liquidity,
-            sqrt_price_x96=working_sqrt_price_x96,
-            tick=working_tick,
-            tick_bitmap=working_tick_bitmap,
-            tick_data=working_tick_data,
-            block=state_block,
-        )
-        self._state_cache = deque(maxlen=max(1, state_cache_depth))
-        self._state_cache.append(initial_state)
-        self._state_lock = Lock()
-
-        # Liquidity range consumption cache
-        self._swap_step_cache: dict[LiquidityRangeCacheKey, LiquidityRangeCacheValue] = {}
-        self._swap_step_cache_lock = Lock()
-
-        pool_registry.add(
-            pool=self,
-            chain_id=self.chain_id,
-            pool_address=self.address,
-            pool_id=self.pool_id,
-        )
-
-        self._subscribers: WeakSet[Subscriber] = WeakSet()
-
-        if not silent:  # pragma: no branch
-            logger.info(self.name)
-            logger.info(f"• ID: {self.pool_id.to_0x_hex()}")
-            logger.info(f"• Token 0: {self.token0}")
-            logger.info(f"• Token 1: {self.token1}")
-            logger.info(f"• Liquidity: {self.liquidity}")
-            logger.info(f"• SqrtPrice: {self.sqrt_price_x96}")
-            logger.info(f"• Tick: {self.tick}")
+        self._bitmap_override = {}
+        self._tick_data_fetcher = None
+        self._subscribers = WeakSet()
+        return self
 
     def __eq__(self, other: object) -> bool:
+        """Check equality with another object.
+
+        Returns:
+            True if the other object is the same pool, False otherwise.
+
+        """
         if isinstance(other, type(self)):
-            return self.address == other.address and self.pool_id == other.pool_id
-        return super().__eq__(other)
+            return self._pool_id == other.pool_id
+        return NotImplemented
 
     def __hash__(self) -> int:
-        return hash(HexBytes(self.address) + self.pool_id)
+        """Hash.
 
-    def __getstate__(self) -> dict[str, Any]:
-        # Remove objects that cannot be pickled and are unnecessary to perform
-        # the calculation
-        copied_attributes: set[str] = set()
-        dropped_attributes = (
-            "_state_lock",
-            "_subscribers",
-            "_swap_step_cache_lock",
-        )
+        Returns:
+            The hash of the pool ID.
 
-        with self._state_lock:
-            return {
-                k: (v.copy() if k in copied_attributes else v)
-                for k, v in self.__dict__.items()
-                if k not in dropped_attributes
-            }
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        state["_state_lock"] = Lock()
-        state["_swap_step_cache_lock"] = Lock()
-        self.__dict__ = state
+        """
+        return hash(self._pool_id)
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f"{self.__class__.__name__}(pool_id={self.pool_id.to_0x_hex()},  token0={self.token0}, token1={self.token1}, fee={self.fee}, tick spacing={self.tick_spacing})"  # noqa:E501
+        """Return the canonical string representation.
+
+        Returns:
+            The string representation of the pool.
+
+        """
+        return f"{self.__class__.__name__}(id={self.pool_id.to_0x_hex()}, token0={self._token0}, token1={self._token1}, fee={self.fee}, tick spacing={self.tick_spacing})"  # noqa:E501
 
     def __str__(self) -> str:
+        """Return the canonical string representation.
+
+        Returns:
+            The pool name string.
+
+        """
         return self.name
-
-    def _fetch_and_populate_initialized_ticks(
-        self,
-        word_position: int,
-        tick_bitmap: InitializedTickMap,
-        tick_data: LiquidityMap,
-        block_number: BlockNumber | None = None,
-    ) -> None:
-        """
-        Update the supplied tick bitmap with initialized tick values within a specified word
-        position. A word is divided into 256 ticks, spaced at a fixed interval.
-        """
-
-        w3 = connection_manager.get_web3(self.chain_id)
-
-        if block_number is None:
-            block_number = w3.eth.get_block_number()
-
-        working_tick_bitmap = 0
-        working_tick_data: list[tuple[Tick, LiquidityGross, LiquidityNet]] = []
-        working_tick_bitmap = self.get_tick_bitmap_at_word(
-            w3=w3,
-            word_position=word_position,
-            block_identifier=block_number,
-        )
-        if working_tick_bitmap != 0:
-            working_tick_data = self.get_populated_ticks_in_word(
-                w3=w3,
-                word_position=word_position,
-                block_identifier=block_number,
-            )
-
-        tick_bitmap[word_position] = UniswapV4BitmapAtWord(
-            bitmap=working_tick_bitmap,
-            block=block_number,
-        )
-        for tick, liquidity_gross, liquidity_net in working_tick_data:
-            tick_data[tick] = UniswapV4LiquidityAtTick(
-                liquidity_net=liquidity_net,
-                liquidity_gross=liquidity_gross,
-                block=block_number,
-            )
-
-    def _get_state_values(
-        self,
-        w3: Web3,
-        state_block: BlockNumber,
-    ) -> tuple[Slot0, Liquidity]:
-        with w3.batch_requests() as batch:
-            batch.add(
-                # This call uses a specific block so the mutable state values are consistent
-                w3.eth.call(
-                    transaction=TxParams(
-                        to=self._state_view_address,
-                        data=encode_function_calldata(
-                            function_prototype="getSlot0(bytes32)",
-                            function_arguments=[self.pool_id],
-                        ),
-                    ),
-                    block_identifier=state_block,
-                )
-            )
-            batch.add(
-                # This call uses a specific block so the mutable state values are consistent
-                w3.eth.call(
-                    transaction=TxParams(
-                        to=self._state_view_address,
-                        data=encode_function_calldata(
-                            function_prototype="getLiquidity(bytes32)",
-                            function_arguments=[self.pool_id],
-                        ),
-                    ),
-                    block_identifier=state_block,
-                )
-            )
-
-            slot0_result, liquidity_result = cast(
-                "tuple[HexBytes, ...]",
-                batch.execute(),
-            )
-
-        price, tick, protocol_fee, lp_fee = cast(
-            "tuple[int, ...]",
-            eth_abi.abi.decode(types=self.SLOT0_STRUCT_TYPES, data=slot0_result),
-        )
-
-        (liquidity,) = cast(
-            "tuple[int]",
-            eth_abi.abi.decode(types=["uint256"], data=liquidity_result),
-        )
-
-        # Extract the two fees (uint12) from the close-packed uint24 protocol fee
-        # ref: https://github.com/Uniswap/v4-core/blob/main/src/types/Slot0.sol
-        protocol_fee_one_to_zero, protocol_fee_zero_to_one = (
-            protocol_fee >> 12,  # discard the lower 12 bits by shifting
-            protocol_fee & 0xFFF,  # mask to keep only the lower 12 bits
-        )
-
-        return (
-            Slot0(
-                sqrt_price_x96=price,
-                tick=tick,
-                protocol_fee=ProtocolFee(
-                    one_for_zero=protocol_fee_one_to_zero,
-                    zero_for_one=protocol_fee_zero_to_one,
-                ),
-                lp_fee=lp_fee,
-            ),
-            liquidity,
-        )
 
     @staticmethod
     def _calculate_swap_fee(
         protocol_fee: int,
         lp_fee: int,
-    ) -> SwapFee:
+    ) -> Pip:
+        """Calculate combined swap fee from protocol + LP fee.
+
+        Returns:
+            The combined fee in pips.
+
+        """
         protocol_fee &= 0xFFF
         lp_fee &= 0xFFFFFF
         numerator = protocol_fee * lp_fee
         return (protocol_fee + lp_fee) - (numerator // PIPS_DENOMINATOR)
-
-    def _calculate_swap(
-        self,
-        *,
-        zero_for_one: bool,
-        amount_specified: int,
-        sqrt_price_x96_limit: int,
-        override_state: UniswapV4PoolState | None = None,
-    ) -> tuple[SwapDelta, FeeToProtocol, SwapFee, SwapResult]:
-        """
-        This function is ported and adapted from the swap() function implemented by the Pool.sol
-        library contract.
-
-        ref: https://github.com/Uniswap/v4-core/blob/main/src/libraries/Pool.sol
-
-        Returns a tuple with amounts and final pool state values for a successful swap:
-        (amount0, amount1, sqrt_price_x96, liquidity, tick)
-
-        A positive amount indicates the quantity available for withdrawal by the swapper,
-        and a negative amount indicates the deposit required.
-
-        This method will fetch missing liquidity data as needed, but it will be discarded to avoid
-        race conditions.
-        """
-
-        if override_state is not None:
-            liquidity_start = override_state.liquidity
-            sqrt_price_x96_start = override_state.sqrt_price_x96
-            tick_start = override_state.tick
-            tick_bitmap_temp = override_state.tick_bitmap
-            tick_data_temp = override_state.tick_data
-        else:
-            liquidity_start = self.liquidity
-            sqrt_price_x96_start = self.sqrt_price_x96
-            tick_start = self.tick
-            tick_bitmap_temp = self.tick_bitmap
-            tick_data_temp = self.tick_data
-
-        protocol_fee = (
-            self.protocol_fee.zero_for_one if zero_for_one else self.protocol_fee.one_for_zero
-        )
-
-        assert liquidity_start >= 0
-
-        amount_specified_remaining = amount_specified
-        amount_calculated = 0
-        result: Final[SwapResult] = SwapResult(
-            sqrt_price_x96=sqrt_price_x96_start,
-            tick=tick_start,
-            liquidity=liquidity_start,
-        )
-
-        lp_fee = self.lp_fee
-        swap_fee = lp_fee if protocol_fee == 0 else self._calculate_swap_fee(protocol_fee, lp_fee)
-
-        # a swap fee totaling MAX_SWAP_FEE (100%) makes exact output swaps impossible since the
-        # input is entirely consumed by the fee
-        if swap_fee >= MAX_SWAP_FEE and amount_specified > 0:  # exact output
-            raise EVMRevertError(error="InvalidFeeForExactOut")
-
-        # swapFee is the pool's fee in pips (LP fee + protocol fee)
-        # when the amount swapped is 0, there is no protocolFee applied and the fee amount paid to
-        # the protocol is set to 0
-        if amount_specified == 0:
-            return (
-                SwapDelta(currency0=0, currency1=0),
-                0,
-                swap_fee,
-                result,
-            )
-
-        if zero_for_one:
-            if sqrt_price_x96_limit >= sqrt_price_x96_start:
-                raise EVMRevertError(error="PriceLimitAlreadyExceeded")
-            # Swaps can never occur at MIN_TICK, only at MIN_TICK + 1, except at initialization of
-            # a pool. Under certain circumstances outlined below, the tick will preemptively reach
-            # MIN_TICK without swapping there
-            if sqrt_price_x96_limit <= MIN_SQRT_PRICE:
-                raise EVMRevertError(error="PriceLimitOutOfBounds")
-        else:
-            if sqrt_price_x96_limit <= sqrt_price_x96_start:
-                raise EVMRevertError(error="PriceLimitAlreadyExceeded")
-            if sqrt_price_x96_limit >= MAX_SQRT_PRICE:
-                raise EVMRevertError(error="PriceLimitOutOfBounds")
-
-        step = StepComputations()
-
-        if not self.sparse_liquidity_map:
-            # The liquidity mapping is complete. Optimize loop by building a generator that yields
-            # ticks and initialization status along the swap path
-            ticks_along_swap_path = gen_ticks(
-                tick_data=tick_data_temp,
-                starting_tick=tick_start,
-                tick_spacing=self.tick_spacing,
-                less_than_or_equal=zero_for_one,
-            )
-
-        while not (
-            amount_specified_remaining == 0 or result.sqrt_price_x96 == sqrt_price_x96_limit
-        ):
-            step.sqrt_price_start_x96 = result.sqrt_price_x96
-
-            if not self.sparse_liquidity_map:
-                step.tick_next, step.initialized = next(ticks_along_swap_path)
-            else:
-                try:
-                    step.tick_next, step.initialized = next_initialized_tick_within_one_word(
-                        tick_bitmap=tick_bitmap_temp,
-                        tick_data=tick_data_temp,
-                        tick=result.tick,
-                        tick_spacing=self.tick_spacing,
-                        less_than_or_equal=zero_for_one,
-                    )
-                except LiquidityMapWordMissing as exc:
-                    missing_word = exc.word
-                    self._fetch_and_populate_initialized_ticks(
-                        word_position=missing_word,
-                        tick_bitmap=tick_bitmap_temp,
-                        tick_data=tick_data_temp,
-                        block_number=self.update_block,
-                    )
-                    continue
-
-            # Ensure that we do not overshoot the min/max tick, as the tick bitmap is not aware of
-            # these bounds
-            step.tick_next = (
-                max(MIN_TICK, step.tick_next)  # descending ticks
-                if zero_for_one
-                else min(MAX_TICK, step.tick_next)  # ascending ticks
-            )
-            step.sqrt_price_next_x96 = get_sqrt_price_at_tick(step.tick_next)
-
-            # Determine the current liquidity range boundaries
-            if zero_for_one:
-                tick_lower, tick_upper = (
-                    step.tick_next,
-                    step.tick_next + self.tick_spacing,
-                )
-            else:
-                tick_lower, tick_upper = (
-                    step.tick_next - self.tick_spacing,
-                    step.tick_next,
-                )
-            assert tick_lower < tick_upper, f"{tick_lower} should be < {tick_upper}"
-
-            exact_input = amount_specified < 0
-
-            cached_result = self._swap_step_cache.get(
-                LiquidityRangeCacheKey(
-                    exact_input=exact_input,
-                    tick_lower=tick_lower,
-                    tick_upper=tick_upper,
-                    liquidity=result.liquidity,
-                    zero_for_one=zero_for_one,
-                    price_start=step.sqrt_price_start_x96,
-                    price_end=step.sqrt_price_next_x96,
-                )
-            )
-
-            if cached_result and abs(amount_specified_remaining) >= cached_result.amount_required:
-                step.amount_in = cached_result.amount_in
-                step.amount_out = cached_result.amount_out
-                step.fee_amount = cached_result.fee_amount
-                result.sqrt_price_x96 = cached_result.price_end
-            else:
-                # compute values to swap to the target tick, price limit, or point where
-                # input/output amount is exhausted
-                result.sqrt_price_x96, step.amount_in, step.amount_out, step.fee_amount = (
-                    compute_swap_step(
-                        sqrt_ratio_x96_current=result.sqrt_price_x96,
-                        sqrt_ratio_x96_target=get_sqrt_price_target(
-                            zero_for_one=zero_for_one,
-                            sqrt_price_next_x96=step.sqrt_price_next_x96,
-                            sqrt_price_limit_x96=sqrt_price_x96_limit,
-                        ),
-                        liquidity=result.liquidity,
-                        amount_remaining=amount_specified_remaining,
-                        fee_pips=swap_fee,
-                    )
-                )
-
-            if exact_input:
-                if not (MIN_INT256 <= step.amount_in + step.fee_amount <= MAX_INT256):
-                    raise EVMRevertError(error="SafeCastOverflow")
-                if not (MIN_INT256 <= step.amount_out <= MAX_INT256):
-                    raise EVMRevertError(error="SafeCastOverflow")
-                amount_specified_remaining += step.amount_in + step.fee_amount
-                amount_calculated += step.amount_out
-            else:
-                if not (MIN_INT256 <= step.amount_out <= MAX_INT256):
-                    raise EVMRevertError(error="SafeCastOverflow")
-                if not (MIN_INT256 <= step.amount_in + step.fee_amount <= MAX_INT256):
-                    raise EVMRevertError(error="SafeCastOverflow")
-                amount_specified_remaining -= step.amount_out
-                amount_calculated -= step.amount_in + step.fee_amount
-
-            if protocol_fee > 0:
-                # step.amountIn does not include the swap fee, as it's already been taken from it,
-                # so add it back to get the total amountIn and use that to calculate the amount of
-                # fees owed to the protocol cannot overflow due to limits on the size of protocolFee
-                # and params.amountSpecified.
-                # This rounds down to favor LPs over the protocol
-                delta = (
-                    step.fee_amount  # lp fee is 0, so the entire fee is owed to the protocol
-                    if (swap_fee == protocol_fee)
-                    else (step.amount_in + step.fee_amount) * protocol_fee // PIPS_DENOMINATOR
-                )
-                # subtract it from the total fee and add it to the protocol fee
-                step.fee_amount -= delta
-
-            # Shift tick if we reached the next price, and preemptively decrement for zeroForOne
-            # swaps to tickNext - 1. If the swap doesn't continue (if amountRemaining == 0 or
-            # sqrtPriceLimit is met), slot0.tick will be 1 less than
-            # getTickAtSqrtPrice(slot0.sqrtPrice). This doesn't affect swaps, but donation calls
-            # should verify both price and tick to reward the correct LPs.
-            if result.sqrt_price_x96 == step.sqrt_price_next_x96:
-                # Cache the step if it consumed the liquidity range
-                if not cached_result:
-                    self._cache_swap_step(
-                        tick_lower=tick_lower,
-                        tick_upper=tick_upper,
-                        liquidity=result.liquidity,
-                        zero_for_one=zero_for_one,
-                        exact_input=exact_input,
-                        amount_in=step.amount_in,
-                        amount_out=step.amount_out,
-                        fee_amount=step.fee_amount,
-                        price_start=step.sqrt_price_start_x96,
-                        price_end=result.sqrt_price_x96,
-                    )
-                # If the tick is initialized, adjust the liquidity range
-                if step.initialized:
-                    liquidity_net_at_next_tick = tick_data_temp[step.tick_next].liquidity_net
-                    result.liquidity += (
-                        -liquidity_net_at_next_tick if zero_for_one else liquidity_net_at_next_tick
-                    )
-                result.tick = step.tick_next - 1 if zero_for_one else step.tick_next
-            elif result.sqrt_price_x96 != step.sqrt_price_start_x96:
-                # Recompute unless we're on a lower tick boundary (i.e. already transitioned ticks),
-                # and haven't moved
-                result.tick = get_tick_at_sqrt_price(result.sqrt_price_x96)
-
-            assert result.liquidity >= 0
-
-        if zero_for_one != (amount_specified < 0):
-            # currency1 is swapped in
-            swap_delta = SwapDelta(
-                currency0=amount_calculated,
-                currency1=amount_specified - amount_specified_remaining,
-            )
-        else:
-            swap_delta = SwapDelta(
-                currency0=amount_specified - amount_specified_remaining,
-                currency1=amount_calculated,
-            )
-
-        return swap_delta, protocol_fee, swap_fee, result
-
-    def _notify_subscribers(self: Publisher, message: AbstractPublisherMessage) -> None:
-        for subscriber in self._subscribers:
-            subscriber.notify(publisher=self, message=message)
 
     def calculate_tokens_in_from_tokens_out(
         self,
@@ -874,22 +384,88 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         token_out_quantity: int,
         override_state: UniswapV4PoolState | None = None,
     ) -> int:
+        """Calculate tokens in from tokens out.
+
+        Returns:
+            The required input token amount.
+
+        Raises:
+            DegenbotValueError: If token_out is not held by this pool.
+            HookedPoolResult: If the pool has active hooks that affect the swap.
+            IncompleteSwap: If the swap cannot fulfill the full output amount.
+            LiquidityPoolError: If the simulated execution reverts.
+
+        """
         if token_out not in self.tokens:  # pragma: no cover
             raise DegenbotValueError(message="token_out not found!")
 
-        zero_for_one = token_out == self.token1
+        zero_for_one = token_out == self._token1
 
-        try:
-            swap_delta, *_ = self._calculate_swap(
+        # ADR-005 slice 4: mainline exact-output swap (no override) delegates to
+        # the Rust exact-output fetch+retry seam. The V4 exact-output sign
+        # convention (amountSpecified > 0) is handled in the Rust core; a custom
+        # limit threads through (the seam honours it). The override path routes
+        # to the Rust exact-output override seam
+        # (``simulate_exact_output_swap_with_override`` — see below).
+        if override_state is None:
+            outcome = self._py_pool.simulate_exact_output_swap_with_fetch(
                 zero_for_one=zero_for_one,
-                amount_specified=token_out_quantity,
-                sqrt_price_x96_limit=MIN_SQRT_PRICE + 1 if zero_for_one else MAX_SQRT_PRICE - 1,
-                override_state=override_state,
+                amount_out=token_out_quantity,
+                block=self.update_block,
             )
-        except EVMRevertError as e:  # pragma: no cover
-            raise LiquidityPoolError(message=f"Simulated execution reverted: {e}") from e
+            if outcome is None:
+                raise LiquidityPoolError(
+                    message=(
+                        f"Simulated execution could not compute. "
+                        f"pool={self.address} zfo={zero_for_one} "
+                        f"amount_out={token_out_quantity}"
+                    ),
+                )
+            rust_amount0, rust_amount1 = int(outcome[0]), int(outcome[1])
+            # The output side is the requested token_out; the input side is the
+            # required token_in (opposing amount). zfo: token1 out / token0 in;
+            # ofz: token0 out / token1 in.
+            rust_amount_out = rust_amount1 if zero_for_one else rust_amount0
+            if rust_amount_out < token_out_quantity:
+                rust_amount_in = rust_amount0 if zero_for_one else rust_amount1
+                raise IncompleteSwap(
+                    amount_in=rust_amount_in,
+                    amount_out=rust_amount_out,
+                )
+            return rust_amount0 if zero_for_one else rust_amount1
 
-        assert swap_delta.amount_out <= token_out_quantity
+        # ADR-005 slice 4: exact-output swap over an override (arbitrage
+        # hypothetical) delegates to the Rust fetch-enhanced exact-output
+        # override seam. HookedPoolResult / IncompleteSwap stay in Python.
+        outcome = self._py_pool.simulate_exact_output_swap_with_override(
+            zero_for_one=zero_for_one,
+            amount_out=token_out_quantity,
+            block=self.update_block,
+            override_sqrt_price_x96=override_state.sqrt_price_x96,
+            override_liquidity=override_state.liquidity,
+            override_tick=override_state.tick,
+            override_tick_data={
+                tick: (la.liquidity_gross, la.liquidity_net, la.block)
+                for tick, la in override_state.tick_data.items()
+            },
+            sqrt_price_limit_x96=None,
+        )
+        if outcome is None:
+            raise LiquidityPoolError(
+                message=(
+                    f"Simulated execution could not compute. "
+                    f"pool={self.address} zfo={zero_for_one} "
+                    f"amount_out={token_out_quantity} override"
+                ),
+            )
+        rust_amount0, rust_amount1 = int(outcome[0]), int(outcome[1])
+        # Exact-output: output side is the requested token_out; input side is
+        # the required token_in. ofz (zfo=False): token0 out / token1 in.
+        # zfo: token1 out / token0 in.
+        amount_out = rust_amount1 if zero_for_one else rust_amount0
+        amount_in = rust_amount0 if zero_for_one else rust_amount1
+
+        assert amount_out <= token_out_quantity
 
         if conflicting_hooks := (
             {
@@ -900,19 +476,19 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             }
             & self.active_hooks
         ):
-            raise PossibleInaccurateResult(
-                amount_in=swap_delta.amount_in,
-                amount_out=swap_delta.amount_out,
+            raise HookedPoolResult(
+                amount_in=amount_in,
+                amount_out=amount_out,
                 hooks=conflicting_hooks,
             )
 
-        if swap_delta.amount_out < token_out_quantity:
+        if amount_out < token_out_quantity:
             raise IncompleteSwap(
-                amount_in=swap_delta.amount_in,
-                amount_out=swap_delta.amount_out,
+                amount_in=amount_in,
+                amount_out=amount_out,
             )
 
-        return swap_delta.amount_in
+        return amount_in
 
     def calculate_tokens_out_from_tokens_in(
         self,
@@ -920,22 +496,77 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         token_in_quantity: int,
         override_state: UniswapV4PoolState | None = None,
     ) -> int:
+        """Calculate tokens out from tokens in.
+
+        Returns:
+            The expected output token amount.
+
+        Raises:
+            DegenbotValueError: If token_in is not held by this pool.
+            HookedPoolResult: If the pool has active hooks that affect the swap.
+            IncompleteSwap: If the swap cannot fulfill the full input amount.
+            LiquidityPoolError: If the simulated execution reverts.
+
+        """
         if token_in not in self.tokens:  # pragma: no cover
             raise DegenbotValueError(message="token_in not found!")
 
-        zero_for_one = token_in == self.token0
+        zero_for_one = token_in == self._token0
 
-        try:
-            swap_delta, *_ = self._calculate_swap(
+        # ADR-005 slice 3b: mainline exact-input swap (no override, no custom
+        # price limit) delegates to the Rust fetch+retry seam. The sparse-path
+        # crossing-swap divergence (ELSE-branch miss check in `v4_simulate_swap`)
+        # is fixed — `test_cached_calculations` was RED on seed 2, now GREEN
+        # across seeds. The override path routes to the Rust override seam
+        # (``simulate_swap_with_override`` — see below); a custom limit threads
+        # through both paths (the seam honours it).
+        if override_state is None:
+            outcome = self._py_pool.simulate_swap_with_fetch(
                 zero_for_one=zero_for_one,
-                amount_specified=-token_in_quantity,
-                sqrt_price_x96_limit=MIN_SQRT_PRICE + 1 if zero_for_one else MAX_SQRT_PRICE - 1,
-                override_state=override_state,
+                amount_in=token_in_quantity,
+                block=self.update_block,
             )
-        except EVMRevertError as e:  # pragma: no cover
-            raise LiquidityPoolError(message=f"Simulated execution reverted: {e}") from e
+            if outcome is None:
+                raise LiquidityPoolError(
+                    message=(
+                        f"Simulated execution could not compute. "
+                        f"pool={self.address} zfo={zero_for_one} "
+                        f"amount_in={token_in_quantity}"
+                    ),
+                )
+            rust_amount0, rust_amount1 = int(outcome[0]), int(outcome[1])
+            return rust_amount1 if zero_for_one else rust_amount0
 
-        assert swap_delta.amount_in <= token_in_quantity
+        # ADR-005 slice 4: exact-input swap over an override (arbitrage
+        # hypothetical) delegates to the Rust fetch-enhanced override seam.
+        # HookedPoolResult / IncompleteSwap stay in Python.
+        outcome = self._py_pool.simulate_swap_with_override(
+            zero_for_one=zero_for_one,
+            amount_in=token_in_quantity,
+            block=self.update_block,
+            override_sqrt_price_x96=override_state.sqrt_price_x96,
+            override_liquidity=override_state.liquidity,
+            override_tick=override_state.tick,
+            override_tick_data={
+                tick: (la.liquidity_gross, la.liquidity_net, la.block)
+                for tick, la in override_state.tick_data.items()
+            },
+            sqrt_price_limit_x96=None,
+        )
+        if outcome is None:
+            raise LiquidityPoolError(
+                message=(
+                    f"Simulated execution could not compute. "
+                    f"pool={self.address} zfo={zero_for_one} "
+                    f"amount_in={token_in_quantity} override"
+                ),
+            )
+        rust_amount0, rust_amount1 = int(outcome[0]), int(outcome[1])
+        # ofz (zfo=False): token1 in / token0 out. zfo: token0 in / token1 out.
+        amount_in = rust_amount0 if zero_for_one else rust_amount1
+        amount_out = rust_amount1 if zero_for_one else rust_amount0
+
+        assert amount_in <= token_in_quantity
 
         if conflicting_hooks := (
             {
@@ -946,259 +577,299 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
             }
             & self.active_hooks
         ):
-            raise PossibleInaccurateResult(
-                amount_in=swap_delta.amount_in,
-                amount_out=swap_delta.amount_out,
+            raise HookedPoolResult(
+                amount_in=amount_in,
+                amount_out=amount_out,
                 hooks=conflicting_hooks,
             )
 
-        if swap_delta.amount_in < token_in_quantity:
+        if amount_in < token_in_quantity:
             raise IncompleteSwap(
-                amount_in=swap_delta.amount_in,
-                amount_out=swap_delta.amount_out,
+                amount_in=amount_in,
+                amount_out=amount_out,
             )
 
-        return swap_delta.amount_out
-
-    def get_tick_bitmap_at_word(
-        self, w3: Web3, word_position: int, block_identifier: BlockIdentifier
-    ) -> int:
-        (bitmap_at_word,) = cast(
-            "tuple[int]",
-            raw_call(
-                w3=w3,
-                address=self._state_view_address,
-                calldata=encode_function_calldata(
-                    function_prototype="getTickBitmap(bytes32,int16)",
-                    function_arguments=[self.pool_id, word_position],
-                ),
-                return_types=["uint256"],
-                block_identifier=block_identifier,
-            ),
-        )
-        return bitmap_at_word
-
-    def get_populated_ticks_in_word(
-        self,
-        w3: Web3,
-        word_position: int,
-        block_identifier: BlockIdentifier,
-    ) -> list[tuple[Tick, LiquidityGross, LiquidityNet]]:
-        bitmap_at_word = self.get_tick_bitmap_at_word(
-            w3=w3, word_position=word_position, block_identifier=block_identifier
-        )
-
-        active_ticks = [
-            ((word_position << 8) + i) * self.tick_spacing
-            for i in range(256)
-            if bitmap_at_word & (1 << i) > 0
-        ]
-
-        with w3.batch_requests() as batch:
-            for tick in active_ticks:
-                batch.add(
-                    w3.eth.call(
-                        transaction=TxParams(
-                            to=self._state_view_address,
-                            data=encode_function_calldata(
-                                function_prototype="getTickLiquidity(bytes32,int24)",
-                                function_arguments=[self.pool_id, tick],
-                            ),
-                        ),
-                        block_identifier=block_identifier,
-                    )
-                )
-            results = cast(
-                "list[HexBytes]",
-                batch.execute(),
-            )
-
-        populated_ticks: list[tuple[Tick, LiquidityGross, LiquidityNet]] = []
-        for tick, result in zip(active_ticks, results, strict=True):
-            liquidity_gross, liquidity_net = eth_abi.abi.decode(
-                types=self.TICK_LIQUIDITY_STRUCT_TYPES,
-                data=result,
-            )
-            populated_ticks.append((tick, liquidity_gross, liquidity_net))
-
-        return populated_ticks
+        return amount_out
 
     @property
-    def address(self) -> ChecksumAddress:  # type: ignore[override]
+    def address(self) -> ChecksumAddress:
+        """Address.
+
+        Returns:
+            The pool manager address.
+
+        """
         return self._pool_manager_address
 
     @property
-    def chain_id(self) -> int:
-        return self._chain_id
-
-    @property
     def liquidity(self) -> int:
-        return self.state.liquidity
+        """Liquidity.
+
+        Returns:
+            The current active liquidity (from Rust via the handle).
+
+        """
+        return self._py_pool.liquidity
 
     @property
     def pool_id(self) -> HexBytes:
+        """Pool id.
+
+        Returns:
+            The pool ID bytes.
+
+        """
         return self._pool_id
 
     @property
     def pool_key(self) -> UniswapV4PoolKey:
+        """Pool key.
+
+        Returns:
+            The V4 pool key struct.
+
+        """
         return self._pool_key
 
     @property
     def sqrt_price_x96(self) -> int:
-        return self.state.sqrt_price_x96
+        """Sqrt price x96.
+
+        Returns:
+            The current sqrt price as a Q64.96 value (from Rust).
+
+        """
+        return self._py_pool.sqrt_price_x96
 
     @property
     def state(self) -> UniswapV4PoolState:
-        return self._state_cache[-1]
+        """State.
+
+        Returns:
+            The current pool state, built from one atomic Rust scalar snapshot
+            (``_py_pool.snapshot_v3()`` — V3/V4-generic — ) + the tick-map
+            snapshots.
+
+        Raises:
+            DegenbotValueError: If the pool is not registered in Rust.
+
+        """
+        snap = self._py_pool.snapshot_v3()
+        if snap is None:
+            msg = "No V4 pool state available (pool not registered in Rust)"
+            raise DegenbotValueError(message=msg)
+        sqrt_price_x96, liquidity, tick, block = snap
+        return self.PoolState.__value__(
+            id=self.pool_id,
+            address=self._pool_manager_address,
+            liquidity=liquidity,
+            sqrt_price_x96=sqrt_price_x96,
+            tick=tick,
+            tick_bitmap=self.tick_bitmap,
+            tick_data=self.tick_data,
+            block=block,
+        )
 
     @property
     def tick(self) -> int:
-        return self.state.tick
+        """Tick.
+
+        Returns:
+            The current tick (from Rust via the handle).
+
+        """
+        return self._py_pool.tick
 
     @property
     def tick_bitmap(self) -> InitializedTickMap:
-        return self.state.tick_bitmap.copy()
+        """Tick bitmap.
+
+        Returns a deep-copy snapshot of the Rust-side tick bitmap (built from
+        ``tick_data`` keys — Rust derives the bitmap, no separate store) MERGED
+        with the companion's verbatim ``_bitmap_override``. Mirrors the V3
+        companion.
+        """
+        raw = self._py_pool.tick_bitmap_snapshot()
+        result: dict[int, BitmapAtWord] = {
+            int(word): (
+                BitmapAtWord(bitmap=int(row[0]), block=int(row[1]))
+                if not isinstance(row, BitmapAtWord)
+                else row
+            )
+            for word, row in raw.items()
+        }
+        for word, bitmap_at_word in self._bitmap_override.items():
+            result[word] = bitmap_at_word  # noqa: PERF403
+        return result
 
     @property
     def tick_data(self) -> LiquidityMap:
-        return self.state.tick_data.copy()
+        """Tick data.
+
+        Returns a deep-copy snapshot of the Rust-side tick data (mirrors V3).
+        """
+        raw = self._py_pool.tick_data_snapshot()
+        return {
+            int(tick): (
+                LiquidityAtTick(
+                    liquidity_net=int(row[1]),
+                    liquidity_gross=int(row[0]),
+                    block=int(row[2]),
+                )
+                if not isinstance(row, LiquidityAtTick)
+                else row
+            )
+            for tick, row in raw.items()
+        }
 
     @property
     def tick_spacing(self) -> int:
+        """Tick spacing.
+
+        Returns:
+            The tick spacing for the pool (Python-side identity).
+
+        """
         return self.pool_key.tick_spacing
 
     @property
     def fee(self) -> int:
+        """Fee.
+
+        Returns:
+            The fee in pips (Python-side identity).
+
+        """
         return self.pool_key.fee
 
     @property
-    def tokens(self) -> tuple[Erc20Token, Erc20Token]:
-        return self.token0, self.token1
+    def update_block(self) -> BlockNumber:
+        """Update block.
+
+        Returns:
+            The block number of the most recent state update (from Rust).
+
+        """
+        return self._py_pool.update_block
 
     @property
-    def update_block(self) -> BlockNumber:
-        if TYPE_CHECKING:
-            assert self.state.block is not None
-        return self.state.block
+    def initial_state_block(self) -> int:
+        """Block number at which the pool's initial state was captured.
 
-    def swap_is_viable(
+        Returns:
+            The block number from construction (DB snapshot or RPC fetch).
+
+        """
+        return self._initial_state_block
+
+    def swap_is_viable(  # noqa: PLR6301
         self,
         state: UniswapV4PoolState,
-        vector: UniswapPoolSwapVector,
+        vector: UniswapPoolSwapVector,  # noqa: ARG002
     ) -> bool:
-        if self.sparse_liquidity_map:
-            # Liquidity cannot be checked with a sparse mapping, so default to True
-            return True
+        """Swap is viable.
 
-        if state.tick_data == {}:
-            # The pool has no liquidity
+        Returns:
+            True if a swap can proceed with the given state, False otherwise.
+
+        """
+        if state.liquidity == 0:
             return False
+        return state.sqrt_price_x96 > 1
 
-        if state.sqrt_price_x96 == 0:
-            # The pool is not initialized
-            assert state.tick_data == {}, (
-                f"Found pool @ {self.address} with liquidity positions, but price=0!"
-            )
-            return False
-
-        if (vector.zero_for_one is True and state.sqrt_price_x96 <= MIN_SQRT_PRICE + 1) or (
-            vector.zero_for_one is False and state.sqrt_price_x96 >= MAX_SQRT_PRICE - 1
-        ):
-            # The price has reached the min/max price, and the swap would drive it beyond
-            # that limit
-            return False
-
-        # ----------------------------------------------------------------------------------
-        # After this point, at least one liquidity position is assumed
-        # ----------------------------------------------------------------------------------
-        if vector.zero_for_one:
-            # A 0->1 swap will lower the price & tick, so pool viability can be
-            # determined by checking for a liquidity position starting below
-            # the current price
-            return get_sqrt_price_at_tick(min(state.tick_data)) < state.sqrt_price_x96
-        # A 1->0 swap will raise the price & tick. Check for a liquidity position
-        # above the current price, similar to the above comment.
-        return get_sqrt_price_at_tick(max(state.tick_data)) > state.sqrt_price_x96
-
-    def auto_update(
+    def update_tick_data(
         self,
-        block_number: BlockNumber | None = None,
-        *,
-        silent: bool = True,
+        tick_bitmap: dict[int, Any],
+        tick_data: dict[int, Any],
+        block: int,
     ) -> None:
+        """Apply updated tick bitmap and data from the tick data fetcher.
+
+        Delegates to ``PyLiquidityPool.update_tick_data`` (replaces the
+        Rust-side ``tick_data`` HashMap; scalars unchanged; ``update_block``
+        advances when newer). Records every word in ``tick_bitmap`` into
+        ``_bitmap_override``. Mirrors the V3 companion.
         """
-        Retrieves and records the current slot0 and liquidity state from the pool at the provided
-        block number, or the latest block if not provided.
+        normalized: dict[int, tuple[int, int, int]] = {}
+        for tick, info in tick_data.items():
+            if isinstance(info, LiquidityAtTick):
+                normalized[int(tick)] = (
+                    int(info.liquidity_gross),
+                    int(info.liquidity_net),
+                    int(info.block),
+                )
+            elif isinstance(info, dict):
+                normalized[int(tick)] = (
+                    int(info["liquidity_gross"]),
+                    int(info["liquidity_net"]),
+                    int(info.get("block", 0)),
+                )
+            else:
+                normalized[int(tick)] = (
+                    int(info[0]),
+                    int(info[1]),
+                    int(info[2]) if len(info) > 2 else block,  # noqa: PLR2004
+                )
+        self._py_pool.update_tick_data(tick_bitmap, normalized, block)
+        for word, bitmap_at_word in tick_bitmap.items():
+            if isinstance(bitmap_at_word, BitmapAtWord):
+                self._bitmap_override[int(word)] = bitmap_at_word
+            elif isinstance(bitmap_at_word, dict):
+                self._bitmap_override[int(word)] = BitmapAtWord(**bitmap_at_word)
+            else:
+                self._bitmap_override[int(word)] = bitmap_at_word
+        self._notify_subscribers(message=UniswapV4PoolStateUpdated(self.state))
+        # NOTE: ``_sparse_liquidity_map`` NOT flipped — fetcher's incremental
+        # backfill must keep the pool sparse. See V3 companion for rationale.
 
-        @dev this method uses a lock to guard state-modifying methods that might cause race
-        conditions when used with threads.
+    def _apply_fetched_tick_word(self, word: int, block: BlockNumber) -> bool:
+        """Fetch a tick-bitmap word via ``_tick_data_fetcher`` and merge it.
+
+        ADR-005 slice 3b: the fetcher RETURNS the word's ticks (return-data
+        contract — the Rust ``simulate_swap_with_fetch`` seam uses the same
+        callback). Merge them into the pool state via ``update_tick_data``;
+        the bitmap is derived from the tick_data keys (V3/V4 invariant), so no
+        verbatim bitmap value is needed.
+
+        Returns:
+            ``True`` if the fetch succeeded, ``False`` if no fetcher or the
+            fetch returned ``None``.
+
         """
-
-        with self._state_lock:
-            if block_number is not None and block_number < self.update_block:
-                raise LateUpdateError
-
-            w3 = connection_manager.get_web3(self.chain_id)
-            block_number = block_number if block_number is not None else w3.eth.get_block_number()
-
-            new_slot0, new_liquidity = self._get_state_values(w3=w3, state_block=block_number)
-            new_sqrt_price_x96 = new_slot0.sqrt_price_x96
-            new_tick = new_slot0.tick
-            self.lp_fee = new_slot0.lp_fee
-            self.protocol_fee = new_slot0.protocol_fee
-
-            if (
-                new_sqrt_price_x96 == self.sqrt_price_x96
-                and new_liquidity == self.liquidity
-                and self.tick == new_tick
-            ):
-                return
-
-            working_state = dataclasses.replace(
-                self.state,
-                liquidity=new_liquidity,
-                sqrt_price_x96=new_sqrt_price_x96,
-                tick=new_tick,
-                block=block_number,
-            )
-
-            if self.state.block == block_number:
-                self._state_cache.pop()
-            self._state_cache.append(working_state)
-
-            self._notify_subscribers(
-                message=UniswapV4PoolStateUpdated(working_state),
-            )
-
-            if not silent:  # pragma: no cover
-                logger.info(f"Liquidity: {self.liquidity}")
-                logger.info(f"SqrtPriceX96: {self.sqrt_price_x96}")
-                logger.info(f"Tick: {self.tick}")
+        if self._tick_data_fetcher is None:
+            return False
+        fetched = self._tick_data_fetcher(word, block)
+        if fetched is None:
+            return False
+        merged = {**self.tick_data, **fetched}
+        self.update_tick_data(
+            tick_bitmap={word: BitmapAtWord(bitmap=0, block=block)},
+            tick_data=merged,
+            block=block,
+        )
+        return True
 
     def external_update(
         self,
         update: UniswapV4PoolExternalUpdate,
     ) -> bool:
+        """Process a `UniswapV4PoolExternalUpdate` (Swap event).
+
+        Delegates the scalar write to ``PyLiquidityPool.apply_swap``. Mirrors
+        the V3 companion.
+
+        Returns:
+            True if any updated state value was recorded, False otherwise.
+
+        Raises:
+            ExternalUpdateError: If the update is for an invalid block.
+
         """
-        Process a `UniswapV3PoolExternalUpdate` with one or more of the following update types:
-            - `block_number`: int
-            - `tick`: int
-            - `liquidity`: int
-            - `sqrt_price_x96`: int
-
-        `block_number` is validated against the most recently recorded block prior to recording any
-        changes.
-
-        Returns a bool indicating whether any updated state value was recorded.
-
-        @dev This method uses a lock to guard state-modifying methods that might cause race
-        conditions when used with threads.
-        """
-
-        if update.block_number < self.update_block:
-            raise ExternalUpdateError(
-                message=f"Rejected update for block {update.block_number} in the past, current update block is {self.update_block}"  # noqa:E501
-            )
+        if (
+            update.block_number <= self._initial_state_block
+            or update.block_number < self.update_block
+        ):
+            raise ExternalUpdateError(message=f"Rejected update for block {update.block_number}")
 
         if (
             update.liquidity == self.liquidity
@@ -1207,355 +878,133 @@ class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
         ):
             return False
 
-        with self._state_lock:
-            state_block = update.block_number
-
-            working_state = dataclasses.replace(
-                self.state,
-                liquidity=update.liquidity,
-                sqrt_price_x96=update.sqrt_price_x96,
-                tick=update.tick,
-                block=state_block,
-            )
-
-            if self.state.block == update.block_number:
-                self._state_cache.pop()
-            self._state_cache.append(working_state)
-
-            self._notify_subscribers(
-                message=UniswapV4PoolStateUpdated(working_state),
-            )
-
-            return True
+        self._py_pool.apply_swap(
+            sqrt_price_x96=update.sqrt_price_x96,
+            liquidity=update.liquidity,
+            tick=update.tick,
+            block_number=update.block_number,
+        )
+        self._notify_subscribers(message=UniswapV4PoolStateUpdated(self.state))
+        return True
 
     def update_liquidity_map(
         self,
         update: UniswapV4PoolLiquidityMappingUpdate,
     ) -> None:
-        """
-        Applies an update to the liquidity map.
+        """Apply an update to the liquidity map (ModifyLiquidity event).
 
-        @dev This method uses a lock to guard state-modifying methods that might cause race
-        conditions when used with threads.
+        Delegates the tick mutation to ``PyLiquidityPool.apply_liquidity_update``
+        (Rust does the tick bitmap + tick_data mutation under one write guard).
+        The active ``liquidity`` scalar adjustment (when ``current_tick`` is in
+        range) is landed via a separate ``apply_swap``. Mirrors the V3 companion.
         """
-
         if update.liquidity == 0:
             return
 
-        with self._state_lock:
-            # Invalidate cache entries for the affected range before applying the update
-            self._invalidate_range_cache_for_ticks(update.tick_lower, update.tick_upper)
+        state_block = update.block_number
 
-            state_block = update.block_number
-
-            # The tick bitmap and tick data dictionaries accessed from the property are copies, so
-            # they can be freely modified without corrupting states for previous blocks
-            working_tick_bitmap = self.tick_bitmap
-            working_tick_data = self.tick_data
-
-            working_liquidity = self.liquidity
-
-            assert working_liquidity >= 0, (
-                f"Starting liquidity violates invariant: pool {self.address} {self.tick=} {self.liquidity=}"  # noqa: E501
-            )
-
-            # Adjust in-range liquidity if the modified region includes the active tick.
-            # NOTE: This compares the update block to `initial_state_block` so that onchain
-            # liquidity updates from blocks prior to the creation of this pool helper can be applied
-            # without triggering an inconsistent invariant check. Particularly, the values for
-            # `self.tick` and `self.liquidity` may not align with the pool state when these
-            # liquidity events occured.
-            if (
-                update.tick_lower <= self.tick < update.tick_upper
-                and state_block > self._initial_state_block
-            ):
-                working_liquidity += update.liquidity
-                assert working_liquidity >= 0, (
-                    f"In-range liquidity adjustment violated invariant: pool {self.address} {self.tick=} {self.liquidity=} {self.update_block=} {update=}"  # noqa: E501
-                )
-
+        if self._sparse_liquidity_map and self._tick_data_fetcher is not None:
             for tick in (update.tick_lower, update.tick_upper):
-                tick_word, _ = get_tick_word_and_bit_position(tick, self.tick_spacing)
+                word, _ = cl_get_tick_word_and_bit_position(tick, self.tick_spacing)
+                if word not in self.tick_bitmap:
+                    self._apply_fetched_tick_word(word, state_block - 1)
 
-                if self.sparse_liquidity_map and tick_word not in working_tick_bitmap:
-                    # The liquidity map at the affected word must be complete prior to changing the
-                    # status of any tick
-                    self._fetch_and_populate_initialized_ticks(
-                        word_position=tick_word,
-                        tick_bitmap=working_tick_bitmap,
-                        tick_data=working_tick_data,
-                        block_number=(
-                            # Populate the liquidity data from the previous block
-                            state_block - 1
-                        ),
-                    )
+        applied = self._py_pool.apply_liquidity_update(
+            tick_lower=update.tick_lower,
+            tick_upper=update.tick_upper,
+            liquidity_delta=update.liquidity,
+            block_number=state_block,
+        )
 
-                # Get the liquidity info for this tick. If the mapping is empty at this tick, it is
-                # uninitialized and must be flipped in the bitmap and initialized as empty in the
-                # mapping
-                if tick not in working_tick_data:
-                    working_tick_data[tick] = UniswapV4LiquidityAtTick(
-                        liquidity_net=0,
-                        liquidity_gross=0,
-                        block=state_block,
-                    )
-                    flip_tick(
-                        tick_bitmap=working_tick_bitmap,
-                        sparse=self.sparse_liquidity_map,
-                        tick=tick,
-                        tick_spacing=self.tick_spacing,
-                        update_block=state_block,
-                    )
-
-                current_liquidity_net = working_tick_data[tick].liquidity_net
-                current_liquidity_gross = working_tick_data[tick].liquidity_gross
-
-                new_liquidity_gross = current_liquidity_gross + update.liquidity
-                assert new_liquidity_gross >= 0, (
-                    f"Negative gross liquidity ({new_liquidity_gross})!"
-                )
-
-                if new_liquidity_gross == 0:
-                    # Delete tick from the map if there is no remaining liquidity referencing it,
-                    # and flip it in the bitmap
-                    del working_tick_data[tick]
-                    flip_tick(
-                        tick_bitmap=working_tick_bitmap,
-                        sparse=self.sparse_liquidity_map,
-                        tick=tick,
-                        tick_spacing=self.tick_spacing,
-                        update_block=state_block,
-                    )
-                    continue
-
-                # Liquidity positions include the lower tick, but exclude the upper tick.
-                if tick == update.tick_lower:
-                    new_liquidity_net = current_liquidity_net + update.liquidity
-                else:
-                    new_liquidity_net = current_liquidity_net - update.liquidity
-
-                working_tick_data[tick] = UniswapV4LiquidityAtTick(
-                    liquidity_net=new_liquidity_net,
-                    liquidity_gross=new_liquidity_gross,
-                    block=state_block,
-                )
-
-            working_state = dataclasses.replace(
-                self.state,
-                liquidity=working_liquidity,
-                tick_data=working_tick_data,
-                tick_bitmap=working_tick_bitmap,
-                block=max(self.update_block, state_block),
+        if (
+            applied
+            and update.tick_lower <= self.tick < update.tick_upper
+            and state_block > self._initial_state_block
+        ):
+            new_active = self.liquidity + update.liquidity
+            assert new_active >= 0, (
+                f"In-range liquidity adjustment violated invariant: pool {self.address} "
+                f"{self.tick=} {self.liquidity=} {self.update_block=} {update=}"
             )
-            if self.state.block == update.block_number:
-                self._state_cache.pop()
-            self._state_cache.append(working_state)
-
-            self._notify_subscribers(
-                message=UniswapV4PoolStateUpdated(working_state),
+            self._py_pool.apply_swap(
+                sqrt_price_x96=self.sqrt_price_x96,
+                liquidity=new_active,
+                tick=self.tick,
+                block_number=state_block,
             )
 
-    def get_arbitrage_helpers(self) -> tuple[AbstractArbitrage, ...]:
-        return tuple(
-            subscriber
-            for subscriber in self._subscribers
-            if isinstance(subscriber, AbstractArbitrage)
-        )
+        self._notify_subscribers(message=UniswapV4PoolStateUpdated(self.state))
 
-    def get_absolute_price(
-        self,
-        token: Erc20Token,
-        override_state: UniswapV4PoolState | None = None,
-    ) -> Fraction:
+    def discard_states_before_block(self, block: BlockNumber) -> None:
+        """Discard cached states earlier than the given block.
+
+        Raises:
+            NoPoolStateAvailable: If the target is past the newest delta.
+
         """
-        Get the absolute price for the given token, expressed in units of the other.
+        try:
+            self._py_pool.discard_v3_before_block(block)
+        except ValueError as e:
+            raise NoPoolStateAvailable(block=block) from e
+
+    def restore_state_before_block(self, block: BlockNumber) -> None:
+        """Restore the last pool state recorded prior to a target block.
+
+        Delegates to ``PyLiquidityPool.restore_v3_before_block`` (V3/V4-generic).
+        Mirrors the V3 companion.
+
+        Raises:
+            NoPoolStateAvailable: If no state exists prior to the target block.
+
         """
-
-        return 1 / self.get_absolute_exchange_rate(token, override_state=override_state)
-
-    def get_absolute_exchange_rate(
-        self,
-        token: Erc20Token,
-        override_state: UniswapV4PoolState | None = None,
-    ) -> Fraction:
-        """
-        Get the absolute exchange rate for the given token, expressed in terms of a unit amount of
-        its paired token.
-
-        e.g. taking the USDC-WETH pool in https://blog.uniswap.org/uniswap-v3-math-primer — the
-        WETH/USDC exchange rate is 649004842.70137. Rounding down, this signifies that the smallest
-        swap (1 USDC) results in a 649004842 WETH output.
-
-        A V4 pool encodes the token1/token0 exchange rate in `sqrt_price_x96`, so it can be directly
-        obtained.
-        """
-
-        if token not in self.tokens:
-            raise DegenbotValueError(message=f"Unknown token {token}")
-
-        state = self.state if override_state is None else override_state
-
-        return (
-            exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
-            if token == self.token1
-            else 1 / exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
-        )
-
-    def get_nominal_price(
-        self,
-        token: Erc20Token,
-        override_state: UniswapV4PoolState | None = None,
-    ) -> Fraction:
-        """
-        Get the nominal price for the given token, expressed in units of the other, corrected for
-        decimal place values.
-        """
-
-        return 1 / self.get_nominal_exchange_rate(token, override_state=override_state)
-
-    def get_nominal_exchange_rate(
-        self,
-        token: Erc20Token,
-        override_state: UniswapV4PoolState | None = None,
-    ) -> Fraction:
-        """
-        Get the nominal rate for the given token, expressed in units of the other, corrected for
-        decimal place values.
-        """
-
-        return self.get_absolute_exchange_rate(token=token, override_state=override_state) * (
-            Fraction(10**self.token1.decimals, 10**self.token0.decimals)
-            if token == self.token0
-            else Fraction(10**self.token0.decimals, 10**self.token1.decimals)
-        )
-
-    def discard_states_before_block(
-        self,
-        block: BlockNumber,
-    ) -> None:
-        """
-        Discard cached states earlier than the given block.
-        """
-
-        with self._state_lock:
-            # The oldest state already satisfies the request
-            if (earliest_block := self._state_cache[0].block) and earliest_block >= block:
-                return
-
-            # The newest state is older than the target block, so there is no state to return to
-            if (newest_block := self._state_cache[-1].block) and newest_block < block:
-                raise NoPoolStateAvailable(block=block)
-
-            # Discard older states until the earliest block meets or crosses the target
-            while (earliest_block := self._state_cache[0].block) is None or earliest_block < block:
-                self._state_cache.popleft()
-
-            assert self.state.block is not None
-            assert self.state.block >= block
-
-    def restore_state_before_block(
-        self,
-        block: BlockNumber,
-    ) -> None:
-        """
-        Restore the last pool state recorded prior to a target block.
-
-        Use this method to maintain consistent state data following a chain re-organization.
-
-        The pool will notify all subscribers of the new state with a `UniswapV4PoolStateUpdated`
-        event.
-        """
-
-        with self._state_lock:
-            # The newest state already satisfies the request
-            if (newest_block := self._state_cache[-1].block) and newest_block < block:
-                return
-
-            # No earlier state is available
-            if (earliest_block := self._state_cache[0].block) and earliest_block >= block:
-                raise NoPoolStateAvailable(block=block)
-
-            # Discard blocks until the last block is older than the target
-            while self._state_cache[-1].block is None or self._state_cache[-1].block >= block:
-                self._state_cache.pop()
-
+        try:
+            restored = self._py_pool.restore_v3_before_block(block)
+        except ValueError as e:
+            raise NoPoolStateAvailable(block=block) from e
+        if restored is not None:
             self._notify_subscribers(message=UniswapV4PoolStateUpdated(self.state))
 
-    def _cache_swap_step(
+    def simulate_swap(
         self,
-        *,
-        tick_lower: int,
-        tick_upper: int,
-        liquidity: int,
-        zero_for_one: bool,
-        exact_input: bool,
+        token_in: ChecksumAddress,
         amount_in: int,
-        amount_out: int,
-        fee_amount: int,
-        price_start: SqrtPriceX96,
-        price_end: SqrtPriceX96,
-    ) -> None:
-        """
-        Cache the result of a swap step that consumed an entire liquidity range.
-        """
-        cache_key = LiquidityRangeCacheKey(
-            exact_input=exact_input,
-            tick_lower=tick_lower,
-            tick_upper=tick_upper,
-            liquidity=liquidity,
-            zero_for_one=zero_for_one,
-            price_start=price_start,
-            price_end=price_end,
-        )
-
-        # Calculate the total amount required to consume this range
-        amount_required = (amount_in + fee_amount) if exact_input else amount_out
-
-        cache_value = LiquidityRangeCacheValue(
-            amount_in=amount_in,
-            amount_out=amount_out,
-            fee_amount=fee_amount,
-            price_end=price_end,
-            amount_required=amount_required,
-        )
-
-        with self._swap_step_cache_lock:
-            self._swap_step_cache[cache_key] = cache_value
-
-    def _invalidate_range_cache_for_ticks(self, tick_lower: int, tick_upper: int) -> None:
-        """
-        Invalidate cache entries that overlap with the specified tick range.
-
-        This should be called when liquidity is updated in a range to ensure
-        cached calculations remain valid.
-        """
-        with self._swap_step_cache_lock:
-            self._swap_step_cache = {
-                key: value
-                for key, value in self._swap_step_cache.items()
-                # Preserve only the cached values outside of the updated range
-                # TODO: determine if one or more inequalities can be <= or >=
-                if (tick_lower > key.tick_upper or tick_upper < key.tick_lower)
-            }
-
-    def clear_swap_step_cache(self) -> None:
-        """
-        Clear all cached liquidity range calculations.
-
-        This can be useful for memory management or when you want to ensure
-        fresh calculations.
-        """
-        with self._swap_step_cache_lock:
-            self._swap_step_cache.clear()
-
-    def get_range_cache_stats(self) -> dict[str, int]:
-        """
-        Get statistics about the liquidity range cache.
+        token_out: ChecksumAddress,  # noqa: ARG002
+        state_override: AbstractPoolState | None = None,
+    ) -> SimulationResult:
+        """Simulate swap.
 
         Returns:
-            Dictionary containing cache size and other metrics.
+            The simulation result with amounts (final_state = initial_state —
+            V4 simulation doesn't mutate state mid-arbitrage; preserved from
+            the pre-companion behavior).
+
+        Raises:
+            DegenbotValueError: If tokens are unknown or state type mismatches.
+
         """
-        with self._swap_step_cache_lock:
-            return {
-                "cache_size": len(self._swap_step_cache),
-            }
+        v4_state: UniswapV4PoolState | None = None
+        if state_override is not None:
+            if not isinstance(state_override, UniswapV4PoolState):
+                msg = f"Expected UniswapV4PoolState, got {type(state_override).__name__}"
+                raise DegenbotValueError(message=msg)
+            v4_state = state_override
+
+        if token_in == self._token0.address:
+            token_in_obj = self._token0
+        elif token_in == self._token1.address:
+            token_in_obj = self._token1
+        else:
+            raise DegenbotValueError(message=f"token_in {token_in} not in pool")
+
+        initial_state = v4_state or self.state
+        amount_out = self.calculate_tokens_out_from_tokens_in(
+            token_in=token_in_obj,
+            token_in_quantity=amount_in,
+            override_state=v4_state,
+        )
+        return SimulationResult(
+            amount_in=amount_in,
+            amount_out=amount_out,
+            initial_state=initial_state,
+            final_state=initial_state,
+        )

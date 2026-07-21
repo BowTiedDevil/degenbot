@@ -1,0 +1,32 @@
+{
+  "chain_id": 1,
+  "block": 24407242,
+  "address": "0x3e5FA9518eA95c3E533EB377C001702A9AaCAA32",
+  "pool_id": "0x3e5fa9518ea95c3e533eb377c001702a9aacaa32000200000000000000000052",
+  "vault": "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+  "name": "usdc_weth",
+  "tokens": [
+    {
+      "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "name": "Wrapped Ether",
+      "symbol": "WETH",
+      "decimals": 18
+    },
+    {
+      "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+      "name": "Tether USD",
+      "symbol": "USDT",
+      "decimals": 6
+    }
+  ],
+  "balances": [
+    3008102220163638974,
+    6289667028
+  ],
+  "fee": "9/10000",
+  "weights": [
+    500000000000000000,
+    500000000000000000
+  ],
+  "pow_version": "v1"
+}

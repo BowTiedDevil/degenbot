@@ -1,0 +1,32 @@
+{
+  "chain_id": 1,
+  "block": 24407242,
+  "address": "0xfF083f57A556bfB3BBe46Ea1B4Fa154b2b1FBe88",
+  "pool_id": "0xff083f57a556bfb3bbe46ea1b4fa154b2b1fbe88000200000000000000000030",
+  "vault": "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+  "name": "weth_rpl",
+  "tokens": [
+    {
+      "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "name": "Wrapped Ether",
+      "symbol": "WETH",
+      "decimals": 18
+    },
+    {
+      "address": "0xDe30da39c46104798bB5aA3fe8B9e0e1F348163F",
+      "name": "Gitcoin",
+      "symbol": "GTC",
+      "decimals": 18
+    }
+  ],
+  "balances": [
+    568378671231646483,
+    47199704325082113591188
+  ],
+  "fee": "3/2000",
+  "weights": [
+    200000000000000000,
+    800000000000000000
+  ],
+  "pow_version": "v1"
+}

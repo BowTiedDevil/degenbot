@@ -1,0 +1,249 @@
+"""Tick data fetching and bitmap loading for V3/V4 pools."""
+
+from __future__ import annotations
+
+import dataclasses
+from typing import TYPE_CHECKING, Any, cast
+
+from degenbot.logging import logger
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from eth_typing import ChecksumAddress
+
+    from degenbot.bot import PyBotIo
+    from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+    from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class TickDataTypes:
+    """Type-params that differ between V3 and V4 tick data fetchers.
+
+    V3 and V4 use the same algorithm but different concrete types for
+    the bitmap-at-word and liquidity-at-tick values. This dataclass
+    captures those differences so the algorithm can be written once.
+    """
+
+    bitmap_at_word: type  # BitmapAtWord
+    liquidity_at_tick: type  # LiquidityAtTick
+    tick_struct_types: tuple[str, ...]  # ABI types for decoding tick data
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class _PoolRef:
+    """Minimal pool reference needed by fetch helpers."""
+
+    address: ChecksumAddress
+    tick_spacing: int
+
+
+# The tick-map shape a fetched word carries: ``{tick: (gross, net, block)}``.
+# The Rust ``TickWordFetcher`` seam (and the Python companion's sparse
+# write-back sites after slice 3b) consume this exact shape.
+FetchedTickData = dict[int, tuple[int, int, int]]
+
+
+def make_tick_data_fetcher(
+    pool_lookup: Callable[[int], UniswapV3Pool | UniswapV4Pool | None],
+    io: PyBotIo,
+    types: TickDataTypes,
+    *,
+    state_view_address: str | None = None,
+    pool_id: bytes | None = None,
+) -> Callable[[int, int], FetchedTickData | None]:
+    """Create a tick data fetcher callback for a concentrated-liquidity pool.
+
+    ADR-005 sparse-map parity (slice 3b): the returned fetcher RETURNS the
+    fetched word's tick data (``{tick: (liquidity_gross, liquidity_net,
+    block)}``) rather than writing it back via ``update_tick_data``. This is
+    the contract both the Rust ``TickWordFetcher`` seam AND the Python
+    companion's sparse-write-back sites expect — the former holds the write
+    lock across the fetch call (a write-back fetcher would re-enter it and
+    deadlock), the latter now merges the returned data explicitly so the
+    on-chain baseline is preserved when an update is later applied on top.
+
+    Returns ``None`` if the pool is not found or the bitmap RPC fails (the
+    Rust loop treats this as a fetch failure → gives up; a Python sparse loop
+    treats this as an unresolved word → ``LiquidityPoolError``). An empty dict
+    marks the word known with no initialized ticks (an all-zero bitmap word —
+    the Rust merge records the word as known either way).
+
+    For V4 pools, pass ``state_view_address`` and ``pool_id`` so the fetcher
+    calls the state-view contract with the correct V4 ABI
+    (``getTickBitmap(bytes32,int16)`` / ``getTickLiquidity(bytes32,int24)``).
+    When these are absent the fetcher uses V3 ABI calls
+    (``tickBitmap(int16)`` / ``ticks(int24)``) on ``pool.address``.
+
+    Returns:
+        The computed value.
+
+    """
+    is_v4 = state_view_address is not None and pool_id is not None
+
+    def fetcher(
+        word_position: int,
+        block_number: int,
+    ) -> FetchedTickData | None:
+        pool = pool_lookup(block_number)
+        if pool is None:
+            return None
+
+        pool_ref = _PoolRef(address=pool.address, tick_spacing=pool.tick_spacing)
+        fetched: dict[int, Any] = {}
+
+        ok: bool
+        if is_v4:
+            ok = _fetch_v4(
+                io=io,
+                state_view_address=cast("str", state_view_address),
+                pool_id=cast("bytes", pool_id),
+                pool_ref=pool_ref,
+                word_position=word_position,
+                block_number=block_number,
+                fetched=fetched,
+                types=types,
+            )
+        else:
+            ok = _fetch_v3(
+                io=io,
+                pool_ref=pool_ref,
+                word_position=word_position,
+                block_number=block_number,
+                fetched=fetched,
+                types=types,
+            )
+
+        if not ok:
+            # Bitmap RPC failed — fetch failure (the Rust loop gives up; a
+            # Python sparse loop raises LiquidityPoolError on the dedup retry).
+            return None
+
+        # Normalize LiquidityAtTick values into the (gross, net, block) tuple
+        # shape the Rust merge + the Python write-back sites expect.
+        return {
+            int(tick): (
+                int(info.liquidity_gross),
+                int(info.liquidity_net),
+                int(info.block),
+            )
+            for tick, info in fetched.items()
+        }
+
+    return fetcher
+
+
+def _fetch_v3(
+    *,
+    io: PyBotIo,
+    pool_ref: _PoolRef,
+    word_position: int,
+    block_number: int,
+    fetched: dict[int, Any],
+    types: TickDataTypes,
+) -> bool:
+    """Fetch tick bitmap + data for a V3 pool's word; populate ``fetched``.
+
+    Returns:
+        ``True`` if the bitmap RPC succeeded (``fetched`` holds the word's
+        active ticks — possibly empty for an all-zero bitmap word), ``False``
+        if the bitmap RPC failed (the caller treats this as a fetch failure).
+
+    """
+    # ADR-005 slice 14j: when io is a PyBotIo, delegate tick RPC calls to Rust.
+    # ADR-005 slice 14j: delegate tick RPC calls to Rust (PyBotIo is the only
+    # executor; the Python parity-gate fallback is retired).
+    try:
+        bitmap_value = io.fetch_tick_bitmap(pool_ref.address, word_position, block=block_number)
+    except Exception:  # noqa: BLE001
+        return False
+
+    if bitmap_value != 0:
+        active_ticks = [
+            ((word_position << 8) + i) * pool_ref.tick_spacing
+            for i in range(256)
+            if bitmap_value & (1 << i) > 0
+        ]
+
+        for active_tick in active_ticks:
+            try:
+                liquidity_gross, liquidity_net = io.fetch_tick_data(
+                    pool_ref.address,
+                    active_tick,
+                    block=block_number,
+                )
+            except Exception:  # noqa: BLE001
+                logger.debug(
+                    "Failed to fetch tick data for tick %d",
+                    active_tick,
+                    exc_info=True,
+                )
+                continue
+
+            fetched[active_tick] = types.liquidity_at_tick(
+                liquidity_net=int(liquidity_net),
+                liquidity_gross=int(liquidity_gross),
+                block=block_number,
+            )
+    return True
+
+
+def _fetch_v4(
+    *,
+    io: PyBotIo,
+    state_view_address: str,
+    pool_id: bytes,
+    pool_ref: _PoolRef,
+    word_position: int,
+    block_number: int,
+    fetched: dict[int, Any],
+    types: TickDataTypes,
+) -> bool:
+    """Fetch tick bitmap + data for a V4 pool's word; populate ``fetched``.
+
+    Returns:
+        ``True`` if the bitmap RPC succeeded, ``False`` on failure.
+
+    """
+    # ADR-005 slice 14k: delegate V4 tick RPCs to Rust (PyBotIo is the only
+    # executor; the Python parity-gate fallback is retired).
+    try:
+        bitmap_value = io.fetch_v4_tick_bitmap(
+            state_view_address,
+            pool_id,
+            word_position,
+            block=block_number,
+        )
+    except Exception:  # noqa: BLE001
+        return False
+
+    if bitmap_value != 0:
+        active_ticks = [
+            ((word_position << 8) + i) * pool_ref.tick_spacing
+            for i in range(256)
+            if bitmap_value & (1 << i) > 0
+        ]
+
+        for active_tick in active_ticks:
+            try:
+                liquidity_gross, liquidity_net = io.fetch_v4_tick_data(
+                    state_view_address,
+                    pool_id,
+                    active_tick,
+                    block=block_number,
+                )
+            except Exception:  # noqa: BLE001
+                logger.debug(
+                    "Failed to fetch V4 tick data for tick %d",
+                    active_tick,
+                    exc_info=True,
+                )
+                continue
+
+            fetched[active_tick] = types.liquidity_at_tick(
+                liquidity_net=int(liquidity_net),
+                liquidity_gross=int(liquidity_gross),
+                block=block_number,
+            )
+    return True

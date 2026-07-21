@@ -1,4 +1,4 @@
-"""Uniswap V4: Backfill state view addresses
+"""Uniswap V4: Backfill state view addresses.
 
 Revision ID: 06a3739885a0
 Revises: 6f376d34618b
@@ -25,7 +25,6 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-
     connection = op.get_bind()
     session = Session(bind=connection)
 
@@ -37,7 +36,7 @@ def upgrade() -> None:
             and pool_manager.state_view is None
         ):
             pool_manager.state_view = get_checksum_address(
-                "0x7fFE42C4a5DEeA5b0feC41C94C136Cf115597227"
+                "0x7fFE42C4a5DEeA5b0feC41C94C136Cf115597227",
             )
 
         elif (
@@ -47,7 +46,7 @@ def upgrade() -> None:
             and pool_manager.state_view is None
         ):
             pool_manager.state_view = get_checksum_address(
-                "0xA3c0c9b65baD0b08107Aa264b0f3dB444b867A71"
+                "0xA3c0c9b65baD0b08107Aa264b0f3dB444b867A71",
             )
 
     session.commit()

@@ -1,4 +1,4 @@
-"""add_borrowable_in_isolation_to_aave_asset_config
+"""add_borrowable_in_isolation_to_aave_asset_config.
 
 Revision ID: b0b9e84d5527
 Revises: 9c411aeeb15e
@@ -22,7 +22,7 @@ def upgrade() -> None:
     """Upgrade schema."""
     with op.batch_alter_table("aave_v3_asset_configs", schema=None) as batch_op:
         batch_op.add_column(
-            sa.Column("borrowable_in_isolation", sa.Boolean(), nullable=False, server_default="0")
+            sa.Column("borrowable_in_isolation", sa.Boolean(), nullable=False, server_default="0"),
         )
 
 

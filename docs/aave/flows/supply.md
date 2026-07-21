@@ -337,7 +337,7 @@ event Supply(
 
 ### ReserveUsedAsCollateralEnabled Event
 
-Emitted only on first supply if asset can be used as collateral.
+Emitted only on first supply if Asset can be used as collateral.
 
 ```solidity
 event ReserveUsedAsCollateralEnabled(

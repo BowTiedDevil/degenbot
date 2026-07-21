@@ -1,4 +1,4 @@
-"""add liquidity update marker
+"""add liquidity update marker.
 
 Revision ID: 7dc2ca38053f
 Revises: 311beed36e7b
@@ -21,28 +21,36 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     """Upgrade schema."""
     op.add_column(
-        "aerodrome_v3_pools", sa.Column("liquidity_update_block", sa.Integer(), nullable=True)
+        "aerodrome_v3_pools",
+        sa.Column("liquidity_update_block", sa.Integer(), nullable=True),
     )
     op.add_column(
-        "aerodrome_v3_pools", sa.Column("liquidity_update_log_index", sa.Integer(), nullable=True)
+        "aerodrome_v3_pools",
+        sa.Column("liquidity_update_log_index", sa.Integer(), nullable=True),
     )
     op.add_column(
-        "pancakeswap_v3_pools", sa.Column("liquidity_update_block", sa.Integer(), nullable=True)
+        "pancakeswap_v3_pools",
+        sa.Column("liquidity_update_block", sa.Integer(), nullable=True),
     )
     op.add_column(
-        "pancakeswap_v3_pools", sa.Column("liquidity_update_log_index", sa.Integer(), nullable=True)
+        "pancakeswap_v3_pools",
+        sa.Column("liquidity_update_log_index", sa.Integer(), nullable=True),
     )
     op.add_column(
-        "sushiswap_v3_pools", sa.Column("liquidity_update_block", sa.Integer(), nullable=True)
+        "sushiswap_v3_pools",
+        sa.Column("liquidity_update_block", sa.Integer(), nullable=True),
     )
     op.add_column(
-        "sushiswap_v3_pools", sa.Column("liquidity_update_log_index", sa.Integer(), nullable=True)
+        "sushiswap_v3_pools",
+        sa.Column("liquidity_update_log_index", sa.Integer(), nullable=True),
     )
     op.add_column(
-        "uniswap_v3_pools", sa.Column("liquidity_update_block", sa.Integer(), nullable=True)
+        "uniswap_v3_pools",
+        sa.Column("liquidity_update_block", sa.Integer(), nullable=True),
     )
     op.add_column(
-        "uniswap_v3_pools", sa.Column("liquidity_update_log_index", sa.Integer(), nullable=True)
+        "uniswap_v3_pools",
+        sa.Column("liquidity_update_log_index", sa.Integer(), nullable=True),
     )
 
 

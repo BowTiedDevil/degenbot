@@ -1,58 +1,122 @@
-[package]
-authors = ["BowTiedDevil <devil@bowtieddevil.com>"]
-name = "degenbot_rs"
-description = "Rust implementations used by the degenbot Python package."
+# degenbot Rust workspace — pure virtual manifest.
+#
+# The workspace root holds ONLY the `[workspace]` declaration + the `[profile.*]`
+# blocks (Cargo only honors `[profile]` at the workspace root — keep them here).
+# The seven pyo3-free core crates + the `degenbot_rs` PyO3 binding layer are all
+# workspace *members* nested under `crates/`, mirroring the `polars` repo layout
+# where `polars-python` sits as a peer of `polars-core`/`-ops`/`-plan`/etc.
+# (ergo UG6FKN follow-up / ADR-005 deferral: the binding layer was lifted out of
+# the workspace root into `crates/degenbot-python/`.)
+#
+# Cores are pyo3-free under their default features; `degenbot-python` enables each
+# core's `pyo3` feature so the `From<Error> for PyErr` conversions are available
+# at the binding layer. Verify with `just check-no-pyo3-in-cores`.
+
+# Shared package metadata inherited by every member crate via `<field>.workspace
+# = true` (ADR-009 single-source-of-truth versioning). The version literal here
+# is the *only* version in the Rust tree; the binding crate `degenbot_rs`
+# (`crates/degenbot-python/`) inherits it, and maturin reads that crate's
+# version to set the published wheel's — so one edit moves both halves.
+[workspace.package]
+version = "0.6.0-alpha.3"
 edition = "2021"
+license = "MIT"
 publish = false
 repository = "https://github.com/BowTiedDevil/degenbot"
-license = "MIT"
+authors = ["BowTiedDevil <devil@bowtieddevil.com>"]
 
-[lints.rust]
-warnings = "deny"
+[workspace]
+resolver = "2"
+members = [
+    "crates/degenbot-core",
+    "crates/degenbot-cl-math",
+    "crates/degenbot-v2-math",
+    "crates/degenbot-curve-math",
+    "crates/degenbot-balancer-math",
+    "crates/degenbot-solidly-math",
+    "crates/degenbot-evm-math",
+    "crates/degenbot-pools",
+    "crates/degenbot-solvers",
+    "crates/degenbot-price",
+    "crates/degenbot-executor",
+    "crates/degenbot-submission",
+    "crates/degenbot-simulation",
+    "crates/degenbot-abi",
+    "crates/degenbot-rpc",
+    "crates/degenbot-fork",
+    "crates/degenbot-bot",
+    "crates/degenbot-decoders",
+    "crates/degenbot-uniswap",
+    "crates/degenbot-pathfinding",
+    "crates/degenbot-db",
+    "crates/degenbot-pool-updater",
+    "crates/degenbot-aave",
+    "crates/degenbot-executor",
+    "crates/degenbot-python",
+    "crates/degenbot",
+]
 
-[lints.clippy]
-unwrap_used = "deny"
-expect_used = "deny"
-missing_errors_doc = "allow"  # Allow missing docs for error types since we use module-level doc
-pedantic = { level = "warn", priority = -1 }
-nursery = { level = "warn", priority = -1 }
-
-[lib]
-name = "degenbot_rs"
-crate-type = ["rlib", "cdylib"]
-
-[dependencies]
-alloy = { version = "^2.0", features = ["full"] }
-futures = { version = "^0.3" }
-log = { version = "^0.4" }
-lru = { version = "^0.18" }
-parking_lot = { version = "^0.12" }
-pyo3 = { version = "^0.28", features = [ "abi3-py312", "serde"] }
-pyo3-async-runtimes = { version = "^0.28", features = ["tokio-runtime"] }
-pyo3-log = { version = "^0.13" }
-rand = { version = "^0.10" }
-serde = { version = "^1.0", features = ["derive"] }
-serde_json = { version = "^1.0" }
-thiserror = { version = "^2.0" }
-tokio = { version = "^1", features = ["rt-multi-thread", "time"] }
-
-[features]
-default = []
-extension-module = ["pyo3/extension-module"]
-auto-initialize = ["pyo3/auto-initialize"]
-
-[dev-dependencies]
-proptest = "^1.10"
-
-[[test]]
-name = "python_integration"
-required-features = ["auto-initialize"]
-
+# Release profile.
+#
+# The `degenbot_rs` cdylib (the Python extension, built from
+# `crates/degenbot-python`) gets the heavy optimizations — `lto = "thin"` +
+# `strip` + `codegen-units = 1` — because it is the shipped runtime artifact.
+# `lto`/`strip` are profile-level (Cargo has no per-package `lto`), so they apply
+# workspace-wide, but the final thin-LTO link only spans codegen units that
+# survive into the cdylib.
+#
+# The pure-Rust core crates (`degenbot-core`, `-cl-math`, `-abi`, `-rpc`,
+# `-bot`) get per-package overrides below: more `codegen-units` for faster
+# compilation during a cdylib release build. They are libraries consumed (and
+# inlined at the final link) by the cdylib, so the looser per-package codegen
+# does not meaningfully hurt runtime — the cdylib's thin LTO re-converges.
 [profile.release]
 lto = "thin"
 strip = true
 codegen-units = 1
 
-[profile.bench]
-inherits = "release"
-debug = true
+[profile.release.package.degenbot-core]
+codegen-units = 16
+[profile.release.package.degenbot-cl-math]
+codegen-units = 16
+[profile.release.package.degenbot-v2-math]
+codegen-units = 16
+[profile.release.package.degenbot-curve-math]
+codegen-units = 16
+[profile.release.package.degenbot-balancer-math]
+codegen-units = 16
+[profile.release.package.degenbot-solidly-math]
+codegen-units = 16
+[profile.release.package.degenbot-evm-math]
+codegen-units = 16
+[profile.release.package.degenbot-pools]
+codegen-units = 16
+[profile.release.package.degenbot-price]
+codegen-units = 16
+[profile.release.package.degenbot-abi]
+codegen-units = 16
+[profile.release.package.degenbot-rpc]
+codegen-units = 16
+[profile.release.package.degenbot-fork]
+codegen-units = 16
+[profile.release.package.degenbot-bot]
+codegen-units = 16
+[profile.release.package.degenbot-decoders]
+codegen-units = 16
+[profile.release.package.degenbot-uniswap]
+codegen-units = 16
+[profile.release.package.degenbot-pathfinding]
+codegen-units = 16
+[profile.release.package.degenbot-db]
+codegen-units = 16
+[profile.release.package.degenbot-executor]
+codegen-units = 16
+[profile.release.package.degenbot-submission]
+codegen-units = 16
+
+# Dev profile (default for `cargo test` / `just dev`): keep compilation fast.
+# No LTO, relaxed debug-info so the pure-Rust cores (`cargo test -p <crate>`)
+# rebuild quickly during the red-green loop.
+[profile.dev]
+# More codegen units for faster incremental dev builds across all crates.
+codegen-units = 16

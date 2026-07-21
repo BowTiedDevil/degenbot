@@ -1,0 +1,77 @@
+[package]
+name = "degenbot-bot"
+description = "Rust-owned bot state (BotState) + Möbius solvers + unified Uniswap V2/V3/V4 engine."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+complexity = "warn"
+correctness = "warn"
+pedantic = "warn"
+perf = "warn"
+style = "warn"
+suspicious = "warn"
+
+[dependencies]
+alloy = { version = "^2.0", features = ["full", "transport-throttle"] }
+# `async_trait` makes the construction-I/O core traits dyn-compatible (they're
+# held as `Arc<dyn DbConstruction + Send + Sync>` on `ConstructionIo`). The
+# macro desugars `async fn` to `-> Pin<Box<dyn Future + Send>>` — the standard
+# pattern alloy itself uses for `dyn Provider`.
+async-trait = { version = "^0.1" }
+dashmap = { version = "^6.1" }
+degenbot-abi = { path = "../degenbot-abi" }
+degenbot-cl-math = { path = "../degenbot-cl-math" }
+degenbot-core = { path = "../degenbot-core" }
+degenbot-db = { path = "../degenbot-db" }
+degenbot-decoders = { path = "../degenbot-decoders" }
+degenbot-rpc = { path = "../degenbot-rpc" }
+degenbot-solidly-math = { path = "../degenbot-solidly-math" }
+degenbot-balancer-math = { path = "../degenbot-balancer-math" }
+degenbot-curve-math = { path = "../degenbot-curve-math" }
+degenbot-pools = { path = "../degenbot-pools" }
+degenbot-solvers = { path = "../degenbot-solvers" }
+degenbot-executor = { path = "../degenbot-executor" }
+degenbot-uniswap = { path = "../degenbot-uniswap" }
+degenbot-v2-math = { path = "../degenbot-v2-math" }
+futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
+# hotpath: drain-path profiling tracer (ADR-005 core, pyo3-free). The crate is a
+# non-optional dependency so the `#[hotpath::measure]` attributes resolve, but
+# with `default-features = false` it expands to no-op stubs (see hotpath's
+# `lib_off.rs`) — zero compile-time or runtime cost in default builds. Enable
+# the `hotpath` / `hotpath-cpu` / `hotpath-alloc` features below (or in a
+# consumer crate) to turn the macros into real instrumentation.
+hotpath = { version = "^0.21", default-features = false }
+log = { version = "^0.4" }
+parking_lot = { version = "^0.12" }
+rand = { version = "^0.10" }
+rayon = { version = "^1.10" }
+serde = { version = "^1.0", features = ["derive"] }
+serde_json = { version = "^1.0" }
+thiserror = { version = "^2.0" }
+tokio = { version = "^1.52", features = ["rt-multi-thread", "time", "macros", "sync"] }
+
+[features]
+# Drain-path profiling tracer bullet (see `src/profiling.rs`). Enable with
+# `--features hotpath` (timing+threads), `hotpath-cpu` (CPU sampling, Linux/macOS
+# only), or `hotpath-alloc` (allocation accounting). Operationally gated by the
+# `DEGENBOT_HOTPATH=1` env var so default runs never construct the guard.
+hotpath = ["hotpath/hotpath", "hotpath/threads"]
+hotpath-cpu = ["hotpath", "hotpath/hotpath-cpu"]
+hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
+
+[dev-dependencies]
+proptest = "^1.10"
+# Test-only constructors (e.g. AlloyProvider::from_provider) used by the
+# bot_core block-pump tests.
+degenbot-rpc = { path = "../degenbot-rpc", features = ["test-utils"] }
+# Captures alloy/tungstenite tracing for the `ws_getlogs_large_filter_diagnostic`
+# ignored test (reconnect-cycle investigation, 2026-07-12).
+tracing-subscriber = { version = "^0.3", default-features = false, features = ["std", "fmt", "env-filter"] }

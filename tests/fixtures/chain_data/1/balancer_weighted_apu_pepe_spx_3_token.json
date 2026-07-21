@@ -1,0 +1,42 @@
+{
+  "chain_id": 1,
+  "block": 24407242,
+  "address": "0x9D0D36cC9E989598F01A4656E0efFf73896c30ed",
+  "pool_id": "0x9d0d36cc9e989598f01a4656e0efff73896c30ed0001000000000000000006e6",
+  "vault": "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+  "name": "apu_pepe_spx_3_token",
+  "desc": "APU/PEPE/SPX 33/33/33, 1.00% fee, mixed decimals (18/18/8)",
+  "tokens": [
+    {
+      "address": "0x594DaaD7D77592a2b97b725A7AD59D7E188b5bFa",
+      "name": "Apu Apustaja",
+      "symbol": "APU",
+      "decimals": 18
+    },
+    {
+      "address": "0x6982508145454Ce325dDbE47a25d4ec3d2311933",
+      "name": "Pepe",
+      "symbol": "PEPE",
+      "decimals": 18
+    },
+    {
+      "address": "0xE0f63A424a4439cBE457D80E4f4b51aD25b2c56C",
+      "name": "SPX6900",
+      "symbol": "SPX",
+      "decimals": 8
+    }
+  ],
+  "balances": [
+    2617200587496563290737381,
+    23397985104635697944567788,
+    30791683803
+  ],
+  "fee": "1/100",
+  "weights": [
+    333300000000000000,
+    333300000000000000,
+    333400000000000000
+  ],
+  "pow_version": "v2",
+  "n_tokens": 3
+}

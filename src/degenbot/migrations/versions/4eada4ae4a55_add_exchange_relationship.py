@@ -1,4 +1,4 @@
-"""add exchange relationship
+"""add exchange relationship.
 
 Revision ID: 4eada4ae4a55
 Revises: 7dc2ca38053f
@@ -47,7 +47,7 @@ def upgrade() -> None:
                 UPDATE pools
                 SET exchange_id = :exchange_id
                 WHERE kind = :name AND chain = :chain_id
-                """
+                """,
             ),
             {
                 "exchange_id": exchange_id,

@@ -1,0 +1,35 @@
+[package]
+name = "degenbot-fork"
+description = "Pure-Rust Anvil fork lifecycle + dev-RPC core (alloy node-bindings)."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+complexity = "warn"
+correctness = "warn"
+pedantic = "warn"
+perf = "warn"
+style = "warn"
+suspicious = "warn"
+
+[dependencies]
+# NOTE: `"node-bindings"` MUST be explicit — alloy's `full` feature array
+# (v2.1.1) includes `provider-ipc` + `provider-anvil-api` but NOT
+# `node-bindings`. Without it, `alloy::node_bindings::Anvil` is unresolved
+# (cfg-gated re-export in alloy/src/lib.rs). Verified by the IPC spike.
+alloy = { version = "^2.0", features = ["full", "node-bindings", "transport-throttle"] }
+degenbot-core = { path = "../degenbot-core" }
+thiserror = { version = "^2.0" }
+tokio = { version = "^1.52", features = ["rt-multi-thread", "time", "macros", "sync"] }
+
+[features]
+default = []
+# Test-only constructors visible to downstream crates' tests.
+test-utils = []

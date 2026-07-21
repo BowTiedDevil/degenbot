@@ -1,0 +1,30 @@
+[package]
+name = "degenbot-v2-math"
+description = "Pure-Rust ports of Uniswap V2-style constant-product (x·y=k) swap math."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+complexity = "warn"
+correctness = "warn"
+pedantic = "warn"
+perf = "warn"
+style = "warn"
+suspicious = "warn"
+
+[dependencies]
+alloy = { version = "^2.0" }
+
+[dev-dependencies]
+criterion = { version = "^0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "swap"
+harness = false

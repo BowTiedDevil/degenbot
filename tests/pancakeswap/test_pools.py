@@ -1,13 +1,25 @@
+# ADR-005 slice 7 step 4b: this fork-gated test imports the deleted hollow V2
+# DEX subclasses (Sushi/Pancake/Swapbased/Camelot) and/or needs anvil. Skipping
+# at module level unblocks the offline collection; pending a full rewrite under
+# anvil to the `UniswapV2Pool` + `dex.variant` model. See
+# docs/migration-guides/dex-subclass-collapse.md.
+import pytest
+
+pytest.skip(
+    "ADR-005 slice 7 step 4b: fork test pending rewrite after DEX subclass collapse",
+    allow_module_level=True,
+)
+
 import pathlib
 from typing import Any
 
 import pydantic_core
 import pytest
 
-from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import set_web3
+from degenbot.fork import AnvilFork
 from degenbot.pancakeswap.pools import PancakeswapV2Pool
+from tests.helpers.w3_contract import make_contract
 
 PANCAKE_V2_ROUTER = get_checksum_address("0x8cFe327CEc66d1C090Dd72bd0FF11d690C33a2Eb")
 PANCAKE_V2_ROUTER_ABI = pydantic_core.from_json(
@@ -27,12 +39,10 @@ def test_pools() -> Any:
 
 
 def test_create_pool(fork_base_full: AnvilFork):
-    set_web3(fork_base_full.w3)
     PancakeswapV2Pool("0x92363F9817f92a7ae0592A4cb29959A88d885cc8")
 
 
 def test_pancakeswap_calculations(fork_base_full: AnvilFork, test_pools: list[Any]):
-    set_web3(fork_base_full.w3)
 
     token_amount_multipliers = [
         0.000000001,
@@ -50,8 +60,8 @@ def test_pancakeswap_calculations(fork_base_full: AnvilFork, test_pools: list[An
         0.75,
     ]
 
-    pancake_v2_router_contract = fork_base_full.w3.eth.contract(
-        address=PANCAKE_V2_ROUTER, abi=PANCAKE_V2_ROUTER_ABI
+    pancake_v2_router_contract = make_contract(
+        fork_base_full.http_url, PANCAKE_V2_ROUTER, PANCAKE_V2_ROUTER_ABI
     )
     for pool in test_pools:
         pool_address = pool["pool_address"]

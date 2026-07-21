@@ -1,173 +1,234 @@
-from typing import TYPE_CHECKING, Self
+"""Pool registry: address-keyed store of built pool instances."""
 
-from hexbytes import HexBytes
+from __future__ import annotations
 
-import degenbot.exceptions
-from degenbot.checksum_cache import get_checksum_address
-from degenbot.exceptions.registry import RegistryAlreadyInitialized
-from degenbot.types.abstract import AbstractLiquidityPool, AbstractRegistry
-from degenbot.types.aliases import ChainId
+from typing import TYPE_CHECKING, overload
+
+from degenbot.registry.base import AddressRegistry, MultiKeyAddressRegistry
+from degenbot.types.pool_protocols import ConcentratedLiquidityPool
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
+    from degenbot.bot import PyBot
+    from degenbot.types.abstract import AbstractLiquidityPool
+    from degenbot.types.aliases import ChainId
 
-PoolId = bytes | str
-Address = bytes | str
+
+type PoolId = bytes
 
 
-class _UniswapV4PoolManagerRegistry(AbstractRegistry):
-    """
-    The Uniswap V4 singleton design breaks the fundamental assumption of the PoolRegistry: that each
-    liquidity pool can be uniquely identified by a chain ID and contract address. This private class
-    is used to represent Uniswap V4 PoolManager singleton contracts. `PoolRegistry` and similar high
-    level registries may defer to this class to track V4 pools by their pool ID and PoolManager
-    address.
-    """
+class ManagedPoolRegistry(MultiKeyAddressRegistry["ConcentratedLiquidityPool"]):
+    """Registry for V4 pools keyed by (chain_id, pool_manager_address, pool_id)."""
 
     def __init__(self) -> None:
-        self._all_v4_pools: dict[
-            tuple[
-                ChainId,
-                ChecksumAddress,  # PoolManager contract address
-                HexBytes,  # Pool id
-            ],
-            AbstractLiquidityPool,
-        ] = {}
+        """Initialize the instance."""
+        super().__init__(
+            address_fields=("pool_manager_address", "pool_id"),
+            name="ManagedPool",
+        )
 
     def get(
         self,
         chain_id: ChainId,
-        pool_manager_address: Address,
+        pool_manager_address: ChecksumAddress,
         pool_id: PoolId,
-    ) -> "AbstractLiquidityPool | None":
-        return self._all_v4_pools.get((
-            chain_id,
-            get_checksum_address(pool_manager_address),
-            HexBytes(pool_id),
-        ))
+    ) -> ConcentratedLiquidityPool | None:
+        """Retrieve a V4 pool by chain, manager address, and pool ID.
 
-    def add(
-        self,
-        pool: "AbstractLiquidityPool",
-        chain_id: ChainId,
-        pool_manager_address: Address,
-        pool_id: PoolId,
-    ) -> None:
-        pool_manager_address = get_checksum_address(pool_manager_address)
-        pool_id = HexBytes(pool_id)
+        Returns:
+            The registered V4 pool, or None if not found.
 
-        if self.get(
+        """
+        return self._get(
             chain_id=chain_id,
             pool_manager_address=pool_manager_address,
             pool_id=pool_id,
-        ):
-            raise degenbot.exceptions.DegenbotValueError(message="Pool is already registered")
-
-        self._all_v4_pools[
-            chain_id,
-            pool_manager_address,
-            pool_id,
-        ] = pool
-
-    def remove(
-        self,
-        pool_manager_address: Address,
-        chain_id: ChainId,
-        pool_id: PoolId,
-    ) -> None:
-        self._all_v4_pools.pop(
-            (
-                chain_id,
-                get_checksum_address(pool_manager_address),
-                HexBytes(pool_id),
-            ),
-            None,
-        )
-
-
-class PoolRegistry(AbstractRegistry):
-    instance: Self | None = None
-
-    @classmethod
-    def get_instance(cls) -> Self | None:
-        return cls.instance
-
-    def __init__(self) -> None:
-        if type(self).instance is not None:
-            raise RegistryAlreadyInitialized(
-                message="A registry has already been initialized. Access it using the pool_registry.get_instance() class method"  # noqa:E501
-            )
-        type(self).instance = self
-
-        self._all_pools: dict[
-            tuple[
-                ChainId,
-                ChecksumAddress,  # pool address
-            ],
-            AbstractLiquidityPool,
-        ] = {}
-        self._v4_pool_registry = _UniswapV4PoolManagerRegistry()
-
-    def get(
-        self,
-        chain_id: ChainId,
-        pool_address: Address,
-        pool_id: PoolId | None = None,
-    ) -> "AbstractLiquidityPool | None":
-        if pool_id is not None:
-            return self._v4_pool_registry.get(
-                chain_id=chain_id,
-                pool_manager_address=get_checksum_address(pool_address),
-                pool_id=pool_id,
-            )
-
-        return self._all_pools.get(
-            (
-                chain_id,
-                get_checksum_address(pool_address),
-            ),
         )
 
     def add(
         self,
-        pool: "AbstractLiquidityPool",
+        pool: ConcentratedLiquidityPool,
         chain_id: ChainId,
-        pool_address: Address,
-        pool_id: PoolId | None = None,
+        pool_manager_address: ChecksumAddress,
+        pool_id: PoolId,
     ) -> None:
-        if pool_id is not None:
-            self._v4_pool_registry.add(
-                pool,
-                chain_id=chain_id,
-                pool_manager_address=get_checksum_address(pool_address),
-                pool_id=pool_id,
-            )
-        elif self.get(
+        """Register a V4 pool."""
+        self._add(
+            item=pool,
             chain_id=chain_id,
-            pool_address=get_checksum_address(pool_address),
-        ):
-            raise degenbot.exceptions.DegenbotValueError(message="Pool is already registered")
-
-        self._all_pools[chain_id, get_checksum_address(pool_address)] = pool
+            pool_manager_address=pool_manager_address,
+            pool_id=pool_id,
+        )
 
     def remove(
         self,
         chain_id: ChainId,
-        pool_address: Address,
+        pool_manager_address: ChecksumAddress,
+        pool_id: PoolId,
+    ) -> None:
+        """Remove a V4 pool."""
+        self._remove(
+            chain_id=chain_id,
+            pool_manager_address=pool_manager_address,
+            pool_id=pool_id,
+        )
+
+
+class PoolRegistry(AddressRegistry["AbstractLiquidityPool"]):
+    """Registry for liquidity pools keyed by (chain_id, pool_address)."""
+
+    def __init__(
+        self,
+        managed_pool_registry: ManagedPoolRegistry | None = None,
+        *,
+        py_bot: PyBot | None = None,
+    ) -> None:
+        """Initialize the instance.
+
+        Args:
+            managed_pool_registry: Optional managed (V4) pool sub-registry.
+            py_bot: Optional ``PyBot`` handle for Rust-state propagation.
+                When set, ``remove`` and ``_reset`` propagate to the Rust
+                ``BotState`` via ``py_bot.unregister_pool`` (ADR-007). When
+                ``None`` (e.g. tests that construct ``PoolRegistry()``
+                standalone), removal is Python-only — Rust state is untouched.
+
+        """
+        super().__init__(name="Pool")
+        self._managed_pool_registry = managed_pool_registry or ManagedPoolRegistry()
+        self._py_bot = py_bot
+
+    @overload
+    def get(
+        self,
+        chain_id: ChainId,
+        pool_address: ChecksumAddress,
+        pool_id: None = None,
+    ) -> AbstractLiquidityPool | None: ...
+
+    @overload
+    def get(
+        self,
+        chain_id: ChainId,
+        pool_address: ChecksumAddress,
+        pool_id: PoolId,
+    ) -> ConcentratedLiquidityPool | None: ...
+
+    def get(
+        self,
+        chain_id: ChainId,
+        pool_address: ChecksumAddress,
+        pool_id: PoolId | None = None,
+    ) -> AbstractLiquidityPool | ConcentratedLiquidityPool | None:
+        """Retrieve a pool by chain and address.
+
+        Returns:
+            The registered pool, or None if not found.
+
+        """
+        if isinstance(pool_id, bytes):
+            return self._managed_pool_registry.get(
+                chain_id=chain_id,
+                pool_manager_address=pool_address,
+                pool_id=pool_id,
+            )
+        return self._get(chain_id=chain_id, address=pool_address)
+
+    def add(
+        self,
+        pool: AbstractLiquidityPool,
+        chain_id: ChainId,
+        pool_address: ChecksumAddress,
         pool_id: PoolId | None = None,
     ) -> None:
-        if pool_id is not None:
-            self._v4_pool_registry.remove(
+        """Register a pool.
+
+        When pool_id is provided, the pool must satisfy the
+        ConcentratedLiquidityPool protocol and is registered in the
+        managed pool sub-registry. Otherwise, it is registered as a
+        standard pool.
+
+        Raises:
+            TypeError: If pool_id is provided but pool does not satisfy ConcentratedLiquidityPool.
+
+        """
+        if isinstance(pool_id, bytes):
+            if not isinstance(pool, ConcentratedLiquidityPool):
+                msg = "pool must satisfy ConcentratedLiquidityPool when pool_id is provided"
+                raise TypeError(msg)
+            self._managed_pool_registry.add(
+                pool=pool,
                 chain_id=chain_id,
-                pool_manager_address=get_checksum_address(pool_address),
+                pool_manager_address=pool_address,
                 pool_id=pool_id,
             )
         else:
-            self._all_pools.pop(
-                (
-                    chain_id,
-                    get_checksum_address(pool_address),
-                ),
-                None,
+            self._add(item=pool, chain_id=chain_id, address=pool_address)
+
+    @overload
+    def remove(
+        self,
+        chain_id: ChainId,
+        pool_address: ChecksumAddress,
+        pool_id: PoolId,
+    ) -> None: ...
+
+    @overload
+    def remove(
+        self,
+        chain_id: ChainId,
+        pool_address: ChecksumAddress,
+        pool_id: None = None,
+    ) -> None: ...
+
+    def remove(
+        self,
+        chain_id: ChainId,
+        pool_address: ChecksumAddress,
+        pool_id: PoolId | None = None,
+    ) -> None:
+        """Remove a pool.
+
+        For V2/V3 pools (``pool_id`` is ``None``), propagates to the Rust
+        ``BotState`` via ``py_bot.unregister_pool`` so the Rust-owned state
+        stays symmetric with the Python registry (ADR-007). V4 pools
+        (``pool_id`` is bytes) are Python-only here — V4 unregister is
+        engine-side (see ADR-007 Deferred).
+        """
+        if isinstance(pool_id, bytes):
+            self._managed_pool_registry.remove(
+                chain_id=chain_id,
+                pool_manager_address=pool_address,
+                pool_id=pool_id,
             )
+        elif self._py_bot is not None:
+            # V2/V3 path: propagate to Rust before removing the Python entry
+            # (the Rust side is silent-on-miss, so ordering is safe).
+            self._py_bot.unregister_pool(address=pool_address)
+        self._remove(chain_id=chain_id, address=pool_address)
+
+    def _reset(self, *, propagate_to_rust: bool = True) -> None:
+        """Reset both the main registry and the managed pool registry.
+
+        When ``propagate_to_rust`` is True (the default — end-of-life
+        teardown), V2/V3 removal is propagated to the Rust ``BotState`` via
+        ``py_bot.unregister_pool`` before clearing Python storage (ADR-007).
+        V4 pools are Python-only (engine-side unregister is deferred).
+
+        When ``propagate_to_rust`` is False (the mid-lifecycle
+        ``release_python_state`` handoff), Rust keeps the pools — the live pump
+        keeps writing V3 Mint/Burn/Swap through the shared ``BotState``, so the
+        release must NOT unregister the very state it is handing canonical
+        ownership to. Unregistering there stranded every live Mint/Burn (the
+        pump routed them to the buffer because ``registered=false``) and
+        dropped every Swap, freezing the tick map (the V3 desync in the
+        permutation run). Only Python storage is dropped; Rust stays canonical.
+        """
+        if propagate_to_rust and self._py_bot is not None:
+            # Iterate storage keys (not pool objects) — the key's second
+            # element is the checksummed address; tests may store mocks.
+            for _chain_id, address in self._storage():
+                self._py_bot.unregister_pool(address=address)
+        self.reset()
+        self._managed_pool_registry.reset()

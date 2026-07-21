@@ -1,51 +1,46 @@
+"""Uniswap V3 pool snapshot and subscription handler."""
+
 import asyncio
 import pathlib
 from collections import defaultdict, deque
-from typing import TYPE_CHECKING, Any, Protocol, TypedDict
+from typing import Any, Protocol, TypedDict
 
 import pydantic_core
 import tqdm
 import tqdm.asyncio
-from eth_abi.abi import decode as abi_decode
 from eth_typing import ChecksumAddress, HexAddress
-from hexbytes import HexBytes
-from sqlalchemy import select
-from web3 import Web3
-from web3.types import LogReceipt
+from sqlalchemy.orm import Session, scoped_session
 
+from degenbot.abi import decode as abi_decode
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.config import settings
-from degenbot.connection import async_connection_manager, connection_manager
-from degenbot.database import db_session
-from degenbot.database.models.base import ExchangeTable
-from degenbot.database.models.pools import AbstractUniswapV3Pool, LiquidityPoolTable
+from degenbot.crypto import event_topic
 from degenbot.database.operations import get_scoped_sqlite_session
-from degenbot.exceptions.liquidity_pool import UnknownPool
-from degenbot.functions import fetch_logs_retrying, fetch_logs_retrying_async
+from degenbot.database.session_manager import DatabaseSessionManager
+from degenbot.db import PyDatabaseSnapshot
+from degenbot.exceptions.pool import UnknownPool
 from degenbot.logging import logger
+from degenbot.provider import AlloyProvider, AsyncAlloyProvider
+from degenbot.provider.log_fetching import fetch_logs_retrying, fetch_logs_retrying_async
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import KeyedDefaultDict
+from degenbot.types.rpc_types import LogReceipt
 from degenbot.uniswap.abi import UNISWAP_V3_POOL_ABI
-from degenbot.uniswap.v3_types import (
-    UniswapV3BitmapAtWord,
-    UniswapV3LiquidityAtTick,
-    UniswapV3LiquidityEvent,
-    UniswapV3PoolLiquidityMappingUpdate,
-)
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
+from degenbot.uniswap.v3_types import UniswapV3LiquidityEvent, UniswapV3PoolLiquidityMappingUpdate
 
 
 class LiquidityMap(TypedDict):
-    tick_bitmap: dict[int, UniswapV3BitmapAtWord]
-    tick_data: dict[int, UniswapV3LiquidityAtTick]
+    """LiquidityMap class."""
+
+    tick_bitmap: dict[int, BitmapAtWord]
+    tick_data: dict[int, LiquidityAtTick]
 
 
 class UniswapV3LiquiditySnapshotSource(Protocol):
-    """
-    A minimal protocol allowing the UniswapV3LiquiditySnapshot class to retrieve pool data from a
-    generic source.
+    """A minimal protocol for retrieving pool data from a generic source.
+
+    Any class implementing the protocol must implement these methods,
+    transforming data as necessary to return the specified types.
     """
 
     storage_kind: str
@@ -53,14 +48,37 @@ class UniswapV3LiquiditySnapshotSource(Protocol):
 
     # Any class implementing the protocol must implement these methods, transforming data as
     # necessary to return the specified types.
-    def get_liquidity_map(self, pool_address: ChecksumAddress) -> LiquidityMap | None: ...
-    def get_newest_block(self) -> BlockNumber | None: ...
-    def get_pools(self) -> set[ChecksumAddress]: ...
+    def get_liquidity_map(self, pool_address: ChecksumAddress) -> LiquidityMap | None:
+        """Return liquidity map.
+
+        Returns:
+            The liquidity map for the pool, or None if not found.
+
+        """
+        ...
+
+    def get_newest_block(self) -> BlockNumber | None:
+        """Return newest block.
+
+        Returns:
+            The newest block number, or None if unavailable.
+
+        """
+        ...
+
+    def get_pools(self) -> set[ChecksumAddress]:
+        """Return pools.
+
+        Returns:
+            The set of pool addresses.
+
+        """
+        ...
 
 
 class MonolithicJsonFileSnapshot:
-    """
-    A pool liquidity source backed by a single JSON file with this structure:
+    """A pool liquidity source backed by a single JSON file.
+
     {
         "snapshot_block": int,
         "chain_id": int,
@@ -83,39 +101,58 @@ class MonolithicJsonFileSnapshot:
         "0xPoolAddress2": { ... },
         "0xPoolAddress3": { ... },
         ...
-    }
+    }.
     """
 
     storage_kind = "file"
 
     def __init__(self, path: pathlib.Path | str) -> None:
+        """Initialize the instance."""
         path = pathlib.Path(path).expanduser().absolute()
         self._path = path
         self._file_snapshot: dict[str, Any] = pydantic_core.from_json(path.read_bytes())
         self.chain_id: int = self._file_snapshot["chain_id"]
 
     def get_liquidity_map(self, pool_address: ChecksumAddress) -> LiquidityMap | None:
+        """Return liquidity map.
+
+        Returns:
+            The liquidity map for the pool, or None if not found.
+
+        """
         if pool_address not in self._file_snapshot:
             return None
 
         return LiquidityMap(
             tick_bitmap={
-                int(k): UniswapV3BitmapAtWord(**v)
+                int(k): BitmapAtWord(**v)
                 for k, v in self._file_snapshot[pool_address]["tick_bitmap"].items()
             },
             tick_data={
-                int(k): UniswapV3LiquidityAtTick(**v)
+                int(k): LiquidityAtTick(**v)
                 for k, v in self._file_snapshot[pool_address]["tick_data"].items()
             },
         )
 
     def get_newest_block(self) -> BlockNumber | None:
+        """Return newest block.
+
+        Returns:
+            The snapshot block number, or None if unavailable.
+
+        """
         newest_block = self._file_snapshot.get("snapshot_block")
         if newest_block is None:
             return None
         return int(newest_block)
 
     def get_pools(self) -> set[ChecksumAddress]:
+        """Return pools.
+
+        Returns:
+            The set of pool addresses from the snapshot.
+
+        """
         # all top-level keys except metadata entries
         return {
             get_checksum_address(key)
@@ -125,8 +162,7 @@ class MonolithicJsonFileSnapshot:
 
 
 class IndividualJsonFileSnapshot:
-    """
-    Snapshot source backed by a directory of JSON files with this tree structure:
+    """Snapshot source backed by a directory of JSON files with this tree structure.
 
         /path/to/snapshots/
         ├── _metadata.json              -> { "block": int, "chain_id": int }
@@ -140,6 +176,7 @@ class IndividualJsonFileSnapshot:
     storage_kind = "dir"
 
     def __init__(self, path: pathlib.Path | str) -> None:
+        """Initialize the instance."""
         dir_path = pathlib.Path(path).expanduser().absolute()
         assert dir_path.exists()
         assert dir_path.is_dir()
@@ -150,15 +187,33 @@ class IndividualJsonFileSnapshot:
         self.chain_id: int = self._metadata["chain_id"]
 
     def get_newest_block(self) -> BlockNumber | None:
+        """Return newest block.
+
+        Returns:
+            The block number from metadata, or None if unavailable.
+
+        """
         newest_block = self._metadata.get("block")
         if newest_block is None:
             return None
         return int(newest_block)
 
     def get_pools(self) -> set[ChecksumAddress]:
+        """Return pools.
+
+        Returns:
+            The set of pool addresses from file stems.
+
+        """
         return {get_checksum_address(pool_file.stem) for pool_file in self._dir.glob("0x*.json")}
 
     def get_liquidity_map(self, pool_address: ChecksumAddress) -> LiquidityMap | None:
+        """Return liquidity map.
+
+        Returns:
+            The liquidity map for the pool, or None if not found.
+
+        """
         pool_path = self._dir / f"{pool_address}.json"
         if not pool_path.exists():
             return None
@@ -166,101 +221,157 @@ class IndividualJsonFileSnapshot:
         pool_liquidity_snapshot = pydantic_core.from_json(pool_path.read_bytes())
         return LiquidityMap(
             tick_bitmap={
-                int(k): UniswapV3BitmapAtWord(**v)
-                for k, v in pool_liquidity_snapshot["tick_bitmap"].items()
+                int(k): BitmapAtWord(**v) for k, v in pool_liquidity_snapshot["tick_bitmap"].items()
             },
             tick_data={
-                int(k): UniswapV3LiquidityAtTick(**v)
+                int(k): LiquidityAtTick(**v)
                 for k, v in pool_liquidity_snapshot["tick_data"].items()
             },
         )
 
 
 class DatabaseSnapshot:
-    """
-    Snapshot source backed by built-in SQLite database using the ORM abstractions defined
-    in `degenbot.database`.
+    """Snapshot source backed by built-in SQLite database.
 
-    If a path to an SQLite database is not provided, the default location specified in
-    `degenbot.settings` will be used.
+    Routes every read through the Rust `degenbot-db` core crate via the
+    `PyDatabaseSnapshot` PyO3 seam (ADR-005 three-layer architecture). The
+    `session` / `database_path` are retained for explicit-deps construction +
+    migration tooling; reads no longer use the SQLAlchemy session.
     """
 
     storage_kind = "db"
+    session: DatabaseSessionManager | scoped_session[Session]
 
-    def __init__(self, chain_id: ChainId, database_path: pathlib.Path | None = None) -> None:
-        if database_path is None:
-            self.session = db_session
-            self.database_path = settings.database.path
+    def __init__(
+        self,
+        chain_id: ChainId,
+        *,
+        db: DatabaseSessionManager | None = None,
+        database_path: pathlib.Path | None = None,
+    ) -> None:
+        """Initialize the instance.
+
+        Raises:
+            ValueError: If neither db nor database_path is provided.
+
+        """
+        if db is not None:
+            self.session = db
+            self.database_path = database_path or pathlib.Path()
         else:
+            if database_path is None:
+                msg = "Either db or database_path must be provided"
+                raise ValueError(msg)
             self.session = get_scoped_sqlite_session(database_path)
             self.database_path = database_path
 
         self.chain_id = chain_id
+        # Lazily-constructed Rust read handle (opened on first read so a
+        # `db=-only` construction with no resolvable path doesn't fail until
+        # a read is actually attempted).
+        self._rust_snapshot: PyDatabaseSnapshot | None = None
+
+    def _rust_db_path(self) -> pathlib.Path:
+        """Resolve the SQLite file path the Rust reader will open.
+
+        Prefer an explicit `database_path`; fall back to the bound engine's
+        file URL (the `db=bot.db` case where no path was passed).
+
+        Returns:
+            The resolved database file path.
+
+        Raises:
+            ValueError: If no file path can be resolved (e.g. an in-memory engine).
+
+        """
+        if self.database_path and self.database_path.name:
+            return self.database_path
+        engine = getattr(self.session, "_engine", None)
+        if engine is not None:
+            db_path = engine.url.database
+            if db_path and db_path != ":memory:":
+                return pathlib.Path(db_path)
+        msg = "database_path is required for Rust-backed snapshot reads"
+        raise ValueError(msg)
+
+    def _rust(self) -> PyDatabaseSnapshot:
+        if self._rust_snapshot is None:
+            self._rust_snapshot = PyDatabaseSnapshot(
+                chain_id=self.chain_id,
+                database_path=str(self._rust_db_path()),
+            )
+        return self._rust_snapshot
 
     def get_liquidity_map(self, pool_address: ChecksumAddress) -> LiquidityMap | None:
-        pool_in_db = self.session.scalar(
-            select(LiquidityPoolTable).where(LiquidityPoolTable.address == pool_address)
-        )
-        if pool_in_db is None:
+        """Return liquidity map.
+
+        Returns:
+            The liquidity map for the pool, or None if not found.
+
+        """
+        raw = self._rust().get_liquidity_map_v3(get_checksum_address(pool_address))
+        if raw is None:
             return None
-
-        if TYPE_CHECKING:
-            assert isinstance(pool_in_db, AbstractUniswapV3Pool)
-
         return LiquidityMap(
             tick_bitmap={
-                int(initialization_map.word): UniswapV3BitmapAtWord(
-                    bitmap=initialization_map.bitmap
-                )
-                for initialization_map in pool_in_db.initialization_maps
+                int(word): BitmapAtWord(**entry) for word, entry in raw["tick_bitmap"].items()
             },
             tick_data={
-                int(liquidity_position.tick): UniswapV3LiquidityAtTick(
-                    liquidity_gross=liquidity_position.liquidity_gross,
-                    liquidity_net=liquidity_position.liquidity_net,
-                )
-                for liquidity_position in pool_in_db.liquidity_positions
+                int(tick): LiquidityAtTick(**entry) for tick, entry in raw["tick_data"].items()
             },
         )
 
+    def get_all_liquidity_maps(self) -> dict[ChecksumAddress, dict[int, tuple[int, int]]]:
+        """Return all V3 tick data as plain dicts.
+
+        Delegates the bulk read to the Rust core (GIL released during the
+        SQLite scan). Returns {pool_address: {tick_index: (liquidity_gross, liquidity_net)}}.
+
+        Returns:
+            A dict mapping pool addresses to tick data dicts.
+
+        """
+        return {
+            get_checksum_address(addr): ticks
+            for addr, ticks in self._rust().get_all_liquidity_maps_v3().items()
+        }
+
     def get_newest_block(self) -> BlockNumber | None:
-        with db_session() as session:
-            last_update_blocks: Sequence[int | None] = session.scalars(
-                select(ExchangeTable.last_update_block).where(
-                    ExchangeTable.chain_id == self.chain_id,
-                    ExchangeTable.name.like("%!_v3", escape="!"),
-                )
-            ).all()
+        """Return newest block.
 
-        if not last_update_blocks or None in last_update_blocks:
-            return None
+        Returns:
+            The newest block number across all V3 exchanges, or None if unavailable.
 
-        return max(
-            last_update_block
-            for last_update_block in last_update_blocks
-            if isinstance(last_update_block, int)
-        )
+        """
+        return self._rust().get_newest_block_v3()
 
     def get_pools(self) -> set[ChecksumAddress]:
-        return {
-            get_checksum_address(pool)
-            for pool in self.session.scalars(select(AbstractUniswapV3Pool.address)).all()
-        }
+        """Return pools.
+
+        Returns:
+            The set of V3 pool addresses from the database.
+
+        """
+        return {get_checksum_address(p) for p in self._rust().get_pools_v3()}
 
 
 class UniswapV3LiquiditySnapshot:
-    """
-    Retrieve and maintain liquidity positions for Uniswap V3 pools.
-    """
+    """Retrieve and maintain liquidity positions for Uniswap V3 pools."""
 
-    UNISWAP_V3_MINT_EVENT_HASH = HexBytes(
-        Web3().eth.contract(abi=UNISWAP_V3_POOL_ABI).events.Mint().topic
+    UNISWAP_V3_MINT_EVENT_HASH = event_topic(
+        next(e for e in UNISWAP_V3_POOL_ABI if e.get("name") == "Mint" and e.get("type") == "event")
     )
-    UNISWAP_V3_BURN_EVENT_HASH = HexBytes(
-        Web3().eth.contract(abi=UNISWAP_V3_POOL_ABI).events.Burn().topic
+    UNISWAP_V3_BURN_EVENT_HASH = event_topic(
+        next(e for e in UNISWAP_V3_POOL_ABI if e.get("name") == "Burn" and e.get("type") == "event")
     )
 
     def __init__(self, source: UniswapV3LiquiditySnapshotSource) -> None:
+        """Initialize the instance.
+
+        Raises:
+            ValueError: If the provided source is uninitialized.
+
+        """
         self._source = source
         self._chain_id = source.chain_id
 
@@ -270,31 +381,36 @@ class UniswapV3LiquiditySnapshot:
         self.newest_block: BlockNumber = source_block
 
         self._liquidity_events: dict[ChecksumAddress, deque[UniswapV3LiquidityEvent]] = defaultdict(
-            deque
+            deque,
         )
         self._liquidity_snapshot: dict[ChecksumAddress, LiquidityMap | None] = KeyedDefaultDict(
-            lambda key: self._source.get_liquidity_map(get_checksum_address(key))
+            lambda key: self._source.get_liquidity_map(get_checksum_address(key)),
         )
 
         logger.info(f"Loaded Uniswap V3 LP snapshot from {source.storage_kind} source")
 
     @property
     def chain_id(self) -> int:
+        """Chain id."""
         return self._chain_id
 
     @property
     def pools(self) -> set[ChecksumAddress]:
+        """Pools."""
         return self._source.get_pools()
 
     def _process_liquidity_event_log(
         self,
         log: LogReceipt,
     ) -> tuple[ChecksumAddress, UniswapV3LiquidityEvent]:
-        """
-        Decode an event log and convert to an address and a `UniswapV3LiquidityEvent` for
-        processing with `UniswapV3Pool.update_liquidity_map`.
-        """
+        """Decode an event log and convert to an address and a `UniswapV3LiquidityEvent`.
 
+        For processing with `UniswapV3Pool.update_liquidity_map`.
+
+        Returns:
+            Tuple of (pool address, liquidity event).
+
+        """
         # ref: https://github.com/Uniswap/v3-core/blob/main/contracts/interfaces/pool/IUniswapV3PoolEvents.sol
         #
         # event Mint(
@@ -346,17 +462,18 @@ class UniswapV3LiquiditySnapshot:
     def fetch_new_events(
         self,
         to_block: BlockNumber,
+        *,
+        provider: AlloyProvider,
         blocks_per_request: int | None = None,
     ) -> None:
-        """
-        Fetch liquidity events from the block following the last-known event to the target block
+        """Fetch liquidity events from the block following the last-known event to the target block.
+
         using `eth_getLogs`. Blocks per request will be capped at `blocks_per_request`.
         """
-
         logger.info(f"Updating Uniswap V3 snapshot from block {self.newest_block} to {to_block}")
 
         event_logs = fetch_logs_retrying(
-            w3=connection_manager.get_web3(self.chain_id),
+            provider=provider,
             start_block=self.newest_block + 1,
             end_block=to_block,
             max_blocks_per_request=blocks_per_request,
@@ -385,20 +502,20 @@ class UniswapV3LiquiditySnapshot:
     async def fetch_new_events_async(
         self,
         to_block: BlockNumber,
+        *,
+        provider: AsyncAlloyProvider,
         blocks_per_request: int | None = None,
     ) -> None:
-        """
-        Async version of fetch_new_events.
+        """Async version of fetch_new_events.
 
         Fetch liquidity events from the block following the last-known event to the target block
         using `eth_getLogs` via the async provider. Blocks per request will be capped at
         `blocks_per_request`.
         """
-
         logger.info(f"Updating Uniswap V3 snapshot from block {self.newest_block} to {to_block}")
 
         event_logs = await fetch_logs_retrying_async(
-            w3=async_connection_manager.get_web3(self.chain_id),
+            provider=provider,
             start_block=self.newest_block + 1,
             end_block=to_block,
             max_blocks_per_request=blocks_per_request,
@@ -406,7 +523,7 @@ class UniswapV3LiquiditySnapshot:
                 [
                     self.UNISWAP_V3_MINT_EVENT_HASH,
                     self.UNISWAP_V3_BURN_EVENT_HASH,
-                ]
+                ],
             ],
         )
 
@@ -430,10 +547,12 @@ class UniswapV3LiquiditySnapshot:
         self,
         pool_address: HexAddress,
     ) -> tuple[UniswapV3PoolLiquidityMappingUpdate, ...]:
-        """
-        Consume pending liquidity updates for the pool.
-        """
+        """Consume pending liquidity updates for the pool.
 
+        Returns:
+            A tuple of liquidity mapping updates for the pool.
+
+        """
         pool_key = get_checksum_address(pool_address)
 
         try:
@@ -449,9 +568,12 @@ class UniswapV3LiquiditySnapshot:
         finally:
             self._liquidity_events[pool_key].clear()
 
-    def tick_bitmap(self, pool_address: str | bytes) -> dict[int, UniswapV3BitmapAtWord] | None:
-        """
-        Consume the tick initialization bitmaps for the pool.
+    def tick_bitmap(self, pool_address: str | bytes) -> dict[int, BitmapAtWord] | None:
+        """Consume the tick initialization bitmaps for the pool.
+
+        Returns:
+            The tick bitmap dict, or None if no snapshot exists.
+
         """
         pool_address = get_checksum_address(pool_address)
 
@@ -463,9 +585,12 @@ class UniswapV3LiquiditySnapshot:
         pool_snapshot["tick_bitmap"] = {}
         return tick_bitmap
 
-    def tick_data(self, pool_address: str | bytes) -> dict[int, UniswapV3LiquidityAtTick] | None:
-        """
-        Consume the liquidity mapping for the pool.
+    def tick_data(self, pool_address: str | bytes) -> dict[int, LiquidityAtTick] | None:
+        """Consume the liquidity mapping for the pool.
+
+        Returns:
+            The tick data dict, or None if no snapshot exists.
+
         """
         pool_address = get_checksum_address(pool_address)
 
@@ -480,13 +605,15 @@ class UniswapV3LiquiditySnapshot:
     def update(
         self,
         pool: HexAddress,
-        tick_data: dict[int, UniswapV3LiquidityAtTick],
-        tick_bitmap: dict[int, UniswapV3BitmapAtWord],
+        tick_data: dict[int, LiquidityAtTick],
+        tick_bitmap: dict[int, BitmapAtWord],
     ) -> None:
-        """
-        Update the liquidity mapping for the pool.
-        """
+        """Update the liquidity mapping for the pool.
 
+        Raises:
+            UnknownPool: If the pool has no snapshot.
+
+        """
         pool_key = get_checksum_address(pool)
 
         pool_snapshot = self._liquidity_snapshot[pool_key]

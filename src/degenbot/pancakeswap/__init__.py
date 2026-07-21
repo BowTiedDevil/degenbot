@@ -1,12 +1,15 @@
-from . import (
-    abi as abi,
-)  # excluded from __all__ so it doesn't bubble back up to the top level package namespace
-from .managers import PancakeswapV2PoolManager, PancakeswapV3PoolManager
-from .pools import PancakeswapV2Pool, PancakeswapV3Pool
+"""PancakeSwap V3 pool type registration and exports.
+
+Deployment data (chain_id, factory → deployer / init_hash / variant /
+dex_identity) for the PancakeSwap V2/V3 factories is loaded from the
+shipped ``deployments.json`` by the top-level ``degenbot`` package init via
+``register_from_deployments(load_deployments())`` (ADR-005).
+"""
+
+from .pools import PancakeswapV3Pool
+from .trackers import PancakeswapV3PoolTracker
 
 __all__ = (
-    "PancakeswapV2Pool",
-    "PancakeswapV2PoolManager",
     "PancakeswapV3Pool",
-    "PancakeswapV3PoolManager",
+    "PancakeswapV3PoolTracker",
 )

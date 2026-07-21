@@ -1,4 +1,4 @@
-"""copy token addresses to erc20 table
+"""copy token addresses to erc20 table.
 
 Revision ID: 2afcff276d90
 Revises: 4eada4ae4a55
@@ -15,8 +15,6 @@ from sqlalchemy.orm import Session
 
 from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.database.models.pools import (
-    AbstractUniswapV2Pool,
-    AbstractUniswapV3Pool,
     AerodromeV2PoolTable,
     AerodromeV3PoolTable,
     CamelotV2PoolTable,
@@ -27,7 +25,9 @@ from degenbot.database.models.pools import (
     SushiswapV3PoolTable,
     SwapbasedV2PoolTable,
     UniswapV2PoolTable,
+    UniswapV2PoolTableBase,
     UniswapV3PoolTable,
+    UniswapV3PoolTableBase,
     UniswapV4PoolTable,
 )
 
@@ -40,7 +40,6 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-
     with op.batch_alter_table("erc20_tokens", schema=None) as batch_op:
         batch_op.alter_column("name", existing_type=sa.TEXT(), nullable=True)
         batch_op.alter_column("symbol", existing_type=sa.TEXT(), nullable=True)
@@ -65,7 +64,7 @@ def upgrade() -> None:
         UniswapV3PoolTable,
     ]:
         if TYPE_CHECKING:
-            assert isinstance(table, (AbstractUniswapV2Pool, AbstractUniswapV3Pool))
+            assert isinstance(table, (UniswapV2PoolTableBase, UniswapV3PoolTableBase))
 
         for chain_id, token0_address, token1_address in session.query(
             table.chain,
@@ -82,7 +81,7 @@ def upgrade() -> None:
     ).all():
         # Get the chain ID from the manager_id
         chain_id = session.scalar(
-            sa.select(PoolManagerTable.chain).where(PoolManagerTable.id == pool_id)
+            sa.select(PoolManagerTable.chain).where(PoolManagerTable.id == pool_id),
         )
         if TYPE_CHECKING:
             assert chain_id is not None
@@ -94,7 +93,8 @@ def upgrade() -> None:
     existing_token_addresses.update(
         (chain_id, token_address)
         for chain_id, token_address in session.query(
-            Erc20TokenTable.chain, Erc20TokenTable.address
+            Erc20TokenTable.chain,
+            Erc20TokenTable.address,
         ).all()
     )
 

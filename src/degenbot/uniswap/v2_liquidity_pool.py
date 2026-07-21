@@ -1,55 +1,26 @@
-# ruff: noqa: PLR0904
+"""UniswapV2Pool: constant-product AMM with reserve tracking."""
 
-
-import contextlib
 import dataclasses
-from collections import deque
-from collections.abc import Iterable
 from fractions import Fraction
-from threading import Lock
-from typing import TYPE_CHECKING, Any, Self, cast
+from typing import Any, ClassVar, Self
 from weakref import WeakSet
 
-import eth_abi.abi
-from eth_abi.exceptions import DecodingError
-from eth_typing import BlockIdentifier, ChecksumAddress
-from sqlalchemy import select
-from sqlalchemy.orm import Session, scoped_session
-from web3 import Web3
-from web3.exceptions import ContractLogicError
-from web3.types import TxParams
+from eth_typing import ChecksumAddress
 
+from degenbot.aerodrome.math import (
+    calc_exact_in_stable_camelot as _rs_calc_exact_in_stable_camelot,
+)
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import connection_manager
-from degenbot.database import db_session
-from degenbot.database.models.pools import (
-    AbstractUniswapV2Pool,
-    LiquidityPoolTable,
-    UniswapV2PoolTable,
-)
-from degenbot.erc20 import Erc20Token, Erc20TokenManager
+from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.liquidity_pool import (
-    AddressMismatch,
-    ExternalUpdateError,
-    InvalidSwapInputAmount,
-    LateUpdateError,
-    LiquidityPoolError,
-    NoPoolStateAvailable,
-)
-from degenbot.functions import encode_function_calldata, raw_call
-from degenbot.logging import logger
-from degenbot.registry import pool_registry
-from degenbot.types.abstract import AbstractArbitrage, AbstractLiquidityPool
-from degenbot.types.aliases import BlockNumber, ChainId
-from degenbot.types.concrete import AbstractPublisherMessage, Publisher, PublisherMixin, Subscriber
-from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS, UniswapV2ExchangeDeployment
-from degenbot.uniswap.types import UniswapPoolSwapVector
-from degenbot.uniswap.v2_functions import (
-    constant_product_calc_exact_in,
-    constant_product_calc_exact_out,
-    generate_v2_pool_address,
-)
+from degenbot.exceptions.pool import ExternalUpdateError
+from degenbot.types import DexIdentity, PyLiquidityPool
+from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
+from degenbot.types.aliases import BlockNumber
+from degenbot.types.concrete import PublisherMixin, Subscriber
+from degenbot.types.pool_protocols import SimulationResult
+from degenbot.uniswap.v2_pool_calc import UniswapV2PoolCalc
+from degenbot.uniswap.v2_pool_state import V2PoolState
 from degenbot.uniswap.v2_types import (
     UniswapV2PoolExternalUpdate,
     UniswapV2PoolSimulationResult,
@@ -57,700 +28,275 @@ from degenbot.uniswap.v2_types import (
     UniswapV2PoolStateUpdated,
 )
 
-if TYPE_CHECKING:
-    from hexbytes import HexBytes
 
+class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
+    """A Uniswap V2-based liquidity pool implementing the x*y=k constant function invariant."""
 
-def get_pool_from_database(
-    address: ChecksumAddress,
-    chain_id: int,
-    session: Session | scoped_session[Session] = db_session,
-) -> AbstractUniswapV2Pool | None:
-    return session.scalar(
-        select(LiquidityPoolTable).where(
-            LiquidityPoolTable.address == address,
-            LiquidityPoolTable.chain == chain_id,
-        )
-    )  # type: ignore[return-value]
+    variant: ClassVar[str | None] = None
 
+    # Camelot solidly-stable strategy (ADR-005 slice 7 step 4a fold). The
+    # companion sets these as INSTANCE attrs off the `PyLiquidityPool` handle's
+    # `V2PoolDescriptor` (see `_from_py_pool`) — `stable_swap` selects the
+    # stable calc branch for Camelot stable pools; False
+    # otherwise. ``fee_denominator`` carries Camelot's integer fee scaling
+    # (used by the stable math); None for non-Camelot V2 (volatile calc ignores
+    # it). The class-level defaults are the read path ONLY for instances that
+    # bypassed `_from_py_pool` (none — the construction guard blocks `__init__`).
+    stable_swap: bool = False
+    fee_denominator: int | None = None
 
-class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
-    """
-    A Uniswap V2-based liquidity pool implementing the x*y=k constant function invariant.
-    """
+    # Instance attributes set in `_from_py_pool` (the only construction seam —
+    # `__init__` raises). Declared at class scope so the type checker tracks
+    # them without inline annotations on the classmethod body
+    _py_pool: PyLiquidityPool
+    dex: DexIdentity
+    address: ChecksumAddress
+    factory: ChecksumAddress
+    _fee_token0: Fraction
+    _fee_token1: Fraction
+    _token0: Erc20Token
+    _token1: Erc20Token
+    init_hash: str
+    deployer: ChecksumAddress
+    name: str
+    _subscribers: WeakSet[Subscriber]
 
     type PoolState = UniswapV2PoolState
-    type DatabasePoolType = UniswapV2PoolTable
 
-    _state: PoolState
-    _state_cache: deque[PoolState]
+    def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+        """Direct construction is forbidden.
 
-    FEE = Fraction(3, 1000)
-    RESERVES_STRUCT_TYPES = ("uint112", "uint112")
-    UNISWAP_V2_MAINNET_POOL_INIT_HASH = (
-        "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
-    )
+        ``UniswapV2Pool`` is a Python companion over a Rust-owned
+        ``PyLiquidityPool`` handle. The handle can only be produced by
+        registering a pool in a ``PyBot`` — there is no way for a caller to
+        hand-build one. Use the registered entry points instead:
+
+        - Production: ``Bot.build_pool(address)``
+        - Tests: ``make_v2_pool(...)``
+
+        Both register the pool in Rust, obtain the ``PyLiquidityPool``
+        handle, and wrap it via :meth:`_from_py_pool` (mirroring Polars'
+        ``_from_pydf`` seam).
+
+        Raises:
+            TypeError: Always. Direct construction is not supported.
+
+        """
+        msg = (
+            f"{type(self).__name__} cannot be constructed directly. "
+            "Use Bot.build_pool(address) (production) or make_v2_pool(...) "
+            "(tests) to register the pool in Rust and obtain the "
+            "PyLiquidityPool handle to wrap."
+        )
+        raise TypeError(msg)
 
     @classmethod
-    def from_exchange(
-        cls,
-        address: str,
-        exchange: UniswapV2ExchangeDeployment,
-        **kwargs: Any,
-    ) -> Self:
+    def _from_py_pool(cls, py_pool: PyLiquidityPool) -> Self:
+        """Wrap a Rust-owned ``PyLiquidityPool`` handle as a Python companion.
+
+        Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). The
+        handle is self-describing: every identity field (address, factory,
+        fees, tokens, dex preset, stable strategy) is read off it — no
+        identity is passed as constructor args. Rust owns the mutable state
+        (reserves + reorg journal) as ``V2PoolState`` and the immutable
+        registration metadata as ``V2PoolDescriptor``; this companion reads
+        both through ``self._py_pool``.
+
+        Only ``Bot.build_pool()`` (production) and ``make_v2_pool`` (tests)
+        should call this — they have already registered the pool (and, per
+        ADR-006, its tokens in the same ``Bot``) and obtained the handle.
+        ``cls`` is used so subclasses that only set ClassVars (the documented
+        extension contract) inherit this seam and produce instances of the
+        subclass.
+
+        Returns:
+            A ``cls`` instance wrapping ``py_pool``.
+
+        Raises:
+            DegenbotValueError: If the handle is not a V2-family pool
+                (``py_pool.variant`` is empty — the ``PoolEntry`` is not
+                ``V2``), so the union-handle V2 getters would return
+                empty/default identity.
+            DegenbotValueError: If the handle has no ``DexIdentity`` preset
+                (the pool was not registered with a variant) or the pool's
+                tokens are not registered in the same ``Bot`` (ADR-006).
+
         """
-        Create a new `UniswapV2Pool` with exchange information taken from the provided deployment.
-        """
+        self: Self = cls.__new__(cls)
+        self._py_pool = py_pool
 
-        return cls(
-            address=address,
-            deployer_address=exchange.factory.deployer,
-            init_hash=exchange.factory.pool_init_hash,
-            **kwargs,
-        )
-
-    def _notify_subscribers(self: Publisher, message: AbstractPublisherMessage) -> None:
-        for subscriber in self._subscribers:
-            subscriber.notify(publisher=self, message=message)
-
-    def __init__(
-        self,
-        address: ChecksumAddress | str,
-        *,
-        chain_id: ChainId | None = None,
-        deployer_address: str | None = None,
-        init_hash: str | None = None,
-        fee: Fraction | Iterable[Fraction] | None = None,
-        state_block: BlockNumber | None = None,
-        verify_address: bool = True,
-        silent: bool = False,
-        state_cache_depth: int = 8,
-    ) -> None:
-        """
-        An abstract representation of an x*y=k invariant automatic matchmaker, based on Uniswap V2.
-
-        Arguments
-        ---------
-        address:
-            The address for the deployed pool contract.
-        chain_id:
-            The chain ID where the pool contract is deployed.
-        deployer_address:
-            The address for the deployment contract (optional).
-        init_hash:
-            The init hash for the factory contract. If one is not provided, the preset deployments
-            will be searched first. If no matching deployment is found, the default Uniswap V2 hash
-            will be used.
-        fee:
-            The swap fee as a `Fraction`. If not provided, the default will be used. A 0.3% fee
-            can be specified by passing `fee=Fraction(3,1000)`. For split-fee pools of unequal
-            value, provide an iterable of fees ordered by token position, e.g.
-            `fee=[Fraction(3,1000), Fraction(2,1000)]`
-        state_block:
-            Fetch initial state values from the chain at a particular block height. Defaults to the
-            latest block if omitted.
-        verify_address:
-            Control if the pool address is verified against the deterministic address.
-        silent:
-            Suppress status output.
-        state_cache_depth:
-            How many unique block-state pairs to hold in the state cache.
-        """
-
-        self.address = get_checksum_address(address)
-        self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
-        w3 = connection_manager.get_web3(self.chain_id)
-        state_block = state_block if state_block is not None else w3.eth.block_number
-
-        self.init_hash = (
-            init_hash if init_hash is not None else self.UNISWAP_V2_MAINNET_POOL_INIT_HASH
-        )
-
-        with db_session() as session:
-            pool_from_db: AbstractUniswapV2Pool = session.scalar(
-                select(LiquidityPoolTable).where(
-                    LiquidityPoolTable.address == self.address,
-                    LiquidityPoolTable.chain == self._chain_id,
-                )
+        # Variant-family guard: the handle's ``variant`` getter reads the V2
+        # ``PoolEntry`` identity and returns ``""`` for every non-V2 variant
+        # (V3/V4/Curve/Balancer). Wrapping such a handle here would read
+        # empty/default identity off the union handle (the leaky corner) and
+        # later crash with a confusing ``ZeroDivisionError`` on
+        # ``Fraction(denom - gamma, denom)`` when ``fee_tokenN`` yields ``(0, 0)``.
+        # Fail fast with a clear message instead — the uniform precondition
+        # check every ``_from_py_pool`` seam uses (``pool_family`` dispatches on
+        # the ``PoolEntry`` variant directly, so it is correct for every
+        # registered family; the V2-only ``variant`` getter returns ``""`` for
+        # non-V2 and can't serve as a cross-family guard).
+        if py_pool.pool_family != "v2":
+            msg = (
+                "PyLiquidityPool handle is not a V2-family pool "
+                f"(got pool_family {py_pool.pool_family!r}); "
+                "UniswapV2Pool._from_py_pool requires a handle registered via "
+                "register_v2_pool"
             )
+            raise DegenbotValueError(message=msg)
 
-            # Get the tokens held by the pool
-            if pool_from_db is not None:
-                token0_address = pool_from_db.token0.address
-                token1_address = pool_from_db.token1.address
-            else:
-                try:
-                    _, (token0_address, token1_address) = self.get_immutable_pool_values(w3=w3)
-                except (ContractLogicError, DecodingError) as exc:  # pragma: no cover
-                    # Contracts differ slightly across Uniswap V2 forks, so decoding may fail.
-                    # Catch this here and raise as a pool-specific exception
-                    raise LiquidityPoolError(message="Could not decode contract data") from exc
-
-            # Get the factory & deployer info
-            if pool_from_db is not None:
-                self.factory = get_checksum_address(pool_from_db.exchange.factory)
-                self.deployer = (
-                    get_checksum_address(pool_from_db.exchange.deployer)
-                    if pool_from_db.exchange.deployer is not None
-                    else self.factory
-                )
-            else:
-                try:
-                    factory, _ = self.get_immutable_pool_values(w3=w3)
-                    self.factory = get_checksum_address(factory)
-                except (ContractLogicError, DecodingError) as exc:  # pragma: no cover
-                    # Contracts differ slightly across Uniswap V2 forks, so decoding may fail.
-                    # Catch this here and raise as a pool-specific exception
-                    raise LiquidityPoolError(message="Could not decode contract data") from exc
-
-                # The deployer address is not typically available via getter, so assume the factory
-                # deployed the pool unless an address was explicitly provided
-                self.deployer = get_checksum_address(deployer_address or self.factory)
-
-            # Use registered deployment values if available
-            with contextlib.suppress(KeyError):
-                factory_deployment = FACTORY_DEPLOYMENTS[self.chain_id][self.factory]
-                self.init_hash = factory_deployment.pool_init_hash
-                if factory_deployment.deployer is not None:  # pragma: no cover
-                    self.deployer = factory_deployment.deployer
-
-            # Set the fees taken on swaps for both tokens
-            if pool_from_db is not None:
-                self.fee_token0 = Fraction(pool_from_db.fee_token0, pool_from_db.fee_denominator)
-                self.fee_token1 = Fraction(pool_from_db.fee_token1, pool_from_db.fee_denominator)
-            elif fee is not None:
-                match fee:
-                    case Iterable():
-                        self.fee_token0, self.fee_token1 = fee
-                    case Fraction():
-                        self.fee_token0 = self.fee_token1 = fee
-                    case _:
-                        raise DegenbotValueError(message="Fees not passed correctly.")
-            else:
-                self.fee_token0 = self.fee_token1 = self.FEE
-
-        token_manager = Erc20TokenManager(chain_id=self.chain_id)
-        try:
-            self.token0 = token_manager.get_erc20token(
-                address=token0_address,
-                silent=silent,
+        # DexIdentity preset — resolved from the registered variant tag by
+        # Rust (``preset_for_variant``). Always present for a V2 pool
+        # registered via ``register_v2_pool`` (which validates the variant).
+        dex = py_pool.dex
+        if dex is None:  # pragma: no cover
+            msg = (
+                "PyLiquidityPool handle has no DexIdentity preset; the pool "
+                "must be registered with a variant via register_v2_pool"
             )
-            self.token1 = token_manager.get_erc20token(
-                address=token1_address,
-                silent=silent,
+            raise DegenbotValueError(message=msg)
+        self.dex = dex
+
+        # Recover token companions from the SAME shared BotState (ADR-006):
+        # ``get_token0``/``get_token1`` return ``PyErc20Token`` handles for
+        # tokens registered in the same ``Bot`` as the pool. Production
+        # builders register tokens via the shared ``Erc20Builder`` (same
+        # ``_py_bot``); the test factory registers them explicitly.
+        py_token0 = py_pool.get_token0()
+        py_token1 = py_pool.get_token1()
+        if py_token0 is None or py_token1 is None:  # pragma: no cover
+            msg = (
+                "pool tokens must be registered in the same Bot as the pool "
+                "(ADR-006): get_token0/get_token1 returned None"
             )
-        except DegenbotValueError as e:
-            raise LiquidityPoolError(message="Could not build one or more tokens.") from e
+            raise DegenbotValueError(message=msg)
+        self._token0 = Erc20Token._from_py_token(py_token0)  # noqa: SLF001
+        self._token1 = Erc20Token._from_py_token(py_token1)  # noqa: SLF001
 
-        if verify_address and self.address != self._verified_address():  # pragma: no branch
-            raise AddressMismatch
+        self.address = get_checksum_address(py_pool.address)
+        self.factory = get_checksum_address(py_pool.factory)
 
-        fee_string = (
-            f"{100 * self.fee_token0.numerator / self.fee_token0.denominator:.2f}"
-            if self.fee_token0 == self.fee_token1
-            else (
-                f"{100 * self.fee_token0.numerator / self.fee_token0.denominator:.2f}"
+        # ``fee_tokenN`` on the handle is the RETAINED post-fee fraction
+        # ``(gamma_numer, fee_denom)`` (Rust convention); the companion stores
+        # the FEE ``Fraction`` (e.g. ``Fraction(3, 1000)`` for 0.3%), so the
+        # conversion is ``Fraction(denom - gamma, denom)``.
+        gamma0, denom0 = py_pool.fee_token0
+        gamma1, denom1 = py_pool.fee_token1
+        self._fee_token0 = Fraction(denom0 - gamma0, denom0)
+        self._fee_token1 = Fraction(denom1 - gamma1, denom1)
+
+        # Deployer/init_hash come from the dex preset (the only path now —
+        # the handle carries the canonical deployment identity).
+        self.init_hash = dex.init_hash
+        self.deployer = get_checksum_address(dex.deployer)
+
+        # Camelot stable strategy + integer fee scale: read off the handle's
+        # descriptor (no longer class-level attrs mutated by the builder).
+        self.stable_swap = py_pool.stable_swap
+        self.fee_denominator = py_pool.fee_denominator
+
+        fee_numerator_0 = 100 * self._fee_token0.numerator / self._fee_token0.denominator
+        if self._fee_token0 == self._fee_token1:
+            fee_string = f"{fee_numerator_0:.2f}"
+        else:
+            fee_string = (
+                f"{fee_numerator_0:.2f}"
                 f"/"
-                f"{100 * self.fee_token1.numerator / self.fee_token1.denominator:.2f}"
+                f"{100 * self._fee_token1.numerator / self._fee_token1.denominator:.2f}"
             )
-        )
-        self.name = f"{self.token0}-{self.token1} ({self.__class__.__name__}, {fee_string}%)"
+        self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, {fee_string}%)"
 
-        reserves0, reserves1 = self.get_reserves(w3=w3, block_identifier=state_block)
-
-        initial_state = self.PoolState.__value__(
-            address=self.address,
-            reserves_token0=reserves0,
-            reserves_token1=reserves1,
-            block=state_block,
-        )
-        self._state_cache = deque(maxlen=max(1, state_cache_depth))
-        self._state_cache.append(initial_state)
-        self._state_lock = Lock()
-
-        if not silent:  # pragma: no cover
-            logger.info(self.name)
-            logger.info(f"• Token 0: {self.token0} - Reserves: {self.reserves_token0}")
-            logger.info(f"• Token 1: {self.token1} - Reserves: {self.reserves_token1}")
-
-        pool_registry.add(pool_address=self.address, chain_id=self.chain_id, pool=self)
-
-        self._subscribers: WeakSet[Subscriber] = WeakSet()
-
-    @property
-    def chain_id(self) -> int:
-        return self._chain_id
-
-    def __getstate__(self) -> dict[str, Any]:
-        # Remove objects that either cannot be pickled or are unnecessary to perform the calculation
-        copied_attributes = ()
-        dropped_attributes = (
-            "_state_lock",
-            "_subscribers",
-        )
-
-        with self._state_lock:
-            return {
-                k: (v.copy() if k in copied_attributes else v)
-                for k, v in self.__dict__.items()
-                if k not in dropped_attributes
-            }
+        self._subscribers = WeakSet()
+        return self
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f"{self.__class__.__name__}(address={self.address}, token0={self.token0}, token1={self.token1})"  # noqa:E501
+        """Return the canonical string representation.
 
-    def _verified_address(self) -> ChecksumAddress:
-        return generate_v2_pool_address(
-            deployer_address=self.deployer,
-            token_addresses=(self.token0.address, self.token1.address),
-            init_hash=self.init_hash,
-        )
+        Returns:
+            The string representation of the pool.
 
-    def get_immutable_pool_values(
-        self,
-        w3: Web3,
-    ) -> tuple[
-        str,  # factory
-        tuple[str, str],  # tokens
-    ]:
-        with w3.batch_requests() as batch:
-            batch.add_mapping({
-                # These calls default to use 'latest' for block number, which is OK since the
-                # values are immutable
-                w3.eth.call: [
-                    TxParams(
-                        to=self.address,
-                        data=encode_function_calldata(
-                            function_prototype="factory()",
-                            function_arguments=None,
-                        ),
-                    ),
-                    TxParams(
-                        to=self.address,
-                        data=encode_function_calldata(
-                            function_prototype="token0()",
-                            function_arguments=None,
-                        ),
-                    ),
-                    TxParams(
-                        to=self.address,
-                        data=encode_function_calldata(
-                            function_prototype="token1()",
-                            function_arguments=None,
-                        ),
-                    ),
-                ],
-            })
-
-            factory, token0, token1 = batch.execute()
-
-        (factory,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", factory))
-        (token0,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", token0))
-        (token1,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", token1))
-
-        return (
-            cast("str", factory),
-            cast("tuple[str,str]", (token0, token1)),
-        )
+        """
+        return f"{self.__class__.__name__}(address={self.address}, token0={self._token0}, token1={self._token1})"  # noqa: E501
 
     @property
     def update_block(self) -> BlockNumber:
-        if TYPE_CHECKING:
-            assert self.state.block is not None
-        return self.state.block
+        """Update block.
+
+        Returns:
+            The block number of the most recent state update (from Rust).
+
+        """
+        return self._py_pool.update_block
 
     @property
     def reserves_token0(self) -> int:
+        """Reserves token0.
+
+        Returns:
+            The reserve amount for token0 (from Rust).
+
+        """
         return self.state.reserves_token0
 
     @property
     def reserves_token1(self) -> int:
+        """Reserves token1.
+
+        Returns:
+            The reserve amount for token1 (from Rust).
+
+        """
         return self.state.reserves_token1
 
     @property
     def state(self) -> PoolState:
-        return self._state_cache[-1]
+        """State.
 
-    @property
-    def tokens(self) -> tuple[Erc20Token, Erc20Token]:
-        return self.token0, self.token1
+        Returns:
+            The current pool state, built from one atomic Rust snapshot
+            (``_py_pool.snapshot()``) so a Rust-side ``sync_reserves``
+            (pump update) can't interleave between the reserve reads.
 
-    @property
-    def w3(self) -> Web3:
-        return connection_manager.get_web3(self.chain_id)
+        Raises:
+            DegenbotValueError: If the pool is not registered in Rust (no
+                V2 state to snapshot).
 
-    @staticmethod
-    def swap_is_viable(
-        state: PoolState,
-        vector: UniswapPoolSwapVector,
-    ) -> bool:
-        if state.reserves_token0 == 0 or state.reserves_token1 == 0:
-            return False
-        return state.reserves_token1 > 1 if vector.zero_for_one else state.reserves_token0 > 1
-
-    def auto_update(
-        self,
-        *,
-        block_number: BlockNumber | None = None,
-        silent: bool = True,
-    ) -> None:
         """
-        Retrieves and records the current state from the pool at the provided block number, or the
-        latest block if not provided.
-
-        @dev this method uses a lock to guard state-modifying methods that might cause race
-        conditions when used with threads.
-        """
-
-        with self._state_lock:
-            if block_number is not None and block_number < self.update_block:
-                raise LateUpdateError
-
-            w3 = self.w3
-            block_number = block_number if block_number is not None else w3.eth.get_block_number()
-            reserves0, reserves1 = self.get_reserves(w3=w3, block_identifier=block_number)
-
-            if (
-                self.reserves_token0,
-                self.reserves_token1,
-            ) == (
-                reserves0,
-                reserves1,
-            ):
-                return
-
-            working_state = dataclasses.replace(
-                self.state,
-                reserves_token0=reserves0,
-                reserves_token1=reserves1,
-                block=block_number,
-            )
-
-            if self.update_block == block_number:
-                self._state_cache.pop()
-            self._state_cache.append(working_state)
-
-            if not silent:  # pragma: no cover
-                logger.info(f"[{self.name}]")
-                logger.info(f"{self.token0}: {self.reserves_token0}")
-                logger.info(f"{self.token1}: {self.reserves_token1}")
-            self._notify_subscribers(
-                message=UniswapV2PoolStateUpdated(self.state),
-            )
-
-    def calculate_tokens_in_from_ratio_out(
-        self,
-        token_in: Erc20Token,
-        ratio_absolute: Fraction,
-    ) -> int:
-        """
-        Calculates the maximum token input for the target output ratio after
-        fees, defined as (quantity out / quantity in), at current pool
-        reserves. The ratio must be passed as an absolute value reflecting the
-        decimal amounts specified by the ERC-20 token contract
-        (e.g. 10 * 10 ** (18-8) ETH/BTC).
-        """
-
-        if token_in not in self.tokens:  # pragma: no cover
-            raise DegenbotValueError(message=f"Token in {token_in} not held by this pool.")
-
-        if token_in == self.token0:
-            # formula: dx = y0/C - x0/(1-FEE), where C = token1/token0
-            return max(
-                0,
-                int(
-                    self.reserves_token1 / ratio_absolute
-                    - self.reserves_token0 / (1 - self.fee_token0)
-                ),
-            )
-
-        # formula: dy = x0/C - y0/(1-FEE), where C = token0/token1
-        return max(
-            0,
-            int(
-                self.reserves_token0 / ratio_absolute - self.reserves_token1 / (1 - self.fee_token1)
-            ),
-        )
-
-    def calculate_tokens_in_from_tokens_out(
-        self,
-        token_out_quantity: int,
-        token_out: Erc20Token,
-        override_state: PoolState | None = None,
-    ) -> int:
-        """
-        Calculates the required token INPUT of token_in for a target OUTPUT at current pool
-        reserves.
-
-        Accepts a `PoolState` state override for calculation against an arbitrary state
-        in lieu of the recorded state.
-        """
-
-        if token_out_quantity <= 0:  # pragma: no cover
-            raise InvalidSwapInputAmount
-
-        if override_state:  # pragma: no cover
-            logger.debug(f"State overrides applied: {override_state}")
-
-        if token_out == self.token1:
-            reserves_in = (
-                override_state.reserves_token0
-                if override_state is not None
-                else self.reserves_token0
-            )
-            reserves_out = (
-                override_state.reserves_token1
-                if override_state is not None
-                else self.reserves_token1
-            )
-            fee = self.fee_token0
-        elif token_out == self.token0:
-            reserves_in = (
-                override_state.reserves_token1
-                if override_state is not None
-                else self.reserves_token1
-            )
-            reserves_out = (
-                override_state.reserves_token0
-                if override_state is not None
-                else self.reserves_token0
-            )
-            fee = self.fee_token1
-        else:  # pragma: no cover
-            raise DegenbotValueError(
-                message=f"Could not identify token_out: {token_out}! This pool holds: {self.token0} {self.token1}"  # noqa:E501
-            )
-
-        # last token becomes infinitely expensive, so largest possible swap out is reserves - 1
-        if token_out_quantity > reserves_out - 1:
-            raise LiquidityPoolError(
-                message=f"Requested amount out ({token_out_quantity}) >= pool reserves ({reserves_out})"  # noqa:E501
-            )
-
-        return constant_product_calc_exact_out(
-            amount_out=token_out_quantity,
-            reserves_in=reserves_in,
-            reserves_out=reserves_out,
-            fee=fee,
-        )
-
-    def calculate_tokens_out_from_tokens_in(
-        self,
-        token_in: Erc20Token,
-        token_in_quantity: int,
-        override_state: PoolState | None = None,
-    ) -> int:
-        """
-        Calculates the expected token OUTPUT for a target INPUT at current pool reserves.
-        """
-
-        if token_in_quantity <= 0:  # pragma: no cover
-            raise InvalidSwapInputAmount
-
-        if override_state:  # pragma: no cover
-            logger.debug(f"State overrides applied: {override_state}")
-
-        if token_in == self.token0:
-            reserves_in = (
-                override_state.reserves_token0
-                if override_state is not None
-                else self.reserves_token0
-            )
-            reserves_out = (
-                override_state.reserves_token1
-                if override_state is not None
-                else self.reserves_token1
-            )
-            fee = self.fee_token0
-        elif token_in == self.token1:
-            reserves_in = (
-                override_state.reserves_token1
-                if override_state is not None
-                else self.reserves_token1
-            )
-            reserves_out = (
-                override_state.reserves_token0
-                if override_state is not None
-                else self.reserves_token0
-            )
-            fee = self.fee_token1
-        else:  # pragma: no cover
-            raise DegenbotValueError(
-                message=f"Could not identify token_in: {token_in}! Pool holds: {self.token0} {self.token1}"  # noqa:E501
-            )
-
-        return constant_product_calc_exact_in(
-            amount_in=token_in_quantity,
-            reserves_in=reserves_in,
-            reserves_out=reserves_out,
-            fee=fee,
+        snapshot = self._py_pool.snapshot()
+        if snapshot is None:
+            msg = "No V2 pool state available (pool not registered in Rust)"
+            raise DegenbotValueError(message=msg)
+        reserve0, reserve1, block = snapshot
+        return self.PoolState.__value__(
+            address=self.address,
+            reserves_token0=reserve0,
+            reserves_token1=reserve1,
+            block=block,
         )
 
     def external_update(
         self,
         update: UniswapV2PoolExternalUpdate,
     ) -> None:
+        """External update.
+
+        Raises:
+            ExternalUpdateError: If the update is for a past block.
+
+        """
         if update.block_number < self.update_block:
             raise ExternalUpdateError(
-                message=f"Rejected update for block {update.block_number} in the past, current update block is {self.update_block}"  # noqa:E501
+                message=f"Rejected update for block {update.block_number} in the past, current update block is {self.update_block}",  # noqa: E501
             )
 
-        with self._state_lock:
-            if (
-                update.reserves_token0,
-                update.reserves_token1,
-            ) == (
-                self.reserves_token0,
-                self.reserves_token1,
-            ):
-                return
-
-            working_state = dataclasses.replace(
-                self.state,
-                reserves_token0=update.reserves_token0,
-                reserves_token1=update.reserves_token1,
-                block=update.block_number,
-            )
-
-            if self.state.block == update.block_number:
-                self._state_cache.pop()
-            self._state_cache.append(working_state)
-
-            self._notify_subscribers(
-                message=UniswapV2PoolStateUpdated(self.state),
-            )
-
-    def get_absolute_price(
-        self,
-        token: Erc20Token,
-        override_state: PoolState | None = None,
-    ) -> Fraction:
-        """
-        Get the absolute price for the given token, expressed in units of the other.
-        """
-
-        return 1 / self.get_absolute_exchange_rate(token, override_state=override_state)
-
-    def get_absolute_exchange_rate(
-        self,
-        token: Erc20Token,
-        override_state: PoolState | None = None,
-    ) -> Fraction:
-        """
-        Get the absolute exchange rate for the given token, expressed in terms of a unit amount of
-        its paired token.
-
-        e.g. taking the USDC-WETH pool in https://blog.uniswap.org/uniswap-v3-math-primer — the
-        WETH/USDC exchange rate is 649004842.70137. Rounding down, this signifies that the smallest
-        swap (1 USDC) results in a 649004842 WETH output.
-
-        The exchange rate for a V2 pool is a simple ratio of the output token reserves to the input
-        token reserves.
-        """
-
-        if token not in self.tokens:
-            raise DegenbotValueError(message=f"Unknown token {token}")
-
-        state = self.state if override_state is None else override_state
-
-        return (
-            Fraction(state.reserves_token1, state.reserves_token0)
-            if token == self.token1
-            else Fraction(state.reserves_token0, state.reserves_token1)
+        self._py_pool.sync_reserves(
+            reserve0=update.reserves_token0,
+            reserve1=update.reserves_token1,
+            block_number=update.block_number,
         )
-
-    def get_nominal_price(
-        self,
-        token: Erc20Token,
-        override_state: PoolState | None = None,
-    ) -> Fraction:
-        """
-        Get the nominal price for the given token, expressed per nominal unit of its paired token.
-        The price is corrected for the decimal place values of both tokens.
-        """
-
-        return 1 / self.get_nominal_exchange_rate(token=token, override_state=override_state)
-
-    def get_nominal_exchange_rate(
-        self,
-        token: Erc20Token,
-        override_state: PoolState | None = None,
-    ) -> Fraction:
-        """
-        Get the nominal rate for the given token, expressed in units of the other, corrected for
-        decimal place values.
-        """
-
-        return self.get_absolute_exchange_rate(token=token, override_state=override_state) * (
-            Fraction(10**self.token1.decimals, 10**self.token0.decimals)
-            if token == self.token0
-            else Fraction(10**self.token0.decimals, 10**self.token1.decimals)
+        self._notify_subscribers(
+            message=UniswapV2PoolStateUpdated(self.state),
         )
-
-    def get_reserves(self, w3: Web3, block_identifier: BlockIdentifier) -> tuple[int, int]:
-        reserves_token0, reserves_token1 = raw_call(
-            w3=w3,
-            address=self.address,
-            calldata=encode_function_calldata(
-                function_prototype="getReserves()",
-                function_arguments=None,
-            ),
-            return_types=["uint256", "uint256"],
-            block_identifier=block_identifier,
-        )
-        return reserves_token0, reserves_token1
-
-    def discard_states_before_block(
-        self,
-        block: BlockNumber,
-    ) -> None:
-        """
-        Discard cached states earlier than the given block.
-        """
-
-        with self._state_lock:
-            # The oldest state already satisfies the request
-            if (earliest_block := self._state_cache[0].block) and earliest_block >= block:
-                return
-
-            # The newest state is older than the target block, so there is no state to return to
-            if (newest_block := self._state_cache[-1].block) and newest_block < block:
-                raise NoPoolStateAvailable(block=block)
-
-            # Discard older states until the earliest block meets or crosses the target
-            while (earliest_block := self._state_cache[0].block) is None or earliest_block < block:
-                self._state_cache.popleft()
-
-            assert self.state.block is not None
-            assert self.state.block >= block
-
-    def restore_state_before_block(
-        self,
-        block: BlockNumber,
-    ) -> None:
-        """
-        Restore the last pool state recorded prior to a target block.
-
-        Use this method to maintain consistent state data following a chain re-organization.
-
-        The pool will notify all subscribers of the new state with a `UniswapV2PoolStateUpdated`
-        event.
-        """
-
-        with self._state_lock:
-            # The newest state already satisfies the request
-            if (newest_block := self._state_cache[-1].block) and newest_block < block:
-                return
-
-            # No earlier state is available
-            if (earliest_block := self._state_cache[0].block) and earliest_block >= block:
-                raise NoPoolStateAvailable(block=block)
-
-            # Discard blocks until the last block is older than the target
-            while self._state_cache[-1].block is None or self._state_cache[-1].block >= block:
-                self._state_cache.pop()
-
-            self._notify_subscribers(message=UniswapV2PoolStateUpdated(self.state))
 
     def simulate_add_liquidity(
         self,
@@ -758,28 +304,24 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         added_reserves_token1: int,
         override_state: PoolState | None = None,
     ) -> UniswapV2PoolSimulationResult:
-        """
-        Simulate adding liquidity.
-        """
-        with self._state_lock:
-            reserves_token0 = (
-                override_state.reserves_token0 if override_state else self.reserves_token0
-            )
-            reserves_token1 = (
-                override_state.reserves_token1 if override_state else self.reserves_token1
-            )
+        """Simulate adding liquidity.
 
-            return UniswapV2PoolSimulationResult(
-                amount0_delta=added_reserves_token0,
-                amount1_delta=added_reserves_token1,
-                initial_state=override_state or self.state,
-                final_state=dataclasses.replace(
-                    self.state,
-                    reserves_token0=reserves_token0 + added_reserves_token0,
-                    reserves_token1=reserves_token1 + added_reserves_token1,
-                    block=self.update_block if override_state is not None else None,
-                ),
-            )
+        Returns:
+            The simulation result with delta amounts and state transitions.
+
+        """
+        state = override_state if override_state is not None else self.state
+        return UniswapV2PoolSimulationResult(
+            amount0_delta=added_reserves_token0,
+            amount1_delta=added_reserves_token1,
+            initial_state=state,
+            final_state=dataclasses.replace(
+                state,
+                reserves_token0=state.reserves_token0 + added_reserves_token0,
+                reserves_token1=state.reserves_token1 + added_reserves_token1,
+                block=self.update_block if override_state is not None else None,
+            ),
+        )
 
     def simulate_remove_liquidity(
         self,
@@ -787,28 +329,24 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         removed_reserves_token1: int,
         override_state: PoolState | None = None,
     ) -> UniswapV2PoolSimulationResult:
-        """
-        Simulate removing liquidity.
-        """
-        with self._state_lock:
-            reserves_token0 = (
-                override_state.reserves_token0 if override_state else self.reserves_token0
-            )
-            reserves_token1 = (
-                override_state.reserves_token1 if override_state else self.reserves_token1
-            )
+        """Simulate removing liquidity.
 
-            return UniswapV2PoolSimulationResult(
-                amount0_delta=-removed_reserves_token0,
-                amount1_delta=-removed_reserves_token1,
-                initial_state=override_state or self.state,
-                final_state=dataclasses.replace(
-                    self.state,
-                    reserves_token0=reserves_token0 - removed_reserves_token0,
-                    reserves_token1=reserves_token1 - removed_reserves_token1,
-                    block=self.update_block if override_state is not None else None,
-                ),
-            )
+        Returns:
+            The simulation result with delta amounts and state transitions.
+
+        """
+        state = override_state if override_state is not None else self.state
+        return UniswapV2PoolSimulationResult(
+            amount0_delta=-removed_reserves_token0,
+            amount1_delta=-removed_reserves_token1,
+            initial_state=state,
+            final_state=dataclasses.replace(
+                state,
+                reserves_token0=state.reserves_token0 - removed_reserves_token0,
+                reserves_token1=state.reserves_token1 - removed_reserves_token1,
+                block=self.update_block if override_state is not None else None,
+            ),
+        )
 
     def simulate_exact_input_swap(
         self,
@@ -816,17 +354,27 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         token_in_quantity: int,
         override_state: PoolState | None = None,
     ) -> UniswapV2PoolSimulationResult:
-        """
-        Simulate an exact input swap.
+        """Simulate an exact input swap.
+
+        Returns:
+            The simulation result with delta amounts and state transitions.
+
+        Raises:
+            DegenbotValueError: If token_in is unknown.
+
         """
         if token_in not in self.tokens:
             raise DegenbotValueError(message="token_in is unknown.")
 
-        zero_for_one = token_in == self.token0
+        # One atomic snapshot drives the whole simulation: calc + final_state
+        # both read `state.reserves_*`, so a Rust-side sync_reserves (pump)
+        # can't interleave between the calc and the delta computation.
+        state = override_state if override_state is not None else self.state
+        zero_for_one = token_in == self._token0
         token_out_quantity = self.calculate_tokens_out_from_tokens_in(
             token_in=token_in,
             token_in_quantity=token_in_quantity,
-            override_state=override_state,
+            override_state=state,
         )
         token0_delta = -token_out_quantity if zero_for_one is False else token_in_quantity
         token1_delta = -token_out_quantity if zero_for_one is True else token_in_quantity
@@ -834,11 +382,11 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         return UniswapV2PoolSimulationResult(
             amount0_delta=token0_delta,
             amount1_delta=token1_delta,
-            initial_state=override_state or self.state,
+            initial_state=state,
             final_state=dataclasses.replace(
-                self.state,
-                reserves_token0=self.reserves_token0 + token0_delta,
-                reserves_token1=self.reserves_token1 + token1_delta,
+                state,
+                reserves_token0=state.reserves_token0 + token0_delta,
+                reserves_token1=state.reserves_token1 + token1_delta,
                 block=self.update_block if override_state is not None else None,
             ),
         )
@@ -849,15 +397,25 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         token_out_quantity: int,
         override_state: PoolState | None = None,
     ) -> UniswapV2PoolSimulationResult:
+        """Simulate exact output swap.
+
+        Returns:
+            The simulation result with delta amounts and state transitions.
+
+        Raises:
+            DegenbotValueError: If token_out is unknown.
+
+        """
         if token_out not in self.tokens:
             raise DegenbotValueError(message="token_out is unknown.")
 
-        zero_for_one = token_out == self.token1
+        state = override_state if override_state is not None else self.state
+        zero_for_one = token_out == self._token1
 
         token_in_quantity = self.calculate_tokens_in_from_tokens_out(
             token_out=token_out,
             token_out_quantity=token_out_quantity,
-            override_state=override_state,
+            override_state=state,
         )
         token0_delta = token_in_quantity if zero_for_one is True else -token_out_quantity
         token1_delta = token_in_quantity if zero_for_one is False else -token_out_quantity
@@ -865,18 +423,133 @@ class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
         return UniswapV2PoolSimulationResult(
             amount0_delta=token0_delta,
             amount1_delta=token1_delta,
-            initial_state=override_state or self.state,
+            initial_state=state,
             final_state=dataclasses.replace(
-                self.state,
-                reserves_token0=self.reserves_token0 + token0_delta,
-                reserves_token1=self.reserves_token1 + token1_delta,
+                state,
+                reserves_token0=state.reserves_token0 + token0_delta,
+                reserves_token1=state.reserves_token1 + token1_delta,
                 block=self.update_block if override_state is not None else None,
             ),
         )
 
-    def get_arbitrage_helpers(self) -> tuple[AbstractArbitrage, ...]:
-        return tuple(
-            subscriber
-            for subscriber in self._subscribers
-            if isinstance(subscriber, AbstractArbitrage)
+    def simulate_swap(
+        self,
+        token_in: ChecksumAddress,
+        amount_in: int,
+        token_out: ChecksumAddress,
+        state_override: AbstractPoolState | None = None,
+    ) -> SimulationResult:
+        """Simulate swap.
+
+        Returns:
+            The simulation result with amounts and state transitions.
+
+        Raises:
+            DegenbotValueError: If tokens are unknown or mismatched.
+
+        """
+        v2_state: UniswapV2PoolState | None = None
+        if state_override is not None:
+            if not isinstance(state_override, UniswapV2PoolState):
+                msg = f"Expected UniswapV2PoolState, got {type(state_override).__name__}"
+                raise DegenbotValueError(message=msg)
+            v2_state = state_override
+
+        if token_in == self._token0.address:
+            token_in_obj = self._token0
+            expected_token_out = self._token1.address
+        elif token_in == self._token1.address:
+            token_in_obj = self._token1
+            expected_token_out = self._token0.address
+        else:
+            raise DegenbotValueError(message=f"token_in {token_in} not in pool")
+
+        if token_out != expected_token_out:
+            msg = f"token_out {token_out} does not match expected {expected_token_out}"
+            raise DegenbotValueError(message=msg)
+
+        result = self.simulate_exact_input_swap(
+            token_in=token_in_obj,
+            token_in_quantity=amount_in,
+            override_state=v2_state,
+        )
+        zero_for_one = token_in_obj == self._token0
+        amount_out = -result.amount1_delta if zero_for_one else -result.amount0_delta
+        return SimulationResult(
+            amount_in=amount_in,
+            amount_out=amount_out,
+            initial_state=result.initial_state,
+            final_state=result.final_state,
+        )
+
+    def calculate_tokens_out_from_tokens_in(
+        self,
+        token_in: Erc20Token,
+        token_in_quantity: int,
+        override_state: UniswapV2PoolState | None = None,
+    ) -> int:
+        """Calculate the expected token OUTPUT for a target INPUT at current reserves.
+
+        Strategy dispatch (ADR-005 slice 7 step 4a fold): Camelot stable pools
+        (``stable_swap=True``) use the solidly-stable invariant with Camelot's
+        k/get_y; all other V2 pools fall through to ``super()`` — the
+        ``UniswapV2PoolCalc`` Rust-delegation path (slice 5) is unperturbed for
+        the volatile majority.
+
+        Returns:
+            The expected output token amount.
+
+        """
+        if self.stable_swap:
+            return self._calculate_tokens_out_from_tokens_in_stable_swap(
+                token_in=token_in,
+                token_in_quantity=token_in_quantity,
+                override_state=override_state,
+            )
+        return super().calculate_tokens_out_from_tokens_in(
+            token_in=token_in,
+            token_in_quantity=token_in_quantity,
+            override_state=override_state,
+        )
+
+    def _calculate_tokens_out_from_tokens_in_stable_swap(
+        self,
+        token_in: Erc20Token,
+        token_in_quantity: int,
+        override_state: UniswapV2PoolState | None = None,
+    ) -> int:
+        """Camelot solidly-stable swap calculation (folded from CamelotPoolCalc).
+
+        Routes through the Rust ``degenbot-solidly-math`` core
+        (``solidly_calc_exact_in_stable_camelot``), which bakes in Camelot's
+        ``k_camelot``/``get_y_camelot`` variant (ADR-005 slice 7).
+
+        ``fee_tokenN`` is the FEE ``Fraction`` (e.g. ``Fraction(3, 1000)``).
+
+        Returns:
+            The computed integer value.
+
+        """
+        precision_multiplier_token0: int = 10**self.token0.decimals
+        precision_multiplier_token1: int = 10**self.token1.decimals
+
+        fee = self.fee_token0 if token_in == self.token0 else self.fee_token1
+        token_in_index = 0 if token_in == self.token0 else 1
+
+        if override_state is not None:
+            reserves_token0 = override_state.reserves_token0
+            reserves_token1 = override_state.reserves_token1
+        else:
+            reserves_token0 = self.reserves_token0
+            reserves_token1 = self.reserves_token1
+
+        return _rs_calc_exact_in_stable_camelot(
+            token_in_quantity,
+            token_in_index,
+            reserves_token0,
+            reserves_token1,
+            precision_multiplier_token0,
+            precision_multiplier_token1,
+            fee.numerator,
+            fee.denominator,
         )

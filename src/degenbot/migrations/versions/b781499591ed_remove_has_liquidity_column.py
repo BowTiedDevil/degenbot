@@ -1,4 +1,4 @@
-"""Remove has_liquidity column
+"""Remove has_liquidity column.
 
 Revision ID: b781499591ed
 Revises: bd7ca13a7d39

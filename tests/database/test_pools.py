@@ -4,7 +4,6 @@ from hexbytes import HexBytes
 from sqlalchemy import case, distinct, func, or_, select
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.database import db_session
 from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.database.models.pools import (
     AerodromeV2PoolTable,
@@ -14,15 +13,17 @@ from degenbot.database.models.pools import (
 )
 
 
-def test_query_base_class():
+def test_query_base_class(test_db):
     start = time.perf_counter()
-    with db_session() as session:
+    with test_db() as session:
         num_pools = session.scalar(select(func.count()).select_from(LiquidityPoolTable))
-    print(f"Found {num_pools} pools (base table select) in {time.perf_counter() - start:.2f}s")
+    elapsed = time.perf_counter() - start
+    print(f"Found {num_pools} pools (base table select) in {elapsed:.2f}s")
+    assert num_pools == 4
 
 
-def test_get_pool_from_base_table():
-    with db_session() as session:
+def test_get_pool_from_base_table(test_db):
+    with test_db() as session:
         pool = session.scalar(
             select(LiquidityPoolTable).where(
                 LiquidityPoolTable.address == "0x723AEf6543aecE026a15662Be4D3fb3424D502A9"
@@ -33,10 +34,10 @@ def test_get_pool_from_base_table():
         assert pool.token1.address == "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA"
 
 
-def test_filter_by_token_id():
+def test_filter_by_token_id(test_db):
     start = time.perf_counter()
 
-    with db_session() as session:
+    with test_db() as session:
         weth = session.scalar(
             select(Erc20TokenTable).where(
                 Erc20TokenTable.address == "0x4200000000000000000000000000000000000006",
@@ -58,12 +59,13 @@ def test_filter_by_token_id():
         f"Found {num_pools} WETH pairs (base table select with token_id filter) in "
         f"{time.perf_counter() - start:.2f}s"
     )
+    assert num_pools == 3
 
 
-def test_filter_by_token_relationship():
+def test_filter_by_token_relationship(test_db):
     start = time.perf_counter()
 
-    with db_session() as session:
+    with test_db() as session:
         weth = session.scalar(
             select(Erc20TokenTable).where(
                 Erc20TokenTable.address == "0x4200000000000000000000000000000000000006",
@@ -86,14 +88,15 @@ def test_filter_by_token_relationship():
         f"Found {num_pools} WETH pairs (base table select with token relationhip .has() filter) "
         f"in {time.perf_counter() - start:.2f}s"
     )
+    assert num_pools == 3
 
 
-def test_find_unique_tokens_paired_with_weth():
+def test_find_unique_tokens_paired_with_weth(test_db):
     start = time.perf_counter()
 
     min_pairs = 2
 
-    with db_session() as session:
+    with test_db() as session:
         weth = session.scalar(
             select(Erc20TokenTable).where(
                 Erc20TokenTable.address == "0x4200000000000000000000000000000000000006",
@@ -103,7 +106,7 @@ def test_find_unique_tokens_paired_with_weth():
         paired_tokens = session.scalars(
             select(
                 distinct(
-                    db_session
+                    test_db
                     .query(
                         case(
                             (LiquidityPoolTable.token0_id == weth.id, LiquidityPoolTable.token1_id),
@@ -127,16 +130,17 @@ def test_find_unique_tokens_paired_with_weth():
         f"Found {len(paired_tokens)} tokens with at least {min_pairs} WETH pairs in "
         f"{time.perf_counter() - start:.2f}s"
     )
+    assert len(paired_tokens) == 1
 
 
-def test_get_uniswap_v4_pool():
+def test_get_uniswap_v4_pool(test_db):
     pool_hash = HexBytes("0x96d4b53a38337a5733179751781178a2613306063c511b78cd02684739288c0a")
     pool_manager_address = get_checksum_address("0x498581fF718922c3f8e6A244956aF099B2652b2b")
     chain_id = 8453
 
     start = time.perf_counter()
 
-    with db_session() as session:
+    with test_db() as session:
         pool_manager_in_db = session.scalar(
             select(PoolManagerTable).where(
                 PoolManagerTable.address == pool_manager_address,

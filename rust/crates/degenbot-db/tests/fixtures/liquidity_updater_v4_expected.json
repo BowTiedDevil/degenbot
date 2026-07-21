@@ -1,0 +1,35 @@
+{
+  "chain_id": 1,
+  "initialization_maps": [
+    {
+      "bitmap": "3072",
+      "word": 0
+    },
+    {
+      "bitmap": "1645504557321206042154969182557350504982735865633579863348609024",
+      "word": 4
+    }
+  ],
+  "liquidity_update_block": 202,
+  "liquidity_update_log_index": 0,
+  "pool_hash": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "pool_manager_chain": 1,
+  "positions": [
+    {
+      "liquidity_gross": "250000",
+      "liquidity_net": "250000",
+      "tick": 100
+    },
+    {
+      "liquidity_gross": "250000",
+      "liquidity_net": "-250000",
+      "tick": 110
+    },
+    {
+      "liquidity_gross": "500",
+      "liquidity_net": "500",
+      "tick": 12345
+    }
+  ],
+  "tick_spacing": 10
+}

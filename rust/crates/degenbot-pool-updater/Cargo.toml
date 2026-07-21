@@ -1,0 +1,40 @@
+[package]
+name = "degenbot-pool-updater"
+description = "Pure-Rust pool-updater chunk-loop core: typed RPC event fetching + decode-to-row-input mapping (epic 2SFL6I)."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+complexity = "warn"
+correctness = "warn"
+pedantic = "warn"
+perf = "warn"
+style = "warn"
+suspicious = "warn"
+
+[dependencies]
+alloy = { version = "^2.0" }
+degenbot-db = { path = "../degenbot-db" }
+degenbot-decoders = { path = "../degenbot-decoders" }
+degenbot-core = { path = "../degenbot-core" }
+degenbot-rpc = { path = "../degenbot-rpc" }
+tokio = { version = "^1.52", features = ["rt-multi-thread", "macros", "sync"] }
+thiserror = { version = "^2.0" }
+# Plain rusqlite (no `bundled`) — the bundled libsqlite3-sys link is owned
+# solely by degenbot-db; here we only need the Connection/Transaction types.
+rusqlite = { version = "^0.40" }
+
+[features]
+default = []
+
+[dev-dependencies]
+alloy = { version = "^2.0" }
+degenbot-rpc = { path = "../degenbot-rpc" }
+tempfile = { version = "^3.0" }

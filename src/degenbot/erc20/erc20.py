@@ -1,34 +1,23 @@
-import contextlib
-from typing import TYPE_CHECKING, cast
+"""Erc20Token: on-chain token with metadata, balance, and approval tracking."""
 
-import eth_abi.abi
-import sqlalchemy.exc
-from eth_abi.exceptions import DecodingError
+from typing import TYPE_CHECKING, Any, Self, cast
+
 from eth_typing import ChecksumAddress
 from sqlalchemy import select
 from sqlalchemy.orm import Session, scoped_session
-from web3 import AsyncBaseProvider, AsyncWeb3, Web3
-from web3.exceptions import Web3Exception
-from web3.types import BlockIdentifier, TxParams
 
+from degenbot.abi import AbiDecodeError, decode
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import async_connection_manager, connection_manager
-from degenbot.database import db_session
 from degenbot.database.models import Erc20TokenTable
-from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.erc20 import NoPriceOracle
-from degenbot.functions import (
-    encode_function_calldata,
-    get_number_for_block_identifier,
-    get_number_for_block_identifier_async,
-    raw_call,
-)
-from degenbot.logging import logger
-from degenbot.registry import token_registry
+from degenbot.erc20 import PyErc20Token
+from degenbot.exceptions.infrastructure import NoPriceOracle
+from degenbot.provider import AlloyProvider
+from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.types.abstract import AbstractErc20Token
-from degenbot.types.aliases import BlockNumber, ChainId
+from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import BoundedCache
+from degenbot.types.rpc_types import BlockIdentifier
 
 if TYPE_CHECKING:
     from hexbytes import HexBytes
@@ -37,202 +26,302 @@ if TYPE_CHECKING:
 def get_token_from_database(
     token: ChecksumAddress,
     chain_id: int,
-    session: Session | scoped_session[Session] = db_session,
+    session: Session | scoped_session[Session],
 ) -> Erc20TokenTable | None:
+    """Return token from database.
+
+    Returns:
+        The computed value.
+
+    """
     return session.scalar(
         select(Erc20TokenTable).where(
             Erc20TokenTable.address == token,
             Erc20TokenTable.chain == chain_id,
-        )
+        ),
     )
 
 
+UNKNOWN_NAME = "Unknown Token"
+UNKNOWN_SYMBOL = "UNKNOWN"
+UNKNOWN_DECIMALS = 18
+
+
 class Erc20Token(AbstractErc20Token):
-    """
-    An ERC-20 token contract.
+    """An ERC-20 token contract.
+
+    Constructed from pre-fetched data only. Use ``Bot.build_erc20token()`` to fetch from chain.
+    Balance, approval, and total supply queries go through ``Bot.get_token_balance()`` etc.
     """
 
-    UNKNOWN_NAME = "Unknown"
-    UNKNOWN_SYMBOL = "UNKN"
-    UNKNOWN_DECIMALS = 18
+    # Instance attributes set in `_from_py_token` (the only construction seam —
+    # `__init__` raises). Declared at class scope so the type checker tracks
+    # them without inline annotations on the classmethod body (red-knot rejects
+    # `self.x: T = ...` as `invalid-type-form`).
+    _py_token: PyErc20Token
+    _state_cache_depth: int
+    _cached_approval: dict[tuple[int, ChecksumAddress, ChecksumAddress], int]
+    _cached_balance: dict[ChecksumAddress, BoundedCache[BlockNumber, int]]
+    _cached_total_supply: BoundedCache[BlockNumber, int]
+    _price_oracle: ChainlinkPriceContract | None
 
-    def __init__(
-        self,
-        address: str,
+    def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+        """Direct construction is forbidden.
+
+        ``Erc20Token`` is a Python companion over a Rust-owned
+        ``PyErc20Token`` handle. The handle can only be produced by
+        registering token metadata in a ``PyBot`` — there is no way for a
+        caller to hand-build one. Use the registered entry points instead:
+
+        - Production: ``Bot.get_token(address)``
+        - Tests: ``make_erc20(...)``
+
+        Both register the token metadata in Rust, obtain the ``PyErc20Token``
+        handle, and wrap it via :meth:`_from_py_token` (mirroring Polars'
+        ``_from_pydf`` seam).
+
+        Raises:
+            TypeError: Always. Direct construction is not supported.
+
+        """
+        msg = (
+            f"{type(self).__name__} cannot be constructed directly. "
+            "Use Bot.get_token(address) (production) or make_erc20(...) "
+            "(tests) to register the token metadata in Rust and obtain the "
+            "PyErc20Token handle to wrap."
+        )
+        raise TypeError(msg)
+
+    @classmethod
+    def _from_py_token(
+        cls,
+        py_token: PyErc20Token,
         *,
-        chain_id: ChainId | None = None,
         oracle_address: str | None = None,
-        silent: bool = False,
         state_cache_depth: int = 8,
-    ) -> None:
-        self.address = get_checksum_address(address)
-        self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
+    ) -> Self:
+        """Wrap a Rust-owned ``PyErc20Token`` handle as a Python companion.
 
-        token_from_db = get_token_from_database(
-            token=self.address,
-            chain_id=self.chain_id,
-        )
+        Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). Rust
+        owns the token metadata (address, name, symbol, decimals, chain_id)
+        as a ``TokenEntry``; this companion reads it through ``self._py_token``
+        on every access and holds no metadata copy. Price oracle +
+        balance/approval/total-supply caches stay Python (I/O constructs that
+        cannot move to Rust).
 
-        self.decimals = self.UNKNOWN_DECIMALS
-        self.name = self.UNKNOWN_NAME
-        self.symbol = self.UNKNOWN_SYMBOL
+        Only ``Bot.get_token()`` / ``Bot.build_erc20token()`` (production)
+        and ``make_erc20`` (tests) should call this — they have already
+        registered the token metadata in a ``PyBot`` and obtained the handle.
+        ``cls`` is used so subclasses that only set ClassVars inherit this
+        seam and produce instances of the subclass.
 
-        # Attempt to load values from the DB
-        if token_from_db is not None:
-            if token_from_db.decimals is not None:
-                self.decimals = token_from_db.decimals
-            if token_from_db.name is not None:
-                self.name = token_from_db.name
-            if token_from_db.symbol is not None:
-                self.symbol = token_from_db.symbol
+        Returns:
+            A ``cls`` instance wrapping ``py_token``.
 
-        # Look up values from the contract if all defaults are still set
-        if (
-            self.decimals == self.UNKNOWN_DECIMALS
-            and self.name == self.UNKNOWN_NAME
-            and self.symbol == self.UNKNOWN_SYMBOL
-        ):
-            w3 = self.w3
-
-            if not w3.eth.get_code(self.address):
-                raise DegenbotValueError(message="No contract deployed at this address")
-
-            try:
-                self.name, self.symbol, self.decimals = self.get_name_symbol_decimals_batched(w3=w3)
-            except (Web3Exception, DecodingError):
-                for func_prototype in ("name()", "NAME()"):
-                    try:
-                        self.name = self.get_name(w3=w3, func_prototype=func_prototype)
-                    except (Web3Exception, DecodingError):
-                        continue
-                    else:
-                        break
-
-                for func_prototype in ("symbol()", "SYMBOL()"):
-                    try:
-                        self.symbol = self.get_symbol(w3=w3, func_prototype=func_prototype)
-                    except (Web3Exception, DecodingError):
-                        continue
-                    else:
-                        break
-
-                for func_prototype in ("decimals()", "DECIMALS()"):
-                    try:
-                        self.decimals = self.get_decimals(w3=w3, func_prototype=func_prototype)
-                    except (Web3Exception, DecodingError):
-                        continue
-                    else:
-                        break
-
-            if (
-                token_from_db is not None
-                and token_from_db.name is None
-                and token_from_db.symbol is None
-                and token_from_db.decimals is None
-            ):
-                with contextlib.suppress(sqlalchemy.exc.SQLAlchemyError), db_session() as session:
-                    token_from_db.decimals = self.decimals
-                    token_from_db.name = self.name
-                    token_from_db.symbol = self.symbol
-                    session.commit()
-
-        self._price_oracle = (
-            ChainlinkPriceContract(address=oracle_address, chain_id=self.chain_id)
-            if oracle_address
-            else None
-        )
-
-        token_registry.add(token_address=self.address, chain_id=self.chain_id, token=self)
+        """
+        self = cls.__new__(cls)
+        self._py_token = py_token
 
         self._state_cache_depth = state_cache_depth
-        self._cached_approval: dict[tuple[int, ChecksumAddress, ChecksumAddress], int] = {}
-        self._cached_balance: dict[ChecksumAddress, BoundedCache[BlockNumber, int]] = {}
-        self._cached_total_supply: BoundedCache[BlockNumber, int] = BoundedCache(
+        self._cached_approval = {}
+        self._cached_balance = {}
+        self._cached_total_supply = BoundedCache(
             max_items=state_cache_depth,
         )
 
-        if not silent:  # pragma: no cover
-            logger.info(f"• {self.symbol} ({self.name})")
-
-    def __repr__(self) -> str:  # pragma: no cover
-        return f"{self.__class__.__name__}(address={self.address}, symbol='{self.symbol}', name='{self.name}', decimals={self.decimals})"  # noqa:E501
-
-    def get_name_symbol_decimals_batched(self, w3: Web3) -> tuple[str, str, int]:
-        with w3.batch_requests() as batch:
-            batch.add_mapping({
-                w3.eth.call: [
-                    TxParams(
-                        to=self.address,
-                        data=encode_function_calldata(
-                            function_prototype="name()",
-                            function_arguments=None,
-                        ),
-                    ),
-                    TxParams(
-                        to=self.address,
-                        data=encode_function_calldata(
-                            function_prototype="symbol()",
-                            function_arguments=None,
-                        ),
-                    ),
-                    TxParams(
-                        to=self.address,
-                        data=encode_function_calldata(
-                            function_prototype="decimals()",
-                            function_arguments=None,
-                        ),
-                    ),
-                ]
-            })
-
-            name, symbol, decimals = batch.execute()
-
-            (name,) = eth_abi.abi.decode(types=["string"], data=cast("HexBytes", name))
-            (symbol,) = eth_abi.abi.decode(types=["string"], data=cast("HexBytes", symbol))
-            (decimals,) = eth_abi.abi.decode(types=["uint256"], data=cast("HexBytes", decimals))
-
-            return cast("str", name), cast("str", symbol), cast("int", decimals)
-
-    def get_name(self, w3: Web3, func_prototype: str) -> str:
-        result = w3.eth.call(
-            TxParams(
-                to=self.address,
-                data=encode_function_calldata(
-                    function_prototype=func_prototype,
-                    function_arguments=None,
-                ),
+        self._price_oracle = None
+        if oracle_address:
+            self._price_oracle = ChainlinkPriceContract(
+                address=oracle_address,
+                chain_id=self.chain_id,
             )
+
+        return self
+
+    @property
+    def address(self) -> ChecksumAddress:
+        """Token contract address (EIP-55 checksum).
+
+        Rust holds the address bytes; ``get_checksum_address`` applies the
+        codebase-wide EIP-55 display convention.
+        """
+        return get_checksum_address(self._py_token.address)
+
+    @property
+    def name(self) -> str:
+        """Token name (read from Rust-owned ``TokenEntry``)."""
+        return self._py_token.name
+
+    @property
+    def symbol(self) -> str:
+        """Token symbol (read from Rust-owned ``TokenEntry``)."""
+        return self._py_token.symbol
+
+    @property
+    def decimals(self) -> int:
+        """Token decimals (read from Rust-owned ``TokenEntry``)."""
+        return self._py_token.decimals
+
+    # -- Cache accessors (dictionary operations, no I/O) --
+
+    def get_cached_balance(self, address: ChecksumAddress, block_number: int) -> int | None:
+        """Return cached balance.
+
+        Returns:
+            The computed value.
+
+        """
+        cache = self._cached_balance.get(address, BoundedCache(max_items=self._state_cache_depth))
+        return cache.get(block_number)
+
+    def set_cached_balance(self, address: ChecksumAddress, block_number: int, balance: int) -> None:
+        """Set cached balance."""
+        if address not in self._cached_balance:
+            self._cached_balance[address] = BoundedCache(max_items=self._state_cache_depth)
+        self._cached_balance[address][block_number] = balance
+
+    def get_cached_approval(
+        self,
+        block_number: int,
+        owner: ChecksumAddress,
+        spender: ChecksumAddress,
+    ) -> int | None:
+        """Return cached approval.
+
+        Returns:
+            The computed value.
+
+        """
+        return self._cached_approval.get((block_number, owner, spender))
+
+    def set_cached_approval(
+        self,
+        block_number: int,
+        owner: ChecksumAddress,
+        spender: ChecksumAddress,
+        amount: int,
+    ) -> None:
+        """Set cached approval."""
+        self._cached_approval[block_number, owner, spender] = amount
+
+    def get_cached_total_supply(self, block_number: int) -> int | None:
+        """Return cached total supply.
+
+        Returns:
+            The computed value.
+
+        """
+        return self._cached_total_supply.get(block_number)
+
+    def set_cached_total_supply(self, block_number: int, total_supply: int) -> None:
+        """Set cached total supply."""
+        self._cached_total_supply[block_number] = total_supply
+
+    # -- RPC static methods (used by Bot.build_erc20token) --
+
+    @staticmethod
+    def fetch_name_symbol_decimals_batched(
+        address: ChecksumAddress,
+        provider: AlloyProvider,
+    ) -> tuple[str, str, int]:
+        """Fetch token name, symbol, and decimals via batched RPC calls.
+
+        Returns:
+            The computed value.
+
+        """
+        name_calldata = encode_function_calldata(
+            function_prototype="name()",
+            function_arguments=None,
+        )
+        symbol_calldata = encode_function_calldata(
+            function_prototype="symbol()",
+            function_arguments=None,
+        )
+        decimals_calldata = encode_function_calldata(
+            function_prototype="decimals()",
+            function_arguments=None,
+        )
+
+        name_result = provider.call(to=address, data=name_calldata)
+        symbol_result = provider.call(to=address, data=symbol_calldata)
+        decimals_result = provider.call(to=address, data=decimals_calldata)
+
+        (name,) = decode(types=["string"], data=name_result)
+        (symbol,) = decode(types=["string"], data=symbol_result)
+        (decimals,) = decode(types=["uint256"], data=decimals_result)
+
+        return cast("str", name), cast("str", symbol), cast("int", decimals)
+
+    @staticmethod
+    def fetch_name(
+        address: ChecksumAddress,
+        provider: AlloyProvider,
+        func_prototype: str = "name()",
+    ) -> str:
+        """Fetch token name via RPC call.
+
+        Returns:
+            The computed string value.
+
+        """
+        result = provider.call(
+            to=address,
+            data=encode_function_calldata(
+                function_prototype=func_prototype,
+                function_arguments=None,
+            ),
         )
 
         try:
-            (name,) = eth_abi.abi.decode(types=["string"], data=result)
+            (name,) = decode(types=["string"], data=result)
             return cast("str", name)
-        except DecodingError:
-            (name,) = eth_abi.abi.decode(types=["bytes32"], data=result)
+        except AbiDecodeError:
+            (name,) = decode(types=["bytes32"], data=result)
             return cast("HexBytes", name).decode("utf-8", errors="ignore").strip("\x00")
 
-    def get_symbol(self, w3: Web3, func_prototype: str) -> str:
-        result = w3.eth.call(
-            TxParams(
-                to=self.address,
-                data=encode_function_calldata(
-                    function_prototype=func_prototype,
-                    function_arguments=None,
-                ),
-            )
+    @staticmethod
+    def fetch_symbol(
+        address: ChecksumAddress,
+        provider: AlloyProvider,
+        func_prototype: str = "symbol()",
+    ) -> str:
+        """Fetch token symbol via RPC call.
+
+        Returns:
+            The computed string value.
+
+        """
+        result = provider.call(
+            to=address,
+            data=encode_function_calldata(
+                function_prototype=func_prototype,
+                function_arguments=None,
+            ),
         )
 
         try:
-            (symbol,) = eth_abi.abi.decode(types=["string"], data=result)
+            (symbol,) = decode(types=["string"], data=result)
             return cast("str", symbol)
-        except DecodingError:
-            (symbol,) = eth_abi.abi.decode(types=["bytes32"], data=result)
+        except AbiDecodeError:
+            (symbol,) = decode(types=["bytes32"], data=result)
             return cast("HexBytes", symbol).decode("utf-8", errors="ignore").strip("\x00")
 
-    def get_decimals(self, w3: Web3, func_prototype: str) -> int:
+    @staticmethod
+    def fetch_decimals(
+        address: ChecksumAddress,
+        provider: AlloyProvider,
+        func_prototype: str = "decimals()",
+    ) -> int:
+        """Fetch token decimals via RPC call.
+
+        Returns:
+            The computed integer value.
+
+        """
         (result,) = raw_call(
-            w3=w3,
-            address=self.address,
+            provider,
+            address=address,
             calldata=encode_function_calldata(
                 function_prototype=func_prototype,
                 function_arguments=None,
@@ -241,246 +330,46 @@ class Erc20Token(AbstractErc20Token):
         )
         return cast("int", result)
 
-    def get_approval(
-        self,
-        owner: str,
-        spender: str,
+    @staticmethod
+    def fetch_total_supply(
+        address: ChecksumAddress,
+        provider: AlloyProvider,
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
+        """Fetch total supply via RPC call.
+
+        Returns:
+            The computed integer value.
+
         """
-        Retrieve the amount that can be spent by `spender` on behalf of `owner`.
-        """
+        block: int | None = None
+        if block_identifier is not None and isinstance(block_identifier, int):
+            block = block_identifier
 
-        owner = get_checksum_address(owner)
-        spender = get_checksum_address(spender)
-
-        block_number = (
-            block_identifier
-            if isinstance(block_identifier, int)
-            else get_number_for_block_identifier(
-                block_identifier,
-                self.w3,
-            )
-        )
-
-        with contextlib.suppress(KeyError):
-            return self._cached_approval[block_number, owner, spender]
-
-        approval: int
-        (approval,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=self.w3.eth.call(
-                transaction=TxParams(
-                    to=self.address,
-                    data=Web3.keccak(text="allowance(address,address)")[:4]
-                    + eth_abi.abi.encode(types=["address", "address"], args=[owner, spender]),
-                ),
-                block_identifier=block_number,
+        result = provider.call(
+            to=address,
+            data=encode_function_calldata(
+                function_prototype="totalSupply()",
+                function_arguments=None,
             ),
+            block=block,
         )
-        self._cached_approval[block_number, owner, spender] = approval
-        return approval
-
-    async def get_approval_async(
-        self,
-        owner: str,
-        spender: str,
-        block_identifier: BlockIdentifier | None = None,
-    ) -> int:
-        """
-        Retrieve the amount that can be spent by `spender` on behalf of `owner`.
-        """
-
-        owner = get_checksum_address(owner)
-        spender = get_checksum_address(spender)
-
-        block_number = (
-            block_identifier
-            if isinstance(block_identifier, int)
-            else await get_number_for_block_identifier_async(
-                block_identifier,
-                self.async_w3,
-            )
-        )
-
-        with contextlib.suppress(KeyError):
-            return self._cached_approval[block_number, owner, spender]
-
-        approval: int
-        (approval,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=await self.async_w3.eth.call(
-                transaction=TxParams(
-                    to=self.address,
-                    data=Web3.keccak(text="allowance(address,address)")[:4]
-                    + eth_abi.abi.encode(types=["address", "address"], args=[owner, spender]),
-                ),
-                block_identifier=block_number,
-            ),
-        )
-        self._cached_approval[block_number, owner, spender] = approval
-        return approval
-
-    def get_balance(
-        self,
-        address: str,
-        block_identifier: BlockIdentifier | None = None,
-    ) -> int:
-        """
-        Retrieve the ERC-20 balance for the given address.
-        """
-
-        address = get_checksum_address(address)
-
-        block_number = (
-            block_identifier
-            if isinstance(block_identifier, int)
-            else get_number_for_block_identifier(
-                block_identifier,
-                self.w3,
-            )
-        )
-
-        with contextlib.suppress(KeyError):
-            return self._cached_balance[address][block_number]
-
-        balance: int
-        (balance,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=self.w3.eth.call(
-                transaction=TxParams(
-                    to=self.address,
-                    data=Web3.keccak(text="balanceOf(address)")[:4]
-                    + eth_abi.abi.encode(types=["address"], args=[address]),
-                ),
-                block_identifier=block_number,
-            ),
-        )
-
-        if address not in self._cached_balance:
-            self._cached_balance[address] = BoundedCache(max_items=self._state_cache_depth)
-
-        self._cached_balance[address][block_number] = balance
-        return balance
-
-    async def get_balance_async(
-        self,
-        address: str,
-        block_identifier: BlockIdentifier | None = None,
-    ) -> int:
-        """
-        Retrieve the ERC-20 balance for the given address.
-        """
-
-        address = get_checksum_address(address)
-
-        block_number = (
-            block_identifier
-            if isinstance(block_identifier, int)
-            else await get_number_for_block_identifier_async(
-                block_identifier,
-                self.async_w3,
-            )
-        )
-
-        with contextlib.suppress(KeyError):
-            return self._cached_balance[address][block_number]
-
-        balance: int
-        (balance,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=await self.async_w3.eth.call(
-                transaction=TxParams(
-                    to=self.address,
-                    data=Web3.keccak(text="balanceOf(address)")[:4]
-                    + eth_abi.abi.encode(types=["address"], args=[address]),
-                ),
-                block_identifier=block_number,
-            ),
-        )
-
-        if address not in self._cached_balance:
-            self._cached_balance[address] = BoundedCache(max_items=self._state_cache_depth)
-
-        self._cached_balance[address][block_number] = balance
-        return balance
-
-    def get_total_supply(self, block_identifier: BlockIdentifier | None = None) -> int:
-        """
-        Retrieve the total supply for this token.
-        """
-
-        block_number = (
-            block_identifier
-            if isinstance(block_identifier, int)
-            else get_number_for_block_identifier(
-                block_identifier,
-                self.w3,
-            )
-        )
-
-        with contextlib.suppress(KeyError):
-            return self._cached_total_supply[block_number]
-
-        total_supply: int
-        (total_supply,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=self.w3.eth.call(
-                transaction=TxParams(
-                    to=self.address,
-                    data=Web3.keccak(text="totalSupply()")[:4],
-                ),
-                block_identifier=block_number,
-            ),
-        )
-        self._cached_total_supply[block_number] = total_supply
-        return total_supply
-
-    async def get_total_supply_async(self, block_identifier: BlockIdentifier | None = None) -> int:
-        """
-        Retrieve the total supply for this token.
-        """
-
-        block_number = (
-            block_identifier
-            if isinstance(block_identifier, int)
-            else await get_number_for_block_identifier_async(
-                block_identifier,
-                self.async_w3,
-            )
-        )
-
-        with contextlib.suppress(KeyError):
-            return self._cached_total_supply[block_number]
-
-        total_supply: int
-        (total_supply,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=await self.async_w3.eth.call(
-                transaction=TxParams(
-                    to=self.address,
-                    data=Web3.keccak(text="totalSupply()")[:4],
-                ),
-                block_identifier=block_number,
-            ),
-        )
-        self._cached_total_supply[block_number] = total_supply
-        return total_supply
-
-    @property
-    def chain_id(self) -> int:
-        return self._chain_id
+        (total_supply,) = decode(types=["uint256"], data=result)
+        return cast("int", total_supply)
 
     @property
     def price(self) -> float:
+        """Price.
+
+        Raises:
+            NoPriceOracle: See function documentation.
+
+        """
         if self._price_oracle is None:
             raise NoPriceOracle
         return self._price_oracle.price
 
     @property
-    def w3(self) -> Web3:
-        return connection_manager.get_web3(self.chain_id)
-
-    @property
-    def async_w3(self) -> AsyncWeb3[AsyncBaseProvider]:
-        return async_connection_manager.get_web3(self.chain_id)
+    def chain_id(self) -> int:
+        """Chain ID (read from Rust-owned ``TokenEntry``)."""
+        return self._py_token.chain_id

@@ -1,4 +1,4 @@
-"""Copy token IDs to pool table
+"""Copy token IDs to pool table.
 
 Revision ID: e453c9cd9e51
 Revises: bbb8d61cef9c
@@ -14,8 +14,6 @@ from alembic import op
 from sqlalchemy.orm import Session
 
 from degenbot.database.models.pools import (
-    AbstractUniswapV2Pool,
-    AbstractUniswapV3Pool,
     AerodromeV2PoolTable,
     AerodromeV3PoolTable,
     CamelotV2PoolTable,
@@ -26,7 +24,9 @@ from degenbot.database.models.pools import (
     SushiswapV3PoolTable,
     SwapbasedV2PoolTable,
     UniswapV2PoolTable,
+    UniswapV2PoolTableBase,
     UniswapV3PoolTable,
+    UniswapV3PoolTableBase,
 )
 
 # revision identifiers, used by Alembic.
@@ -38,7 +38,6 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-
     connection = op.get_bind()
     session = Session(bind=connection)
 
@@ -57,19 +56,19 @@ def upgrade() -> None:
         if TYPE_CHECKING:
             assert isinstance(
                 table,
-                (AbstractUniswapV2Pool, AbstractUniswapV3Pool),
+                (UniswapV2PoolTableBase, UniswapV3PoolTableBase),
             )
 
         for pool in session.scalars(sa.select(table)).all():
             base_pool = session.scalar(
-                sa.select(LiquidityPoolTable).where(LiquidityPoolTable.id == pool.pool_id)
+                sa.select(LiquidityPoolTable).where(LiquidityPoolTable.id == pool.pool_id),
             )
 
-            assert isinstance(pool, (AbstractUniswapV2Pool, AbstractUniswapV3Pool))
+            assert isinstance(pool, (UniswapV2PoolTableBase, UniswapV3PoolTableBase))
             assert isinstance(base_pool, LiquidityPoolTable)
 
-            base_pool.token0_id_ = pool.token0_id
-            base_pool.token1_id_ = pool.token1_id
+            base_pool.token0_id_ = pool.token0_id  # type: ignore
+            base_pool.token1_id_ = pool.token1_id  # type: ignore
 
     session.commit()
 

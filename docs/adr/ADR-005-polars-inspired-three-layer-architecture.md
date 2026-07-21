@@ -1,0 +1,407 @@
+# ADR-005: Polars-Inspired Three-Layer Architecture
+
+**Status: accepted.** Implemented for the `Bot`/`PyBot`/`PyLiquidityPool`/`PyErc20Token` family
+(`BotCore`→`Bot`, `PyBotCore`→`PyBot` rename + `Mutex`→`RwLock` in the PyO3-handle tier).
+The `ArbitrageEngine` unification is deferred — see "Deferred".
+
+## Context
+
+degenbot mixes Python and Rust via PyO3 across two distinct questions:
+
+1. **(ADR-003)** *What owns runtime pool/token state?* — answered: the Rust `Bot`, as a
+   single owner peer to `ArbitrageEngine`.
+2. **(this ADR)** *How do Python callers reach that Rust-owned state across the FFI
+   without copying, while staying thread-safe under Python 3.13+ free-threading and the
+   per-block hot loop?* — previously unanswered. ADR-003 mentions "thin `PyO3` handles
+   over `Arc<Mutex<BotCore>>`" in passing but never canonizes the lock type or the
+   session-owns-wrapper topology. The "Polars model" was referenced scattered across
+   Plan 079, ADR-003 implications, and `rust/AGENTS.md`, but never recorded as a
+   decision for the *stateful* middle-layer case.
+
+`rust/AGENTS.md` already documents the **generic** PyO3 module convention — Python
+convenience layer / thin PyO3 wrapper (`*_py.rs`) / pure Rust core (`*.rs`, no `pyo3`
+imports) — and lists Polars as one of two reference projects (Polars + Pydantic). That
+convention covers the *stateless* case (free `#[pyfunction]`s like `decode`/`encode`/
+`tick_math`). This ADR is the **stateful specialization**: when the Rust core holds
+long-lived mutable state that many Python objects must reference.
+
+## Decision
+
+Adopt the **Polars-inspired three-layer architecture** for stateful Rust-owned
+resources, with a **standalone Rust core as a first-class concern** (the crate split
+that lets the core be consumed without Python, like Polars). Three layers with strict
+separation (mirroring `rust/AGENTS.md`'s generic convention, specialized for shared
+state), realized across two Rust crates:
+
+1. **Rust Core** (`Bot`, `V2PoolState`/`V3PoolState`/`V4PoolState`, `DexIdentity`,
+   reorg journal, event decoders, swap math) — pure Rust, **zero `pyo3` imports**.
+   Owns all data + state-machine logic + the `DexIdentity` preset registry. This is
+   the crate a standalone Rust consumer `cargo add`s; the Python-binding crate is a
+   sibling, not a parent. Already largely true: `rust/src/bot_core/mod.rs` core
+   structs have no `pyo3` imports today — the split is a packaging decision, not a
+   rewrite.
+2. **PyO3 Wrapper** (`PyBot`, `#[pyclass]` in `py_bot.rs`) — holds
+   `Arc<parking_lot::RwLock<Bot>>`. **The wrapper is the sharing mechanism.** Thin
+   stateful handles (`PyLiquidityPool` carrying a `pool_id` key, `PyErc20Token` carrying an `Address`
+   key) clone the *same* `Arc`, so N Python objects reference one Rust-owned `Bot`.
+   Read methods take a read guard (`calculate_tokens_out`, `encode_swap`, getters,
+   journal-length queries); write methods take a write guard (`register_*`, `update_*`,
+   `restore_*`, `discard_*`). All `#[pyclass]`/`#[pyfunction]` surface lives in the
+   binding crate; the Rust core never names them.
+3. **Python Session** (`bot.py:Bot`) — the public orchestrator. Constructs
+   `self._py_bot = PyBot()` in `__init__`. Owns registries, config, DB, and all I/O;
+   delegates Rust-owned state through the wrapper.
+
+The **crate split target** mirrors Polars' topology:
+
+| Crate | Contents | `pyo3`? | Consumers |
+|---|---|---|---|
+| `degenbot-core` | `Bot`, `V2/V3/V4PoolState`, `DexIdentity` + presets, calc math, reorg, decoders | none | Rust users *and* the binding crate |
+| `degenbot-python` | `PyBot`, `PyLiquidityPool`, `PyErc20Token`, `PyBotIo` (future), all `#[pyclass]`/`#[pyfunction]` | all | Python only |
+| `degenbot` (umbrella Python package) | the Python `Bot` companion + the `degenbot_rs` extension built from `degenbot-python` | n/a | Python users |
+
+This is exactly `polars-core` / `polars-python` / `polars` (the umbrella `polars`
+Rust crate re-exports `polars_core::{DataFrame, Series, ...}` with zero `pyo3`; all
+`Py*` wrappers live exclusively in `polars-python`, which Rust consumers never touch).
+
+### Placement of DEX identity
+
+The standalone constraint **settles where DEX identity lives**: in `degenbot-core`
+(Rust), not in a Python module. A Rust consumer constructing a Sushiswap-on-Arbitrum V2
+pool needs the Sushiswap factory address, deployer, init hash, and fees — without a
+Python import. If those presets lived in `degenbot.dex_presets` (Python), the
+standalone claim breaks. `DexIdentity` is therefore a frozen value object in
+`degenbot-core` (factory, deployer, init hash, fee params, variant string, ABI struct
+shapes), with `pub` DEX presets (`UNISWAP_V2`, `SUSHISW2`, `CAMELOT_V2_STABLE`, etc.)
+— the exact shape Polars gives format codecs in `polars-io` (Rust), not Python.
+
+**`DexIdentity` is *not* a field on `V2PoolState`.** A pool's swap-math inputs
+(reserves, sqrt_price) don't need the DEX identity to apply a Sync event or solve a
+swap — that's invariant math. The identity is needed only at *encoding* (factory goes
+into calldata) and *registration* (which preset constructed this). So it's a
+construction/encoding parameter, not state. Both the Python `Pool` companion (via the
+`Py*` wrapper) and the standalone Rust consumer read `DexIdentity` presets from
+`degenbot-core`.
+
+> **Clarification (per-pool `DexVariant` tag).** The rule above holds for the
+> *preset* — the level-1 DEX data (factory, deployer, init-hash, default fees,
+> ABI shape) that is shared across many pools and therefore not stored per-pool.
+> Namespace echo lives on the immutable half of `PoolEntry::V2` — a
+> `V2PoolIdentity` (`VxPoolIdentity` per ADR-005 identity slice) holds the
+> permanent per-pool tags `{ variant: DexVariant, stable_swap: bool,
+> fee_denominator: Option<u64> }` (alongside address/tokens/fees/factory).
+> This is *registration metadata* (which preset constructed this pool, plus
+> the Camelot solidly-stable strategy the builder observed on-chain), not
+> swap-math state. The Python companion recovers it off the `PyLiquidityPool`
+> handle (the Polars `_from_pydf` end state) — `py_pool.dex` resolves the full
+> preset via `preset_for_variant(variant)`, while `py_pool.variant`/
+> `.stable_swap`/`.fee_denominator` carry the per-pool tag. Two Camelot pools
+> share a factory but differ in their variant tag; the tag is how the
+> companion picks the right stable-strategy branch without re-fetching
+> on-chain state.
+>
+> See the "Achieved invariant: identity/state split" section below for the
+> full per-variant shape.
+
+### Grounding in Polars
+
+`polars-python`'s `DataFrame` wrapper holds `RwLock<DataFrame>` over `polars-core`;
+slicing/cloning shares the underlying buffers via a custom `Arc` (`SharedStorage`), so
+many Python `DataFrame` views reference one Rust-owned buffer set. degenbot mirrors this
+exactly: `PyBot` holds `RwLock<Bot>`; `PyLiquidityPool`/`PyErc20Token` share via `Arc::clone`. The
+difference is granularity — Polars shares large Arrow buffers; degenbot shares a single
+state struct and keys into it.
+
+The **crate split mirrors Polars exactly too** (verified against the Polars source):
+`polars-core` has zero `pyo3` imports in any of its 231 source files (the `pyo3` line
+in its `Cargo.toml` is declared-but-unused); all `#[pyclass]` `Py*` wrappers live
+exclusively in `polars-python`; the umbrella `polars` Rust crate `pub use`s
+`polars_core::{DataFrame, Series, ...}` with no `pyo3`, and is what Rust consumers
+`cargo add`. degenbot's target topology (`degenbot-core` / `degenbot-python` /
+`degenbot` umbrella) is the same shape — Rust core consumable standalone, Python
+bindings a sibling crate.
+
+### Layer naming
+
+Naming follows the Polars rule **unconditionally**: the `Py` prefix is kept on the
+PyO3 wrapper both as the Rust struct name *and* as the Python-exposed name; the bare
+noun is reserved for the Python companion class. No `#[pyclass(name = "...")]`
+override drops the prefix.
+
+| Layer | Name | Example |
+|---|---|---|
+| Rust core (data + state-machine logic, no I/O) | bare noun, no `pyo3` | `Bot`, `DexIdentity` |
+| Rust core internal storage (dispatch key, not public) | terse `<version>PoolState` | `V2PoolState`, `V3PoolState`, `V4PoolState` + `PoolEntry::V2/V3/V4` (each variant is a `(VxPoolIdentity, VxPoolState)` tuple — see the achieved-invariant section) |
+| PyO3 wrapper (`#[pyclass]`, keeps `Py`) | `Py` + companion name | `PyBot`, `PyLiquidityPool`, `PyErc20Token` |
+| Python companion (orchestration + I/O) | bare noun matching the wrapper minus `Py` | `Bot` ↔ `PyBot`; `Erc20Token` ↔ `PyErc20Token`; `UniswapV2Pool` ↔ `PyLiquidityPool` |
+| Future Rust I/O struct | `Py` + `*Io`/`*Reader` | `PyBotIo` (stateful, holds provider/DB) |
+| Stateful Rust free functions | no `Py` prefix | per `rust/AGENTS.md` (`#[pyfunction]`) |
+
+**Generalized wrapper noun, variant is internal.** The wrapper noun is *generalized* —
+`PyLiquidityPool` (and the standalone-Rust `UniswapV2Pool` reference), not a
+per-variant `PyV2PoolState`/`PyV3PoolState`/`PyV4PoolState`. The `V2`/`V3`/`V4`
+variant vocabulary lives **only** as internal Rust-core storage dispatch
+(`PoolEntry::V2(V2PoolIdentity, V2PoolState)` (+ V3/V4 twins) — the terse `VxPoolState`/`VxPoolIdentity` structs are match-arm targets,
+not a public API surface). This matches degenbot's user-facing ergonomics: a user knows
+they want "a Uniswap V2 pool" (which the frontend shows), not the constant-product
+invariant name; `Bot` investigates the identity under the hood (pool key, address,
+token pair, fee, factory) and resolves the variant internally. The standalone-Rust
+`Bot` (under the crate-split target) does the same — a Rust consumer constructs via
+`Bot::register_pool(addr, dex=...)`, never `V2PoolState::new(...)`. This is the
+`pl.DataFrame` precedent: users construct `DataFrame`, never `ChunkedArray<T>`.
+
+**Stance B — collapsed DEX companions.** Under stance B, the hollow DEX-class
+hierarchy (`SushiswapV2Pool`, `PancakeswapV2Pool`, `SwapbasedV2Pool`, `CamelotLiquidityPool`
+— all of which added only a `variant` ClassVar + static fee constants, verified during grilling)
+collapses into the generalized `UniswapV2Pool` companion, with DEX identity carried as
+`DexIdentity` data (stance II — identity is deployment data, not behavior) and DEX
+*behavioral* divergence carried as strategy on the base class (Camelot's solidly-stable
+calc + the stable `to_hop_state` branch were folded into `UniswapV2Pool` directly in
+slice 7 step 4a; Aerodrome V2's stable path + log decoder remain a separate subclass
++ builder, deferred per TODO-e30504ed — neither earns its own class hierarchy).
+DEX presets live in `degenbot-core` as `pub` values (`UNISWAP_V2`, `SUSHISWAP_V2`,
+`CAMELOT_V2`, etc.), resolvable via `dex_identity(variant)` + passed as the `dex=`
+construction parameter. `Bot.build_pool` returns `UniswapV2Pool` for every V2-family
+DEX; the per-factory registration carries `variant="<dex>"` (preserving the DB `kind`)
+and the canonical preset. Public-API breakage is accepted (0.x major refactor).
+
+> **Status: implemented in slice 7** (steps 1–4). The hollow subclasses are deleted;
+`pool_type_registry.register(..., variant=, dex_identity=)` is the resolution seam.
+See `docs/migration-guides/dex-subclass-collapse.md` for the migration. A pre-existing
+`get_y_camelot` arity bug in the (dead-code) stable `to_hop_state` branch surfaced
+during the fold — resolved by `7b9cfffc` (was tracked in TODO-7ea2e7d9).
+
+**Precedent set by this ADR's slices.** The `#[pyclass(name = "Pool")]` /
+`name = "Token"` overrides (which exposed the original structs under the bare names
+`Pool`/`Token`) were dropped (slice 1), and the structs renamed to
+`PyLiquidityPool`/`PyErc20Token` (slice 2) — every wrapper now keeps the `Py` prefix
+unconditionally, with no `name=` override. This is the template for future wrappers.
+
+## Considered options (rejected alternatives)
+
+- **Mutex everywhere (engine parity).** Keep `Arc<Mutex<Bot>>` on `PyBot` to match
+  `ArbitrageEngine`. **Rejected**: the Python-facing access pattern is read-heavy
+  (per-pool calc reads, tick-data reads during solves, `PyLiquidityPool`/`PyErc20Token` property
+  reads); a single write mutex would serialize all of them. `RwLock` allows concurrent
+  readers under Python 3.13+ free-threading. Cost — marginally larger guard, slightly
+  slower writes — is justified by read dominance. (`ArbitrageEngine` retains `Mutex` today
+  because its access pattern is engine-then-core under a pump, a different shape; see
+  Deferred.)
+- **The Python `Bot` class *is* the `#[pyclass]`.** Drop the wrapper, make `Bot` itself
+  a PyO3 class. **Rejected**: couples session orchestration (SQLAlchemy, web3.py,
+  publisher/subscriber, RPC I/O) to PyO3 lifetime/GIL semantics — `Bot` could no longer
+  be constructed without the GIL or unit-tested without the extension built. Breaks the
+  clean separation the generic `rust/AGENTS.md` three-layer rule mandates ("if `pyo3`
+  appears in a file that isn't `*_py.rs`, it's a code smell") — a Python class can't be
+  `*_py.rs`.
+- **Handles re-resolve via a global registry.** `PyLiquidityPool`/`PyErc20Token` hold only a key and
+  call a global `get_pool(id)` each access. **Rejected**: forces a lock + `HashMap`
+  lookup per property read, and reintroduces a process-global singleton (the deprecated
+  pattern root `AGENTS.md` warns against) as the state authority. Loses the O(1)
+  `Arc`-shared reference that is the whole point of the Polars analogy.
+- **Status quo (`PyBotCore` + `Mutex`).** **Rejected**: this was the ad-hoc,
+  uncanonicalized state this ADR replaces. No recorded rationale existed for the lock
+  type or the topology; the next contributor could not tell whether the choices were
+  deliberate.
+- **DEX identity on the Python companion (B-i).** Place `DexIdentity` presets in a
+  Python module (`degenbot.dex_presets`), with the Python `Pool` companion as the
+  single source. **Rejected by the standalone-core constraint**: a Rust consumer of
+  `degenbot-core` (a pure-Rust bot, or a Python-alternative runtime) constructing a
+  Sushiswap V2 pool would need the Sushiswap factory/init-hash/fees — unreachable
+  without a Python import. The standalone claim is first-class, so identity must be
+  Rust-side (see "Placement of DEX identity" above). The Python companion *holds* a
+  `DexIdentity` at runtime (resolved through the `Py*` wrapper); it is not the
+  *source* of truth for it.
+- **Everything in Rust upfront (B-iii).** Move all DEX calc strategies into Rust as
+  part of this ADR. **Rejected**: violates the cutover property — each DEX's calc
+  strategy is independently portable to Rust and must be tested against the existing
+  Python behavior before cutover. `ConstantProductCalc` ports first; `CamelotStableCalc`
+  follows independently; DEX identity (data, not behavior) is Rust-side from day one
+  regardless. See Deferred.
+
+## Consequences
+
+- **Multiple Python handles share one Rust-owned `Bot` thread-safely** — the goal. The
+  Python `Bot` can hand out `PyLiquidityPool`/`PyErc20Token` handles that stay live and consistent
+  with the session's state for their lifetime.
+- **The `RwLock` read/write split is now an invariant.** New stateful `#[pyclass]`
+  wrappers in this tier must classify each method as read (`.read()`) or write
+  (`.write()`).
+- **Two locking disciplines coexist until unification** (see Deferred): `RwLock` on the
+  Python-facing wrapper tier, `Mutex` on the engine-internal tier. A future slice
+  collapses this.
+- **The lock-ordering rule from ADR-003 is preserved**: Python-facing wrapper methods
+  take the core lock alone and never nest the `ArbitrageEngine` lock — the rule that
+  keeps the deadlock surface empty. This ADR does not change lock *order*, only the
+  *type* of lock on the Python-facing tier.
+- **The standalone-core constraint is first-class.** Any new state, identity, or
+  preset that a standalone Rust consumer would need must land in `degenbot-core` from
+  day one — placing it on the Python side first and "moving it later" strands it
+  across the future crate boundary. `DexIdentity` (above) is the operative precedent:
+  Rust-side at introduction, even though the Python `Pool` companion is its first
+  consumer. This is the rule that prevents the crate split (Deferred) from becoming
+  a rewrite.
+
+## Related
+
+- **ADR-003** (Bot as state layer) — **complementary, not overlapping.** ADR-003 answers
+  *what owns state* (the Rust `Bot`, peer to `ArbitrageEngine`); this ADR answers *how
+  Python reaches that state across FFI*. ADR-003's "thin `PyO3` handles over
+  `Arc<Mutex<BotCore>>`" mentioned the handles + Arc but never canonized the lock type
+  or the session-owns-wrapper topology — that canonization is this ADR.
+- **`rust/AGENTS.md` "Three-Layer Pattern"** — this ADR is the **stateful
+  specialization** of that generic convention. The generic convention says "pure core /
+  thin wrapper / Python convenience"; this ADR adds the stateful topology (shared
+  `Arc<RwLock<Core>>`, the-wrapper-is-the-sharing-mechanism, Python session owns the
+  wrapper, read/write guard split).
+- **`docs/architecture/rust-owned-bot.md` §13** — topology description and code mapping.
+  inline mentions in {Bot}/{PyBot}/{PyLiquidityPool}/{PyErc20Token} de-duplicated to point here.
+- **Plan 079** ("Rust-Owned Bot Core") — first articulated the "Polars model" goal
+  ("Python is the cockpit, Rust is the engine"). This ADR records the FFI-topology
+  decision 079 implied but never specified, and **sharpens 079's framing**: the
+  standalone-Rust-core target means Rust isn't merely Python's engine — it's a
+  consumable library in its own right. "Cockpit/engine" survives as the *Python-bound*
+  reading; the crate split (Deferred) is the standalone reading 079 didn't name.
+
+## Deferred
+
+Two targets are deferred, both consequences of this ADR's standalone-core direction:
+
+- **Crate split (`degenbot-core` / `degenbot-python` / `degenbot` umbrella).** Today
+  `rust/` is one crate with `pyo3` permeating (the `*_py.rs` convention). The split
+  peels the `*_py.rs` files into `degenbot-python`, leaving `degenbot-core` with zero
+  `pyo3` — a packaging change, not a rewrite (core structs like `Bot`/`V3PoolState`
+  already import no `pyo3`). **The mechanical relocation + virtual-manifest workspace
+  restructure is DONE** (the `degenbot_rs` binding layer now lives at
+  `rust/crates/degenbot-python/` as a peer of the seven pyo3-free cores; `rust/Cargo.toml`
+  is a pure virtual manifest — see ergo `DPSVCH`). The umbrella Rust crate
+  `degenbot` (`rust/crates/degenbot/`) re-exports the cores with zero `pyo3`, and
+  `examples/standalone_consumer.rs` is the standalone-Rust-consumer smoke test
+  (constructs a `BotState`, registers a V2 pool via the `UNISWAP_V2` preset, runs a
+  swap calc — no Python in the build) — see ergo `KWTAXJ`. **Remains deferred:**
+  the polish pass on a `cargo add degenbot` re-export surface for external Rust
+  consumers (publish) and the `degenbot` umbrella Python package wiring beyond the
+  existing `degenbot` Python package built by maturin. Triggered when either (a) a
+  standalone Rust consumer wants `cargo add degenbot-core`, or (b) the Python-binding
+  surface grows large enough to deserve its own release cadence. The `DexIdentity`
+  preset registry lands in `degenbot-core` *now* (regardless of split timing) per the
+  standalone-core consequence above, so the split never has to relocate it.
+
+- **`ArbitrageEngine` lock unification.** `ArbitrageEngine` holds its own
+  `Arc<Mutex<Bot>>` (engine-then-core order, ADR-003). Unifying the engine onto the
+  *shared* `Arc<RwLock<Bot>>` — so the engine and Python share one handle to one `Bot`
+  — is a later slice. Requires resolving the nested lock-ordering question (currently
+  engine-`Mutex`-then-core-`Mutex`; collapsing to a single core lock, or a different
+  discipline) and is deferred until the engine's access pattern is ready to give up
+  its independent lock. Until then, the Python `Bot`'s `PyBot` and the
+  `ArbitrageEngine`'s `Bot` are separate Rust-owned instances of the same struct.
+
+## Achieved invariant: identity/state split
+
+Every `PoolEntry` variant now carries a `(VxPoolIdentity, VxPoolState)` tuple
+— the ADR-005 identity/state split, completed across all five pool families
+(V2/V3/V4/Curve/Balancer-weighted/Balancer-stable).
+
+- **`VxPoolIdentity`** is pure immutable registration data, set once at
+  `register_<family>_pool` and never mutated. Each mirrors `TokenEntry` (one
+  immutable identity struct per registry entry): the level-2 identity fields
+  (address/tokens/fees/factory or pool_manager/pool_key/vault/pool_id) plus
+  the per-pool variant tags that previously sat on the mutable struct
+  (`V2PoolDescriptor`'s `variant`/`stable_swap`/`fee_denominator`, Curve's
+  variant strategy enums + `base_pool`, Balancer's `pow_version`/`amp`/
+  `bpt_idx`/`invariant_version`). One immutable struct per variant.
+- **`VxPoolState`** is pure mutable runtime — the slot0 head scalars
+  (`sqrt_price_x96`/`liquidity`/`tick` for CL; reserves/balances for the
+  others), `update_block`, the per-tick/balance reorg journal, and (for CL)
+  the pinned verify seeds (`snapshot_seed`/`post_drain_snapshot`) + cached
+  tick ranges.
+- **Accessor convention**: `BotState::get_<family>_identity(pool_id)` borrow
+  the immutable half; `get_<family>_pool(pool_id)` borrow the mutable half.
+  Reads that need both (the V3/V4 swap simulators, the diagnostic arms,
+  `sync_tick_data_by_pool_id`) bind the `PoolEntry::Vx(identity, state)` pair
+  in the match, then read scalars off `identity` (immutable config like
+  `fee`/`tick_spacing`) and mutable fields off `state`.
+- **`V3FamilyPool`** trait (the V3+V4 dyn-accessible reader surface) was
+  slimmed to mutable-only scalars (`sqrt_price_x96`/`liquidity`/`tick`/
+  `update_block`/`tick_data`); the immutable `fee`/`tick_spacing` reads moved
+  off the trait. **`TickMap`** / `TickMapMut` re-homed: the V3/V4 `TickMap`
+  impl is on the `(VxPoolIdentity, VxPoolState)` tuple (the trait projects
+  identity's `address`/`tick_spacing` AND the mutable state's
+  `tick`/`tick_data`); `TickMapMut` has no impls post-split (the apply path
+  writes through the `PoolEntry` match, not the trait).
+
+The split leaves the **post-deregistration identity-cache concern** (`PyLiquidityPool`
+keeping per-pool memoized scalars after `unregister`) the Python companion's
+responsibility by design (ADR-007) — `BotState` no longer retains the
+identity after `unregister_pool` (the whole `PoolEntry`, identity + journal,
+is dropped together), and that is unaffected by the split.
+
+Migration commits: `e138e98` (V2), `7c492b0` (V3), `66e80fbc` (V4),
+`df2ffb9d` (Curve), `030948ed` (Balancer).
+
+## Achieved invariant: the sealed `_from_py_pool` seam (Polars `_from_pydf` end state)
+
+The identity/state split made every identity field handle-readable; the
+**sealed `_from_py_pool` seam** closes the loop by making the handle the
+*single constructor argument*. Every companion — V2 (first, as the template),
+V3, V4, Balancer-weighted, Balancer-stable, Aerodrome, Curve — now constructs
+via `cls._from_py_pool(py_pool) -> Self`, reading every identity field off the
+handle. Direct `__init__` is forbidden (`TypeError`) on every companion;
+`Erc20Token` followed with its `_from_py_token`. This is the Polars
+`_from_pydf` end state: the companion holds nothing an external caller can
+mutate, and the only paths to a pool instance are the ones that wire a handle
+(`Bot.build_pool()` / the test factories).
+
+- **Variant-family guard.** `_from_py_pool` asserts the handle's
+  `pool_family()` (the `755d1c7b` discriminator) before reading identity — a
+  V2 handle passed to `UniswapV3Pool._from_py_pool` raises
+  `DegenbotValueError`, not a wrong-field crash. The guard is the seam's
+  integrity rule across a registry that indexes all families by `pool_id`.
+- **I/O callables are stored pyo3-free trait objects on `VxPoolState`** (not
+  Python callbacks). The per-family read surfaces the companion previously
+  held as 13 individual callbacks are now a single stored trait object on the
+  Rust state, read through a Py-adapter on the handle:
+  - **V3/V4 tick fetcher** (`bb2ee538`, `MLJT4V`) — the `TickMap`
+    lazy/invalidated reads go through a stored `Arc<dyn TickFetcher>`.
+  - **Curve data provider** (`5b832a99`, `JFGCHJ`) — the 13-method
+    `CurveDataProvider` trait object lives on `CurvePoolState`; the companion
+    reads it through `_HandleCurveDataProviderAdapter` (BQM2OA), mirroring the
+    Balancer rate-provider adapter.
+  - **Balancer rate provider** (`3dbf2f49`, `4UBHP6`) — the weighted/stable
+    rate-provider trait object lives on the Balancer state; the companion
+    reads it through `_HandleRateProviderAdapter` (MBWSGP).
+  Each is a pyo3-free `Arc<dyn Trait>` on the Rust core with a Py-adapter in
+  `degenbot-python` — the FFI rule of ADR-005 (no pyo3 in core crates) holds.
+- **The Curve cross-pool go-between.** Curve metapools break single-arg by
+  depending on a *second pool* (the base pool) whose calc methods they invoke.
+  Resolved by a ~6-line Rust go-between (`curve_base_pool()`): the metapool's
+  stored `base_pool: Option<Address>` resolves through the existing
+  `pool_id_by_address` index to a base-pool `PyLiquidityPool` sharing the same
+  `BotState` core — no Python registry. The companion wraps it in a
+  `_LazyBasePool` (memoised; zero cost if the base swap path is never taken).
+- **`BasePoolPort` — the named interface behind the go-between (BQM2OA).**
+  The metapool `DyCalculator` calls exactly six members on its base pool
+  (`tokens`/`balances`/`fee` + `calc_token_amount`/`get_dy`/
+  `calc_withdraw_one_coin`), not the ~50-symbol companion. That surface is now
+  a `Protocol` at the calculator boundary
+  (`DyCalculationInputs.base_pool: BasePoolPort | None`). **Two real
+  adapters** satisfy it (the codebase-design seam gate): the production
+  `_LazyBasePool` + a canned `StubBasePool`, the latter finally letting
+  metapool math be unit-tested without standing up a full pool.
+- **Deletion test applied to `state_cache_depth`.** Never non-default for
+  Curve (verified at task time), so the knob was deleted from the Curve
+  companion path (default-8 retained on `PerBlockCache`, shared with other
+  families via `BuildPoolRequest`).
+
+Seam commits (per family): `15a8e2a5` + `f167db11` (V2, the template),
+`7ec458ad` (V3), `7bc78962` (V4), `11ead76a` (Balancer-weighted),
+`798247fd` (Balancer-stable), `1411a960` (Aerodrome), `938fb4d3` (Curve).
+Rust foundation commits: `755d1c7b` (pool_family discriminator),
+`bb2ee538` (tick fetcher trait), `5b832a99` (Curve data-provider trait),
+`3dbf2f49` (Balancer rate-provider trait).
+
+The companion-to-handle migration is **complete for every pool family**. The
+follow-up epic (layer-3: pump-decode per-block Curve/Balancer state directly
+into `BotState` slots, eliminating the data_provider/rate_provider callables
+for on-chain feeds) is recorded in
+`docs/migration-guides/sealed-pool-seam.md`.

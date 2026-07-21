@@ -1,47 +1,50 @@
-from degenbot.constants import MAX_UINT256, MIN_UINT256
-from degenbot.exceptions.evm import EVMRevertError
-from degenbot.uniswap.v3_libraries.functions import mulmod
+"""Uniswap V3 FullMath: 512-bit multiplication with Q96 rounding.
+
+Thin delegation shim over the Rust ``degenbot-cl-math`` core
+(``cl_muldiv`` / ``cl_muldiv_rounding_up``), exposing them with the V3
+Solidity revert messages via ``EVMRevertError``.
+
+See: contract_reference/uniswap/V3/UniswapV3Factory.sol (FullMath library)
+"""
+
+import functools
+from collections.abc import Callable
+from typing import Any
+
+from degenbot.exceptions.pool import EVMRevertError
+from degenbot.uniswap.math import (
+    muldiv as _rs_muldiv,
+)
+from degenbot.uniswap.math import (
+    muldiv_rounding_up as _rs_muldiv_rounding_up,
+)
+
+# Translation table: Rust core messages → V3 Solidity revert messages
+_V3_MESSAGE_MAP = {
+    "DIVISION BY ZERO": "DIVISION BY ZERO",
+}
 
 
-def muldiv(
-    a: int,
-    b: int,
-    denominator: int,
-) -> int:
+def _wrap_evmrevert(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Wrap Rust function to convert ValueError/OverflowError → EVMRevertError.
+
+    Returns:
+        A wrapper function that re-raises as EVMRevertError.
+
     """
-    The Solidity implementation is designed to calculate a * b / d without risk of overflowing
-    the intermediate result.
 
-    Python integers do not overflow and have no bit depth limitation, so this function simply
-    checks for an invalid result.
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        try:
+            return fn(*args, **kwargs)
+        except ValueError as e:
+            msg = _V3_MESSAGE_MAP.get(str(e), str(e))
+            raise EVMRevertError(error=msg) from e
+        except OverflowError as e:
+            raise EVMRevertError(error=str(e)) from e
 
-    ref: https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/FullMath.sol
-    """
-
-    # Assert values are valid for Solidity contract
-    if a < MIN_UINT256 or a > MAX_UINT256:
-        raise EVMRevertError(error="Invalid value for a.")
-    if b < MIN_UINT256 or b > MAX_UINT256:
-        raise EVMRevertError(error="Invalid value for b.")
-    if denominator < MIN_UINT256 or denominator > MAX_UINT256:
-        raise EVMRevertError(error="Invalid value for denominator.")
-
-    if denominator == 0:
-        raise EVMRevertError(error="DIVISION BY ZERO")
-
-    result = (a * b) // denominator
-
-    if not (MIN_UINT256 <= result <= MAX_UINT256):
-        raise EVMRevertError(error="Invalid result, does not fit in uint256")
-
-    return result
+    return wrapper
 
 
-def muldiv_rounding_up(a: int, b: int, denominator: int) -> int:
-    result = muldiv(a, b, denominator)
-    if mulmod(a, b, denominator) > 0:
-        # must be less than max uint256 since we're rounding up
-        if not (MIN_UINT256 <= result < MAX_UINT256):
-            raise EVMRevertError(error="FAIL!")
-        return result + 1
-    return result
+muldiv = _wrap_evmrevert(_rs_muldiv)
+muldiv_rounding_up = _wrap_evmrevert(_rs_muldiv_rounding_up)

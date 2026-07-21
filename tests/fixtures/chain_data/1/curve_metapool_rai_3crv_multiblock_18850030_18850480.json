@@ -1,0 +1,602 @@
+{
+  "immutable": {
+    "chain_id": 1,
+    "address": "0x618788357D0EBd8A37e763ADab3bc575D54c2C7d",
+    "name": "Curve RAI/3Crv metapool (multi-block)",
+    "start_block": 18850000,
+    "end_block": 18850500,
+    "span": 30,
+    "blocks": [
+      18850030,
+      18850060,
+      18850090,
+      18850120,
+      18850150,
+      18850180,
+      18850210,
+      18850240,
+      18850270,
+      18850300,
+      18850330,
+      18850360,
+      18850390,
+      18850420,
+      18850450,
+      18850480
+    ],
+    "tokens": [
+      {
+        "address": "0x03ab458634910AaD20eF5f1C8ee96F1D6ac54919",
+        "name": "Rai Reflex Index",
+        "symbol": "RAI",
+        "decimals": 18
+      },
+      {
+        "address": "0x6c3F90f043a72FA612cbac8115EE7e52BDe6E490",
+        "name": "Curve.fi DAI/USDC/USDT",
+        "symbol": "3Crv",
+        "decimals": 18
+      }
+    ],
+    "tokens_underlying": [
+      {
+        "address": "0x03ab458634910AaD20eF5f1C8ee96F1D6ac54919",
+        "name": "Rai Reflex Index",
+        "symbol": "RAI",
+        "decimals": 18
+      },
+      {
+        "address": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+        "name": "Dai Stablecoin",
+        "symbol": "DAI",
+        "decimals": 18
+      },
+      {
+        "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "name": "USD Coin",
+        "symbol": "USDC",
+        "decimals": 6
+      },
+      {
+        "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+        "name": "Tether USD",
+        "symbol": "USDT",
+        "decimals": 6
+      }
+    ],
+    "fee": 4000000,
+    "admin_fee": 5000000000,
+    "use_lending": [
+      false,
+      false
+    ],
+    "create_timestamp": 1703352887,
+    "strategies": {
+      "d_variant": 1,
+      "y_variant": 1,
+      "yd_variant": 1,
+      "swap_style": 1,
+      "metapool_rate_style": 3,
+      "metapool_underlying_style": 2,
+      "lending_rate_style": 1
+    },
+    "lp_token": {
+      "address": "0x6BA5b4e438FA0aAf7C1bD179285aF65d13bD3D90",
+      "name": "RAI3CRV",
+      "symbol": "RAI3CRV",
+      "decimals": 18
+    },
+    "base_pool": {
+      "address": "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7",
+      "tokens": [
+        {
+          "address": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+          "name": "Dai Stablecoin",
+          "symbol": "DAI",
+          "decimals": 18
+        },
+        {
+          "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+          "name": "USD Coin",
+          "symbol": "USDC",
+          "decimals": 6
+        },
+        {
+          "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+          "name": "Tether USD",
+          "symbol": "USDT",
+          "decimals": 6
+        }
+      ],
+      "fee": 1000000,
+      "admin_fee": 5000000000,
+      "use_lending": [
+        false,
+        false,
+        false
+      ],
+      "create_timestamp": 1703352887,
+      "strategies": {
+        "d_variant": 2,
+        "y_variant": 3,
+        "yd_variant": 1,
+        "swap_style": 2,
+        "metapool_rate_style": 1,
+        "metapool_underlying_style": 1,
+        "lending_rate_style": 1
+      },
+      "lp_token": {
+        "address": "0x6c3F90f043a72FA612cbac8115EE7e52BDe6E490",
+        "name": "Curve.fi DAI/USDC/USDT",
+        "symbol": "3Crv",
+        "decimals": 18
+      }
+    }
+  },
+  "states": {
+    "18850030": {
+      "balances": [
+        60914945592088877599217,
+        173619981438922591633883
+      ],
+      "a_coefficient": 100,
+      "virtual_price": 1028650100001818926,
+      "base_virtual_price": 1028613014616190268,
+      "base_cache_updated": 1703134055,
+      "block_timestamp": 1703352887,
+      "redemption_price": 2826835393788173919,
+      "lp_token_total_supply": 351097171584529492285701,
+      "initial_a": 10000,
+      "future_a": 10000,
+      "initial_a_time": 0,
+      "future_a_time": 0,
+      "base_balances": [
+        74961333991675863544647866,
+        73692008646223,
+        37232762736446
+      ],
+      "base_a": 2000,
+      "base_virtual_price_own": 1028650100001818926,
+      "base_lp_token_total_supply": 180704066213490729944786100,
+      "base_initial_a": 5000,
+      "base_future_a": 2000,
+      "base_initial_a_time": 1653559305,
+      "base_future_a_time": 1654158027
+    },
+    "18850060": {
+      "balances": [
+        60914945592088877599217,
+        173619981438922591633883
+      ],
+      "a_coefficient": 100,
+      "virtual_price": 1028650100001818926,
+      "base_virtual_price": 1028613014616190268,
+      "base_cache_updated": 1703134055,
+      "block_timestamp": 1703353259,
+      "redemption_price": 2826835393788173919,
+      "lp_token_total_supply": 351097171584529492285701,
+      "initial_a": 10000,
+      "future_a": 10000,
+      "initial_a_time": 0,
+      "future_a_time": 0,
+      "base_balances": [
+        74961333991675863544647866,
+        73692008646223,
+        37232762736446
+      ],
+      "base_a": 2000,
+      "base_virtual_price_own": 1028650100001818926,
+      "base_lp_token_total_supply": 180704066213490729944786100,
+      "base_initial_a": 5000,
+      "base_future_a": 2000,
+      "base_initial_a_time": 1653559305,
+      "base_future_a_time": 1654158027
+    },
+    "18850090": {
+      "balances": [
+        60914945592088877599217,
+        173619981438922591633883
+      ],
+      "a_coefficient": 100,
+      "virtual_price": 1028650100001818926,
+      "base_virtual_price": 1028613014616190268,
+      "base_cache_updated": 1703134055,
+      "block_timestamp": 1703353619,
+      "redemption_price": 2826835393788173919,
+      "lp_token_total_supply": 351097171584529492285701,
+      "initial_a": 10000,
+      "future_a": 10000,
+      "initial_a_time": 0,
+      "future_a_time": 0,
+      "base_balances": [
+        74961333991675863544647866,
+        73692008646223,
+        37232762736446
+      ],
+      "base_a": 2000,
+      "base_virtual_price_own": 1028650100001818926,
+      "base_lp_token_total_supply": 180704066213490729944786100,
+      "base_initial_a": 5000,
+      "base_future_a": 2000,
+      "base_initial_a_time": 1653559305,
+      "base_future_a_time": 1654158027
+    },
+    "18850120": {
+      "balances": [
+        60914945592088877599217,
+        173619981438922591633883
+      ],
+      "a_coefficient": 100,
+      "virtual_price": 1028650100079679017,
+      "base_virtual_price": 1028613014616190268,
+      "base_cache_updated": 1703134055,
+      "block_timestamp": 1703353979,
+      "redemption_price": 2826835393788173919,
+      "lp_token_total_supply": 351097171584529492285701,
+      "initial_a": 10000,
+      "future_a": 10000,
+      "initial_a_time": 0,
+      "future_a_time": 0,
+      "base_balances": [
+        74961333991675863544647866,
+        73691387021172,
+        37232762736446
+      ],
+      "base_a": 2000,
+      "base_virtual_price_own": 1028650100079679017,
+      "base_lp_token_total_supply": 180703461959700639000587968,
+      "base_initial_a": 5000,
+      "base_future_a": 2000,
+      "base_initial_a_time": 1653559305,
+      "base_future_a_time": 1654158027
+    },
+    "18850150": {
+      "balances": [
+        60914945592088877599217,
+        173619981438922591633883
+      ],
+      "a_coefficient": 100,
+      "virtual_price": 1028650100079679017,
+      "base_virtual_price": 1028613014616190268,
+      "base_cache_updated": 1703134055,
+      "block_timestamp": 1703354339,
+      "redemption_price": 2826835393788173919,
+      "lp_token_total_supply": 351097171584529492285701,
+      "initial_a": 10000,
+      "future_a": 10000,
+      "initial_a_time": 0,
+      "future_a_time": 0,
+      "base_balances": [
+        74961333991675863544647866,
+        73691387021172,
+        37232762736446
+      ],
+      "base_a": 2000,
+      "base_virtual_price_own": 1028650100079679017,
+      "base_lp_token_total_supply": 180703461959700639000587968,
+      "base_initial_a": 5000,
+      "base_future_a": 2000,
+      "base_initial_a_time": 1653559305,
+      "base_future_a_time": 1654158027
+    },
+    "18850180": {
+      "balances": [
+        60914945592088877599217,
+        173619981438922591633883
+      ],
+      "a_coefficient": 100,
+      "virtual_price": 1028650100093520574,
+      "base_virtual_price": 1028613014616190268,
+      "base_cache_updated": 1703134055,
+      "block_timestamp": 1703354699,
+      "redemption_price": 2826835393788173919,
+      "lp_token_total_supply": 351097171584529492285701,
+      "initial_a": 10000,
+      "future_a": 10000,
+      "initial_a_time": 0,
+      "future_a_time": 0,
+      "base_balances": [
+        74961333991675863544647866,
+        73691336999880,
+        37232812736446
+      ],
+      "base_a": 2000,
+      "base_virtual_price_own": 1028650100093520574,
+      "base_lp_token_total_supply": 180703461959700639000587968,
+      "base_initial_a": 5000,
+      "base_future_a": 2000,
+      "base_initial_a_time": 1653559305,
+      "base_future_a_time": 1654158027
+    },
+    "18850210": {
+      "balances": [
+        60914945592088877599217,
+        173619981438922591633883
+      ],
+      "a_coefficient": 100,
+      "virtual_price": 1028650100093520574,
+      "base_virtual_price": 1028613014616190268,
+      "base_cache_updated": 1703134055,
+      "block_timestamp": 1703355059,
+      "redemption_price": 2826835393788173919,
+      "lp_token_total_supply": 351097171584529492285701,
+      "initial_a": 10000,
+      "future_a": 10000,
+      "initial_a_time": 0,
+      "future_a_time": 0,
+      "base_balances": [
+        74961333991675863544647866,
+        73691336999880,
+        37232812736446
+      ],
+      "base_a": 2000,
+      "base_virtual_price_own": 1028650100093520574,
+      "base_lp_token_total_supply": 180703461959700639000587968,
+      "base_initial_a": 5000,
+      "base_future_a": 2000,
+      "base_initial_a_time": 1653559305,
+      "base_future_a_time": 1654158027
+    },
+    "18850240": {
+      "balances": [
+        60914945592088877599217,
+        173619981438922591633883
+      ],
+      "a_coefficient": 100,
+      "virtual_price": 1028650100093520574,
+      "base_virtual_price": 1028613014616190268,
+      "base_cache_updated": 1703134055,
+      "block_timestamp": 1703355419,
+      "redemption_price": 2826835393788173919,
+      "lp_token_total_supply": 351097171584529492285701,
+      "initial_a": 10000,
+      "future_a": 10000,
+      "initial_a_time": 0,
+      "future_a_time": 0,
+      "base_balances": [
+        74961333991675863544647866,
+        73691336999880,
+        37232812736446
+      ],
+      "base_a": 2000,
+      "base_virtual_price_own": 1028650100093520574,
+      "base_lp_token_total_supply": 180703461959700639000587968,
+      "base_initial_a": 5000,
+      "base_future_a": 2000,
+      "base_initial_a_time": 1653559305,
+      "base_future_a_time": 1654158027
+    },
+    "18850270": {
+      "balances": [
+        60914945592088877599217,
+        173619981438922591633883
+      ],
+      "a_coefficient": 100,
+      "virtual_price": 1028650100093520574,
+      "base_virtual_price": 1028613014616190268,
+      "base_cache_updated": 1703134055,
+      "block_timestamp": 1703355779,
+      "redemption_price": 2826835393788173919,
+      "lp_token_total_supply": 351097171584529492285701,
+      "initial_a": 10000,
+      "future_a": 10000,
+      "initial_a_time": 0,
+      "future_a_time": 0,
+      "base_balances": [
+        74961333991675863544647866,
+        73691336999880,
+        37232812736446
+      ],
+      "base_a": 2000,
+      "base_virtual_price_own": 1028650100093520574,
+      "base_lp_token_total_supply": 180703461959700639000587968,
+      "base_initial_a": 5000,
+      "base_future_a": 2000,
+      "base_initial_a_time": 1653559305,
+      "base_future_a_time": 1654158027
+    },
+    "18850300": {
+      "balances": [
+        60914945592088877599217,
+        173619981438922591633883
+      ],
+      "a_coefficient": 100,
+      "virtual_price": 1028650100093520574,
+      "base_virtual_price": 1028613014616190268,
+      "base_cache_updated": 1703134055,
+      "block_timestamp": 1703356139,
+      "redemption_price": 2826835393788173919,
+      "lp_token_total_supply": 351097171584529492285701,
+      "initial_a": 10000,
+      "future_a": 10000,
+      "initial_a_time": 0,
+      "future_a_time": 0,
+      "base_balances": [
+        74961333991675863544647866,
+        73691336999880,
+        37232812736446
+      ],
+      "base_a": 2000,
+      "base_virtual_price_own": 1028650100093520574,
+      "base_lp_token_total_supply": 180703461959700639000587968,
+      "base_initial_a": 5000,
+      "base_future_a": 2000,
+      "base_initial_a_time": 1653559305,
+      "base_future_a_time": 1654158027
+    },
+    "18850330": {
+      "balances": [
+        60914945592088877599217,
+        173619981438922591633883
+      ],
+      "a_coefficient": 100,
+      "virtual_price": 1028650100093520574,
+      "base_virtual_price": 1028613014616190268,
+      "base_cache_updated": 1703134055,
+      "block_timestamp": 1703356499,
+      "redemption_price": 2826835393788173919,
+      "lp_token_total_supply": 351097171584529492285701,
+      "initial_a": 10000,
+      "future_a": 10000,
+      "initial_a_time": 0,
+      "future_a_time": 0,
+      "base_balances": [
+        74961333991675863544647866,
+        73691336999880,
+        37232812736446
+      ],
+      "base_a": 2000,
+      "base_virtual_price_own": 1028650100093520574,
+      "base_lp_token_total_supply": 180703461959700639000587968,
+      "base_initial_a": 5000,
+      "base_future_a": 2000,
+      "base_initial_a_time": 1653559305,
+      "base_future_a_time": 1654158027
+    },
+    "18850360": {
+      "balances": [
+        60914945592088877599217,
+        173619981438922591633883
+      ],
+      "a_coefficient": 100,
+      "virtual_price": 1028650100093520574,
+      "base_virtual_price": 1028613014616190268,
+      "base_cache_updated": 1703134055,
+      "block_timestamp": 1703356859,
+      "redemption_price": 2826835393788173919,
+      "lp_token_total_supply": 351097171584529492285701,
+      "initial_a": 10000,
+      "future_a": 10000,
+      "initial_a_time": 0,
+      "future_a_time": 0,
+      "base_balances": [
+        74961333991675863544647866,
+        73691336999880,
+        37232812736446
+      ],
+      "base_a": 2000,
+      "base_virtual_price_own": 1028650100093520574,
+      "base_lp_token_total_supply": 180703461959700639000587968,
+      "base_initial_a": 5000,
+      "base_future_a": 2000,
+      "base_initial_a_time": 1653559305,
+      "base_future_a_time": 1654158027
+    },
+    "18850390": {
+      "balances": [
+        60914945592088877599217,
+        173619981438922591633883
+      ],
+      "a_coefficient": 100,
+      "virtual_price": 1028650100326143930,
+      "base_virtual_price": 1028613014616190268,
+      "base_cache_updated": 1703134055,
+      "block_timestamp": 1703357219,
+      "redemption_price": 2826835393788173919,
+      "lp_token_total_supply": 351097171584529492285701,
+      "initial_a": 10000,
+      "future_a": 10000,
+      "initial_a_time": 0,
+      "future_a_time": 0,
+      "base_balances": [
+        74961333991675863544647866,
+        73689479742487,
+        37232812736446
+      ],
+      "base_a": 2000,
+      "base_virtual_price_own": 1028650100326143930,
+      "base_lp_token_total_supply": 180701656603202267511516166,
+      "base_initial_a": 5000,
+      "base_future_a": 2000,
+      "base_initial_a_time": 1653559305,
+      "base_future_a_time": 1654158027
+    },
+    "18850420": {
+      "balances": [
+        60914945592088877599217,
+        173619981438922591633883
+      ],
+      "a_coefficient": 100,
+      "virtual_price": 1028650123858279332,
+      "base_virtual_price": 1028613014616190268,
+      "base_cache_updated": 1703134055,
+      "block_timestamp": 1703357579,
+      "redemption_price": 2826835393788173919,
+      "lp_token_total_supply": 351097171584529492285701,
+      "initial_a": 10000,
+      "future_a": 10000,
+      "initial_a_time": 0,
+      "future_a_time": 0,
+      "base_balances": [
+        74961332918556273423131588,
+        73689478687575,
+        37374678697582
+      ],
+      "base_a": 2000,
+      "base_virtual_price_own": 1028650123858279332,
+      "base_lp_token_total_supply": 180839614203818013094472315,
+      "base_initial_a": 5000,
+      "base_future_a": 2000,
+      "base_initial_a_time": 1653559305,
+      "base_future_a_time": 1654158027
+    },
+    "18850450": {
+      "balances": [
+        60914945592088877599217,
+        173619981438922591633883
+      ],
+      "a_coefficient": 100,
+      "virtual_price": 1028650406379468599,
+      "base_virtual_price": 1028613014616190268,
+      "base_cache_updated": 1703134055,
+      "block_timestamp": 1703357939,
+      "redemption_price": 2826835393788173919,
+      "lp_token_total_supply": 351097171584529492285701,
+      "initial_a": 10000,
+      "future_a": 10000,
+      "initial_a_time": 0,
+      "future_a_time": 0,
+      "base_balances": [
+        74979963586785496721932343,
+        72686229303499,
+        38358902603579
+      ],
+      "base_a": 2000,
+      "base_virtual_price_own": 1028650406379468599,
+      "base_lp_token_total_supply": 180839614203818013094472315,
+      "base_initial_a": 5000,
+      "base_future_a": 2000,
+      "base_initial_a_time": 1653559305,
+      "base_future_a_time": 1654158027
+    },
+    "18850480": {
+      "balances": [
+        60914945592088877599217,
+        173619981438922591633883
+      ],
+      "a_coefficient": 100,
+      "virtual_price": 1028650434093176147,
+      "base_virtual_price": 1028613014616190268,
+      "base_cache_updated": 1703134055,
+      "block_timestamp": 1703358311,
+      "redemption_price": 2826835393788173919,
+      "lp_token_total_supply": 351097171584529492285701,
+      "initial_a": 10000,
+      "future_a": 10000,
+      "initial_a_time": 0,
+      "future_a_time": 0,
+      "base_balances": [
+        74979963586785496721932343,
+        72585749356844,
+        38458902603579
+      ],
+      "base_a": 2000,
+      "base_virtual_price_own": 1028650434093176147,
+      "base_lp_token_total_supply": 180839184919818013094480501,
+      "base_initial_a": 5000,
+      "base_future_a": 2000,
+      "base_initial_a_time": 1653559305,
+      "base_future_a_time": 1654158027
+    }
+  }
+}

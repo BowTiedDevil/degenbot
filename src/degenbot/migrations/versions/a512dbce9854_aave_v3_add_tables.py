@@ -1,4 +1,4 @@
-"""Aave V3: add tables
+"""Aave V3: add tables.
 
 Revision ID: a512dbce9854
 Revises: eb4080485a56
@@ -22,7 +22,6 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-
     op.create_table(
         "aave_v3_markets",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
@@ -102,10 +101,14 @@ def upgrade() -> None:
             unique=True,
         )
         batch_op.create_index(
-            batch_op.f("ix_aave_v3_assets_a_token_id"), ["a_token_id"], unique=False
+            batch_op.f("ix_aave_v3_assets_a_token_id"),
+            ["a_token_id"],
+            unique=False,
         )
         batch_op.create_index(
-            batch_op.f("ix_aave_v3_assets_market_id"), ["market_id"], unique=False
+            batch_op.f("ix_aave_v3_assets_market_id"),
+            ["market_id"],
+            unique=False,
         )
         batch_op.create_index(
             batch_op.f("ix_aave_v3_assets_underlying_asset_id"),
@@ -113,7 +116,9 @@ def upgrade() -> None:
             unique=False,
         )
         batch_op.create_index(
-            batch_op.f("ix_aave_v3_assets_v_token_id"), ["v_token_id"], unique=False
+            batch_op.f("ix_aave_v3_assets_v_token_id"),
+            ["v_token_id"],
+            unique=False,
         )
 
     op.create_table(
@@ -131,7 +136,9 @@ def upgrade() -> None:
     )
     with op.batch_alter_table("aave_v3_contracts", schema=None) as batch_op:
         batch_op.create_index(
-            batch_op.f("ix_aave_v3_contracts_market_id"), ["market_id"], unique=False
+            batch_op.f("ix_aave_v3_contracts_market_id"),
+            ["market_id"],
+            unique=False,
         )
 
     op.create_table(
@@ -162,10 +169,14 @@ def upgrade() -> None:
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("asset_id", sa.Integer(), nullable=False),
         sa.Column(
-            "balance", degenbot.database.models.base.IntMappedToString(length=78), nullable=False
+            "balance",
+            degenbot.database.models.base.IntMappedToString(length=78),
+            nullable=False,
         ),
         sa.Column(
-            "last_index", degenbot.database.models.base.IntMappedToString(length=78), nullable=True
+            "last_index",
+            degenbot.database.models.base.IntMappedToString(length=78),
+            nullable=True,
         ),
         sa.ForeignKeyConstraint(
             ["asset_id"],
@@ -179,13 +190,19 @@ def upgrade() -> None:
     )
     with op.batch_alter_table("aave_v3_collateral_positions", schema=None) as batch_op:
         batch_op.create_index(
-            "ix_aave_collateral_position_user_asset", ["user_id", "asset_id"], unique=True
+            "ix_aave_collateral_position_user_asset",
+            ["user_id", "asset_id"],
+            unique=True,
         )
         batch_op.create_index(
-            batch_op.f("ix_aave_v3_collateral_positions_asset_id"), ["asset_id"], unique=False
+            batch_op.f("ix_aave_v3_collateral_positions_asset_id"),
+            ["asset_id"],
+            unique=False,
         )
         batch_op.create_index(
-            batch_op.f("ix_aave_v3_collateral_positions_user_id"), ["user_id"], unique=False
+            batch_op.f("ix_aave_v3_collateral_positions_user_id"),
+            ["user_id"],
+            unique=False,
         )
 
     op.create_table(
@@ -194,10 +211,14 @@ def upgrade() -> None:
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("asset_id", sa.Integer(), nullable=False),
         sa.Column(
-            "balance", degenbot.database.models.base.IntMappedToString(length=78), nullable=False
+            "balance",
+            degenbot.database.models.base.IntMappedToString(length=78),
+            nullable=False,
         ),
         sa.Column(
-            "last_index", degenbot.database.models.base.IntMappedToString(length=78), nullable=True
+            "last_index",
+            degenbot.database.models.base.IntMappedToString(length=78),
+            nullable=True,
         ),
         sa.ForeignKeyConstraint(
             ["asset_id"],
@@ -211,13 +232,19 @@ def upgrade() -> None:
     )
     with op.batch_alter_table("aave_v3_debt_positions", schema=None) as batch_op:
         batch_op.create_index(
-            "ix_aave_debt_position_user_asset", ["user_id", "asset_id"], unique=True
+            "ix_aave_debt_position_user_asset",
+            ["user_id", "asset_id"],
+            unique=True,
         )
         batch_op.create_index(
-            batch_op.f("ix_aave_v3_debt_positions_asset_id"), ["asset_id"], unique=False
+            batch_op.f("ix_aave_v3_debt_positions_asset_id"),
+            ["asset_id"],
+            unique=False,
         )
         batch_op.create_index(
-            batch_op.f("ix_aave_v3_debt_positions_user_id"), ["user_id"], unique=False
+            batch_op.f("ix_aave_v3_debt_positions_user_id"),
+            ["user_id"],
+            unique=False,
         )
 
 

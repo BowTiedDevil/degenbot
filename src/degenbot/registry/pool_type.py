@@ -1,0 +1,431 @@
+"""Unified pool type registry.
+
+Identity (family, variant, kind) is auto-derived from the class hierarchy
+and class attributes. Deployment data (chain_id, factory, deployer, init_hash)
+is carried by the registration call.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.types.pool_type import PoolFamily, PoolTypeDescriptor, derive_kind
+
+if TYPE_CHECKING:
+    from eth_typing import ChecksumAddress
+
+    from degenbot.types import DexIdentity
+    from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
+    from degenbot.types.aliases import ChainId
+    from degenbot.types.pool_protocols import ConcentratedLiquidityPool, ConstantProductPool
+
+
+@dataclass(frozen=True)
+class PoolDeploymentData:
+    """Per-chain deployment data for a pool factory."""
+
+    factory_address: ChecksumAddress
+    deployer: str
+    pool_init_hash: str | None
+    implementation_address: str | None = None
+
+
+def _derive_family(pool_class: type[AbstractLiquidityPool]) -> PoolFamily:
+    """Derive the pool family from the class's structural shape.
+
+    Uses duck-typing checks on the class's annotation/attribute signatures
+    rather than ABC inheritance. This works with issubclass() which
+    runtime-checkable protocols with @property don't support.
+
+    Checking strategy:
+    - ConcentratedLiquidityPool shape: has sqrt_price_x96, tick, tick_spacing, liquidity
+    - ConstantProductPool shape: has reserves_token0, reserves_token1, fee_token0, fee_token1
+    - StableswapPool shape: has tokens (multi-token)
+
+    Returns:
+        The derived PoolFamily enum value.
+
+    Raises:
+        ValueError: If the class does not satisfy any known pool protocol.
+
+    """
+    # Check for concentrated liquidity attributes (V3/V4)
+    if all(
+        hasattr(pool_class, attr)
+        for attr in ("sqrt_price_x96", "tick", "tick_spacing", "liquidity")
+    ):
+        return PoolFamily.CONCENTRATED_LIQUIDITY
+
+    # Check for constant product attributes (V2/Aerodrome)
+    if all(
+        hasattr(pool_class, attr)
+        for attr in ("reserves_token0", "reserves_token1", "fee_token0", "fee_token1")
+    ):
+        return PoolFamily.CONSTANT_PRODUCT
+
+    # Check for StableSwap attributes (Curve)
+    if hasattr(pool_class, "tokens") and not hasattr(pool_class, "fee_token0"):
+        return PoolFamily.STABLESWAP
+
+    msg = (
+        f"Cannot derive pool family for {pool_class.__name__}. "
+        f"The class must satisfy ConstantProductPool, "
+        f"ConcentratedLiquidityPool, or StableswapPool protocol."
+    )
+    raise ValueError(msg)
+
+
+class PoolTypeRegistry:
+    """Unified registry mapping (chain_id, factory_address) → pool type identity.
+
+    Each DEX module registers its pool subclass at import time via register().
+    Builders consult this registry to select the concrete class and its
+    deployment data.
+
+    Family, variant, and kind are auto-derived from the class hierarchy
+    and the class's `variant` attribute.
+
+    Public API for external callers
+    --------------------------------
+    Library users who want to register a custom DEX pool class should:
+
+    1. Subclass a pool shape protocol (``ConstantProductPool``,
+       ``ConcentratedLiquidityPool``, or ``StableswapPool``). This is
+       typically done by inheriting from an existing pool class that
+       already satisfies the protocol (e.g., ``UniswapV2Pool``).
+
+    2. Add a ``variant: ClassVar[str | None] = "your_dex_name"`` class
+       attribute. Use the bare DEX name without a ``_v2``/``_v3`` suffix
+       — the suffix is derived automatically from the family.
+
+    3. If the pool has a non-standard constructor (e.g. requires
+       chain fetches for extra parameters), add a builder method
+       (e.g. ``_build_aerodrome_v2``, ``_build_camelot``) on the
+       appropriate pool builder class. The builder will be dispatched
+       via ``issubclass`` checks in the ``build()`` method.
+
+    4. Call ``pool_type_registry.register()`` with the class, chain ID,
+       factory address, and optional deployment data.
+
+    Example::
+
+        from degenbot.registry import pool_type_registry
+        from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+
+
+        class MyCustomPool(UniswapV2Pool):
+            variant: ClassVar[str | None] = "my_dex"
+
+
+        pool_type_registry.register(
+            MyCustomPool,
+            chain_id=1,
+            factory_address="0x...",
+            pool_init_hash="0x...",
+        )
+
+    After registration, ``Bot.build_pool()`` will automatically select
+    ``MyCustomPool`` for any pool whose ``factory()`` returns the registered
+    address on the given chain.
+    """
+
+    def __init__(self) -> None:
+        """Initialize the instance."""
+        self._entries: dict[tuple[int, str], _RegistryEntry] = {}
+        self._kind_index: dict[str, PoolTypeDescriptor] = {}
+        self._default_v2_class: type[ConstantProductPool] | None = None
+        self._default_v3_class: type[ConcentratedLiquidityPool] | None = None
+
+    # --- Registration ---
+
+    def register(
+        self,
+        pool_class: type[AbstractLiquidityPool],
+        *,
+        chain_id: ChainId,
+        factory_address: str,
+        pool_init_hash: str | None = None,
+        deployer: str | None = None,
+        family: PoolFamily | None = None,
+        variant: str | None = None,
+        dex_identity: DexIdentity | None = None,
+        implementation_address: str | None = None,
+    ) -> None:
+        """Register a pool class for a specific (chain_id, factory) deployment.
+
+        Identity (family, variant, kind) is auto-derived from the class.
+        Deployment data (chain_id, factory, deployer, init_hash) is stored
+        alongside for lookup.
+
+        Args:
+            pool_class: The concrete pool class.
+            chain_id: The chain ID for this deployment.
+            factory_address: The factory contract address.
+            pool_init_hash: The CREATE2 init code hash (V2 only).
+            deployer: The CREATE2 deployer address (defaults to factory_address).
+            family: Override the auto-derived pool family. Use when the class
+                shape misleads ``_derive_family`` (e.g. BalancerV2Pool has
+                ``tokens`` but not ``fee_token0``, so it would derive as
+                STABLESWAP instead of WEIGHTED).
+            variant: Override the auto-derived variant
+                (``getattr(pool_class, "variant", None)``). Needed for the
+                ADR-005 slice 7 step 4b collapse: when the hollow DEX
+                subclasses (SushiswapV2Pool, etc.) are deleted, the canonical
+                ``UniswapV2Pool`` (variant=None) is registered for each DEX
+                factory WITH ``variant="sushiswap"`` to preserve the DB
+                ``kind`` (``"sushiswap_v2"``) — keeps existing DB rows
+                resolvable while collapsing the class hierarchy.
+            dex_identity: The canonical DexIdentity preset for this DEX (ADR-005
+                slice 7 step 3). Carries the variant tag, reserves ABI shape,
+                canonical-chain factory/init-hash, + default fees. Optional —
+                Aerodrome V2 (deferred, TODO-e30504ed) + non-V2 families omit
+                it. Resolvable via ``get_v2_identity()``.
+            implementation_address: The EIP-1167 master implementation contract
+                Aerodrome factories clone (V2 stable/volatile + V3 Slipstream).
+                ``None`` for V2/V3 rows that use the standard init-hash CREATE2
+                path (ADR-005 Fork A follow-on, S5SJXF/D7VKQX).
+
+
+        Raises:
+            ValueError: If the factory is already registered for the given chain.
+
+        """
+        checksummed_factory = get_checksum_address(factory_address)
+
+        key = (chain_id, factory_address)
+        if key in self._entries:
+            msg = f"Factory {factory_address} on chain {chain_id} is already registered."
+            raise ValueError(msg)
+
+        family = family if family is not None else _derive_family(pool_class)
+        variant = variant if variant is not None else getattr(pool_class, "variant", None)
+        kind = derive_kind(family, variant)
+
+        self._entries[key] = _RegistryEntry(
+            pool_class=pool_class,
+            family=family,
+            variant=variant,
+            kind=kind,
+            deployment=PoolDeploymentData(
+                factory_address=checksummed_factory,
+                deployer=deployer if deployer is not None else factory_address,
+                pool_init_hash=pool_init_hash,
+                implementation_address=implementation_address,
+            ),
+            dex_identity=dex_identity,
+        )
+
+        # Update reverse index: kind → descriptor. When multiple deployments
+        # share the same kind (e.g. SushiswapV2 on multiple chains), the last
+        # registration wins.
+        self._kind_index[kind] = PoolTypeDescriptor(
+            family=family,
+            variant=variant,
+            kind=kind,
+            factory=checksummed_factory,
+        )
+
+    def unregister(self, *, chain_id: ChainId, factory_address: str) -> None:
+        """Remove a previously-registered (chain_id, factory) entry.
+
+        Used by tests to clean up after calling ``register()`` so the
+        module-level singleton is not permanently polluted.
+
+        Raises:
+            KeyError: If no registration exists for the given key.
+
+        """
+        key = (chain_id, factory_address)
+        removed = self._entries.pop(key, None)
+        if removed is None:
+            msg = f"No registration for factory {factory_address} on chain {chain_id}."
+            raise KeyError(msg)
+        # Remove the kind index entry only if it still points at the
+        # removed factory. Other deployments may share the same kind.
+        if self._kind_index.get(removed.kind) is not None:
+            # Rebuild the kind index entry from remaining entries with the
+            # same kind, or drop it if none remain.
+            same_kind = [e for e in self._entries.values() if e.kind == removed.kind]
+            if same_kind:
+                last = same_kind[-1]
+                self._kind_index[removed.kind] = PoolTypeDescriptor(
+                    family=last.family,
+                    variant=last.variant,
+                    kind=last.kind,
+                    factory=last.deployment.factory_address,
+                )
+            else:
+                del self._kind_index[removed.kind]
+
+    def set_default_v2_class(self, pool_class: type[ConstantProductPool]) -> None:
+        """Set the default V2 pool class when no factory-specific mapping exists."""
+        self._default_v2_class = pool_class
+
+    def set_default_v3_class(self, pool_class: type[ConcentratedLiquidityPool]) -> None:
+        """Set the default V3 pool class when no factory-specific mapping exists."""
+        self._default_v3_class = pool_class
+
+    # --- Lookup ---
+
+    def has_registration(self, chain_id: ChainId, factory_address: str) -> bool:
+        """Whether a pool class is registered for (chain_id, factory).
+
+        Returns:
+            True if a registration exists, False otherwise.
+
+        """
+        return (chain_id, factory_address) in self._entries
+
+    def get_class(
+        self,
+        chain_id: ChainId,
+        factory_address: str,
+    ) -> type[AbstractLiquidityPool] | None:
+        """Get the pool class for (chain_id, factory).
+
+        Returns None if no specific registration exists and no default is set.
+
+        Returns:
+            The pool class, or None if not found.
+
+        """
+        entry = self._entries.get((chain_id, factory_address))
+        if entry is not None:
+            return entry.pool_class
+        return None
+
+    def get_v2_class(
+        self,
+        chain_id: ChainId,
+        factory_address: str,
+    ) -> type[ConstantProductPool] | None:
+        """Get the V2 pool class for (chain_id, factory), with default fallback.
+
+        Returns:
+            The V2 pool class, or None if not found.
+
+        """
+        entry = self._entries.get((chain_id, factory_address))
+        if entry is not None:
+            # Type narrowing: entry.pool_class satisfies ConstantProductPool
+            # because _derive_family validated the structural shape at registration
+            return entry.pool_class
+        return self._default_v2_class
+
+    def get_v3_class(
+        self,
+        chain_id: ChainId,
+        factory_address: str,
+    ) -> type[ConcentratedLiquidityPool] | None:
+        """Get the V3 pool class for (chain_id, factory), with default fallback.
+
+        Returns:
+            The V3 pool class, or None if not found.
+
+        """
+        entry = self._entries.get((chain_id, factory_address))
+        if entry is not None:
+            # Type narrowing: entry.pool_class satisfies ConcentratedLiquidityPool
+            # because _derive_family validated the structural shape at registration
+            return entry.pool_class
+        return self._default_v3_class
+
+    def get_descriptor(self, chain_id: ChainId, factory_address: str) -> PoolTypeDescriptor | None:
+        """Get the PoolTypeDescriptor for (chain_id, factory).
+
+        Returns:
+            The descriptor, or None if not found.
+
+        """
+        entry = self._entries.get((chain_id, factory_address))
+        if entry is None:
+            return None
+        return PoolTypeDescriptor(
+            family=entry.family,
+            variant=entry.variant,
+            kind=entry.kind,
+            factory=entry.deployment.factory_address,
+        )
+
+    def get_v2_identity(self, chain_id: ChainId, factory_address: str) -> DexIdentity | None:
+        """Get the DexIdentity preset for (chain_id, factory), or None.
+
+        Returns None if no registration exists OR if the registration was made
+        without a ``dex_identity`` (e.g. Aerodrome V2 — deferred per
+        TODO-e30504ed).
+
+        Returns:
+            The DexIdentity preset, or None if not found / not set.
+
+        """
+        entry = self._entries.get((chain_id, factory_address))
+        if entry is None:
+            return None
+        return entry.dex_identity
+
+    def get_deployment(self, chain_id: ChainId, factory_address: str) -> PoolDeploymentData | None:
+        """Get the deployment data for (chain_id, factory).
+
+        Returns:
+            The deployment data, or None if not found.
+
+        """
+        entry = self._entries.get((chain_id, factory_address))
+        if entry is None:
+            return None
+        return entry.deployment
+
+    def get_descriptor_by_kind(self, kind: str) -> PoolTypeDescriptor | None:
+        """Get a PoolTypeDescriptor by its kind string.
+
+        Used for DB lookups where the kind is known but the factory
+        address is not. When multiple deployments share a kind, returns
+        the descriptor from the last registration.
+
+        Returns:
+            The descriptor, or None if not found.
+
+        """
+        return self._kind_index.get(kind)
+
+    # --- Introspection ---
+
+    @property
+    def registrations(
+        self,
+    ) -> dict[
+        tuple[ChainId, str],
+        tuple[type[AbstractLiquidityPool], PoolTypeDescriptor, PoolDeploymentData],
+    ]:
+        """A copy of all registrations."""
+        return {
+            key: (entry.pool_class, entry.descriptor, entry.deployment)
+            for key, entry in self._entries.items()
+        }
+
+
+@dataclass(frozen=True)
+class _RegistryEntry:
+    """Internal storage for a single registration."""
+
+    pool_class: type[AbstractLiquidityPool]
+    family: PoolFamily
+    variant: str | None
+    kind: str
+    deployment: PoolDeploymentData
+    dex_identity: DexIdentity | None = None
+
+    @property
+    def descriptor(self) -> PoolTypeDescriptor:
+        return PoolTypeDescriptor(
+            family=self.family,
+            variant=self.variant,
+            kind=self.kind,
+            factory=self.deployment.factory_address,
+        )
+
+
+# Module-level singleton
+pool_type_registry = PoolTypeRegistry()

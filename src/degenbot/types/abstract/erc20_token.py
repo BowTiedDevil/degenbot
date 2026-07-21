@@ -1,54 +1,23 @@
+"""Abstract ERC-20 token protocol definition."""
+
 from eth_typing import ChecksumAddress
-from hexbytes import HexBytes
+
+from degenbot.types.address_comparable import AddressComparable
 
 
-class AbstractErc20Token:
+class AbstractErc20Token(AddressComparable):
+    """AbstractErc20Token class."""
+
     address: ChecksumAddress
     symbol: str
     name: str
     decimals: int
 
-    def __eq__(self, other: object) -> bool:
-        match other:
-            case AbstractErc20Token():
-                return self.address == other.address
-            case HexBytes():
-                return self.address.lower() == other.to_0x_hex().lower()
-            case bytes():
-                return self.address.lower() == "0x" + other.hex().lower()
-            case str():
-                return self.address.lower() == other.lower()
-            case _:
-                return NotImplemented
-
-    def __lt__(self, other: object) -> bool:
-        match other:
-            case AbstractErc20Token():
-                return self.address < other.address
-            case HexBytes():
-                return self.address.lower() < other.to_0x_hex().lower()
-            case bytes():
-                return self.address.lower() < "0x" + other.hex().lower()
-            case str():
-                return self.address.lower() < other.lower()
-            case _:
-                return NotImplemented
-
-    def __gt__(self, other: object) -> bool:
-        match other:
-            case AbstractErc20Token():
-                return self.address > other.address
-            case HexBytes():
-                return self.address.lower() > other.to_0x_hex().lower()
-            case bytes():
-                return self.address.lower() > "0x" + other.hex().lower()
-            case str():
-                return self.address.lower() > other.lower()
-            case _:
-                return NotImplemented
-
-    def __hash__(self) -> int:
-        return hash(self.address)
-
     def __str__(self) -> str:
+        """Return a string representation.
+
+        Returns:
+            The computed value.
+
+        """
         return self.symbol

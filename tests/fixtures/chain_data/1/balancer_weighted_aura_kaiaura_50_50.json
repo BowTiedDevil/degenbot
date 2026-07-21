@@ -1,0 +1,34 @@
+{
+  "chain_id": 1,
+  "block": 24407242,
+  "address": "0x62E57e37E3185871c13a422A363293780D17305B",
+  "pool_id": "0x62e57e37e3185871c13a422a363293780d17305b0002000000000000000006d3",
+  "vault": "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+  "name": "aura_kaiaura_50_50",
+  "desc": "AURA/kaiAURA 50/50, 0.10% fee",
+  "tokens": [
+    {
+      "address": "0xC0c293ce456fF0ED870ADd98a0828Dd4d2903DBF",
+      "name": "Aura",
+      "symbol": "AURA",
+      "decimals": 18
+    },
+    {
+      "address": "0xFFd9c960bC303b8d3aAED58229ce8a7310bCc5b8",
+      "name": "Kai Aura",
+      "symbol": "kaiAURA",
+      "decimals": 18
+    }
+  ],
+  "balances": [
+    62816080261597564972316,
+    114799562283553693154351
+  ],
+  "fee": "1/1000",
+  "weights": [
+    500000000000000000,
+    500000000000000000
+  ],
+  "pow_version": "v2",
+  "n_tokens": 2
+}

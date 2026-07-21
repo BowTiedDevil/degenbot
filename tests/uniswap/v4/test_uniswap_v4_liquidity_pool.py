@@ -7,20 +7,19 @@ import hypothesis.strategies
 import pydantic_core
 import pytest
 from hexbytes import HexBytes
-from web3.contract import Contract
-from web3.exceptions import ContractLogicError
 
-from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import set_web3
 from degenbot.constants import MAX_INT128, ZERO_ADDRESS
-from degenbot.exceptions.liquidity_pool import (
+from degenbot.exceptions import ContractLogicError
+from degenbot.exceptions.pool import (
+    HookedPoolResult,
     IncompleteSwap,
     LiquidityPoolError,
-    PossibleInaccurateResult,
 )
-from degenbot.registry import pool_registry
+from degenbot.fork import AnvilFork
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+from tests.helpers.bot_factory import make_bot_with_provider
+from tests.helpers.w3_contract import make_contract
 
 if TYPE_CHECKING:
     from eth_typing import HexStr
@@ -39,7 +38,7 @@ STATE_VIEW_ADDRESS = get_checksum_address("0x7fFE42C4a5DEeA5b0feC41C94C136Cf1155
 UNISWAP_V4_QUOTER_ADDRESS = get_checksum_address("0x52F0E24D1c21C8A0cB1e5a5dD6198556BD9E1203")
 UNISWAP_V4_QUOTER_ABI = """
 [{"inputs":[{"internalType":"contract IPoolManager","name":"_poolManager","type":"address"}],"stateMutability":"nonpayable","type":"constructor"},{"inputs":[{"internalType":"PoolId","name":"poolId","type":"bytes32"}],"name":"NotEnoughLiquidity","type":"error"},{"inputs":[],"name":"NotPoolManager","type":"error"},{"inputs":[],"name":"NotSelf","type":"error"},{"inputs":[{"internalType":"uint256","name":"amount","type":"uint256"}],"name":"QuoteSwap","type":"error"},{"inputs":[],"name":"UnexpectedCallSuccess","type":"error"},{"inputs":[{"internalType":"bytes","name":"revertData","type":"bytes"}],"name":"UnexpectedRevertBytes","type":"error"},{"inputs":[{"components":[{"internalType":"Currency","name":"exactCurrency","type":"address"},{"components":[{"internalType":"Currency","name":"intermediateCurrency","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"int24","name":"tickSpacing","type":"int24"},{"internalType":"contract IHooks","name":"hooks","type":"address"},{"internalType":"bytes","name":"hookData","type":"bytes"}],"internalType":"struct PathKey[]","name":"path","type":"tuple[]"},{"internalType":"uint128","name":"exactAmount","type":"uint128"}],"internalType":"struct IV4Quoter.QuoteExactParams","name":"params","type":"tuple"}],"name":"_quoteExactInput","outputs":[{"internalType":"bytes","name":"","type":"bytes"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"components":[{"components":[{"internalType":"Currency","name":"currency0","type":"address"},{"internalType":"Currency","name":"currency1","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"int24","name":"tickSpacing","type":"int24"},{"internalType":"contract IHooks","name":"hooks","type":"address"}],"internalType":"struct PoolKey","name":"poolKey","type":"tuple"},{"internalType":"bool","name":"zeroForOne","type":"bool"},{"internalType":"uint128","name":"exactAmount","type":"uint128"},{"internalType":"bytes","name":"hookData","type":"bytes"}],"internalType":"struct IV4Quoter.QuoteExactSingleParams","name":"params","type":"tuple"}],"name":"_quoteExactInputSingle","outputs":[{"internalType":"bytes","name":"","type":"bytes"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"components":[{"internalType":"Currency","name":"exactCurrency","type":"address"},{"components":[{"internalType":"Currency","name":"intermediateCurrency","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"int24","name":"tickSpacing","type":"int24"},{"internalType":"contract IHooks","name":"hooks","type":"address"},{"internalType":"bytes","name":"hookData","type":"bytes"}],"internalType":"struct PathKey[]","name":"path","type":"tuple[]"},{"internalType":"uint128","name":"exactAmount","type":"uint128"}],"internalType":"struct IV4Quoter.QuoteExactParams","name":"params","type":"tuple"}],"name":"_quoteExactOutput","outputs":[{"internalType":"bytes","name":"","type":"bytes"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"components":[{"components":[{"internalType":"Currency","name":"currency0","type":"address"},{"internalType":"Currency","name":"currency1","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"int24","name":"tickSpacing","type":"int24"},{"internalType":"contract IHooks","name":"hooks","type":"address"}],"internalType":"struct PoolKey","name":"poolKey","type":"tuple"},{"internalType":"bool","name":"zeroForOne","type":"bool"},{"internalType":"uint128","name":"exactAmount","type":"uint128"},{"internalType":"bytes","name":"hookData","type":"bytes"}],"internalType":"struct IV4Quoter.QuoteExactSingleParams","name":"params","type":"tuple"}],"name":"_quoteExactOutputSingle","outputs":[{"internalType":"bytes","name":"","type":"bytes"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"poolManager","outputs":[{"internalType":"contract IPoolManager","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"components":[{"internalType":"Currency","name":"exactCurrency","type":"address"},{"components":[{"internalType":"Currency","name":"intermediateCurrency","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"int24","name":"tickSpacing","type":"int24"},{"internalType":"contract IHooks","name":"hooks","type":"address"},{"internalType":"bytes","name":"hookData","type":"bytes"}],"internalType":"struct PathKey[]","name":"path","type":"tuple[]"},{"internalType":"uint128","name":"exactAmount","type":"uint128"}],"internalType":"struct IV4Quoter.QuoteExactParams","name":"params","type":"tuple"}],"name":"quoteExactInput","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"},{"internalType":"uint256","name":"gasEstimate","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"components":[{"components":[{"internalType":"Currency","name":"currency0","type":"address"},{"internalType":"Currency","name":"currency1","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"int24","name":"tickSpacing","type":"int24"},{"internalType":"contract IHooks","name":"hooks","type":"address"}],"internalType":"struct PoolKey","name":"poolKey","type":"tuple"},{"internalType":"bool","name":"zeroForOne","type":"bool"},{"internalType":"uint128","name":"exactAmount","type":"uint128"},{"internalType":"bytes","name":"hookData","type":"bytes"}],"internalType":"struct IV4Quoter.QuoteExactSingleParams","name":"params","type":"tuple"}],"name":"quoteExactInputSingle","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"},{"internalType":"uint256","name":"gasEstimate","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"components":[{"internalType":"Currency","name":"exactCurrency","type":"address"},{"components":[{"internalType":"Currency","name":"intermediateCurrency","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"int24","name":"tickSpacing","type":"int24"},{"internalType":"contract IHooks","name":"hooks","type":"address"},{"internalType":"bytes","name":"hookData","type":"bytes"}],"internalType":"struct PathKey[]","name":"path","type":"tuple[]"},{"internalType":"uint128","name":"exactAmount","type":"uint128"}],"internalType":"struct IV4Quoter.QuoteExactParams","name":"params","type":"tuple"}],"name":"quoteExactOutput","outputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"uint256","name":"gasEstimate","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"components":[{"components":[{"internalType":"Currency","name":"currency0","type":"address"},{"internalType":"Currency","name":"currency1","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"int24","name":"tickSpacing","type":"int24"},{"internalType":"contract IHooks","name":"hooks","type":"address"}],"internalType":"struct PoolKey","name":"poolKey","type":"tuple"},{"internalType":"bool","name":"zeroForOne","type":"bool"},{"internalType":"uint128","name":"exactAmount","type":"uint128"},{"internalType":"bytes","name":"hookData","type":"bytes"}],"internalType":"struct IV4Quoter.QuoteExactSingleParams","name":"params","type":"tuple"}],"name":"quoteExactOutputSingle","outputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"uint256","name":"gasEstimate","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes","name":"data","type":"bytes"}],"name":"unlockCallback","outputs":[{"internalType":"bytes","name":"","type":"bytes"}],"stateMutability":"nonpayable","type":"function"}]
-"""  # noqa:E501
+"""  # noqa: E501
 
 TOKEN_AMOUNT_MULTIPLIERS = [
     0.000000001,
@@ -58,26 +57,15 @@ SNAPSHOT_BLOCK = 21883665
 
 @pytest.fixture
 def eth_usdc_v4(fork_mainnet_full: AnvilFork) -> UniswapV4Pool:
-    set_web3(fork_mainnet_full.w3)
-
-    if (
-        pool := pool_registry.get(
-            chain_id=fork_mainnet_full.w3.eth.chain_id,
-            pool_address=V4_POOL_MANAGER_ADDRESS,
-            pool_id=ETH_USDC_V4_POOL_ID,
-        )
-    ) is None:
-        return UniswapV4Pool(
-            pool_id=ETH_USDC_V4_POOL_ID,
-            pool_manager_address=V4_POOL_MANAGER_ADDRESS,
-            state_view_address=STATE_VIEW_ADDRESS,
-            tokens=[USDC_CONTRACT_ADDRESS, NATIVE_CURRENCY_ADDRESS],
-            fee=ETH_USDC_V4_POOL_FEE,
-            tick_spacing=ETH_USDC_V4_POOL_TICK_SPACING,
-        )
-
-    assert isinstance(pool, UniswapV4Pool)
-    return pool
+    bot = make_bot_with_provider(fork_mainnet_full.provider)
+    return bot.build_managed_pool(
+        V4_POOL_MANAGER_ADDRESS,
+        ETH_USDC_V4_POOL_ID,
+        state_view_address=STATE_VIEW_ADDRESS,
+        fee=ETH_USDC_V4_POOL_FEE,
+        tick_spacing=ETH_USDC_V4_POOL_TICK_SPACING,
+        tokens=[USDC_CONTRACT_ADDRESS, NATIVE_CURRENCY_ADDRESS],
+    )
 
 
 @pytest.fixture
@@ -104,26 +92,25 @@ def _test_pool_exact_input(
     quoter: Contract,
     snapshot: dict[str, Any] | None = None,
 ):
+
     pool_id: HexStr = pool["pool_id"]
 
-    lp = pool_registry.get(
-        chain_id=fork.w3.eth.chain_id,
-        pool_address=V4_POOL_MANAGER_ADDRESS,
+    bot = make_bot_with_provider(fork.provider)
+    lp = bot.managed_pools.get(
+        chain_id=fork.provider.get_chain_id(),
+        pool_manager_address=V4_POOL_MANAGER_ADDRESS,
         pool_id=pool_id,
     )
     if lp is None:
         try:
-            lp = UniswapV4Pool(
-                pool_id=pool_id,
-                pool_manager_address=V4_POOL_MANAGER_ADDRESS,
-                tokens=(
-                    pool["token0"],
-                    pool["token1"],
-                ),
+            lp = bot.build_managed_pool(
+                V4_POOL_MANAGER_ADDRESS,
+                pool_id,
+                state_view_address=STATE_VIEW_ADDRESS,
+                tokens=[pool["token0"], pool["token1"]],
                 fee=pool["fee"],
                 tick_spacing=pool["tick_spacing"],
                 hook_address=pool["hooks"],
-                state_view_address=STATE_VIEW_ADDRESS,
                 tick_bitmap=snapshot[pool_id]["tick_bitmap"]
                 if snapshot is not None and pool_id in snapshot
                 else None,
@@ -166,7 +153,7 @@ def _test_pool_exact_input(
             )
         except IncompleteSwap as exc:
             helper_amount_out = exc.amount_out
-        except PossibleInaccurateResult:
+        except HookedPoolResult:
             # The result might not match because a swap hook is not modeled
             continue
         except LiquidityPoolError as exc:
@@ -203,7 +190,7 @@ def _test_pool_exact_input(
             )
         except IncompleteSwap as exc:
             helper_amount_out = exc.amount_out
-        except PossibleInaccurateResult:
+        except HookedPoolResult:
             # The result might not match because a swap hook is not modeled
             continue
         except LiquidityPoolError as exc:
@@ -226,24 +213,22 @@ def _test_pool_exact_output(
 ):
     pool_id: HexStr = pool["pool_id"]
 
-    lp = pool_registry.get(
-        chain_id=fork.w3.eth.chain_id,
-        pool_address=V4_POOL_MANAGER_ADDRESS,
+    bot = make_bot_with_provider(fork.provider)
+    lp = bot.managed_pools.get(
+        chain_id=fork.provider.get_chain_id(),
+        pool_manager_address=V4_POOL_MANAGER_ADDRESS,
         pool_id=pool_id,
     )
     if lp is None:
         try:
-            lp = UniswapV4Pool(
-                pool_id=pool_id,
-                pool_manager_address=V4_POOL_MANAGER_ADDRESS,
-                tokens=(
-                    pool["token0"],
-                    pool["token1"],
-                ),
+            lp = bot.build_managed_pool(
+                V4_POOL_MANAGER_ADDRESS,
+                pool_id,
+                state_view_address=STATE_VIEW_ADDRESS,
+                tokens=[pool["token0"], pool["token1"]],
                 fee=pool["fee"],
                 tick_spacing=pool["tick_spacing"],
                 hook_address=pool["hooks"],
-                state_view_address=STATE_VIEW_ADDRESS,
                 tick_bitmap=snapshot[pool_id]["tick_bitmap"]
                 if snapshot is not None and pool_id in snapshot
                 else None,
@@ -286,7 +271,7 @@ def _test_pool_exact_output(
             )
         except IncompleteSwap as exc:
             helper_amount_in = exc.amount_in
-        except PossibleInaccurateResult:
+        except HookedPoolResult:
             # The result might not match because a swap hook is not modeled
             continue
         except LiquidityPoolError as exc:
@@ -323,7 +308,7 @@ def _test_pool_exact_output(
             )
         except IncompleteSwap as exc:
             helper_amount_in = exc.amount_in
-        except PossibleInaccurateResult:
+        except HookedPoolResult:
             # The result might not match because a swap hook is not modeled
             continue
         except LiquidityPoolError as exc:
@@ -353,6 +338,8 @@ def test_pool_sqrt_price_checks(eth_usdc_v4: UniswapV4Pool):
     assert eth_usdc_v4.sqrt_price_x96 > 0
 
 
+@pytest.mark.slow
+@pytest.mark.ethereum
 @hypothesis.given(
     amount=hypothesis.strategies.integers(
         min_value=1,
@@ -370,9 +357,8 @@ def test_cached_calculations(
     eth_usdc_v4: UniswapV4Pool,
     fork_mainnet_full: AnvilFork,
 ) -> None:
-    quoter = fork_mainnet_full.w3.eth.contract(
-        address=UNISWAP_V4_QUOTER_ADDRESS,
-        abi=UNISWAP_V4_QUOTER_ABI,
+    quoter = make_contract(
+        fork_mainnet_full.http_url, UNISWAP_V4_QUOTER_ADDRESS, UNISWAP_V4_QUOTER_ABI
     )
 
     for token_in, token_out in [
@@ -420,15 +406,13 @@ def test_cached_calculations(
         assert amount_in == quoter_amount_in
 
 
+@pytest.mark.slow
 def test_first_200_pools(
     fork_mainnet_full: AnvilFork,
     testing_pools,
 ):
-    set_web3(fork_mainnet_full.w3)
-
-    quoter = fork_mainnet_full.w3.eth.contract(
-        address=UNISWAP_V4_QUOTER_ADDRESS,
-        abi=UNISWAP_V4_QUOTER_ABI,
+    quoter = make_contract(
+        fork_mainnet_full.http_url, UNISWAP_V4_QUOTER_ADDRESS, UNISWAP_V4_QUOTER_ABI
     )
 
     for pool in testing_pools:
@@ -444,6 +428,7 @@ def test_first_200_pools(
         )
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "fork_mainnet_archive",
     [SNAPSHOT_BLOCK],
@@ -454,11 +439,8 @@ def test_first_200_pools_with_snapshot(
     testing_pools,
     liquidity_snapshot,
 ):
-    set_web3(fork_mainnet_archive.w3)
-
-    quoter = fork_mainnet_archive.w3.eth.contract(
-        address=UNISWAP_V4_QUOTER_ADDRESS,
-        abi=UNISWAP_V4_QUOTER_ABI,
+    quoter = make_contract(
+        fork_mainnet_archive.http_url, UNISWAP_V4_QUOTER_ADDRESS, UNISWAP_V4_QUOTER_ABI
     )
 
     for pool in testing_pools:

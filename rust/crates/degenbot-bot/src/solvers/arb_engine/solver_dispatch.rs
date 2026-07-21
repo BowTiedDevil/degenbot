@@ -1,0 +1,523 @@
+//! Path resolution, solver dispatch, and rebuild logic.
+
+use alloy::primitives::U256;
+use rayon::prelude::*;
+
+use super::{ArbitrageEngine, BlockMetadata, HashMap, HashSet};
+use ::degenbot_solvers::mixed::{
+    BalancerStableHopState, BalancerWeightedHopState, CurveStableswapHopState, HopType,
+    MixedPoolRef, ResolvedHop, ResolvedMixedPath, SolidlyHopState, SolvePathResult,
+};
+
+impl ArbitrageEngine {
+    /// Re-resolve and re-solve only paths that contain updated pools.
+    ///
+    /// Uses the `pool_to_paths` reverse index to identify `affected_path_ids`,
+    /// then re-resolves and re-solves only those. Unaffected paths carry
+    /// their previous results forward.
+    pub fn rebuild_and_solve_affected(
+        &mut self,
+        v2_affected: &HashSet<u64>,
+        v3_affected: &HashSet<u64>,
+        v4_affected: &HashSet<u64>,
+        block_number: u64,
+        _metadata: &BlockMetadata,
+    ) {
+        // Collect affected path IDs from the reverse index
+        let mut affected_path_ids: HashSet<u64> = HashSet::new();
+
+        for pool_key in v2_affected {
+            if let Some(path_ids) = self.pool_to_paths.get(&(HopType::V2, *pool_key)) {
+                affected_path_ids.extend(path_ids);
+            }
+        }
+        for pool_key in v3_affected {
+            if let Some(path_ids) = self.pool_to_paths.get(&(HopType::V3, *pool_key)) {
+                affected_path_ids.extend(path_ids);
+            }
+        }
+        for pool_key in v4_affected {
+            if let Some(path_ids) = self.pool_to_paths.get(&(HopType::V4, *pool_key)) {
+                affected_path_ids.extend(path_ids);
+            }
+        }
+
+        // Also re-solve any paths registered via register_and_solve_path that
+        // haven't been through rebuild_and_solve_affected yet. These paths were
+        // eagerly solved at registration time, but the pump's process_block
+        // replaces self.results entirely — so we must include them to avoid
+        // dropping their results.
+        affected_path_ids.extend(&self.pending_new_paths);
+        self.pending_new_paths.clear();
+
+        // If no paths are affected, just update the block number
+        if affected_path_ids.is_empty() {
+            self.results_block = block_number;
+            return;
+        }
+
+        // Re-resolve and solve only affected paths — update results in-place
+        // without cloning unchanged entries.
+
+        // Re-derive resolved hop states under the core lock — a single
+        // consistent snapshot of BotState for the whole re-derive (ADR-003
+        // Option A: one core-lock window per `solve_dirty`). V3/V4 state still
+        // reads from the per-family block engines here; Slices 2/3 migrate
+        // those into BotState too. The guard drops before `solve_path` runs,
+        // which is pure `&self`.
+        {
+            let core = self.core.read();
+            for &path_id in &affected_path_ids {
+                let Some(path) = self.path_pools.get(&path_id) else {
+                    continue;
+                };
+                let mut resolved = ResolvedMixedPath::default();
+                Self::resolve_path(&core, &path.pools, &mut resolved);
+                self.path_resolved.insert(path_id, resolved);
+            }
+        }
+
+        // Remove old results for affected paths (they'll be re-solved below)
+        for &path_id in &affected_path_ids {
+            self.results.remove(&path_id);
+        }
+
+        // Solve affected paths and insert new results.
+        //
+        // ADR-005 slice 15b-1: rayon `par_iter` parallelizes the solve across
+        // the affected-path set. `Self::solve_path` is a free-standing dispatch
+        // (no `&self` read); each work item takes the `path_id` + a CLONED
+        // `ResolvedMixedPath` (the `Clone` derive is cheap; the V3-V4 path
+        // math reads only immutable statics), then writes — under the parallel
+        // closure — into the engine-level result-set via a `Mutex`-free
+        // pattern: collect `(path_id, SolvePathResult)` pairs into a Vec, then
+        // merge sequentially into `self.results`. The parallel workers touch
+        // NO engine state and NO core.lock — engine-then-core lock ordering is
+        // preserved unchanged (rayon's internal thread pool never re-enters the
+        // engine `Mutex`). For tiny batches the par_iter dispatch overhead is
+        // bounded by rayon's lazy split (see `par_iter` docs); the sequential
+        // cost dominates below the rayon internal cutoff.
+        //
+        // Pre-collect the work items (path_id + resolved-snapshot). The clone
+        // drops the immutable borrow on `self.path_resolved` that would block
+        // parallel dispatch.
+        let to_solve: Vec<(u64, ResolvedMixedPath)> = affected_path_ids
+            .iter()
+            .filter_map(|&pid| {
+                let resolved = self.path_resolved.get(&pid)?;
+                if !resolved.valid {
+                    return None;
+                }
+                Some((pid, resolved.clone()))
+            })
+            .collect();
+
+        // Filter out empty/profitless results in the same pass that produces
+        // them — the contract is identical to the prior serial loop.
+        let solved: Vec<(u64, SolvePathResult)> = to_solve
+            .par_iter()
+            .filter_map(|(pid, resolved)| {
+                ::degenbot_solvers::mixed::solve_path(resolved).map(|r| (*pid, r))
+            })
+            .filter(|(_, r)| !r.optimal_input.is_zero() && !r.profit.is_zero())
+            .collect();
+
+        // Sequential merge — no lock acquisition; workers above owned their
+        // clones.
+        for (pid, solve_result) in solved {
+            self.results.insert(pid, solve_result);
+        }
+
+        self.results_block = block_number;
+        // Note: no compute_diff_and_send here — the pump controls when
+        // batches are dispatched (debounce timer or block boundary).
+    }
+
+    /// Solve all registered paths using `solve_path`.
+    ///
+    /// ADR-005 slice 15b-1: the solve loop runs under rayon `par_iter` over
+    /// the registered `path_resolved` map. `Self::solve_path` is receiver-free
+    /// (slice 15b-1: pure dispatch to the freestanding math helpers), so the
+    /// parallel closure borrows only the `path_resolved` entry — no `&self`
+    /// mutation under the workers; they collect pairs that the outer loop
+    /// inserts into the fresh result map sequentially. The engine-then-core
+    /// lock ordering is unchanged: this method is `&self` (no core.lock taken
+    /// here; the caller already resolved the paths under `core.read()` at the
+    /// `solve_all_paths` entry).
+    #[must_use]
+    pub fn solve_all(&self) -> HashMap<u64, SolvePathResult> {
+        self.path_resolved
+            .par_iter()
+            .filter_map(|(&path_id, resolved)| {
+                if !resolved.valid {
+                    return None;
+                }
+                ::degenbot_solvers::mixed::solve_path(resolved)
+                    .filter(|r| !r.optimal_input.is_zero() && !r.profit.is_zero())
+                    .map(|r| (path_id, r))
+            })
+            .collect()
+    }
+
+    ///
+    /// `core` is the locked [`BotState`] snapshot to read V2 state from
+    /// (ADR-003). V3/V4 hops still read the per-family block engines; their
+    /// state migrates into `core` in Slices 2/3.
+    #[allow(clippy::too_many_lines)]
+    pub fn resolve_path(
+        core: &crate::bot_core::BotState,
+        pool_refs: &[MixedPoolRef],
+        resolved: &mut ResolvedMixedPath,
+    ) {
+        resolved.hops.clear();
+        resolved.valid = false;
+
+        if pool_refs.len() < 2 {
+            return;
+        }
+
+        resolved.hops.reserve(pool_refs.len());
+
+        for pool_ref in pool_refs {
+            match pool_ref.hop_type {
+                HopType::V2 => {
+                    // Read V2 state from BotState and build the orientation-specific
+                    // `IntHopState` at resolve time from `zero_for_one` (ADR-003
+                    // "Swap Orientation": single PoolEntry per address, orientation
+                    // derived at solve — the engine never mutates this state).
+                    let Some(state) = core.get_v2_pool_state(pool_ref.pool_key) else {
+                        return; // Missing pool → invalid
+                    };
+                    let Some(identity) = core.get_v2_identity(pool_ref.pool_key) else {
+                        return; // Missing pool → invalid
+                    };
+                    let (reserve_in, reserve_out, gamma_numer, fee_denom) = if pool_ref.zero_for_one
+                    {
+                        (
+                            state.reserve0.to::<U256>(),
+                            state.reserve1.to::<U256>(),
+                            identity.fee_token0.0,
+                            identity.fee_token0.1,
+                        )
+                    } else {
+                        (
+                            state.reserve1.to::<U256>(),
+                            state.reserve0.to::<U256>(),
+                            identity.fee_token1.0,
+                            identity.fee_token1.1,
+                        )
+                    };
+                    let hop_state = degenbot_v2_math::IntHopState::new(
+                        reserve_in,
+                        reserve_out,
+                        gamma_numer,
+                        fee_denom,
+                    );
+                    resolved.hops.push(ResolvedHop::V2 { state: hop_state });
+                }
+                HopType::V3 => {
+                    // Look up V3 pool state (now owned by BotState — ADR-003) and
+                    // build the integer tick-range sequence used by the CL solver.
+                    let Some(pool_state) = core.get_v3_pool(pool_ref.pool_key) else {
+                        return; // Missing pool → invalid
+                    };
+                    let Some(identity) = core.get_v3_identity(pool_ref.pool_key) else {
+                        return; // Missing pool → invalid
+                    };
+                    let Some(int_seq) = pool_state.build_int_v3_sequence(
+                        identity.tick_spacing,
+                        identity.fee,
+                        pool_ref.zero_for_one,
+                        10,
+                    ) else {
+                        return; // No integer sequence → invalid
+                    };
+
+                    resolved.hops.push(ResolvedHop::V3 { int_seq });
+                }
+                HopType::V4 => {
+                    // V4 pools use identical CL math as V3 (BotState-owned, ADR-003).
+                    let Some(pool_state) = core.get_v4_pool(pool_ref.pool_key) else {
+                        return; // Missing pool → invalid
+                    };
+                    let Some(identity) = core.get_v4_identity(pool_ref.pool_key) else {
+                        return; // Missing pool → invalid
+                    };
+                    let Some(int_seq) = pool_state.build_int_v4_sequence(
+                        identity.pool_key.tick_spacing,
+                        identity.pool_key.fee,
+                        pool_ref.zero_for_one,
+                        10,
+                    ) else {
+                        return; // No integer sequence → invalid
+                    };
+
+                    resolved.hops.push(ResolvedHop::V4 { int_seq });
+                }
+                // Solidly-stable (Aerodrome stable / Camelot stable_swap) resolve. Reads
+                // reserves + identity off the per-family `PoolEntry` arm, then
+                // fetches token decimals via the token registry (never stored
+                // on the identity — ADR-003 single source of truth).
+                HopType::SolidlyStable => {
+                    if let Some(id) = core.get_aerodrome_identity(pool_ref.pool_key) {
+                        let Some(state) = core.get_aerodrome_pool(pool_ref.pool_key) else {
+                            return; // Missing pool → invalid
+                        };
+                        let (decimals_0, decimals_1) =
+                            match (core.token_entry(&id.token0), core.token_entry(&id.token1)) {
+                                (Some(t0), Some(t1)) => (
+                                    U256::from(10u64).pow(U256::from(t0.decimals)),
+                                    U256::from(10u64).pow(U256::from(t1.decimals)),
+                                ),
+                                _ => return, // Missing token entry → invalid
+                            };
+                        // Aerodrome fee is stored as the fee fraction directly
+                        // (cf. Camelot below).
+                        resolved.hops.push(ResolvedHop::SolidlyStable {
+                            state: SolidlyHopState {
+                                reserves_0: state.reserve0.to::<U256>(),
+                                reserves_1: state.reserve1.to::<U256>(),
+                                decimals_0,
+                                decimals_1,
+                                token_in: u8::from(!pool_ref.zero_for_one),
+                                fee_numer: U256::from(id.fee.0),
+                                fee_denom: U256::from(id.fee.1),
+                                stable: id.stable,
+                                variant: id.variant,
+                            },
+                        });
+                    } else if let Some(id) = core.get_v2_identity(pool_ref.pool_key) {
+                        // Camelot stable_swap path (V2PoolIdentity with
+                        // `stable_swap=true`).
+                        let Some(state) = core.get_v2_pool_state(pool_ref.pool_key) else {
+                            return; // Missing pool → invalid
+                        };
+                        let (decimals_0, decimals_1) =
+                            match (core.token_entry(&id.token0), core.token_entry(&id.token1)) {
+                                (Some(t0), Some(t1)) => (
+                                    U256::from(10u64).pow(U256::from(t0.decimals)),
+                                    U256::from(10u64).pow(U256::from(t1.decimals)),
+                                ),
+                                _ => return, // Missing token entry → invalid
+                            };
+                        // Camelot stores the per-direction RETAINED fraction
+                        // `(gamma_numer, fee_denom)`; the solidly math takes the
+                        // FEE fraction, so invert: `fee_numer = denom - gamma`,
+                        // `fee_denom = denom`. Selected by `zero_for_one`
+                        // (token0 in → fee_token0; token1 in → fee_token1).
+                        let (gamma, denom) = if pool_ref.zero_for_one {
+                            id.fee_token0
+                        } else {
+                            id.fee_token1
+                        };
+                        resolved.hops.push(ResolvedHop::SolidlyStable {
+                            state: SolidlyHopState {
+                                reserves_0: state.reserve0.to::<U256>(),
+                                reserves_1: state.reserve1.to::<U256>(),
+                                decimals_0,
+                                decimals_1,
+                                token_in: u8::from(!pool_ref.zero_for_one),
+                                fee_numer: U256::from(denom.saturating_sub(gamma)),
+                                fee_denom: U256::from(denom),
+                                stable: id.stable_swap,
+                                variant: id.variant,
+                            },
+                        });
+                    } else {
+                        return; // Not an Aerodrome/Camelot pool → invalid
+                    }
+                }
+                HopType::BalancerWeighted => {
+                    let Some(id) = core.get_balancer_weighted_identity(pool_ref.pool_key) else {
+                        return; // Missing pool → invalid
+                    };
+                    let Some(state) = core.get_balancer_weighted_pool(pool_ref.pool_key) else {
+                        return; // Missing pool → invalid
+                    };
+                    // N-token pool: zero_for_one selects token[0]→token[1]
+                    // (i=0, j=1) or token[1]→token[0] (i=1, j=0). The engine
+                    // only handles the pairwise (0/1) case; N>2 pair selection
+                    // is a Python-side concern (BalancerPairView) that fixes
+                    // the pair before registration.
+                    if id.n_tokens() < 2 {
+                        return; // Can't form a pairwise hop
+                    }
+                    // Upscale balances to 18-decimal fixed-point (Balancer
+                    // convention: the math leaf operates at ONE = 1e18 scale).
+                    // scaling_factors[i] = 10^(18 - token_decimals_i).
+                    let (balance_in, balance_out, weight_in, weight_out, sf_in, sf_out) =
+                        if pool_ref.zero_for_one {
+                            (
+                                state.balances[0].saturating_mul(id.scaling_factors[0]),
+                                state.balances[1].saturating_mul(id.scaling_factors[1]),
+                                id.weights[0],
+                                id.weights[1],
+                                id.scaling_factors[0],
+                                id.scaling_factors[1],
+                            )
+                        } else {
+                            (
+                                state.balances[1].saturating_mul(id.scaling_factors[1]),
+                                state.balances[0].saturating_mul(id.scaling_factors[0]),
+                                id.weights[1],
+                                id.weights[0],
+                                id.scaling_factors[1],
+                                id.scaling_factors[0],
+                            )
+                        };
+                    let Some(pow_version) =
+                        degenbot_balancer_math::PowVersion::from_u8(id.pow_version)
+                    else {
+                        return; // Unknown pow_version → invalid
+                    };
+                    resolved.hops.push(ResolvedHop::BalancerWeighted {
+                        state: BalancerWeightedHopState {
+                            balance_in,
+                            balance_out,
+                            weight_in,
+                            weight_out,
+                            swap_fee: U256::from(id.swap_fee),
+                            pow_version,
+                            scaling_factor_in: sf_in,
+                            scaling_factor_out: sf_out,
+                        },
+                    });
+                }
+                HopType::BalancerStable => {
+                    let Some(id) = core.get_balancer_stable_identity(pool_ref.pool_key) else {
+                        return; // Missing pool → invalid
+                    };
+                    let Some(state) = core.get_balancer_stable_pool(pool_ref.pool_key) else {
+                        return; // Missing pool → invalid
+                    };
+                    if id.n_tokens() < 2 {
+                        return; // Can't form a pairwise hop
+                    }
+                    let (raw_idx_in, raw_idx_out) = if pool_ref.zero_for_one {
+                        (0, 1)
+                    } else {
+                        (1, 0)
+                    };
+                    let skip_bpt = |idx: usize| -> usize {
+                        match id.bpt_idx {
+                            Some(bpt) if idx >= bpt => idx - 1,
+                            _ => idx,
+                        }
+                    };
+                    let token_index_in = skip_bpt(raw_idx_in);
+                    let token_index_out = skip_bpt(raw_idx_out);
+                    let upscaled_balances: Vec<U256> = {
+                        let mut ub = Vec::with_capacity(id.n_tokens());
+                        for (i, &bal) in state.balances.iter().enumerate() {
+                            if id.bpt_idx.is_some_and(|bpt| bpt == i) {
+                                continue;
+                            }
+                            ub.push(bal.saturating_mul(id.scaling_factors[i]));
+                        }
+                        ub
+                    };
+                    if token_index_in >= upscaled_balances.len()
+                        || token_index_out >= upscaled_balances.len()
+                    {
+                        return;
+                    }
+                    let amp_u256 = U256::from(id.amp);
+                    let invariant = if id.invariant_version == 1 {
+                        degenbot_balancer_math::stable_math::calculate_invariant(
+                            amp_u256,
+                            &upscaled_balances,
+                        )
+                    } else {
+                        degenbot_balancer_math::stable_math::calculate_invariant_deployed(
+                            amp_u256,
+                            &upscaled_balances,
+                            true,
+                        )
+                    };
+                    let Ok(invariant) = invariant else {
+                        return;
+                    };
+                    resolved.hops.push(ResolvedHop::BalancerStable {
+                        state: BalancerStableHopState {
+                            amp: amp_u256,
+                            balances: upscaled_balances,
+                            token_index_in,
+                            token_index_out,
+                            invariant,
+                            swap_fee: U256::from(id.swap_fee),
+                            scaling_factor_in: id.scaling_factors[raw_idx_in],
+                            scaling_factor_out: id.scaling_factors[raw_idx_out],
+                        },
+                    });
+                }
+                HopType::CurveStableswap => {
+                    let Some(id) = core.get_curve_identity(pool_ref.pool_key) else {
+                        return; // Missing pool → invalid
+                    };
+                    let Some(state) = core.get_curve_pool(pool_ref.pool_key) else {
+                        return; // Missing pool → invalid
+                    };
+                    if id.tokens.len() < 2 {
+                        return; // Can't form a pairwise hop
+                    }
+                    let (raw_idx_in, raw_idx_out) = if pool_ref.zero_for_one {
+                        (0, 1)
+                    } else {
+                        (1, 0)
+                    };
+                    // Curve constants
+                    let precision = U256::from(10u64).pow(U256::from(18u64));
+                    let fee_denom = U256::from(10u64).pow(U256::from(10u64));
+                    let a_precision = U256::from(100u64);
+                    let amp = U256::from(id.a_coefficient).saturating_mul(a_precision);
+                    let n_coins = U256::from(id.tokens.len() as u64);
+                    // Build rate-adjusted XP: xp[i] = balances[i] * rate_multipliers[i] / PRECISION
+                    let xp: Vec<U256> = state
+                        .balances
+                        .iter()
+                        .zip(id.rate_multipliers.iter())
+                        .map(|(b, rm)| b.saturating_mul(*rm) / precision)
+                        .collect();
+                    if raw_idx_in >= xp.len() || raw_idx_out >= xp.len() {
+                        return;
+                    }
+                    let Some(y_variant) =
+                        degenbot_curve_math::stableswap::YVariant::try_from_u8(id.y_variant)
+                    else {
+                        return;
+                    };
+                    let Some(d_variant) =
+                        degenbot_curve_math::stableswap::DVariant::try_from_u8(id.d_variant)
+                    else {
+                        return;
+                    };
+                    resolved.hops.push(ResolvedHop::CurveStableswap {
+                        state: CurveStableswapHopState {
+                            amp,
+                            a_precision,
+                            xp,
+                            token_index_in: raw_idx_in,
+                            token_index_out: raw_idx_out,
+                            n_coins,
+                            fee: U256::from(id.fee),
+                            fee_denom,
+                            precision,
+                            rate_multiplier_in: id.rate_multipliers[raw_idx_in],
+                            rate_multiplier_out: id.rate_multipliers[raw_idx_out],
+                            y_variant,
+                            d_variant,
+                        },
+                    });
+                }
+            }
+        }
+
+        resolved.valid = true;
+    }
+}
+
+impl Default for ArbitrageEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}

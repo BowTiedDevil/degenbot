@@ -1,0 +1,317 @@
+//! `PyO3` bindings for the contract module.
+
+use crate::abi_types::AbiValue;
+use crate::contract::{encode_arguments, Contract, FunctionSignature};
+use crate::prelude::*;
+use crate::provider::AlloyProvider;
+use crate::rpc::provider::PyAlloyProvider;
+use alloy::hex;
+use pyo3::types::{PyBool, PyBytes, PyList};
+use runtime::get_runtime;
+use std::sync::Arc;
+
+/// Python wrapper for a Contract.
+#[pyclass(
+    name = "Contract",
+    skip_from_py_object,
+    module = "degenbot._ffi.contract"
+)]
+pub struct PyContract {
+    contract: Contract,
+}
+
+#[pymethods]
+impl PyContract {
+    /// Create a new contract instance.
+    ///
+    /// Args:
+    ///     address: Contract address (hex string)
+    ///     `provider_url`: RPC provider URL (optional, defaults to localhost)
+    #[new]
+    #[pyo3(signature = (address, provider_url=None))]
+    fn new(py: Python<'_>, address: &str, provider_url: Option<String>) -> PyResult<Self> {
+        // Default provider URL if not provided
+        let url = provider_url.unwrap_or_else(|| "http://localhost:8545".to_string());
+        let address = address.to_string();
+
+        // Release GIL during provider creation
+        let provider = py
+            .detach(|| {
+                get_runtime().block_on(async {
+                    AlloyProvider::new(&url, crate::provider::DEFAULT_MAX_RETRIES).await
+                })
+            })
+            .map_err(Into::<PyErr>::into)?;
+
+        let contract = Contract::new(&address, Arc::new(provider)).map_err(Into::<PyErr>::into)?;
+
+        Ok(Self { contract })
+    }
+
+    /// Create a contract from an existing `AlloyProvider`, sharing its
+    /// connection pool across multiple contract instances.
+    ///
+    /// This is more efficient than `new` when creating many contracts
+    /// against the same RPC endpoint, since it avoids creating a new
+    /// HTTP connection pool for each contract.
+    ///
+    /// Args:
+    ///     address: Contract address (hex string)
+    ///     provider: An existing `AlloyProvider` instance
+    #[staticmethod]
+    #[pyo3(signature = (address, provider))]
+    fn from_provider(address: &str, provider: &PyAlloyProvider) -> PyResult<Self> {
+        let contract =
+            Contract::new(address, Arc::clone(&provider.provider)).map_err(Into::<PyErr>::into)?;
+        Ok(Self { contract })
+    }
+
+    /// Execute a contract call.
+    ///
+    /// Args:
+    ///     `function_signature`: Function signature like "balanceOf(address)"
+    ///     args: List of arguments as strings
+    ///     `block_number`: Optional block number to query
+    ///
+    /// Returns:
+    ///     List of decoded return values as strings
+    #[pyo3(signature = (function_signature, args, block_number=None))]
+    fn call(
+        &self,
+        py: Python<'_>,
+        function_signature: &str,
+        args: &Bound<'_, PyList>,
+        block_number: Option<u64>,
+    ) -> PyResult<Py<PyList>> {
+        let function_signature = function_signature.to_string();
+        let contract = self.contract.clone();
+
+        // Extract args from Python list
+        let args: Vec<String> = args
+            .iter()
+            .map(|a| a.extract::<String>())
+            .collect::<Result<_, _>>()?;
+
+        // Release GIL during RPC call
+        let result = py
+            .detach(|| {
+                get_runtime().block_on(async {
+                    contract
+                        .call(&function_signature, &args, block_number)
+                        .await
+                })
+            })
+            .map_err(Into::<PyErr>::into)?;
+
+        // Convert results to Python list
+        let py_list = PyList::empty(py);
+        for value in result {
+            py_list.append(value)?;
+        }
+
+        Ok(py_list.into())
+    }
+
+    /// Get the contract address.
+    #[getter]
+    fn address(&self) -> String {
+        format!("{:#x}", self.contract.address())
+    }
+
+    /// Execute a contract call and return decoded values as Python types.
+    ///
+    /// Unlike `call` which returns strings, this method returns native
+    /// Python types (int, bool, str, bytes, list) avoiding the string
+    /// round-trip overhead.
+    ///
+    /// Args:
+    ///     `function_signature`: Function signature like "balanceOf(address)"
+    ///     args: List of arguments as strings
+    ///     `block_number`: Optional block number to query
+    ///
+    /// Returns:
+    ///     List of decoded return values as native Python types
+    #[pyo3(signature = (function_signature, args, block_number=None))]
+    fn call_typed(
+        &self,
+        py: Python<'_>,
+        function_signature: &str,
+        args: &Bound<'_, PyList>,
+        block_number: Option<u64>,
+    ) -> PyResult<Py<PyList>> {
+        let function_signature = function_signature.to_string();
+        let contract = self.contract.clone();
+
+        // Extract args from Python list
+        let args: Vec<String> = args
+            .iter()
+            .map(|a| a.extract::<String>())
+            .collect::<Result<_, _>>()?;
+
+        // Release GIL during RPC call
+        let result = py
+            .detach(|| {
+                get_runtime().block_on(async {
+                    contract
+                        .call_typed(&function_signature, &args, block_number)
+                        .await
+                })
+            })
+            .map_err(Into::<PyErr>::into)?;
+
+        // Convert AbiValue results to native Python types
+        let py_list = PyList::empty(py);
+        for value in result {
+            let py_obj = abi_value_to_python(py, &value)?;
+            py_list.append(py_obj)?;
+        }
+
+        Ok(py_list.into())
+    }
+}
+
+/// Encode function arguments.
+///
+/// Args:
+///     `function_signature`: Function signature like "transfer(address,uint256)"
+///     args: List of arguments as strings
+///
+/// Returns:
+///     Encoded calldata as bytes
+#[pyfunction]
+fn encode_function_call<'py>(
+    py: Python<'py>,
+    function_signature: &str,
+    args: &Bound<'_, PyList>,
+) -> PyResult<Bound<'py, PyBytes>> {
+    // Extract args from Python list (copy before releasing GIL)
+    let args: Vec<String> = args
+        .iter()
+        .map(|a| a.extract::<String>())
+        .collect::<Result<_, _>>()?;
+    let function_signature = function_signature.to_string();
+
+    // Release GIL during pure Rust encoding work
+    let calldata = py.detach(|| -> Result<Vec<u8>, crate::errors::ContractError> {
+        let func = FunctionSignature::parse(&function_signature)?;
+        let encoded_args = encode_arguments(&func.inputs, &args)?;
+
+        let mut calldata = Vec::with_capacity(4 + encoded_args.len());
+        calldata.extend_from_slice(&func.selector);
+        calldata.extend_from_slice(&encoded_args);
+        Ok(calldata)
+    })?;
+
+    Ok(PyBytes::new(py, &calldata))
+}
+
+/// Decode return data.
+///
+/// Args:
+///     data: Return data as bytes
+///     `output_types`: List of output type strings like `["uint256", "address"]`
+///
+/// Returns:
+///     List of decoded values as strings
+#[pyfunction]
+fn decode_return_data(
+    py: Python<'_>,
+    data: &[u8],
+    output_types: &Bound<'_, PyList>,
+) -> PyResult<Vec<String>> {
+    use crate::abi_types::AbiType;
+    use crate::contract::decode_return_data as decode_impl;
+
+    // Extract types from Python list (copy before releasing GIL)
+    let output_types: Vec<String> = output_types
+        .iter()
+        .map(|t| t.extract::<String>())
+        .collect::<Result<_, _>>()?;
+
+    let types: Vec<AbiType> = output_types
+        .iter()
+        .map(|t| {
+            AbiType::parse(t).map_err(|e| crate::errors::ContractError::InvalidAbi {
+                message: format!("{e}"),
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // Copy data before releasing GIL
+    let data = data.to_vec();
+
+    // Release GIL during pure Rust decoding work
+    let result = py.detach(|| decode_impl(&data, &types))?;
+
+    Ok(result)
+}
+
+/// Parse a function signature and return its selector.
+///
+/// Args:
+///     `function_signature`: Function signature like "transfer(address,uint256)"
+///
+/// Returns:
+///     4-byte function selector as hex string
+#[pyfunction]
+fn get_function_selector(function_signature: &str) -> PyResult<String> {
+    let func = FunctionSignature::parse(function_signature)?;
+    Ok(format!("0x{}", hex::encode(func.selector)))
+}
+
+/// Convert an `AbiValue` to a native Python object.
+///
+/// Maps each `AbiValue` variant to the most natural Python type:
+/// - `Address` → `str` (checksummed hex)
+/// - `Bool` → `bool`
+/// - `Uint` → `int`
+/// - `Int` → `int`
+/// - `FixedBytes` / `Bytes` → `bytes`
+/// - `String` → `str`
+/// - `Array` → `list`
+fn abi_value_to_python<'py>(
+    py: Python<'py>,
+    value: &AbiValue,
+) -> PyResult<Bound<'py, pyo3::types::PyAny>> {
+    use crate::conversion::alloy::{i256_to_py, u256_to_py};
+
+    match value {
+        AbiValue::Address(addr) => {
+            let s = format!("0x{}", alloy::hex::encode(addr));
+            Ok(s.into_pyobject(py)?.into_any())
+        }
+        AbiValue::Bool(b) => Ok(PyBool::new(py, *b).to_owned().into_any()),
+        AbiValue::Uint(n, _bits) => u256_to_py(py, n),
+        AbiValue::Int(n, _bits) => i256_to_py(py, n),
+        AbiValue::FixedBytes(bytes) | AbiValue::Bytes(bytes) => {
+            Ok(PyBytes::new(py, bytes).into_any())
+        }
+        AbiValue::String(s) => Ok(s.clone().into_pyobject(py)?.into_any()),
+        AbiValue::Array(values) => {
+            let py_list = PyList::empty(py);
+            for v in values {
+                let py_obj = abi_value_to_python(py, v)?;
+                py_list.append(py_obj)?;
+            }
+            Ok(py_list.into_any())
+        }
+    }
+}
+
+/// Add contract module to Python module.
+#[allow(clippy::missing_errors_doc)]
+pub fn add_contract_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    let py = m.py();
+    let submod = PyModule::new(py, "degenbot._ffi.contract")?;
+    submod.add_class::<PyContract>()?;
+    submod.add_function(wrap_pyfunction!(encode_function_call, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(decode_return_data, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(get_function_selector, &submod)?)?;
+    #[cfg(feature = "async")]
+    submod.add_class::<crate::rpc::async_contract::PyAsyncContract>()?;
+    m.add_submodule(&submod)?;
+    py.import("sys")?
+        .getattr("modules")?
+        .set_item("degenbot._ffi.contract", &submod)?;
+    Ok(())
+}

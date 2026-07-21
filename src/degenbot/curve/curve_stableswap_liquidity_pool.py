@@ -1,731 +1,617 @@
-# TODO
-# ----------------------------------------------------
-# PRIORITY      TASK
-# high          write state_update method
-# high          create a manager for Curve pools
-# medium        add liquidity modifying mode for external_update
-# medium        investigate differences in get_dy_underlying vs exchange_underlying at GUSD-3Crv
-# low           investigate providing overrides for live-lookup contracts
+"""Curve StableSwap liquidity pool implementation.
+
+Implements the Curve StableSwap invariant for V1-style pools including
+plain pools, metapools, lending pools, and crypto pools.
+"""
 
 import contextlib
+import dataclasses
 from collections.abc import Iterable, Sequence
-from threading import Lock
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Self
 from weakref import WeakSet
 
-import eth_abi.abi
-import web3.exceptions
-from eth_abi.exceptions import DecodingError, InsufficientDataBytes
-from eth_typing import AnyAddress, ChecksumAddress
-from hexbytes import HexBytes
-from web3 import Web3
-from web3.exceptions import Web3Exception
-from web3.types import BlockIdentifier, TxParams
+from eth_typing import ChecksumAddress
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import connection_manager
-from degenbot.constants import ZERO_ADDRESS
-from degenbot.curve.deployments import (
-    BROKEN_CURVE_V1_POOLS,
-    CURVE_V1_FACTORY_ADDRESS,
-    CURVE_V1_METAREGISTRY_ADDRESS,
-    CURVE_V1_REGISTRY_ADDRESS,
+from degenbot.curve.math import (
+    stableswap_get_d as curve_stableswap_get_d,
 )
-from degenbot.curve.types import CurveStableswapPoolState, CurveStableSwapPoolStateUpdated
-from degenbot.erc20 import Erc20Token, Erc20TokenManager
+from degenbot.curve.math import (
+    stableswap_get_y as curve_stableswap_get_y,
+)
+from degenbot.curve.math import (
+    stableswap_get_y_d as curve_stableswap_get_y_d,
+)
+from degenbot.curve.math import (
+    stableswap_newton_y as curve_stableswap_newton_y,
+)
+from degenbot.curve.math import (
+    stableswap_reduction_coefficient as curve_stableswap_reduction_coefficient,
+)
+from degenbot.curve.per_block_cache import PerBlockCache
+from degenbot.curve.stableswap_pool_state import StableswapPoolState
+from degenbot.curve.strategies import PoolStrategies
+from degenbot.curve.types import (
+    BasePoolPort,
+    CurveDataProvider,
+    CurveStableswapPoolExternalUpdate,
+    CurveStableswapPoolState,
+    CurveStableSwapPoolStateUpdated,
+    DVariant,
+    DyCalculationInputs,
+    LendingRateStyle,
+    MetapoolRateStyle,
+    MetapoolUnderlyingStyle,
+    SwapStyle,
+    YDVariant,
+    YVariant,
+)
+from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.arbitrage import NoLiquidity
-from degenbot.exceptions.evm import EVMRevertError
-from degenbot.exceptions.liquidity_pool import BrokenPool, InvalidSwapInputAmount
-from degenbot.functions import encode_function_calldata, get_number_for_block_identifier, raw_call
+from degenbot.exceptions.pool import EVMRevertError, InvalidSwapInputAmount, MissingCurveData
 from degenbot.logging import logger
-from degenbot.registry import pool_registry
-from degenbot.types.abstract import AbstractArbitrage, AbstractLiquidityPool
-from degenbot.types.aliases import BlockNumber, ChainId
+from degenbot.types import PyLiquidityPool
+from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
+from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import (
-    AbstractPublisherMessage,
-    BoundedCache,
-    Publisher,
     PublisherMixin,
     Subscriber,
 )
+from degenbot.types.pool_protocols import SimulationResult
+from degenbot.types.rpc_types import BlockIdentifier
 
 
-class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
+def _compute_rate_and_precision_multipliers(
+    tokens: Sequence[Erc20Token],
+    precision_multipliers: Sequence[int] | None,
+    precision_decimals: int,
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Derive Curve rate + precision multipliers from token decimals.
+
+    Single source of truth — shared by ``CurveStableswapPool.__init__`` and
+    ``make_curve_pool`` (the factory passes the derived ``rate_multipliers`` to
+    ``PyBot.register_curve_pool`` so the Rust core stores the same values the
+    companion keeps; they're consumed by the future Rust ``get_dy``, ADR-005
+    slice 11c). Mirrors the pre-companion derivation exactly.
+
+    Returns:
+        ``(rate_multipliers, precision_multipliers)``.
+
+    """
+    rate_multipliers = tuple(10 ** (2 * precision_decimals - token.decimals) for token in tokens)
+    if precision_multipliers is not None:
+        pms = tuple(precision_multipliers)
+        rate_multipliers = tuple(pm * 10**precision_decimals for pm in pms)
+    else:
+        pms = tuple(10 ** (precision_decimals - token.decimals) for token in tokens)
+    return rate_multipliers, pms
+
+
+class _HandleCurveDataProviderAdapter:
+    """Adapts a ``PyLiquidityPool`` handle as a stored ``CurveDataProvider``.
+
+    The (BQM2OA) companion holds no Python data-provider object — the
+    provider is the stored Rust trait object (ADR-005 JFGCHJ). This shim
+    exposes the 13-method ``CurveDataProvider`` read interface by delegating
+    each call to the handle's stored provider, mirroring the Balancer
+    ``_HandleRateProviderAdapter`` (MBWSGP). ``MissingCurveData`` is raised on
+    a missing provider / fetch miss so the calc path's existing error
+    handling applies unchanged.
+    """
+
+    def __init__(self, py_pool: PyLiquidityPool) -> None:
+        self._py_pool = py_pool
+
+    def block_number(self) -> int:
+        v = self._py_pool.fetch_curve_block_number()
+        if v is None:
+            raise MissingCurveData(self._py_pool.address, "block_number", "no data provider stored")
+        return v
+
+    def block_timestamp(self, block_number: int) -> int:
+        v = self._py_pool.fetch_curve_block_timestamp(block_number)
+        if v is None:
+            raise MissingCurveData(
+                self._py_pool.address, "block_timestamp", "no data provider stored"
+            )
+        return v
+
+    def token_balance(self, token_address: str, holder_address: str, block_number: int) -> int:
+        v = self._py_pool.fetch_curve_token_balance(token_address, holder_address, block_number)
+        if v is None:
+            raise MissingCurveData(
+                self._py_pool.address, "token_balance", "no data provider stored"
+            )
+        return v
+
+    def token_total_supply(self, token_address: str, block_number: int) -> int:
+        v = self._py_pool.fetch_curve_token_total_supply(token_address, block_number)
+        if v is None:
+            raise MissingCurveData(
+                self._py_pool.address, "token_total_supply", "no data provider stored"
+            )
+        return v
+
+    def lending_rates(self, block_number: int) -> tuple[int, ...]:
+        rates = self._py_pool.fetch_curve_lending_rates(block_number)
+        if not rates:
+            raise MissingCurveData(
+                self._py_pool.address, "lending_rates", "no data provider stored"
+            )
+        return tuple(rates)
+
+    def d(self, block_number: int) -> int:
+        v = self._py_pool.fetch_curve_d(block_number)
+        if v is None:
+            raise MissingCurveData(self._py_pool.address, "d", "no data provider stored")
+        return v
+
+    def gamma(self, block_number: int) -> int:
+        v = self._py_pool.fetch_curve_gamma(block_number)
+        if v is None:
+            raise MissingCurveData(self._py_pool.address, "gamma", "no data provider stored")
+        return v
+
+    def price_scale(self, block_number: int) -> tuple[int, ...]:
+        scales = self._py_pool.fetch_curve_price_scale(block_number)
+        if not scales:
+            raise MissingCurveData(self._py_pool.address, "price_scale", "no data provider stored")
+        return tuple(scales)
+
+    def admin_balances(self, block_number: int) -> tuple[int, ...]:
+        bal = self._py_pool.fetch_curve_admin_balances(block_number)
+        if not bal:
+            raise MissingCurveData(
+                self._py_pool.address, "admin_balances", "no data provider stored"
+            )
+        return tuple(bal)
+
+    def redemption_price(self, block_number: int) -> int:
+        v = self._py_pool.fetch_curve_redemption_price(block_number)
+        if v is None:
+            raise MissingCurveData(
+                self._py_pool.address, "redemption_price", "no data provider stored"
+            )
+        return v
+
+    def base_cache_updated(self, block_number: int) -> int:
+        v = self._py_pool.fetch_curve_base_cache_updated(block_number)
+        if v is None:
+            raise MissingCurveData(
+                self._py_pool.address, "base_cache_updated", "no data provider stored"
+            )
+        return v
+
+    def base_virtual_price(self, block_number: int) -> int:
+        v = self._py_pool.fetch_curve_base_virtual_price(block_number)
+        if v is None:
+            raise MissingCurveData(
+                self._py_pool.address, "base_virtual_price", "no data provider stored"
+            )
+        return v
+
+    def virtual_price(self, block_number: int) -> int:
+        v = self._py_pool.fetch_curve_virtual_price(block_number)
+        if v is None:
+            raise MissingCurveData(
+                self._py_pool.address, "virtual_price", "no data provider stored"
+            )
+        return v
+
+
+class CurveStableswapPool(
+    PublisherMixin,
+    StableswapPoolState,
+    AbstractLiquidityPool,
+):
+    """CurveStableswapPool class."""
+
     type PoolState = CurveStableswapPoolState
-    _state_cache: BoundedCache[BlockNumber, PoolState]
 
     # Constants from contract
     # ref: https://github.com/curvefi/curve-contract/blob/master/contracts/pool-templates/base/SwapTemplateBase.vy
     PRECISION_DECIMALS: int = 18
     PRECISION: int = 10**PRECISION_DECIMALS
-    LENDING_PRECISION: int = PRECISION
+
+    # Class-scope instance-attribute declarations (red-knot): `_from_py_pool`
+    # assigns these on `Self`; declare them at class scope so attribute reads
+    # in helper/calc methods resolve (mirrors the Balancer/Aerodrome seams).
+    address: ChecksumAddress
+    _py_pool: PyLiquidityPool
+    _tokens: tuple[Erc20Token, ...]
+    _a_coefficient: int
+    _fee: int
+    _admin_fee: int
+    _rate_multipliers: tuple[int, ...]
+    _precision_multipliers: tuple[int, ...]
+    _fee_gamma: int
+    _mid_fee: int
+    _offpeg_fee_multiplier: int
+    _out_fee: int
+    _gamma: int
+    _strategies: PoolStrategies
+    _base_pool: BasePoolPort | None
+    _tokens_underlying: tuple[Erc20Token, ...] | None
+    _lp_token: Erc20Token
+    _use_lending: tuple[bool, ...]
+    _initial_a_coefficient: int | None
+    _future_a_coefficient: int | None
+    _initial_a_coefficient_time: int | None
+    _future_a_coefficient_time: int | None
+    _create_timestamp: int | None
+    _data_provider: CurveDataProvider | None
+    _cache: PerBlockCache
+    _coin_index_type: str
+    _name: str
+    _subscribers: WeakSet[Subscriber]
     FEE_DENOMINATOR: int = 10**10
     A_PRECISION: int = 100
     MAX_COINS: int = 8
+    # BASE_CACHE_EXPIRES moved to PerBlockCache
 
-    D_VARIANT_GROUP_0 = frozenset(
-        get_checksum_address(pool_address)
-        for pool_address in (
-            "0x06364f10B501e868329afBc005b3492902d6C763",
-            "0x4CA9b3063Ec5866A4B82E437059D2C43d1be596F",
-            "0x52EA46506B9CC5Ef470C5bf89f17Dc28bB35D85C",
-            "0x7fC77b5c7614E1533320Ea6DDc2Eb61fa00A9714",
-            "0x93054188d876f558f4a66B2EF1d97d16eDf0895B",
-            "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7",
-        )
-    )
-    D_VARIANT_GROUP_1 = frozenset(
-        get_checksum_address(pool_address)
-        for pool_address in (
-            "0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51",
-            "0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27",
-            "0xA2B47E3D5c44877cca798226B7B8118F9BFb7A56",
-            "0xA5407eAE9Ba41422680e2e00537571bcC53efBfD",
-        )
-    )
-    D_VARIANT_GROUP_2 = frozenset(
-        get_checksum_address(pool_address)
-        for pool_address in (
-            "0x0AD66FeC8dB84F8A3365ADA04aB23ce607ac6E24",
-            "0x1c899dED01954d0959E034b62a728e7fEbE593b0",
-            "0x3F1B0278A9ee595635B61817630cC19DE792f506",
-            "0x3Fb78e61784C9c637D560eDE23Ad57CA1294c14a",
-            "0x447Ddd4960d9fdBF6af9a790560d0AF76795CB08",
-            "0x453D92C7d4263201C69aACfaf589Ed14202d83a4",
-            "0x663aC72a1c3E1C4186CD3dCb184f216291F4878C",
-            "0x6A274dE3e2462c7614702474D64d376729831dCa",
-            "0x7C0d189E1FecB124487226dCbA3748bD758F98E4",
-            "0x875DF0bA24ccD867f8217593ee27253280772A97",
-            "0x99f5aCc8EC2Da2BC0771c32814EFF52b712de1E5",
-            "0x9D0464996170c6B9e75eED71c68B99dDEDf279e8",
-            "0xB37D6c07482Bc11cd28a1f11f1a6ad7b66Dec933",
-            "0xB657B895B265C38c53FFF00166cF7F6A3C70587d",
-            "0xD6Ac1CB9019137a896343Da59dDE6d097F710538",
-            "0xE95E4c2dAC312F31Dc605533D5A4d0aF42579308",
-            "0xf7b55C3732aD8b2c2dA7c24f30A69f55c54FB717",
-        )
-    )
-    D_VARIANT_GROUP_3 = frozenset(
-        get_checksum_address(pool_address)
-        for pool_address in (
-            "0xDC24316b9AE028F1497c275EB9192a3Ea0f67022",
-            "0xDeBF20617708857ebe4F679508E7b7863a8A8EeE",
-            "0xEB16Ae0052ed37f479f7fe63849198Df1765a733",
-        )
-    )
-    D_VARIANT_GROUP_4 = frozenset(
-        get_checksum_address(pool_address)
-        for pool_address in (
-            "0x1062FD8eD633c1f080754c19317cb3912810B5e5",
-            "0x1C5F80b6B68A9E1Ef25926EeE00b5255791b996B",
-            "0x26f3f26F46cBeE59d1F8860865e13Aa39e36A8c0",
-            "0x2d600BbBcC3F1B6Cb9910A70BaB59eC9d5F81B9A",
-            "0x320B564Fb9CF36933eC507a846ce230008631fd3",
-            "0x3b21C2868B6028CfB38Ff86127eF22E68d16d53B",
-            "0x69ACcb968B19a53790f43e57558F5E443A91aF22",
-            "0x971add32Ea87f10bD192671630be3BE8A11b8623",
-            "0xCA0253A98D16e9C1e3614caFDA19318EE69772D0",
-            "0xfBB481A443382416357fA81F16dB5A725DC6ceC8",
-        )
-    )
+    def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+        """Direct construction is forbidden.
 
-    Y_VARIANT_GROUP_0 = frozenset(
-        get_checksum_address(pool_address)
-        for pool_address in (
-            "0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51",
-            "0x52EA46506B9CC5Ef470C5bf89f17Dc28bB35D85C",
-            "0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27",
-            "0xA2B47E3D5c44877cca798226B7B8118F9BFb7A56",
-            "0xA5407eAE9Ba41422680e2e00537571bcC53efBfD",
-        )
-    )
-    Y_VARIANT_GROUP_1 = frozenset(
-        get_checksum_address(pool_address)
-        for pool_address in (
-            "0x06364f10B501e868329afBc005b3492902d6C763",
-            "0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51",
-            "0x4CA9b3063Ec5866A4B82E437059D2C43d1be596F",
-            "0x52EA46506B9CC5Ef470C5bf89f17Dc28bB35D85C",
-            "0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27",
-            "0x7fC77b5c7614E1533320Ea6DDc2Eb61fa00A9714",
-            "0x93054188d876f558f4a66B2EF1d97d16eDf0895B",
-            "0xA2B47E3D5c44877cca798226B7B8118F9BFb7A56",
-            "0xA5407eAE9Ba41422680e2e00537571bcC53efBfD",
-            "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7",
-        )
-    )
+        A ``CurveStableswapPool`` is a companion over a Rust-owned
+        ``PyLiquidityPool`` handle. The handle can only be produced by
+        registering a pool in a ``PyBot`` (production: ``Bot.build_pool()``;
+        tests: ``make_curve_pool``), then wrapping via
+        :meth:`_from_py_pool`. Direct constructor calls are rejected so that
+        the only paths to a pool instance are the ones that wire the handle —
+        mirroring Polars' ``_from_pydf`` pattern and matching V2/V3/V4/Balancer
+        /Aerodrome. Every identity field + the stored I/O trait objects are
+        read off the handle; the companion holds nothing an external caller
+        can mutate.
 
-    Y_D_VARIANT_GROUP_0 = frozenset(
-        get_checksum_address(pool_address)
-        for pool_address in (
-            "0xDcEF968d416a41Cdac0ED8702fAC8128A64241A2",
-            "0xf253f83AcA21aAbD2A20553AE0BF7F65C755A07F",
-        )
-    )
+        Raises:
+            TypeError: Always — direct construction is forbidden.
 
-    def _notify_subscribers(self: Publisher, message: AbstractPublisherMessage) -> None:
-        for subscriber in self._subscribers:
-            subscriber.notify(publisher=self, message=message)
-
-    def __init__(
-        self,
-        address: ChecksumAddress | str,
-        *,
-        chain_id: ChainId | None = None,
-        state_block: BlockNumber | None = None,
-        silent: bool = False,
-        state_cache_depth: int = 8,
-    ) -> None:
         """
-        A Curve V1 (StableSwap) pool.
+        msg = (
+            f"{type(self).__name__} cannot be constructed directly. "
+            "A PyLiquidityPool handle is wired by Bot.build_pool() "
+            "(production) or make_curve_pool (tests); call "
+            f"{type(self).__name__}._from_py_pool(handle) to wrap a "
+            "registered handle."
+        )
+        raise TypeError(msg)
 
-        Arguments
-        ---------
-        address:
-            Address for the deployed pool contract.
-        chain_id:
-            The chain ID where the pool contract is deployed.
-        state_block:
-            Fetch initial state values from the chain at a particular block height. Defaults to the
-            latest block if omitted.
-        silent:
-            Suppress status output.
-        state_cache_depth:
-            How many states to hold in the cache.
+    @classmethod
+    def _from_py_pool(cls, py_pool: PyLiquidityPool) -> Self:
+        """Wrap a Rust-owned ``PyLiquidityPool`` handle as a Python companion.
+
+        Single-arg seam (ADR-005 BQM2OA): reads *every* identity field + the
+        stored data-provider trait object off the handle. The cross-pool
+        references (base pool companion + underlying/LP tokens) are recovered
+        from the handle too — the base pool via the Rust go-between
+        ``curve_base_pool()`` (same shared ``BotState``, no Python registry),
+        wrapped in a :class:`_LazyBasePool` that memoises construction.
+
+        Returns:
+            The companion wrapping the handle.
+
+        Raises:
+            DegenbotValueError: If the handle is not a Curve stableswap pool,
+                or its tokens are not registered in the handle's Bot.
+
         """
+        self = object.__new__(cls)
 
-        self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
-        w3: web3.Web3 = connection_manager.get_web3(self.chain_id)
-        if state_block is None:
-            state_block = w3.eth.block_number
-
-        self.fee_gamma: int
-        self.mid_fee: int
-        self.offpeg_fee_multiplier: int
-        self.out_fee: int
-        self.precision_multipliers: tuple[int, ...]
-        self.rate_multipliers: tuple[int, ...]
-        self.use_lending: tuple[bool, ...]
-        self.oracle_method: int | None
-
-        self.initial_a_coefficient: int | None = None
-        self.initial_a_coefficient_time: int | None = None
-        self.future_a_coefficient: int | None = None
-        self.future_a_coefficient_time: int | None = None
-
-        def get_a_scaling_values() -> None:
-            with (
-                contextlib.suppress(Web3Exception, DecodingError),
-                w3.batch_requests() as batch,
-            ):
-                batch.add(
-                    w3.eth.call(
-                        transaction=TxParams(
-                            to=self.address,
-                            data=encode_function_calldata(
-                                function_prototype="initial_A()",
-                                function_arguments=None,
-                            ),
-                        ),
-                        block_identifier=self.update_block,
-                    )
-                )
-                batch.add(
-                    w3.eth.call(
-                        transaction=TxParams(
-                            to=self.address,
-                            data=encode_function_calldata(
-                                function_prototype="initial_A_time()",
-                                function_arguments=None,
-                            ),
-                        ),
-                        block_identifier=self.update_block,
-                    )
-                )
-                batch.add(
-                    w3.eth.call(
-                        transaction=TxParams(
-                            to=self.address,
-                            data=encode_function_calldata(
-                                function_prototype="future_A()",
-                                function_arguments=None,
-                            ),
-                        ),
-                        block_identifier=self.update_block,
-                    ),
-                )
-                batch.add(
-                    w3.eth.call(
-                        transaction=TxParams(
-                            to=self.address,
-                            data=encode_function_calldata(
-                                function_prototype="future_A_time()",
-                                function_arguments=None,
-                            ),
-                        ),
-                        block_identifier=self.update_block,
-                    )
-                )
-
-                initial_a, initial_a_time, future_a, future_a_time = batch.execute()
-
-                (initial_a,) = eth_abi.abi.decode(
-                    types=["uint256"], data=cast("HexBytes", initial_a)
-                )
-                (initial_a_time,) = eth_abi.abi.decode(
-                    types=["uint256"], data=cast("HexBytes", initial_a_time)
-                )
-                (future_a,) = eth_abi.abi.decode(types=["uint256"], data=cast("HexBytes", future_a))
-                (future_a_time,) = eth_abi.abi.decode(
-                    types=["uint256"], data=cast("HexBytes", future_a_time)
-                )
-
-                self.initial_a_coefficient = cast("int", initial_a)
-                self.initial_a_coefficient_time = cast("int", initial_a_time)
-                self.future_a_coefficient = cast("int", future_a)
-                self.future_a_coefficient_time = cast("int", future_a_time)
-
-        self.a_coefficient: int
-        self.fee: int
-        self.admin_fee: int
-
-        def get_coefficient_and_fees() -> None:
-            with w3.batch_requests() as batch:
-                batch.add(
-                    w3.eth.call(
-                        transaction=TxParams(
-                            to=self.address,
-                            data=encode_function_calldata(
-                                function_prototype="A()",
-                                function_arguments=None,
-                            ),
-                        ),
-                        block_identifier=self.update_block,
-                    )
-                )
-                batch.add(
-                    w3.eth.call(
-                        transaction=TxParams(
-                            to=self.address,
-                            data=encode_function_calldata(
-                                function_prototype="fee()",
-                                function_arguments=None,
-                            ),
-                        ),
-                        block_identifier=self.update_block,
-                    )
-                )
-                batch.add(
-                    w3.eth.call(
-                        transaction=TxParams(
-                            to=self.address,
-                            data=encode_function_calldata(
-                                function_prototype="admin_fee()",
-                                function_arguments=None,
-                            ),
-                        ),
-                        block_identifier=self.update_block,
-                    )
-                )
-
-                a_coefficient, pool_fee, admin_fee = batch.execute()
-
-                (a_coefficient,) = eth_abi.abi.decode(
-                    types=["uint256"], data=cast("HexBytes", a_coefficient)
-                )
-                (pool_fee,) = eth_abi.abi.decode(types=["uint256"], data=cast("HexBytes", pool_fee))
-                (admin_fee,) = eth_abi.abi.decode(
-                    types=["uint256"], data=cast("HexBytes", admin_fee)
-                )
-
-                self.a_coefficient = cast("int", a_coefficient)
-                self.fee = cast("int", pool_fee)
-                self.admin_fee = cast("int", admin_fee)
-
-        def get_coin_index_type() -> Literal["uint256", "int128"]:
-            """
-            Identify the type used for the `index` argument to the `coins` contract call.
-
-            Several different ABIs were used for Curve pool contracts, so this function provides for
-            dynamic discovery of input types without hard-coding.
-            """
-
-            for coin_type in ("uint256", "int128"):
-                try:
-                    eth_abi.abi.decode(
-                        types=["address"],
-                        data=w3.eth.call(
-                            transaction=TxParams(
-                                to=self.address,
-                                data=Web3.keccak(text=f"coins({coin_type})")[:4]
-                                + eth_abi.abi.encode(types=[coin_type], args=[0]),
-                            ),
-                            block_identifier=state_block,
-                        ),
-                    )
-                except (InsufficientDataBytes, web3.exceptions.ContractLogicError):
-                    continue
-                else:
-                    return coin_type
-
-            raise DegenbotValueError(
-                message="Could not determine input type for pool"
-            )  # pragma: no cover
-
-        def get_token_addresses() -> tuple[ChecksumAddress, ...]:
-            token_addresses = []
-            for token_id in range(self.MAX_COINS):  # pragma: no branch
-                try:
-                    token_address: str
-                    (token_address,) = raw_call(
-                        w3=w3,
-                        address=self.address,
-                        calldata=encode_function_calldata(
-                            function_prototype=f"coins({self._coin_index_type})",
-                            function_arguments=[token_id],
-                        ),
-                        return_types=["address"],
-                        block_identifier=state_block,
-                    )
-                except web3.exceptions.ContractLogicError:
-                    break
-                else:
-                    token_addresses.append(get_checksum_address(token_address))
-
-            return tuple(token_addresses)
-
-        def get_lp_token_address() -> ChecksumAddress:
-            for contract_address in (
-                CURVE_V1_METAREGISTRY_ADDRESS,
-                CURVE_V1_REGISTRY_ADDRESS,
-                CURVE_V1_FACTORY_ADDRESS,
-            ):
-                with contextlib.suppress(Web3Exception, DecodingError):
-                    (lp_token_address,) = raw_call(
-                        w3=connection_manager.get_web3(chain_id=self.chain_id),
-                        address=contract_address,
-                        calldata=encode_function_calldata(
-                            function_prototype="get_lp_token(address)",
-                            function_arguments=[self.address],
-                        ),
-                        return_types=["address"],
-                        block_identifier=state_block,
-                    )
-                    if lp_token_address == ZERO_ADDRESS:
-                        continue
-                    return get_checksum_address(lp_token_address)
-
-            raise DegenbotValueError(
-                message=f"Could not identify LP token for pool {self.address}"
-            )  # pragma: no cover
-
-        def get_pool_from_lp_token(token: AnyAddress) -> ChecksumAddress:
-            for contract_address in (
-                CURVE_V1_METAREGISTRY_ADDRESS,
-                CURVE_V1_REGISTRY_ADDRESS,
-                CURVE_V1_FACTORY_ADDRESS,
-            ):
-                with contextlib.suppress(Web3Exception, DecodingError):
-                    (pool_address,) = raw_call(
-                        w3=connection_manager.get_web3(chain_id=self.chain_id),
-                        address=contract_address,
-                        calldata=encode_function_calldata(
-                            function_prototype="get_pool_from_lp_token(address)",
-                            function_arguments=[get_checksum_address(token)],
-                        ),
-                        return_types=["address"],
-                        block_identifier=state_block,
-                    )
-                    return get_checksum_address(pool_address)
-
-            raise DegenbotValueError(
-                message=f"Could not identify base pool from LP token for {self.address}"
-            )  # pragma: no cover
-
-        def is_metapool() -> bool:
-            """
-            Check if the registry contract and the factory contract report that this is registered
-            as a metapool. Some metapools are not correctly marked in one of the contracts, so this
-            function checks both.
-            """
-            w3 = connection_manager.get_web3(chain_id=self.chain_id)
-
-            is_meta_results = [False]
-
-            for contract_address in (
-                CURVE_V1_METAREGISTRY_ADDRESS,
-                CURVE_V1_REGISTRY_ADDRESS,
-                CURVE_V1_FACTORY_ADDRESS,
-            ):
-                with contextlib.suppress(Web3Exception, DecodingError):
-                    (result,) = raw_call(
-                        w3=w3,
-                        address=contract_address,
-                        calldata=encode_function_calldata(
-                            function_prototype="is_meta(address)",
-                            function_arguments=[self.address],
-                        ),
-                        return_types=["bool"],
-                        block_identifier=state_block,
-                    )
-                    is_meta_results.append(cast("bool", result))
-
-            return any(is_meta_results)
-
-        def set_pool_specific_attributes() -> None:
-            match self.address:
-                case "0xA2B47E3D5c44877cca798226B7B8118F9BFb7A56":
-                    self.use_lending = (True, True)
-                    self.precision_multipliers = (1, 10**12)
-                case "0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5":
-                    self.fee_gamma = 10000000000000000
-                    self.mid_fee = 4000000
-                    self.out_fee = 40000000
-                case "0xDcEF968d416a41Cdac0ED8702fAC8128A64241A2":
-                    self.precision_multipliers = (1, 1000000000000)
-                case "0x52EA46506B9CC5Ef470C5bf89f17Dc28bB35D85C":
-                    self.use_lending = (True, True, False)
-                    self.precision_multipliers = (1, 10**12, 10**12)
-                case "0x06364f10B501e868329afBc005b3492902d6C763":
-                    self.use_lending = (True, True, True, False)
-                case "0xDeBF20617708857ebe4F679508E7b7863a8A8EeE":
-                    self.precision_multipliers = (1, 10**12, 10**12)
-                    (self.offpeg_fee_multiplier,) = eth_abi.abi.decode(
-                        types=["uint256"],
-                        data=w3.eth.call(
-                            transaction=TxParams(
-                                to=self.address,
-                                data=Web3.keccak(text="offpeg_fee_multiplier()")[:4],
-                            ),
-                            block_identifier=state_block,
-                        ),
-                    )
-                case "0x2dded6Da1BF5DBdF597C45fcFaa3194e53EcfeAF":
-                    self.precision_multipliers = (1, 10**12, 10**12)
-                case "0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27":
-                    self.precision_multipliers = (1, 10**12, 10**12, 1)
-                    self.use_lending = (True, True, True, True)
-                case "0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51":
-                    self.precision_multipliers = (1, 10**12, 10**12, 1)
-                    self.use_lending = (True, True, True, True)
-                case "0xA5407eAE9Ba41422680e2e00537571bcC53efBfD":
-                    self.use_lending = (False, False, False, False)
-                case (
-                    "0x59Ab5a5b5d617E478a2479B0cAD80DA7e2831492"
-                    | "0xBfAb6FA95E0091ed66058ad493189D2cB29385E6"
-                ):
-                    self._set_oracle_method(block_number=state_block)
-                case "0xEB16Ae0052ed37f479f7fe63849198Df1765a733":
-                    (self.offpeg_fee_multiplier,) = eth_abi.abi.decode(
-                        types=["uint256"],
-                        data=w3.eth.call(
-                            transaction=TxParams(
-                                to=self.address,
-                                data=Web3.keccak(text="offpeg_fee_multiplier()")[:4],
-                            ),
-                            block_identifier=state_block,
-                        ),
-                    )
-
-        self.address = get_checksum_address(address)
-        if self.address in BROKEN_CURVE_V1_POOLS:
-            raise BrokenPool
-
-        block = w3.eth.get_block(state_block)
-
-        self._create_timestamp = block["timestamp"]
-
-        self._block_timestamps: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_admin_balances: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_base_cache_updated: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_base_virtual_price: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_contract_D: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_gamma: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_price_scale: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_rates_from_aeth: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_rates_from_ctokens: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_rates_from_cytokens: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_rates_from_oracle: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_rates_from_reth: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_rates_from_ytokens: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_scaled_redemption_price: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_virtual_price: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth
-        )
-
-        # token setup
-        self._coin_index_type = get_coin_index_type()
-
-        token_manager = Erc20TokenManager(chain_id=self.chain_id)
-        self.lp_token = token_manager.get_erc20token(
-            address=get_lp_token_address(),
-            silent=silent,
-        )
-        self.tokens: tuple[Erc20Token, ...] = tuple(
-            token_manager.get_erc20token(
-                address=token_address,
-                silent=silent,
+        # Family assertion — a V2/V3/V4/Balancer handle must raise, not crash.
+        family = py_pool.pool_family
+        if family != "curve":
+            msg = (
+                f"PyLiquidityPool handle is not a Curve stableswap pool "
+                f"(got pool_family {family!r})"
             )
-            for token_address in get_token_addresses()
-        )
+            raise DegenbotValueError(message=msg)
 
-        # metapool setup
-        self.base_pool: CurveStableswapPool | None = None
-        if is_metapool():
-            # Curve metapools hold the LP token for the base pool at index 1
-            base_pool_address = get_pool_from_lp_token(self.tokens[1].address)
+        self._py_pool = py_pool
+        self.address = get_checksum_address(py_pool.address)
 
-            if (
-                base_pool := pool_registry.get(
-                    pool_address=base_pool_address, chain_id=self.chain_id
-                )
-            ) is None:
-                base_pool = CurveStableswapPool(
-                    base_pool_address, state_block=state_block, silent=silent
-                )
-            if TYPE_CHECKING:
-                assert isinstance(base_pool, CurveStableswapPool)
-
-            self.base_pool = base_pool
-            self.tokens_underlying = (self.tokens[0], *self.base_pool.tokens)
-
-            self.base_cache_updated: int | None = None
-            with contextlib.suppress(web3.exceptions.ContractLogicError):
-                self.base_cache_updated = self._get_base_cache_updated(block_number=state_block)
-
-            self.base_virtual_price: int
-            with contextlib.suppress(web3.exceptions.ContractLogicError):
-                self.base_virtual_price = self._get_base_virtual_price(block_number=state_block)
-
-        balances: list[int] = []
-        for token_id, _ in enumerate(self.tokens):
-            token_balance: int
-            (token_balance,) = eth_abi.abi.decode(
-                types=[self._coin_index_type],
-                data=w3.eth.call(
-                    transaction=TxParams(
-                        to=self.address,
-                        data=Web3.keccak(text=f"balances({self._coin_index_type})")[:4]
-                        + eth_abi.abi.encode(types=[self._coin_index_type], args=[token_id]),
-                    ),
-                    block_identifier=state_block,
-                ),
+        # Tokens — recovered as companion handles (shared BotState).
+        py_tokens = py_pool.get_curve_tokens()
+        if py_tokens is None:
+            msg = (
+                "Curve pool tokens are not registered in the handle's Bot; "
+                "register them via Bot.build_pool() / make_erc20 first."
             )
-            balances.append(token_balance)
-
-        """
-        3pool example
-        rate_multipliers = [
-          10**12000000,             <------ 10**18 == 10**(18 + 18 - 18)
-          10**12000000000000000000, <------ 10**30 == 10**(18 + 18 - 6)
-          10**12000000000000000000, <------ 10**30 == 10**(18 + 18 - 6)
-        ]
-        """
-        self.rate_multipliers = tuple(
-            10 ** (2 * self.PRECISION_DECIMALS - token.decimals) for token in self.tokens
-        )
-        self.precision_multipliers = tuple(
-            cast("int", 10 ** (self.PRECISION_DECIMALS - token.decimals)) for token in self.tokens
+            raise DegenbotValueError(message=msg)
+        self._tokens = tuple(
+            Erc20Token._from_py_token(t)  # noqa: SLF001
+            for t in py_tokens
         )
 
-        self._state = CurveStableswapPoolState(
+        self._a_coefficient = py_pool.curve_a_coefficient
+        self._fee = py_pool.curve_fee
+        self._admin_fee = py_pool.curve_admin_fee
+
+        # Rate/precision multipliers — the Rust core stores exactly what the
+        # builder registered (computed via _compute_rate_and_precision_multipliers);
+        # the handle is the single source of truth.
+        self._rate_multipliers = tuple(py_pool.curve_rate_multipliers)
+        self._precision_multipliers = tuple(py_pool.curve_precision_multipliers)
+
+        # Crypto-pool fees (None ⇔ 0 for standard stableswap pools). Guard narrows
+        # the tuple[...] | None handle return (family asserted above, so never
+        # None in practice).
+        crypto_fees = py_pool.curve_crypto_fees()
+        assert crypto_fees is not None  # pragma: no cover — curve family asserted
+        fee_gamma, mid_fee, offpeg_fee_multiplier, out_fee, gamma = crypto_fees
+        self._fee_gamma = fee_gamma if fee_gamma is not None else 0
+        self._mid_fee = mid_fee if mid_fee is not None else 0
+        self._offpeg_fee_multiplier = (
+            offpeg_fee_multiplier if offpeg_fee_multiplier is not None else 0
+        )
+        self._out_fee = out_fee if out_fee is not None else 0
+        self._gamma = gamma if gamma is not None else 0
+
+        # Strategies — reconstruct from the 7 u8 discriminants stored in Rust.
+        # auto()-based enums: .value is forwarded verbatim, so Enum(value)
+        # round-trips (the factory's _strategies_to_rust_enums is the inverse).
+        self._strategies = PoolStrategies(
+            d_variant=DVariant(py_pool.curve_d_variant),
+            y_variant=YVariant(py_pool.curve_y_variant),
+            yd_variant=YDVariant(py_pool.curve_yd_variant),
+            swap_style=SwapStyle(py_pool.curve_swap_style),
+            metapool_rate_style=MetapoolRateStyle(py_pool.curve_metapool_rate_style),
+            metapool_underlying_style=MetapoolUnderlyingStyle(
+                py_pool.curve_metapool_underlying_style
+            ),
+            lending_rate_style=LendingRateStyle(py_pool.curve_lending_rate_style),
+        )
+
+        # Cross-pool base reference — the go-between returns a handle over the
+        # base pool (same core); wrapped lazily so an unused base path pays zero.
+        base_handle = py_pool.curve_base_pool()
+        self._base_pool = _LazyBasePool(base_handle) if base_handle is not None else None
+
+        # Underlying + LP tokens — recovered as companion handles.
+        underlying = py_pool.get_curve_tokens_underlying()
+        self._tokens_underlying = (
+            tuple(Erc20Token._from_py_token(t) for t in underlying)  # noqa: SLF001
+            if underlying is not None
+            else None
+        )
+        lp = py_pool.get_curve_lp_token()
+        self._lp_token = (
+            Erc20Token._from_py_token(lp) if lp is not None else self._tokens[0]  # noqa: SLF001
+        )
+
+        ul = tuple(py_pool.curve_use_lending)
+        self._use_lending = ul or tuple(False for _ in self._tokens)
+
+        # A-ramping (all None ⇔ a plain non-ramping pool). Guard narrows the
+        # tuple[...] | None handle return (family asserted above, so never
+        # None in practice).
+        curve_a_ramp = py_pool.curve_a_ramp()
+        assert curve_a_ramp is not None  # pragma: no cover — curve family asserted
+        (
+            self._initial_a_coefficient,
+            self._future_a_coefficient,
+            self._initial_a_coefficient_time,
+            self._future_a_coefficient_time,
+            self._create_timestamp,
+        ) = curve_a_ramp
+
+        # Data provider — the stored Rust trait object, read through a handle
+        # adapter (mirrors the Balancer _HandleRateProviderAdapter).
+        self._data_provider = (
+            _HandleCurveDataProviderAdapter(py_pool) if py_pool.curve_has_data_provider else None
+        )
+
+        # Per-block on-chain caches (cache depth is companion-owned mutable
+        # cache config; the always-8 default applies — no caller passes a
+        # non-default value (verified at task time), so this stays companion-side
+        # and single-arg is preserved).
+        self._cache = PerBlockCache(
+            data_provider=self._data_provider,
             address=self.address,
-            balances=tuple(balances),
-            block=state_block,
+            base_pool_is_set=self.base_pool is not None,
         )
-        self._state_cache = BoundedCache(max_items=state_cache_depth)
-        self._state_cache[state_block] = self._state
-        self._state_lock = Lock()
-        self._block_timestamps[state_block] = block["timestamp"]
 
-        get_a_scaling_values()
-        get_coefficient_and_fees()
-        set_pool_specific_attributes()
+        self._coin_index_type = "uint256"
+
+        # The registration block (genesis journal delta). Used to pre-populate
+        # base-cache virtual-price values for metapools at construction time.
+        registration_block = py_pool.update_block
+        if self.base_pool is not None and registration_block != 0:
+            with contextlib.suppress(Exception):
+                self._cache.get_cached_virtual_price(block_number=registration_block)
 
         fee_string = f"{100 * self.fee / self.FEE_DENOMINATOR:.2f}"
-        token_string = "-".join([token.symbol for token in self.tokens])
-        self.name = f"{token_string} ({self.__class__.__name__}, {fee_string}%)"
+        token_string = "-".join([token.symbol for token in self._tokens])
+        self._name = f"{token_string} ({self.__class__.__name__}, {fee_string}%)"
 
-        self._subscribers: WeakSet[Subscriber] = WeakSet()
-
-        pool_registry.add(pool_address=self.address, chain_id=self.chain_id, pool=self)
-
-        if not silent:
-            logger.info(
-                f"{self.name} @ {self.address}, A={self.a_coefficient}, fee={100 * self.fee / self.FEE_DENOMINATOR:.2f}%"  # noqa:E501
-            )
-            for token_id, (token, balance) in enumerate(
-                zip(self.tokens, self.balances, strict=True)
-            ):
-                logger.info(f"• Token {token_id}: {token} - Reserves: {balance}")
-
-    def __getstate__(self) -> dict[str, Any]:
-        # Remove objects that cannot be pickled and are unnecessary to perform
-        # the calculation
-        dropped_attributes = (
-            "_state_lock",
-            "_subscribers",
-        )
-
-        with self._state_lock:
-            return {k: v for k, v in self.__dict__.items() if k not in dropped_attributes}
+        self._subscribers = WeakSet()
+        return self
 
     def __repr__(self) -> str:  # pragma: no cover
-        token_string = "-".join([token.symbol for token in self.tokens])
+        """Return the canonical string representation.
+
+        Returns:
+            A string representation of the object.
+
+        """
+        token_string = "-".join([token.symbol for token in self._tokens])
         return f"{self.__class__.__name__}(address={self.address}, tokens={token_string}, fee={100 * self.fee / self.FEE_DENOMINATOR:.2f}%, A={self.a_coefficient})"  # noqa:E501
 
     @property
     def balances(self) -> tuple[int, ...]:
-        return self.state.balances
+        """Balances.
 
-    @property
-    def chain_id(self) -> int:
-        return self._chain_id
+        Read from the Rust core via the ``PyLiquidityPool`` handle
+        (ADR-005 slice 11b). Rust ``BotState`` is the single source of truth
+        for the mutable ``balances`` slot; this getter returns the live tuple.
+        """
+        return tuple(self._py_pool.balances)
 
     @property
     def state(self) -> CurveStableswapPoolState:
-        return self._state
+        """State.
+
+        Built from one atomic Rust snapshot (``snapshot_curve()`` —
+        ``(balances, block)``) so callers see a coherent tuple (no torn read
+        mid-``external_update``). Mirrors V3/V4's ``snapshot_v3()`` contract.
+
+        Raises:
+            DegenbotValueError: If the Rust snapshot is absent (the pool is
+                not registered in Rust as a Curve pool — unreachable for a
+                companion built over a registered handle).
+
+        """
+        snap = self._py_pool.snapshot_curve()
+        # snapshot_curve returns None only for a non-Curve pool_id; this
+        # companion is always built over a registered Curve handle, so the
+        # snapshot is always present. Defensive: treat None as no-state.
+        if snap is None:  # pragma: no cover - defensive, unreachable in practice
+            msg = f"No Curve pool state available for {self.address}"
+            raise DegenbotValueError(message=msg)
+        balances, block = snap
+        return CurveStableswapPoolState(
+            address=self.address,
+            balances=tuple(balances),
+            block=block,
+        )
 
     @property
     def update_block(self) -> BlockNumber:
-        if TYPE_CHECKING:
-            assert self.state.block is not None
-        return self.state.block
+        """Update block (from Rust via the handle)."""
+        return self._py_pool.update_block
+
+    @property
+    def requires_io_at_calculation_time(self) -> bool:
+        """Whether this pool may call data_provider during swap calculations.
+
+        Returns True for pools that need per-block on-chain data (D, gamma,
+        price_scale, lending rates, admin balances, virtual price for
+        metapools, block timestamps for A ramping). Returns False only for
+        plain pools with static rate multipliers and no A ramping.
+        """
+        if self._strategies.swap_style in {
+            SwapStyle.CRYPTO,
+            SwapStyle.LIVE_ADMIN,
+            SwapStyle.LIVE_ADMIN_DYNAMIC,
+            SwapStyle.LIVE_ADMIN_DYNAMIC_PRECISION,
+            SwapStyle.LIVE_ADMIN_ORACLE,
+        }:
+            return True
+        if self._strategies.lending_rate_style != LendingRateStyle.NONE:
+            return True
+        if self.base_pool is not None:
+            return True
+        return any([
+            self.future_a_coefficient is not None,
+            self.initial_a_coefficient is not None,
+        ])
+
+    def external_update(self, update: CurveStableswapPoolExternalUpdate) -> None:
+        """Apply an external state update with new balances.
+
+        Delegates to the Rust core (``PyLiquidityPool.apply_curve_balance_update``)
+        which journals the prior balances (genesis-anchor V2-style discipline)
+        and lands the new balances + ``update_block`` atomically
+        (ADR-005 slice 11b). The ``StateCache`` temporal-navigation layer it
+        used to write is gone — the Rust reorg journal handles rollback now.
+
+        Raises:
+            DegenbotValueError: If the Rust core rejects the update (the pool
+                is not registered as a Curve pool — unreachable for a companion
+                built over a registered handle).
+
+        """
+        applied = self._py_pool.apply_curve_balance_update(
+            list(update.balances),
+            update.block_number,
+        )
+        if not applied:  # pragma: no cover - defensive, unreachable for a Curve handle
+            msg = f"external_update rejected for {self.address} (not a Curve pool in Rust)"
+            raise DegenbotValueError(message=msg)
+        new_state = CurveStableswapPoolState(
+            address=self.address,
+            balances=update.balances,
+            block=update.block_number,
+        )
+        self._notify_subscribers(
+            CurveStableSwapPoolStateUpdated(state=new_state),
+        )
+
+    def _fetch_token_balance(
+        self,
+        token: Erc20Token,
+        address: ChecksumAddress,
+        *,
+        block_identifier: int | None = None,
+    ) -> int:
+        """Fetch token balance using the data provider if available.
+
+        Returns:
+            The computed integer value.
+
+        Raises:
+            MissingCurveData: See function documentation.
+
+        """
+        if self._data_provider is not None and block_identifier is not None:
+            return self._data_provider.token_balance(token.address, address, block_identifier)
+        raise MissingCurveData(
+            self.address,
+            "token_balance",
+            "Token balance fetch requires I/O. Provide a data_provider.",
+        )
+
+    def _fetch_token_total_supply(
+        self,
+        token: Erc20Token,
+        *,
+        block_identifier: int | None = None,
+    ) -> int:
+        """Fetch token total supply using the data provider if available.
+
+        Returns:
+            The computed integer value.
+
+        Raises:
+            MissingCurveData: See function documentation.
+
+        """
+        if self._data_provider is not None and block_identifier is not None:
+            return self._data_provider.token_total_supply(token.address, block_identifier)
+        raise MissingCurveData(
+            self.address,
+            "token_total_supply",
+            "Token total supply fetch requires I/O. Provide a data_provider.",
+        )
+
+    def _resolve_block_number(self, block_identifier: BlockIdentifier | None) -> int:
+        """Resolve a block identifier to an integer. Falls back to data provider if available.
+
+        Returns:
+            The computed integer value.
+
+        Raises:
+            MissingCurveData: See function documentation.
+
+        """
+        if isinstance(block_identifier, int):
+            return block_identifier
+        if self._data_provider is not None:
+            return self._data_provider.block_number()
+        raise MissingCurveData(
+            self.address,
+            "block_identifier",
+            "block_identifier must be an integer when no provider is available. "
+            "Use Bot.update() or pass an explicit block number.",
+        )
 
     def _a(self, timestamp: int | None = None) -> int:
-        """
-        Handle ramping A up or down
-        """
+        """Handle ramping A up or down.
 
+        Returns:
+            The computed integer value.
+
+        """
         if any([
             self.future_a_coefficient is None,
             self.initial_a_coefficient is None,
@@ -737,14 +623,13 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             assert self.initial_a_coefficient_time is not None
             assert self.future_a_coefficient_time is not None
             assert self.future_a_coefficient is not None
+            assert self._create_timestamp is not None
 
         if self._create_timestamp >= self.future_a_coefficient_time:
             return self.future_a_coefficient
 
         if timestamp is None:
-            timestamp = connection_manager.get_web3(self.chain_id).eth.get_block("latest")[
-                "timestamp"
-            ]
+            timestamp = self._cache.get_cached_block_timestamp(0)
 
         a_1 = self.future_a_coefficient
         t_1 = self.future_a_coefficient_time
@@ -771,30 +656,27 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         block_identifier: BlockIdentifier | None = None,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        """
-        Simplified method to calculate addition or reduction in token supply at
+        """Simplified method to calculate addition or reduction in token supply at.
+
         deposit or withdrawal without taking fees into account (but looking at
         slippage).
         Needed to prevent front-running, not for precise calculations!
-        """
 
-        n_coins = len(self.tokens)
+        Returns:
+            The computed integer value.
+
+        """
+        n_coins = len(self._tokens)
 
         pool_balances = (
             list(override_state.balances) if override_state is not None else list(self.balances)
         )
 
-        block_number = (
-            block_identifier
-            if isinstance(block_identifier, int)
-            else get_number_for_block_identifier(
-                block_identifier,
-                connection_manager.get_web3(self.chain_id),
-            )
-        )
+        block_number = self._resolve_block_number(block_identifier)
 
+        block_timestamp = self._cache.get_cached_block_timestamp(block_number)
         xp = self._xp(rates=self.rate_multipliers, balances=pool_balances)
-        amp = self._a(timestamp=self._block_timestamps[block_number])
+        amp = self._a(timestamp=block_timestamp)
         d_0 = self._get_d(_xp=xp, _amp=amp)
 
         for i in range(n_coins):
@@ -805,27 +687,33 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
         xp = self._xp(rates=self.rate_multipliers, balances=pool_balances)
         d_1 = self._get_d(xp, amp)
-        token_amount: int = self.lp_token.get_total_supply(block_identifier=block_number)
+        token_amount: int = self._fetch_token_total_supply(
+            self.lp_token,
+            block_identifier=block_number,
+        )
 
         diff = d_1 - d_0 if deposit else d_0 - d_1
 
         return diff * token_amount // d_0
 
     def calc_withdraw_one_coin(
-        self, _token_amount: int, i: int, block_identifier: BlockIdentifier | None = None
+        self,
+        _token_amount: int,
+        i: int,
+        block_identifier: BlockIdentifier | None = None,
     ) -> tuple[int, ...]:
-        block_number = (
-            block_identifier
-            if isinstance(block_identifier, int)
-            else get_number_for_block_identifier(
-                block_identifier,
-                connection_manager.get_web3(self.chain_id),
-            )
-        )
+        """Calc withdraw one coin.
 
-        n_coins = len(self.tokens)
-        amp = self._a(timestamp=self._block_timestamps[block_number])
-        total_supply = self.lp_token.get_total_supply(block_identifier=block_number)
+        Returns:
+            The computed value.
+
+        """
+        block_number = self._resolve_block_number(block_identifier)
+
+        block_timestamp = self._cache.get_cached_block_timestamp(block_number)
+        n_coins = len(self._tokens)
+        amp = self._a(timestamp=block_timestamp)
+        total_supply = self._fetch_token_total_supply(self.lp_token, block_identifier=block_number)
         precisions = self.precision_multipliers
         xp = self._xp(rates=self.rate_multipliers, balances=self.balances)
         d_0 = self._get_d(xp, amp)
@@ -844,40 +732,147 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
         return dy, dy_0 - dy, total_supply
 
-    def _get_scaled_redemption_price(self, block_number: BlockNumber) -> int:
-        with contextlib.suppress(KeyError):
-            return self._cached_scaled_redemption_price[block_number]
+    def _resolve_calculation_inputs_via_io(
+        self,
+        block_number: int,
+        override_state: CurveStableswapPoolState | None = None,
+    ) -> DyCalculationInputs:
+        """Pre-resolve all data needed by DyCalculator implementations.
 
-        redemption_price_scale = 10**9
+        All I/O, cache lookups, and rate resolution happen here.
+        The calculator receives a frozen snapshot — no pool access needed.
 
-        w3 = connection_manager.get_web3(self.chain_id)
+        Returns:
+            The computed value.
 
-        snap_contract_address: str
-        (snap_contract_address,) = eth_abi.abi.decode(
-            types=["address"],
-            data=w3.eth.call(
-                transaction=TxParams(
-                    to=self.address,
-                    data=Web3.keccak(text="redemption_price_snap()")[:4],
-                ),
-                block_identifier=block_number,
-            ),
+        Raises:
+            MissingCurveData: See function documentation.
+
+        """
+        pool_balances = override_state.balances if override_state is not None else self.balances
+
+        # Resolve block timestamp
+        block_timestamp = self._cache.get_cached_block_timestamp(block_number)
+
+        # Resolve amp with y_variant-aware A_PRECISION handling.
+        # stableswap_get_y expects amp to be already divided by A_PRECISION
+        # for VARIANT_0, and undivided for other variants.
+        raw_amp = self._a(timestamp=block_timestamp)
+        amp = (
+            raw_amp // self.A_PRECISION
+            if self._strategies.y_variant == YVariant.VARIANT_0
+            else raw_amp
         )
 
-        rate: int
-        (rate,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=w3.eth.call(
-                transaction=TxParams(
-                    to=get_checksum_address(snap_contract_address),
-                    data=Web3.keccak(text="snappedRedemptionPrice()")[:4],
-                ),
-                block_identifier=block_number,
-            ),
+        # Resolve rates (lending-rate I/O)
+        if self._strategies.lending_rate_style == LendingRateStyle.NONE:
+            resolved_rates = self.rate_multipliers
+        else:
+            if self._data_provider is None:
+                raise MissingCurveData(
+                    self.address,
+                    "lending_rate",
+                    "Data provider is required for pools with"
+                    " lending tokens. Provide one via Bot.build_pool().",
+                )
+            resolved_rates = self._data_provider.lending_rates(block_number)
+
+        # Compute XP
+        xp = tuple(
+            rate * balance // self.PRECISION
+            for rate, balance in zip(resolved_rates, pool_balances, strict=True)
         )
-        result = rate // redemption_price_scale
-        self._cached_scaled_redemption_price[block_number] = result
-        return result
+
+        inputs = DyCalculationInputs(
+            PRECISION=self.PRECISION,
+            FEE_DENOMINATOR=self.FEE_DENOMINATOR,
+            fee=self.fee,
+            n_coins=len(self.tokens),
+            balances=pool_balances,
+            rate_multipliers=self.rate_multipliers,
+            precision_multipliers=self.precision_multipliers,
+            offpeg_fee_multiplier=self.offpeg_fee_multiplier,
+            fee_gamma=self.fee_gamma,
+            mid_fee=self.mid_fee,
+            out_fee=self.out_fee,
+            address=self.address,
+            resolved_rates=resolved_rates,
+            xp=xp,
+            block_number=block_number,
+            block_timestamp=block_timestamp,
+            amp=amp,
+            d_variant=self._strategies.d_variant,
+            y_variant=self._strategies.y_variant,
+            yd_variant=self._strategies.yd_variant,
+            a_precision=self.A_PRECISION,
+        )
+
+        swap_style = self._strategies.swap_style
+
+        # ── Crypto-specific I/O ──
+        if swap_style == SwapStyle.CRYPTO:
+            d_val = self._cache.get_cached_contract_d(block_number)
+            gamma_val = self._cache.get_cached_gamma(block_number)
+            price_scale_val = self._cache.get_cached_price_scale(block_number)
+
+            return dataclasses.replace(
+                inputs,
+                d=d_val,
+                gamma=gamma_val,
+                price_scale=price_scale_val,
+            )
+
+        # ── Live-admin-specific I/O ──
+        if swap_style in {
+            SwapStyle.LIVE_ADMIN,
+            SwapStyle.LIVE_ADMIN_DYNAMIC,
+            SwapStyle.LIVE_ADMIN_DYNAMIC_PRECISION,
+            SwapStyle.LIVE_ADMIN_ORACLE,
+        }:
+            if self._data_provider is None:
+                raise MissingCurveData(
+                    self.address,
+                    "data_provider",
+                    "Live-admin pool requires a data_provider"
+                    " for token balances and admin balances.",
+                )
+            live_balances = tuple(
+                self._data_provider.token_balance(token.address, self.address, block_number)
+                for token in self._tokens
+            )
+            admin_balances = self._cache.get_cached_admin_balances(block_number)
+            effective_balances = tuple(
+                lb - ab for lb, ab in zip(live_balances, admin_balances, strict=True)
+            )
+
+            # For LIVE_ADMIN_ORACLE, re-resolve rates using effective balances
+            if swap_style == SwapStyle.LIVE_ADMIN_ORACLE:
+                oracle_rates = self._resolve_rates(
+                    rates=self.rate_multipliers,
+                    block_number=block_number,
+                )
+                oracle_xp = tuple(
+                    rate * balance // self.PRECISION
+                    for rate, balance in zip(oracle_rates, effective_balances, strict=True)
+                )
+            else:
+                oracle_rates = resolved_rates
+                oracle_xp = tuple(
+                    rate * balance // self.PRECISION
+                    for rate, balance in zip(resolved_rates, effective_balances, strict=True)
+                )
+
+            return dataclasses.replace(
+                inputs,
+                live_balances=live_balances,
+                admin_balances=admin_balances,
+                effective_balances=effective_balances,
+                balances=effective_balances,
+                resolved_rates=oracle_rates,
+                xp=oracle_xp,
+            )
+
+        return inputs
 
     def get_dy(
         self,
@@ -887,508 +882,76 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         block_identifier: BlockIdentifier | None = None,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        """
-        @notice Calculate the current output dy given input dx
+        """@notice Calculate the current output dy given input dx.
+
         @dev Index values can be found via the `coins` public getter method
         @param i Index value for the coin to send
         @param j Index value of the coin to recieve
         @param dx Amount of `i` being exchanged
-        @return Amount of `j` predicted
+        @return Amount of `j` predicted.
 
         Reference: https://github.com/curveresearch/notes/blob/main/stableswap.pdf
+
+        Returns:
+            The computed integer value.
+
         """
-
-        def _dynamic_fee(xpi: int, xpj: int, _fee: int, _feemul: int) -> int:
-            if _feemul <= self.FEE_DENOMINATOR:
-                return _fee
-            xps2 = (xpi + xpj) ** 2
-            return (_feemul * _fee) // (
-                (_feemul - self.FEE_DENOMINATOR) * 4 * xpi * xpj // xps2 + self.FEE_DENOMINATOR
-            )
-
-        pool_balances = override_state.balances if override_state is not None else self.balances
-        rates = self.rate_multipliers
-
-        block_number = (
-            block_identifier
-            if isinstance(block_identifier, int)
-            else get_number_for_block_identifier(
-                block_identifier,
-                connection_manager.get_web3(self.chain_id),
-            )
-        )
+        block_number = self._resolve_block_number(block_identifier)
 
         if self.base_pool is not None:
-            if self.address == "0xC61557C5d177bd7DC889A3b621eEC333e168f68A":
-                rates = (
-                    self.PRECISION,
-                    self._get_virtual_price(block_number=block_number),
-                )
-            elif self.address == "0x618788357D0EBd8A37e763ADab3bc575D54c2C7d":
-                rates = (
-                    self._get_scaled_redemption_price(block_number=block_number),
-                    self._get_virtual_price(block_number=block_number),
-                )
-            else:
-                rates = (
-                    self.rate_multipliers[0],
-                    self._get_virtual_price(block_number=block_number),
-                )
-
-            xp = self._xp(rates=rates, balances=pool_balances)
-            x = xp[i] + (dx * rates[i] // self.PRECISION)
-            y = self._get_y(i, j, x, xp)
-            dy = xp[j] - y - 1
-            fee = self.fee * dy // self.FEE_DENOMINATOR
-            return (dy - fee) * self.PRECISION // rates[j]
-
-        if self.address in {
-            "0x4e0915C88bC70750D68C481540F081fEFaF22273",
-            "0x1005F7406f32a61BD760CfA14aCCd2737913d546",
-            "0x6A274dE3e2462c7614702474D64d376729831dCa",
-            "0xb9446c4Ef5EBE66268dA6700D26f96273DE3d571",
-            "0x3Fb78e61784C9c637D560eDE23Ad57CA1294c14a",
-        }:
-            live_balances = [
-                token.get_balance(self.address, block_identifier=block_number)
-                for token in self.tokens
-            ]
-            admin_balances = self._get_admin_balances(block_number=block_number)
-
-            balances = [
-                pool_balance - admin_balance
-                for pool_balance, admin_balance in zip(live_balances, admin_balances, strict=True)
-            ]
-
-            xp = self._xp(rates=rates, balances=balances)
-            x = xp[i] + (dx * rates[i] // self.PRECISION)
-            y = self._get_y(i, j, x, xp)
-            dy = xp[j] - y - 1
-            fee = self.fee * dy // self.FEE_DENOMINATOR
-            return (dy - fee) * self.PRECISION // rates[j]
-
-        if self.address == "0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5":
-
-            def _d(block_number: BlockNumber) -> int:
-                with contextlib.suppress(KeyError):
-                    return self._cached_contract_D[block_number]
-
-                w3 = connection_manager.get_web3(self.chain_id)
-
-                d: int
-                (d,) = eth_abi.abi.decode(
-                    types=["uint256"],
-                    data=w3.eth.call(
-                        transaction=TxParams(
-                            to=self.address,
-                            data=Web3.keccak(text="D()")[:4],
-                        ),
-                        block_identifier=block_number,
-                    ),
-                )
-                self._cached_contract_D[block_number] = d
-                return d
-
-            def _gamma(block_number: BlockNumber) -> int:
-                with contextlib.suppress(KeyError):
-                    return self._cached_gamma[block_number]
-
-                w3 = connection_manager.get_web3(self.chain_id)
-
-                gamma: int
-                (gamma,) = eth_abi.abi.decode(
-                    types=["uint256"],
-                    data=w3.eth.call(
-                        transaction=TxParams(
-                            to=self.address,
-                            data=Web3.keccak(text="gamma()")[:4],
-                        ),
-                        block_identifier=block_number,
-                    ),
-                )
-                self._cached_gamma[block_number] = gamma
-                return gamma
-
-            def _price_scale(block_number: BlockNumber) -> tuple[int, ...]:
-                with contextlib.suppress(KeyError):
-                    return self._cached_price_scale[block_number]
-
-                n_coins = len(self.tokens)
-
-                w3 = connection_manager.get_web3(self.chain_id)
-
-                price_scale = [0] * (n_coins - 1)
-                for token_index in range(n_coins - 1):
-                    (price_scale[token_index],) = eth_abi.abi.decode(
-                        types=["uint256"],
-                        data=w3.eth.call(
-                            transaction=TxParams(
-                                to=self.address,
-                                data=Web3.keccak(text="price_scale(uint256)")[:4]
-                                + eth_abi.abi.encode(types=["uint256"], args=[token_index]),
-                            ),
-                            block_identifier=block_number,
-                        ),
-                    )
-                self._cached_price_scale[block_number] = tuple(price_scale)
-                return tuple(price_scale)
-
-            def _newton_y(ann: int, gamma: int, xp: Sequence[int], d: int, token_index: int) -> int:
-                """
-                Calculating xp[i] given other balances xp[0..N_COINS-1] and invariant D
-                _ann = A * N**N
-                """
-
-                n_coins = len(self.tokens)
-                a_multiplier = self.A_PRECISION
-
-                # Safety checks
-                assert (
-                    n_coins**n_coins * a_multiplier - 1
-                    < ann
-                    < 10000 * n_coins**n_coins * a_multiplier + 1
-                ), "unsafe value for A"
-                assert 10**10 - 1 < gamma < 10**16 + 1, "unsafe values for gamma"
-                assert 10**17 - 1 < d < 10**15 * 10**18 + 1, "unsafe values for D"
-
-                for index in range(3):
-                    if index != token_index:
-                        frac = xp[index] * 10**18 // d
-                        assert 10**16 - 1 < frac < 10**20 + 1, (
-                            f"{frac=} out of range"
-                        )  # dev: unsafe values x[i]
-
-                y = d // n_coins
-                k_0_i = 10**18
-                s_i = 0
-
-                x_sorted = list(xp)
-                x_sorted[token_index] = 0
-                x_sorted = sorted(x_sorted, reverse=True)  # From high to low
-
-                convergence_limit = max(x_sorted[0] // 10**14, d // 10**14, 100)
-                for j_ in range(2, n_coins + 1):
-                    x_ = x_sorted[n_coins - j_]
-                    y = y * d // (x_ * n_coins)  # Small _x first
-                    s_i += x_
-
-                for k_ in range(n_coins - 1):
-                    k_0_i = k_0_i * x_sorted[k_] * n_coins // d  # Large _x first
-
-                for _ in range(255):  # pragma: no branch
-                    y_prev = y
-
-                    k_0 = k_0_i * y * n_coins // d
-                    s = s_i + y
-
-                    g1k0 = gamma + 10**18
-                    g1k0 = g1k0 - k_0 + 1 if g1k0 > k_0 else k_0 - g1k0 + 1
-
-                    mul1 = 10**18 * d // gamma * g1k0 // gamma * g1k0 * a_multiplier // ann
-                    mul2 = 10**18 + (2 * 10**18) * k_0 // g1k0
-
-                    yfprime = 10**18 * y + s * mul2 + mul1
-                    dyfprime = d * mul2
-
-                    if yfprime < dyfprime:
-                        y = y_prev // 2
-                        continue
-
-                    yfprime -= dyfprime
-                    fprime = yfprime // y
-
-                    y_minus = mul1 // fprime
-                    y_plus = (yfprime + 10**18 * d) // fprime + y_minus * 10**18 // k_0
-                    y_minus += 10**18 * s // fprime
-
-                    y = y_prev // 2 if y_plus < y_minus else y_plus - y_minus
-                    diff = y - y_prev if y > y_prev else y_prev - y
-
-                    if diff < max(convergence_limit, y // 10**14):
-                        frac = y * 10**18 // d
-                        assert 10**16 - 1 < frac < 10**20 + 1, "unsafe value for y"
-                        return y
-
-                raise EVMRevertError(
-                    error=f"_newton_y() did not converge for pool {self.address}"
-                )  # pragma: no cover
-
-            def _reduction_coefficient(x: Sequence[int], fee_gamma: int) -> int:
-                """
-                fee_gamma / (fee_gamma + (1 - K))
-                where
-                K = prod(x) / (sum(x) / N)**N
-                (all normalized to 1e18)
-                """
-                k = 10**18
-                s = 0
-                for x_i in x:
-                    s += x_i
-                # Could be good to pre-sort x, but it is used only for dynamic fee,
-                # so that is not so important
-                for x_i in x:
-                    k = k * n_coins * x_i // s
-                if fee_gamma > 0:
-                    k = fee_gamma * 10**18 // (fee_gamma + 10**18 - k)
-                return k
-
-            n_coins = len(self.tokens)
-
-            assert i != j, "coin index out of range"
-            assert i < n_coins, "coin index out of range"
-            assert j < n_coins, "coin index out of range"
-            assert dx > 0, "do not exchange 0 coins"
-
-            precisions = [
-                10**12,  # USDT
-                10**10,  # WBTC
-                1,  # WETH
-            ]
-
-            price_scale = _price_scale(block_number=block_number)
-
-            xp_ = list(pool_balances)
-            xp_[i] += dx
-            xp_[0] *= precisions[0]
-
-            for k in range(n_coins - 1):
-                xp_[k + 1] = xp_[k + 1] * price_scale[k] * precisions[k + 1] // self.PRECISION
-
-            amp = self._a(timestamp=self._block_timestamps[block_number])
-            gamma = _gamma(block_number=block_number)
-            d = _d(block_number=block_number)
-            y = _newton_y(amp, gamma, xp_, d, j)
-            dy = xp_[j] - y - 1
-
-            xp_[j] = y
-            if j > 0:
-                dy = dy * self.PRECISION // price_scale[j - 1]
-            dy //= precisions[j]
-
-            f = _reduction_coefficient(xp_, self.fee_gamma)
-            fee_calc = (self.mid_fee * f + self.out_fee * (10**18 - f)) // 10**18
-
-            dy -= fee_calc * dy // 10**10
-            return dy
-
-        if self.address in {
-            "0x4CA9b3063Ec5866A4B82E437059D2C43d1be596F",
-            "0x7fC77b5c7614E1533320Ea6DDc2Eb61fa00A9714",
-            "0x93054188d876f558f4a66B2EF1d97d16eDf0895B",
-            "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7",
-        }:
-            xp = self._xp(rates=rates, balances=pool_balances)
-            x = xp[i] + (dx * rates[i] // self.PRECISION)
-            y = self._get_y(i, j, x, xp)
-            dy = (xp[j] - y - 1) * self.PRECISION // rates[j]
-            fee = self.fee * dy // self.FEE_DENOMINATOR
-            return dy - fee
-
-        if self.address in {
-            "0x0Ce6a5fF5217e38315f87032CF90686C96627CAA",
-            "0x19b080FE1ffA0553469D20Ca36219F17Fcf03859",
-            "0x1C5F80b6B68A9E1Ef25926EeE00b5255791b996B",
-            "0x1F6bb2a7a2A84d08bb821B89E38cA651175aeDd4",
-            "0x21B45B2c1C53fDFe378Ed1955E8Cc29aE8cE0132",
-            "0x3CFAa1596777CAD9f5004F9a0c443d912E262243",
-            "0x3F1B0278A9ee595635B61817630cC19DE792f506",
-            "0x4424b4A37ba0088D8a718b8fc2aB7952C7e695F5",
-            "0x602a9Abb10582768Fd8a9f13aD6316Ac2A5A2e2B",
-            "0x8461A004b50d321CB22B7d034969cE6803911899",
-            "0x857110B5f8eFD66CC3762abb935315630AC770B5",
-            "0x8818a9bb44Fbf33502bE7c15c500d0C783B73067",
-            "0x9c2C8910F113181783c249d8F6Aa41b51Cde0f0c",
-            "0xa1F8A6807c402E4A15ef4EBa36528A3FED24E577",
-            "0xaE34574AC03A15cd58A92DC79De7B1A0800F1CE3",
-            "0xAf25fFe6bA5A8a29665adCfA6D30C5Ae56CA0Cd3",
-            "0xBa3436Fd341F2C8A928452Db3C5A3670d1d5Cc73",
-            "0xbB2dC673E1091abCA3eaDB622b18f6D4634b2CD9",
-            "0xc5424B857f758E906013F3555Dad202e4bdB4567",
-            "0xc8a7C1c4B748970F57cA59326BcD49F5c9dc43E3",
-            "0xcbD5cC53C5b846671C6434Ab301AD4d210c21184",
-            "0xD6Ac1CB9019137a896343Da59dDE6d097F710538",
-            "0xD7C10449A6D134A9ed37e2922F8474EAc6E5c100",
-            "0xDC24316b9AE028F1497c275EB9192a3Ea0f67022",
-            "0xDcEF968d416a41Cdac0ED8702fAC8128A64241A2",
-            "0xe7A3b38c39F97E977723bd1239C3470702568e7B",
-            "0xf083FBa98dED0f9C970e5a418500bad08D8b9732",
-            "0xF178C0b5Bb7e7aBF4e12A4838C7b7c5bA2C623c0",
-            "0xf253f83AcA21aAbD2A20553AE0BF7F65C755A07F",
-            "0xfC8c34a3B3CFE1F1Dd6DBCCEC4BC5d3103b80FF0",
-            "0xFD5dB7463a3aB53fD211b4af195c5BCCC1A03890",
-        }:
-            xp = self._xp(rates=rates, balances=pool_balances)
-            x = xp[i] + (dx * rates[i] // self.PRECISION)
-            y = self._get_y(i, j, x, xp)
-            dy = xp[j] - y - 1
-            fee = self.fee * dy // self.FEE_DENOMINATOR
-            return (dy - fee) * self.PRECISION // rates[j]
-
-        if self.address in {
-            "0x04c90C198b2eFF55716079bc06d7CCc4aa4d7512",
-            "0x320B564Fb9CF36933eC507a846ce230008631fd3",
-            "0x48fF31bBbD8Ab553Ebe7cBD84e1eA3dBa8f54957",
-            "0x55A8a39bc9694714E2874c1ce77aa1E599461E18",
-            "0x875DF0bA24ccD867f8217593ee27253280772A97",
-            "0x9D0464996170c6B9e75eED71c68B99dDEDf279e8",
-            "0xBaaa1F5DbA42C3389bDbc2c9D2dE134F5cD0Dc89",
-            "0xDa5B670CcD418a187a3066674A8002Adc9356Ad1",
-            "0xf03bD3cfE85f00bF5819AC20f0870cE8a8d1F0D8",
-            "0xFB9a265b5a1f52d97838Ec7274A0b1442efAcC87",
-        }:
-            xp = tuple(pool_balances)
-            x = xp[i] + dx
-            y = self._get_y(i, j, x, xp)
-            dy = xp[j] - y - 1
-            fee = self.fee * dy // self.FEE_DENOMINATOR
-            return dy - fee
-
-        if self.address in {
-            "0x59Ab5a5b5d617E478a2479B0cAD80DA7e2831492",
-            "0xBfAb6FA95E0091ed66058ad493189D2cB29385E6",
-        }:
-            live_balances = [
-                token.get_balance(self.address, block_identifier=block_number)
-                for token in self.tokens
-            ]
-            admin_balances = self._get_admin_balances(block_number=block_number)
-            balances = [
-                pool_balance - admin_balance
-                for pool_balance, admin_balance in zip(live_balances, admin_balances, strict=True)
-            ]
-            rates = self._stored_rates_from_oracle(block_number=block_number)
-            xp = self._xp(rates=rates, balances=balances)
-            x = xp[i] + (dx * rates[i] // self.PRECISION)
-            y = self._get_y(i, j, x, xp)
-            dy = xp[j] - y - 1
-            fee = self.fee * dy // self.FEE_DENOMINATOR
-            return (dy - fee) * self.PRECISION // rates[j]
-
-        if self.address in {
-            "0x52EA46506B9CC5Ef470C5bf89f17Dc28bB35D85C",
-            "0xA2B47E3D5c44877cca798226B7B8118F9BFb7A56",
-            "0xA5407eAE9Ba41422680e2e00537571bcC53efBfD",
-        }:
-            rates = self._stored_rates_from_ctokens(block_number=block_number)
-            xp = self._xp(rates=rates, balances=pool_balances)
-            x = xp[i] + (dx * rates[i] // self.PRECISION)
-            y = self._get_y(i, j, x, xp)
-            dy = (xp[j] - y) * self.PRECISION // rates[j]
-            fee = self.fee * dy // self.FEE_DENOMINATOR
-            return dy - fee
-
-        if self.address == "0x2dded6Da1BF5DBdF597C45fcFaa3194e53EcfeAF":
-            rates = self._stored_rates_from_cytokens(block_number=block_number)
-            xp = self._xp(rates=rates, balances=pool_balances)
-            x = xp[i] + (dx * rates[i] // self.PRECISION)
-            y = self._get_y(i, j, x, xp)
-            dy = xp[j] - y - 1
-            return (dy - (self.fee * dy // self.FEE_DENOMINATOR)) * self.PRECISION // rates[j]
-
-        if self.address == "0x06364f10B501e868329afBc005b3492902d6C763":
-            rates = self._stored_rates_from_ytokens(block_number=block_number)
-            xp = self._xp(rates=rates, balances=pool_balances)
-            x = xp[i] + (dx * rates[i] // self.PRECISION)
-            y = self._get_y(i, j, x, xp)
-            dy = (xp[j] - y - 1) * self.PRECISION // rates[j]
-            fee = self.fee * dy // self.FEE_DENOMINATOR
-            return dy - fee
-
-        if self.address in {
-            "0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51",
-            "0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27",
-        }:
-            rates = self._stored_rates_from_ytokens(block_number=block_number)
-            xp = self._xp(rates=rates, balances=pool_balances)
-            x = xp[i] + (dx * rates[i] // self.PRECISION)
-            y = self._get_y(i, j, x, xp)
-            dy = (xp[j] - y) * self.PRECISION // rates[j]
-            fee = self.fee * dy // self.FEE_DENOMINATOR
-            return dy - fee
-
-        if self.address == "0xA96A65c051bF88B4095Ee1f2451C2A9d43F53Ae2":
-            rates = self._stored_rates_from_aeth(block_number=block_number)
-            xp = self._xp(rates=rates, balances=pool_balances)
-            x = xp[i] + (dx * rates[i] // self.PRECISION)
-            y = self._get_y(i, j, x, xp)
-            dy = xp[j] - y
-            fee = self.fee * dy // self.FEE_DENOMINATOR
-            return (dy - fee) * self.PRECISION // rates[j]
-
-        if self.address == "0xF9440930043eb3997fc70e1339dBb11F341de7A8":
-            rates = self._stored_rates_from_reth(block_number=block_number)
-            xp = self._xp(rates=rates, balances=pool_balances)
-            x = xp[i] + (dx * rates[i] // self.PRECISION)
-            y = self._get_y(i, j, x, xp)
-            dy = xp[j] - y
-            fee = self.fee * dy // self.FEE_DENOMINATOR
-            return (dy - fee) * self.PRECISION // rates[j]
-
-        if self.address == "0xEB16Ae0052ed37f479f7fe63849198Df1765a733":
-            live_balances = [
-                token.get_balance(self.address, block_identifier=block_number)
-                for token in self.tokens
-            ]
-            admin_balances = self._get_admin_balances(block_number=block_number)
-
-            xp_ = [
-                pool_balance - admin_balance
-                for pool_balance, admin_balance in zip(live_balances, admin_balances, strict=True)
-            ]
-            x = xp_[i] + dx
-            y = self._get_y(i, j, x, xp_)
-            dy = xp_[j] - y
-            fee_ = (
-                _dynamic_fee(
-                    xpi=(xp_[i] + x) // 2,
-                    xpj=(xp_[j] + y) // 2,
-                    _fee=self.fee,
-                    _feemul=self.offpeg_fee_multiplier,
-                )
-                * dy
-                // self.FEE_DENOMINATOR
+            # Metapool path — resolve metapool-specific inputs
+            inputs = self._resolve_metapool_inputs_via_io(block_number, override_state)
+            assert self._strategies.metapool_dy_calculator is not None
+            return self._strategies.metapool_dy_calculator.calculate(
+                i,
+                j,
+                dx,
+                inputs=inputs,
+                override_state=override_state,
             )
-            return dy - fee_
 
-        if self.address == "0xDeBF20617708857ebe4F679508E7b7863a8A8EeE":
-            live_balances = [
-                token.get_balance(self.address, block_identifier=block_number)
-                for token in self.tokens
-            ]
-            admin_balances = self._get_admin_balances(block_number=block_number)
-            balances = [
-                pool_balance - admin_balance
-                for pool_balance, admin_balance in zip(live_balances, admin_balances, strict=True)
-            ]
+        # Non-metapool path — resolve standard/crypto/live-admin inputs
+        inputs = self._resolve_calculation_inputs_via_io(block_number, override_state)
 
-            xp_ = [
-                balance * rate
-                for balance, rate in zip(balances, self.precision_multipliers, strict=True)
-            ]
+        assert self._strategies.dy_calculator is not None
+        return self._strategies.dy_calculator.calculate(
+            i,
+            j,
+            dx,
+            inputs=inputs,
+            override_state=override_state,
+        )
 
-            x = xp_[i] + dx * self.precision_multipliers[i]
-            y = self._get_y(i, j, x, xp_)
-            dy = (xp_[j] - y) // self.precision_multipliers[j]
+    def _resolve_metapool_inputs_via_io(
+        self,
+        block_number: int,
+        override_state: CurveStableswapPoolState | None = None,
+    ) -> DyCalculationInputs:
+        """Pre-resolve data needed by metapool DyCalculator implementations.
 
-            fee_ = (
-                _dynamic_fee(
-                    xpi=(xp_[i] + x) // 2,
-                    xpj=(xp_[j] + y) // 2,
-                    _fee=self.fee,
-                    _feemul=self.offpeg_fee_multiplier,
-                )
-                * dy
-                // self.FEE_DENOMINATOR
-            )
-            return dy - fee_
+        Extends the base inputs with metapool-specific I/O (virtual price,
+        redemption price, base pool reference).
 
-        # default pool behavior
-        xp = self._xp(rates=rates, balances=pool_balances)
-        x = xp[i] + (dx * rates[i] // self.PRECISION)
-        y = self._get_y(i, j, x, xp)
-        dy = xp[j] - y - 1
-        fee = self.fee * dy // self.FEE_DENOMINATOR
-        return (dy - fee) * self.PRECISION // rates[j]
+        Returns:
+            The computed value.
+
+        """
+        inputs = self._resolve_calculation_inputs_via_io(block_number, override_state)
+
+        # Resolve virtual price
+        virtual_price = self._cache.get_cached_virtual_price(block_number)
+
+        # Resolve scaled redemption price (may not be available for all metapools)
+        scaled_redemption_price: int | None = None
+        with contextlib.suppress(MissingCurveData):
+            scaled_redemption_price = self._cache.get_cached_scaled_redemption_price(block_number)
+
+        return dataclasses.replace(
+            inputs,
+            virtual_price=virtual_price,
+            scaled_redemption_price=scaled_redemption_price,
+            base_pool=self.base_pool,
+        )
 
     def _get_dy_underlying(
         self,
@@ -1398,850 +961,175 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         block_identifier: BlockIdentifier | None = None,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        if TYPE_CHECKING:
-            assert self.base_pool is not None
+        block_number = self._resolve_block_number(block_identifier)
+        inputs = self._resolve_metapool_inputs_via_io(block_number, override_state)
 
-        pool_balances = override_state.balances if override_state is not None else self.balances
-
-        block_number = (
-            block_identifier
-            if isinstance(block_identifier, int)
-            else get_number_for_block_identifier(
-                identifier=block_identifier,
-                w3=connection_manager.get_web3(self.chain_id),
-            )
+        assert self._strategies.metapool_underlying_dy_calculator is not None
+        return self._strategies.metapool_underlying_dy_calculator.calculate(
+            i,
+            j,
+            dx,
+            inputs=inputs,
+            override_state=override_state,
         )
-
-        if self.address == "0x618788357D0EBd8A37e763ADab3bc575D54c2C7d":
-            base_n_coins = len(self.base_pool.tokens)
-            max_coin = len(self.tokens) - 1
-            redemption_coin = 0
-
-            # dx and dy in underlying units
-            rates = (
-                self._get_scaled_redemption_price(block_number=block_number),
-                vp_rate := self._get_virtual_price(block_number=block_number),
-            )
-            xp = self._xp(rates=rates, balances=pool_balances)
-
-            # Use base_i or base_j if they are >= 0
-            base_i = i - max_coin
-            base_j = j - max_coin
-            meta_i = max_coin
-            meta_j = max_coin
-            if base_i < 0:
-                meta_i = i
-            if base_j < 0:
-                meta_j = j
-
-            if base_i < 0:
-                x = xp[i] + (
-                    dx
-                    * self._get_scaled_redemption_price(block_number=block_number)
-                    // self.PRECISION
-                )
-            elif base_j < 0:
-                # i is from BasePool
-                # At first, get the amount of pool tokens
-                base_inputs = [0] * base_n_coins
-                base_inputs[base_i] = dx
-                # Token amount transformed to underlying "dollars"
-                x = (
-                    self.base_pool.calc_token_amount(
-                        amounts=base_inputs,
-                        deposit=True,
-                        block_identifier=block_number,
-                        override_state=(
-                            override_state.base if override_state is not None else None
-                        ),
-                    )
-                    * vp_rate
-                    // self.PRECISION
-                )
-                # Accounting for deposit/withdraw fees approximately
-                x -= x * self.base_pool.fee // (2 * self.FEE_DENOMINATOR)
-                # Adding number of pool tokens
-                x += xp[max_coin]
-            else:
-                # If both are from the base pool
-                return self.base_pool.get_dy(
-                    i=base_i,
-                    j=base_j,
-                    dx=dx,
-                    override_state=(override_state.base if override_state is not None else None),
-                )
-
-            # This pool is involved only when in-pool assets are used
-            y = self._get_y(meta_i, meta_j, x, xp)
-            dy = xp[meta_j] - y - 1
-            dy -= self.fee * dy // self.FEE_DENOMINATOR
-            if j == redemption_coin:
-                dy = (dy * self.PRECISION) // self._get_scaled_redemption_price(
-                    block_number=block_number
-                )
-
-            # If output is going via the metapool
-            if base_j >= 0:
-                # j is from BasePool
-                # The fee is already accounted for
-                dy, *_ = self.base_pool.calc_withdraw_one_coin(
-                    _token_amount=dy * self.PRECISION // vp_rate,
-                    i=base_j,
-                    block_identifier=block_number,
-                )
-
-            return dy
-
-        if self.address in {
-            "0xC61557C5d177bd7DC889A3b621eEC333e168f68A",
-            "0x4606326b4Db89373F5377C316d3b0F6e55Bc6A20",
-        }:
-            base_n_coins = len(self.base_pool.tokens)
-            max_coin = len(self.tokens) - 1
-
-            rates = (self.PRECISION, self._get_virtual_price(block_number=block_number))
-            xp = self._xp(rates=rates, balances=pool_balances)
-
-            base_i = 0
-            base_j = 0
-            meta_i = 0
-            meta_j = 0
-
-            if i != 0:
-                base_i = i - max_coin
-                meta_i = 1
-            if j != 0:
-                base_j = j - max_coin
-                meta_j = 1
-
-            if i == 0:
-                x = xp[i] + dx * (rates[0] // 10**18)
-            elif j == 0:
-                # i is from BasePool
-                # At first, get the amount of pool tokens
-                base_inputs = [0] * base_n_coins
-                base_inputs[base_i] = dx
-                # Token amount transformed to underlying "dollars"
-                x = (
-                    self.base_pool.calc_token_amount(
-                        amounts=base_inputs,
-                        deposit=True,
-                        block_identifier=block_number,
-                        override_state=(
-                            override_state.base if override_state is not None else None
-                        ),
-                    )
-                    * rates[1]
-                    // self.PRECISION
-                )
-                # Accounting for deposit/withdraw fees approximately
-                x -= x * self.base_pool.fee // (2 * self.FEE_DENOMINATOR)
-                # Adding number of pool tokens
-                x += xp[max_coin]
-            else:
-                # If both are from the base pool
-                return self.base_pool.get_dy(
-                    i=base_i,
-                    j=base_j,
-                    dx=dx,
-                    block_identifier=block_number,
-                    override_state=(override_state.base if override_state is not None else None),
-                )
-
-            # This pool is involved only when in-pool assets are used
-            y = self._get_y(meta_i, meta_j, x, xp)
-            dy = xp[meta_j] - y - 1
-            dy -= self.fee * dy // self.FEE_DENOMINATOR
-
-            # If output is going via the metapool
-            if j == 0:
-                dy //= rates[0] // 10**18
-            else:
-                # j is from BasePool
-                # The fee is already accounted for
-                dy, *_ = self.base_pool.calc_withdraw_one_coin(
-                    _token_amount=dy * self.PRECISION // rates[1],
-                    i=base_j,
-                    block_identifier=block_number,
-                )
-
-            return dy
-
-        working_rates = list(self.rate_multipliers)
-
-        vp_rate = self._get_virtual_price(block_number=block_number)
-        working_rates[-1] = vp_rate
-
-        xp = self._xp(rates=tuple(working_rates), balances=pool_balances)
-        precisions = self.precision_multipliers
-
-        base_n_coins = len(self.base_pool.tokens)
-        max_coin = len(self.tokens) - 1
-
-        # Use base_i or base_j if they are >= 0
-        base_i = i - max_coin
-        base_j = j - max_coin
-        meta_i = max_coin
-        meta_j = max_coin
-        if base_i < 0:
-            meta_i = i
-        if base_j < 0:
-            meta_j = j
-
-        if base_i < 0:
-            x = xp[i] + dx * precisions[i]
-        elif base_j < 0:
-            # i is from BasePool
-            # At first, get the amount of pool tokens
-            base_inputs = [0] * base_n_coins
-            base_inputs[base_i] = dx
-            # Token amount transformed to underlying "dollars"
-            x = (
-                self.base_pool.calc_token_amount(
-                    amounts=base_inputs,
-                    deposit=True,
-                    block_identifier=block_number,
-                    override_state=(override_state.base if override_state is not None else None),
-                )
-                * vp_rate
-                // self.PRECISION
-            )
-            # Accounting for deposit/withdraw fees approximately
-            x -= x * self.base_pool.fee // (2 * self.FEE_DENOMINATOR)
-            # Adding number of pool tokens
-            x += xp[max_coin]
-        else:
-            # If both are from the base pool
-            return self.base_pool.get_dy(
-                i=base_i,
-                j=base_j,
-                dx=dx,
-                block_identifier=block_number,
-                override_state=(override_state.base if override_state is not None else None),
-            )
-
-        # This pool is involved only when in-pool assets are used
-        y = self._get_y(meta_i, meta_j, x, xp)
-        dy = xp[meta_j] - y - 1
-        dy -= self.fee * dy // self.FEE_DENOMINATOR
-
-        # If output is going via the metapool
-        if base_j < 0:
-            dy //= precisions[meta_j]
-        else:
-            # j is from BasePool
-            # The fee is already accounted for
-            dy, *_ = self.base_pool.calc_withdraw_one_coin(
-                _token_amount=dy * self.PRECISION // vp_rate,
-                i=base_j,
-                block_identifier=block_number,
-            )
-
-        return dy
-
-    def _get_base_cache_updated(self, block_number: BlockNumber) -> int:
-        with contextlib.suppress(KeyError):
-            return self._cached_base_cache_updated[block_number]
-
-        w3 = connection_manager.get_web3(self.chain_id)
-
-        base_cache_updated: int
-        (base_cache_updated,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=w3.eth.call(
-                transaction=TxParams(
-                    to=self.address,
-                    data=Web3.keccak(text="base_cache_updated()")[:4],
-                ),
-                block_identifier=block_number,
-            ),
-        )
-        self._cached_base_cache_updated[block_number] = base_cache_updated
-        return base_cache_updated
-
-    def _get_base_virtual_price(self, block_number: BlockNumber) -> int:
-        with contextlib.suppress(KeyError):
-            return self._cached_base_virtual_price[block_number]
-
-        w3 = connection_manager.get_web3(self.chain_id)
-
-        base_virtual_price: int
-        (base_virtual_price,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=w3.eth.call(
-                transaction=TxParams(
-                    to=self.address,
-                    data=Web3.keccak(text="base_virtual_price()")[:4],
-                ),
-                block_identifier=block_number,
-            ),
-        )
-        self._cached_base_virtual_price[block_number] = base_virtual_price
-        return base_virtual_price
-
-    def _get_virtual_price(self, block_number: BlockNumber) -> int:
-        if TYPE_CHECKING:
-            assert self.base_pool is not None
-
-        with contextlib.suppress(KeyError):
-            return self._cached_virtual_price[block_number]
-
-        base_cache_expires = 10 * 60  # 10 minutes
-
-        w3 = connection_manager.get_web3(self.chain_id)
-        self._block_timestamps[block_number] = w3.eth.get_block(block_identifier=block_number)[
-            "timestamp"
-        ]
-
-        base_virtual_price: int
-        if (
-            self.base_cache_updated is None
-            or self._block_timestamps[block_number] > self.base_cache_updated + base_cache_expires
-        ):
-            (base_virtual_price,) = eth_abi.abi.decode(
-                types=["uint256"],
-                data=w3.eth.call(
-                    transaction=TxParams(
-                        to=self.base_pool.address,
-                        data=Web3.keccak(text="get_virtual_price()")[:4],
-                    ),
-                    block_identifier=block_number,
-                ),
-            )
-        else:
-            base_virtual_price = self.base_virtual_price
-
-        self._cached_virtual_price[block_number] = base_virtual_price
-        self.base_virtual_price = base_virtual_price
-        return base_virtual_price
-
-    def _get_admin_balances(self, block_number: BlockNumber) -> tuple[int, ...]:
-        with contextlib.suppress(KeyError):
-            return self._cached_admin_balances[block_number]
-
-        admin_balances: list[int] = []
-        for token_index, _ in enumerate(self.tokens):
-            admin_balance: int
-            (admin_balance,) = raw_call(
-                w3=connection_manager.get_web3(chain_id=self.chain_id),
-                address=self.address,
-                calldata=encode_function_calldata(
-                    function_prototype="admin_balances(uint256)",
-                    function_arguments=[token_index],
-                ),
-                return_types=["uint256"],
-                block_identifier=block_number,
-            )
-            admin_balances.append(admin_balance)
-
-        self._cached_admin_balances[block_number] = tuple(admin_balances)
-        return tuple(admin_balances)
 
     def _get_d(self, _xp: Sequence[int], _amp: int) -> int:
-        """
-        Solve for the Curve stableswap invariant D, using a modified Newton's method.
+        """Solve for the Curve stableswap invariant D.
 
-        Mainnet V1 Curve pools have several calculation variants to calculate the D and D_prev
-        values. The pool addresses using each variant are grouped and the appropriate function is
-        set at runtime.
-        """
+        Delegates to the pure function stableswap_get_d. Kept as a thin
+        wrapper for backwards compatibility with callers that access pool state.
 
-        def calc_d(
-            *,
-            a_nn: int,
-            s: int,
-            d: int,
-            d_p: int,
-            n_coins: int,
-            a_precision: int,
-        ) -> int:
-            return (
-                (a_nn * s // a_precision + d_p * n_coins)
-                * d
-                // ((a_nn - a_precision) * d // a_precision + (n_coins + 1) * d_p)
+        Returns:
+            The computed integer value.
+
+        Raises:
+            EVMRevertError: See function documentation.
+
+        """
+        try:
+            return curve_stableswap_get_d(
+                list(_xp),
+                _amp,
+                len(self._tokens),
+                self.A_PRECISION,
+                self._strategies.d_variant.value,
             )
-
-        def calc_d_variant_alpha(
-            *,
-            a_nn: int,
-            s: int,
-            d: int,
-            d_p: int,
-            n_coins: int,
-            a_precision: int,  # noqa:ARG001
-        ) -> int:
-            return (a_nn * s + d_p * n_coins) * d // ((a_nn - 1) * d + (n_coins + 1) * d_p)
-
-        def calc_dp(
-            *,
-            d: int,
-            d_p: int,
-            xp: Sequence[int],
-        ) -> int:
-            for x in xp:
-                d_p = d_p * d // (x * n_coins)
-            return d_p
-
-        def calc_dp_variant_alpha(
-            *,
-            d: int,
-            d_p: int,
-            xp: Sequence[int],
-        ) -> int:
-            for x in xp:
-                d_p = d_p * d // (x * n_coins + 1)
-            return d_p
-
-        def calc_dp_variant_beta(
-            *,
-            d: int,
-            d_p: int,  # noqa:ARG001
-            xp: Sequence[int],
-        ) -> int:
-            return d * d // xp[0] * d // xp[1] // n_coins**2
-
-        def calc_dp_variant_gamma(
-            *,
-            d: int,
-            d_p: int,  # noqa:ARG001
-            xp: Sequence[int],
-        ) -> int:
-            return d * d // xp[0] * d // xp[1] // cast("int", n_coins**n_coins)
-
-        d_func = calc_d
-        dp_func = calc_dp
-        if self.address in self.D_VARIANT_GROUP_0:
-            d_func = calc_d_variant_alpha
-        elif self.address in self.D_VARIANT_GROUP_1:
-            d_func = calc_d_variant_alpha
-            dp_func = calc_dp_variant_alpha
-        elif self.address in self.D_VARIANT_GROUP_2:
-            dp_func = calc_dp_variant_beta
-        elif self.address in self.D_VARIANT_GROUP_3:
-            dp_func = calc_dp_variant_alpha
-        elif self.address in self.D_VARIANT_GROUP_4:
-            dp_func = calc_dp_variant_gamma
-
-        d = s = sum(_xp)
-        if s == 0:
-            return 0
-        n_coins = len(self.tokens)
-        a_nn = _amp * n_coins
-
-        for _ in range(255):  # pragma: no branch
-            d_p = d_prev = d
-            d_p = dp_func(d=d, d_p=d_p, xp=_xp)
-            d = d_func(a_nn=a_nn, s=s, d=d, d_p=d_p, n_coins=n_coins, a_precision=self.A_PRECISION)
-            if d_prev < d:
-                if d - d_prev <= 1:
-                    return d
-            elif d_prev - d <= 1:
-                return d
-
-        raise EVMRevertError(error="D calculation did not converge.")  # pragma: no cover
+        except ValueError as e:
+            raise EVMRevertError(error=str(e)) from e
 
     def _get_y(self, i: int, j: int, x: int, xp: Sequence[int]) -> int:
+        """Calculate x[j] if one makes x[i] = x.
+
+        Delegates to the pure function stableswap_get_y. Resolves amp from
+        the pool's A-ramping state and block timestamps before calling.
+
+        Returns:
+            The computed integer value.
+
+        Raises:
+            EVMRevertError: See function documentation.
+
         """
-        Calculate x[j] if one makes x[i] = x
-
-        Done by solving quadratic equation iteratively.
-        x_1**2 + x_1 * (sum' - (A*n**n - 1) * D / (A * n**n)) = D ** (n + 1) / (
-            n ** (2 * n) * prod' * A
-        )
-        x_1**2 + b*x_1 = c
-
-        x_1 = (x_1**2 + c) / (2*x_1 + b)
-        """
-
-        # x in the input is converted to the same price/precision
-
-        n_coins = len(self.tokens)
-
-        assert i != j, "same coin"
-        assert j >= 0, "j below zero"
-        assert j < n_coins, "j above N_COINS"
-
-        # should be unreachable, but good for safety
-        assert i >= 0
-        assert i < n_coins
-
         amp = (
-            self._a(timestamp=self._block_timestamps[self.update_block]) // self.A_PRECISION
-            if self.address in self.Y_VARIANT_GROUP_0
-            else self._a(timestamp=self._block_timestamps[self.update_block])
+            self._a(timestamp=self._cache.get_cached_block_timestamp(self.update_block))
+            // self.A_PRECISION
+            if self._strategies.y_variant == YVariant.VARIANT_0
+            else self._a(timestamp=self._cache.get_cached_block_timestamp(self.update_block))
         )
-        c = y = d = self._get_d(xp, amp)
-
-        s = 0
-        for coin_index in range(n_coins):
-            if coin_index == i:
-                x_ = x
-            elif coin_index != j:
-                x_ = xp[coin_index]
-            else:
-                continue
-            s += x_
-            c = c * d // (x_ * n_coins)
-
-        a_nn = amp * n_coins
-        if self.address in self.Y_VARIANT_GROUP_1:
-            c = c * d // (a_nn * n_coins)
-            b = s + d // a_nn
-        else:
-            c = c * d * self.A_PRECISION // (a_nn * n_coins)
-            b = s + d * self.A_PRECISION // a_nn
-
-        for _ in range(255):  # pragma: no branch
-            y_prev = y
-            y = (y * y + c) // (2 * y + b - d)
-            if y > y_prev:
-                if y - y_prev <= 1:
-                    return y
-            elif y_prev - y <= 1:
-                return y
-
-        raise EVMRevertError(error="y calculation did not converge.")  # pragma: no cover
+        try:
+            return curve_stableswap_get_y(
+                i,
+                j,
+                x,
+                list(xp),
+                amp,
+                len(self._tokens),
+                self.A_PRECISION,
+                self._strategies.y_variant.value,
+                self._strategies.d_variant.value,
+            )
+        except ValueError as e:
+            raise EVMRevertError(error=str(e)) from e
 
     def _get_y_d(self, a: int, i: int, xp: Sequence[int], d: int) -> int:
-        n_coins = len(self.tokens)
+        """Calculate y given A, xp, and D.
 
-        assert i >= 0  # dev: i below zero
-        assert i < n_coins  # dev: i above N_COINS
+        Delegates to the pure function stableswap_get_y_d.
 
-        c = y = d
+        Returns:
+            The computed integer value.
 
-        s = 0
-        for coin_index in range(n_coins):
-            if coin_index != i:
-                x = xp[coin_index]
-            else:
-                continue
-            s += x
-            c = c * d // (x * n_coins)
+        Raises:
+            EVMRevertError: See function documentation.
 
-        a_nn = a * n_coins
-        if self.address in self.Y_D_VARIANT_GROUP_0:
-            b = s + d * self.A_PRECISION // a_nn
-            c = c * d * self.A_PRECISION // (a_nn * n_coins)
-        else:
-            b = s + d // a_nn
-            c = c * d // (a_nn * n_coins)
-
-        for _ in range(255):  # pragma: no branch
-            y_prev = y
-            y = (y * y + c) // (2 * y + b - d)
-            if y > y_prev:
-                if y - y_prev <= 1:
-                    return y
-            elif y_prev - y <= 1:
-                return y
-
-        raise EVMRevertError(error="y_d calculation did not converge.")  # pragma: no cover
-
-    def _set_oracle_method(self, block_number: BlockNumber) -> None:
-        w3 = connection_manager.get_web3(self.chain_id)
-        (self.oracle_method,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=w3.eth.call(
-                transaction=TxParams(
-                    to=self.address,
-                    data=Web3.keccak(text="oracle_method()")[:4],
-                ),
-                block_identifier=block_number,
-            ),
-        )
-
-    def _stored_rates_from_ctokens(self, block_number: BlockNumber) -> tuple[int, ...]:
-        with contextlib.suppress(KeyError):
-            return self._cached_rates_from_ctokens[block_number]
-
-        result: list[int] = []
-        rate: int
-        for token, use_lending, multiplier in zip(
-            self.tokens,
-            self.use_lending,
-            self.precision_multipliers,
-            strict=True,
-        ):
-            if not use_lending:
-                rate = self.PRECISION
-            else:
-                w3 = connection_manager.get_web3(self.chain_id)
-                (rate,) = eth_abi.abi.decode(
-                    types=["uint256"],
-                    data=w3.eth.call(
-                        transaction=TxParams(
-                            to=token.address,
-                            data=Web3.keccak(text="exchangeRateStored()")[:4],
-                        ),
-                        block_identifier=block_number,
-                    ),
-                )
-                supply_rate: int
-                (supply_rate,) = eth_abi.abi.decode(
-                    types=["uint256"],
-                    data=w3.eth.call(
-                        transaction=TxParams(
-                            to=token.address,
-                            data=Web3.keccak(text="supplyRatePerBlock()")[:4],
-                        ),
-                        block_identifier=block_number,
-                    ),
-                )
-                old_block: BlockNumber
-                (old_block,) = eth_abi.abi.decode(
-                    types=["uint256"],
-                    data=w3.eth.call(
-                        transaction=TxParams(
-                            to=token.address,
-                            data=Web3.keccak(text="accrualBlockNumber()")[:4],
-                        ),
-                        block_identifier=block_number,
-                    ),
-                )
-
-                rate += rate * supply_rate * (block_number - old_block) // self.PRECISION
-
-            result.append(multiplier * rate)
-
-        self._cached_rates_from_ctokens[block_number] = tuple(result)
-        return tuple(result)
-
-    def _stored_rates_from_ytokens(self, block_number: BlockNumber) -> tuple[int, ...]:
-        with contextlib.suppress(KeyError):
-            return self._cached_rates_from_ytokens[block_number]
-
-        # ref: https://etherscan.io/address/0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27#code
-
-        result: list[int] = []
-        for token, multiplier, use_lending in zip(
-            self.tokens,
-            self.precision_multipliers,
-            self.use_lending,
-            strict=True,
-        ):
-            if use_lending:
-                w3 = connection_manager.get_web3(self.chain_id)
-                rate: int
-                (rate,) = eth_abi.abi.decode(
-                    types=["uint256"],
-                    data=w3.eth.call(
-                        transaction=TxParams(
-                            to=token.address,
-                            data=Web3.keccak(text="getPricePerFullShare()")[:4],
-                        ),
-                        block_identifier=block_number,
-                    ),
-                )
-            else:
-                rate = self.LENDING_PRECISION
-
-            result.append(rate * multiplier)
-
-        self._cached_rates_from_ytokens[block_number] = tuple(result)
-        return tuple(result)
-
-    def _stored_rates_from_cytokens(self, block_number: BlockNumber) -> tuple[int, ...]:
-        with contextlib.suppress(KeyError):
-            return self._cached_rates_from_cytokens[block_number]
-
-        w3 = connection_manager.get_web3(self.chain_id)
-
-        result: list[int] = []
-        for token, precision_multiplier in zip(
-            self.tokens, self.precision_multipliers, strict=True
-        ):
-            rate: int
-            (rate,) = eth_abi.abi.decode(
-                types=["uint256"],
-                data=(
-                    w3.eth.call(
-                        transaction=TxParams(
-                            to=token.address,
-                            data=Web3.keccak(text="exchangeRateStored()")[:4],
-                        ),
-                        block_identifier=block_number,
-                    )
-                ),
-            )
-            supply_rate: int
-            (supply_rate,) = eth_abi.abi.decode(
-                types=["uint256"],
-                data=w3.eth.call(
-                    transaction=TxParams(
-                        to=token.address,
-                        data=Web3.keccak(text="supplyRatePerBlock()")[:4],
-                    ),
-                    block_identifier=block_number,
-                ),
-            )
-            old_block: BlockNumber
-            (old_block,) = eth_abi.abi.decode(
-                types=["uint256"],
-                data=w3.eth.call(
-                    transaction=TxParams(
-                        to=token.address,
-                        data=Web3.keccak(text="accrualBlockNumber()")[:4],
-                    ),
-                    block_identifier=block_number,
-                ),
-            )
-
-            rate += rate * supply_rate * (block_number - old_block) // self.PRECISION
-            result.append(precision_multiplier * rate)
-
-        self._cached_rates_from_cytokens[block_number] = tuple(result)
-        return tuple(result)
-
-    def _stored_rates_from_reth(self, block_number: BlockNumber) -> tuple[int, ...]:
-        with contextlib.suppress(KeyError):
-            return self.PRECISION, self._cached_rates_from_reth[block_number]
-
-        w3 = connection_manager.get_web3(self.chain_id)
-
-        # ref: https://etherscan.io/address/0xF9440930043eb3997fc70e1339dBb11F341de7A8#code
-        ratio: int
-        (ratio,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=w3.eth.call(
-                transaction=TxParams(
-                    to=self.tokens[1].address,
-                    data=Web3.keccak(text="getExchangeRate()")[:4],
-                ),
-                block_identifier=block_number,
-            ),
-        )
-        self._cached_rates_from_reth[block_number] = ratio
-        return self.PRECISION, ratio
-
-    def _stored_rates_from_aeth(self, block_number: BlockNumber) -> tuple[int, ...]:
-        with contextlib.suppress(KeyError):
-            return (
-                self.PRECISION,
-                self.PRECISION
-                * self.LENDING_PRECISION
-                // self._cached_rates_from_aeth[block_number],
-            )
-
-        w3 = connection_manager.get_web3(self.chain_id)
-
-        # ref: https://etherscan.io/address/0xA96A65c051bF88B4095Ee1f2451C2A9d43F53Ae2#code
-        ratio: int
-        (ratio,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=w3.eth.call(
-                transaction=TxParams(
-                    to=self.tokens[1].address,
-                    data=Web3.keccak(text="ratio()")[:4],
-                ),
-                block_identifier=block_number,
-            ),
-        )
-        self._cached_rates_from_aeth[block_number] = ratio
-        return self.PRECISION, self.PRECISION * self.LENDING_PRECISION // ratio
-
-    def _stored_rates_from_oracle(self, block_number: BlockNumber) -> tuple[int, ...]:
         """
-        Get rates from on-chain oracle
+        try:
+            return curve_stableswap_get_y_d(
+                a,
+                i,
+                list(xp),
+                d,
+                len(self._tokens),
+                self.A_PRECISION,
+                self._strategies.yd_variant.value,
+            )
+        except ValueError as e:
+            raise EVMRevertError(error=str(e)) from e
 
-        Ref: https://etherscan.io/address/0x59Ab5a5b5d617E478a2479B0cAD80DA7e2831492#code
+    def _resolve_rates(
+        self,
+        *,
+        rates: tuple[int, ...],
+        block_number: int,
+    ) -> tuple[int, ...]:
+        """Select rates based on the pool's lending rate style.
+
+        Returns rate_multipliers for NONE, or calls the data provider
+        for lending pools.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            MissingCurveData: See function documentation.
+
         """
+        if self._strategies.lending_rate_style == LendingRateStyle.NONE:
+            return rates
 
-        with contextlib.suppress(KeyError):
-            return self._cached_rates_from_oracle[block_number]
-
-        self._set_oracle_method(block_number=block_number)
-        if TYPE_CHECKING:
-            assert self.oracle_method is not None
-
-        if self.oracle_method == 0:
-            rates = self.rate_multipliers
-        else:
-            oracle_bit_mask = (2**32 - 1) * 256**28
-            oracle_rate: int
-            (oracle_rate,) = eth_abi.abi.decode(
-                types=["uint256"],
-                data=connection_manager.get_web3(self.chain_id).eth.call(
-                    transaction=TxParams(
-                        to=get_checksum_address(HexBytes(self.oracle_method % 2**160)),
-                        data=HexBytes(self.oracle_method & oracle_bit_mask),
-                    ),
-                    block_identifier=block_number,
-                ),
+        if self._data_provider is None:
+            raise MissingCurveData(
+                self.address,
+                "lending_rate",
+                "Data provider is required for pools with lending tokens. "
+                "Provide one via Bot.build_pool().",
             )
-            rates = (
-                self.rate_multipliers[0],
-                self.rate_multipliers[1] * oracle_rate // self.PRECISION,
-            )
-
-        self._cached_rates_from_oracle[block_number] = rates
-        return rates
+        return self._data_provider.lending_rates(block_number)
 
     def _xp(self, rates: Iterable[int], balances: Iterable[int]) -> tuple[int, ...]:
         return tuple(
             rate * balance // self.PRECISION for rate, balance in zip(rates, balances, strict=True)
         )
 
-    def auto_update(self, block_number: BlockNumber | None = None) -> bool:
+    def _newton_y(self, ann: int, gamma: int, xp: Sequence[int], d: int, token_index: int) -> int:
+        """Calculate xp[i] given other balances and invariant D using Newton's method.
+
+        Delegates to the pure function stableswap_newton_y.
+        Used by crypto (volatile) Curve pools.
+
+        Returns:
+            The computed integer value.
+
+        Raises:
+            EVMRevertError: See function documentation.
+
         """
-        Retrieve and set updated balances from the contract
-        """
-
-        with self._state_lock:
-            w3 = connection_manager.get_web3(self.chain_id)
-
-            state_block = w3.eth.get_block("latest" if block_number is None else block_number)
-            block_number = state_block["number"]
-
-            token_balances = []
-            token_balance: int
-            for token_id, _ in enumerate(self.tokens):
-                (token_balance,) = eth_abi.abi.decode(
-                    types=[self._coin_index_type],
-                    data=w3.eth.call(
-                        transaction=TxParams(
-                            to=self.address,
-                            data=Web3.keccak(text=f"balances({self._coin_index_type})")[:4]
-                            + eth_abi.abi.encode(types=[self._coin_index_type], args=[token_id]),
-                        ),
-                        block_identifier=block_number,
-                    ),
-                )
-                token_balances.append(token_balance)
-
-            if self.base_pool is not None:
-                self.base_pool.auto_update(block_number=block_number)
-                if self.base_cache_updated is not None:
-                    self.base_cache_updated = self._get_base_cache_updated(
-                        block_number=block_number
-                    )
-
-            found_updates = tuple(token_balances) != self.balances
-
-            state = (
-                CurveStableswapPoolState(
-                    address=self.address,
-                    balances=tuple(token_balances),
-                    base=self.base_pool.state,
-                    block=block_number,
-                )
-                if self.base_pool is not None
-                else CurveStableswapPoolState(
-                    address=self.address,
-                    balances=tuple(token_balances),
-                    block=block_number,
-                )
+        try:
+            return curve_stableswap_newton_y(
+                ann,
+                gamma,
+                list(xp),
+                d,
+                token_index,
+                len(self._tokens),
+                self.A_PRECISION,
             )
-            self._state_cache[block_number] = state
-            self._state = state
-            self._block_timestamps[block_number] = state_block["timestamp"]
+        except ValueError as e:
+            raise EVMRevertError(
+                error=f"_newton_y() did not converge for pool {self.address}",
+            ) from e
 
-            if found_updates:
-                self._notify_subscribers(
-                    message=CurveStableSwapPoolStateUpdated(state),
-                )
+    @staticmethod
+    def _reduction_coefficient(x: Sequence[int], fee_gamma: int, n_coins: int) -> int:
+        """fee_gamma / (fee_gamma + (1 - K)) where K = prod(x) / (sum(x) / N)**N.
 
-            return found_updates
+        Delegates to the pure function stableswap_reduction_coefficient.
+
+        Returns:
+            The computed integer value.
+
+        """
+        return curve_stableswap_reduction_coefficient(list(x), fee_gamma, n_coins)
 
     def calculate_tokens_out_from_tokens_in(
         self,
@@ -2251,18 +1139,18 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         override_state: CurveStableswapPoolState | None = None,
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
-        """
-        Calculates the expected token OUTPUT for a target INPUT at current pool reserves.
-        """
+        """Calculate the expected token OUTPUT for a target INPUT at current pool reserves.
 
-        block_number = (
-            block_identifier
-            if isinstance(block_identifier, int)
-            else get_number_for_block_identifier(
-                block_identifier,
-                connection_manager.get_web3(self.chain_id),
-            )
-        )
+        Returns:
+            The computed integer value.
+
+        Raises:
+            DegenbotValueError: See function documentation.
+            InvalidSwapInputAmount: See function documentation.
+            NoLiquidity: See function documentation.
+
+        """
+        block_number = self._resolve_block_number(block_identifier)
 
         if token_in_quantity <= 0:
             raise InvalidSwapInputAmount
@@ -2272,8 +1160,8 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             logger.debug(f"Balances: {override_state.balances}")
 
         tokens_used_this_pool = [
-            token_in in self.tokens,
-            token_out in self.tokens,
+            token_in in self._tokens,
+            token_out in self._tokens,
         ]
 
         tokens_used_in_base_pool = []
@@ -2288,8 +1176,8 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 raise NoLiquidity(message="One or more of the tokens has a zero balance.")
 
             return self.get_dy(
-                i=self.tokens.index(token_in),
-                j=self.tokens.index(token_out),
+                i=self._tokens.index(token_in),
+                j=self._tokens.index(token_out),
                 dx=token_in_quantity,
                 block_identifier=block_number,
                 override_state=override_state,
@@ -2297,20 +1185,21 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         if any(tokens_used_this_pool) and any(tokens_used_in_base_pool):
             if TYPE_CHECKING:
                 assert self.base_pool is not None
+                assert self.tokens_underlying is not None
 
-            # TODO: see if any of these checks are unnecessary (partial zero balance OK?)
+            # TODO:  # noqa: FIX002 see if any of these checks are unnecessary (partial zero balance OK?)
             if any(balance == 0 for balance in self.base_pool.balances):
                 raise NoLiquidity(message="One or more of the base pool tokens has a zero balance.")
             if any(balance == 0 for balance in self.balances):
                 raise NoLiquidity(message="One or more of the tokens has a zero balance.")
 
-            token_in_from_metapool = token_in in self.tokens
-            token_out_from_metapool = token_out in self.tokens
+            token_in_from_metapool = token_in in self._tokens
+            token_out_from_metapool = token_out in self._tokens
             assert token_in_from_metapool or token_out_from_metapool
 
-            if token_in_from_metapool and self.balances[self.tokens.index(token_in)] == 0:
+            if token_in_from_metapool and self.balances[self._tokens.index(token_in)] == 0:
                 raise NoLiquidity(message=f"{token_in} has a zero balance.")
-            if token_out_from_metapool and self.balances[self.tokens.index(token_out)] == 0:
+            if token_out_from_metapool and self.balances[self._tokens.index(token_out)] == 0:
                 raise NoLiquidity(message=f"{token_out} has a zero balance.")
 
             token_in_from_basepool = token_in in self.base_pool.tokens
@@ -2330,12 +1219,12 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
             return self._get_dy_underlying(
                 i=(
-                    self.tokens.index(token_in)
+                    self._tokens.index(token_in)
                     if token_in_from_metapool
                     else self.tokens_underlying.index(token_in)
                 ),
                 j=(
-                    self.tokens.index(token_out)
+                    self._tokens.index(token_out)
                     if token_out_from_metapool
                     else self.tokens_underlying.index(token_out)
                 ),
@@ -2344,6 +1233,8 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 override_state=override_state,
             )
         if all(tokens_used_in_base_pool):
+            if TYPE_CHECKING:
+                assert self.tokens_underlying is not None
             token_in_from_basepool = token_in in self.tokens_underlying
             token_out_from_basepool = token_out in self.tokens_underlying
             assert token_in_from_basepool or token_out_from_basepool
@@ -2357,12 +1248,109 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             )
 
         raise DegenbotValueError(
-            message="Tokens not held by pool or in underlying base pool"
+            message="Tokens not held by pool or in underlying base pool",
         )  # pragma: no cover
 
-    def get_arbitrage_helpers(self) -> tuple[AbstractArbitrage, ...]:
-        return tuple(
-            subscriber
-            for subscriber in self._subscribers
-            if isinstance(subscriber, AbstractArbitrage)
+    def simulate_swap(
+        self,
+        token_in: ChecksumAddress,
+        amount_in: int,
+        token_out: ChecksumAddress,
+        state_override: AbstractPoolState | None = None,
+    ) -> SimulationResult:
+        """Simulate swap.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            DegenbotValueError: See function documentation.
+
+        """
+        curve_state: CurveStableswapPoolState | None = None
+        if state_override is not None:
+            if not isinstance(state_override, CurveStableswapPoolState):
+                msg = f"Expected CurveStableswapPoolState, got {type(state_override).__name__}"
+                raise DegenbotValueError(message=msg)
+            curve_state = state_override
+        token_in_obj = next((t for t in self._tokens if t.address == token_in), None)
+        if token_in_obj is None:
+            all_tokens = list(self._tokens)
+            if self.base_pool is not None:
+                all_tokens.extend(self.base_pool.tokens)
+            if token_in not in {t.address for t in all_tokens}:
+                raise DegenbotValueError(message=f"token_in {token_in} not in pool")
+
+        token_out_obj = next((t for t in self._tokens if t.address == token_out), None)
+        if token_out_obj is None:
+            all_tokens = list(self._tokens)
+            if self.base_pool is not None:
+                all_tokens.extend(self.base_pool.tokens)
+            if token_out not in {t.address for t in all_tokens}:
+                raise DegenbotValueError(message=f"token_out {token_out} not in pool")
+
+        if token_in_obj is None or token_out_obj is None:
+            msg = f"token_in {token_in} or token_out {token_out} not found in pool tokens"
+            raise DegenbotValueError(message=msg)
+
+        initial_state = curve_state or self.state
+        amount_out = self.calculate_tokens_out_from_tokens_in(
+            token_in=token_in_obj,
+            token_out=token_out_obj,
+            token_in_quantity=amount_in,
+            override_state=curve_state,
         )
+        return SimulationResult(
+            amount_in=amount_in,
+            amount_out=amount_out,
+            initial_state=initial_state,
+            final_state=initial_state,
+        )
+
+
+class _LazyBasePool:
+    """Production adapter satisfying ``BasePoolPort`` for a metapool's base pool.
+
+    Holds the base pool's ``PyLiquidityPool`` handle (resolved by the Rust
+    go-between ``curve_base_pool()`` — same shared ``BotState`` core, no
+    Python registry lookup) and memoises the base companion on first use.
+    Defers construction so a metapool that never takes the base swap path
+    pays zero base-pool cost, and at most one companion across a full calc
+    (ADR-005 BQM2OA). Satisfies the ``BasePoolPort`` surface — the six
+    members the ``DyCalculator`` actually calls.
+
+    Defined after ``CurveStableswapPool`` (forward reference); resolved as a
+    module global at call time from within ``CurveStableswapPool._from_py_pool``.
+    """
+
+    __slots__ = ("_built", "_handle")
+
+    def __init__(self, handle: PyLiquidityPool) -> None:
+        self._handle = handle
+        self._built = None
+
+    def _pool(self) -> CurveStableswapPool:
+        if self._built is None:
+            self._built = CurveStableswapPool._from_py_pool(self._handle)  # noqa: SLF001
+        return self._built
+
+    @property
+    def tokens(self) -> tuple[Erc20Token, ...]:
+        return self._pool().tokens
+
+    @property
+    def balances(self) -> tuple[int, ...]:
+        return self._pool().balances
+
+    @property
+    def fee(self) -> int:
+        return self._pool().fee
+
+    def calc_token_amount(self, *args: Any, **kwargs: Any) -> int:
+        return self._pool().calc_token_amount(*args, **kwargs)
+
+    def get_dy(self, *args: Any, **kwargs: Any) -> int:
+        return self._pool().get_dy(*args, **kwargs)
+
+    def calc_withdraw_one_coin(self, *args: Any, **kwargs: Any) -> tuple[int, ...]:
+        return self._pool().calc_withdraw_one_coin(*args, **kwargs)

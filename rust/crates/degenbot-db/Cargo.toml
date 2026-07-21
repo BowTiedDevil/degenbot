@@ -1,0 +1,46 @@
+[package]
+name = "degenbot-db"
+description = "SQLite persistence substrate for the degenbot Rust core — pyo3-free read handle with an Alembic-aware schema gate."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+complexity = "warn"
+correctness = "warn"
+pedantic = "warn"
+perf = "warn"
+style = "warn"
+suspicious = "warn"
+
+# Pure-Rust persistence leaf: rusqlite (bundled libsqlite3-sys, no system
+# SQLite required) + alloy primitives for Address/U256/B256 decode at the row
+# boundary. NO pyo3, NO tokio, NO sqlx — the read fns are short synchronous
+# SQLite lookups. Verified pyo3-free under default features by 
+# `just check-no-pyo3-in-cores`.
+[dependencies]
+alloy = { version = "^2.0" }
+# CL liquidity-mapping math — `apply_liquidity_mapping_update` drives the V3/V4
+# DB-aware liquidity updater's per-event tick/bitmap mutation (task QJSCA5).
+# Pyo3-free core; verified by `just check-no-pyo3-in-cores`.
+degenbot-cl-math = { path = "../degenbot-cl-math" }
+degenbot-pathfinding = { path = "../degenbot-pathfinding" }
+parking_lot = { version = "^0.12" }
+# Float upward across rusqlite's 0.x point releases (each minor is semver-
+# breaking) but cap below a future 1.0 cutover. The `bundled` feature lives
+# only here so libsqlite3-sys is compiled once for the whole workspace.
+# See ADR-010/ADR-011 before reining this in — the on-disk SQLite version
+# this ships is the one creating/reading the Alembic-era .db files.
+rusqlite = { version = "^0.40", features = ["bundled", "backup"] }
+thiserror = { version = "^2.0" }
+
+[dev-dependencies]
+serde = { version = "^1.0", features = ["derive"] }
+serde_json = { version = "^1.0" }
+tempfile = { version = "^3.0" }
