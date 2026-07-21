@@ -39,6 +39,10 @@ revm = { version = "41.0.0", default-features = true, features = ["alloydb", "as
 # → 2.2.0). `full` brings the RPC types + provider-http the PoC verified.
 alloy = { version = "^2.0", features = ["full"] }
 degenbot-core = { path = "../degenbot-core" }
+# `WarmupSlots` + `compute_simulation_warmup_slots` — the warmup slot addresses
+# crossed from the executor leaf (same pyo3-free core layer). The state-override
+# adaptor (RBCQTQ) consumes the slot keys directly; no logic duplication.
+degenbot-executor = { path = "../degenbot-executor" }
 thiserror = { version = "^2.0" }
 # `tokio` is required by `WrapDatabaseAsync` (it blocks the async `AlloyDB`
 # `DatabaseAsyncRef` calls on a runtime — `WrapDatabaseAsync::new` needs a
