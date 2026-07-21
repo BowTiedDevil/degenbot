@@ -37,6 +37,26 @@ Use `ergo` for all feature planning. Discover usage with `ergo --help` and `ergo
 ## Refactoring & Feature Development
 Use Red/Green TDD while refactoring and implementing new features.
 
+## Writing Discoverable Code
+Agents (and humans) navigate by plain-text search, not hover or jump-to-definition. Make code resolvable in one search.
+
+- **Exported symbols get descriptive names.** Prefer 2–4 words with at least one domain term (`calculate_tokens_out_from_v2_pool`, not `calc_out`). The shortest globally-unique name wins; uniqueness is tested by search.
+- **Do not disambiguate via module path only.** `rust/crates/degenbot-uniswap/src/state.rs` communicates less at the call site than `uniswap_v2_state_pool_token_balances`. Use path conventions where they are rigid and absolute (e.g. `Input`/`Output` in encoder modules), but prefer the name itself to carry meaning.
+- **One concept, one spelling.** Reuse existing vocabulary; avoid introducing synonyms (`lending_pool` vs `money_market`). When behavior changes, rename in the same commit.
+- **Filenames are search queries.** Avoid bare-role names (`utils.rs`, `types.rs`, `helpers.rs`). Prefix with the domain (`uniswap_v3_tick_math.rs`, `erc20_token_registry.rs`). `lib.rs`/`mod.rs` are acceptable only as thin re-export entry points.
+- **Doc comments at every export.** One line stating the sharpest thing the signature cannot show (units, timezone, ownership, ordering). Include the plain-word phrase someone would search ("token balance" not just `token_bal`).
+- **Keep strings whole.** Do not build event names, error codes, or log prefixes with template interpolation; write full literals so log greps return to the source. Error messages start with a unique literal prefix (`"Pool state missing token0"`, not `"{context}: missing token"`).
+- **Colocate tests.** Rust unit tests live in the same file; integration tests live under `tests/` or `rust/crates/<crate>/tests/` with a name matching the module they cover.
+- **Mark dead ends.** Use `#[deprecated]` / `TODO` / `DEPRECATED` with a pointer to the replacement path.
+
+### Commit checklist for discoverability
+1. Can one search for each new exported name find its definition?
+2. Would swapping two same-typed arguments fail the build? (Brand IDs, use newtypes, or add distinct parameter types.)
+3. Is the one critical thing a caller must know written at the definition site?
+4. Do all error/log strings appear verbatim in source?
+5. Did behavior change without a corresponding rename?
+6. When code moved, was it removed from the old location?
+
 ## Commands
 Uses `just` (see justfile) and `uv` as the package runner. Key commands:
 
