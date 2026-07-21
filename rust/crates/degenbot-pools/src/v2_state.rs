@@ -2,7 +2,9 @@
 //! **Relocated** from `degenbot-bot/src/bot_core/mod.rs`; re-exported there
 //! at the historical `bot_core::V2*`/`RegisterV2*` path.
 
-use crate::state_history::{JournalError, ReorgJournal, ReorgPoolState, V2BlockDelta};
+use crate::state_history::{
+    JournalError, ReorgJournal, ReorgPoolState, ReservePairPoolState, V2BlockDelta,
+};
 use alloy::primitives::{aliases::U112, Address, B256};
 use degenbot_uniswap::dex_identity::DexVariant;
 
@@ -196,16 +198,18 @@ impl V2PoolState {
         (identity, state)
     }
 
-    /// Apply a V2 `Sync` event to this pool's reserves, capturing the prior
-    /// reserves into the reorg journal (ADR-014 D1 — relocated from
-    /// `BotState::apply_v2_sync_by_pool_id`).
-    ///
-    /// Pushes a full-state `V2BlockDelta` (`before` = pre-sync reserves,
-    /// `after` = the new reserves, at `block_number`), then overwrites
-    /// `reserve0`/`reserve1` and advances `update_block`. The genesis-anchor
-    /// discipline (registration's `before == after`) is what makes
-    /// `restore_before_block` land at registration.
-    pub fn apply_sync(&mut self, reserve0: U112, reserve1: U112, block_number: u64) {
+    // Apply `Sync` is on `ReservePairPoolState` (ADR-017 slice 5 —
+    // byte-identical to the Aerodrome impl modulo the struct name).
+    //
+    // Pushes a full-state `V2BlockDelta` (`before` = pre-sync reserves,
+    // `after` = the new reserves, at `block_number`), then overwrites
+    // `reserve0`/`reserve1` and advances `update_block`. The genesis-anchor
+    // discipline (registration's `before == after`) is what makes
+    // `restore_before_block` land at registration.
+}
+
+impl ReservePairPoolState for V2PoolState {
+    fn apply_sync(&mut self, reserve0: U112, reserve1: U112, block_number: u64) {
         self.journal.push_delta(V2BlockDelta {
             block: block_number,
             reserve0_before: self.reserve0,
