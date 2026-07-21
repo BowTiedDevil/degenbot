@@ -2,7 +2,7 @@
 //! **Relocated** from `degenbot-bot/src/bot_core/mod.rs`; re-exported there
 //! at the historical `bot_core::V2*`/`RegisterV2*` path.
 
-use crate::state_history::{ReorgJournal, V2BlockDelta};
+use crate::state_history::{JournalError, ReorgJournal, ReorgPoolState, V2BlockDelta};
 use alloy::primitives::{aliases::U112, Address, B256};
 use degenbot_uniswap::dex_identity::DexVariant;
 
@@ -216,6 +216,29 @@ impl V2PoolState {
         self.reserve0 = reserve0;
         self.reserve1 = reserve1;
         self.update_block = block_number;
+    }
+}
+
+// ADR-016 — pool-owned reorg rollback for the reserve-pair family. The
+// field-write previously duplicated across the `BotState::v2_*` /
+// `aerodrome_*` restore dispatchers is absorbed into the state struct;
+// restore returns `()` so the trait is no-op-free. Byte-identical to the
+// Aerodrome impl modulo the struct name.
+impl ReorgPoolState for V2PoolState {
+    fn restore_before_block(&mut self, block: u64) -> Result<(), JournalError> {
+        let (reserve0, reserve1, landed_block) = self.journal.restore_before_block(block)?;
+        self.reserve0 = reserve0;
+        self.reserve1 = reserve1;
+        self.update_block = landed_block;
+        Ok(())
+    }
+
+    fn discard_before_block(&mut self, block: u64) -> Result<(), JournalError> {
+        self.journal.discard_before_block(block)
+    }
+
+    fn journal_len(&self) -> usize {
+        self.journal.len()
     }
 }
 

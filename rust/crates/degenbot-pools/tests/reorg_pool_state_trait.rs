@@ -28,11 +28,13 @@
 //! struct's PUBLIC `balances`/`update_block` fields after restore — no internals
 //! mocked, no `BotState`.
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{aliases::U112, Address, U256};
+use degenbot_pools::aerodrome_v2_state::AerodromeV2PoolState;
 use degenbot_pools::balancer_stable_state::BalancerStablePoolState;
 use degenbot_pools::balancer_weighted_state::BalancerWeightedPoolState;
 use degenbot_pools::curve_state::CurvePoolState;
-use degenbot_pools::state_history::{BalancesBlockDelta, JournalError, ReorgJournal};
+use degenbot_pools::state_history::{BalancesBlockDelta, JournalError, ReorgJournal, V2BlockDelta};
+use degenbot_pools::v2_state::V2PoolState;
 use degenbot_pools::ReorgPoolState;
 
 const GENESIS_BLOCK: u64 = 10;
@@ -389,4 +391,127 @@ fn balancer_stable_discard_before_block_returns_unit_and_drops_old_deltas() {
         "discard does not mutate live state"
     );
     assert_eq!(state.update_block, SWAP_BLOCK);
+}
+
+// ---------------------------------------------------------------------------
+// V2 (reserve-pair) — restore writes reserve fields, returns ()
+// ---------------------------------------------------------------------------
+
+fn genesis_reserves() -> (U112, U112) {
+    (U112::from(1000u64), U112::from(1000u64))
+}
+
+fn after_swap_reserves() -> (U112, U112) {
+    (U112::from(1100u64), U112::from(909u64))
+}
+
+fn v2_post_swap() -> V2PoolState {
+    let (r0, r1) = genesis_reserves();
+    let (a0, a1) = after_swap_reserves();
+    let mut journal = ReorgJournal::<V2BlockDelta>::new(8);
+    journal.push_delta(V2BlockDelta {
+        block: GENESIS_BLOCK,
+        reserve0_before: r0,
+        reserve1_before: r1,
+        reserve0_after: r0,
+        reserve1_after: r1,
+    });
+    journal.push_delta(V2BlockDelta {
+        block: SWAP_BLOCK,
+        reserve0_before: r0,
+        reserve1_before: r1,
+        reserve0_after: a0,
+        reserve1_after: a1,
+    });
+    V2PoolState {
+        reserve0: a0,
+        reserve1: a1,
+        update_block: SWAP_BLOCK,
+        journal,
+    }
+}
+
+#[test]
+fn v2_restore_before_block_returns_unit_and_writes_landed_at_fields() {
+    let (r0, r1) = genesis_reserves();
+    let (a0, a1) = after_swap_reserves();
+    let mut state = v2_post_swap();
+    assert_eq!(state.reserve0, a0);
+    assert_eq!(state.reserve1, a1);
+    assert_eq!(state.update_block, SWAP_BLOCK);
+    assert_eq!(state.journal_len(), 2);
+
+    let result: Result<(), JournalError> = state.restore_before_block(GENESIS_BLOCK + 1);
+
+    assert!(result.is_ok());
+    assert_eq!(state.reserve0, r0, "reserve0 rolls back to genesis");
+    assert_eq!(state.reserve1, r1, "reserve1 rolls back to genesis");
+    assert_eq!(state.update_block, GENESIS_BLOCK);
+    assert_eq!(state.journal_len(), 1, "swap delta was popped");
+}
+
+#[test]
+fn v2_restore_before_block_no_op_when_newest_before_target() {
+    let mut state = v2_post_swap();
+    let result = state.restore_before_block(SWAP_BLOCK + 100);
+    assert!(result.is_ok());
+    let (a0, a1) = after_swap_reserves();
+    assert_eq!(state.reserve0, a0, "post-swap state survives no-op");
+    assert_eq!(state.reserve1, a1);
+    assert_eq!(state.journal_len(), 2, "journal untouched on no-op");
+}
+
+// ---------------------------------------------------------------------------
+// Aerodrome (reserve-pair) — restore writes reserve fields, returns ()
+// ---------------------------------------------------------------------------
+
+fn aerodrome_post_swap() -> AerodromeV2PoolState {
+    let (r0, r1) = genesis_reserves();
+    let (a0, a1) = after_swap_reserves();
+    let mut journal = ReorgJournal::<V2BlockDelta>::new(8);
+    journal.push_delta(V2BlockDelta {
+        block: GENESIS_BLOCK,
+        reserve0_before: r0,
+        reserve1_before: r1,
+        reserve0_after: r0,
+        reserve1_after: r1,
+    });
+    journal.push_delta(V2BlockDelta {
+        block: SWAP_BLOCK,
+        reserve0_before: r0,
+        reserve1_before: r1,
+        reserve0_after: a0,
+        reserve1_after: a1,
+    });
+    AerodromeV2PoolState {
+        reserve0: a0,
+        reserve1: a1,
+        update_block: SWAP_BLOCK,
+        journal,
+    }
+}
+
+#[test]
+fn aerodrome_restore_before_block_returns_unit_and_writes_landed_at_fields() {
+    let (r0, r1) = genesis_reserves();
+    let mut state = aerodrome_post_swap();
+
+    let result: Result<(), JournalError> = state.restore_before_block(GENESIS_BLOCK + 1);
+
+    assert!(result.is_ok());
+    assert_eq!(state.reserve0, r0, "reserve0 rolls back to genesis");
+    assert_eq!(state.reserve1, r1, "reserve1 rolls back to genesis");
+    assert_eq!(state.update_block, GENESIS_BLOCK);
+    assert_eq!(state.journal_len(), 1, "swap delta was popped");
+}
+
+#[test]
+fn aerodrome_discard_before_block_returns_unit_and_drops_old_deltas() {
+    let (a0, a1) = after_swap_reserves();
+    let mut state = aerodrome_post_swap();
+    let result: Result<(), JournalError> = state.discard_before_block(SWAP_BLOCK);
+    assert!(result.is_ok());
+    assert_eq!(state.journal_len(), 1, "genesis delta discarded");
+    assert_eq!(state.reserve0, a0, "discard does not mutate live state");
+    assert_eq!(state.reserve1, a1);
 }
