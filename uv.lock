@@ -609,7 +609,6 @@ dependencies = [
     { name = "click" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
-    { name = "scipy" },
     { name = "sqlalchemy" },
     { name = "tenacity" },
     { name = "tomlkit" },
@@ -632,6 +631,7 @@ dev = [
     { name = "pytest-xdist" },
     { name = "python-dotenv" },
     { name = "ruff" },
+    { name = "scipy" },
     { name = "sybil" },
     { name = "ty" },
     { name = "vulture" },
@@ -645,7 +645,6 @@ requires-dist = [
     { name = "click", specifier = "~=8.4" },
     { name = "pydantic", specifier = "~=2.13" },
     { name = "pydantic-settings", specifier = "~=2.14" },
-    { name = "scipy", specifier = "~=1.17" },
     { name = "sqlalchemy", specifier = "~=2.0" },
     { name = "tenacity", specifier = "~=9.1" },
     { name = "tomlkit", specifier = "~=0.15" },
@@ -668,11 +667,12 @@ dev = [
     { name = "pytest-xdist" },
     { name = "python-dotenv" },
     { name = "ruff" },
+    { name = "scipy" },
     { name = "sybil" },
     { name = "ty" },
-    { name = "vulture", specifier = ">=2.16" },
+    { name = "vulture" },
     { name = "vyper" },
-    { name = "web3", specifier = "~=7.14" },
+    { name = "web3" },
 ]
 
 [[package]]
