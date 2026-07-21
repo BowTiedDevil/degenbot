@@ -47,18 +47,30 @@ pub enum Identity {
     },
 }
 
+/// Concrete DEX variant behind a [`Structure::ReservePair`] pool.
+///
+/// Distinguishes the Uniswap-V2-style constant-product family from the
+/// Aerodrome-V2 volatile/stable pair.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReservePairVariant {
     UniswapV2,
     AerodromeV2 { stable: bool },
 }
 
+/// Concrete DEX variant behind a [`Structure::ConcentratedLiquidity`] pool.
+///
+/// Distinguishes Uniswap V3 (factory-addressed pool) from Uniswap V4
+/// (singleton + `PoolId`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConcentratedLiquidityVariant {
     UniswapV3,
     UniswapV4,
 }
 
+/// Concrete DEX variant behind a [`Structure::BalanceVector`] pool.
+///
+/// Distinguishes the N-token balance-pool families: Curve stableswap and
+/// the Balancer weighted / stable subsets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BalanceVectorVariant {
     Curve,
