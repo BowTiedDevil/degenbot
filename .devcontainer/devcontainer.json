@@ -217,7 +217,14 @@
       ],
       "settings": {
         "python.defaultInterpreterPath": "/home/dev/.venvs/degenbot/bin/python",
-        "python.venvPath": "/home/dev/.venvs"
+        "python.venvPath": "/home/dev/.venvs",
+        // Isolate rust-analyzer's build artifacts into target/rust-analyzer so
+        // it does not invalidate (or be invalidated by) `cargo build` /
+        // `uv sync` fingerprint state in target/. Without this, a `uv sync`
+        // cdylib rebuild or a `cargo build` flip-flops rust-analyzer into a
+        // full recheck (~19s first-check tax; see rust/PERF_RESULTS.md
+        // lever #4). `true` resolves to target/rust-analyzer.
+        "rust-analyzer.cargo.targetDir": true
       }
     }
   },

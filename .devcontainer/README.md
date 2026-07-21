@@ -92,6 +92,7 @@ time):
 | Node 24 LTS | `nodejs24`                                | Active LTS (EOL 2028-04). Provides node + npm in one package; satisfies pi's `>=22.19.0` floor. |
 | `just`      | `just`                                    |                                                  |
 | `uv`        | `uv`                                      | Fedora packages uv directly (unlike Ubuntu).     |
+| mold, lld   | `mold`, `lld`                             | Faster cargo linkers (dev-only perf; see `rust/PERF_RESULTS.md`). mold is the default via the user-level `~/.cargo/config.toml` baked in the Dockerfile; lld is installed as a fallback. Scoped to the devcontainer (NOT committed as `rust/.cargo/config.toml`) so CI and non-devcontainer cloners keep using the default system linker. |
 | `tmux`      | `tmux`                                    | baked in (was runtime-installed before)          |
 | git / curl  | `git`, `curl`, `ca-certificates`, ...     |                                                  |
 
@@ -104,6 +105,7 @@ post-create-installed tools went missing after any container recreate):
 |---------|----------------------|----------------------------------------------------------------------------------------------------------------|
 | Foundry | `foundryup` (latest) | Blockchain toolchain; no dnf path. `forge`, `cast`, `anvil` in `~/.foundry/bin`. Rebuilds pick up newer Foundry — pin (`foundryup -v <tag>`) if reproducibility matters. |
 | `pi`    | `npm i -g @earendil-works/pi-coding-agent` | npm prefix is set to `~/.local` in the Dockerfile, so the binary lands in `~/.local/bin` with no sudo. Matches host version era. |
+| `cargo-nextest` | `cargo install --locked cargo-nextest` | Faster Rust test runner (~20% faster build+run than `cargo test`; see `rust/PERF_RESULTS.md` lever #3). Lands in `~/.cargo/bin`. Dev-only — CI does not install nextest, so the CI-facing `just test-rust` recipe still uses `cargo test`; the dev-only `just test-rust-nextest` recipe uses this binary (and falls back to `cargo test` if absent). |
 
 ## Bind mounts (host → container)
 
@@ -179,6 +181,20 @@ tmux show -gv terminal-overrides         # expect *:Tc present
   but no `rustup`, so `rustup target add ...` / toolchain pinning don't work. If
   you need cross-compilation targets or pinned toolchains, re-introduce rustup
   (drop the dnf rust packages) in the Dockerfile.
+- **mold linker is the devcontainer default** via the user-level
+  `~/.cargo/config.toml` baked into the image (NOT a committed
+  `rust/.cargo/config.toml`). This is deliberate: a repo-local config would
+  force mold on CI (ubuntu-latest, no mold → link failures) and on
+  non-devcontainer cloners. Scoping it to the image keeps the repo buildable
+  anywhere with the default linker while giving the devcontainer the
+  measured build/link speedups (see `rust/PERF_RESULTS.md` lever #1). To
+  disable mold locally, delete or edit `~/.cargo/config.toml`; to try lld
+  instead, swap `-fuse-ld=mold` for `-fuse-ld=lld` (lld is also installed).
+- **cargo-nextest is dev-only**: the devcontainer image installs
+  `cargo-nextest` and the dev-only `just test-rust-nextest` recipe uses it
+  (falling back to `cargo test` if absent). The CI-facing `just test-rust`
+  recipe is unchanged and still uses `cargo test`, because CI does not
+  install nextest. See `rust/PERF_RESULTS.md` lever #3.
 - **Python follows `fedora:latest`** (currently 3.14). The project declares
   `requires-python >= 3.12`, so this is in-spec. `tool.ty.environment
   python-version = "3.12"` is the type-checker's analysis target only — it
