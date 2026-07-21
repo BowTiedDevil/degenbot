@@ -363,6 +363,12 @@ pub trait ReorgPoolState {
     /// Number of deltas currently held in the reorg journal.
     #[must_use]
     fn journal_len(&self) -> usize;
+
+    /// Block number of the newest delta in the journal, or `None` if empty.
+    /// Used by bulk restore to skip pools whose newest delta landed strictly
+    /// before the reorg target (idempotent no-op). See ADR-016.
+    #[must_use]
+    fn newest_block(&self) -> Option<u64>;
 }
 
 // ---------------------------------------------------------------------------

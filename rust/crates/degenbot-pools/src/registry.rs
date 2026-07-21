@@ -185,6 +185,39 @@ impl PoolEntry {
             None
         }
     }
+
+    /// Project to `&dyn ReorgPoolState` (ADR-016). One match over all 7
+    /// variants — used by `BotState`'s unified reorg dispatchers
+    /// (`restore_pool_before_block` / `discard_pool_before_block` /
+    /// `pool_journal_len`) to dispatch through the trait without re-matching
+    /// family inline.
+    #[must_use]
+    pub fn as_reorg_state(&self) -> Option<&dyn crate::state_history::ReorgPoolState> {
+        Some(match self {
+            PoolEntry::V2(_, s) => s,
+            PoolEntry::V3(_, s) => s,
+            PoolEntry::V4(_, s) => s,
+            PoolEntry::Curve(_, s) => s,
+            PoolEntry::BalancerWeighted(_, s) => s,
+            PoolEntry::BalancerStable(_, s) => s,
+            PoolEntry::AerodromeV2(_, s) => s,
+        })
+    }
+
+    /// Mutable projection to `&mut dyn ReorgPoolState` (ADR-016) — the write
+    /// twin of [`as_reorg_state`](Self::as_reorg_state).
+    #[must_use]
+    pub fn as_reorg_state_mut(&mut self) -> Option<&mut dyn crate::state_history::ReorgPoolState> {
+        Some(match self {
+            PoolEntry::V2(_, s) => s,
+            PoolEntry::V3(_, s) => s,
+            PoolEntry::V4(_, s) => s,
+            PoolEntry::Curve(_, s) => s,
+            PoolEntry::BalancerWeighted(_, s) => s,
+            PoolEntry::BalancerStable(_, s) => s,
+            PoolEntry::AerodromeV2(_, s) => s,
+        })
+    }
 }
 
 /// Read-only surface shared by [`V3PoolState`] and [`V4PoolState`] — the

@@ -1510,7 +1510,12 @@ impl PyLiquidityPool {
 
     /// Number of deltas in the V2 reorg journal (genesis + transitions).
     fn journal_len(&self) -> usize {
-        self.core.read().v2_journal_len(self.pool_id)
+        let core = self.core.read();
+        if core.get_v2_pool_state(self.pool_id).is_none() {
+            0
+        } else {
+            core.pool_journal_len(self.pool_id).unwrap_or(0)
+        }
     }
 
     /// Discard V2 reorg journal deltas earlier than `block`.
@@ -1520,9 +1525,12 @@ impl PyLiquidityPool {
     ///         every known state).
     #[pyo3(signature = (block))]
     fn discard_before_block(&self, block: u64) -> PyResult<()> {
-        self.core
-            .write()
-            .v2_discard_before_block(self.pool_id, block)
+        let mut core = self.core.write();
+        if core.get_v2_pool_state(self.pool_id).is_none() {
+            return Ok(());
+        }
+        core.discard_pool_before_block(self.pool_id, block)
+            .unwrap_or(Ok(()))
             .map_err(journal_err_to_py)
     }
 
@@ -1535,27 +1543,37 @@ impl PyLiquidityPool {
     ///     `ValueError`: If `block` is at or before the registration block.
     #[pyo3(signature = (block))]
     fn restore_before_block(&self, py: Python<'_>, block: u64) -> PyResult<Option<Py<PyAny>>> {
-        let result = {
+        // Read-after-restore (ADR-016): post-restore reserves == the
+        // before-values the per-family tuple previously carried.
+        let (r0, r1, blk) = {
             let mut core = self.core.write();
-            core.v2_restore_before_block(self.pool_id, block)
-        };
-        match result {
-            None => Ok(None),
-            Some(Err(e)) => Err(journal_err_to_py(e)),
-            Some(Ok((r0, r1, blk))) => {
-                let r0 = r0.to::<alloy::primitives::U256>();
-                let r1 = r1.to::<alloy::primitives::U256>();
-                let tuple = pyo3::types::PyTuple::new(
-                    py,
-                    [
-                        crate::conversion::alloy::u256_to_py(py, &r0)?.unbind(),
-                        crate::conversion::alloy::u256_to_py(py, &r1)?.unbind(),
-                        blk.into_pyobject(py)?.into_any().unbind(),
-                    ],
-                )?;
-                Ok(Some(tuple.into_any().unbind()))
+            if core.get_v2_pool_state(self.pool_id).is_none() {
+                return Ok(None);
             }
-        }
+            match core.restore_pool_before_block(self.pool_id, block) {
+                None => return Ok(None),
+                Some(Err(e)) => return Err(journal_err_to_py(e)),
+                Some(Ok(())) => {
+                    let state = core
+                        .get_v2_pool_state(self.pool_id)
+                        .expect("V2 pool confirmed above");
+                    (
+                        state.reserve0.to::<alloy::primitives::U256>(),
+                        state.reserve1.to::<alloy::primitives::U256>(),
+                        state.update_block,
+                    )
+                }
+            }
+        };
+        let tuple = pyo3::types::PyTuple::new(
+            py,
+            [
+                crate::conversion::alloy::u256_to_py(py, &r0)?.unbind(),
+                crate::conversion::alloy::u256_to_py(py, &r1)?.unbind(),
+                blk.into_pyobject(py)?.into_any().unbind(),
+            ],
+        )?;
+        Ok(Some(tuple.into_any().unbind()))
     }
 
     // --- Aerodrome V2 reorg journal ---
@@ -1566,9 +1584,12 @@ impl PyLiquidityPool {
     ///     `ValueError`: If the target is past the newest delta.
     #[pyo3(signature = (block))]
     fn discard_aerodrome_before_block(&self, block: u64) -> PyResult<()> {
-        self.core
-            .write()
-            .aerodrome_discard_before_block(self.pool_id, block)
+        let mut core = self.core.write();
+        if core.get_aerodrome_pool(self.pool_id).is_none() {
+            return Ok(());
+        }
+        core.discard_pool_before_block(self.pool_id, block)
+            .unwrap_or(Ok(()))
             .map_err(journal_err_to_py)
     }
 
@@ -1585,27 +1606,36 @@ impl PyLiquidityPool {
         py: Python<'_>,
         block: u64,
     ) -> PyResult<Option<Py<PyAny>>> {
-        let result = {
+        // Read-after-restore (ADR-016).
+        let (r0, r1, blk) = {
             let mut core = self.core.write();
-            core.aerodrome_restore_before_block(self.pool_id, block)
-        };
-        match result {
-            None => Ok(None),
-            Some(Err(e)) => Err(journal_err_to_py(e)),
-            Some(Ok((r0, r1, blk))) => {
-                let r0 = r0.to::<alloy::primitives::U256>();
-                let r1 = r1.to::<alloy::primitives::U256>();
-                let tuple = pyo3::types::PyTuple::new(
-                    py,
-                    [
-                        crate::conversion::alloy::u256_to_py(py, &r0)?.unbind(),
-                        crate::conversion::alloy::u256_to_py(py, &r1)?.unbind(),
-                        blk.into_pyobject(py)?.into_any().unbind(),
-                    ],
-                )?;
-                Ok(Some(tuple.into_any().unbind()))
+            if core.get_aerodrome_pool(self.pool_id).is_none() {
+                return Ok(None);
             }
-        }
+            match core.restore_pool_before_block(self.pool_id, block) {
+                None => return Ok(None),
+                Some(Err(e)) => return Err(journal_err_to_py(e)),
+                Some(Ok(())) => {
+                    let state = core
+                        .get_aerodrome_pool(self.pool_id)
+                        .expect("Aerodrome pool confirmed above");
+                    (
+                        state.reserve0.to::<alloy::primitives::U256>(),
+                        state.reserve1.to::<alloy::primitives::U256>(),
+                        state.update_block,
+                    )
+                }
+            }
+        };
+        let tuple = pyo3::types::PyTuple::new(
+            py,
+            [
+                crate::conversion::alloy::u256_to_py(py, &r0)?.unbind(),
+                crate::conversion::alloy::u256_to_py(py, &r1)?.unbind(),
+                blk.into_pyobject(py)?.into_any().unbind(),
+            ],
+        )?;
+        Ok(Some(tuple.into_any().unbind()))
     }
 
     // --- V3 mutations (plan-101 slice 8a) ---
@@ -1799,13 +1829,12 @@ impl PyLiquidityPool {
     fn discard_v3_before_block(&self, block: u64) -> PyResult<()> {
         let mut core = self.core.write();
         // J63J3N: only apply when this handle points at a V3/V4 pool —
-        // otherwise silently no-op (avoids corrupting a V2's journal from a
-        // V3-shaped companion). The family dispatcher routes V4 to its own
-        // journal method; V2 / unregistered no-ops (V3's contract).
+        // otherwise silently no-op. Unified dispatcher (ADR-016).
         if core.get_v3_or_v4_pool(self.pool_id).is_none() {
             return Ok(());
         }
-        core.discard_v3_or_v4_before_block(self.pool_id, block)
+        core.discard_pool_before_block(self.pool_id, block)
+            .unwrap_or(Ok(()))
             .map_err(journal_err_to_py)
     }
 
@@ -1818,33 +1847,40 @@ impl PyLiquidityPool {
     ///     `ValueError`: If `block` is at or before the registration block.
     #[pyo3(signature = (block))]
     fn restore_v3_before_block(&self, py: Python<'_>, block: u64) -> PyResult<Option<Py<PyAny>>> {
-        let result = {
+        // Read-after-restore (ADR-016 D4): the trait returns `()`; the
+        // post-restore scalar fields ARE the before-values the
+        // `V3RestoreResult.scalar_priors` previously carried.
+        let (sqrt_p, liq, tick, blk) = {
             let mut core = self.core.write();
             if core.get_v3_or_v4_pool(self.pool_id).is_none() {
                 return Ok(None);
             }
-            core.restore_v3_or_v4_before_block(self.pool_id, block)
-        };
-        match result {
-            None => Ok(None),
-            Some(restore) => {
-                let p = restore
-                    .scalar_priors
-                    .as_ref()
-                    .expect("post-restore scalar_priors must be Some");
-                let tuple = pyo3::types::PyTuple::new(
-                    py,
-                    [
-                        crate::conversion::alloy::u256_to_py(py, &p.sqrt_price_x96_before)?
-                            .unbind(),
-                        p.liquidity_before.into_pyobject(py)?.into_any().unbind(),
-                        p.tick_before.into_pyobject(py)?.into_any().unbind(),
-                        restore.block.into_pyobject(py)?.into_any().unbind(),
-                    ],
-                )?;
-                Ok(Some(tuple.into_any().unbind()))
+            match core.restore_pool_before_block(self.pool_id, block) {
+                None => return Ok(None),
+                Some(Err(e)) => return Err(journal_err_to_py(e)),
+                Some(Ok(())) => {
+                    let s = core
+                        .get_v3_or_v4_pool(self.pool_id)
+                        .expect("V3/V4 pool confirmed above");
+                    (
+                        s.sqrt_price_x96(),
+                        s.liquidity(),
+                        s.tick(),
+                        s.update_block(),
+                    )
+                }
             }
-        }
+        };
+        let tuple = pyo3::types::PyTuple::new(
+            py,
+            [
+                crate::conversion::alloy::u256_to_py(py, &sqrt_p)?.unbind(),
+                liq.into_pyobject(py)?.into_any().unbind(),
+                tick.into_pyobject(py)?.into_any().unbind(),
+                blk.into_pyobject(py)?.into_any().unbind(),
+            ],
+        )?;
+        Ok(Some(tuple.into_any().unbind()))
     }
 
     /// Snapshot of the V3/V4 `tick_data` `HashMap` as a Python dict.

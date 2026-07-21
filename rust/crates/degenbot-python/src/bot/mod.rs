@@ -1688,7 +1688,14 @@ impl PyBot {
     ///
     /// Returns 0 if the pool ID is not registered or is not a V3 pool.
     fn v3_journal_len(&self, pool_id: u64) -> usize {
-        self.bot.state_arc().read().v3_journal_len(pool_id)
+        let state = self.bot.state_arc();
+        let core = state.read();
+        // Family guard: 0 for non-V3/V4 (preserves the per-family contract).
+        if core.get_v3_or_v4_pool(pool_id).is_none() {
+            0
+        } else {
+            core.pool_journal_len(pool_id).unwrap_or(0)
+        }
     }
 
     /// Discard V3 reorg journal deltas earlier than the given block.
@@ -1698,10 +1705,14 @@ impl PyBot {
     /// is past the newest delta. Raises `ValueError` on error (ADR-005 slice 4).
     #[pyo3(signature = (pool_id, block))]
     fn v3_discard_before_block(&self, pool_id: u64, block: u64) -> PyResult<()> {
-        self.bot
-            .state_arc()
-            .write()
-            .v3_discard_before_block(pool_id, block)
+        let state = self.bot.state_arc();
+        let mut core = state.write();
+        // Family guard: no-op for non-V3/V4 (V3's contract).
+        if core.get_v3_or_v4_pool(pool_id).is_none() {
+            return Ok(());
+        }
+        core.discard_pool_before_block(pool_id, block)
+            .unwrap_or(Ok(()))
             .map_err(journal_err_to_py)
     }
 
@@ -1716,38 +1727,42 @@ impl PyBot {
         pool_id: u64,
         block: u64,
     ) -> PyResult<Option<Py<PyAny>>> {
-        let result = {
+        // Read-after-restore (ADR-016 D4): the trait `restore_pool_before_block`
+        // returns `()`; the post-restore scalar fields ARE the before-values
+        // the `V3RestoreResult.scalar_priors` previously carried. Copy out
+        // under the write guard, then marshal after release.
+        let (sqrt_p, liq, tick, blk) = {
             let state = self.bot.state_arc();
             let mut core = state.write();
-            core.v3_restore_before_block(pool_id, block)
-        };
-        match result {
-            Some(restore) => {
-                // `restore.scalar_priors` is always `Some` post-restore: the
-                // core `v3_restore_before_block` populates it with the current
-                // state scalars when the rolled-back range was tick-only
-                // (None internally — the scalars were never changed by the
-                // rolled-back events, so the current scalars ARE the restored
-                // scalars). See ADR-004.
-                let p = restore
-                    .scalar_priors
-                    .as_ref()
-                    .expect("post-restore scalar_priors must be Some");
-                let liq_u128 = p.liquidity_before;
-                let tuple = pyo3::types::PyTuple::new(
-                    py,
-                    [
-                        crate::conversion::alloy::u256_to_py(py, &p.sqrt_price_x96_before)?
-                            .unbind(),
-                        liq_u128.into_pyobject(py)?.into_any().unbind(),
-                        p.tick_before.into_pyobject(py)?.into_any().unbind(),
-                        restore.block.into_pyobject(py)?.into_any().unbind(),
-                    ],
-                )?;
-                Ok(Some(tuple.into_any().unbind()))
+            if core.get_v3_or_v4_pool(pool_id).is_none() {
+                return Ok(None);
             }
-            None => Ok(None),
-        }
+            match core.restore_pool_before_block(pool_id, block) {
+                None => return Ok(None),
+                Some(Err(e)) => return Err(journal_err_to_py(e)),
+                Some(Ok(())) => {
+                    let state = core
+                        .get_v3_or_v4_pool(pool_id)
+                        .expect("V3/V4 pool confirmed above");
+                    (
+                        state.sqrt_price_x96(),
+                        state.liquidity(),
+                        state.tick(),
+                        state.update_block(),
+                    )
+                }
+            }
+        };
+        let tuple = pyo3::types::PyTuple::new(
+            py,
+            [
+                crate::conversion::alloy::u256_to_py(py, &sqrt_p)?.unbind(),
+                liq.into_pyobject(py)?.into_any().unbind(),
+                tick.into_pyobject(py)?.into_any().unbind(),
+                blk.into_pyobject(py)?.into_any().unbind(),
+            ],
+        )?;
+        Ok(Some(tuple.into_any().unbind()))
     }
 
     /// Register a token.
@@ -1832,7 +1847,14 @@ impl PyBot {
     ///
     /// Returns 0 if the pool ID is not registered.
     fn v2_journal_len(&self, pool_id: u64) -> usize {
-        self.bot.state_arc().read().v2_journal_len(pool_id)
+        let state = self.bot.state_arc();
+        let core = state.read();
+        // Family guard: 0 for non-V2 (preserves the per-family contract).
+        if core.get_v2_pool_state(pool_id).is_none() {
+            0
+        } else {
+            core.pool_journal_len(pool_id).unwrap_or(0)
+        }
     }
 
     /// Discard V2 reorg journal deltas earlier than the given block.
@@ -1844,10 +1866,14 @@ impl PyBot {
     ///     `ValueError`: If the target is past the newest delta.
     #[pyo3(signature = (pool_id, block))]
     fn v2_discard_before_block(&self, pool_id: u64, block: u64) -> PyResult<()> {
-        self.bot
-            .state_arc()
-            .write()
-            .v2_discard_before_block(pool_id, block)
+        let state = self.bot.state_arc();
+        let mut core = state.write();
+        // Family guard: no-op for non-V2 (V2's contract).
+        if core.get_v2_pool_state(pool_id).is_none() {
+            return Ok(());
+        }
+        core.discard_pool_before_block(pool_id, block)
+            .unwrap_or(Ok(()))
             .map_err(journal_err_to_py)
     }
 
@@ -1870,28 +1896,39 @@ impl PyBot {
         pool_id: u64,
         block: u64,
     ) -> PyResult<Option<Py<PyAny>>> {
-        let result = {
+        // Read-after-restore (ADR-016): the trait returns `()`; the
+        // post-restore reserves ARE the before-values the per-family tuple
+        // previously carried. Copy out under the guard, marshal after release.
+        let (r0, r1, blk) = {
             let state = self.bot.state_arc();
             let mut core = state.write();
-            core.v2_restore_before_block(pool_id, block)
-        };
-        match result {
-            None => Ok(None),
-            Some(Err(e)) => Err(journal_err_to_py(e)),
-            Some(Ok((r0, r1, blk))) => {
-                let r0 = r0.to::<alloy::primitives::U256>();
-                let r1 = r1.to::<alloy::primitives::U256>();
-                let tuple = pyo3::types::PyTuple::new(
-                    py,
-                    [
-                        crate::conversion::alloy::u256_to_py(py, &r0)?.unbind(),
-                        crate::conversion::alloy::u256_to_py(py, &r1)?.unbind(),
-                        blk.into_pyobject(py)?.into_any().unbind(),
-                    ],
-                )?;
-                Ok(Some(tuple.into_any().unbind()))
+            if core.get_v2_pool_state(pool_id).is_none() {
+                return Ok(None);
             }
-        }
+            match core.restore_pool_before_block(pool_id, block) {
+                None => return Ok(None),
+                Some(Err(e)) => return Err(journal_err_to_py(e)),
+                Some(Ok(())) => {
+                    let state = core
+                        .get_v2_pool_state(pool_id)
+                        .expect("V2 pool confirmed above");
+                    (
+                        state.reserve0.to::<alloy::primitives::U256>(),
+                        state.reserve1.to::<alloy::primitives::U256>(),
+                        state.update_block,
+                    )
+                }
+            }
+        };
+        let tuple = pyo3::types::PyTuple::new(
+            py,
+            [
+                crate::conversion::alloy::u256_to_py(py, &r0)?.unbind(),
+                crate::conversion::alloy::u256_to_py(py, &r1)?.unbind(),
+                blk.into_pyobject(py)?.into_any().unbind(),
+            ],
+        )?;
+        Ok(Some(tuple.into_any().unbind()))
     }
 }
 

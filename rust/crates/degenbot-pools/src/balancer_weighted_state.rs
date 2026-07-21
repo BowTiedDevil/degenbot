@@ -224,4 +224,8 @@ impl ReorgPoolState for BalancerWeightedPoolState {
     fn journal_len(&self) -> usize {
         self.journal.len()
     }
+
+    fn newest_block(&self) -> Option<u64> {
+        self.journal.newest_block()
+    }
 }
