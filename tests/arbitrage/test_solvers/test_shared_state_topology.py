@@ -1282,31 +1282,36 @@ class TestSharedStateTopologyBalancerWeighted:
         assert snap_balances == list(BALANCER_WEIGHTED_BALANCES)
         assert snap_block == 10
 
-    def test_balancer_weighted_apply_is_silent_noop_on_curve_pool(self) -> None:
-        """``apply_balancer_weighted_balance_update`` on a Curve pool is a
-        silent no-op (``False``) — the family-dispatch contract: a non-matching
-        companion must NOT corrupt a pool registered under a different family.
+    def test_balancer_weighted_apply_is_silent_noop_on_v3_pool(self) -> None:
+        """``apply_balancer_weighted_balance_update`` on a V3 pool is a
+        silent no-op (``False``) — the structural-family dispatch contract
+        (ADR-017 D1): the balance-vector apply dispatcher matches
+        ``Curve | BalancerWeighted | BalancerStable`` and is ``None`` on any
+        non-balance-vector pool. A V3 pool registered under the CL family must
+        NOT be mutated by a balance-vector companion.
         """
         core = PyBot()
-        curve_pool_id = core.register_curve_pool(
-            address=CURVE_POOL_A,
-            tokens=CURVE_TOKENS,
-            a_coefficient=CURVE_A,
-            fee=CURVE_FEE,
-            admin_fee=CURVE_ADMIN_FEE,
-            rate_multipliers=CURVE_RATE_MULTIPLIERS,
-            balances=CURVE_BALANCES,
-            update_block=10,
+        v3_pool_id = core.register_v3_pool(
+            address=V3_POOL_A,
+            token0=TOKEN0,
+            token1=TOKEN1,
+            fee=V3_FEE,
+            tick_spacing=V3_TICK_SPACING,
+            factory=FACTORY,
+            sqrt_price_x96=V3_SQRT_PRICE,
+            liquidity=V3_LIQUIDITY,
+            tick=V3_TICK,
         )
-        curve_handle = core.get_pool(curve_pool_id)
-        assert curve_handle is not None
-        applied = curve_handle.apply_balancer_weighted_balance_update(
+        v3_handle = core.get_pool(v3_pool_id)
+        assert v3_handle is not None
+        applied = v3_handle.apply_balancer_weighted_balance_update(
             [1, 2, 3],
             5,
         )
-        assert applied is False, "Balancer weighted apply on a Curve pool must be a silent no-op"
-        # The Curve balances are unchanged — no corruption.
-        assert curve_handle.balances == list(CURVE_BALANCES)
+        assert applied is False, "Balancer weighted apply on a V3 pool must be a silent no-op"
+        # The V3 scalars are unchanged — no corruption.
+        assert v3_handle.sqrt_price_x96 == V3_SQRT_PRICE
+        assert v3_handle.liquidity == V3_LIQUIDITY
 
     def test_balancer_weighted_snapshot_returns_none_for_curve_pool(self) -> None:
         """``snapshot_balancer_weighted()`` returns ``None`` on non-Balancer-
@@ -1498,28 +1503,33 @@ class TestSharedStateTopologyBalancerStable:
         assert snap_balances == list(BALANCER_STABLE_BALANCES)
         assert snap_block == 10
 
-    def test_balancer_stable_apply_is_silent_noop_on_curve_pool(self) -> None:
-        """``apply_balancer_stable_balance_update`` on a Curve pool is a
-        silent no-op (``False``) — the family-dispatch contract: a non-matching
-        companion must NOT corrupt a pool registered under a different family.
+    def test_balancer_stable_apply_is_silent_noop_on_v3_pool(self) -> None:
+        """``apply_balancer_stable_balance_update`` on a V3 pool is a
+        silent no-op (``False``) — the structural-family dispatch contract
+        (ADR-017 D1): the balance-vector apply dispatcher matches
+        ``Curve | BalancerWeighted | BalancerStable`` and is ``None`` on any
+        non-balance-vector pool. A V3 pool registered under the CL family must
+        NOT be mutated by a balance-vector companion.
         """
         core = PyBot()
-        curve_pool_id = core.register_curve_pool(
-            address=CURVE_POOL_A,
-            tokens=CURVE_TOKENS,
-            a_coefficient=CURVE_A,
-            fee=CURVE_FEE,
-            admin_fee=CURVE_ADMIN_FEE,
-            rate_multipliers=CURVE_RATE_MULTIPLIERS,
-            balances=CURVE_BALANCES,
-            update_block=10,
+        v3_pool_id = core.register_v3_pool(
+            address=V3_POOL_A,
+            token0=TOKEN0,
+            token1=TOKEN1,
+            fee=V3_FEE,
+            tick_spacing=V3_TICK_SPACING,
+            factory=FACTORY,
+            sqrt_price_x96=V3_SQRT_PRICE,
+            liquidity=V3_LIQUIDITY,
+            tick=V3_TICK,
         )
-        curve_handle = core.get_pool(curve_pool_id)
-        assert curve_handle is not None
-        applied = curve_handle.apply_balancer_stable_balance_update([1, 2, 3], 5)
-        assert applied is False, "Balancer stable apply on a Curve pool must be a silent no-op"
-        # The Curve balances are unchanged — no corruption.
-        assert curve_handle.balances == list(CURVE_BALANCES)
+        v3_handle = core.get_pool(v3_pool_id)
+        assert v3_handle is not None
+        applied = v3_handle.apply_balancer_stable_balance_update([1, 2, 3], 5)
+        assert applied is False, "Balancer stable apply on a V3 pool must be a silent no-op"
+        # The V3 scalars are unchanged — no corruption.
+        assert v3_handle.sqrt_price_x96 == V3_SQRT_PRICE
+        assert v3_handle.liquidity == V3_LIQUIDITY
 
     def test_balancer_stable_snapshot_returns_none_for_curve_pool(self) -> None:
         """``snapshot_balancer_stable()`` returns ``None`` on non-Balancer-

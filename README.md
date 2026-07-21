@@ -1022,7 +1022,6 @@ Optimal arbitrage amounts for a cyclic pool sequence are computed by the Rust `A
 
 ```python
 from degenbot.arbitrage.engine_registry import EngineRegistry
-from degenbot.arbitrage.solvers import BrentSolver, SolveResult, SolverMethod
 
 # EngineRegistry is the one canonical entry point: it runs the pre-pump
 # startup ritual (subscribe -> backfill from snapshot -> verify config) and
@@ -1030,21 +1029,26 @@ from degenbot.arbitrage.solvers import BrentSolver, SolveResult, SolverMethod
 # owns the EVM-exact U512 solve and re-solves affected paths on each block.
 #
 #     registry = EngineRegistry(bot=bot)
-#     path_id = registry.register_path(pools=[v2_pool, v3_pool], input_token=weth)
+#     path_id = registry.register_path(
+#         pools_and_zfos=[(v2_pool, True), (v3_pool, False)],
+#     )
 #     results = registry.engine.latest_results().get(path_id)
 #
-# `BrentSolver` stays as the Python reference oracle, cross-validated against
-# the engine in tests/arbitrage/test_engine_vs_brent_parity.py:
+# The Python `BrentSolver` reference oracle and the legacy
+# `tests/arbitrage/test_engine_vs_brent_parity.py` cross-validation test
+# were retired alongside the f64 hop-state taxonomy (ergo 6C32UV / LMM2NB);
+# the Rust `ArbitrageEngine` is now the sole solve surface and its own
+# regression corpus is the oracle.
 
-assert SolverMethod.BRENT.value  # the oracle optimizer used in cross-validation
+assert EngineRegistry is not None  # the one canonical solve entry point
 ```
 
 > **Note:** The legacy `UniswapLpCycle` / `UniswapCurveCycle`, the Python
-> `ArbitragePath` wrapper, and the Python `SwapAmounts` /
-> `generate_payloads` encoding mirror have all been retired. The Rust
-> `ArbitrageEngine` (driven via `EngineRegistry`) is the production solve
-> surface, and on-chain calldata is produced Rust-side by
-> `degenbot_executor::composers::encode_cmd_stream` /
+> `ArbitragePath` wrapper, the Python `BrentSolver` reference oracle, and
+> the Python `SwapAmounts` / `generate_payloads` encoding mirror have all
+> been retired. The Rust `ArbitrageEngine` (driven via `EngineRegistry`) is
+> the production solve surface, and on-chain calldata is produced Rust-side
+> by `degenbot_executor::composers::encode_cmd_stream` /
 > `dispatch_profitable`. There is no Python swap-amount encoding layer.
 
 #### Swap Encoding & On-Chain Execution
