@@ -21,13 +21,11 @@ dependencies = [
     "click ~= 8.4",
     "pydantic ~= 2.13",
     "pydantic-settings ~= 2.14",
-    "scipy ~= 1.17",
     "sqlalchemy ~= 2.0",
     "tenacity ~= 9.1",
     "tomlkit ~= 0.15",
     "tqdm ~= 4.67",
-    "ujson ~= 5.12",
-    
+    "ujson ~= 5.12",    
 ]
 license = {text = "MIT"}
 license-files = ["LICENSE"]
@@ -241,11 +239,12 @@ dev = [
     "pytest",
     "python-dotenv",
     "ruff",
+    "scipy",
     "sybil",
     "ty",
     "vyper",
-    "web3 ~= 7.14",
-    "vulture>=2.16",
+    "web3",
+    "vulture",
 ]
 
 [tool.ty.environment]
