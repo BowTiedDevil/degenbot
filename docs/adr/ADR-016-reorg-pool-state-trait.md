@@ -92,29 +92,30 @@ The "return the landed values" optimization survives as a **wrapper-level**
 concern, not a core-semantics constraint — which is the right layer for it
 (FFI convenience, not core behavior).
 
-### D4 — CL family (`V3`/`V4`) is the open harder case, DEFERRED.
+### D4 — CL family (`V3`/`V4`) adopts the trait (VERDICT: absorb).
 
 `V3BlockDelta`'s restore is a genuinely different algorithm (pops + accumulates
 `scalar_priors` and tick priors across the rolled-back range, returning
 `V3RestoreResult`). The no-op objection does not bite here either (restore
-can still return `()`), but `V3RestoreResult` is currently consumed by
-`BotState::v3_restore_before_block` to drive the field writes AND by the
-PyO3 wrapper to marshal a tuple to Python.
+can still return `()`), and the CL-feasibility spike (ergo `Z76ETG`)
+resolved the open question: **Option A — absorb.**
 
-Adopting `ReorgPoolState` on `V3PoolState` / `V4PoolState` means
-`V3RestoreResult` becomes a **private internal transient** consumed inside
-the impl (writing slot0/tick fields internally, returning `()`).
-Feasibility depends on whether any downstream consumer genuinely needs the
-typed result beyond writing fields / reporting to Python — both of which are
-absorbable. The CL-feasibility spike (ergo `Z76ETG`) resolves this; it is
-not decided here. The ADR will be updated with the verdict.
+**Survey result.** Every consumer of `V3RestoreResult` is either (a)
+absorbable into the struct impl (the core `v3_restore_before_block` /
+`v4_restore_before_block` field-write), (b) absorbable into PyO3
+read-after-restore (the two CL restore wrappers marshal
+`(sqrt_price_x96_before, liquidity_before, tick_before, block)` — all
+equivalent to the post-restore struct fields, since the restore writes the
+before-values *into* the fields; `tick_priors` is never marshalled across
+the FFI), or a discard/count use. The `tick_priors` field is consumed only
+internally (the core restore writes `state.tick_data`). No category-(c)
+consumer (a caller genuinely needing the typed result) exists.
 
-If the spike finds CL absorbs: `V3`/`V4` adopt `ReorgPoolState`,
-`V3RestoreResult` goes private to `state_history.rs`. If it finds a genuine
-typed-result consumer: `V3`/`V4` keep their own restore return path inside
-the unified match; the `BotState`-side dedup (D2) still wins (one method per
-op, the family match centralized once), with CL routing to a CL-specific
-restore arm.
+**Decision.** `V3`/`V4` adopt `ReorgPoolState`; `V3RestoreResult` becomes a
+private internal transient the V3/V4 impls consume during the field-write,
+then discard; restore returns `()`. The two PyO3 CL restore wrappers
+read-after-restore (post-restore fields == the before-values they currently
+read off the result). The equivalence is exact.
 
 ### D5 — Reserve-pair family (`V2`/`Aerodrome`) gated on `DBISWP`.
 
@@ -152,16 +153,19 @@ Tracking under ergo epic `OCXSHQ` ("ADR-016: ReorgPoolState"):
 
 1. **Balance-vector family** (done, spike + 3-impl witness): `Curve`, `BalancerWeighted`,
    `BalancerStable` — `ReorgPoolState` impl landed, 12 tests pass.
-2. **CL-feasibility spike** (`Z76ETG`): determine whether `V3RestoreResult` can
-   become a private internal transient. Decides the shape of D4.
+2. **CL-feasibility spike** (`Z76ETG`, DONE): verdict **Option A — absorb**.
+   `V3RestoreResult` becomes a private internal transient; the two CL PyO3
+   restore wrappers read-after-restore (exact equivalence — post-restore
+   fields == the before-values they currently marshal). `tick_priors` never
+   crosses the FFI. See D4.
 3. **Collapse `BotState` balance-vector dispatchers** (`LDTEMF`): replace the
    nine per-family balance-vector methods with three trait-dispatching ones.
 4. **PyO3 FFI read-after-restore** (`5XGSYG`): update the balance-vector
    restore wrappers to read-after-restore.
 5. **Reserve-pair family** (`O3AHUW`, gated on `DBISWP`): `V2` + `Aerodrome`
    adopt the trait.
-6. **CL family adoption** (post-spike-`Z76ETG`): `V3` + `V4` per the spike
-   verdict.
+6. **CL family adoption** (post-spike-`Z76ETG`, verdict=A): `V3` + `V4` adopt
+   the trait; `V3RestoreResult` goes private.
 7. **Final `BotState` collapse** (`YTGXBJ`): the remaining per-family
    dispatchers + the bulk restore dispatch through the trait.
 
