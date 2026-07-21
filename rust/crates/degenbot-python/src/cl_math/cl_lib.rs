@@ -447,6 +447,7 @@ pub fn compute_swap_step_v4(
 
 // ─── TickMath (additional helpers) ─────────────────────────────────────
 
+/// Maximum usable tick for the given spacing (delegates to the cl-math core).
 #[pyfunction(signature = (tick_spacing))]
 #[must_use]
 #[allow(clippy::missing_const_for_fn)]
@@ -454,6 +455,7 @@ pub fn max_usable_tick(tick_spacing: i32) -> i32 {
     tick_math::max_usable_tick(tick_spacing)
 }
 
+/// Minimum usable tick for the given spacing (delegates to the cl-math core).
 #[pyfunction(signature = (tick_spacing))]
 #[must_use]
 #[allow(clippy::missing_const_for_fn)]

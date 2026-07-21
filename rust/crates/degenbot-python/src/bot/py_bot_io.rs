@@ -132,6 +132,10 @@ impl PyErc20TokenRow {
     }
 }
 
+/// The Rust `#[pyclass]` I/O façade pool builders receive in place of the
+/// Python `SyncPoolIO` adapter — delegates the 7-method `PoolIO` surface to
+/// the held Python `provider` (see module docs). Exposed to Python as
+/// `degenbot._ffi.PyBotIo`.
 #[pyclass(name = "PyBotIo", module = "degenbot._ffi")]
 pub struct PyBotIo {
     /// Native Rust `AlloyProvider` extracted from the held Python provider
