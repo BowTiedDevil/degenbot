@@ -1020,6 +1020,57 @@ except StaleRateResult:
 
 Optimal arbitrage amounts for a cyclic pool sequence are computed by the Rust `ArbitrageEngine` (EVM-exact U512 solve), driven through `EngineRegistry` — the production solve surface that replaced both the deprecated `UniswapLpCycle` / `UniswapCurveCycle` and the since-retired Python `ArbitragePath` wrapper (ACDWOC):
 
+<!-- invisible-code-block: python
+import asyncio
+import degenbot
+from degenbot.config import DegenbotConfig
+from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI as RPC_URL
+from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.v2_pool_factory import make_v2_pool
+from tests.helpers.v3_pool_factory import make_v3_pool
+from fractions import Fraction
+
+# A single Bot owns the shared BotState both pools register into. Two
+# USDC/WETH pools (one V2, one V3) form a valid 2-hop cyclic arb.
+bot = degenbot.Bot(
+    config=DegenbotConfig(
+        default_chain_id=1,
+        rpc={1: RPC_URL},
+        database={"path": ":memory:"},
+    )
+)
+_py = bot._py_bot
+_usdc = make_erc20(_py,
+    address='0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+    name='USD Coin', symbol='USDC', decimals=6, chain_id=1,
+)
+_weth = make_erc20(_py,
+    address='0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+    name='Wrapped Ether', symbol='WETH', decimals=18, chain_id=1,
+)
+v2_pool = make_v2_pool(
+    '0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc',
+    token0=_usdc, token1=_weth,
+    factory='0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f',
+    fee_token0=Fraction(3, 1000),
+    fee_token1=Fraction(3, 1000),
+    reserves_token0=100_000 * 10**6,
+    reserves_token1=30 * 10**18,
+    chain_id=1,
+    py_bot=_py,
+)
+v3_pool = make_v3_pool(
+    '0x88e6A0c2ddd26feeb64f039a2c41296fcb3f5640',
+    token0=_usdc, token1=_weth,
+    factory='0x1F98431c8aD98523631AE4a59f267346ea31F984',
+    fee=500, tick_spacing=10,
+    sqrt_price_x96=1_500_000_000_000_000_000_000_000_000,
+    tick=-210_500,
+    liquidity=1_500_000_000_000_000_000,
+    py_bot=_py,
+)
+-->
+
 ```python
 from degenbot.arbitrage.engine_registry import EngineRegistry
 
@@ -1027,20 +1078,32 @@ from degenbot.arbitrage.engine_registry import EngineRegistry
 # startup ritual (subscribe -> backfill from snapshot -> verify config) and
 # registers cyclic paths against a Bot's shared BotState. The Rust engine
 # owns the EVM-exact U512 solve and re-solves affected paths on each block.
-#
-#     registry = EngineRegistry(bot=bot)
-#     path_id = registry.register_path(
-#         pools_and_zfos=[(v2_pool, True), (v3_pool, False)],
-#     )
-#     results = registry.engine.latest_results().get(path_id)
-#
+registry = EngineRegistry(bot=bot)
+```
+
+<!-- invisible-code-block: python
+# pools must be handed to the engine before path-building (the pump loop
+# does this in `build_paths`; verify is a no-op without `start()`). V3
+# registration is async because the live-RPC verify ritual is awaited even
+# when skipped.
+registry.register_v2_pool(v2_pool)
+asyncio.run(registry.register_v3_pool(v3_pool))
+-->
+
+```python
+path_id = registry.register_path(
+    pools_and_zfos=[(v2_pool, True), (v3_pool, False)],
+)
+# The registered path is inspectable immediately (a solved snapshot of its
+# hops); profitable solves surface in the next `latest_results()` batch.
+solved_path = registry.engine.inspect_path(path_id)
+assert solved_path["path_id"] == path_id
+
 # The Python `BrentSolver` reference oracle and the legacy
 # `tests/arbitrage/test_engine_vs_brent_parity.py` cross-validation test
 # were retired alongside the f64 hop-state taxonomy (ergo 6C32UV / LMM2NB);
 # the Rust `ArbitrageEngine` is now the sole solve surface and its own
 # regression corpus is the oracle.
-
-assert EngineRegistry is not None  # the one canonical solve entry point
 ```
 
 > **Note:** The legacy `UniswapLpCycle` / `UniswapCurveCycle`, the Python
