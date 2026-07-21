@@ -6,7 +6,7 @@
 //! making it the highest-frequency code in the workspace, isolatable from the
 //! `PyO3` layer, and independently testable without a Python interpreter.
 //!
-//! The Python binding layer lives in the root `degenbot_rs` crate's
-//! `cl_lib_py` module.
+//! The Python binding layer lives in the `degenbot_rs` crate's
+//! `cl_math::cl_lib` module (`rust/crates/degenbot-python/src/cl_math/cl_lib.rs`).
 
 pub mod cl_lib;
