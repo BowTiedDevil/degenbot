@@ -16,7 +16,9 @@ use alloy::primitives::{Address, I256, U160, U256};
 
 use crate::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use crate::liquidity_event::LiquidityEvent;
-use crate::state_history::{ReorgJournal, ScalarPriors, TickBefore, V3BlockDelta};
+use crate::state_history::{
+    JournalError, ReorgJournal, ReorgPoolState, ScalarPriors, TickBefore, V3BlockDelta,
+};
 use crate::tick_bitmap::{compute_tick_ranges, gen_ticks, V3TickRangeForSolver};
 use crate::tick_fetch::TickWordFetcher;
 use crate::v3_state::{PoolTickCoverage, SimulateSwapError, V3SwapOutcome};
@@ -556,6 +558,64 @@ impl V4PoolState {
     }
 }
 
+// ADR-016 — pool-owned reorg rollback for the CL family. The field-write
+// previously duplicated across `BotState::v3_restore_before_block` /
+// `v4_restore_before_block` (scalar-priors write-back + tick reverse-apply)
+// is absorbed into the state struct; `V3RestoreResult` stays internal to
+// this impl and never escapes. The CL journal's `restore_before_block`
+// returns `V3RestoreResult` directly (panics on empty — the empty-journal
+// case is an invariant violation for a registered pool, not a recoverable
+// error), so this impl returns `Ok(())` after applying the landed-at state.
+// Byte-identical to the V3 impl modulo the struct name. See ADR-016 D4.
+impl ReorgPoolState for V4PoolState {
+    fn restore_before_block(&mut self, block: u64) -> Result<(), JournalError> {
+        let result = self.journal.restore_before_block(block);
+
+        // Sync scalar fields if the rolled-back range had scalar changes.
+        // If scalar_priors is None (tick-only event(s) rolled back), the
+        // current slot0 scalars were never changed by the rolled-back events
+        // and are already correct — skip the write-back. See ADR-004.
+        if let Some(p) = &result.scalar_priors {
+            self.sqrt_price_x96 = p.sqrt_price_x96_before;
+            self.liquidity = p.liquidity_before;
+            self.tick = p.tick_before;
+        }
+        self.update_block = result.block;
+        self.invalidate_tick_range_cache();
+
+        // Reverse-apply tick priors accumulated across all popped deltas.
+        for (tick_idx, tick_before) in &result.tick_priors {
+            match tick_before.liquidity_gross_before {
+                Some(gross_before) => {
+                    // Tick existed before — restore its prior values.
+                    self.tick_data.insert(
+                        *tick_idx,
+                        TickInfo {
+                            liquidity_gross: gross_before,
+                            liquidity_net: tick_before.liquidity_net_before,
+                            block: 0,
+                        },
+                    );
+                }
+                None => {
+                    // Tick was newly initialized in this block — remove it.
+                    self.tick_data.remove(tick_idx);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn discard_before_block(&mut self, block: u64) -> Result<(), JournalError> {
+        self.journal.discard_before_block(block)
+    }
+
+    fn journal_len(&self) -> usize {
+        self.journal.len()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // V4 single-pool swap simulation (ADR-003: "Pool's authority over its own math")
 // ---------------------------------------------------------------------------
@@ -945,5 +1005,109 @@ mod apply_inherent_tests {
             assert!(cache.zfo.is_none());
             assert!(cache.ofz.is_none());
         }
+    }
+
+    // ------------------------------------------------------------------
+    // ReorgPoolState trait (ADR-016 D4 — CL family adopts the trait).
+    // `restore_before_block` returns `()`; the landed-at state lives in the
+    // struct's own fields (read-after-restore). `V3RestoreResult` stays
+    // internal to the impl and never escapes. Byte-identical to the V3 impl.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn restore_before_block_writes_landed_at_scalars_and_restore_point_block() {
+        let liq = 1_000_000u128;
+        let mut state = state_with_position(liq);
+        let pre_sqrt = state.sqrt_price_x96;
+        let pre_liq = state.liquidity;
+        let pre_tick = state.tick;
+
+        let new_sqrt = U256::from(2u128) << 96;
+        state.apply_swap(new_sqrt, liq + 1, 1, 7, &[]);
+        assert_eq!(state.update_block, 7);
+
+        let result: Result<(), JournalError> = state.restore_before_block(7);
+        assert!(result.is_ok());
+        assert_eq!(state.sqrt_price_x96, pre_sqrt);
+        assert_eq!(state.liquidity, pre_liq);
+        assert_eq!(state.tick, pre_tick);
+        assert_eq!(
+            state.update_block, 7,
+            "update_block set to the restore-point block (result.block)"
+        );
+        assert_eq!(state.journal_len(), 0, "swap delta popped");
+    }
+
+    #[test]
+    fn restore_before_block_no_op_when_newest_delta_before_target() {
+        let liq = 1_000_000u128;
+        let mut state = state_with_position(liq);
+        let new_sqrt = U256::from(2u128) << 96;
+        state.apply_swap(new_sqrt, liq + 1, 1, 7, &[]);
+        let post_sqrt = state.sqrt_price_x96;
+
+        let result: Result<(), JournalError> = state.restore_before_block(8);
+        assert!(result.is_ok());
+        assert_eq!(
+            state.sqrt_price_x96, post_sqrt,
+            "no rollback when newest delta is before the target"
+        );
+        assert_eq!(state.journal_len(), 1, "delta not popped");
+    }
+
+    #[test]
+    fn restore_before_block_removes_newly_initialized_tick_on_rollback() {
+        let liq = 1_000_000u128;
+        let mut state = state_with_position(liq);
+        let new_tick = TickInfo {
+            liquidity_gross: U256::from(500u64).to::<U128>(),
+            liquidity_net: I256::try_from(500i128).unwrap(),
+            block: 7,
+        };
+        let new_sqrt = U256::from(2u128) << 96;
+        state.apply_swap(new_sqrt, liq + 1, 1, 7, &[(100, new_tick)]);
+        assert!(
+            state.tick_data.contains_key(&100),
+            "new tick seeded by swap"
+        );
+
+        let result: Result<(), JournalError> = state.restore_before_block(7);
+        assert!(result.is_ok());
+        assert!(
+            !state.tick_data.contains_key(&100),
+            "newly-initialized tick removed on rollback"
+        );
+    }
+
+    #[test]
+    fn discard_before_block_drops_old_deltas_without_mutating_live_state() {
+        let liq = 1_000_000u128;
+        let mut state = state_with_position(liq);
+        state.journal.push_delta(V3BlockDelta {
+            block: 0,
+            scalar_priors: None,
+            tick_priors: Vec::new(),
+        });
+        let new_sqrt = U256::from(2u128) << 96;
+        state.apply_swap(new_sqrt, liq + 1, 1, 7, &[]);
+        assert_eq!(state.journal_len(), 2);
+        let post_sqrt = state.sqrt_price_x96;
+
+        let result: Result<(), JournalError> = state.discard_before_block(7);
+        assert!(result.is_ok());
+        assert_eq!(state.journal_len(), 1, "genesis dropped, swap kept");
+        assert_eq!(
+            state.sqrt_price_x96, post_sqrt,
+            "discard trims history only — live state untouched"
+        );
+    }
+
+    #[test]
+    fn journal_len_reports_delta_count() {
+        let liq = 1_000_000u128;
+        let mut state = state_with_position(liq);
+        assert_eq!(state.journal_len(), 0);
+        state.apply_swap(U256::from(2u128) << 96, liq + 1, 1, 7, &[]);
+        assert_eq!(state.journal_len(), 1);
     }
 }
