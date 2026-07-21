@@ -13,7 +13,7 @@ dynamic = ["version"]
 authors = [
     { name="BowTiedDevil", email="devil@bowtieddevil.com" },
 ]
-description = "Python + Rust (PyO3) building blocks for Uniswap (V2, V3, V4), Curve V1, Solidly V2, Balancer V2 & Aave V3 arbitrage and liquidation bots on EVM-compatible blockchains"
+description = "Python + Rust building blocks for Uniswap (V2, V3, V4), Curve V1, Solidly V2, Balancer V2 & Aave V3 arbitrage and liquidation bots on EVM-compatible blockchains"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
