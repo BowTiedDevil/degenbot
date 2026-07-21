@@ -13,7 +13,7 @@ from degenbot.aerodrome.math import (
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.pool import ExternalUpdateError
+from degenbot.exceptions.pool import ExternalUpdateError, NoPoolStateAvailable
 from degenbot.types import DexIdentity, PyLiquidityPool
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.aliases import BlockNumber
@@ -297,6 +297,46 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
         self._notify_subscribers(
             message=UniswapV2PoolStateUpdated(self.state),
         )
+
+    def discard_states_before_block(self, block: BlockNumber) -> None:
+        """Discard cached V2 reorg journal deltas earlier than the given block.
+
+        Delegates to ``PyLiquidityPool.discard_before_block`` (Rust pops
+        journal deltas strictly earlier than the target, keeping the genesis
+        delta + everything at/after the target). The current state is
+        unchanged when the target is at/after the newest delta.
+
+        Raises:
+            NoPoolStateAvailable: If the target is past the newest delta
+                (would remove every known state).
+
+        """
+        try:
+            self._py_pool.discard_before_block(block)
+        except ValueError as e:
+            raise NoPoolStateAvailable(block=block) from e
+
+    def restore_state_before_block(self, block: BlockNumber) -> None:
+        """Restore the V2 pool to the landed-at state just before the target block.
+
+        Delegates to ``PyLiquidityPool.restore_before_block`` (Rust pops
+        journal deltas at/after the target + reverse-applies them, writing
+        back the pre-target reserves in one write guard). The journal's
+        ``update_block`` lands at the oldest popped delta's block (the target
+        convention); the restored reserves are the pre-target state.
+        Subscribers are notified with the restored state.
+
+        Raises:
+            NoPoolStateAvailable: If no state exists prior to the target
+                block (the target is at or before the registration block).
+
+        """
+        try:
+            restored = self._py_pool.restore_before_block(block)
+        except ValueError as e:
+            raise NoPoolStateAvailable(block=block) from e
+        if restored is not None:
+            self._notify_subscribers(message=UniswapV2PoolStateUpdated(self.state))
 
     def simulate_add_liquidity(
         self,

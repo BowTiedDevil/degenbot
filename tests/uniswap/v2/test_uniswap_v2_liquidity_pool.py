@@ -1,20 +1,7 @@
-# ADR-005 slice 7 step 4b: this fork-gated test imports the deleted hollow V2
-# DEX subclasses (Sushi/Pancake/Swapbased/Camelot) and/or needs anvil. Skipping
-# at module level unblocks the offline collection; pending a full rewrite under
-# anvil to the `UniswapV2Pool` + `dex.variant` model. See
-# docs/migration-guides/dex-subclass-collapse.md.
-import pytest
-
-pytest.skip(
-    "ADR-005 slice 7 step 4b: fork test pending rewrite after DEX subclass collapse",
-    allow_module_level=True,
-)
-
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
 import pytest
-from degenbot.camelot.pools import CamelotLiquidityPool
 from hexbytes import HexBytes
 
 from degenbot.bot import Bot
@@ -44,7 +31,6 @@ if TYPE_CHECKING:
     from degenbot.types.aliases import BlockNumber
 
 
-UNISWAP_V2_ROUTER02 = get_checksum_address("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D")
 UNISWAP_V2_WBTC_WETH_POOL = get_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
 UNISWAP_V2_FACTORY_ADDRESS = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
 UNISWAP_V2_FACTORY_POOL_INIT_HASH = (
@@ -57,6 +43,8 @@ WETH_CONTRACT_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 
 CAMELOT_WETH_USDC_LP_ADDRESS = get_checksum_address("0x84652bb2539513BAf36e225c930Fdd8eaa63CE27")
 CAMELOT_MIM_USDC_LP_ADDRESS = get_checksum_address("0x68A0859de50B4Dfc6EFEbE981cA906D38Cdb0D1F")
+
+HISTORICAL_BLOCK = 17_600_000
 
 
 def _make_bot(fork: AnvilFork) -> Bot:
@@ -73,13 +61,17 @@ def ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block(
     forking block.
     """
     bot = _make_bot(fork_mainnet_archive)
-    return bot.build_pool(UNISWAP_V2_WBTC_WETH_POOL)
+    pool = bot.build_pool(UNISWAP_V2_WBTC_WETH_POOL)
+    assert isinstance(pool, UniswapV2Pool)
+    return pool
 
 
 @pytest.fixture
 def ethereum_uniswap_v2_wbtc_weth_liquiditypool(fork_mainnet_full: AnvilFork) -> UniswapV2Pool:
     bot = _make_bot(fork_mainnet_full)
-    return bot.build_pool(UNISWAP_V2_WBTC_WETH_POOL)
+    pool = bot.build_pool(UNISWAP_V2_WBTC_WETH_POOL)
+    assert isinstance(pool, UniswapV2Pool)
+    return pool
 
 
 @pytest.fixture
@@ -156,12 +148,12 @@ def test_nominal_price_scaled_by_decimals(
 def test_create_camelot_v2_stable_pool(fork_arbitrum_full: AnvilFork):
     bot = _make_bot(fork_arbitrum_full)
     lp = bot.build_pool(CAMELOT_MIM_USDC_LP_ADDRESS)
-    # Camelot pools are wrapped as CamelotLiquidityPool by the manager
-    # For direct construction, use I/O-free constructor
-
-    # Build tokens I/O-free first, then construct the pool
-    # The pool reference comes from the bot which handles the construction
-    assert isinstance(lp, (CamelotLiquidityPool, UniswapV2Pool))
+    # ADR-005 slice 7 step 4b: the hollow CamelotLiquidityPool subclass is
+    # deleted; Camelot pools are now canonical UniswapV2Pool instances whose
+    # DexIdentity variant tags them as Camelot. The stable pair resolves to
+    # the ``camelot-v2-stable`` preset.
+    assert isinstance(lp, UniswapV2Pool)
+    assert lp.dex.variant == "camelot-v2-stable"
 
     token_in = lp.token0  # MIM token
     amount_in = 1000 * 10**token_in.decimals  # nominal value of $1000
@@ -185,11 +177,17 @@ def test_create_camelot_v2_stable_pool(fork_arbitrum_full: AnvilFork):
 def test_create_camelot_v2_pool(fork_arbitrum_full: AnvilFork):
     bot = _make_bot(fork_arbitrum_full)
     lp = bot.build_pool(CAMELOT_WETH_USDC_LP_ADDRESS)
+    # ADR-005 slice 7 step 4b: the hollow CamelotLiquidityPool subclass is
+    # deleted; Camelot pools are now canonical UniswapV2Pool instances whose
+    # DexIdentity variant tags them as Camelot. The volatile pair resolves to
+    # the ``camelot-v2-volatile`` preset.
+    assert isinstance(lp, UniswapV2Pool)
+    assert lp.dex.variant == "camelot-v2-volatile"
 
     token_in = lp.token1
     amount_in = 1000 * 10**token_in.decimals  # nominal value of $1000
 
-    w3_contract: Contract = make_contract(
+    w3_contract = make_contract(
         fork_arbitrum_full.http_url, CAMELOT_WETH_USDC_LP_ADDRESS, CAMELOT_POOL_ABI
     )
     assert w3_contract.functions.getAmountOut(
@@ -261,7 +259,7 @@ def test_dunder_methods(
 
 @pytest.mark.parametrize(
     "fork_mainnet_archive",
-    [17_600_000],  # EDIT ME
+    [HISTORICAL_BLOCK],
     indirect=True,
 )
 def test_calculate_tokens_out_from_tokens_in(
@@ -328,7 +326,7 @@ def test_calculate_tokens_out_from_tokens_in_with_override(
 
 @pytest.mark.parametrize(
     "fork_mainnet_archive",
-    [17_600_000],  # EDIT ME
+    [HISTORICAL_BLOCK],
     indirect=True,
 )
 def test_calculate_tokens_in_from_tokens_out(
@@ -354,7 +352,7 @@ def test_calculate_tokens_in_from_tokens_out(
 
 @pytest.mark.parametrize(
     "fork_mainnet_archive",
-    [17_600_000],  # EDIT ME
+    [HISTORICAL_BLOCK],
     indirect=True,
 )
 def test_calculate_tokens_in_from_tokens_out_with_override(
@@ -391,7 +389,7 @@ def test_calculate_tokens_in_from_tokens_out_with_override(
 
 @pytest.mark.parametrize(
     "fork_mainnet_archive",
-    [17_600_000],  # EDIT ME
+    [HISTORICAL_BLOCK],
     indirect=True,
 )
 @pytest.mark.online_rpc
@@ -430,7 +428,7 @@ def test_comparisons(
 
 @pytest.mark.parametrize(
     "fork_mainnet_archive",
-    [17_600_000],  # EDIT ME
+    [HISTORICAL_BLOCK],
     indirect=True,
 )
 def test_reorg(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block: UniswapV2Pool):
@@ -502,7 +500,7 @@ def test_reorg(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block: 
 
 @pytest.mark.parametrize(
     "fork_mainnet_archive",
-    [17_600_000],  # EDIT ME
+    [HISTORICAL_BLOCK],
     indirect=True,
 )
 def test_discard_before_finalized(
@@ -557,7 +555,7 @@ def test_discard_before_finalized(
 
 @pytest.mark.parametrize(
     "fork_mainnet_archive",
-    [17_600_000],  # EDIT ME
+    [HISTORICAL_BLOCK],
     indirect=True,
 )
 def test_discard_earlier_than_created(
@@ -772,21 +770,30 @@ def test_simulations_with_override(
 def test_swap_for_all(
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block: UniswapV2Pool,
 ):
-    # The last token in a pool can never be swapped for
-    assert (
-        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.calculate_tokens_out_from_tokens_in(
-            ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.token1,
-            2**256 - 1,
-        )
-        == ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.reserves_token0 - 1
+    # The last token in a pool can never be swapped for: a huge (but
+    # non-overflowing) input extracts ``reserve_out - 1`` at most, never the
+    # full reserve. ``2**150`` is large enough to saturate the constant-product
+    # output to ``reserve_out - 1`` here (reserve_out ~= 2.5e21 ~= 2**71) yet
+    # leaves headroom across all three `uint256` multiplies in on-chain
+    # `getAmountOut` (``amount_in*gamma``, ``*reserve_out``, ``reserve_in*fee``).
+    lp = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block
+    huge_but_safe = 2**150
+    assert lp.calculate_tokens_out_from_tokens_in(lp.token1, huge_but_safe) == (
+        lp.reserves_token0 - 1
     )
-    assert (
-        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.calculate_tokens_out_from_tokens_in(
-            ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.token0,
-            2**256 - 1,
-        )
-        == ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.reserves_token1 - 1
+    assert lp.calculate_tokens_out_from_tokens_in(lp.token0, huge_but_safe) == (
+        lp.reserves_token1 - 1
     )
+
+    # cdbc03bb: Rust mirrors on-chain `getAmountOut` SafeMath and reverts on
+    # `uint256` overflow. ``amount_in = 2**256 - 1`` overflows
+    # ``amount_in * gamma_numer`` and reverts on-chain (and in the off-chain
+    # model) — mirrored by the `calculate_tokens_in_from_tokens_out` overdraw
+    # reverts below.
+    with pytest.raises(LiquidityPoolError):
+        lp.calculate_tokens_out_from_tokens_in(lp.token1, 2**256 - 1)
+    with pytest.raises(LiquidityPoolError):
+        lp.calculate_tokens_out_from_tokens_in(lp.token0, 2**256 - 1)
 
     with pytest.raises(LiquidityPoolError):
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.calculate_tokens_in_from_tokens_out(

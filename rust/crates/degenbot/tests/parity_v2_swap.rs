@@ -12,7 +12,7 @@
 //! `tests/standalone_parity/test_v2_swap_dual_driver.py` — it drives the
 //! **same** fixture through the Python consumer path (`PyBot`, the PyO3
 //! binding). Both consumers hit the same `BotState::register_v2_pool` +
-//! `BotState::calculate_tokens_out` core; the closed form is the shared
+//! `BotState::calculate_tokens_out_miss_aware` core; the closed form is the shared
 //! oracle. If the PyO3 arg-extraction → core-call → result-wrap seam ever
 //! drops precision, changes rounding, or swaps a direction flag, the two
 //! tests diverge from the closed form and the parity breaks.
@@ -128,7 +128,11 @@ fn standalone_rust_consumer_matches_closed_form() {
         .expect("register canonical V2 pool");
     assert_eq!(pid, 1, "first registered pool gets id 1");
 
-    let amount_out = bot.calculate_tokens_out(pid, ZERO_FOR_ONE, U256::from(AMOUNT_IN));
+    let amount_out = bot
+        .calculate_tokens_out_miss_aware(pid, ZERO_FOR_ONE, U256::from(AMOUNT_IN))
+        .expect(
+            "small in-tick amount with pre-populated tick data; V2 calc must not miss or overflow",
+        );
     assert_eq!(
         amount_out,
         U256::from(EXPECTED_AMOUNT_OUT),

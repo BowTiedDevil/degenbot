@@ -1230,25 +1230,20 @@ impl BotState {
 
     /// Calculate the output token amount for a given input amount.
     ///
-    /// Uses the constant-product invariant with EVM-exact integer arithmetic.
+    /// Uses the constant-product / concentrated-liquidity invariant with
+    /// EVM-exact integer arithmetic. Returns `Ok(U256::ZERO)` for the
+    /// non-fetchable zeros (pool not found, zero amount, V2/Curve/Balancer
+    /// sentinels). A V3/V4 sparse tick-word miss is surfaced as
+    /// [`SimulateSwapError::MissingTickWord`] so the caller can fetch + retry;
+    /// a `uint256` arithmetic overflow (the on-chain `getAmountOut` `SafeMath`
+    /// revert, cdbc03bb) is surfaced as [`SimulateSwapError::NotComputable`].
     ///
-    /// Returns 0 if the pool is not found or the amount is 0. For V3/V4 sparse
-    /// pools, a fetchable tick-word miss is mapped to 0; use
-    /// [`Self::calculate_tokens_out_miss_aware`] to surface it.
-    #[must_use]
-    pub fn calculate_tokens_out(&self, pool_id: u64, zero_for_one: bool, amount_in: U256) -> U256 {
-        self.calculate_tokens_out_miss_aware(pool_id, zero_for_one, amount_in)
-            .unwrap_or(U256::ZERO)
-    }
-
-    /// Like [`Self::calculate_tokens_out`] but surfaces a V3/V4 sparse-map
-    /// fetchable miss as [`SimulateSwapError::MissingTickWord`] instead of
-    /// mapping it to 0.
-    ///
-    /// `Ok(U256::ZERO)` covers the non-fetchable zeros (pool not found, zero
-    /// amount, V2/Curve/Balancer sentinels, arithmetic overflow via
-    /// [`SimulateSwapError::NotComputable`]). The fetch+retry loop lives in
-    /// [`Self::calculate_tokens_out_with_fetch`].
+    /// Callers MUST NOT swallow `NotComputable` to `U256::ZERO` — that
+    /// concealment was the cdbc03bb bug (an on-chain `getAmountOut` revert
+    /// surfaced as a silent `0`). Handle `MissingTickWord` by fetching +
+    /// retrying (see [`Self::calculate_tokens_out_with_fetch`]) or by mapping
+    /// ONLY that variant to zero with an explicit `match`; propagate
+    /// `NotComputable` as a panic/error so a real overflow is visible.
     ///
     /// # Errors
     ///
@@ -3260,7 +3255,9 @@ mod tests {
             .expect("test setup: V2 registration");
 
         // Python reference: constant_product_calc_exact_in(100, 1000, 2000, 3/1000) = 181
-        let amount_out = core.calculate_tokens_out(pool_id, true, U256::from(100));
+        let amount_out = core
+            .calculate_tokens_out_miss_aware(pool_id, true, U256::from(100))
+            .expect("small non-overflowing V2 amount; calc must not miss or overflow");
         assert_eq!(amount_out, U256::from(181));
     }
 
@@ -3526,7 +3523,9 @@ mod tests {
             .expect("test setup: V2 registration");
 
         // Python reference: constant_product_calc_exact_in(100, 1000, 2000, 3/1000) = 181
-        let amount_out = core.calculate_tokens_out(pool_id, false, U256::from(100));
+        let amount_out = core
+            .calculate_tokens_out_miss_aware(pool_id, false, U256::from(100))
+            .expect("small non-overflowing V2 amount; calc must not miss or overflow");
         assert_eq!(amount_out, U256::from(181));
     }
 
@@ -3538,14 +3537,18 @@ mod tests {
             .expect("test setup: V2 registration");
 
         // Before update: swap 100 token0 → 181 token1
-        let before = core.calculate_tokens_out(pool_id, true, U256::from(100));
+        let before = core
+            .calculate_tokens_out_miss_aware(pool_id, true, U256::from(100))
+            .expect("small non-overflowing V2 amount; calc must not miss or overflow");
         assert_eq!(before, U256::from(181));
 
         // Update reserves: now reserve0=2000, reserve1=1000
         core.update_v2_pool(make_pool_addr(), U112::from(2000), U112::from(1000), 42);
 
         // After update: Python: constant_product_calc_exact_in(100, 2000, 1000, 3/1000) = 47
-        let after = core.calculate_tokens_out(pool_id, true, U256::from(100));
+        let after = core
+            .calculate_tokens_out_miss_aware(pool_id, true, U256::from(100))
+            .expect("small non-overflowing V2 amount; calc must not miss or overflow");
         assert_eq!(after, U256::from(47));
     }
 
@@ -3595,7 +3598,9 @@ mod tests {
         // Swap 1000 USDC for WETH
         // Python reference: 531380142665175213
         let amount_in = U256::from(1_000_000_000u64); // 1000 USDC (6dp)
-        let amount_out = core.calculate_tokens_out(pool_id, true, amount_in);
+        let amount_out = core
+            .calculate_tokens_out_miss_aware(pool_id, true, amount_in)
+            .expect("small non-overflowing V2 amount; calc must not miss or overflow");
         assert_eq!(amount_out, U256::from(531_380_142_665_175_213_u64));
     }
 
@@ -5632,9 +5637,17 @@ mod tests {
             .expect("test setup: V3 registration");
 
         // Without the fetch+retry loop: the starting word (0) is unknown →
-        // miss → ZERO (calculate_tokens_out does NOT use the stored fetcher).
+        // miss → ZERO. Only `MissingTickWord` maps to ZERO here; a
+        // `NotComputable` (overflow) must panic rather than be swallowed to
+        // ZERO (that swallow was the cdbc03bb bug).
         assert_eq!(
-            core.calculate_tokens_out(pool_id, true, U256::from(1000u64)),
+            match core.calculate_tokens_out_miss_aware(pool_id, true, U256::from(1000u64)) {
+                Ok(v) => v,
+                Err(SimulateSwapError::MissingTickWord(_)) => U256::ZERO,
+                Err(SimulateSwapError::NotComputable) => panic!(
+                    "sparse V3 swap must miss (MissingTickWord), not overflow (NotComputable)"
+                ),
+            },
             U256::ZERO,
             "sparse pool with unknown starting word must miss → ZERO without the fetch+retry loop"
         );
@@ -5651,7 +5664,11 @@ mod tests {
 
         // The fetch+retry result must match the direct no-miss path (word 0
         // now known after the fetch merge — no further miss).
-        let direct = core.calculate_tokens_out(pool_id, true, U256::from(1000u64));
+        let direct = core
+            .calculate_tokens_out_miss_aware(pool_id, true, U256::from(1000u64))
+            .expect(
+                "word 0 is known after the fetch merge; the direct path must not miss or overflow",
+            );
         assert_eq!(
             fetched, direct,
             "with_fetch result must match the no-miss direct path after the word is filled"
@@ -5775,7 +5792,8 @@ mod tests {
         assert!(calls_after_first >= 1, "first solve must fetch word 0");
         assert_eq!(
             first,
-            core.calculate_tokens_out(pool_id, true, U256::from(1000u64)),
+            core.calculate_tokens_out_miss_aware(pool_id, true, U256::from(1000u64))
+                .expect("word 0 is known after the fetch+retry; the direct path must not miss or overflow"),
             "first fetched result must match the no-miss direct path"
         );
 

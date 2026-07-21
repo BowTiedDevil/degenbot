@@ -11,7 +11,7 @@
 //!
 //! Like the V3 seed, the CL swap has no simple closed form, so the shared
 //! oracle is the recorded constant `EXPECTED_AMOUNT_OUT_ZFO` (deterministic
-//! — both consumers hit one `BotState::calculate_tokens_out` core). Plus
+//! — both consumers hit one `BotState::calculate_tokens_out_miss_aware` core). Plus
 //! monotonicity + direction-symmetry sanity checks.
 //!
 //! The matching Python side lives at
@@ -102,7 +102,11 @@ fn standalone_rust_consumer_v4_swap_matches_recorded_constant() {
         .expect("register canonical V4 pool");
     assert_eq!(pid, 1, "first registered pool gets id 1 (parity contract)");
 
-    let amount_out = bot.calculate_tokens_out(pid, ZERO_FOR_ONE, U256::from(AMOUNT_IN));
+    let amount_out = bot
+        .calculate_tokens_out_miss_aware(pid, ZERO_FOR_ONE, U256::from(AMOUNT_IN))
+        .expect(
+            "small in-tick amount with pre-populated tick data; V4 calc must not miss or overflow",
+        );
     assert_eq!(
         amount_out,
         U256::from(EXPECTED_AMOUNT_OUT_ZFO),
@@ -111,14 +115,22 @@ fn standalone_rust_consumer_v4_swap_matches_recorded_constant() {
 
     // Monotonicity (in-tick).
     let bigger_in = U256::from(AMOUNT_IN) * U256::from(10_u64);
-    let bigger_out = bot.calculate_tokens_out(pid, ZERO_FOR_ONE, bigger_in);
+    let bigger_out = bot
+        .calculate_tokens_out_miss_aware(pid, ZERO_FOR_ONE, bigger_in)
+        .expect(
+            "in-tick 10x amount with pre-populated tick data; V4 calc must not miss or overflow",
+        );
     assert!(
         bigger_out > amount_out,
         "V4 in-tick swap must be monotonic: {bigger_out} !> {amount_out}"
     );
 
     // Direction symmetry at the 1:1 price (catches a V4 sign-flip regression).
-    let ofz_out = bot.calculate_tokens_out(pid, false, U256::from(AMOUNT_IN));
+    let ofz_out = bot
+        .calculate_tokens_out_miss_aware(pid, false, U256::from(AMOUNT_IN))
+        .expect(
+            "small in-tick amount with pre-populated tick data; V4 calc must not miss or overflow",
+        );
     assert_eq!(
         ofz_out, amount_out,
         "1:1-price V4 swap must be direction-symmetric (zfo == ofz)"

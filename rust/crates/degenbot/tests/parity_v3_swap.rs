@@ -13,7 +13,7 @@
 //! (`BotState`, as a `cargo add degenbot` user) produces the **same**
 //! `amount_out` as the **Python consumer** (`PyBot`, the PyO3 binding). The
 //! shared oracle is the recorded constant `EXPECTED_AMOUNT_OUT_ZFO`
-//! (deterministic — both consumers hit one `BotState::calculate_tokens_out`
+//! (deterministic — both consumers hit one `BotState::calculate_tokens_out_miss_aware`
 //! core). Plus a monotonicity sanity check (larger input → larger output,
 //! within the active tick) to catch a degenerate zero-return regression, and
 //! a direction-symmetry check (zfo == ofz at the 1:1 price) to catch a
@@ -106,7 +106,11 @@ fn standalone_rust_consumer_v3_swap_matches_recorded_constant() {
         .expect("register canonical V3 pool");
     assert_eq!(pid, 1, "first registered pool gets id 1 (parity contract)");
 
-    let amount_out = bot.calculate_tokens_out(pid, ZERO_FOR_ONE, U256::from(AMOUNT_IN));
+    let amount_out = bot
+        .calculate_tokens_out_miss_aware(pid, ZERO_FOR_ONE, U256::from(AMOUNT_IN))
+        .expect(
+            "small in-tick amount with pre-populated tick data; V3 calc must not miss or overflow",
+        );
     assert_eq!(
         amount_out,
         U256::from(EXPECTED_AMOUNT_OUT_ZFO),
@@ -118,7 +122,11 @@ fn standalone_rust_consumer_v3_swap_matches_recorded_constant() {
     // output (catches a degenerate zero-return / overflow-clamp regression
     // that a single-point constant alone would miss).
     let bigger_in = U256::from(AMOUNT_IN) * U256::from(10_u64);
-    let bigger_out = bot.calculate_tokens_out(pid, ZERO_FOR_ONE, bigger_in);
+    let bigger_out = bot
+        .calculate_tokens_out_miss_aware(pid, ZERO_FOR_ONE, bigger_in)
+        .expect(
+            "in-tick 10x amount with pre-populated tick data; V3 calc must not miss or overflow",
+        );
     assert!(
         bigger_out > amount_out,
         "V3 in-tick swap must be monotonic: {bigger_out} !> {amount_out}"
@@ -127,7 +135,11 @@ fn standalone_rust_consumer_v3_swap_matches_recorded_constant() {
     // Symmetry sanity: at the 1:1 price the zfo and ofz outputs are equal
     // (no directional asymmetry at balance). Catches a direction-flag
     // inversion in the FFI seam.
-    let ofz_out = bot.calculate_tokens_out(pid, false, U256::from(AMOUNT_IN));
+    let ofz_out = bot
+        .calculate_tokens_out_miss_aware(pid, false, U256::from(AMOUNT_IN))
+        .expect(
+            "small in-tick amount with pre-populated tick data; V3 calc must not miss or overflow",
+        );
     assert_eq!(
         ofz_out, amount_out,
         "1:1-price V3 swap must be direction-symmetric (zfo == ofz)"

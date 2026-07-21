@@ -17,7 +17,8 @@ use pyo3::types::{PyDict, PyList};
 
 use crate::bot::journal_err_to_py;
 use degenbot_bot::bot_core::{
-    BalancerStablePoolIdentity, BalancerWeightedPoolIdentity, BotState, CurvePoolIdentity, TickInfo,
+    BalancerStablePoolIdentity, BalancerWeightedPoolIdentity, BotState, CurvePoolIdentity,
+    SimulateSwapError, TickInfo,
 };
 
 /// Encode a byte slice as a lowercase hex string (no "0x" prefix).
@@ -569,6 +570,16 @@ impl PyLiquidityPool {
     }
 
     /// Calculate the output token amount for a given input amount.
+    ///
+    /// Surfaces the cdbc03bb on-chain-equivalent revert: when the constant-
+    /// product / CL swap math overflows a `uint256` intermediate (mirroring
+    /// on-chain `getAmountOut` `SafeMath` revert), this raises `ValueError` so the
+    /// Python companion can translate it to a domain `LiquidityPoolError`.
+    /// A V3/V4 sparse-map miss is still mapped to 0 — callers needing the miss
+    /// surfaced use [`calculate_tokens_out_with_fetch`][Self::calculate_tokens_out_with_fetch].
+    ///
+    /// Raises:
+    ///     `ValueError`: If the swap math overflows `uint256` (on-chain revert).
     #[pyo3(signature = (zero_for_one, amount_in))]
     fn calculate_tokens_out(
         &self,
@@ -579,9 +590,27 @@ impl PyLiquidityPool {
         let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
         let result = {
             let core = self.core.read();
-            core.calculate_tokens_out(self.pool_id, zero_for_one, amount)
+            core.calculate_tokens_out_miss_aware(self.pool_id, zero_for_one, amount)
         };
-        let bound = crate::conversion::alloy::u256_to_py(py, &result)?;
+        // cdbc03bb: V2/V3/V4 swap math reverts on `uint256` overflow (mirrors
+        // on-chain `getAmountOut` SafeMath revert). The plain
+        // `calculate_tokens_out` surfaces that revert as a Python `ValueError`
+        // (the V2 companion translates it to a domain `LiquidityPoolError`,
+        // mirroring `calculate_tokens_in_from_tokens_out`'s overdraw-sentinel
+        // translation). A V3/V4 sparse-map miss stays mapped to 0 so callers
+        // that don't opt into `calculate_tokens_out_with_fetch` keep the
+        // legacy no-raise-on-miss contract documented on the underlying
+        // `BotState::calculate_tokens_out`.
+        let out = match result {
+            Ok(v) => v,
+            Err(SimulateSwapError::MissingTickWord(_)) => U256::ZERO,
+            Err(SimulateSwapError::NotComputable) => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
+                ));
+            }
+        };
+        let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
         Ok(bound.unbind())
     }
 

@@ -47,7 +47,7 @@ use degenbot_bot::bot_core::PoolTickCoverage;
 use degenbot_bot::bot_core::{
     Bot, RegisterAerodromeV2PoolParams, RegisterBalancerStablePoolParams,
     RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams, RegisterV2PoolParams,
-    RegisterV3PoolParams, RegisterV4PoolParams, V4PoolKey,
+    RegisterV3PoolParams, RegisterV4PoolParams, SimulateSwapError, V4PoolKey,
 };
 use degenbot_pools::state_history::JournalError;
 use degenbot_uniswap::dex_identity::DexVariant;
@@ -736,13 +736,10 @@ impl PyBot {
 
     /// Calculate the output token amount for a given input amount.
     ///
-    /// Args:
-    ///     `pool_id`: The pool ID returned by `register_v2_pool`.
-    ///     `zero_for_one`: True for token0→token1, False for token1→token0.
-    ///     `amount_in`: Input token amount (Python int).
-    ///
-    /// Returns:
-    ///     The output token amount as a Python int.
+    /// Raises `ValueError` when the swap math overflows a `uint256` intermediate
+    /// (mirrors on-chain `getAmountOut` `SafeMath` revert — cdbc03bb). A V3/V4
+    /// sparse-map miss is still mapped to 0; callers needing the miss surfaced
+    /// use `calculate_tokens_out_with_fetch` on the pool handle.
     #[pyo3(signature = (pool_id, zero_for_one, amount_in))]
     fn calculate_tokens_out(
         &self,
@@ -755,9 +752,23 @@ impl PyBot {
         let result = {
             let state = self.bot.state_arc();
             let core = state.read();
-            core.calculate_tokens_out(pool_id, zero_for_one, amount)
+            core.calculate_tokens_out_miss_aware(pool_id, zero_for_one, amount)
         };
-        let bound = crate::conversion::alloy::u256_to_py(py, &result)?;
+        // cdbc03bb: surface `NotComputable` (uint256 overflow = on-chain revert)
+        // as a Python `ValueError` so the companion can translate it to a
+        // domain `LiquidityPoolError`; keep `MissingTickWord` mapped to 0 so
+        // callers that haven't opted into the fetch-retry path keep the legacy
+        // no-raise-on-miss contract.
+        let out = match result {
+            Ok(v) => v,
+            Err(SimulateSwapError::MissingTickWord(_)) => alloy::primitives::U256::ZERO,
+            Err(SimulateSwapError::NotComputable) => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
+                ));
+            }
+        };
+        let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
         Ok(bound.unbind())
     }
 

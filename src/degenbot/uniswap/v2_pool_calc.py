@@ -145,6 +145,7 @@ class UniswapV2PoolCalc:
         Raises:
             InvalidSwapInputAmount: If token_in_quantity is not positive.
             DegenbotValueError: If token_in is not held by this pool.
+            LiquidityPoolError: If `uint256` swap math overflows (on-chain revert).
 
         """
         if token_in_quantity <= 0:  # pragma: no cover
@@ -163,10 +164,26 @@ class UniswapV2PoolCalc:
             # ADR-005 slice 5: delegate the constant-product math to the Rust
             # pool handle. Rust reads reserves + fee under a single read guard
             # (no separate Python state read beforehand — no pump-interleave).
-            return self._py_pool.calculate_tokens_out(
-                zero_for_one=zero_for_one,
-                amount_in=token_in_quantity,
-            )
+            #
+            # cdbc03bb: Rust mirrors on-chain `getAmountOut` SafeMath and
+            # reverts on `uint256` overflow (e.g. `amount_in = 2**256 - 1`
+            # overflows `amount_in * gamma_numer`); the FFI surfaces that
+            # revert as a `ValueError`. Translate it to the original Python
+            # contract's `LiquidityPoolError` (mirrors
+            # `calculate_tokens_in_from_tokens_out`'s overdraw-sentinel
+            # translation below).
+            try:
+                return self._py_pool.calculate_tokens_out(
+                    zero_for_one=zero_for_one,
+                    amount_in=token_in_quantity,
+                )
+            except ValueError as e:
+                raise LiquidityPoolError(
+                    message=(
+                        f"Input amount ({token_in_quantity}) overflows "
+                        "uint256 swap math (on-chain revert)"
+                    ),
+                ) from e
 
         # Override path: Python constant-product calc against the override
         # reserves. simulate_* relies on this for delta + final_state
