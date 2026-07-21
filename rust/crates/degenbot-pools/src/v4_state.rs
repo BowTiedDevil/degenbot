@@ -302,17 +302,10 @@ impl V4PoolState {
             .collect();
     }
 
-    /// Merge a fetched tick word's ticks into this state's `tick_data` +
-    /// mark the word as known + invalidate the cached tick ranges. Used by
-    /// the fetch+retry override loop (merges into the TRANSIENT override
-    /// state, not registered `BotState`). Mirrors `BotState::merge_tick_word`.
-    pub fn merge_tick_word(&mut self, fetched: &crate::tick_fetch::FetchedTickWord) {
-        for (tick, info) in &fetched.ticks {
-            self.tick_data.insert(*tick, info.clone());
-        }
-        self.known_bitmap_words.insert(fetched.word);
-        self.invalidate_tick_range_cache();
-    }
+    // `merge_tick_word` lives on the `ConcentratedLiquidityPoolMut` trait
+    // (ADR-017 slice 1) — the body was the byte-identical twin of
+    // `V3PoolState::merge_tick_word`; the trait dedups the two. See
+    // `impl ConcentratedLiquidityPoolMut for V4PoolState` in `registry.rs`.
 
     /// Construct from registration params with a journal of the given depth.
     #[must_use]
@@ -936,6 +929,65 @@ mod apply_inherent_tests {
             let cache = state.cached_tick_ranges.lock();
             assert!(cache.zfo.is_none());
             assert!(cache.ofz.is_none());
+        }
+    }
+
+    #[test]
+    fn merge_tick_word_via_trait_merges_ticks_marks_word_known_invalidates_cache() {
+        // ADR-017 slice 1: `merge_tick_word` lives on the
+        // `ConcentratedLiquidityPoolMut` trait. Verify the trait-dispatch path
+        // lands ticks + marks the word known + invalidates the cached ranges
+        // (the same observable behavior the prior inherent method had, now
+        // reached through `&mut dyn ConcentratedLiquidityPoolMut`).
+        let liq = 1_000_000u128;
+        let mut state = state_with_position(liq);
+        // Seed the cache so the invalidate assertion is observable.
+        let _ = state.build_int_v4_sequence(60, 3_000, true, 15);
+        let fetched = crate::tick_fetch::FetchedTickWord {
+            word: 7,
+            ticks: {
+                let mut m = HashMap::new();
+                m.insert(
+                    420,
+                    TickInfo {
+                        liquidity_gross: U256::from(500u64).to::<U128>(),
+                        liquidity_net: I256::try_from(500i128).unwrap(),
+                        block: 9,
+                    },
+                );
+                m
+            },
+        };
+        let before_len = state.journal.len();
+
+        let cl: &mut dyn ConcentratedLiquidityPoolMut = &mut state;
+        let applied = cl.merge_tick_word(&fetched);
+
+        assert!(applied, "trait merge_tick_word returns true on a CL pool");
+        assert_eq!(
+            state.tick_data.get(&420),
+            Some(&TickInfo {
+                liquidity_gross: U256::from(500u64).to::<U128>(),
+                liquidity_net: I256::try_from(500i128).unwrap(),
+                block: 9,
+            }),
+            "fetched tick landed in tick_data"
+        );
+        assert!(
+            state.known_bitmap_words.contains(&7),
+            "fetched word marked known"
+        );
+        assert_eq!(
+            state.journal.len(),
+            before_len,
+            "merge_tick_word never journals (no rollback delta)"
+        );
+        {
+            let cache = state.cached_tick_ranges.lock();
+            assert!(
+                cache.zfo.is_none() && cache.ofz.is_none(),
+                "cache invalidated"
+            );
         }
     }
 

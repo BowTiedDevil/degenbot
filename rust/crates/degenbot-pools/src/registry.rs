@@ -186,6 +186,17 @@ impl PoolEntry {
         }
     }
 
+    /// Project to `&mut dyn ConcentratedLiquidityPoolMut` (ADR-017) — the
+    /// mutable CL-family apply-twin of [`Self::as_reorg_state_mut`] (the
+    /// reorg projection from ADR-016). Used by `BotState`'s CL apply
+    /// dispatchers (`merge_tick_word`, and the future `apply_swap` /
+    /// `apply_liquidity_update` slices) to reach the trait method without a
+    /// per-family variant match at each call site.
+    #[must_use]
+    pub fn as_cl_mut(&mut self) -> Option<&mut dyn ConcentratedLiquidityPoolMut> {
+        some_cl_mut(self)
+    }
+
     /// Project to `&dyn ReorgPoolState` (ADR-016). One match over all 7
     /// variants — used by `BotState`'s unified reorg dispatchers
     /// (`restore_pool_before_block` / `discard_pool_before_block` /
@@ -217,6 +228,21 @@ impl PoolEntry {
             PoolEntry::BalancerStable(_, s) => s,
             PoolEntry::AerodromeV2(_, s) => s,
         })
+    }
+}
+
+/// `PoolEntry::as_cl_mut` helper — one match over V3 | V4. Free-standing so
+/// `PoolEntry::as_cl_mut` stays a one-liner (matches the `as_reorg_state`
+/// shape). Returns `None` for the five non-CL families.
+fn some_cl_mut(entry: &mut PoolEntry) -> Option<&mut dyn ConcentratedLiquidityPoolMut> {
+    match entry {
+        PoolEntry::V3(_, s) => Some(s),
+        PoolEntry::V4(_, s) => Some(s),
+        PoolEntry::V2(..)
+        | PoolEntry::Curve(..)
+        | PoolEntry::BalancerWeighted(..)
+        | PoolEntry::BalancerStable(..)
+        | PoolEntry::AerodromeV2(..) => None,
     }
 }
 
@@ -311,6 +337,22 @@ pub trait ConcentratedLiquidityPoolMut: ConcentratedLiquidityPool {
         update_block: u64,
         tick_spacing: i32,
     ) -> bool;
+
+    /// Merge a fetched tick-bitmap word's ticks into this state's `tick_data`,
+    /// mark the word as known in `known_bitmap_words`, and invalidate the
+    /// cached tick ranges. Scalars (`sqrt_price_x96`/`liquidity`/`tick`)
+    /// are untouched. Used by the fetch+retry miss path
+    /// ([`crate::tick_fetch::miss::TickWordFetcher`]) and the
+    /// `simulate_swap_with_override` transient-state merge loop.
+    ///
+    /// No journal delta — a fetched-word merge mutates `tick_data` only;
+    /// reorg rollback covers it via the surrounding event's delta, not a
+    /// merge delta (mirrors the no-journal contract of [`Self::replace_tick_data`]).
+    ///
+    /// Returns `true` (the CL mutator always succeeds; the dispatch site's
+    /// `false` return is reserved for non-CL / unregistered pools — same
+    /// convention as [`Self::replace_tick_data`]).
+    fn merge_tick_word(&mut self, fetched: &crate::tick_fetch::FetchedTickWord) -> bool;
 }
 
 impl ConcentratedLiquidityPoolMut for V3PoolState {
@@ -328,6 +370,15 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
         self.invalidate_tick_range_cache();
         true
     }
+
+    fn merge_tick_word(&mut self, fetched: &crate::tick_fetch::FetchedTickWord) -> bool {
+        for (tick, info) in &fetched.ticks {
+            self.tick_data.insert(*tick, info.clone());
+        }
+        self.known_bitmap_words.insert(fetched.word);
+        self.invalidate_tick_range_cache();
+        true
+    }
 }
 
 impl ConcentratedLiquidityPoolMut for V4PoolState {
@@ -342,6 +393,15 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
             self.update_block = update_block;
         }
         self.seed_known_bitmap_words(tick_spacing);
+        self.invalidate_tick_range_cache();
+        true
+    }
+
+    fn merge_tick_word(&mut self, fetched: &crate::tick_fetch::FetchedTickWord) -> bool {
+        for (tick, info) in &fetched.ticks {
+            self.tick_data.insert(*tick, info.clone());
+        }
+        self.known_bitmap_words.insert(fetched.word);
         self.invalidate_tick_range_cache();
         true
     }
