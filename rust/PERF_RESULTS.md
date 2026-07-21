@@ -3,11 +3,11 @@
 Companion to `rust/PERF_BASELINE.md` (which holds the pre-experiment numbers).
 This file records each lever's before/after, whether it was kept, and why.
 
-**Durable status:** the kept changes (mold, nextest, r-a `targetDir`) are
-provisioned by the devcontainer so they survive rebuilds — see the
-"Durable devcontainer changes" section below. The repo itself stays free of
-any mold config so CI (ubuntu-latest, no mold) and non-devcontainer cloners
-keep building with the default linker.
+**Durable status:** the kept changes (mold, nextest, r-a `targetDir`, dev-profile
+cdylib) are provisioned by the devcontainer / pyproject so they survive
+rebuilds — see the "Durable devcontainer changes" section below. The repo
+itself stays free of any mold config so CI (ubuntu-latest, no mold) and
+non-devcontainer cloners keep building with the default linker.
 
 Hardware/toolchain at experiment time: 24 cores, Fedora, rustc 1.96.1.
 Installed during experiments: `mold 2.40.4`, `lld 22.1.8`,
@@ -17,7 +17,8 @@ Installed during experiments: `mold 2.40.4`, `lld 22.1.8`,
 
 | Lever | Status | Baseline → After | Δ |
 |-------|--------|------------------|---|
-| mold linker | **KEPT** (`rust/.cargo/config.toml`) | clean build 59s→51s; test-build 64s→48s; cdylib link 27s→19.5s | −14% build, −25% test-build, −28% cdylib |
+| mold linker | **KEPT** (devcontainer `~/.cargo/config.toml`) | clean build 59s→51s; test-build 64s→48s; cdylib link 27s→19.5s | −14% build, −25% test-build, −28% cdylib |
+| **dev-profile cdylib** | **KEPT** (`pyproject.toml [tool.maturin] profile = "dev"`) | **uv-sync cdylib rebuild 149s→24s** (fires on every .rs edit) | **−84%** |
 | nextest | **RECOMMENDED** (measured, not wired into justfile) | build+run 94s→75s (clean) | −20% |
 | build-override opt-level=3 | REVERTED (regression) | 51s→75s clean | +47% (worse) |
 | r-a `cargo.targetDir:true` | RECOMMENDED (IDE config, not A/B-able here) | kills the 19s first-check tax | estimated |
@@ -136,6 +137,57 @@ Installed during experiments: `mold 2.40.4`, `lld 22.1.8`,
 - `cargo features prune` (cargo-features-manager) was listed in the article but not
   tried — installable if a feature-level audit is wanted.
 
+### Lever 8 — Dev-profile cdylib rebuild (the big agent-loop win) ✅ KEPT
+
+**The finding.** `[tool.maturin] profile = "release"` in `pyproject.toml` meant
+*every* `uv sync`-driven cdylib rebuild — which fires on any `.rs` edit via
+`[tool.uv] cache-keys` watching `rust/crates/*/src/**/*.rs` — was a full
+release build: `opt-level=3` + `lto="thin"` + `codegen-units=1`. That is the
+single largest "small change → full run" cost an automated agent pays, and it
+fires on every Rust edit.
+
+**The fix.** `profile = "dev"` in `pyproject.toml` `[tool.maturin]`. The
+editable-install cdylib (the `.so` Python loads in the devcontainer) now
+builds at `opt-level=0`, no LTO.
+
+**Measured (uv sync, single `.rs` touch):**
+- release profile: **149s**
+- dev profile: **24s**
+- → **−125s / −84%** per agent Rust edit.
+
+At the cargo level the same ratio holds: `cargo build --release -p degenbot_rs
+--features …` = 156s vs `cargo build -p degenbot_rs --features …` (dev) = 32s.
+
+**Independence from the published wheel (verified).** `[tool.maturin] profile`
+is consumed ONLY by the local editable-install build path (`uv sync` /
+`just dev` / `maturin develop`). The published wheel is built by the
+PyO3/maturin-action in `.github/workflows/publish-to-pypi.yaml` line 71,
+which passes `--release` explicitly AND overrides the features list
+(`--features pyo3/extension-module`, dropping `degenbot-bot/hotpath`). So
+the shipped artifact stays fully LTO-optimized, runtime-hotpath-free, and
+unaffected by this setting. CI build/test jobs (`just lint-rust` /
+`test-rust` / `build-rust-extension`) use cargo directly and don't read
+`[tool.maturin]` at all — they are also unaffected.
+
+**Tradeoff acknowledged.** The dev `.so` is now unoptimized: swap/solver math
+runs slower in the devcontainer. That is acceptable (and correct) for the
+dev/agent loop, where the goal is iteration speed, not hot-path latency.
+Hot-path latency measurement must use a release build (`just build-rust-debug`
+or a release wheel), which is unchanged.
+
+**Verified green** with the new dev `.so`: 1749 Rust tests (nextest) + 360
+rust-wrapped Python tests (pytest tests/rust) pass.
+
+### Lever 9 — Dev-profile debuginfo trim ❌ REVERTED
+
+Tried `[profile.dev] debug = "line-tables-only"` to cut debuginfo generation +
+link cost on the test-build path (the corrode.dev article's `debug=0`/`strip`
+suggestion, adapted to keep backtrace line numbers). Measured against the
+test-build (B4) path: no clear win (54s vs 48s, within noise / slightly worse
+on a clean rebuild), and it costs debugger + variable-inspection fidelity.
+Not worth it for this workspace. `[profile.dev]` stays at `codegen-units = 16`
+only.
+
 ## Reproducing measurements
 
 ```bash
@@ -163,8 +215,12 @@ time cargo nextest run --workspace            # 75s build+run (nextest), 11s war
 - `rust/.cargo/config.toml` — was created during experiments, then **REMOVED**
   (would break CI / non-devcontainer cloners). mold is provisioned via the
   devcontainer image instead — see below.
-- `rust/Cargo.toml` — `[profile.dev]` temporarily gained then lost `build-override`;
+- `rust/Cargo.toml` — `[profile.dev]` temporarily gained then lost `build-override`
+  (lever #2, regressed) and `debug = "line-tables-only"` (lever #9, no win);
   net no change from baseline.
+- `pyproject.toml` — `[tool.maturin] profile` flipped `"release"` → `"dev"`
+  (lever #8 — the headline agent-loop win). VERIFIED independent of the
+  published wheel (CI maturin-action passes `--release` explicitly).
 - `rust/PERF_BASELINE.md` — pre-experiment baseline reference (kept).
 - `rust/PERF_RESULTS.md` — this file (kept).
 
@@ -197,6 +253,16 @@ unaffected.
   and falls back to `cargo test` if nextest is absent. The CI-facing
   `test-rust` recipe is UNCHANGED (still `cargo test`) so CI (no nextest)
   stays green.
+
+## Durable repo changes (not devcontainer-scoped)
+
+- `pyproject.toml` `[tool.maturin] profile = "dev"` (lever #8). This is a
+  real repo change (committed), NOT devcontainer-scoped — because
+  `[tool.maturin] profile` is consumed only by the local editable-install
+  build path, and the published wheel passes `--release` explicitly at the
+  CI `maturin-action` invocation. Every clone (devcontainer or otherwise)
+  gets the fast dev `.so` on `uv sync`; every published wheel stays
+  LTO-optimized. This is the one durable repo change from the perf work.
 
 `cargo-machete` and `cargo-shear` were NOT baked in (lever #7 is
 investigative; the findings are mostly derive-macro false positives that
