@@ -1025,38 +1025,17 @@ impl BotState {
         }
         for update in buffered {
             if let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&key) {
-                // Capture boundary-tick priors before mutation so reorg
-                // rollback can reverse-apply. A tick absent before this update
-                // (newly initialized) gets `liquidity_gross_before: None`
-                // (deleted on rollback). Mint/Burn don't touch slot0 scalars
-                // → `scalar_priors: None`.
-                let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(2);
-                for &tick_idx in &[update.tick_lower, update.tick_upper] {
-                    let prior = state.tick_data.get(&tick_idx).cloned();
-                    journaled_priors.push((
-                        tick_idx,
-                        TickBefore {
-                            liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
-                            liquidity_net_before: prior
-                                .as_ref()
-                                .map_or(alloy::primitives::I256::ZERO, |p| p.liquidity_net),
-                        },
-                    ));
-                }
-                ::degenbot_pools::tick_bitmap::apply_liquidity_to_tick_range(
-                    &mut state.tick_data,
+                // ADR-017 slice 3: delegate to the CL trait method (formerly
+                // re-inlined here byte-identically to the inherent
+                // `apply_liquidity_update`). Mint/Burn carry no scalar priors —
+                // the trait method journals the two boundary-tick priors +
+                // pushes a `scalar_priors: None` `V3BlockDelta`.
+                state.apply_liquidity_update(
                     update.tick_lower,
                     update.tick_upper,
                     update.liquidity_delta,
                     update.block_number,
                 );
-                state.journal.push_delta(V3BlockDelta {
-                    block: update.block_number,
-                    scalar_priors: None,
-                    tick_priors: journaled_priors,
-                });
-                state.update_block = update.block_number;
-                state.invalidate_tick_range_cache();
             }
         }
     }
@@ -1086,33 +1065,14 @@ impl BotState {
         }
         for update in buffered {
             if let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&key) {
-                let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(2);
-                for &tick_idx in &[update.tick_lower, update.tick_upper] {
-                    let prior = state.tick_data.get(&tick_idx).cloned();
-                    journaled_priors.push((
-                        tick_idx,
-                        TickBefore {
-                            liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
-                            liquidity_net_before: prior
-                                .as_ref()
-                                .map_or(alloy::primitives::I256::ZERO, |p| p.liquidity_net),
-                        },
-                    ));
-                }
-                ::degenbot_pools::tick_bitmap::apply_liquidity_to_tick_range(
-                    &mut state.tick_data,
+                // ADR-017 slice 3: delegate to the CL trait method (formerly
+                // re-inlined here byte-identically to `apply_liquidity_update`).
+                state.apply_liquidity_update(
                     update.tick_lower,
                     update.tick_upper,
                     update.liquidity_delta,
                     update.block_number,
                 );
-                state.journal.push_delta(V3BlockDelta {
-                    block: update.block_number,
-                    scalar_priors: None,
-                    tick_priors: journaled_priors,
-                });
-                state.update_block = update.block_number;
-                state.invalidate_tick_range_cache();
             }
         }
     }
@@ -2702,34 +2662,18 @@ impl BotState {
             let Some(PoolEntry::V4(_, state)) = self.pools.get_mut(&id) else {
                 continue;
             };
+            // ADR-014 D4: the on-chain ModifyLiquidity int256 envelope is
+            // narrowed to i128 (the Tick.liquidityNet type V4 itself narrows
+            // to at PoolManager.sol:666) at the drain→apply seam, then the
+            // trait method journals + applies (ADR-017 slice 3 — formerly
+            // re-inlined here byte-identically to `apply_liquidity_update`).
             if let Ok(delta_i128) = i128::try_from(update.liquidity_delta) {
-                let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(2);
-                for &tick_idx in &[update.tick_lower, update.tick_upper] {
-                    let prior = state.tick_data.get(&tick_idx).cloned();
-                    journaled_priors.push((
-                        tick_idx,
-                        TickBefore {
-                            liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
-                            liquidity_net_before: prior
-                                .as_ref()
-                                .map_or(alloy::primitives::I256::ZERO, |p| p.liquidity_net),
-                        },
-                    ));
-                }
-                ::degenbot_pools::tick_bitmap::apply_liquidity_to_tick_range(
-                    &mut state.tick_data,
+                state.apply_liquidity_update(
                     update.tick_lower,
                     update.tick_upper,
                     delta_i128,
                     update.block_number,
                 );
-                state.journal.push_delta(V3BlockDelta {
-                    block: update.block_number,
-                    scalar_priors: None,
-                    tick_priors: journaled_priors,
-                });
-                state.update_block = update.block_number;
-                state.invalidate_tick_range_cache();
             }
         }
     }
@@ -2754,34 +2698,15 @@ impl BotState {
             let Some(PoolEntry::V4(_, state)) = self.pools.get_mut(&id) else {
                 continue;
             };
+            // ADR-014 D4: int256→i128 narrow at the drain→apply seam, then
+            // delegate to the trait method (ADR-017 slice 3).
             if let Ok(delta_i128) = i128::try_from(update.liquidity_delta) {
-                let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(2);
-                for &tick_idx in &[update.tick_lower, update.tick_upper] {
-                    let prior = state.tick_data.get(&tick_idx).cloned();
-                    journaled_priors.push((
-                        tick_idx,
-                        TickBefore {
-                            liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
-                            liquidity_net_before: prior
-                                .as_ref()
-                                .map_or(alloy::primitives::I256::ZERO, |p| p.liquidity_net),
-                        },
-                    ));
-                }
-                ::degenbot_pools::tick_bitmap::apply_liquidity_to_tick_range(
-                    &mut state.tick_data,
+                state.apply_liquidity_update(
                     update.tick_lower,
                     update.tick_upper,
                     delta_i128,
                     update.block_number,
                 );
-                state.journal.push_delta(V3BlockDelta {
-                    block: update.block_number,
-                    scalar_priors: None,
-                    tick_priors: journaled_priors,
-                });
-                state.update_block = update.block_number;
-                state.invalidate_tick_range_cache();
             }
         }
     }
