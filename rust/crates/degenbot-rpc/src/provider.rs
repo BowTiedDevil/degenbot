@@ -34,6 +34,84 @@ const MAX_RETRY_DELAY_MS: u64 = 30_000; // 30 seconds
 const BACKOFF_MULTIPLIER: u64 = 2;
 const MAX_JITTER_MS: u64 = 100; // Add up to 100ms of jitter
 
+/// Retry an async operation with exponential backoff, emitting `log` records on
+/// every retry attempt so operators can see backoff in logs (E2B542).
+///
+/// The codebase's logging vocabulary is `log` (used across every Rust core
+/// crate); `log` is already a dependency of `degenbot-rpc`, so no new dep is
+/// introduced. The per-call context label is embedded in the `ProviderError`
+/// `Display` (baked in via `into_provider_error("<context>")` at the call site,
+/// which formats `{context}: {self}`), so the emitted `{error}` carries the
+/// context verbatim.
+///
+/// Emission policy (the E2B542 decision):
+/// - First retry (attempt 1): `log::debug!` — transient, often benign.
+/// - Subsequent retries (attempt >= 2): `log::warn!` — sustained backoff.
+/// - Exhausted all attempts: `log::error!` — terminal failure.
+///
+/// Extracted from `AlloyProvider::retry_with_backoff` (which delegates, passing
+/// `self.max_attempts`) so the loop is unit-testable without constructing a
+/// live provider, and so a test can drive `max_attempts = 2` for a fast,
+/// deterministic assertion that the expected structured fields are emitted.
+pub(crate) async fn retry_with_backoff_loop<F, Fut, T>(
+    max_attempts: u32,
+    operation: F,
+) -> ProviderResult<T>
+where
+    F: Fn() -> Fut + Send + Sync,
+    Fut: std::future::Future<Output = ProviderResult<T>> + Send,
+    T: Send,
+{
+    let mut attempt = 0;
+    let mut delay_ms = INITIAL_RETRY_DELAY_MS;
+
+    loop {
+        match operation().await {
+            Ok(result) => return Ok(result),
+            Err(e) => {
+                attempt += 1;
+                if attempt >= max_attempts {
+                    log::error!(
+                        target: "degenbot_rpc::provider",
+                        "RPC retries exhausted: attempt {attempt}/{max_attempts}: {e}"
+                    );
+                    return Err(e);
+                }
+
+                // Check if it's a retryable error
+                if !e.is_retryable() {
+                    return Err(e);
+                }
+
+                // Calculate delay with exponential backoff and jitter
+                // Use random_range for uniform distribution (avoids modulo bias)
+                let jitter = rand::rng().random_range(0..MAX_JITTER_MS);
+                let sleep_ms = delay_ms + jitter;
+
+                if attempt <= 1 {
+                    log::debug!(
+                        target: "degenbot_rpc::provider",
+                        "RPC retry: attempt {attempt}/{max_attempts} after {sleep_ms}ms: {e}"
+                    );
+                } else {
+                    log::warn!(
+                        target: "degenbot_rpc::provider",
+                        "RPC retry: attempt {attempt}/{max_attempts} after {sleep_ms}ms: {e}"
+                    );
+                }
+
+                tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
+
+                // Exponential backoff with cap (saturating to prevent overflow)
+                delay_ms = std::cmp::min(
+                    delay_ms.saturating_mul(BACKOFF_MULTIPLIER),
+                    MAX_RETRY_DELAY_MS,
+                );
+            }
+        }
+    }
+}
+
 /// Maximum allowed concurrent requests in `LogFetcher`.
 ///
 /// Prevents file-descriptor exhaustion and RPC rate-limit bans from
@@ -62,6 +140,55 @@ macro_rules! rpc_call {
             })
             .await
     };
+}
+
+/// JSON-RPC error codes that providers use to signal request-rate / quota
+/// exhaustion over HTTP 200 (the transport did NOT fail at the HTTP layer,
+/// so the 429-based classification in [`IntoProviderError`] does not fire).
+///
+/// Conservative set (BJXUPU):
+/// - `-32005` — `Alchemy` "your app has exceeded its compute unit capacity".
+/// - `-32004` — `QuickNode` "rate limit exceeded".
+///
+/// Infura reuses the generic `-32001` code for quota errors but disambiguates
+/// via the *message*; that case is caught by [`JSON_RPC_RATE_LIMIT_MESSAGE_MARKERS`],
+/// not by this code table, so a `-32001` without a rate-limit message stays
+/// `RpcError` (pinned by `non_revert_error_stays_rpc_error`).
+///
+/// Adding a provider code is one line here — not a match-arm edit.
+const JSON_RPC_RATE_LIMIT_CODES: &[i64] = &[-32_005, -32_004];
+
+/// Case-insensitive message substrings that mark a JSON-RPC error response as
+/// a rate-limit / quota error regardless of code. Catches providers that reuse
+/// a generic code (e.g. Infura's `-32001`) for quota exhaustion. The check is
+/// exact substring match on the lowercased message, so a non-rate-limit
+/// `-32001` (e.g. "requested block not available") stays `RpcError`.
+///
+/// Adding a provider's marker phrasing is one line here — not a match-arm edit.
+const JSON_RPC_RATE_LIMIT_MESSAGE_MARKERS: &[&str] = &[
+    "rate limit",
+    "too many requests",
+    "compute units exceeded",
+    "exceeded its rate",
+];
+
+/// Whether a JSON-RPC `ErrorResp` (code, message) represents a provider
+/// rate-limit / quota response. Data-driven via
+/// [`JSON_RPC_RATE_LIMIT_CODES`] (code match) and
+/// [`JSON_RPC_RATE_LIMIT_MESSAGE_MARKERS`] (case-insensitive message
+/// substring). Used by [`IntoProviderError::into_provider_error`] so such
+/// responses map to [`ProviderError::RateLimited`] and feed the retry loop.
+///
+/// (BJXUPU — `is_retryable()` already returns true for `RateLimited`, so no
+/// predicate change is needed.)
+fn is_json_rpc_rate_limit_response(code: i64, message: &str) -> bool {
+    if JSON_RPC_RATE_LIMIT_CODES.contains(&code) {
+        return true;
+    }
+    let lower = message.to_lowercase();
+    JSON_RPC_RATE_LIMIT_MESSAGE_MARKERS
+        .iter()
+        .any(|marker| lower.contains(marker))
 }
 
 /// Extension trait that converts an Alloy `RpcError` into a `ProviderError`.
@@ -112,6 +239,19 @@ impl IntoProviderError for RpcError<TransportErrorKind> {
 
         // Server returned an error response (JSON-RPC error)
         if let Some(error_resp) = self.as_error_resp() {
+            // BJXUPU: JSON-RPC-level rate-limit responses. Providers signal
+            // quota exhaustion over HTTP 200 (the transport did NOT fail at
+            // the HTTP layer, so the 429 transport branch above does not fire).
+            // Detect by (a) a known provider quota code, or (b) a rate-limit
+            // message marker on any code (Infura reuses -32001 for quota
+            // errors). Map to `RateLimited` so the retry loop's
+            // `is_retryable()` picks them up. Both tables are data-driven so
+            // adding a provider code/marker later is one line, not a match-arm
+            // edit.
+            if is_json_rpc_rate_limit_response(error_resp.code, &error_resp.message) {
+                return ProviderError::RateLimited { message };
+            }
+
             // Detect EVM execution reverts structurally (alloy's
             // `as_revert_data()` checks `message.contains("revert")` + spelunks
             // `data` for the 0x08c379a0/0x4e487b71 selector). The classification
@@ -566,38 +706,7 @@ impl AlloyProvider {
         Fut: std::future::Future<Output = ProviderResult<T>> + Send,
         T: Send,
     {
-        let mut attempt = 0;
-        let mut delay_ms = INITIAL_RETRY_DELAY_MS;
-
-        loop {
-            match operation().await {
-                Ok(result) => return Ok(result),
-                Err(e) => {
-                    attempt += 1;
-                    if attempt >= self.max_attempts {
-                        return Err(e);
-                    }
-
-                    // Check if it's a retryable error
-                    if !e.is_retryable() {
-                        return Err(e);
-                    }
-
-                    // Calculate delay with exponential backoff and jitter
-                    // Use random_range for uniform distribution (avoids modulo bias)
-                    let jitter = rand::rng().random_range(0..MAX_JITTER_MS);
-
-                    let sleep_duration = Duration::from_millis(delay_ms + jitter);
-                    tokio::time::sleep(sleep_duration).await;
-
-                    // Exponential backoff with cap (saturating to prevent overflow)
-                    delay_ms = std::cmp::min(
-                        delay_ms.saturating_mul(BACKOFF_MULTIPLIER),
-                        MAX_RETRY_DELAY_MS,
-                    );
-                }
-            }
-        }
+        retry_with_backoff_loop(self.max_attempts, operation).await
     }
 
     /// Get the RPC URL.
@@ -1180,6 +1289,88 @@ mod tests {
         );
     }
 
+    // ── BJXUPU: JSON-RPC-level rate-limit error responses ───────────────
+    //
+    // HTTP 200 + a JSON-RPC error body is how providers (Alchemy, QuickNode,
+    // Infura) signal quota exhaustion over a transport that did NOT fail at
+    // the HTTP layer. `into_provider_error` must recognise these and map them
+    // to `ProviderError::RateLimited` so the retry loop's `is_retryable()`
+    // picks them up (instead of failing fast as `RpcError { code }`).
+
+    /// BJXUPU: Alchemy/QuickNode `-32005` (request rate exceeded) maps to
+    /// `RateLimited` (retryable), not `RpcError`.
+    #[test]
+    fn json_rpc_rate_limit_code_32005_classified_as_rate_limited() {
+        let json = r#"{"code":-32005,"message":"your app has exceeded its compute unit capacity"}"#;
+        let payload: alloy::rpc::json_rpc::ErrorPayload = serde_json::from_str(json).unwrap();
+        let rpc_err: RpcError<TransportErrorKind> = RpcError::ErrorResp(payload);
+        let provider_err = rpc_err.into_provider_error("eth_getLogs failed");
+        assert!(
+            matches!(provider_err, ProviderError::RateLimited { .. }),
+            "-32005 should map to RateLimited, got {provider_err:?}"
+        );
+        assert!(
+            provider_err.is_retryable(),
+            "RateLimited must be retryable, got {provider_err:?}"
+        );
+        // The per-call context label is preserved in the message.
+        let ProviderError::RateLimited { message } = &provider_err else {
+            unreachable!()
+        };
+        assert!(
+            message.contains("eth_getLogs failed"),
+            "context label lost: {message}"
+        );
+    }
+
+    /// BJXUPU: `QuickNode` `-32004` (rate limit) also maps to `RateLimited`.
+    #[test]
+    fn json_rpc_rate_limit_code_32004_classified_as_rate_limited() {
+        let json = r#"{"code":-32004,"message":"rate limit exceeded"}"#;
+        let payload: alloy::rpc::json_rpc::ErrorPayload = serde_json::from_str(json).unwrap();
+        let rpc_err: RpcError<TransportErrorKind> = RpcError::ErrorResp(payload);
+        let provider_err = rpc_err.into_provider_error("eth_call failed");
+        assert!(
+            matches!(provider_err, ProviderError::RateLimited { .. }),
+            "-32004 should map to RateLimited, got {provider_err:?}"
+        );
+        assert!(provider_err.is_retryable());
+    }
+
+    /// BJXUPU: `Infura`-style `-32001` carrying a rate-limit *message* maps to
+    /// `RateLimited` (the message-marker fallback catches providers that reuse
+    /// a generic code for quota errors). The companion test
+    /// `non_revert_error_stays_rpc_error` pins that `-32001` WITHOUT a
+    /// rate-limit message stays `RpcError` — so the message-marker check is
+    /// exact, not a blanket code match.
+    #[test]
+    fn json_rpc_rate_limit_message_classified_as_rate_limited() {
+        let json = r#"{"code":-32001,"message":"rate limit exceeded, try again later"}"#;
+        let payload: alloy::rpc::json_rpc::ErrorPayload = serde_json::from_str(json).unwrap();
+        let rpc_err: RpcError<TransportErrorKind> = RpcError::ErrorResp(payload);
+        let provider_err = rpc_err.into_provider_error("eth_call failed");
+        assert!(
+            matches!(provider_err, ProviderError::RateLimited { .. }),
+            "-32001 with a rate-limit message should map to RateLimited, got {provider_err:?}"
+        );
+        assert!(provider_err.is_retryable());
+    }
+
+    /// BJXUPU: `-32601` (method not found) is NOT a rate-limit code and must
+    /// stay `RpcError` (not retried). Guards against an over-broad code set.
+    #[test]
+    fn json_rpc_method_not_found_stays_rpc_error() {
+        let json = r#"{"code":-32601,"message":"the method eth_getLogs does not exist"}"#;
+        let payload: alloy::rpc::json_rpc::ErrorPayload = serde_json::from_str(json).unwrap();
+        let rpc_err: RpcError<TransportErrorKind> = RpcError::ErrorResp(payload);
+        let provider_err = rpc_err.into_provider_error("eth_getLogs failed");
+        assert!(
+            matches!(provider_err, ProviderError::RpcError { code: -32601, .. }),
+            "-32601 should stay RpcError, got {provider_err:?}"
+        );
+        assert!(!provider_err.is_retryable());
+    }
+
     // ── LogFilter construction ──────────────────────────────────────────
 
     #[test]
@@ -1455,6 +1646,177 @@ mod tests {
         for err in non_retryable {
             assert!(!err.is_retryable(), "{err:?} should not be retryable");
         }
+    }
+
+    // ── E2B542: retry-loop emits `log` records on every attempt ───────────
+    //
+    // `log::set_logger` is once-per-process and parallel tests would race on
+    // a single capture sink, so the logger is installed once (via `Once`) and
+    // each test registers its own thread-local `Sender` to collect records.
+    // This keeps the retry-tracing assertion parallel-safe.
+    use std::cell::RefCell;
+    use std::sync::Once;
+    thread_local! {
+        static RETRY_CAPTURE: RefCell<Option<std::sync::mpsc::Sender<String>>> =
+            const { RefCell::new(None) };
+    }
+    struct CapturingLogger;
+    impl log::Log for CapturingLogger {
+        fn enabled(&self, metadata: &log::Metadata) -> bool {
+            metadata.target().starts_with("degenbot_rpc::provider")
+        }
+        fn log(&self, record: &log::Record) {
+            RETRY_CAPTURE.with(|c| {
+                if let Some(tx) = &*c.borrow() {
+                    let _ = tx.send(format!(
+                        "{}|{}|{}",
+                        record.level(),
+                        record.target(),
+                        record.args()
+                    ));
+                }
+            });
+        }
+        fn flush(&self) {}
+    }
+    static INSTALL_CAPTURE_LOGGER: Once = Once::new();
+    fn install_capturing_logger() {
+        INSTALL_CAPTURE_LOGGER.call_once(|| {
+            let _ = log::set_logger(&CapturingLogger);
+            log::set_max_level(log::LevelFilter::Trace);
+        });
+    }
+    fn capture_retry_logs() -> std::sync::mpsc::Receiver<String> {
+        install_capturing_logger();
+        let (tx, rx) = std::sync::mpsc::channel();
+        RETRY_CAPTURE.with(|c| *c.borrow_mut() = Some(tx));
+        rx
+    }
+    fn stop_capturing_retry_logs() {
+        RETRY_CAPTURE.with(|c| *c.borrow_mut() = None);
+    }
+
+    /// E2B542: a retryable error that exhausts all attempts emits one `error!`
+    /// record (the terminal failure) plus a `debug!`/`warn!` per preceding retry,
+    /// each carrying `attempt`, `max_attempts`, the delay, and the `ProviderError`
+    /// display (which embeds the per-call context label).
+    #[tokio::test]
+    async fn retry_with_backoff_loop_emits_log_on_each_retry_and_terminal_failure() {
+        let rx = capture_retry_logs();
+
+        let attempt = 0;
+        let max_attempts: u32 = 3;
+        // Each invocation fails with a retryable rate-limit error; the context
+        // label "eth_call failed" is baked into the message via Display.
+        let result: ProviderResult<u64> =
+            retry_with_backoff_loop(max_attempts, move || async move {
+                log::debug!(target: "degenbot_rpc::provider", "invocation attempt {attempt}");
+                Err(ProviderError::RateLimited {
+                    message: "eth_call failed: rate limited".to_string(),
+                })
+            })
+            .await;
+
+        stop_capturing_retry_logs();
+
+        assert!(result.is_err(), "should exhaust retries");
+        let logs: Vec<String> = rx.iter().collect();
+        // attempt 1 (debug), attempt 2 (warn), then the terminal error (attempt 3).
+        let retry_lines: Vec<&String> = logs
+            .iter()
+            .filter(|l| l.contains("RPC retry: attempt"))
+            .collect();
+        let terminal_lines: Vec<&String> = logs
+            .iter()
+            .filter(|l| l.contains("RPC retries exhausted"))
+            .collect();
+        assert_eq!(
+            retry_lines.len(),
+            2,
+            "expected exactly two retry records (attempts 1 and 2), got {retry_lines:?}"
+        );
+        assert_eq!(
+            terminal_lines.len(),
+            1,
+            "expected exactly one terminal-failure record, got {terminal_lines:?}"
+        );
+
+        // Structured fields: attempt index, max_attempts, the delay (ms), and
+        // the ProviderError display carrying the context label.
+        let first = &retry_lines[0];
+        assert!(
+            first.contains("attempt 1/3"),
+            "first retry missing attempt/max: {first}"
+        );
+        assert!(first.contains("ms:"), "first retry missing delay: {first}");
+        assert!(
+            first.contains("eth_call failed: rate limited"),
+            "first retry missing the context-carrying error display: {first}"
+        );
+        assert!(
+            first.starts_with("DEBUG|"),
+            "attempt 1 should be debug!: {first}"
+        );
+        let second = &retry_lines[1];
+        assert!(
+            second.starts_with("WARN|"),
+            "attempt 2 should be warn!: {second}"
+        );
+        assert!(
+            second.contains("attempt 2/3"),
+            "second retry missing attempt/max: {second}"
+        );
+        let terminal = &terminal_lines[0];
+        assert!(
+            terminal.starts_with("ERROR|"),
+            "terminal failure should be error!: {terminal}"
+        );
+        assert!(
+            terminal.contains("attempt 3/3"),
+            "terminal record missing attempt/max: {terminal}"
+        );
+    }
+
+    /// E2B542: a non-retryable error is surfaced immediately with NO retry log
+    /// emission (the loop returns before the logging branch).
+    #[tokio::test]
+    async fn retry_with_backoff_loop_emits_no_log_for_non_retryable_error() {
+        let rx = capture_retry_logs();
+
+        let max_attempts: u32 = 5;
+        let result: ProviderResult<u64> = retry_with_backoff_loop(max_attempts, || async {
+            Err(ProviderError::InvalidBlockRange { from: 2, to: 1 })
+        })
+        .await;
+
+        stop_capturing_retry_logs();
+
+        assert!(result.is_err(), "non-retryable should surface immediately");
+        let logs: Vec<String> = rx.iter().collect();
+        assert!(
+            logs.iter()
+                .all(|l| !l.contains("RPC retry") && !l.contains("RPC retries exhausted")),
+            "non-retryable error must not emit retry/exhausted logs, got {logs:?}"
+        );
+    }
+
+    /// E2B542: a successful first attempt emits NO retry log (the happy path).
+    #[tokio::test]
+    async fn retry_with_backoff_loop_emits_no_log_on_first_success() {
+        let rx = capture_retry_logs();
+
+        let max_attempts: u32 = 3;
+        let result: ProviderResult<u64> =
+            retry_with_backoff_loop(max_attempts, || async { Ok(7_u64) }).await;
+
+        stop_capturing_retry_logs();
+
+        assert_eq!(result.unwrap(), 7);
+        let logs: Vec<String> = rx.iter().collect();
+        assert!(
+            logs.is_empty(),
+            "successful first attempt must emit no provider logs, got {logs:?}"
+        );
     }
 
     // ── Chunk calculation ───────────────────────────────────────────────
