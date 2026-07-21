@@ -4,6 +4,7 @@ from typing import cast
 import eth_abi.abi
 import eth_abi.exceptions
 import pytest
+import web3
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.crypto import function_selector, keccak256
@@ -48,7 +49,7 @@ def tripool(fork_mainnet_full: AnvilFork) -> CurveStableswapPool:
     return _build_pool(fork_mainnet_full, TRIPOOL_ADDRESS)
 
 
-def _test_calculations(lp: CurveStableswapPool, w3: Web3):
+def _test_calculations(lp: CurveStableswapPool, w3: web3.Web3):
     state_block = lp.update_block
     w3_contract = w3.eth.contract(
         address=lp.address,
