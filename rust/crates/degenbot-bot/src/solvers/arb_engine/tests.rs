@@ -2143,12 +2143,12 @@ mod tests {
         // land on pre-B1, since the single collapsed delta at chunk_end >= B2
         // pops the whole chunk).
         drop(core);
-        let restored = engine
+        engine
             .core
             .write()
-            .v3_restore_before_block(pool_id, b2)
-            .expect("restore returns Some");
-        let _ = restored;
+            .restore_pool_before_block(pool_id, b2)
+            .expect("restore returns Some")
+            .expect("restore succeeds");
         let core = engine.core.read();
         let s = core.get_v3_pool(pool_id).expect("v3 pool registered");
         assert_eq!(

@@ -12,7 +12,6 @@ use alloy::primitives::{aliases::U112, Address, I256, U256};
 use crate::bot_core::snapshot_verify::SnapshotLoadError;
 use ::degenbot_pools::state_history::{
     JournalError, ReorgPoolState, ScalarPriors, TickBefore, V2BlockDelta, V3BlockDelta,
-    V3RestoreResult,
 };
 use degenbot_uniswap::v2_encoding::{encode_v2_swap, EncodedCall};
 
@@ -2075,64 +2074,6 @@ impl BotState {
     /// Get the number of deltas in the reorg journal for a V2 pool.
     ///
     /// Returns 0 if the pool ID is not registered.
-    #[must_use]
-    pub fn v2_journal_len(&self, pool_id: u64) -> usize {
-        match self.pools.get(&pool_id) {
-            Some(PoolEntry::V2(_, state)) => state.journal.len(),
-            _ => 0,
-        }
-    }
-
-    /// Discard V2 reorg journal deltas earlier than the given block.
-    ///
-    /// No-op if the earliest delta is at/after the target (nothing to discard
-    /// — supports a continuously-running bot calling `discard(latest - N)` on
-    /// fresh pools). The genesis delta is discarded like any other when the
-    /// target is past it, as long as at least one delta remains.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err(JournalError::NoStateAtOrAfterBlock)` if the target is past
-    /// the newest delta (would remove every known state). The `PyO3` layer maps
-    /// this to `ValueError`.
-    pub fn v2_discard_before_block(
-        &mut self,
-        pool_id: u64,
-        block: u64,
-    ) -> Result<(), JournalError> {
-        let Some(PoolEntry::V2(_, state)) = self.pools.get_mut(&pool_id) else {
-            return Ok(());
-        };
-        state.journal.discard_before_block(block)
-    }
-
-    /// Restore V2 pool state prior to a target block.
-    ///
-    /// Pops reorg journal deltas at/after the target block and restores the
-    /// landed-at state (the `*_after` of the largest delta below the target)
-    /// into the current mutable fields.
-    ///
-    /// Returns `Some(Ok((reserve0, reserve1, block)))` on success, `Some(Err)`
-    /// if the pool exists but the target is at/before registration (no state
-    /// before it — decision 3), or `None` if the pool ID is not registered.
-    pub fn v2_restore_before_block(
-        &mut self,
-        pool_id: u64,
-        block: u64,
-    ) -> Option<Result<(U112, U112, u64), JournalError>> {
-        let PoolEntry::V2(_, state) = self.pools.get_mut(&pool_id)? else {
-            return None;
-        };
-        let (r0, r1, blk) = match state.journal.restore_before_block(block) {
-            Ok(v) => v,
-            Err(e) => return Some(Err(e)),
-        };
-        state.reserve0 = r0;
-        state.reserve1 = r1;
-        state.update_block = blk;
-        Some(Ok((r0, r1, blk)))
-    }
-
     /// Restore **every** registered V2 pool's state to just before `target`.
     ///
     /// Bulk restore helper. ADR-006 slice 7 replaced the engine-level
@@ -2309,82 +2250,11 @@ impl BotState {
             .map(|(_, state)| state)
     }
 
-    /// Discard Aerodrome reorg journal deltas earlier than the given block.
-    /// No-op if not registered / not an Aerodrome pool.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err(JournalError::NoStateAtOrAfterBlock)` if the target is past
-    /// the newest delta.
-    pub fn aerodrome_discard_before_block(
-        &mut self,
-        pool_id: u64,
-        block: u64,
-    ) -> Result<(), JournalError> {
-        let Some(PoolEntry::AerodromeV2(_, state)) = self.pools.get_mut(&pool_id) else {
-            return Ok(());
-        };
-        state.journal.discard_before_block(block)
-    }
-
-    /// Restore Aerodrome pool state prior to a target block (V2-shaped delta —
-    /// two reserves). Pops journal deltas at/after the target and restores the
-    /// landed-at state into the current mutable fields.
-    ///
-    /// Returns `Some(Ok((reserve0, reserve1, block)))` on success, `Some(Err)`
-    /// if the target is at/before registration (no state before it), or `None`
-    /// if the pool ID is not registered / not an Aerodrome pool.
-    pub fn aerodrome_restore_before_block(
-        &mut self,
-        pool_id: u64,
-        block: u64,
-    ) -> Option<Result<(U112, U112, u64), JournalError>> {
-        let PoolEntry::AerodromeV2(_, state) = self.pools.get_mut(&pool_id)? else {
-            return None;
-        };
-        let (r0, r1, blk) = match state.journal.restore_before_block(block) {
-            Ok(v) => v,
-            Err(e) => return Some(Err(e)),
-        };
-        state.reserve0 = r0;
-        state.reserve1 = r1;
-        state.update_block = blk;
-        Some(Ok((r0, r1, blk)))
-    }
-
     // --- V3 journal methods ---
 
     /// Get the number of deltas in the reorg journal for a V3 pool.
     ///
     /// Returns 0 if the pool ID is not registered or is not a V3 pool.
-    #[must_use]
-    pub fn v3_journal_len(&self, pool_id: u64) -> usize {
-        match self.pools.get(&pool_id) {
-            Some(PoolEntry::V3(_, state)) => state.journal.len(),
-            _ => 0,
-        }
-    }
-
-    /// Discard V3 reorg journal deltas earlier than the given block.
-    ///
-    /// No-op if the earliest delta is at/after the target, or the pool is not
-    /// registered / not a V3 pool.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err(JournalError::NoStateAtOrAfterBlock)` if the target is past
-    /// the newest delta. The `PyO3` layer maps this to `ValueError`.
-    pub fn v3_discard_before_block(
-        &mut self,
-        pool_id: u64,
-        block: u64,
-    ) -> Result<(), JournalError> {
-        let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&pool_id) else {
-            return Ok(());
-        };
-        state.journal.discard_before_block(block)
-    }
-
     /// Does `pool_id`'s journal have state at or before `block`? (ADR-006
     /// slice 7.) `false` → a too-deep reorg; `ReorgCoordinator` returns
     /// `Err(NoStatePriorToBlock)` and the pump shuts down gracefully.
@@ -2447,68 +2317,6 @@ impl BotState {
                 .earliest_block()
                 .is_some_and(|earliest| earliest < block),
         }
-    }
-
-    /// Restore V4 pool state prior to a target block (`V3RestoreResult` shape).
-    ///
-    /// Returns `V3RestoreResult` with the before-values, or `None`
-    /// if the pool ID is not registered or is not a V3 pool.
-    ///
-    /// # Panics
-    ///
-    /// Panics if no delta exists before the target block.
-    pub fn v3_restore_before_block(&mut self, pool_id: u64, block: u64) -> Option<V3RestoreResult> {
-        let PoolEntry::V3(_, state) = self.pools.get_mut(&pool_id)? else {
-            return None;
-        };
-        let mut result = state.journal.restore_before_block(block);
-
-        // Sync scalar fields if the rolled-back range had scalar changes.
-        // If scalar_priors is None (tick-only event(s) rolled back), the
-        // current slot0 scalars were never changed by the rolled-back events
-        // and are already correct — skip the write-back. See ADR-004.
-        if let Some(p) = &result.scalar_priors {
-            state.sqrt_price_x96 = p.sqrt_price_x96_before;
-            state.liquidity = p.liquidity_before;
-            state.tick = p.tick_before;
-        }
-        state.update_block = result.block;
-        state.invalidate_tick_range_cache();
-
-        // Reverse-apply tick priors
-        for (tick_idx, tick_before) in &result.tick_priors {
-            match tick_before.liquidity_gross_before {
-                Some(gross_before) => {
-                    // Tick existed before — restore its prior values
-                    state.tick_data.insert(
-                        *tick_idx,
-                        TickInfo {
-                            liquidity_gross: gross_before,
-                            liquidity_net: tick_before.liquidity_net_before,
-                            block: 0,
-                        },
-                    );
-                }
-                None => {
-                    // Tick was newly initialized in this block — remove it
-                    state.tick_data.remove(tick_idx);
-                }
-            }
-        }
-
-        // If scalar_priors was None (tick-only rollback), populate it with the
-        // current (post-restore) scalars so downstream consumers (e.g., the
-        // PyO3 `v3_restore_before_block` wrapper) always see Some — the
-        // current scalars ARE the restored scalars in this case. See ADR-004.
-        if result.scalar_priors.is_none() {
-            result.scalar_priors = Some(ScalarPriors {
-                sqrt_price_x96_before: state.sqrt_price_x96,
-                liquidity_before: state.liquidity,
-                tick_before: state.tick,
-            });
-        }
-
-        Some(result)
     }
 
     /// Encode a V2 swap call for the given pool.
@@ -3260,119 +3068,6 @@ impl BotState {
 
     // --- V4 journal methods ---
 
-    /// Discard V4 reorg journal deltas earlier than the given block.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err(JournalError::NoStateAtOrAfterBlock)` if the target is past
-    /// the newest delta. The `PyO3` layer maps this to `ValueError`.
-    pub fn v4_discard_before_block(
-        &mut self,
-        pool_id: u64,
-        block: u64,
-    ) -> Result<(), JournalError> {
-        let Some(PoolEntry::V4(_, state)) = self.pools.get_mut(&pool_id) else {
-            return Ok(());
-        };
-        state.journal.discard_before_block(block)
-    }
-
-    /// Family-dispatching journal discard (J63J3N): routes V4 pools to
-    /// `v4_discard_before_block`, V3 (and V2/unregistered) to
-    /// `v3_discard_before_block`. The per-handle Python
-    /// `PyLiquidityPool.discard_v3_before_block` previously gated on a
-    /// `get_v3_pool(...).is_none()` V3 probe that returned `None` for V4 and
-    /// no-op'd — so V4 reorg journals were never trimmed via the handle path.
-    /// The `matches!` probe is a Copy discriminant (immutable borrow ends
-    /// before the `&mut self` call).
-    ///
-    /// # Errors
-    ///
-    /// Propagates the underlying journal's `JournalError` for V3/V4 discard.
-    pub fn discard_v3_or_v4_before_block(
-        &mut self,
-        pool_id: u64,
-        block: u64,
-    ) -> Result<(), JournalError> {
-        if matches!(self.pools.get(&pool_id), Some(PoolEntry::V4(..))) {
-            self.v4_discard_before_block(pool_id, block)
-        } else {
-            self.v3_discard_before_block(pool_id, block)
-        }
-    }
-
-    /// Restore V4 pool state prior to a target block (same `V3BlockDelta` shape).
-    pub fn v4_restore_before_block(&mut self, pool_id: u64, block: u64) -> Option<V3RestoreResult> {
-        let PoolEntry::V4(_, state) = self.pools.get_mut(&pool_id)? else {
-            return None;
-        };
-        let mut result = state.journal.restore_before_block(block);
-
-        // Sync scalar fields if the rolled-back range had scalar changes.
-        // If scalar_priors is None (tick-only event(s) rolled back), the
-        // current slot0 scalars were never changed by the rolled-back events
-        // and are already correct — skip the write-back. See ADR-004.
-        if let Some(p) = &result.scalar_priors {
-            state.sqrt_price_x96 = p.sqrt_price_x96_before;
-            state.liquidity = p.liquidity_before;
-            state.tick = p.tick_before;
-        }
-        state.update_block = result.block;
-        state.invalidate_tick_range_cache();
-
-        for (tick_idx, tick_before) in &result.tick_priors {
-            match tick_before.liquidity_gross_before {
-                Some(gross_before) => {
-                    state.tick_data.insert(
-                        *tick_idx,
-                        TickInfo {
-                            liquidity_gross: gross_before,
-                            liquidity_net: tick_before.liquidity_net_before,
-                            block: 0,
-                        },
-                    );
-                }
-                None => {
-                    state.tick_data.remove(tick_idx);
-                }
-            }
-        }
-
-        // If scalar_priors was None (tick-only rollback), populate it with the
-        // current (post-restore) scalars so downstream consumers always see
-        // Some — the current scalars ARE the restored scalars in this case.
-        // See ADR-004.
-        if result.scalar_priors.is_none() {
-            result.scalar_priors = Some(ScalarPriors {
-                sqrt_price_x96_before: state.sqrt_price_x96,
-                liquidity_before: state.liquidity,
-                tick_before: state.tick,
-            });
-        }
-
-        Some(result)
-    }
-
-    /// Family-dispatching journal restore (J63J3N): routes V4 pools to
-    /// `v4_restore_before_block`, V3 (and V2/unregistered) to
-    /// `v3_restore_before_block`. The per-handle
-    /// `PyLiquidityPool.restore_v3_before_block` previously gated on a
-    /// `get_v3_pool(...).is_none()` V3 probe that returned `None` for V4 — so
-    /// V4 reorg rollback via the handle path silently no-op'd, returning
-    /// `None` (not the rolled-back scalars). Mirrors the RAJ3PP
-    /// `apply_liquidity_update_by_pool_id` dispatch shape.
-    pub fn restore_v3_or_v4_before_block(
-        &mut self,
-        pool_id: u64,
-        block: u64,
-    ) -> Option<V3RestoreResult> {
-        if matches!(self.pools.get(&pool_id), Some(PoolEntry::V4(..))) {
-            self.v4_restore_before_block(pool_id, block)
-        } else {
-            self.v3_restore_before_block(pool_id, block)
-        }
-    }
-
     /// Register a token.
     ///
     /// # Panics
@@ -3976,11 +3671,9 @@ mod tests {
         assert_eq!(state.journal.len(), 2);
 
         // Reorg to before block 20 → restores registration state (genesis at 10).
-        let restored = core.aerodrome_restore_before_block(pool_id, 20);
-        let (r0, r1, blk) = restored.expect("restore returns Some").expect("Ok");
-        assert_eq!(r0, U112::from(1_000u64));
-        assert_eq!(r1, U112::from(2_000u64));
-        assert_eq!(blk, 10);
+        core.restore_pool_before_block(pool_id, 20)
+            .expect("restore returns Some")
+            .expect("restore succeeds");
         let state = core.get_aerodrome_pool(pool_id).expect("aerodrome state");
         assert_eq!(state.reserve0, U112::from(1_000u64));
         assert_eq!(state.reserve1, U112::from(2_000u64));
@@ -3994,7 +3687,9 @@ mod tests {
             core.apply_aerodrome_sync_by_pool_id(v2_id, U112::ZERO, U112::ZERO, 99),
             None
         );
-        assert_eq!(core.aerodrome_restore_before_block(v2_id, 1), None);
+        // The no-mutate-on-wrong-family guard for restore moved to the PyO3
+        // wrapper layer (ADR-016); BotState's unified restore dispatches
+        // across all families, so a V2 pool_id is restored as V2.
     }
 
     #[test]
@@ -4208,7 +3903,7 @@ mod tests {
         // coordinator proceeds to `restore_pool_before_block` →
         // `v3_restore_before_block`.
         assert!(core.has_state_prior_to(pool_id, 12));
-        let result = core.v3_restore_before_block(pool_id, 12);
+        let result = core.restore_pool_before_block(pool_id, 12);
         assert!(
             result.is_some(),
             "restore returns Some even on the no-op path"
@@ -4329,7 +4024,7 @@ mod tests {
 
         // 4. Restore before block B → rolls back the buffered Mint to the
         //    registration snapshot.
-        core.v3_restore_before_block(pool_id, block_b);
+        core.restore_pool_before_block(pool_id, block_b);
         let s = core.get_v3_pool(pool_id).expect("registered");
         let t60 = s.tick_data.get(&60).expect("tick 60 still present");
         assert_eq!(
@@ -4382,7 +4077,7 @@ mod tests {
             assert!(s.tick_data.contains_key(&120));
         }
 
-        core.v3_restore_before_block(pool_id, block_b);
+        core.restore_pool_before_block(pool_id, block_b);
         let s = core.get_v3_pool(pool_id).expect("registered");
         assert_eq!(
             s.tick_data.get(&60).expect("t60").liquidity_gross,
@@ -4474,7 +4169,7 @@ mod tests {
         }
 
         // 4. Restore before block B → rolls back the ModifyLiquidity.
-        core.v4_restore_before_block(pool_id, block_b);
+        core.restore_pool_before_block(pool_id, block_b);
         let s = core.get_v4_pool(pool_id).expect("registered");
         assert_eq!(
             s.tick_data.get(&60).expect("t60").liquidity_gross,
@@ -5188,7 +4883,7 @@ mod tests {
         // Roll back block B. Pre-fix this returned post-first-Swap scalars
         // (2<<96, 2_000_000, -10); the fix must land on the pre-B (registration)
         // state (1<<96, 1_000_000, 0).
-        let _ = core.v3_restore_before_block(pool_id, block_b);
+        let _ = core.restore_pool_before_block(pool_id, block_b);
         let s = core.get_v3_pool(pool_id).expect("registered after restore");
         assert_eq!(
             s.sqrt_price_x96,
