@@ -6,11 +6,12 @@ use crate::aerodrome_v2_state::{AerodromeV2PoolIdentity, AerodromeV2PoolState};
 use crate::balancer_stable_state::{BalancerStablePoolIdentity, BalancerStablePoolState};
 use crate::balancer_weighted_state::{BalancerWeightedPoolIdentity, BalancerWeightedPoolState};
 use crate::curve_state::{CurvePoolIdentity, CurvePoolState};
+use crate::state_history::{ScalarPriors, TickBefore, V3BlockDelta};
 use crate::v2_state::{V2PoolIdentity, V2PoolState};
 use crate::v3_state::{V3PoolIdentity, V3PoolState};
 use crate::v4_state::{V4PoolIdentity, V4PoolState};
 use crate::TickInfo;
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{Address, I256, U256};
 use std::collections::HashMap;
 
 /// A single pool's state. Pool-type-specific fields are in the enum variants.
@@ -353,6 +354,46 @@ pub trait ConcentratedLiquidityPoolMut: ConcentratedLiquidityPool {
     /// `false` return is reserved for non-CL / unregistered pools — same
     /// convention as [`Self::replace_tick_data`]).
     fn merge_tick_word(&mut self, fetched: &crate::tick_fetch::FetchedTickWord) -> bool;
+
+    /// Apply a Swap event to this pool's mutable `slot0` scalars + `tick_data`,
+    /// capturing reverse-apply priors into the reorg journal (ADR-014 D1,
+    /// ADR-017 slice 2). The delta carries `scalar_priors: Some(..)` (a Swap
+    /// changes the slot0 head on every event) plus per-tick priors for any
+    /// ticks this event mutates. A tick with no prior entry is journaled with
+    /// `liquidity_gross_before: None` (on rollback, delete it).
+    ///
+    /// `tick_priors`: ticks the event reports as changed, with their new
+    /// `TickInfo`. The method *writes* the passed tick info into `tick_data`
+    /// (it carries new tick values from the event), whereas [`Self::apply_liquidity_update`]
+    /// *reads* the current tick priors before mutating — same loop shape,
+    /// different work.
+    fn apply_swap(
+        &mut self,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        block_number: u64,
+        tick_priors: &[(i32, TickInfo)],
+    );
+
+    /// Apply a liquidity update (V3 Mint/Burn, V4 `ModifyLiquidity`) to this
+    /// pool's `tick_data`, capturing reverse-apply priors into the reorg
+    /// journal (ADR-014 D1, ADR-017 slice 2). Applies the delta via
+    /// [`crate::tick_bitmap::apply_liquidity_to_tick_range`] (matching Solidity
+    /// `Tick.update`), advances `update_block`, invalidates the tick-range
+    /// cache.
+    ///
+    /// Journal-capture policy (ADR-004): the delta carries `scalar_priors: None`
+    /// — Mint/Burn/ModifyLiquidity mutate `tick_data` only, NOT the active
+    /// `liquidity` scalar, so restore skips the scalar write-back. Only the
+    /// two boundary-tick priors (captured BEFORE mutation) are reverse-applied.
+    fn apply_liquidity_update(
+        &mut self,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: i128,
+        block_number: u64,
+    );
 }
 
 impl ConcentratedLiquidityPoolMut for V3PoolState {
@@ -379,6 +420,81 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
         self.invalidate_tick_range_cache();
         true
     }
+
+    fn apply_swap(
+        &mut self,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        block_number: u64,
+        tick_priors: &[(i32, TickInfo)],
+    ) {
+        let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(tick_priors.len());
+        for &(tick_index, ref new_info) in tick_priors {
+            let prior = self.tick_data.get(&tick_index).cloned();
+            journaled_priors.push((
+                tick_index,
+                TickBefore {
+                    liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
+                    liquidity_net_before: prior.as_ref().map_or(I256::ZERO, |p| p.liquidity_net),
+                },
+            ));
+            self.tick_data.insert(tick_index, new_info.clone());
+        }
+
+        self.journal.push_delta(V3BlockDelta {
+            block: block_number,
+            scalar_priors: Some(ScalarPriors {
+                sqrt_price_x96_before: self.sqrt_price_x96,
+                liquidity_before: self.liquidity,
+                tick_before: self.tick,
+            }),
+            tick_priors: journaled_priors,
+        });
+
+        self.sqrt_price_x96 = sqrt_price_x96;
+        self.liquidity = liquidity;
+        self.tick = tick;
+        self.update_block = block_number;
+        self.invalidate_tick_range_cache();
+    }
+
+    fn apply_liquidity_update(
+        &mut self,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: i128,
+        block_number: u64,
+    ) {
+        let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(2);
+        for &tick_idx in &[tick_lower, tick_upper] {
+            let prior = self.tick_data.get(&tick_idx).cloned();
+            journaled_priors.push((
+                tick_idx,
+                TickBefore {
+                    liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
+                    liquidity_net_before: prior.as_ref().map_or(I256::ZERO, |p| p.liquidity_net),
+                },
+            ));
+        }
+
+        crate::tick_bitmap::apply_liquidity_to_tick_range(
+            &mut self.tick_data,
+            tick_lower,
+            tick_upper,
+            liquidity_delta,
+            block_number,
+        );
+
+        self.journal.push_delta(V3BlockDelta {
+            block: block_number,
+            scalar_priors: None,
+            tick_priors: journaled_priors,
+        });
+
+        self.update_block = block_number;
+        self.invalidate_tick_range_cache();
+    }
 }
 
 impl ConcentratedLiquidityPoolMut for V4PoolState {
@@ -404,6 +520,81 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
         self.known_bitmap_words.insert(fetched.word);
         self.invalidate_tick_range_cache();
         true
+    }
+
+    fn apply_swap(
+        &mut self,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        block_number: u64,
+        tick_priors: &[(i32, TickInfo)],
+    ) {
+        let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(tick_priors.len());
+        for &(tick_index, ref new_info) in tick_priors {
+            let prior = self.tick_data.get(&tick_index).cloned();
+            journaled_priors.push((
+                tick_index,
+                TickBefore {
+                    liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
+                    liquidity_net_before: prior.as_ref().map_or(I256::ZERO, |p| p.liquidity_net),
+                },
+            ));
+            self.tick_data.insert(tick_index, new_info.clone());
+        }
+
+        self.journal.push_delta(V3BlockDelta {
+            block: block_number,
+            scalar_priors: Some(ScalarPriors {
+                sqrt_price_x96_before: self.sqrt_price_x96,
+                liquidity_before: self.liquidity,
+                tick_before: self.tick,
+            }),
+            tick_priors: journaled_priors,
+        });
+
+        self.sqrt_price_x96 = sqrt_price_x96;
+        self.liquidity = liquidity;
+        self.tick = tick;
+        self.update_block = block_number;
+        self.invalidate_tick_range_cache();
+    }
+
+    fn apply_liquidity_update(
+        &mut self,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: i128,
+        block_number: u64,
+    ) {
+        let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(2);
+        for &tick_idx in &[tick_lower, tick_upper] {
+            let prior = self.tick_data.get(&tick_idx).cloned();
+            journaled_priors.push((
+                tick_idx,
+                TickBefore {
+                    liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
+                    liquidity_net_before: prior.as_ref().map_or(I256::ZERO, |p| p.liquidity_net),
+                },
+            ));
+        }
+
+        crate::tick_bitmap::apply_liquidity_to_tick_range(
+            &mut self.tick_data,
+            tick_lower,
+            tick_upper,
+            liquidity_delta,
+            block_number,
+        );
+
+        self.journal.push_delta(V3BlockDelta {
+            block: block_number,
+            scalar_priors: None,
+            tick_priors: journaled_priors,
+        });
+
+        self.update_block = block_number;
+        self.invalidate_tick_range_cache();
     }
 }
 

@@ -16,9 +16,7 @@ use alloy::primitives::{Address, I256, U160, U256};
 
 use crate::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use crate::liquidity_event::LiquidityEvent;
-use crate::state_history::{
-    JournalError, ReorgJournal, ReorgPoolState, ScalarPriors, TickBefore, V3BlockDelta,
-};
+use crate::state_history::{JournalError, ReorgJournal, ReorgPoolState, V3BlockDelta};
 use crate::tick_bitmap::{compute_tick_ranges, gen_ticks, V3TickRangeForSolver};
 use crate::tick_fetch::TickWordFetcher;
 use crate::v3_state::{PoolTickCoverage, SimulateSwapError, V3SwapOutcome};
@@ -350,101 +348,10 @@ impl V4PoolState {
         (identity, state)
     }
 
-    /// Apply a V4 Swap event to this pool's mutable `slot0` scalars + `tick_data`,
-    /// capturing reverse-apply priors into the reorg journal (ADR-014 D1 —
-    /// relocated from `BotState::apply_v4_swap_by_pool_id`). V4 shares identical
-    /// CL math + the `V3BlockDelta` journal type with V3, so the body is the
-    /// same shape as `V3PoolState::apply_swap`; the CL mut trait (ADR-014 D2)
-    /// will dedup these twins.
-    ///
-    /// Journal-capture policy: `scalar_priors: Some(..)` (a Swap changes the
-    /// slot0 head) plus per-tick priors for any ticks this event mutates.
-    pub fn apply_swap(
-        &mut self,
-        sqrt_price_x96: U256,
-        liquidity: u128,
-        tick: i32,
-        block_number: u64,
-        tick_priors: &[(i32, TickInfo)],
-    ) {
-        let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(tick_priors.len());
-        for &(tick_index, ref new_info) in tick_priors {
-            let prior = self.tick_data.get(&tick_index).cloned();
-            journaled_priors.push((
-                tick_index,
-                TickBefore {
-                    liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
-                    liquidity_net_before: prior
-                        .as_ref()
-                        .map_or(alloy::primitives::I256::ZERO, |p| p.liquidity_net),
-                },
-            ));
-            self.tick_data.insert(tick_index, new_info.clone());
-        }
-
-        self.journal.push_delta(V3BlockDelta {
-            block: block_number,
-            scalar_priors: Some(ScalarPriors {
-                sqrt_price_x96_before: self.sqrt_price_x96,
-                liquidity_before: self.liquidity,
-                tick_before: self.tick,
-            }),
-            tick_priors: journaled_priors,
-        });
-
-        self.sqrt_price_x96 = sqrt_price_x96;
-        self.liquidity = liquidity;
-        self.tick = tick;
-        self.update_block = block_number;
-        self.invalidate_tick_range_cache();
-    }
-
-    /// Apply a V4 `ModifyLiquidity` event to this pool's `tick_data`, capturing
-    /// reverse-apply priors into the reorg journal (ADR-014 D1 — relocated from
-    /// `BotState::apply_v4_liquidity_update_by_pool_id`). Mirrors
-    /// `V3PoolState::apply_liquidity_update` for the V4 entry.
-    ///
-    /// Journal-capture policy (ADR-004): `scalar_priors: None` —
-    /// `ModifyLiquidity` mutates `tick_data` only, NOT the active `liquidity`
-    /// scalar, so restore skips the scalar write-back.
-    pub fn apply_liquidity_update(
-        &mut self,
-        tick_lower: i32,
-        tick_upper: i32,
-        liquidity_delta: i128,
-        block_number: u64,
-    ) {
-        let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(2);
-        for &tick_idx in &[tick_lower, tick_upper] {
-            let prior = self.tick_data.get(&tick_idx).cloned();
-            journaled_priors.push((
-                tick_idx,
-                TickBefore {
-                    liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
-                    liquidity_net_before: prior
-                        .as_ref()
-                        .map_or(alloy::primitives::I256::ZERO, |p| p.liquidity_net),
-                },
-            ));
-        }
-
-        crate::tick_bitmap::apply_liquidity_to_tick_range(
-            &mut self.tick_data,
-            tick_lower,
-            tick_upper,
-            liquidity_delta,
-            block_number,
-        );
-
-        self.journal.push_delta(V3BlockDelta {
-            block: block_number,
-            scalar_priors: None,
-            tick_priors: journaled_priors,
-        });
-
-        self.update_block = block_number;
-        self.invalidate_tick_range_cache();
-    }
+    // `apply_swap` + `apply_liquidity_update` live on the
+    // `ConcentratedLiquidityPoolMut` trait (ADR-017 slice 2) — the bodies
+    // were byte-identical twins across V3/V4; the trait dedups the two.
+    // See `impl ConcentratedLiquidityPoolMut for V4PoolState` in `registry.rs`.
 
     /// Invalidate the cached tick ranges (call after any state mutation).
     pub fn invalidate_tick_range_cache(&self) {
