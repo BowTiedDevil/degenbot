@@ -287,7 +287,10 @@ impl PumpState {
     /// Set the HTTP RPC URL used for verification (ADR-006 D4 T4).
     pub(crate) fn set_verify_rpc_url(&self, rpc_url: &str) {
         let runtime = degenbot_core::runtime::get_runtime();
-        match runtime.block_on(degenbot_rpc::provider::AlloyProvider::new(rpc_url, 3)) {
+        match runtime.block_on(degenbot_rpc::provider::AlloyProvider::new(
+            rpc_url,
+            degenbot_rpc::provider::DEFAULT_MAX_RETRIES,
+        )) {
             Ok(provider) => {
                 *self.verify_provider.lock() = Some(provider);
             }
@@ -331,13 +334,16 @@ impl PumpState {
             (v3, v4)
         };
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let provider = degenbot_rpc::provider::AlloyProvider::new(&rpc_url, 3)
-                .await
-                .map_err(|e| {
-                    crate::bot::engine::VerificationRpcError::new_err(format!(
-                        "verify_liquidity_maps: failed to create provider: {e}"
-                    ))
-                })?;
+            let provider = degenbot_rpc::provider::AlloyProvider::new(
+                &rpc_url,
+                degenbot_rpc::provider::DEFAULT_MAX_RETRIES,
+            )
+            .await
+            .map_err(|e| {
+                crate::bot::engine::VerificationRpcError::new_err(format!(
+                    "verify_liquidity_maps: failed to create provider: {e}"
+                ))
+            })?;
             let v3_result = degenbot_bot::bot_core::liquidity_verifier::verify_v3_pools(
                 &provider,
                 tick_lens,
@@ -380,13 +386,16 @@ impl PumpState {
             v3
         };
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let provider = degenbot_rpc::provider::AlloyProvider::new(&rpc_url, 3)
-                .await
-                .map_err(|e| {
-                    crate::bot::engine::VerificationRpcError::new_err(format!(
-                        "verify_v3_liquidity_maps: failed to create provider: {e}"
-                    ))
-                })?;
+            let provider = degenbot_rpc::provider::AlloyProvider::new(
+                &rpc_url,
+                degenbot_rpc::provider::DEFAULT_MAX_RETRIES,
+            )
+            .await
+            .map_err(|e| {
+                crate::bot::engine::VerificationRpcError::new_err(format!(
+                    "verify_v3_liquidity_maps: failed to create provider: {e}"
+                ))
+            })?;
             let tick_lens = alloy::primitives::Address::ZERO;
             let v3_result = degenbot_bot::bot_core::liquidity_verifier::verify_v3_pools(
                 &provider,
@@ -424,13 +433,16 @@ impl PumpState {
             v4
         };
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let provider = degenbot_rpc::provider::AlloyProvider::new(&rpc_url, 3)
-                .await
-                .map_err(|e| {
-                    crate::bot::engine::VerificationRpcError::new_err(format!(
-                        "verify_v4_liquidity_maps: failed to create provider: {e}"
-                    ))
-                })?;
+            let provider = degenbot_rpc::provider::AlloyProvider::new(
+                &rpc_url,
+                degenbot_rpc::provider::DEFAULT_MAX_RETRIES,
+            )
+            .await
+            .map_err(|e| {
+                crate::bot::engine::VerificationRpcError::new_err(format!(
+                    "verify_v4_liquidity_maps: failed to create provider: {e}"
+                ))
+            })?;
             let v4_result = degenbot_bot::bot_core::liquidity_verifier::verify_v4_pools(
                 &provider,
                 state_view,
@@ -485,13 +497,16 @@ impl PumpState {
             let Some(tick_data) = seed else {
                 return Ok(());
             };
-            let provider = degenbot_rpc::provider::AlloyProvider::new(&rpc_url, 3)
-                .await
-                .map_err(|e| {
-                    crate::bot::engine::VerificationRpcError::new_err(format!(
-                        "verify_v3_snapshot_seed: failed to create provider: {e}"
-                    ))
-                })?;
+            let provider = degenbot_rpc::provider::AlloyProvider::new(
+                &rpc_url,
+                degenbot_rpc::provider::DEFAULT_MAX_RETRIES,
+            )
+            .await
+            .map_err(|e| {
+                crate::bot::engine::VerificationRpcError::new_err(format!(
+                    "verify_v3_snapshot_seed: failed to create provider: {e}"
+                ))
+            })?;
             let result = degenbot_bot::bot_core::liquidity_verifier::verify_v3_liquidity_map(
                 &provider,
                 pool_addr,
@@ -543,13 +558,16 @@ impl PumpState {
             let Some(tick_data) = seed else {
                 return Ok(());
             };
-            let provider = degenbot_rpc::provider::AlloyProvider::new(&rpc_url, 3)
-                .await
-                .map_err(|e| {
-                    crate::bot::engine::VerificationRpcError::new_err(format!(
-                        "verify_v4_snapshot_seed: failed to create provider: {e}"
-                    ))
-                })?;
+            let provider = degenbot_rpc::provider::AlloyProvider::new(
+                &rpc_url,
+                degenbot_rpc::provider::DEFAULT_MAX_RETRIES,
+            )
+            .await
+            .map_err(|e| {
+                crate::bot::engine::VerificationRpcError::new_err(format!(
+                    "verify_v4_snapshot_seed: failed to create provider: {e}"
+                ))
+            })?;
             let result = degenbot_bot::bot_core::liquidity_verifier::verify_v4_liquidity_map(
                 &provider,
                 state_view,
@@ -621,13 +639,16 @@ impl PumpState {
             let Some((tick_data, pinned_block)) = post_drain else {
                 return Ok(());
             };
-            let provider = degenbot_rpc::provider::AlloyProvider::new(&rpc_url, 3)
-                .await
-                .map_err(|e| {
-                    crate::bot::engine::VerificationRpcError::new_err(format!(
-                        "verify_v3_post_drain_snapshot: failed to create provider: {e}"
-                    ))
-                })?;
+            let provider = degenbot_rpc::provider::AlloyProvider::new(
+                &rpc_url,
+                degenbot_rpc::provider::DEFAULT_MAX_RETRIES,
+            )
+            .await
+            .map_err(|e| {
+                crate::bot::engine::VerificationRpcError::new_err(format!(
+                    "verify_v3_post_drain_snapshot: failed to create provider: {e}"
+                ))
+            })?;
             let result = degenbot_bot::bot_core::liquidity_verifier::verify_v3_liquidity_map(
                 &provider,
                 pool_addr,
@@ -682,13 +703,16 @@ impl PumpState {
             let Some((tick_data, pinned_block)) = post_drain else {
                 return Ok(());
             };
-            let provider = degenbot_rpc::provider::AlloyProvider::new(&rpc_url, 3)
-                .await
-                .map_err(|e| {
-                    crate::bot::engine::VerificationRpcError::new_err(format!(
-                        "verify_v4_post_drain_snapshot: failed to create provider: {e}"
-                    ))
-                })?;
+            let provider = degenbot_rpc::provider::AlloyProvider::new(
+                &rpc_url,
+                degenbot_rpc::provider::DEFAULT_MAX_RETRIES,
+            )
+            .await
+            .map_err(|e| {
+                crate::bot::engine::VerificationRpcError::new_err(format!(
+                    "verify_v4_post_drain_snapshot: failed to create provider: {e}"
+                ))
+            })?;
             let result = degenbot_bot::bot_core::liquidity_verifier::verify_v4_liquidity_map(
                 &provider,
                 state_view,

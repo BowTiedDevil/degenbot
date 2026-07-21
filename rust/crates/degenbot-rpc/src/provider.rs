@@ -139,8 +139,146 @@ const MAX_CONCURRENT_REQUESTS_CAP: usize = 32;
 /// need a longer value via the builder/constructor arg.
 const DEFAULT_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Default maximum total attempts for provider operations (1 initial + 9 retries).
-pub const DEFAULT_MAX_RETRIES: u32 = 10;
+/// Default maximum total attempts for provider operations (1 initial + 2
+/// retries). 65F2N7 #4: this is the actual production default the bot hotpath
+/// (`degenbot-bot` pump) uses — previously `10` but every `new()` call site
+/// passed `3`, making the constant misleading. Now the constant matches the
+/// hotpath default; non-hotpath updaters (Aave/pool-updater) pass their own
+/// `RPC_MAX_RETRIES` constant as an intentional override.
+pub const DEFAULT_MAX_RETRIES: u32 = 3;
+
+/// 65F2N7 #1: detect an IPC path explicitly. A string is an IPC path if it
+/// starts with `ipc://`, is an absolute Unix path (starts with `/`), or is a
+/// Windows named pipe (starts with `\\`). A bare `host:port` (a typo missing
+/// the `http://` scheme) is NOT an IPC path — it falls through to the
+/// unsupported-scheme error so the typo surfaces immediately instead of
+/// silently routing to a nonexistent IPC file.
+#[must_use]
+fn is_ipc_path(rpc_url: &str) -> bool {
+    rpc_url.starts_with("ipc://") || rpc_url.starts_with('/') || rpc_url.starts_with("\\\\")
+}
+
+/// 65F2N7 #3: retry a WS connect at construction with the existing backoff.
+/// Previously `connect_ws(ws_connect).await?` was eagerly fatal — a transient
+/// outage at build time failed the provider permanently while HTTP was lazy.
+/// Now construction retries the connect a bounded number of times, matching
+/// HTTP's lazy-retry behavior at the transport-establishment boundary.
+async fn connect_ws_with_retries(
+    ws_connect: WsConnect,
+    max_retries: u32,
+) -> ProviderResult<Arc<dyn Provider<Ethereum>>> {
+    let mut attempt = 0;
+    let mut delay_ms = INITIAL_RETRY_DELAY_MS;
+    loop {
+        match ProviderBuilder::default()
+            .with_default_caching()
+            .connect_ws(ws_connect.clone())
+            .await
+        {
+            Ok(provider) => return Ok(Arc::new(provider.erased())),
+            Err(e) => {
+                attempt += 1;
+                if attempt >= max_retries {
+                    return Err(ProviderError::ConnectionFailed {
+                        message: format!(
+                            "Failed to connect to WebSocket endpoint after {attempt} attempts: {e}"
+                        ),
+                    });
+                }
+                log::warn!(
+                    target: "degenbot_rpc::provider",
+                    "WS connect retry: attempt {attempt}/{max_retries} after {delay_ms}ms: {e}"
+                );
+                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                delay_ms = std::cmp::min(
+                    delay_ms.saturating_mul(BACKOFF_MULTIPLIER),
+                    MAX_RETRY_DELAY_MS,
+                );
+            }
+        }
+    }
+}
+
+/// 65F2N7 #3: retry an IPC connect at construction with the existing backoff.
+/// Same rationale as `connect_ws_with_retries` — IPC connect was eagerly
+/// fatal; now it retries a bounded number of times.
+async fn connect_ipc_with_retries(
+    ipc_connect: IpcConnect<String>,
+    max_retries: u32,
+) -> ProviderResult<Arc<dyn Provider<Ethereum>>> {
+    let mut attempt = 0;
+    let mut delay_ms = INITIAL_RETRY_DELAY_MS;
+    loop {
+        match ProviderBuilder::default()
+            .with_default_caching()
+            .connect_ipc(ipc_connect.clone())
+            .await
+        {
+            Ok(provider) => return Ok(Arc::new(provider.erased())),
+            Err(e) => {
+                attempt += 1;
+                if attempt >= max_retries {
+                    return Err(ProviderError::ConnectionFailed {
+                        message: format!(
+                            "Failed to connect to IPC endpoint after {attempt} attempts: {e}"
+                        ),
+                    });
+                }
+                log::warn!(
+                    target: "degenbot_rpc::provider",
+                    "IPC connect retry: attempt {attempt}/{max_retries} after {delay_ms}ms: {e}"
+                );
+                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                delay_ms = std::cmp::min(
+                    delay_ms.saturating_mul(BACKOFF_MULTIPLIER),
+                    MAX_RETRY_DELAY_MS,
+                );
+            }
+        }
+    }
+}
+
+/// 65F2N7 #2: the idempotent-RPC-method allowlist. `make_request` is a raw
+/// escape hatch that can issue ANY method — including non-idempotent
+/// `debug_*` / `trace_*` / state-mutating methods. Retrying those blindly (the
+/// previous behavior) is unsafe: a partial timeout on a mutating call re-sends
+/// the payload. `make_request` retries ONLY methods in this allowlist (read-only
+/// eth_* calls that are safe to repeat); all other methods get a single
+/// attempt. Callers who know their custom method is idempotent should route
+/// through the typed methods (`get_block`, `eth_call`, etc.) instead.
+#[must_use]
+fn is_idempotent_rpc_method(method: &str) -> bool {
+    // Read-only eth_* methods safe to retry. Mutating methods (eth_sendRawTransaction,
+    // eth_sendTransaction) and stateful trace/debug methods are excluded.
+    matches!(
+        method,
+        "eth_call"
+            | "eth_chainId"
+            | "eth_estimateGas"
+            | "eth_blockNumber"
+            | "eth_getBalance"
+            | "eth_getCode"
+            | "eth_getStorageAt"
+            | "eth_getTransactionByHash"
+            | "eth_getTransactionReceipt"
+            | "eth_getTransactionCount"
+            | "eth_getBlockByNumber"
+            | "eth_getBlockByHash"
+            | "eth_getLogs"
+            | "eth_getBlockTransactionCountByNumber"
+            | "eth_getBlockTransactionCountByHash"
+            | "eth_getTransactionByBlockHashAndIndex"
+            | "eth_getTransactionByBlockNumberAndIndex"
+            | "eth_getUncleByBlockHashAndIndex"
+            | "eth_getUncleByBlockNumberAndIndex"
+            | "eth_getUncleCountByBlockHash"
+            | "eth_getUncleCountByBlockNumber"
+            | "eth_feeHistory"
+            | "eth_gasPrice"
+            | "eth_maxPriorityFeePerGas"
+            | "eth_getProof"
+    )
+}
 
 /// Type alias for the full Ethereum block type returned by `get_block`.
 ///
@@ -600,26 +738,24 @@ impl AlloyProvider {
                         .max_message_size(None)
                         .max_frame_size(None),
                 );
-                let provider = ProviderBuilder::default()
-                    .with_default_caching()
-                    .connect_ws(ws_connect)
-                    .await
-                    .map_err(|e| ProviderError::ConnectionFailed {
-                        message: format!("Failed to connect to WebSocket endpoint: {e}"),
-                    })?
-                    .erased();
-                Arc::new(provider)
-            } else if !rpc_url.contains("://") {
-                let ipc_connect: IpcConnect<String> = IpcConnect::new(rpc_url.to_string());
-                let provider = ProviderBuilder::default()
-                    .with_default_caching()
-                    .connect_ipc(ipc_connect)
-                    .await
-                    .map_err(|e| ProviderError::ConnectionFailed {
-                        message: format!("Failed to connect to IPC endpoint: {e}"),
-                    })?
-                    .erased();
-                Arc::new(provider)
+                let provider = connect_ws_with_retries(ws_connect, max_retries).await?;
+                provider
+            } else if is_ipc_path(rpc_url) {
+                // 65F2N7 #1: explicit IPC path detection — require `ipc://`, an
+                // absolute Unix path (`/`), or a Windows named pipe (`\\`). A
+                // bare `localhost:8545` (a typo missing `http://`) is NO longer
+                // silently routed to IPC; it falls through to the
+                // unsupported-scheme error below with a clear message.
+                let ipc_path = rpc_url.strip_prefix("ipc://").unwrap_or(rpc_url);
+                let ipc_connect: IpcConnect<String> = IpcConnect::new(ipc_path.to_string());
+                // 65F2N7 #3: WS/IPC connect is no longer eagerly fatal. HTTP
+                // is lazy (connects on first call, retried via
+                // retry_with_backoff); WS/IPC `.await?`'d at construction, so a
+                // transient outage at build time failed the provider
+                // permanently. Now construction retries the connect a bounded
+                // number of times (max_retries) with the existing backoff.
+                let provider = connect_ipc_with_retries(ipc_connect, max_retries).await?;
+                provider
             } else {
                 // `rpc_url` contains an unrecognised scheme.
                 // Extract the scheme portion for the error message.
@@ -1097,20 +1233,35 @@ impl AlloyProvider {
         let method = method.to_string();
         let params = Arc::new(params);
 
-        self.retry_with_backoff(|| {
+        // 65F2N7 #2: `make_request` is a raw escape hatch that can issue ANY
+        // method. Retrying non-idempotent methods (debug_*, trace_*, state-
+        // mutating) is unsafe — a partial timeout re-sends the payload. Retry
+        // ONLY the idempotent allowlist (`is_idempotent_rpc_method`); all other
+        // methods get a single attempt. Callers who need retry for a custom
+        // idempotent method should route through the typed methods instead.
+        if is_idempotent_rpc_method(&method) {
+            self.retry_with_backoff(|| {
+                let client = self.inner.client();
+                let method = method.clone();
+                let params = Arc::clone(&params);
+                async move {
+                    let result: serde_json::Value = client
+                        .request(method, (*params).clone())
+                        .await
+                        .map_err(|e| e.into_provider_error("RPC request failed"))?;
+                    Ok(result)
+                }
+            })
+            .await
+        } else {
+            // Non-idempotent method: single attempt, no retry.
             let client = self.inner.client();
-            let method = method.clone();
-            let params = Arc::clone(&params);
-            async move {
-                let result: serde_json::Value = client
-                    .request(method, (*params).clone())
-                    .await
-                    .map_err(|e| e.into_provider_error("RPC request failed"))?;
-
-                Ok(result)
-            }
-        })
-        .await
+            let result: serde_json::Value = client
+                .request(method, (*params).clone())
+                .await
+                .map_err(|e| e.into_provider_error("RPC request failed"))?;
+            Ok(result)
+        }
     }
 }
 
@@ -2140,6 +2291,54 @@ mod tests {
         // Verify the type alias is usable (compile-time check)
         fn assert_block_type(_: Option<EthBlock>) {}
         assert_block_type(None);
+    }
+
+    // ── 65F2N7: IPC path detection + idempotent retry allowlist ─────────
+
+    #[test]
+    fn test_is_ipc_path_detects_unix_and_windows_and_scheme() {
+        // Unix absolute path
+        assert!(is_ipc_path("/tmp/anvil.ipc"));
+        assert!(is_ipc_path("/var/run/geth.ipc"));
+        // Windows named pipe (backslash-backslash)
+        assert!(is_ipc_path("\\\\.\\pipe\\geth.ipc"));
+        // Explicit ipc:// scheme
+        assert!(is_ipc_path("ipc:///tmp/anvil.ipc"));
+    }
+
+    #[test]
+    fn test_is_ipc_path_rejects_bare_hostport_typo() {
+        // 65F2N7 #1: a bare `localhost:8545` (missing the http:// scheme) is
+        // NO longer silently routed to IPC. It must be rejected so the typo
+        // surfaces in the unsupported-scheme error.
+        assert!(!is_ipc_path("localhost:8545"));
+        assert!(!is_ipc_path("127.0.0.1:8545"));
+        assert!(!is_ipc_path("example.com:8545"));
+        // Unrecognized schemes are not IPC paths either.
+        assert!(!is_ipc_path("ftp://something"));
+        assert!(!is_ipc_path("ldap://something"));
+    }
+
+    #[test]
+    fn test_is_idempotent_rpc_method_allowlist() {
+        // 65F2N7 #2: read-only eth_* methods are retry-safe.
+        assert!(is_idempotent_rpc_method("eth_call"));
+        assert!(is_idempotent_rpc_method("eth_getLogs"));
+        assert!(is_idempotent_rpc_method("eth_getBlockByNumber"));
+        assert!(is_idempotent_rpc_method("eth_getTransactionReceipt"));
+        assert!(is_idempotent_rpc_method("eth_chainId"));
+        assert!(is_idempotent_rpc_method("eth_feeHistory"));
+    }
+
+    #[test]
+    fn test_is_idempotent_rpc_method_rejects_non_idempotent() {
+        // 65F2N7 #2: mutating + stateful methods must NOT be retried blindly.
+        assert!(!is_idempotent_rpc_method("eth_sendRawTransaction"));
+        assert!(!is_idempotent_rpc_method("eth_sendTransaction"));
+        assert!(!is_idempotent_rpc_method("debug_traceCallByBlockhash"));
+        assert!(!is_idempotent_rpc_method("trace_call"));
+        assert!(!is_idempotent_rpc_method("trace_block"));
+        assert!(!is_idempotent_rpc_method("custom_method"));
     }
 
     // ── §4.2 parity: typed RPC struct JSON round-trips match web3.py ───
