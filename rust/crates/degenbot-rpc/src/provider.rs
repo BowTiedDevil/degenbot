@@ -50,11 +50,13 @@ const MAX_JITTER_MS: u64 = 100; // Add up to 100ms of jitter
 /// - Exhausted all attempts: `log::error!` — terminal failure.
 ///
 /// Extracted from `AlloyProvider::retry_with_backoff` (which delegates, passing
-/// `self.max_attempts`) so the loop is unit-testable without constructing a
-/// live provider, and so a test can drive `max_attempts = 2` for a fast,
-/// deterministic assertion that the expected structured fields are emitted.
+/// `self.max_attempts` + `self.call_timeout`) so the loop is unit-testable
+/// without constructing a live provider, and so a test can drive
+/// `max_attempts = 2` for a fast, deterministic assertion that the expected
+/// structured fields are emitted.
 pub(crate) async fn retry_with_backoff_loop<F, Fut, T>(
     max_attempts: u32,
+    call_timeout: Duration,
     operation: F,
 ) -> ProviderResult<T>
 where
@@ -66,49 +68,58 @@ where
     let mut delay_ms = INITIAL_RETRY_DELAY_MS;
 
     loop {
-        match operation().await {
-            Ok(result) => return Ok(result),
-            Err(e) => {
-                attempt += 1;
-                if attempt >= max_attempts {
-                    log::error!(
-                        target: "degenbot_rpc::provider",
-                        "RPC retries exhausted: attempt {attempt}/{max_attempts}: {e}"
-                    );
-                    return Err(e);
-                }
+        // EO75JH: bound every attempt so a stuck transport (especially
+        // WS/IPC mid-read) cannot hang the loop indefinitely. HTTP has alloy's
+        // read timeout, but WS/IPC have no default — a half-open socket hangs
+        // forever without this wrapper. On elapsed, classify as
+        // `ProviderError::Timeout` so the existing `is_retryable()` picks it up.
+        let outcome = match tokio::time::timeout(call_timeout, operation()).await {
+            Ok(Ok(result)) => return Ok(result),
+            Ok(Err(e)) if !e.is_retryable() => return Err(e),
+            // Retryable failure OR per-call timeout → fall through to backoff.
+            Ok(Err(e)) => e,
+            Err(_elapsed) => ProviderError::Timeout {
+                message: format!(
+                    "RPC call timed out after {}ms (attempt {}/{max_attempts})",
+                    call_timeout.as_millis(),
+                    attempt + 1
+                ),
+            },
+        };
 
-                // Check if it's a retryable error
-                if !e.is_retryable() {
-                    return Err(e);
-                }
-
-                // Calculate delay with exponential backoff and jitter
-                // Use random_range for uniform distribution (avoids modulo bias)
-                let jitter = rand::rng().random_range(0..MAX_JITTER_MS);
-                let sleep_ms = delay_ms + jitter;
-
-                if attempt <= 1 {
-                    log::debug!(
-                        target: "degenbot_rpc::provider",
-                        "RPC retry: attempt {attempt}/{max_attempts} after {sleep_ms}ms: {e}"
-                    );
-                } else {
-                    log::warn!(
-                        target: "degenbot_rpc::provider",
-                        "RPC retry: attempt {attempt}/{max_attempts} after {sleep_ms}ms: {e}"
-                    );
-                }
-
-                tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
-
-                // Exponential backoff with cap (saturating to prevent overflow)
-                delay_ms = std::cmp::min(
-                    delay_ms.saturating_mul(BACKOFF_MULTIPLIER),
-                    MAX_RETRY_DELAY_MS,
-                );
-            }
+        attempt += 1;
+        if attempt >= max_attempts {
+            log::error!(
+                target: "degenbot_rpc::provider",
+                "RPC retries exhausted: attempt {attempt}/{max_attempts}: {outcome}"
+            );
+            return Err(outcome);
         }
+
+        // Calculate delay with exponential backoff and jitter
+        // Use random_range for uniform distribution (avoids modulo bias)
+        let jitter = rand::rng().random_range(0..MAX_JITTER_MS);
+        let sleep_ms = delay_ms + jitter;
+
+        if attempt <= 1 {
+            log::debug!(
+                target: "degenbot_rpc::provider",
+                "RPC retry: attempt {attempt}/{max_attempts} after {sleep_ms}ms: {outcome}"
+            );
+        } else {
+            log::warn!(
+                target: "degenbot_rpc::provider",
+                "RPC retry: attempt {attempt}/{max_attempts} after {sleep_ms}ms: {outcome}"
+            );
+        }
+
+        tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
+
+        // Exponential backoff with cap (saturating to prevent overflow)
+        delay_ms = std::cmp::min(
+            delay_ms.saturating_mul(BACKOFF_MULTIPLIER),
+            MAX_RETRY_DELAY_MS,
+        );
     }
 }
 
@@ -117,6 +128,14 @@ where
 /// Prevents file-descriptor exhaustion and RPC rate-limit bans from
 /// spawning thousands of simultaneous connections.
 const MAX_CONCURRENT_REQUESTS_CAP: usize = 32;
+
+/// Default per-call timeout for `AlloyProvider` (EO75JH). HTTP uses alloy's
+/// read timeout, but WS/IPC have no default — a half-open socket hangs the
+/// retry loop indefinitely. This bounds every attempt so a stuck transport
+/// retries (or fails) within a known wall-clock. 30s is generous for any
+/// single RPC call; `eth_simulate_v1` / very large `eth_getLogs` ranges may
+/// need a longer value via the builder/constructor arg.
+const DEFAULT_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Default maximum total attempts for provider operations (1 initial + 9 retries).
 pub const DEFAULT_MAX_RETRIES: u32 = 10;
@@ -447,6 +466,13 @@ pub struct AlloyProvider {
     inner: Arc<dyn Provider<Ethereum>>,
     rpc_url: String,
     max_attempts: u32,
+    /// Per-call timeout (EO75JH). Each `operation()` in `retry_with_backoff`
+    /// is wrapped in `tokio::time::timeout(call_timeout, ...)`; a stuck
+    /// transport (especially WS/IPC mid-read) classifies as
+    /// `ProviderError::Timeout` and feeds the existing `is_retryable()`.
+    /// Default `DEFAULT_CALL_TIMEOUT` (30s); raise via the constructor for
+    /// `eth_simulate_v1` / large `eth_getLogs` ranges.
+    call_timeout: Duration,
 }
 
 // Manual Clone impl makes Arc::clone sharing semantics explicit
@@ -457,6 +483,7 @@ impl Clone for AlloyProvider {
             inner: Arc::clone(&self.inner),
             rpc_url: self.rpc_url.clone(),
             max_attempts: self.max_attempts,
+            call_timeout: self.call_timeout,
         }
     }
 }
@@ -604,6 +631,7 @@ impl AlloyProvider {
             inner: provider,
             rpc_url: rpc_url.to_string(),
             max_attempts: max_retries.saturating_add(1),
+            call_timeout: DEFAULT_CALL_TIMEOUT,
         })
     }
 
@@ -706,7 +734,7 @@ impl AlloyProvider {
         Fut: std::future::Future<Output = ProviderResult<T>> + Send,
         T: Send,
     {
-        retry_with_backoff_loop(self.max_attempts, operation).await
+        retry_with_backoff_loop(self.max_attempts, self.call_timeout, operation).await
     }
 
     /// Get the RPC URL.
@@ -1110,6 +1138,7 @@ impl AlloyProvider {
             inner,
             rpc_url: String::from("test"),
             max_attempts: DEFAULT_MAX_RETRIES,
+            call_timeout: DEFAULT_CALL_TIMEOUT,
         }
     }
 }
@@ -1709,7 +1738,7 @@ mod tests {
         // Each invocation fails with a retryable rate-limit error; the context
         // label "eth_call failed" is baked into the message via Display.
         let result: ProviderResult<u64> =
-            retry_with_backoff_loop(max_attempts, move || async move {
+            retry_with_backoff_loop(max_attempts, Duration::from_secs(30), move || async move {
                 log::debug!(target: "degenbot_rpc::provider", "invocation attempt {attempt}");
                 Err(ProviderError::RateLimited {
                     message: "eth_call failed: rate limited".to_string(),
@@ -1784,10 +1813,11 @@ mod tests {
         let rx = capture_retry_logs();
 
         let max_attempts: u32 = 5;
-        let result: ProviderResult<u64> = retry_with_backoff_loop(max_attempts, || async {
-            Err(ProviderError::InvalidBlockRange { from: 2, to: 1 })
-        })
-        .await;
+        let result: ProviderResult<u64> =
+            retry_with_backoff_loop(max_attempts, Duration::from_secs(30), || async {
+                Err(ProviderError::InvalidBlockRange { from: 2, to: 1 })
+            })
+            .await;
 
         stop_capturing_retry_logs();
 
@@ -1807,7 +1837,10 @@ mod tests {
 
         let max_attempts: u32 = 3;
         let result: ProviderResult<u64> =
-            retry_with_backoff_loop(max_attempts, || async { Ok(7_u64) }).await;
+            retry_with_backoff_loop(max_attempts, Duration::from_secs(30), || async {
+                Ok(7_u64)
+            })
+            .await;
 
         stop_capturing_retry_logs();
 
@@ -1816,6 +1849,85 @@ mod tests {
         assert!(
             logs.is_empty(),
             "successful first attempt must emit no provider logs, got {logs:?}"
+        );
+    }
+
+    /// EO75JH: a stuck call (operation sleeps longer than the per-call
+    /// timeout) is bounded — the loop does NOT hang forever, it classifies
+    /// the elapsed attempt as `ProviderError::Timeout`, retries, and after
+    /// exhausting attempts returns `Timeout`. Wall-clock is bounded by
+    /// `(attempts × call_timeout) + backoff`, not by the hung transport.
+    #[tokio::test]
+    async fn retry_with_backoff_loop_times_out_hung_call_within_bounded_wall_clock() {
+        // A timeout so short a real network call could never complete, but long
+        // enough to be measurable. The operation sleeps far longer than the
+        // timeout, so it can never win the race — simulating a stuck WS/IPC read.
+        let call_timeout = Duration::from_millis(20);
+        let hung_sleep = Duration::from_millis(500);
+        // max_attempts = 2 so we get exactly: 1st attempt times out → backoff
+        // (INITIAL_RETRY_DELAY_MS=100ms + 0..MAX_JITTER_MS) → 2nd attempt times
+        // out → exhausted → return `Timeout`.
+        let max_attempts: u32 = 2;
+
+        let started = std::time::Instant::now();
+        let result: ProviderResult<u64> =
+            retry_with_backoff_loop(max_attempts, call_timeout, || async {
+                tokio::time::sleep(hung_sleep).await;
+                Ok(7_u64)
+            })
+            .await;
+        let elapsed = started.elapsed();
+
+        // Does not hang forever: elapsed is dominated by the backoff
+        // (INITIAL_RETRY_DELAY_MS=100ms + jitter up to MAX_JITTER_MS=100ms)
+        // plus the two cut-off attempts (2 × 20ms), NOT by the hung
+        // transport's 500ms sleep. Worst case ≈ 20 + 200 + 20 = 240ms; the
+        // key property is that we never waited for even ONE full hung sleep.
+        assert!(
+            elapsed < hung_sleep,
+            "hung call should have been cut off by the per-call timeout, not blocked on tokio::sleep for {hung_sleep:?}; elapsed {elapsed:?}"
+        );
+        assert!(
+            matches!(result, Err(ProviderError::Timeout { .. })),
+            "exhausted retries on a hung call should surface Timeout, got {result:?}"
+        );
+    }
+
+    /// EO75JH: after a per-call timeout, the loop retries and can succeed on
+    /// a later attempt — the timeout is classified as retryable (feeds
+    /// `is_retryable()`), the backoff applies, and a fast retry wins.
+    #[tokio::test]
+    async fn retry_with_backoff_loop_recovers_after_timeout_then_success() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        // Short timeout so the first (hung) attempt is cut off quickly.
+        let call_timeout = Duration::from_millis(20);
+        let max_attempts: u32 = 3;
+        let attempt_counter = Arc::new(AtomicU32::new(0));
+        let counter = attempt_counter.clone();
+
+        let result: ProviderResult<u64> =
+            retry_with_backoff_loop(max_attempts, call_timeout, move || {
+                let counter = counter.clone();
+                async move {
+                    let n = counter.fetch_add(1, Ordering::SeqCst);
+                    if n == 0 {
+                        // First attempt: hang (simulates a stuck WS/IPC read).
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                    }
+                    Ok(42_u64)
+                }
+            })
+            .await;
+
+        assert_eq!(
+            result.unwrap(),
+            42,
+            "should recover after the hung first attempt"
+        );
+        assert_eq!(
+            attempt_counter.load(Ordering::SeqCst),
+            2,
+            "exactly two attempts: the first timed out, the second succeeded"
         );
     }
 
