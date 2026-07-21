@@ -289,3 +289,108 @@ fn skip_bpt(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::skip_bpt;
+    use alloy::primitives::U256;
+
+    // Distinct magnitudes per token so a mis-rebase swapping one balance
+    // so a mis-rebase that swapped one balance for another is caught). …
+
+    fn b(i: u64) -> U256 {
+        U256::from(i)
+    }
+
+    /// RPSW4Z: the MetaStable pass-through. `bpt_idx = None` leaves balances +
+    /// indices untouched — the ComposableStable rebase machinery is a no-op.
+    #[test]
+    fn skip_bpt_metastable_none_is_passthrough() {
+        let balances = [b(10), b(20)];
+        let (v, idx_in, idx_out) = skip_bpt(&balances, None, 0, 1);
+        assert_eq!(
+            v,
+            vec![b(10), b(20)],
+            "Metastable balances must be unchanged"
+        );
+        assert_eq!(
+            (idx_in, idx_out),
+            (0, 1),
+            "Metastable indices must be unchanged"
+        );
+    }
+
+    /// RPSW4Z: ComposableStable `bpt_idx = Some(2)` (BPT at the END). The BPT
+    /// is dropped and neither swap index is past `bpt_idx`, so `adj_in`/`adj_out`
+    /// do NOT rebase — this is the BPT-drop branch exercisable end-to-end via
+    /// `simulate_balancer_stable_swap` (covered by the parity fixture in
+    /// `rust/crates/degenbot/tests/parity_balancer_stable_swap.rs`). Pinned here
+    /// at the unit level so the BPT-drop + no-rebase combination is directly
+    /// attributable.
+    #[test]
+    fn skip_bpt_composable_bpt_at_end_drops_bpt_no_rebase() {
+        // [token0=10, token1=20, BPT=999] → drop index 2 → [10, 20].
+        let balances = [b(10), b(20), b(999)];
+        let (v, idx_in, idx_out) = skip_bpt(&balances, Some(2), 0, 1);
+        assert_eq!(v, vec![b(10), b(20)], "BPT (index 2) must be dropped");
+        assert_eq!(
+            (idx_in, idx_out),
+            (0, 1),
+            "indices below bpt_idx must not rebase"
+        );
+    }
+
+    /// RPSW4Z: ComposableStable `bpt_idx = Some(1)` (BPT in the MIDDLE), swap
+    /// `token0 → token2` (idx_in=0, idx_out=2). `idx_out` is PAST `bpt_idx`, so
+    /// it rebases to `2 - 1 = 1`; `idx_in` (0, below bpt_idx) stays `0`. The BPT
+    /// at index 1 is dropped, leaving [token0, token2] with adj_in=0, adj_out=1.
+    ///
+    /// This is the index-rebase branch the end-to-end `simulate_swap` fixture
+    /// CANNOT reach (the dispatch is `zero_for_one`-based and hardcodes token
+    /// positions `0 ↔ 1`, so a `bpt_idx = 1` pool would swap token0 ↔ BPT —
+    /// not a valid asset-pair swap). It is the core correctness claim of the
+    /// full RPSW4Z scenario and is pinned directly here so the rebase is
+    /// verified independently of the dispatch limitation. The end-to-end wiring
+    /// of arbitrary (idx_in, idx_out) through `simulate_swap` is the broader
+    /// VQ4OHX multi-token-API extension (sibling to `7D34LW` / `U2K6FN`).
+    #[test]
+    fn skip_bpt_composable_bpt_in_middle_rebases_index_past_bpt() {
+        // [token0=10, BPT=999, token2=30] → drop index 1 → [10, 30].
+        let balances = [b(10), b(999), b(30)];
+        let (v, idx_in, idx_out) = skip_bpt(&balances, Some(1), 0, 2);
+        assert_eq!(v, vec![b(10), b(30)], "BPT (index 1) must be dropped");
+        assert_eq!(idx_in, 0, "idx_in (0, below bpt_idx=1) must not rebase");
+        assert_eq!(
+            idx_out, 1,
+            "idx_out (2, past bpt_idx=1) must rebase to 2-1=1"
+        );
+    }
+
+    /// RPSW4Z: symmetric rebase — `idx_in` past `bpt_idx`, `idx_out` below.
+    /// `bpt_idx = Some(1)`, swap `token2 → token0` (idx_in=2, idx_out=0).
+    /// Confirms the rebase applies to EITHER side, not just `idx_out`.
+    #[test]
+    fn skip_bpt_composable_rebases_idx_in_past_bpt() {
+        let balances = [b(10), b(999), b(30)];
+        let (v, idx_in, idx_out) = skip_bpt(&balances, Some(1), 2, 0);
+        assert_eq!(v, vec![b(10), b(30)], "BPT (index 1) must be dropped");
+        assert_eq!(idx_in, 1, "idx_in (2, past bpt_idx=1) must rebase to 2-1=1");
+        assert_eq!(idx_out, 0, "idx_out (0, below bpt_idx=1) must not rebase");
+    }
+
+    /// RPSW4Z: both indices past `bpt_idx` (`bpt_idx = Some(0)`, BPT at start,
+    /// swap `token1 → token2`). Both rebase by -1. Confirms the rebase is
+    /// applied uniformly to both sides when both are past the BPT.
+    #[test]
+    fn skip_bpt_composable_rebases_both_indices_past_bpt() {
+        // [BPT=999, token1=20, token2=30] → drop index 0 → [20, 30].
+        let balances = [b(999), b(20), b(30)];
+        let (v, idx_in, idx_out) = skip_bpt(&balances, Some(0), 1, 2);
+        assert_eq!(v, vec![b(20), b(30)], "BPT (index 0) must be dropped");
+        assert_eq!(
+            (idx_in, idx_out),
+            (0, 1),
+            "both past bpt_idx=0 rebase by -1"
+        );
+    }
+}
