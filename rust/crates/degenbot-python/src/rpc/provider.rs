@@ -435,7 +435,12 @@ impl PyAlloyProvider {
             .map_err(Into::<PyErr>::into)?;
 
         match tx {
-            Some(tx_json) => {
+            Some(tx_typed) => {
+                // HXLBJZ: the core returns alloy's typed `Transaction`; serialize
+                // to JSON at the FFI boundary for `json_to_py_with_hexbytes`.
+                let tx_json = serde_json::to_value(&tx_typed).map_err(|e| {
+                    PyValueError::new_err(format!("Failed to serialize transaction: {e}"))
+                })?;
                 // Use json_to_py_with_hexbytes to convert with automatic HexBytes detection
                 let py_obj = json_to_py_with_hexbytes(py, tx_json).map_err(|e| {
                     PyValueError::new_err(format!("Failed to convert transaction: {e}"))
@@ -463,7 +468,12 @@ impl PyAlloyProvider {
             .map_err(Into::<PyErr>::into)?;
 
         match receipt {
-            Some(receipt_json) => {
+            Some(receipt_typed) => {
+                // HXLBJZ: the core returns alloy's typed `TransactionReceipt`;
+                // serialize to JSON at the FFI boundary.
+                let receipt_json = serde_json::to_value(&receipt_typed).map_err(|e| {
+                    PyValueError::new_err(format!("Failed to serialize transaction receipt: {e}"))
+                })?;
                 // Use json_to_py_with_hexbytes to convert with automatic HexBytes detection
                 let py_obj = json_to_py_with_hexbytes(py, receipt_json).map_err(|e| {
                     PyValueError::new_err(format!("Failed to convert receipt: {e}"))

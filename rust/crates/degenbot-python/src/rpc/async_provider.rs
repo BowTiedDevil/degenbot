@@ -307,7 +307,14 @@ impl PyAsyncAlloyProvider {
 
             tx.map_or_else(
                 || Ok(pyo3::Python::attach(|py| py.None().into_bound(py).unbind())),
-                |tx_json| {
+                |tx_typed| {
+                    // HXLBJZ: core returns typed Transaction; serialize to JSON
+                    // at the FFI boundary for json_to_py_with_hexbytes.
+                    let tx_json = serde_json::to_value(&tx_typed).map_err(|e| {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "Failed to serialize transaction: {e}"
+                        ))
+                    })?;
                     Python::attach(|py| json_to_py_with_hexbytes(py, tx_json).map(Bound::unbind))
                 },
             )
@@ -330,7 +337,14 @@ impl PyAsyncAlloyProvider {
 
             receipt.map_or_else(
                 || Ok(pyo3::Python::attach(|py| py.None().into_bound(py).unbind())),
-                |receipt_json| {
+                |receipt_typed| {
+                    // HXLBJZ: core returns typed TransactionReceipt; serialize
+                    // to JSON at the FFI boundary for json_to_py_with_hexbytes.
+                    let receipt_json = serde_json::to_value(&receipt_typed).map_err(|e| {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "Failed to serialize transaction receipt: {e}"
+                        ))
+                    })?;
                     Python::attach(|py| {
                         json_to_py_with_hexbytes(py, receipt_json).map(Bound::unbind)
                     })

@@ -14,7 +14,9 @@ use alloy::rpc::types::eth::{
     simulate::{SimulatePayload, SimulatedBlock},
     FeeHistory,
 };
-use alloy::rpc::types::eth::{AccessListResult, Block, Header as RpcHeader, Transaction};
+use alloy::rpc::types::eth::{
+    AccessListResult, Block, Header as RpcHeader, Transaction, TransactionReceipt,
+};
 use alloy::rpc::types::TransactionRequest;
 use alloy::rpc::types::{Filter, Log};
 use alloy::transports::ipc::IpcConnect;
@@ -841,31 +843,20 @@ impl AlloyProvider {
     /// # Errors
     ///
     /// Returns `ProviderError::RpcError` if the RPC call fails.
-    pub async fn get_transaction(
-        &self,
-        tx_hash: &str,
-    ) -> ProviderResult<Option<serde_json::Value>> {
+    pub async fn get_transaction(&self, tx_hash: &str) -> ProviderResult<Option<Transaction>> {
         let hash = B256::from_str(tx_hash).map_err(|e| ProviderError::InvalidParams {
             message: format!("Invalid transaction hash: {e}"),
         })?;
 
+        // HXLBJZ: return alloy's typed `Transaction` (consistent with
+        // `EthBlock`'s `Transaction<TxEnvelope>`), not a serialize-then-reparse
+        // `serde_json::Value` round-trip. The PyO3 wrapper serializes to JSON
+        // at the FFI boundary when a Python caller needs it.
         self.retry_with_backoff(|| async {
-            let result = self
-                .inner
+            self.inner
                 .get_transaction_by_hash(hash)
                 .await
-                .map_err(|e| e.into_provider_error("Failed to get transaction"))?;
-
-            // Convert to JSON value
-            let json_value = result
-                .map(|tx| {
-                    serde_json::to_value(&tx).map_err(|e| ProviderError::SerializationError {
-                        message: format!("Failed to serialize transaction: {e}"),
-                    })
-                })
-                .transpose()?;
-
-            Ok(json_value)
+                .map_err(|e| e.into_provider_error("Failed to get transaction"))
         })
         .await
     }
@@ -878,28 +869,18 @@ impl AlloyProvider {
     pub async fn get_transaction_receipt(
         &self,
         tx_hash: &str,
-    ) -> ProviderResult<Option<serde_json::Value>> {
+    ) -> ProviderResult<Option<TransactionReceipt>> {
         let hash = B256::from_str(tx_hash).map_err(|e| ProviderError::InvalidParams {
             message: format!("Invalid transaction hash: {e}"),
         })?;
 
+        // HXLBJZ: return alloy's typed `TransactionReceipt`, not a
+        // serialize-then-reparse `serde_json::Value` round-trip.
         self.retry_with_backoff(|| async {
-            let result = self
-                .inner
+            self.inner
                 .get_transaction_receipt(hash)
                 .await
-                .map_err(|e| e.into_provider_error("Failed to get transaction receipt"))?;
-
-            // Convert to JSON value
-            let json_value = result
-                .map(|receipt| {
-                    serde_json::to_value(&receipt).map_err(|e| ProviderError::SerializationError {
-                        message: format!("Failed to serialize transaction receipt: {e}"),
-                    })
-                })
-                .transpose()?;
-
-            Ok(json_value)
+                .map_err(|e| e.into_provider_error("Failed to get transaction receipt"))
         })
         .await
     }
@@ -915,6 +896,13 @@ impl AlloyProvider {
         position: U256,
         block_number: Option<u64>,
     ) -> ProviderResult<B256> {
+        // HXLBJZ: the `to_be_bytes::<32>()` byte-array detour is NOT
+        // pointless — alloy's `get_storage_at` returns a `U256`
+        // (`StorageValue = U256`), and there is no direct `From<U256> for
+        // B256`. The 32-byte big-endian form of a `U256` IS the `B256` layout,
+        // so `to_be_bytes::<32>()` → `B256::from([u8; 32])` is the canonical
+        // (and zero-cost) conversion. If alloy ever returns `B256` directly,
+        // return it as-is here.
         self.retry_with_backoff(|| async {
             let result = if let Some(block) = block_number {
                 self.inner
@@ -926,7 +914,7 @@ impl AlloyProvider {
             }
             .map_err(|e| e.into_provider_error("Failed to get storage"))?;
 
-            // Convert U256 to B256 (32-byte storage slot)
+            // Direct conversion: U256's 32-byte big-endian form is a B256.
             Ok(B256::from(result.to_be_bytes::<32>()))
         })
         .await
