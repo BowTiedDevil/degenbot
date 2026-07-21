@@ -1115,13 +1115,6 @@ class ArbitrageEngine:
         v4_sync_updates: list[tuple[str, str, int, int, int, dict[int, tuple[int, int]]]],
         block_number: int,
     ) -> None: ...
-    def process_logs(
-        self,
-        v2_sync_updates: list[tuple[str, int, int]],
-        v3_swap_updates: list[tuple[str, int, int, int, list[tuple[int, tuple[int, int]]]]],
-        v4_swap_updates: list[tuple[str, str, int, int, int, list[tuple[int, tuple[int, int]]]]],
-        block_number: int,
-    ) -> None: ...
 
     # ── Backfill/pump buffer drain (restores what the d65c43f6 bypass dropped). ──
     def apply_buffer_v3(self, pool_address: str) -> None: ...

@@ -313,11 +313,11 @@ class AbstractUniswapV3PoolTracker[Pool: UniswapV3Pool](AbstractPoolTracker[Pool
         1. Apply pending Mint/Burn updates to the Python pool's tick_data
         2. Collect the updated tick_data for pushing to the Rust engine
 
-        Returns the V3 updates list suitable for `engine.process_logs()`.
+        Returns the V3 updates list suitable for the engine's sync path.
 
         This is the one-time bridge between Python's snapshot state and the Rust
-        engine's tick_data. After this call and one final `process_logs`, the
-        Rust pump takes over state updates.
+        engine's tick_data. After this call and one final state sync, the Rust
+        pump takes over state updates.
         """
         if self._snapshot is None:
             return

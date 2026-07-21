@@ -6,8 +6,8 @@
 //! blocks per type, so each concern file contributes one slice.
 
 use super::{
-    hex_string_to_pool_id, make_tick_info, Address, BlockMetadata, DrainSink, HashMap,
-    PyArbitrageEngine, PyList, V4StateSync,
+    hex_string_to_pool_id, make_tick_info, Address, DrainSink, HashMap, PyArbitrageEngine, PyList,
+    V4StateSync,
 };
 use crate::prelude::*;
 
@@ -399,33 +399,6 @@ impl PyArbitrageEngine {
                 },
             );
         }
-        Ok(())
-    }
-
-    /// Process Sync, V3 Swap, and V4 Swap events synchronously (for testing).
-    ///
-    /// `v2_sync_updates`: list of (`address_str`, `reserve0`, `reserve1`)
-    /// `v3_swap_updates`: list of (`address_str`, `sqrt_price_x96`, liquidity, tick, `tick_priors`)
-    ///   where `tick_priors` is a list of (`tick_index`, (`liquidity_gross`, `liquidity_net`))
-    /// `v4_swap_updates`: list of (`pool_manager_str`, `pool_id_hex`, `sqrt_price_x96`, liquidity, tick, `tick_priors`)
-    #[pyo3(signature = (v2_sync_updates, v3_swap_updates, v4_swap_updates, block_number))]
-    fn process_logs(
-        &self,
-        v2_sync_updates: &Bound<'_, PyList>,
-        v3_swap_updates: &Bound<'_, PyList>,
-        v4_swap_updates: &Bound<'_, PyList>,
-        block_number: u64,
-    ) -> PyResult<()> {
-        let rust_v2 = Self::parse_v2_updates(v2_sync_updates)?;
-        let rust_v3 = Self::parse_v3_updates(v3_swap_updates)?;
-        let rust_v4 = Self::parse_v4_updates(v4_swap_updates)?;
-        self.engine.lock().process_all_updates(
-            &rust_v2,
-            &rust_v3,
-            &rust_v4,
-            block_number,
-            &BlockMetadata::default(),
-        );
         Ok(())
     }
 }

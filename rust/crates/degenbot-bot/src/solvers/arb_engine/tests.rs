@@ -130,8 +130,10 @@ mod tests {
             ])
             .unwrap();
 
-        // Process with no logs — should not panic
-        engine.process_block(&[], 1, &BlockMetadata::default());
+        // Process with no logs — should not panic. X35QKN: process_block was
+        // retired (the parallel log-routing API); an empty-log process is just
+        // solve_dirty over empty dirty sets + the last_processed_block stamp.
+        engine.solve_dirty(1, &BlockMetadata::default());
 
         let (results, block) = engine.latest_results();
         assert_eq!(block, 1);
@@ -2079,7 +2081,7 @@ mod tests {
             }
         }
 
-        let mut engine = ArbitrageEngine::new();
+        let engine = ArbitrageEngine::new();
         let pool_addr = Address::from([0x77u8; 20]);
         let base_sp = U256::from(79_228_162_514_264_337_593_543_950_336_u128); // ~1.0 price
 
@@ -2111,7 +2113,11 @@ mod tests {
             v3_swap_log(pool_addr, sp_b2, 1_200_000, 2, b2),
         ];
 
-        engine.process_backfill_logs(&logs, chunk_end);
+        // X35QKN: the engine's `process_backfill_logs` delegator was retired
+        // (the pump calls `BotState::process_backfill_logs` directly). The test
+        // only asserts on journal/state, so call the BotState method directly
+        // — the same path the production backfill uses.
+        engine.core.write().process_backfill_logs(&logs, chunk_end);
 
         let core = engine.core.read();
         let s = core.get_v3_pool(pool_id).expect("v3 pool registered");
