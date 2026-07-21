@@ -173,7 +173,14 @@ fn v2_fee_bips(gamma: u64, denom: u64) -> u16 {
     }
     let fee_numer = u128::from(denom - gamma);
     let fee_denom = u128::from(denom);
-    u16::try_from((fee_numer * 10_000) / fee_denom).unwrap_or(u16::MAX)
+    // `fee_bips = (1 − gamma/denom) × 10_000`. With `gamma ≤ denom` (guarded
+    // above), `fee_bips ≤ 10_000 ≤ u16::MAX`, so `try_into` cannot fail on a
+    // valid path; `.expect` surfaces a real invariant break loudly rather than
+    // masking to `u16::MAX` (the prior `.unwrap_or(u16::MAX)` would have
+    // surfaced a bogus 65535 fee tier if `gamma > denom` ever slipped past the
+    // guard, hiding the bug instead of failing).
+    u16::try_from((fee_numer * 10_000) / fee_denom)
+        .expect("fee_bips <= 10000 <= u16::MAX under the gamma <= denom guard")
 }
 
 #[cfg(test)]

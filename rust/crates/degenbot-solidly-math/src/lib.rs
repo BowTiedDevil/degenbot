@@ -91,4 +91,14 @@ pub enum SolidlyMathError {
     /// Mirrors the Python oracle's
     /// `raise EVMRevertError(error="Failed to converge on a value for y")`.
     DidNotConverge,
+    /// `amount_out` was zero, so no input can produce a strictly-positive
+    /// output. Mirrors the on-chain Solidly `getAmountIn` revert
+    /// `INSUFFICIENT_OUTPUT_AMOUNT` (Solidity's `require(amountOut > 0)`).
+    ///
+    /// Previously the `M - 1` underflow at the end of
+    /// `calc_exact_out_stable_solidly` was masked by `.unwrap_or(U256::ZERO)`
+    /// into a phantom `amount_in == 1`; this variant surfaces it as a typed
+    /// error so the FFI layer raises a Python exception instead of returning
+    /// a wrong number.
+    InsufficientOutputAmount,
 }

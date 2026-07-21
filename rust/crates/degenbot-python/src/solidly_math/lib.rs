@@ -69,6 +69,10 @@ fn u256_to_py_obj(py: Python<'_>, v: U256) -> PyResult<PyObject> {
 ///   value for y")`) surfaces as `ValueError` (the binding matches the
 ///   curve/balancer pattern of converting revert-tagged errors to
 ///   `ValueError`).
+/// - `InsufficientOutputAmount` (the on-chain Solidly `getAmountIn` revert
+///   `INSUFFICIENT_OUTPUT_AMOUNT`) surfaces as `ValueError` carrying the
+///   Solidity revert string — matches how the on-chain pair reverts for a
+///   zero `amountOut` rather than silently returning a wrong input.
 #[allow(clippy::needless_pass_by_value)]
 fn solidly_err(e: SolidlyMathError) -> PyErr {
     match e {
@@ -78,6 +82,9 @@ fn solidly_err(e: SolidlyMathError) -> PyErr {
         SolidlyMathError::InvalidTokenIn => PyValueError::new_err("Invalid token_in identifier"),
         SolidlyMathError::DidNotConverge => {
             PyValueError::new_err("EVM Revert: Failed to converge on a value for y")
+        }
+        SolidlyMathError::InsufficientOutputAmount => {
+            PyValueError::new_err("EVM Revert: INSUFFICIENT_OUTPUT_AMOUNT")
         }
     }
 }

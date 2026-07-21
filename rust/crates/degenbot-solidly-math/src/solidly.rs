@@ -287,9 +287,19 @@ pub fn calc_exact_in_stable_solidly(
 /// # Errors
 ///
 /// - [`SolidlyMathError::InvalidTokenIn`] if `token_in` is not 0 or 1.
+/// - [`SolidlyMathError::InsufficientOutputAmount`] if `amount_out` is zero
+///   (the on-chain Solidly `getAmountIn` `INSUFFICIENT_OUTPUT_AMOUNT` revert).
 /// - [`SolidlyMathError::Overflow`] on divide-by-zero (zero decimals /
 ///   zero fee-keep / `amount_out` not smaller than the output reserve).
 /// - Propagates [`get_y_solidly`]'s revert on non-convergence.
+///
+/// # Panics
+///
+/// Panics if the `M ≥ 1` invariant breaks (i.e. `amount_in_after_fee_scaled`
+/// is zero despite the `amount_out.is_zero()` guard + the overdraw check
+/// above). This is unreachable on a valid path; the `.expect` surfaces a real
+/// invariant violation loudly rather than masking to a phantom 0 the way the
+/// prior `.unwrap_or(U256::ZERO)` did.
 #[allow(clippy::too_many_arguments)]
 pub fn calc_exact_out_stable_solidly(
     amount_out: U256,
@@ -303,6 +313,15 @@ pub fn calc_exact_out_stable_solidly(
 ) -> Result<U256, SolidlyMathError> {
     if token_in != 0 && token_in != 1 {
         return Err(SolidlyMathError::InvalidTokenIn);
+    }
+    // On-chain Solidly `getAmountIn` reverts with INSUFFICIENT_OUTPUT_AMOUNT
+    // for amount_out == 0 (Solidity's `require(amountOut > 0)`). Surface the
+    // same revert — a zero `amount_out` would otherwise drive the solver to
+    // the rest state (`x0_sol == reserves_a`), zeroing
+    // `amount_in_after_fee_scaled` and underflowing `M - 1` (the prior
+    // `.unwrap_or(U256::ZERO)` masked that into a phantom `amount_in == 1`).
+    if amount_out.is_zero() {
+        return Err(SolidlyMathError::InsufficientOutputAmount);
     }
     if decimals_0.is_zero() || decimals_1.is_zero() || fee_denom.is_zero() {
         return Err(SolidlyMathError::Overflow);
@@ -366,8 +385,15 @@ pub fn calc_exact_out_stable_solidly(
         .wrapping_add(ONE)
         .wrapping_sub(U256::from(1u64))
         / ONE;
-    // M ≥ 1 for any non-zero target (amount_in_after_fee_scaled > 0 here).
-    let m_minus_one = m.checked_sub(U256::from(1u64)).unwrap_or(U256::ZERO);
+    // M ≥ 1 for any non-zero target (`amount_in_after_fee_scaled > 0` here,
+    // guaranteed by the `amount_out.is_zero()` guard above + the
+    // `amount_out_scaled < reserves_b` overdraw check). `checked_sub`
+    // therefore cannot underflow on a valid path; if it ever does (a real
+    // invariant break), `.expect` panics loudly rather than masking to a
+    // phantom 0 the way the prior `.unwrap_or(U256::ZERO)` did.
+    let m_minus_one = m
+        .checked_sub(U256::from(1u64))
+        .expect("M >= 1 invariant: amount_in_after_fee_scaled > 0 after the zero-output guard");
     let amount_in = m_minus_one
         .wrapping_mul(fee_denom)
         .wrapping_div(fee_keep)

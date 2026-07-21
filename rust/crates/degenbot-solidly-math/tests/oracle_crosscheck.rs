@@ -327,3 +327,38 @@ fn cross_check_calc_exact_out_stable_solidly_roundtrip() {
         );
     }
 }
+
+// ── calc_exact_out_stable_solidly(amount_out=0) must revert (smoke-spelunk) ─
+//
+// Regression guard against the masking `.unwrap_or(U256::ZERO)` at the `M-1`
+// site: a zero `amount_out` drives the solver to the rest state
+// (`x0_sol == reserves_a`), so `amount_in_after_fee_scaled == 0`, `M == 0`,
+// and `M-1` underflows. On-chain Solidly `getAmountIn` reverts here with
+// `INSUFFICIENT_OUTPUT_AMOUNT`; the unwrap_or used to swallow that into a
+// phantom `amount_in == 1`. The fix surfaces a typed `SolidlyMathError` so
+// the path propagates to the Python layer as an exception (matching the
+// on-chain revert) instead of returning a wrong number.
+#[test]
+fn calc_exact_out_stable_solidly_zero_output_reverts_not_phantom_one() {
+    use degenbot_solidly_math::SolidlyMathError;
+    // Snapshot corpus reserves/decimals/fees — any registered stable pool
+    // would do; we just need a non-degenerate in-range configuration.
+    let snap = load_snapshot();
+    let case = &snap["calc_exact_in_stable_solidly"].as_array().unwrap()[0];
+    let args = case["args"].as_array().unwrap();
+    let token_in: u8 = args_as_u8(&args[1]);
+    let r0 = args_as_u256(&args[2]);
+    let r1 = args_as_u256(&args[3]);
+    let d0 = args_as_u256(&args[4]);
+    let d1 = args_as_u256(&args[5]);
+    let fee_numer = args_as_u256(&args[6]);
+    let fee_denom = args_as_u256(&args[7]);
+
+    let result =
+        calc_exact_out_stable_solidly(U256::ZERO, token_in, r0, r1, d0, d1, fee_numer, fee_denom);
+    assert!(
+        matches!(result, Err(SolidlyMathError::InsufficientOutputAmount)),
+        "amount_out=0 must revert with InsufficientOutputAmount, got {result:?} \
+         (previously the unwrap_or masked this into a phantom amount_in=1)",
+    );
+}
