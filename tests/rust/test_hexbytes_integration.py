@@ -5,6 +5,8 @@ These tests verify that the provider returns:
 - Checksummed strings for address fields
 """
 
+from collections.abc import Iterator
+
 import pytest
 from hexbytes import HexBytes
 

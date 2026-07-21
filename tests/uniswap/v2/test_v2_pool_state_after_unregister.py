@@ -72,7 +72,7 @@ class TestStateRaisesAfterUnregister:
         # ``snapshot() is None``. Fail loudly with a typed error rather than
         # ``TypeError: cannot unpack non-iterable NoneType``.
         with pytest.raises(DegenbotValueError, match="No V2 pool state available"):
-            pool.state
+            _ = pool.state
 
     def test_state_reads_cleanly_before_unregister(self) -> None:
         """Guard against the test becoming vacuous: live pools read state.
@@ -118,6 +118,7 @@ class TestStateRaisesAfterUnregister:
         assert state.reserves_token0 == 1_000
         assert state.reserves_token1 == 2_000
         # A registered pool always has a non-zero update block.
+        assert state.block is not None
         assert state.block >= 0
 
     def test_unregister_unknown_address_is_silent_noop(self) -> None:
@@ -188,4 +189,4 @@ def test_from_py_pool_still_usable_after_unregister() -> None:
     assert pool.fee_token1 == Fraction(3, 1000)
 
     with pytest.raises(DegenbotValueError, match="No V2 pool state available"):
-        pool.state
+        _ = pool.state
