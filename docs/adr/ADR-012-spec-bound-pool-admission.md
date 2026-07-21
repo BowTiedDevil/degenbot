@@ -127,6 +127,102 @@ that want to scope just admission refusals use
   with the project guideline against backwards-compat layers for
   retired implementations.
 
+## Addendum: type-level enforcement (epic `ZPHT6X`)
+
+The original decision enforced V2-family spec widths at *registration*
+but stored the reserves as `U256`, leaving the narrowing helper as the
+runtime guard. Epic `ZPHT6X` "Typed V2 reserve width (`U112`) + drop
+swap-primitive `U512` dodge" deepens the contract: the spec width is
+now enforced at the **type level**, superseding the runtime check.
+
+This addendum realizes the "deeper fix" forward-referenced in commit
+`19218a2c` ("refactor(rust): panic on U512→U256 overflow in mobius
+solvers"), which converted the silently-saturating narrowing to an
+explicit pre-check + panic but deferred the type-narrowing to a
+separate multi-crate refactor.
+
+The changes:
+
+- **(a) V2 reserve storage is now `U112`.** `V2PoolState`'s
+  `reserve0` / `reserve1` fields are `alloy::primitives::aliases::U112`,
+  the on-chain `uint112` storage type. `register_v2_pool` accepts `U112`
+  reserves (the `RegisterV2PoolParams` fields are `U112`), so the
+  runtime `validate_v2_reserve` check (`value > UINT112_MAX`) is a
+  **tautology** for type-correct callers — a `U112` cannot exceed
+  `uint112::MAX`. The runtime check **remains** as a diagnostic-message
+  uniformity aid (it returns the `SpecViolation` with the offending
+  field name, which the bare type would not), and as a guard against
+  any future code path that widens-then-narrows around the typed seam.
+  This is the registration-time enforcement cited by the Möbius
+  narrowing helper's `# Panics` docstring.
+
+- **(b) `IntHopState::swap` does native `U256` arithmetic.** The V2
+  swap primitive (`degenbot_v2_math::hop_state::IntHopState::swap`)
+  previously widend to `U512` for the multiply-then-narrow dodge. It
+  now runs `checked_mul` / `checked_add` in `U256`, returning
+  `HopSwapError::Overflow` on overflow — mirroring on-chain
+  `getAmountOut`'s `SafeMath` revert semantics exactly (any
+  `uint256`-overflowing intermediate reverts on-chain, so the primitive
+  surfaces it rather than returning a phantom result the chain never
+  produces). The `U512` intermediate and the `u512_to_u256_internal`
+  narrowing assertion that lived on the swap-primitive path are
+  **deleted** — replaced by on-chain-faithful multiply-and-panic.
+
+- **(c) The Möbius-solver `U512` is retained as legitimate extended
+  precision.** The `U512` in `degenbot-solvers` (`mobius_int.rs`,
+  `mobius_int_exact.rs`, `mobius_v3_int.rs`) is **not** a swap-primitive
+  upcast-and-narrow dodge — it is legitimate extended precision for two
+  distinct computations a single `U256` cannot hold:
+
+  1. **Multi-hop Möbius matrix recurrence** (`mobius_int.rs`).
+     An *n*-hop constant-product path composes the per-hop Möbius
+     transform `γ·s·x / (r + γ·x)` into `l(x) = K·x / (M + N·x)`. The
+     coefficients `K`, `M`, `N` are the product of *n* `(s, r, γ, fee)`
+     terms each; for a realistic arb path they exceed 256 bits. The
+     recurrence (a 2×2 matrix product) is carried in `U512` so the
+     composition does not overflow; the final `x* = (√(K·M) − M) / N` is
+     narrowed back to `U256` via `u512_to_u256_internal`. This is the
+     canonical "matrix recurrence" shape — extended precision for a
+     *composition*, not a single swap.
+  2. **Integer square root** (`isqrt_u512` in `mobius_int_exact.rs`).
+     The closed-form optimum `x* = (√(K·M) − M) / N` needs an integer
+     square root. `U256` exposes no `isqrt`; `U512` does, and the
+     `K·M` product is already `U512`-wide (see #1). `isqrt_u512` is the
+     exact floor `isqrt` (Newton iteration, `EVM`-parity floor). This is
+     the canonical "isqrt" shape — `U512` is needed because the 
+     sqrt input is the `U512` matrix coefficient, not because a single
+     swap overflowed.
+  3. **V3/V4 concentrated-liquidity swap math** (`mobius_v3_int.rs`).
+     The CL swap step multiplies `uint128` liquidity by `uint160`
+     `sqrtPriceX96` by `uint256` `Q96` — a `385`-bit numerator and a
+     `416`-bit denominator (the bit-width analysis is documented inline
+     at each site). Both exceed 256 bits *independently*; the division
+     is exact only in `U512`. The per-step quotients narrow back to
+     `U256` via `u512_to_u256`. This is the canonical "CL-math
+     intermediate" shape — extended precision for a *multi-field
+     product*, not a single swap.
+
+  A **"swap primitive"** (the rejected shape) is one that widens a
+  single V2 `getAmountOut` multiply to `U512` purely to dodge the
+  `uint256` overflow the chain itself would revert on, then narrows
+  back — manufacturing a phantom result. The ZPHT6X audit confirms
+  **zero** `U512` sites in `degenbot-solvers` are this shape: every
+  `U512` either (i) composes a multi-hop recurrence, (ii) takes an
+  `isqrt` whose input is the `U512` matrix coefficient, or (iii)
+  multiplies CL fields whose product independently exceeds 256 bits.
+  The `u512_to_u256_internal` narrowing is retained precisely because
+  these are legitimate extended-precision computations whose *final*
+  output fits in `U256` but whose *intermediate* does not.
+
+- **Forward-reference cleanup.** The `# Panics` docstring on
+  `u512_to_u256_internal` (and the inline comment at the assertion
+  site) now cites **registration-time enforcement**
+  (`register_v2_pool` / `register_v3_pool` / `register_v4_pool` +
+  `spec_bounds.rs` + this ADR) as the upstream guarantee — it does
+  **not** cross-reference `IntHopState::swap` (the swap primitive no
+  longer carries a narrowing assert; its docstring stands alone). The
+  audit confirmed no stale cross-reference remained to rephrase.
+
 ## References
 
 - ADR-005 — Polars-inspired three-layer FFI (the standalone-Rust-core
