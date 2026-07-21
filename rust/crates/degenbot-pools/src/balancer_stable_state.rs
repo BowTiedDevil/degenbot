@@ -66,7 +66,7 @@
 use alloy::primitives::{Address, U256};
 
 use crate::rate_provider::BalancerRateProvider;
-use crate::state_history::{BalancesBlockDelta, ReorgJournal};
+use crate::state_history::{BalancesBlockDelta, JournalError, ReorgJournal, ReorgPoolState};
 
 use std::sync::Arc;
 
@@ -257,5 +257,28 @@ impl BalancerStablePoolState {
             rate_provider: params.rate_provider,
         };
         (identity, state)
+    }
+}
+
+// ADR-014 D3 refinement — pool-owned reorg rollback for the balance-vector
+// family. The field-write previously duplicated across the three
+// `BotState::*_restore_before_block` dispatchers (Curve + Balancer weighted +
+// stable) is absorbed into the state struct itself; restore returns `()` so a
+// single non-generic trait covers the family with no no-op stubs. The two
+// sibling balance-vector structs get byte-identical impls in follow-on slices.
+impl ReorgPoolState for BalancerStablePoolState {
+    fn restore_before_block(&mut self, block: u64) -> Result<(), JournalError> {
+        let (balances, landed_block) = self.journal.restore_before_block(block)?;
+        self.balances.clone_from(&balances);
+        self.update_block = landed_block;
+        Ok(())
+    }
+
+    fn discard_before_block(&mut self, block: u64) -> Result<(), JournalError> {
+        self.journal.discard_before_block(block)
+    }
+
+    fn journal_len(&self) -> usize {
+        self.journal.len()
     }
 }
