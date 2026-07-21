@@ -11,7 +11,8 @@ use alloy::primitives::{aliases::U112, Address, I256, U256};
 
 use crate::bot_core::snapshot_verify::SnapshotLoadError;
 use ::degenbot_pools::state_history::{
-    JournalError, ScalarPriors, TickBefore, V2BlockDelta, V3BlockDelta, V3RestoreResult,
+    JournalError, ReorgPoolState, ScalarPriors, TickBefore, V2BlockDelta, V3BlockDelta,
+    V3RestoreResult,
 };
 use degenbot_uniswap::v2_encoding::{encode_v2_swap, EncodedCall};
 
@@ -269,7 +270,8 @@ impl BotState {
     /// immutable config (tokens, A, fee, variant strategy enums, base-pool
     /// reference) + the registration-time mutable state (`balances`,
     /// `update_block`). Seeds the reorg journal with a genesis anchor (mirror
-    /// of V2's discipline) so `curve_restore_before_block` can land on the
+    /// of V2's discipline) so the balance-vector trait dispatcher
+    /// (`restore_balance_vector_before_block`, ADR-016) can land on the
     /// registration state.
     ///
     /// Returns the auto-assigned pool ID.
@@ -2203,23 +2205,15 @@ impl BotState {
                     // priors); delegated to `v4_restore_before_block`.
                     self.v4_restore_before_block(pool_id, target).is_some()
                 }
-                Some(PoolEntry::Curve(..)) => {
-                    // Curve restore: same full-state delta shape as V2;
-                    // delegated to `curve_restore_before_block`.
-                    self.curve_restore_before_block(pool_id, target).is_some()
-                }
-                Some(PoolEntry::BalancerWeighted(..)) => {
-                    // Balancer weighted restore: same full-state delta shape
-                    // as V2/Curve; delegated to
-                    // `balancer_weighted_restore_before_block`.
-                    self.balancer_weighted_restore_before_block(pool_id, target)
-                        .is_some()
-                }
-                Some(PoolEntry::BalancerStable(..)) => {
-                    // Balancer stable restore: same full-state delta shape as
-                    // V2/Curve/BalancerWeighted; delegated to
-                    // `balancer_stable_restore_before_block`.
-                    self.balancer_stable_restore_before_block(pool_id, target)
+                Some(
+                    PoolEntry::Curve(..)
+                    | PoolEntry::BalancerWeighted(..)
+                    | PoolEntry::BalancerStable(..),
+                ) => {
+                    // Balance-vector restore (Curve + Balancer weighted +
+                    // stable, shared full-state delta shape); delegated to the
+                    // balance-vector trait dispatcher (ADR-016 ReorgPoolState).
+                    self.restore_balance_vector_before_block(pool_id, target)
                         .is_some()
                 }
                 Some(PoolEntry::AerodromeV2(_, state)) => {
@@ -2244,186 +2238,69 @@ impl BotState {
         restored
     }
 
-    // --- Curve journal methods (ADR-005 slice 11a state port) ---
+    // --- Balance-vector reorg dispatch (ADR-016 ReorgPoolState) ---
+    // ADR-016 collapses the per-family balance-vector restore/discard/
+    // journal_len dispatchers onto one trait-dispatching method per op.
+    // The trait impls on the balance-vector state structs (Curve + Balancer
+    // weighted + stable) absorb the field-write; restore returns `()`. These
+    // three methods replace the nine per-family `curve_*` / `balancer_weighted_*`
+    // / `balancer_stable_*` reorg dispatchers.
 
-    /// Get the number of deltas in the reorg journal for a Curve pool.
-    ///
-    /// Returns 0 if the pool ID is not registered or is not a Curve pool.
-    #[must_use]
-    pub fn curve_journal_len(&self, pool_id: u64) -> usize {
-        match self.pools.get(&pool_id) {
-            Some(PoolEntry::Curve(_, state)) => state.journal.len(),
-            _ => 0,
-        }
-    }
-
-    /// Discard Curve reorg journal deltas earlier than the given block.
-    ///
-    /// No-op if the earliest delta is at/after the target, or the pool is not
-    /// registered / not a Curve pool.
+    /// Restore a balance-vector pool's state to the landed-at state strictly
+    /// before `block`, via the `ReorgPoolState` trait. Returns `None` if the
+    /// pool ID is not registered or is not a balance-vector pool.
     ///
     /// # Errors
     ///
-    /// Returns `Err(JournalError::NoStateAtOrAfterBlock)` if the target is past
-    /// the newest delta.
-    pub fn curve_discard_before_block(
+    /// `NoStatePriorToBlock` if the target is at/before the registration
+    /// (genesis) delta.
+    pub fn restore_balance_vector_before_block(
         &mut self,
         pool_id: u64,
         block: u64,
-    ) -> Result<(), JournalError> {
-        let Some(PoolEntry::Curve(_, state)) = self.pools.get_mut(&pool_id) else {
-            return Ok(());
+    ) -> Option<Result<(), JournalError>> {
+        let state: &mut dyn ReorgPoolState = match self.pools.get_mut(&pool_id)? {
+            PoolEntry::Curve(_, state) => state,
+            PoolEntry::BalancerWeighted(_, state) => state,
+            PoolEntry::BalancerStable(_, state) => state,
+            _ => return None,
         };
-        state.journal.discard_before_block(block)
+        Some(state.restore_before_block(block))
     }
 
-    /// Restore Curve pool state prior to a target block.
-    ///
-    /// Pops reorg journal deltas at/after the target block and restores the
-    /// landed-at balances (the `balances_after` of the largest delta below the
-    /// target) into the current mutable fields. Mirrors `v2_restore_before_block`
-    /// (Curve is a full-state delta, same shape as V2).
-    ///
-    /// Returns `Some(Ok((balances, block)))` on success, `Some(Err)` if the
-    /// pool exists but the target is at/before registration (no state before
-    /// it), or `None` if the pool ID is not registered / not a Curve pool.
-    pub fn curve_restore_before_block(
-        &mut self,
-        pool_id: u64,
-        block: u64,
-    ) -> Option<Result<(Vec<U256>, u64), JournalError>> {
-        let PoolEntry::Curve(_, state) = self.pools.get_mut(&pool_id)? else {
-            return None;
-        };
-        let (balances, blk) = match state.journal.restore_before_block(block) {
-            Ok(v) => v,
-            Err(e) => return Some(Err(e)),
-        };
-        state.balances.clone_from(&balances);
-        state.update_block = blk;
-        Some(Ok((balances, blk)))
-    }
-
-    // --- ADR-005 slice 12a: Balancer weighted journal methods ---
-
-    /// Get the number of deltas in the reorg journal for a Balancer weighted
-    /// pool. Returns 0 if the pool ID is not registered or is not a Balancer
-    /// weighted pool.
-    #[must_use]
-    pub fn balancer_weighted_journal_len(&self, pool_id: u64) -> usize {
-        match self.pools.get(&pool_id) {
-            Some(PoolEntry::BalancerWeighted(_, state)) => state.journal.len(),
-            _ => 0,
-        }
-    }
-
-    /// Discard Balancer weighted reorg journal deltas earlier than the given
-    /// block. No-op if the pool ID is not registered / not a Balancer weighted
-    /// pool.
+    /// Discard balance-vector reorg journal deltas earlier than `block`, via
+    /// the `ReorgPoolState` trait. Returns `None` if the pool ID is not
+    /// registered or is not a balance-vector pool.
     ///
     /// # Errors
     ///
-    /// Returns `Err(JournalError::NoStateAtOrAfterBlock)` if the target is past
-    /// the newest delta.
-    pub fn balancer_weighted_discard_before_block(
+    /// `NoStateAtOrAfterBlock` if the target is past the newest delta.
+    pub fn discard_balance_vector_before_block(
         &mut self,
         pool_id: u64,
         block: u64,
-    ) -> Result<(), JournalError> {
-        let Some(PoolEntry::BalancerWeighted(_, state)) = self.pools.get_mut(&pool_id) else {
-            return Ok(());
+    ) -> Option<Result<(), JournalError>> {
+        let state: &mut dyn ReorgPoolState = match self.pools.get_mut(&pool_id)? {
+            PoolEntry::Curve(_, state) => state,
+            PoolEntry::BalancerWeighted(_, state) => state,
+            PoolEntry::BalancerStable(_, state) => state,
+            _ => return None,
         };
-        state.journal.discard_before_block(block)
+        Some(state.discard_before_block(block))
     }
 
-    /// Restore Balancer weighted pool state prior to a target block.
-    ///
-    /// Pops reorg journal deltas at/after the target block and restores the
-    /// landed-at balances (the `balances_after` of the largest delta below
-    /// the target) into the current mutable fields. Mirrors
-    /// `curve_restore_before_block` (Balancer weighted is a full-state delta,
-    /// same shape as V2/Curve).
-    ///
-    /// Returns `Some(Ok((balances, block)))` on success, `Some(Err)` if the
-    /// pool exists but the target is at/before registration (no state before
-    /// it), or `None` if the pool ID is not registered / not a Balancer
-    /// weighted pool.
-    pub fn balancer_weighted_restore_before_block(
-        &mut self,
-        pool_id: u64,
-        block: u64,
-    ) -> Option<Result<(Vec<U256>, u64), JournalError>> {
-        let PoolEntry::BalancerWeighted(_, state) = self.pools.get_mut(&pool_id)? else {
-            return None;
-        };
-        let (balances, blk) = match state.journal.restore_before_block(block) {
-            Ok(v) => v,
-            Err(e) => return Some(Err(e)),
-        };
-        state.balances.clone_from(&balances);
-        state.update_block = blk;
-        Some(Ok((balances, blk)))
-    }
-
-    // --- ADR-005 slice 12c: Balancer stable journal methods ---
-
-    /// Get the number of deltas in the reorg journal for a Balancer stable
-    /// pool. Returns 0 if the pool ID is not registered or is not a Balancer
-    /// stable pool.
+    /// Number of deltas in the reorg journal for a balance-vector pool, via
+    /// the `ReorgPoolState` trait. Returns `None` if the pool ID is not
+    /// registered or is not a balance-vector pool.
     #[must_use]
-    pub fn balancer_stable_journal_len(&self, pool_id: u64) -> usize {
-        match self.pools.get(&pool_id) {
-            Some(PoolEntry::BalancerStable(_, state)) => state.journal.len(),
-            _ => 0,
-        }
-    }
-
-    /// Discard Balancer stable reorg journal deltas earlier than the given
-    /// block. No-op if the pool ID is not registered / not a Balancer stable
-    /// pool.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err(JournalError::NoStateAtOrAfterBlock)` if the target is past
-    /// the newest delta.
-    pub fn balancer_stable_discard_before_block(
-        &mut self,
-        pool_id: u64,
-        block: u64,
-    ) -> Result<(), JournalError> {
-        let Some(PoolEntry::BalancerStable(_, state)) = self.pools.get_mut(&pool_id) else {
-            return Ok(());
+    pub fn balance_vector_journal_len(&self, pool_id: u64) -> Option<usize> {
+        let state: &dyn ReorgPoolState = match self.pools.get(&pool_id)? {
+            PoolEntry::Curve(_, state) => state,
+            PoolEntry::BalancerWeighted(_, state) => state,
+            PoolEntry::BalancerStable(_, state) => state,
+            _ => return None,
         };
-        state.journal.discard_before_block(block)
-    }
-
-    /// Restore Balancer stable pool state prior to a target block.
-    ///
-    /// Pops reorg journal deltas at/after the target block and restores the
-    /// landed-at balances (the `balances_after` of the largest delta below
-    /// the target) into the current mutable fields. Mirrors
-    /// `balancer_weighted_restore_before_block` (Balancer stable is a
-    /// full-state delta, same shape as V2/Curve/BalancerWeighted).
-    ///
-    /// Returns `Some(Ok((balances, block)))` on success, `Some(Err)` if the
-    /// pool exists but the target is at/before registration (no state before
-    /// it), or `None` if the pool ID is not registered / not a Balancer
-    /// stable pool.
-    pub fn balancer_stable_restore_before_block(
-        &mut self,
-        pool_id: u64,
-        block: u64,
-    ) -> Option<Result<(Vec<U256>, u64), JournalError>> {
-        let PoolEntry::BalancerStable(_, state) = self.pools.get_mut(&pool_id)? else {
-            return None;
-        };
-        let (balances, blk) = match state.journal.restore_before_block(block) {
-            Ok(v) => v,
-            Err(e) => return Some(Err(e)),
-        };
-        state.balances.clone_from(&balances);
-        state.update_block = blk;
-        Some(Ok((balances, blk)))
+        Some(state.journal_len())
     }
 
     // --- Aerodrome V2 journal + registration methods ---
@@ -2599,14 +2476,12 @@ impl BotState {
             Some(PoolEntry::V4(..)) => {
                 let _ = self.v4_restore_before_block(pool_id, block);
             }
-            Some(PoolEntry::Curve(..)) => {
-                let _ = self.curve_restore_before_block(pool_id, block);
-            }
-            Some(PoolEntry::BalancerWeighted(..)) => {
-                let _ = self.balancer_weighted_restore_before_block(pool_id, block);
-            }
-            Some(PoolEntry::BalancerStable(..)) => {
-                let _ = self.balancer_stable_restore_before_block(pool_id, block);
+            Some(
+                PoolEntry::Curve(..)
+                | PoolEntry::BalancerWeighted(..)
+                | PoolEntry::BalancerStable(..),
+            ) => {
+                let _ = self.restore_balance_vector_before_block(pool_id, block);
             }
             Some(PoolEntry::AerodromeV2(..)) => {
                 let _ = self.aerodrome_restore_before_block(pool_id, block);
