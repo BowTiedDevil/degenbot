@@ -40,6 +40,7 @@ use degenbot_core::errors::{ProviderError, ProviderResult};
 use degenbot_executor::composers::{encode_cmd_stream, EncodeOptions, HopInfo, PathInfo};
 use degenbot_executor::WarmupSlots;
 use degenbot_rpc::provider::AlloyProvider;
+use parking_lot::RwLock;
 use revm::database_interface::WrapDatabaseAsync;
 use std::sync::Arc;
 // `ExecutionResult` lives in `revm::context_interface` (re-exported by the revm
@@ -558,13 +559,17 @@ impl Provider<Ethereum> for ArcDynProviderEthereum {
 // is the source of truth on this split.)
 
 /// The production DB stack backing a per-block [`BlockEvm`] —
-/// `CacheDB<BotStateDb<WrapDatabaseAsync<AlloyDB<Ethereum, ArcDynProviderEthereum>>>>`.
-/// The `AlloyDB` cold-miss fallback (RPC) sits under the `BotStateDb` typed-
-/// state seam (option B — today a forwarder; see [`crate::bot_state_db`]).
+/// `CacheDB<WarmCodeCache<BotStateDb<WrapDatabaseAsync<AlloyDB<...>>>>>`.
+/// The `WarmCodeCache` layer (cross-block bytecode + account-existence, per-
+/// entry TTL'd) sits between the per-block `CacheDB` and the `BotStateDb`
+/// storage-forwarding seam; the `AlloyDB` cold-miss fallback (RPC) sits at the
+/// bottom (see [`crate::warm_code_cache`]).
 type ProductionBlockDb<'a> = CacheDB<
-    crate::BotStateDb<
-        'a,
-        WrapDatabaseAsync<revm::database::AlloyDB<Ethereum, ArcDynProviderEthereum>>,
+    crate::WarmCodeCache<
+        crate::BotStateDb<
+            'a,
+            WrapDatabaseAsync<revm::database::AlloyDB<Ethereum, ArcDynProviderEthereum>>,
+        >,
     >,
 >;
 
@@ -608,12 +613,20 @@ pub struct BlockSimHandle<'a> {
 
 impl<'a> BlockSimHandle<'a> {
     /// Build the per-block shared EVM: the layered DB (`AlloyDB` →
-    /// `WrapDatabaseAsync` → `BotStateDb` → `CacheDB`), the state overrides
-    /// applied ONCE (every override is per-block-invariant — derived from
-    /// [`SimulateContext`], not `path`), and the revm `Context` pinned to the
-    /// block env. Returns `None` on a build failure (no ambient multi-threaded
-    /// runtime for `WrapDatabaseAsync`, or an override-application error); the
-    /// caller tallies `rpc-failed` for every candidate in that case.
+    /// `WrapDatabaseAsync` → `BotStateDb` → `WarmCodeCache` → `CacheDB`), the
+    /// state overrides applied ONCE (every override is per-block-invariant —
+    /// derived from [`SimulateContext`], not `path`), and the revm `Context`
+    /// pinned to the block env. Returns `None` on a build failure (no ambient
+    /// multi-threaded runtime for `WrapDatabaseAsync`, or an override-
+    /// application error); the caller tallies `rpc-failed` for every candidate
+    /// in that case.
+    ///
+    /// `warm_cache` is the cross-block persistent bytecode + account-existence
+    /// layer ([`crate::WarmCodeCache`]); it persists across blocks via the
+    /// engine owner's `Arc<RwLock<WarmCodeCacheInner>>` (cloned into the
+    /// per-block `WarmCodeCache` wrapper value here — only the inner map
+    /// survives across blocks). The per-block `CacheDB` layered above still
+    /// drops at end of block (overrides + mutable storage are per-block).
     ///
     /// `WrapDatabaseAsync::new` returns `None` if there is no runtime or the
     /// runtime is `CurrentThread`. The pump drives the dispatch through
@@ -621,7 +634,11 @@ impl<'a> BlockSimHandle<'a> {
     /// path is unreachable in production — `None` means the dispatch host lost
     /// its runtime.
     #[must_use]
-    pub fn build(ctx: &SimulateContext<'_>, bot_state: &'a BotState) -> Option<Self> {
+    pub fn build(
+        ctx: &SimulateContext<'_>,
+        bot_state: &'a BotState,
+        warm_cache: &Arc<RwLock<crate::WarmCodeCacheInner>>,
+    ) -> Option<Self> {
         // `AlloyDB::new` requires `P: Provider<Ethereum>` by value; the
         // type-erased `Arc<dyn Provider>` from `provider_arc()` does NOT satisfy
         // it (Alloy's auto-impl covers `Arc<T: Provider + Sized>`, not
@@ -638,7 +655,12 @@ impl<'a> BlockSimHandle<'a> {
             return None;
         };
         let bot_state_db = crate::BotStateDb::new(bot_state, wrap_db);
-        let mut cache_db = CacheDB::new(bot_state_db);
+        let warm_code_cache = crate::WarmCodeCache::with_owner(
+            Arc::clone(warm_cache),
+            ctx.current_block,
+            bot_state_db,
+        );
+        let mut cache_db = CacheDB::new(warm_code_cache);
         // Apply the state-override adaptor (owner funding, executor code
         // injection, warmup slots) over the layered DB — the same overrides
         // `simulate_one`'s `eth_simulateV1` `stateOverrides` carries.

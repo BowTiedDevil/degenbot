@@ -94,9 +94,9 @@ pub mod dispatch_profitable;
 // (mirrors how `degenbot_executor` surfaces `WarmupSlots` / `mapping_slot`).
 pub use degenbot_evm::{
     compute_priority_fee, fits_int128, BlockPriorityFees, BlockSimHandle, FailBuckets, SimFailure,
-    SimResult, SimulateContext, SimulatePath, AGE_DECAY_CONSTANT, EXECUTE_CONFIG,
-    GAS_SAFETY_MARGIN, INITIAL_EXECUTE_GAS, INT128_MAX, INT128_MIN, MAX_PRIORITY_FEE_PERCENTILE,
-    MIN_PRIORITY_FEE_PERCENTILE, TARGET_PROFIT_RATIO,
+    SimResult, SimulateContext, SimulatePath, WarmCodeCacheInner, AGE_DECAY_CONSTANT,
+    EXECUTE_CONFIG, GAS_SAFETY_MARGIN, INITIAL_EXECUTE_GAS, INT128_MAX, INT128_MIN,
+    MAX_PRIORITY_FEE_PERCENTILE, MIN_PRIORITY_FEE_PERCENTILE, TARGET_PROFIT_RATIO,
 };
 pub use dispatch::{SimulatedCall, SimulationResult};
 pub use payload::{build_simulate_payload, SimulationParams, SIM_CALL_COUNT};

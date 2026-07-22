@@ -293,7 +293,7 @@ impl DispatchOutcome {
 /// held under the guard — so a poison indicates a bug in a sibling task
 /// (the suppression arc is shared with the submission seam's accessors;
 /// never locked across an `.await`).
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 pub async fn dispatch_profitable_results(
     mut candidates: Vec<DispatchCandidate>,
     ctx: &SimulateContext<'_>,
@@ -314,6 +314,19 @@ pub async fn dispatch_profitable_results(
     // in-process sim's blocking RPC cold-miss path does not deadlock against
     // the pump's worker pool.
     bot_state: Option<Arc<RwLock<BotState>>>,
+    // The cross-block persistent bytecode + account-existence cache
+    // (`WarmCodeCacheInner`, the `HDEG7H` Option-A layer). Required when
+    // `bot_state` is `Some` (the `BlockSimHandle` path always inserts the
+    // `WarmCodeCache` layer); ignored when `bot_state` is `None` (the legacy
+    // `simulate_one` RPC path doesn't go through `BlockSimHandle`). The
+    // `Arc` clones cheaply into this async fn's future; the engine owner
+    // (`PyArbitrageEngine` / standalone `Bot`) holds it for the engine's
+    // life. If `Some(bot_state)` arrives with `None` warm_cache (a caller
+    // wiring gap), a fresh `WarmCodeCacheInner::shared_default()` is
+    // constructed per call — a safe degradation to Tier-1-only behavior (no
+    // cross-block persistence, no panic). The FFI seam sets both from the
+    // same `engine` arg, so the gap is unreachable in production.
+    warm_cache: Option<Arc<RwLock<degenbot_evm::WarmCodeCacheInner>>>,
 ) -> DispatchOutcome {
     let mut outcome = DispatchOutcome::default();
     let pre_filter_count = candidates.len();
@@ -367,7 +380,13 @@ pub async fn dispatch_profitable_results(
         // held for the serial loop's duration.
         Some(arc) => {
             let guard = arc.read();
-            match BlockSimHandle::build(ctx, &guard) {
+            // The warm-code cache arc; degrade to a fresh per-call cache if
+            // the caller wired `bot_state` without one (safe — no
+            // cross-block persistence, no panic).
+            let warm_cache = warm_cache
+                .clone()
+                .unwrap_or_else(degenbot_evm::WarmCodeCacheInner::shared_default);
+            match BlockSimHandle::build(ctx, &guard, &warm_cache) {
                 Some(mut handle) => candidates
                     .into_iter()
                     .map(|c| {
@@ -677,6 +696,7 @@ mod tests {
             MIN_PROFIT_NET,
             0,
             None,
+            None,
         )
         .await;
 
@@ -718,6 +738,7 @@ mod tests {
                 MIN_PROFIT_NET,
                 0,
                 None,
+                None,
             )
             .await;
         }
@@ -747,6 +768,7 @@ mod tests {
             50, // < retry interval (100) → still suppressed (last_retry stays 0)
             MIN_PROFIT_NET,
             0,
+            None,
             None,
         )
         .await;
@@ -782,6 +804,7 @@ mod tests {
             50, // < retry interval (100) → still suppressed
             MIN_PROFIT_NET,
             0,
+            None,
             None,
         )
         .await;
@@ -884,6 +907,7 @@ mod tests {
             MIN_PROFIT_NET,
             0,
             None,
+            None,
         )
         .await;
 
@@ -945,6 +969,7 @@ mod tests {
             MIN_PROFIT_NET,
             0,
             None,
+            None,
         )
         .await;
 
@@ -999,6 +1024,7 @@ mod tests {
             100,
             MIN_PROFIT_NET,
             0,
+            None,
             None,
         )
         .await;
@@ -1062,6 +1088,7 @@ mod tests {
             MIN_PROFIT_NET,
             0,
             None,
+            None,
         )
         .await;
         // All 60 suppressed pre-sim.
@@ -1084,6 +1111,7 @@ mod tests {
             100,
             MIN_PROFIT_NET,
             0,
+            None,
             None,
         )
         .await;
@@ -1117,6 +1145,7 @@ mod tests {
             MIN_PROFIT_NET,
             0,
             None,
+            None,
         )
         .await;
         assert_eq!(outcome.fail_count, 2);
@@ -1147,6 +1176,7 @@ mod tests {
             100,
             MIN_PROFIT_NET,
             0,
+            None,
             None,
         )
         .await;
@@ -1184,6 +1214,7 @@ mod tests {
             100,
             MIN_PROFIT_NET,
             0,
+            None,
             None,
         )
         .await;
@@ -1231,6 +1262,7 @@ mod tests {
             MIN_PROFIT_NET,
             0,
             Some(bot_state),
+            Some(degenbot_evm::WarmCodeCacheInner::shared_default()),
         )
         .await;
 
