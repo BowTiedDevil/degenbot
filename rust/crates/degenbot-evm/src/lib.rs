@@ -84,7 +84,7 @@ pub mod calldata;
 pub mod access_list;
 
 pub use access_list::emit_access_list_from_state;
-pub use bot_state_db::BotStateDb;
+pub use bot_state_db::{BotStateDb, SnapshotError};
 /// Re-export the shared sim primitives so `degenbot-simulation` can `pub use
 /// degenbot_evm::{...}` (it re-exports them under its own crate root for
 /// existing call sites + the PyO3 wrappers).

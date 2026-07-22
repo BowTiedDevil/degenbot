@@ -238,10 +238,23 @@ fn encode_v3_liquidity_slot(liquidity: u128) -> StorageValue {
 /// Encode V3 `TickInfo` (the `ticks(i24)` slot value): packed `uint128
 /// liquidityGross; int128 liquidityNet; …`. The post-net tail (fee growth, etc.)
 /// is zero-filled — the sim reads `liquidityGross`/`liquidityNet` only.
+///
+/// `liquidityNet` is an `I256`; the `int128` Solidity field occupies the LOW
+/// 128 bits of the slot word. `I256::into_raw()` returns the full 256-bit
+/// two's-complement bit pattern, which for negative values has the high 128
+/// bits set to all ones. Those high bits are OUTSIDE the `int128` field and
+/// MUST be masked off before the OR with `gross << 128` (which occupies the
+/// high 128 bits) — otherwise a negative `liquidityNet` corrupts
+/// `liquidityGross` to `2^128 - 1`.
 #[must_use]
 fn encode_v3_tick_info_slot(tick_info: &degenbot_pools::TickInfo) -> StorageValue {
     let gross = U256::from(tick_info.liquidity_gross);
-    let net = sign_extend_128_from_i256(tick_info.liquidity_net);
+    let net_raw = sign_extend_128_from_i256(tick_info.liquidity_net);
+    // Mask net to the low 128 bits (the int128 field width) — the high 128
+    // bits of `net_raw` are sign-extension beyond the field and would corrupt
+    // the `gross` half of the packed word if OR-ed in.
+    let mask_128 = (U256::from(1u64) << 128) - U256::from(1u64);
+    let net = net_raw & mask_128;
     (gross << 128) | net
 }
 
@@ -379,5 +392,37 @@ mod tests {
         preimage[32..64].copy_from_slice(&U256::from(5u64).to_be_bytes::<32>());
         let expected = U256::from_be_bytes(alloy::primitives::keccak256(preimage).0);
         assert_eq!(slot, expected, "ticks(i24) mapping slot = keccak(tick . 5)");
+    }
+
+    /// Negative-`liquidityNet` tick pin: a negative net MUST NOT corrupt the
+    /// `liquidityGross` half of the packed `ticks(i24)` slot word. Pre-fix,
+    /// `sign_extend_128_from_i256` returned the full 256-bit two's-complement
+    /// (high 128 bits all ones for negatives), and the OR with `gross << 128`
+    /// clobbered gross to `2^128 - 1`. Found by the
+    /// `parity_diagnostic_encoding` integration test.
+    #[test]
+    fn v3_tick_info_slot_negative_net_preserves_gross() {
+        let tick_info = degenbot_pools::TickInfo {
+            liquidity_gross: alloy::primitives::U128::from(5_000_000u128),
+            liquidity_net: alloy::primitives::I256::try_from(-3_000_000i64).expect("fits i256"),
+            block: 0,
+        };
+        let word = encode_v3_tick_info_slot(&tick_info);
+        // gross occupies the high 128 bits.
+        let mask_128 = (U256::from(1u64) << 128) - U256::from(1u64);
+        let gross = (word >> 128) & mask_128;
+        assert_eq!(
+            gross,
+            U256::from(5_000_000u128),
+            "gross preserved (negative net)"
+        );
+        // net occupies the low 128 bits as int128 two's-complement.
+        let net_word = word & mask_128;
+        // int128 of -3_000_000 == 2^128 - 3_000_000.
+        let expected_net = (U256::from(1u64) << 128) - U256::from(3_000_000u64);
+        assert_eq!(
+            net_word, expected_net,
+            "net = -3M as int128 two's complement"
+        );
     }
 }
