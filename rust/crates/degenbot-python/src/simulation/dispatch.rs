@@ -51,7 +51,7 @@ use crate::simulation::outcome::PyDispatchOutcome;
 use crate::submission::dispatcher::PyDispatcher;
 use degenbot_executor::composers::{HopInfo, PathInfo};
 use degenbot_simulation::dispatch_profitable::{
-    dispatch_profitable_results, DispatchCandidate, DispatchError, DispatchOutcome,
+    dispatch_profitable_results, DispatchCandidate, DispatchOutcome,
 };
 use degenbot_simulation::BlockPriorityFees;
 use degenbot_simulation::{SimResult, SimulateContext};
@@ -69,9 +69,8 @@ use std::sync::Arc;
 ///
 /// `ValueError`: if `candidates` holds a non-`PyDispatchCandidate` element
 /// (the GIL-held arg extraction rejects it before the async block is created),
-/// or if the core `dispatch_profitable_results` returns a `DispatchError`
-/// (an unrecoverable semaphore-acquisition failure — never happens in normal
-/// operation).
+/// None — the core `dispatch_profitable_results` is infallible (every
+/// per-path failure is tallied into `outcome.fail_buckets`, not propagated).
 ///
 /// # Panics
 ///
@@ -188,8 +187,7 @@ pub fn dispatch_profitable_py<'py>(
             min_profit_margin_bps,
             bot_state,
         )
-        .await
-        .map_err(|e: DispatchError| PyValueError::new_err(format!("{e:?}")))?;
+        .await;
 
         // ── Join survivors → SubmitCandidates (pure Rust — no GIL needed) ──
         // The cockpit chains dispatch_profitable_py → dispatch_and_submit_py

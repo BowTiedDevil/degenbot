@@ -14,8 +14,8 @@
 //! # Dispositions (per the `4JGPDW` scope rubric)
 //!
 //! - **D1 `port-now`** — the fan-out + categorization (this leaf). Pure
-//!   concurrency orchestration: tokio `JoinSet` + `MAX_SIMULATE_CONCURRENT`
-//!   semaphore; pure-int categorization.
+//!   concurrency orchestration: a `buffer_unordered(MAX_SIMULATE_CONCURRENT)`
+//!   stream (capped by `truncate` pre-fan-out); pure-int categorization.
 //! - **D2 `done`-reference** — [`degenbot_submission::PathSuppression`] (the
 //!   M756BN leaf — `record_success`/`record_failure`/`is_suppressed`/
 //!   `total_suppressed` + `PATH_SUPPRESS_THRESHOLD`). CONSUMED, not re-ported.
@@ -54,8 +54,9 @@ use crate::{
 // ─────────────────────────────────────────────────────────────────────────
 
 /// The concurrent-simulation cap (`MAX_SIMULATE_CONCURRENT = 50`, L147) —
-/// the tokio `Semaphore` permit count for the fan-out. Candidates beyond this
-/// are NOT simulated (the Python oracle slices `results[:MAX_SIMULATE_CONCURRENT]`).
+/// the `truncate` pre-fan-out cap + the `buffer_unordered` bound for the
+/// legacy RPC path. Candidates beyond this are NOT simulated (the Python
+/// oracle slices `results[:MAX_SIMULATE_CONCURRENT]`).
 pub const MAX_SIMULATE_CONCURRENT: usize = 50;
 
 /// The min net-profit threshold (`MIN_PROFIT_NET = 1`, L137) — a gross-
@@ -229,10 +230,10 @@ impl DispatchOutcome {
 // The fan-out (D1)
 // ─────────────────────────────────────────────────────────────────────────
 
-/// Fan out [`simulate_one`] across a tokio `JoinSet` with a semaphore cap,
-/// gather with exception tolerance, and categorize into gas-profitable /
-/// gas-unprofitable / exception (ports the fan-out L2450–L2517 +
-/// categorization L2519–L2535).
+/// Fan out [`simulate_one`] across a `buffer_unordered(MAX_SIMULATE_CONCURRENT)`
+/// stream (capped by `truncate` pre-fan-out), gather with exception tolerance,
+/// and categorize into gas-profitable / gas-unprofitable / exception (ports the
+/// fan-out L2450–L2517 + categorization L2519–L2535).
 ///
 /// Pipeline:
 /// 1. **Pre-filter — suppression** — drop paths currently suppressed by
@@ -244,11 +245,15 @@ impl DispatchOutcome {
 ///    Python oracle slices `results[:MAX_SIMULATE_CONCURRENT]`; the candidates
 ///    are expected pre-sorted by engine profit descending — the caller does
 ///    the sort, ports L1684).
-/// 4. **Fan-out** — spawn one `simulate_one` per candidate on a `JoinSet`
-///    with a `Semaphore(MAX_SIMULATE_CONCURRENT)` (the semaphore is belt +
-///    suspenders; the L2491 slice already caps the count, but the semaphore
-///    guarantees the cap even if a caller hands more candidates).
-/// 5. **Gather** — drain the `JoinSet`; exceptions are tolerated (counted, not
+/// 4. **Fan-out** — two branches on `bot_state`. When `Some`, the in-process
+///    revm path builds ONE per-block `BlockSimHandle` + simulates each
+///    candidate SERIALLY on the shared `&mut evm` (Tier 1, `V5HCR5`). When
+///    `None`, the legacy RPC path drives `simulate_one` per candidate through
+///    `buffer_unordered(MAX_SIMULATE_CONCURRENT)` (the bound mirrors the
+///    Python `asyncio.gather(*sim_tasks)` concurrency — the L2491 `truncate`
+///    already caps the count, the `buffer_unordered` bound is belt +
+///    suspenders for a caller that hands more candidates).
+/// 5. **Gather** — collect the stream; exceptions are tolerated (counted, not
 ///    propagated — the Python oracle uses `return_exceptions=True`,
 ///    L2504).
 /// 6. **Categorize** — gas-profitable (`net ≥ min_profit_net`) /
@@ -270,12 +275,15 @@ impl DispatchOutcome {
 /// W failed, V exceptions` summary L2538–L2542). The summary RENDERING stays
 /// Python (D4); this leaf returns the typed [`DispatchOutcome`].
 ///
-/// # Errors
+/// # Failure model
 ///
-/// Returns `Err` only on an unrecoverable semaphore-acquisition failure (the
-/// `JoinSet` tasks' individual errors are tolerated — ports
-/// `return_exceptions=True`). In practice the semaphore acquire never fails
-/// (it's cancelled only on runtime shutdown).
+/// Infallible — returns `DispatchOutcome` directly (not a `Result`). Every
+/// per-path failure (revert / no-profit / rpc-failed / int128-overflow) is
+/// tallied into `outcome.fail_buckets` + recorded as a per-candidate
+/// [`SimFailure`] (ports the Python oracle's `return_exceptions=True`
+/// tolerance, L2504 — no failure propagates as an `Err`). The
+/// `exception_count` field captures `simulate_one` `Err` returns (the rare
+/// defensive `?` on the execute() ABI encode), counted not propagated.
 ///
 /// # Panics
 ///
@@ -306,7 +314,7 @@ pub async fn dispatch_profitable_results(
     // in-process sim's blocking RPC cold-miss path does not deadlock against
     // the pump's worker pool.
     bot_state: Option<Arc<RwLock<BotState>>>,
-) -> Result<DispatchOutcome, DispatchError> {
+) -> DispatchOutcome {
     let mut outcome = DispatchOutcome::default();
     let pre_filter_count = candidates.len();
 
@@ -484,22 +492,7 @@ pub async fn dispatch_profitable_results(
         .gas_unprofitable
         .sort_by_key(|r| std::cmp::Reverse(r.net_profit));
 
-    Ok(outcome)
-}
-
-/// A dispatch fan-out error (ports the `return_exceptions=True` exceptions +
-/// the semaphore-acquire failure).
-#[derive(Debug, thiserror::Error)]
-pub enum DispatchError {
-    /// The semaphore was closed (runtime shutdown mid-fan-out). Never happens
-    /// in normal operation — the [`Semaphore`] is local to the call.
-    #[error("dispatch fan-out semaphore closed")]
-    SemaphoreClosed,
-    /// A per-path `simulate_one` returned `Err` (the `?` indirection surfaces
-    /// the [`degenbot_core::errors::ProviderError`]). Tolerated + counted as
-    /// an exception by [`dispatch_profitable_results`].
-    #[error("simulate_one error: {0}")]
-    SimError(String),
+    outcome
 }
 
 #[cfg(test)]
@@ -685,8 +678,7 @@ mod tests {
             0,
             None,
         )
-        .await
-        .unwrap();
+        .await;
 
         // Categorization: 1 profitable, 1 no-profit (→ fail_count=1).
         assert_eq!(outcome.gas_profitable.len(), 1);
@@ -727,8 +719,7 @@ mod tests {
                 0,
                 None,
             )
-            .await
-            .unwrap();
+            .await;
         }
         // After 10 failures, path 7 is suppressed.
         assert!(suppression
@@ -758,8 +749,7 @@ mod tests {
             0,
             None,
         )
-        .await
-        .unwrap();
+        .await;
         assert_eq!(outcome.suppressed_count, 1);
         assert_eq!(outcome.candidate_count, 0);
         // The sentinel response is still unconsumed.
@@ -794,8 +784,7 @@ mod tests {
             0,
             None,
         )
-        .await
-        .unwrap();
+        .await;
         assert_eq!(outcome.suppressed_count, 1);
         assert_eq!(outcome.candidate_count, 0);
         // No RPC dispatched (sentinel still in queue).
@@ -896,8 +885,7 @@ mod tests {
             0,
             None,
         )
-        .await
-        .unwrap();
+        .await;
 
         assert_eq!(outcome.candidate_count, 2);
         assert_eq!(
@@ -958,8 +946,7 @@ mod tests {
             0,
             None,
         )
-        .await
-        .unwrap();
+        .await;
 
         assert_eq!(
             outcome.gas_profitable.len(),
@@ -1014,8 +1001,7 @@ mod tests {
             0,
             None,
         )
-        .await
-        .unwrap();
+        .await;
         // The simulate_v1 failure → simulate_one `Ok(None)` + `rpc-failed` →
         // fail_count=1, exception_count=0.
         assert_eq!(outcome.exception_count, 0);
@@ -1077,8 +1063,7 @@ mod tests {
             0,
             None,
         )
-        .await
-        .unwrap();
+        .await;
         // All 60 suppressed pre-sim.
         assert_eq!(outcome.suppressed_count, 60);
         assert_eq!(outcome.candidate_count, 0);
@@ -1101,8 +1086,7 @@ mod tests {
             0,
             None,
         )
-        .await
-        .unwrap();
+        .await;
         assert_eq!(outcome.candidate_count, 0);
         assert_eq!(outcome.gas_profitable.len(), 0);
         assert_eq!(outcome.suppressed_count, 0);
@@ -1134,8 +1118,7 @@ mod tests {
             0,
             None,
         )
-        .await
-        .unwrap();
+        .await;
         assert_eq!(outcome.fail_count, 2);
         assert_eq!(outcome.fail_buckets.get("no-profit"), 2);
     }
@@ -1166,8 +1149,7 @@ mod tests {
             0,
             None,
         )
-        .await
-        .unwrap();
+        .await;
 
         assert_eq!(outcome.failures.len(), 2, "expected two failure records");
         let ids: Vec<u64> = outcome.failures.iter().map(|f| f.path_id).collect();
@@ -1204,8 +1186,7 @@ mod tests {
             0,
             None,
         )
-        .await
-        .unwrap();
+        .await;
 
         assert_eq!(outcome.failures.len(), 1);
         let f = &outcome.failures[0];
@@ -1251,8 +1232,7 @@ mod tests {
             0,
             Some(bot_state),
         )
-        .await
-        .unwrap();
+        .await;
 
         // Build failed under current_thread runtime → every candidate
         // tallied rpc-failed (Ok(None)), no exceptions.
