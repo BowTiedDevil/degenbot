@@ -655,6 +655,24 @@ where
     Db: revm::database_interface::DatabaseRef,
     <Db as revm::database_interface::DatabaseRef>::Error: std::fmt::Display,
 {
+    // Per-call diagnostic trace — opt-in via `DEGENBOT_SIM_TRACE=1`. Dumps
+    // gas_used, halt/revert/success state, and the first 32 bytes of output
+    // for every call in the 7-call vector, scoped to a specific path_id when
+    // `DEGENBOT_SIM_TRACE_PATH` is set (avoids spamming on a full batch).
+    let sim_trace = std::env::var("DEGENBOT_SIM_TRACE").ok().as_deref() == Some("1");
+    let sim_trace_path: Option<u64> = std::env::var("DEGENBOT_SIM_TRACE_PATH")
+        .ok()
+        .and_then(|s| s.parse().ok());
+    let trace_this_path = sim_trace && sim_trace_path.is_none_or(|p| p == path.path_id);
+    if trace_this_path {
+        eprintln!(
+            "[sim-trace] ENTER path={} hop_count={} optimal_input={}",
+            path.path_id,
+            path.path_info.hops.len(),
+            path.optimal_input,
+        );
+    }
+
     // C3 — int128 check (mirrors simulate_one's guard).
     if path.hop_outputs.len() != path.path_info.hops.len() {
         return Ok(None);
@@ -706,6 +724,22 @@ where
             message: format!("execute() ABI encode failed: {e}"),
         })?;
 
+    if trace_this_path {
+        eprintln!(
+            "[sim-trace] executor_owner={} executor_address={} current_block={} base_fee_next={}",
+            ctx.executor_owner, ctx.executor_address, ctx.current_block, ctx.base_fee_next,
+        );
+        eprintln!(
+            "[sim-trace] execute_calldata_len={} first_4_bytes=0x{}",
+            execute_calldata.len(),
+            revm::primitives::hex::encode(&execute_calldata[..4]),
+        );
+        eprintln!(
+            "[sim-trace] calldata={}",
+            revm::primitives::hex::encode(&execute_calldata)
+        );
+    }
+
     // Build the 7 calldata blobs (the balance reads + the execute call).
     let weth_call =
         encode_balance_of_calldata(ctx.executor_address).expect("valid address encodes");
@@ -753,6 +787,12 @@ where
             // A revm transact error (DB cold-miss RPC failure, or an
             // invalid tx). Treat as rpc-failed (the Python oracle swallows
             // these into rpc-failed).
+            if trace_this_path {
+                eprintln!(
+                    "[sim-trace] path={} call[{}] transact_one returned Err (rpc-failed)",
+                    path.path_id, idx
+                );
+            }
             fail_buckets.record(
                 path.path_id,
                 "rpc-failed",
@@ -761,6 +801,29 @@ where
             );
             return Ok(None);
         };
+        if trace_this_path {
+            let gas = res.gas().tx_gas_used();
+            let kind = match &res {
+                ExecutionResult::Success { reason, .. } => format!("Success({reason:?})"),
+                ExecutionResult::Revert { .. } => "Revert".to_string(),
+                ExecutionResult::Halt { reason, .. } => format!("Halt({reason})"),
+            };
+            let out_hex = res.output().map_or_else(
+                || "<no output>".to_string(),
+                |b| {
+                    let n = b.len().min(32);
+                    format!(
+                        "0x{}…({} bytes)",
+                        revm::primitives::hex::encode(&b[..n]),
+                        b.len()
+                    )
+                },
+            );
+            eprintln!(
+                "[sim-trace] path={} call[{idx}] {kind} gas_used={gas} output={out_hex}",
+                path.path_id,
+            );
+        }
         if !res.is_success() && first_failure.is_none() {
             first_failure = Some(idx);
         }

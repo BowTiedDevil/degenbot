@@ -184,6 +184,23 @@ pub async fn simulate_one(
         access_list: access_list.clone(),
     };
     let Ok(result) = dispatch::simulate_v1(ctx.provider, &sim_params, state_overrides).await else {
+        // Per-call diagnostic trace — opt-in via `DEGENBOT_SIM_TRACE=1`. Dumps
+        // per-call gas + status + first 32 bytes of returnData / revert_data.
+        let sim_trace = std::env::var("DEGENBOT_SIM_TRACE").ok().as_deref() == Some("1");
+        let sim_trace_path: Option<u64> = std::env::var("DEGENBOT_SIM_TRACE_PATH")
+            .ok()
+            .and_then(|s| s.parse().ok());
+        if sim_trace && sim_trace_path.is_none_or(|p| p == path.path_id) {
+            eprintln!(
+                "[sim-trace-rpc] path={} RPC=Err (rpc-failed) execute_calldata_len={}",
+                path.path_id,
+                execute_calldata.len(),
+            );
+            eprintln!(
+                "[sim-trace-rpc] calldata={}",
+                alloy::primitives::hex::encode(&execute_calldata)
+            );
+        }
         fail_buckets.record(
             path.path_id,
             "rpc-failed",
@@ -192,6 +209,42 @@ pub async fn simulate_one(
         );
         return Ok(None);
     };
+
+    // Per-call diagnostic trace — mirrors `simulate_in_process_with_db`'s.
+    {
+        let sim_trace = std::env::var("DEGENBOT_SIM_TRACE").ok().as_deref() == Some("1");
+        let sim_trace_path: Option<u64> = std::env::var("DEGENBOT_SIM_TRACE_PATH")
+            .ok()
+            .and_then(|s| s.parse().ok());
+        if sim_trace && sim_trace_path.is_none_or(|p| p == path.path_id) {
+            eprintln!(
+                "[sim-trace-rpc] path={} first_failure={:?} execute_calldata_len={}",
+                path.path_id,
+                result.first_failure,
+                execute_calldata.len(),
+            );
+            eprintln!(
+                "[sim-trace-rpc] calldata={}",
+                alloy::primitives::hex::encode(&execute_calldata)
+            );
+            for (idx, call) in result.calls.iter().enumerate() {
+                let n = call.return_data.len().min(32);
+                let out_hex = if call.return_data.is_empty() {
+                    "<empty>".to_string()
+                } else {
+                    format!(
+                        "0x{}…({} bytes)",
+                        alloy::primitives::hex::encode(&call.return_data[..n]),
+                        call.return_data.len()
+                    )
+                };
+                eprintln!(
+                    "[sim-trace-rpc] path={} call[{idx}] status={} gas_used={} output={out_hex}",
+                    path.path_id, call.status, call.gas_used,
+                );
+            }
+        }
+    }
 
     // Classify + tally the revert if any call failed (C5 — SYI3PG reference).
     if let Some(fail_idx) = result.first_failure {
