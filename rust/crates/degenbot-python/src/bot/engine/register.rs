@@ -70,12 +70,18 @@ impl PyArbitrageEngine {
         if let Some(parent) = py_bot_ref {
             parent.borrow(py).attach_pump_state(Arc::clone(&pump));
         }
+        // The cross-block warm bytecode cache (`HDEG7H` Option A) — one
+        // shared `Arc<RwLock<WarmCodeCacheInner>>` for the engine's life,
+        // cloned into each per-block `BlockSimHandle::build`. Empty at
+        // construction; warmed lazily by the first block's cold RPCs.
+        let warm_code_cache = degenbot_simulation::WarmCodeCacheInner::shared_default();
         Self {
             engine,
             engine_handle,
             pump,
             result_rx: Arc::new(parking_lot::Mutex::new(Some(result_rx))),
             block_rx: Arc::new(parking_lot::Mutex::new(Some(block_rx))),
+            warm_code_cache,
         }
     }
 

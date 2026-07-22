@@ -158,15 +158,16 @@ pub fn dispatch_profitable_py<'py>(
     // `engine` is `None`, `bot_state = None` → the fan-out falls back to
     // `simulate_one` (the legacy `eth_simulateV1` path).
     //
-    // `warm_cache` is the cross-block bytecode cache (`HDEG7H` Option A).
-    // Today `None` — the engine does not yet own one (task `O2Y6SA` adds it;
-    // the `Some(bot_state)` branch then degrades to a fresh per-call
-    // `WarmCodeCacheInner::shared_default()`, no cross-block persistence —
-    // Tier-1-only behavior, a safe no-op until `O2Y6SA` lands).
+    // `warm_cache` is the cross-block bytecode cache (`HDEG7H` Option A) —
+    // cloned from the engine's `warm_code_cache_arc()` (one Arc clone, no
+    // map copy). When `engine` is `None`, `warm_cache = None` → the fan-out
+    // falls back to `simulate_one` (same as `bot_state`).
     let bot_state: Option<Arc<parking_lot::RwLock<degenbot_bot::bot_core::BotState>>> =
         engine.as_ref().map(|eng| eng.borrow(py).bot_state_arc());
     let warm_cache: Option<Arc<parking_lot::RwLock<degenbot_simulation::WarmCodeCacheInner>>> =
-        None;
+        engine
+            .as_ref()
+            .map(|eng| eng.borrow(py).warm_code_cache_arc());
 
     // ── GIL release across the per-path simulation fan-out ──
     future_into_py(py, async move {

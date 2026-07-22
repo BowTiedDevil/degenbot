@@ -86,6 +86,15 @@ pub struct PyArbitrageEngine {
     /// Python consumes this as its block clock (not `ResultBatch::solve_block`).
     /// Consumed by `BlockStream::__anext__`; wrapped in Arc for the coroutine.
     block_rx: Arc<parking_lot::Mutex<Option<mpsc::UnboundedReceiver<BlockNotification>>>>,
+    /// The cross-block persistent bytecode + account-existence cache
+    /// (`WarmCodeCacheInner`, the `HDEG7H` Option-A layer). Held for the
+    /// engine's life; cloned into each per-block `BlockSimHandle::build` so
+    /// the per-block cold `basic`/code RPCs stop repeating across blocks
+    /// (first block warms; later blocks hit until TTL expiry). Constructed
+    /// once in `new`; untouched by the pump (read-only under the
+    /// `parking_lot::RwLock`, written only by the warm cache's own TTL
+    /// re-fetch path).
+    warm_code_cache: Arc<parking_lot::RwLock<degenbot_simulation::WarmCodeCacheInner>>,
 }
 
 impl PyArbitrageEngine {
@@ -97,6 +106,17 @@ impl PyArbitrageEngine {
     /// one Arc clone, no state copy.
     pub(crate) fn bot_state_arc(&self) -> Arc<parking_lot::RwLock<BotState>> {
         self.engine.lock().core.clone()
+    }
+
+    /// The cross-block warm bytecode cache arc (`HDEG7H` Option A) — the
+    /// persistent `Arc<RwLock<WarmCodeCacheInner>>` held for the engine's life.
+    /// `dispatch_profitable_py` clones this into the per-block
+    /// `BlockSimHandle::build` so the `WarmCodeCache` layer shares one inner
+    /// map across every per-block EVM. One Arc clone, no map copy.
+    pub(crate) fn warm_code_cache_arc(
+        &self,
+    ) -> Arc<parking_lot::RwLock<degenbot_simulation::WarmCodeCacheInner>> {
+        Arc::clone(&self.warm_code_cache)
     }
 }
 
