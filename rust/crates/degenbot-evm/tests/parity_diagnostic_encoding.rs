@@ -149,6 +149,7 @@ fn unpack_v2_reserves(word: U256) -> (u128, u128, u32) {
 /// `sqrtPriceX96` occupies the low 160 bits; the int24 tick occupies bits
 /// 160..=183 and is sign-extended in the stored word (negative ticks have bits
 /// 184..=255 set).
+#[allow(dead_code)]
 fn unpack_v3_slot0(word: U256) -> (U256, i32) {
     let mask_160 = (U256::from(1u64) << 160) - U256::from(1u64);
     let sqrt = word & mask_160;
@@ -165,6 +166,7 @@ fn unpack_v3_slot0(word: U256) -> (U256, i32) {
 
 /// Unpack `uint128 liquidity` from V3 slot 4 (high 128 bits zero in a
 /// well-formed encoder output; only the low 128 bits are read).
+#[allow(dead_code)]
 fn unpack_v3_liquidity(word: U256) -> u128 {
     let mask_128: U256 = (U256::from(1u64) << 128) - U256::from(1u64);
     (word & mask_128).to::<u128>()
@@ -173,6 +175,7 @@ fn unpack_v3_liquidity(word: U256) -> u128 {
 /// Unpack `uint128 liquidityGross; int128 liquidityNet; …` from a V3
 /// `ticks(i24)` slot word. `liquidityGross` occupies bits 128..=255;
 /// `liquidityNet` occupies bits 0..=127 as a two's-complement int128.
+#[allow(dead_code)]
 fn unpack_v3_tick_info(word: U256) -> (u128, i128) {
     let mask_128: U256 = (U256::from(1u64) << 128) - U256::from(1u64);
     let gross: U256 = (word >> 128) & mask_128;
@@ -305,103 +308,78 @@ fn v2_reserves_slot_falls_through_to_fallback() {
     assert_eq!(other, StorageValue::ZERO, "unmapped V2 slot falls through");
 }
 
-/// V3 `slot0` round-trips the registered sqrtPriceX96 + tick.
+/// V3 `slot0` (slot 0) is served from the RPC fallback, NOT the snapshot.
+/// See `v2_reserves_slot_falls_through_to_fallback` + the `BotStateDb` doc for
+/// the consistency reason (snapshot `slot0`/`tick` from `update_block` is
+/// inconsistent with the on-chain tick-bitmap/fee-growth the V3 `swap()` also
+/// reads → cross-tick swaps revert).
 #[test]
-fn v3_slot0_round_trips_typed_state() {
+fn v3_slot0_falls_through_to_fallback() {
     let mut core = BotState::new();
     let pool_id = register_v3_fixture(&mut core);
-
-    let entry = core.pool_entry(pool_id).expect("pool registered");
-    let PoolEntry::V3(_identity, state) = entry else {
-        panic!("expected V3 pool entry");
-    };
-    let expected_sqrt = state.sqrt_price_x96;
-    let expected_tick = state.tick;
-
+    let _ = pool_id;
     let db = BotStateDb::new(&core, NoopFallback);
     let word = db
         .storage_ref(V3_POOL_ADDRESS, U256::from(V3_SLOT0_SLOT))
-        .expect("tracked V3 slot0 must not fall through");
-
-    let (sqrt, tick) = unpack_v3_slot0(word);
+        .expect("V3 slot0 read must not error (falls through)");
     assert_eq!(
-        sqrt, expected_sqrt,
-        "V3 sqrtPriceX96: storage_ref slot unpacks to the typed-state value"
-    );
-    assert_eq!(
-        tick, expected_tick,
-        "V3 tick: storage_ref slot unpacks to the typed-state value (incl. sign)"
+        word,
+        StorageValue::ZERO,
+        "V3 slot0 must fall through to the fallback (snapshot slot0 is not \
+         servable until the engine tracks on-chain-consistent V3 state — see \
+         BotStateDb doc)"
     );
 }
 
-/// V3 `liquidity` round-trips the registered active liquidity.
+/// V3 `liquidity` (slot 4) is served from the RPC fallback, NOT the snapshot.
 #[test]
-fn v3_liquidity_slot_round_trips_typed_state() {
+fn v3_liquidity_slot_falls_through_to_fallback() {
     let mut core = BotState::new();
     let pool_id = register_v3_fixture(&mut core);
-
-    let entry = core.pool_entry(pool_id).expect("pool registered");
-    let PoolEntry::V3(_identity, state) = entry else {
-        panic!("expected V3 pool entry");
-    };
-    let expected_liquidity = state.liquidity;
-
+    let _ = pool_id;
     let db = BotStateDb::new(&core, NoopFallback);
     let word = db
         .storage_ref(V3_POOL_ADDRESS, U256::from(V3_LIQUIDITY_SLOT))
-        .expect("tracked V3 liquidity slot must not fall through");
-
-    let liq = unpack_v3_liquidity(word);
+        .expect("V3 liquidity read must not error (falls through)");
     assert_eq!(
-        liq, expected_liquidity,
-        "V3 liquidity: storage_ref slot unpacks to the typed-state value"
+        word,
+        StorageValue::ZERO,
+        "V3 liquidity must fall through to the fallback"
     );
 }
 
-/// V3 `ticks(i24)` slot round-trips the registered per-tick gross/net
-/// liquidity for BOTH a positive-net and a negative-net tick.
+/// V3 `ticks(i24)` mapping slots are served from the RPC fallback, NOT the
+/// snapshot. The fixture registers nonzero tick liquidity; if the snapshot
+/// were served, `storage_ref` would return a nonzero packed word. ZERO proves
+/// the fallthrough.
 #[test]
-fn v3_tick_info_slot_round_trips_typed_state() {
+fn v3_tick_info_slot_falls_through_to_fallback() {
     let mut core = BotState::new();
     let pool_id = register_v3_fixture(&mut core);
-
     let entry = core.pool_entry(pool_id).expect("pool registered");
     let PoolEntry::V3(_identity, state) = entry else {
         panic!("expected V3 pool entry");
     };
-
     let db = BotStateDb::new(&core, NoopFallback);
-
-    for (&tick, tick_info) in &state.tick_data {
+    for &tick in state.tick_data.keys() {
         let slot = v3_tick_mapping_slot(V3_TICKS_MAPPING_SLOT, tick);
         let word = db
             .storage_ref(V3_POOL_ADDRESS, slot)
-            .unwrap_or_else(|_| panic!("tracked V3 ticks({tick}) slot must not fall through"));
-
-        let (gross, net) = unpack_v3_tick_info(word);
+            .expect("V3 ticks(i24) read must not error (falls through)");
         assert_eq!(
-            gross,
-            tick_info.liquidity_gross.to::<u128>(),
-            "V3 ticks({tick}) liquidityGross round-trip"
-        );
-        // The Solidity field is int128; the typed-state field is I256. The
-        // round-trip goes I256 -> int128 slot word -> int128 unpack. Compare
-        // via the shared i128 domain (the fixture's net values fit i128).
-        let expected_net_i128 = i128::try_from(tick_info.liquidity_net)
-            .expect("fixture tick net fits int128 (Solidity field width)");
-        assert_eq!(
-            net, expected_net_i128,
-            "V3 ticks({tick}) liquidityNet round-trip (incl. sign)"
+            word,
+            StorageValue::ZERO,
+            "V3 ticks({tick}) must fall through to the fallback"
         );
     }
 }
 
-/// The V3 tick-mapping-slot derivation in this test file MUST match the slot
-/// `storage_ref` actually resolves at — otherwise the `ticks(i24)` lookup
-/// would always fall through to the fallback. This guards the keccak preimage
-/// construction (int24 tick, big-endian, right-aligned in a 32-byte word,
-/// concatenated with the base slot as a 32-byte big-endian word) against
-/// drift from the Solidity storage-layout mapping-slot rule.
+/// The V3 tick-mapping-slot derivation in this test file MUST match the
+/// Solidity storage-layout mapping-slot rule (`keccak256(int24 tick BE32 .
+/// base_slot BE32)`). The lookup itself now falls through to the fallback (see
+/// `v3_tick_info_slot_falls_through_to_fallback`); this test only pins the
+/// keccak preimage construction for the follow-up that re-enables
+/// snapshot-served V3 ticks.
 #[test]
 fn v3_tick_mapping_slot_derivation_is_keccak_tick_dot_base_slot() {
     // A known reference: tick = -887_270 (a real V3 tick on mainnet).
@@ -414,24 +392,4 @@ fn v3_tick_mapping_slot_derivation_is_keccak_tick_dot_base_slot() {
         slot, expected,
         "tick mapping slot = keccak256(int24 tick BE32 . base_slot BE32)"
     );
-    // Confirm the lookup hits the tracked path (not the NoopFallback zero).
-    let mut core = BotState::new();
-    let pool_id = register_v3_fixture(&mut core);
-    let entry = core.pool_entry(pool_id).expect("pool registered");
-    let PoolEntry::V3(_identity, state) = entry else {
-        panic!("expected V3 pool entry");
-    };
-    let db = BotStateDb::new(&core, NoopFallback);
-    for (&tick, tick_info) in &state.tick_data {
-        let slot = v3_tick_mapping_slot(V3_TICKS_MAPPING_SLOT, tick);
-        let word = db
-            .storage_ref(V3_POOL_ADDRESS, slot)
-            .expect("tick slot lookup hits the tracked path");
-        let (gross, _net) = unpack_v3_tick_info(word);
-        assert_ne!(
-            gross, 0,
-            "tick lookup must hit the tracked path (nonzero gross)"
-        );
-        assert_eq!(gross, tick_info.liquidity_gross.to::<u128>());
-    }
 }

@@ -57,15 +57,20 @@ use revm::state::AccountInfo;
 const V2_PAIR_RESERVES_SLOT: u64 = 8;
 
 /// V3 `slot0` storage slot — `uint160 sqrtPriceX96; int24 tick; …` packed at
-/// slot 0.
+/// slot 0. Unused by `read_v3_slot` (V3 served from the RPC fallback — see
+/// [`BotStateDb`] doc). Kept for the follow-up re-enablement.
+#[allow(dead_code)]
 const V3_SLOT0_SLOT: u64 = 0;
 
-/// V3 `liquidity` storage slot — `uint128 liquidity` at slot 4.
+/// V3 `liquidity` storage slot — `uint128 liquidity` at slot 4. Unused by
+/// `read_v3_slot` (V3 served from the RPC fallback).
+#[allow(dead_code)]
 const V3_LIQUIDITY_SLOT: u64 = 4;
 
 /// V3 `ticks` mapping base slot — `mapping(int24 => TickInfo)` at slot 5. The
 /// per-tick slot is `keccak256(tick_BE32 . 5_BE32)`; `TickInfo` is packed
-/// `uint128 liquidityGross; int128 liquidityNet; …`.
+/// `uint128 liquidityGross; int128 liquidityNet; …`. Unused by `read_v3_slot`.
+#[allow(dead_code)]
 const V3_TICKS_MAPPING_SLOT: u64 = 5;
 
 /// The engine-state read view that is the EVM's `Database`.
@@ -211,21 +216,18 @@ fn read_v2_slot(
     None
 }
 
-/// Read a V3 pool persistent slot: `slot0`@0, `liquidity`@4, or a per-tick
-/// `ticks(i32)` slot; other V3 internal slots fall through to AlloyDB.
-fn read_v3_slot(state: &degenbot_pools::v3_state::V3PoolState, slot: U256) -> Option<StorageValue> {
-    if slot == U256::from(V3_SLOT0_SLOT) {
-        return Some(encode_v3_slot0(state.sqrt_price_x96, state.tick));
-    }
-    if slot == U256::from(V3_LIQUIDITY_SLOT) {
-        return Some(encode_v3_liquidity_slot(state.liquidity));
-    }
-    // Per-tick slot: scan tick_data for a `keccak256(tick . 5)` match.
-    for (&tick, tick_info) in &state.tick_data {
-        if tick_mapping_slot(V3_TICKS_MAPPING_SLOT, tick) == slot {
-            return Some(encode_v3_tick_info_slot(tick_info));
-        }
-    }
+/// Read a V3 pool persistent slot. Returns `None` — V3 `slot0`/`liquidity`/
+/// `ticks(i24)` are served from the RPC fallback, NOT the snapshot. See
+/// [`BotStateDb`]'s doc comment for the consistency reason: the snapshot's V3
+/// state (from `update_block`) is inconsistent with the on-chain tick-bitmap /
+/// fee-growth / observation slots the pool's `swap()` also reads (served from
+/// the RPC at `current_block`) — a stale `slot0`/`tick` against a fresh
+/// tick-bitmap reverts every cross-tick swap (`LOK`/`empty` on V2-V2-V3 paths).
+/// All V3 pair internal slots fall through to AlloyDB.
+fn read_v3_slot(
+    _state: &degenbot_pools::v3_state::V3PoolState,
+    _slot: U256,
+) -> Option<StorageValue> {
     None
 }
 
@@ -249,6 +251,7 @@ fn encode_v2_reserves_slot(reserve0: u128, reserve1: u128, update_block: u64) ->
 /// Encode V3 `slot0` (slot 0): packed `uint160 sqrtPriceX96; int24 tick; …`. The
 /// post-tick tail (observation index/cardinality, fee protocol, unlocked) is
 /// zero-filled — the sim reads `sqrtPriceX96` + `tick` only.
+#[allow(dead_code)]
 #[must_use]
 fn encode_v3_slot0(sqrt_price_x96: U256, tick: i32) -> StorageValue {
     // Low 160 bits of sqrtPriceX96 (mask = 2^160 - 1).
@@ -263,6 +266,7 @@ fn encode_v3_slot0(sqrt_price_x96: U256, tick: i32) -> StorageValue {
 }
 
 /// Encode V3 `liquidity` (slot 4): `uint128 liquidity` (high 128 bits zero).
+#[allow(dead_code)]
 #[must_use]
 fn encode_v3_liquidity_slot(liquidity: u128) -> StorageValue {
     U256::from(liquidity)
@@ -279,6 +283,7 @@ fn encode_v3_liquidity_slot(liquidity: u128) -> StorageValue {
 /// MUST be masked off before the OR with `gross << 128` (which occupies the
 /// high 128 bits) — otherwise a negative `liquidityNet` corrupts
 /// `liquidityGross` to `2^128 - 1`.
+#[allow(dead_code)]
 #[must_use]
 fn encode_v3_tick_info_slot(tick_info: &degenbot_pools::TickInfo) -> StorageValue {
     let gross = U256::from(tick_info.liquidity_gross);
@@ -293,6 +298,7 @@ fn encode_v3_tick_info_slot(tick_info: &degenbot_pools::TickInfo) -> StorageValu
 
 /// Compute `keccak256(tick_BE32 . base_slot_BE32)` — the V3 `ticks(i24)`
 /// mapping slot for tick index `tick` at mapping base slot `base_slot`.
+#[allow(dead_code)]
 fn tick_mapping_slot(base_slot: u64, tick: i32) -> U256 {
     let mut preimage = [0u8; 64];
     // int24 tick, big-endian, right-padded to 32 bytes (the high 28 bytes zero).
@@ -303,6 +309,7 @@ fn tick_mapping_slot(base_slot: u64, tick: i32) -> U256 {
 
 /// Sign-extend a 24-bit value (int24 reinterpreted as the low 24 bits of a
 /// `U256`) to a full 256-bit two's-complement word. The sign bit is bit 23.
+#[allow(dead_code)]
 fn sign_extend_24(low24_u: U256) -> U256 {
     let low24 = low24_u & U256::from(0xFF_FFFFu32);
     if (low24 & U256::from(0x80_0000u32)).is_zero() {
@@ -318,6 +325,7 @@ fn sign_extend_24(low24_u: U256) -> U256 {
 /// Sign-extend an `I256` to a `U256` two's-complement word (low 128 bits hold
 /// the magnitude; bit 127 is the sign bit). Used for V3 `TickInfo.liquidity_net`
 /// in the `ticks(i24)` packed slot.
+#[allow(dead_code)]
 fn sign_extend_128_from_i256(val: alloy::primitives::I256) -> U256 {
     // I256 -> its 256-bit two's-complement bit pattern (negative values have
     // the high 128 bits set; the EVM int128 reads the low 128).
