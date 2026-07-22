@@ -49,6 +49,11 @@ use revm::state::AccountInfo;
 
 /// V2 pair reserves slot — `uint112 reserve0; uint112 reserve1; uint32
 /// blockTimestampLast;` packed at slot 8 (UniswapV2Pair `getReserves` layout).
+///
+/// Unused by `read_v2_slot` (V2 slot 8 is served from the RPC fallback until
+/// the engine tracks per-pair token balances — see [`BotStateDb`] doc). Kept as
+/// the slot-layout reference for the follow-up re-enablement.
+#[allow(dead_code)]
 const V2_PAIR_RESERVES_SLOT: u64 = 8;
 
 /// V3 `slot0` storage slot — `uint160 sqrtPriceX96; int24 tick; …` packed at
@@ -112,8 +117,32 @@ where
         self.fallback.basic_ref(address)
     }
 
-    /// Tracked storage served from the snapshot (V2 reserves / V3 slot0 /
-    /// liquidity / ticks); untracked fall through to `AlloyDB`.
+    /// Tracked storage served from the snapshot (V3 slot0 / liquidity /
+    /// ticks); untracked fall through to `AlloyDB`.
+    ///
+    /// # V2 pair slot 8 — served from the RPC fallback, NOT the snapshot
+    ///
+    /// The V2 pair's `swap()` K-invariant check mixes slot-8
+    /// `_reserve0/_reserve1` (this slot) with `IERC20.balanceOf` (read from
+    /// the same RPC fallback). Serving the snapshot reserves here makes the two
+    /// axes diverge — the snapshot reserves are from `update_block` (a block
+    /// number) and lack matching per-pair token balances the engine does not
+    /// track — so K fails with stale `_reserve` vs fresh `balanceOf`. Serving
+    /// BOTH from the same on-chain slot-8 read keeps them consistent.
+    ///
+    /// `read_v2_slot` therefore returns `None`, routing V2 slot 8 through to
+    /// `self.fallback.storage_ref` below (one cold RPC per pair, cached by the
+    /// outer `CacheDB`). The snapshot IS still the SOLVER's source of truth for
+    /// path-finding + amount computation — only the EVM's K check needs
+    /// on-chain-consistent state, and a fresh backrun snapshot matches on-chain
+    /// closely enough that the solver's amounts satisfy K against the on-chain
+    /// reserves.
+    ///
+    /// # Follow-up
+    ///
+    /// The engine should track per-pair token balances (so `balanceOf` and
+    /// reserves both come from the snapshot, reorg-aware + RPC-free). Until
+    /// then, V2 slot 8 falls through to the RPC fallback.
     ///
     /// # Errors
     ///
@@ -169,18 +198,17 @@ fn read_tracked_storage(
     }
 }
 
-/// Read a V2 pair persistent slot. Only slot 8 (the packed reserves word) is
-/// mapped; all other V2 pair internal slots fall through to AlloyDB.
-fn read_v2_slot(state: &degenbot_pools::v2_state::V2PoolState, slot: U256) -> Option<StorageValue> {
-    if slot == U256::from(V2_PAIR_RESERVES_SLOT) {
-        Some(encode_v2_reserves_slot(
-            state.reserve0.to(),
-            state.reserve1.to(),
-            state.update_block,
-        ))
-    } else {
-        None
-    }
+/// Read a V2 pair persistent slot. Returns `None` — V2 slot 8 (reserves) is
+/// served from the RPC fallback, NOT the snapshot. See [`BotStateDb`]'s and
+/// [`DatabaseRef::storage_ref`](BotStateDb#method.storage_ref)'s doc comments
+/// for the K-invariant consistency reason (the snapshot reserves lack matching
+/// per-pair token balances the engine does not track). All V2 pair internal
+/// slots also fall through to AlloyDB.
+fn read_v2_slot(
+    _state: &degenbot_pools::v2_state::V2PoolState,
+    _slot: U256,
+) -> Option<StorageValue> {
+    None
 }
 
 /// Read a V3 pool persistent slot: `slot0`@0, `liquidity`@4, or a per-tick
@@ -204,7 +232,13 @@ fn read_v3_slot(state: &degenbot_pools::v3_state::V3PoolState, slot: U256) -> Op
 /// Encode the V2 pair reserves slot (slot 8): packed `uint112 reserve0;
 /// uint112 reserve1; uint32 blockTimestampLast` (UniswapV2Pair `getReserves`
 /// layout). `blockTimestampLast` is filled from `update_block` (truncated to
-/// `u32`) — the sim does not consult it, but the slot shape must match.
+/// `u32`).
+///
+/// UNUSED in production — `read_v2_slot` returns `None` (V2 slot 8 served from
+/// the RPC fallback). Kept + tested as the encoding oracle for the follow-up
+/// that re-enables snapshot-served V2 reserves once the engine tracks per-pair
+/// token balances (so reserves + `IERC20.balanceOf` stay consistent).
+#[allow(dead_code)]
 #[must_use]
 fn encode_v2_reserves_slot(reserve0: u128, reserve1: u128, update_block: u64) -> StorageValue {
     let timestamp_last = u32::try_from(update_block).unwrap_or(u32::MAX);

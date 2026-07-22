@@ -126,6 +126,12 @@ const V3_TICKS_MAPPING_SLOT: u64 = 5;
 /// Unpack `uint112 reserve0; uint112 reserve1; uint32 blockTimestampLast` from
 /// the V2 reserves slot word (slot 8). Layout: reserve0 occupies bits
 /// 144..=255, reserve1 occupies bits 32..=143, timestamp occupies bits 0..=31.
+///
+/// UNUSED by the parity tests now that V2 slot 8 is served from the fallback
+/// (see `v2_reserves_slot_falls_through_to_fallback`). Kept as the spec-derived
+/// unpacker reference for the follow-up that re-enables snapshot-served V2
+/// reserves.
+#[allow(dead_code)]
 fn unpack_v2_reserves(word: U256) -> (u128, u128, u32) {
     let mask_112: U256 = (U256::from(1u64) << 112) - U256::from(1u64);
     let mask_32: U256 = (U256::from(1u64) << 32) - U256::from(1u64);
@@ -259,39 +265,44 @@ fn register_v3_fixture(core: &mut BotState) -> u64 {
 // Parity tests: storage_ref(slot) unpacks to the typed scalars in BotState.
 // ---------------------------------------------------------------------------
 
-/// V2 reserves slot 8 round-trips the registered reserves + update block.
+/// V2 pair slot 8 (reserves) is served from the RPC fallback, NOT the
+/// snapshot. The V2 `swap()` K-invariant check mixes slot-8
+/// `_reserve0/_reserve1` with `IERC20.balanceOf` (read from the same fallback);
+/// serving the snapshot reserves makes the two axes diverge (no matching
+/// per-pair token balances in the engine) → K reverts. So `storage_ref` for a
+/// tracked V2 pair's slot 8 MUST fall through to the fallback (returns the
+/// fallback's value, not the snapshot-encoded reserves).
+///
+/// The reserves-slot *encoding* is still pinned by the
+/// `v2_reserves_slot_encodes_packed_word` unit test (for the follow-up that
+/// re-enables snapshot-served V2 reserves once the engine tracks token
+/// balances).
 #[test]
-fn v2_reserves_slot_round_trips_typed_state() {
+fn v2_reserves_slot_falls_through_to_fallback() {
     let mut core = BotState::new();
     let pool_id = register_v2_fixture(&mut core);
-
-    // The diagnostic's typed view: read the reserves directly off the state.
-    let entry = core.pool_entry(pool_id).expect("pool registered");
-    let PoolEntry::V2(_identity, state) = entry else {
-        panic!("expected V2 pool entry");
-    };
-    let expected_reserve0 = state.reserve0.to::<u128>();
-    let expected_reserve1 = state.reserve1.to::<u128>();
-    let expected_timestamp = u32::try_from(state.update_block).unwrap_or(u32::MAX);
+    let _ = pool_id;
 
     let db = BotStateDb::new(&core, NoopFallback);
+    // NoopFallback returns ZERO for every slot. If the snapshot were served,
+    // storage_ref would return the packed reserves word (nonzero — the fixture
+    // registers nonzero reserves). ZERO proves the fallthrough.
     let word = db
         .storage_ref(V2_POOL_ADDRESS, U256::from(V2_PAIR_RESERVES_SLOT))
-        .expect("tracked V2 reserves slot must not fall through to fallback");
+        .expect("V2 slot 8 read must not error (falls through to fallback)");
+    assert_eq!(
+        word,
+        StorageValue::ZERO,
+        "V2 slot 8 must fall through to the fallback (snapshot reserves are not \
+         servable until the engine tracks per-pair token balances — see \
+         BotStateDb doc)"
+    );
 
-    let (r0, r1, ts) = unpack_v2_reserves(word);
-    assert_eq!(
-        r0, expected_reserve0,
-        "V2 reserve0: storage_ref slot unpacks to the typed-state value"
-    );
-    assert_eq!(
-        r1, expected_reserve1,
-        "V2 reserve1: storage_ref slot unpacks to the typed-state value"
-    );
-    assert_eq!(
-        ts, expected_timestamp,
-        "V2 blockTimestampLast: storage_ref slot unpacks the update block"
-    );
+    // A non-reserves slot on the tracked V2 pair also falls through.
+    let other = db
+        .storage_ref(V2_POOL_ADDRESS, U256::from(7u64))
+        .expect("unmapped V2 slot read must not error");
+    assert_eq!(other, StorageValue::ZERO, "unmapped V2 slot falls through");
 }
 
 /// V3 `slot0` round-trips the registered sqrtPriceX96 + tick.
