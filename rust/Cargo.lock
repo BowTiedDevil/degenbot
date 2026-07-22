@@ -2147,6 +2147,7 @@ name = "degenbot-evm"
 version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
+ "degenbot-abi",
  "degenbot-bot",
  "degenbot-core",
  "degenbot-decoders",

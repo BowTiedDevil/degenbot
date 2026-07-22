@@ -30,11 +30,24 @@ use std::collections::BTreeMap;
 
 use alloy::primitives::{Address, U256};
 use alloy::rpc::types::AccessList;
-use degenbot_core::errors::ProviderResult;
-use degenbot_executor::composers::{EncodeOptions, HopInfo, PathInfo};
+use degenbot_core::errors::{ProviderError, ProviderResult};
+use degenbot_executor::composers::{encode_cmd_stream, EncodeOptions, HopInfo, PathInfo};
 use degenbot_executor::WarmupSlots;
 use degenbot_rpc::provider::AlloyProvider;
+// `ExecutionResult` lives in `revm::context_interface` (re-exported by the revm
+// umbrella); `TxEnv` + `TxKind` in `revm::context` / `revm::primitives`.
+use revm::context::TxEnv;
+use revm::context_interface::result::ExecutionResult;
+use revm::database::CacheDB;
+use revm::primitives::TxKind;
+// `MainBuilder` (`.build_mainnet()`) + `MainContext` (`.mainnet()`) — the revm
+// EVM builder traits re-exported from the handler crate.
+use revm::{ExecuteEvm, MainBuilder, MainContext};
 
+use crate::calldata::{
+    encode_balance_of_calldata, encode_erc6909_balance_of_calldata,
+    encode_get_eth_balance_calldata, wrap_execute_calldata,
+};
 use crate::state_override::SimulationOverrideParams;
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -482,35 +495,419 @@ impl SimulatePath {
 // The in-process entry point (task JHGLF4)
 // ─────────────────────────────────────────────────────────────────────────
 
+/// The gas limit granted to each balance-of read call in the 7-call vector
+/// (revm path). Mirrors the implicit gas the `eth_simulateV1` node grants a
+/// read-only `eth_call`-shaped entry; a balanceOf SLOAD + RETURN fits well
+/// under 100k gas.
+pub const BALANCE_CALL_GAS_LIMIT: u64 = 100_000;
+
 /// Execute the 7-call simulate vector in-process via revm, returning the same
 /// [`SimResult`] shape `degenbot-simulation::simulate_one` yields.
 ///
 /// Orchestration: int128 guard → encode (`encode_cmd_stream`,
 /// `degenbot-executor`) → `execute()` calldata wrap
-/// (`degenbot_simulation::payload::wrap_execute_calldata`) → apply state
-/// overrides ([`crate::state_override::apply_simulation_overrides`]) → revm
-/// `transact` per call → parse balance diffs → compute gross/net profit +
+/// ([`wrap_execute_calldata`]) → apply state overrides
+/// ([`apply_simulation_overrides`]) → revm `transact_one` per call (the
+/// journaled state accumulates across the 7 calls, so post-balance reads see
+/// the execute() changes) → parse balance diffs → compute gross/net profit +
 /// the market-aware priority fee ([`compute_priority_fee`]) → return
 /// [`SimResult`].
 ///
-/// Block-env parity: revm gives explicit `BlockEnv { number, timestamp,
-/// basefee, gas_limit, beneficiary }` — pinned to the same env the Python
-/// oracle used (`base_fee_next`, the pump's block timestamp/number).
+/// Block-env parity: revm gives explicit `BlockEnv { basefee, number, … }` —
+/// pinned to `ctx.base_fee_next` + `ctx.current_block` (the same env the
+/// Python oracle's `block_identifier="pending"` resolved to on the node).
 ///
-/// # Filled by task `JHGLF4`
+/// The `bot_state` borrow backs [`crate::bot_state_db::BotStateDb`] (option B):
+/// tracked pool slots served from engine state (0 RPC); untracked contracts +
+/// pool internal slots fall through to the `WrapDatabaseAsync<AlloyDB>`
+/// cold-miss fallback (RPC). The `provider` is the AlloyDB backing's RPC handle.
 ///
-/// The revm 7-call sequential execution (shared `CacheDB<BotStateDb<…>>`,
-/// `transact` per call, the journaled-state persists across calls) + the
-/// `ResultAndState` revert classification + the balance-diff decode land here.
-#[allow(clippy::missing_errors_doc)]
+/// # Errors
+///
+/// Returns `Ok(None)` for any non-profitable / reverted / failed outcome — the
+/// bucket is tallied before returning. Returns `Err` only on an unrecoverable
+/// RPC failure (`rpc-failed`) or a BlockEnv/DB construction failure.
 pub async fn simulate_in_process(
-    _ctx: &SimulateContext<'_>,
-    _path: SimulatePath,
-    _fail_buckets: &mut FailBuckets,
+    ctx: &SimulateContext<'_>,
+    bot_state: &degenbot_bot::bot_core::BotState,
+    path: SimulatePath,
+    fail_buckets: &mut FailBuckets,
 ) -> ProviderResult<Option<SimResult>> {
-    // TODO(JHGLF4): port simulate_one's 7-call orchestration into revm
-    // transact. Return the same SimResult fields the dispatch leaf reads.
-    todo!("JHGLF4: port simulate_one into in-process revm transact")
+    // Build the layered DB: CacheDB<BotStateDb<WrapDatabaseAsync<AlloyDB>>>
+    // (option B — the engine state IS the EVM's Database, AlloyDB cold-miss
+    // fallback for untracked contracts).
+    //
+    // TODO(JHGLF4-followup): the AlloyDB construction needs a concrete
+    // `P: Provider<Ethereum>` (an owned provider, not `Arc<dyn Provider>` —
+    // the trait is not object-safe to forward through `Arc<dyn>`). The
+    // `AlloyProvider` wrapper exposes `provider_arc() -> Arc<dyn Provider>`
+    // (used by the offline provider path), but `AlloyDB::new` takes `P: Provider`
+    // by value, so a direct hand-off hits an unsized-type error. The fix is to
+    // either (a) thread the concrete provider type through `SimulateContext`
+    // (replacing the `&AlloyProvider` erase), or (b) wrap the `Arc<dyn Provider>`
+    // in a small `Provider`-impl newtype. Defer to the dispatch-swap integration
+    // task (which wires `simulate_in_process` into the live pump) — the testable
+    // revm orchestration is `simulate_in_process_with_db` (smoke-tested below
+    // over `CacheDB<BotStateDb<EmptyDB>>`). Until then, return `rpc-failed` so
+    // the bucket tallies identically to `simulate_one`'s RPC-failure path.
+    let _ = (ctx.provider, bot_state);
+    fail_buckets.record(
+        path.path_id,
+        "rpc-failed",
+        None,
+        alloy::primitives::Bytes::new(),
+    );
+    Ok(None)
+}
+
+/// The testable in-process orchestration core: runs the 7-call vector over a
+/// PRE-BUILT `CacheDB` (overrides already applied by the caller) via revm
+/// `transact_one` (the journaled state accumulates across the 7 calls), then
+/// parses the balance diffs + computes the [`SimResult`].
+///
+/// Sync — no RPC, no tokio runtime needed (the `CacheDB`'s backing `Database`
+/// is whatever the caller supplied; `EmptyDB` for the smoke test,
+/// `BotStateDb<WrapDatabaseAsync<AlloyDB>>` for production via
+/// [`simulate_in_process`]). This split lets the revm orchestration be
+/// smoke-tested against `CacheDB<EmptyDB>` without a live RPC.
+///
+/// The caller owns the `cache_db` (by value); it is moved into the revm
+/// `Context::with_db` (revm owns the DB for the EVM's lifetime). Overrides
+/// must be applied BEFORE this call.
+///
+/// # Errors
+///
+/// Returns `Ok(None)` for non-profitable / reverted outcomes (bucket tallied).
+/// Returns `Err` only on an unrecoverable revm `transact` error (a DB
+/// cold-miss RPC failure — `rpc-failed`).
+/// # Panics
+///
+/// Panics if a `TxEnv::builder().build()` fails (cannot happen with the
+/// well-formed balance/execute calldata + addresses this fn constructs).
+#[allow(clippy::needless_pass_by_value)]
+#[allow(clippy::too_many_lines)]
+pub fn simulate_in_process_with_db<Db>(
+    ctx: &SimulateContext<'_>,
+    cache_db: CacheDB<Db>,
+    path: SimulatePath,
+    fail_buckets: &mut FailBuckets,
+) -> ProviderResult<Option<SimResult>>
+where
+    Db: revm::database_interface::DatabaseRef,
+    <Db as revm::database_interface::DatabaseRef>::Error: std::fmt::Display,
+{
+    // C3 — int128 check (mirrors simulate_one's guard).
+    if path.hop_outputs.len() != path.path_info.hops.len() {
+        return Ok(None);
+    }
+    for (i, hop) in path.path_info.hops.iter().enumerate() {
+        if let HopInfo::V4(_) = hop {
+            let amount_specified = if i == 0 {
+                path.optimal_input
+            } else {
+                path.hop_outputs[i - 1]
+            };
+            let output_amount = path.hop_outputs[i];
+            if !fits_int128(amount_specified) || !fits_int128(output_amount) {
+                fail_buckets.record(
+                    path.path_id,
+                    "int128-overflow",
+                    None,
+                    alloy::primitives::Bytes::new(),
+                );
+                return Ok(None);
+            }
+        }
+    }
+
+    // Encode the cmd_executor command stream (YQORTM).
+    let cmd_bytes = encode_cmd_stream(
+        &path.path_info,
+        path.optimal_input,
+        &path.hop_outputs,
+        ctx.executor_address,
+        ctx.pool_manager_address,
+        ctx.weth_address,
+        path.opts,
+    );
+    let Some(cmd_bytes) = cmd_bytes else {
+        fail_buckets.record(
+            path.path_id,
+            "encode-failed",
+            None,
+            alloy::primitives::Bytes::new(),
+        );
+        return Ok(None);
+    };
+
+    // execute(bytes, uint256) ABI wrap (config=0 — no on-chain profit check).
+    let execute_calldata = wrap_execute_calldata(ctx.executor_address, &cmd_bytes, EXECUTE_CONFIG)
+        .map_err(|e| ProviderError::RpcError {
+            code: -32603,
+            message: format!("execute() ABI encode failed: {e}"),
+        })?;
+
+    // Build the 7 calldata blobs (the balance reads + the execute call).
+    let weth_call =
+        encode_balance_of_calldata(ctx.executor_address).expect("valid address encodes");
+    let eth_call =
+        encode_get_eth_balance_calldata(ctx.executor_address).expect("valid address encodes");
+    let erc6909_call = encode_erc6909_balance_of_calldata(ctx.executor_address, ctx.weth_address)
+        .expect("valid address + weth encode");
+
+    // Build the EVM: CacheDB moved into the revm Context (revm owns it for the
+    // EVM's lifetime). Block env pinned to ctx.base_fee_next + current_block
+    // (the same env the Python oracle's `block_identifier="pending"` resolved to).
+    //
+    // `disable_nonce_check`: the 7 calls share ONE owner; `eth_simulateV1` does
+    // NOT bump the caller's nonce per call (each entry is an `eth_call`-shaped
+    // read, not a real tx), so revm's per-tx nonce floor would reject calls
+    // [1..6] (nonce 0 < account nonce 1 after call [0] commits). Disable the
+    // check — parity with the node's lenient simulate.
+    let mut revm_ctx = revm::context::Context::mainnet();
+    revm_ctx.cfg.disable_nonce_check = true;
+    let mut evm = revm_ctx.with_db(cache_db).build_mainnet();
+    evm.ctx.modify_block(|block| {
+        block.basefee = u64::try_from(ctx.base_fee_next).unwrap_or(u64::MAX);
+        block.number = U256::from(ctx.current_block);
+    });
+
+    // The 7 calls: 3 pre-balance reads, execute(), 3 post-balance reads. The
+    // journaled state ACCUMULATES across transact_one calls (revm 41 API:
+    // transact_one stores changes in the journal; finalize clears it), so the
+    // post reads see the execute() changes. A reverted execute rolls back ONLY
+    // its own changes (revm invariants) — the pre reads persist.
+    let txs = [
+        build_balance_tx(ctx, ctx.weth_address, &weth_call),
+        build_balance_tx(ctx, ctx.multicall3_address, &eth_call),
+        build_balance_tx(ctx, ctx.pool_manager_address, &erc6909_call),
+        build_execute_tx(ctx, &execute_calldata),
+        build_balance_tx(ctx, ctx.weth_address, &weth_call),
+        build_balance_tx(ctx, ctx.multicall3_address, &eth_call),
+        build_balance_tx(ctx, ctx.pool_manager_address, &erc6909_call),
+    ];
+
+    let mut results: Vec<ExecutionResult> = Vec::with_capacity(7);
+    let mut first_failure: Option<usize> = None;
+    for (idx, tx) in txs.into_iter().enumerate() {
+        let Ok(res) = evm.transact_one(tx) else {
+            // A revm transact error (DB cold-miss RPC failure, or an
+            // invalid tx). Treat as rpc-failed (the Python oracle swallows
+            // these into rpc-failed).
+            fail_buckets.record(
+                path.path_id,
+                "rpc-failed",
+                Some(idx),
+                alloy::primitives::Bytes::new(),
+            );
+            return Ok(None);
+        };
+        if !res.is_success() && first_failure.is_none() {
+            first_failure = Some(idx);
+        }
+        results.push(res);
+    }
+
+    // Finalize the journaled state (clears the journal). The state is available
+    // for access-list emission (task ED3Q7R — currently a no-op stub, so the
+    // access_list field stays None).
+    let _state = evm.finalize();
+
+    // Classify + tally the first revert if any call failed.
+    if let Some(fail_idx) = first_failure {
+        let revert_data = results[fail_idx]
+            .output()
+            .cloned()
+            .filter(|b| !b.is_empty())
+            .unwrap_or_default();
+        let bucket = degenbot_decoders::revert::classify_revert(&revert_data);
+        fail_buckets.record(path.path_id, &bucket, Some(fail_idx), revert_data);
+        return Ok(None);
+    }
+
+    // C2 — gross profit: decode the 7 return values (3 pre + 3 post balance
+    // diffs). execute() call [3] output is unused (its gas_used is read below).
+    let decode = |idx: usize| -> Option<U256> { Some(decode_balance(results[idx].output()?)) };
+    let Some(weth_before) = decode(0) else {
+        fail_buckets.record(
+            path.path_id,
+            "balance-decode",
+            Some(0),
+            alloy::primitives::Bytes::new(),
+        );
+        return Ok(None);
+    };
+    let Some(eth_before) = decode(1) else {
+        fail_buckets.record(
+            path.path_id,
+            "balance-decode",
+            Some(1),
+            alloy::primitives::Bytes::new(),
+        );
+        return Ok(None);
+    };
+    let Some(erc6909_before) = decode(2) else {
+        fail_buckets.record(
+            path.path_id,
+            "balance-decode",
+            Some(2),
+            alloy::primitives::Bytes::new(),
+        );
+        return Ok(None);
+    };
+    let Some(weth_after) = decode(4) else {
+        fail_buckets.record(
+            path.path_id,
+            "balance-decode",
+            Some(4),
+            alloy::primitives::Bytes::new(),
+        );
+        return Ok(None);
+    };
+    let Some(eth_after) = decode(5) else {
+        fail_buckets.record(
+            path.path_id,
+            "balance-decode",
+            Some(5),
+            alloy::primitives::Bytes::new(),
+        );
+        return Ok(None);
+    };
+    let Some(erc6909_after) = decode(6) else {
+        fail_buckets.record(
+            path.path_id,
+            "balance-decode",
+            Some(6),
+            alloy::primitives::Bytes::new(),
+        );
+        return Ok(None);
+    };
+
+    let combined_before = weth_before + eth_before + erc6909_before;
+    let combined_after = weth_after + eth_after + erc6909_after;
+    let gross_profit = combined_after.saturating_sub(combined_before);
+    if gross_profit.is_zero() {
+        fail_buckets.record(
+            path.path_id,
+            "no-profit",
+            None,
+            alloy::primitives::Bytes::new(),
+        );
+        return Ok(None);
+    }
+
+    // The execute() call's gas_used (revm per-call, no eth_simulateV1
+    // block-aggregation edge case).
+    let gas_used = results[3].gas().total_gas_spent();
+
+    // C4 — the market-aware age-decay priority fee.
+    let priority_fee = compute_priority_fee(
+        gross_profit,
+        gas_used,
+        ctx.base_fee_next,
+        path.solve_block,
+        ctx.current_block,
+        ctx.block_priority_fees.as_ref(),
+    );
+
+    // Net profit = gross - gas_used * (base_fee_next + priority_fee).
+    let gas_fee = U256::from(gas_used)
+        .saturating_mul(U256::from(ctx.base_fee_next.saturating_add(priority_fee)));
+    let net_profit = gross_profit.saturating_sub(gas_fee);
+
+    // ED3Q7R — emit the EIP-2930 access list the execute() call warmed. The
+    // 7-call profit-detection above used `transact_one` (journal accumulates
+    // across all 7 calls), so its `finalize()` state carries the cumulative
+    // touches (balance reads + execute). For the SUBMITTED execute() tx's
+    // access list we need execute()-only touched slots — so a separate
+    // `transact(execute_tx)` (fresh journal for this one tx) captures its
+    // `ResultAndState.state` + `emit_access_list_from_state` emits the list.
+    //
+    // The re-run executes on the post-7-call committed `CacheDB` state
+    // (execute's first run already committed). The touched SLOT SET is
+    // invariant to balance values (execute() warms the same pool slots
+    // regardless of the balance state — a revert still warms the slots it
+    // accessed before reverting), so the re-run's access list equals the
+    // first run's. No `eth_createAccessList` RPC.
+    let access_list = match evm.transact(build_execute_tx(ctx, &execute_calldata)) {
+        Ok(result_and_state) => Some(crate::access_list::emit_access_list_from_state(
+            &result_and_state.state,
+        )),
+        Err(_) => {
+            // The re-run failed (a DB cold-miss RPC failure on the committed
+            // state). Fall back to no access list — the submitted tx carries
+            // none (same as a simulate-one path whose eth_createAccessList
+            // swallowed + re-simulated without one).
+            None
+        }
+    };
+
+    Ok(Some(SimResult {
+        path_id: path.path_id,
+        gross_profit,
+        net_profit,
+        gas_used,
+        priority_fee,
+        base_fee_next: ctx.base_fee_next,
+        execute_calldata,
+        access_list,
+        hop_count: path.hop_count(),
+    }))
+}
+
+/// Build a read-only balance-call `TxEnv` (caller = owner, target = `to`, gas =
+/// [`BALANCE_CALL_GAS_LIMIT`]). `gas_price` is set to `ctx.base_fee_next` so the
+/// top-level tx clears revm's `max_fee_per_gas >= basefee` check (the simulate
+/// oracle's `max_fee_per_gas=0` was accepted by the node's lenient
+/// `eth_simulateV1`; revm enforces the fee floor).
+fn build_balance_tx(
+    ctx: &SimulateContext<'_>,
+    to: Address,
+    data: &alloy::primitives::Bytes,
+) -> TxEnv {
+    TxEnv::builder()
+        .caller(ctx.executor_owner)
+        .kind(TxKind::Call(to))
+        .data(alloy::primitives::Bytes::copy_from_slice(data))
+        .value(U256::ZERO)
+        .gas_limit(BALANCE_CALL_GAS_LIMIT)
+        .gas_price(ctx.base_fee_next.max(1))
+        .build()
+        .expect("valid balance-call TxEnv")
+}
+
+/// Build the `execute(bytes, uint256)` `TxEnv` (caller = owner, target =
+/// executor, gas = [`INITIAL_EXECUTE_GAS`]).
+fn build_execute_tx(ctx: &SimulateContext<'_>, data: &alloy::primitives::Bytes) -> TxEnv {
+    TxEnv::builder()
+        .caller(ctx.executor_owner)
+        .kind(TxKind::Call(ctx.executor_address))
+        .data(alloy::primitives::Bytes::copy_from_slice(data))
+        .value(U256::ZERO)
+        .gas_limit(INITIAL_EXECUTE_GAS)
+        .gas_price(ctx.base_fee_next.max(1))
+        .build()
+        .expect("valid execute TxEnv")
+}
+
+/// Decode a 32-byte big-endian uint256 from a revm call's return output.
+/// Mirrors `simulate_one`'s `decode_balance`: empty → `0`;
+/// 32 bytes → big-endian uint256; >32 → last 32 bytes (uint256 ABI right-align);
+/// 1..31 → left-padded.
+fn decode_balance(data: &alloy::primitives::Bytes) -> U256 {
+    match data.len() {
+        0 => U256::ZERO,
+        32 => U256::from_be_slice(data),
+        n if n > 32 => {
+            let tail = &data[n - 32..];
+            U256::from_be_slice(tail)
+        }
+        n => {
+            let mut buf = [0u8; 32];
+            buf[32 - n..].copy_from_slice(data);
+            U256::from_be_slice(&buf)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -639,5 +1036,147 @@ mod tests {
             compute_priority_fee(U256::from(1_000_000u128), 100, 0, 100, 100, None),
             8000
         );
+    }
+
+    // ── simulate_in_process_with_db: the in-process smoke test ───────────
+
+    use alloy::primitives::{address, Bytes};
+    use alloy::providers::{Provider, ProviderBuilder};
+    use alloy::rpc::client::ClientBuilder;
+    use alloy::transports::mock::{Asserter, MockTransport};
+    use degenbot_executor::composers::{EncodeOptions, HopInfo, PathInfo, V2HopInfo};
+    use degenbot_executor::{compute_simulation_warmup_slots, WarmupSlots};
+    use degenbot_rpc::provider::AlloyProvider;
+    use revm::database::CacheDB;
+    use revm::database_interface::EmptyDB;
+    use std::sync::Arc;
+
+    const SMOKE_OWNER: Address = address!("9c56a29c7231974c269e24f9fb3c29203039089e");
+    const SMOKE_EXECUTOR: Address = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    const SMOKE_WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+    const SMOKE_PM: Address = address!("000000000004444c5dc75cb358380d2e3de08a90");
+    const SMOKE_MULTICALL3: Address = address!("c411372f0b8ae58585e33b78aea9e0596da9a6f1");
+
+    fn smoke_provider(asserter: &Asserter) -> AlloyProvider {
+        let client = ClientBuilder::default().transport(MockTransport::new(asserter.clone()), true);
+        let dyn_provider = ProviderBuilder::new().connect_client(client).erased();
+        AlloyProvider::from_provider(
+            Arc::new(dyn_provider) as Arc<dyn alloy::providers::Provider<alloy::network::Ethereum>>
+        )
+    }
+
+    fn smoke_warmup() -> WarmupSlots {
+        compute_simulation_warmup_slots(SMOKE_EXECUTOR, SMOKE_WETH, SMOKE_PM)
+    }
+
+    fn smoke_ctx(provider: &AlloyProvider) -> SimulateContext<'_> {
+        SimulateContext {
+            provider,
+            executor_owner: SMOKE_OWNER,
+            executor_address: SMOKE_EXECUTOR,
+            weth_address: SMOKE_WETH,
+            pool_manager_address: SMOKE_PM,
+            multicall3_address: SMOKE_MULTICALL3,
+            inject_code: true,
+            injected_address: Some(SMOKE_EXECUTOR),
+            runtime_bytecode: Bytes::from_static(&[0xfe]), // INVALID — execute() reverts
+            warmup: smoke_warmup(),
+            base_fee_next: 1_000_000_000u128,
+            current_block: 100,
+            block_priority_fees: Some(BlockPriorityFees {
+                block: 100,
+                p10: U256::from(500_000_000u64),
+                p50: U256::from(2_000_000_000u64),
+            }),
+        }
+    }
+
+    fn smoke_v2_path(path_id: u64) -> SimulatePath {
+        SimulatePath {
+            path_id,
+            optimal_input: 1_000_000_000_000_000_000u128,
+            hop_outputs: vec![1_100_000_000_000_000_000u128, 1_210_000_000_000_000_000u128],
+            path_info: PathInfo::new(vec![
+                HopInfo::V2(V2HopInfo {
+                    pool_address: address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+                    token0_address: SMOKE_WETH,
+                    token1_address: address!("1111111111111111111111111111111111111111"),
+                    fee: 30,
+                    zfo: true,
+                }),
+                HopInfo::V2(V2HopInfo {
+                    pool_address: address!("cccccccccccccccccccccccccccccccccccccccc"),
+                    token0_address: address!("1111111111111111111111111111111111111111"),
+                    token1_address: SMOKE_WETH,
+                    fee: 30,
+                    zfo: true,
+                }),
+            ]),
+            solve_block: 100,
+            opts: EncodeOptions {
+                erc6909_profit: false,
+                use_v4_batch: false,
+            },
+        }
+    }
+
+    /// The smoke test: `simulate_in_process_with_db` over `CacheDB<EmptyDB>`
+    /// (no RPC, no `BotState` tracked pools) with the executor injected as a
+    /// `0xfe` INVALID contract → the execute() call [3] reverts → the
+    /// `first_failure` is [3] + the revert bucket tallies. Proves the full
+    /// revm 7-call orchestration runs end-to-end (CacheDB built, overrides
+    /// applied, EVM built, block env set, 7 transact_one calls executed,
+    /// journal accumulated + finalized, revert classified + tallied).
+    #[test]
+    fn simulate_in_process_with_db_revert_path_smoke() {
+        let asserter = Asserter::new();
+        let provider = smoke_provider(&asserter);
+        let ctx = smoke_ctx(&provider);
+        let mut cache_db: CacheDB<EmptyDB> = CacheDB::new(EmptyDB::default());
+        crate::state_override::apply_simulation_overrides(&mut cache_db, &ctx.override_params())
+            .expect("overrides apply over EmptyDB");
+        let mut buckets = FailBuckets::new();
+
+        let result =
+            simulate_in_process_with_db(&ctx, cache_db, smoke_v2_path(7), &mut buckets).unwrap();
+        assert!(result.is_none(), "reverting execute returns None");
+        // The execute() call [3] reverted (0xfe INVALID Halt). A Halt has no
+        // output → classify_revert on empty bytes → the "empty" bucket.
+        assert_eq!(buckets.get("empty"), 1, "revert bucket tallied");
+        let failures = buckets.failures();
+        assert_eq!(failures.len(), 1, "one per-path failure recorded");
+        assert_eq!(failures[0].path_id, 7);
+        assert_eq!(
+            failures[0].fail_index,
+            Some(3),
+            "the execute() call [3] failed"
+        );
+    }
+
+    /// The no-profit smoke: executor injected as EMPTY bytecode (no-op) → all 7
+    /// calls succeed (balance calls to no-code accounts return empty → 0) →
+    /// pre==post → gross 0 → `no-profit` bucket. Proves the success-path
+    /// orchestration (7 transact_one, journal finalize, balance decode,
+    /// profit arithmetic, tally) runs end-to-end.
+    #[test]
+    fn simulate_in_process_with_db_no_profit_path_smoke() {
+        let asserter = Asserter::new();
+        let provider = smoke_provider(&asserter);
+        let mut ctx = smoke_ctx(&provider);
+        ctx.runtime_bytecode = Bytes::new(); // empty bytecode — execute() is a no-op
+        let mut cache_db: CacheDB<EmptyDB> = CacheDB::new(EmptyDB::default());
+        crate::state_override::apply_simulation_overrides(&mut cache_db, &ctx.override_params())
+            .expect("overrides apply over EmptyDB");
+        let mut buckets = FailBuckets::new();
+
+        let result =
+            simulate_in_process_with_db(&ctx, cache_db, smoke_v2_path(11), &mut buckets).unwrap();
+        assert!(result.is_none(), "no-profit returns None");
+        assert_eq!(buckets.get("no-profit"), 1, "no-profit bucket tallied");
+        let failures = buckets.failures();
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].path_id, 11);
+        assert_eq!(failures[0].bucket, "no-profit");
+        assert!(failures[0].fail_index.is_none(), "no call reverted");
     }
 }

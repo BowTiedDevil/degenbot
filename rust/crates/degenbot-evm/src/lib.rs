@@ -72,6 +72,12 @@ pub mod bot_state_db;
 /// transient-storage capability is verified).
 pub mod v4_transient;
 
+/// 7-call vector calldata builders (WETH9 `balanceOf`, Multicall3
+/// `getEthBalance`, PoolManager ERC6909 `balanceOf`, `wrap_execute_calldata`).
+/// Shared with `degenbot-simulation` (re-exported) so the in-process revm path
+/// builds the 7-call vector without a cycle.
+pub mod calldata;
+
 /// EIP-2930 access-list emission from the revm `State` journal — retires
 /// `eth_createAccessList`. Reads the touched address + slot set from
 /// `transact`'s `ResultAndState.state`.

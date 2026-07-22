@@ -59,8 +59,11 @@ use alloy::rpc::types::eth::state::{AccountOverride, StateOverride};
 use degenbot_executor::WarmupSlots;
 
 /// Balance-call calldata builders (B1): WETH9 `balanceOf`, Multicall3
-/// `getEthBalance`, PoolManager ERC6909 `balanceOf`.
-pub mod calldata;
+/// `getEthBalance`, PoolManager ERC6909 `balanceOf`, + `wrap_execute_calldata`.
+/// Moved to `degenbot-evm` (shared with `simulate_in_process`); re-exported
+/// here so existing `use degenbot_simulation::calldata::...` call sites stay
+/// unchanged.
+pub use degenbot_evm::calldata;
 
 /// The `eth_simulateV1` `SimulatePayload` 7-call builder (B2).
 pub mod payload;

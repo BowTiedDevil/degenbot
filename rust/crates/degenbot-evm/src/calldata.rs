@@ -1,25 +1,24 @@
-//! Balance-call calldata builders for the `eth_simulateV1` 7-call vector (B1).
+//! 7-call vector calldata builders (moved from degenbot-simulation; shared with
+//! `simulate_in_process`).
 //!
-//! Ports `examples/eth_backrun_v2_v3_v4_rust.py::encode_balanceof_calldata`
-//! (L370–L386) + the `getEthBalance` / ERC6909 `balanceOf` calldata assembly
-//! (L1713–L1742). These are the three pre/post balance reads that bracket the
-//! `execute()` call — they let the simulate orchestration detect profit by
-//! diffing balances (physical ERC-20 WETH transfer, Multicall3 ETH balance,
-//! and V4 `V4_MINT_COMPACT` ERC6909 balance).
+//! The three pre/post balance-read calldata blobs that bracket the `execute()`
+//! call in the 7-call simulate vector: WETH9/ERC20 `balanceOf(address)`,
+//! Multicall3 `getEthBalance(address)`, and PoolManager ERC6909
+//! `balanceOf(address,uint256)`. Plus the `execute(bytes,uint256)` calldata
+//! wrap (a thin delegation to `degenbot_executor::encode_execute_call`).
 //!
-//! All selectors are `keccak256(signature)[:4]` (the Solidity function selector
-//! spec); values are ABI-encoded via `degenbot_abi::abi_encoder::encode_rust`
-//! (the pure-Rust encoder — no `eth_abi` Python dependency).
+//! These live in `degenbot-evm` (not `degenbot-simulation`) so the in-process
+//! revm path (`simulate_in_process`) can build the 7-call vector without
+//! depending on `degenbot-simulation` (a cycle — `degenbot-simulation` depends
+//! on `degenbot-evm` for the shared primitives). `degenbot-simulation`
+//! re-exports them (`pub use degenbot_evm::calldata`) so existing call sites
+//! stay unchanged.
 //!
-//! # Parity (§4.2)
-//!
-//! Each builder is byte-for-byte parity vs the Python oracle's
-//! `selector + eth_abi.abi.encode(...)` output. The selector hexes are pinned
-//! `const` (captured from `Web3.keccak(text=...)[:4]`); the encoded tails are
-//! asserted against the same in the golden tests.
+//! All selectors are `keccak256(signature)[:4]`; values are ABI-encoded via
+//! `degenbot_abi::abi_encoder::encode_rust` (the pure-Rust encoder). Each
+//! builder is byte-for-byte parity vs the Python oracle's
+//! `selector + eth_abi.abi.encode(...)` output (golden tests pin the bytes).
 
-// Solidity/RPC identifiers (balanceOf, getEthBalance, ERC6909, Multicall3,
-// …) are ubiquitous in this module's docs.
 #![allow(clippy::doc_markdown)]
 
 use alloy::primitives::{Address, Bytes};
@@ -102,6 +101,26 @@ fn encode_single_address(selector: [u8; 4], account: Address) -> Result<Bytes, A
     data.extend_from_slice(&selector);
     data.extend_from_slice(&tail);
     Ok(Bytes::from(data))
+}
+
+/// Wrap the `execute(bytes, uint256)` call from its parts (the backrun call).
+///
+/// Delegates to `degenbot_executor::composers::encode_execute_call` (the
+/// §YQORTM leaf) — the selector + the `(bytes, uint256)` ABI encoding live
+/// there. Moved here from `degenbot-simulation::payload` so the in-process
+/// revm path can build the execute calldata without a cycle.
+///
+/// # Errors
+///
+/// Returns [`AbiDecodeError`] if the `(bytes, uint256)` encoding fails.
+pub fn wrap_execute_calldata(
+    executor_address: Address,
+    cmd_bytes: &[u8],
+    config: alloy::primitives::U256,
+) -> Result<Bytes, AbiDecodeError> {
+    let encoded =
+        degenbot_executor::composers::encode_execute_call(executor_address, cmd_bytes, config)?;
+    Ok(Bytes::from(encoded.data))
 }
 
 #[cfg(test)]

@@ -33,12 +33,12 @@ use alloy::primitives::{Address, Bytes, U256};
 use alloy::rpc::types::eth::simulate::{SimBlock, SimulatePayload};
 use alloy::rpc::types::eth::state::StateOverride;
 use alloy::rpc::types::TransactionRequest;
-use degenbot_core::errors::AbiDecodeError;
-use degenbot_executor::composers::encode_execute_call;
-
-use crate::calldata::{
+use degenbot_evm::calldata::{
     encode_balance_of_calldata, encode_erc6909_balance_of_calldata, encode_get_eth_balance_calldata,
 };
+// `wrap_execute_calldata` moved to `degenbot-evm::calldata`; re-export here so
+// `simulate_one`'s `use crate::payload::wrap_execute_calldata` stays unchanged.
+pub use degenbot_evm::calldata::wrap_execute_calldata;
 
 /// The number of calls in the standard simulation vector (3 pre + 1 execute + 3 post).
 pub const SIM_CALL_COUNT: usize = 7;
@@ -190,24 +190,6 @@ fn execute_call(params: &SimulationParams) -> TransactionRequest {
         access_list: params.access_list.clone(),
         ..Default::default()
     }
-}
-
-/// Convenience: ABI-wrap the `execute(bytes, uint256)` call from its parts.
-///
-/// Delegates to `degenbot_executor::composers::encode_execute_call` (the
-/// §YQORTM leaf) — the selector + the `(bytes, uint256)` ABI encoding live
-/// there.
-///
-/// # Errors
-///
-/// Returns [`AbiDecodeError`] if the `(bytes, uint256)` encoding fails.
-pub fn wrap_execute_calldata(
-    executor_address: Address,
-    cmd_bytes: &[u8],
-    config: U256,
-) -> Result<Bytes, AbiDecodeError> {
-    let encoded = encode_execute_call(executor_address, cmd_bytes, config)?;
-    Ok(Bytes::from(encoded.data))
 }
 
 #[cfg(test)]
