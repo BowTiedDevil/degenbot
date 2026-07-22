@@ -47,9 +47,9 @@ use degenbot_executor::composers::{encode_cmd_stream, HopInfo};
 // The shared sim primitives — `SimResult`, `FailBuckets`, `compute_priority_fee`,
 // `fits_int128`, `SimulateContext`, `SimulatePath`, `BlockPriorityFees`, the
 // priority-fee/gas constants — live in `degenbot-evm` (the in-process engine's
-// home, shared with `degenbot-evm::simulate_in_process`); re-exported from this
+// home, shared with `degenbot-evm::BlockSimHandle`); re-exported from this
 // crate's root. Source them there so a single call-site swap
-// (`dispatch::simulate_v1` -> `degenbot-evm::simulate_in_process`) needs no
+// (`dispatch::simulate_v1` -> `degenbot-evm::BlockSimHandle`) needs no
 // type translation. The test-only imports (`Address`, `EncodeOptions`,
 // `PathInfo`, `WarmupSlots`, `AlloyProvider`, `BlockPriorityFees`,
 // `INT128_MAX`) move into the `#[cfg(test)]` module so the lib build doesn't

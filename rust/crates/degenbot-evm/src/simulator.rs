@@ -2,18 +2,20 @@
 //!
 //! Owns the SHARED sim types + pure functions BOTH consumers of the Rust core
 //! reach: `simulate_one` (the `eth_simulateV1` path in `degenbot-simulation`)
-//! and `simulate_in_process` (the in-process revm path, this crate). The two
+//! and `simulate_path_on_evm` (the in-process revm path, this crate — driven
+//! per-block by `BlockSimHandle`). The two
 //! are dual drivers over one engine — they share `SimResult`, `FailBuckets`,
 //! `compute_priority_fee`, `fits_int128`, `SimulateContext`, `SimulatePath`,
 //! `BlockPriorityFees` + the priority-fee constants so the dispatch leaf can
-//! swap `dispatch::simulate_v1` for `simulate_in_process` behind a single
-//! call-site change with no type translation.
+//! swap `dispatch::simulate_v1` for the in-process revm path
+//! (`BlockSimHandle::simulate_path`) behind a single call-site change with no
+//! type translation.
 //!
 //! `degenbot-simulation` re-exports these (`pub use degenbot_evm::{...}`) so
 //! existing `use degenbot_simulation::SimResult` call sites + the PyO3
 //! wrappers stay unchanged.
 //!
-//! # `simulate_in_process` (task `JHGLF4`)
+//! # In-process revm sim (task `JHGLF4`, Tier 1 `V5HCR5`)
 //!
 //! Executes the 7-call vector (pre-balances → `execute()` → post-balances) via
 //! revm `transact`, returning the same `SimResult` shape `simulate_one` yields.
@@ -33,6 +35,7 @@ use alloy::network::Ethereum;
 use alloy::primitives::{Address, U256};
 use alloy::providers::{Provider, RootProvider};
 use alloy::rpc::types::AccessList;
+use degenbot_bot::bot_core::BotState;
 use degenbot_core::errors::{ProviderError, ProviderResult};
 use degenbot_executor::composers::{encode_cmd_stream, EncodeOptions, HopInfo, PathInfo};
 use degenbot_executor::WarmupSlots;
@@ -398,7 +401,7 @@ fn u256_to_f64_lossy(v: U256) -> f64 {
 // The orchestration inputs (moved from degenbot-simulation::simulate_one)
 // ─────────────────────────────────────────────────────────────────────────
 
-/// Inputs to [`simulate_in_process`] / `simulate_one` that don't vary per-path.///
+/// Inputs to [`BlockSimHandle`] / `simulate_one` that don't vary per-path.///
 /// Ports the closure-captured state in the Python `simulate_one`: the
 /// executor/weth/pm/multicall addresses, the funding flags, the warmup slots,
 /// the dispatcher's `block_priority_fees` + the block context.
@@ -466,7 +469,7 @@ impl SimulateContext<'_> {
     }
 }
 
-/// Per-path inputs to [`simulate_in_process`] / `simulate_one`.
+/// Per-path inputs to [`BlockSimHandle`] / `simulate_one`.
 #[derive(Debug, Clone)]
 pub struct SimulatePath {
     /// The path id.
@@ -532,98 +535,164 @@ impl Provider<Ethereum> for ArcDynProviderEthereum {
     }
 }
 
-/// Execute the 7-call simulate vector in-process via revm, returning the same
-/// [`SimResult`] shape `degenbot-simulation::simulate_one` yields.
+// ─────────────────────────────────────────────────────────────────────────
+// The per-block shared-EVM handle (Tier 1, task V5HCR5)
+// ─────────────────────────────────────────────────────────────────────────
+// Retires the per-path `simulate_in_process` (which rebuilt the full
+// `CacheDB`+EVM stack per call). The per-block handle is built ONCE in
+// `dispatch_profitable_results` and shared (as `&mut`) across the serial
+// fan-out. The measured shape: the trigger path pays the cold RPCs, the
+// fan-out hits the warmed `CacheDB` at ~1 µs p50 (~50× faster than the
+// per-path fresh-`CacheDB` config A — benchmark `examples/rpc_cache_fanout.rs`).
+//
+// Correctness — why a shared `CacheDB` does NOT leak execute() SSTOREs across
+// paths: revm 41 splits journalling into `transact_one` (accumulate to the
+// journal) → `finalize` (return the `State` + CLEAR the journal; does NOT
+// commit to the DB) → `commit` (write a `State` to the DB).
+// `simulate_path_on_evm` calls `transact_one` + `finalize` only — it NEVER
+// calls `commit`. So execute()'s SSTOREs live in the per-path `State` returned
+// by `finalize` (then discarded via `let _state = evm.finalize()`), NOT in the
+// shared `CacheDB`. The `CacheDB` accumulates only READ caches (account info,
+// bytecode, storage slots read during balanceOf/execute), which is exactly the
+// latency win + never a stale-write hazard. (revm-handler-41/src/api.rs:44-110
+// is the source of truth on this split.)
+
+/// The production DB stack backing a per-block [`BlockEvm`] —
+/// `CacheDB<BotStateDb<WrapDatabaseAsync<AlloyDB<Ethereum, ArcDynProviderEthereum>>>>`.
+/// The `AlloyDB` cold-miss fallback (RPC) sits under the `BotStateDb` typed-
+/// state seam (option B — today a forwarder; see [`crate::bot_state_db`]).
+type ProductionBlockDb<'a> = CacheDB<
+    crate::BotStateDb<
+        'a,
+        WrapDatabaseAsync<revm::database::AlloyDB<Ethereum, ArcDynProviderEthereum>>,
+    >,
+>;
+
+/// The concrete per-block EVM type held by [`BlockSimHandle`] — revm's
+/// [`revm::MainnetEvm`] over the production [`ProductionBlockDb`] stack.
+/// Spelled out as a type alias so [`BlockSimHandle`] can name the `evm` field
+/// the [`BlockSimHandle::build`] builder returns (the field is private — the
+/// type never crosses the crate boundary).
+type BlockEvm<'a> = revm::MainnetEvm<revm::handler::MainnetContext<ProductionBlockDb<'a>>>;
+
+/// Owns a per-block shared EVM (one `CacheDB` + revm `Context`, state overrides
+/// applied once) for the in-process sim fan-out (Tier 1, `V5HCR5`).
 ///
-/// Orchestration: int128 guard → encode (`encode_cmd_stream`,
-/// `degenbot-executor`) → `execute()` calldata wrap
-/// ([`wrap_execute_calldata`]) → apply state overrides
-/// ([`apply_simulation_overrides`]) → revm `transact_one` per call (the
-/// journaled state accumulates across the 7 calls, so post-balance reads see
-/// the execute() changes) → parse balance diffs → compute gross/net profit +
-/// the market-aware priority fee ([`compute_priority_fee`]) → return
-/// [`SimResult`].
+/// Built ONCE per block by [`BlockSimHandle::build`] in
+/// `dispatch_profitable_results`, then each candidate path is simulated
+/// SERIALLY via [`BlockSimHandle::simulate_path`] — which delegates to
+/// [`simulate_path_on_evm`] over the shared `&mut self.evm`. Per-path isolation
+/// is revm's `finalize()` (clears the journal between paths — execute()'s
+/// SSTOREs live in the per-path `State` returned by `finalize`, never
+/// committed to the shared `CacheDB`; see the module-level note above). The
+/// `CacheDB` + EVM drop naturally at end of block — no cross-block caching in
+/// Tier 1, so memory is bounded by one block's working set.
 ///
-/// Block-env parity: revm gives explicit `BlockEnv { basefee, number, … }` —
-/// pinned to `ctx.base_fee_next` + `ctx.current_block` (the same env the
-/// Python oracle's `block_identifier="pending"` resolved to on the node).
+/// Serial (not `buffer_unordered`) because a shared `&mut evm` can't be held
+/// across `'static`+`Send` futures. The benchmark's config B (serial-warm,
+/// ~1 µs p50) beats config A (parallel-cold, ~590 µs p50) by ~60× — losing
+/// concurrency is a NET WIN because the per-path RPC cold-miss dwarfs the
+/// per-path EVM execution.
 ///
-/// The `bot_state` borrow backs [`crate::bot_state_db::BotStateDb`] (the
-/// option B seam): today the wrapper forwards every read to the
-/// `WrapDatabaseAsync<AlloyDB>` cold-miss fallback (RPC); typed-state serving
-/// is not wired (see [`crate::bot_state_db`] for the historical note). The
-/// `provider` is the AlloyDB backing's RPC handle.
-///
-/// # Errors
-///
-/// Returns `Ok(None)` for any non-profitable / reverted / failed outcome — the
-/// bucket is tallied before returning. Returns `Err` only on an unrecoverable
-/// RPC failure (`rpc-failed`) or a BlockEnv/DB construction failure.
-pub fn simulate_in_process(
-    ctx: &SimulateContext<'_>,
-    bot_state: &degenbot_bot::bot_core::BotState,
-    path: SimulatePath,
-    fail_buckets: &mut FailBuckets,
-) -> ProviderResult<Option<SimResult>> {
-    // Build the layered DB (option B — the engine state IS the EVM's Database,
-    // AlloyDB cold-miss fallback for untracked contracts):
-    //   CacheDB<BotStateDb<WrapDatabaseAsync<AlloyDB<Ethereum, ArcDynProviderEthereum>>>>
-    //
-    // `AlloyDB::new` requires `P: Provider<Ethereum>` by value. Alloy's
-    // `Provider` trait carries `#[auto_impl::auto_impl(&, &mut, Rc, Arc, Box)]`,
-    // but the generated impl is `impl<T: Provider + Sized> Provider for Arc<T>`
-    // — it does NOT cover `?Sized` trait objects, so `Arc<dyn Provider>`
-    // itself does not satisfy `P: Provider` (the fork in the original task
-    // body is real). [`ArcDynProviderEthereum`] bridges the gap: it stores the
-    // `Arc<dyn Provider>` and impls `Provider` by delegating `root()` (the one
-    // non-default method; every other `Provider` method has a default impl
-    // routed through `root()`).
-    let alloy_db = revm::database::AlloyDB::new(
-        ArcDynProviderEthereum(ctx.provider.provider_arc()),
-        BlockId::Number(ctx.current_block.into()),
-    );
-    // `WrapDatabaseAsync::new` blocks on the ambient tokio runtime; it returns
-    // `None` if there is no runtime or the runtime is `CurrentThread`. The pump
-    // drives `simulate_in_process` through `pyo3_async_runtimes`, whose default
-    // is `Builder::new_multi_thread()` — so this `None` path is unreachable in
-    // production. A `None` here means the dispatch host lost its runtime; tally
-    // `rpc-failed` identically to `simulate_one`'s RPC-failure path.
-    let Some(wrap_db) = WrapDatabaseAsync::new(alloy_db) else {
-        fail_buckets.record(
-            path.path_id,
-            "rpc-failed",
-            None,
-            alloy::primitives::Bytes::new(),
+/// Replaces the retired per-path `simulate_in_process` (which rebuilt the full
+/// `CacheDB`+EVM stack per call). The state overrides — owner ETH funding,
+/// executor code injection, warmup slots, WETH balance — are all per-block-
+/// invariant (derived from [`SimulateContext`], not `path`), so applying them
+/// once at [`BlockSimHandle::build`] is semantically identical to applying
+/// them per-path.
+pub struct BlockSimHandle<'a> {
+    /// The shared revm EVM. `&mut`-borrowed per path by `simulate_path`; never
+    /// aliased — the fan-out is serial.
+    evm: BlockEvm<'a>,
+}
+
+impl<'a> BlockSimHandle<'a> {
+    /// Build the per-block shared EVM: the layered DB (`AlloyDB` →
+    /// `WrapDatabaseAsync` → `BotStateDb` → `CacheDB`), the state overrides
+    /// applied ONCE (every override is per-block-invariant — derived from
+    /// [`SimulateContext`], not `path`), and the revm `Context` pinned to the
+    /// block env. Returns `None` on a build failure (no ambient multi-threaded
+    /// runtime for `WrapDatabaseAsync`, or an override-application error); the
+    /// caller tallies `rpc-failed` for every candidate in that case.
+    ///
+    /// `WrapDatabaseAsync::new` returns `None` if there is no runtime or the
+    /// runtime is `CurrentThread`. The pump drives the dispatch through
+    /// `pyo3_async_runtimes` (`Builder::new_multi_thread()`), so the `None`
+    /// path is unreachable in production — `None` means the dispatch host lost
+    /// its runtime.
+    #[must_use]
+    pub fn build(ctx: &SimulateContext<'_>, bot_state: &'a BotState) -> Option<Self> {
+        // `AlloyDB::new` requires `P: Provider<Ethereum>` by value; the
+        // type-erased `Arc<dyn Provider>` from `provider_arc()` does NOT satisfy
+        // it (Alloy's auto-impl covers `Arc<T: Provider + Sized>`, not
+        // `?Sized` trait objects). [`ArcDynProviderEthereum`] bridges the gap.
+        let alloy_db = revm::database::AlloyDB::new(
+            ArcDynProviderEthereum(ctx.provider.provider_arc()),
+            BlockId::Number(ctx.current_block.into()),
         );
-        return Ok(None);
-    };
-    let bot_state_db = crate::BotStateDb::new(bot_state, wrap_db);
-    let mut cache_db = CacheDB::new(bot_state_db);
-    // Apply the state-override adaptor (owner funding, executor code injection,
-    // warmup slots) over the layered DB — the same `apply_simulation_overrides`
-    // the `simulate_one` path's `eth_simulateV1` `stateOverrides` carries.
-    if let Err(err) =
-        crate::state_override::apply_simulation_overrides(&mut cache_db, &ctx.override_params())
-    {
-        // The override adaptor only fails on an override-application error
-        // (e.g. a warmup-slot write to an account the DB refused). Tally as
-        // `rpc-failed` to keep the bucket shape identical to `simulate_one`'s
-        // construction-failure path; the override-params are operator config,
-        // so a failure here is a wiring error, not a per-path revert.
-        fail_buckets.record(
-            path.path_id,
-            "rpc-failed",
-            None,
-            alloy::primitives::Bytes::new(),
-        );
-        log::warn!(
-            "simulate_in_process: state-override application failed for path {}: {}",
-            path.path_id,
-            err
-        );
-        return Ok(None);
+        let Some(wrap_db) = WrapDatabaseAsync::new(alloy_db) else {
+            log::warn!(
+                "BlockSimHandle: no ambient multi-threaded tokio runtime — \
+                 WrapDatabaseAsync unavailable; block sim disabled"
+            );
+            return None;
+        };
+        let bot_state_db = crate::BotStateDb::new(bot_state, wrap_db);
+        let mut cache_db = CacheDB::new(bot_state_db);
+        // Apply the state-override adaptor (owner funding, executor code
+        // injection, warmup slots) over the layered DB — the same overrides
+        // `simulate_one`'s `eth_simulateV1` `stateOverrides` carries.
+        if let Err(err) =
+            crate::state_override::apply_simulation_overrides(&mut cache_db, &ctx.override_params())
+        {
+            // The override adaptor only fails on an override-application
+            // error (e.g. a warmup-slot write to an account the DB refused).
+            // The override-params are operator config, so a failure here is a
+            // wiring error, not a per-path revert — tally `rpc-failed` for
+            // every candidate (the whole block's sim is dead).
+            log::warn!("BlockSimHandle: state-override application failed: {err}");
+            return None;
+        }
+        let mut revm_ctx = revm::context::Context::mainnet();
+        // `disable_nonce_check`: the 7 calls share ONE owner; `eth_simulateV1`
+        // does NOT bump the caller's nonce per call (each entry is an
+        // `eth_call`-shaped read), so revm's per-tx nonce floor would reject
+        // calls [1..6]. Disable it — parity with the node's lenient simulate.
+        revm_ctx.cfg.disable_nonce_check = true;
+        let mut evm = revm_ctx.with_db(cache_db).build_mainnet();
+        evm.ctx.modify_block(|block| {
+            block.basefee = u64::try_from(ctx.base_fee_next).unwrap_or(u64::MAX);
+            block.number = U256::from(ctx.current_block);
+            // The block timestamp, threaded from the pump's block header via
+            // `SimulateContext::block_timestamp`. The default `timestamp = 1`
+            // causes V2 pair `_update` to overflow `price0CumulativeLast` in
+            // Solidity 0.8+ forks (Camelot/Aerodrome), reverting every swap —
+            // the root cause of the `--sim=evm` parity gap (XPPMQG).
+            block.timestamp = U256::from(ctx.block_timestamp);
+        });
+        Some(Self { evm })
     }
-    simulate_in_process_with_db(ctx, cache_db, path, fail_buckets)
+
+    /// Run one path's 7-call vector on the shared `&mut self.evm`. Delegates to
+    /// [`simulate_path_on_evm`]; the journal clears between paths via the
+    /// `finalize()` calls inside `simulate_path_on_evm` (the post-loop
+    /// `finalize` on the happy/abort paths + `transact()`'s built-in
+    /// `finalize` for the access-list re-run). Per-path overrides are NOT
+    /// applied here — they were applied once at [`build`](Self::build).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Ok(None)` for non-profitable / reverted outcomes (bucket
+    /// tallied). Returns `Err` only on an unrecoverable revm `transact` error
+    /// (a DB cold-miss RPC failure — `rpc-failed`).
+    pub fn simulate_path(
+        &mut self,
+        ctx: &SimulateContext<'_>,
+        path: SimulatePath,
+        fail_buckets: &mut FailBuckets,
+    ) -> ProviderResult<Option<SimResult>> {
+        simulate_path_on_evm(&mut self.evm, ctx, path, fail_buckets)
+    }
 }
 
 /// The testable in-process orchestration core: runs the 7-call vector over a
@@ -634,7 +703,7 @@ pub fn simulate_in_process(
 /// Sync — no RPC, no tokio runtime needed (the `CacheDB`'s backing `Database`
 /// is whatever the caller supplied; `EmptyDB` for the smoke test,
 /// `BotStateDb<WrapDatabaseAsync<AlloyDB>>` for production via
-/// [`simulate_in_process`]). Today `BotStateDb` forwards every read to the
+/// [`BlockSimHandle`]). Today `BotStateDb` forwards every read to the
 /// fallback (typed-state serving not wired — see `bot_state_db`'s doc). This split lets the revm orchestration be
 /// smoke-tested against `CacheDB<EmptyDB>` without a live RPC.
 ///
@@ -839,6 +908,16 @@ where
             // A revm transact error (DB cold-miss RPC failure, or an
             // invalid tx). Treat as rpc-failed (the Python oracle swallows
             // these into rpc-failed).
+            //
+            // Finalize the partial journal before returning: calls [0..idx-1]
+            // may have succeeded (accumulating read-caches in the journal —
+            // `transact_one` stores to the journal, NOT the `CacheDB`). On the
+            // SHARED per-block `&mut evm` (Tier 1), an un-finalized journal
+            // would leak those partial read-caches into the next path's first
+            // `transact_one`. `finalize` returns + discards the per-path
+            // `State` (NOT committed — `simulate_path_on_evm` never calls
+            // `commit`), so execute() SSTOREs stay out of the shared `CacheDB`.
+            let _ = evm.finalize();
             if trace_this_path {
                 eprintln!(
                     "[sim-trace] path={} call[{}] transact_one returned Err (rpc-failed)",

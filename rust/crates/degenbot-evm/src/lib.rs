@@ -16,7 +16,7 @@
 //! slots the pool's own `swap()` reads (fee growth, tick bitmap,
 //! `IERC20.balanceOf`) produced K-invariant / `LOK` reverts from
 //! stale-vs-fresh state divergence. The wrapper persists as the option B
-//! seam the live `simulate_in_process` chain references; collapsing it to
+//! seam the live `BlockSimHandle` chain references; collapsing it to
 //! bare `WrapDatabaseAsync<AlloyDB>` is the Tier 1 refactor's scope (ergo
 //! task `V5HCR5`). See [`bot_state_db`] for the historical note on the
 //! retired slot encoders.
@@ -96,8 +96,8 @@ pub use bot_state_db::BotStateDb;
 /// degenbot_evm::{...}` (it re-exports them under its own crate root for
 /// existing call sites + the PyO3 wrappers).
 pub use simulator::{
-    compute_priority_fee, fits_int128, simulate_in_process, BlockPriorityFees, FailBuckets,
-    SimFailure, SimResult, SimulateContext, SimulatePath, AGE_DECAY_CONSTANT, EXECUTE_CONFIG,
+    compute_priority_fee, fits_int128, BlockPriorityFees, BlockSimHandle, FailBuckets, SimFailure,
+    SimResult, SimulateContext, SimulatePath, AGE_DECAY_CONSTANT, EXECUTE_CONFIG,
     GAS_SAFETY_MARGIN, INITIAL_EXECUTE_GAS, INT128_MAX, INT128_MIN, MAX_PRIORITY_FEE_PERCENTILE,
     MIN_PRIORITY_FEE_PERCENTILE, TARGET_PROFIT_RATIO,
 };

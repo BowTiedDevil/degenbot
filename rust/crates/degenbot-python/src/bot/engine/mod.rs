@@ -91,7 +91,7 @@ pub struct PyArbitrageEngine {
 impl PyArbitrageEngine {
     /// The shared `BotState` arc (ADR-003) — the engine's `core`
     /// `Arc<RwLock<BotState>>`, cloned out for callers that need to read the
-    /// pool-state registry (e.g. the in-process `simulate_in_process` path
+    /// pool-state registry (e.g. the in-process `BlockSimHandle` path
     /// borrows `&BotState` for `BotStateDb`). Acquires the engine lock
     /// (engine-then-core ordering per ADR-003) + clones the `core` arc —
     /// one Arc clone, no state copy.

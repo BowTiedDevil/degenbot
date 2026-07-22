@@ -1,5 +1,5 @@
 //! 7-call vector calldata builders (moved from degenbot-simulation; shared with
-//! `simulate_in_process`).
+//! `simulate_path_on_evm` / `BlockSimHandle`).
 //!
 //! The three pre/post balance-read calldata blobs that bracket the `execute()`
 //! call in the 7-call simulate vector: WETH9/ERC20 `balanceOf(address)`,
@@ -8,7 +8,8 @@
 //! wrap (a thin delegation to `degenbot_executor::encode_execute_call`).
 //!
 //! These live in `degenbot-evm` (not `degenbot-simulation`) so the in-process
-//! revm path (`simulate_in_process`) can build the 7-call vector without
+//! revm path (`simulate_path_on_evm` via `BlockSimHandle`) can build the 7-call
+//! vector without
 //! depending on `degenbot-simulation` (a cycle — `degenbot-simulation` depends
 //! on `degenbot-evm` for the shared primitives). `degenbot-simulation`
 //! re-exports them (`pub use degenbot_evm::calldata`) so existing call sites

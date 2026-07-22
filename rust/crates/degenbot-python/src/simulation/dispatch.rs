@@ -150,7 +150,7 @@ pub fn dispatch_profitable_py<'py>(
     // fan-out (monitor-task contention is unaffected).
     let suppression_arc = dispatcher.suppression_arc();
 
-    // ── BotState extraction (for the in-process `simulate_in_process` path).
+    // ── BotState extraction (for the in-process `BlockSimHandle` path).
     // Done under the GIL: the `Py<PyArbitrageEngine>` is borrowed, the engine
     // lock is acquired (engine-then-core ordering per ADR-003), + the `core`
     // `Arc<RwLock<BotState>>` is cloned out (cheap — one Arc clone). The arc

@@ -408,11 +408,8 @@ fn build_tx(pair: Address, calldata: &Bytes) -> TxEnv {
 }
 
 /// Build an EVM with `disable_nonce_check` set (the 7-call vector in
-/// `simulate_in_process` shares one caller; `eth_simulateV1` doesn't bump the
-/// nonce per call, so revm's per-tx nonce floor would reject calls 2..N).
-/// Build an EVM with `disable_nonce_check` set (the 7-call vector in
-/// `simulate_in_process` shares one caller; `eth_simulateV1` doesn't bump the
-/// nonce per call, so revm's per-tx nonce floor would reject calls 2..N).
+/// `simulate_path_on_evm` shares one caller; `eth_simulateV1` doesn't bump
+/// the nonce per call, so revm's per-tx nonce floor would reject calls 2..N).
 /// Returns the concrete `MainnetEvm<Context<Db, ...>>` — `impl` is avoided
 /// so callers can pass a `&mut` to `run_isolated_transacts`.
 fn build_evm<Db: revm::database_interface::Database>(

@@ -60,7 +60,7 @@ use degenbot_executor::WarmupSlots;
 
 /// Balance-call calldata builders (B1): WETH9 `balanceOf`, Multicall3
 /// `getEthBalance`, PoolManager ERC6909 `balanceOf`, + `wrap_execute_calldata`.
-/// Moved to `degenbot-evm` (shared with `simulate_in_process`); re-exported
+/// Moved to `degenbot-evm` (shared with `BlockSimHandle`); re-exported
 /// here so existing `use degenbot_simulation::calldata::...` call sites stay
 /// unchanged.
 pub use degenbot_evm::calldata;
@@ -93,8 +93,8 @@ pub mod dispatch_profitable;
 // Re-export the most-used types at the crate root for ergonomic access
 // (mirrors how `degenbot_executor` surfaces `WarmupSlots` / `mapping_slot`).
 pub use degenbot_evm::{
-    compute_priority_fee, fits_int128, simulate_in_process, BlockPriorityFees, FailBuckets,
-    SimFailure, SimResult, SimulateContext, SimulatePath, AGE_DECAY_CONSTANT, EXECUTE_CONFIG,
+    compute_priority_fee, fits_int128, BlockPriorityFees, BlockSimHandle, FailBuckets, SimFailure,
+    SimResult, SimulateContext, SimulatePath, AGE_DECAY_CONSTANT, EXECUTE_CONFIG,
     GAS_SAFETY_MARGIN, INITIAL_EXECUTE_GAS, INT128_MAX, INT128_MIN, MAX_PRIORITY_FEE_PERCENTILE,
     MIN_PRIORITY_FEE_PERCENTILE, TARGET_PROFIT_RATIO,
 };

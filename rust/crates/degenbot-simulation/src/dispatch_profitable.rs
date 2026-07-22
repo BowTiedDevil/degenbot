@@ -46,8 +46,7 @@ use futures::stream::{self, StreamExt};
 use parking_lot::RwLock;
 
 use crate::{
-    simulate_in_process, simulate_one, FailBuckets, SimFailure, SimResult, SimulateContext,
-    SimulatePath,
+    simulate_one, BlockSimHandle, FailBuckets, SimFailure, SimResult, SimulateContext, SimulatePath,
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -286,6 +285,7 @@ impl DispatchOutcome {
 /// held under the guard — so a poison indicates a bug in a sibling task
 /// (the suppression arc is shared with the submission seam's accessors;
 /// never locked across an `.await`).
+#[allow(clippy::too_many_lines)]
 pub async fn dispatch_profitable_results(
     mut candidates: Vec<DispatchCandidate>,
     ctx: &SimulateContext<'_>,
@@ -294,16 +294,17 @@ pub async fn dispatch_profitable_results(
     min_profit_net: u128,
     min_profit_margin_bps: u64,
     // When `Some`, the fan-out routes each candidate through the in-process
-    // revm sim (`simulate_in_process`) over the borrowed `&BotState`, retiring
-    // the `eth_simulateV1` RPC path (`simulate_one`) for the dispatch. When
-    // `None`, the fan-out uses `simulate_one` (the legacy RPC path — the
-    // default). The `Arc<RwLock<BotState>>` is the engine's shared state owner
-    // (ADR-003); a per-path read guard is taken inside the fan-out closure
-    // (`parking_lot::RwLockReadGuard` is `Send`, so the `.await`-driven
-    // `simulate_in_process` runs under the guard without a `Send` failure).
-    // revm's `WrapDatabaseAsync::block_on` uses `tokio::task::block_in_place`
-    // under a multi-threaded runtime, so the in-process sim's blocking RPC
-    // cold-miss path does not deadlock against the pump's worker pool.
+    // revm sim over the borrowed `&BotState` via a per-block shared
+    // `BlockSimHandle` (Tier 1, `V5HCR5` — retired the per-path
+    // `simulate_in_process` fresh-`CacheDB`-per-call build), replacing the
+    // `eth_simulateV1` RPC path (`simulate_one`) for the dispatch. When
+    // `None`, the fan-out uses `simulate_one` (the legacy concurrent RPC path
+    // — the default). The `Arc<RwLock<BotState>>` is the engine's shared
+    // state owner (ADR-003); a per-block read guard is taken for the serial
+    // loop. revm's `WrapDatabaseAsync::block_on` uses
+    // `tokio::task::block_in_place` under a multi-threaded runtime, so the
+    // in-process sim's blocking RPC cold-miss path does not deadlock against
+    // the pump's worker pool.
     bot_state: Option<Arc<RwLock<BotState>>>,
 ) -> Result<DispatchOutcome, DispatchError> {
     let mut outcome = DispatchOutcome::default();
@@ -331,8 +332,11 @@ pub async fn dispatch_profitable_results(
     candidates.truncate(MAX_SIMULATE_CONCURRENT);
     outcome.candidate_count = candidates.len();
 
-    // 4. Fan-out — spawn one `simulate_one` per candidate with a bounded-
-    //    concurrency stream. `buffer_unordered(MAX_SIMULATE_CONCURRENT)` is
+    // 4. Fan-out — two branches on `bot_state`. When `Some`, the in-process
+    //    revm path builds ONE per-block `BlockSimHandle` + simulates each
+    //    candidate SERIALLY on the shared `&mut evm` (Tier 1, `V5HCR5`). When
+    //    `None`, the legacy RPC path spawns one `simulate_one` per candidate
+    //    with a bounded-concurrency stream. `buffer_unordered(MAX_SIMULATE_CONCURRENT)` is
     //    the Rust idiom for the Python `asyncio.gather(*sim_tasks)` + the
     //    `results[:MAX_SIMULATE_CONCURRENT]` cap (the cap is double-asserted:
     //    the L2491 truncate + the buffer bound — belt + suspenders).
@@ -340,33 +344,77 @@ pub async fn dispatch_profitable_results(
     //    the stream borrows `ctx` for its lifetime, and we collect within this
     //    fn (no task outlives the call).
     let candidate_path_ids: Vec<u64> = candidates.iter().map(|c| c.path_id).collect();
-    let sim_results: Vec<(u64, FailBuckets, Result<Option<SimResult>, String>)> = stream::iter(
-        candidates
-            .into_iter()
-            .map(|c| (c.path_id, c.to_simulate_path())),
-    )
-    .map(|(pid, path)| {
-        let bs_arc = bot_state.clone();
-        async move {
-            let mut buckets = FailBuckets::new();
-            let result: Result<Option<SimResult>, String> = match bs_arc {
-                Some(arc) => {
-                    let guard = arc.read();
-                    simulate_in_process(ctx, &guard, path, &mut buckets).map_err(|e| format!("{e}"))
-                }
-                None => simulate_one(ctx, path, &mut buckets)
-                    .await
-                    .map_err(|e| format!("{e}")),
-            };
-            match result {
-                Ok(opt) => (pid, buckets, Ok(opt)),
-                Err(e) => (pid, buckets, Err(e)),
+    let sim_results: Vec<(u64, FailBuckets, Result<Option<SimResult>, String>)> = match bot_state {
+        // In-process revm path (Tier 1, `V5HCR5`): build ONE per-block EVM
+        // (`BlockSimHandle`) and simulate each candidate SERIALLY on the
+        // shared `&mut evm`. The shared `CacheDB` captures the ~50× latency
+        // win (benchmark `examples/rpc_cache_fanout.rs` config B vs A): the
+        // trigger path pays the cold RPCs, the fan-out hits the warmed cache
+        // at ~1 µs p50. Serial (not `buffer_unordered`) because a shared
+        // `&mut evm` can't be held across `'static`+`Send` futures — the
+        // per-path RPC cold-miss dwarfs the per-path EVM execution, so
+        // serial-warm beats parallel-cold. Per-path isolation is revm's
+        // `finalize()` (execute() SSTOREs live in the per-path `State`, never
+        // committed to the shared `CacheDB`). `parking_lot`'s read guard is
+        // held for the serial loop's duration.
+        Some(arc) => {
+            let guard = arc.read();
+            match BlockSimHandle::build(ctx, &guard) {
+                Some(mut handle) => candidates
+                    .into_iter()
+                    .map(|c| {
+                        let pid = c.path_id;
+                        let mut buckets = FailBuckets::new();
+                        let result = handle
+                            .simulate_path(ctx, c.to_simulate_path(), &mut buckets)
+                            .map_err(|e| format!("{e}"));
+                        (pid, buckets, result)
+                    })
+                    .collect(),
+                // Build failure — no ambient runtime or an override-
+                // application error. The whole block's sim is dead: tally
+                // `rpc-failed` for every candidate (mirrors the retired
+                // per-path build-failure tally).
+                None => candidates
+                    .into_iter()
+                    .map(|c| {
+                        let mut buckets = FailBuckets::new();
+                        buckets.record(
+                            c.path_id,
+                            "rpc-failed",
+                            None,
+                            alloy::primitives::Bytes::new(),
+                        );
+                        (c.path_id, buckets, Ok(None))
+                    })
+                    .collect(),
             }
         }
-    })
-    .buffer_unordered(MAX_SIMULATE_CONCURRENT)
-    .collect()
-    .await;
+        // Legacy RPC path (`eth_simulateV1`) — concurrent
+        // `buffer_unordered` + `simulate_one`. The default when no `bot_state`
+        // is supplied.
+        None => {
+            stream::iter(
+                candidates
+                    .into_iter()
+                    .map(|c| (c.path_id, c.to_simulate_path())),
+            )
+            .map(|(pid, path)| async move {
+                let mut buckets = FailBuckets::new();
+                let result: Result<Option<SimResult>, String> =
+                    simulate_one(ctx, path, &mut buckets)
+                        .await
+                        .map_err(|e| format!("{e}"));
+                match result {
+                    Ok(opt) => (pid, buckets, Ok(opt)),
+                    Err(e) => (pid, buckets, Err(e)),
+                }
+            })
+            .buffer_unordered(MAX_SIMULATE_CONCURRENT)
+            .collect()
+            .await
+        }
+    };
 
     // 5. Categorize — gas-profitable / gas-unprofitable / exception (ports
     //    L2519–L2557). `simulate_one` returns `Ok(Some(result))` for gross-
@@ -1165,5 +1213,69 @@ mod tests {
         assert_eq!(f.bucket, "rpc-failed");
         assert!(f.fail_index.is_none(), "rpc-failed has no sim call idx");
         assert!(f.revert_data.is_empty());
+    }
+
+    // ── Tier 1 (V5HCR5): in-process serial branch ─────────────────────
+
+    /// Tier 1 (`V5HCR5`) parity: the in-process serial branch
+    /// (`Some(bot_state)`) tallies `rpc-failed` for every candidate when the
+    /// per-block EVM build fails. Under a `current_thread` tokio runtime,
+    /// `WrapDatabaseAsync::new` returns `None` (it requires a multi-threaded
+    /// runtime — the pump's `pyo3_async_runtimes` default), so
+    /// `BlockSimHandle::build` returns `None` and the dispatch fans a
+    /// `rpc-failed` `SimFailure` out to every candidate — one per `path_id`.
+    /// This is the RPC-free characterization of the serial branch's
+    /// build-failure handling, mirroring the retired per-path
+    /// `simulate_in_process` build-failure tally (behavior-preserving — the
+    /// old per-path build also returned `Ok(None)` + a `rpc-failed` record per
+    /// path under the same no-runtime condition).
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_in_process_tallies_rpc_failed_for_all_when_build_fails() {
+        let asserter = Asserter::new();
+        // sentinel — never consumed (build fails before any sim runs).
+        asserter.push_success(&access_list_response());
+        let provider = mock_provider(&asserter);
+        let suppression = Arc::new(Mutex::new(PathSuppression::new()));
+        let bot_state = Arc::new(RwLock::new(BotState::new()));
+
+        let cands = vec![
+            candidate(40, 1_000_000_000_000_000_000u128, 1_000),
+            candidate(41, 1_000_000_000_000_000_000u128, 1_000),
+        ];
+        let outcome = dispatch_profitable_results(
+            cands,
+            &ctx(&provider),
+            &suppression,
+            100,
+            MIN_PROFIT_NET,
+            0,
+            Some(bot_state),
+        )
+        .await
+        .unwrap();
+
+        // Build failed under current_thread runtime → every candidate
+        // tallied rpc-failed (Ok(None)), no exceptions.
+        assert_eq!(outcome.candidate_count, 2);
+        assert_eq!(outcome.fail_count, 2);
+        assert_eq!(outcome.exception_count, 0);
+        assert_eq!(
+            outcome.gas_profitable.len() + outcome.gas_unprofitable.len(),
+            0
+        );
+        assert_eq!(outcome.fail_buckets.get("rpc-failed"), 2);
+        // One SimFailure per candidate, each carrying its own path_id.
+        assert_eq!(outcome.failures.len(), 2);
+        let ids: Vec<u64> = outcome.failures.iter().map(|f| f.path_id).collect();
+        assert!(ids.contains(&40), "path 40 must be surfaced, got {ids:?}");
+        assert!(ids.contains(&41), "path 41 must be surfaced, got {ids:?}");
+        for f in &outcome.failures {
+            assert_eq!(f.bucket, "rpc-failed");
+            assert!(f.fail_index.is_none());
+            assert!(f.revert_data.is_empty());
+        }
+        // No RPC dispatched (build failed before any transact; sentinel
+        // untouched).
+        assert!(!asserter.read_q().is_empty());
     }
 }

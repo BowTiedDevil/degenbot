@@ -28,7 +28,7 @@ use degenbot_core::errors::{ProviderError, ProviderResult};
 use degenbot_rpc::provider::{AlloyProvider, EthBlock as RpcEthBlock};
 
 use crate::payload::{build_simulate_payload, SimulationParams};
-// `BlockPriorityFees` lives in `degenbot-evm` (shared with `simulate_in_process`);
+// `BlockPriorityFees` lives in `degenbot-evm` (shared with `BlockSimHandle`);
 // re-exported from this crate's root.
 use crate::BlockPriorityFees;
 

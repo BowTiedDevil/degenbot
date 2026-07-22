@@ -11,7 +11,7 @@
 //! K-invariant / `LOK` reverts from stale-vs-fresh state divergence. See the
 //! historical note below.
 //!
-//! The wrapper persists because the live `simulate_in_process` chain
+//! The wrapper persists because the live `BlockSimHandle` chain
 //! (`simulator.rs`) references it as the `CacheDB` backing; collapsing it to
 //! bare `WrapDatabaseAsync<AlloyDB>` is the Tier 1 refactor's scope
 //! (ergo task `V5HCR5`), not this module's cleanup.
