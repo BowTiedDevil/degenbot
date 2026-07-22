@@ -35,6 +35,13 @@
 //!   EVM per call (mirrors a production shape where each sim is a fresh
 //!   simulation sharing only the proactive cache layer).
 //!   Expected: 2 RPCs total (first call only).
+//! - **D (cross-block `WarmCodeCache`)** — fresh `CacheDB`+EVM per block over
+//!   N consecutive mainnet blocks, with a persistent `WarmCodeCacheInner`
+//!   arc shared across all N blocks. The immutable `basic`/code RPC fires
+//!   once (cold) then hits the warm cache until the per-entry TTL; the
+//!   mutable `storage` RPC fires every block (never cached).
+//!   Expected: N+2 RPCs over N blocks (1 basic cold + 1 basic TTL re-cold +
+//!   N storage) vs 2N for the no-warm-cache baseline.
 //!
 //! # Decision rule
 //!
@@ -42,6 +49,9 @@
 //!   `CacheDB` via a persistent EVM with `transact()` calls.
 //! - B ≫ C → the proactive layer has a real advantage (e.g. if `CacheDB`
 //!   sharing across `transact()` calls is broken in some way).
+//! - D ≪ B-over-N-blocks → the cross-block `WarmCodeCache` layer earns its
+//!   keep: it lets the per-block `CacheDB` rebuild (correct — fresh storage
+//!   each block) without re-paying the immutable `basic`/code RPC every block.
 //!
 //! # Observed result (chain=1, block ~25.5M, 1 trigger + 50 fan-out reads)
 //!
@@ -59,6 +69,15 @@
 //! overhead without benefit. The decision rule says: **share REVM's `CacheDB`
 //! via a persistent EVM using `transact()` — don't build a separate proactive
 //! cache layer.**
+//!
+//! **D ≪ B-over-N-blocks (measured, chain=1, N=12 blocks, TTL=10):** config D
+//! fires 2 `basic` RPCs (cold load at block 1 + TTL re-cold at block 12) + 12
+//! `storage` RPCs = 14 total; the no-warm-cache baseline (fresh `CacheDB` per
+//! block) fires 12 `basic` + 12 `storage` = 24 total. **The `WarmCodeCache`
+//! layer saves 10 RPCs / 42% over 12 blocks** — the saved `basic` RPC on
+//! every block past the cold load. The TTL re-cold-load lands precisely at
+//! block 12 (loaded at ordinal 1, `12 - 1 = 11 > 10` → stale), asserted by
+//! [`assert_warm_cache_ttl_boundary`].
 //!
 //! # Run
 //!
@@ -83,6 +102,10 @@ use revm::database::{AlloyDB, CacheDB};
 use revm::database_interface::{DatabaseRef, WrapDatabaseAsync, WrapDatabaseRef};
 use revm::primitives::{StorageKey, StorageValue, TxKind, B256};
 use revm::{ExecuteEvm, MainBuilder, MainContext};
+
+// The example lives in the `degenbot-evm` crate, so it can reach the
+// cross-block warm-cache types via the library's public surface.
+use degenbot_evm::{WarmCodeCache, WarmCodeCacheInner};
 
 /// The Uniswap V2 USDC/WETH pair — a real mainnet V2 pair with code at the
 /// pinned block. Override via `PAIR_ADDRESS` env var.
@@ -136,6 +159,47 @@ async fn main() {
         ("B (shared CacheDB, transact())", &cfg_b),
         ("C (proactive, fresh CacheDB/call)", &cfg_c),
     ]);
+
+    // -----------------------------------------------------------------
+    // Config D: cross-block WarmCodeCache over N consecutive mainnet blocks.
+    // Sweeps `WARM_CACHE_N_BLOCKS` blocks ending at `block_number` so the
+    // last block is the TTL re-cold boundary (loaded at ordinal 1, stale at
+    // ordinal ttl_blocks + 2).
+    // -----------------------------------------------------------------
+    eprintln!();
+    eprintln!(
+        "=== Config D: cross-block WarmCodeCache (N={WARM_CACHE_N_BLOCKS} blocks, TTL={WARM_CACHE_TTL_BLOCKS}) ==="
+    );
+    let start_block = block_number.saturating_sub(WARM_CACHE_N_BLOCKS as u64 - 1);
+    eprintln!("Sweep: block {start_block} ..= {block_number}");
+    let cfg_d = run_config_warm_cache_multi_block(
+        &provider,
+        &tx,
+        start_block,
+        WARM_CACHE_N_BLOCKS,
+        WARM_CACHE_TTL_BLOCKS,
+    );
+    let cfg_b_mb =
+        run_config_shared_cachedb_multi_block(&provider, &tx, start_block, WARM_CACHE_N_BLOCKS);
+    print_multi_block_breakdown("D", &cfg_d);
+    print_multi_block_breakdown("B-noblock", &cfg_b_mb);
+    let d_total = cfg_d.total_basic + cfg_d.total_storage;
+    let b_total = cfg_b_mb.total_basic + cfg_b_mb.total_storage;
+    let saved = b_total.saturating_sub(d_total);
+    let pct = if b_total == 0 {
+        0.0
+    } else {
+        100.0 * saved as f64 / b_total as f64
+    };
+    eprintln!(
+        "[warm-cache] config D total RPCs = {d_total} vs config B (no warm cache) total RPCs = {b_total} over {WARM_CACHE_N_BLOCKS} blocks (saved {saved} RPCs, {pct:.0}% reduction)"
+    );
+    assert_warm_cache_ttl_boundary(&cfg_d, WARM_CACHE_TTL_BLOCKS);
+    eprintln!(
+        "[warm-cache] PASS: TTL boundary re-cold-load verified (basic RPCs: cold at block 1, warm through block {warm}, re-cold at block {cold})",
+        warm = WARM_CACHE_TTL_BLOCKS + 1,
+        cold = WARM_CACHE_TTL_BLOCKS + 2
+    );
 }
 
 // =================================================================
@@ -599,4 +663,230 @@ fn run_config_proactive(provider: &RootProvider, tx: &TxEnv, block_id: BlockId) 
         storage_rpcs: counter.storage_rpcs(),
         basic_rpcs: counter.basic_rpcs(),
     }
+}
+
+// =================================================================
+// Config D: cross-block WarmCodeCache — fresh CacheDB+EVM per block, with
+// the persistent WarmCodeCacheInner arc shared across N blocks.
+// =================================================================
+//
+// The production shape is multi-block: block N's `getReserves()` runs against
+// a `CacheDB` rebuilt fresh for block N (so the mutable storage row — V2
+// reserves slot 8 — is always current), layered over a `WarmCodeCache` whose
+// inner `Arc<RwLock<WarmCodeCacheInner>>` persists across all N blocks. The
+// immutable `basic`/code RPC (the pair's account info + bytecode) fires once
+// (cold) then hits the warm cache until the per-entry TTL expires; the
+// mutable `storage` RPC fires every block (it is never cached — caching it
+// would re-introduce stale-state divergence).
+//
+// Expected RPC counts (one `getReserves()` per block):
+//   - Block 1 (cold):           1 basic + 1 storage  = 2 RPCs
+//   - Blocks 2..=TTL+1 (warm):  0 basic + 1 storage  = 1 RPC/block
+//   - Block TTL+2 (re-cold):    1 basic + 1 storage  = 2 RPCs  (TTL expiry)
+//   - Total over N=TTL+2:       2 basic + N storage   = N+2 RPCs
+//
+// vs config-B-over-N-blocks (fresh `CacheDB` per block, NO warm-cache layer):
+//   - Every block: 1 basic + 1 storage = 2 RPCs/block → 2N RPCs total.
+//
+// The win is the saved `basic` RPC on every block past the cold load — the
+// row the `WarmCodeCache` layer exists to eliminate.
+
+/// The `WarmCodeCache` per-entry TTL, in blocks. An entry loaded at block
+/// ordinal 1 is fresh while `block - 1 <= TTL`; the first stale (re-cold)
+/// block is ordinal `TTL + 2`. With the default 10, that's block 12.
+const WARM_CACHE_TTL_BLOCKS: u64 = 10;
+
+/// Number of consecutive mainnet blocks config D sweeps. Equals
+/// `WARM_CACHE_TTL_BLOCKS + 2` so the run captures the cold load (block 1),
+/// the warm run (blocks 2..=TTL+1), AND the TTL re-cold (block TTL+2 = last).
+const WARM_CACHE_N_BLOCKS: usize = WARM_CACHE_TTL_BLOCKS as usize + 2;
+
+/// Per-block RPC deltas for the multi-block configs.
+#[derive(Clone, Copy)]
+struct PerBlockRpc {
+    /// 1-indexed ordinal within the run (block 1 = first).
+    ordinal: usize,
+    /// The actual mainnet block number.
+    block_number: u64,
+    /// `basic_ref` RPCs that reached the alloy layer this block.
+    basic_rpcs: u64,
+    /// `storage_ref` RPCs that reached the alloy layer this block.
+    storage_rpcs: u64,
+}
+
+/// Aggregate over N blocks for the multi-block configs.
+struct MultiBlockResult {
+    per_block: Vec<PerBlockRpc>,
+    total_basic: u64,
+    total_storage: u64,
+    #[allow(dead_code)]
+    total_wall: Duration,
+}
+
+/// Config D — cross-block `WarmCodeCache`: per block, rebuild a fresh
+/// `CacheDB`+EVM (correct — fresh storage each block) over the stack
+/// `CacheDB<WarmCodeCache<FundedCallerDb<CountingRpcDb<WrapDatabaseAsync<AlloyDB>>>>>`.
+/// The `WarmCodeCacheInner` arc persists across all N blocks.
+fn run_config_warm_cache_multi_block(
+    provider: &RootProvider,
+    tx: &TxEnv,
+    start_block: u64,
+    n_blocks: usize,
+    ttl_blocks: u64,
+) -> MultiBlockResult {
+    let counter = Arc::new(Counter::default());
+    let warm_inner: Arc<parking_lot::RwLock<WarmCodeCacheInner>> =
+        WarmCodeCacheInner::shared_with_ttl(ttl_blocks);
+    let start = Instant::now();
+    let mut per_block = Vec::with_capacity(n_blocks);
+    for i in 0..n_blocks {
+        let block_number = start_block + i as u64;
+        let before_basic = counter.basic_rpcs();
+        let before_storage = counter.storage_rpcs();
+        let alloy_db = AlloyDB::new(provider.clone(), BlockId::number(block_number));
+        let wrap_db = WrapDatabaseAsync::new(alloy_db).expect("multi-thread runtime");
+        let counting_db = CountingRpcDb {
+            inner: wrap_db,
+            counter: counter.clone(),
+        };
+        let funded_db = FundedCallerDb { inner: counting_db };
+        let warm_db = WarmCodeCache::with_owner(warm_inner.clone(), block_number, funded_db);
+        let cache_db = CacheDB::new(warm_db);
+        let mut evm = build_evm(cache_db);
+        let _ = evm.transact(tx.clone());
+        per_block.push(PerBlockRpc {
+            ordinal: i + 1,
+            block_number,
+            basic_rpcs: counter.basic_rpcs() - before_basic,
+            storage_rpcs: counter.storage_rpcs() - before_storage,
+        });
+    }
+    MultiBlockResult {
+        per_block,
+        total_basic: counter.basic_rpcs(),
+        total_storage: counter.storage_rpcs(),
+        total_wall: start.elapsed(),
+    }
+}
+
+/// Config-B-over-N-blocks comparator: the same per-block fresh-`CacheDB`
+/// rebuild WITHOUT the `WarmCodeCache` layer. Correct (fresh storage each
+/// block) but the `basic`/code RPC re-fires every block — the row config D
+/// eliminates. This is the "no warm cache" baseline the `[warm-cache]`
+/// summary reports the win against.
+fn run_config_shared_cachedb_multi_block(
+    provider: &RootProvider,
+    tx: &TxEnv,
+    start_block: u64,
+    n_blocks: usize,
+) -> MultiBlockResult {
+    let counter = Arc::new(Counter::default());
+    let start = Instant::now();
+    let mut per_block = Vec::with_capacity(n_blocks);
+    for i in 0..n_blocks {
+        let block_number = start_block + i as u64;
+        let before_basic = counter.basic_rpcs();
+        let before_storage = counter.storage_rpcs();
+        let alloy_db = AlloyDB::new(provider.clone(), BlockId::number(block_number));
+        let wrap_db = WrapDatabaseAsync::new(alloy_db).expect("multi-thread runtime");
+        let counting_db = CountingRpcDb {
+            inner: wrap_db,
+            counter: counter.clone(),
+        };
+        let funded_db = FundedCallerDb { inner: counting_db };
+        let cache_db = CacheDB::new(funded_db);
+        let mut evm = build_evm(cache_db);
+        let _ = evm.transact(tx.clone());
+        per_block.push(PerBlockRpc {
+            ordinal: i + 1,
+            block_number,
+            basic_rpcs: counter.basic_rpcs() - before_basic,
+            storage_rpcs: counter.storage_rpcs() - before_storage,
+        });
+    }
+    MultiBlockResult {
+        per_block,
+        total_basic: counter.basic_rpcs(),
+        total_storage: counter.storage_rpcs(),
+        total_wall: start.elapsed(),
+    }
+}
+
+/// Print the per-block RPC breakdown (basic-ref count, storage-ref count) so
+/// the warm-cache hit (basic→0 from block 2) + the TTL re-cold (basic→1 at
+/// the boundary) are visible in the output.
+fn print_multi_block_breakdown(label: &str, r: &MultiBlockResult) {
+    eprintln!();
+    eprintln!("[{label}] per-block RPC breakdown:");
+    eprintln!(
+        "  {:>6} {:>14} {:>12} {:>14}",
+        "block", "number", "basic RPCs", "storage RPCs"
+    );
+    for b in &r.per_block {
+        eprintln!(
+            "  {:>6} {:>14} {:>12} {:>14}",
+            b.ordinal, b.block_number, b.basic_rpcs, b.storage_rpcs
+        );
+    }
+    let total = r.total_basic + r.total_storage;
+    eprintln!(
+        "[{label}] total: {} basic + {} storage = {} RPCs over {} blocks",
+        r.total_basic,
+        r.total_storage,
+        total,
+        r.per_block.len()
+    );
+}
+
+/// Assert the `WarmCodeCache` TTL boundary behavior — the test-style
+/// acceptance assertion for config D (mirrors how the single-block configs
+/// print their expected counts, but as a real `assert!` so a regression in
+/// the warm-cache layer fails the example).
+///
+/// Expected shape (N = `ttl_blocks + 2`):
+///   - block 1: cold load → `basic_rpcs == 1`
+///   - blocks `2..=ttl_blocks+1`: warm hit → `basic_rpcs == 0`
+///   - block `ttl_blocks+2`: TTL re-cold → `basic_rpcs == 1`
+///   - total `basic_rpcs == 2`
+///   - every block: `storage_rpcs == 1` (storage is never cached)
+fn assert_warm_cache_ttl_boundary(r: &MultiBlockResult, ttl_blocks: u64) {
+    let n = r.per_block.len();
+    let ttl = ttl_blocks as usize;
+    let first_stale_ordinal = ttl + 2; // 1-indexed
+    assert_eq!(
+        n, first_stale_ordinal,
+        "config D run length must equal ttl_blocks + 2 to capture the TTL boundary"
+    );
+    // Block 1: cold load.
+    assert_eq!(
+        r.per_block[0].basic_rpcs, 1,
+        "block 1 should cold-load basic (expected 1 basic RPC)"
+    );
+    // Blocks 2..=ttl_blocks+1: warm-cache hits (0 basic RPCs each).
+    for b in &r.per_block[1..first_stale_ordinal - 1] {
+        assert_eq!(
+            b.basic_rpcs, 0,
+            "block {} should hit the warm cache (expected 0 basic RPCs)",
+            b.ordinal
+        );
+    }
+    // Block ttl_blocks+2: TTL re-cold load.
+    let stale = &r.per_block[first_stale_ordinal - 1];
+    assert_eq!(
+        stale.basic_rpcs, 1,
+        "block {} (TTL boundary, loaded at 1) should re-cold-load basic (expected 1 basic RPC)",
+        stale.ordinal
+    );
+    // Storage fires every block (never cached).
+    for b in &r.per_block {
+        assert_eq!(
+            b.storage_rpcs, 1,
+            "block {} should fire 1 storage RPC (storage is never cached)",
+            b.ordinal
+        );
+    }
+    assert_eq!(
+        r.total_basic, 2,
+        "config D should fire basic RPC exactly twice (cold load + TTL re-cold)"
+    );
 }
