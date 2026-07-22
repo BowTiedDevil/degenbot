@@ -84,6 +84,7 @@ class TestDispatchEmptyInput:
             dispatcher=dispatcher,
             base_fee_next=1_000_000_000,
             current_block=100,
+            block_timestamp=0,
             min_profit_net=1,
             min_profit_margin_bps=0,
         )
@@ -115,6 +116,7 @@ class TestDispatchEmptyInput:
             dispatcher=dispatcher,
             base_fee_next=1_000_000_000,
             current_block=100,
+            block_timestamp=0,
             min_profit_net=1,
             min_profit_margin_bps=0,
         )
@@ -141,6 +143,7 @@ class TestDispatchArgumentValidation:
                 dispatcher=dispatcher,
                 base_fee_next=1_000_000_000,
                 current_block=100,
+                block_timestamp=0,
                 min_profit_net=1,
                 min_profit_margin_bps=0,
             )
@@ -157,6 +160,7 @@ class TestDispatchArgumentValidation:
                 dispatcher=dispatcher,
                 base_fee_next=1_000_000_000,
                 current_block=100,
+                block_timestamp=0,
                 min_profit_net=1,
                 min_profit_margin_bps=0,
             )
@@ -179,6 +183,7 @@ class TestDispatchJoinShape:
             dispatcher=dispatcher,
             base_fee_next=1_000_000_000,
             current_block=100,
+            block_timestamp=0,
             min_profit_net=1,
             min_profit_margin_bps=0,
         )
@@ -241,6 +246,7 @@ class TestDispatchWithCandidateButNoRpc:
             dispatcher=dispatcher,
             base_fee_next=1_000_000_000,
             current_block=50,  # < PATH_SUPPRESS_RETRY_INTERVAL (100) → still suppressed
+            block_timestamp=0,
             min_profit_net=1,
             min_profit_margin_bps=0,
         )
