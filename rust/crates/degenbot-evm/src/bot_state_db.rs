@@ -96,7 +96,6 @@ where
 impl<ExtDb> DatabaseRef for BotStateDb<'_, ExtDb>
 where
     ExtDb: DatabaseRef,
-    <ExtDb as DatabaseRef>::Error: From<SnapshotError>,
 {
     type Error = ExtDb::Error;
 

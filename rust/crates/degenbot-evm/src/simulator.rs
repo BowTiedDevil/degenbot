@@ -28,12 +28,17 @@
 
 use std::collections::BTreeMap;
 
+use alloy::eips::BlockId;
+use alloy::network::Ethereum;
 use alloy::primitives::{Address, U256};
+use alloy::providers::{Provider, RootProvider};
 use alloy::rpc::types::AccessList;
 use degenbot_core::errors::{ProviderError, ProviderResult};
 use degenbot_executor::composers::{encode_cmd_stream, EncodeOptions, HopInfo, PathInfo};
 use degenbot_executor::WarmupSlots;
 use degenbot_rpc::provider::AlloyProvider;
+use revm::database_interface::WrapDatabaseAsync;
+use std::sync::Arc;
 // `ExecutionResult` lives in `revm::context_interface` (re-exported by the revm
 // umbrella); `TxEnv` + `TxKind` in `revm::context` / `revm::primitives`.
 use revm::context::TxEnv;
@@ -393,8 +398,7 @@ fn u256_to_f64_lossy(v: U256) -> f64 {
 // The orchestration inputs (moved from degenbot-simulation::simulate_one)
 // ─────────────────────────────────────────────────────────────────────────
 
-/// Inputs to [`simulate_in_process`] / `simulate_one` that don't vary per-path.
-///
+/// Inputs to [`simulate_in_process`] / `simulate_one` that don't vary per-path.///
 /// Ports the closure-captured state in the Python `simulate_one`: the
 /// executor/weth/pm/multicall addresses, the funding flags, the warmup slots,
 /// the dispatcher's `block_priority_fees` + the block context.
@@ -501,6 +505,27 @@ impl SimulatePath {
 /// under 100k gas.
 pub const BALANCE_CALL_GAS_LIMIT: u64 = 100_000;
 
+/// A `Provider<Ethereum>` newtype over `Arc<dyn Provider<Ethereum>>`, so the
+/// type-erased provider from [`AlloyProvider::provider_arc`] satisfies
+/// `P: Provider<Ethereum>` for [`revm::database::AlloyDB::new`].
+///
+/// Alloy's `Provider` trait carries `#[auto_impl::auto_impl(&, &mut, Rc, Arc,
+/// Box)]`, but the generated impl is `impl<T: Provider + Sized> Provider for
+/// Arc<T>` — it does **not** cover `?Sized` trait objects, so
+/// `Arc<dyn Provider<Ethereum>>` itself does not satisfy `P: Provider` (the
+/// task-body fork is real, not a non-issue). This newtype bridges the gap: it
+/// stores the `Arc<dyn Provider>` (always `Sized`) and impls `Provider` by
+/// delegating `root()` — the one non-default `Provider` method. Every other
+/// `Provider` method has a default impl routed through `root()`.
+#[derive(Clone)]
+pub(crate) struct ArcDynProviderEthereum(Arc<dyn Provider<Ethereum>>);
+
+impl Provider<Ethereum> for ArcDynProviderEthereum {
+    fn root(&self) -> &RootProvider<Ethereum> {
+        self.0.root()
+    }
+}
+
 /// Execute the 7-call simulate vector in-process via revm, returning the same
 /// [`SimResult`] shape `degenbot-simulation::simulate_one` yields.
 ///
@@ -533,31 +558,65 @@ pub async fn simulate_in_process(
     path: SimulatePath,
     fail_buckets: &mut FailBuckets,
 ) -> ProviderResult<Option<SimResult>> {
-    // Build the layered DB: CacheDB<BotStateDb<WrapDatabaseAsync<AlloyDB>>>
-    // (option B — the engine state IS the EVM's Database, AlloyDB cold-miss
-    // fallback for untracked contracts).
+    // Build the layered DB (option B — the engine state IS the EVM's Database,
+    // AlloyDB cold-miss fallback for untracked contracts):
+    //   CacheDB<BotStateDb<WrapDatabaseAsync<AlloyDB<Ethereum, ArcDynProviderEthereum>>>>
     //
-    // TODO(JHGLF4-followup): the AlloyDB construction needs a concrete
-    // `P: Provider<Ethereum>` (an owned provider, not `Arc<dyn Provider>` —
-    // the trait is not object-safe to forward through `Arc<dyn>`). The
-    // `AlloyProvider` wrapper exposes `provider_arc() -> Arc<dyn Provider>`
-    // (used by the offline provider path), but `AlloyDB::new` takes `P: Provider`
-    // by value, so a direct hand-off hits an unsized-type error. The fix is to
-    // either (a) thread the concrete provider type through `SimulateContext`
-    // (replacing the `&AlloyProvider` erase), or (b) wrap the `Arc<dyn Provider>`
-    // in a small `Provider`-impl newtype. Defer to the dispatch-swap integration
-    // task (which wires `simulate_in_process` into the live pump) — the testable
-    // revm orchestration is `simulate_in_process_with_db` (smoke-tested below
-    // over `CacheDB<BotStateDb<EmptyDB>>`). Until then, return `rpc-failed` so
-    // the bucket tallies identically to `simulate_one`'s RPC-failure path.
-    let _ = (ctx.provider, bot_state);
-    fail_buckets.record(
-        path.path_id,
-        "rpc-failed",
-        None,
-        alloy::primitives::Bytes::new(),
+    // `AlloyDB::new` requires `P: Provider<Ethereum>` by value. Alloy's
+    // `Provider` trait carries `#[auto_impl::auto_impl(&, &mut, Rc, Arc, Box)]`,
+    // but the generated impl is `impl<T: Provider + Sized> Provider for Arc<T>`
+    // — it does NOT cover `?Sized` trait objects, so `Arc<dyn Provider>`
+    // itself does not satisfy `P: Provider` (the fork in the original task
+    // body is real). [`ArcDynProviderEthereum`] bridges the gap: it stores the
+    // `Arc<dyn Provider>` and impls `Provider` by delegating `root()` (the one
+    // non-default method; every other `Provider` method has a default impl
+    // routed through `root()`).
+    let alloy_db = revm::database::AlloyDB::new(
+        ArcDynProviderEthereum(ctx.provider.provider_arc()),
+        BlockId::Number(ctx.current_block.into()),
     );
-    Ok(None)
+    // `WrapDatabaseAsync::new` blocks on the ambient tokio runtime; it returns
+    // `None` if there is no runtime or the runtime is `CurrentThread`. The pump
+    // drives `simulate_in_process` through `pyo3_async_runtimes`, whose default
+    // is `Builder::new_multi_thread()` — so this `None` path is unreachable in
+    // production. A `None` here means the dispatch host lost its runtime; tally
+    // `rpc-failed` identically to `simulate_one`'s RPC-failure path.
+    let Some(wrap_db) = WrapDatabaseAsync::new(alloy_db) else {
+        fail_buckets.record(
+            path.path_id,
+            "rpc-failed",
+            None,
+            alloy::primitives::Bytes::new(),
+        );
+        return Ok(None);
+    };
+    let bot_state_db = crate::BotStateDb::new(bot_state, wrap_db);
+    let mut cache_db = CacheDB::new(bot_state_db);
+    // Apply the state-override adaptor (owner funding, executor code injection,
+    // warmup slots) over the layered DB — the same `apply_simulation_overrides`
+    // the `simulate_one` path's `eth_simulateV1` `stateOverrides` carries.
+    if let Err(err) =
+        crate::state_override::apply_simulation_overrides(&mut cache_db, &ctx.override_params())
+    {
+        // The override adaptor only fails on an override-application error
+        // (e.g. a warmup-slot write to an account the DB refused). Tally as
+        // `rpc-failed` to keep the bucket shape identical to `simulate_one`'s
+        // construction-failure path; the override-params are operator config,
+        // so a failure here is a wiring error, not a per-path revert.
+        fail_buckets.record(
+            path.path_id,
+            "rpc-failed",
+            None,
+            alloy::primitives::Bytes::new(),
+        );
+        log::warn!(
+            "simulate_in_process: state-override application failed for path {}: {}",
+            path.path_id,
+            err
+        );
+        return Ok(None);
+    }
+    simulate_in_process_with_db(ctx, cache_db, path, fail_buckets)
 }
 
 /// The testable in-process orchestration core: runs the 7-call vector over a
