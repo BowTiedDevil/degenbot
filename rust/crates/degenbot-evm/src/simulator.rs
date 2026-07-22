@@ -652,7 +652,6 @@ pub fn simulate_in_process(
 /// Panics if a `TxEnv::builder().build()` fails (cannot happen with the
 /// well-formed balance/execute calldata + addresses this fn constructs).
 #[allow(clippy::needless_pass_by_value)]
-#[allow(clippy::too_many_lines)]
 pub fn simulate_in_process_with_db<Db>(
     ctx: &SimulateContext<'_>,
     cache_db: CacheDB<Db>,
@@ -662,6 +661,68 @@ pub fn simulate_in_process_with_db<Db>(
 where
     Db: revm::database_interface::DatabaseRef,
     <Db as revm::database_interface::DatabaseRef>::Error: std::fmt::Display,
+{
+    // Build the EVM (`CacheDB` → revm `Context`) + pin the block env to the
+    // per-block `ctx` values (shared by every path in the fan-out). The 7-call
+    // orchestration + profit/access-list logic lives in
+    // [`simulate_path_on_evm`] so a shared per-block EVM (Tier 1, `V5HCR5`)
+    // can call it with `&mut evm` without rebuilding the DB stack per path.
+    //
+    // `disable_nonce_check`: the 7 calls share ONE owner; `eth_simulateV1` does
+    // NOT bump the caller's nonce per call (each entry is an `eth_call`-shaped
+    // read, not a real tx), so revm's per-tx nonce floor would reject calls
+    // [1..6]. Disable the check — parity with the node's lenient simulate.
+    let mut revm_ctx = revm::context::Context::mainnet();
+    revm_ctx.cfg.disable_nonce_check = true;
+    let mut evm = revm_ctx.with_db(cache_db).build_mainnet();
+    evm.ctx.modify_block(|block| {
+        block.basefee = u64::try_from(ctx.base_fee_next).unwrap_or(u64::MAX);
+        block.number = U256::from(ctx.current_block);
+        // The block timestamp, threaded from the pump's block header via
+        // `SimulateContext::block_timestamp`. The default `timestamp = 1`
+        // causes V2 pair `_update` to overflow `price0CumulativeLast` in
+        // Solidity 0.8+ forks (Camelot/Aerodrome), reverting every swap — the
+        // root cause of the `--sim=evm` parity gap (XPPMQG).
+        block.timestamp = U256::from(ctx.block_timestamp);
+    });
+    simulate_path_on_evm(&mut evm, ctx, path, fail_buckets)
+}
+
+/// Run one path's 7-call vector on a PRE-BUILT `&mut EVM` (block env already
+/// set by the caller; `CacheDB` + overrides applied upstream). The journaled
+/// state accumulates across the 7 `transact_one` calls (pre reads → execute →
+/// post reads see execute's changes), then `finalize()` clears the journal so
+/// the next path on the same shared EVM starts from clean committed state —
+/// the per-path isolation Tier 1 (`V5HCR5`) needs for a shared per-block EVM.
+///
+/// Generic over `E` so the smoke test (an `EmptyDB`-backed EVM built by the
+/// caller) and production (a shared `BotStateDb<WrapDatabaseAsync<AlloyDB>>`
+/// -backed EVM) both reach the same 7-call orchestration.
+///
+/// # Errors
+///
+/// Returns `Ok(None)` for non-profitable / reverted outcomes (bucket tallied).
+/// Returns `Err` only on an unrecoverable revm `transact` error (a DB
+/// cold-miss RPC failure — `rpc-failed`).
+/// # Panics
+///
+/// Panics if a `TxEnv::builder().build()` fails (cannot happen with the
+/// well-formed balance/execute calldata + addresses this fn constructs).
+#[allow(clippy::needless_pass_by_value)]
+#[allow(clippy::too_many_lines)]
+pub fn simulate_path_on_evm<E>(
+    evm: &mut E,
+    ctx: &SimulateContext<'_>,
+    path: SimulatePath,
+    fail_buckets: &mut FailBuckets,
+) -> ProviderResult<Option<SimResult>>
+where
+    E: ExecuteEvm<
+        Tx = TxEnv,
+        ExecutionResult = revm::context_interface::result::ExecutionResult,
+        State = revm::state::EvmState,
+    >,
+    <E as ExecuteEvm>::Error: std::fmt::Display,
 {
     // Per-call diagnostic trace — opt-in via `DEGENBOT_SIM_TRACE=1`. Dumps
     // gas_used, halt/revert/success state, and the first 32 bytes of output
@@ -755,30 +816,6 @@ where
         encode_get_eth_balance_calldata(ctx.executor_address).expect("valid address encodes");
     let erc6909_call = encode_erc6909_balance_of_calldata(ctx.executor_address, ctx.weth_address)
         .expect("valid address + weth encode");
-
-    // Build the EVM: CacheDB moved into the revm Context (revm owns it for the
-    // EVM's lifetime). Block env pinned to ctx.base_fee_next + current_block
-    // (the same env the Python oracle's `block_identifier="pending"` resolved to).
-    //
-    // `disable_nonce_check`: the 7 calls share ONE owner; `eth_simulateV1` does
-    // NOT bump the caller's nonce per call (each entry is an `eth_call`-shaped
-    // read, not a real tx), so revm's per-tx nonce floor would reject calls
-    // [1..6] (nonce 0 < account nonce 1 after call [0] commits). Disable the
-    // check — parity with the node's lenient simulate.
-    let mut revm_ctx = revm::context::Context::mainnet();
-    revm_ctx.cfg.disable_nonce_check = true;
-    let mut evm = revm_ctx.with_db(cache_db).build_mainnet();
-    evm.ctx.modify_block(|block| {
-        block.basefee = u64::try_from(ctx.base_fee_next).unwrap_or(u64::MAX);
-        block.number = U256::from(ctx.current_block);
-
-        // The block timestamp, threaded from the pump's block header via
-        // `SimulateContext::block_timestamp`. The default `timestamp = 1`
-        // causes V2 pair `_update` to overflow `price0CumulativeLast` in
-        // Solidity 0.8+ forks (Camelot/Aerodrome), reverting every swap — the
-        // root cause of the `--sim=evm` parity gap (XPPMQG).
-        block.timestamp = U256::from(ctx.block_timestamp);
-    });
 
     // The 7 calls: 3 pre-balance reads, execute(), 3 post-balance reads. The
     // journaled state ACCUMULATES across transact_one calls (revm 41 API:
