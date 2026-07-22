@@ -90,6 +90,12 @@ pub mod calldata;
 /// `transact`'s `ResultAndState.state`.
 pub mod access_list;
 
+/// Cross-block warm cache for immutable/long-TTL account data (bytecode +
+/// account existence) — the persistent layer underneath the per-block
+/// `CacheDB`. Caches `basic_ref` + `code_by_hash_ref` with a per-entry TTL;
+/// forwards `storage_ref` + `block_hash_ref` untouched.
+pub mod warm_code_cache;
+
 pub use access_list::emit_access_list_from_state;
 pub use bot_state_db::BotStateDb;
 /// Re-export the shared sim primitives so `degenbot-simulation` can `pub use
@@ -102,3 +108,4 @@ pub use simulator::{
     MIN_PRIORITY_FEE_PERCENTILE, TARGET_PROFIT_RATIO,
 };
 pub use state_override::{apply_simulation_overrides, SimulationOverrideParams};
+pub use warm_code_cache::{WarmCodeCache, WarmCodeCacheInner, WARM_CODE_CACHE_TTL_BLOCKS};

@@ -2155,6 +2155,7 @@ dependencies = [
  "degenbot-pools",
  "degenbot-rpc",
  "log",
+ "parking_lot",
  "revm",
  "thiserror 2.0.19",
  "tokio",
