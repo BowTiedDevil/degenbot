@@ -28,6 +28,9 @@ use degenbot_core::errors::{ProviderError, ProviderResult};
 use degenbot_rpc::provider::{AlloyProvider, EthBlock as RpcEthBlock};
 
 use crate::payload::{build_simulate_payload, SimulationParams};
+// `BlockPriorityFees` lives in `degenbot-evm` (shared with `simulate_in_process`);
+// re-exported from this crate's root.
+use crate::BlockPriorityFees;
 
 /// The block identifier the Python oracle simulates against — `"pending"`.
 ///
@@ -88,21 +91,6 @@ pub struct SimulationResult {
     pub calls: Vec<SimulatedCall>,
     /// The first failing call's index, if any.
     pub first_failure: Option<usize>,
-}
-
-/// A per-block percentile fee summary the `_compute_priority_fee` consumer reads.
-///
-/// Mirrors the Python `dispatcher.block_priority_fees[block]` dict
-/// (`dict(zip(FEE_PERCENTILES, reward[-1]))` — L2851): p10 and p50 priority-fee
-/// samples for a single block, keyed by percentile.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct BlockPriorityFees {
-    /// The block number these fees describe.
-    pub block: u64,
-    /// The p10 priority-fee sample (wei).
-    pub p10: U256,
-    /// The p50 priority-fee sample (wei).
-    pub p50: U256,
 }
 
 /// Dispatch an `eth_simulateV1` over the typed RPC surface.

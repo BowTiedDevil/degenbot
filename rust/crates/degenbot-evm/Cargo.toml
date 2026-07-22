@@ -39,9 +39,14 @@ revm = { version = "41.0.0", default-features = true, features = ["alloydb", "as
 # → 2.2.0). `full` brings the RPC types + provider-http the PoC verified.
 alloy = { version = "^2.0", features = ["full"] }
 degenbot-core = { path = "../degenbot-core" }
-# `WarmupSlots` + `compute_simulation_warmup_slots` + `mapping_slot` — the warmup
-# slot addresses + Solidity mapping-slot math crossed from the executor leaf.
+# `WarmupSlots` + `compute_simulation_warmup_slots` + `mapping_slot` + the
+# `encode_cmd_stream`/`PathInfo`/`HopInfo`/`EncodeOptions` types the sim
+# orchestration consumes — crossed from the executor leaf.
 degenbot-executor = { path = "../degenbot-executor" }
+# `AlloyProvider` — the typed RPC provider the in-process sim's cold-miss
+# fallback (`WrapDatabaseAsync<AlloyDB>`) + the access-list / feeHistory paths
+# consume. The `SimulateContext.provider` field holds a borrowed `&AlloyProvider`.
+degenbot-rpc = { path = "../degenbot-rpc" }
 # `BotState` (ADR-003 state owner; ADR-005 standalone-core) — the snapshot
 # surface (`v3_pools_snapshot` / `v4_pools_snapshot`) + the typed pool-state
 # structs BotStateDb reads. Depends on `degenbot-pools` (state structs) +

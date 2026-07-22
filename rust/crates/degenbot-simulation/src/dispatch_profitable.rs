@@ -43,9 +43,7 @@ use degenbot_executor::composers::{EncodeOptions, PathInfo};
 use degenbot_submission::PathSuppression;
 use futures::stream::{self, StreamExt};
 
-use crate::simulate_one::{
-    simulate_one, FailBuckets, SimFailure, SimResult, SimulateContext, SimulatePath,
-};
+use crate::{simulate_one, FailBuckets, SimFailure, SimResult, SimulateContext, SimulatePath};
 
 // ─────────────────────────────────────────────────────────────────────────
 // Constants (ports the Python oracle's module-level literals)
@@ -432,7 +430,7 @@ mod tests {
     #![allow(clippy::too_many_lines)]
 
     use super::*;
-    use crate::dispatch::BlockPriorityFees;
+    use crate::BlockPriorityFees;
     use alloy::primitives::{address, Address, Bytes, U256};
     use alloy::providers::{Provider, ProviderBuilder};
     use alloy::rpc::client::ClientBuilder;

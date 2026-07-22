@@ -79,5 +79,13 @@ pub mod access_list;
 
 pub use access_list::emit_access_list_from_state;
 pub use bot_state_db::BotStateDb;
-pub use simulator::simulate_in_process;
-pub use state_override::apply_simulation_overrides;
+/// Re-export the shared sim primitives so `degenbot-simulation` can `pub use
+/// degenbot_evm::{...}` (it re-exports them under its own crate root for
+/// existing call sites + the PyO3 wrappers).
+pub use simulator::{
+    compute_priority_fee, fits_int128, simulate_in_process, BlockPriorityFees, FailBuckets,
+    SimFailure, SimResult, SimulateContext, SimulatePath, AGE_DECAY_CONSTANT, EXECUTE_CONFIG,
+    GAS_SAFETY_MARGIN, INITIAL_EXECUTE_GAS, INT128_MAX, INT128_MIN, MAX_PRIORITY_FEE_PERCENTILE,
+    MIN_PRIORITY_FEE_PERCENTILE, TARGET_PROFIT_RATIO,
+};
+pub use state_override::{apply_simulation_overrides, SimulationOverrideParams};

@@ -26,6 +26,18 @@ degenbot-abi = { path = "../degenbot-abi" }
 degenbot-rpc = { path = "../degenbot-rpc" }
 degenbot-core = { path = "../degenbot-core" }
 degenbot-decoders = { path = "../degenbot-decoders" }
+# `degenbot-evm` — the in-process EVM execution core (revm). This crate owns the
+# SHARED sim primitives (`SimResult`, `FailBuckets`, `compute_priority_fee`,
+# `fits_int128`, `SimulateContext`, `SimulatePath`, `BlockPriorityFees` + the
+# constants) so `simulate_in_process` (degenbot-evm) + `simulate_one` (this
+# crate, the eth_simulateV1 path) share one type home. This crate re-exports
+# them (`pub use degenbot_evm::{...}`) so existing `use degenbot_simulation::...`
+# call sites + the PyO3 wrappers stay unchanged. revm is already compiled in
+# the workspace (the umbrella + degenbot-aave + degenbot-evm-math depend on
+# degenbot-evm), so this edge costs link-time, not a new heavy compile; the
+# eventual dispatch swap (retire `dispatch::simulate_v1` for
+# `degenbot-evm::simulate_in_process`) needs this edge anyway.
+degenbot-evm = { path = "../degenbot-evm" }
 degenbot-submission = { path = "../degenbot-submission" }
 thiserror = { version = "^2.0" }
 futures = { version = "^0.3" }

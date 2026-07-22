@@ -53,8 +53,8 @@ use degenbot_executor::composers::{HopInfo, PathInfo};
 use degenbot_simulation::dispatch_profitable::{
     dispatch_profitable_results, DispatchCandidate, DispatchError, DispatchOutcome,
 };
-use degenbot_simulation::simulate_one::{SimResult, SimulateContext};
 use degenbot_simulation::BlockPriorityFees;
+use degenbot_simulation::{SimResult, SimulateContext};
 use degenbot_submission::{PoolKey, SubmitCandidate};
 use pyo3::exceptions::PyValueError;
 use pyo3::types::PyList;
