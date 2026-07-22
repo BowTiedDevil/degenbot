@@ -6,19 +6,25 @@
 //! typed state and falling back to `AlloyDB` (RPC) only for contracts the
 //! engine does not track.
 //!
-//! ## Architecture (option B, chosen by the operator post-spike QGJGWI)
+//! ## Architecture (option B seam — forwarding today)
 //!
-//! The engine state *is* the EVM's `Database`. A hand-written `DatabaseRef`
-//! impl ([`bot_state_db::BotStateDb`]) reads `Bot`'s typed pool state
-//! (`V2PoolState` reserves, `V3PoolState`/`V4PoolState` `slot0`/`liquidity`/
-//! tick-data) and ABI-encodes it to EVM slots on demand — no long-lived
-//! encoded copy (the typed fields remain the single source of truth). Composes
-//! under [`revm::database::CacheDB`] for sim-scoped overrides:
+//! [`bot_state_db::BotStateDb`] is a thin `revm::DatabaseRef` wrapper that
+//! currently **forwards every read** to the `WrapDatabaseAsync<AlloyDB>`
+//! fallback. The typed-state serving path (V2 reserves / V3 `slot0`/
+//! `liquidity`/`ticks` ABI-encoded to EVM slots on demand) was deliberately
+//! NOT wired — serving the snapshot's reserves/`slot0` against the on-chain
+//! slots the pool's own `swap()` reads (fee growth, tick bitmap,
+//! `IERC20.balanceOf`) produced K-invariant / `LOK` reverts from
+//! stale-vs-fresh state divergence. The wrapper persists as the option B
+//! seam the live `simulate_in_process` chain references; collapsing it to
+//! bare `WrapDatabaseAsync<AlloyDB>` is the Tier 1 refactor's scope (ergo
+//! task `V5HCR5`). See [`bot_state_db`] for the historical note on the
+//! retired slot encoders.
 //!
 //! ```text
 //! EVM transact → CacheDB (sim-scoped overrides)
-//!                 → BotStateDb (engine typed state, encode-on-demand)
-//!                 → WrapDatabaseAsync<AlloyDB> (RPC fallback for untracked)
+//!                 → BotStateDb (forwarding wrapper; option B seam)
+//!                 → WrapDatabaseAsync<AlloyDB> (RPC fallback)
 //! ```
 //!
 //! ## Two consumers (ADR-005)
@@ -60,9 +66,10 @@ pub mod simulator;
 /// `insert_account_info` calls, preserving the explicit-balance-wins merge.
 pub mod state_override;
 
-/// `BotStateDb` — a `revm::DatabaseRef` impl over `Bot`'s typed pool state,
-/// with `WrapDatabaseAsync<AlloyDB>` as the cold-miss fallback for untracked
-/// contracts. The move that makes the engine state *be* the EVM's `Database`.
+/// `BotStateDb` — a thin `revm::DatabaseRef` wrapper that forwards every read
+/// to the `WrapDatabaseAsync<AlloyDB>` fallback. Currently a pass-through;
+/// the typed-state serving path (option B) is not wired. See the module's
+/// historical note on the retired slot encoders.
 pub mod bot_state_db;
 
 /// V4 PoolManager transient-storage seeder (EIP-1153) — seeds the built EVM's
@@ -84,7 +91,7 @@ pub mod calldata;
 pub mod access_list;
 
 pub use access_list::emit_access_list_from_state;
-pub use bot_state_db::{BotStateDb, SnapshotError};
+pub use bot_state_db::BotStateDb;
 /// Re-export the shared sim primitives so `degenbot-simulation` can `pub use
 /// degenbot_evm::{...}` (it re-exports them under its own crate root for
 /// existing call sites + the PyO3 wrappers).

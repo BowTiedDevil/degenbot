@@ -548,10 +548,11 @@ impl Provider<Ethereum> for ArcDynProviderEthereum {
 /// pinned to `ctx.base_fee_next` + `ctx.current_block` (the same env the
 /// Python oracle's `block_identifier="pending"` resolved to on the node).
 ///
-/// The `bot_state` borrow backs [`crate::bot_state_db::BotStateDb`] (option B):
-/// tracked pool slots served from engine state (0 RPC); untracked contracts +
-/// pool internal slots fall through to the `WrapDatabaseAsync<AlloyDB>`
-/// cold-miss fallback (RPC). The `provider` is the AlloyDB backing's RPC handle.
+/// The `bot_state` borrow backs [`crate::bot_state_db::BotStateDb`] (the
+/// option B seam): today the wrapper forwards every read to the
+/// `WrapDatabaseAsync<AlloyDB>` cold-miss fallback (RPC); typed-state serving
+/// is not wired (see [`crate::bot_state_db`] for the historical note). The
+/// `provider` is the AlloyDB backing's RPC handle.
 ///
 /// # Errors
 ///
@@ -633,7 +634,8 @@ pub fn simulate_in_process(
 /// Sync — no RPC, no tokio runtime needed (the `CacheDB`'s backing `Database`
 /// is whatever the caller supplied; `EmptyDB` for the smoke test,
 /// `BotStateDb<WrapDatabaseAsync<AlloyDB>>` for production via
-/// [`simulate_in_process`]). This split lets the revm orchestration be
+/// [`simulate_in_process`]). Today `BotStateDb` forwards every read to the
+/// fallback (typed-state serving not wired — see `bot_state_db`'s doc). This split lets the revm orchestration be
 /// smoke-tested against `CacheDB<EmptyDB>` without a live RPC.
 ///
 /// The caller owns the `cache_db` (by value); it is moved into the revm
