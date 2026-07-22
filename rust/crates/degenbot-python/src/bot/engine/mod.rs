@@ -29,6 +29,7 @@ pub use errors::*;
 pub use result_channel::BlockStream;
 
 use crate::prelude::*;
+use degenbot_bot::bot_core::BotState;
 pub(crate) use std::collections::HashMap;
 pub(crate) use std::sync::Arc;
 
@@ -87,7 +88,17 @@ pub struct PyArbitrageEngine {
     block_rx: Arc<parking_lot::Mutex<Option<mpsc::UnboundedReceiver<BlockNotification>>>>,
 }
 
-impl PyArbitrageEngine {}
+impl PyArbitrageEngine {
+    /// The shared `BotState` arc (ADR-003) — the engine's `core`
+    /// `Arc<RwLock<BotState>>`, cloned out for callers that need to read the
+    /// pool-state registry (e.g. the in-process `simulate_in_process` path
+    /// borrows `&BotState` for `BotStateDb`). Acquires the engine lock
+    /// (engine-then-core ordering per ADR-003) + clones the `core` arc —
+    /// one Arc clone, no state copy.
+    pub(crate) fn bot_state_arc(&self) -> Arc<parking_lot::RwLock<BotState>> {
+        self.engine.lock().core.clone()
+    }
+}
 
 pub(crate) fn make_tick_info(
     liquidity_gross: u128,

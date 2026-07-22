@@ -38,6 +38,17 @@ degenbot-decoders = { path = "../degenbot-decoders" }
 # eventual dispatch swap (retire `dispatch::simulate_v1` for
 # `degenbot-evm::simulate_in_process`) needs this edge anyway.
 degenbot-evm = { path = "../degenbot-evm" }
+# `degenbot-bot` — for `BotState` (the ADR-003 state owner the in-process
+# `simulate_in_process` path needs as `&BotState`). Transitive via
+# `degenbot-evm` (which already depends on `degenbot-bot`); this edge makes
+# the `Option<Arc<RwLock<BotState>>>` dispatch-swap param type-carryable from
+# `degenbot-simulation::dispatch_profitable_results`. The eventual dispatch
+# swap (retire `dispatch::simulate_v1` for `degenbot-evm::simulate_in_process`)
+# needs `BotState` here anyway.
+degenbot-bot = { path = "../degenbot-bot" }
+# `parking_lot::RwLock` — the `BotState` lock type (matches `degenbot-bot`
+# so the `Option<Arc<RwLock<BotState>>>` fan-out param is the same lock family).
+parking_lot = "^0.12"
 degenbot-submission = { path = "../degenbot-submission" }
 thiserror = { version = "^2.0" }
 futures = { version = "^0.3" }

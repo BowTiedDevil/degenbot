@@ -80,8 +80,8 @@ use std::sync::Arc;
 /// indicates a bug in a sibling task (the dispatcher/suppression mutexes are
 /// only ever locked for short synchronous spans).
 #[pyfunction]
-#[pyo3(signature = (candidates, context, dispatcher, base_fee_next, current_block, min_profit_net, min_profit_margin_bps))]
-#[allow(clippy::too_many_arguments)]
+#[pyo3(signature = (candidates, context, dispatcher, base_fee_next, current_block, min_profit_net, min_profit_margin_bps, *, engine=None))]
+#[allow(clippy::too_many_arguments, clippy::needless_pass_by_value)]
 pub fn dispatch_profitable_py<'py>(
     py: Python<'py>,
     candidates: &Bound<'_, PyList>,
@@ -91,6 +91,7 @@ pub fn dispatch_profitable_py<'py>(
     current_block: u64,
     min_profit_net: u128,
     min_profit_margin_bps: u64,
+    engine: Option<Py<crate::bot::engine::PyArbitrageEngine>>,
 ) -> PyResult<Bound<'py, PyAny>> {
     // ── GIL-held arg extraction ──
     // Walk the candidate list: clone each held DispatchCandidate into the
@@ -148,6 +149,17 @@ pub fn dispatch_profitable_py<'py>(
     // fan-out (monitor-task contention is unaffected).
     let suppression_arc = dispatcher.suppression_arc();
 
+    // ── BotState extraction (for the in-process `simulate_in_process` path).
+    // Done under the GIL: the `Py<PyArbitrageEngine>` is borrowed, the engine
+    // lock is acquired (engine-then-core ordering per ADR-003), + the `core`
+    // `Arc<RwLock<BotState>>` is cloned out (cheap — one Arc clone). The arc
+    // threads through the async fan-out; the per-path read guard is taken in
+    // the closure body (`parking_lot::RwLockReadGuard` is `Send`). When
+    // `engine` is `None`, `bot_state = None` → the fan-out falls back to
+    // `simulate_one` (the legacy `eth_simulateV1` path).
+    let bot_state: Option<Arc<parking_lot::RwLock<degenbot_bot::bot_core::BotState>>> =
+        engine.as_ref().map(|eng| eng.borrow(py).bot_state_arc());
+
     // ── GIL release across the per-path simulation fan-out ──
     future_into_py(py, async move {
         let ctx = SimulateContext {
@@ -172,6 +184,7 @@ pub fn dispatch_profitable_py<'py>(
             current_block,
             min_profit_net,
             min_profit_margin_bps,
+            bot_state,
         )
         .await
         .map_err(|e: DispatchError| PyValueError::new_err(format!("{e:?}")))?;

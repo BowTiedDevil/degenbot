@@ -552,7 +552,7 @@ impl Provider<Ethereum> for ArcDynProviderEthereum {
 /// Returns `Ok(None)` for any non-profitable / reverted / failed outcome — the
 /// bucket is tallied before returning. Returns `Err` only on an unrecoverable
 /// RPC failure (`rpc-failed`) or a BlockEnv/DB construction failure.
-pub async fn simulate_in_process(
+pub fn simulate_in_process(
     ctx: &SimulateContext<'_>,
     bot_state: &degenbot_bot::bot_core::BotState,
     path: SimulatePath,

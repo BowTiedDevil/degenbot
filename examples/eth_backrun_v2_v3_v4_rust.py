@@ -710,6 +710,7 @@ class BackrunSession:
                 operator_private_key=cfg.operator_private_key,
                 dispatcher=self.dispatcher,
                 dry_run=cfg.dry_run,
+                sim_mode=cfg.sim_mode,
                 block_stream=_consumer_branch,
             ),
             name="result-consumer",
@@ -1375,6 +1376,7 @@ async def _dispatch_profitable(
     current_block: int,
     base_fee_next: int,
     dry_run: bool,
+    sim_mode: str = "rpc",
 ) -> None:
     """Encode → simulate → submit a batch of profitable results via the Rust seam.
 
@@ -1420,6 +1422,7 @@ async def _dispatch_profitable(
         current_block=current_block,
         min_profit_net=MIN_PROFIT_NET,
         min_profit_margin_bps=MIN_PROFIT_MARGIN_BPS,
+        engine=engine_registry.engine if sim_mode == "evm" else None,
     )
     _render_sim_summary(outcome)
     _render_sim_failures(outcome)
@@ -1583,6 +1586,7 @@ async def consume_result_batches(
     dispatcher: Dispatcher,
     dry_run: bool,
     *,
+    sim_mode: str = "rpc",
     block_stream: AsyncIterator[dict[str, int]] | None = None,
     result_iter: AsyncIterator[dict[str, object]] | None = None,
 ) -> None:
@@ -1648,6 +1652,7 @@ async def consume_result_batches(
                     operator_address,
                     operator_private_key,
                     dry_run,
+                    sim_mode=sim_mode,
                 )
 
 
@@ -1790,6 +1795,8 @@ async def _apply_result_if_ready(
     operator_address: str,
     operator_private_key: str,
     dry_run: bool,
+    *,
+    sim_mode: str = "rpc",
 ) -> None:
     """Dispatch profitable results from a solver result batch if fut resolved.
 
@@ -1849,6 +1856,7 @@ async def _apply_result_if_ready(
                 parent_gas_limit=int(cast("Any", batch["gas_limit"])),
             ),
             dry_run=dry_run,
+            sim_mode=sim_mode,
         )
 
 
@@ -1877,6 +1885,20 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "Pool version permutation filter (e.g. V2-V3-V4). "
             "Only paths matching this 3-hop ordering will be built and simulated. "
             "Overrides PATH_PERMUTATION_FILTER in the source file."
+        ),
+    )
+    parser.add_argument(
+        "--sim",
+        type=str,
+        default="rpc",
+        choices=("rpc", "evm"),
+        help=(
+            "Simulation back-end: 'rpc' (default) hashes each candidate through "
+            "eth_simulateV1 via dispatch_profitable's simulate_one leaf; 'evm' "
+            "routes the fan-out through the in-process revm sim (the new core "
+            "simulate_in_process path). 'evm' exercises the in-process sim "
+            "end-to-end against the live RPC (cold-miss AlloyDB fallback) — "
+            "dry-run only (implies no submission)."
         ),
     )
     parser.add_argument(
@@ -1925,6 +1947,7 @@ async def main() -> None:
             permutation=args.permutation,
             cli_http=args.node_http,
             cli_ws=args.node_ws,
+            sim_mode=args.sim,
         )
     except ValueError as exc:
         bot_logger.error(str(exc))

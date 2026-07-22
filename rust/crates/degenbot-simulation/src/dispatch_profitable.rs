@@ -39,11 +39,16 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use alloy::primitives::U256;
+use degenbot_bot::bot_core::BotState;
 use degenbot_executor::composers::{EncodeOptions, PathInfo};
 use degenbot_submission::PathSuppression;
 use futures::stream::{self, StreamExt};
+use parking_lot::RwLock;
 
-use crate::{simulate_one, FailBuckets, SimFailure, SimResult, SimulateContext, SimulatePath};
+use crate::{
+    simulate_in_process, simulate_one, FailBuckets, SimFailure, SimResult, SimulateContext,
+    SimulatePath,
+};
 
 // ─────────────────────────────────────────────────────────────────────────
 // Constants (ports the Python oracle's module-level literals)
@@ -288,6 +293,18 @@ pub async fn dispatch_profitable_results(
     current_block: u64,
     min_profit_net: u128,
     min_profit_margin_bps: u64,
+    // When `Some`, the fan-out routes each candidate through the in-process
+    // revm sim (`simulate_in_process`) over the borrowed `&BotState`, retiring
+    // the `eth_simulateV1` RPC path (`simulate_one`) for the dispatch. When
+    // `None`, the fan-out uses `simulate_one` (the legacy RPC path — the
+    // default). The `Arc<RwLock<BotState>>` is the engine's shared state owner
+    // (ADR-003); a per-path read guard is taken inside the fan-out closure
+    // (`parking_lot::RwLockReadGuard` is `Send`, so the `.await`-driven
+    // `simulate_in_process` runs under the guard without a `Send` failure).
+    // revm's `WrapDatabaseAsync::block_on` uses `tokio::task::block_in_place`
+    // under a multi-threaded runtime, so the in-process sim's blocking RPC
+    // cold-miss path does not deadlock against the pump's worker pool.
+    bot_state: Option<Arc<RwLock<BotState>>>,
 ) -> Result<DispatchOutcome, DispatchError> {
     let mut outcome = DispatchOutcome::default();
     let pre_filter_count = candidates.len();
@@ -328,11 +345,23 @@ pub async fn dispatch_profitable_results(
             .into_iter()
             .map(|c| (c.path_id, c.to_simulate_path())),
     )
-    .map(|(pid, path)| async move {
-        let mut buckets = FailBuckets::new();
-        match simulate_one(ctx, path, &mut buckets).await {
-            Ok(opt) => (pid, buckets, Ok(opt)),
-            Err(e) => (pid, buckets, Err(format!("{e}"))),
+    .map(|(pid, path)| {
+        let bs_arc = bot_state.clone();
+        async move {
+            let mut buckets = FailBuckets::new();
+            let result: Result<Option<SimResult>, String> = match bs_arc {
+                Some(arc) => {
+                    let guard = arc.read();
+                    simulate_in_process(ctx, &guard, path, &mut buckets).map_err(|e| format!("{e}"))
+                }
+                None => simulate_one(ctx, path, &mut buckets)
+                    .await
+                    .map_err(|e| format!("{e}")),
+            };
+            match result {
+                Ok(opt) => (pid, buckets, Ok(opt)),
+                Err(e) => (pid, buckets, Err(e)),
+            }
         }
     })
     .buffer_unordered(MAX_SIMULATE_CONCURRENT)
@@ -605,6 +634,7 @@ mod tests {
             100,
             MIN_PROFIT_NET,
             0,
+            None,
         )
         .await
         .unwrap();
@@ -646,6 +676,7 @@ mod tests {
                 100,
                 MIN_PROFIT_NET,
                 0,
+                None,
             )
             .await
             .unwrap();
@@ -676,6 +707,7 @@ mod tests {
             50, // < retry interval (100) → still suppressed (last_retry stays 0)
             MIN_PROFIT_NET,
             0,
+            None,
         )
         .await
         .unwrap();
@@ -711,6 +743,7 @@ mod tests {
             50, // < retry interval (100) → still suppressed
             MIN_PROFIT_NET,
             0,
+            None,
         )
         .await
         .unwrap();
@@ -812,6 +845,7 @@ mod tests {
             100,
             MIN_PROFIT_NET,
             0,
+            None,
         )
         .await
         .unwrap();
@@ -873,6 +907,7 @@ mod tests {
             100,
             MIN_PROFIT_NET,
             0,
+            None,
         )
         .await
         .unwrap();
@@ -928,6 +963,7 @@ mod tests {
             100,
             MIN_PROFIT_NET,
             0,
+            None,
         )
         .await
         .unwrap();
@@ -990,6 +1026,7 @@ mod tests {
             50, // < retry interval → all suppressed
             MIN_PROFIT_NET,
             0,
+            None,
         )
         .await
         .unwrap();
@@ -1013,6 +1050,7 @@ mod tests {
             100,
             MIN_PROFIT_NET,
             0,
+            None,
         )
         .await
         .unwrap();
@@ -1045,6 +1083,7 @@ mod tests {
             100,
             MIN_PROFIT_NET,
             0,
+            None,
         )
         .await
         .unwrap();
@@ -1076,6 +1115,7 @@ mod tests {
             100,
             MIN_PROFIT_NET,
             0,
+            None,
         )
         .await
         .unwrap();
@@ -1113,6 +1153,7 @@ mod tests {
             100,
             MIN_PROFIT_NET,
             0,
+            None,
         )
         .await
         .unwrap();
