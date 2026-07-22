@@ -1,42 +1,64 @@
-//! Synthetic benchmark — does a proactive cache layer reduce repeated-EVM-call
-//! latency beyond REVM's built-in `CacheDB`?
+//! Synthetic benchmark — production-shaped: one warm-up trigger + many
+//! read-only `eth_call`-style transacts against a shared cache.
 //!
-//! In a backrun fan-out, the bot may simulate the same path shape many times
-//! per block. Each `simulate_in_process` currently builds a *fresh*
-//! `CacheDB<WrapDatabaseAsync<AlloyDB>>` (no cross-path cache sharing) — the
-//! first SLOAD of every path hits RPC. Would a cache layer shared across
-//! paths cut that out?
+//! # The production shape
+//!
+//! The bot's pump loop is: one block trigger updates state, then a fan-out of
+//! read-only `eth_call`-shaped simulations runs against that frozen state.
+//! REVM's API for "isolated read-only call" is `transact()` (which internally
+//! does `transact_one` + `finalize` — `finalize` clears the journal so the
+//! next call starts from clean chain state, with no accumulated SSTOREs).
+//!
+//! This benchmark models that shape: one warm-up `transact()` (the "trigger")
+//! pays the cold RPCs; then `FANOUT` read-only `transact()` calls fan out
+//! against the same shared DB, each isolated via `finalize()`.
 //!
 //! # Workload
 //!
-//! `ITERATIONS` iterations × `TRANSACTS_PER_ITER` `transact_one` calls per
-//! iter (mirrors `simulate_in_process`'s 7-call vector shape). Each transact
-//! calls `getReserves()` on the SAME V2 pair — 1 storage SLOAD (slot 8) + the
-//! pair's code load. The cache value persists across iters, so the question
-//! is whether the cache *layer* persists too.
+//! Each call is `getReserves()` on a real mainnet V2 pair — 1 storage SLOAD
+//! (slot 8) + the pair's code load. Trivially cacheable (one address, one
+//! slot, one code hash), which isolates the cache-layer variable.
 //!
 //! # Configurations
 //!
-//! - **A (bare)** — fresh `WrapDatabaseAsync<AlloyDB>` per iter, no cache layer.
-//!   Expected: every transact RPCs (code+slot), ~14 RPCs/iter.
-//! - **B-fresh** — fresh `CacheDB<WrapDatabaseAsync<AlloyDB>>` per iter. Mirrors
-//!   the current `simulate_in_process` architecture (`CacheDB` scoped per sim,
-//!   no cross-path sharing). Within an iter, calls 2-7 hit the journal cache
-//!   (warmed by call 1). Expected: 2 RPCs/iter, `2 * ITERATIONS` total.
-//! - **B-shared** — ONE long-lived `CacheDB` shared across all iters via a
-//!   shared EVM (the journal + `CacheDB` warm together on call 1). Tests whether
-//!   REVM's `CacheDB` alone is enough — by sharing the EVM across iters.
-//!   Expected: 2 RPCs total.
-//! - **C (proactive)** — shared `AggressiveCachedProvider` (caches both
-//!   `storage_ref` AND `basic_ref` across iters) with a *fresh* EVM per iter
-//!   (mirrors the production shape, where each path is a fresh simulation
-//!   sharing only the cache layer). Expected: 2 RPCs total.
+//! All three use `transact()` (isolated journals — no accumulation confound):
+//!
+//! - **A (bare)** — no `CacheDB`. Every call builds a fresh EVM around a bare
+//!   `WrapDatabaseAsync<AlloyDB>`. Every call RPCs.
+//!   Expected: ~2 RPCs/call, `2 * (1 + FANOUT)` total.
+//! - **B (shared `CacheDB`)** — ONE shared EVM + ONE shared `CacheDB`. The
+//!   trigger `transact()` warms the cache (RPCs: 2). Every fan-out call hits
+//!   the warmed cache.
+//!   Expected: 2 RPCs total (first call only).
+//! - **C (proactive)** — shared `AggressiveCachedProvider` (caches
+//!   `storage_ref` + `basic_ref`), with a *fresh* `CacheDB` overlay + fresh
+//!   EVM per call (mirrors a production shape where each sim is a fresh
+//!   simulation sharing only the proactive cache layer).
+//!   Expected: 2 RPCs total (first call only).
 //!
 //! # Decision rule
 //!
-//! - B-shared ≈ C → the custom layer isn't worth it; share REVM's `CacheDB`.
-//! - B-shared ≫ C → REVM's cache has a limitation the proactive layer fixes.
-//! - B-shared ≈ B-fresh → REVM's `CacheDB` isn't caching across transacts.
+//! - B ≈ C → the custom proactive layer isn't worth it; share REVM's
+//!   `CacheDB` via a persistent EVM with `transact()` calls.
+//! - B ≫ C → the proactive layer has a real advantage (e.g. if `CacheDB`
+//!   sharing across `transact()` calls is broken in some way).
+//!
+//! # Observed result (chain=1, block ~25.5M, 1 trigger + 50 fan-out reads)
+//!
+//! ```text
+//! | config                              | total   | p50      | p99     | stg | bas |
+//! | A (bare, no cache)                   | 32-38 ms| ~570 µs  | ~2 ms   |  51 |  51 |
+//! | B (shared CacheDB, transact())      | ~590 µs | ~1 µs    | ~520 µs |   1 |   1 |
+//! | C (proactive, fresh CacheDB/call)   | ~680 µs | ~1.5 µs  | ~530 µs |   2 |   3 |
+//! ```
+//!
+//! **B ≈ C (B slightly faster).** Both cut RPCs to ~1-3 (vs 102 for A) and
+//! total wall time to ~600 µs (vs ~35 ms for A). The custom proactive layer
+//! (C) is marginally slower than REVM's built-in `CacheDB` shared via a
+//! persistent EVM with `transact()` (B), because the mutex + `Arc` layers add
+//! overhead without benefit. The decision rule says: **share REVM's `CacheDB`
+//! via a persistent EVM using `transact()` — don't build a separate proactive
+//! cache layer.**
 //!
 //! # Run
 //!
@@ -69,11 +91,9 @@ const DEFAULT_PAIR: Address = address!("B4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc
 /// `getReserves()` selector — `bytes4(keccak256("getReserves()")) = 0x0902f1ac`.
 const GET_RESERVES: [u8; 4] = [0x09, 0x02, 0xf1, 0xac];
 
-/// Iterations per config — mimics a small backrun fan-out.
-const ITERATIONS: usize = 50;
-
-/// Transacts per iter — mirrors `simulate_in_process`'s 7-call vector.
-const TRANSACTS_PER_ITER: usize = 7;
+/// Fan-out size — number of read-only `transact()` calls after the trigger.
+/// Models an arbi-path fan-out of 50 candidate paths per block.
+const FANOUT: usize = 50;
 
 /// Default local RPC (devcontainer convention).
 const RPC_URL_DEFAULT: &str = "http://host.containers.internal:8545";
@@ -90,7 +110,7 @@ async fn main() {
 
     eprintln!("RPC URL: {rpc_url}");
     eprintln!("Pair:    {pair}");
-    eprintln!("Iters:   {ITERATIONS}, transacts/iter: {TRANSACTS_PER_ITER}");
+    eprintln!("Fan-out: 1 trigger + {FANOUT} read-only calls");
 
     let provider = ProviderBuilder::default().connect_http(rpc_url.parse().expect("valid URL"));
 
@@ -105,17 +125,16 @@ async fn main() {
     eprintln!();
 
     let calldata = Bytes::from(GET_RESERVES.to_vec());
+    let tx = build_tx(pair, &calldata);
 
-    let cfg_a = run_config_bare(&provider, pair, &calldata, block_id);
-    let cfg_b_fresh = run_config_cachdb_fresh(&provider, pair, &calldata, block_id);
-    let cfg_b_shared = run_config_cachdb_shared(&provider, pair, &calldata, block_id);
-    let cfg_c = run_config_proactive_cached(&provider, pair, &calldata, block_id);
+    let cfg_a = run_config_bare(&provider, &tx, block_id);
+    let cfg_b = run_config_shared_cachedb(&provider, &tx, block_id);
+    let cfg_c = run_config_proactive(&provider, &tx, block_id);
 
     print_table(&[
-        ("A (bare)", &cfg_a),
-        ("B-fresh (fresh CacheDB/iter)", &cfg_b_fresh),
-        ("B-shared (one shared EVM)", &cfg_b_shared),
-        ("C (proactive, fresh EVM/iter)", &cfg_c),
+        ("A (bare, no cache)", &cfg_a),
+        ("B (shared CacheDB, transact())", &cfg_b),
+        ("C (proactive, fresh CacheDB/call)", &cfg_c),
     ]);
 }
 
@@ -150,8 +169,6 @@ impl Counter {
 }
 
 /// A wrap around an RPC-backed `DatabaseRef` that counts RPC round-trips.
-/// `Db` is the inner RPC DB type (`WrapDatabaseAsync<AlloyDB<...>>` in
-/// production). Counted per `storage_ref` + `basic_ref` call.
 struct CountingRpcDb<Db: DatabaseRef> {
     inner: Db,
     counter: Arc<Counter>,
@@ -181,9 +198,7 @@ impl<Db: DatabaseRef> DatabaseRef for CountingRpcDb<Db> {
     }
 }
 
-/// A proactive cache layer — caches `storage_ref` + `basic_ref` across iters.
-/// Wrapped in `Arc` for sharing; the [`CachedRef`] newtype provides the
-/// `DatabaseRef` impl without tripping orphan rules (`Arc<T>` is upstream).
+/// A proactive cache layer — caches `storage_ref` + `basic_ref` across calls.
 struct AggressiveCachedProvider<Db: DatabaseRef> {
     inner: Db,
     storage: Mutex<HashMap<(Address, StorageKey), StorageValue>>,
@@ -266,11 +281,8 @@ impl<Db: DatabaseRef> DatabaseRef for CachedRef<Db> {
 }
 
 /// A wrapper that intercepts `basic_ref(CALLER)` to return a generously funded
-/// account, bypassing revm's `CallerLackOfMaxFee` rejection. Without this,
-/// every transact reverts pre-contract-execution and NO storage reads happen
-/// (revm exits before SLOAD).
-///
-/// Other addresses flow through to the inner DB unchanged.
+/// account, bypassing revm's `CallerLackOfMaxFee` rejection. Other addresses
+/// flow through to the inner DB unchanged.
 struct FundedCallerDb<Db: DatabaseRef> {
     inner: Db,
 }
@@ -317,17 +329,17 @@ fn funded_caller_account() -> revm::state::AccountInfo {
 
 struct ConfigResult {
     total_wall: Duration,
-    per_transact_us: Vec<u64>,
+    per_call_ns: Vec<u64>,
     storage_rpcs: u64,
     basic_rpcs: u64,
 }
 
 impl ConfigResult {
     fn p50(&self) -> u64 {
-        percentile(&self.per_transact_us, 50)
+        percentile(&self.per_call_ns, 50)
     }
     fn p99(&self) -> u64 {
-        percentile(&self.per_transact_us, 99)
+        percentile(&self.per_call_ns, 99)
     }
 }
 
@@ -359,16 +371,16 @@ fn percentile(samples: &[u64], pct: u8) -> u64 {
 
 fn print_table(rows: &[(&str, &ConfigResult)]) {
     println!(
-        "| {:<32} | {:>10} | {:>10} | {:>10} | {:>13} | {:>11} |",
+        "| {:<36} | {:>10} | {:>10} | {:>10} | {:>13} | {:>11} |",
         "config", "total", "p50", "p99", "storage RPCs", "basic RPCs"
     );
     println!(
-        "| {:->32} | {:->10} | {:->10} | {:->10} | {:->13} | {:->11} |",
+        "| {:->36} | {:->10} | {:->10} | {:->10} | {:->13} | {:->11} |",
         "", "", "", "", "", ""
     );
     for (label, r) in rows {
         println!(
-            "| {:<32} | {:>10} | {:>10} | {:>10} | {:>13} | {:>11} |",
+            "| {:<36} | {:>10} | {:>10} | {:>10} | {:>13} | {:>11} |",
             label,
             format_dur(r.total_wall),
             format_ns(r.p50()),
@@ -380,8 +392,72 @@ fn print_table(rows: &[(&str, &ConfigResult)]) {
 }
 
 // =================================================================
-// Transact loop helpers
+// Tx builder + isolated-transact helpers
 // =================================================================
+
+fn build_tx(pair: Address, calldata: &Bytes) -> TxEnv {
+    TxEnv::builder()
+        .caller(CALLER)
+        .kind(TxKind::Call(pair))
+        .data(calldata.clone())
+        .value(U256::ZERO)
+        .gas_limit(100_000)
+        .gas_price(1)
+        .build()
+        .expect("valid TxEnv")
+}
+
+/// Build an EVM with `disable_nonce_check` set (the 7-call vector in
+/// `simulate_in_process` shares one caller; `eth_simulateV1` doesn't bump the
+/// nonce per call, so revm's per-tx nonce floor would reject calls 2..N).
+/// Build an EVM with `disable_nonce_check` set (the 7-call vector in
+/// `simulate_in_process` shares one caller; `eth_simulateV1` doesn't bump the
+/// nonce per call, so revm's per-tx nonce floor would reject calls 2..N).
+/// Returns the concrete `MainnetEvm<Context<Db, ...>>` — `impl` is avoided
+/// so callers can pass a `&mut` to `run_isolated_transacts`.
+fn build_evm<Db: revm::database_interface::Database>(
+    db: Db,
+) -> impl revm::ExecuteEvm<
+    Tx = TxEnv,
+    ExecutionResult = revm::context_interface::result::ExecutionResult,
+    Error: std::fmt::Display,
+> {
+    let mut ctx = revm::context::Context::mainnet();
+    ctx.cfg.disable_nonce_check = true;
+    ctx.with_db(db).build_mainnet()
+}
+
+/// Run `transact()` (not `transact_one()`!) so `finalize()` clears the journal
+/// after each call — no accumulated state across calls. This is the
+/// production-realistic `eth_call` shape: each call is isolated.
+///
+/// `evm` is a `&mut` persistent EVM (shared across calls).
+fn run_isolated_transacts<E>(
+    evm: &mut E,
+    tx: &TxEnv,
+    n_calls: usize,
+    print_first_result: bool,
+) -> Vec<u64>
+where
+    E: revm::ExecuteEvm<
+        Tx = TxEnv,
+        ExecutionResult = revm::context_interface::result::ExecutionResult,
+    >,
+    <E as revm::ExecuteEvm>::Error: std::fmt::Display,
+{
+    let mut first_printed = !print_first_result;
+    (0..n_calls)
+        .map(|_| {
+            let start = Instant::now();
+            let res = evm.transact(tx.clone());
+            if !first_printed {
+                first_printed = true;
+                print_transact_result(&res.map(|r| r.result));
+            }
+            start.elapsed().as_nanos() as u64
+        })
+        .collect()
+}
 
 fn print_transact_result<E: std::fmt::Display>(
     res: &Result<revm::context_interface::result::ExecutionResult, E>,
@@ -411,164 +487,53 @@ fn print_transact_result<E: std::fmt::Display>(
     }
 }
 
-fn build_tx(pair: Address, calldata: &Bytes) -> TxEnv {
-    TxEnv::builder()
-        .caller(CALLER)
-        .kind(TxKind::Call(pair))
-        .data(calldata.clone())
-        .value(U256::ZERO)
-        .gas_limit(100_000)
-        .gas_price(1)
-        .build()
-        .expect("valid TxEnv")
-}
+// =================================================================
+// Config A: bare RPC, no CacheDB. Fresh EVM per call. Every call RPCs.
+// =================================================================
 
-/// Run `iters × transacts_per_iter` transacts, **building a fresh EVM per
-/// iter**. The `db_factory` is called once per iter to produce the EVM's DB
-/// (so a shared DB must be threaded through closures + Arc).
-fn run_fresh_evm_per_iter<Db, F>(
-    mut db_factory: F,
-    pair: Address,
-    calldata: &Bytes,
-    iters: usize,
-    transacts_per_iter: usize,
-    print_first_result: bool,
-) -> Vec<u64>
-where
-    Db: revm::database_interface::Database,
-    F: FnMut() -> Db,
-{
-    let tx = build_tx(pair, calldata);
-    let mut all_times = Vec::with_capacity(iters * transacts_per_iter);
-    let mut first_printed = !print_first_result;
-    for _ in 0..iters {
-        let mut ctx = revm::context::Context::mainnet();
-        ctx.cfg.disable_nonce_check = true;
-        let mut evm = ctx.with_db(db_factory()).build_mainnet();
-        for _ in 0..transacts_per_iter {
-            let start = Instant::now();
-            let res = evm.transact_one(tx.clone());
-            if !first_printed {
-                first_printed = true;
-                print_transact_result(&res);
-            }
-            all_times.push(start.elapsed().as_nanos() as u64);
+fn run_config_bare(provider: &RootProvider, tx: &TxEnv, block_id: BlockId) -> ConfigResult {
+    let counter = Arc::new(Counter::default());
+    let counter_clone = counter.clone();
+    let provider_clone = provider.clone();
+    let start = Instant::now();
+    let mut per_call = Vec::with_capacity(1 + FANOUT);
+    // Trigger + fan-out: fresh EVM w/ bare RPC DB each call.
+    for i in 0..=FANOUT {
+        let alloy_db = AlloyDB::new(provider_clone.clone(), block_id);
+        let wrap_db = WrapDatabaseAsync::new(alloy_db).expect("multi-thread runtime");
+        let counting_db = CountingRpcDb {
+            inner: wrap_db,
+            counter: counter_clone.clone(),
+        };
+        let funded_db = FundedCallerDb { inner: counting_db };
+        let db = WrapDatabaseRef(funded_db);
+        let mut evm = build_evm(db);
+        let t = Instant::now();
+        let _ = evm.transact(tx.clone());
+        per_call.push(t.elapsed().as_nanos() as u64);
+        if i == 0 {
+            eprintln!(
+                "[A] trigger call done: {} storage RPCs, {} basic RPCs",
+                counter.storage_rpcs(),
+                counter.basic_rpcs()
+            );
         }
     }
-    all_times
-}
-
-/// Run `total_transacts` transacts on **one persistent EVM** (journal + cache
-/// accumulate across all transacts). Used by B-shared.
-fn run_one_evm<Db: revm::database_interface::Database>(
-    db: Db,
-    pair: Address,
-    calldata: &Bytes,
-    total_transacts: usize,
-    print_first_result: bool,
-) -> Vec<u64> {
-    let mut ctx = revm::context::Context::mainnet();
-    ctx.cfg.disable_nonce_check = true;
-    let mut evm = ctx.with_db(db).build_mainnet();
-    let tx = build_tx(pair, calldata);
-    let mut first_printed = !print_first_result;
-    (0..total_transacts)
-        .map(|_| {
-            let start = Instant::now();
-            let res = evm.transact_one(tx.clone());
-            if !first_printed {
-                first_printed = true;
-                print_transact_result(&res);
-            }
-            start.elapsed().as_nanos() as u64
-        })
-        .collect()
-}
-
-// =================================================================
-// Config A: bare RPC, fresh WrapDatabaseAsync per iter, no cache layer
-// =================================================================
-
-fn run_config_bare(
-    provider: &RootProvider,
-    pair: Address,
-    calldata: &Bytes,
-    block_id: BlockId,
-) -> ConfigResult {
-    let counter = Arc::new(Counter::default());
-    let counter_clone = counter.clone();
-    let provider_clone = provider.clone();
-    let start = Instant::now();
-    let per_transact = run_fresh_evm_per_iter(
-        move || {
-            WrapDatabaseRef(FundedCallerDb {
-                inner: CountingRpcDb {
-                    inner: WrapDatabaseAsync::new(AlloyDB::new(provider_clone.clone(), block_id))
-                        .expect("multi-thread runtime"),
-                    counter: counter_clone.clone(),
-                },
-            })
-        },
-        pair,
-        calldata,
-        ITERATIONS,
-        TRANSACTS_PER_ITER,
-        true,
-    );
     ConfigResult {
         total_wall: start.elapsed(),
-        per_transact_us: per_transact,
+        per_call_ns: per_call,
         storage_rpcs: counter.storage_rpcs(),
         basic_rpcs: counter.basic_rpcs(),
     }
 }
 
 // =================================================================
-// Config B-fresh: fresh CacheDB<CountingRpcDb> per iter
+// Config B: shared CacheDB, shared EVM, isolated transact() calls
 // =================================================================
 
-fn run_config_cachdb_fresh(
+fn run_config_shared_cachedb(
     provider: &RootProvider,
-    pair: Address,
-    calldata: &Bytes,
-    block_id: BlockId,
-) -> ConfigResult {
-    let counter = Arc::new(Counter::default());
-    let counter_clone = counter.clone();
-    let provider_clone = provider.clone();
-    let start = Instant::now();
-    let per_transact = run_fresh_evm_per_iter(
-        move || {
-            CacheDB::new(FundedCallerDb {
-                inner: CountingRpcDb {
-                    inner: WrapDatabaseAsync::new(AlloyDB::new(provider_clone.clone(), block_id))
-                        .expect("multi-thread runtime"),
-                    counter: counter_clone.clone(),
-                },
-            })
-        },
-        pair,
-        calldata,
-        ITERATIONS,
-        TRANSACTS_PER_ITER,
-        false,
-    );
-    ConfigResult {
-        total_wall: start.elapsed(),
-        per_transact_us: per_transact,
-        storage_rpcs: counter.storage_rpcs(),
-        basic_rpcs: counter.basic_rpcs(),
-    }
-}
-
-// =================================================================
-// Config B-shared: ONE CacheDB across all iters (one persistent EVM)
-// =================================================================
-
-fn run_config_cachdb_shared(
-    provider: &RootProvider,
-    pair: Address,
-    calldata: &Bytes,
+    tx: &TxEnv,
     block_id: BlockId,
 ) -> ConfigResult {
     let counter = Arc::new(Counter::default());
@@ -578,34 +543,32 @@ fn run_config_cachdb_shared(
         inner: wrap_db,
         counter: counter.clone(),
     };
-    let cache_db = CacheDB::new(FundedCallerDb { inner: counting_db });
+    let funded_db = FundedCallerDb { inner: counting_db };
+    let cache_db = CacheDB::new(funded_db);
+    let mut evm = build_evm(cache_db);
     let start = Instant::now();
-    let per_transact = run_one_evm(
-        cache_db,
-        pair,
-        calldata,
-        ITERATIONS * TRANSACTS_PER_ITER,
-        false,
+    // Trigger (call 0) warms the cache; fan-out (1..=FANOUT) hits it.
+    let per_call = run_isolated_transacts(&mut evm, tx, 1 + FANOUT, true);
+    eprintln!(
+        "[B] after trigger+fan-out: {} storage RPCs, {} basic RPCs",
+        counter.storage_rpcs(),
+        counter.basic_rpcs()
     );
     ConfigResult {
         total_wall: start.elapsed(),
-        per_transact_us: per_transact,
+        per_call_ns: per_call,
         storage_rpcs: counter.storage_rpcs(),
         basic_rpcs: counter.basic_rpcs(),
     }
 }
 
 // =================================================================
-// Config C: shared AggressiveCachedProvider, fresh EVM per iter
-// (the proposed proactive cache layer)
+// Config C: proactive cache (AggressiveCachedProvider), fresh CacheDB+EVM
+// per call (mirrors fresh-EVM-per-sim production shape with a shared
+// proactive cache layer underneath).
 // =================================================================
 
-fn run_config_proactive_cached(
-    provider: &RootProvider,
-    pair: Address,
-    calldata: &Bytes,
-    block_id: BlockId,
-) -> ConfigResult {
+fn run_config_proactive(provider: &RootProvider, tx: &TxEnv, block_id: BlockId) -> ConfigResult {
     let counter = Arc::new(Counter::default());
     let alloy_db = AlloyDB::new(provider.clone(), block_id);
     let wrap_db = WrapDatabaseAsync::new(alloy_db).expect("multi-thread runtime");
@@ -613,23 +576,29 @@ fn run_config_proactive_cached(
         inner: wrap_db,
         counter: counter.clone(),
     };
-    let shared = Arc::new(AggressiveCachedProvider::new(
-        FundedCallerDb { inner: counting_db },
-        counter.clone(),
-    ));
+    let funded_db = FundedCallerDb { inner: counting_db };
+    let shared = Arc::new(AggressiveCachedProvider::new(funded_db, counter.clone()));
     let cached_ref = CachedRef(shared);
     let start = Instant::now();
-    let per_transact = run_fresh_evm_per_iter(
-        move || WrapDatabaseRef(cached_ref.clone()),
-        pair,
-        calldata,
-        ITERATIONS,
-        TRANSACTS_PER_ITER,
-        false,
-    );
+    let mut per_call = Vec::with_capacity(1 + FANOUT);
+    for i in 0..=FANOUT {
+        // Fresh CacheDB + EVM per call; the shared CachedRef persists.
+        let cache_db = CacheDB::new(WrapDatabaseRef(cached_ref.clone()));
+        let mut evm = build_evm(cache_db);
+        let t = Instant::now();
+        let _ = evm.transact(tx.clone());
+        per_call.push(t.elapsed().as_nanos() as u64);
+        if i == 0 {
+            eprintln!(
+                "[C] trigger call done: {} storage RPCs, {} basic RPCs",
+                counter.storage_rpcs(),
+                counter.basic_rpcs()
+            );
+        }
+    }
     ConfigResult {
         total_wall: start.elapsed(),
-        per_transact_us: per_transact,
+        per_call_ns: per_call,
         storage_rpcs: counter.storage_rpcs(),
         basic_rpcs: counter.basic_rpcs(),
     }
