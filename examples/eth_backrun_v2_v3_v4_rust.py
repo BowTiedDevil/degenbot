@@ -1374,6 +1374,7 @@ async def _dispatch_profitable(
     operator_nonce: int,
     dispatcher: Dispatcher,
     current_block: int,
+    block_timestamp: int,
     base_fee_next: int,
     dry_run: bool,
     sim_mode: str = "rpc",
@@ -1420,6 +1421,7 @@ async def _dispatch_profitable(
         dispatcher=dispatcher,
         base_fee_next=base_fee_next,
         current_block=current_block,
+        block_timestamp=block_timestamp,
         min_profit_net=MIN_PROFIT_NET,
         min_profit_margin_bps=MIN_PROFIT_MARGIN_BPS,
         engine=engine_registry.engine if sim_mode == "evm" else None,
@@ -1850,6 +1852,7 @@ async def _apply_result_if_ready(
             operator_nonce=operator_nonce,
             dispatcher=dispatcher,
             current_block=current_block,
+            block_timestamp=dispatcher.block_timestamp_for(current_block) or 0,
             base_fee_next=next_base_fee(
                 parent_base_fee=int(cast("Any", batch.get("base_fee_per_gas") or 0)),
                 parent_gas_used=int(cast("Any", batch["gas_used"])),

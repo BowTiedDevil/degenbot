@@ -80,7 +80,7 @@ use std::sync::Arc;
 /// indicates a bug in a sibling task (the dispatcher/suppression mutexes are
 /// only ever locked for short synchronous spans).
 #[pyfunction]
-#[pyo3(signature = (candidates, context, dispatcher, base_fee_next, current_block, min_profit_net, min_profit_margin_bps, *, engine=None))]
+#[pyo3(signature = (candidates, context, dispatcher, base_fee_next, current_block, block_timestamp, min_profit_net, min_profit_margin_bps, *, engine=None))]
 #[allow(clippy::too_many_arguments, clippy::needless_pass_by_value)]
 pub fn dispatch_profitable_py<'py>(
     py: Python<'py>,
@@ -89,6 +89,7 @@ pub fn dispatch_profitable_py<'py>(
     dispatcher: &PyDispatcher,
     base_fee_next: u128,
     current_block: u64,
+    block_timestamp: u64,
     min_profit_net: u128,
     min_profit_margin_bps: u64,
     engine: Option<Py<crate::bot::engine::PyArbitrageEngine>>,
@@ -175,6 +176,7 @@ pub fn dispatch_profitable_py<'py>(
             warmup,
             base_fee_next,
             current_block,
+            block_timestamp,
             block_priority_fees,
         };
         let outcome: DispatchOutcome = dispatch_profitable_results(

@@ -487,6 +487,7 @@ mod tests {
             warmup: warmup(),
             base_fee_next: 1_000_000_000u128, // 1 gwei
             current_block: 100,
+            block_timestamp: 0,
             block_priority_fees: Some(BlockPriorityFees {
                 block: 100,
                 p10: U256::from(500_000_000u64),   // 0.5 gwei

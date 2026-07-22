@@ -438,6 +438,12 @@ pub struct SimulateContext<'a> {
     /// The block the solver produced the result on (`solve_block` is per-path;
     /// this is `current_block`).
     pub current_block: u64,
+    /// The timestamp of `current_block` (the block header's `timestamp`). Used
+    /// as the EVM's `block.timestamp` so the V2 pair's `_update()` computes a
+    /// correct `timeElapsed` (a stale/default timestamp overflows
+    /// `UQ112x112.mul(timeElapsed)` — task XPPMQG). Threaded from the pump's
+    /// block header to avoid a per-path `eth_getBlockByNumber` RPC.
+    pub block_timestamp: u64,
     /// The latest block priority-fee percentiles (p10/p50) — the
     /// `dispatcher.block_priority_fees[max(...)]` the Python oracle reads.
     pub block_priority_fees: Option<BlockPriorityFees>,
@@ -764,18 +770,12 @@ where
         block.basefee = u64::try_from(ctx.base_fee_next).unwrap_or(u64::MAX);
         block.number = U256::from(ctx.current_block);
 
-        // Fetch the block timestamp via RPC (use the same `block_in_place`
-        // pattern as `WrapDatabaseAsync`). The default `timestamp = 1` causes
-        // V2 pair `_update` to overflow `price0CumulativeLast` in Solidity
-        // 0.8+ forks (Camelot/Aerodrome), reverting every swap — the root
-        // cause of the `--sim=evm` parity gap (XPPMQG).
-        //
-        // The fetch is ONE round-trip per path (block-cached by the node).
-        // TODO (XPPMQG): thread `block_timestamp` through `SimulateContext`
-        // from the pump's block header to avoid the per-path RPC — the
-        // Python side already has `block_timestamp` (L1748) but doesn't
-        // forward it through `dispatch_profitable`.
-        block.timestamp = U256::from(fetch_block_timestamp(ctx.provider, ctx.current_block));
+        // The block timestamp, threaded from the pump's block header via
+        // `SimulateContext::block_timestamp`. The default `timestamp = 1`
+        // causes V2 pair `_update` to overflow `price0CumulativeLast` in
+        // Solidity 0.8+ forks (Camelot/Aerodrome), reverting every swap — the
+        // root cause of the `--sim=evm` parity gap (XPPMQG).
+        block.timestamp = U256::from(ctx.block_timestamp);
     });
 
     // The 7 calls: 3 pre-balance reads, execute(), 3 post-balance reads. The
@@ -988,32 +988,6 @@ where
         access_list,
         hop_count: path.hop_count(),
     }))
-}
-
-/// Fetch the block timestamp via `eth_getBlockByNumber`, blocking on the
-/// ambient tokio runtime (same `block_in_place` pattern as
-/// `WrapDatabaseAsync`). Returns 0 on failure (the EVM will use timestamp 0,
-/// which is wrong but non-fatal — the caller's sim reverts, not a panic).
-///
-/// TODO (XPPMQG): eliminate this per-path RPC round-trip by threading the
-/// timestamp through `SimulateContext` from the pump's block header.
-fn fetch_block_timestamp(provider: &AlloyProvider, block_number: u64) -> u64 {
-    let Ok(handle) = tokio::runtime::Handle::try_current() else {
-        return 0;
-    };
-    let should_block_in_place =
-        handle.runtime_flavor() != tokio::runtime::RuntimeFlavor::CurrentThread;
-    let fut = async {
-        match provider.get_block(block_number).await {
-            Ok(Some(block)) => block.header.timestamp,
-            _ => 0,
-        }
-    };
-    if should_block_in_place {
-        tokio::task::block_in_place(move || handle.block_on(fut))
-    } else {
-        handle.block_on(fut)
-    }
 }
 
 /// Build a read-only balance-call `TxEnv` (caller = owner, target = `to`, gas =
@@ -1244,6 +1218,7 @@ mod tests {
             warmup: smoke_warmup(),
             base_fee_next: 1_000_000_000u128,
             current_block: 100,
+            block_timestamp: 0,
             block_priority_fees: Some(BlockPriorityFees {
                 block: 100,
                 p10: U256::from(500_000_000u64),

@@ -443,6 +443,17 @@ impl Dispatcher {
         self.block_times.push_back((block, timestamp));
     }
 
+    /// Look up the recorded timestamp for `block` (the in-process `evm` sim
+    /// uses it as the EVM `block.timestamp` so the V2 pair's `_update()` does
+    /// not overflow `timeElapsed` — task XPPMQG). `None` if `block` is outside
+    /// the recorded window (falls back to 0 at the sim seam).
+    #[must_use]
+    pub fn block_timestamp_for(&self, block: u64) -> Option<u64> {
+        self.block_times
+            .iter()
+            .find_map(|(b, ts)| (*b == block).then_some(*ts))
+    }
+
     /// Record per-block percentile fees, pruning to `FEE_HISTORY_WINDOW`.
     /// On overflow the min key (oldest block) is popped (matches Python
     /// `block_priority_fees.pop(min(...))`).
