@@ -1899,9 +1899,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "Simulation back-end: 'rpc' (default) hashes each candidate through "
             "eth_simulateV1 via dispatch_profitable's simulate_one leaf; 'evm' "
             "routes the fan-out through the in-process revm sim (the new core "
-            "simulate_in_process path). 'evm' exercises the in-process sim "
-            "end-to-end against the live RPC (cold-miss AlloyDB fallback) — "
-            "dry-run only (implies no submission)."
+            "BlockSimHandle path — one shared EVM per block, serial transact). "
+            "'evm' exercises the in-process sim end-to-end against the live RPC "
+            "(cold-miss AlloyDB fallback) — dry-run only (implies no submission)."
         ),
     )
     parser.add_argument(
