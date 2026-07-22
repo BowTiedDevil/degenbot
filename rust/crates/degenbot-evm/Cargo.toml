@@ -72,6 +72,10 @@ tokio = { version = "^1.52", features = ["rt"] }
 # `compute_simulation_warmup_slots` + the `PathInfo`/`HopInfo`/`V2HopInfo`/
 # `EncodeOptions` types the smoke test's `SimulatePath` fixture constructs.
 degenbot-executor = { path = "../degenbot-executor" }
+# `examples/rpc_cache_fanout.rs` uses `#[tokio::main(flavor = "multi_thread")]`
+# — `WrapDatabaseAsync<AlloyDB>` blocks on the ambient tokio runtime, which
+# requires a multi-thread runtime (`CurrentThread` returns `None`).
+tokio = { version = "^1.52", features = ["rt-multi-thread", "macros"] }
 # `AlloyProvider::from_provider` (always-available — the smoke test builds a
 # mock-transport provider so `SimulateContext.provider` is satisfied without a
 # live RPC; the queue stays empty since `simulate_in_process_with_db` does no
