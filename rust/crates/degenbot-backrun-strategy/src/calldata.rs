@@ -1,5 +1,5 @@
-//! 7-call vector calldata builders (moved from degenbot-simulation; shared with
-//! `simulate_path_on_evm` / `BlockSimHandle`).
+//! 7-call vector calldata builders — the backrun strategy's balance-read +
+//! execute-wrap calldata.
 //!
 //! The three pre/post balance-read calldata blobs that bracket the `execute()`
 //! call in the 7-call simulate vector: WETH9/ERC20 `balanceOf(address)`,
@@ -7,10 +7,10 @@
 //! `balanceOf(address,uint256)`. Plus the `execute(bytes,uint256)` calldata
 //! wrap (a thin delegation to `degenbot_executor::encode_execute_call`).
 //!
-//! These live alongside the in-process revm path (`simulate_path_on_evm`
-//! via `BlockSimHandle`) in the `sim::evm` submodule. `degenbot-simulation`
-//! re-exports this module at its crate root so existing
-//! `use degenbot_simulation::calldata::...` call sites stay unchanged.
+//! Moved here from `degenbot-simulation::sim::evm::calldata` (ADR-019 D4/D7,
+//! decision R): these builders are part of the backrun bundle (the 7-call
+//! vector), so they live with the strategy that consumes them, not with the
+//! generic engine. The engine no longer references them.
 //!
 //! All selectors are `keccak256(signature)[:4]`; values are ABI-encoded via
 //! `degenbot_abi::abi_encoder::encode_rust` (the pure-Rust encoder). Each

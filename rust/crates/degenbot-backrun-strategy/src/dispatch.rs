@@ -28,7 +28,8 @@
 //!   Python for the thin-margin pre-filter.
 //! - **D4 `stays-python`** — the `[sim] ... by reason: {breakdown}` summary
 //!   log rendering (`format_failure_breakdown`) stays in the Python driver;
-//!   this leaf exposes the tally as a typed [`crate::simulate_one::FailBuckets`]
+//!   this leaf exposes the tally as a typed [`FailBuckets`] (re-exported
+//!   from `simulator` at this crate's root) the companion renders.
 //!   the companion renders.
 
 // Solidity/EVM + Rust-ecosystem identifiers (tokio, JoinSet, bps, PathSuppression,
@@ -41,10 +42,13 @@ use std::sync::{Arc, Mutex};
 use alloy::primitives::U256;
 use degenbot_bot::bot_core::BotState;
 use degenbot_executor::composers::{EncodeOptions, PathInfo};
+use degenbot_simulation::BlockSimHandle;
 use degenbot_submission::PathSuppression;
 use parking_lot::RwLock;
 
-use crate::{BlockSimHandle, FailBuckets, SimFailure, SimResult, SimulateContext, SimulatePath};
+use crate::{
+    simulate_path_on_evm, FailBuckets, SimFailure, SimResult, SimulateContext, SimulatePath,
+};
 
 // ─────────────────────────────────────────────────────────────────────────
 // Constants (ports the Python oracle's module-level literals)
@@ -323,7 +327,7 @@ pub fn dispatch_profitable_results(
     // constructed per call — a safe degradation to Tier-1-only behavior (no
     // cross-block persistence, no panic). The FFI seam sets both from the
     // same `engine` arg, so the gap is unreachable in production.
-    warm_cache: Option<Arc<RwLock<crate::WarmCodeCacheInner>>>,
+    warm_cache: Option<Arc<RwLock<degenbot_simulation::WarmCodeCacheInner>>>,
 ) -> DispatchOutcome {
     let mut outcome = DispatchOutcome::default();
     let pre_filter_count = candidates.len();
@@ -389,16 +393,33 @@ pub fn dispatch_profitable_results(
             // The warm-code cache arc; degrade to a fresh per-call cache if
             // the caller wired `bot_state` without one (safe — no
             // cross-block persistence, no panic).
-            let warm_cache = warm_cache.unwrap_or_else(crate::WarmCodeCacheInner::shared_default);
-            match BlockSimHandle::build(ctx, &guard, &warm_cache) {
+            let warm_cache =
+                warm_cache.unwrap_or_else(degenbot_simulation::WarmCodeCacheInner::shared_default);
+            // The engine `BlockSimHandle` build takes the block-env primitives
+            // + the override params projected from this strategy's
+            // `SimulateContext` (ADR-019 D7, decision R — the engine stays
+            // generic over strategy config; it never names `SimulateContext`).
+            match BlockSimHandle::build(
+                ctx.provider,
+                ctx.base_fee_next,
+                ctx.current_block,
+                ctx.block_timestamp,
+                &ctx.override_params(),
+                &guard,
+                &warm_cache,
+            ) {
                 Some(mut handle) => candidates
                     .into_iter()
                     .map(|c| {
                         let pid = c.path_id;
                         let mut buckets = FailBuckets::new();
-                        let result = handle
-                            .simulate_path(ctx, c.to_simulate_path(), &mut buckets)
-                            .map_err(|e| format!("{e}"));
+                        let result = simulate_path_on_evm(
+                            handle.evm_mut(),
+                            ctx,
+                            c.to_simulate_path(),
+                            &mut buckets,
+                        )
+                        .map_err(|e| format!("{e}"));
                         (pid, buckets, result)
                     })
                     .collect(),
@@ -694,7 +715,7 @@ mod tests {
             MIN_PROFIT_NET,
             0,
             Some(bot_state),
-            Some(crate::WarmCodeCacheInner::shared_default()),
+            Some(degenbot_simulation::WarmCodeCacheInner::shared_default()),
         );
 
         // Build failed under current_thread runtime → every candidate

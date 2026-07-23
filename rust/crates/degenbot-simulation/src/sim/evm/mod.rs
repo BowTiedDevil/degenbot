@@ -54,11 +54,13 @@
 // lint for this submodule.
 #![allow(clippy::doc_markdown)]
 
-/// The hot-path in-process simulation entry point.
+/// The hot-path in-process simulation engine entry point.
 ///
-/// Executes the 7-call vector (pre-balances → `execute()` → post-balances) via
-/// revm `transact_one`, returning the `SimResult` shape the dispatch leaf
-/// consumes.
+/// Owns the per-block shared EVM handle (`BlockSimHandle`) + the layered DB
+/// types (`BlockEvm` / `ProductionBlockDb`) + the provider newtype. The
+/// **strategy** (the 7-call bundle, `SimResult`, `compute_priority_fee`,
+/// `dispatch_profitable_results`, `SimulateContext`, the calldata builders)
+/// relocated to `degenbot-backrun-strategy` (ADR-019 D4/D7, decision R).
 pub mod simulator;
 
 /// Sim-scoped override application on a `CacheDB`.
@@ -81,9 +83,8 @@ pub mod bot_state_db;
 /// transient-storage capability is verified).
 pub mod v4_transient;
 
-/// 7-call vector calldata builders (WETH9 `balanceOf`, Multicall3
-/// `getEthBalance`, PoolManager ERC6909 `balanceOf`, `wrap_execute_calldata`).
-pub mod calldata;
+// 7-call vector calldata builders live in `degenbot-backrun-strategy::calldata`
+// (relocated with the backrun bundle — ADR-019 D4/D7, decision R).
 
 /// EIP-2930 access-list emission from the revm `State` journal — retires
 /// `eth_createAccessList`. Reads the touched address + slot set from
@@ -98,17 +99,10 @@ pub mod warm_code_cache;
 
 pub use access_list::{emit_access_list_from_state, AccessListCollector};
 pub use bot_state_db::BotStateDb;
-/// Re-export the shared sim primitives so `degenbot-simulation`'s crate root
-/// (`pub use sim::evm::{...}`) surfaces them for existing call sites + the
-/// PyO3 wrappers.
-pub use simulator::{
-    compute_priority_fee, fits_int128, BlockSimHandle, FailBuckets, SimFailure, SimResult,
-    SimulateContext, SimulatePath, AGE_DECAY_CONSTANT, EXECUTE_CONFIG, GAS_SAFETY_MARGIN,
-    INITIAL_EXECUTE_GAS, INT128_MAX, INT128_MIN, MAX_PRIORITY_FEE_PERCENTILE,
-    MIN_PRIORITY_FEE_PERCENTILE, TARGET_PROFIT_RATIO,
-};
-/// `BlockPriorityFees` is sourced from `degenbot_rpc` (the fee struct is
-/// market data, owned by the RPC crate per ADR-019 D5) — re-exported at the
-/// `degenbot-simulation` crate root directly.
+/// Re-export the engine surface so `degenbot-simulation`'s crate root can
+/// surface it for the strategy crate (`degenbot-backrun-strategy`) + the
+/// PyO3 wrapper. The strategy types (`SimResult`, `SimulateContext`, …) now
+/// live in `degenbot-backrun-strategy`.
+pub use simulator::{BlockEvm, BlockSimHandle, ProductionBlockDb};
 pub use state_override::{apply_simulation_overrides, SimulationOverrideParams};
 pub use warm_code_cache::{WarmCodeCache, WarmCodeCacheInner, WARM_CODE_CACHE_TTL_BLOCKS};

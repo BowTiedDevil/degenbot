@@ -46,6 +46,7 @@ degenbot-pools = { path = "../degenbot-pools" }
 degenbot-price = { path = "../degenbot-price" }
 degenbot-rpc = { path = "../degenbot-rpc" }
 degenbot-simulation = { path = "../degenbot-simulation" }
+degenbot-backrun-strategy = { path = "../degenbot-backrun-strategy" }
 degenbot-solidly-math = { path = "../degenbot-solidly-math" }
 degenbot-solvers = { path = "../degenbot-solvers" }
 degenbot-submission = { path = "../degenbot-submission" }

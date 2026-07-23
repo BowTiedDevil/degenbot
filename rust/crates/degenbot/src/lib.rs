@@ -79,8 +79,17 @@ pub use degenbot_submission;
 
 /// `eth_simulateV1` `stateOverrides` construction — code injection + ETH/WETH
 /// funding + warmup-slot integration + WETH9 `balanceOf` override
-/// (pure-Rust leaf).
+/// (pure-Rust leaf). The in-process revm engine (the per-block shared-EVM
+/// handle, DB stack, overrides, AL collector, warm cache).
 pub use degenbot_simulation;
+
+/// The backrun searcher strategy — the 7-call pre/post-balance bundle,
+/// `compute_priority_fee`, `decode_balance`, `SimResult`, + the
+/// `dispatch_profitable_results` fan-out/categorization policy over the
+/// `degenbot-simulation` engine (ADR-019 D4/D7, decision R — Rust-canonical:
+/// the strategy stays in Rust; the Python driver is a thin cockpit, not a
+/// co-implementation).
+pub use degenbot_backrun_strategy;
 
 /// Concentrated-liquidity math (`cl_lib`, `tick_math`).
 pub use degenbot_cl_math;

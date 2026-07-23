@@ -51,27 +51,19 @@ degenbot-pools = { path = "../degenbot-pools" }
 # `V4PoolId` — the V4 pool identifier type (crossed from the decoders leaf for
 # the v4_transient seeder's pool-key lookup).
 degenbot-decoders = { path = "../degenbot-decoders" }
-# `encode_rust` + `AbiValue` — the pure-Rust ABI encoder for the balance-call
-# calldata builders (balanceOf / getEthBalance / ERC6909 balanceOf selectors +
-# abi-encoded tails).
-degenbot-abi = { path = "../degenbot-abi" }
-# `DispatchCandidate`/`SubmitCandidate`/`PathSuppression` (the submission seam)
-# — `dispatch_profitable_results` returns + threads these.
-degenbot-submission = { path = "../degenbot-submission" }
 thiserror = { version = "^2.0" }
 log = { version = "^0.4" }
-futures = { version = "^0.3" }
 # `parking_lot::RwLock` — backs the cross-block persistent `WarmCodeCacheInner`
 # (the bytecode + account-existence layer) AND the `BotState` lock type
 # (matches `degenbot-bot` so the `Option<Arc<RwLock<BotState>>>` fan-out param
 # is the same lock family).
 parking_lot = "^0.12"
-# `JoinSet` (`rt`) + `Semaphore` (`sync`) for the dispatch_profitable_results
-# fan-out cap (D1). `rt` is also required by `WrapDatabaseAsync` (it blocks the
-# async `AlloyDB` `DatabaseAsyncRef` calls on a runtime —
-# `WrapDatabaseAsync::new` needs a current-thread tokio handle). The `macros`
-# feature is dev-test only (the `#[tokio::test]` attribute).
-tokio = { version = "^1.52", features = ["rt", "sync"] }
+# `rt` is required by `WrapDatabaseAsync` (it blocks the async `AlloyDB`
+# `DatabaseAsyncRef` calls on a runtime — `WrapDatabaseAsync::new` needs a
+# current-thread tokio handle). The fan-out/categorization policy + its
+# `buffer_unordered`/`Semaphore` concurrency retired with the strategy
+# relocation to `degenbot-backrun-strategy` (ADR-019 D4/D7).
+tokio = { version = "^1.52", features = ["rt"] }
 
 [dev-dependencies]
 serde_json = { version = "^1.0" }

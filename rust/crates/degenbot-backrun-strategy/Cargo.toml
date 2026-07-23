@@ -43,7 +43,12 @@ degenbot-rpc = { path = "../degenbot-rpc" }
 # `V4PoolId` (the v4_transient seeder's pool-key lookup) + `encode_rust`
 # (the pure-Rust ABI encoder for the balance-call calldata).
 degenbot-decoders = { path = "../degenbot-decoders" }
+# `encode_rust` / `AbiValue` — the pure-Rust ABI encoder for the 7-call
+# balance-call calldata builders (balanceOf / getEthBalance / ERC6909).
 degenbot-abi = { path = "../degenbot-abi" }
+# `ProviderError` / `ProviderResult` / `AbiDecodeError` — the shared error
+# types `simulate_path_on_evm` + the calldata builders return.
+degenbot-core = { path = "../degenbot-core" }
 # revm — the EVM trait bounds `simulate_path_on_evm<E: ExecuteEvm +
 # InspectEvm<...>>` carries (the strategy drives the borrowed `&mut E`
 # the engine exposes via `BlockSimHandle::evm_mut`).
@@ -56,3 +61,4 @@ log = { version = "^0.4" }
 [dev-dependencies]
 tokio = { version = "^1.52", features = ["macros", "rt"] }
 degenbot-rpc = { path = "../degenbot-rpc", features = ["test-utils"] }
+serde_json = { version = "^1.0" }

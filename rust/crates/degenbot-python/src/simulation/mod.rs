@@ -1,23 +1,29 @@
-//! `PyO3` seam over the `degenbot-simulation` core crate.
+//! `PyO3` seam over the `degenbot-backrun-strategy` core crate.
 //!
-//! The simulation crate is the per-block profitability pipeline — it takes a
+//! The backrun strategy is the per-block profitability pipeline — it takes a
 //! batch of solved arbitrage candidates, runs each through the in-process
-//! revm sim (`BlockSimHandle::simulate_path`), classifies the outcome
+//! revm sim (the engine's `BlockSimHandle` EVM driven by the strategy's
+//! `simulate_path_on_evm`), classifies the outcome
 //! (gas-profitable / unprofitable / revert), computes gross/net profit +
 //! the market-aware age-decay priority fee, and hands the winners to the
-//! submission seam. It is a pyo3-free core leaf that ports the Python
-//! `dispatch_profitable` chain wholesale. (ADR-019 retired the legacy
-//! `eth_simulateV1` / `simulate_one` RPC path — the in-process revm path is
-//! the sole executor.)
+//! submission seam. It is a pyo3-free core leaf (ADR-019 D4/D7, decision R —
+//! the strategy stays in Rust; ADR-019 retired the legacy `eth_simulateV1`
+//! / `simulate_one` RPC path — the in-process revm path is the sole executor).
 //!
-//! ## Layering (ADR-005)
+//! ## Layering (ADR-005 / ADR-019 D7)
 //!
-//! - **Core** (`degenbot-simulation`): the typed pipeline —
+//! - **Engine** (`degenbot-simulation`): the in-process revm EVM handle
+//!   (`BlockSimHandle`, layered DB, overrides, AL collector, warm cache).
+//!   Zero pyo3.
+//! - **Strategy** (`degenbot-backrun-strategy`): the backrun bundle —
 //!   `dispatch_profitable_results`, `SimResult`, `SimulateContext`,
-//!   `DispatchCandidate`, `DispatchOutcome`, `FailBuckets`. Zero pyo3.
+//!   `DispatchCandidate`, `DispatchOutcome`, `FailBuckets`,
+//!   `compute_priority_fee`, the 7-call `simulate_path_on_evm`. Zero pyo3.
+//!   The Python driver is a thin cockpit over this — NOT a co-implementation
+//!   (AGENTS.md).
 //! - **`PyO3` wrapper** (this module): `#[pyclass]`/`#[pyfunction]` only —
-//!   arg-extract → GIL release (`py.detach`) → core call → result wrap. No
-//!   business logic. Mirrors the `submission/` subtree's discipline exactly.
+//!   arg-extract → GIL release (`py.detach`) → strategy call → result wrap.
+//!   No business logic. Mirrors the `submission/` subtree's discipline exactly.
 //! - **Python companion** (`examples/eth_backrun_v2_v3_v4_rust.py`): the
 //!   cockpit renders the `[sim]` summary from `PyDispatchOutcome` and chains
 //!   `dispatch_profitable_py` → `dispatch_and_submit_py`.

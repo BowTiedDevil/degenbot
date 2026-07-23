@@ -49,12 +49,10 @@ use crate::simulation::candidate::PyDispatchCandidate;
 use crate::simulation::context::PySimulateContext;
 use crate::simulation::outcome::PyDispatchOutcome;
 use crate::submission::dispatcher::PyDispatcher;
+use degenbot_backrun_strategy::BlockPriorityFees;
+use degenbot_backrun_strategy::{dispatch_profitable_results, DispatchCandidate, DispatchOutcome};
+use degenbot_backrun_strategy::{SimResult, SimulateContext};
 use degenbot_executor::composers::{HopInfo, PathInfo};
-use degenbot_simulation::dispatch_profitable::{
-    dispatch_profitable_results, DispatchCandidate, DispatchOutcome,
-};
-use degenbot_simulation::BlockPriorityFees;
-use degenbot_simulation::{SimResult, SimulateContext};
 use degenbot_submission::{PoolKey, SubmitCandidate};
 use pyo3::exceptions::PyValueError;
 use pyo3::types::PyList;

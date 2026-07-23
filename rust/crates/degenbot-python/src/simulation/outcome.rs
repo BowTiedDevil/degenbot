@@ -25,9 +25,9 @@
 use crate::hex_utils::encode_hex;
 use crate::prelude::*;
 use crate::submission::submit::PySubmitCandidate;
+use degenbot_backrun_strategy::DispatchOutcome;
+use degenbot_backrun_strategy::{FailBuckets, SimFailure};
 use degenbot_executor::composers::{HopInfo, PathInfo};
-use degenbot_simulation::dispatch_profitable::DispatchOutcome;
-use degenbot_simulation::{FailBuckets, SimFailure};
 use degenbot_submission::SubmitCandidate;
 use pyo3::types::{PyDict, PyList};
 use std::collections::HashMap;
