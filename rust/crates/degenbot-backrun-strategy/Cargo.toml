@@ -1,0 +1,58 @@
+[package]
+name = "degenbot-backrun-strategy"
+description = "The backrun searcher strategy — the 7-call pre/post-balance bundle, gross/net + priority-fee sizing, dispatch fan-out + categorization policy. One example strategy over the degenbot-simulation engine (ADR-019 D4/D7; pyo3-free Rust core)."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+complexity = "warn"
+correctness = "warn"
+pedantic = "warn"
+perf = "warn"
+style = "warn"
+suspicious = "warn"
+
+[dependencies]
+# The simulation engine (revm executor, BlockSimHandle, overrides, AL, warm
+# cache). This crate is ONE strategy over the engine — it builds the 7-call
+# vector, drives `BlockSimHandle`'s EVM, decodes balances, sizes the priority
+# fee, + runs the fan-out/categorization policy. ADR-019 D4/D7: the engine
+# stays thin + generic; the backrun bundle is this strategy's concern, not the
+# engine's.
+degenbot-simulation = { path = "../degenbot-simulation" }
+# `BotState` (ADR-003 state owner) — the snapshot surface the dispatch
+# fan-out reads via `BlockSimHandle`.
+degenbot-bot = { path = "../degenbot-bot" }
+# `PathInfo` / `HopInfo` / `EncodeOptions` / `WarmupSlots` / the
+# `compute_simulation_warmup_slots` the candidate + context consume.
+degenbot-executor = { path = "../degenbot-executor" }
+# `PathSuppression` (the dispatcher's per-path suppression ring) +
+# `SubmitCandidate` (the submission seam's input shape — the dispatch joins
+# survivors into it).
+degenbot-submission = { path = "../degenbot-submission" }
+# `AlloyProvider` — the typed RPC provider `SimulateContext` borrows (the
+# cold-miss fallback underneath the engine's CacheDB).
+degenbot-rpc = { path = "../degenbot-rpc" }
+# `V4PoolId` (the v4_transient seeder's pool-key lookup) + `encode_rust`
+# (the pure-Rust ABI encoder for the balance-call calldata).
+degenbot-decoders = { path = "../degenbot-decoders" }
+degenbot-abi = { path = "../degenbot-abi" }
+# revm — the EVM trait bounds `simulate_path_on_evm<E: ExecuteEvm +
+# InspectEvm<...>>` carries (the strategy drives the borrowed `&mut E`
+# the engine exposes via `BlockSimHandle::evm_mut`).
+revm = { version = "41.0.0", default-features = true, features = ["alloydb", "asyncdb"] }
+alloy = { version = "^2.0" }
+parking_lot = "^0.12"
+thiserror = { version = "^2.0" }
+log = { version = "^0.4" }
+
+[dev-dependencies]
+tokio = { version = "^1.52", features = ["macros", "rt"] }
+degenbot-rpc = { path = "../degenbot-rpc", features = ["test-utils"] }

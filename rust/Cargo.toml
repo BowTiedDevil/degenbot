@@ -52,6 +52,7 @@ members = [
     "crates/degenbot-solidly-math",
     "crates/degenbot-solvers",
     "crates/degenbot-submission",
+    "crates/degenbot-backrun-strategy",
     "crates/degenbot-uniswap",
     "crates/degenbot-v2-math",
 ]

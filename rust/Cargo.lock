@@ -2044,6 +2044,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "degenbot-backrun-strategy"
+version = "0.6.0-alpha.3"
+dependencies = [
+ "alloy",
+ "degenbot-abi",
+ "degenbot-bot",
+ "degenbot-decoders",
+ "degenbot-executor",
+ "degenbot-rpc",
+ "degenbot-simulation",
+ "degenbot-submission",
+ "log",
+ "parking_lot",
+ "revm",
+ "thiserror 2.0.19",
+ "tokio",
+]
+
+[[package]]
 name = "degenbot-balancer-math"
 version = "0.6.0-alpha.3"
 dependencies = [
