@@ -35,7 +35,8 @@
 //!    → `Bot` *is* the EVM's `Database` → in-process sim with no Python and no
 //!    RPC-for-tracked-state.
 //! 2. **Python driver shell**: reaches the same in-process sim through a thin
-//!    PyO3 wrapper (`degenbot-python/src/simulation/evm.rs`).
+//!    PyO3 wrapper (`degenbot-python/src/simulation/`, the `dispatch`
+//!    `#[pyfunction]` over `BlockSimHandle`).
 //!
 //! ## References
 //!

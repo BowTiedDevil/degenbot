@@ -708,11 +708,13 @@ pub struct DiagnosticPathState {
     /// The hop snapshots.
     pub hops: Vec<DiagnosticHop>,
     /// The solver's reported optimal input for this path (PCG2M3; threaded in
-    /// from `simulate_one`). `None` until populated.
+    /// from the backrun strategy's `simulate_path_on_evm`). `None` until
+    /// populated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub optimal_input: Option<String>,
     /// The solver's reported per-hop output amounts in path order (PCG2M3;
-    /// threaded in from `simulate_one`). Empty until populated.
+    /// threaded in from the backrun strategy's `simulate_path_on_evm`). Empty
+    /// until populated.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hop_outputs: Vec<String>,
     /// Call data that produced the revert, if captured from a sim failure.

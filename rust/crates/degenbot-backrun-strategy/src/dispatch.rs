@@ -7,8 +7,8 @@
 //! the SYI3PG cross-epic reference).
 //!
 //! This is the concurrency orchestration that owns the GIL release + the
-//! tokio fan-out over the per-path [`simulate_one`] leaf (sibling C-child).
-//! Owning the fan-out in Rust releases the GIL across the per-tx sim RPCs
+//! tokio fan-out over the per-path [`simulate_path_on_evm`] leaf. Owning
+//! the fan-out in Rust releases the GIL across the per-tx sim RPCs
 //! (ADR-005 §3 — "Rust is the engine").
 //!
 //! # Dispositions (per the `4JGPDW` scope rubric)
@@ -159,7 +159,7 @@ pub struct DispatchCandidate {
 }
 
 impl DispatchCandidate {
-    /// Build the [`SimulatePath`] the fan-out hands to [`simulate_one`].
+    /// Build the [`SimulatePath`] the fan-out hands to [`simulate_path_on_evm`].
     #[must_use]
     fn to_simulate_path(&self) -> SimulatePath {
         SimulatePath {
@@ -190,7 +190,7 @@ pub struct DispatchOutcome {
     /// The number of candidates that raised an exception during simulation
     /// (ports `exception_count`, L2536).
     pub exception_count: usize,
-    /// The number of candidates that returned `None` from `simulate_one`
+    /// The number of candidates that returned `None` from `simulate_path_on_evm`
     /// (revert / no-profit / int128-overflow / etc.) — `sim_fail_count`
     /// (L2537): `len(candidates) - sim_ok_count - exception_count`.
     pub fail_count: usize,
@@ -231,7 +231,7 @@ impl DispatchOutcome {
 // The fan-out (D1)
 // ─────────────────────────────────────────────────────────────────────────
 
-/// Fan out [`simulate_one`] across a `buffer_unordered(MAX_SIMULATE_CONCURRENT)`
+/// Fan out [`simulate_path_on_evm`] across a `buffer_unordered(MAX_SIMULATE_CONCURRENT)`
 /// stream (capped by `truncate` pre-fan-out), gather with exception tolerance,
 /// and categorize into gas-profitable / gas-unprofitable / exception (ports the
 /// fan-out L2450–L2517 + categorization L2519–L2535).
@@ -246,14 +246,13 @@ impl DispatchOutcome {
 ///    Python oracle slices `results[:MAX_SIMULATE_CONCURRENT]`; the candidates
 ///    are expected pre-sorted by engine profit descending — the caller does
 ///    the sort, ports L1684).
-/// 4. **Fan-out** — two branches on `bot_state`. When `Some`, the in-process
-///    revm path builds ONE per-block `BlockSimHandle` + simulates each
-///    candidate SERIALLY on the shared `&mut evm` (Tier 1, `V5HCR5`). When
-///    `None`, the legacy RPC path drives `simulate_one` per candidate through
-///    `buffer_unordered(MAX_SIMULATE_CONCURRENT)` (the bound mirrors the
-///    Python `asyncio.gather(*sim_tasks)` concurrency — the L2491 `truncate`
-///    already caps the count, the `buffer_unordered` bound is belt +
-///    suspenders for a caller that hands more candidates).
+/// 4. **Fan-out** — the in-process revm path: build ONE per-block
+///    `BlockSimHandle` + simulate each candidate SERIALLY on the shared
+///    `&mut evm` (Tier 1, `V5HCR5`). `bot_state` is `Option` so that
+///    empty / pre-filtered-to-empty input (which short-circuits at step 3)
+///    need not construct an engine; the `None` arm is the unreachable
+///    anti-pattern guard for non-empty input without a `BotState` (the
+///    retired `eth_simulateV1` RPC executor — ADR-019 D1).
 /// 5. **Gather** — collect the stream; exceptions are tolerated (counted, not
 ///    propagated — the Python oracle uses `return_exceptions=True`,
 ///    L2504).
@@ -265,8 +264,8 @@ impl DispatchOutcome {
 ///    (L2573–L2577).
 ///
 /// `ctx` is the shared [`SimulateContext`] (provider, addresses, warmup,
-/// block context — see [`simulate_one`]). `path_suppression` is mutated in
-/// place for the pre-filter + the outcome recording.
+/// block context — see [`simulate_path_on_evm`]). `path_suppression` is
+/// mutated in place for the pre-filter + the outcome recording.
 ///
 /// # §4.2 parity
 ///
@@ -283,8 +282,8 @@ impl DispatchOutcome {
 /// tallied into `outcome.fail_buckets` + recorded as a per-candidate
 /// [`SimFailure`] (ports the Python oracle's `return_exceptions=True`
 /// tolerance, L2504 — no failure propagates as an `Err`). The
-/// `exception_count` field captures `simulate_one` `Err` returns (the rare
-/// defensive `?` on the execute() ABI encode), counted not propagated.
+/// `exception_count` field captures `simulate_path_on_evm` `Err` returns (the
+/// rare defensive `?` on the execute() ABI encode), counted not propagated.
 ///
 /// # Panics
 ///
@@ -302,25 +301,25 @@ pub fn dispatch_profitable_results(
     current_block: u64,
     min_profit_net: u128,
     min_profit_margin_bps: u64,
-    // When `Some`, the fan-out routes each candidate through the in-process
-    // revm sim over the borrowed `&BotState` via a per-block shared
-    // `BlockSimHandle` (Tier 1, `V5HCR5` — retired the per-path
-    // `simulate_in_process` fresh-`CacheDB`-per-call build), replacing the
-    // `eth_simulateV1` RPC path (`simulate_one`) for the dispatch. When
-    // `None`, the fan-out uses `simulate_one` (the legacy concurrent RPC path
-    // — the default). The `Arc<RwLock<BotState>>` is the engine's shared
-    // state owner (ADR-003); a per-block read guard is taken for the serial
-    // loop. revm's `WrapDatabaseAsync::block_on` uses
+    // The fan-out routes each candidate through the in-process revm sim
+    // over the borrowed `&BotState` via a per-block shared `BlockSimHandle`
+    // (Tier 1, `V5HCR5` — retired the per-path `simulate_in_process`
+    // fresh-`CacheDB`-per-call build), the sole executor since the
+    // `eth_simulateV1` RPC path retired (ADR-019 D1). The `Arc<RwLock<BotState>>`
+    // is the engine's shared state owner (ADR-003); a per-block read guard is
+    // taken for the serial loop. revm's `WrapDatabaseAsync::block_on` uses
     // `tokio::task::block_in_place` under a multi-threaded runtime, so the
     // in-process sim's blocking RPC cold-miss path does not deadlock against
-    // the pump's worker pool.
+    // the pump's worker pool. `Option` (not required) so that empty /
+    // pre-filtered-to-empty input — which never reaches this param at all
+    // (step 3's `is_empty()` short-circuit above) — need not wire an engine;
+    // the `None` arm below is the unreachable guard for non-empty input
+    // without a `BotState`.
     bot_state: Option<Arc<RwLock<BotState>>>,
     // The cross-block persistent bytecode + account-existence cache
-    // (`WarmCodeCacheInner`, the `HDEG7H` Option-A layer). Required when
-    // `bot_state` is `Some` (the `BlockSimHandle` path always inserts the
-    // `WarmCodeCache` layer); ignored when `bot_state` is `None` (the legacy
-    // `simulate_one` RPC path doesn't go through `BlockSimHandle`). The
-    // `Arc` clones cheaply into this async fn's future; the engine owner
+    // (`WarmCodeCacheInner`, the `HDEG7H` Option-A layer). Required by the
+    // `BlockSimHandle` build (the `None` arm is unreachable — see `bot_state`).
+    // The `Arc` clones cheaply into this async fn's future; the engine owner
     // (`PyArbitrageEngine` / standalone `Bot`) holds it for the engine's
     // life. If `Some(bot_state)` arrives with `None` warm_cache (a caller
     // wiring gap), a fresh `WarmCodeCacheInner::shared_default()` is
@@ -363,17 +362,17 @@ pub fn dispatch_profitable_results(
         return outcome;
     }
 
-    // 4. Fan-out — two branches on `bot_state`. When `Some`, the in-process
-    //    revm path builds ONE per-block `BlockSimHandle` + simulates each
-    //    candidate SERIALLY on the shared `&mut evm` (Tier 1, `V5HCR5`). When
-    //    `None`, the legacy RPC path spawns one `simulate_one` per candidate
-    //    with a bounded-concurrency stream. `buffer_unordered(MAX_SIMULATE_CONCURRENT)` is
-    //    the Rust idiom for the Python `asyncio.gather(*sim_tasks)` + the
-    //    `results[:MAX_SIMULATE_CONCURRENT]` cap (the cap is double-asserted:
-    //    the L2491 truncate + the buffer bound — belt + suspenders).
-    //    Unlike `tokio::spawn`, `buffer_unordered` does NOT require `'static` —
-    //    the stream borrows `ctx` for its lifetime, and we collect within this
-    //    fn (no task outlives the call).
+    // 4. Fan-out — build ONE per-block `BlockSimHandle` + simulate each
+    //    candidate SERIALLY on the shared `&mut evm` (Tier 1, `V5HCR5`).
+    //    `buffer_unordered(MAX_SIMULATE_CONCURRENT)` was the Rust idiom for
+    //    the Python `asyncio.gather(*sim_tasks)` + the
+    //    `results[:MAX_SIMULATE_CONCURRENT]` cap under the retired RPC path
+    //    (the cap is double-asserted: the L2491 truncate + the buffer bound
+    //    — belt + suspenders); the in-process serial path uses a plain
+    //    `.map().collect()` over the borrowed `&mut evm`. Unlike
+    //    `tokio::spawn`, neither borrows `'static` — the closure borrows
+    //    `ctx` for its lifetime, and we collect within this fn (no task
+    //    outlives the call).
     let candidate_path_ids: Vec<u64> = candidates.iter().map(|c| c.path_id).collect();
     let sim_results: Vec<(u64, FailBuckets, Result<Option<SimResult>, String>)> = match bot_state {
         // In-process revm path (Tier 1, `V5HCR5`): build ONE per-block EVM
@@ -444,11 +443,12 @@ pub fn dispatch_profitable_results(
         }
         // ADR-019 D1 — the legacy RPC `eth_simulateV1` path retired; the
         // in-process revm path (the `Some` arm above) is the sole executor.
-        // `None` is unreachable in production (the FFI seam always sources a
-        // `BotState` from the engine). Kept as `Option` transitively so the
-        // FFI shape is unchanged until step 6 (HZL664) decomposes the PyO3
-        // surface + collapses `bot_state` to a required arg. Step 5 (JB22F5)
-        // will relocate this whole fn to `examples/`.
+        // This arm is unreachable in production: the FFI seam always sources a
+        // `BotState` from the engine, and empty / pre-filtered-to-empty input
+        // short-circuits at step 3 above before the `match` is reached. The
+        // `Option` (rather than a required arg) is preserved so that
+        // empty-input callers (the seam's offline empty-candidate tests) need
+        // not construct an engine.
         None => {
             unreachable!(
                 "dispatch_profitable_results: the legacy RPC sim path retired (ADR-019 D1); supply a BotState"
@@ -457,7 +457,7 @@ pub fn dispatch_profitable_results(
     };
 
     // 5. Categorize — gas-profitable / gas-unprofitable / exception (ports
-    //    L2519–L2557). `simulate_one` returns `Ok(Some(result))` for gross-
+    //    L2519–L2557). `simulate_path_on_evm` returns `Ok(Some(result))` for gross-
     //    profitable paths; `Ok(None)` for revert/no-profit/overflow (tallied
     //    into `buckets`); `Err(_)` for an unrecoverable RPC failure (counted
     //    as an exception — ports `return_exceptions=True`, L2504).

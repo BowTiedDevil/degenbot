@@ -123,7 +123,7 @@ pub fn fits_int128(value: u128) -> bool {
 
 /// The profitable simulation result — `(path_id, gross, net, gas, tx_params, path_info)`.
 ///
-/// Mirrors the Python `simulate_one` return tuple (L2436). All gross-profitable
+/// Mirrors the Python oracle's per-path simulate return tuple (L2436). All gross-profitable
 /// results are returned — the caller separates gas-profitable from
 /// gas-unprofitable but onchain-valid (the comment at L2432–L2434).
 #[derive(Debug, Clone)]
@@ -378,11 +378,12 @@ fn u256_to_f64_lossy(v: U256) -> f64 {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// The orchestration inputs (moved from degenbot-simulation::simulate_one)
+// The orchestration inputs
 // ─────────────────────────────────────────────────────────────────────────
 
-/// Inputs to [`BlockSimHandle`] / `simulate_one` that don't vary per-path.///
-/// Ports the closure-captured state in the Python `simulate_one`: the
+/// Inputs to [`BlockSimHandle`] / [`simulate_path_on_evm`] that don't vary per-path.
+///
+/// Ports the closure-captured state in the Python oracle's per-path simulate: the
 /// executor/weth/pm/multicall addresses, the funding flags, the warmup slots,
 /// the dispatcher's `block_priority_fees` + the block context.
 ///
@@ -391,9 +392,9 @@ fn u256_to_f64_lossy(v: U256) -> f64 {
 #[derive(Clone)]
 pub struct SimulateContext<'a> {
     /// The typed RPC provider (the §ZUZANP leaf, wrapped). The in-process path
-    /// uses it for the cold-miss `AlloyDB` fallback + (interim, until
-    /// [`emit_access_list_from_state`] lands in task
-    /// `ED3Q7R`) the `eth_createAccessList` / `eth_feeHistory` paths.
+    /// uses it for the cold-miss `AlloyDB` fallback under the engine's
+    /// `WrapDatabaseAsync` (a sim miss for an untracked account/block routes
+    /// through `block_in_place` to a single `eth_call`).
     pub provider: &'a AlloyProvider,
     /// The operator key's address — the `from` of the `execute()` call + the
     /// owner funded with ETH in `stateOverrides` (TCTUAW).
@@ -449,7 +450,7 @@ impl SimulateContext<'_> {
     }
 }
 
-/// Per-path inputs to [`BlockSimHandle`] / `simulate_one`.
+/// Per-path inputs to [`BlockSimHandle`] / [`simulate_path_on_evm`].
 #[derive(Debug, Clone)]
 pub struct SimulatePath {
     /// The path id.
@@ -618,7 +619,7 @@ where
         );
     }
 
-    // C3 — int128 check (mirrors simulate_one's guard).
+    // C3 — int128 check (mirrors the oracle's guard).
     if path.hop_outputs.len() != path.path_info.hops.len() {
         return Ok(None);
     }
@@ -951,7 +952,7 @@ fn build_execute_tx(ctx: &SimulateContext<'_>, data: &alloy::primitives::Bytes) 
 }
 
 /// Decode a 32-byte big-endian uint256 from a revm call's return output.
-/// Mirrors `simulate_one`'s `decode_balance`: empty → `0`;
+/// Mirrors the oracle's `decode_balance`: empty → `0`;
 /// 32 bytes → big-endian uint256; >32 → last 32 bytes (uint256 ABI right-align);
 /// 1..31 → left-padded.
 fn decode_balance(data: &alloy::primitives::Bytes) -> U256 {

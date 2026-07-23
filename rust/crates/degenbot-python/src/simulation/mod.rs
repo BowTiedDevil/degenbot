@@ -8,7 +8,7 @@
 //! the market-aware age-decay priority fee, and hands the winners to the
 //! submission seam. It is a pyo3-free core leaf (ADR-019 D4/D7, decision R —
 //! the strategy stays in Rust; ADR-019 retired the legacy `eth_simulateV1`
-//! / `simulate_one` RPC path — the in-process revm path is the sole executor).
+//! RPC executor — the in-process revm path is the sole executor).
 //!
 //! ## Layering (ADR-005 / ADR-019 D7)
 //!
@@ -32,13 +32,11 @@
 //! each surviving `SimResult` → `PySubmitCandidate` at result-wrap time, so the
 //! cockpit chains simulate → submit with no field reshuffling.
 //!
-//! ## A2 scope (`TCZ47Z`)
+//! ## Surface
 //!
-//! Three pyclasses land here: [`PySimulateContext`] (the session-static config
-//! bag), [`PyDispatchCandidate`] (the per-path builder), and
-//! [`PyDispatchOutcome`] (the read-only result). The
-//! `dispatch_profitable_py` pyfunction (A4, `QQFTB4`) is not yet registered —
-//! it depends on the A3 `PathSuppression` extraction.
+//! Three pyclasses: [`PySimulateContext`] (the session-static config bag),
+//! [`PyDispatchCandidate`] (the per-path builder), and [`PyDispatchOutcome`]
+//! (the read-only result), plus the `dispatch_profitable_py` pyfunction.
 
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
@@ -52,14 +50,12 @@ pub use candidate::PyDispatchCandidate;
 pub use context::PySimulateContext;
 pub use outcome::PyDispatchOutcome;
 
-/// Register the simulation pyclasses on the module.
-///
-/// A2 registers the three pyclasses. A4 (`QQFTB4`) will additionally register
-/// the `dispatch_profitable_py` pyfunction.
+/// Register the simulation pyclasses + the `dispatch_profitable_py`
+/// pyfunction on the module.
 ///
 /// # Errors
 ///
-/// Returns `PyErr` if a class fails to register on the module.
+/// Returns `PyErr` if a class or function fails to register on the module.
 pub fn add_simulation_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = m.py();
     let submod = PyModule::new(py, "degenbot._ffi.simulation")?;

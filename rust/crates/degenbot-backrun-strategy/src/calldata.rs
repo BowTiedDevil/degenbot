@@ -105,8 +105,9 @@ fn encode_single_address(selector: [u8; 4], account: Address) -> Result<Bytes, A
 ///
 /// Delegates to `degenbot_executor::composers::encode_execute_call` (the
 /// §YQORTM leaf) — the selector + the `(bytes, uint256)` ABI encoding live
-/// there. Moved here from `degenbot-simulation::payload` so the in-process
-/// revm path can build the execute calldata without a cycle.
+/// there. Colocated with the backrun bundle (the 7-call vector's execute
+/// wrap) so the in-process revm path can build the execute calldata without
+/// a cycle.
 ///
 /// # Errors
 ///

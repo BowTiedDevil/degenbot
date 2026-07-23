@@ -279,9 +279,9 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     crate::submission::add_submission_module(m)?;
 
     // Simulation seam (feature = "simulation") — the PyO3 binding over
-    // `degenbot-simulation` (per-block profitability pipeline: simulate_one
-    // + dispatch_profitable_results). Skeleton for now; the pyclasses +
-    // `dispatch_profitable_py` pyfunction land in A2/A4.
+    // `degenbot-backrun-strategy` (per-block profitability pipeline:
+    // `dispatch_profitable_results` + the 7-call `simulate_path_on_evm`,
+    // driven over the `degenbot-simulation` engine's `BlockSimHandle`).
     #[cfg(feature = "simulation")]
     crate::simulation::add_simulation_module(m)?;
 

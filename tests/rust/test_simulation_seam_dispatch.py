@@ -7,11 +7,11 @@ Python oracle over the anvil mock corpus. The goal here is to pin the
 wiring + the empty-candidate short-circuit + the ``PyDispatchOutcome`` join
 shape (the join itself, ``SimResult → PySubmitCandidate``, is exercised by
 the simulation-core mock-transport tests in
-``rust/crates/degenbot-simulation/src/dispatch_profitable.rs`` — A4 only wires
+``rust/crates/degenbot-backrun-strategy/src/dispatch.rs`` — A4 only wires
 it through the seam).
 
 The empty-candidate case is RPC-free: the core short-circuits before any
-``simulate_one`` is spawned (``dispatch_returns_empty_outcome_for_empty_input``
+per-path simulate is spawned (``dispatch_returns_empty_outcome_for_empty_input``
 core test), so the offline dead-URL provider never dials.
 """
 
