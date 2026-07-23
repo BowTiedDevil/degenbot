@@ -323,7 +323,7 @@ pub fn dispatch_profitable_results(
     // constructed per call — a safe degradation to Tier-1-only behavior (no
     // cross-block persistence, no panic). The FFI seam sets both from the
     // same `engine` arg, so the gap is unreachable in production.
-    warm_cache: Option<Arc<RwLock<degenbot_evm::WarmCodeCacheInner>>>,
+    warm_cache: Option<Arc<RwLock<crate::WarmCodeCacheInner>>>,
 ) -> DispatchOutcome {
     let mut outcome = DispatchOutcome::default();
     let pre_filter_count = candidates.len();
@@ -389,8 +389,7 @@ pub fn dispatch_profitable_results(
             // The warm-code cache arc; degrade to a fresh per-call cache if
             // the caller wired `bot_state` without one (safe — no
             // cross-block persistence, no panic).
-            let warm_cache =
-                warm_cache.unwrap_or_else(degenbot_evm::WarmCodeCacheInner::shared_default);
+            let warm_cache = warm_cache.unwrap_or_else(crate::WarmCodeCacheInner::shared_default);
             match BlockSimHandle::build(ctx, &guard, &warm_cache) {
                 Some(mut handle) => candidates
                     .into_iter()
@@ -695,7 +694,7 @@ mod tests {
             MIN_PROFIT_NET,
             0,
             Some(bot_state),
-            Some(degenbot_evm::WarmCodeCacheInner::shared_default()),
+            Some(crate::WarmCodeCacheInner::shared_default()),
         );
 
         // Build failed under current_thread runtime → every candidate

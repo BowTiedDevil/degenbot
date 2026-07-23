@@ -23,9 +23,8 @@
 //! `encode_v3_tick_info_slot`, `tick_mapping_slot`, `sign_extend_*`) plus
 //! `read_v2_slot`/`read_v3_slot`/`read_tracked_storage`/`SnapshotError`. These
 //! are deleted (no consumer; the `read_*_slot` paths returned `None` so
-//! `storage_ref` always fell through). If Tier 2 option B
-//! (`rust/crates/degenbot-evm` epic `L4GJEA` / spike `BF2V3B`) is ever
-//! pursued, the encoders must be re-derived from the Solidity storage layout
+//! `storage_ref` always fell through). If Tier 2 option B is ever pursued,
+//! the encoders must be re-derived from the Solidity storage layout
 //! — the old `parity_diagnostic_encoding.rs` tests that pinned them are also
 //! gone. The default Tier 2 disposition is C (reject), so re-derivation is
 //! not on any current path.

@@ -39,7 +39,6 @@ members = [
     "crates/degenbot-db",
     "crates/degenbot-decoders",
     "crates/degenbot-evm-math",
-    "crates/degenbot-evm",
     "crates/degenbot-executor",
     "crates/degenbot-executor",
     "crates/degenbot-fork",

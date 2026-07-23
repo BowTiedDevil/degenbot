@@ -11,9 +11,9 @@
 //! constants, so the dispatch leaf calls the in-process revm path
 //! (`BlockSimHandle::simulate_path`) with no type translation.
 //!
-//! `degenbot-simulation` re-exports these (`pub use degenbot_evm::{...}`) so
-//! existing `use degenbot_simulation::SimResult` call sites + the PyO3
-//! wrappers stay unchanged.
+//! `degenbot-simulation` re-exports these at its crate root
+//! (`pub use sim::evm::{...}`) so existing `use degenbot_simulation::SimResult`
+//! call sites + the PyO3 wrappers stay unchanged.
 //!
 //! # In-process revm sim (task `JHGLF4`, Tier 1 `V5HCR5`)
 //!
@@ -54,11 +54,11 @@ use revm::primitives::TxKind;
 // EVM builder traits re-exported from the handler crate.
 use revm::{ExecuteEvm, InspectEvm, MainBuilder, MainContext};
 
-use crate::calldata::{
+use super::calldata::{
     encode_balance_of_calldata, encode_erc6909_balance_of_calldata,
     encode_get_eth_balance_calldata, wrap_execute_calldata,
 };
-use crate::state_override::SimulationOverrideParams;
+use super::state_override::SimulationOverrideParams;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Constants (ports the Python oracle's module-level literals)
@@ -395,7 +395,7 @@ fn u256_to_f64_lossy(v: U256) -> f64 {
 pub struct SimulateContext<'a> {
     /// The typed RPC provider (the §ZUZANP leaf, wrapped). The in-process path
     /// uses it for the cold-miss `AlloyDB` fallback + (interim, until
-    /// [`crate::access_list::emit_access_list_from_state`] lands in task
+    /// [`super::access_list::emit_access_list_from_state`] lands in task
     /// `ED3Q7R`) the `eth_createAccessList` / `eth_feeHistory` paths.
     pub provider: &'a AlloyProvider,
     /// The operator key's address — the `from` of the `execute()` call + the
@@ -545,10 +545,10 @@ impl Provider<Ethereum> for ArcDynProviderEthereum {
 /// The `WarmCodeCache` layer (cross-block bytecode + account-existence, per-
 /// entry TTL'd) sits between the per-block `CacheDB` and the `BotStateDb`
 /// storage-forwarding seam; the `AlloyDB` cold-miss fallback (RPC) sits at the
-/// bottom (see [`crate::warm_code_cache`]).
+/// bottom (see [`super::warm_code_cache`]).
 type ProductionBlockDb<'a> = CacheDB<
-    crate::WarmCodeCache<
-        crate::BotStateDb<
+    super::WarmCodeCache<
+        super::BotStateDb<
             'a,
             WrapDatabaseAsync<revm::database::AlloyDB<Ethereum, ArcDynProviderEthereum>>,
         >,
@@ -563,7 +563,7 @@ type ProductionBlockDb<'a> = CacheDB<
 /// reads does not invoke the inspector).
 type BlockEvm<'a> = revm::MainnetEvm<
     revm::handler::MainnetContext<ProductionBlockDb<'a>>,
-    crate::access_list::AccessListCollector,
+    super::access_list::AccessListCollector,
 >;
 
 /// Owns a per-block shared EVM (one `CacheDB` + revm `Context`, state overrides
@@ -608,7 +608,7 @@ impl<'a> BlockSimHandle<'a> {
     /// in that case.
     ///
     /// `warm_cache` is the cross-block persistent bytecode + account-existence
-    /// layer ([`crate::WarmCodeCache`]); it persists across blocks via the
+    /// layer ([`super::WarmCodeCache`]); it persists across blocks via the
     /// engine owner's `Arc<RwLock<WarmCodeCacheInner>>` (cloned into the
     /// per-block `WarmCodeCache` wrapper value here — only the inner map
     /// survives across blocks). The per-block `CacheDB` layered above still
@@ -623,7 +623,7 @@ impl<'a> BlockSimHandle<'a> {
     pub fn build(
         ctx: &SimulateContext<'_>,
         bot_state: &'a BotState,
-        warm_cache: &Arc<RwLock<crate::WarmCodeCacheInner>>,
+        warm_cache: &Arc<RwLock<super::WarmCodeCacheInner>>,
     ) -> Option<Self> {
         // `AlloyDB::new` requires `P: Provider<Ethereum>` by value; the
         // type-erased `Arc<dyn Provider>` from `provider_arc()` does NOT satisfy
@@ -640,8 +640,8 @@ impl<'a> BlockSimHandle<'a> {
             );
             return None;
         };
-        let bot_state_db = crate::BotStateDb::new(bot_state, wrap_db);
-        let warm_code_cache = crate::WarmCodeCache::with_owner(
+        let bot_state_db = super::BotStateDb::new(bot_state, wrap_db);
+        let warm_code_cache = super::WarmCodeCache::with_owner(
             Arc::clone(warm_cache),
             ctx.current_block,
             bot_state_db,
@@ -651,7 +651,7 @@ impl<'a> BlockSimHandle<'a> {
         // injection, warmup slots) over the layered DB — the same overrides
         // `simulate_one`'s `eth_simulateV1` `stateOverrides` carries.
         if let Err(err) =
-            crate::state_override::apply_simulation_overrides(&mut cache_db, &ctx.override_params())
+            super::state_override::apply_simulation_overrides(&mut cache_db, &ctx.override_params())
         {
             // The override adaptor only fails on an override-application
             // error (e.g. a warmup-slot write to an account the DB refused).
@@ -669,7 +669,7 @@ impl<'a> BlockSimHandle<'a> {
         revm_ctx.cfg.disable_nonce_check = true;
         let mut evm = revm_ctx
             .with_db(cache_db)
-            .build_mainnet_with_inspector(crate::access_list::AccessListCollector::default());
+            .build_mainnet_with_inspector(super::access_list::AccessListCollector::default());
         evm.ctx.modify_block(|block| {
             block.basefee = u64::try_from(ctx.base_fee_next).unwrap_or(u64::MAX);
             block.number = U256::from(ctx.current_block);
@@ -755,7 +755,7 @@ where
     revm_ctx.cfg.disable_nonce_check = true;
     let mut evm = revm_ctx
         .with_db(cache_db)
-        .build_mainnet_with_inspector(crate::access_list::AccessListCollector::default());
+        .build_mainnet_with_inspector(super::access_list::AccessListCollector::default());
     evm.ctx.modify_block(|block| {
         block.basefee = u64::try_from(ctx.base_fee_next).unwrap_or(u64::MAX);
         block.number = U256::from(ctx.current_block);
@@ -802,7 +802,7 @@ where
             Tx = TxEnv,
             ExecutionResult = revm::context_interface::result::ExecutionResult,
             State = revm::state::EvmState,
-        > + InspectEvm<Inspector = crate::access_list::AccessListCollector>,
+        > + InspectEvm<Inspector = super::access_list::AccessListCollector>,
     <E as ExecuteEvm>::Error: std::fmt::Display,
 {
     // Per-call diagnostic trace — opt-in via `DEGENBOT_SIM_TRACE=1`. Dumps
@@ -922,7 +922,7 @@ where
     // inspector, so the collector sees execute()-only `SLOAD`/`SSTORE` opcodes.
     // The collector is moved into the EVM by `inspect_one`; the paired
     // [`AccessListHandle`] retains a shared handle to drain after the run.
-    let (collector, access_list_handle) = crate::access_list::AccessListCollector::new();
+    let (collector, access_list_handle) = super::access_list::AccessListCollector::new();
     // `Option::take` moves the collector into `inspect_one` exactly once (at
     // idx == 3); the borrow checker can't prove `idx == 3` fires at most once
     // inside the loop, so the `Option` makes the single move explicit.
@@ -1399,8 +1399,11 @@ mod tests {
         let provider = smoke_provider(&asserter);
         let ctx = smoke_ctx(&provider);
         let mut cache_db: CacheDB<EmptyDB> = CacheDB::new(EmptyDB::default());
-        crate::state_override::apply_simulation_overrides(&mut cache_db, &ctx.override_params())
-            .expect("overrides apply over EmptyDB");
+        crate::sim::evm::state_override::apply_simulation_overrides(
+            &mut cache_db,
+            &ctx.override_params(),
+        )
+        .expect("overrides apply over EmptyDB");
         let mut buckets = FailBuckets::new();
 
         let result =
@@ -1431,8 +1434,11 @@ mod tests {
         let mut ctx = smoke_ctx(&provider);
         ctx.runtime_bytecode = Bytes::new(); // empty bytecode — execute() is a no-op
         let mut cache_db: CacheDB<EmptyDB> = CacheDB::new(EmptyDB::default());
-        crate::state_override::apply_simulation_overrides(&mut cache_db, &ctx.override_params())
-            .expect("overrides apply over EmptyDB");
+        crate::sim::evm::state_override::apply_simulation_overrides(
+            &mut cache_db,
+            &ctx.override_params(),
+        )
+        .expect("overrides apply over EmptyDB");
         let mut buckets = FailBuckets::new();
 
         let result =

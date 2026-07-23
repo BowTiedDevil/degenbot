@@ -12,7 +12,7 @@
 //!
 //! This module seeds that field from `degenbot-bot`'s tracked-ahead V4 typed
 //! state before `transact`, mirroring how
-//! [`crate::state_override::apply_simulation_overrides`] seeds the `CacheDB`.
+//! [`super::state_override::apply_simulation_overrides`] seeds the `CacheDB`.
 //!
 //! # Coverage + the V4 slot-layout follow-up
 //!

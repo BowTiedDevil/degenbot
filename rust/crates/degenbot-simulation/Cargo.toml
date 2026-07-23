@@ -1,6 +1,6 @@
 [package]
 name = "degenbot-simulation"
-description = "Pure-Rust eth_simulateV1 stateOverrides construction — code injection + ETH/WETH funding + warmup-slot integration + WETH9 balanceOf override (pyo3-free core leaf)."
+description = "In-process revm simulation executor + dispatch fan-out (pyo3-free core; ADR-019 D4 fold)."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
@@ -20,48 +20,70 @@ style = "warn"
 suspicious = "warn"
 
 [dependencies]
-alloy = { version = "^2.0" }
-degenbot-executor = { path = "../degenbot-executor" }
-degenbot-abi = { path = "../degenbot-abi" }
-degenbot-rpc = { path = "../degenbot-rpc" }
+# revm — the canonical Rust EVM (audited, used by Reth/Foundry/many L2s).
+# `default-features = true` brings std + secp256k1 + c-kzg + blst + portable +
+# tracer (all mainnet precompiles — keep). `alloydb` enables `AlloyDB` (the
+# RPC-backed DatabaseAsyncRef). `asyncdb` enables `DatabaseAsyncRef` +
+# `WrapDatabaseAsync` (the async→sync Database bridge). `dev` is NOT enabled —
+# owner-funding uses explicit `CacheDB::insert_account_info` (the owner is
+# genuinely credited), keeping the sim a faithful mainnet execution (no
+# balance-check bypass).
+revm = { version = "41.0.0", default-features = true, features = ["alloydb", "asyncdb"] }
+# The alloy umbrella (single source, matches degenbot-rpc's convention). The
+# umbrella's `DynProvider`/`Provider`/`Ethereum` are the same types revm's
+# `AlloyDB<N, P>` consumes. `full` brings the RPC types + provider-http.
+alloy = { version = "^2.0", features = ["full"] }
 degenbot-core = { path = "../degenbot-core" }
-degenbot-decoders = { path = "../degenbot-decoders" }
-# `degenbot-evm` — the in-process EVM execution core (revm). This crate owns the
-# SHARED sim primitives (`SimResult`, `FailBuckets`, `compute_priority_fee`,
-# `fits_int128`, `SimulateContext`, `SimulatePath`, `BlockPriorityFees` + the
-# constants) so `simulate_in_process` (degenbot-evm) + `simulate_one` (this
-# crate, the eth_simulateV1 path) share one type home. This crate re-exports
-# them (`pub use degenbot_evm::{...}`) so existing `use degenbot_simulation::...`
-# call sites + the PyO3 wrappers stay unchanged. revm is already compiled in
-# the workspace (the umbrella + degenbot-aave + degenbot-evm-math depend on
-# degenbot-evm), so this edge costs link-time, not a new heavy compile; the
-# eventual dispatch swap (retire `dispatch::simulate_v1` for
-# `degenbot-evm::simulate_in_process`) needs this edge anyway.
-degenbot-evm = { path = "../degenbot-evm" }
-# `degenbot-bot` — for `BotState` (the ADR-003 state owner the in-process
-# `simulate_in_process` path needs as `&BotState`). Transitive via
-# `degenbot-evm` (which already depends on `degenbot-bot`); this edge makes
-# the `Option<Arc<RwLock<BotState>>>` dispatch-swap param type-carryable from
-# `degenbot-simulation::dispatch_profitable_results`. The eventual dispatch
-# swap (retire `dispatch::simulate_v1` for `degenbot-evm::simulate_in_process`)
-# needs `BotState` here anyway.
+# `WarmupSlots` + `compute_simulation_warmup_slots` + `mapping_slot` + the
+# `encode_cmd_stream`/`PathInfo`/`HopInfo`/`EncodeOptions` types the sim
+# orchestration consumes — crossed from the executor leaf.
+degenbot-executor = { path = "../degenbot-executor" }
+# `AlloyProvider` — the typed RPC provider the in-process sim's cold-miss
+# fallback (`WrapDatabaseAsync<AlloyDB>`) + the access-list / feeHistory paths
+# consume. The `SimulateContext.provider` field holds a borrowed `&AlloyProvider`.
+degenbot-rpc = { path = "../degenbot-rpc" }
+# `BotState` (ADR-003 state owner; ADR-005 standalone-core) — the snapshot
+# surface (`v3_pools_snapshot` / `v4_pools_snapshot`) + the typed pool-state
+# structs BotStateDb reads. Depends on `degenbot-pools` (state structs) +
+# `degenbot-uniswap` (DexIdentity). Added in EGMSNS (option B).
 degenbot-bot = { path = "../degenbot-bot" }
-# `parking_lot::RwLock` — the `BotState` lock type (matches `degenbot-bot`
-# so the `Option<Arc<RwLock<BotState>>>` fan-out param is the same lock family).
-parking_lot = "^0.12"
+degenbot-pools = { path = "../degenbot-pools" }
+# `V4PoolId` — the V4 pool identifier type (crossed from the decoders leaf for
+# the v4_transient seeder's pool-key lookup).
+degenbot-decoders = { path = "../degenbot-decoders" }
+# `encode_rust` + `AbiValue` — the pure-Rust ABI encoder for the balance-call
+# calldata builders (balanceOf / getEthBalance / ERC6909 balanceOf selectors +
+# abi-encoded tails).
+degenbot-abi = { path = "../degenbot-abi" }
+# `DispatchCandidate`/`SubmitCandidate`/`PathSuppression` (the submission seam)
+# — `dispatch_profitable_results` returns + threads these.
 degenbot-submission = { path = "../degenbot-submission" }
 thiserror = { version = "^2.0" }
+log = { version = "^0.4" }
 futures = { version = "^0.3" }
+# `parking_lot::RwLock` — backs the cross-block persistent `WarmCodeCacheInner`
+# (the bytecode + account-existence layer) AND the `BotState` lock type
+# (matches `degenbot-bot` so the `Option<Arc<RwLock<BotState>>>` fan-out param
+# is the same lock family).
+parking_lot = "^0.12"
 # `JoinSet` (`rt`) + `Semaphore` (`sync`) for the dispatch_profitable_results
-# fan-out cap (D1). The `macros` feature is dev-test only (the `#[tokio::test]`
-# attribute used by the §4.2 parity tests).
+# fan-out cap (D1). `rt` is also required by `WrapDatabaseAsync` (it blocks the
+# async `AlloyDB` `DatabaseAsyncRef` calls on a runtime —
+# `WrapDatabaseAsync::new` needs a current-thread tokio handle). The `macros`
+# feature is dev-test only (the `#[tokio::test]` attribute).
 tokio = { version = "^1.52", features = ["rt", "sync"] }
 
 [dev-dependencies]
 serde_json = { version = "^1.0" }
-tokio = { version = "^1.52", features = ["macros", "rt"] }
+# `examples/rpc_cache_fanout.rs` uses `#[tokio::main(flavor = "multi_thread")]`
+# — `WrapDatabaseAsync<AlloyDB>` blocks on the ambient tokio runtime, which
+# requires a multi-thread runtime (`CurrentThread` returns `None`).
+tokio = { version = "^1.52", features = ["macros", "rt-multi-thread"] }
 # `test-utils` gates `AlloyProvider::from_provider` (the mock-transport
-# constructor) so the §4.2 wire-shape tests can drive the typed dispatch
-# without a live RPC. Production builds (the umbrella, the cdylib) never
-# enable this feature.
+# constructor) so the §4.2 wire-shape tests + the parity fixture can drive the
+# typed dispatch without a live RPC. Production builds (the umbrella, the
+# cdylib) never enable this feature.
 degenbot-rpc = { path = "../degenbot-rpc", features = ["test-utils"] }
+# `compute_simulation_warmup_slots` + the `PathInfo`/`HopInfo`/`V2HopInfo`/
+# `EncodeOptions` types the smoke test's `SimulatePath` fixture constructs.
+degenbot-executor = { path = "../degenbot-executor" }

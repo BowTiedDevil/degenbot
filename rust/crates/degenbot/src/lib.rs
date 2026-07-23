@@ -82,12 +82,6 @@ pub use degenbot_submission;
 /// (pure-Rust leaf).
 pub use degenbot_simulation;
 
-/// In-process EVM execution over revm — `CacheDB<BotStateDb<AlloyDB>>`
-/// composition fed by Rust-owned bot state; absorbs `eth_simulateV1` +
-/// `eth_createAccessList` into the core (pure-Rust leaf, ADR-005
-/// standalone-core).
-pub use degenbot_evm;
-
 /// Concentrated-liquidity math (`cl_lib`, `tick_math`).
 pub use degenbot_cl_math;
 /// Uniswap V2 constant-product (`x·y=k`) single-hop swap math (`IntHopState`,

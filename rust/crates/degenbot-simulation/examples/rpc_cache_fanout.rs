@@ -103,9 +103,10 @@ use revm::database_interface::{DatabaseRef, WrapDatabaseAsync, WrapDatabaseRef};
 use revm::primitives::{StorageKey, StorageValue, TxKind, B256};
 use revm::{ExecuteEvm, MainBuilder, MainContext};
 
-// The example lives in the `degenbot-evm` crate, so it can reach the
-// cross-block warm-cache types via the library's public surface.
-use degenbot_evm::{WarmCodeCache, WarmCodeCacheInner};
+// The example lives in the `degenbot-simulation` crate (the folded engine
+// home — ADR-019 D4), so it reaches the cross-block warm-cache types via
+// the library's public surface.
+use degenbot_simulation::{WarmCodeCache, WarmCodeCacheInner};
 
 /// The Uniswap V2 USDC/WETH pair — a real mainnet V2 pair with code at the
 /// pinned block. Override via `PAIR_ADDRESS` env var.

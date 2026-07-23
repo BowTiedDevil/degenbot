@@ -43,9 +43,9 @@ pub const P50_INDEX: usize = 1;
 /// (`dict(zip(FEE_PERCENTILES, reward[-1]))` — L2851): p10 and p50 priority-fee
 /// samples for a single block, keyed by percentile.
 ///
-/// The strategy-side consumer (`compute_priority_fee`) lives in `degenbot-evm`,
-/// which imports this type from here — the fee struct is market data, produced
-/// by the RPC leaf below.
+/// The strategy-side consumer (`compute_priority_fee`) lives in
+/// `degenbot-simulation` (the `sim::evm` submodule), which imports this type
+/// from here — the fee struct is market data, produced by the RPC leaf below.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BlockPriorityFees {
     /// The block number these fees describe.

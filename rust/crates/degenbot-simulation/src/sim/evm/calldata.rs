@@ -7,13 +7,10 @@
 //! `balanceOf(address,uint256)`. Plus the `execute(bytes,uint256)` calldata
 //! wrap (a thin delegation to `degenbot_executor::encode_execute_call`).
 //!
-//! These live in `degenbot-evm` (not `degenbot-simulation`) so the in-process
-//! revm path (`simulate_path_on_evm` via `BlockSimHandle`) can build the 7-call
-//! vector without
-//! depending on `degenbot-simulation` (a cycle — `degenbot-simulation` depends
-//! on `degenbot-evm` for the shared primitives). `degenbot-simulation`
-//! re-exports them (`pub use degenbot_evm::calldata`) so existing call sites
-//! stay unchanged.
+//! These live alongside the in-process revm path (`simulate_path_on_evm`
+//! via `BlockSimHandle`) in the `sim::evm` submodule. `degenbot-simulation`
+//! re-exports this module at its crate root so existing
+//! `use degenbot_simulation::calldata::...` call sites stay unchanged.
 //!
 //! All selectors are `keccak256(signature)[:4]`; values are ABI-encoded via
 //! `degenbot_abi::abi_encoder::encode_rust` (the pure-Rust encoder). Each

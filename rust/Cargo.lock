@@ -1998,7 +1998,6 @@ dependencies = [
  "degenbot-curve-math",
  "degenbot-db",
  "degenbot-decoders",
- "degenbot-evm",
  "degenbot-evm-math",
  "degenbot-executor",
  "degenbot-fork",
@@ -2143,25 +2142,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "degenbot-evm"
-version = "0.6.0-alpha.3"
-dependencies = [
- "alloy",
- "degenbot-abi",
- "degenbot-bot",
- "degenbot-core",
- "degenbot-decoders",
- "degenbot-executor",
- "degenbot-pools",
- "degenbot-rpc",
- "log",
- "parking_lot",
- "revm",
- "thiserror 2.0.19",
- "tokio",
-]
-
-[[package]]
 name = "degenbot-evm-math"
 version = "0.6.0-alpha.3"
 dependencies = [
@@ -2270,12 +2250,14 @@ dependencies = [
  "degenbot-bot",
  "degenbot-core",
  "degenbot-decoders",
- "degenbot-evm",
  "degenbot-executor",
+ "degenbot-pools",
  "degenbot-rpc",
  "degenbot-submission",
  "futures",
+ "log",
  "parking_lot",
+ "revm",
  "serde_json",
  "thiserror 2.0.19",
  "tokio",
