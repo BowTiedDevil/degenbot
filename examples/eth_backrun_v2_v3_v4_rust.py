@@ -1377,7 +1377,7 @@ async def _dispatch_profitable(
     block_timestamp: int,
     base_fee_next: int,
     dry_run: bool,
-    sim_mode: str = "rpc",
+    sim_mode: str = "evm",
 ) -> None:
     """Encode → simulate → submit a batch of profitable results via the Rust seam.
 
@@ -1588,7 +1588,7 @@ async def consume_result_batches(
     dispatcher: Dispatcher,
     dry_run: bool,
     *,
-    sim_mode: str = "rpc",
+    sim_mode: str = "evm",
     block_stream: AsyncIterator[dict[str, int]] | None = None,
     result_iter: AsyncIterator[dict[str, object]] | None = None,
 ) -> None:
@@ -1798,7 +1798,7 @@ async def _apply_result_if_ready(
     operator_private_key: str,
     dry_run: bool,
     *,
-    sim_mode: str = "rpc",
+    sim_mode: str = "evm",
 ) -> None:
     """Dispatch profitable results from a solver result batch if fut resolved.
 
@@ -1893,15 +1893,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--sim",
         type=str,
-        default="rpc",
+        default="evm",
         choices=("rpc", "evm"),
         help=(
-            "Simulation back-end: 'rpc' (default) hashes each candidate through "
-            "eth_simulateV1 via dispatch_profitable's simulate_one leaf; 'evm' "
-            "routes the fan-out through the in-process revm sim (the new core "
-            "BlockSimHandle path — one shared EVM per block, serial transact). "
-            "'evm' exercises the in-process sim end-to-end against the live RPC "
-            "(cold-miss AlloyDB fallback) — dry-run only (implies no submission)."
+            "Simulation back-end: 'evm' (default) routes the fan-out through "
+            "the in-process revm sim (the core BlockSimHandle path — one shared "
+            "EVM per block, serial transact, with the cross-block WarmCodeCache "
+            "eliminating immutable code/account RPCs); 'rpc' hashes each "
+            "candidate through eth_simulateV1 via dispatch_profitable's "
+            "simulate_one leaf (the legacy per-call RPC path)."
         ),
     )
     parser.add_argument(

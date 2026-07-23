@@ -162,9 +162,10 @@ class BackrunConfig:
     verification_retry_policy: VerificationRetryPolicy
     # Run mode
     dry_run: bool
-    # Simulation back-end: "rpc" (default, eth_simulateV1 via simulate_one)
-    # or "evm" (in-process revm via simulate_in_process).
-    sim_mode: str = "rpc"
+    # Simulation back-end: "evm" (default, in-process revm via
+    # simulate_in_process + BlockSimHandle with cross-block WarmCodeCache)
+    # or "rpc" (eth_simulateV1 via simulate_one — the legacy per-call path).
+    sim_mode: str = "evm"
 
     @classmethod
     def from_env(
@@ -176,7 +177,7 @@ class BackrunConfig:
         chain_id: int = 1,
         cli_http: str | None = None,
         cli_ws: str | None = None,
-        sim_mode: str = "rpc",
+        sim_mode: str = "evm",
     ) -> "BackrunConfig":
         """Build a BackrunConfig from a dotenv-style env mapping + CLI flags.
 
