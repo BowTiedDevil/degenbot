@@ -153,15 +153,16 @@ pub fn dispatch_profitable_py<'py>(
     // Done under the GIL: the `Py<PyArbitrageEngine>` is borrowed, the engine
     // lock is acquired (engine-then-core ordering per ADR-003), + the `core`
     // `Arc<RwLock<BotState>>` is cloned out (cheap — one Arc clone). The arc
-    // threads through the async fan-out; the per-path read guard is taken in
+    // threads through the async fan-out; the per-block read guard is taken in
     // the closure body (`parking_lot::RwLockReadGuard` is `Send`). When
-    // `engine` is `None`, `bot_state = None` → the fan-out falls back to
-    // `simulate_one` (the legacy `eth_simulateV1` path).
+    // `engine` is `None`, `bot_state = None` — but the legacy RPC sim path
+    // retired (ADR-019 D1), so the core's `None` arm is now `unreachable!`;
+    // production always supplies `engine`. Kept `Option` here transitively
+    // until step 6 (HZL664) collapses the FFI seam to a required `engine`.
     //
     // `warm_cache` is the cross-block bytecode cache (`HDEG7H` Option A) —
     // cloned from the engine's `warm_code_cache_arc()` (one Arc clone, no
-    // map copy). When `engine` is `None`, `warm_cache = None` → the fan-out
-    // falls back to `simulate_one` (same as `bot_state`).
+    // map copy). Same transitional `Option` shape as `bot_state`.
     let bot_state: Option<Arc<parking_lot::RwLock<degenbot_bot::bot_core::BotState>>> =
         engine.as_ref().map(|eng| eng.borrow(py).bot_state_arc());
     let warm_cache: Option<Arc<parking_lot::RwLock<degenbot_simulation::WarmCodeCacheInner>>> =
@@ -196,8 +197,7 @@ pub fn dispatch_profitable_py<'py>(
             min_profit_margin_bps,
             bot_state,
             warm_cache,
-        )
-        .await;
+        );
 
         // ── Join survivors → SubmitCandidates (pure Rust — no GIL needed) ──
         // The cockpit chains dispatch_profitable_py → dispatch_and_submit_py

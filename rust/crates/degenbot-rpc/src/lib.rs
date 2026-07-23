@@ -10,16 +10,20 @@
 //! # Modules
 //!
 //! - [`provider`] — sync `AlloyProvider`, `LogFetcher`, `LogFilter`, retry logic.
+//! - [`fees`] — per-block priority-fee market oracle (`eth_feeHistory` leaf +
+//!   the typed p10/p50 parse + `BlockPriorityFees`).
 //! - [`contract`] — `Contract` interface with `FunctionSignature` ABI caching.
 //! - [`subscription`] — double-buffer `SubscriptionHandle`, raw `drain_raw`,
 //!   and the `pump_*` subscription drivers.
 
 pub mod abi;
 pub mod contract;
+pub mod fees;
 pub mod multicall3;
 pub mod offline;
 pub mod provider;
 pub mod subscription;
 pub mod tick_bootstrap;
 
+pub use fees::{fetch_priority_fee_percentiles, BlockPriorityFees};
 pub use tick_bootstrap::AlloyTickBootstrapRpc;

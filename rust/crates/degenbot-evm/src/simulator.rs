@@ -6,10 +6,10 @@
 //! per-block by `BlockSimHandle`). The two
 //! are dual drivers over one engine — they share `SimResult`, `FailBuckets`,
 //! `compute_priority_fee`, `fits_int128`, `SimulateContext`, `SimulatePath`,
-//! `BlockPriorityFees` + the priority-fee constants so the dispatch leaf can
-//! swap `dispatch::simulate_v1` for the in-process revm path
-//! (`BlockSimHandle::simulate_path`) behind a single call-site change with no
-//! type translation.
+//! `BlockPriorityFees` (imported from `degenbot_rpc::fees` — the fee struct is
+//! market data, owned by the RPC crate per ADR-019 D5) + the priority-fee
+//! constants, so the dispatch leaf calls the in-process revm path
+//! (`BlockSimHandle::simulate_path`) with no type translation.
 //!
 //! `degenbot-simulation` re-exports these (`pub use degenbot_evm::{...}`) so
 //! existing `use degenbot_simulation::SimResult` call sites + the PyO3
@@ -39,6 +39,7 @@ use degenbot_bot::bot_core::BotState;
 use degenbot_core::errors::{ProviderError, ProviderResult};
 use degenbot_executor::composers::{encode_cmd_stream, EncodeOptions, HopInfo, PathInfo};
 use degenbot_executor::WarmupSlots;
+use degenbot_rpc::fees::BlockPriorityFees;
 use degenbot_rpc::provider::AlloyProvider;
 use parking_lot::RwLock;
 use revm::database_interface::WrapDatabaseAsync;
@@ -51,7 +52,7 @@ use revm::database::CacheDB;
 use revm::primitives::TxKind;
 // `MainBuilder` (`.build_mainnet()`) + `MainContext` (`.mainnet()`) — the revm
 // EVM builder traits re-exported from the handler crate.
-use revm::{ExecuteEvm, MainBuilder, MainContext};
+use revm::{ExecuteEvm, InspectEvm, MainBuilder, MainContext};
 
 use crate::calldata::{
     encode_balance_of_calldata, encode_erc6909_balance_of_calldata,
@@ -287,25 +288,6 @@ impl FailBuckets {
     pub fn into_failures(self) -> Vec<SimFailure> {
         self.failures
     }
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// The per-block priority-fee percentiles (moved from degenbot-simulation::dispatch)
-// ─────────────────────────────────────────────────────────────────────────
-
-/// A per-block percentile fee summary the `_compute_priority_fee` consumer reads.
-///
-/// Mirrors the Python `dispatcher.block_priority_fees[block]` dict
-/// (`dict(zip(FEE_PERCENTILES, reward[-1]))` — L2851): p10 and p50 priority-fee
-/// samples for a single block, keyed by percentile.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct BlockPriorityFees {
-    /// The block number these fees describe.
-    pub block: u64,
-    /// The p10 priority-fee sample (wei).
-    pub p10: U256,
-    /// The p50 priority-fee sample (wei).
-    pub p50: U256,
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -574,11 +556,15 @@ type ProductionBlockDb<'a> = CacheDB<
 >;
 
 /// The concrete per-block EVM type held by [`BlockSimHandle`] — revm's
-/// [`revm::MainnetEvm`] over the production [`ProductionBlockDb`] stack.
-/// Spelled out as a type alias so [`BlockSimHandle`] can name the `evm` field
-/// the [`BlockSimHandle::build`] builder returns (the field is private — the
-/// type never crosses the crate boundary).
-type BlockEvm<'a> = revm::MainnetEvm<revm::handler::MainnetContext<ProductionBlockDb<'a>>>;
+/// [`revm::MainnetEvm`] over the production [`ProductionBlockDb`] stack. The
+/// inspector type parameter is [`AccessListCollector`] (ADR-019 D3) — baked in
+/// so `simulate_path_on_evm` can attach it to `execute()`'s `inspect_one` run
+/// and drain the warmed-slot access list (`transact_one` for the balance
+/// reads does not invoke the inspector).
+type BlockEvm<'a> = revm::MainnetEvm<
+    revm::handler::MainnetContext<ProductionBlockDb<'a>>,
+    crate::access_list::AccessListCollector,
+>;
 
 /// Owns a per-block shared EVM (one `CacheDB` + revm `Context`, state overrides
 /// applied once) for the in-process sim fan-out (Tier 1, `V5HCR5`).
@@ -681,7 +667,9 @@ impl<'a> BlockSimHandle<'a> {
         // `eth_call`-shaped read), so revm's per-tx nonce floor would reject
         // calls [1..6]. Disable it — parity with the node's lenient simulate.
         revm_ctx.cfg.disable_nonce_check = true;
-        let mut evm = revm_ctx.with_db(cache_db).build_mainnet();
+        let mut evm = revm_ctx
+            .with_db(cache_db)
+            .build_mainnet_with_inspector(crate::access_list::AccessListCollector::default());
         evm.ctx.modify_block(|block| {
             block.basefee = u64::try_from(ctx.base_fee_next).unwrap_or(u64::MAX);
             block.number = U256::from(ctx.current_block);
@@ -765,7 +753,9 @@ where
     // [1..6]. Disable the check — parity with the node's lenient simulate.
     let mut revm_ctx = revm::context::Context::mainnet();
     revm_ctx.cfg.disable_nonce_check = true;
-    let mut evm = revm_ctx.with_db(cache_db).build_mainnet();
+    let mut evm = revm_ctx
+        .with_db(cache_db)
+        .build_mainnet_with_inspector(crate::access_list::AccessListCollector::default());
     evm.ctx.modify_block(|block| {
         block.basefee = u64::try_from(ctx.base_fee_next).unwrap_or(u64::MAX);
         block.number = U256::from(ctx.current_block);
@@ -809,10 +799,10 @@ pub fn simulate_path_on_evm<E>(
 ) -> ProviderResult<Option<SimResult>>
 where
     E: ExecuteEvm<
-        Tx = TxEnv,
-        ExecutionResult = revm::context_interface::result::ExecutionResult,
-        State = revm::state::EvmState,
-    >,
+            Tx = TxEnv,
+            ExecutionResult = revm::context_interface::result::ExecutionResult,
+            State = revm::state::EvmState,
+        > + InspectEvm<Inspector = crate::access_list::AccessListCollector>,
     <E as ExecuteEvm>::Error: std::fmt::Display,
 {
     // Per-call diagnostic trace — opt-in via `DEGENBOT_SIM_TRACE=1`. Dumps
@@ -925,8 +915,26 @@ where
 
     let mut results: Vec<ExecutionResult> = Vec::with_capacity(7);
     let mut first_failure: Option<usize> = None;
+    // `execute()` (call [3]) runs with an [`AccessListCollector`] attached via
+    // `inspect_one` (ADR-019 D3) so the EIP-2930 warmed-slot access list is a
+    // byproduct of the FIRST execute() run — no post-re-`transact`. The balance
+    // reads [0..3] + [4..7] use `transact_one`, which does NOT invoke the
+    // inspector, so the collector sees execute()-only `SLOAD`/`SSTORE` opcodes.
+    // The collector is moved into the EVM by `inspect_one`; the paired
+    // [`AccessListHandle`] retains a shared handle to drain after the run.
+    let (collector, access_list_handle) = crate::access_list::AccessListCollector::new();
+    // `Option::take` moves the collector into `inspect_one` exactly once (at
+    // idx == 3); the borrow checker can't prove `idx == 3` fires at most once
+    // inside the loop, so the `Option` makes the single move explicit.
+    let mut collector_opt = Some(collector);
     for (idx, tx) in txs.into_iter().enumerate() {
-        let Ok(res) = evm.transact_one(tx) else {
+        let result = if idx == 3 {
+            let collector = collector_opt.take().expect("collector taken only at idx 3");
+            evm.inspect_one(tx, collector)
+        } else {
+            evm.transact_one(tx)
+        };
+        let Ok(res) = result else {
             // A revm transact error (DB cold-miss RPC failure, or an
             // invalid tx). Treat as rpc-failed (the Python oracle swallows
             // these into rpc-failed).
@@ -1090,32 +1098,14 @@ where
         .saturating_mul(U256::from(ctx.base_fee_next.saturating_add(priority_fee)));
     let net_profit = gross_profit.saturating_sub(gas_fee);
 
-    // ED3Q7R — emit the EIP-2930 access list the execute() call warmed. The
-    // 7-call profit-detection above used `transact_one` (journal accumulates
-    // across all 7 calls), so its `finalize()` state carries the cumulative
-    // touches (balance reads + execute). For the SUBMITTED execute() tx's
-    // access list we need execute()-only touched slots — so a separate
-    // `transact(execute_tx)` (fresh journal for this one tx) captures its
-    // `ResultAndState.state` + `emit_access_list_from_state` emits the list.
-    //
-    // The re-run executes on the post-7-call committed `CacheDB` state
-    // (execute's first run already committed). The touched SLOT SET is
-    // invariant to balance values (execute() warms the same pool slots
-    // regardless of the balance state — a revert still warms the slots it
-    // accessed before reverting), so the re-run's access list equals the
-    // first run's. No `eth_createAccessList` RPC.
-    let access_list = match evm.transact(build_execute_tx(ctx, &execute_calldata)) {
-        Ok(result_and_state) => Some(crate::access_list::emit_access_list_from_state(
-            &result_and_state.state,
-        )),
-        Err(_) => {
-            // The re-run failed (a DB cold-miss RPC failure on the committed
-            // state). Fall back to no access list — the submitted tx carries
-            // none (same as a simulate-one path whose eth_createAccessList
-            // swallowed + re-simulated without one).
-            None
-        }
-    };
+    // ADR-019 D3 — the EIP-2930 access list execute() warmed was collected
+    // as a byproduct of the FIRST execute() `inspect_one` run (call [3]
+    // above) by the attached [`AccessListCollector`]. Drain it via the paired
+    // handle — no post-re-`transact` (execute() ran once).
+    // `emit_access_list_from_state` stays as an engine-generic primitive
+    // (emitting from a `State` journal); it is just no longer the production
+    // AL path.
+    let access_list = access_list_handle.take_access_list();
 
     Ok(Some(SimResult {
         path_id: path.path_id,
@@ -1125,7 +1115,7 @@ where
         priority_fee,
         base_fee_next: ctx.base_fee_next,
         execute_calldata,
-        access_list,
+        access_list: Some(access_list),
         hop_count: path.hop_count(),
     }))
 }

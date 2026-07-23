@@ -27,9 +27,17 @@
 // storage, journaled_state, etc.) are ubiquitous here.
 #![allow(clippy::doc_markdown)]
 
+use alloy::primitives::map::AddressHashMap;
 use alloy::primitives::B256;
 use alloy::rpc::types::eth::AccessList;
+use revm::bytecode::opcode::{SLOAD, SSTORE};
+use revm::inspector::Inspector;
+use revm::interpreter::interpreter_types::{InputsTr, Jumps, StackTr};
+use revm::interpreter::{Interpreter, InterpreterTypes};
 use revm::state::{Account, EvmState};
+use std::cell::RefCell;
+use std::collections::BTreeSet;
+use std::rc::Rc;
 
 /// Emit the EIP-2930 access list the `execute()` call warmed, from the revm
 /// `transact` result's `state` journal.
@@ -94,12 +102,158 @@ fn storage_keys_for(account: &Account) -> Vec<B256> {
     account.storage.keys().map(|key| B256::from(*key)).collect()
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// The in-process access-list collector (ADR-019 D3)
+// ─────────────────────────────────────────────────────────────────────────
+
+/// The owned interior slot map shared between an [`AccessListCollector`]
+/// (the [`Inspector`] that writes during `execute()`) + its [`AccessListHandle`]
+/// (the handle `simulate_path_on_evm` reads from after the run).
+#[derive(Debug, Default)]
+struct CollectedSlots {
+    /// `address ->` the set of storage slot keys (B256, the EIP-2930 wire
+    /// type) `execute()` touched. `BTreeSet` for deterministic emission.
+    touched: AddressHashMap<BTreeSet<B256>>,
+}
+
+/// An [`Inspector`] that collects the EIP-2930 access list as a byproduct of
+/// the FIRST `inspect_one`/`inspect_one_tx` run, by recording every `SLOAD`/
+/// `SSTORE` opcode's `(address, slot)` pair in real-time.
+///
+/// Replaces the post-re-`transact` + [`emit_access_list_from_state`] as the
+/// production access-list source (ADR-019 D3). The re-run executed `execute()`
+/// twice; this collector drains the warmed-slot set from the first run, so
+/// `execute()` runs once.
+///
+/// # Why per-opcode capture (not journal diff)
+///
+/// The 7-call profit-detection loop accumulates ALL seven calls' touches into
+/// one journal (pre reads → `execute()` → post reads). The submitted
+/// `execute()` transaction's access list needs `execute()`-ONLY touched slots,
+/// so a journal-`finalize` diff would include the balance-read slots too. The
+/// collector is attached ONLY to `execute()`'s `inspect_one` (the balance
+/// reads use `transact_one`, which does not invoke the inspector), so it sees
+/// exactly `execute()`'s `SLOAD`/`SSTORE` opcodes — `execute()`-only by
+/// construction, no diffing needed.
+///
+/// # The shared-handle shape
+///
+/// `inspect_one(tx, collector)` MOVES the collector into the EVM (it becomes
+/// `InspectEvm::Inspector`), so the caller can't read it back without the
+/// low-level `InspectorEvmTr::inspector()` getter (whose associated-type
+/// bounds would cascade onto the generic `simulate_path_on_evm`). Instead,
+/// [`AccessListCollector::new`] returns the collector + an [`AccessListHandle`]
+/// sharing an `Rc<RefCell<CollectedSlots>>`; the collector writes during
+/// `execute()`, the handle drains after — no `InspectorEvmTr` bound needed.
+///
+/// # Parity with [`emit_access_list_from_state`]
+///
+/// Both produce the same `(address, storage_keys)` set for a given
+/// `execute()` call: `emit_access_list_from_state` reads the post-`transact`
+/// `State` journal's `account.storage.keys()` (slots revm inserted on cold
+/// access); the collector records the same slots at the `SLOAD`/`SSTORE`
+/// opcode. The parity test pins them equal over a fixture.
+#[derive(Debug, Clone)]
+pub struct AccessListCollector {
+    /// Shared with the [`AccessListHandle`] returned from [`Self::new`].
+    slots: Rc<RefCell<CollectedSlots>>,
+}
+
+/// A read/drain handle to an [`AccessListCollector`] that was moved into an
+/// EVM via `inspect_one`. Holds the same `Rc<RefCell<CollectedSlots>>` so the
+/// caller can drain the warmed-slot set after the run without retrieving the
+/// collector back out of the EVM.
+#[derive(Debug, Clone)]
+pub struct AccessListHandle {
+    slots: Rc<RefCell<CollectedSlots>>,
+}
+
+impl Default for AccessListCollector {
+    /// A collector with no handle — the placeholder baked into the per-block
+    /// EVM via `build_mainnet_with_inspector` (its type fixes
+    /// `InspectEvm::Inspector = AccessListCollector`; `inspect_one` swaps in a
+    /// fresh collector-with-handle per `execute()` run, so the baked-in one is
+    /// never read).
+    fn default() -> Self {
+        Self {
+            slots: Rc::new(RefCell::new(CollectedSlots::default())),
+        }
+    }
+}
+
+impl AccessListCollector {
+    /// Create a collector + its drain handle (shared `Rc<RefCell<...>>`).
+    #[must_use]
+    pub fn new() -> (Self, AccessListHandle) {
+        let slots = Rc::new(RefCell::new(CollectedSlots::default()));
+        (
+            Self {
+                slots: Rc::clone(&slots),
+            },
+            AccessListHandle { slots },
+        )
+    }
+}
+
+impl AccessListHandle {
+    /// Drain the collected slot set into an EIP-2930 [`AccessList`],
+    /// resetting the collector to empty for reuse on the next path.
+    ///
+    /// Accounts with no touched storage (a bare balance touch) contribute no
+    /// `AccessListItem` — the access list's value is the storage keys it
+    /// pre-warms (mirrors [`emit_access_list_from_state`]).
+    #[must_use]
+    pub fn take_access_list(&self) -> AccessList {
+        let touched = std::mem::take(&mut self.slots.borrow_mut().touched);
+        let items: Vec<alloy::rpc::types::eth::AccessListItem> = touched
+            .into_iter()
+            .filter_map(|(address, slots)| {
+                if slots.is_empty() {
+                    None
+                } else {
+                    Some(alloy::rpc::types::eth::AccessListItem {
+                        address,
+                        storage_keys: slots.into_iter().collect(),
+                    })
+                }
+            })
+            .collect();
+        AccessList::from(items)
+    }
+}
+
+/// `Inspector` impl — record the slot on every `SLOAD`/`SSTORE`.
+///
+/// The `step` hook fires BEFORE the opcode executes, so the slot key is still
+/// the stack top. revm's stack Vec grows by appending (TOP = `data().last()`),
+/// so the slot is `last()` for both `SLOAD` (slot = top) and `SSTORE`
+/// (slot = top, value = second-from-top). The touched address is the current
+/// frame's `target_address` (`interp.input`).
+impl<CTX, INTR: InterpreterTypes> Inspector<CTX, INTR> for AccessListCollector {
+    fn step(&mut self, interp: &mut Interpreter<INTR>, _context: &mut CTX) {
+        let opcode = interp.bytecode.opcode();
+        if opcode == SLOAD || opcode == SSTORE {
+            let address = interp.input.target_address();
+            // revm's stack Vec grows by appending, so the TOP (the slot for
+            // both `SLOAD` + `SSTORE`) is `data().last()`, not `first()`.
+            if let Some(&slot) = interp.stack.data().last() {
+                self.slots
+                    .borrow_mut()
+                    .touched
+                    .entry(address)
+                    .or_default()
+                    .insert(B256::from(slot));
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::too_many_lines)]
 
     use super::*;
-    use alloy::primitives::{Address, B256, U256};
+    use alloy::primitives::{Address, Bytes, B256, U256};
     use revm::state::{
         Account, AccountStatus, EvmState, EvmStorage, EvmStorageSlot, TransactionId,
     };
@@ -208,5 +362,123 @@ mod tests {
         let state = EvmState::default();
         let access_list = emit_access_list_from_state(&state);
         assert!(access_list.is_empty());
+    }
+
+    // ── ADR-019 D3 parity: the Inspector collector + the State-journal
+    //    emitter produce the same `(address, storage_keys)` set for a given
+    //    contract execution. fixture: a contract that does SLOAD(slot 1) +
+    //    SSTORE(slot 2 = 0x99), so both slots 1 + 2 are warmed at the contract
+    //    address. Both methods must emit exactly that.
+    // ──────────────────────────────────────────────────────────────────────
+
+    use revm::bytecode::opcode;
+    use revm::bytecode::Bytecode;
+    use revm::context::Context as RevmContext;
+    use revm::context::TxEnv;
+    use revm::database::CacheDB;
+    use revm::database_interface::EmptyDB;
+    use revm::primitives::TxKind;
+    use revm::state::AccountInfo;
+    use revm::{ExecuteEvm, InspectEvm, MainBuilder, MainContext};
+
+    /// Build a CacheDB with a single funded contract at `contract_addr`
+    /// carrying the SLOAD/SSTORE fixture bytecode.
+    fn fixture_db(contract_addr: Address, code: Bytecode) -> CacheDB<EmptyDB> {
+        let mut cache_db = CacheDB::new(EmptyDB::default());
+        cache_db.insert_account_info(
+            contract_addr,
+            AccountInfo {
+                balance: U256::from(1_000_000_000_000_000_000u64),
+                code: Some(code),
+                ..Default::default()
+            },
+        );
+        cache_db
+    }
+
+    /// Fixture bytecode: `PUSH1 1, SLOAD, PUSH1 0x99, PUSH1 2, SSTORE, STOP`.
+    /// Touches storage slot 1 (read) + slot 2 (write) at its own address.
+    fn fixture_bytecode() -> Bytes {
+        alloy::primitives::Bytes::from(vec![
+            opcode::PUSH1,
+            0x01,
+            opcode::SLOAD, // read slot 1
+            opcode::PUSH1,
+            0x99,
+            opcode::PUSH1,
+            0x02,
+            opcode::SSTORE, // write slot 2 = 0x99
+            opcode::STOP,
+        ])
+    }
+
+    /// The EIP-2930 access list the [`AccessListCollector`] records during a
+    /// single `inspect_one` run MATCHES the access list
+    /// [`emit_access_list_from_state`] emits from the post-`transact` `State`
+    /// journal — same address + same storage-key set. ADR-019 D3 parity.
+    #[test]
+    fn access_list_collector_matches_state_journal_emitter() {
+        let contract_addr = Address::repeat_byte(0x42);
+        let tx = TxEnv::builder()
+            .kind(TxKind::Call(contract_addr))
+            .gas_limit(100_000)
+            .build()
+            .expect("well-formed tx");
+
+        // Path A — Inspector collector on the first (and only) run.
+        let db_a = fixture_db(contract_addr, Bytecode::new_raw(fixture_bytecode()));
+        let evm_a = RevmContext::mainnet()
+            .with_db(db_a)
+            .build_mainnet_with_inspector(AccessListCollector::default());
+        let mut evm_a = evm_a;
+        let (collector, handle) = AccessListCollector::new();
+        let result_a = evm_a
+            .inspect_one(tx.clone(), collector)
+            .expect("inspect runs");
+        assert!(result_a.is_success(), "fixture must succeed");
+        let al_collector = handle.take_access_list();
+
+        // Path B — `transact` + `emit_access_list_from_state` (the retired
+        // production path, now an engine-generic primitive).
+        let db_b = fixture_db(contract_addr, Bytecode::new_raw(fixture_bytecode()));
+        let mut evm_b = RevmContext::mainnet()
+            .with_db(db_b)
+            .build_mainnet_with_inspector(AccessListCollector::default());
+        let result_b = evm_b.transact(tx).expect("transact runs");
+        assert!(result_b.result.is_success(), "fixture must succeed");
+        let al_state = emit_access_list_from_state(&result_b.state);
+
+        // Both must surface exactly the contract address + the {slot 1, slot 2}
+        // SET (ADR-019 D3 parity — “same addresses + storage keys”). The
+        // collector emits sorted (BTreeSet); the state-journal emitter emits
+        // storage-map iteration order, so compare the SETS, not ordered Vecs.
+        let collector_addrs: Vec<Address> = al_collector.iter().map(|i| i.address).collect();
+        let state_addrs: Vec<Address> = al_state.iter().map(|i| i.address).collect();
+        assert_eq!(
+            collector_addrs,
+            vec![contract_addr],
+            "collector surfaces contract only"
+        );
+        assert_eq!(
+            state_addrs,
+            vec![contract_addr],
+            "state emitter surfaces contract only"
+        );
+
+        let mut collector_slots = al_collector[0].storage_keys.clone();
+        let mut state_slots = al_state[0].storage_keys.clone();
+        collector_slots.sort();
+        state_slots.sort();
+        let mut expected = vec![B256::from(U256::from(1u64)), B256::from(U256::from(2u64))];
+        expected.sort();
+        assert_eq!(
+            collector_slots, expected,
+            "collector slots {collector_slots:?}"
+        );
+        assert_eq!(state_slots, expected, "state emitter slots {state_slots:?}");
+        assert_eq!(
+            collector_slots, state_slots,
+            "ADR-019 D3 parity: collector AL must equal state-journal AL"
+        );
     }
 }

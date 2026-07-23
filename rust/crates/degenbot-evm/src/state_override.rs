@@ -1,8 +1,7 @@
 //! Sim-scoped override application on a `CacheDB`.
 //!
-//! Ports `degenbot-simulation::build_simulation_state_overrides` (owner funded
-//! 100 ETH, injected executor + runtime bytecode, warmup slots, WETH9
-//! `balanceOf` override) into `CacheDB::insert_account_storage` /
+//! Applies the owner-funded-100-ETH + injected-executor+runtime-bytecode +
+//! warmup-slots + WETH9 `balanceOf` override into `CacheDB::insert_account_storage` /
 //! `insert_account_info` calls, preserving the **explicit-balance-wins** merge
 //! documented on the source leaf (the executor's 10-ETH `balance` override
 //! must NOT be clobbered by the warmup's residual-`0x0` balance; the WETH9
@@ -32,9 +31,9 @@ pub const EXECUTOR_FUND_ETH: u64 = 10;
 /// The 1-wei warmup touch value (ERC6909 + WETH9 slot pre-warming).
 pub const ONE_WEI: U256 = U256::from_limbs([1, 0, 0, 0]);
 
-/// Parameters mirroring `degenbot-simulation::build_simulation_state_overrides`
-/// inputs, supplied by the dispatch leaf. Carries the addresses + runtime
-/// bytecode + the warmup slots computed by `degenbot-executor`.
+/// Parameters for the simulation state-override application, supplied by
+/// the dispatch leaf. Carries the addresses + runtime bytecode + the warmup
+/// slots computed by `degenbot-executor`.
 #[derive(Debug, Clone)]
 pub struct SimulationOverrideParams {
     /// The operator key's address — the owner funded with ETH for gas.
@@ -54,8 +53,7 @@ pub struct SimulationOverrideParams {
     pub pool_manager_address: Address,
 }
 
-/// Apply the simulation state-overrides onto a `CacheDB`, mirroring
-/// `degenbot-simulation::build_simulation_state_overrides` field-for-field.
+/// Apply the simulation state-overrides onto a `CacheDB`, field-for-field.
 ///
 /// The merge is **explicit-balance-wins**: an existing `balance` is preserved;
 /// only absent balances are filled from the warmup. The WETH9 `balanceOf` slot

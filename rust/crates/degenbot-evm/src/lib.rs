@@ -53,16 +53,14 @@
 /// The hot-path in-process simulation entry point.
 ///
 /// Executes the 7-call vector (pre-balances → `execute()` → post-balances) via
-/// revm `transact_one`, returning the same `SimResult` shape
-/// `degenbot-simulation::simulate_one` produces, so the dispatch leaf can swap
-/// `dispatch::simulate_v1` for this behind a single call-site change.
+/// revm `transact_one`, returning the `SimResult` shape the dispatch leaf
+/// consumes.
 pub mod simulator;
 
 /// Sim-scoped override application on a `CacheDB`.
 ///
-/// Ports `degenbot-simulation::build_simulation_state_overrides` (owner funded
-/// 100 ETH, injected executor + runtime bytecode, warmup slots, WETH9
-/// `balanceOf` override) into `CacheDB::insert_account_storage` /
+/// Applies the owner-funded-100-ETH + injected-executor+runtime-bytecode +
+/// warmup-slots + WETH9 `balanceOf` override into `CacheDB::insert_account_storage` /
 /// `insert_account_info` calls, preserving the explicit-balance-wins merge.
 pub mod state_override;
 
@@ -96,16 +94,19 @@ pub mod access_list;
 /// forwards `storage_ref` + `block_hash_ref` untouched.
 pub mod warm_code_cache;
 
-pub use access_list::emit_access_list_from_state;
+pub use access_list::{emit_access_list_from_state, AccessListCollector};
 pub use bot_state_db::BotStateDb;
 /// Re-export the shared sim primitives so `degenbot-simulation` can `pub use
 /// degenbot_evm::{...}` (it re-exports them under its own crate root for
 /// existing call sites + the PyO3 wrappers).
 pub use simulator::{
-    compute_priority_fee, fits_int128, BlockPriorityFees, BlockSimHandle, FailBuckets, SimFailure,
-    SimResult, SimulateContext, SimulatePath, AGE_DECAY_CONSTANT, EXECUTE_CONFIG,
-    GAS_SAFETY_MARGIN, INITIAL_EXECUTE_GAS, INT128_MAX, INT128_MIN, MAX_PRIORITY_FEE_PERCENTILE,
+    compute_priority_fee, fits_int128, BlockSimHandle, FailBuckets, SimFailure, SimResult,
+    SimulateContext, SimulatePath, AGE_DECAY_CONSTANT, EXECUTE_CONFIG, GAS_SAFETY_MARGIN,
+    INITIAL_EXECUTE_GAS, INT128_MAX, INT128_MIN, MAX_PRIORITY_FEE_PERCENTILE,
     MIN_PRIORITY_FEE_PERCENTILE, TARGET_PROFIT_RATIO,
 };
+/// `BlockPriorityFees` is re-exported from `degenbot_rpc` (the fee struct is
+/// market data, owned by the RPC crate per ADR-019 D5). `degenbot-simulation`
+/// sources it from `degenbot_rpc` directly.
 pub use state_override::{apply_simulation_overrides, SimulationOverrideParams};
 pub use warm_code_cache::{WarmCodeCache, WarmCodeCacheInner, WARM_CODE_CACHE_TTL_BLOCKS};

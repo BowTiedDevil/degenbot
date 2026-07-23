@@ -1,16 +1,18 @@
 //! `PyO3` seam over the `degenbot-simulation` core crate.
 //!
 //! The simulation crate is the per-block profitability pipeline — it takes a
-//! batch of solved arbitrage candidates, runs each through `eth_simulateV1`
-//! (`simulate_one`), classifies the outcome (gas-profitable / unprofitable /
-//! revert), computes gross/net profit + the market-aware age-decay priority
-//! fee, and hands the winners to the submission seam. It is a pyo3-free core
-//! leaf (3660 lines, six modules) that ports the Python `dispatch_profitable`
-//! → `simulate_one` chain wholesale.
+//! batch of solved arbitrage candidates, runs each through the in-process
+//! revm sim (`BlockSimHandle::simulate_path`), classifies the outcome
+//! (gas-profitable / unprofitable / revert), computes gross/net profit +
+//! the market-aware age-decay priority fee, and hands the winners to the
+//! submission seam. It is a pyo3-free core leaf that ports the Python
+//! `dispatch_profitable` chain wholesale. (ADR-019 retired the legacy
+//! `eth_simulateV1` / `simulate_one` RPC path — the in-process revm path is
+//! the sole executor.)
 //!
 //! ## Layering (ADR-005)
 //!
-//! - **Core** (`degenbot-simulation`): the typed pipeline — `simulate_one`,
+//! - **Core** (`degenbot-simulation`): the typed pipeline —
 //!   `dispatch_profitable_results`, `SimResult`, `SimulateContext`,
 //!   `DispatchCandidate`, `DispatchOutcome`, `FailBuckets`. Zero pyo3.
 //! - **`PyO3` wrapper** (this module): `#[pyclass]`/`#[pyfunction]` only —
