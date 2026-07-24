@@ -517,7 +517,7 @@ impl PumpState {
             if let Err(err) = result {
                 return Err(map_liquidity_verify_error(err));
             }
-            log::info!(
+            log::debug!(
                 "[verify-seed] V3 snapshot seed OK for {} at block {}",
                 pool_addr,
                 block_number.unwrap_or(0)
@@ -579,7 +579,7 @@ impl PumpState {
             if let Err(err) = result {
                 return Err(map_liquidity_verify_error(err));
             }
-            log::info!(
+            log::debug!(
                 "[verify-seed] V4 snapshot seed OK for pool_id {} at block {}",
                 degenbot_core::hex_utils::encode_hex(&pool_id),
                 block_number.unwrap_or(0)
