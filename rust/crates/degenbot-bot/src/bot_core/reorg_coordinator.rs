@@ -314,7 +314,7 @@ mod tests {
     ) -> (Arc<Bot>, u64, Arc<CountingSubscriber>) {
         let bot = Arc::new(Bot::new(1));
         let pool_id = bot
-            .state
+            .state_arc()
             .write()
             .register_v2_pool(&RegisterV2PoolParams {
                 address: pool_addr,
@@ -362,7 +362,7 @@ mod tests {
         ));
         assert_eq!(count(), 1, "forward dispatch notified once");
         assert_eq!(
-            bot.state.read().v2_snapshot(pool_id),
+            bot.state_arc().read().v2_snapshot(pool_id),
             Some((U256::from(1_500), U256::from(2_500), 7)),
             "forward Sync applied"
         );
@@ -380,7 +380,7 @@ mod tests {
             .expect("restore before 7 succeeds");
         assert_eq!(count(), 2, "reorg dispatched the SAME notify as forward");
         assert_eq!(
-            bot.state.read().v2_snapshot(pool_id),
+            bot.state_arc().read().v2_snapshot(pool_id),
             Some((U256::from(1_000), U256::from(2_000), 5)),
             "reorg rolled back to genesis reserves"
         );
@@ -415,7 +415,7 @@ mod tests {
         }
         // State untouched (the genesis reserves).
         assert_eq!(
-            bot.state.read().v2_snapshot(pool_id),
+            bot.state_arc().read().v2_snapshot(pool_id),
             Some((U256::from(1_000), U256::from(2_000), 5)),
             "too-deep reorg left state unchanged"
         );
@@ -440,7 +440,7 @@ mod tests {
         use crate::bot_core::{PoolTickCoverage, RegisterV3PoolParams};
         let bot = Arc::new(Bot::new(1));
         let pool_id = bot
-            .state
+            .state_arc()
             .write()
             .register_v3_pool(&RegisterV3PoolParams {
                 address: pool_addr,
@@ -537,7 +537,8 @@ mod tests {
         ));
         assert_eq!(count(), 1, "forward swap notified once");
         {
-            let guard = bot.state.read();
+            let state = bot.state_arc();
+            let guard = state.read();
             let s = guard.get_v3_pool(pool_id).expect("registered");
             assert_eq!(s.sqrt_price_x96, new_sqrt);
             assert_eq!(s.liquidity, 2_000_000);
@@ -558,7 +559,8 @@ mod tests {
             .expect("single-delta-at-target restores, is NOT too-deep");
         assert_eq!(count(), 2, "reorg dispatched the SAME notify as forward");
         {
-            let guard = bot.state.read();
+            let state = bot.state_arc();
+            let guard = state.read();
             let s = guard.get_v3_pool(pool_id).expect("registered");
             assert_eq!(
                 s.sqrt_price_x96, reg_sqrt,
@@ -593,7 +595,7 @@ mod tests {
         // No forward dispatch → V3 journal is empty (registration pushes no
         // genesis delta, unlike V2).
         assert!(bot
-            .state
+            .state_arc()
             .read()
             .get_v3_pool(pool_id)
             .unwrap()
@@ -618,7 +620,8 @@ mod tests {
             }
         }
         // State untouched — the registration scalars survive.
-        let guard = bot.state.read();
+        let state = bot.state_arc();
+        let guard = state.read();
         let s = guard.get_v3_pool(pool_id).expect("registered");
         assert_eq!(s.sqrt_price_x96, U256::from(1u128) << 96);
         assert_eq!(s.liquidity, 1_000_000);
@@ -645,7 +648,7 @@ mod tests {
         use crate::bot_core::{PoolTickCoverage, RegisterV4PoolParams, V4PoolKey};
         let bot = Arc::new(Bot::new(1));
         let pool_id = bot
-            .state
+            .state_arc()
             .write()
             .register_v4_pool(&RegisterV4PoolParams {
                 pool_manager,
@@ -753,7 +756,8 @@ mod tests {
         ));
         assert_eq!(count(), 1);
         {
-            let guard = bot.state.read();
+            let state = bot.state_arc();
+            let guard = state.read();
             let s = guard.get_v4_pool(pool_id).expect("registered");
             assert_eq!(s.sqrt_price_x96, new_sqrt);
             assert_eq!(s.journal.len(), 1, "V4 registration pushes no genesis");
@@ -774,7 +778,8 @@ mod tests {
             .expect("V4 single-delta-at-target restores, is NOT too-deep");
         assert_eq!(count(), 2, "reorg dispatched the SAME notify as forward");
         {
-            let guard = bot.state.read();
+            let state = bot.state_arc();
+            let guard = state.read();
             let s = guard.get_v4_pool(pool_id).expect("registered");
             assert_eq!(
                 s.sqrt_price_x96, reg_sqrt,
@@ -794,7 +799,7 @@ mod tests {
         let pool_id_bytes: degenbot_decoders::v4_swap_decoder::V4PoolId = [0xefu8; 32];
         let (bot, pool_id, _sub) = bot_with_v4(pool_manager, pool_id_bytes, 5);
         assert!(bot
-            .state
+            .state_arc()
             .read()
             .get_v4_pool(pool_id)
             .unwrap()
@@ -819,7 +824,8 @@ mod tests {
                 assert_eq!(block, 7);
             }
         }
-        let guard = bot.state.read();
+        let state = bot.state_arc();
+        let guard = state.read();
         let s = guard.get_v4_pool(pool_id).expect("registered");
         assert_eq!(s.sqrt_price_x96, U256::from(1u128) << 96);
         assert!(s.journal.is_empty());

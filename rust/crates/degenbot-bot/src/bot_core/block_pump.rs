@@ -1760,7 +1760,7 @@ mod tests {
     ) -> (Arc<Bot>, u64, Arc<FakeCountingSubscriber>) {
         let bot = Arc::new(Bot::new(1));
         let pool_id = bot
-            .state
+            .state_arc()
             .write()
             .register_v2_pool(&RegisterV2PoolParams {
                 address: pool_addr,
@@ -1844,7 +1844,7 @@ mod tests {
 
         assert_eq!(notify_count(), 1, "forward Sync through the pump notified");
         assert_eq!(
-            bot.state.read().v2_snapshot(pool_id),
+            bot.state_arc().read().v2_snapshot(pool_id),
             Some((U256::from(1_500), U256::from(2_500), 7)),
             "forward Sync applied through the pump",
         );
@@ -1873,7 +1873,7 @@ mod tests {
             "reorg fired the SAME notify path as a forward Sync",
         );
         assert_eq!(
-            bot.state.read().v2_snapshot(pool_id),
+            bot.state_arc().read().v2_snapshot(pool_id),
             Some((U256::from(1_000), U256::from(2_000), 5)),
             "reorg rolled back to genesis reserves",
         );
@@ -1923,7 +1923,7 @@ mod tests {
         // Genesis anchored at block 5: reserves (1000, 2000).
         let (bot, pool_id, sub) = bot_with_registered_v2(pool_addr, 5);
         let notify_count = || *sub.notifies.lock().unwrap();
-        let snapshot = || bot.state.read().v2_snapshot(pool_id);
+        let snapshot = || bot.state_arc().read().v2_snapshot(pool_id);
 
         // Drive 5 -> 7 (forward sync at 7) -> tombstone 7 via a forward sync
         // at 8 (advance_to_drained(7) follows the tombstone).
