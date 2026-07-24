@@ -11,7 +11,7 @@ use alloy::primitives::{aliases::U112, Address, I256, U256};
 
 use crate::bot_core::snapshot_verify::SnapshotLoadError;
 use ::degenbot_pools::state_history::{
-    JournalError, ReorgPoolState, ScalarPriors, TickBefore, V2BlockDelta, V3BlockDelta,
+    JournalError, ReorgPoolState, ScalarPriors, TickBefore, V3BlockDelta,
 };
 use degenbot_uniswap::v2_encoding::{encode_v2_swap, EncodedCall};
 
@@ -554,28 +554,14 @@ impl BotState {
         reserve1: U112,
         block_number: u64,
     ) -> Option<u64> {
+        // ADR-014 D1: delegate to the pool_id-keyed dispatcher (the V3
+        // address-keyed wrapper pattern). The inline body that previously
+        // lived here was byte-identical to `V2PoolState::apply_sync`, which the
+        // twin reaches via `as_reserve_pair_mut()?.apply_sync(...)` — the
+        // duplication (the bug-hiding class D1 was written to kill) is removed;
+        // the address→pool_id resolution is what this wrapper owns.
         let &pool_id = self.pool_addresses.get(&pool_address)?;
-
-        let Some(PoolEntry::V2(_, state)) = self.pools.get_mut(&pool_id) else {
-            return None;
-        };
-
-        // Push a transition delta: before = pre-update reserves (the current
-        // state), after = post-update reserves (the landed-at state for this
-        // block). The genesis delta pushed at registration is the floor.
-        state.journal.push_delta(V2BlockDelta {
-            block: block_number,
-            reserve0_before: state.reserve0,
-            reserve1_before: state.reserve1,
-            reserve0_after: reserve0,
-            reserve1_after: reserve1,
-        });
-
-        state.reserve0 = reserve0;
-        state.reserve1 = reserve1;
-        state.update_block = block_number;
-
-        Some(pool_id)
+        self.apply_sync_by_pool_id(pool_id, reserve0, reserve1, block_number)
     }
 
     /// Update a V2 pool's reserves from a Sync event.
@@ -2275,46 +2261,23 @@ impl BotState {
 
     /// Apply a V4 Swap event to a registered pool (ADR-003 live path).
     pub fn apply_v4_swap(&mut self, update: &V4SwapUpdate, block_number: u64) -> Option<u64> {
+        // ADR-014 D1: delegate to the pool_id-keyed dispatcher (the V3
+        // address-keyed wrapper pattern). The inline body that previously
+        // lived here was byte-identical to `impl ConcentratedLiquidityPoolMut
+        // for V4PoolState::apply_swap`, which the twin reaches via
+        // `state.apply_swap(...)` — the duplication (the bug-hiding class D1
+        // was written to kill) is removed; the (pool_manager, pool_id)→pool_id
+        // resolution is what this wrapper owns.
         let key = (update.pool_manager, update.pool_id);
         let &pool_id = self.v4_pool_ids.get(&key)?;
-
-        let Some(PoolEntry::V4(_, state)) = self.pools.get_mut(&pool_id) else {
-            return None;
-        };
-
-        let mut journaled_priors: Vec<(i32, TickBefore)> =
-            Vec::with_capacity(update.tick_priors.len());
-        for &(tick_index, ref new_info) in &update.tick_priors {
-            let prior = state.tick_data.get(&tick_index).cloned();
-            journaled_priors.push((
-                tick_index,
-                TickBefore {
-                    liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
-                    liquidity_net_before: prior
-                        .as_ref()
-                        .map_or(alloy::primitives::I256::ZERO, |p| p.liquidity_net),
-                },
-            ));
-            state.tick_data.insert(tick_index, new_info.clone());
-        }
-
-        state.journal.push_delta(V3BlockDelta {
-            block: block_number,
-            scalar_priors: Some(ScalarPriors {
-                sqrt_price_x96_before: state.sqrt_price_x96,
-                liquidity_before: state.liquidity,
-                tick_before: state.tick,
-            }),
-            tick_priors: journaled_priors,
-        });
-
-        state.sqrt_price_x96 = update.sqrt_price_x96;
-        state.liquidity = update.liquidity;
-        state.tick = update.tick;
-        state.update_block = block_number;
-        state.invalidate_tick_range_cache();
-
-        Some(pool_id)
+        self.apply_v4_swap_by_pool_id(
+            pool_id,
+            update.sqrt_price_x96,
+            update.liquidity,
+            update.tick,
+            block_number,
+            &update.tick_priors,
+        )
     }
 
     /// Apply a V4 `ModifyLiquidity` event to a registered pool, or buffer it
@@ -2341,48 +2304,29 @@ impl BotState {
             );
             return None;
         };
-
-        let Some(PoolEntry::V4(_, state)) = self.pools.get_mut(&pool_id) else {
-            return None;
-        };
-
+        // ADR-014 D1: delegate to the pool_id-keyed dispatcher (the V3
+        // address-keyed wrapper pattern). The inline body that previously
+        // lived here was byte-identical to `impl ConcentratedLiquidityPoolMut
+        // for V4PoolState::apply_liquidity_update`, which the twin reaches via
+        // `state.apply_liquidity_update(...)` — the duplication (the bug-hiding
+        // class D1 was written to kill) is removed.
+        //
+        // ADR-014 D4 seam: the int256→i128 narrowing lives at this drain→apply
+        // call site (matches the contract's own
+        // `params.liquidityDelta.toInt128()` at `PoolManager.sol:666`); the
+        // state-struct apply body operates on int128 (matches `Tick.Info`'s
+        // int128). An int256 that doesn't fit int128 is dropped here, not
+        // buried in the apply body. The buffer branch above (unregistered pool
+        // → `v4_buffer`) stays — a registry concern ADR-014 D1 says lives on
+        // the holder, not the state struct.
         let delta_i128: i128 = i128::try_from(liquidity_delta).ok()?;
-
-        let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(2);
-        for &tick_idx in &[tick_lower, tick_upper] {
-            let prior = state.tick_data.get(&tick_idx).cloned();
-            journaled_priors.push((
-                tick_idx,
-                TickBefore {
-                    liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
-                    liquidity_net_before: prior
-                        .as_ref()
-                        .map_or(alloy::primitives::I256::ZERO, |p| p.liquidity_net),
-                },
-            ));
-        }
-
-        ::degenbot_pools::tick_bitmap::apply_liquidity_to_tick_range(
-            &mut state.tick_data,
+        self.apply_v4_liquidity_update_by_pool_id(
+            pool_id,
             tick_lower,
             tick_upper,
             delta_i128,
             block_number,
-        );
-
-        // Journal: V4 `ModifyLiquidity` mutates tick_data only, NOT the slot0
-        // scalars — so the journal carries no scalar priors for this tick-only
-        // event (scalar_priors: None). Only the two tick priors are reverse-
-        // applied on rollback. See ADR-004.
-        state.journal.push_delta(V3BlockDelta {
-            block: block_number,
-            scalar_priors: None,
-            tick_priors: journaled_priors,
-        });
-
-        state.update_block = block_number;
-        state.invalidate_tick_range_cache();
-        Some(pool_id)
+        )
     }
 
     /// Apply a V4 Swap event to a registered pool by its inner handle
