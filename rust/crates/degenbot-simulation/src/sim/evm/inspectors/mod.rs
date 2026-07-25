@@ -24,9 +24,9 @@
 //!
 //! A `cargo add degenbot` consumer reaches `CallTrace` + captured swaps +
 //! reverting-frame attribution from the engine directly — no Python, no
-//! `DEGENBOT_SIM_TRACE` env var, no Multicall3 re-fetch. The inspectors are
-//! engine-generic (no `SimulateContext`/`SimResult`/strategy vocabulary); the
-//! four-way Drift/SolverCalc/Encoding classifier POLICY stays in the strategy
+//! Multicall3 re-fetch. The inspectors are engine-generic (no
+//! `SimulateContext`/`SimResult`/strategy vocabulary); the four-way
+//! Drift/SolverCalc/Encoding classifier POLICY stays in the strategy
 //! (`logs/permutation_analyzer.py`).
 //!
 //! # Status

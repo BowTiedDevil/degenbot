@@ -265,28 +265,34 @@ Exerciser proof (the "helps find/fix real bugs" claim):
   `Inspector`), the `u64::to_be_bytes()` PUSH2 bytecode misalignment, and the
   `log`-vs-`log_full` surprise (the spec's Q1 finding).
 
+Delivered (ergo epic 63I7WJ, task AM5AJW — commits `a11b48ea` +
+`d571553a`):
+
+5. **Re-point classifier + drop `DEGENBOT_SIM_TRACE`** ✓ (`a11b48ea` +
+   `d571553a`) — `format_sim_diag_line` now builds the `[sim-diag]` JSON from
+   the failure record's `captured_swaps` + `hop_outputs` + `optimal_input`
+   (no `fetch_onchain`, no recompute). `logs/permutation_analyzer.py`'s
+   `classify_candidate` compares each captured swap's output amount (positive
+   delta) vs `hop_outputs[i]`: SolverCalc = mismatch, Encoding = all match but
+   sim reverted, Unknown = bare revert / no swaps / V4 (gated on `5RI47E`).
+   The `DEGENBOT_SIM_TRACE` eprintln block in `simulate_path_on_evm` is
+   DROPPED — the inspector's structured capture (captured_swaps +
+   reverting_frame) supersedes the per-call gas/halt/revert `eprintln` spam.
+6. **Retire `diagnostic.rs` onchain-recompute half** ✓ (`d571553a`) — -1,722
+   lines. Deleted `fetch_onchain`, the `recompute_v2/v3/v4_amount_out` family,
+   the Multicall3 batching + per-family `build_*`/`decode_*` calls, the
+   hand-rolled ABI hex parsers, `HopRecompute` + `DiagnosticHop.recompute`,
+   `apply_onchain_fetch`, and the recompute-population loop. RETAINED:
+   `FieldDiff` + `compute_field_diffs` (pure typed-diff utilities, re-exported
+   for a future lightweight drift detector), `DiagnosticPoolState`,
+   `DiagnosticHop` (minus recompute), `DiagnosticPathState`,
+   `diagnostic_path_state` (engine-state read, no RPC). PyO3
+   `diagnostic_inspect_path` stripped its `fetch_onchain` RPC branch.
+
 Deferred (live-RPC-gated — NOT safely doable without a mainnet provider):
 
-5. **Re-point classifier + drop `DEGENBOT_SIM_TRACE`** — the blocker's two
-   halves are now BOTH resolved: (a) the mainnet probe (commit `e7c88cda`)
-   proves captured swaps match onchain receipts; (b) the success-path
-   `captured_swaps` now cross the FFI (commit `55737e91`, the
-   `profitable_captured_swaps` getter). What remains is the re-point itself:
-   `format_sim_diag_line` + `logs/permutation_analyzer.py`'s classifier swap
-   from reading the `recompute`/`onchain_state` per-hop fields (which step 6
-   deletes) to reading `profitable_captured_swaps`. This is COUPLED to step 6
-   (5 re-points the classifier at captured swaps; 6 deletes the onchain
-   recompute the classifier currently reads) — they must move together as a
-   fork sequenced with `WQENYW`'s `diagnostic.rs` submodule split + gated on
-   `5RI47E` (the V4 seeder) so V4 retires with the same proof.
-6. **Retire `diagnostic.rs` onchain-recompute half** — the "prove on REAL
-   mainnet paths" gate that previously blocked this is now SATISFIED (the
-   probe below). The remaining work is the deletion itself, which is a
-   cross-cutting change to a 2,576-line file that (a) deletes
-   `fetch_onchain`/`recompute_v2/v3/v4_amount_out`/`HopRecompute`/the
-   `build_*_calls`+`decode_*_results` RPC transport, (b) changes the
-   Python-facing `DiagnosticPathState` serde shape (`expected_out_onchain`,
-   `matches_solver` vanish) that `format_sim_diag_line`'s TSV columns read,
+_LEGACY (superseded by step 5+6 delivery above) — the old deferral text is
+retained for provenance:_
    and (c) must be sequenced with `WQENYW`'s in-flight `diagnostic.rs`
    submodule split (retire-then-split, or merge). Per AGENTS.md this is a
    coordinated multi-file deletion across Rust + Python + the kill-list
