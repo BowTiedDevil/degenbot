@@ -3,7 +3,9 @@
 //! The reference fast path — engine V2/V3/V4 Möbius solves use cheaper
 //! closed-form math; this gives the floor for comparison.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
+use std::hint::black_box;
+
 use degenbot_v2_math::IntHopState;
 
 fn bench_v2_swap(c: &mut Criterion) {

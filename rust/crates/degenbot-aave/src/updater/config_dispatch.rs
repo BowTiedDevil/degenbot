@@ -2044,7 +2044,7 @@ mod tests {
                 new_oracle_address,
             } => {
                 assert_eq!(market_id, 1);
-                assert!(new_oracle_address.len() == 42);
+                assert_eq!(new_oracle_address.len(), 42);
             }
             other => panic!("expected PriceOracleUpdated, got {other:?}"),
         }

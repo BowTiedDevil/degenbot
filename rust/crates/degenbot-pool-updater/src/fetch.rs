@@ -166,13 +166,11 @@ pub async fn fetch_pool_created_logs_for_spec(
 /// `(block, log_index)` ordering invariant).
 #[must_use]
 pub fn decode_v3_liquidity_log(log: &Log) -> Option<LiquidityUpdateEvent> {
-    let (tick_lower, tick_upper, magnitude) = if let Some(mint) = decode_v3_mint_log(log) {
-        (mint.tick_lower, mint.tick_upper, mint.amount)
-    } else if let Some(burn) = decode_v3_burn_log(log) {
-        (burn.tick_lower, burn.tick_upper, burn.amount)
-    } else {
-        return None;
-    };
+    let (tick_lower, tick_upper, magnitude) = decode_v3_mint_log(log)
+        .map(|mint| (mint.tick_lower, mint.tick_upper, mint.amount))
+        .or_else(|| {
+            decode_v3_burn_log(log).map(|burn| (burn.tick_lower, burn.tick_upper, burn.amount))
+        })?;
     if magnitude == 0 {
         return None; // ignore zero-amount events
     }
@@ -303,8 +301,8 @@ pub fn decode_v3_liquidity_log_with_pool(log: &Log) -> Option<(Address, Liquidit
     // Decode once (avoid the original `decode_v3_liquidity_log`'s double
     // `decode_v3_burn_log` — it re-decodes to decide the sign). Capture
     // `pool_address` from the leaf (it set it from `log.address()`).
-    let (pool_address, tick_lower, tick_upper, magnitude, is_burn) =
-        if let Some(mint) = decode_v3_mint_log(log) {
+    let (pool_address, tick_lower, tick_upper, magnitude, is_burn) = decode_v3_mint_log(log)
+        .map(|mint| {
             (
                 mint.pool_address,
                 mint.tick_lower,
@@ -312,17 +310,18 @@ pub fn decode_v3_liquidity_log_with_pool(log: &Log) -> Option<(Address, Liquidit
                 mint.amount,
                 false,
             )
-        } else if let Some(burn) = decode_v3_burn_log(log) {
-            (
-                burn.pool_address,
-                burn.tick_lower,
-                burn.tick_upper,
-                burn.amount,
-                true,
-            )
-        } else {
-            return None;
-        };
+        })
+        .or_else(|| {
+            decode_v3_burn_log(log).map(|burn| {
+                (
+                    burn.pool_address,
+                    burn.tick_lower,
+                    burn.tick_upper,
+                    burn.amount,
+                    true,
+                )
+            })
+        })?;
     if magnitude == 0 {
         return None; // ignore zero-amount events
     }

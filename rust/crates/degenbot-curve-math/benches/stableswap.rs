@@ -9,7 +9,9 @@
 #![allow(clippy::doc_markdown)]
 #![allow(clippy::needless_range_loop)]
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
+use std::hint::black_box;
+
 use degenbot_curve_math::stableswap::{stableswap_get_d, stableswap_get_y, DVariant, YVariant};
 
 /// Curve 3pool-like reserves (DAI/USDC/USDT, 18dp normalized via precisions).

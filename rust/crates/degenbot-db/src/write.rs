@@ -3026,7 +3026,10 @@ mod tests {
             )
             .unwrap();
         assert_eq!(ltv, 0);
-        assert!((borr, stable, flash, iso, borr_iso) == (false, false, false, false, false));
+        assert_eq!(
+            (borr, stable, flash, iso, borr_iso),
+            (false, false, false, false, false)
+        );
         assert!(dc.is_none());
         assert!(emode.is_none());
     }

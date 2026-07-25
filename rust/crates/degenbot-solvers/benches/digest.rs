@@ -19,7 +19,9 @@
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::doc_markdown)]
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
+use std::hint::black_box;
+
 use degenbot_balancer_math::stable_math::calculate_invariant_deployed;
 use degenbot_curve_math::stableswap::{DVariant, YVariant};
 use degenbot_solvers::mixed::{

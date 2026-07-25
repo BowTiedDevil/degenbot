@@ -151,7 +151,7 @@ fn replay_event_sequence_produces_coherent_multitable_state() {
         )
         .unwrap();
     assert_eq!((ltv, lt, bonus), (7500, 8000, 10500));
-    assert!((borr, flash, iso, borr_iso) == (true, true, true, true));
+    assert_eq!((borr, flash, iso, borr_iso), (true, true, true, true));
     assert!(!stable);
     assert_eq!(dc, "999");
     // note: emode on the asset_config is the bitmap-decoded e_mode_category_id

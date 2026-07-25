@@ -10,7 +10,9 @@
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::cast_possible_truncation)]
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
+use std::hint::black_box;
+
 use degenbot_balancer_math::{
     stable_math::{calc_out_given_in as stable_calc_out_given_in, calculate_invariant_deployed},
     weighted_math::calc_out_given_in as weighted_calc_out_given_in,
