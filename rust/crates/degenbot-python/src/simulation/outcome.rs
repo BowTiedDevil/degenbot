@@ -169,6 +169,10 @@ impl PyDispatchOutcome {
     ///     (`str` address), `selector` (`str` 4-byte hex), `revert_data`
     ///     (`str` hex), `label` (`str`). `None` for orchestration-only buckets
     ///     + the balance-decode branch (ergo epic 63I7WJ task 3AJ4I4).
+    ///   - `captured_swaps` (`list[dict]`) — the V2/V3/V4 swap events captured
+    ///     before the revert (per-swap `family`/`emitter`/`amount0`/`amount1`/"+ "
+    ///     `sqrt_price_x96`/`liquidity`/`tick`). Empty for orchestration-only
+    ///     buckets + the balance-decode branch (ergo epic 63I7WJ task SUD5UT).
     ///
     /// Consumed by the Python companion's `[sim-fail]` renderer so the
     /// operator can identify WHICH path reverted against WHICH pools.
@@ -202,6 +206,24 @@ impl PyDispatchOutcome {
                 }
                 None => dict.set_item("reverting_frame", py.None())?,
             }
+            // The captured swaps (before the revert) — per-swap dicts.
+            let swaps_list = PyList::empty(py);
+            for s in &f.captured_swaps {
+                let sdict = PyDict::new(py);
+                sdict.set_item("family", format!("{:?}", s.family).to_lowercase())?;
+                sdict.set_item("emitter", format!("{:#x}", s.emitter))?;
+                let amount0 = alloy_py::i256_to_py(py, &s.amount0)?;
+                sdict.set_item("amount0", amount0)?;
+                let amount1 = alloy_py::i256_to_py(py, &s.amount1)?;
+                sdict.set_item("amount1", amount1)?;
+                let sqrt_price = alloy_py::u256_to_py(py, &s.sqrt_price_x96)?;
+                sdict.set_item("sqrt_price_x96", sqrt_price)?;
+                let liquidity = alloy_py::u256_to_py(py, &s.liquidity)?;
+                sdict.set_item("liquidity", liquidity)?;
+                sdict.set_item("tick", s.tick)?;
+                swaps_list.append(sdict)?;
+            }
+            dict.set_item("captured_swaps", swaps_list)?;
             list.append(dict)?;
         }
         Ok(list)

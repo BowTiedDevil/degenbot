@@ -50,7 +50,7 @@ use revm::primitives::TxKind;
 // EVM builder traits re-exported from the handler crate. The `AccessListCollector`
 // inspector + `SimulationOverrideParams` are engine types the strategy drives.
 use degenbot_simulation::{
-    AccessListCollector, CallTraceInspector, SimInspector, SimulationOverrideParams,
+    AccessListCollector, CallTraceInspector, CapturedSwap, SimInspector, SimulationOverrideParams,
     SwapEventCaptureInspector,
 };
 use revm::{ExecuteEvm, InspectEvm, MainBuilder, MainContext};
@@ -150,6 +150,13 @@ pub struct SimResult {
     pub execute_calldata: alloy::primitives::Bytes,
     /// The EIP-2930 access list computed for the `execute()` call, if any.
     pub access_list: Option<AccessList>,
+    /// The swap events (`Sync`/`Swap`) the `SwapEventCaptureInspector`
+    /// captured during `execute()` call [3]'s `inspect_one` — the V2/V3/V4
+    /// pools' own emitted swap events, decoded. The ground-truth "what each
+    /// hop actually produced, as simulated" — replaces the onchain-recompute
+    /// pipeline (ergo epic 63I7WJ). Empty if `execute()` reverted before any
+    /// swap emitted. V4 amount correctness is gated on task `5RI47E`.
+    pub captured_swaps: Vec<CapturedSwap>,
     /// The number of hops in the path (for the caller's `path_info` reshape).
     pub hop_count: usize,
 }
@@ -212,6 +219,11 @@ pub struct SimFailure {
     /// `CallTraceInspector`. `None` for orchestration-only buckets + the
     /// balance-decode branch. Ergo epic 63I7WJ task 3AJ4I4.
     pub reverting_frame: Option<RevertingFrame>,
+    /// The swap events captured BEFORE the revert (the swaps `execute()` did
+    /// before reverting) — diagnostic for WHY it reverted (e.g. a partial fill
+    /// that blew the price limit). Empty for orchestration-only buckets + the
+    /// balance-decode branch (no `inspect_one` ran). Ergo epic 63I7WJ.
+    pub captured_swaps: Vec<CapturedSwap>,
 }
 
 /// The inspector-captured attribution of a failing `execute()` frame — the
@@ -293,6 +305,7 @@ impl FailBuckets {
             fail_index,
             revert_data,
             reverting_frame: None,
+            captured_swaps: Vec::new(),
         });
     }
 
@@ -306,6 +319,7 @@ impl FailBuckets {
         bucket: &str,
         fail_index: Option<usize>,
         reverting_frame: RevertingFrame,
+        captured_swaps: Vec<CapturedSwap>,
     ) {
         self.tally(bucket);
         self.failures.push(SimFailure {
@@ -314,6 +328,7 @@ impl FailBuckets {
             fail_index,
             revert_data: reverting_frame.revert_data.clone(),
             reverting_frame: Some(reverting_frame),
+            captured_swaps,
         });
     }
 
@@ -861,7 +876,7 @@ where
     // shared per-block `&mut evm`. The `AccessListCollector` is drained only
     // on the success path (its AL is meaningful for profitable paths only).
     let captured_call_trace = call_trace_handle.take_trace();
-    let _captured_swaps = swap_events_handle.take_swaps();
+    let captured_swaps = swap_events_handle.take_swaps();
 
     // Classify + tally the first revert if any call failed.
     if let Some(fail_idx) = first_failure {
@@ -899,6 +914,7 @@ where
                     revert_data: frame_revert_data,
                     label: frame_label,
                 },
+                captured_swaps.clone(),
             );
         } else {
             fail_buckets.record(path.path_id, &bucket, Some(fail_idx), revert_data);
@@ -1021,6 +1037,7 @@ where
         base_fee_next: ctx.base_fee_next,
         execute_calldata,
         access_list: Some(access_list),
+        captured_swaps,
         hop_count: path.hop_count(),
     }))
 }
@@ -1405,6 +1422,12 @@ mod tests {
             failures[0].revert_data.as_ref(),
             &[0xca, 0xfe, 0xba, 0xbe],
             "the top-level revert_data matches the frame's (same bytes)"
+        );
+        // No swap events were emitted before the (immediate) revert — the
+        // captured_swaps list is empty for this stub executor.
+        assert!(
+            failures[0].captured_swaps.is_empty(),
+            "the cafebabe stub emits no swap events before reverting"
         );
     }
 
