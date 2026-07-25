@@ -26,7 +26,7 @@ use crate::hex_utils::encode_hex;
 use crate::prelude::*;
 use crate::submission::submit::PySubmitCandidate;
 use degenbot_backrun_strategy::DispatchOutcome;
-use degenbot_backrun_strategy::{FailBuckets, SimFailure};
+use degenbot_backrun_strategy::{CapturedSwap, FailBuckets, SimFailure};
 use degenbot_executor::composers::{HopInfo, PathInfo};
 use degenbot_submission::SubmitCandidate;
 use pyo3::types::{PyDict, PyList};
@@ -56,6 +56,14 @@ pub struct PyDispatchOutcome {
     /// renders as a `[sim-fail]` line. The aggregate count lives in
     /// `fail_buckets`; this preserves per-candidate attribution.
     pub(crate) failures: Vec<SimFailure>,
+    /// The SUCCESS-path captured swaps, one entry per profitable survivor,
+    /// keyed by `path_id` (ergo epic 63I7WJ). The revert-path swaps already
+    /// ride on each `SimFailure` (surfaced via `failures()`); this is the
+    /// matching success-path surface so the step-5 classifier re-point can
+    /// consume the decoded swap amounts instead of the `diagnostic.rs`
+    /// onchain recompute (`decode_swap_log(event).amount == solver.hop_outputs[i]`
+    /// — the getAmountOut recompute is redundant once these cross the FFI).
+    pub(crate) success_captured_swaps: Vec<(u64, Vec<CapturedSwap>)>,
     /// The input candidates' `PathInfo`, keyed by `path_id` — the join map
     /// A4 snapshots before the core consumes the batch. Populated from the
     /// INPUT batch (every candidate passed in), NOT filtered to survivors: the
@@ -74,6 +82,7 @@ impl PyDispatchOutcome {
         gas_profitable: Vec<SubmitCandidate>,
         path_info_by_id: HashMap<u64, PathInfo>,
         outcome: &DispatchOutcome,
+        success_captured_swaps: Vec<(u64, Vec<CapturedSwap>)>,
     ) -> Self {
         Self {
             gas_profitable,
@@ -86,6 +95,7 @@ impl PyDispatchOutcome {
             thin_dropped: outcome.thin_dropped,
             fail_buckets: outcome.fail_buckets.clone(),
             failures: outcome.failures.clone(),
+            success_captured_swaps,
         }
     }
 }
@@ -138,6 +148,37 @@ impl PyDispatchOutcome {
     #[getter]
     fn thin_dropped(&self) -> usize {
         self.thin_dropped
+    }
+
+    /// The SUCCESS-path captured swaps — `list[dict]`, one entry per
+    /// profitable survivor, each dict carrying `path_id` (`int`) +
+    /// `captured_swaps` (`list[dict]` of per-swap `family`/`emitter`/
+    /// `amount0`/`amount1`/`sqrt_price_x96`/`liquidity`/`tick`).
+    ///
+    /// The matching success-path surface to each `SimFailure.captured_swaps`
+    /// the revert path surfaces via `failures()`. Each entry's swap list is
+    /// the V2/V3/V4 `Swap` events the in-process EVM emitted during the
+    /// survivor's `execute()` — the ground-truth hop output (no
+    /// `getAmountOut` recompute, no Multicall3 reserves re-fetch needed). The
+    /// step-5 classifier (`logs/permutation_analyzer.py` +
+    /// `format_sim_diag_line`) re-points at these to retire
+    /// `diagnostic.rs::recompute_v2/v3_amount_out`. Empty for survivors that
+    /// swapped zero pools (shouldn't happen — `encode_cmd_stream` only builds
+    /// swap commands for paths with hops).
+    #[getter]
+    fn profitable_captured_swaps<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
+        let list = PyList::empty(py);
+        for (path_id, swaps) in &self.success_captured_swaps {
+            let dict = PyDict::new(py);
+            dict.set_item("path_id", *path_id)?;
+            let swaps_list = PyList::empty(py);
+            for s in swaps {
+                swaps_list.append(captured_swap_to_dict(py, s)?)?;
+            }
+            dict.set_item("captured_swaps", swaps_list)?;
+            list.append(dict)?;
+        }
+        Ok(list)
     }
 
     /// The revert/no-profit/overflow bucket tally — `{bucket: count}`.
@@ -209,19 +250,7 @@ impl PyDispatchOutcome {
             // The captured swaps (before the revert) — per-swap dicts.
             let swaps_list = PyList::empty(py);
             for s in &f.captured_swaps {
-                let sdict = PyDict::new(py);
-                sdict.set_item("family", format!("{:?}", s.family).to_lowercase())?;
-                sdict.set_item("emitter", format!("{:#x}", s.emitter))?;
-                let amount0 = alloy_py::i256_to_py(py, &s.amount0)?;
-                sdict.set_item("amount0", amount0)?;
-                let amount1 = alloy_py::i256_to_py(py, &s.amount1)?;
-                sdict.set_item("amount1", amount1)?;
-                let sqrt_price = alloy_py::u256_to_py(py, &s.sqrt_price_x96)?;
-                sdict.set_item("sqrt_price_x96", sqrt_price)?;
-                let liquidity = alloy_py::u256_to_py(py, &s.liquidity)?;
-                sdict.set_item("liquidity", liquidity)?;
-                sdict.set_item("tick", s.tick)?;
-                swaps_list.append(sdict)?;
+                swaps_list.append(captured_swap_to_dict(py, s)?)?;
             }
             dict.set_item("captured_swaps", swaps_list)?;
             list.append(dict)?;
@@ -326,3 +355,24 @@ fn hop_to_py_dict<'py>(
 
 // `BTreeMap` import removed: `FailBuckets` holds its bucket map
 // internally and we only expose it via `buckets()` iteration.
+
+/// Build the per-swap dict for a captured swap (family/emitter/amount0/amount1/
+/// `sqrt_price_x96/liquidity/tick`) — the shared shape the revert-path
+/// `failures()` + the success-path `profitable_captured_swaps()` getters both
+/// emit, so the Python consumer sees one captured-swap dict shape regardless of
+/// whether the swap came from a reverted or a profitable run (ergo epic 63I7WJ).
+fn captured_swap_to_dict<'py>(py: Python<'py>, s: &CapturedSwap) -> PyResult<Bound<'py, PyDict>> {
+    let sdict = PyDict::new(py);
+    sdict.set_item("family", format!("{:?}", s.family).to_lowercase())?;
+    sdict.set_item("emitter", format!("{:#x}", s.emitter))?;
+    let amount0 = alloy_py::i256_to_py(py, &s.amount0)?;
+    sdict.set_item("amount0", amount0)?;
+    let amount1 = alloy_py::i256_to_py(py, &s.amount1)?;
+    sdict.set_item("amount1", amount1)?;
+    let sqrt_price = alloy_py::u256_to_py(py, &s.sqrt_price_x96)?;
+    sdict.set_item("sqrt_price_x96", sqrt_price)?;
+    let liquidity = alloy_py::u256_to_py(py, &s.liquidity)?;
+    sdict.set_item("liquidity", liquidity)?;
+    sdict.set_item("tick", s.tick)?;
+    Ok(sdict)
+}

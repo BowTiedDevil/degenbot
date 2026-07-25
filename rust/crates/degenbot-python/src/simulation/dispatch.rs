@@ -51,7 +51,7 @@ use crate::simulation::outcome::PyDispatchOutcome;
 use crate::submission::dispatcher::PyDispatcher;
 use degenbot_backrun_strategy::BlockPriorityFees;
 use degenbot_backrun_strategy::{dispatch_profitable_results, DispatchCandidate, DispatchOutcome};
-use degenbot_backrun_strategy::{SimResult, SimulateContext};
+use degenbot_backrun_strategy::{CapturedSwap, SimResult, SimulateContext};
 use degenbot_executor::composers::{HopInfo, PathInfo};
 use degenbot_submission::{PoolKey, SubmitCandidate};
 use pyo3::exceptions::PyValueError;
@@ -201,16 +201,28 @@ pub fn dispatch_profitable_py<'py>(
         // The cockpit chains dispatch_profitable_py → dispatch_and_submit_py
         // straight through PyDispatchOutcome.gas_profitable, so the join
         // produces exactly the field set dispatch_and_submit consumes.
+        //
+        // Ergo 63I7WJ: collect each survivor's `captured_swaps` in parallel —
+        // the success-path surface the step-5 classifier re-points at (the
+        // revert path already surfaces them via `failures()` on each
+        // `SimFailure`). `SimResult.captured_swaps` is the swap-event capture
+        // drained from the inspector after `execute()`.
         let joined: Vec<SubmitCandidate> = outcome
             .gas_profitable
             .iter()
             .map(|r| join_sim_result(r, &path_info_by_id, executor_address))
+            .collect();
+        let success_captured_swaps: Vec<(u64, Vec<CapturedSwap>)> = outcome
+            .gas_profitable
+            .iter()
+            .map(|r| (r.path_id, r.captured_swaps.clone()))
             .collect();
 
         Ok(PyDispatchOutcome::from_join(
             joined,
             path_info_by_id,
             &outcome,
+            success_captured_swaps,
         ))
     })
 }

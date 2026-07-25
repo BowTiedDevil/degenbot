@@ -101,6 +101,13 @@ class TestDispatchEmptyInput:
         assert outcome.suppressed_count == 0
         assert outcome.thin_dropped == 0
         assert outcome.fail_buckets == {}
+        # Ergo epic 63I7WJ — the success-path captured-swaps surface (the
+        # matching success-path getter to each SimFailure.captured_swaps the
+        # revert path surfaces via failures()). Empty for the empty-candidate
+        # short-circuit (no survivors → no captured swaps). Proves the getter
+        # is registered + returns the list shape the step-5 classifier will
+        # consume.
+        assert outcome.profitable_captured_swaps == []
 
     async def test_empty_candidates_releases_gil_across_await(self) -> None:
         # The function is `async` (returns a coroutine) — `future_into_py`
