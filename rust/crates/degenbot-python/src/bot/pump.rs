@@ -659,7 +659,7 @@ impl PumpState {
             if let Err(err) = result {
                 return Err(map_liquidity_verify_error(err));
             }
-            log::info!(
+            log::debug!(
                 "[verify-drain] V3 post-drain snapshot OK for {pool_addr} at block {pinned_block}"
             );
             Ok(())
@@ -724,7 +724,7 @@ impl PumpState {
             if let Err(err) = result {
                 return Err(map_liquidity_verify_error(err));
             }
-            log::info!(
+            log::debug!(
                 "[verify-drain] V4 post-drain snapshot OK for pool_id {} at block {}",
                 degenbot_core::hex_utils::encode_hex(&pool_id),
                 pinned_block
