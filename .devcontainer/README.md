@@ -106,6 +106,7 @@ post-create-installed tools went missing after any container recreate):
 | Foundry | `foundryup` (latest) | Blockchain toolchain; no dnf path. `forge`, `cast`, `anvil` in `~/.foundry/bin`. Rebuilds pick up newer Foundry — pin (`foundryup -v <tag>`) if reproducibility matters. |
 | `pi`    | `npm i -g @earendil-works/pi-coding-agent` | npm prefix is set to `~/.local` in the Dockerfile, so the binary lands in `~/.local/bin` with no sudo. Matches host version era. |
 | `cargo-nextest` | `cargo install --locked cargo-nextest` | Faster Rust test runner (~20% faster build+run than `cargo test`; see `rust/PERF_RESULTS.md` lever #3). Lands in `~/.cargo/bin`. Dev-only — CI does not install nextest, so the CI-facing `just test-rust` recipe still uses `cargo test`; the dev-only `just test-rust-nextest` recipe uses this binary (and falls back to `cargo test` if absent). |
+| `cargo-edit` | `cargo install --locked cargo-edit` | Provides `cargo upgrade`, used by `just update-deps` to bump Cargo.toml version requirements across semver-major boundaries (e.g. revm 41 -> 42), which `cargo update` cannot do alone. Lands in `~/.cargo/bin`; dev-only. |
 
 ## Bind mounts (host → container)
 

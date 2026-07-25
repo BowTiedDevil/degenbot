@@ -33,6 +33,16 @@ cd /workspaces/degenbot
 uv venv --allow-existing "$UV_PROJECT_ENVIRONMENT"
 uv sync
 
+# Self-heal the VS Code Server persisted install. The `vscode` podman volume
+# is auto-mounted at /vscode by the Dev Containers extension (NOT declared in
+# devcontainer.json — it injects it at `devcontainer up`). On a fresh volume the
+# server tree is seeded root:root by the bootstrap; per-reconnect install steps
+# then run as `dev` (uid 1000), which can't write into a root:root 0o755 parent.
+# The result is an empty <commit>_<timestamp>/ staging dir per reconnect — VS
+# Code treats its own commit as never-installed and re-downloads on every
+# attach. Normalize ownership to `dev` so the install completes once and sticks.
+sudo chown -R dev:dev /vscode/vscode-server 2>/dev/null || true
+
 # Self-heal a poisoned editable install. uv's rebuild-on-`uv run` (driven by
 # [tool.uv] cache-keys watching the .rs sources) only fires when the editable
 # install's `.pth` points at the LIVE repo — it keys staleness off that path.

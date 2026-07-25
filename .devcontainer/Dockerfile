@@ -118,6 +118,11 @@ RUN uv tool install prek
 # ENV PATH above). `--locked` pins to the Cargo.lock in nextest's own
 # published crate for reproducibility.
 RUN cargo install --locked cargo-nextest
+# `cargo-edit` provides `cargo upgrade` (rewrites Cargo.toml version requirements
+# to latest published, across semver majors — `cargo update` alone can't cross
+# a major boundary), used by `just update-deps`. Same cargo-home + --locked
+# convention as cargo-nextest.
+RUN cargo install --locked cargo-edit
 
 # User-level cargo config: use `mold` as the linker for all cargo builds
 # inside the container (dev-only perf; see rust/PERF_RESULTS.md lever #1).
