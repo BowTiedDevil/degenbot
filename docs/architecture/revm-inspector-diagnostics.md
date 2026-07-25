@@ -1,0 +1,250 @@
+# RevM Inspector-native simulation diagnostics — implementation spec
+
+Ergo epic **63I7WJ** (task **JHPW5W**). Converts the spike
+([`docs/spikes/revm-inspector-diagnostics.md`](../spikes/revm-inspector-diagnostics.md),
+task KCKGP4) + prototype (committed `c59151ea`, task 2LMT7A) into a
+decision-resolved implementation plan. This is the gate for the implementation
+tasks; it is approved before any production wiring lands.
+
+## Architectural framing (carried from the epic + spike + prototype)
+
+- **ADR-019 D4/D7** — engine owns generic primitives; strategy owns the
+  Drift/SolverCalc/Encoding *policy*. The inspectors live in
+  `degenbot-simulation` (the engine crate); the four-way classifier policy
+  stays in `examples/eth_backrun_helpers.py` +
+  `logs/permutation_analyzer.py`, re-pointed at the engine-supplied
+  captured data.
+- **ADR-005 Tier 0** — a `cargo add degenbot` consumer reaches `CallTrace` +
+  captured swaps + reverting-frame attribution from the engine directly.
+- **ADR-013** — the FFI seam is private; the PyO3 wrapper is a thin
+  `#[pyclass]` re-export of the captured structs, no business logic.
+- **AGENTS.md** — retirements are irreversible (no back-compat layer for the
+  retired onchain-recompute path).
+
+## 1. The `SimInspector` type alias (nested tuple)
+
+The production `BlockEvm` inspector type widens from bare `AccessListCollector`
+to the nested tuple:
+
+```rust
+pub type SimInspector = (
+    AccessListCollector,
+    (CallTraceInspector, SwapEventCaptureInspector),
+);
+```
+
+**Hard constraint (prototype 2LMT7A finding):** revm's blanket `Inspector`
+impl covers 2-tuples `(L, R)` only
+(`revm-inspector-42/src/inspector.rs:150`). A flat 3-tuple does NOT satisfy
+`Inspector`. The composition MUST be nested: `AccessListCollector` is `L`, the
+`CallTraceInspector`/`SwapEventCaptureInspector` pair is `R`. The prototype's
+`inspectors/mod.rs::SimInspector` alias already encodes this shape.
+
+**Wiring:** `rust/crates/degenbot-simulation/src/sim/evm/simulator.rs::BlockEvm`
+type parameter flips from `AccessListCollector` to `SimInspector`. The
+strategy's `simulate_path_on_evm` constructs the composed tuple via
+`AccessListCollector::new()` + `CallTraceInspector::new()` +
+`SwapEventCaptureInspector::new()` and passes it to `inspect_one(tx, tuple)`;
+after the run, drains all three handles.
+
+## 2. The captured-struct field set (finalized from the prototype)
+
+The prototype's fields are the production surface (proven by the
+composition-parity test `tests/inspector_composition.rs`):
+
+```rust
+// sim/evm/inspectors/call_trace.rs
+pub struct CallFrame {
+    pub depth: usize,
+    pub caller: Address,
+    pub target: Address,
+    pub selector: [u8; 4],
+    pub gas_limit: u64,
+    pub outcome: Option<FrameOutcome>,
+}
+pub enum FrameOutcome {
+    Success { gas_used: u64, output: Bytes },
+    Revert { gas_used: u64, data: Bytes },   // <- classify_revert input
+    Halt { gas_used: u64 },
+}
+pub struct CallTrace { pub frames: Vec<CallFrame> }
+
+// sim/evm/inspectors/swap_event.rs
+pub struct CapturedSwap {
+    pub emitter: Address,
+    pub family: SwapFamily,                // V2 | V3 | V4
+    pub amount0: I256,
+    pub amount1: I256,
+    pub sqrt_price_x96: U256,
+    pub liquidity: U256,
+    pub tick: i32,
+}
+```
+
+**Open decision — V2 reserves vs amounts.** The V2 `Sync` event carries
+*reserves* (absolute `uint112`), not *amounts* (the V3/V4 `Swap` event carries
+signed `amount0`/`amount1`). The prototype stores zeros for V2 amounts. Since
+the swap-event capture replaces the onchain recompute, V2 amounts are
+derivable from consecutive `Sync` reserve deltas — **but** a single-hop V2
+swap emits exactly one `Sync`, so the *delta* requires the pre-swap reserve
+(the engine-state view). Resolution: extend `CapturedSwap` with a
+`V2Reserves { reserve0, reserve1 }` variant (or an `Option` pair) so the
+strategy classifier can compare `hop_outputs[i]` against
+`|reserve_post - reserve_pre|` using the engine's tracked pre-swap reserve.
+**This is the one field-set change from the prototype** — flagged for the
+implementation task, not a prototype re-spin.
+
+## 3. The `SimFailure` deepening (revert attribution)
+
+`rust/crates/degenbot-backrun-strategy/src/simulator.rs::SimFailure` today:
+
+```rust
+pub struct SimFailure {
+    pub path_id: u64,
+    pub bucket: String,                  // classify_revert label, top-level only
+    pub fail_index: Option<usize>,      // 0–6 top-level call index
+    pub revert_data: alloy::primitives::Bytes,
+}
+```
+
+Replace `fail_index` + the top-level-only `revert_data` with the reverting
+*frame*'s attribution, surfaced across the FFI:
+
+```rust
+pub struct SimFailure {
+    pub path_id: u64,
+    pub bucket: String,
+    pub reverting_frame: Option<RevertingFrame>,
+}
+
+pub struct RevertingFrame {
+    pub depth: usize,                   // call depth (1 = top-level execute())
+    pub target: Address,                // the reverting contract
+    pub selector: [u8; 4],              // the call's selector at the reverting frame
+    pub revert_data: Bytes,             // the reverting frame's data (classify_revert input)
+    pub label: String,                  // classify_revert(revert_data)
+}
+```
+
+**`classify_revert` stays** (`degenbot_decoders::revert`); it is now fed by
+`CallTrace::reverting_frame_label()` at the reverting frame, not the top-level
+bubble. The prototype's `CallTrace::reverting_frame_label()` implements this
+walk (deepest `Revert` frame + `classify_revert`).
+
+## 4. The `diagnostic.rs` retirement boundary
+
+`rust/crates/degenbot-bot/src/solvers/arb_engine/diagnostic.rs` (the
+"mixed Uniswap arbitrage engine" diagnostic path) splits cleanly:
+
+**DELETE (the onchain-recompute half — replaced by swap-event capture):**
+
+- `fetch_onchain` (the Multicall3 RPC fetch, L757) — the swap events are
+  captured in-process; no re-fetch.
+- `recompute_v2_amount_out`, `recompute_v3_amount_out`,
+  `recompute_v4_amount_out` (L154/L190/L221) — the off-chain swap-math
+  recompute against a separately-fetched snapshot.
+- `recompute_cl_amount_out_onchain` (the onchain-state scalar-slot0 recompute).
+- `populate_*_recompute`, `refresh_*_recompute_onchain` (L342/L372/L405/L…).
+- `HopRecompute` (L513) + the `DiagnosticHop::recompute` field (L631) + every
+  `recompute: Some/None` site (L677…L2212).
+- `HopFetch` (L845), `require_success` (L855), `build_v2/v3/v4_calls`,
+  `decode_v2/v3/v4_results` (L959/L973/…), `FetchOutcome` — the RPC transport.
+- The hand-rolled ABI helpers (`fn_selector`, `encode_call`, `uint_value`,
+  `parse_hex_*`, `u256_to_hex`) — replaced by `degenbot-abi`/`degenbot-decoders`.
+
+**RETAIN (the engine-state-read half — answers a different question):**
+
+- `DiagnosticPoolState`, `DiagnosticHop` (minus `recompute`),
+  `DiagnosticPathState`, `FieldDiff` — pure data + serde.
+- `compute_field_diffs` (L70) — pure math, no RPC.
+- `UniswapEngine::diagnostic_path_state` (L1138) — returns
+  `Option<DiagnosticPathState>` (API shape preserved).
+
+**Collapse:** `format_sim_diag_line`'s `DriftArtifact` timing guard collapses
+(the run's own swap events have no block-tag ambiguity — there is no
+"post-publish live read" when the source-of-truth is the run's own emitted
+events, not a separate `fetch_onchain`). The Python-side
+`hops`/`engine_state`/`onchain_state` block in
+`examples/eth_backrun_helpers.py::format_sim_diag_line` is re-pointed at the
+captured swaps + the engine-state-read half.
+
+**Cross-dependency note:** task `WQENYW` ("Split diagnostic.rs into
+per-concern submodules; gate RPC behind feature") is a separate in-flight
+refactor of the SAME file. The retirement here + the split there MUST be
+sequenced (retire-then-split, or merge); the implementation task coordinates.
+
+## 5. The Tier-2 parity-pair fixture (ADR-005 dual-path coverage)
+
+When `CallTrace`/`CapturedSwap`/`RevertingFrame` cross the FFI, add the
+parity pair:
+
+- **Shared fixture:** `tests/standalone_parity/fixtures/inspector_swap.json` —
+  a path's inputs + the expected captured swaps (per-hop `amount0`/`amount1`,
+  `emitter`, `family`) + the expected reverting-frame attribution (depth,
+  target, selector, label). Both sides read this file for inputs AND expected
+  outputs (per the V3/V4 fixture-drift resolution — no copied constants).
+- **Rust half:** `rust/crates/degenbot/tests/parity_inspector.rs` — drives the
+  composed `SimInspector` via `BotState`, asserts the captured swaps + the
+  reverting frame match the fixture.
+- **Python half:** `tests/standalone_parity/test_inspector_dual_driver.py` —
+  drives the same fixture via `PyBot`, asserts the same.
+
+**V4 caveat:** V4-amount correctness is blocked on `5RI47E` (the transient
+seeder). The parity fixture's V2 + V3 slices land now; the V4 slice lands
+when `5RI47E` flips the seeder (deliberate deferral, not a gap).
+
+## 6. The implementation sequencing (follow-on tasks)
+
+Ordered, dependency-resolved. Each is one atomic, reviewable change. File
+these as the JHPW5W task's children OR as a separate epic on approval.
+
+1. **Compose `SimInspector` into `BlockEvm`** — flip the `BlockEvm` type
+   parameter from bare `AccessListCollector` to `SimInspector`; wire the
+   strategy's `simulate_path_on_evm` to construct + drain the tuple. AL
+   parity test stays green (the prototype already pins it).
+2. **Deepen `SimFailure`** — replace `fail_index`/`revert_data` with
+   `RevertingFrame` (depth/target/selector/revert_data/label), fed by
+   `CallTrace::reverting_frame_label()`. Surface across the FFI.
+3. **Widen the decoders to accept `primitives::Log`** (recommended) OR wrap
+   at the inspector boundary — removes the `primitives::Log` →
+   `rpc::types::Log` conversion the prototype carries. Decide in-task;
+   widening is cleaner (the decoders only read `.topics()`/`.data`).
+4. **PyO3 surface** — `#[pyclass]` thin shells for `CallTrace`/`CallFrame`/
+   `FrameOutcome`/`CapturedSwap`/`RevertingFrame`. No business logic across
+   the FFI (ADR-013).
+5. **Re-point the classifier** in `logs/permutation_analyzer.py` +
+   `examples/eth_backrun_helpers.py` at the decoded swap-event amounts; drop
+   the `DEGENBOT_SIM_TRACE` eprintln block in `simulate_path_on_evm`.
+6. **Retire the `diagnostic.rs` onchain-recompute half** — delete the symbols
+   in §4 (DELETE list). Coordinate with `WQENYW`'s split. Green once steps 1–5
+   land.
+7. **Rewire the example bot** — `examples/eth_backrun_v2_v3_v4_rust.py`
+   renders the new `RevertingFrame` attribution + the captured swaps;
+   `logs/permutation_analyzer.py`'s TSV columns stay stable (the labels are
+   the operator contract).
+8. **Tier-2 parity pair** — the shared fixture + `parity_inspector.rs` +
+   `test_inspector_dual_driver.py` (V2+V3 now, V4 when `5RI47E` lands).
+
+## Decisions resolved (no `TBD`)
+
+- **Nested-tuple composition** (not flat 3-tuple) — revm's blanket impl is
+  2-tuple-only. Hard constraint.
+- **`log_full` over `log`** for swap capture (spike Q1) — `log` fires only for
+  frame-init value-transfer logs.
+- **Decode-at-capture** in `SwapEventCaptureInspector` (the prototype's shape) —
+  `CapturedSwap` stores decoded fields, not raw `Log`s.
+- **`classify_revert` stays**, fed at depth by `call_end`'s revert data.
+- **The onchain-recompute half of `diagnostic.rs` is DELETED**, not
+  feature-gated; the engine-state-read half is RETAINED.
+- **V4 amount correctness blocked on `5RI47E`**; V2/V3 unblocked.
+
+## Validation gates (per implementation task)
+
+- `just check-no-pyo3-in-cores` green (the inspectors add no `pyo3`).
+- `just lint-rust` green.
+- `just test-rust` green — the composition-parity test
+  (`tests/inspector_composition.rs`) + the spike probe stay green.
+- `just test-rust-python` green once the PyO3 surface + the example rewire
+  land.
+- Tier-2 parity pair: BOTH halves green (the mechanically-enforced
+  "one inspector, two consumers" claim).
