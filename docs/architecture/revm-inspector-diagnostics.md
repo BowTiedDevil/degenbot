@@ -225,6 +225,67 @@ these as the JHPW5W task's children OR as a separate epic on approval.
 8. **Tier-2 parity pair** — the shared fixture + `parity_inspector.rs` +
    `test_inspector_dual_driver.py` (V2+V3 now, V4 when `5RI47E` lands).
 
+## Implementation status (autonomous session — exercised against the
+backrun bot's test harness)
+
+Delivered + exercised (committed):
+
+1. **Compose `SimInspector` into `BlockEvm`** ✓ (`188b2d5c`) — the nested-tuple
+   `(AccessListCollector, (CallTraceInspector, SwapEventCaptureInspector))`
+   is the `BlockEvm` + `simulate_in_process_with_db` + `simulate_path_on_evm`
+   inspector type. The two `simulate_in_process_with_db` smoke tests confirm
+   the real 7-call orchestration runs with the composed tuple end-to-end.
+2. **Deepen `SimFailure` with `RevertingFrame`** ✓ (`8b815694`) —
+   `CallTrace::failing_frame()` (deepest non-`Success` frame, covers `Revert`
+   AND `Halt`) feeds a `RevertingFrame { depth, target, selector,
+   revert_data, label }` on `SimFailure` via the new `FailBuckets::record_revert`.
+   Drained right after `finalize` so both branches have it.
+3. **PyO3 surface** ✓ (`57556e65`) — `captured_swaps` on `SimResult` (success)
+   + `SimFailure` (revert); the `failures()` getter surfaces `reverting_frame`
+   + `captured_swaps` dicts.
+7. **Rewire the example bot** ✓ (`ca0b124f`) — `_render_sim_failures` now
+   surfaces `revert@depth=N target=… sel=… label=… swaps_before=M revert=…`
+   when `reverting_frame` is set; falls back to `fail_idx=…` for non-revert
+   buckets. New `test_reverting_frame_surfaces_deep_attribution`.
+
+Exerciser proof (the "helps find/fix real bugs" claim):
+
+- A new smoke injects a `REVERT(0xcafebabe)` executor + asserts the
+  reverting_frame surfaces the executor target + the 4-byte selector data +
+  the `unknown:0xcafebabe` label at depth 1 — through the REAL 7-call
+  orchestration, not a unit mock.
+- The existing `0xfe` Halt smoke is enriched to assert the halting frame is
+  attributed (label `empty`).
+- Bugs found + fixed en route: the prototype's LIFO `call_end` pairing
+  (parent outcome stayed `None`), the nested-tuple constraint (revm's
+  blanket `Inspector` impl is 2-tuple-only — a flat 3-tuple does NOT satisfy
+  `Inspector`), the `u64::to_be_bytes()` PUSH2 bytecode misalignment, and the
+  `log`-vs-`log_full` surprise (the spec's Q1 finding).
+
+Deferred (live-RPC-gated — NOT safely doable without a mainnet provider):
+
+5. **Re-point classifier + drop `DEGENBOT_SIM_TRACE`** — the classifier
+   re-point needs the SUCCESS-path captured swaps surfaced to Python (only
+   the revert-path swaps are surfaced today) + real-swap validation. Dropping
+   `DEGENBOT_SIM_TRACE` now would lose the per-call-gas debug view (the
+   structured `CallTrace` isn't fully surfaced yet — only `reverting_frame`).
+   Gated on surfacing the full `CallTrace` + live-RPC validation.
+6. **Retire `diagnostic.rs` onchain-recompute half** — deletion is gated on
+   the swap capture being proven on REAL mainnet paths (the composition test
+   proves the mechanism on synthetic fixtures; real-path amount correctness
+   is unproven without RPC). Coordinate with `WQENYW`'s in-flight
+   `diagnostic.rs` submodule split (retire-then-split, or merge). Deleting
+   unproven risks hiding regressions.
+8. **Tier-2 dual-driver parity pair** — the inspector isn't a `BotState`
+   calc, so the calc-parity pattern (`BotState::calculate_tokens_out` from
+   both `BotState` + `PyBot`) doesn't transfer. The inspector attaches to
+   `simulate_path_on_evm` (in `degenbot-backrun-strategy`), reachable from
+   Python only via `dispatch_profitable_py` — which needs a real provider to
+   run a reverting `execute()` (the dead-URL provider never dials). Needs a
+   new mock-provider simulating a reverting path, OR a PyO3 binding for
+   `simulate_in_process_with_db`. V4 slice additionally blocked on `5RI47E`
+   (the transient seeder).
+
 ## Decisions resolved (no `TBD`)
 
 - **Nested-tuple composition** (not flat 3-tuple) — revm's blanket impl is
