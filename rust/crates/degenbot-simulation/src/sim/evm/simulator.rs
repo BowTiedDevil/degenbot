@@ -104,13 +104,17 @@ pub type ProductionBlockDb<'a> = CacheDB<
 
 /// The concrete per-block EVM type held by [`BlockSimHandle`] — revm's
 /// [`revm::MainnetEvm`] over the production [`ProductionBlockDb`] stack. The
-/// inspector type parameter is [`super::access_list::AccessListCollector`]
-/// (ADR-019 D3) — baked in so the strategy's `simulate_path_on_evm` can attach
-/// it to `execute()`'s `inspect_one` run and drain the warmed-slot access
-/// list (`transact_one` for the balance reads does not invoke the inspector).
+/// inspector type parameter is [`super::inspectors::SimInspector`] (a nested
+/// tuple `(AccessListCollector, (CallTraceInspector,
+/// SwapEventCaptureInspector))` — ADR-019 D3 + ergo epic 63I7WJ) — baked in so
+/// the strategy's `simulate_path_on_evm` can attach it to `execute()`'s
+/// `inspect_one` run and drain the access list + call trace + swap events.
+/// revm's blanket `Inspector` impl covers 2-tuples only, so the three-way
+/// composition is nested (`AccessListCollector` is `L`, the
+/// `CallTraceInspector`/`SwapEventCaptureInspector` pair is `R`).
 pub type BlockEvm<'a> = revm::MainnetEvm<
     revm::handler::MainnetContext<ProductionBlockDb<'a>>,
-    super::access_list::AccessListCollector,
+    super::inspectors::SimInspector,
 >;
 
 /// Owns a per-block shared EVM (one `CacheDB` + revm `Context`, state overrides
@@ -220,7 +224,7 @@ impl<'a> BlockSimHandle<'a> {
         revm_ctx.cfg.disable_nonce_check = true;
         let mut evm = revm_ctx
             .with_db(cache_db)
-            .build_mainnet_with_inspector(super::access_list::AccessListCollector::default());
+            .build_mainnet_with_inspector(super::inspectors::SimInspector::default());
         evm.ctx.modify_block(|block| {
             block.basefee = u64::try_from(base_fee_next).unwrap_or(u64::MAX);
             block.number = U256::from(current_block);

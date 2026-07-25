@@ -49,7 +49,10 @@ use revm::primitives::TxKind;
 // `MainBuilder` (`.build_mainnet()`) + `MainContext` (`.mainnet()`) — the revm
 // EVM builder traits re-exported from the handler crate. The `AccessListCollector`
 // inspector + `SimulationOverrideParams` are engine types the strategy drives.
-use degenbot_simulation::{AccessListCollector, SimulationOverrideParams};
+use degenbot_simulation::{
+    AccessListCollector, CallTraceInspector, SimInspector, SimulationOverrideParams,
+    SwapEventCaptureInspector,
+};
 use revm::{ExecuteEvm, InspectEvm, MainBuilder, MainContext};
 
 use crate::calldata::{
@@ -550,7 +553,7 @@ where
     revm_ctx.cfg.disable_nonce_check = true;
     let mut evm = revm_ctx
         .with_db(cache_db)
-        .build_mainnet_with_inspector(AccessListCollector::default());
+        .build_mainnet_with_inspector(SimInspector::default());
     evm.ctx.modify_block(|block| {
         block.basefee = u64::try_from(ctx.base_fee_next).unwrap_or(u64::MAX);
         block.number = U256::from(ctx.current_block);
@@ -596,7 +599,7 @@ where
             Tx = TxEnv,
             ExecutionResult = revm::context_interface::result::ExecutionResult,
             State = revm::state::EvmState,
-        > + InspectEvm<Inspector = AccessListCollector>,
+        > + InspectEvm<Inspector = SimInspector>,
     <E as ExecuteEvm>::Error: std::fmt::Display,
 {
     // Per-call diagnostic trace — opt-in via `DEGENBOT_SIM_TRACE=1`. Dumps
@@ -709,22 +712,23 @@ where
 
     let mut results: Vec<ExecutionResult> = Vec::with_capacity(7);
     let mut first_failure: Option<usize> = None;
-    // `execute()` (call [3]) runs with an [`AccessListCollector`] attached via
-    // `inspect_one` (ADR-019 D3) so the EIP-2930 warmed-slot access list is a
-    // byproduct of the FIRST execute() run — no post-re-`transact`. The balance
-    // reads [0..3] + [4..7] use `transact_one`, which does NOT invoke the
-    // inspector, so the collector sees execute()-only `SLOAD`/`SSTORE` opcodes.
-    // The collector is moved into the EVM by `inspect_one`; the paired
-    // [`AccessListHandle`] retains a shared handle to drain after the run.
-    let (collector, access_list_handle) = AccessListCollector::new();
-    // `Option::take` moves the collector into `inspect_one` exactly once (at
-    // idx == 3); the borrow checker can't prove `idx == 3` fires at most once
-    // inside the loop, so the `Option` makes the single move explicit.
-    let mut collector_opt = Some(collector);
+    // `execute()` (call [3]) runs with the composed [`SimInspector`] tuple
+    // `(AccessListCollector, (CallTraceInspector, SwapEventCaptureInspector))`
+    // attached via `inspect_one` (ADR-019 D3 + ergo epic 63I7WJ) so the EIP-2930
+    // warmed-slot access list + the call trace + the swap events are byproducts
+    // of the FIRST execute() run — no post-re-`transact`. The balance reads
+    // [0..3] + [4..7] use `transact_one`, which does NOT invoke the inspector,
+    // so the inspectors see execute()-only opcodes. The tuple is moved into the
+    // EVM by `inspect_one`; each member's paired handle retains a shared
+    // `Rc<RefCell<…>>` to drain after the run.
+    let (al, access_list_handle) = AccessListCollector::new();
+    let (ct, call_trace_handle) = CallTraceInspector::new();
+    let (se, swap_events_handle) = SwapEventCaptureInspector::new();
+    let mut inspector_opt = Some((al, (ct, se)));
     for (idx, tx) in txs.into_iter().enumerate() {
         let result = if idx == 3 {
-            let collector = collector_opt.take().expect("collector taken only at idx 3");
-            evm.inspect_one(tx, collector)
+            let inspector = inspector_opt.take().expect("inspector taken only at idx 3");
+            evm.inspect_one(tx, inspector)
         } else {
             evm.transact_one(tx)
         };
@@ -892,14 +896,21 @@ where
         .saturating_mul(U256::from(ctx.base_fee_next.saturating_add(priority_fee)));
     let net_profit = gross_profit.saturating_sub(gas_fee);
 
-    // ADR-019 D3 — the EIP-2930 access list execute() warmed was collected
-    // as a byproduct of the FIRST execute() `inspect_one` run (call [3]
-    // above) by the attached [`AccessListCollector`]. Drain it via the paired
-    // handle — no post-re-`transact` (execute() ran once).
+    // ADR-019 D3 + ergo epic 63I7WJ — the EIP-2930 access list execute() warmed
+    // was collected as a byproduct of the FIRST execute() `inspect_one` run
+    // (call [3] above) by the `AccessListCollector` member of the composed
+    // `SimInspector` tuple. Drain it via the paired handle — no post-re-
+    // `transact` (execute() ran once). The `CallTraceInspector` +
+    // `SwapEventCaptureInspector` members are drained here too (their captured
+    // data is surfaced in the revert-attribution + classifier tasks, steps
+    // 2 + 5 of epic 63I7WJ; drained now to prove the composition end-to-end
+    // + to free the buffers for the next path on the shared per-block EVM).
     // `emit_access_list_from_state` stays as an engine-generic primitive
     // (emitting from a `State` journal); it is just no longer the production
     // AL path.
     let access_list = access_list_handle.take_access_list();
+    let _captured_call_trace = call_trace_handle.take_trace();
+    let _captured_swaps = swap_events_handle.take_swaps();
 
     Ok(Some(SimResult {
         path_id: path.path_id,
