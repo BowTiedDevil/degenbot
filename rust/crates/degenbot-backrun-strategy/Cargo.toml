@@ -52,7 +52,7 @@ degenbot-core = { path = "../degenbot-core" }
 # revm — the EVM trait bounds `simulate_path_on_evm<E: ExecuteEvm +
 # InspectEvm<...>>` carries (the strategy drives the borrowed `&mut E`
 # the engine exposes via `BlockSimHandle::evm_mut`).
-revm = { version = "42.0.1", default-features = true, features = ["alloydb", "asyncdb"] }
+revm = { version = "^42.0", default-features = true, features = ["alloydb", "asyncdb"] }
 alloy = { version = "^2.2" }
 parking_lot = "^0.12"
 thiserror = { version = "^2.0" }
