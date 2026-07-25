@@ -1572,9 +1572,25 @@ def _render_sim_failures(outcome: DispatchOutcome) -> None:
         hops = (
             _hop_token_summary(path_info["hops"]) if path_info is not None else "(path_info missing)"
         )
+        # Ergo epic 63I7WJ — the inspector-captured deep attribution: the
+        # reverting CONTRACT + call depth + selector + classify_revert label
+        # (the frame that actually reverted, not the top-level bubble), plus
+        # the swap events captured before the revert. Falls back to the
+        # top-level ``fail_idx``/``revert`` bubble when the inspector didn't
+        # run on the failing call (balance-decode / orchestration-only buckets).
+        rf = rec.get("reverting_frame")
+        swaps = rec.get("captured_swaps") or []
+        if rf is not None:
+            revert_line = (
+                f"revert@depth={rf['depth']} target={rf['target']} "
+                f"sel={rf['selector']} label={rf['label']} "
+                f"swaps_before={len(swaps)} revert={rf['revert_data']}"
+            )
+        else:
+            revert_line = f"fail_idx={fail_idx} revert={revert_hex}"
         bot_logger.info(
             f"[sim-fail] path={path_id} type={path_type} bucket={bucket} "
-            f"fail_idx={fail_idx} revert={revert_hex} hops={hops}",
+            f"{revert_line} hops={hops}",
         )
     overflow = len(failures) - cap
     if overflow > 0:

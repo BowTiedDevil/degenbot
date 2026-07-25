@@ -138,3 +138,51 @@ def test_overflow_emits_summary_trailing_line(caplog: pytest.LogCaptureFixture) 
     assert len(detail_lines) == 25
     assert len(summary_lines) == 1
     assert "(+5 more)" in summary_lines[0]
+
+
+def test_reverting_frame_surfaces_deep_attribution(caplog: pytest.LogCaptureFixture) -> None:
+    # Ergo epic 63I7WJ — the inspector-captured reverting frame: the CONTRACT
+    # that reverted (not the top-level bubble), its call depth, selector, + the
+    # classify_revert label. Plus the swaps captured before the revert.
+    failures = [
+        {
+            "path_id": 1,
+            "bucket": "unknown:0xcafebabe",
+            "fail_index": 3,
+            "revert_data": "0xcafebabe",
+            "reverting_frame": {
+                "depth": 2,
+                "target": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "selector": "0xdeadbeef",
+                "revert_data": "0xcafebabe",
+                "label": "unknown:0xcafebabe",
+            },
+            "captured_swaps": [
+                {
+                    "family": "v2",
+                    "emitter": "0x" + "bb" * 20,
+                    "amount0": -1000,
+                    "amount1": 990,
+                    "sqrt_price_x96": 0,
+                    "liquidity": 0,
+                    "tick": 0,
+                }
+            ],
+        }
+    ]
+    with caplog.at_level("INFO", logger="degenbot"):
+        _render_sim_failures(_outcome(failures))
+    lines = [r.message for r in caplog.records if r.message.startswith("[sim-fail]")]
+    assert len(lines) == 1
+    line = lines[0]
+    # The deep attribution surfaces — NOT the top-level ``fail_idx=`` bubble.
+    assert "revert@depth=2" in line
+    assert "target=0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" in line
+    assert "sel=0xdeadbeef" in line
+    assert "label=unknown:0xcafebabe" in line
+    assert "swaps_before=1" in line
+    assert "revert=0xcafebabe" in line
+    assert "bucket=unknown:0xcafebabe" in line
+    assert "hops=" in line
+    # The top-level bubble fallback must NOT appear when reverting_frame is set.
+    assert "fail_idx=" not in line
