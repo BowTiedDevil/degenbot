@@ -30,6 +30,8 @@ pub mod sim;
 // now live in `degenbot-backrun-strategy`.
 pub use sim::evm::{
     apply_simulation_overrides, emit_access_list_from_state, AccessListCollector, BlockEvm,
-    BlockSimHandle, BotStateDb, ProductionBlockDb, SimulationOverrideParams, WarmCodeCache,
+    BlockSimHandle, BotStateDb, CallFrame, CallTrace, CallTraceHandle, CallTraceInspector,
+    CapturedSwap, FrameOutcome, ProductionBlockDb, SimInspector, SimulationOverrideParams,
+    SwapEventCaptureHandle, SwapEventCaptureInspector, SwapFamily, WarmCodeCache,
     WarmCodeCacheInner, WARM_CODE_CACHE_TTL_BLOCKS,
 };

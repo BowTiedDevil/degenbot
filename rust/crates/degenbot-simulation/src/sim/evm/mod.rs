@@ -92,6 +92,12 @@ pub mod v4_transient;
 /// `transact`'s `ResultAndState.state`.
 pub mod access_list;
 
+/// Composable `revm::Inspector` pair for simulation diagnostics
+/// (`CallTraceInspector`, `SwapEventCaptureInspector`) + the `SimInspector`
+/// composed-tuple alias. Additive + test-only in the prototype (ergo task
+/// `2LMT7A`); production wiring gated on the JHPW5W follow-on.
+pub mod inspectors;
+
 /// Cross-block warm cache for immutable/long-TTL account data (bytecode +
 /// account existence) — the persistent layer underneath the per-block
 /// `CacheDB`. Caches `basic_ref` + `code_by_hash_ref` with a per-entry TTL;
@@ -100,6 +106,12 @@ pub mod warm_code_cache;
 
 pub use access_list::{emit_access_list_from_state, AccessListCollector};
 pub use bot_state_db::BotStateDb;
+/// Re-export the diagnostic inspectors + captured structs (engine-generic,
+/// ADR-019 D7 — the PyO3 wrapper surfaces them as `#[pyclass]` thin shells).
+pub use inspectors::{
+    CallFrame, CallTrace, CallTraceHandle, CallTraceInspector, CapturedSwap, FrameOutcome,
+    SimInspector, SwapEventCaptureHandle, SwapEventCaptureInspector, SwapFamily,
+};
 /// Re-export the engine surface so `degenbot-simulation`'s crate root can
 /// surface it for the strategy crate (`degenbot-backrun-strategy`) + the
 /// PyO3 wrapper. The strategy types (`SimResult`, `SimulateContext`, …) now

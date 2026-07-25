@@ -53,6 +53,10 @@ degenbot-pools = { path = "../degenbot-pools" }
 degenbot-decoders = { path = "../degenbot-decoders" }
 thiserror = { version = "^2.0" }
 log = { version = "^0.4" }
+# `Serialize` derive for the inspector captured structs (`CallTrace`,
+# `CapturedSwap`) — the diagnostic surface crosses the FFI as `#[pyclass]`
+# thin shells (ADR-019 D7).
+serde = { version = "^1.0", features = ["derive"] }
 # `parking_lot::RwLock` — backs the cross-block persistent `WarmCodeCacheInner`
 # (the bytecode + account-existence layer) AND the `BotState` lock type
 # (matches `degenbot-bot` so the `Option<Arc<RwLock<BotState>>>` fan-out param

@@ -2278,6 +2278,7 @@ dependencies = [
  "log",
  "parking_lot",
  "revm",
+ "serde",
  "serde_json",
  "thiserror 2.0.19",
  "tokio",
