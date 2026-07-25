@@ -20,13 +20,13 @@ style = "warn"
 suspicious = "warn"
 
 [dependencies]
-alloy = { version = "^2.0", features = ["full", "transport-throttle"] }
+alloy = { version = "^2.2", features = ["full", "transport-throttle"] }
 # `async_trait` makes the construction-I/O core traits dyn-compatible (they're
 # held as `Arc<dyn DbConstruction + Send + Sync>` on `ConstructionIo`). The
 # macro desugars `async fn` to `-> Pin<Box<dyn Future + Send>>` — the standard
 # pattern alloy itself uses for `dyn Provider`.
 async-trait = { version = "^0.1" }
-dashmap = { version = "^6.1" }
+dashmap = { version = "^6.2" }
 degenbot-abi = { path = "../degenbot-abi" }
 degenbot-cl-math = { path = "../degenbot-cl-math" }
 degenbot-core = { path = "../degenbot-core" }
@@ -52,11 +52,11 @@ hotpath = { version = "^0.21", default-features = false }
 log = { version = "^0.4" }
 parking_lot = { version = "^0.12" }
 rand = { version = "^0.10" }
-rayon = { version = "^1.10" }
+rayon = { version = "^1.12" }
 serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }
 thiserror = { version = "^2.0" }
-tokio = { version = "^1.52", features = ["rt-multi-thread", "time", "macros", "sync"] }
+tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "macros", "sync"] }
 
 [features]
 # Drain-path profiling tracer bullet (see `src/profiling.rs`). Enable with
@@ -68,7 +68,7 @@ hotpath-cpu = ["hotpath", "hotpath/hotpath-cpu"]
 hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
 
 [dev-dependencies]
-proptest = "^1.10"
+proptest = "^1.11"
 # Test-only constructors (e.g. AlloyProvider::from_provider) used by the
 # bot_core block-pump tests.
 degenbot-rpc = { path = "../degenbot-rpc", features = ["test-utils"] }

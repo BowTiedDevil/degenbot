@@ -30,7 +30,7 @@ crate-type = ["rlib", "cdylib"]
 # ADR-005 deferral — binding layer lifted out of the workspace root.)
 
 [dependencies]
-alloy = { version = "^2.0", features = ["full", "transport-throttle"] }
+alloy = { version = "^2.2", features = ["full", "transport-throttle"] }
 # Path dependency enables the `pyo3` feature so `From<Error> for PyErr`
 # conversions from core are available at this binding layer.
 degenbot-rpc = { path = "../degenbot-rpc", optional = true }
@@ -55,7 +55,7 @@ degenbot-fork = { path = "../degenbot-fork", optional = true }
 degenbot-pool-updater = { path = "../degenbot-pool-updater", optional = true }
 degenbot-aave = { path = "../degenbot-aave", optional = true }
 degenbot-core = { path = "../degenbot-core", features = ["pyo3"] }
-dashmap = { version = "^6.1" }
+dashmap = { version = "^6.2" }
 futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
 log = { version = "^0.4" }
 lru = { version = "^0.18" }
@@ -67,7 +67,7 @@ rand = { version = "^0.10" }
 serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }
 thiserror = { version = "^2.0" }
-tokio = { version = "^1.52", features = ["rt-multi-thread", "time", "macros", "sync"] }
+tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "macros", "sync"] }
 
 [features]
 # Per-domain binding-layer features (ergo UG6FKN task UKDOUR). Each gates its optional
@@ -103,7 +103,7 @@ async = []
 
 [dev-dependencies]
 ctor = "^1"
-proptest = "^1.10"
+proptest = "^1.11"
 # Enable test-only constructors (e.g. `AlloyProvider::from_provider`) for
 # the root crate's tests. Production builds pull degenbot-rpc without this
 # feature.

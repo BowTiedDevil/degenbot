@@ -28,11 +28,11 @@ suspicious = "warn"
 # owner-funding uses explicit `CacheDB::insert_account_info` (the owner is
 # genuinely credited), keeping the sim a faithful mainnet execution (no
 # balance-check bypass).
-revm = { version = "41.0.0", default-features = true, features = ["alloydb", "asyncdb"] }
+revm = { version = "42.0.1", default-features = true, features = ["alloydb", "asyncdb"] }
 # The alloy umbrella (single source, matches degenbot-rpc's convention). The
 # umbrella's `DynProvider`/`Provider`/`Ethereum` are the same types revm's
 # `AlloyDB<N, P>` consumes. `full` brings the RPC types + provider-http.
-alloy = { version = "^2.0", features = ["full"] }
+alloy = { version = "^2.2", features = ["full"] }
 degenbot-core = { path = "../degenbot-core" }
 # `WarmupSlots` + `compute_simulation_warmup_slots` + `mapping_slot` + the
 # `encode_cmd_stream`/`PathInfo`/`HopInfo`/`EncodeOptions` types the sim
@@ -63,14 +63,14 @@ parking_lot = "^0.12"
 # current-thread tokio handle). The fan-out/categorization policy + its
 # `buffer_unordered`/`Semaphore` concurrency retired with the strategy
 # relocation to `degenbot-backrun-strategy` (ADR-019 D4/D7).
-tokio = { version = "^1.52", features = ["rt"] }
+tokio = { version = "^1.53", features = ["rt"] }
 
 [dev-dependencies]
 serde_json = { version = "^1.0" }
 # `examples/rpc_cache_fanout.rs` uses `#[tokio::main(flavor = "multi_thread")]`
 # — `WrapDatabaseAsync<AlloyDB>` blocks on the ambient tokio runtime, which
 # requires a multi-thread runtime (`CurrentThread` returns `None`).
-tokio = { version = "^1.52", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "^1.53", features = ["macros", "rt-multi-thread"] }
 # `test-utils` gates `AlloyProvider::from_provider` (the mock-transport
 # constructor) so the §4.2 wire-shape tests + the parity fixture can drive the
 # typed dispatch without a live RPC. Production builds (the umbrella, the

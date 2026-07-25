@@ -20,11 +20,11 @@ style = "warn"
 suspicious = "warn"
 
 [dependencies]
-alloy = { version = "^2.0" }
+alloy = { version = "^2.2" }
 
 [dev-dependencies]
-proptest = "^1.10"
-criterion = { version = "^0.5", default-features = false, features = ["cargo_bench_support"] }
+proptest = "^1.11"
+criterion = { version = "^0.8", default-features = false, features = ["cargo_bench_support"] }
 
 
 [[bench]]

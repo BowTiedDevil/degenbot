@@ -20,10 +20,10 @@ style = "warn"
 suspicious = "warn"
 
 [dependencies]
-alloy = { version = "^2.0" }
+alloy = { version = "^2.2" }
 log = { version = "^0.4" }
 thiserror = { version = "^2.0" }
-tokio = { version = "^1.52", features = ["rt-multi-thread"] }
+tokio = { version = "^1.53", features = ["rt-multi-thread"] }
 
 # Optional: enables `From<*> for PyErr` conversions in `errors`.
 # Gated (not default) so pure-Rust consumers build without pulling pyo3.
@@ -37,4 +37,4 @@ default = []
 pyo3 = ["dep:pyo3"]
 
 [dev-dependencies]
-proptest = "^1.10"
+proptest = "^1.11"

@@ -24,10 +24,10 @@ suspicious = "warn"
 # (v2.1.1) includes `provider-ipc` + `provider-anvil-api` but NOT
 # `node-bindings`. Without it, `alloy::node_bindings::Anvil` is unresolved
 # (cfg-gated re-export in alloy/src/lib.rs). Verified by the IPC spike.
-alloy = { version = "^2.0", features = ["full", "node-bindings", "transport-throttle"] }
+alloy = { version = "^2.2", features = ["full", "node-bindings", "transport-throttle"] }
 degenbot-core = { path = "../degenbot-core" }
 thiserror = { version = "^2.0" }
-tokio = { version = "^1.52", features = ["rt-multi-thread", "time", "macros", "sync"] }
+tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "macros", "sync"] }
 
 [features]
 default = []
