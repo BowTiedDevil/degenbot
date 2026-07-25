@@ -96,6 +96,22 @@ pub struct CallTrace {
 }
 
 impl CallTrace {
+    /// The deepest non-`Success` frame in the trace (Revert OR Halt) — the
+    /// frame that caused the top-level failure. Covers both the `Revert`
+    /// case (`call_end` with revert data) and the `Halt` case (e.g. `0xfe`
+    /// INVALID, OOG) — a `Halt` has no revert data, so `reverting_frame_label`
+    /// (`Revert`-only) returns `None` for it; this method returns the halting
+    /// frame so the strategy can attribute it (the bucket label for a Halt
+    /// is `classify_revert` on empty bytes → the `"empty"` bucket, parity
+    /// with the pre-inspector behavior).
+    #[must_use]
+    pub fn failing_frame(&self) -> Option<&CallFrame> {
+        self.frames
+            .iter()
+            .rev()
+            .find(|f| !matches!(f.outcome, Some(FrameOutcome::Success { .. }) | None))
+    }
+
     /// The deepest `Revert` frame in the trace — the frame that caused the
     /// top-level revert (or `None` if no frame reverted). This is the
     /// *attribution* seam: the reverting target + selector + revert data.

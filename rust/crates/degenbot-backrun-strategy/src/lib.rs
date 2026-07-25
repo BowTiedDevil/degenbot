@@ -60,7 +60,8 @@ pub use dispatch::{
 };
 pub use simulator::{
     compute_priority_fee, fits_int128, simulate_in_process_with_db, simulate_path_on_evm,
-    FailBuckets, SimFailure, SimResult, SimulateContext, SimulatePath, AGE_DECAY_CONSTANT,
-    BALANCE_CALL_GAS_LIMIT, EXECUTE_CONFIG, GAS_SAFETY_MARGIN, INITIAL_EXECUTE_GAS, INT128_MAX,
-    INT128_MIN, MAX_PRIORITY_FEE_PERCENTILE, MIN_PRIORITY_FEE_PERCENTILE, TARGET_PROFIT_RATIO,
+    FailBuckets, RevertingFrame, SimFailure, SimResult, SimulateContext, SimulatePath,
+    AGE_DECAY_CONSTANT, BALANCE_CALL_GAS_LIMIT, EXECUTE_CONFIG, GAS_SAFETY_MARGIN,
+    INITIAL_EXECUTE_GAS, INT128_MAX, INT128_MIN, MAX_PRIORITY_FEE_PERCENTILE,
+    MIN_PRIORITY_FEE_PERCENTILE, TARGET_PROFIT_RATIO,
 };

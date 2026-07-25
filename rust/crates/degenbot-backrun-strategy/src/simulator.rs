@@ -176,13 +176,21 @@ impl SimResult {
 /// tally when a path fails simulation, surfaced as `DispatchOutcome::failures`
 /// so the Python driver can render a per-candidate `[sim-fail]` line
 /// (path_id + bucket label + the failing call's index in the 7-call vector +
-/// the raw revert data bytes).
+/// the raw revert data bytes + the inspector-captured reverting-frame
+/// attribution when available).
 ///
 /// `fail_index` is `Some(idx)` for failures attributable to a specific
 /// simulated call — the revert branch (`result.first_failure`) AND the
 /// balance-decode branch (the malformed word's call index). It is `None` for
 /// orchestration-only buckets (`int128-overflow`, `encode-failed`,
 /// `rpc-failed`, `no-profit`) where no single call failed.
+///
+/// `reverting_frame` is `Some` only for `execute()` reverts where the
+/// `CallTraceInspector` (attached at call [3]) captured the failing frame —
+/// it carries the DEEP attribution (depth, target, selector, revert data,
+/// `classify_revert` label) of the frame that actually reverted, rather than
+/// the top-level bubble. `None` for orchestration-only buckets + the
+/// balance-decode branch (no `inspect_one` ran on the failing call).
 #[derive(Debug, Clone)]
 pub struct SimFailure {
     /// The path id (mirror of `SimulatePath::path_id`).
@@ -192,10 +200,41 @@ pub struct SimFailure {
     pub bucket: String,
     /// The index of the failing call in the 7-call vector, if any.
     pub fail_index: Option<usize>,
-    /// The raw revert data bytes (the 4-byte selector + ABI-encoded args).
-    /// Empty for orchestration-only buckets + the balance-decode branch
-    /// (where the call succeeded but its returnData wasn't a uint256).
+    /// The raw revert data bytes (the 4-byte selector + ABI-encoded args) —
+    /// the TOP-LEVEL revert bubble's data. Empty for orchestration-only
+    /// buckets + the balance-decode branch. For `execute()` reverts this is
+    /// the same bytes as [`RevertingFrame::revert_data`] (the reverting
+    /// frame's depth + target are the new attribution; this field is kept for
+    /// the Python `[sim-fail]` column-stability contract).
     pub revert_data: alloy::primitives::Bytes,
+    /// The inspector-captured reverting-frame attribution — `Some` only for
+    /// `execute()` reverts where call [3]'s `inspect_one` ran the
+    /// `CallTraceInspector`. `None` for orchestration-only buckets + the
+    /// balance-decode branch. Ergo epic 63I7WJ task 3AJ4I4.
+    pub reverting_frame: Option<RevertingFrame>,
+}
+
+/// The inspector-captured attribution of a failing `execute()` frame — the
+/// depth, target, selector, revert data, + `classify_revert` label of the
+/// deepest non-`Success` frame the `CallTraceInspector` saw during call [3]'s
+/// `inspect_one` run. Replaces the top-level-only `fail_index` + revert-bubble
+/// data with the frame that actually reverted (or halted).
+///
+/// For a `Halt` (e.g. `0xfe` INVALID, OOG), `revert_data` is empty + `label`
+/// is `classify_revert` on empty bytes (the `"empty"` bucket) — parity with
+/// the pre-inspector behavior, now attributed to the halting frame's target.
+#[derive(Debug, Clone)]
+pub struct RevertingFrame {
+    /// The call-stack depth (1 = top-level `execute()`, 2 = first sub-call, …).
+    pub depth: usize,
+    /// The reverting/halting contract's address.
+    pub target: alloy::primitives::Address,
+    /// The first 4 bytes of the call's calldata (the Solidity selector).
+    pub selector: [u8; 4],
+    /// The reverting frame's revert data (`0x` for a `Halt`).
+    pub revert_data: alloy::primitives::Bytes,
+    /// The `classify_revert` label run on `revert_data`.
+    pub label: String,
 }
 
 /// A revert-bucket tally accumulator (ports `_tally_fail`, L1769–L1771).
@@ -253,6 +292,28 @@ impl FailBuckets {
             bucket: bucket.to_string(),
             fail_index,
             revert_data,
+            reverting_frame: None,
+        });
+    }
+
+    /// Record a per-path `execute()` revert WITH the inspector-captured
+    /// reverting-frame attribution. Like [`record`](Self::record) but populates
+    /// [`SimFailure::reverting_frame`] — the deep (depth/target/selector/
+    /// revert-data/label) attribution of the frame that actually reverted.
+    pub fn record_revert(
+        &mut self,
+        path_id: u64,
+        bucket: &str,
+        fail_index: Option<usize>,
+        reverting_frame: RevertingFrame,
+    ) {
+        self.tally(bucket);
+        self.failures.push(SimFailure {
+            path_id,
+            bucket: bucket.to_string(),
+            fail_index,
+            revert_data: reverting_frame.revert_data.clone(),
+            reverting_frame: Some(reverting_frame),
         });
     }
 
@@ -794,6 +855,14 @@ where
     // access_list field stays None).
     let _state = evm.finalize();
 
+    // Drain the inspector buffers (call trace + captured swaps) ONCE here so
+    // both the revert branch (below) + the success branch (profit path) have
+    // the captured data, AND the buffers are reset for the next path on the
+    // shared per-block `&mut evm`. The `AccessListCollector` is drained only
+    // on the success path (its AL is meaningful for profitable paths only).
+    let captured_call_trace = call_trace_handle.take_trace();
+    let _captured_swaps = swap_events_handle.take_swaps();
+
     // Classify + tally the first revert if any call failed.
     if let Some(fail_idx) = first_failure {
         let revert_data = results[fail_idx]
@@ -802,7 +871,38 @@ where
             .filter(|b| !b.is_empty())
             .unwrap_or_default();
         let bucket = degenbot_decoders::revert::classify_revert(&revert_data);
-        fail_buckets.record(path.path_id, &bucket, Some(fail_idx), revert_data);
+        // Ergo epic 63I7WJ task 3AJ4I4 — attribute the revert to the DEEPEST
+        // failing frame the `CallTraceInspector` captured during execute()
+        // call [3]'s `inspect_one`, rather than the top-level bubble. The
+        // inspector ran only at call [3], so this is `Some` only when
+        // `fail_idx == 3` (the execute() call) AND a failing frame was captured.
+        // Otherwise (balance-decode at a non-[3] call, or no frame captured)
+        // fall back to the plain `record` (top-level revert data, no deep
+        // attribution).
+        if let Some(frame) = captured_call_trace.failing_frame() {
+            let frame_revert_data = match &frame.outcome {
+                Some(degenbot_simulation::FrameOutcome::Revert { data, .. }) => data.clone(),
+                _ => alloy::primitives::Bytes::new(),
+            };
+            let frame_label = degenbot_decoders::revert::classify_revert(&frame_revert_data);
+            // `frame_label` moves into `RevertingFrame`; clone for the bucket
+            // arg (record_revert borrows `bucket: &str` + moves the frame).
+            let bucket_label = frame_label.clone();
+            fail_buckets.record_revert(
+                path.path_id,
+                &bucket_label,
+                Some(fail_idx),
+                RevertingFrame {
+                    depth: frame.depth,
+                    target: frame.target,
+                    selector: frame.selector,
+                    revert_data: frame_revert_data,
+                    label: frame_label,
+                },
+            );
+        } else {
+            fail_buckets.record(path.path_id, &bucket, Some(fail_idx), revert_data);
+        }
         return Ok(None);
     }
 
@@ -909,8 +1009,8 @@ where
     // (emitting from a `State` journal); it is just no longer the production
     // AL path.
     let access_list = access_list_handle.take_access_list();
-    let _captured_call_trace = call_trace_handle.take_trace();
-    let _captured_swaps = swap_events_handle.take_swaps();
+    // The call trace + captured swaps were drained right after `finalize`
+    // (before the revert branch) so both branches have them.
 
     Ok(Some(SimResult {
         path_id: path.path_id,
@@ -1221,6 +1321,90 @@ mod tests {
             failures[0].fail_index,
             Some(3),
             "the execute() call [3] failed"
+        );
+        // Ergo epic 63I7WJ task 3AJ4I4 — the `CallTraceInspector` captured the
+        // halting frame's attribution. The 0xfe INVALID is a Halt (not a
+        // Revert), so the reverting frame's revert_data is empty + label is
+        // `classify_revert` on empty bytes (the "empty" bucket label). The
+        // target is the executor + depth 1 (the top-level execute() call).
+        let rf = failures[0]
+            .reverting_frame
+            .as_ref()
+            .expect("the Halt frame is attributed via the call trace");
+        assert_eq!(rf.depth, 1, "the halting frame is the top-level execute()");
+        assert_eq!(rf.target, SMOKE_EXECUTOR, "the executor reverted");
+        assert_eq!(
+            rf.label, "empty",
+            "Halt => empty revert_data => empty label"
+        );
+        assert!(rf.revert_data.is_empty(), "a Halt carries no revert data");
+    }
+
+    /// The exerciser: executor injected as bytecode that REVERTs with a 4-byte
+    /// selector `0xcafebabe` (`PUSH4 0xcafebabe; MSTORE; REVERT(28,4)` roots
+    /// the revert data at mem[28..32]). `classify_revert("cafebabe")` → the
+    /// `unknown:0xcafebabe` bucket. The `CallTraceInspector` (attached at
+    /// execute() call [3]) captures the reverting frame — ergo epic 63I7WJ
+    /// task 3AJ4I4. Proves the deep attribution surfaces the reverting
+    /// CONTRACT + the revert DATA + the label, not just the top-level bubble.
+    #[test]
+    fn simulate_in_process_with_db_revert_with_data_attributes_reverting_frame() {
+        let asserter = Asserter::new();
+        let provider = smoke_provider(&asserter);
+        let mut ctx = smoke_ctx(&provider);
+        // REVERT with 0xcafebabe (4 bytes) — classify_revert → "unknown:0xcafebabe".
+        ctx.runtime_bytecode = Bytes::from_static(&[
+            0x63, 0xca, 0xfe, 0xba, 0xbe, // PUSH4 0xcafebabe
+            0x60, 0x00, // PUSH1 0x00
+            0x52, // MSTORE — mem[0..32] = 0x00..00cafebabe (bytes 28..31)
+            0x60, 0x04, // PUSH1 0x04 (len)
+            0x60, 0x1c, // PUSH1 0x1c (offset=28)
+            0xfd, // REVERT — returns mem[28..32] = 0xcafebabe
+        ]);
+        let mut cache_db: CacheDB<EmptyDB> = CacheDB::new(EmptyDB::default());
+        degenbot_simulation::apply_simulation_overrides(&mut cache_db, &ctx.override_params())
+            .expect("overrides apply over EmptyDB");
+        let mut buckets = FailBuckets::new();
+
+        let path = smoke_v2_path(42);
+        let result = simulate_in_process_with_db(&ctx, cache_db, &path, &mut buckets).unwrap();
+        assert!(result.is_none(), "reverting execute returns None");
+        assert_eq!(
+            buckets.get("unknown:0xcafebabe"),
+            1,
+            "the custom-selector revert bucket tallies"
+        );
+        let failures = buckets.failures();
+        assert_eq!(failures.len(), 1, "one per-path failure recorded");
+        assert_eq!(failures[0].path_id, 42);
+        assert_eq!(
+            failures[0].fail_index,
+            Some(3),
+            "execute() call [3] reverted"
+        );
+        // The reverting-frame attribution — the DEEP capture.
+        let rf = failures[0]
+            .reverting_frame
+            .as_ref()
+            .expect("the reverting frame is captured by the CallTraceInspector");
+        assert_eq!(
+            rf.depth, 1,
+            "the revert is at the top-level execute() frame"
+        );
+        assert_eq!(rf.target, SMOKE_EXECUTOR, "the executor reverted");
+        assert_eq!(
+            rf.label, "unknown:0xcafebabe",
+            "classify_revert on the frame's data"
+        );
+        assert_eq!(
+            rf.revert_data.as_ref(),
+            &[0xca, 0xfe, 0xba, 0xbe],
+            "the frame's revert data is the 4-byte selector"
+        );
+        assert_eq!(
+            failures[0].revert_data.as_ref(),
+            &[0xca, 0xfe, 0xba, 0xbe],
+            "the top-level revert_data matches the frame's (same bytes)"
         );
     }
 

@@ -164,6 +164,11 @@ impl PyDispatchOutcome {
     ///     balance-decode branch); `None` for orchestration-only buckets,
     ///   - `revert_data` (`str`) — the raw revert bytes as `0x`-prefixed hex;
     ///     `"0x"` (empty) for orchestration-only buckets.
+    ///   - `reverting_frame` (`dict | None`) — the inspector-captured deep
+    ///     attribution for `execute()` reverts: `depth` (`int`), `target`
+    ///     (`str` address), `selector` (`str` 4-byte hex), `revert_data`
+    ///     (`str` hex), `label` (`str`). `None` for orchestration-only buckets
+    ///     + the balance-decode branch (ergo epic 63I7WJ task 3AJ4I4).
     ///
     /// Consumed by the Python companion's `[sim-fail]` renderer so the
     /// operator can identify WHICH path reverted against WHICH pools.
@@ -182,6 +187,21 @@ impl PyDispatchOutcome {
             }
             let hex_str = encode_hex(&f.revert_data);
             dict.set_item("revert_data", hex_str)?;
+            match &f.reverting_frame {
+                Some(rf) => {
+                    let rdict = PyDict::new(py);
+                    rdict.set_item("depth", rf.depth)?;
+                    rdict.set_item("target", format!("{:#x}", rf.target))?;
+                    rdict.set_item(
+                        "selector",
+                        format!("0x{}", alloy::primitives::hex::encode(rf.selector)),
+                    )?;
+                    rdict.set_item("revert_data", encode_hex(&rf.revert_data))?;
+                    rdict.set_item("label", &rf.label)?;
+                    dict.set_item("reverting_frame", rdict)?;
+                }
+                None => dict.set_item("reverting_frame", py.None())?,
+            }
             list.append(dict)?;
         }
         Ok(list)
