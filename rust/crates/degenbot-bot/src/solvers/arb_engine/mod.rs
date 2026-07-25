@@ -62,7 +62,9 @@ mod solver_dispatch;
 #[cfg(test)]
 mod tests;
 
-pub use diagnostic::{DiagnosticHop, DiagnosticPathState, DiagnosticPoolState};
+pub use diagnostic::{
+    compute_field_diffs, DiagnosticHop, DiagnosticPathState, DiagnosticPoolState, FieldDiff,
+};
 
 // ---------------------------------------------------------------------------
 // Constants

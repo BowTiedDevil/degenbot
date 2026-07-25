@@ -203,13 +203,18 @@ impl PyArbitrageEngine {
     /// Snapshot the engine-owned state for every hop in a registered path.
     ///
     /// This is a diagnostic helper for investigating simulation failures.
-    /// Engine state is captured while the engine lock is held; the lock is
-    /// released before any RPC calls. The `rpc_url` argument is accepted for
-    /// forward compatibility with on-chain comparison (Slice 3) but is
-    /// currently ignored.
+    /// Snapshots the engine-owned pool state for every hop in `path_id` (no
+    /// RPC calls — pure engine-state read under the engine lock).
+    ///
+    /// `rpc_url` is accepted for forward compatibility but currently ignored;
+    /// the on-chain recompute half (`fetch_onchain`) was retired when
+    /// `[sim-diag]` moved onto the inspector's captured swaps (ergo 63I7WJ /
+    /// task AM5AJW): captured swaps ARE byte-exact ground truth (proven via
+    /// the `swap_capture_correctness` mainnet probe), so no onchain re-fetch
+    /// is needed to classify a revert.
     ///
     /// Returns a Python `dict` containing `path_id`, `path_type`, `solve_block`,
-    /// and a `hops` list with per-hop engine state.
+    /// `engine_processed_block`, and a `hops` list with per-hop engine state.
     ///
     /// Raises `KeyError` if `path_id` is not registered.
     #[allow(clippy::needless_pass_by_value)]
@@ -220,41 +225,18 @@ impl PyArbitrageEngine {
         path_id: u64,
         rpc_url: Option<String>,
     ) -> PyResult<pyo3::Py<pyo3::PyAny>> {
-        // 1. Snapshot engine-owned state under the lock.
+        let _ = rpc_url; // retained for API stability; onchain fetch retired (AM5AJW).
         let engine = self.engine.lock();
         let snapshot = engine.diagnostic_path_state(path_id);
         drop(engine);
 
-        let Some(mut snapshot) = snapshot else {
+        let Some(snapshot) = snapshot else {
             return Err(pyo3::exceptions::PyKeyError::new_err(format!(
                 "path_id {path_id} is not registered"
             )));
         };
 
-        // 2. Optionally fetch on-chain state and compute diffs.
-        let rpc_url = rpc_url.or_else(|| self.pump.verify_rpc_url.lock().clone());
-        if let Some(rpc_url) = rpc_url {
-            let runtime = degenbot_core::runtime::get_runtime();
-            let state_view = *self.pump.verify_state_view.lock();
-
-            match runtime.block_on(degenbot_rpc::provider::AlloyProvider::new(&rpc_url, 3)) {
-                Ok(provider) => {
-                    if let Err(e) = runtime.block_on(snapshot.fetch_onchain(&provider, state_view))
-                    {
-                        eprintln!(
-                            "[diagnostic_inspect_path] on-chain fetch failed for path {path_id}: {e}"
-                        );
-                    }
-                }
-                Err(e) => {
-                    eprintln!(
-                        "[diagnostic_inspect_path] failed to create provider for path {path_id}: {e}"
-                    );
-                }
-            }
-        }
-
-        // 3. Convert the snapshot to a Python dict via JSON round-trip.
+        // Convert the snapshot to a Python dict via JSON round-trip.
         let json = serde_json::to_string(&snapshot).map_err(|e| {
             pyo3::exceptions::PyRuntimeError::new_err(format!(
                 "diagnostic_inspect_path: serialization failed: {e}"

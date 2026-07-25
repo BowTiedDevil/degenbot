@@ -1,20 +1,38 @@
 //! Diagnostic state snapshots for the mixed Uniswap engine.
 //!
-//! This module provides a read-only view of the engine's current pool state
-//! for a registered path. It is intended for debugging simulation failures
-//! and comparing engine state against on-chain state. All access is
+//! Provides a read-only view of the engine's current pool state for a
+//! registered path. Intended for debugging simulation failures. All access is
 //! synchronous and does not mutate engine state.
+//!
+//! ## Retired: on-chain recompute + `fetch_onchain` (ergo epic 63I7WJ, task
+//! AM5AJW)
+//!
+//! The on-chain recompute half — `fetch_onchain`, the `recompute_v2/v3/v4_*`
+//! family, the Multicall3 batching + per-family `build_*`/`decode_*` calls,
+//! the hand-rolled ABI hex parsers, `HopRecompute`, and
+//! `DiagnosticHop::recompute` — was retired when `[sim-diag]` moved onto the
+//! revm inspector's **captured swaps**. Captured swaps ARE byte-exact ground
+//! truth (proven via the `swap_capture_correctness` mainnet probe, block
+//! 25612576 V2+V3 PASS), so no RPC re-fetch + offline recompute is needed to
+//! classify a revert. The classifier (`logs/permutation_analyzer.py::
+//! classify_candidate`) now compares each captured swap's output amount
+//! against the solver-reported `hop_outputs[i]`: `SolverCalc` = mismatch,
+//! Encoding = all match but sim reverted.
+//!
+//! Retained here: the pure typed field-diff utilities (`FieldDiff`,
+//! `compute_field_diffs`) + the engine-state-read half (`DiagnosticPoolState`,
+//! `DiagnosticHop`, `DiagnosticPathState`, `diagnostic_path_state`). The
+//! `DiagnosticHop` onchain-comparison fields (`onchain_state`, `diff`,
+//! `drift`, `field_drift`) stay on the struct (always default now — no fetch
+//! populates them) so the JSON shape + a future lightweight drift detector can
+//! repopulate them via `compute_field_diffs` without re-introducing the heavy
+//! Multicall3 recompute.
 
-use alloy::primitives::{Address, Bytes, I256, U256};
+use alloy::primitives::{Address, U256};
 use serde::{Deserialize, Serialize};
 
 use super::ArbitrageEngine;
 use ::degenbot_solvers::mixed::{HopType, MixedPoolRef};
-use degenbot_rpc::abi::{
-    decode_get_reserves, decode_get_slot0, decode_liquidity, decode_slot0, encode_get_liquidity,
-    encode_get_reserves, encode_get_slot0, encode_liquidity, encode_slot0,
-};
-use degenbot_rpc::multicall3::MulticallResult;
 
 /// A single typed field-level divergence between the engine's view of a pool
 /// and the on-chain snapshot (PCG2M3). The string rendering is the single
@@ -53,9 +71,9 @@ fn is_false(b: &bool) -> bool {
 }
 
 /// Compute typed field-level differences between engine and on-chain pool
-/// state (PCG2M3). Pure — no RPC. The single source of truth for `diff`:
-/// `fetch_onchain` calls this and derives the `Vec<String>` `diff` lines via
-/// `FieldDiff::to_diff_string`, so the two never drift.
+/// state (PCG2M3). Pure — no RPC. Single source of truth for `diff`: a future
+/// lightweight drift detector calls this and derives `DiagnosticHop::diff`
+/// lines via `FieldDiff::to_diff_string`, so the two never drift.
 ///
 /// Fields compared per family:
 /// - V2: `reserve_in`, `reserve_out`
@@ -140,401 +158,6 @@ pub fn compute_field_diffs(
     diffs
 }
 
-/// Recompute a V2 hop's output from its diagnostic state + `amount_in`
-/// (NL2YY3). Reuses `IntHopState::swap` (now in `degenbot-v2-math`) — no parallel
-/// math — so a recompute that agrees with `solver_out` confirms the
-/// reserves/fee the solver saw + the canonical `getAmountOut`, independent of
-/// the solver's path construction. The `DiagnosticPoolState::V2` reserves are
-/// already direction-normalized (`reserve_in` / `reserve_out` relative to the
-/// path direction), and `fee_denom` / `gamma_numer` are hex strings.
-///
-/// Returns `U256::ZERO` on a parse failure or degenerate reserves (matching
-/// the `IntHopState::swap` divide-by-zero semantics).
-#[must_use]
-pub fn recompute_v2_amount_out(state: &DiagnosticPoolState, amount_in: U256) -> U256 {
-    let DiagnosticPoolState::V2 {
-        reserve_in,
-        reserve_out,
-        fee_denom,
-        gamma_numer,
-        ..
-    } = state
-    else {
-        return U256::ZERO;
-    };
-    let Some(ri) = parse_hex_u256(reserve_in) else {
-        return U256::ZERO;
-    };
-    let Some(ro) = parse_hex_u256(reserve_out) else {
-        return U256::ZERO;
-    };
-    let (Some(fee_denom), Some(gamma_numer)) =
-        (parse_hex_u64(fee_denom), parse_hex_u64(gamma_numer))
-    else {
-        return U256::ZERO;
-    };
-    degenbot_v2_math::IntHopState::new(ri, ro, gamma_numer, fee_denom)
-        .swap(amount_in)
-        .unwrap_or(U256::ZERO)
-}
-
-/// Recompute a V3 hop's output from its engine `V3PoolState` + `amount_in`
-/// (ADR-008 D2 / T1). Calls `v3_simulate_swap` — an INDEPENDENT implementation
-/// from the solver's `int_simulate_v3_swap` (U512 reimpl) — so agreement with
-/// `solver_out` confirms the solver's math is consistent given its (possibly
-/// stale) engine state. The discriminant for drift attribution: if
-/// `matches_solver == true`, the revert is pure drift (engine was right given
-/// its state; the chain moved). Returns `None` if the simulate fails (sparse
-/// tick-map miss, pathological input, etc.).
-#[must_use]
-pub fn recompute_v3_amount_out(
-    state: &crate::bot_core::V3PoolState,
-    fee: u32,
-    tick_spacing: i32,
-    zero_for_one: bool,
-    amount_in: U256,
-) -> Option<U256> {
-    // V3: amount_specified > 0 = exact INPUT.
-    let amount_specified = I256::try_from(amount_in).ok()?;
-    let limit = crate::bot_core::V3PoolState::default_sqrt_price_limit(zero_for_one);
-    let outcome = crate::bot_core::v3_simulate_swap(
-        state,
-        fee,
-        tick_spacing,
-        zero_for_one,
-        amount_specified,
-        limit,
-    )
-    .ok()?;
-    // zfo: amount0 in, amount1 out. ofz: amount1 in, amount0 out.
-    Some(if zero_for_one {
-        outcome.amount1
-    } else {
-        outcome.amount0
-    })
-}
-
-/// Recompute a V4 hop's output from its engine `V4PoolState` + `amount_in`
-/// (ADR-008 D2 / T1). Calls `v4_simulate_swap` — independent of the solver's
-/// `int_simulate_v4_swap`. Same discriminant as `recompute_v3_amount_out`.
-#[must_use]
-pub fn recompute_v4_amount_out(
-    state: &crate::bot_core::V4PoolState,
-    fee: u32,
-    tick_spacing: i32,
-    zero_for_one: bool,
-    amount_in: U256,
-) -> Option<U256> {
-    // V4 sign convention (opposite to V3): `amount_specified` < 0 = exact INPUT.
-    let amount_specified = I256::try_from(amount_in).ok()?.saturating_neg();
-    let limit = crate::bot_core::V3PoolState::default_sqrt_price_limit(zero_for_one);
-    let outcome = crate::bot_core::v4_simulate_swap(
-        state,
-        fee,
-        tick_spacing,
-        zero_for_one,
-        amount_specified,
-        limit,
-    )
-    .ok()?;
-    Some(if zero_for_one {
-        outcome.amount1
-    } else {
-        outcome.amount0
-    })
-}
-
-/// Recompute a V3/V4 hop's output from its ON-CHAIN scalar state via a bounded
-/// single-step `compute_swap_step_v3` (T1 / GTOD23-XNWWA3). **Best-effort.**
-///
-/// V3/V4 initialized ticks exist only at multiples of `tick_spacing`, so
-/// liquidity is constant within any one grid step `[tick, tick ± tick_spacing)`.
-/// A swap that exhausts its input before reaching the nearest grid boundary
-/// therefore crosses NO initialized tick — the single-step `compute_swap_step`
-/// against the onchain `slot0` + `liquidity` is EXACT (no tick map needed).
-/// This covers the thin-arb majority S1 identified (`amount_in`/`liquidity` ≤ 1e-4).
-///
-/// Returns `None` (the best-effort limit) when the swap WOULD reach the grid
-/// boundary — that case genuinely needs the full onchain tick map (a heavy
-/// multi-RPC fetch the diagnostic path does not perform) to walk the
-/// liquidity steps past the boundary. The caller surfaces this as
-/// `expected_out_onchain: None` with a clear reason: the single-step reached
-/// the tick-grid boundary and the full tick-map fetch is deferred.
-#[must_use]
-fn recompute_cl_amount_out_onchain(
-    onchain: &DiagnosticPoolState,
-    zero_for_one: bool,
-    amount_in: U256,
-) -> Option<U256> {
-    let (sqrt_price_current, tick, liquidity, tick_spacing, fee) = match onchain {
-        DiagnosticPoolState::V3 {
-            sqrt_price_x96,
-            tick,
-            liquidity,
-            tick_spacing,
-            fee,
-            ..
-        }
-        | DiagnosticPoolState::V4 {
-            sqrt_price_x96,
-            tick,
-            liquidity,
-            tick_spacing,
-            fee,
-            ..
-        } => {
-            let sp = parse_hex_u256(sqrt_price_x96)?;
-            let liq: i128 = parse_hex_u128(liquidity)?.try_into().ok()?;
-            (sp, *tick, liq, *tick_spacing, U256::from(*fee))
-        }
-        DiagnosticPoolState::V2 { .. } => return None,
-    };
-    // Nearest grid boundary in the swap direction. V3/V4 ticks are only
-    // initialized at multiples of tick_spacing, so this is the closest point
-    // at which liquidity COULD change. Clamp to the protocol MIN/MAX tick.
-    let boundary_tick = if zero_for_one {
-        tick.saturating_sub(tick_spacing)
-            .max(degenbot_cl_math::cl_lib::tick_math::MIN_TICK)
-    } else {
-        tick.saturating_add(tick_spacing)
-            .min(degenbot_cl_math::cl_lib::tick_math::MAX_TICK)
-    };
-    let sqrt_price_target =
-        degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(boundary_tick).ok()?;
-    let sqrt_price_target = U256::from(sqrt_price_target);
-    // V3 conventions: amount_specified > 0 = exact input. `compute_swap_step_v3`
-    // is the shared V3/V4 single-step primitive (V4 sign is handled by the
-    // caller of v4_simulate_swap; here we recompute an exact-in step directly).
-    let amount_specified = I256::try_from(amount_in).ok()?;
-    let step = degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v3(
-        sqrt_price_current,
-        sqrt_price_target,
-        liquidity,
-        amount_specified,
-        fee,
-    )
-    .ok()?;
-    // If the step reached the target price, the swap would cross the grid
-    // boundary — needs the full onchain tick map.
-    if step.sqrt_price_next == sqrt_price_target {
-        return None;
-    }
-    Some(step.amount_out)
-}
-
-/// Parse a `0x`-prefixed hex string into a `u128` (for onchain liquidity).
-fn parse_hex_u128(s: &str) -> Option<u128> {
-    let s = s.strip_prefix("0x").unwrap_or(s);
-    u128::from_str_radix(s, 16).ok()
-}
-
-/// Populate `hop.recompute` for a V2 hop from the solver-reported
-/// `amount_in` (the hop's consumed input) + `solver_out` (the hop's reported
-/// output) (NL2YY3). Recomputes against the engine state AND, when an on-chain
-/// fetch ran, the on-chain state. `matches_solver` compares the ONCHAIN
-/// recompute to `solver_out` — the drift detector for V2 (a genuine
-/// solver-calc-error detector: correct on-chain reserves + the canonical
-/// `getAmountOut` must agree with what the solver reported). With no on-chain
-/// state, `expected_out_onchain` and `matches_solver` stay `None` (cannot
-/// detect drift without the chain).
-///
-/// No-op for non-V2 hops.
-pub(crate) fn populate_v2_recompute(hop: &mut DiagnosticHop, amount_in: U256, solver_out: U256) {
-    if !matches!(hop.engine_state, DiagnosticPoolState::V2 { .. }) {
-        return;
-    }
-    let expected_out_engine = recompute_v2_amount_out(&hop.engine_state, amount_in);
-    let (expected_out_onchain, matches_solver) = match &hop.onchain_state {
-        Some(oc) => {
-            let onchain_recompute = recompute_v2_amount_out(oc, amount_in);
-            (
-                Some(onchain_recompute),
-                Some(onchain_recompute == solver_out),
-            )
-        }
-        None => (None, None),
-    };
-    hop.recompute = Some(HopRecompute {
-        amount_in: u256_to_hex(amount_in),
-        solver_out: u256_to_hex(solver_out),
-        expected_out_engine: Some(u256_to_hex(expected_out_engine)),
-        expected_out_onchain: expected_out_onchain.map(u256_to_hex),
-        matches_solver,
-    });
-}
-
-/// After `fetch_onchain` set on-chain state, refresh a V2 hop's existing
-/// `recompute` so `expected_out_onchain` + `matches_solver` reflect the chain
-/// (NL2YY3). Leaves the engine-side recompute untouched — only the
-/// on-chain-derived fields are rewritten — so a fetch never clobbers the
-/// engine comparison. No-op when the hop has no `recompute` (no solve result
-/// was threaded) or no on-chain state.
-pub(crate) fn refresh_v2_recompute_onchain(hop: &mut DiagnosticHop) {
-    let Some(recompute) = hop.recompute.as_mut() else {
-        return;
-    };
-    let Some(onchain) = &hop.onchain_state else {
-        return;
-    };
-    // V2-only: `recompute_v2_amount_out` is only meaningful for a V2 on-chain
-    // state (it returns U256::ZERO for any other family, which would clobber a
-    // V3/V4 hop's deferred-None on-chain fields with a spurious 0x0 /
-    // matches_solver=False). V3/V4 on-chain recompute is deferred — see
-    // [`populate_v3v4_recompute_partial`] + the [`HopRecompute`] docs.
-    if !matches!(onchain, DiagnosticPoolState::V2 { .. }) {
-        return;
-    }
-    let Some(amount_in) = parse_hex_u256(&recompute.amount_in) else {
-        return;
-    };
-    let Some(solver_out) = parse_hex_u256(&recompute.solver_out) else {
-        return;
-    };
-    let onchain_recompute = recompute_v2_amount_out(onchain, amount_in);
-    recompute.expected_out_onchain = Some(u256_to_hex(onchain_recompute));
-    recompute.matches_solver = Some(onchain_recompute == solver_out);
-}
-
-/// After `fetch_onchain` set on-chain state, refresh a V3/V4 hop's existing
-/// `recompute` so `expected_out_onchain` (and `matches_solver`, when the engine
-/// recompute is absent) reflect the chain (T1 / GTOD23-XNWWA3). Uses the bounded
-/// single-step `compute_swap_step_v3` against the onchain scalar state. Leaves
-/// the engine-side recompute untouched — only the on-chain-derived field is
-/// rewritten — so a fetch never clobbers the engine comparison. No-op when the
-/// hop has no `recompute` (no solve result was threaded) or no on-chain state.
-pub(crate) fn refresh_v3v4_recompute_onchain(hop: &mut DiagnosticHop) {
-    let Some(recompute) = hop.recompute.as_mut() else {
-        return;
-    };
-    let Some(onchain) = &hop.onchain_state else {
-        return;
-    };
-    // V3/V4-only: the bounded single-step is only meaningful for a V3/V4
-    // on-chain state. V2 uses `refresh_v2_recompute_onchain`.
-    if matches!(onchain, DiagnosticPoolState::V2 { .. }) {
-        return;
-    }
-    let Some(amount_in) = parse_hex_u256(&recompute.amount_in) else {
-        return;
-    };
-    let Some(solver_out) = parse_hex_u256(&recompute.solver_out) else {
-        return;
-    };
-    let onchain_recompute = recompute_cl_amount_out_onchain(onchain, hop.zero_for_one, amount_in);
-    recompute.expected_out_onchain = onchain_recompute.map(u256_to_hex);
-    // Only re-derive `matches_solver` from the onchain recompute when the
-    // engine recompute is absent (engine remains the preferred basis).
-    if recompute.expected_out_engine.is_none() {
-        recompute.matches_solver = onchain_recompute.map(|o| o == solver_out);
-    }
-}
-
-/// Populate a FULL `recompute` for a V3/V4 hop (T1 / GTOD23-XNWWA3). Carries:
-/// - `expected_out_engine` (the independent `v3_simulate_swap`/`v4_simulate_swap`
-///   recompute against the engine's state, computed by the caller).
-/// - `expected_out_onchain` + `matches_solver` (the bounded single-step
-///   `compute_swap_step_v3` recompute against the ONCHAIN scalar state — best-
-///   effort, exact for non-crossing thin swaps; `None` when the swap reaches the
-///   tick-grid boundary and a full tick-map fetch would be needed).
-///
-/// `matches_solver == true` on the ENGINE recompute is the drift discriminant
-/// (engine math was right given its state → pure drift). The onchain recompute
-/// gives the secondary signal: how much the output actually moved onchain.
-/// No-op for V2 (V2 uses [`populate_v2_recompute`]).
-pub(crate) fn populate_v3v4_recompute_full(
-    hop: &mut DiagnosticHop,
-    amount_in: U256,
-    solver_out: U256,
-    expected_out_engine: Option<U256>,
-) {
-    if matches!(hop.engine_state, DiagnosticPoolState::V2 { .. }) {
-        return;
-    }
-    let expected_out_onchain = hop
-        .onchain_state
-        .as_ref()
-        .and_then(|oc| recompute_cl_amount_out_onchain(oc, hop.zero_for_one, amount_in));
-    // `matches_solver` keys off the ENGINE recompute (the drift discriminant:
-    // did the solver agree with an independent calc against the engine's
-    // own state?). Falls back to the onchain recompute only when the engine
-    // recompute is unavailable (e.g. sparse tick-map miss).
-    let matches_solver = match (expected_out_engine, expected_out_onchain) {
-        (eng, _) if eng.is_some() => eng.map(|e| e == solver_out),
-        (_, Some(_oc)) => expected_out_onchain.map(|o| o == solver_out),
-        _ => None,
-    };
-    hop.recompute = Some(HopRecompute {
-        amount_in: u256_to_hex(amount_in),
-        solver_out: u256_to_hex(solver_out),
-        expected_out_engine: expected_out_engine.map(u256_to_hex),
-        expected_out_onchain: expected_out_onchain.map(u256_to_hex),
-        matches_solver,
-    });
-}
-
-/// Parse a `0x`-prefixed hex string into a `U256` (NL2YY3: the recompute needs
-/// the engine/onchain reserve strings as `U256`).
-fn parse_hex_u256(s: &str) -> Option<U256> {
-    let s = s.strip_prefix("0x").unwrap_or(s);
-    U256::from_str_radix(s, 16).ok()
-}
-
-/// Parse a `0x`-prefixed hex string into a `u64` fee numerator.
-fn parse_hex_u64(s: &str) -> Option<u64> {
-    let s = s.strip_prefix("0x").unwrap_or(s);
-    u64::from_str_radix(s, 16).ok()
-}
-
-/// Engine-vs-onchain re-compute of a single hop's output (PCG2M3 schema; fields
-/// populated by the recompute tasks). All `None` until those tasks wire it.
-///
-/// ## V2 (NL2YY3)
-/// All fields populated: `expected_out_engine` (engine reserves + canonical
-/// `getAmountOut`), `expected_out_onchain` + `matches_solver` (onchain
-/// reserves, post-`fetch_onchain`). `matches_solver == false` is the
-/// solver-calc-error / drift detector for V2.
-///
-/// ## V3/V4 (4BKMKX + T1 / GTOD23-XNWWA3)
-/// `amount_in` + `solver_out` are populated (the solver's reported values).
-/// `expected_out_engine` + `matches_solver` are populated via the INDEPENDENT
-/// `v3_simulate_swap` / `v4_simulate_swap` (NOT the solver's
-/// `int_simulate_v3_swap` — a separate U512 reimplementation), so agreement
-/// confirms the solver's math was right given its (possibly stale) engine
-/// state. `matches_solver == true` is the drift discriminant: the revert is
-/// pure drift, not a solver-calc bug.
-///
-/// `expected_out_onchain` is best-effort: the bounded single-step
-/// `compute_swap_step_v3` against the onchain scalar `slot0`/`liquidity`
-/// (exact for non-crossing thin swaps; `None` when the swap reaches the
-/// tick-grid boundary — needs the full onchain tick map, a heavy RPC fetch the
-/// diagnostic path does not perform). The scalar [`DiagnosticHop::drift`] flag
-/// (PCG2M3) + the decoded revert reason remain the V3/V4 classification basis.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HopRecompute {
-    /// The hop's consumed input used as the re-compute basis.
-    pub amount_in: String,
-    /// The output the solver reported for this hop.
-    pub solver_out: String,
-    /// Re-computed output from the ENGINE state. V2: populated (canonical
-    /// `getAmountOut`). V3/V4: populated via the independent
-    /// `v3_simulate_swap`/`v4_simulate_swap` (T1); `None` only when the pool
-    /// state can't be looked up or the simulate fails (sparse tick-map miss).
-    pub expected_out_engine: Option<String>,
-    /// Re-computed output from the ONCHAIN state. V2: populated post-fetch
-    /// (canonical `getAmountOut` against onchain reserves). V3/V4: best-effort
-    /// populated via the bounded single-step `compute_swap_step_v3` against
-    /// the onchain scalar `slot0`/`liquidity` (T1) — exact for non-crossing
-    /// thin swaps (the majority); `None` when the swap reaches the tick-grid
-    /// boundary (needs the full onchain tick map — a heavy RPC fetch the
-    /// diagnostic path does not perform).
-    pub expected_out_onchain: Option<String>,
-    /// True iff the engine recompute agrees with `solver_out`. V2: populated
-    /// (onchain recompute vs `solver_out`). V3/V4: populated (engine recompute
-    /// vs `solver_out` — T1, the drift discriminant); `None` only when no
-    /// recompute basis is available at all.
-    pub matches_solver: Option<bool>,
-}
-
 /// A snapshot of a single pool's state, formatted for diagnostics.
 ///
 /// Numeric values are stored as hex strings so the output is
@@ -597,6 +220,11 @@ impl DiagnosticPoolState {
 }
 
 /// A single hop inside a diagnostic path snapshot.
+///
+/// The onchain-comparison fields (`onchain_state`, `diff`, `drift`,
+/// `field_drift`) are retained on the struct but stay at default (no fetch
+/// populates them) after the `fetch_onchain` retirement (AM5AJW). A future
+/// lightweight drift detector may repopulate them via `compute_field_diffs`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DiagnosticHop {
@@ -608,8 +236,9 @@ pub struct DiagnosticHop {
     pub zero_for_one: bool,
     /// Engine-owned state captured under the engine lock.
     pub engine_state: DiagnosticPoolState,
-    /// On-chain state fetched after the lock was released (`None` until
-    /// Slice 3 implements RPC comparison).
+    /// On-chain state fetched after the lock was released (`None` — the
+    /// `fetch_onchain` half was retired in AM5AJW; retained for a future
+    /// lightweight drift detector).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub onchain_state: Option<DiagnosticPoolState>,
     /// Human-readable field-level differences between engine and chain.
@@ -625,36 +254,6 @@ pub struct DiagnosticHop {
     /// derived from these (`FieldDiff::to_diff_string`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub field_drift: Vec<FieldDiff>,
-    /// Engine-vs-onchain hop-output recompute (PCG2M3 schema; populated by the
-    /// recompute tasks). `None` until a recompute runs.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub recompute: Option<HopRecompute>,
-}
-
-impl DiagnosticHop {
-    /// Apply an on-chain fetch outcome to this hop (PCG2M3). Single source of
-    /// truth: sets `onchain_state` + `field_drift` + `drift`, then DERIVES the
-    /// human-readable `diff` lines from `field_drift` (via
-    /// `FieldDiff::to_diff_string`) and appends any arbitrary `messages`
-    /// (fetch-skip notes / RPC error strings) verbatim. Callers must NEVER push
-    /// field-diff strings to `diff` directly — go through `field_drift` so the
-    /// typed view and the human view never drift.
-    pub(crate) fn apply_onchain_fetch(
-        &mut self,
-        onchain_state: Option<DiagnosticPoolState>,
-        field_drifts: Vec<FieldDiff>,
-        messages: Vec<String>,
-    ) {
-        self.onchain_state = onchain_state;
-        self.drift = !field_drifts.is_empty();
-        self.diff.extend(
-            field_drifts
-                .iter()
-                .map(FieldDiff::to_diff_string)
-                .chain(messages),
-        );
-        self.field_drift.extend(field_drifts);
-    }
 }
 
 impl Default for DiagnosticHop {
@@ -674,7 +273,6 @@ impl Default for DiagnosticHop {
             diff: Vec::new(),
             drift: false,
             field_drift: Vec::new(),
-            recompute: None,
         }
     }
 }
@@ -702,7 +300,7 @@ pub struct DiagnosticPathState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engine_processed_block: Option<u64>,
     /// Block number at which on-chain state was fetched, if a fetch was
-    /// attempted.
+    /// attempted. Always `None` after the `fetch_onchain` retirement (AM5AJW).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub onchain_block: Option<u64>,
     /// The hop snapshots.
@@ -742,368 +340,6 @@ impl DiagnosticPathState {
             revert_info: None,
         }
     }
-
-    /// Fetch on-chain state for every hop and populate `onchain_state` and
-    /// `diff`.
-    ///
-    /// This is a best-effort operation. If an individual hop's RPC call or
-    /// decoding fails, the error is recorded in that hop's `diff` and the
-    /// rest of the hops are still processed.
-    ///
-    /// # Errors
-    ///
-    /// Returns a provider error only if the underlying provider call fails in a
-    /// way that prevents making any further calls (e.g., connection loss).
-    pub async fn fetch_onchain(
-        &mut self,
-        provider: &degenbot_rpc::provider::AlloyProvider,
-        state_view: Option<Address>,
-    ) -> Result<(), degenbot_core::errors::ProviderError> {
-        use degenbot_rpc::multicall3::{multicall3_batch, MulticallResult};
-        let block_number = self.solve_block;
-        self.onchain_block = block_number;
-
-        // 1. Build ALL sub-calls across hops up-front (1 per V2 hop, 2 per
-        //    V3/V4 hop). A V4 hop without a StateView address is skipped (its
-        //    sub-calls are NOT added to the batch; it gets the legacy skip
-        //    message in the apply loop below).
-        let mut calls: Vec<(Address, Bytes)> = Vec::new();
-        // Per-hop fetch plan: `Some(start, n)` for hops included in the batch;
-        // `None` for skipped V4-without-StateView hops.
-        let mut plans: Vec<Option<HopFetch>> = Vec::with_capacity(self.hops.len());
-        for hop in &self.hops {
-            let plan = match &hop.engine_state {
-                DiagnosticPoolState::V2 { address, .. } => {
-                    let built = build_v2_calls(address)?;
-                    let start = calls.len();
-                    calls.extend(built);
-                    Some(HopFetch { start, n: 1 })
-                }
-                DiagnosticPoolState::V3 { address, .. } => {
-                    let built = build_v3_calls(address)?;
-                    let start = calls.len();
-                    calls.extend(built);
-                    Some(HopFetch { start, n: 2 })
-                }
-                DiagnosticPoolState::V4 { pool_id, .. } => match state_view {
-                    Some(sv) => {
-                        let built = build_v4_calls(sv, pool_id)?;
-                        let start = calls.len();
-                        calls.extend(built);
-                        Some(HopFetch { start, n: 2 })
-                    }
-                    None => None, // skip — no StateView
-                },
-            };
-            plans.push(plan);
-        }
-
-        // 2. ONE batch dispatch for the whole hop set (replacing up to 2N
-        //    serial `eth_call`s — 2 per hop — with one Multicall3 aggregate3
-        //    `eth_call`, chunked at 1024 sub-calls). `multicall3_batch` falls
-        //    back to sequential per-call `eth_call` if the batch itself errors,
-        //    so a transport failure degrades to the prior per-hop behavior.
-        let results: Vec<MulticallResult> = if calls.is_empty() {
-            Vec::new()
-        } else {
-            multicall3_batch(provider, &calls, block_number).await?
-        };
-
-        // 3. Decode each hop's slice + apply (same post-processing as before).
-        for (hop, plan) in self.hops.iter_mut().zip(&plans) {
-            let outcome = match plan {
-                None => Ok(FetchOutcome {
-                    onchain_state: None,
-                    messages: vec![
-                        "V4 on-chain fetch skipped: no StateView address provided".to_string()
-                    ],
-                }),
-                Some(f) => decode_hop_results(hop, &results[f.start..f.start + f.n]),
-            };
-            match outcome {
-                Ok(outcome) => {
-                    let field_drifts = match &outcome.onchain_state {
-                        Some(oc) => compute_field_diffs(&hop.engine_state, oc),
-                        None => Vec::new(),
-                    };
-                    hop.apply_onchain_fetch(outcome.onchain_state, field_drifts, outcome.messages);
-                    refresh_v2_recompute_onchain(hop);
-                    refresh_v3v4_recompute_onchain(hop);
-                }
-                Err(e) => {
-                    hop.diff.push(format!("on-chain fetch failed: {e}"));
-                }
-            }
-        }
-
-        Ok(())
-    }
-}
-
-/// A hop's position within the cross-hop multicall3 batch: `calls[start..start+n]`
-/// are this hop's sub-calls.
-struct HopFetch {
-    start: usize,
-    n: usize,
-}
-
-/// Map a `Multicall3` sub-call result to its raw return data, or a hard
-/// `ProviderError` if the sub-call reverted (`allowFailure = true` batch still
-/// succeeded, but this individual call failed). Preserves the pre-multicall
-/// per-hop behavior: a failed fetch surfaces as "on-chain fetch failed: {e}"
-/// on the matching hop's `diff` (not silently masked).
-fn require_success<'a>(
-    result: &'a MulticallResult,
-    what: &str,
-) -> Result<&'a Bytes, degenbot_core::errors::ProviderError> {
-    if !result.success {
-        return Err(degenbot_core::errors::ProviderError::Other {
-            message: format!("{what} sub-call reverted"),
-        });
-    }
-    Ok(&result.return_data)
-}
-
-/// Decode a hop's slice of the cross-hop multicall3 batch results into a
-/// `FetchOutcome`. Dispatches by pool family (`address` etc. read from the
-/// hop's `engine_state`, so no context cloning). Replaces the old
-/// `fetch_hop_onchain` dispatcher.
-fn decode_hop_results(
-    hop: &DiagnosticHop,
-    results: &[MulticallResult],
-) -> Result<FetchOutcome, degenbot_core::errors::ProviderError> {
-    match &hop.engine_state {
-        DiagnosticPoolState::V2 {
-            address,
-            reserve_in: _,
-            reserve_out: _,
-            fee_denom,
-            gamma_numer,
-        } => decode_v2_results(
-            &results[0],
-            hop.zero_for_one,
-            address,
-            fee_denom,
-            gamma_numer,
-        ),
-        DiagnosticPoolState::V3 {
-            address,
-            token0,
-            token1,
-            fee,
-            tick_spacing,
-            sqrt_price_x96: _,
-            tick: _,
-            liquidity: _,
-        } => decode_v3_results(
-            &results[0],
-            &results[1],
-            address,
-            token0,
-            token1,
-            *fee,
-            *tick_spacing,
-        ),
-        DiagnosticPoolState::V4 {
-            pool_manager,
-            pool_id,
-            currency0,
-            currency1,
-            fee,
-            tick_spacing,
-            hook_flags,
-            hooks,
-            sqrt_price_x96: _,
-            tick: _,
-            liquidity: _,
-        } => decode_v4_results(
-            &results[0],
-            &results[1],
-            pool_manager,
-            pool_id,
-            currency0,
-            currency1,
-            *fee,
-            *tick_spacing,
-            *hook_flags,
-            hooks,
-        ),
-    }
-}
-
-/// Result of fetching on-chain state for a single hop.
-struct FetchOutcome {
-    onchain_state: Option<DiagnosticPoolState>,
-    /// Arbitrary fetch-time messages appended verbatim to `diff` (skip notes,
-    /// RPC errors) — NOT field divergences. Field drift is computed separately
-    /// by `compute_field_diffs` in `fetch_onchain` (single source of truth).
-    messages: Vec<String>,
-}
-
-impl FetchOutcome {
-    fn new(onchain_state: DiagnosticPoolState) -> Self {
-        Self {
-            onchain_state: Some(onchain_state),
-            messages: Vec::new(),
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Per-family on-chain fetch
-// ---------------------------------------------------------------------------
-
-#[allow(clippy::too_many_arguments)]
-/// Build the V2 sub-call(s) for the cross-hop multicall3 batch: 1 call,
-/// `getReserves()`.
-fn build_v2_calls(
-    address: &str,
-) -> Result<Vec<(Address, Bytes)>, degenbot_core::errors::ProviderError> {
-    let pool_address: Address =
-        address
-            .parse()
-            .map_err(|e| degenbot_core::errors::ProviderError::Other {
-                message: format!("invalid V2 pool address {address}: {e}"),
-            })?;
-    Ok(vec![(pool_address, Bytes::from(encode_get_reserves()))])
-}
-
-/// Decode the V2 `getReserves()` sub-call result (from the cross-hop
-/// multicall3 batch) into a `FetchOutcome`.
-fn decode_v2_results(
-    result: &MulticallResult,
-    zero_for_one: bool,
-    address: &str,
-    fee_denom: &str,
-    gamma_numer: &str,
-) -> Result<FetchOutcome, degenbot_core::errors::ProviderError> {
-    let raw = require_success(result, "getReserves")?;
-    let (reserve0, reserve1) = decode_get_reserves(raw)?;
-    let (chain_reserve_in, chain_reserve_out) = if zero_for_one {
-        (reserve0, reserve1)
-    } else {
-        (reserve1, reserve0)
-    };
-    let outcome = FetchOutcome::new(DiagnosticPoolState::V2 {
-        address: address.to_string(),
-        reserve_in: u256_to_hex(chain_reserve_in),
-        reserve_out: u256_to_hex(chain_reserve_out),
-        fee_denom: fee_denom.to_string(),
-        gamma_numer: gamma_numer.to_string(),
-    });
-    Ok(outcome)
-}
-
-/// Build the V3 sub-calls for the cross-hop multicall3 batch: 2 calls,
-/// `slot0()` + `liquidity()` (in that order — `decode_v3_results` reads them
-/// as `results[0]` and `results[1]`).
-fn build_v3_calls(
-    address: &str,
-) -> Result<Vec<(Address, Bytes)>, degenbot_core::errors::ProviderError> {
-    let pool_address: Address =
-        address
-            .parse()
-            .map_err(|e| degenbot_core::errors::ProviderError::Other {
-                message: format!("invalid V3 pool address {address}: {e}"),
-            })?;
-    // slot0() -> (sqrtPriceX96, tick, ...) + liquidity() -> uint128, in that
-    // order — `decode_v3_results` reads them as `results[0]` and `results[1]`.
-    Ok(vec![
-        (pool_address, Bytes::from(encode_slot0())),
-        (pool_address, Bytes::from(encode_liquidity())),
-    ])
-}
-
-/// Decode the V3 `slot0()` + `liquidity()` sub-call results (from the cross-hop
-/// multicall3 batch) into a `FetchOutcome`.
-#[allow(clippy::too_many_arguments)]
-fn decode_v3_results(
-    slot0_result: &MulticallResult,
-    liquidity_result: &MulticallResult,
-    address: &str,
-    token0: &str,
-    token1: &str,
-    fee: u32,
-    tick_spacing: i32,
-) -> Result<FetchOutcome, degenbot_core::errors::ProviderError> {
-    let raw_slot0 = require_success(slot0_result, "slot0")?;
-    let (chain_sqrt_price_x96, chain_tick) = decode_slot0(raw_slot0)?;
-
-    let raw_liquidity = require_success(liquidity_result, "liquidity")?;
-    let chain_liquidity = decode_liquidity(raw_liquidity)?.to::<u128>();
-
-    let outcome = FetchOutcome::new(DiagnosticPoolState::V3 {
-        address: address.to_string(),
-        token0: token0.to_string(),
-        token1: token1.to_string(),
-        fee,
-        tick_spacing,
-        sqrt_price_x96: u256_to_hex(chain_sqrt_price_x96),
-        tick: chain_tick.try_into().unwrap_or_default(),
-        liquidity: u128_to_hex(chain_liquidity),
-    });
-
-    Ok(outcome)
-}
-
-#[allow(clippy::too_many_arguments)]
-/// Build the V4 sub-calls for the cross-hop multicall3 batch: 2 calls,
-/// `StateView.getSlot0(poolId)` + `StateView.getLiquidity(poolId)` (in that
-/// order — `decode_v4_results` reads them as `results[0]` and `results[1]`).
-fn build_v4_calls(
-    state_view: Address,
-    pool_id: &str,
-) -> Result<Vec<(Address, Bytes)>, degenbot_core::errors::ProviderError> {
-    let pool_id_bytes = degenbot_core::hex_utils::decode_32byte_hex(pool_id).map_err(|e| {
-        degenbot_core::errors::ProviderError::Other {
-            message: format!("invalid V4 pool_id {pool_id}: {e}"),
-        }
-    })?;
-    Ok(vec![
-        (state_view, Bytes::from(encode_get_slot0(&pool_id_bytes))),
-        (
-            state_view,
-            Bytes::from(encode_get_liquidity(&pool_id_bytes)),
-        ),
-    ])
-}
-
-/// Decode the V4 `StateView.getSlot0` + `StateView.getLiquidity` sub-call
-/// results (from the cross-hop multicall3 batch) into a `FetchOutcome`.
-#[allow(clippy::too_many_arguments)]
-fn decode_v4_results(
-    slot0_result: &MulticallResult,
-    liquidity_result: &MulticallResult,
-    pool_manager: &str,
-    pool_id: &str,
-    currency0: &str,
-    currency1: &str,
-    fee: u32,
-    tick_spacing: i32,
-    hook_flags: u16,
-    hooks: &str,
-) -> Result<FetchOutcome, degenbot_core::errors::ProviderError> {
-    let raw_slot0 = require_success(slot0_result, "StateView.getSlot0")?;
-    let (chain_sqrt_price_x96, chain_tick, _protocol_fee, _lp_fee) = decode_get_slot0(raw_slot0)?;
-
-    let raw_liquidity = require_success(liquidity_result, "StateView.getLiquidity")?;
-    let chain_liquidity = decode_liquidity(raw_liquidity)?.to::<u128>();
-
-    let outcome = FetchOutcome::new(DiagnosticPoolState::V4 {
-        pool_manager: pool_manager.to_string(),
-        pool_id: pool_id.to_string(),
-        currency0: currency0.to_string(),
-        currency1: currency1.to_string(),
-        fee,
-        tick_spacing,
-        hook_flags,
-        hooks: hooks.to_string(),
-        sqrt_price_x96: u256_to_hex(chain_sqrt_price_x96),
-        tick: chain_tick.try_into().unwrap_or_default(),
-        liquidity: u128_to_hex(chain_liquidity),
-    });
-
-    Ok(outcome)
 }
 
 // ---------------------------------------------------------------------------
@@ -1119,10 +355,6 @@ fn fmt_u256(value: U256) -> String {
 }
 
 fn u256_to_hex(value: U256) -> String {
-    format!("0x{value:x}")
-}
-
-fn u128_to_hex(value: u128) -> String {
     format!("0x{value:x}")
 }
 
@@ -1194,7 +426,6 @@ impl ArbitrageEngine {
                     diff: vec![format!("missing pool_key={} in engine", pool_ref.pool_key)],
                     drift: false,
                     field_drift: Vec::new(),
-                    recompute: None,
                 });
                 continue;
             };
@@ -1208,83 +439,28 @@ impl ArbitrageEngine {
                 diff: Vec::new(),
                 drift: false,
                 field_drift: Vec::new(),
-                recompute: None,
             });
         }
 
-        thread_solver_result_and_recompute(
-            &mut snapshot,
-            self.latest_results().0.get(&path_id),
-            &core,
-            &path.pools,
-        );
+        thread_solver_result_onto_snapshot(&mut snapshot, self.latest_results().0.get(&path_id));
 
         Some(snapshot)
     }
 }
 
-/// Thread the solver's reported result (`optimal_input` + per-hop
-/// `hop_outputs` / `consumed_inputs`) onto the snapshot, and populate each V2
-/// hop's `recompute` from the canonical `getAmountOut` (NL2YY3) + each V3/V4
-/// hop's `recompute` from the independent `v3_simulate_swap`/`v4_simulate_swap`
-/// (T1 / GTOD23-XNWWA3 — the drift discriminant: `matches_solver == true`
-/// means the engine's math was right given its state → pure drift). Onchain
-/// recompute for V3/V4 stays `None` (needs the full tick map — heavy RPC).
-fn thread_solver_result_and_recompute(
+/// Thread the solver's `optimal_input` + `hop_outputs` (the solver's REPORTED
+/// per-hop amounts — the EXPECTED basis the classifier compares captured
+/// swaps against) onto the snapshot. The recompute-population half that used
+/// to live here was retired in AM5AJW (captured swaps replace the recompute).
+fn thread_solver_result_onto_snapshot(
     snapshot: &mut DiagnosticPathState,
     solve_result: Option<&::degenbot_solvers::mixed::SolvePathResult>,
-    core: &crate::bot_core::BotState,
-    pool_refs: &[::degenbot_solvers::mixed::MixedPoolRef],
 ) {
     let Some(result) = solve_result else {
         return;
     };
     snapshot.optimal_input = Some(u256_to_hex(result.optimal_input));
     snapshot.hop_outputs = result.hop_outputs.iter().map(|v| u256_to_hex(*v)).collect();
-    for (hop, i) in snapshot.hops.iter_mut().zip(0..) {
-        let Some(&amount_in) = result.consumed_inputs.get(i) else {
-            continue;
-        };
-        let Some(&solver_out) = result.hop_outputs.get(i) else {
-            continue;
-        };
-        populate_v2_recompute(hop, amount_in, solver_out);
-        // T1: V3/V4 engine-state recompute via the independent simulate path.
-        let expected_out_engine = pool_refs
-            .get(i)
-            .and_then(|pool_ref| match pool_ref.hop_type {
-                ::degenbot_solvers::mixed::HopType::V3 => {
-                    core.get_v3_pool(pool_ref.pool_key).and_then(|state| {
-                        let identity = core.get_v3_identity(pool_ref.pool_key)?;
-                        recompute_v3_amount_out(
-                            state,
-                            identity.fee,
-                            identity.tick_spacing,
-                            pool_ref.zero_for_one,
-                            amount_in,
-                        )
-                    })
-                }
-                ::degenbot_solvers::mixed::HopType::V4 => {
-                    core.get_v4_pool(pool_ref.pool_key).and_then(|state| {
-                        let identity = core.get_v4_identity(pool_ref.pool_key)?;
-                        recompute_v4_amount_out(
-                            state,
-                            identity.pool_key.fee,
-                            identity.pool_key.tick_spacing,
-                            pool_ref.zero_for_one,
-                            amount_in,
-                        )
-                    })
-                }
-                ::degenbot_solvers::mixed::HopType::V2
-                | ::degenbot_solvers::mixed::HopType::SolidlyStable
-                | ::degenbot_solvers::mixed::HopType::BalancerWeighted
-                | ::degenbot_solvers::mixed::HopType::BalancerStable
-                | ::degenbot_solvers::mixed::HopType::CurveStableswap => None,
-            });
-        populate_v3v4_recompute_full(hop, amount_in, solver_out, expected_out_engine);
-    }
 }
 
 /// Build the per-hop [`DiagnosticPoolState`] from a locked [`BotState`] snapshot.
@@ -1365,18 +541,12 @@ fn build_engine_pool_state(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Sub-engine accessors (V3/V4 state now reads from BotState — ADR-003)
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
 
-    use alloy::dyn_abi::DynSolValue;
     use alloy::primitives::{aliases::U112, Address, U256};
 
-    use super::{DiagnosticHop, DiagnosticPoolState};
     use crate::bot_core::RegisterV3PoolParams as V3Params;
     use crate::bot_core::{RegisterV4PoolParams as V4Params, V4PoolKey};
     use crate::solvers::arb_engine::{ArbitrageEngine, DiagnosticPathState, PoolTickCoverage};
@@ -1556,12 +726,6 @@ mod tests {
         assert_eq!(snap.engine_processed_block, None);
 
         // Drive solve_dirty(123) → last_processed_block = Some(123).
-        // `solve_dirty` also bumps `results_block` to 123 (no affected paths →
-        // solver_dispatch.rs short-circuit), so solve_block advances in
-        // lockstep (123 == 123) here — the post-publish advance case (engine
-        // ahead of solve_block) requires the published solve result to lag
-        // behind continued WS log application, which the analyzer-side test
-        // covers (test_classify_post_publish_advance_drift_is_artifact).
         engine.solve_dirty(123, &BlockMetadata::default());
         let snap = engine.diagnostic_path_state(path_id).expect("path exists");
         assert_eq!(
@@ -1583,7 +747,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // Structured typed drift fields (PCG2M3)
+    // Structured typed drift fields (PCG2M3) — pure field-diff utilities
     // -----------------------------------------------------------------
 
     /// A V2 hop whose engine `reserve_in` / `reserve_out` both diverge from the
@@ -1652,202 +816,16 @@ mod tests {
 
         let diffs = super::compute_field_diffs(&engine_state, &onchain_state);
         assert!(diffs.is_empty(), "matching state → no field diffs");
-        assert!(diffs.is_empty(), "drift == false");
-    }
-
-    /// `apply_onchain_fetch` is the single source of truth: it sets
-    /// `onchain_state` + `field_drift` + `drift`, and DERIVES the `diff`
-    /// strings from `field_drift` (via `FieldDiff::to_diff_string`) plus any
-    /// arbitrary fetch-time `messages` (skip notes / RPC errors). Field-drift
-    /// entries become `diff` lines in order; messages are appended verbatim.
-    #[test]
-    fn apply_onchain_fetch_derives_diff_from_field_drift() {
-        let mut hop = super::DiagnosticHop {
-            position: 0,
-            hop_type: "V2".to_string(),
-            zero_for_one: true,
-            engine_state: super::DiagnosticPoolState::V2 {
-                address: "0x0000000000000000000000000000000000001111".to_string(),
-                reserve_in: "0x01".to_string(),
-                reserve_out: "0x02".to_string(),
-                fee_denom: "0x03e8".to_string(),
-                gamma_numer: "0x03e5".to_string(),
-            },
-            onchain_state: None,
-            diff: Vec::new(),
-            drift: false,
-            field_drift: Vec::new(),
-            recompute: None,
-        };
-        let onchain = super::DiagnosticPoolState::V2 {
-            address: "0x0000000000000000000000000000000000001111".to_string(),
-            reserve_in: "0xff".to_string(),
-            reserve_out: "0xee".to_string(),
-            fee_denom: "0x03e8".to_string(),
-            gamma_numer: "0x03e5".to_string(),
-        };
-        let field_drifts = vec![
-            super::FieldDiff {
-                field: "reserve_in".to_string(),
-                engine: "0x01".to_string(),
-                onchain: "0xff".to_string(),
-            },
-            super::FieldDiff {
-                field: "reserve_out".to_string(),
-                engine: "0x02".to_string(),
-                onchain: "0xee".to_string(),
-            },
-        ];
-
-        hop.apply_onchain_fetch(
-            Some(onchain),
-            field_drifts.clone(),
-            vec!["V4 fetch skipped".to_string()],
-        );
-
-        assert!(matches!(
-            hop.onchain_state,
-            Some(super::DiagnosticPoolState::V2 { .. })
-        ));
-        assert_eq!(hop.field_drift, field_drifts);
-        assert!(hop.drift, "non-empty field_drift → drift == true");
-        // diff derives from field_drift (in order) THEN appends messages verbatim.
-        assert_eq!(
-            hop.diff,
-            vec![
-                "reserve_in: engine=0x01, onchain=0xff",
-                "reserve_out: engine=0x02, onchain=0xee",
-                "V4 fetch skipped",
-            ]
-        );
-    }
-
-    /// `apply_onchain_fetch` with zero field drifts + zero messages leaves
-    /// `drift == false` and `diff` empty (the clean-match path).
-    #[test]
-    fn apply_onchain_fetch_clean_match_no_drift() {
-        let mut hop = super::DiagnosticHop::default();
-        hop.apply_onchain_fetch(None::<super::DiagnosticPoolState>, Vec::new(), Vec::new());
-        assert!(hop.onchain_state.is_none());
-        assert!(hop.field_drift.is_empty());
-        assert!(!hop.drift);
-        assert!(hop.diff.is_empty());
-    }
-
-    // -----------------------------------------------------------------
-    // V2 hop-output recompute (NL2YY3)
-    // -----------------------------------------------------------------
-
-    /// `recompute_v2_amount_out` reproduces the canonical Uniswap V2
-    /// `getAmountOut` from a `DiagnosticPoolState::V2` + `amount_in`. Reserves
-    /// and fee fields are stored as hex strings in the diagnostic state, so the
-    /// recompute must parse them to `U256`/`u64` and feed the same
-    /// `IntHopState::swap` (now in `degenbot-v2-math`) — no parallel math.
-    #[test]
-    fn recompute_v2_amount_out_matches_reference_getamountout() {
-        // Uniswap V2 0.3% pool: reserve_in = 1_000_000 USDC (1e6*scale),
-        // reserve_out = 0.5 WETH. Fee denom 1000, gamma 997.
-        let reserve_in = U256::from(1_000_000_000_000_u64);
-        let reserve_out = U256::from(500_000_000_000_000_000_u64);
-        let amount_in = U256::from(1_000_000_000_u64); // 1000 USDC
-
-        let state = super::DiagnosticPoolState::V2 {
-            address: String::new(),
-            reserve_in: format!("0x{reserve_in:x}"),
-            reserve_out: format!("0x{reserve_out:x}"),
-            fee_denom: "0x3e8".to_string(),   // 1000
-            gamma_numer: "0x3e5".to_string(), // 997
-        };
-
-        let amount_out = super::recompute_v2_amount_out(&state, amount_in);
-
-        // Reference: amountInWithFee * reserve_out / (reserve_in * 1000 + amountInWithFee)
-        let amount_in_with_fee = amount_in * U256::from(997_u64);
-        let expected = (amount_in_with_fee * reserve_out)
-            / (reserve_in * U256::from(1000_u64) + amount_in_with_fee);
-        assert_eq!(
-            amount_out, expected,
-            "recompute must match the canonical Uniswap V2 getAmountOut"
-        );
-        assert!(
-            !amount_out.is_zero(),
-            "non-degenerate input must yield non-zero output"
-        );
-    }
-
-    /// `populate_v2_recompute` fills `DiagnosticHop.recompute` for a V2 hop from
-    /// the solver-reported `amount_in` + `solver_out`, recomputing against both
-    /// the engine state and (when present) the on-chain state. `matches_solver`
-    /// compares the ONCHAIN recompute to `solver_out` — the drift detector. A
-    /// hop with no onchain state yields `expected_out_onchain = None` and
-    /// `matches_solver = None` (cannot detect drift without the chain).
-    #[test]
-    fn populate_v2_recompute_fills_engine_and_onchain_matches() {
-        let reserve_in = U256::from(1_000_000_000_000_u64);
-        let reserve_out = U256::from(500_000_000_000_000_000_u64);
-        let amount_in = U256::from(1_000_000_000_u64);
-        let amount_in_with_fee = amount_in * U256::from(997_u64);
-        let expected = (amount_in_with_fee * reserve_out)
-            / (reserve_in * U256::from(1000_u64) + amount_in_with_fee);
-
-        let engine_state = super::DiagnosticPoolState::V2 {
-            address: String::new(),
-            reserve_in: format!("0x{reserve_in:x}"),
-            reserve_out: format!("0x{reserve_out:x}"),
-            fee_denom: "0x3e8".to_string(),
-            gamma_numer: "0x3e5".to_string(),
-        };
-        // On-chain state: identical reserves — recompute matches the solver.
-        let onchain_state = engine_state.clone();
-
-        let mut hop = super::DiagnosticHop {
-            position: 0,
-            hop_type: "V2".to_string(),
-            zero_for_one: true,
-            engine_state,
-            onchain_state: Some(onchain_state),
-            diff: Vec::new(),
-            drift: false,
-            field_drift: Vec::new(),
-            recompute: None,
-        };
-
-        super::populate_v2_recompute(&mut hop, amount_in, expected);
-
-        let recompute = hop.recompute.expect("recompute populated for V2 hop");
-        assert_eq!(recompute.amount_in, format!("0x{amount_in:x}"));
-        assert_eq!(recompute.solver_out, format!("0x{expected:x}"));
-        assert_eq!(
-            recompute.expected_out_engine.as_deref(),
-            Some(format!("0x{expected:x}").as_str()),
-            "engine recompute matches the reference"
-        );
-        assert_eq!(
-            recompute.expected_out_onchain.as_deref(),
-            Some(format!("0x{expected:x}").as_str()),
-            "onchain recompute matches the reference"
-        );
-        assert_eq!(
-            recompute.matches_solver,
-            Some(true),
-            "onchain recompute agrees with solver_out → matches_solver = true"
-        );
     }
 
     /// `diagnostic_path_state` threads the solver's `optimal_input` +
-    /// `hop_outputs` onto the snapshot AND populates `recompute` for every V2
-    /// hop, when the path has recorded solve results. Drives the seam
-    /// (`thread_solver_result_and_recompute`) directly with a synthetic
-    /// `SolvePathResult` so the test does not depend on the solver finding a
-    /// profitable arb in a synthetic pool setup.
+    /// `hop_outputs` onto the snapshot when the path has recorded solve
+    /// results. Drives `thread_solver_result_onto_snapshot` directly with a
+    /// synthetic `SolvePathResult`.
     #[test]
-    fn thread_solver_result_and_recompute_populates_snapshot_fields() {
+    fn thread_solver_result_populates_snapshot_fields() {
         let reserve_in = U256::from(1_000_000_000_000_u64);
-        let reserve_out = U256::from(500_000_000_000_000_000_u64);
         let amount_in = U256::from(1_000_000_000_u64);
-        let amount_in_with_fee = amount_in * U256::from(997_u64);
-        let expected_v2_out = (amount_in_with_fee * reserve_out)
-            / (reserve_in * U256::from(1000_u64) + amount_in_with_fee);
 
         let mut snapshot = super::DiagnosticPathState::new(7, Some(42));
         snapshot.hops.push(super::DiagnosticHop {
@@ -1857,7 +835,7 @@ mod tests {
             engine_state: super::DiagnosticPoolState::V2 {
                 address: String::new(),
                 reserve_in: format!("0x{reserve_in:x}"),
-                reserve_out: format!("0x{reserve_out:x}"),
+                reserve_out: "0x02".to_string(),
                 fee_denom: "0x3e8".to_string(),
                 gamma_numer: "0x3e5".to_string(),
             },
@@ -1865,44 +843,17 @@ mod tests {
             diff: Vec::new(),
             drift: false,
             field_drift: Vec::new(),
-            recompute: None,
-        });
-        // Second hop is a non-V2 hop: recompute must be a no-op for it.
-        snapshot.hops.push(super::DiagnosticHop {
-            position: 1,
-            hop_type: "V3".to_string(),
-            zero_for_one: false,
-            engine_state: super::DiagnosticPoolState::V3 {
-                address: String::new(),
-                token0: String::new(),
-                token1: String::new(),
-                fee: 3000,
-                tick_spacing: 60,
-                sqrt_price_x96: "0x0".to_string(),
-                tick: 0,
-                liquidity: "0x0".to_string(),
-            },
-            onchain_state: None,
-            diff: Vec::new(),
-            drift: false,
-            field_drift: Vec::new(),
-            recompute: None,
         });
 
-        let hop_outputs = vec![expected_v2_out, U256::from(123_u64)];
+        let hop_outputs = vec![U256::from(123_u64)];
         let solve_result = ::degenbot_solvers::mixed::SolvePathResult {
             optimal_input: amount_in,
             profit: U256::from(1_u64),
             hop_outputs: hop_outputs.clone(),
-            consumed_inputs: vec![amount_in, expected_v2_out],
+            consumed_inputs: vec![amount_in],
         };
 
-        super::thread_solver_result_and_recompute(
-            &mut snapshot,
-            Some(&solve_result),
-            &crate::bot_core::BotState::default(),
-            &[],
-        );
+        super::thread_solver_result_onto_snapshot(&mut snapshot, Some(&solve_result));
 
         assert_eq!(
             snapshot.optimal_input.as_deref(),
@@ -1914,663 +865,6 @@ mod tests {
                 .iter()
                 .map(|v| format!("0x{v:x}"))
                 .collect::<Vec<_>>()
-        );
-
-        let v2_recompute = snapshot.hops[0]
-            .recompute
-            .as_ref()
-            .expect("V2 hop recompute populated");
-        assert_eq!(v2_recompute.amount_in, format!("0x{amount_in:x}"));
-        assert_eq!(v2_recompute.solver_out, format!("0x{expected_v2_out:x}"));
-        assert_eq!(
-            v2_recompute.expected_out_engine.as_deref(),
-            Some(format!("0x{expected_v2_out:x}").as_str()),
-            "engine recompute matches the canonical getAmountOut"
-        );
-        assert!(v2_recompute.expected_out_onchain.is_none());
-        assert!(v2_recompute.matches_solver.is_none());
-
-        // Non-V2 (V3/V4) hop: recompute records solver values; engine recompute
-        // fields are None here because the V3 pool isn't registered in this
-        // synthetic BotState (no pool_ref → lookup misses → None basis). In a
-        // real engine `expected_out_engine` + `matches_solver` are populated
-        // by the independent `v3_simulate_swap` (T1).
-        let v3_recompute = snapshot.hops[1]
-            .recompute
-            .as_ref()
-            .expect("V3/V4 hop gets a recompute (solver values recorded)");
-        assert_eq!(
-            v3_recompute.amount_in,
-            format!("0x{expected_v2_out:x}"),
-            "V3 hop amount_in = consumed_inputs[1] = previous hop output"
-        );
-        assert_eq!(v3_recompute.solver_out, format!("0x{:x}", hop_outputs[1]));
-        assert!(
-            v3_recompute.expected_out_engine.is_none(),
-            "unregistered V3 pool → no engine recompute basis → None"
-        );
-        assert!(v3_recompute.expected_out_onchain.is_none());
-        assert!(
-            v3_recompute.matches_solver.is_none(),
-            "no engine recompute basis → matches_solver None"
-        );
-    }
-
-    /// After `fetch_onchain` sets on-chain state, the V2 hop's existing
-    /// recompute must be refreshed so `expected_out_onchain` + `matches_solver`
-    /// reflect the chain. `refresh_v2_recompute_onchain` keeps the engine
-    /// recompute untouched (it only touches on-chain-derived fields), so a
-    /// stale engine-side value is never overwritten by a fetch.
-    #[test]
-    fn refresh_v2_recompute_onchain_populates_onchain_fields_post_fetch() {
-        let reserve_in = U256::from(1_000_000_000_000_u64);
-        let reserve_out = U256::from(500_000_000_000_000_000_u64);
-        let amount_in = U256::from(1_000_000_000_u64);
-        let amount_in_with_fee = amount_in * U256::from(997_u64);
-        let expected = (amount_in_with_fee * reserve_out)
-            / (reserve_in * U256::from(1000_u64) + amount_in_with_fee);
-
-        let engine_state = super::DiagnosticPoolState::V2 {
-            address: String::new(),
-            reserve_in: format!("0x{reserve_in:x}"),
-            reserve_out: format!("0x{reserve_out:x}"),
-            fee_denom: "0x3e8".to_string(),
-            gamma_numer: "0x3e5".to_string(),
-        };
-        // On-chain: different reserve_out → different recompute →
-        // matches_solver = false (drift detected).
-        let drifted_chain = super::DiagnosticPoolState::V2 {
-            address: String::new(),
-            reserve_in: format!("0x{reserve_in:x}"),
-            reserve_out: format!("0x{:x}", reserve_out * U256::from(2_u64)),
-            fee_denom: "0x3e8".to_string(),
-            gamma_numer: "0x3e5".to_string(),
-        };
-
-        let mut hop = super::DiagnosticHop {
-            position: 0,
-            hop_type: "V2".to_string(),
-            zero_for_one: true,
-            engine_state,
-            onchain_state: Some(drifted_chain),
-            diff: Vec::new(),
-            drift: true,
-            field_drift: Vec::new(),
-            recompute: Some(super::HopRecompute {
-                amount_in: format!("0x{amount_in:x}"),
-                solver_out: format!("0x{expected:x}"),
-                expected_out_engine: Some(format!("0x{expected:x}")),
-                expected_out_onchain: None,
-                matches_solver: None,
-            }),
-        };
-
-        super::refresh_v2_recompute_onchain(&mut hop);
-
-        let recompute = hop.recompute.as_ref().expect("recompute preserved");
-        // Engine-side untouched.
-        assert_eq!(
-            recompute.expected_out_engine.as_deref(),
-            Some(format!("0x{expected:x}").as_str())
-        );
-        // On-chain recompute populated + differs from solver_out (drift).
-        assert!(recompute.expected_out_onchain.is_some());
-        assert_eq!(
-            recompute.matches_solver,
-            Some(false),
-            "drifted on-chain reserves → matches_solver = false"
-        );
-    }
-
-    /// V3/V4 hops get a PARTIAL `recompute`: the solver's reported `amount_in`
-    /// and `solver_out` are populated (so the analyzer + humans have them), but
-    /// `expected_out_engine`, `expected_out_onchain`, and `matches_solver` stay
-    /// `None` — per the spike, V3/V4 engine-state recompute is identity (the
-    /// solver's own `cl-math` against its own state) and onchain recompute
-    /// requires a heavy full-tick-map fetch deferred from the diagnostic path.
-    /// The scalar `drift` flag (PCG2M3) and decoded revert reason are the V3/V4
-    /// classification basis instead.
-    /// `populate_v3v4_recompute_full` (T1 / GTOD23-XNWWA3) populates
-    /// `expected_out_engine` (the independent recompute passed by the caller)
-    /// and `matches_solver` on a V3 hop — NOT `None` like the old partial
-    /// variant. `expected_out_onchain` stays `None` (deferred — heavy tick-map
-    /// fetch). `matches_solver` is `Some(true)` when the recompute agrees with
-    /// `solver_out`, `Some(false)` when it diverges, and is the drift
-    /// discriminant (engine math right given its state → pure drift).
-    #[test]
-    fn populate_v3v4_recompute_full_populates_engine_recompute_and_matches_solver() {
-        let v3_state = super::DiagnosticPoolState::V3 {
-            address: String::new(),
-            token0: String::new(),
-            token1: String::new(),
-            fee: 3000,
-            tick_spacing: 60,
-            sqrt_price_x96: "0x0".to_string(),
-            tick: 0,
-            liquidity: "0x0".to_string(),
-        };
-        let mut hop = super::DiagnosticHop {
-            position: 1,
-            hop_type: "V3".to_string(),
-            zero_for_one: false,
-            engine_state: v3_state,
-            onchain_state: None,
-            diff: Vec::new(),
-            drift: false,
-            field_drift: Vec::new(),
-            recompute: None,
-        };
-
-        let amount_in = U256::from(1_000_000_000_u64);
-        let solver_out = U256::from(42_u64);
-        // Caller passes the independent recompute (here, matching solver_out).
-        super::populate_v3v4_recompute_full(&mut hop, amount_in, solver_out, Some(solver_out));
-
-        let recompute = hop.recompute.as_ref().expect("full recompute populated");
-        assert_eq!(recompute.amount_in, format!("0x{amount_in:x}"));
-        assert_eq!(recompute.solver_out, format!("0x{solver_out:x}"));
-        assert_eq!(
-            recompute.expected_out_engine.as_deref(),
-            Some(format!("0x{solver_out:x}").as_str()),
-            "T1: expected_out_engine populated from the independent recompute"
-        );
-        assert!(
-            recompute.expected_out_onchain.is_none(),
-            "no onchain_state on this hop → expected_out_onchain None"
-        );
-        assert_eq!(
-            recompute.matches_solver,
-            Some(true),
-            "T1: matches_solver populated — recompute agrees with solver_out"
-        );
-
-        // Divergent recompute → matches_solver == Some(false).
-        let divergent = U256::from(999_u64);
-        super::populate_v3v4_recompute_full(&mut hop, amount_in, solver_out, Some(divergent));
-        let recompute = hop.recompute.as_ref().expect("recompute repopulated");
-        assert_eq!(
-            recompute.matches_solver,
-            Some(false),
-            "divergent recompute → matches_solver == Some(false)"
-        );
-
-        // No recompute available (e.g. sparse tick-map miss) → None basis.
-        super::populate_v3v4_recompute_full(&mut hop, amount_in, solver_out, None);
-        let recompute = hop.recompute.as_ref().expect("recompute repopulated");
-        assert!(
-            recompute.expected_out_engine.is_none(),
-            "no recompute basis → expected_out_engine None"
-        );
-        assert_eq!(
-            recompute.matches_solver, None,
-            "no recompute basis and no onchain basis → matches_solver None"
-        );
-    }
-
-    /// `populate_v3v4_recompute_full` populates `expected_out_onchain` when an
-    /// onchain state is present, via the bounded single-step
-    /// `compute_swap_step_v3` against the onchain scalar `slot0`/`liquidity`
-    /// (T1). For a thin swap that doesn't reach the tick-grid boundary, the
-    /// single-step is exact — the onchain recompute is the real onchain output.
-    #[test]
-    fn populate_v3v4_recompute_full_populates_onchain_recompute_when_state_present() {
-        // A realistic V3 onchain state: 1:1 price (sqrt_price ≈ 2^96), tick 0,
-        // ample liquidity, tick_spacing 60. A tiny amount_in won't cross the
-        // grid boundary → single-step is exact.
-        let onchain = super::DiagnosticPoolState::V3 {
-            address: String::new(),
-            token0: String::new(),
-            token1: String::new(),
-            fee: 3000,
-            tick_spacing: 60,
-            sqrt_price_x96: format!(
-                "0x{}",
-                U256::from(79_228_162_514_264_337_593_543_950_336_u128)
-            ),
-            tick: 0,
-            liquidity: format!("0x{:x}", 1_000_000_000_000_000_u128),
-        };
-        let mut hop = super::DiagnosticHop {
-            position: 0,
-            hop_type: "V3".to_string(),
-            zero_for_one: true,
-            engine_state: super::DiagnosticPoolState::V3 {
-                address: String::new(),
-                token0: String::new(),
-                token1: String::new(),
-                fee: 3000,
-                tick_spacing: 60,
-                sqrt_price_x96: format!(
-                    "0x{}",
-                    U256::from(79_228_162_514_264_337_593_543_950_336_u128)
-                ),
-                tick: 0,
-                liquidity: format!("0x{:x}", 1_000_000_000_000_000_u128),
-            },
-            onchain_state: Some(onchain),
-            diff: Vec::new(),
-            drift: false,
-            field_drift: Vec::new(),
-            recompute: None,
-        };
-
-        let amount_in = U256::from(1_000_000_000_u64); // tiny vs liquidity → no crossing
-        let solver_out = U256::from(999_u64); // deliberately wrong
-        super::populate_v3v4_recompute_full(&mut hop, amount_in, solver_out, None);
-
-        let recompute = hop.recompute.as_ref().expect("recompute populated");
-        assert!(
-            recompute.expected_out_onchain.is_some(),
-            "onchain state present + non-crossing swap → expected_out_onchain populated"
-        );
-        let onchain_out =
-            super::parse_hex_u256(recompute.expected_out_onchain.as_ref().unwrap()).unwrap();
-        assert!(
-            onchain_out > U256::ZERO,
-            "a real V3 swap must yield a positive output"
-        );
-        // No engine recompute passed → matches_solver falls back to onchain.
-        assert_eq!(
-            recompute.matches_solver,
-            Some(false),
-            "onchain recompute (real output) != solver_out (999) → false"
-        );
-    }
-
-    /// `refresh_v3v4_recompute_onchain` populates `expected_out_onchain` after
-    /// `fetch_onchain` sets on-chain state, leaving the engine-side recompute
-    /// untouched (T1). When the engine recompute IS present, `matches_solver`
-    /// keeps keying off the engine (the drift discriminant); when absent, it
-    /// falls back to the onchain recompute.
-    #[test]
-    fn refresh_v3v4_recompute_onchain_populates_onchain_post_fetch() {
-        let sqrt_p = format!(
-            "0x{}",
-            U256::from(79_228_162_514_264_337_593_543_950_336_u128)
-        );
-        let liq = format!("0x{:x}", 1_000_000_000_000_000_u128);
-        let v3_state = super::DiagnosticPoolState::V3 {
-            address: String::new(),
-            token0: String::new(),
-            token1: String::new(),
-            fee: 3000,
-            tick_spacing: 60,
-            sqrt_price_x96: sqrt_p.clone(),
-            tick: 0,
-            liquidity: liq.clone(),
-        };
-        // Hop starts with NO onchain state + engine recompute present.
-        let mut hop = super::DiagnosticHop {
-            position: 0,
-            hop_type: "V3".to_string(),
-            zero_for_one: true,
-            engine_state: v3_state.clone(),
-            onchain_state: None,
-            diff: Vec::new(),
-            drift: false,
-            field_drift: Vec::new(),
-            recompute: Some(super::HopRecompute {
-                amount_in: format!("0x{:x}", 1_000_000_000_u64),
-                solver_out: format!("0x{:x}", 42_u64),
-                expected_out_engine: Some(format!("0x{:x}", 42_u64)),
-                expected_out_onchain: None,
-                matches_solver: Some(true),
-            }),
-        };
-
-        // No onchain state yet → no-op.
-        super::refresh_v3v4_recompute_onchain(&mut hop);
-        let r = hop.recompute.as_ref().unwrap();
-        assert!(r.expected_out_onchain.is_none());
-        assert_eq!(r.matches_solver, Some(true), "engine basis untouched");
-
-        // Now set onchain state (matching the engine → no drift) and refresh.
-        hop.onchain_state = Some(v3_state);
-        super::refresh_v3v4_recompute_onchain(&mut hop);
-        let r = hop.recompute.as_ref().unwrap();
-        assert!(
-            r.expected_out_onchain.is_some(),
-            "post-fetch → expected_out_onchain populated via single-step"
-        );
-        // Engine recompute present → matches_solver stays keyed off engine
-        // (unchanged here, NOT re-derived from onchain).
-        assert_eq!(
-            r.matches_solver,
-            Some(true),
-            "engine basis present → matches_solver stays engine-derived, not onchain"
-        );
-    }
-
-    // -----------------------------------------------------------------
-    // T1: V3/V4 engine-state recompute (ADR-008 D2 / GTOD23-XNWWA3)
-    // -----------------------------------------------------------------
-
-    /// `recompute_v3_amount_out` calls the INDEPENDENT `v3_simulate_swap`
-    /// (not the solver's `int_simulate_v3_swap`) against the engine's own
-    /// `V3PoolState` and returns a non-zero output for a valid swap. This is
-    /// the keystone discriminant: if it agrees with `solver_out`, the
-    /// engine's math was right given its (possibly stale) state → the revert
-    /// is pure drift, not a solver-calc bug.
-    #[test]
-    fn recompute_v3_amount_out_returns_independent_simulate_output() {
-        let engine = ArbitrageEngine::new();
-        let mut tick_data = HashMap::new();
-        tick_data.insert(
-            60,
-            crate::bot_core::TickInfo {
-                liquidity_gross: alloy::primitives::U128::from(1_000_000),
-                liquidity_net: alloy::primitives::I256::try_from(1_000_000i128)
-                    .unwrap_or(alloy::primitives::I256::ZERO),
-                block: 0,
-            },
-        );
-        tick_data.insert(
-            -60,
-            crate::bot_core::TickInfo {
-                liquidity_gross: alloy::primitives::U128::from(1_000_000),
-                liquidity_net: alloy::primitives::I256::try_from(-1_000_000i128)
-                    .unwrap_or(alloy::primitives::I256::ZERO),
-                block: 0,
-            },
-        );
-        let v3_state = engine.register_v3_pool(&V3Params {
-            address: Address::from([0x22u8; 20]),
-            token0: Address::from([0u8; 20]),
-            token1: Address::from([1u8; 20]),
-            fee: 3000,
-            tick_spacing: 60,
-            factory: Address::ZERO,
-            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
-            liquidity: 1_000_000,
-            tick: 0,
-            tick_data,
-            update_block: 0,
-            coverage: PoolTickCoverage::Tracked,
-            fetcher: None,
-            ..Default::default()
-        });
-        let core = engine.core.read();
-        let state = core.get_v3_pool(v3_state).expect("registered");
-        let identity = core
-            .get_v3_identity(v3_state)
-            .expect("registered pool surfaces an identity");
-        // Hold the read guard for the whole referenced-swap simulation below.
-
-        let amount_in = U256::from(1_000_000_000_u64);
-        let out = super::recompute_v3_amount_out(
-            state,
-            identity.fee,
-            identity.tick_spacing,
-            true,
-            amount_in,
-        )
-        .expect("valid V3 swap should recompute");
-        assert!(out > U256::ZERO, "zfo swap of token0 must yield token1 > 0");
-
-        // Cross-check against `v3_simulate_swap` directly — the recompute wraps it.
-        let limit = crate::bot_core::V3PoolState::default_sqrt_price_limit(true);
-        let spec = alloy::primitives::I256::try_from(amount_in).unwrap();
-        let outcome = crate::bot_core::v3_simulate_swap(
-            state,
-            identity.fee,
-            identity.tick_spacing,
-            true,
-            spec,
-            limit,
-        )
-        .expect("v3_simulate_swap should succeed");
-        assert_eq!(
-            out, outcome.amount1,
-            "recompute must match v3_simulate_swap.amount1"
-        );
-    }
-
-    /// `recompute_v4_amount_out` mirrors the V3 recompute against the engine's
-    /// `V4PoolState`, using V4's sign convention (`amount_specified` < 0 = exact input).
-    #[test]
-    fn recompute_v4_amount_out_returns_independent_simulate_output() {
-        let engine = ArbitrageEngine::new();
-        let mut tick_data = HashMap::new();
-        tick_data.insert(
-            10,
-            crate::bot_core::TickInfo {
-                liquidity_gross: alloy::primitives::U128::from(2_000_000),
-                liquidity_net: alloy::primitives::I256::try_from(2_000_000i128)
-                    .unwrap_or(alloy::primitives::I256::ZERO),
-                block: 0,
-            },
-        );
-        tick_data.insert(
-            -10,
-            crate::bot_core::TickInfo {
-                liquidity_gross: alloy::primitives::U128::from(2_000_000),
-                liquidity_net: alloy::primitives::I256::try_from(-2_000_000i128)
-                    .unwrap_or(alloy::primitives::I256::ZERO),
-                block: 0,
-            },
-        );
-        let v4_fwd = engine
-            .register_v4_pool(&V4Params {
-                pool_manager: Address::from([0x33u8; 20]),
-                pool_id: [0x44u8; 32],
-                pool_key: V4PoolKey {
-                    currency0: Address::from([2u8; 20]),
-                    currency1: Address::from([3u8; 20]),
-                    fee: 500,
-                    tick_spacing: 10,
-                    hooks: Address::ZERO,
-                },
-                hook_flags: 0,
-                sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
-                liquidity: 2_000_000,
-                tick: 0,
-                tick_data,
-                update_block: 0,
-                coverage: PoolTickCoverage::Tracked,
-                fetcher: None,
-            })
-            .expect("V4 registration failed");
-        let core = engine.core.read();
-        let state = core.get_v4_pool(v4_fwd).expect("registered");
-        let identity = core
-            .get_v4_identity(v4_fwd)
-            .expect("registered pool surfaces an identity");
-
-        let amount_in = U256::from(1_000_000_000_u64);
-        let out = super::recompute_v4_amount_out(
-            state,
-            identity.pool_key.fee,
-            identity.pool_key.tick_spacing,
-            true,
-            amount_in,
-        )
-        .expect("valid V4 swap should recompute");
-        assert!(
-            out > U256::ZERO,
-            "zfo swap of currency0 must yield currency1 > 0"
-        );
-    }
-
-    // --- fetch_onchain multicall3 batching integration test ---
-    //
-    // Pins the contract that `fetch_onchain` folds ALL hops' sub-calls (1 per
-    // V2 hop, 2 per V3/V4 hop) into ONE cross-hop Multicall3 `aggregate3`
-    // `eth_call`, instead of up to 2N serial round-trips. See task T6ZU5W.
-
-    /// Build a mock `AlloyProvider` whose `Asserter` queue is preloaded with
-    /// `responses` (one JSON `result` per expected `eth_call`, FIFO). Mirrors
-    /// the `liquidity_verifier` mock-transport harness.
-    fn mock_provider_for_fetch(
-        responses: Vec<String>,
-    ) -> (
-        degenbot_rpc::provider::AlloyProvider,
-        alloy::transports::mock::Asserter,
-    ) {
-        use alloy::network::Ethereum as NetEth;
-        use alloy::providers::{Provider, ProviderBuilder};
-        use alloy::rpc::client::ClientBuilder;
-        use alloy::transports::mock::{Asserter, MockTransport};
-        use std::sync::Arc;
-        let asserter = Asserter::new();
-        for resp in responses {
-            asserter.push_success(&resp);
-        }
-        let client = ClientBuilder::default().transport(MockTransport::new(asserter.clone()), true);
-        let dyn_provider = ProviderBuilder::new().connect_client(client).erased();
-        let provider = degenbot_rpc::provider::AlloyProvider::from_provider(
-            Arc::new(dyn_provider) as Arc<dyn alloy::providers::Provider<NetEth>>
-        );
-        (provider, asserter)
-    }
-
-    /// Encode a Multicall3 `aggregate3` return payload `(bool,bytes)[]` as a
-    /// `0x`-prefixed hex string (`eth_call` result shape).
-    fn mc3_return(results: &[(bool, Vec<u8>)]) -> String {
-        let arr = DynSolValue::Array(
-            results
-                .iter()
-                .map(|(ok, data)| {
-                    DynSolValue::Tuple(vec![
-                        DynSolValue::Bool(*ok),
-                        DynSolValue::Bytes(data.clone()),
-                    ])
-                })
-                .collect(),
-        );
-        format!("0x{}", alloy::primitives::hex::encode(arr.abi_encode()))
-    }
-
-    /// `bytes` are (byte-width, value): each value occupies the LAST `byte-width`
-    /// bytes of a 32-byte word (right-aligned — matches ABI uintN/intN
-    /// encoding). E.g. uint160 → 20 bytes, uint128 → 16, uint112 → 14,
-    /// int24/uint24 → 3, uint16 → 2, uint8 → 1, uint32 → 4.
-    fn abwords(values: &[(usize, u128)]) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 * values.len());
-        for (width, val) in values {
-            assert!(*width <= 32, "byte-width must be <= 32");
-            let mut word = [0u8; 32];
-            let v = U256::from(*val);
-            let bytes = v.to_be_bytes::<32>();
-            word[32 - width..].copy_from_slice(&bytes[32 - width..]);
-            out.extend_from_slice(&word);
-        }
-        out
-    }
-
-    #[tokio::test]
-    async fn fetch_onchain_batches_all_hops_into_one_eth_call() {
-        // A path: V2 hop + V3 hop. Sub-calls across hops: getReserves (1) +
-        // slot0 (1) + liquidity (1) = 3 sub-calls. Preload EXACTLY 1 response
-        // (one cross-hop multicall3 batch). If fetch_onchain makes any 2nd
-        // eth_call, the asserter queue empties → transport error → fetch
-        // returns Err and the assertions fail.
-        let mut snapshot = DiagnosticPathState::new(1, Some(42));
-        // V2 hop. zero_for_one=true → reserve_in=reserve0, reserve_out=reserve1.
-        snapshot.hops.push(DiagnosticHop {
-            position: 0,
-            hop_type: "V2".to_string(),
-            zero_for_one: true,
-            engine_state: DiagnosticPoolState::V2 {
-                address: "0x".to_string() + &"11".repeat(20),
-                reserve_in: format!("0x{:x}", 111u64),
-                reserve_out: format!("0x{:x}", 222u64),
-                fee_denom: "1000".to_string(),
-                gamma_numer: "997".to_string(),
-            },
-            ..Default::default()
-        });
-        // V3 hop.
-        snapshot.hops.push(DiagnosticHop {
-            position: 1,
-            hop_type: "V3".to_string(),
-            zero_for_one: false,
-            engine_state: DiagnosticPoolState::V3 {
-                address: "0x".to_string() + &"22".repeat(20),
-                token0: "0xaaaa".to_string(),
-                token1: "0xbbbb".to_string(),
-                fee: 500,
-                tick_spacing: 10,
-                sqrt_price_x96: format!("0x{:x}", 500u64),
-                tick: 7,
-                liquidity: format!("0x{:x}", 999u64),
-            },
-            ..Default::default()
-        });
-
-        // On-chain values: getReserves → (reserve0=111, reserve1=222, ts=0);
-        // slot0 → (sqrtPriceX96=0x1f4 (500, uint160), tick=7 (int24), ...);
-        // liquidity → 999 (uint128).
-        let getreserves_return = abwords(&[(14, 111), (14, 222), (4, 0)]);
-        let slot0_return = abwords(&[(20, 500), (3, 7), (2, 0), (2, 0), (2, 0), (1, 0)]);
-        // slot0 is a 7-field tuple; adding the 7th bool field (unlocked=true) as
-        // a 32-byte word (0x01). We only read fields 0 + 1, but the tuple decode
-        // needs all 7.
-        let mut slot0_full = slot0_return;
-        slot0_full.extend(U256::from(1u64).to_be_bytes::<32>());
-        let liquidity_return = abwords(&[(16, 999)]);
-        let batch = mc3_return(&[
-            (true, getreserves_return),
-            (true, slot0_full),
-            (true, liquidity_return),
-        ]);
-        let (provider, asserter) = mock_provider_for_fetch(vec![batch]);
-
-        snapshot
-            .fetch_onchain(&provider, None)
-            .await
-            .expect("fetch must succeed");
-
-        assert!(
-            asserter.read_q().is_empty(),
-            "exactly 1 eth_call expected; leftovers: {}",
-            asserter.read_q().len()
-        );
-        // onchain_block updated.
-        assert_eq!(snapshot.onchain_block, Some(42));
-        // Both hops populated, no diff errors.
-        assert_eq!(snapshot.hops.len(), 2);
-        let v2 = snapshot.hops[0]
-            .onchain_state
-            .as_ref()
-            .expect("v2 onchain_state populated");
-        match v2 {
-            DiagnosticPoolState::V2 {
-                reserve_in,
-                reserve_out,
-                ..
-            } => {
-                // zero_for_one=true → reserve_in=reserve0=111, reserve_out=reserve1=222.
-                assert_eq!(*reserve_in, format!("0x{:x}", 111u64));
-                assert_eq!(*reserve_out, format!("0x{:x}", 222u64));
-            }
-            other => panic!("expected V2 onchain_state, got {other:?}"),
-        }
-        assert!(
-            snapshot.hops[0].diff.is_empty(),
-            "no diff: {:?}",
-            snapshot.hops[0].diff
-        );
-        let v3 = snapshot.hops[1]
-            .onchain_state
-            .as_ref()
-            .expect("v3 onchain_state populated");
-        match v3 {
-            DiagnosticPoolState::V3 {
-                sqrt_price_x96,
-                tick,
-                liquidity,
-                ..
-            } => {
-                assert_eq!(*sqrt_price_x96, format!("0x{:x}", 500u64));
-                assert_eq!(*tick, 7);
-                assert_eq!(*liquidity, format!("0x{:x}", 999u64));
-            }
-            other => panic!("expected V3 onchain_state, got {other:?}"),
-        }
-        assert!(
-            snapshot.hops[1].diff.is_empty(),
-            "no diff: {:?}",
-            snapshot.hops[1].diff
         );
     }
 }
