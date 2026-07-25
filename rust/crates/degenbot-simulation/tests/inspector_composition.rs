@@ -20,7 +20,7 @@
 
 #![allow(clippy::doc_markdown, clippy::too_many_lines)]
 
-use alloy::primitives::{Address, Bytes, U256};
+use alloy::primitives::{Address, Bytes, I256, U256};
 use degenbot_simulation::{
     AccessListCollector, CallTraceInspector, SwapEventCaptureInspector, SwapFamily,
 };
@@ -52,24 +52,45 @@ fn db_with_contract(addr: Address, code: Bytecode) -> CacheDB<EmptyDB> {
     db
 }
 
-/// V2 `Sync(uint112,uint112)` LOG1 emitter (reserve0=1000, reserve1=2000).
-fn emit_v2_sync_bytecode(reserve0: u64, reserve1: u64) -> Bytes {
-    let r0 = reserve0.to_be_bytes();
-    let r1 = reserve1.to_be_bytes();
+/// V2 `Swap(address,uint256,uint256,uint256,uint256,address)` LOG3 emitter.
+/// Emits amount0In=1000 (token0 paid in), amount1Out=3000 (token1 received).
+/// Neither sender nor `to` carry amounts (indexed-only). Data layout (128 B):
+/// word0=amount0In, word1=amount1In, word2=amount0Out, word3=amount1Out.
+fn emit_v2_swap_bytecode(sender: Address, to: Address) -> Bytes {
     let mut code = Vec::new();
-    code.extend_from_slice(&[opcode::PUSH2]);
-    code.extend_from_slice(&r0[6..8]);
-    code.extend_from_slice(&[opcode::PUSH1, 0x00, opcode::MSTORE]);
-    code.extend_from_slice(&[opcode::PUSH2]);
-    code.extend_from_slice(&r1[6..8]);
-    code.extend_from_slice(&[opcode::PUSH1, 0x20, opcode::MSTORE]);
-    // LOG1 stack pop order (revm host.rs `log`): offset (top), size, topics.
-    // Push in reverse: topic0 (deepest), size, offset (top).
+    // mem[0x00..0x20] = amount0In = 1000.
+    code.extend_from_slice(&[
+        opcode::PUSH2,
+        0x03,
+        0xE8,
+        opcode::PUSH1,
+        0x00,
+        opcode::MSTORE,
+    ]);
+    // mem[0x20..0x40] = amount1In = 0.
+    code.extend_from_slice(&[opcode::PUSH1, 0x00, opcode::PUSH1, 0x20, opcode::MSTORE]);
+    // mem[0x40..0x60] = amount0Out = 0.
+    code.extend_from_slice(&[opcode::PUSH1, 0x00, opcode::PUSH1, 0x40, opcode::MSTORE]);
+    // mem[0x60..0x80] = amount1Out = 3000.
+    code.extend_from_slice(&[
+        opcode::PUSH2,
+        0x0B,
+        0xB8,
+        opcode::PUSH1,
+        0x60,
+        opcode::MSTORE,
+    ]);
+    // LOG3 pops (top-down): offset, size, topic0, topic1, topic2.
+    // Push in reverse so offset ends on top: topic2, topic1, topic0, size, offset.
+    code.extend_from_slice(&[opcode::PUSH20]);
+    code.extend_from_slice(to.as_slice()); // topic2 = `to`
+    code.extend_from_slice(&[opcode::PUSH20]);
+    code.extend_from_slice(sender.as_slice()); // topic1 = sender
     code.extend_from_slice(&[opcode::PUSH32]);
-    code.extend_from_slice(degenbot_decoders::v2_sync_decoder::V2_SYNC_TOPIC.as_slice());
-    code.extend_from_slice(&[opcode::PUSH1, 0x40]); // size
+    code.extend_from_slice(degenbot_decoders::v2_swap_decoder::V2_SWAP_TOPIC.as_slice()); // topic0
+    code.extend_from_slice(&[opcode::PUSH1, 0x80]); // size = 128
     code.extend_from_slice(&[opcode::PUSH1, 0x00]); // offset (top)
-    code.extend_from_slice(&[opcode::LOG1, opcode::STOP]);
+    code.extend_from_slice(&[opcode::LOG3, opcode::STOP]);
     Bytes::from(code)
 }
 
@@ -126,6 +147,8 @@ fn tx_to(addr: Address) -> TxEnv {
 fn composed_inspector_tuple_parities_al_and_captures_frames_and_swap() {
     let parent = Address::repeat_byte(0x10);
     let child_sync = Address::repeat_byte(0x20);
+    let swap_sender = Address::repeat_byte(0x11);
+    let swap_to = Address::repeat_byte(0x22);
     let al_contract = Address::repeat_byte(0x42);
 
     // ── Path A: AccessListCollector alone over the AL-touching contract ──
@@ -179,7 +202,7 @@ fn composed_inspector_tuple_parities_al_and_captures_frames_and_swap() {
     let mut db_c = CacheDB::new(EmptyDB::default());
     for (addr, code) in [
         (parent, parent_calls_child_bytecode(child_sync)),
-        (child_sync, emit_v2_sync_bytecode(1000, 2000)),
+        (child_sync, emit_v2_swap_bytecode(swap_sender, swap_to)),
     ] {
         db_c.insert_account_info(
             addr,
@@ -237,10 +260,22 @@ fn composed_inspector_tuple_parities_al_and_captures_frames_and_swap() {
     assert_eq!(child_frame.depth, 2);
     assert!(child_frame.outcome.is_some(), "child frame outcome paired");
 
-    // SwapEventCapture: exactly one V2 Sync swap, emitter=child_sync.
-    assert_eq!(swaps.len(), 1, "one V2 Sync captured: {swaps:?}");
+    // SwapEventCapture: exactly one V2 Swap, emitter=child_sync.
+    // amount0 = out - in = 0 - 1000 = -1000 (token0 paid in).
+    // amount1 = out - in = 3000 - 0 = +3000 (token1 received).
+    assert_eq!(swaps.len(), 1, "one V2 Swap captured: {swaps:?}");
     assert_eq!(swaps[0].family, SwapFamily::V2);
     assert_eq!(swaps[0].emitter, child_sync);
+    assert_eq!(
+        swaps[0].amount0,
+        I256::try_from(-1000_i128).unwrap(),
+        "amount0 = out - in = -1000 (token0 paid in)"
+    );
+    assert_eq!(
+        swaps[0].amount1,
+        I256::try_from(3000_i128).unwrap(),
+        "amount1 = out - in = +3000 (token1 received)"
+    );
 
     // No frame reverted in this fixture — the revert-attribution seam is
     // covered by the spike probe (KCKGP4 Q3); here we confirm the happy path.

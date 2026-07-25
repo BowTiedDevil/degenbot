@@ -1,17 +1,27 @@
 //! A `revm::Inspector` capturing swap-related LOG events emitted inside a
-//! simulated `execute()` — the V2 `Sync`, V3 `Swap`, and V4 `Swap` events the
+//! simulated `execute()` — the V2 `Swap`, V3 `Swap`, and V4 `Swap` events the
 //! pools' own `swap()` functions emit.
 //!
 //! # The onchain-recompute replacement (spike KCKGP4, findings Q1 + epic 63I7WJ)
 //!
 //! `execute()` drives real swaps into V2/V3/V4 pools; those pools emit
-//! `Sync`/`Swap` LOG events revm surfaces via `Inspector::log_full`. The
-//! existing `degenbot_decoders::{decode_sync_log, decode_v3_swap_log,
+//! `Swap` LOG events revm surfaces via `Inspector::log_full`. The existing
+//! `degenbot_decoders::{decode_v2_swap_log, decode_v3_swap_log,
 //! decode_v4_swap_log}` decode them. So "did the solver's `hop_outputs[i]`
 //! match reality" is `decode_swap_log(event).amount == solver.hop_outputs[i]`
 //! — no Multicall3 re-fetch, no off-chain recompute, no tick-map fetch, no
 //! storage-layout coupling. This is the swap-event capture that retires
 //! `diagnostic.rs::fetch_onchain` / `recompute_v2/v3/v4_amount_out`.
+//!
+//! # V2 capture: `Swap` (amounts), not `Sync` (reserves)
+//!
+//! V2 pairs emit BOTH `Sync(uint112,uint112)` (reserves) and
+//! `Swap(address,uint256,uint256,uint256,uint256,address)` (in/out amounts).
+//! The capture keys on `Swap` — the in/out amounts map directly to the signed
+//! `amount0`/`amount1` fields (`out - in`), so the captured amount IS the hop
+//! output. Capturing `Sync` (as the prototype did) left the v2 amounts zeroed
+//! and required a `getAmountOut` recompute from separately-fetched reserves,
+//! which is the half `diagnostic.rs` the onchain-recompute retirement deletes.
 //!
 //! # Why `log_full` and not `log` (spike KCKGP4, finding Q1)
 //!
@@ -39,7 +49,7 @@ use std::rc::Rc;
 use alloy::primitives::{Address, Log, I256, U256};
 use alloy::rpc::types::Log as RpcLog;
 use degenbot_decoders::{
-    v2_sync_decoder::{decode_sync_log, V2_SYNC_TOPIC},
+    v2_swap_decoder::{decode_v2_swap_log, V2_SWAP_TOPIC},
     v3_swap_decoder::{decode_v3_swap_log, V3_SWAP_TOPIC},
     v4_swap_decoder::{decode_v4_swap_log, V4_SWAP_TOPIC},
 };
@@ -107,13 +117,23 @@ impl CapturedSwap {
             log_index: None,
             removed: false,
         };
-        if *topic0 == V2_SYNC_TOPIC {
-            let ev = decode_sync_log(&rpc_log)?;
+        if *topic0 == V2_SWAP_TOPIC {
+            // V2 `Swap(address,uint256,uint256,uint256,uint256,address)` —
+            // the in/out amounts. Mapped to the V3 signed convention
+            // (amount > 0 = token RECEIVED by the swapper): amount0 =
+            // amount0_out - amount0_in, amount1 = amount1_out - amount1_in.
+            // A V2 swap pays in exactly one direction (one non-zero *_in,
+            // one non-zero *_out), so each difference fits in I256. This
+            // retires `diagnostic.rs::recompute_v2_amount_out` — the
+            // captured amount IS the hop output, no `getAmountOut` recompute.
+            let ev = decode_v2_swap_log(&rpc_log)?;
+            let amount0 = u256_to_signed_delta(ev.amount0_out, ev.amount0_in)?;
+            let amount1 = u256_to_signed_delta(ev.amount1_out, ev.amount1_in)?;
             Some(Self {
                 emitter: ev.pool_address,
                 family: SwapFamily::V2,
-                amount0: I256::ZERO,
-                amount1: I256::ZERO,
+                amount0,
+                amount1,
                 sqrt_price_x96: U256::ZERO,
                 liquidity: U256::ZERO,
                 tick: 0,
@@ -161,6 +181,20 @@ impl CapturedSwap {
         }
         Some(swap)
     }
+}
+
+/// Map a V2 swap in/out amount pair to the V3 signed-delta convention:
+/// `out - in` (positive = token received by the swapper, negative = paid in).
+///
+/// Returns `None` if either operand exceeds `i256::MAX` (cannot fit a signed
+/// delta) — in practice a V2 swap pays in one direction so one operand is zero
+/// and the non-zero one is a `uint256` amount; only an adversarially-malformed
+/// log with both directions set triggers the `None`.
+#[must_use]
+fn u256_to_signed_delta(amount_out: U256, amount_in: U256) -> Option<I256> {
+    let out = I256::try_from(amount_out).ok()?;
+    let inm = I256::try_from(amount_in).ok()?;
+    Some(out - inm)
 }
 
 /// The internal buffer shared between the inspector + its handle.
@@ -247,29 +281,25 @@ impl<CTX, INTR: revm::interpreter::InterpreterTypes> Inspector<CTX, INTR>
 mod tests {
     use super::*;
     use alloy::primitives::{Bytes, B256};
-    use degenbot_decoders::v2_sync_decoder::V2_SYNC_TOPIC;
+    use degenbot_decoders::v2_swap_decoder::V2_SWAP_TOPIC;
 
-    fn v2_sync_log(reserve0: u64, reserve1: u64) -> Log {
-        let mut data = vec![0u8; 64];
-        reserve0
-            .to_be_bytes()
-            .iter()
-            .rev()
-            .enumerate()
-            .for_each(|(i, b)| {
-                data[31 - i] = *b;
-            });
-        reserve1
-            .to_be_bytes()
-            .iter()
-            .rev()
-            .enumerate()
-            .for_each(|(i, b)| {
-                data[63 - i] = *b;
-            });
+    fn v2_swap_log(
+        pool: Address,
+        sender: Address,
+        to: Address,
+        amount0_in: U256,
+        amount1_in: U256,
+        amount0_out: U256,
+        amount1_out: U256,
+    ) -> Log {
+        let mut data = Vec::with_capacity(128);
+        data.extend_from_slice(&amount0_in.to_be_bytes::<32>());
+        data.extend_from_slice(&amount1_in.to_be_bytes::<32>());
+        data.extend_from_slice(&amount0_out.to_be_bytes::<32>());
+        data.extend_from_slice(&amount1_out.to_be_bytes::<32>());
         Log::new_unchecked(
-            Address::repeat_byte(0x42),
-            vec![V2_SYNC_TOPIC],
+            pool,
+            vec![V2_SWAP_TOPIC, sender.into_word(), to.into_word()],
             Bytes::from(data),
         )
     }
@@ -285,13 +315,63 @@ mod tests {
     }
 
     #[test]
-    fn v2_sync_log_decodes_to_captured_swap() {
-        let log = v2_sync_log(1000, 2000);
-        let swap = CapturedSwap::from_log_with_emitter(&log).expect("V2 Sync decodes");
-        assert_eq!(swap.emitter, Address::repeat_byte(0x42));
+    fn v2_swap_log_decodes_to_captured_swap_with_amounts() {
+        // A V2 swap paying 1e18 token0 IN, receiving 3000e6 token1 OUT.
+        // amount0 = out - in = 0 - 1e18 = -1e18 (paid in, negative).
+        // amount1 = out - in = 3000e6 - 0 = +3000e6 (received, positive).
+        let pool = Address::repeat_byte(0x42);
+        let sender = Address::repeat_byte(0x11);
+        let to = Address::repeat_byte(0x22);
+        let amount0_in = U256::from(1_000_000_000_000_000_000_u64);
+        let amount1_out = U256::from(3_000_000_000_u64);
+        let log = v2_swap_log(
+            pool,
+            sender,
+            to,
+            amount0_in,
+            U256::ZERO,
+            U256::ZERO,
+            amount1_out,
+        );
+        let swap = CapturedSwap::from_log_with_emitter(&log).expect("V2 Swap decodes");
+        assert_eq!(swap.emitter, pool);
         assert_eq!(swap.family, SwapFamily::V2);
-        // V2 Sync carries reserves, not amounts — the prototype stores zeros;
-        // the follow-on task extends `CapturedSwap` for V2 reserves if needed.
+        assert_eq!(
+            swap.amount0,
+            I256::try_from(-1_000_000_000_000_000_000_i128).unwrap(),
+            "amount0 = out - in = -1e18 (token0 paid in)"
+        );
+        assert_eq!(
+            swap.amount1,
+            I256::try_from(3_000_000_000_i128).unwrap(),
+            "amount1 = out - in = +3000e6 (token1 received)"
+        );
+        assert_eq!(swap.sqrt_price_x96, U256::ZERO);
+        assert_eq!(swap.tick, 0);
+    }
+
+    #[test]
+    fn v2_swap_log_reverse_direction_negative_amount1() {
+        // Reverse: paying token1 in, receiving token0 out.
+        let pool = Address::repeat_byte(0x42);
+        let sender = Address::repeat_byte(0x11);
+        let to = Address::repeat_byte(0x22);
+        let log = v2_swap_log(
+            pool,
+            sender,
+            to,
+            U256::ZERO,
+            U256::from(500_u64),
+            U256::from(2_u64),
+            U256::ZERO,
+        );
+        let swap = CapturedSwap::from_log_with_emitter(&log).expect("V2 Swap decodes");
+        assert_eq!(swap.amount0, I256::try_from(2_i128).unwrap(), "+2 received");
+        assert_eq!(
+            swap.amount1,
+            I256::try_from(-500_i128).unwrap(),
+            "-500 paid in"
+        );
     }
 
     #[test]
@@ -301,18 +381,17 @@ mod tests {
     }
 
     #[test]
-    fn v2_sync_topic_is_known_constant() {
+    fn v2_swap_topic_is_known_constant() {
         // Sanity: the topic0 the decoder keys on matches what an actual V2
-        // Sync emits (keccak256("Sync(uint112,uint112)")).
+        // Swap emits (keccak256("Swap(address,uint256,uint256,uint256,uint256,address)"))
+        // — verified against `cast keccak`.
         assert_eq!(
-            V2_SYNC_TOPIC,
+            V2_SWAP_TOPIC,
             B256::new([
-                0x1c, 0x41, 0x1e, 0x9a, 0x96, 0xe0, 0x71, 0x24, 0x1c, 0x2f, 0x21, 0xf7, 0x72, 0x6b,
-                0x17, 0xae, 0x89, 0xe3, 0xca, 0xb4, 0xc7, 0x8b, 0xe5, 0x0e, 0x06, 0x2b, 0x03, 0xa9,
-                0xff, 0xfb, 0xba, 0xd1,
+                0xd7, 0x8a, 0xd9, 0x5f, 0xa4, 0x6c, 0x99, 0x4b, 0x65, 0x51, 0xd0, 0xda, 0x85, 0xfc,
+                0x27, 0x5f, 0xe6, 0x13, 0xce, 0x37, 0x65, 0x7f, 0xb8, 0xd5, 0xe3, 0xd1, 0x30, 0x84,
+                0x01, 0x59, 0xd8, 0x22,
             ])
         );
-        // keep the topic-check — the decoder returns U112 reserves
-        // which the prototype discards (CapturedSwap stores zeros for V2).
     }
 }

@@ -19,7 +19,8 @@
 //!
 //! # Modules
 //!
-//! - [`v2_sync_decoder`] — V2 `Sync(uint112,uint112)`.
+//! - [`v2_sync_decoder`] — V2 `Sync(uint112,uint112)` (reserves).
+//! - [`v2_swap_decoder`] — V2 `Swap(address,uint256,uint256,uint256,uint256,address)` (in/out amounts — the swap-event-capture source that retires `recompute_v2_amount_out`).
 //! - [`v3_swap_decoder`] — V3 `Swap(address,address,int256,int256,uint160,uint128,int24)`.
 //! - [`v3_mint_burn_decoder`] — V3 `Mint` / `Burn` (both → tick-range liquidity delta).
 //! - [`v4_swap_decoder`] — V4 `Swap` (from `PoolManager`).
@@ -45,6 +46,7 @@ pub mod aave_event_decoder;
 pub mod pool_created_decoder;
 pub mod revert;
 pub mod uniswap_tick_range;
+pub mod v2_swap_decoder;
 pub mod v2_sync_decoder;
 pub mod v3_mint_burn_decoder;
 pub mod v3_swap_decoder;
