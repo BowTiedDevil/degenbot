@@ -51,9 +51,6 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::module_name_repetitions)]
 #![allow(clippy::cast_possible_truncation)]
-#![allow(clippy::cast_precision_loss)]
-#![allow(clippy::float_cmp)]
-#![allow(clippy::suboptimal_flops)]
 #![allow(clippy::similar_names)]
 #![allow(clippy::type_complexity)]
 

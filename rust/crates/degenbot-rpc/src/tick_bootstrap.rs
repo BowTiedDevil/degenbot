@@ -78,7 +78,6 @@ impl AlloyTickBootstrapRpc {
 }
 
 impl TickBootstrapRpc for AlloyTickBootstrapRpc {
-    #[allow(clippy::cast_possible_wrap, reason = "bit index 0..256 fits in i32")]
     fn bootstrap_v3_tick_word(
         &self,
         pool_address: &str,
@@ -136,7 +135,6 @@ impl TickBootstrapRpc for AlloyTickBootstrapRpc {
         })
     }
 
-    #[allow(clippy::cast_possible_wrap, reason = "bit index 0..256 fits in i32")]
     fn bootstrap_v4_tick_word(
         &self,
         state_view: &str,

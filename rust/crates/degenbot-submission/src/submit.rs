@@ -412,6 +412,29 @@ pub async fn dispatch_and_submit(
 // The fee-history fetch (I2)
 // ─────────────────────────────────────────────────────────────────────────
 
+/// Convert an `eth_feeHistory` reward percentile (`f64`, per the JSON-RPC
+/// spec) to the `u64` key the `block_priority_fees` ring stores, returning
+/// `None` for anything that is not a finite whole-number value in the valid
+/// percentile range `[0, 100]`.
+///
+/// A bare `p as u64` masks two real hazards: fractional percentiles (e.g.
+/// `10.5`) silently truncate to a key that never matches the `.get(&10)` /
+/// `.get(&50)` lookups the consumer performs, and negative / `NaN` /
+/// out-of-range values sign-mangle into garbage `u64` keys. Rejecting them
+/// here keeps malformed input from polluting the ring; the caller drops the
+/// pairing via `filter_map` (matching the function's tolerate-failure
+/// semantics — a bad percentile is advisory, not fatal).
+fn percentile_key(p: f64) -> Option<u64> {
+    if !p.is_finite() || !(0.0..=100.0).contains(&p) || p.fract() != 0.0 {
+        return None;
+    }
+    // Guarded cast: `p` is finite, whole, and in `[0, 100]`, so it fits `u64`
+    // exactly — no truncation, no sign loss.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let key = p as u64;
+    Some(key)
+}
+
 /// Fetch the per-block priority-fee percentiles via `eth_feeHistory` (typed
 /// ZUZANP surface) + record them into the dispatcher's `block_priority_fees`
 /// ring (ports L2907–L2923).
@@ -464,14 +487,18 @@ pub async fn fetch_fee_history(
         return false;
     };
 
-    // Zip the percentile KEYS (the `reward_percentiles` cast to u64 —
-    // `FEE_PERCENTILES = [10, 50]` → `[10u64, 50u64]`) with the reward values.
-    // Ports `dict(zip(FEE_PERCENTILES, reward_ints))`.
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    // Zip the percentile KEYS with the reward values, validating each
+    // percentile through [`percentile_key`] before it becomes the `u64` key
+    // the `block_priority_fees` consumer reads via `.get(&10)` / `.get(&50)`.
+    // A bare `*p as u64` masks two real hazards: fractional percentiles
+    // (e.g. `10.5`) truncate to a key that never matches a lookup, and
+    // negative / `NaN` / out-of-range values sign-mangle into garbage keys.
+    // Ports `dict(zip(FEE_PERCENTILES, reward_ints))` (the Python source
+    // passed integer percentiles, so the keys were always whole numbers).
     let fees: BTreeMap<u64, u128> = reward_percentiles
         .iter()
-        .map(|p| *p as u64)
         .zip(last_block_rewards.iter().copied())
+        .filter_map(|(p, reward)| percentile_key(*p).map(|k| (k, reward)))
         .collect();
 
     let recorded_block = history.oldest_block + block_count.saturating_sub(1);
@@ -940,6 +967,45 @@ mod tests {
         let recorded = fetch_fee_history(&provider, &dispatcher, 1, 100, &[10.0, 50.0]).await;
 
         assert!(!recorded);
+    }
+
+    #[tokio::test]
+    async fn fetch_fee_history_drops_malformed_percentiles() {
+        // The `eth_feeHistory` percentile keys are `f64`; a bare `as u64` cast
+        // would silently truncate fractional parts and sign-mangle negatives
+        // / NaN into garbage keys. `percentile_key` rejects them, so the ring
+        // only ever holds validated whole-number percentile keys.
+        let asserter = Asserter::new();
+        asserter.push_success(&serde_json::json!({
+            "oldestBlock": "0x64",
+            "baseFeePerGas": ["0x3b9aca00"],
+            "gasUsedRatio": [0.5],
+            // Four reward slots for the four requested percentiles.
+            "reward": [["0x3b9aca00", "0x77359400", "0x0", "0x0"]],
+        }));
+        let provider = mock_provider(&asserter);
+        let dispatcher = Arc::new(Mutex::new(Dispatcher::default()));
+
+        // p10 valid; 50.5 fractional (rejected); -1.0 negative (rejected);
+        // NaN (rejected). Only p10 lands in the ring.
+        let recorded = fetch_fee_history(
+            &provider,
+            &dispatcher,
+            1,
+            100,
+            &[10.0, 50.5, -1.0, f64::NAN],
+        )
+        .await;
+
+        assert!(recorded);
+        let d = dispatcher.lock().unwrap();
+        let fees = d.latest_priority_fees();
+        assert_eq!(fees.get(&10), Some(&1_000_000_000u128));
+        assert!(fees.get(&50).is_none());
+        assert!(fees.get(&505).is_none());
+        // No garbage key from the negative / NaN casts (would have been
+        // `u64::MAX`-ish under a bare `as u64` cast).
+        assert_eq!(fees.len(), 1);
     }
 
     // ── test helpers ──────────────────────────────────────────────────────

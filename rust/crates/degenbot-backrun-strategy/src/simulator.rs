@@ -526,11 +526,10 @@ pub const BALANCE_CALL_GAS_LIMIT: u64 = 100_000;
 ///
 /// Panics if a `TxEnv::builder().build()` fails (cannot happen with the
 /// well-formed balance/execute calldata + addresses this fn constructs).
-#[allow(clippy::needless_pass_by_value)]
 pub fn simulate_in_process_with_db<Db>(
     ctx: &SimulateContext<'_>,
     cache_db: CacheDB<Db>,
-    path: SimulatePath,
+    path: &SimulatePath,
     fail_buckets: &mut FailBuckets,
 ) -> ProviderResult<Option<SimResult>>
 where
@@ -585,12 +584,11 @@ where
 ///
 /// Panics if a `TxEnv::builder().build()` fails (cannot happen with the
 /// well-formed balance/execute calldata + addresses this fn constructs).
-#[allow(clippy::needless_pass_by_value)]
 #[allow(clippy::too_many_lines)]
 pub fn simulate_path_on_evm<E>(
     evm: &mut E,
     ctx: &SimulateContext<'_>,
-    path: SimulatePath,
+    path: &SimulatePath,
     fail_buckets: &mut FailBuckets,
 ) -> ProviderResult<Option<SimResult>>
 where
@@ -1199,8 +1197,8 @@ mod tests {
             .expect("overrides apply over EmptyDB");
         let mut buckets = FailBuckets::new();
 
-        let result =
-            simulate_in_process_with_db(&ctx, cache_db, smoke_v2_path(7), &mut buckets).unwrap();
+        let path = smoke_v2_path(7);
+        let result = simulate_in_process_with_db(&ctx, cache_db, &path, &mut buckets).unwrap();
         assert!(result.is_none(), "reverting execute returns None");
         // The execute() call [3] reverted (0xfe INVALID Halt). A Halt has no
         // output → classify_revert on empty bytes → the "empty" bucket.
@@ -1231,8 +1229,8 @@ mod tests {
             .expect("overrides apply over EmptyDB");
         let mut buckets = FailBuckets::new();
 
-        let result =
-            simulate_in_process_with_db(&ctx, cache_db, smoke_v2_path(11), &mut buckets).unwrap();
+        let path = smoke_v2_path(11);
+        let result = simulate_in_process_with_db(&ctx, cache_db, &path, &mut buckets).unwrap();
         assert!(result.is_none(), "no-profit returns None");
         assert_eq!(buckets.get("no-profit"), 1, "no-profit bucket tallied");
         let failures = buckets.failures();

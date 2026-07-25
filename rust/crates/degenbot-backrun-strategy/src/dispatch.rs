@@ -411,14 +411,11 @@ pub fn dispatch_profitable_results(
                     .into_iter()
                     .map(|c| {
                         let pid = c.path_id;
+                        let sim_path = c.to_simulate_path();
                         let mut buckets = FailBuckets::new();
-                        let result = simulate_path_on_evm(
-                            handle.evm_mut(),
-                            ctx,
-                            c.to_simulate_path(),
-                            &mut buckets,
-                        )
-                        .map_err(|e| format!("{e}"));
+                        let result =
+                            simulate_path_on_evm(handle.evm_mut(), ctx, &sim_path, &mut buckets)
+                                .map_err(|e| format!("{e}"));
                         (pid, buckets, result)
                     })
                     .collect(),
