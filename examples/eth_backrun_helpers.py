@@ -451,46 +451,44 @@ def filter_thin_margin_results(
 
 
 def format_sim_diag_line(
-    snapshot: dict[str, object],
+    failure: dict[str, object],
     *,
     path_id: int,
     path_type: str,
     solve_block: int,
     block: int,
     age: int,
-    revert_info: str,
 ) -> str:
     """Render one always-on ``[sim-diag]`` JSON line per reverted candidate.
 
+    Ergo epic 63I7WJ (task AM5AJW): re-pointed at the inspector's captured
+    swap amounts (the ACTUAL amounts the in-process EVM emitted) vs the
+    solver's reported ``hop_outputs`` (the EXPECTED amounts). No
+    ``fetch_onchain``, no ``recompute`` — the captured swaps ARE the ground
+    truth (proven byte-exact against mainnet receipts by the
+    ``swap_capture_correctness`` probe).
+
     The line is one compact, machine-parseable JSON object (``json.loads`` on
-    the text after the ``[sim-diag] `` prefix) carrying the per-candidate
-    attribution fields the analyzer needs: ``path_id``, ``path_type``,
-    ``solve_block`` (the published-solve block the reverted result was solved
-    for), ``engine_processed_block`` (the engine's last-applied block at
-    diagnostic snapshot time — when GREATER than ``solve_block`` the visible
-    drift is a post-publish snapshot timing artifact, classified
-    ``DriftArtifact``, not real publish-time lag; O5SKZ6), ``onchain_block``
-    (the block the diagnostic's onchain RPC fetch actually hit, when set),
-    ``block``, ``age``, ``revert_info``, ``optimal_input``, ``hop_outputs``, and
-    per-hop ``{engine_state, onchain_state, drift, field_drift, recompute}``
-    (whatever the snapshot carries — engine-only snapshots yield
-    ``onchain_state: None`` / ``drift: False`` / ``field_drift: []``). Never
-    raises — a malformed snapshot emits a best-effort line with the fields it
-    has, so emission never blocks the revert path.
+    the text after the ``[sim-diag] `` prefix) carrying: ``path_id``,
+    ``path_type``, ``solve_block``, ``block``, ``age``, ``revert_info``
+    (the reverting-frame label — the ``failure["bucket"]``), ``optimal_input``
+    (the solver's expected input), ``hop_outputs`` (the solver's expected
+    per-hop outputs), and ``captured_swaps`` (the inspector-captured actual
+    per-swap amounts). ``logs/permutation_analyzer.py::classify_candidate``
+    compares ``hop_outputs[i]`` vs the i-th captured swap's output amount to
+    classify SolverCalc / Encoding / Unknown. Never raises — a malformed
+    failure emits a best-effort line with the fields it has, so emission never
+    blocks the revert path.
     """
-    snapshot_dict = snapshot if isinstance(snapshot, dict) else {}
-    hops = snapshot_dict.get("hops", [])
     payload = {
         "path_id": path_id,
         "path_type": path_type,
         "solve_block": solve_block,
-        "engine_processed_block": snapshot_dict.get("engine_processed_block"),
-        "onchain_block": snapshot_dict.get("onchain_block"),
         "block": block,
         "age": age,
-        "revert_info": revert_info,
-        "optimal_input": snapshot_dict.get("optimal_input"),
-        "hop_outputs": snapshot_dict.get("hop_outputs", []),
-        "hops": hops,
+        "revert_info": failure.get("bucket", "") or "",
+        "optimal_input": failure.get("optimal_input"),
+        "hop_outputs": failure.get("hop_outputs", []),
+        "captured_swaps": failure.get("captured_swaps", []),
     }
     return "[sim-diag] " + json.dumps(payload, default=str, separators=(",", ":"))

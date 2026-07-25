@@ -16,54 +16,52 @@ from examples.eth_backrun_helpers import (
 )
 
 # ---------------------------------------------------------------------------
-# [sim-diag] structured per-revert emission (LAV44W)
+# [sim-diag] structured per-revert emission (ergo epic 63I7WJ task AM5AJW)
 # ---------------------------------------------------------------------------
+
+
+def _failure(**overrides: object) -> dict[str, object]:
+    """A minimal failure-record dict (the shape outcome.failures() emits)."""
+    base: dict[str, object] = {
+        "path_id": 7,
+        "bucket": "unknown:0xcafebabe",
+        "fail_index": 3,
+        "revert_data": "0xcafebabe",
+        "reverting_frame": None,
+        "captured_swaps": [
+            {
+                "family": "v2",
+                "emitter": "0x" + "aa" * 20,
+                "amount0": -1000,
+                "amount1": 3000,
+                "sqrt_price_x96": 0,
+                "liquidity": 0,
+                "tick": 0,
+            }
+        ],
+        "optimal_input": 1000,
+        "hop_outputs": [3000],
+    }
+    base.update(overrides)
+    return base
 
 
 def test_format_sim_diag_line_emits_parseable_json_with_required_fields() -> None:
     """The [sim-diag] line is one JSON object parseable with json.loads.
 
-    Contains the per-candidate attribution fields the analyzer needs:
-    path_id, path_type, solve_block, block, age, revert_info, optimal_input,
-    hop_outputs, and per-hop {engine_state, onchain_state, drift, field_drift,
-    recompute}. Engine-only snapshot (no onchain fetch) yields onchain_state
-    None / drift False / field_drift [].
+    Carries the captured-swaps basis: path_id, path_type, solve_block, block,
+    age, revert_info (the bucket), optimal_input, hop_outputs (expected), and
+    captured_swaps (actual). The classifier compares hop_outputs[i] vs the
+    i-th captured swap's output amount.
     """
-    snapshot = {
-        "path_id": 7,
-        "path_type": "V2-V3-V4",
-        "solve_block": 100,
-        "hops": [
-            {
-                "position": 0,
-                "hop_type": "V2",
-                "engine_state": {"pool_family": "V2", "reserve_in": "0x1"},
-                "onchain_state": None,
-                "drift": False,
-                "field_drift": [],
-                "recompute": {
-                    "amount_in": "0xa",
-                    "solver_out": "0x64",
-                    "expected_out_engine": "0x64",
-                    "expected_out_onchain": None,
-                    "matches_solver": None,
-                },
-            }
-        ],
-        "optimal_input": "0xa",
-        "hop_outputs": ["0x64"],
-    }
-
     line = format_sim_diag_line(
-        snapshot,
+        _failure(),
         path_id=7,
         path_type="V2-V3-V4",
         solve_block=100,
         block=103,
         age=3,
-        revert_info="0x CurrencyNotSettled",
     )
-
     assert line.startswith("[sim-diag] "), "line is prefixed [sim-diag] "
     payload = json.loads(line[len("[sim-diag] ") :])
     assert payload["path_id"] == 7
@@ -71,71 +69,18 @@ def test_format_sim_diag_line_emits_parseable_json_with_required_fields() -> Non
     assert payload["solve_block"] == 100
     assert payload["block"] == 103
     assert payload["age"] == 3
-    assert payload["revert_info"] == "0x CurrencyNotSettled"
-    assert payload["optimal_input"] == "0xa"
-    assert payload["hop_outputs"] == ["0x64"]
-    hop = payload["hops"][0]
-    assert hop["engine_state"]["reserve_in"] == "0x1"
-    assert hop["onchain_state"] is None
-    assert hop["drift"] is False
-    assert hop["field_drift"] == []
-    assert hop["recompute"]["expected_out_engine"] == "0x64"
+    assert payload["revert_info"] == "unknown:0xcafebabe"
+    assert payload["optimal_input"] == 1000
+    assert payload["hop_outputs"] == [3000]
+    swap = payload["captured_swaps"][0]
+    assert swap["family"] == "v2"
+    assert swap["amount0"] == -1000
+    assert swap["amount1"] == 3000
 
 
-def test_format_sim_diag_line_emits_engine_processed_block_and_onchain_block() -> None:
-    """O5SKZ6: the [sim-diag] line must carry ``engine_processed_block`` (the
-    engine's last-applied block at diagnostic snapshot time) and
-    ``onchain_block`` (the block the diagnostic's onchain RPC fetch hit) so the
-    analyzer can distinguish a post-publish snapshot timing artifact from a
-    real publish-time state lag. When ``engine_processed_block > solve_block``
-    (the engine has advanced past the published solve_block by the time the
-    snapshot is read), the visible drift is the post-publish swap the live
-    engine read includes — a SNAPSHOT ARTIFACT (DriftArtifact), NOT real
-    publish-time drift."""
-    snapshot = {
-        "engine_processed_block": 1001,  # engine has advanced past publish
-        "onchain_block": 1000,
-        "hops": [{"drift": True, "recompute": {"matches_solver": None}}],
-    }
-
-    line = format_sim_diag_line(
-        snapshot,
-        path_id=99,
-        path_type="V4-V4-V3",
-        solve_block=1000,
-        block=1001,
-        age=1,
-        revert_info="0x IIA",
-    )
-    payload = json.loads(line[len("[sim-diag] ") :])
-    assert payload["solve_block"] == 1000
-    assert payload["engine_processed_block"] == 1001
-    assert payload["onchain_block"] == 1000
-    assert payload["engine_processed_block"] > payload["solve_block"]
-
-
-def test_format_sim_diag_line_emits_null_block_metadata_when_absent() -> None:
-    """When the snapshot doesn't carry block metadata (older engine-side
-    snapshots), the line emits nulls — the analyzer treats absent metadata
-    conservatively (real drift, not artifact)."""
-    line = format_sim_diag_line(
-        {"hops": []},
-        path_id=1,
-        path_type="V2-V3",
-        solve_block=42,
-        block=42,
-        age=0,
-        revert_info="0x whatever",
-    )
-    payload = json.loads(line[len("[sim-diag] ") :])
-    assert payload["engine_processed_block"] is None
-    assert payload["onchain_block"] is None
-
-
-def test_format_sim_diag_line_never_raises_on_missing_snapshot_keys() -> None:
-    """A taxonomy/emission path must never raise — malformed snapshots emit a
-    best-effort line with whatever fields are present (the analyzer tolerates
-    missing keys)."""
+def test_format_sim_diag_line_never_raises_on_missing_keys() -> None:
+    """A taxonomy/emission path must never raise — malformed failure records
+    emit a best-effort line with whatever fields are present."""
     line = format_sim_diag_line(
         {},
         path_id=1,
@@ -143,12 +88,33 @@ def test_format_sim_diag_line_never_raises_on_missing_snapshot_keys() -> None:
         solve_block=1,
         block=1,
         age=0,
-        revert_info="",
     )
     payload = json.loads(line[len("[sim-diag] ") :])
     assert payload["path_id"] == 1
-    assert payload["hops"] == []
+    assert payload["revert_info"] == ""
     assert payload["optimal_input"] is None
+    assert payload["hop_outputs"] == []
+    assert payload["captured_swaps"] == []
+
+
+def test_format_sim_diag_line_omits_retired_recompute_fields() -> None:
+    """The new payload does NOT carry the retired engine_state/onchain_state/
+    recompute/drift/engine_processed_block/onchain_block fields (deleted with
+    the diagnostic.rs onchain-recompute half). Only captured_swaps +
+    hop_outputs + optimal_input + revert_info remain."""
+    line = format_sim_diag_line(
+        _failure(),
+        path_id=1,
+        path_type="V2-V3",
+        solve_block=1,
+        block=1,
+        age=0,
+    )
+    payload = json.loads(line[len("[sim-diag] ") :])
+    assert "hops" not in payload, "retired per-hop snapshot shape is gone"
+    assert "recompute" not in payload
+    assert "engine_processed_block" not in payload
+    assert "onchain_block" not in payload
 
 
 # ── T3: thin-margin profit filter (GTOD23-IKJRGO) ───────────────────────────

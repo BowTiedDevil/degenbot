@@ -25,6 +25,7 @@
 use crate::hex_utils::encode_hex;
 use crate::prelude::*;
 use crate::submission::submit::PySubmitCandidate;
+use alloy::primitives::U256;
 use degenbot_backrun_strategy::DispatchOutcome;
 use degenbot_backrun_strategy::{CapturedSwap, FailBuckets, SimFailure};
 use degenbot_executor::composers::{HopInfo, PathInfo};
@@ -253,6 +254,20 @@ impl PyDispatchOutcome {
                 swaps_list.append(captured_swap_to_dict(py, s)?)?;
             }
             dict.set_item("captured_swaps", swaps_list)?;
+            // The solver's expected amounts — the [sim-diag] classifier's
+            // EXPECTED half (the ACTUAL half is `captured_swaps`). The gap
+            // between `hop_outputs[i]` and the i-th captured swap's amount
+            // is the new SolverCalc basis (replaces the deleted recompute).
+            // `optimal_input` is the solver's expected input (context for the
+            // expected-vs-actual render). Ergo epic 63I7WJ task AM5AJW.
+            let optimal_input = alloy_py::u256_to_py(py, &U256::from(f.optimal_input))?;
+            dict.set_item("optimal_input", optimal_input)?;
+            let hop_outputs_list = PyList::empty(py);
+            for ho in &f.hop_outputs {
+                let v = alloy_py::u256_to_py(py, &U256::from(*ho))?;
+                hop_outputs_list.append(v)?;
+            }
+            dict.set_item("hop_outputs", hop_outputs_list)?;
             list.append(dict)?;
         }
         Ok(list)

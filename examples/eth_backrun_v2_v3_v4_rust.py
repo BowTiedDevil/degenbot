@@ -43,6 +43,7 @@ import dotenv
 from eth_backrun_helpers import (
     BackrunConfig,
     format_failure_breakdown,
+    format_sim_diag_line,
 )
 from eth_typing import ChainId, ChecksumAddress
 
@@ -1430,7 +1431,7 @@ async def _dispatch_profitable(
         engine=engine_registry.engine,
     )
     _render_sim_summary(outcome)
-    _render_sim_failures(outcome)
+    _render_sim_failures(outcome, current_block=current_block)
     _render_profit_logs(outcome)
 
     # ── Submit gas-profitable via the Rust submit leaf ───
@@ -1540,8 +1541,9 @@ def _render_profit_logs(outcome: DispatchOutcome) -> None:
         )
 
 
-def _render_sim_failures(outcome: DispatchOutcome) -> None:
-    """Render one ``[sim-fail]`` line per reverted / failed candidate (D3).
+def _render_sim_failures(outcome: DispatchOutcome, *, current_block: int) -> None:
+    """Render one ``[sim-fail]`` + one ``[sim-diag]`` line per reverted / failed
+    candidate (D3 + AM5AJW).
 
     Counterpart to :func:`_render_profit_logs` — operates on the FAILURES
     rather than the survivors. Each record carries the per-candidate detail the
@@ -1591,6 +1593,21 @@ def _render_sim_failures(outcome: DispatchOutcome) -> None:
         bot_logger.info(
             f"[sim-fail] path={path_id} type={path_type} bucket={bucket} "
             f"{revert_line} hops={hops}",
+        )
+        # Ergo epic 63I7WJ (task AM5AJW) — emit the structured [sim-diag] JSON
+        # line the ``logs/permutation_analyzer.py`` classifier parses. Built
+        # from the failure record's captured_swaps (actual) + hop_outputs
+        # (expected) — no fetch_onchain, no recompute. The classifier
+        # compares them to produce Drift/SolverCalc/Encoding/Unknown.
+        bot_logger.info(
+            format_sim_diag_line(
+                rec,
+                path_id=path_id,
+                path_type=path_type,
+                solve_block=current_block,
+                block=current_block,
+                age=0,
+            )
         )
     overflow = len(failures) - cap
     if overflow > 0:

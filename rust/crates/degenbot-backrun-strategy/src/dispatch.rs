@@ -432,6 +432,8 @@ pub fn dispatch_profitable_results(
                             "rpc-failed",
                             None,
                             alloy::primitives::Bytes::new(),
+                            c.optimal_input,
+                            c.hop_outputs.clone(),
                         );
                         (c.path_id, buckets, Ok(None))
                     })

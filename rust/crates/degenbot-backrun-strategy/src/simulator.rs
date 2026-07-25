@@ -224,6 +224,18 @@ pub struct SimFailure {
     /// that blew the price limit). Empty for orchestration-only buckets + the
     /// balance-decode branch (no `inspect_one` ran). Ergo epic 63I7WJ.
     pub captured_swaps: Vec<CapturedSwap>,
+    /// The solver's optimal input for this path (`path.optimal_input`). Carried
+    /// so the `[sim-diag]` classifier (ergo epic 63I7WJ task AM5AJW) can emit
+    /// the expected-vs-actual comparison without re-deriving it — the
+    /// *actual* amount comes from `captured_swaps`.
+    pub optimal_input: u128,
+    /// The solver's per-hop outputs (`path.hop_outputs`). The EXPECTED amount
+    /// the solver said each hop would produce; the ACTUAL amount lives on each
+    /// `captured_swaps` entry's `amount0`/`amount1` — the gap between them is
+    /// the new `SolverCalc` classification basis (replaces the deleted
+    /// `recompute.matches_solver`). Empty for orchestration-only buckets where
+    /// no hop ran (the int128-overflow guard, the encode-failed guard).
+    pub hop_outputs: Vec<u128>,
 }
 
 /// The inspector-captured attribution of a failing `execute()` frame — the
@@ -297,6 +309,8 @@ impl FailBuckets {
         bucket: &str,
         fail_index: Option<usize>,
         revert_data: alloy::primitives::Bytes,
+        optimal_input: u128,
+        hop_outputs: Vec<u128>,
     ) {
         self.tally(bucket);
         self.failures.push(SimFailure {
@@ -306,6 +320,8 @@ impl FailBuckets {
             revert_data,
             reverting_frame: None,
             captured_swaps: Vec::new(),
+            optimal_input,
+            hop_outputs,
         });
     }
 
@@ -313,6 +329,7 @@ impl FailBuckets {
     /// reverting-frame attribution. Like [`record`](Self::record) but populates
     /// [`SimFailure::reverting_frame`] — the deep (depth/target/selector/
     /// revert-data/label) attribution of the frame that actually reverted.
+    #[allow(clippy::too_many_arguments)]
     pub fn record_revert(
         &mut self,
         path_id: u64,
@@ -320,6 +337,8 @@ impl FailBuckets {
         fail_index: Option<usize>,
         reverting_frame: RevertingFrame,
         captured_swaps: Vec<CapturedSwap>,
+        optimal_input: u128,
+        hop_outputs: Vec<u128>,
     ) {
         self.tally(bucket);
         self.failures.push(SimFailure {
@@ -329,6 +348,8 @@ impl FailBuckets {
             revert_data: reverting_frame.revert_data.clone(),
             reverting_frame: Some(reverting_frame),
             captured_swaps,
+            optimal_input,
+            hop_outputs,
         });
     }
 
@@ -714,6 +735,8 @@ where
                     "int128-overflow",
                     None,
                     alloy::primitives::Bytes::new(),
+                    path.optimal_input,
+                    path.hop_outputs.clone(),
                 );
                 return Ok(None);
             }
@@ -736,6 +759,8 @@ where
             "encode-failed",
             None,
             alloy::primitives::Bytes::new(),
+            path.optimal_input,
+            path.hop_outputs.clone(),
         );
         return Ok(None);
     };
@@ -833,6 +858,8 @@ where
                 "rpc-failed",
                 Some(idx),
                 alloy::primitives::Bytes::new(),
+                path.optimal_input,
+                path.hop_outputs.clone(),
             );
             return Ok(None);
         };
@@ -915,9 +942,18 @@ where
                     label: frame_label,
                 },
                 captured_swaps.clone(),
+                path.optimal_input,
+                path.hop_outputs.clone(),
             );
         } else {
-            fail_buckets.record(path.path_id, &bucket, Some(fail_idx), revert_data);
+            fail_buckets.record(
+                path.path_id,
+                &bucket,
+                Some(fail_idx),
+                revert_data,
+                path.optimal_input,
+                path.hop_outputs.clone(),
+            );
         }
         return Ok(None);
     }
@@ -931,6 +967,8 @@ where
             "balance-decode",
             Some(0),
             alloy::primitives::Bytes::new(),
+            path.optimal_input,
+            path.hop_outputs.clone(),
         );
         return Ok(None);
     };
@@ -940,6 +978,8 @@ where
             "balance-decode",
             Some(1),
             alloy::primitives::Bytes::new(),
+            path.optimal_input,
+            path.hop_outputs.clone(),
         );
         return Ok(None);
     };
@@ -949,6 +989,8 @@ where
             "balance-decode",
             Some(2),
             alloy::primitives::Bytes::new(),
+            path.optimal_input,
+            path.hop_outputs.clone(),
         );
         return Ok(None);
     };
@@ -958,6 +1000,8 @@ where
             "balance-decode",
             Some(4),
             alloy::primitives::Bytes::new(),
+            path.optimal_input,
+            path.hop_outputs.clone(),
         );
         return Ok(None);
     };
@@ -967,6 +1011,8 @@ where
             "balance-decode",
             Some(5),
             alloy::primitives::Bytes::new(),
+            path.optimal_input,
+            path.hop_outputs.clone(),
         );
         return Ok(None);
     };
@@ -976,6 +1022,8 @@ where
             "balance-decode",
             Some(6),
             alloy::primitives::Bytes::new(),
+            path.optimal_input,
+            path.hop_outputs.clone(),
         );
         return Ok(None);
     };
@@ -989,6 +1037,8 @@ where
             "no-profit",
             None,
             alloy::primitives::Bytes::new(),
+            path.optimal_input,
+            path.hop_outputs.clone(),
         );
         return Ok(None);
     }

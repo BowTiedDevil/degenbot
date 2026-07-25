@@ -1,8 +1,14 @@
-"""Tests for the structured per-revert four-way classifier (CPCZZV).
+"""Tests for the structured per-revert four-way classifier.
 
-The classifier replaces the false `Stale_Reverts`/`Bug_Reverts` dichotomy with
-Drift / SolverCalc / Encoding / Unknown, parsed from the `[sim-diag]` JSON line
-each reverted candidate emits.
+Ergo epic 63I7WJ (task AM5AJW): re-pointed at the inspector's captured swap
+amounts vs the solver's ``hop_outputs``. Replaces the retired
+``recompute.matches_solver`` / ``drift`` basis (deleted with the
+``diagnostic.rs`` onchain-recompute half).
+
+The ``Drift`` / ``DriftArtifact`` columns are kept in the TSV for column
+stability but always tally 0 — the in-process captured swaps reflect the
+engine's current state (same state the solver read), so drift (stale engine
+vs mainnet) cannot be detected without the onchain recompute.
 """
 
 import json
@@ -17,152 +23,71 @@ def _line(payload: dict) -> dict:
     return json.loads((_PREFIX + json.dumps(payload))[_PREFIX.__len__() :])
 
 
-def _hop(*, drift: bool = False, matches_solver: object = None) -> dict:
+def _swap(*, family: str = "v2", amount0: int = -1000, amount1: int = 3000) -> dict:
+    """A captured swap dict (the inspector's CapturedSwap shape). The OUTPUT is
+    the positive amount (received); the input is negative (paid in)."""
     return {
-        "drift": drift,
-        "recompute": {"matches_solver": matches_solver},
+        "family": family,
+        "emitter": "0x" + "aa" * 20,
+        "amount0": amount0,
+        "amount1": amount1,
+        "sqrt_price_x96": 0,
+        "liquidity": 0,
+        "tick": 0,
     }
 
 
-def test_classify_drift_when_any_hop_drifts() -> None:
-    """Drift takes precedence: any hop with drift=true → Drift, regardless of
-    the recompute result (a drifted state makes the recompute basis invalid)."""
+def test_classify_solvercalc_when_captured_amount_differs_from_hop_output() -> None:
+    """The captured swap's output (amount1=+3000) differs from the solver's
+    hop_outputs[0] (2900) → SolverCalc (solver math was wrong)."""
     snap = _line({
-        "hops": [
-            _hop(drift=False, matches_solver=True),
-            _hop(drift=True, matches_solver=False),
-            _hop(drift=False, matches_solver=True),
-        ],
-        "revert_info": "0x IIA",
-    })
-    assert classify_candidate(snap) == "Drift"
-
-
-def test_classify_solvercalc_when_no_drift_and_recompute_mismatches() -> None:
-    """No drift + any hop recompute.matches_solver == False → SolverCalc
-    (correct on-chain state, wrong solver output)."""
-    snap = _line({
-        "hops": [
-            _hop(drift=False, matches_solver=True),
-            _hop(drift=False, matches_solver=False),
-        ],
-        "revert_info": "0x SomeError",
+        "revert_info": "0x CurrencyNotSettled",
+        "hop_outputs": [2900],
+        "captured_swaps": [_swap(amount0=-1000, amount1=3000)],
     })
     assert classify_candidate(snap) == "SolverCalc"
 
 
-def test_classify_encoding_when_no_drift_and_all_recompute_matches() -> None:
-    """No drift + all hops matches_solver == True, yet sim reverted → the
-    amounts were right, so the stream must be wrong → Encoding."""
+def test_classify_encoding_when_all_captured_amounts_match_hop_outputs() -> None:
+    """Every captured swap's output matches its hop_outputs[i], yet the sim
+    reverted → the amounts were right, so the encoded stream must be wrong →
+    Encoding."""
     snap = _line({
-        "hops": [
-            _hop(drift=False, matches_solver=True),
-            _hop(drift=False, matches_solver=True),
-        ],
         "revert_info": "0x CurrencyNotSettled",
+        "hop_outputs": [3000],
+        "captured_swaps": [_swap(amount0=-1000, amount1=3000)],
     })
     assert classify_candidate(snap) == "Encoding"
 
 
-def test_classify_unknown_when_recompute_unavailable() -> None:
-    """No drift + recompute unavailable (matches_solver None on every hop — V3/V4
-    where onchain recompute is deferred) → Unknown (cannot attribute)."""
-    snap = _line({
-        "hops": [
-            _hop(drift=False, matches_solver=None),
-            _hop(drift=False, matches_solver=None),
-        ],
-        "revert_info": "0x execution reverted",
-    })
-    assert classify_candidate(snap) == "Unknown"
-
-
 def test_classify_unknown_when_bare_empty_revert() -> None:
     """A bare/empty revert (no payload) → Unknown, never 'stale'."""
-    snap = _line({"hops": [_hop(drift=False, matches_solver=None)], "revert_info": ""})
+    snap = _line({"revert_info": "", "hop_outputs": [3000], "captured_swaps": [_swap()]})
     assert classify_candidate(snap) == "Unknown"
 
 
-def test_classify_unknown_when_no_hops_or_malformed() -> None:
-    """Malformed snapshot (no hops) → Unknown (never raises)."""
-    snap = _line({"hops": [], "revert_info": "0x whatever"})
+def test_classify_unknown_when_no_captured_swaps() -> None:
+    """No captured swaps (orchestration-only bucket — no swaps ran before the
+    revert, e.g. encode-failed or balance-decode) → Unknown."""
+    snap = _line({"revert_info": "0x whatever", "hop_outputs": [3000], "captured_swaps": []})
     assert classify_candidate(snap) == "Unknown"
 
 
-# ---------------------------------------------------------------------------
-# DriftArtifact: post-publish-advance snapshot artifact (O5SKZ6)
-# ---------------------------------------------------------------------------
+def test_classify_unknown_when_no_hop_outputs_or_malformed() -> None:
+    """Malformed snapshot (no hop_outputs) → Unknown (never raises)."""
+    snap = _line({"revert_info": "0x whatever", "captured_swaps": [_swap()]})
+    assert classify_candidate(snap) == "Unknown"
 
-from logs.permutation_analyzer import DRIFT_ARTIFACT
 
-
-def test_classify_post_publish_advance_drift_is_artifact_not_real_lag() -> None:
-    """When the diagnostic's ``engine_processed_block`` (the engine's
-    last-applied block when the snapshot was taken) is GREATER than the
-    published ``solve_block`` (the block the reverted result was solved for),
-    the visible drift is a SNAPSHOT TIMING ARTIFACT — the engine has advanced
-    past the published block by the time ``_emit_sim_diag`` reads live
-    ``engine_state`` against an onchain RPC sometimes pinned to ``solve_block``
-    — NOT a real publish-time state lag.
-
-    Started O5SKZ6. Verified in ``perm-V4-V4-V3.log`` block 25398801: only
-    hop[0] (V4a) drifts and the engine tick is AHEAD of the onchain-fetch tick
-    (the V4a pool had a post-publish swap the live engine read includes but
-    the pinned solve_block RPC excludes). All V4-V4-V3 reverts were the
-    executor-custody ``Comp::_transferTokens`` bug (fixed by WVKFDH), not drift
-    — no evidence of drift-driven onchain failures in any permutation.
-    """
+def test_classify_unknown_when_v4_captured_swap() -> None:
+    """A V4 captured swap's amount correctness is gated on task 5RI47E (the
+    transient seeder) — cannot validate, so the hop is Unknown."""
     snap = _line({
-        "solve_block": 25398800,
-        "engine_processed_block": 25398801,  # engine advanced past publish
-        "revert_info": "0x6675636b Localization: BLAH",
-        "hops": [_hop(drift=True, matches_solver=None)],
+        "revert_info": "0x CurrencyNotSettled",
+        "hop_outputs": [3000],
+        "captured_swaps": [_swap(family="v4", amount0=-1000, amount1=3000)],
     })
-    assert classify_candidate(snap) == DRIFT_ARTIFACT
-
-
-def test_classify_post_publish_advance_via_onchain_block_is_artifact() -> None:
-    """Even without ``engine_processed_block``, when ``onchain_block`` (the
-    block the diagnostic's RPC fetch actually hit) is later than the published
-    ``solve_block``, the drift is a snapshot artifact — the RPC was pinned
-    upstream of the published solve block, not at solve time."""
-    snap = _line({
-        "solve_block": 25398800,
-        "onchain_block": 25398801,  # RPC fetched at a block past publish
-        "revert_info": "0x IIA",
-        "hops": [_hop(drift=True, matches_solver=None)],
-    })
-    assert classify_candidate(snap) == DRIFT_ARTIFACT
-
-
-def test_classify_drift_at_published_block_is_real_lag() -> None:
-    """Drift with ``engine_processed_block == solve_block`` (engine hasn't
-    advanced past publish) AND no ``onchain_block`` past publish is a REAL
-    publish-time state lag — classified as ``Drift``, not artifact.
-
-    This is the worst case: the engine's state at publish disagrees with
-    onchain truth at the same block. Means a swap was applied wrong, or the
-    pump published during `LogsArriving` and the WS hasn't delivered the
-    straggler at snapshot time."""
-    snap = _line({
-        "solve_block": 25398800,
-        "engine_processed_block": 25398800,  # no advance
-        "revert_info": "0x IIA",
-        "hops": [_hop(drift=True, matches_solver=None)],
-    })
-    assert classify_candidate(snap) == "Drift"
-
-
-def test_classify_drift_with_no_block_metadata_is_real_lag() -> None:
-    """Drift with no ``engine_processed_block`` / ``onchain_block`` metadata
-    (older sim-diag lines predating the O5SKZ6 fix) defaults to ``Drift`` —
-    cannot prove artifact, so attribute conservatively."""
-    snap = _line({
-        "solve_block": 25398800,
-        "revert_info": "0x IIA",
-        "hops": [_hop(drift=True, matches_solver=None)],
-    })
-    assert classify_candidate(snap) == "Drift"
+    assert classify_candidate(snap) == "Unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -177,11 +102,11 @@ def test_analyze_log_classifies_reverts_from_sim_diag_lines() -> None:
         "[sim] 5 ok (3 profitable, 2 below threshold), 3 failed, 0 exceptions\n"
         "[sim] by reason: no-profit=1 CurrencyNotSettled=1 unknown:0x..=1\n"
         '[sim-diag] {"path_id":1,"revert_info":"0x CurrencyNotSettled",'
-        '"hops":[{"drift":false,"recompute":{"matches_solver":true}}]}\n'
+        '"hop_outputs":[3000],"captured_swaps":[{"family":"v2","amount0":-1000,"amount1":3000}]}\n'
         '[sim-diag] {"path_id":2,"revert_info":"0x IIA",'
-        '"hops":[{"drift":true,"recompute":{"matches_solver":null}}]}\n'
+        '"hop_outputs":[2900],"captured_swaps":[{"family":"v2","amount0":-1000,"amount1":3000}]}\n'
         '[sim-diag] {"path_id":3,"revert_info":"0x execution reverted",'
-        '"hops":[{"drift":false,"recompute":{"matches_solver":null}}]}\n'
+        '"hop_outputs":[3000],"captured_swaps":[]}\n'
     )
     r = analyze_log(log, permutation="V2-V3-V4")
     assert r.sim_ok == 5
@@ -189,10 +114,9 @@ def test_analyze_log_classifies_reverts_from_sim_diag_lines() -> None:
     assert r.reverts == 3
     assert r.candidates == 9
     assert r.classification == "⚠️ Partial"
-    # One Encoding (no drift, all matches true), one Drift, one Unknown.
-    assert r.drift == 1
-    assert r.solver_calc == 0
+    # One Encoding (amounts match), one SolverCalc (mismatch), one Unknown (no swaps).
     assert r.encoding == 1
+    assert r.solver_calc == 1
     assert r.unknown == 1
     assert r.structured is True
 
@@ -226,14 +150,7 @@ def test_analyze_log_detects_verify_basis_from_startup_log() -> None:
 
 def test_analyze_log_verify_basis_from_per_pool_gates() -> None:
     """The per-pool two-step gates (step-1 seed + step-2 post-drain) ARE the
-    verification basis — the startup batch verify (step 3b) is redundant with
-    them (step-1 proves the seed good; step-2 proves the drain/pump applied
-    events correctly) and was removed (it raced the pump's WS log-application
-    lag at the moving head: `last_processed_block()` can advance past a block
-    on the header edge before its Mint log is dispatched — V2-V2-V3 crash at
-    block 25397049, Mint at 25397047 unapplied). A log carrying only the
-    per-pool `[verify-seed]`/`[verify-drain]` OK lines must register as
-    verified, replacing the old `[verify] … OK` batch line."""
+    verification basis."""
     log = (
         "[verify-seed] V3 snapshot seed OK for 0x88e6…5640 at block 25396501\n"
         "[verify-drain] V3 post-drain snapshot OK for 0x88e6…5640 at block 25397043\n"
@@ -243,19 +160,11 @@ def test_analyze_log_verify_basis_from_per_pool_gates() -> None:
 
 
 def test_analyze_log_verify_basis_recurring_drift_from_rust_mismatch() -> None:
-    """GTOD23-YBEYKY (T4): the recurring in-loop verifier's Python-side
-    ``[verify] (recurring)`` lines were silenced (S2/PB24RX). Its Rust-side
-    mismatch emit survives under ``[dbg-verify] MISMATCH`` — recognize that as
-    "recurring verify ran + detected drift" so the analyzer reports the drift
-    detection instead of reporting no recurring activity."""
     log = "[dbg-verify] MISMATCH 0x8ad5… tick=203880 block=25398650\n[sim] 1 ok (1), 0 failed\n"
     assert analyze_log(log).verify_basis == "recurring-drift"
 
 
 def test_analyze_log_verify_basis_recurring_drift_takes_priority_when_ok_also_present() -> None:
-    """When both the per-pool OK AND a recurring mismatch appear, the recurring
-    drift signal takes priority (it caught drift the registration-time two-step
-    didn't)."""
     log = (
         "[verify-seed] V3 snapshot seed OK for 0x88e6…5640 at block 25396501\n"
         "[dbg-verify] MISMATCH 0x8ad5… tick=203880 block=25398650\n"
@@ -265,9 +174,6 @@ def test_analyze_log_verify_basis_recurring_drift_takes_priority_when_ok_also_pr
 
 
 def test_analyze_log_verify_basis_recurring_python_line_now_visible() -> None:
-    """After T4's logging.py fix, the recurring verifier's own Python ``[verify]
-    (recurring)`` line is no longer silenced — the analyzer recognizes it as
-    recurring-drift signal too (it's the recurring verifier reporting it ran)."""
     log = "[verify] (recurring) checking at block 25398650\n[sim] 1 ok (1), 0 failed\n"
     assert analyze_log(log).verify_basis == "recurring-drift"
 
@@ -278,54 +184,14 @@ def test_tsv_header_has_four_way_columns_no_stale() -> None:
     assert "Stale" not in h and "Bug" not in h and "IIA_Reverts" not in h
 
 
-def test_classify_v3_no_drift_partial_recompute_is_unknown_not_solvercalc() -> None:
-    """A V3/V4 no-drift revert where recompute is unavailable (matches_solver
-    None on every hop — the 4BKMKX deferred case) must classify as Unknown,
-    NEVER as SolverCalc. Guards against the V2 refresh clobbering a V3/V4
-    hop's deferred-None on-chain fields with a spurious matches_solver=False
-    (which would wrongly trigger SolverCalc)."""
-    snap = _line({
-        "hops": [
-            # V3 hop: no drift, recompute fully deferred (all None).
-            _hop(drift=False, matches_solver=None),
-        ],
-        "revert_info": "0x CurrencyNotSettled",
-    })
-    assert classify_candidate(snap) == "Unknown"
-
-
-def test_analyze_log_tallies_drift_artifact_separately() -> None:
-    """O5SKZ6: when the sim-diag line carries ``engine_processed_block > solve_block``
-    (engine advanced past publish), the drift is classified as ``DriftArtifact``
-    (snapshot timing artifact, not real publish-time lag) and tallied in a
-    dedicated column, while real-drift lines still tally under ``Drift``."""
-    log = (
-        "[sim] 2 ok (2), 0 failed, 0 exceptions\n"
-        '[sim-diag] {"path_id":1,"solve_block":25398800,'
-        '"engine_processed_block":25398801,"revert_info":"0x IIA",'
-        '"hops":[{"drift":true,"recompute":{"matches_solver":null}}]}\n'
-        '[sim-diag] {"path_id":2,"solve_block":25398800,"revert_info":"0x IIA",'
-        '"hops":[{"drift":true,"recompute":{"matches_solver":null}}]}\n'
-    )
-    r = analyze_log(log, permutation="V4-V4-V3")
-    assert r.drift_artifact == 1
-    assert r.drift == 1
-    h = tsv_header()
-    assert "DriftArtifact" in h
-    row = result_to_tsv_row(1, r)
-    assert "DriftArtifact" in tsv_header()
-
-
 # ---------------------------------------------------------------------------
-# basis_note (verify-basis qualifier on the Drift verdict)
+# basis_note (verify-basis qualifier)
 # ---------------------------------------------------------------------------
 
 from logs.permutation_analyzer import basis_note
 
 
 def test_basis_note_structured_but_unverified() -> None:
-    """[sim-diag] lines exist but no run emitted a [verify] line → drift basis
-    unconfirmed (can't attribute to pump desync vs bad snapshot)."""
     n = basis_note(structured=True, skipped=False, verified=False)
     assert n == (
         "# basis: structured-four-way; drift basis unconfirmed "

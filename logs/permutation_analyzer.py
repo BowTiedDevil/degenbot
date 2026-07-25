@@ -57,65 +57,59 @@ PARTIAL_PCT = 20
 def classify_candidate(sim_diag: dict) -> str:
     """Classify one reverted candidate from its parsed ``[sim-diag]`` payload.
 
+    Ergo epic 63I7WJ (task AM5AJW): re-pointed at the inspector's captured
+    swap amounts (the ACTUAL amounts the in-process EVM emitted) vs the
+    solver's reported ``hop_outputs`` (the EXPECTED amounts). Replaces the
+    deleted ``recompute.matches_solver`` (the onchain-recompute basis that
+    retired with ``diagnostic.rs``).
+
     Pure + total: never raises (a malformed/empty snapshot classifies as
     ``Unknown`` so the analyzer never blocks on a bad line).
     """
-    hops = sim_diag.get("hops") if isinstance(sim_diag, dict) else None
-    if not hops or not isinstance(hops, list):
+    if not isinstance(sim_diag, dict):
         return UNKNOWN
 
-    # A bare/empty revert cannot be attributed even with a clean recompute.
+    # A bare/empty revert cannot be attributed even with clean captured swaps.
     revert_info = sim_diag.get("revert_info", "") or ""
     if not revert_info.strip():
         return UNKNOWN
 
-    any_drift = False
-    any_solvercalc = False
-    all_matches_true = True
-    any_recompute_available = False
-    for hop in hops:
-        if not isinstance(hop, dict):
-            continue
-        if hop.get("drift"):
-            any_drift = True
-        recompute = hop.get("recompute")
-        if isinstance(recompute, dict):
-            matches = recompute.get("matches_solver")
-            if matches is not None:
-                any_recompute_available = True
-            if matches is False:
-                any_solvercalc = True
-            if matches is not True:
-                all_matches_true = False
+    hop_outputs = sim_diag.get("hop_outputs")
+    captured_swaps = sim_diag.get("captured_swaps")
+    if not isinstance(hop_outputs, list) or not isinstance(captured_swaps, list):
+        return UNKNOWN
+    # No captured swaps = orchestration-only bucket (encode-failed,
+    # balance-decode, int128-overflow — no swaps ran before the revert).
+    if not captured_swaps:
+        return UNKNOWN
+    # A count mismatch shouldn't happen in normal operation (each hop emits
+    # one swap); defensively Unknown, not a false SolverCalc/Encoding.
+    if len(captured_swaps) != len(hop_outputs):
+        return UNKNOWN
 
-    if any_drift:
-        # O5SKZ6: a drift visible in the sim-diag can be a SNAPSHOT TIMING
-        # ARTIFACT rather than a real publish-time state lag. ``_emit_sim_diag``
-        # reads the engine's *live* state (post-publish, may have advanced) and
-        # fetches onchain at the snapshot's solve_block (= engine.results_block
-        # at diagnostic time, possibly past the published solve_block). When
-        # the engine has advanced past the published solve_block, or the onchain
-        # RPC was pinned at a block past publish, the visible drift is the
-        # post-publish swap that the live engine read includes but the pinned
-        # onchain snapshot excludes — NOT a real publish-time lag. Only when
-        # both markers align with solve_block is the drift a real publish-time
-        # state disagreement.
-        solve_block = sim_diag.get("solve_block") if isinstance(sim_diag, dict) else None
-        engine_processed_block = (
-            sim_diag.get("engine_processed_block") if isinstance(sim_diag, dict) else None
-        )
-        onchain_block = (
-            sim_diag.get("onchain_block") if isinstance(sim_diag, dict) else None
-        )
-        if isinstance(solve_block, int) and (
-            (isinstance(engine_processed_block, int) and engine_processed_block > solve_block)
-            or (isinstance(onchain_block, int) and onchain_block > solve_block)
-        ):
-            return DRIFT_ARTIFACT
-        return DRIFT
-    if any_solvercalc:
+    all_match = True
+    any_mismatch = False
+    for i, swap in enumerate(captured_swaps):
+        if not isinstance(swap, dict):
+            return UNKNOWN
+        family = swap.get("family")
+        # V4 amount correctness is gated on task 5RI47E (the transient seeder)
+        # — cannot validate the captured amount, so the hop is Unknown.
+        if family == "v4":
+            return UNKNOWN
+        amount0 = swap.get("amount0", 0)
+        amount1 = swap.get("amount1", 0)
+        # The output is the positive amount (received); the input is negative
+        # (paid in). For an exact-input swap, exactly one is positive.
+        actual_output = max(amount0, amount1)
+        expected_output = hop_outputs[i]
+        if actual_output != expected_output:
+            any_mismatch = True
+            all_match = False
+
+    if any_mismatch:
         return SOLVER_CALC
-    if all_matches_true and any_recompute_available:
+    if all_match:
         return ENCODING
     return UNKNOWN
 

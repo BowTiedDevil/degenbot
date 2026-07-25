@@ -72,7 +72,7 @@ def _outcome(failures: list[dict[str, Any]]) -> Any:
 
 def test_no_failures_emits_nothing(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level("INFO", logger="degenbot"):
-        _render_sim_failures(_outcome([]))
+        _render_sim_failures(_outcome([]), current_block=100)
     assert not any("[sim-fail]" in r.message for r in caplog.records)
 
 
@@ -92,7 +92,7 @@ def test_each_failure_emits_one_line_with_attribution(caplog: pytest.LogCaptureF
         },
     ]
     with caplog.at_level("INFO", logger="degenbot"):
-        _render_sim_failures(_outcome(failures))
+        _render_sim_failures(_outcome(failures), current_block=100)
 
     lines = [r.message for r in caplog.records if r.message.startswith("[sim-fail]")]
     assert len(lines) == 2
@@ -113,7 +113,7 @@ def test_missing_path_info_falls_back_gracefully(caplog: pytest.LogCaptureFixtur
     # path_id 99 isn't in path_infos → renderer must not crash, emits "(path_info missing)".
     failures = [{"path_id": 777, "bucket": "rpc-failed", "fail_index": None, "revert_data": "0x"}]
     with caplog.at_level("INFO", logger="degenbot"):
-        _render_sim_failures(_outcome(failures))
+        _render_sim_failures(_outcome(failures), current_block=100)
     lines = [r.message for r in caplog.records if r.message.startswith("[sim-fail]")]
     assert len(lines) == 1
     assert "path=777" in lines[0]
@@ -131,7 +131,7 @@ def test_overflow_emits_summary_trailing_line(caplog: pytest.LogCaptureFixture) 
         for i in range(30)
     ]
     with caplog.at_level("INFO", logger="degenbot"):
-        _render_sim_failures(_outcome(failures))
+        _render_sim_failures(_outcome(failures), current_block=100)
     lines = [r.message for r in caplog.records if r.message.startswith("[sim-fail]")]
     detail_lines = [m for m in lines if "path=" in m]
     summary_lines = [m for m in lines if "(+5 more)" in m]
@@ -171,7 +171,7 @@ def test_reverting_frame_surfaces_deep_attribution(caplog: pytest.LogCaptureFixt
         }
     ]
     with caplog.at_level("INFO", logger="degenbot"):
-        _render_sim_failures(_outcome(failures))
+        _render_sim_failures(_outcome(failures), current_block=100)
     lines = [r.message for r in caplog.records if r.message.startswith("[sim-fail]")]
     assert len(lines) == 1
     line = lines[0]
