@@ -202,9 +202,24 @@ format:
 
 # ========== Dependency Updates ==========
 
-# Upgrade Python and Rust dependencies
+# Upgrade Python and Rust dependencies.
+#
+# Two passes over Rust deps, because Cargo splits the job:
+#   1. `cargo upgrade --incompatible` rewrites the version *requirements* in
+#      every member Cargo.toml to the latest published, including across
+#      semver major boundaries (e.g. revm 41 -> 42). `cargo update` alone
+#      cannot do this — it only refreshes Cargo.lock within the existing
+#      `^x.y.z` range, so a major release on crates.io is invisible to it.
+#   2. `cargo update` then refreshes Cargo.lock to satisfy the new
+#      requirements. `cargo upgrade` already rewrites the lock too, but the
+#      explicit pass also pulls compatible patch bumps it left at the floor.
+#
+# Requires the `cargo-edit` subcommand (`cargo upgrade`); install with
+#   `cargo install --locked cargo-edit`
+# Upgrade Python and Rust dependencies (incl. semver-major bumps).
 update-deps:
     uv sync --upgrade
+    cargo upgrade --manifest-path rust/Cargo.toml --incompatible
     cargo update --manifest-path rust/Cargo.toml
 
 # ========== CI/CD ==========
