@@ -269,22 +269,78 @@ Deferred (live-RPC-gated — NOT safely doable without a mainnet provider):
    the revert-path swaps are surfaced today) + real-swap validation. Dropping
    `DEGENBOT_SIM_TRACE` now would lose the per-call-gas debug view (the
    structured `CallTrace` isn't fully surfaced yet — only `reverting_frame`).
-   Gated on surfacing the full `CallTrace` + live-RPC validation.
-6. **Retire `diagnostic.rs` onchain-recompute half** — deletion is gated on
-   the swap capture being proven on REAL mainnet paths (the composition test
-   proves the mechanism on synthetic fixtures; real-path amount correctness
-   is unproven without RPC). Coordinate with `WQENYW`'s in-flight
-   `diagnostic.rs` submodule split (retire-then-split, or merge). Deleting
-   unproven risks hiding regressions.
-8. **Tier-2 dual-driver parity pair** — the inspector isn't a `BotState`
-   calc, so the calc-parity pattern (`BotState::calculate_tokens_out` from
-   both `BotState` + `PyBot`) doesn't transfer. The inspector attaches to
-   `simulate_path_on_evm` (in `degenbot-backrun-strategy`), reachable from
-   Python only via `dispatch_profitable_py` — which needs a real provider to
-   run a reverting `execute()` (the dead-URL provider never dials). Needs a
-   new mock-provider simulating a reverting path, OR a PyO3 binding for
-   `simulate_in_process_with_db`. V4 slice additionally blocked on `5RI47E`
-   (the transient seeder).
+   Gated on surfacing the full `CallTrace` + live-RPC validation. Note: the
+   live-RPC validation half is now DONE (the probe below proves captured swaps
+   match onchain); what remains is the Python-surface wiring + the
+   `format_sim_diag_line` re-point to consume the success-path captured swaps
+   already crossing the FFI.
+6. **Retire `diagnostic.rs` onchain-recompute half** — the "prove on REAL
+   mainnet paths" gate that previously blocked this is now SATISFIED (the
+   probe below). The remaining work is the deletion itself, which is a
+   cross-cutting change to a 2,576-line file that (a) deletes
+   `fetch_onchain`/`recompute_v2/v3/v4_amount_out`/`HopRecompute`/the
+   `build_*_calls`+`decode_*_results` RPC transport, (b) changes the
+   Python-facing `DiagnosticPathState` serde shape (`expected_out_onchain`,
+   `matches_solver` vanish) that `format_sim_diag_line`'s TSV columns read,
+   and (c) must be sequenced with `WQENYW`'s in-flight `diagnostic.rs`
+   submodule split (retire-then-split, or merge). Per AGENTS.md this is a
+   coordinated multi-file deletion across Rust + Python + the kill-list
+   discipline — NOT a safe unilateral change. **Fork**: do it as its own
+   spec-coordinated task once `5RI47E` (V4 seeder) + `WQENYW` (submodule
+   split) land, so the V4 recompute retires with the same proof + the file
+   split doesn't collide with the deletion.
+8. **Tier-2 dual-driver parity pair** — the *substance* (captured swaps ==
+   onchain, both families) is now PROVEN by the probe below on real mainnet.
+   The formal ADR-005 tier-2 dual-driver pair (shared JSON fixture, driven
+   through both `BotState` + `PyBot`) remains deferred: the inspector isn't a
+   `BotState` calc (the calc-parity pattern doesn't transfer), and it's
+   reachable from Python only via `dispatch_profitable_py` (needs a real
+   provider to run a reverting `execute()`) OR a new PyO3 binding for
+   `simulate_in_process_with_db`. The probe IS the real-RPC parity proof; the
+   formal pair needs the Python inspector entrypoint first. V4 slice blocked on
+   `5RI47E` (the transient seeder).
+
+## Real-mainnet validation (archive node — step 6's "prove on real mainnet
+paths" gate SATISFIED)
+
+The `swap_capture_correctness` example binary
+   (`rust/crates/degenbot-simulation/examples/swap_capture_correctness.rs`,
+   commit `e7c88cda`) replays real mainnet swap transactions through a
+   `CacheDB<WrapDatabaseAsync<AlloyDB>>` EVM pinned at the parent block with
+   the `SwapEventCaptureInspector` attached, asserting the captured swap
+   events (emitter + family + amount0 + amount1) byte-match the onchain
+   receipts. Opt-in (`DEGENBOT_SWAP_CAPTURE_PROBE=1`); skips cleanly when no
+   RPC is configured.
+
+**Result (block 25612576, archive node):**
+
+- V2: tx[0], 1 `Swap` event captured — exact match (emitter + amounts).
+- V3: tx[3], 7 `Swap` events captured — all 7 exact-match (emitters + signed
+  amounts + sqrt-price/liquidity/tick).
+
+This proves the inspector captures real mainnet V2/V3 `Swap` events with
+byte-exact amounts — the ground-truth validation of the captured-swaps
+replacement for `diagnostic.rs::recompute_v2/v3_amount_out` (no
+`getAmountOut` recompute, no Multicall3 reserves re-fetch needed). The V2
+slice required a spec-aligned fix mid-validation (see below).
+
+## V2 capture fix: `Swap` (amounts), not `Sync` (reserves)
+
+Mid-validation, the probe revealed a spec gap: the prototype V2 capture keyed
+on the `Sync(uint112,uint112)` event (reserves) and ZEROED the amounts — so
+the "`decode_swap_log(event).amount == solver.hop_outputs[i]`" claim (direct
+amount comparison, no recompute) could NOT hold for V2. Fix (commit `67f4166e`):
+
+- New `degenbot-decoders::v2_swap_decoder` (mirrors `v3_swap_decoder`):
+  `V2_SWAP_TOPIC` + `decode_v2_swap_log` → `V2SwapEvent { sender/to,
+  amount0_in/out, amount1_in/out }` + 7 decoder unit tests.
+- The inspector now keys V2 on the `Swap` event + maps the in/out amounts to
+  the V3 signed-delta convention (`amount0 = amount0_out - amount0_in`: positive
+  = token received). The captured V2 amount IS the hop output — retires
+  `recompute_v2_amount_out` entirely.
+- The composition test was updated to emit a V2 `Swap` (LOG3 + 3 topics +
+  128-byte data) + assert `amount0=-1000` (token0 paid in) /
+  `amount1=+3000` (token1 received).
 
 ## Decisions resolved (no `TBD`)
 
