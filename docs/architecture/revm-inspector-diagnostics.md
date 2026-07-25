@@ -240,9 +240,12 @@ Delivered + exercised (committed):
    AND `Halt`) feeds a `RevertingFrame { depth, target, selector,
    revert_data, label }` on `SimFailure` via the new `FailBuckets::record_revert`.
    Drained right after `finalize` so both branches have it.
-3. **PyO3 surface** ✓ (`57556e65`) — `captured_swaps` on `SimResult` (success)
-   + `SimFailure` (revert); the `failures()` getter surfaces `reverting_frame`
-   + `captured_swaps` dicts.
+3. **PyO3 surface** ✓ (`57556e65` + `55737e91`) — `captured_swaps` on
+   `SimResult` (success) + `SimFailure` (revert); the `failures()` getter
+   surfaces `reverting_frame` + `captured_swaps` dicts; the
+   `profitable_captured_swaps` getter surfaces the success-path swaps (one
+   entry per profitable survivor, same dict shape as `failures()`
+   `captured_swaps` — DRY via the `captured_swap_to_dict` helper).
 7. **Rewire the example bot** ✓ (`ca0b124f`) — `_render_sim_failures` now
    surfaces `revert@depth=N target=… sel=… label=… swaps_before=M revert=…`
    when `reverting_frame` is set; falls back to `fail_idx=…` for non-revert
@@ -264,16 +267,18 @@ Exerciser proof (the "helps find/fix real bugs" claim):
 
 Deferred (live-RPC-gated — NOT safely doable without a mainnet provider):
 
-5. **Re-point classifier + drop `DEGENBOT_SIM_TRACE`** — the classifier
-   re-point needs the SUCCESS-path captured swaps surfaced to Python (only
-   the revert-path swaps are surfaced today) + real-swap validation. Dropping
-   `DEGENBOT_SIM_TRACE` now would lose the per-call-gas debug view (the
-   structured `CallTrace` isn't fully surfaced yet — only `reverting_frame`).
-   Gated on surfacing the full `CallTrace` + live-RPC validation. Note: the
-   live-RPC validation half is now DONE (the probe below proves captured swaps
-   match onchain); what remains is the Python-surface wiring + the
-   `format_sim_diag_line` re-point to consume the success-path captured swaps
-   already crossing the FFI.
+5. **Re-point classifier + drop `DEGENBOT_SIM_TRACE`** — the blocker's two
+   halves are now BOTH resolved: (a) the mainnet probe (commit `e7c88cda`)
+   proves captured swaps match onchain receipts; (b) the success-path
+   `captured_swaps` now cross the FFI (commit `55737e91`, the
+   `profitable_captured_swaps` getter). What remains is the re-point itself:
+   `format_sim_diag_line` + `logs/permutation_analyzer.py`'s classifier swap
+   from reading the `recompute`/`onchain_state` per-hop fields (which step 6
+   deletes) to reading `profitable_captured_swaps`. This is COUPLED to step 6
+   (5 re-points the classifier at captured swaps; 6 deletes the onchain
+   recompute the classifier currently reads) — they must move together as a
+   fork sequenced with `WQENYW`'s `diagnostic.rs` submodule split + gated on
+   `5RI47E` (the V4 seeder) so V4 retires with the same proof.
 6. **Retire `diagnostic.rs` onchain-recompute half** — the "prove on REAL
    mainnet paths" gate that previously blocked this is now SATISFIED (the
    probe below). The remaining work is the deletion itself, which is a
