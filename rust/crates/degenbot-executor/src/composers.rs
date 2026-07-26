@@ -4162,6 +4162,31 @@ fn three_hop_v4_v4_v4(
     }
     let _ = (out_a, out_b);
 
+    // Mid-currencies at each V4↔V4 boundary — detect native-ETH↔WETH gaps.
+    let mid_currency_a_out = if ha.zfo {
+        ha.currency1_address
+    } else {
+        ha.currency0_address
+    };
+    let mid_currency_b_in = if hb.zfo {
+        hb.currency0_address
+    } else {
+        hb.currency1_address
+    };
+    let mid_currency_b_out = if hb.zfo {
+        hb.currency1_address
+    } else {
+        hb.currency0_address
+    };
+    let mid_currency_c_in = if hc.zfo {
+        hc.currency0_address
+    } else {
+        hc.currency1_address
+    };
+    let bridge_ab = CurrencyBridge::at_boundary(mid_currency_a_out, mid_currency_b_in);
+    let bridge_bc = CurrencyBridge::at_boundary(mid_currency_b_out, mid_currency_c_in);
+    let any_gap = bridge_ab.needs_bridge() || bridge_bc.needs_bridge();
+
     let mut at = AddressTable::with_sentinels(
         Some(weth_address),
         Some(executor_address),
@@ -4194,7 +4219,7 @@ fn three_hop_v4_v4_v4(
 
     let mut inner: Vec<u8>;
 
-    if opts.use_v4_batch {
+    if opts.use_v4_batch && !any_gap {
         let batch = [
             V4BatchEntry {
                 c0_idx: c0_a_idx,
@@ -4231,6 +4256,11 @@ fn three_hop_v4_v4_v4(
             inner.extend_from_slice(&encoders::enc_v4_take_delta(profit_idx, executor_idx));
         }
     } else {
+        // Compact path. When a boundary has a native↔WETH gap, emit
+        // TAKE + WETH_DEPOSIT/WITHDRAW + explicit V4_SWAP_COMPACT (the PM
+        // delta is on the wrong currency for V4_SWAP_DYNAMIC) +
+        // V4_SETTLE_DELTA for the bridged input currency. Non-gap boundaries
+        // use V4_SWAP_DYNAMIC (reads the PM delta from the prior swap).
         inner = encoders::enc_v4_swap_compact(
             c0_a_idx,
             c1_a_idx,
@@ -4241,12 +4271,58 @@ fn three_hop_v4_v4_v4(
             optimal_input,
         )
         .ok()?;
-        inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
-            c0_b_idx, c1_b_idx, fee_b, ts_b, zero_idx, hb.zfo,
-        ));
-        inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
-            c0_c_idx, c1_c_idx, fee_c, ts_c, zero_idx, hc.zfo,
-        ));
+
+        // Hop B
+        if bridge_ab.needs_bridge() {
+            let take_idx = match bridge_ab {
+                CurrencyBridge::Wrap => SENTINEL_NATIVE,
+                CurrencyBridge::Unwrap => weth_idx,
+                CurrencyBridge::None => unreachable!("bridge_ab.needs_bridge()"),
+            };
+            emit_currency_bridge(&mut inner, bridge_ab, take_idx, out_a)?;
+            inner.extend_from_slice(
+                &encoders::enc_v4_swap_compact(
+                    c0_b_idx, c1_b_idx, fee_b, ts_b, zero_idx, hb.zfo, out_a,
+                )
+                .ok()?,
+            );
+            let b_input_idx = match bridge_ab {
+                CurrencyBridge::Wrap => weth_idx,
+                CurrencyBridge::Unwrap => SENTINEL_NATIVE,
+                CurrencyBridge::None => unreachable!(),
+            };
+            inner.extend_from_slice(&encoders::enc_v4_settle_delta(b_input_idx));
+        } else {
+            inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
+                c0_b_idx, c1_b_idx, fee_b, ts_b, zero_idx, hb.zfo,
+            ));
+        }
+
+        // Hop C
+        if bridge_bc.needs_bridge() {
+            let take_idx = match bridge_bc {
+                CurrencyBridge::Wrap => SENTINEL_NATIVE,
+                CurrencyBridge::Unwrap => weth_idx,
+                CurrencyBridge::None => unreachable!("bridge_bc.needs_bridge()"),
+            };
+            emit_currency_bridge(&mut inner, bridge_bc, take_idx, out_b)?;
+            inner.extend_from_slice(
+                &encoders::enc_v4_swap_compact(
+                    c0_c_idx, c1_c_idx, fee_c, ts_c, zero_idx, hc.zfo, out_b,
+                )
+                .ok()?,
+            );
+            let c_input_idx = match bridge_bc {
+                CurrencyBridge::Wrap => weth_idx,
+                CurrencyBridge::Unwrap => SENTINEL_NATIVE,
+                CurrencyBridge::None => unreachable!(),
+            };
+            inner.extend_from_slice(&encoders::enc_v4_settle_delta(c_input_idx));
+        } else {
+            inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
+                c0_c_idx, c1_c_idx, fee_c, ts_c, zero_idx, hc.zfo,
+            ));
+        }
     }
 
     // Profit capture.
@@ -4257,7 +4333,7 @@ fn three_hop_v4_v4_v4(
                 &encoders::enc_v4_mint_compact(weth_idx, executor_idx, profit_amount).ok()?,
             );
         }
-    } else if !opts.use_v4_batch {
+    } else if !opts.use_v4_batch || any_gap {
         if output_currency_c == NATIVE_CURRENCY_ADDRESS {
             let native_idx = at.add(NATIVE_CURRENCY_ADDRESS).ok()?;
             inner.extend_from_slice(&encoders::enc_v4_take_delta(native_idx, executor_idx));
