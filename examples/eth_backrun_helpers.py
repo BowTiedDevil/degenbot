@@ -539,7 +539,26 @@ def aggregate_pool_divergence(
     # example-adjacent + not a degenbot dep. Keeping the import local avoids
     # a hard coupling at module load (the helper is still unit-testable
     # because the test path imports classify_candidate first).
-    from logs.permutation_analyzer import classify_candidate
+    # Defensive: when the example runs as a script (`python examples/...`),
+    # Python's script-mode puts `examples/` on `sys.path[0]`, NOT the repo
+    # root where `logs/` lives — so the import fails. The aggregator is a
+    # monitoring convenience (its sibling `format_sim_diag_line` says "never
+    # raises"); crashing the dispatch path on an import gap would silently
+    # kill every subsequent dispatch (the exception is swallowed as a "Task
+    # exception was never retrieved"). Degrade to no lines + a one-time
+    # warning (pytest runs add `.` to sys.path via pyproject `pythonpath`, so
+    # the classifier IS reached under the test suite).
+    try:
+        from logs.permutation_analyzer import classify_candidate
+    except ImportError:
+        import warnings
+
+        warnings.warn(
+            "aggregate_pool_divergence: logs.permutation_analyzer not importable "
+            "(run from the repo root, or the [pool-divergence] signal is disabled).",
+            stacklevel=2,
+        )
+        return []
 
     # pool_address → {count of SolverCalc failures, set of path_ids}
     per_pool: dict[str, dict[str, int | set[int]]] = {}
