@@ -48,6 +48,14 @@ pub mod dispatch;
 /// counter consumed by the same dispatch leaf).
 pub mod pool_divergence;
 
+/// Fee-on-transfer token suspicion attribution (spike `5MP3HQ`) — the
+/// `fot_suspected_token` leaf attributes a `SimFailure` to the failing hop's
+/// input token when the failure's `reverting_frame.label` is `IIA` (V3) or
+/// `CurrencyNotSettled` (V4), or when the captured-swap output mismatches
+/// `hop_outputs[i]` (the V2 non-reverting case). Pure lookup off `HopInfo`,
+/// no engine accessor required.
+pub mod fot_attribution;
+
 /// The sim value types + the 7-call orchestration (`simulate_path_on_evm`).
 pub mod simulator;
 
@@ -64,6 +72,10 @@ pub use degenbot_rpc::BlockPriorityFees;
 pub use dispatch::{
     dispatch_profitable_results, filter_thin_margin_results, DispatchCandidate, DispatchOutcome,
     BPS_DENOM, MAX_SIMULATE_CONCURRENT, MIN_PROFIT_NET,
+};
+pub use fot_attribution::{
+    fot_suspected_token, fot_suspected_token_from_reverting_frame,
+    fot_suspected_token_from_swap_mismatch,
 };
 pub use pool_divergence::{
     diverging_pool_keys, hop_pool_key, is_solver_calc_failure, PoolDivergence, PoolDivergenceKey,

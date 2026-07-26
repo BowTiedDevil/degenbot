@@ -259,7 +259,7 @@ pub fn diverging_pool_keys(failure: &SimFailure, hops: &[HopInfo]) -> Vec<PoolDi
 /// the swapper). For an exact-input swap exactly one of `amount0`/`amount1` is
 /// positive; `max` picks the output. Mirrors the Python classifier's
 /// `actual_output = max(amount0, amount1)` convention.
-fn captured_swap_output(swap: &CapturedSwap) -> U256 {
+pub(crate) fn captured_swap_output(swap: &CapturedSwap) -> U256 {
     // amount0/amount1 are I256 (signed deltas — positive = received,
     // negative = paid in). The output is the positive one; clamp negatives
     // to 0 so `max` picks the received amount (and a swap with both negative
