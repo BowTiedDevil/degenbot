@@ -300,16 +300,22 @@ retained for provenance:_
    spec-coordinated task once `5RI47E` (V4 seeder) + `WQENYW` (submodule
    split) land, so the V4 recompute retires with the same proof + the file
    split doesn't collide with the deletion.
-8. **Tier-2 dual-driver parity pair** — the *substance* (captured swaps ==
-   onchain, both families) is now PROVEN by the probe below on real mainnet.
-   The formal ADR-005 tier-2 dual-driver pair (shared JSON fixture, driven
-   through both `BotState` + `PyBot`) remains deferred: the inspector isn't a
-   `BotState` calc (the calc-parity pattern doesn't transfer), and it's
-   reachable from Python only via `dispatch_profitable_py` (needs a real
-   provider to run a reverting `execute()`) OR a new PyO3 binding for
-   `simulate_in_process_with_db`. The probe IS the real-RPC parity proof; the
-   formal pair needs the Python inspector entrypoint first. V4 slice blocked on
-   `5RI47E` (the transient seeder).
+8. **Tier-2 dual-driver parity pair** ✓ (`437593b2`) — the formal ADR-005
+   tier-2 dual-driver pair is DELIVERED. The new `simulate_in_process_revert_probe`
+   PyO3 binding exposes the in-process path (`simulate_in_process_with_db` over
+   `CacheDB<EmptyDB>`, no RPC) so Python can drive the SAME `0xcafebabe` REVERT
+   fixture the Rust smoke test uses. Shared JSON fixture
+   (`tests/standalone_parity/fixtures/inspector_cafebabe_revert.json`) carries
+   the recorded expected output (reverting_frame depth/target/selector/label,
+   captured_swaps=[], bucket) — both `rust/crates/degenbot/tests/parity_inspector.rs`
+   (Rust consumer) + `tests/standalone_parity/test_inspector_dual_driver.py`
+   (Python consumer) load it + assert byte-exact. A deliberately-wrong fixture
+   edit fails BOTH halves (RED-verified). The oracle is a recorded constant
+   (weaker than the calc parity's closed form — the revm EVM run is the truth);
+   noted in the test header. V4 slice deferred (gated on `5RI47E`).
+
+_LEGACY (superseded by the delivery above) — the old deferral text is
+retained for provenance:_
 
 ## Real-mainnet validation (archive node — step 6's "prove on real mainnet
 paths" gate SATISFIED)
