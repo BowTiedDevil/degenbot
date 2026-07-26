@@ -41,6 +41,13 @@ pub mod calldata;
 /// + the candidate/outcome types + the thin-margin pre-filter.
 pub mod dispatch;
 
+/// Per-pool solver-divergence tracking (`PoolDivergence` +
+/// `is_solver_calc_failure`) — a stateful per-pool memo consumed by the
+/// dispatch leaf to skip paths through recently-divergent pools (ergo epic
+/// GAXXNJ, task GMWYIU). Parallels `PathSuppression` (a stateful per-key
+/// counter consumed by the same dispatch leaf).
+pub mod pool_divergence;
+
 /// The sim value types + the 7-call orchestration (`simulate_path_on_evm`).
 pub mod simulator;
 
@@ -58,6 +65,7 @@ pub use dispatch::{
     dispatch_profitable_results, filter_thin_margin_results, DispatchCandidate, DispatchOutcome,
     BPS_DENOM, MAX_SIMULATE_CONCURRENT, MIN_PROFIT_NET,
 };
+pub use pool_divergence::{is_solver_calc_failure, PoolDivergence, POOL_DIVERGENCE_DECAY_BLOCKS};
 pub use simulator::{
     compute_priority_fee, fits_int128, simulate_in_process_with_db, simulate_path_on_evm,
     FailBuckets, RevertingFrame, SimFailure, SimResult, SimulateContext, SimulatePath,

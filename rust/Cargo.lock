@@ -2058,6 +2058,7 @@ dependencies = [
  "degenbot-executor",
  "degenbot-rpc",
  "degenbot-simulation",
+ "degenbot-solvers",
  "degenbot-submission",
  "log",
  "parking_lot",
