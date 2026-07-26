@@ -170,6 +170,90 @@ pub fn v4_output_is_native(hop: &V4HopInfo) -> bool {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Currency-bridge helpers (native-ETH ↔ WETH representation gap)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// The representation-bridge action needed at a V4↔X currency boundary.
+///
+/// V4 tracks native ETH and WETH as distinct delta currencies. When a
+/// path's hop A outputs one and hop B's input expects the other, an explicit
+/// `WETH_DEPOSIT` (wrap native→WETH) or `WETH_WITHDRAW` (unwrap WETH→native)
+/// must bridge the gap inside `V4_UNLOCK` before hop B runs. See §10.3 of the
+/// crate docs + `/workspaces/executor/tests/test_cmd_executor_v4v4_wrap_unwrap.py`
+/// for the canonical on-chain pattern.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CurrencyBridge {
+    /// No bridge — both sides agree (both native or both WETH/ERC20).
+    None,
+    /// V4 output is native ETH, hop B needs WETH → `V4_TAKE_COMPACT(native)` + `WETH_DEPOSIT`.
+    Wrap,
+    /// V4 output is WETH, hop B needs native ETH → `V4_TAKE_COMPACT(weth)` + `WETH_WITHDRAW`.
+    Unwrap,
+}
+
+impl CurrencyBridge {
+    /// `true` when a wrap or unwrap is required at this boundary.
+    #[must_use]
+    pub const fn needs_bridge(self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    /// Classify the boundary from the mid-currencies of two adjacent hops.
+    ///
+    /// `output_currency_a` is the currency hop A *delivers* (its output
+    /// currency); `input_currency_b` is the currency hop B *consumes* (its
+    /// input currency). Only native-ETH (`address(0)`) vs anything-else is
+    /// the distinguishing axis — WETH addresses and other ERC-20s are all
+    /// "non-native" from the bridge's perspective.
+    #[must_use]
+    pub fn at_boundary(output_currency_a: Address, input_currency_b: Address) -> Self {
+        let a_native = output_currency_a == NATIVE_CURRENCY_ADDRESS;
+        let b_native = input_currency_b == NATIVE_CURRENCY_ADDRESS;
+        match (a_native, b_native) {
+            (true, false) => Self::Wrap,
+            (false, true) => Self::Unwrap,
+            _ => Self::None,
+        }
+    }
+}
+
+/// Emit the `V4_TAKE_COMPACT` + `WETH_DEPOSIT`/`WETH_WITHDRAW` bridge bytes
+/// for a [`CurrencyBridge`] into `inner`.
+///
+/// `currency_idx` is the address-table index of the currency to take from
+/// the PoolManager: the native-ETH index (`SENTINEL_NATIVE` or a registered
+/// table entry) for [`CurrencyBridge::Wrap`], or the WETH index
+/// (`SENTINEL_WETH`) for [`CurrencyBridge::Unwrap`]. `amount` is the
+/// forward output hop A produced (the quantity to wrap or unwrap).
+///
+/// Returns `None` (for `?` propagation) only if `V4_TAKE_COMPACT` fails to
+/// encode (uint96 overflow — caller should have guarded with `fits_int128`).
+/// [`CurrencyBridge::None`] emits nothing.
+pub(crate) fn emit_currency_bridge(
+    inner: &mut Vec<u8>,
+    bridge: CurrencyBridge,
+    currency_idx: u8,
+    amount: u128,
+) -> Option<()> {
+    match bridge {
+        CurrencyBridge::None => {}
+        CurrencyBridge::Wrap => {
+            inner.extend_from_slice(
+                &encoders::enc_v4_take_compact(currency_idx, SENTINEL_SELF, amount).ok()?,
+            );
+            inner.extend_from_slice(&encoders::enc_weth_deposit(U256::from(amount)));
+        }
+        CurrencyBridge::Unwrap => {
+            inner.extend_from_slice(
+                &encoders::enc_v4_take_compact(currency_idx, SENTINEL_SELF, amount).ok()?,
+            );
+            inner.extend_from_slice(&encoders::enc_weth_withdraw(U256::from(amount)));
+        }
+    }
+    Some(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Top-level dispatcher
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -487,9 +571,8 @@ fn encode_cmd_v4_v4(
 
     let a_outputs_native = mid_currency_a == NATIVE_CURRENCY_ADDRESS;
     let b_needs_native = mid_currency_b == NATIVE_CURRENCY_ADDRESS;
-    let needs_wrap = a_outputs_native && !b_needs_native;
-    let needs_unwrap = !a_outputs_native && b_needs_native;
-    let currency_gap = needs_wrap || needs_unwrap;
+    let bridge = CurrencyBridge::at_boundary(mid_currency_a, mid_currency_b);
+    let currency_gap = bridge.needs_bridge();
 
     let mut at = AddressTable::with_sentinels(
         Some(weth_address),
@@ -535,20 +618,13 @@ fn encode_cmd_v4_v4(
     };
 
     if currency_gap {
-        // Take the intermediate token out of PM, convert, then second swap.
-        if a_outputs_native {
-            // Pool A output is ETH.
-            inner.extend_from_slice(
-                &encoders::enc_v4_take_compact(_native_idx, SENTINEL_SELF, forward_out).ok()?,
-            );
-            inner.extend_from_slice(&encoders::enc_weth_deposit(U256::from(forward_out)));
-        } else {
-            // Pool A output is WETH.
-            inner.extend_from_slice(
-                &encoders::enc_v4_take_compact(weth_idx, SENTINEL_SELF, forward_out).ok()?,
-            );
-            inner.extend_from_slice(&encoders::enc_weth_withdraw(U256::from(forward_out)));
-        }
+        // Take the intermediate token out of PM, bridge the native↔WETH gap.
+        let bridge_idx = match bridge {
+            CurrencyBridge::Wrap => _native_idx,
+            CurrencyBridge::Unwrap => weth_idx,
+            CurrencyBridge::None => unreachable!("currency_gap implies a bridge"),
+        };
+        emit_currency_bridge(&mut inner, bridge, bridge_idx, forward_out)?;
         // 4. V4_SWAP_COMPACT for pool B (explicit amount).
         inner.extend_from_slice(
             &encoders::enc_v4_swap_compact(
@@ -4199,4 +4275,96 @@ fn three_hop_v4_v4_v4(
     let mut out = encoders::enc_preamble(&at);
     out.extend_from_slice(&commands);
     Some(out)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Unit tests — CurrencyBridge classifier + emitter
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::primitives::address;
+
+    #[test]
+    fn currency_bridge_both_native_is_none() {
+        let b = CurrencyBridge::at_boundary(NATIVE_CURRENCY_ADDRESS, NATIVE_CURRENCY_ADDRESS);
+        assert_eq!(b, CurrencyBridge::None);
+        assert!(!b.needs_bridge());
+    }
+
+    #[test]
+    fn currency_bridge_both_weth_is_none() {
+        let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+        let b = CurrencyBridge::at_boundary(weth, weth);
+        assert_eq!(b, CurrencyBridge::None);
+    }
+
+    #[test]
+    fn currency_bridge_native_to_weth_is_wrap() {
+        let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+        let b = CurrencyBridge::at_boundary(NATIVE_CURRENCY_ADDRESS, weth);
+        assert_eq!(b, CurrencyBridge::Wrap);
+        assert!(b.needs_bridge());
+    }
+
+    #[test]
+    fn currency_bridge_weth_to_native_is_unwrap() {
+        let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+        let b = CurrencyBridge::at_boundary(weth, NATIVE_CURRENCY_ADDRESS);
+        assert_eq!(b, CurrencyBridge::Unwrap);
+        assert!(b.needs_bridge());
+    }
+
+    #[test]
+    fn currency_bridge_native_to_erc20_is_wrap() {
+        // native → any non-native (ERC-20) is a wrap (executor holds ETH, needs WETH/ERC20 representation)
+        let usdc = address!("A0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+        let b = CurrencyBridge::at_boundary(NATIVE_CURRENCY_ADDRESS, usdc);
+        assert_eq!(b, CurrencyBridge::Wrap);
+    }
+
+    #[test]
+    fn currency_bridge_erc20_to_native_is_unwrap() {
+        let usdc = address!("A0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+        let b = CurrencyBridge::at_boundary(usdc, NATIVE_CURRENCY_ADDRESS);
+        assert_eq!(b, CurrencyBridge::Unwrap);
+    }
+
+    #[test]
+    fn emit_currency_bridge_none_emits_nothing() {
+        let mut inner = Vec::new();
+        let result = emit_currency_bridge(&mut inner, CurrencyBridge::None, 0xFE, 1000);
+        assert_eq!(result, Some(()));
+        assert!(inner.is_empty(), "None bridge must emit zero bytes");
+    }
+
+    #[test]
+    fn emit_currency_bridge_wrap_emits_take_plus_deposit() {
+        let mut inner = Vec::new();
+        let native_idx = 0xFF;
+        let amount = 1_000_000_000_000_000_000u128;
+        emit_currency_bridge(&mut inner, CurrencyBridge::Wrap, native_idx, amount)
+            .expect("Wrap bridge encodes");
+        // V4_TAKE_COMPACT = 0x52 (1) + currency_idx (1) + recipient_idx (1) + amount_u96 (12) = 15 bytes
+        // WETH_DEPOSIT = 0x12 (1) + amount_u256 (32) = 33 bytes
+        assert_eq!(inner.len(), 15 + 33);
+        assert_eq!(inner[0], 0x52); // CMD_V4_TAKE_COMPACT
+        assert_eq!(inner[1], native_idx);
+        assert_eq!(inner[2], SENTINEL_SELF);
+        assert_eq!(inner[15], 0x12); // CMD_WETH_DEPOSIT
+    }
+
+    #[test]
+    fn emit_currency_bridge_unwrap_emits_take_plus_withdraw() {
+        let mut inner = Vec::new();
+        let weth_idx = SENTINEL_WETH;
+        let amount = 2_000_000_000_000_000_000u128;
+        emit_currency_bridge(&mut inner, CurrencyBridge::Unwrap, weth_idx, amount)
+            .expect("Unwrap bridge encodes");
+        // V4_TAKE_COMPACT (15) + WETH_WITHDRAW (33) = 48 bytes
+        assert_eq!(inner.len(), 15 + 33);
+        assert_eq!(inner[0], 0x52); // CMD_V4_TAKE_COMPACT
+        assert_eq!(inner[15], 0x13); // CMD_WETH_WITHDRAW
+    }
 }
