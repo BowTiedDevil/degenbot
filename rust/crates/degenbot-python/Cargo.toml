@@ -49,6 +49,7 @@ degenbot-pathfinding = { path = "../degenbot-pathfinding", optional = true }
 degenbot-price = { path = "../degenbot-price", optional = true, features = ["pyo3"] }
 degenbot-submission = { path = "../degenbot-submission", optional = true, features = ["pyo3"] }
 degenbot-simulation = { path = "../degenbot-simulation", optional = true }
+revm = { version = "^42.0", default-features = false }
 degenbot-backrun-strategy = { path = "../degenbot-backrun-strategy", optional = true }
 degenbot-executor = { path = "../degenbot-executor", optional = true }
 degenbot-fork = { path = "../degenbot-fork", optional = true }

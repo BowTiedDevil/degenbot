@@ -2014,6 +2014,7 @@ dependencies = [
  "degenbot-submission",
  "degenbot-uniswap",
  "degenbot-v2-math",
+ "revm",
  "serde",
  "serde_json",
 ]
@@ -2381,6 +2382,7 @@ dependencies = [
  "pyo3-async-runtimes",
  "pyo3-log",
  "rand 0.10.2",
+ "revm",
  "serde",
  "serde_json",
  "thiserror 2.0.19",

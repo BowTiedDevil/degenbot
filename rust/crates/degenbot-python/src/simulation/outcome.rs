@@ -376,7 +376,10 @@ fn hop_to_py_dict<'py>(
 /// `failures()` + the success-path `profitable_captured_swaps()` getters both
 /// emit, so the Python consumer sees one captured-swap dict shape regardless of
 /// whether the swap came from a reverted or a profitable run (ergo epic 63I7WJ).
-fn captured_swap_to_dict<'py>(py: Python<'py>, s: &CapturedSwap) -> PyResult<Bound<'py, PyDict>> {
+pub(crate) fn captured_swap_to_dict<'py>(
+    py: Python<'py>,
+    s: &CapturedSwap,
+) -> PyResult<Bound<'py, PyDict>> {
     let sdict = PyDict::new(py);
     sdict.set_item("family", format!("{:?}", s.family).to_lowercase())?;
     sdict.set_item("emitter", format!("{:#x}", s.emitter))?;

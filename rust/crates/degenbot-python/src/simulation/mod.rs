@@ -44,6 +44,7 @@ use pyo3::types::PyModule;
 pub mod candidate;
 pub mod context;
 pub mod dispatch;
+pub mod in_process_probe;
 pub mod outcome;
 
 pub use candidate::PyDispatchCandidate;
@@ -64,6 +65,10 @@ pub fn add_simulation_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     submod.add_class::<PyDispatchOutcome>()?;
     submod.add_function(wrap_pyfunction!(
         crate::simulation::dispatch::dispatch_profitable_py,
+        &submod
+    )?)?;
+    submod.add_function(wrap_pyfunction!(
+        crate::simulation::in_process_probe::simulate_in_process_revert_probe,
         &submod
     )?)?;
     m.add_submodule(&submod)?;

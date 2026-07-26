@@ -1,0 +1,34 @@
+{
+  "_doc": "Shared ADR-005 Tier-2 dual-driver parity fixture for the revm inspector. Both rust/crates/degenbot/tests/parity_inspector.rs (Rust consumer: simulate_in_process_with_db directly) and tests/standalone_parity/test_inspector_dual_driver.py (Python consumer: the simulate_in_process_revert_probe PyO3 binding) load this file and assert the recorded output. The fixture: executor injected with the 0xcafebabe REVERT stub (PUSH4 0xcafebabe; PUSH1 0x00; MSTORE; PUSH1 0x04; PUSH1 0x1c; REVERT) over a 2-hop V2 path against CacheDB<EmptyDB> (no RPC). The oracle is a RECORDED constant (no closed-form derivation — the revm EVM run is the truth); the byte-exact assertion is the parity contract. V4 slice deferred (gated on 5RI47E).",
+
+  "fixture": {
+    "path_id": 42,
+    "runtime_bytecode_hex": "63cafebabe6000526004601cfd",
+    "_doc_runtime_bytecode": "PUSH4 0xcafebabe; PUSH1 0x00; MSTORE; PUSH1 0x04 (len); PUSH1 0x1c (offset=28); REVERT — returns mem[28..32] = 0xcafebabe"
+  },
+
+  "expected": {
+    "result": null,
+    "fail_buckets": {
+      "unknown:0xcafebabe": 1
+    },
+    "failures": [
+      {
+        "path_id": 42,
+        "bucket": "unknown:0xcafebabe",
+        "fail_index": 3,
+        "revert_data": "0xcafebabe",
+        "reverting_frame": {
+          "depth": 1,
+          "target": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "selector": "0xab5898e8",
+          "revert_data": "0xcafebabe",
+          "label": "unknown:0xcafebabe"
+        },
+        "captured_swaps": [],
+        "optimal_input": 1000000000000000000,
+        "hop_outputs": [1100000000000000000, 1210000000000000000]
+      }
+    ]
+  }
+}
