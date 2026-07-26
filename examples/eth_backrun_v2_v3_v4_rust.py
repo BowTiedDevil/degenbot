@@ -1476,8 +1476,8 @@ def _render_sim_summary(outcome: DispatchOutcome) -> None:
 
     Ports the prior ``[sim] N candidates: X ok (Y profitable, Z below
     threshold), W failed, V exceptions …`` summary (the only rendering the A5
-    acceptance criterion requires). Appends the suppressed/thin drops when
-    non-zero (more informative than the prior line, which folded them in
+    acceptance criterion requires). Appends the suppressed/thin/divergent drops
+    when non-zero (more informative than the prior line, which folded them in
     opaquely). The ``[profit]``/``[sim-ok]`` per-path logs are rendered by
     :func:`_render_profit_logs`.
     """
@@ -1486,8 +1486,12 @@ def _render_sim_summary(outcome: DispatchOutcome) -> None:
     breakdown = format_failure_breakdown(outcome.fail_buckets)
     sim_ok = len(profitable) + outcome.gas_unprofitable_count
     extra = ""
-    if outcome.suppressed_count or outcome.thin_dropped:
-        extra = f" — suppressed={outcome.suppressed_count}, thin={outcome.thin_dropped}"
+    if outcome.suppressed_count or outcome.thin_dropped or outcome.divergent_dropped:
+        extra = (
+            f" — suppressed={outcome.suppressed_count}, "
+            f"thin={outcome.thin_dropped}, "
+            f"divergent={outcome.divergent_dropped}"
+        )
     bot_logger.info(
         f"[sim] {outcome.candidate_count} candidates: "
         f"{sim_ok} ok ({len(profitable)} profitable, "

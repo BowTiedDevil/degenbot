@@ -28,11 +28,76 @@
 //! DOES release the GIL across RPC is `dispatch_and_submit_py` (separate file).
 
 use crate::prelude::*;
-use degenbot_backrun_strategy::PoolDivergence;
+use degenbot_backrun_strategy::{PoolDivergence, PoolDivergenceKey};
 use degenbot_submission::{CommittedTx, Dispatcher, PathSuppression, PoolKey};
 use pyo3::types::PyTuple;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
+
+/// The read-only view of one entry in `PyDispatcher.divergent_pools()` — a
+/// pool flagged `SolverCalc` within the decay window. Carries the `family`
+/// discriminator, the pool's chain identity (`address` for V2/V3, `pool_id`
+/// bytes32 hex for V4), + `last_flagged_block`.
+#[pyclass(name = "PyDivergentPool", module = "degenbot._ffi.submission")]
+pub struct PyDivergentPool {
+    pub(crate) family: &'static str,
+    pub(crate) address: Option<String>,
+    pub(crate) pool_id: Option<String>,
+    pub(crate) last_flagged_block: u64,
+}
+
+impl From<(PoolDivergenceKey, u64)> for PyDivergentPool {
+    fn from((key, last_flagged_block): (PoolDivergenceKey, u64)) -> Self {
+        match key {
+            PoolDivergenceKey::V2(addr) => Self {
+                family: "V2",
+                address: Some(format!("{addr:#x}")),
+                pool_id: None,
+                last_flagged_block,
+            },
+            PoolDivergenceKey::V3(addr) => Self {
+                family: "V3",
+                address: Some(format!("{addr:#x}")),
+                pool_id: None,
+                last_flagged_block,
+            },
+            PoolDivergenceKey::V4(id) => Self {
+                family: "V4",
+                address: None,
+                pool_id: Some(format!("{id:#x}")),
+                last_flagged_block,
+            },
+        }
+    }
+}
+#[pymethods]
+impl PyDivergentPool {
+    /// The Uniswap family (`"V2"` / `"V3"` / `"V4"`).
+    #[getter]
+    fn family(&self) -> &str {
+        self.family
+    }
+
+    /// The pool contract address (`0x`-prefixed checksummed) for V2/V3;
+    /// `None` for V4 (V4 pools live inside the `PoolManager` — use `pool_id`).
+    #[getter]
+    fn address(&self) -> Option<String> {
+        self.address.clone()
+    }
+
+    /// The V4 `poolId` bytes32 (`0x`-prefixed hex); `None` for V2/V3.
+    #[getter]
+    fn pool_id(&self) -> Option<String> {
+        self.pool_id.clone()
+    }
+
+    /// The block the pool last flagged `SolverCalc` (decays after
+    /// `POOL_DIVERGENCE_DECAY_BLOCKS` clean blocks).
+    #[getter]
+    fn last_flagged_block(&self) -> u64 {
+        self.last_flagged_block
+    }
+}
 
 /// The coordination-state value object for the dispatch loop.
 ///
@@ -351,6 +416,39 @@ impl PyDispatcher {
             .lock()
             .expect("suppression mutex poisoned")
             .discard(path_id);
+    }
+
+    // ── PoolDivergence delegation (GMWYIU) ─────────────────────────
+    // Delegated to the standalone `Arc<Mutex<PoolDivergence>>`, NOT the
+    // `Dispatcher` arc — the sim seam locks the same arc directly at the
+    // dispatch skip (step 2) + feedback (step 7) bookends. The persistent
+    // cross-block memo (the action layer); the per-block `[pool-divergence]`
+    // signal rendering stays Python (`aggregate_pool_divergence` reads
+    // `outcome.failures` — the signal layer is complementary, not redundant).
+    /// The lifetime-total paths dropped via the divergence skip.
+    #[getter]
+    fn total_divergent_dropped(&self) -> u64 {
+        self.pool_divergence
+            .lock()
+            .expect("pool_divergence mutex poisoned")
+            .total_divergent_dropped()
+    }
+
+    /// The current divergent-pool set — `list[dict]`, one per pool flagged
+    /// `SolverCalc` within the decay window. Each dict carries `family`
+    /// (`"V2"`/`"V3"`/`"V4"`), the pool identity (`address` for V2/V3,
+    /// `pool_id` bytes32 hex for V4), + `last_flagged_block`. Drives the
+    /// operator's `[pool-divergence-memo]` monitoring view of the persistent
+    /// memo state (distinct from the per-block `[pool-divergence]` signal the
+    /// Python aggregator renders from `outcome.failures`).
+    fn divergent_pools(&self, current_block: u64) -> Vec<PyDivergentPool> {
+        self.pool_divergence
+            .lock()
+            .expect("pool_divergence mutex poisoned")
+            .divergent_pools(current_block)
+            .into_iter()
+            .map(PyDivergentPool::from)
+            .collect()
     }
 
     // ── introspection (the [dispatch]/[sim] summary reads) ────────

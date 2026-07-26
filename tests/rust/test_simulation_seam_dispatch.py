@@ -100,6 +100,7 @@ class TestDispatchEmptyInput:
         assert outcome.candidate_count == 0
         assert outcome.suppressed_count == 0
         assert outcome.thin_dropped == 0
+        assert outcome.divergent_dropped == 0
         assert outcome.fail_buckets == {}
         # Ergo epic 63I7WJ — the success-path captured-swaps surface (the
         # matching success-path getter to each SimFailure.captured_swaps the
@@ -292,3 +293,33 @@ class TestDispatchWithCandidateButNoRpc:
         assert hop1["fee"] == 30
         assert hop0["zfo"] is True
         assert hop1["zfo"] is False
+
+
+class TestPoolDivergenceFfiGetters:
+    """The PyDispatcher divergence getters (ergo GMWYIU) — the persistent
+    cross-block memo's read surface. A fresh dispatcher has no divergent
+    pools + a zero lifetime drop tally; the getters return the right types
+    (the action layer's skip + feedback behavior is proven at the Rust-core
+    level in `dispatch.rs`; these prove the FFI seam propagates the state).
+
+    The per-block `[pool-divergence]` signal rendering stays Python
+    (`aggregate_pool_divergence` reads `outcome.failures` — the signal layer
+    is complementary, not redundant with this persistent memo).
+    """
+
+    def test_fresh_dispatcher_has_no_divergent_pools(self) -> None:
+        dispatcher = PyDispatcher.for_block(100)
+        assert dispatcher.total_divergent_dropped == 0
+        assert dispatcher.divergent_pools(100) == []
+
+    def test_divergent_pools_returns_pydivergentpool_instances(self) -> None:
+        # The getter's return type is `list[PyDivergentPool]` — an empty list
+        # on a fresh dispatcher, but the type is registered (importable).
+        from degenbot._ffi.submission import PyDivergentPool
+
+        dispatcher = PyDispatcher.for_block(100)
+        pools = dispatcher.divergent_pools(100)
+        assert isinstance(pools, list)
+        # PyDivergentPool is registered on the submission submodule.
+        assert PyDivergentPool is not None
+

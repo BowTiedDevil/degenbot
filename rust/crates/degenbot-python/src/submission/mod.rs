@@ -17,7 +17,7 @@ pub mod params;
 pub mod signer;
 pub mod submit;
 
-pub use dispatcher::PyDispatcher;
+pub use dispatcher::{PyDispatcher, PyDivergentPool};
 pub use params::PyTxParams;
 pub use signer::PyTxSigner;
 pub use submit::PySubmitCandidate;
@@ -34,6 +34,7 @@ pub fn add_submission_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = m.py();
     let submod = PyModule::new(py, "degenbot._ffi.submission")?;
     submod.add_class::<PyDispatcher>()?;
+    submod.add_class::<PyDivergentPool>()?;
     submod.add_class::<PyTxSigner>()?;
     submod.add_class::<PyTxParams>()?;
     submod.add_class::<PySubmitCandidate>()?;

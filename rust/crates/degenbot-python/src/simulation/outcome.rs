@@ -49,6 +49,11 @@ pub struct PyDispatchOutcome {
     pub(crate) candidate_count: usize,
     pub(crate) suppressed_count: usize,
     pub(crate) thin_dropped: usize,
+    /// The per-call pool-divergence skip count (ergo `GMWYIU`) — candidates
+    /// dropped pre-sim because they routed through a pool flagged `SolverCalc`
+    /// within the decay window. Mirrors `thin_dropped` / `suppressed_count`;
+    /// the lifetime tally lives on `PyDispatcher.total_divergent_dropped`.
+    pub(crate) divergent_dropped: usize,
     pub(crate) fail_buckets: FailBuckets,
     /// The per-path `SimFailure` records (one per `tally`/`record` site
     /// across the fan-out). Each carries `path_id` + the bucket label + the
@@ -94,6 +99,7 @@ impl PyDispatchOutcome {
             candidate_count: outcome.candidate_count,
             suppressed_count: outcome.suppressed_count,
             thin_dropped: outcome.thin_dropped,
+            divergent_dropped: outcome.divergent_dropped,
             fail_buckets: outcome.fail_buckets.clone(),
             failures: outcome.failures.clone(),
             success_captured_swaps,
@@ -149,6 +155,14 @@ impl PyDispatchOutcome {
     #[getter]
     fn thin_dropped(&self) -> usize {
         self.thin_dropped
+    }
+
+    /// The per-call pool-divergence skip count (ergo `GMWYIU`) — candidates
+    /// dropped pre-sim because they routed through a pool flagged `SolverCalc`
+    /// within the decay window. Mirrors `thin_dropped` / `suppressed_count`.
+    #[getter]
+    fn divergent_dropped(&self) -> usize {
+        self.divergent_dropped
     }
 
     /// The SUCCESS-path captured swaps — `list[dict]`, one entry per
