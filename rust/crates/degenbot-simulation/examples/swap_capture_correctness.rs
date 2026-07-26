@@ -1,24 +1,25 @@
 //! Swap-event capture correctness probe (ergo epic 63I7WJ).
 //!
-//! Proves the `SwapEventCaptureInspector` captures real V2/V3 `Swap` events
-//! with amounts that **byte-match the onchain receipt**, by replaying real
-//! mainnet swap transactions through a `CacheDB<WrapDatabaseAsync<AlloyDB>>`
+//! Proves the `SwapEventCaptureInspector` captures real V2/V3/V4 `Swap`
+//! events with amounts that **byte-match the onchain receipt**, by replaying
+//! real mainnet swap transactions through a `CacheDB<WrapDatabaseAsync<AlloyDB>>`
 //! EVM pinned at the parent block.
 //!
 //! # The question
 //!
-//! Does the inspector's captured swap (emitter + amount0 + amount1) match the
-//! swap event the chain actually emitted for that exact transaction? This is
-//! the ground-truth proof that retires `diagnostic.rs::recompute_v2/v3_amount_out`:
+//! Does the inspector's captured swap (emitter + amount0 + amount1, plus the
+//! post-swap `sqrtPriceX96`/`liquidity`/`tick` for V3/V4) match the swap event
+//! the chain actually emitted for that exact transaction? This is the
+//! ground-truth proof that retires `diagnostic.rs::recompute_v2/v3_amount_out`:
 //! if the captured amount equals the onchain-emitted amount, the off-chain
 //! `getAmountOut` recompute + the Multicall3 reserves re-fetch are redundant
 //! (the run's OWN emitted event is the source of truth).
 //!
 //! # Method
 //!
-//! - Scan the latest ~20 blocks' receipts for transactions emitting V2 `Swap`
-//!   and/or V3 `Swap` events (topic0 match).
-//! - For the first qualifying V2 tx + the first qualifying V3 tx found (each at
+//! - Scan the latest ~20 blocks' receipts for transactions emitting V2 `Swap`,
+//!   V3 `Swap`, and/or V4 `Swap` events (topic0 match).
+//! - For the first qualifying V2 tx + first V3 tx + first V4 tx found (each at
 //!   tx-index ≤ 30, so prior-tx replay is bounded):
 //!   1. Pin `CacheDB<WrapDatabaseAsync<AlloyDB>>` at the PARENT block.
 //!   2. Set the EVM block env to the block's header.
@@ -26,11 +27,13 @@
 //!      nonce bumps + SSTOREs land in the `CacheDB` so the target sees prior-tx
 //!      effects exactly as on-chain).
 //!   4. `inspect_one` the target tx with a `SwapEventCaptureInspector`
-//!      attached — the inspector's `log_full` hook captures every V2/V3 `Swap`
-//!      event the in-process EVM emits.
+//!      attached — the inspector's `log_full` hook captures every V2/V3/V4
+//!      `Swap` event the in-process EVM emits; the frame-stack
+//!      (`frame_start`/`frame_end`) drops reverted-frame swaps so only
+//!      committed swaps are compared.
 //!   5. Drain the captured swaps + compare against the target's receipt:
-//!      every receipt swap log must have a matching captured swap
-//!      (same emitter + family + amount0 + amount1), and no extras.
+//!      every receipt swap log must have a matching captured swap (same
+//!      emitter + family + amounts + post-swap state), and no extras.
 //!
 //! # Run
 //!
@@ -54,6 +57,7 @@ use alloy::rpc::types::{Block as AlloyBlock, TransactionReceipt};
 use degenbot_decoders::{
     v2_swap_decoder::{decode_v2_swap_log, V2_SWAP_TOPIC},
     v3_swap_decoder::{decode_v3_swap_log, V3_SWAP_TOPIC},
+    v4_swap_decoder::{decode_v4_swap_log, V4_SWAP_TOPIC},
 };
 use degenbot_simulation::sim::evm::inspectors::{SwapEventCaptureInspector, SwapFamily};
 use revm::context::{BlockEnv, TxEnv};
@@ -93,8 +97,9 @@ async fn main() {
 
     let mut validated_v2 = false;
     let mut validated_v3 = false;
+    let mut validated_v4 = false;
     for offset in 0..BLOCK_SCAN_RANGE {
-        if validated_v2 && validated_v3 {
+        if validated_v2 && validated_v3 && validated_v4 {
             break;
         }
         let block_number = latest.saturating_sub(offset);
@@ -119,6 +124,15 @@ async fn main() {
                                 cand.tx_index
                             ),
                         }
+                    } else if cand.family == SwapFamily::V4 && !validated_v4 {
+                        match validate_swap_capture(&provider, block_number, cand).await {
+                            Ok(()) => validated_v4 = true,
+                            Err(why) => eprintln!(
+                                "[swap-capture-probe] block {block_number} V4 tx index {} \
+                                 validation FAILED: {why}",
+                                cand.tx_index
+                            ),
+                        }
                     }
                 }
             }
@@ -126,16 +140,16 @@ async fn main() {
         }
     }
 
-    eprintln!();
     eprintln!("=== swap-capture-correctness probe result ===");
     eprintln!("V2 Swap capture validated : {validated_v2}");
     eprintln!("V3 Swap capture validated : {validated_v3}");
-    if validated_v2 && validated_v3 {
-        eprintln!("PASS — captured swaps match onchain receipts for both families.");
+    eprintln!("V4 Swap capture validated : {validated_v4}");
+    if validated_v2 && validated_v3 && validated_v4 {
+        eprintln!("PASS — captured swaps match onchain receipts for all three families.");
     } else {
         eprintln!(
             "INCOMPLETE — re-run on a busier block range or raise MAX_TARGET_TX_INDEX \
-             (V2={validated_v2}, V3={validated_v3})."
+             (V2={validated_v2}, V3={validated_v3}, V4={validated_v4})."
         );
     }
 }
@@ -146,8 +160,9 @@ struct SwapCandidate {
     family: SwapFamily,
 }
 
-/// Scan one block's receipts for the first V2-Swap tx + first V3-Swap tx
-/// (each at tx-index ≤ `MAX_TARGET_TX_INDEX` — bounds the prior-tx replay cost).
+/// Scan one block's receipts for the first V2-Swap tx + first V3-Swap tx +
+/// first V4-Swap tx (each at tx-index ≤ `MAX_TARGET_TX_INDEX` — bounds the
+/// prior-tx replay cost).
 async fn scan_block_for_swap_txs(
     provider: &alloy::providers::RootProvider,
     block_number: u64,
@@ -160,8 +175,13 @@ async fn scan_block_for_swap_txs(
 
     let mut first_v2: Option<usize> = None;
     let mut first_v3: Option<usize> = None;
+    let mut first_v4: Option<usize> = None;
     for (tx_index, rcpt) in receipts.iter().enumerate() {
-        if tx_index > MAX_TARGET_TX_INDEX && first_v2.is_none() && first_v3.is_none() {
+        if tx_index > MAX_TARGET_TX_INDEX
+            && first_v2.is_none()
+            && first_v3.is_none()
+            && first_v4.is_none()
+        {
             // No qualifying swap in the bounded range — give up on this block.
             break;
         }
@@ -176,6 +196,11 @@ async fn scan_block_for_swap_txs(
                 && tx_index <= MAX_TARGET_TX_INDEX
             {
                 first_v3 = Some(tx_index);
+            } else if *topic0 == V4_SWAP_TOPIC
+                && first_v4.is_none()
+                && tx_index <= MAX_TARGET_TX_INDEX
+            {
+                first_v4 = Some(tx_index);
             }
         }
     }
@@ -192,16 +217,33 @@ async fn scan_block_for_swap_txs(
             family: SwapFamily::V3,
         });
     }
+    if let Some(idx) = first_v4 {
+        out.push(SwapCandidate {
+            tx_index: idx,
+            family: SwapFamily::V4,
+        });
+    }
     Ok(out)
 }
 
 /// The expected (onchain-receipt-derived) swap shape the capture must match.
+/// Carries the full post-swap state the captured `CapturedSwap` exposes, so
+/// the V3/V4 comparison is a byte-exact claim on amounts AND post-swap
+/// `sqrtPriceX96`/`liquidity`/`tick` (not just amounts). V2 has no post-swap
+/// state field (the `Sync` event carries reserves, not the V3 state trio), so
+/// those fields are zero for V2.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ExpectedSwap {
     emitter: Address,
     family: SwapFamily,
     amount0: I256,
     amount1: I256,
+    /// Post-swap `sqrtPriceX96` (V3/V4) or `U256::ZERO` (V2).
+    sqrt_price_x96: U256,
+    /// Post-swap active liquidity (V3/V4) or `U256::ZERO` (V2).
+    liquidity: U256,
+    /// Post-swap tick (V3/V4) or `0` (V2).
+    tick: i32,
 }
 
 /// Decode the target tx's receipt logs into the expected swap set.
@@ -223,6 +265,9 @@ fn expected_swaps_from_receipt(receipt: &TransactionReceipt) -> Result<Vec<Expec
                 family: SwapFamily::V2,
                 amount0,
                 amount1,
+                sqrt_price_x96: U256::ZERO,
+                liquidity: U256::ZERO,
+                tick: 0,
             });
         } else if *topic0 == V3_SWAP_TOPIC {
             let ev = decode_v3_swap_log(log)
@@ -232,6 +277,25 @@ fn expected_swaps_from_receipt(receipt: &TransactionReceipt) -> Result<Vec<Expec
                 family: SwapFamily::V3,
                 amount0: ev.amount0,
                 amount1: ev.amount1,
+                sqrt_price_x96: ev.sqrt_price_x96,
+                liquidity: U256::from(ev.liquidity),
+                tick: ev.tick,
+            });
+        } else if *topic0 == V4_SWAP_TOPIC {
+            // V4 `Swap` is emitted by the `PoolManager` — the emitter is the
+            // log's address (NOT a per-pool contract; the per-pool id is in
+            // topic[1]). The decoder's `V4SwapEvent` carries `pool_id`, not
+            // an emitter, so we take the emitter from `log.address()`.
+            let ev = decode_v4_swap_log(log)
+                .ok_or_else(|| "receipt V4 Swap log failed to decode".to_string())?;
+            out.push(ExpectedSwap {
+                emitter: log.address(),
+                family: SwapFamily::V4,
+                amount0: ev.amount0,
+                amount1: ev.amount1,
+                sqrt_price_x96: ev.sqrt_price_x96,
+                liquidity: U256::from(ev.liquidity),
+                tick: ev.tick,
             });
         }
     }
@@ -390,6 +454,9 @@ fn compare_captured_to_expected(
                 && cap.family == exp.family
                 && cap.amount0 == exp.amount0
                 && cap.amount1 == exp.amount1
+                && cap.sqrt_price_x96 == exp.sqrt_price_x96
+                && cap.liquidity == exp.liquidity
+                && cap.tick == exp.tick
             {
                 used[i] = true;
                 found = true;

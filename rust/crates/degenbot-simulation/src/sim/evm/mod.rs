@@ -77,12 +77,18 @@ pub mod state_override;
 /// historical note on the retired slot encoders.
 pub mod bot_state_db;
 
-/// V4 PoolManager transient-storage seeder (EIP-1153) — seeds the built EVM's
-/// `journaled_state.inner.transient_storage` from `V4PoolState` before
-/// `transact`, since V4 pools have no persistent on-chain storage at fixed
-/// slots. The V4 slot-layout mapping is a follow-up sub-step (revm's
-/// transient-storage capability is verified).
-pub mod v4_transient;
+// (Deleted) V4 PoolManager transient-storage seeder — `v4_transient.rs` was
+// built on the false premise that V4 pool swap state (sqrtPriceX96 /
+// liquidity / tick) lives in transient storage (EIP-1153). Per the deployed
+// V4-core source (`contract_reference/uniswap/V4/PoolManager.sol`),
+// `_pools` (mapping `PoolId => Pool.State`) is a PERSISTENT mapping at slot 6
+// — see `docs/architecture/v4_poolmanager_storage_layout.md`. Transient
+// storage holds the currency-delta accounting + lock flag (NOT pool state).
+// The `apply_v4_transient_state` function was a dead no-op stub (never
+// called). V4 pool state for the in-process sim is seeded via the PERSISTENT
+// CacheDB cold-load path (the `BotStateDb` → `WrapDatabaseAsync<AlloyDB>`
+// fallback) — proven for V2/V3 by the `swap_capture_correctness.rs`
+// mainnet probe; V4 probe extension is the real V4 captured-amount proof.
 
 // 7-call vector calldata builders live in `degenbot-backrun-strategy::calldata`
 // (relocated with the backrun bundle — ADR-019 D4/D7, decision R).

@@ -40,7 +40,7 @@ degenbot-submission = { path = "../degenbot-submission" }
 # `AlloyProvider` — the typed RPC provider `SimulateContext` borrows (the
 # cold-miss fallback underneath the engine's CacheDB).
 degenbot-rpc = { path = "../degenbot-rpc" }
-# `V4PoolId` (the v4_transient seeder's pool-key lookup) + `encode_rust`
+# `V4PoolId` (the V4 swap-event decoder's pool-id type) + `encode_rust`
 # (the pure-Rust ABI encoder for the balance-call calldata).
 degenbot-decoders = { path = "../degenbot-decoders" }
 # `encode_rust` / `AbiValue` — the pure-Rust ABI encoder for the 7-call

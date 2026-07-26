@@ -49,7 +49,7 @@ degenbot-rpc = { path = "../degenbot-rpc" }
 degenbot-bot = { path = "../degenbot-bot" }
 degenbot-pools = { path = "../degenbot-pools" }
 # `V4PoolId` — the V4 pool identifier type (crossed from the decoders leaf for
-# the v4_transient seeder's pool-key lookup).
+# the V4 swap-event decoder + the swap-capture inspector).
 degenbot-decoders = { path = "../degenbot-decoders" }
 thiserror = { version = "^2.0" }
 log = { version = "^0.4" }
