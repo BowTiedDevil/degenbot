@@ -1434,6 +1434,7 @@ async def _dispatch_profitable(
     _render_sim_summary(outcome)
     _render_sim_failures(outcome, current_block=current_block)
     _render_pool_divergence(outcome)
+    _render_fot_tokens(dispatcher, current_block)
     _render_profit_logs(outcome)
 
     # ── Submit gas-profitable via the Rust submit leaf ───
@@ -1486,11 +1487,17 @@ def _render_sim_summary(outcome: DispatchOutcome) -> None:
     breakdown = format_failure_breakdown(outcome.fail_buckets)
     sim_ok = len(profitable) + outcome.gas_unprofitable_count
     extra = ""
-    if outcome.suppressed_count or outcome.thin_dropped or outcome.divergent_dropped:
+    if (
+        outcome.suppressed_count
+        or outcome.thin_dropped
+        or outcome.divergent_dropped
+        or outcome.fot_dropped
+    ):
         extra = (
             f" — suppressed={outcome.suppressed_count}, "
             f"thin={outcome.thin_dropped}, "
-            f"divergent={outcome.divergent_dropped}"
+            f"divergent={outcome.divergent_dropped}, "
+            f"fot={outcome.fot_dropped}"
         )
     bot_logger.info(
         f"[sim] {outcome.candidate_count} candidates: "
@@ -1635,6 +1642,25 @@ def _render_pool_divergence(outcome: DispatchOutcome) -> None:
         outcome.failures, total_sims=outcome.candidate_count,
     ):
         bot_logger.info(line)
+
+
+def _render_fot_tokens(dispatcher: Dispatcher, current_block: int) -> None:
+    """Render one ``[fot]`` line per confirmed fee-on-transfer token.
+
+    Ergo epic 3O535Q: reads the persistent ``FeeOnTransferRegistry`` via
+    the FFI getter ``dispatcher.fot_tokens(current_block)`` — the
+    confirmed-FoT set (tokens with >= K distinct failing pools + 0
+    successes, within the decay window). Complements the per-call
+    ``fot=N`` in the ``[sim]`` summary (which counts THIS block's skips);
+    this is the persistent memo state across blocks.
+    """
+    fot_tokens = dispatcher.fot_tokens(current_block)
+    for token in fot_tokens:
+        bot_logger.info(f"[fot] confirmed fee-on-transfer token: {token}")
+    if fot_tokens:
+        bot_logger.info(
+            f"[fot] total dropped (lifetime): {dispatcher.total_fot_dropped}"
+        )
 
 
 async def consume_result_batches(
