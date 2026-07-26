@@ -36,7 +36,7 @@
 // MAX_SIMULATE_CONCURRENT, etc.) are ubiquitous here.
 #![allow(clippy::doc_markdown)]
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use alloy::primitives::U256;
@@ -47,7 +47,8 @@ use degenbot_submission::PathSuppression;
 use parking_lot::RwLock;
 
 use crate::{
-    simulate_path_on_evm, FailBuckets, SimFailure, SimResult, SimulateContext, SimulatePath,
+    diverging_pool_keys, hop_pool_key, is_solver_calc_failure, simulate_path_on_evm, FailBuckets,
+    PoolDivergence, SimFailure, SimResult, SimulateContext, SimulatePath,
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -203,6 +204,12 @@ pub struct DispatchOutcome {
     /// The number of candidates dropped by [`filter_thin_margin_results`]
     /// (ports `thin_dropped`, L2499).
     pub thin_dropped: usize,
+    /// The number of candidates dropped pre-sim because every surviving
+    /// hop routed through a pool flagged `SolverCalc` within the decay window
+    /// (ergo `GMWYIU`). Mirrors `suppressed_count` / `thin_dropped` — a per-call
+    /// pre-filter drop count; the lifetime tally lives on
+    /// [`PoolDivergence::total_divergent_dropped`].
+    pub divergent_dropped: usize,
     /// The `_fail_buckets` tally — the revert/no-profit/overflow buckets
     /// accumulated across the fan-out (ports `_fail_buckets`, L1769). The
     /// aggregation rendering (`format_failure_breakdown`) stays Python (D4);
@@ -240,26 +247,34 @@ impl DispatchOutcome {
 /// 1. **Pre-filter — suppression** — drop paths currently suppressed by
 ///    `path_suppression.is_suppressed(pid, current_block)` (the retry-interval
 ///    logic is owned by [`PathSuppression`]).
-/// 2. **Pre-filter — thin-margin** — drop razor-thin arb via
+/// 2. **Pre-filter — pool divergence** (ergo `GMWYIU`) — drop candidates
+///    routing through a pool flagged `SolverCalc` within the decay window
+///    (counted in `divergent_dropped`). The memo is keyed by chain identity
+///    (V2/V3 address, V4 `poolId`) derivable from each hop's `HopInfo`.
+/// 3. **Pre-filter — thin-margin** — drop razor-thin arb via
 ///    [`filter_thin_margin_results`] (`min_profit_margin_bps`; `0` disables).
-/// 3. **Cap** — take the first [`MAX_SIMULATE_CONCURRENT`] candidates (the
+/// 4. **Cap** — take the first [`MAX_SIMULATE_CONCURRENT`] candidates (the
 ///    Python oracle slices `results[:MAX_SIMULATE_CONCURRENT]`; the candidates
 ///    are expected pre-sorted by engine profit descending — the caller does
 ///    the sort, ports L1684).
-/// 4. **Fan-out** — the in-process revm path: build ONE per-block
+/// 5. **Fan-out** — the in-process revm path: build ONE per-block
 ///    `BlockSimHandle` + simulate each candidate SERIALLY on the shared
 ///    `&mut evm` (Tier 1, `V5HCR5`). `bot_state` is `Option` so that
-///    empty / pre-filtered-to-empty input (which short-circuits at step 3)
+///    empty / pre-filtered-to-empty input (which short-circuits at step 5)
 ///    need not construct an engine; the `None` arm is the unreachable
 ///    anti-pattern guard for non-empty input without a `BotState` (the
 ///    retired `eth_simulateV1` RPC executor — ADR-019 D1).
-/// 5. **Gather** — collect the stream; exceptions are tolerated (counted, not
+/// 6. **Gather** — collect the stream; exceptions are tolerated (counted, not
 ///    propagated — the Python oracle uses `return_exceptions=True`,
 ///    L2504).
-/// 6. **Categorize** — gas-profitable (`net ≥ min_profit_net`) /
+/// 7. **Feedback — pool divergence** (ergo `GMWYIU`) — for each `SolverCalc`
+///    failure, record divergence for the diverging hop's pool key (derived
+///    from `path_info.hops[i]`); the NEXT block's skip (step 2) drops paths
+///    through it pre-sim.
+/// 8. **Categorize** — gas-profitable (`net ≥ min_profit_net`) /
 ///    gas-unprofitable (`None`-filtered, gross > 0, net below threshold) /
 ///    exception. Sort both categories by net profit descending (L2561/L2563).
-/// 7. **Record suppression outcomes** — `record_success(pid)` for paths that
+/// 9. **Record suppression outcomes** — `record_success(pid)` for paths that
 ///    returned a result, `record_failure(pid)` for paths that didn't
 ///    (L2573–L2577).
 ///
@@ -287,11 +302,12 @@ impl DispatchOutcome {
 ///
 /// # Panics
 ///
-/// Panics if the `path_suppression` mutex is poisoned (a peer task panicked
-/// while holding it). The mutex is locked ONLY at the bookends (step 1
-/// pre-filter + step 6 outcome record) — both synchronous spans, no `.await`
-/// held under the guard — so a poison indicates a bug in a sibling task
-/// (the suppression arc is shared with the submission seam's accessors;
+/// Panics if the `path_suppression` OR `pool_divergence` mutex is poisoned (a
+/// peer task panicked while holding it). Both mutexes are locked ONLY at the
+/// bookends (the suppression + divergence pre-filters in steps 1/2 + the
+/// outcome recording + divergence feedback in steps 7/8) — both synchronous
+/// spans, no `.await` held under either guard — so a poison indicates a bug in
+/// a sibling task (the arcs are shared with the submission seam's accessors;
 /// never locked across an `.await`).
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 pub fn dispatch_profitable_results(
@@ -301,6 +317,15 @@ pub fn dispatch_profitable_results(
     current_block: u64,
     min_profit_net: u128,
     min_profit_margin_bps: u64,
+    // The per-pool solver-divergence memo (ergo `GMWYIU`). Parallels
+    // `path_suppression` — a standalone `Arc<Mutex<PoolDivergence>>` (NOT
+    // composed into the `Dispatcher`) so the sim seam locks it directly at
+    // the skip bookend (step 2) + the feedback (step 7), never across the
+    // fan-out `.await`s. The skip drops candidates routing through a pool
+    // flagged `SolverCalc` within the decay window; the feedback records
+    // divergence for `SolverCalc` failures' diverging hops so the NEXT
+    // block's skip drops them.
+    pool_divergence: &Arc<Mutex<PoolDivergence>>,
     // The fan-out routes each candidate through the in-process revm sim
     // over the borrowed `&BotState` via a per-block shared `BlockSimHandle`
     // (Tier 1, `V5HCR5` — retired the per-path `simulate_in_process`
@@ -312,7 +337,7 @@ pub fn dispatch_profitable_results(
     // in-process sim's blocking RPC cold-miss path does not deadlock against
     // the pump's worker pool. `Option` (not required) so that empty /
     // pre-filtered-to-empty input — which never reaches this param at all
-    // (step 3's `is_empty()` short-circuit above) — need not wire an engine;
+    // (step 4's `is_empty()` short-circuit above) — need not wire an engine;
     // the `None` arm below is the unreachable guard for non-empty input
     // without a `BotState`.
     bot_state: Option<Arc<RwLock<BotState>>>,
@@ -343,12 +368,49 @@ pub fn dispatch_profitable_results(
     }
     outcome.suppressed_count = pre_filter_count - candidates.len();
 
-    // 2. Pre-filter — thin-margin (L2497–L2499).
+    // 2. Pre-filter — pool divergence (ergo `GMWYIU`). Drop candidates
+    //    routing through a pool flagged `SolverCalc` within the decay window
+    //    (counted in `divergent_dropped`). The memo is keyed by chain
+    //    identity — V2/V3 pool address, V4 `poolId` bytes32 — derivable from
+    //    each hop's `HopInfo` with no engine lookup, so the skip is
+    //    standalone. Snapshot each candidate's `PathInfo` into a join map
+    //    first (the post-fan-out feedback path re-derives the diverging
+    //    hop's key from `hops[i]` — the V4 `CapturedSwap.emitter` is the
+    //    shared PoolManager, useless for per-pool attribution).
+    let path_info_by_id: HashMap<u64, PathInfo> = candidates
+        .iter()
+        .map(|c| (c.path_id, c.path_info.clone()))
+        .collect();
+    let divergent_before = candidates.len();
+    {
+        let pd = pool_divergence
+            .lock()
+            .expect("pool_divergence mutex poisoned");
+        candidates.retain(|c| {
+            !c.path_info
+                .hops
+                .iter()
+                .filter_map(hop_pool_key)
+                .any(|k| pd.is_divergent(k, current_block))
+        });
+        outcome.divergent_dropped = divergent_before - candidates.len();
+    }
+    // Bump the lifetime tally (mirrors `PathSuppression::total_suppressed`).
+    if outcome.divergent_dropped > 0 {
+        let mut pd = pool_divergence
+            .lock()
+            .expect("pool_divergence mutex poisoned");
+        for _ in 0..outcome.divergent_dropped {
+            pd.record_dropped();
+        }
+    }
+
+    // 3. Pre-filter — thin-margin (L2497–L2499).
     let (kept, thin_dropped) = filter_thin_margin_results(candidates, min_profit_margin_bps);
     outcome.thin_dropped = thin_dropped;
     candidates = kept;
 
-    // 3. Cap (L2491). The candidates are expected pre-sorted by engine profit
+    // 4. Cap (L2491). The candidates are expected pre-sorted by engine profit
     //    descending (the caller's responsibility — ports L1684's sort).
     candidates.truncate(MAX_SIMULATE_CONCURRENT);
     outcome.candidate_count = candidates.len();
@@ -362,7 +424,7 @@ pub fn dispatch_profitable_results(
         return outcome;
     }
 
-    // 4. Fan-out — build ONE per-block `BlockSimHandle` + simulate each
+    // 5. Fan-out — build ONE per-block `BlockSimHandle` + simulate each
     //    candidate SERIALLY on the shared `&mut evm` (Tier 1, `V5HCR5`).
     //    `buffer_unordered(MAX_SIMULATE_CONCURRENT)` was the Rust idiom for
     //    the Python `asyncio.gather(*sim_tasks)` + the
@@ -444,7 +506,7 @@ pub fn dispatch_profitable_results(
         // in-process revm path (the `Some` arm above) is the sole executor.
         // This arm is unreachable in production: the FFI seam always sources a
         // `BotState` from the engine, and empty / pre-filtered-to-empty input
-        // short-circuits at step 3 above before the `match` is reached. The
+        // short-circuits at step 4 above before the `match` is reached. The
         // `Option` (rather than a required arg) is preserved so that
         // empty-input callers (the seam's offline empty-candidate tests) need
         // not construct an engine.
@@ -455,7 +517,7 @@ pub fn dispatch_profitable_results(
         }
     };
 
-    // 5. Categorize — gas-profitable / gas-unprofitable / exception (ports
+    // 6. Categorize — gas-profitable / gas-unprofitable / exception (ports
     //    L2519–L2557). `simulate_path_on_evm` returns `Ok(Some(result))` for gross-
     //    profitable paths; `Ok(None)` for revert/no-profit/overflow (tallied
     //    into `buckets`); `Err(_)` for an unrecoverable RPC failure (counted
@@ -499,7 +561,35 @@ pub fn dispatch_profitable_results(
     // `fail_count = len(candidates) - sim_ok_count - exception_count` (L2537).
     outcome.fail_count = outcome.candidate_count - outcome.sim_ok_count() - outcome.exception_count;
 
-    // 6. Record suppression outcomes (L2573–L2577). Ports
+    // 7. Feedback — record divergence for `SolverCalc` failures' diverging
+    //    hops (ergo `GMWYIU`). A pool flagged this block stays divergent for
+    //    `POOL_DIVERGENCE_DECAY_BLOCKS`; the NEXT block's skip drops paths
+    //    routing through it pre-sim. The diverging hop's key is derived from
+    //    `path_info_by_id[pid].hops[i]` (index correspondence is the
+    //    `is_solver_calc_failure` count-guard contract — a count mismatch
+    //    short-circuits to non-`SolverCalc`); the V4 `poolId` comes from the
+    //    hop, NOT the captured swap's emitter (which is the shared
+    //    PoolManager). Scope-locked once for the whole feedback loop.
+    {
+        let mut pd = pool_divergence
+            .lock()
+            .expect("pool_divergence mutex poisoned");
+        for f in &outcome.failures {
+            if !is_solver_calc_failure(f) {
+                continue;
+            }
+            // A path dropped by a PRE-sim filter never reaches sim, so its
+            // failures aren't in `outcome.failures`; the lookup always hits
+            // for a SolverCalc-classified failure (it was simulated).
+            if let Some(path_info) = path_info_by_id.get(&f.path_id) {
+                for key in diverging_pool_keys(f, &path_info.hops) {
+                    pd.record_divergence(key, current_block);
+                }
+            }
+        }
+    }
+
+    // 8. Record suppression outcomes (L2573–L2577). Ports
     //    `record_success(pid)` for succeeded, `record_failure(pid)` for the
     //    rest (revert/no-profit/overflow/exception). Scope-locked (same
     //    bookend-only discipline as step 1 — the guard drops before any
@@ -515,7 +605,7 @@ pub fn dispatch_profitable_results(
         }
     }
 
-    // 7. Sort both categories by net profit descending (L2561/L2563).
+    // 9. Sort both categories by net profit descending (L2561/L2563).
     outcome
         .gas_profitable
         .sort_by_key(|r| std::cmp::Reverse(r.net_profit));
@@ -599,6 +689,34 @@ mod tests {
                 zfo: true,
             }),
         ])
+    }
+
+    /// A single-hop V2 candidate routing through `pool` — for the divergence
+    /// skip test, which pre-flags one pool + asserts the candidate through it
+    /// is dropped while a candidate through a clean pool survives.
+    fn single_v2_hop(pool: Address) -> PathInfo {
+        PathInfo::new(vec![HopInfo::V2(V2HopInfo {
+            pool_address: pool,
+            token0_address: WETH,
+            token1_address: address!("1111111111111111111111111111111111111111"),
+            fee: 30,
+            zfo: true,
+        })])
+    }
+
+    fn candidate_through_pool(path_id: u64, pool: Address) -> DispatchCandidate {
+        DispatchCandidate {
+            path_id,
+            optimal_input: 1_000_000_000_000_000_000u128,
+            engine_profit: 1_000,
+            hop_outputs: vec![1_100_000_000_000_000_000u128],
+            solve_block: 100,
+            path_info: single_v2_hop(pool),
+            opts: EncodeOptions {
+                erc6909_profit: false,
+                use_v4_batch: false,
+            },
+        }
     }
 
     fn candidate(path_id: u64, opt_input: u128, profit: u128) -> DispatchCandidate {
@@ -700,6 +818,7 @@ mod tests {
         asserter.push_success(&access_list_response());
         let provider = mock_provider(&asserter);
         let suppression = Arc::new(Mutex::new(PathSuppression::new()));
+        let pool_divergence = Arc::new(Mutex::new(crate::PoolDivergence::new()));
         let bot_state = Arc::new(RwLock::new(BotState::new()));
 
         let cands = vec![
@@ -713,6 +832,7 @@ mod tests {
             100,
             MIN_PROFIT_NET,
             0,
+            &pool_divergence,
             Some(bot_state),
             Some(degenbot_simulation::WarmCodeCacheInner::shared_default()),
         );
@@ -740,5 +860,113 @@ mod tests {
         // No RPC dispatched (build failed before any transact; sentinel
         // untouched).
         assert!(!asserter.read_q().is_empty());
+    }
+
+    // ── Pool divergence skip + feedback (ergo GMWYIU) ────────────────
+
+    /// The skip (step 2) drops a candidate routing through a pool flagged
+    /// `SolverCalc` within the decay window, while a candidate through a
+    /// clean pool survives to sim. `divergent_dropped` counts the drop +
+    /// `PoolDivergence::total_divergent_dropped` bumps the lifetime tally.
+    /// Uses the build-fails sim path (no real sim needed — the skip is
+    /// pre-sim, so the dropped candidate never reaches the fan-out).
+    #[test]
+    fn dispatch_skips_candidates_through_divergent_pools() {
+        // Pre-flag pool A as divergent this block.
+        const POOL_A: Address = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        const POOL_B: Address = address!("dddddddddddddddddddddddddddddddddddddddd");
+        let asserter = Asserter::new();
+        asserter.push_success(&access_list_response());
+        let provider = mock_provider(&asserter);
+        let suppression = Arc::new(Mutex::new(PathSuppression::new()));
+        let pool_divergence = Arc::new(Mutex::new(crate::PoolDivergence::new()));
+        let bot_state = Arc::new(RwLock::new(BotState::new()));
+
+        pool_divergence
+            .lock()
+            .unwrap()
+            .record_divergence(crate::PoolDivergenceKey::V2(POOL_A), 100);
+
+        let cands = vec![
+            candidate_through_pool(50, POOL_A), // divergent → dropped pre-sim
+            candidate_through_pool(51, POOL_B), // clean → reaches sim
+        ];
+        let outcome = dispatch_profitable_results(
+            cands,
+            &ctx(&provider),
+            &suppression,
+            100,
+            MIN_PROFIT_NET,
+            0,
+            &pool_divergence,
+            Some(bot_state),
+            Some(degenbot_simulation::WarmCodeCacheInner::shared_default()),
+        );
+
+        // The divergent candidate dropped pre-sim; the clean one reached sim
+        // (build fails → rpc-failed).
+        assert_eq!(outcome.divergent_dropped, 1, "divergent candidate dropped");
+        assert_eq!(
+            outcome.candidate_count, 1,
+            "only the clean candidate simmed"
+        );
+        assert_eq!(outcome.fail_buckets.get("rpc-failed"), 1);
+        // The lifetime tally bumped once.
+        assert_eq!(
+            pool_divergence.lock().unwrap().total_divergent_dropped(),
+            1,
+            "record_dropped bumped the lifetime tally"
+        );
+        // The dropped candidate's path_id is NOT in the failures (it never
+        // simulated).
+        let simmed_ids: Vec<u64> = outcome.failures.iter().map(|f| f.path_id).collect();
+        assert!(simmed_ids.contains(&51), "clean candidate simmed");
+        assert!(
+            !simmed_ids.contains(&50),
+            "divergent candidate never simmed"
+        );
+    }
+
+    /// The feedback (step 7) does NOT record divergence for non-`SolverCalc`
+    /// failures. The build-fails path tallies `rpc-failed` (empty
+    /// `captured_swaps` → `is_solver_calc_failure` is false), so the memo stays
+    /// empty after the fan-out — the next block's skip is unaffected.
+    #[test]
+    fn dispatch_feedback_skips_non_solvercalc_failures() {
+        let asserter = Asserter::new();
+        asserter.push_success(&access_list_response());
+        let provider = mock_provider(&asserter);
+        let suppression = Arc::new(Mutex::new(PathSuppression::new()));
+        let pool_divergence = Arc::new(Mutex::new(crate::PoolDivergence::new()));
+        let bot_state = Arc::new(RwLock::new(BotState::new()));
+
+        let cands = vec![candidate_through_pool(
+            60,
+            address!("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"),
+        )];
+        let outcome = dispatch_profitable_results(
+            cands,
+            &ctx(&provider),
+            &suppression,
+            100,
+            MIN_PROFIT_NET,
+            0,
+            &pool_divergence,
+            Some(bot_state),
+            Some(degenbot_simulation::WarmCodeCacheInner::shared_default()),
+        );
+
+        // rpc-failed (empty captured_swaps) → not SolverCalc → no feedback.
+        assert_eq!(outcome.fail_buckets.get("rpc-failed"), 1);
+        assert_eq!(outcome.fail_count, 1);
+        // The memo is unchanged — no pools flagged.
+        assert!(
+            pool_divergence
+                .lock()
+                .unwrap()
+                .divergent_pools(100)
+                .is_empty(),
+            "non-SolverCalc failures must not record divergence"
+        );
     }
 }

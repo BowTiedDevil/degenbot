@@ -28,6 +28,7 @@
 //! DOES release the GIL across RPC is `dispatch_and_submit_py` (separate file).
 
 use crate::prelude::*;
+use degenbot_backrun_strategy::PoolDivergence;
 use degenbot_submission::{CommittedTx, Dispatcher, PathSuppression, PoolKey};
 use pyo3::types::PyTuple;
 use std::collections::HashSet;
@@ -61,6 +62,12 @@ pub struct PyDispatcher {
     /// touched only at the sim fan-out bookends, dormant across the RPC
     /// `.await`s, and uncontended during the fan-out).
     pub(crate) suppression: Arc<Mutex<PathSuppression>>,
+    /// The standalone per-pool solver-divergence memo (ergo `GMWYIU`) — same
+    /// standalone-arc rationale as `suppression`: the simulation seam locks
+    /// it directly at the dispatch skip (step 1.5) + feedback (step 5.5)
+    /// bookends, NEVER across the fan-out `.await`s, so the `Dispatcher`
+    /// lock stays uncontended by divergence bookkeeping.
+    pub(crate) pool_divergence: Arc<Mutex<PoolDivergence>>,
 }
 
 impl PyDispatcher {
@@ -79,6 +86,15 @@ impl PyDispatcher {
     pub(crate) fn suppression_arc(&self) -> Arc<Mutex<PathSuppression>> {
         Arc::clone(&self.suppression)
     }
+
+    /// Borrow the shared `Arc<Mutex<PoolDivergence>>` (for the simulation
+    /// seam's `dispatch_profitable_py` — `GMWYIU` — which locks divergence
+    /// at the dispatch skip + feedback bookends; the `Dispatcher` arc is
+    /// NOT touched, so monitor-task contention on the `Dispatcher` is
+    /// unaffected).
+    pub(crate) fn pool_divergence_arc(&self) -> Arc<Mutex<PoolDivergence>> {
+        Arc::clone(&self.pool_divergence)
+    }
 }
 
 #[pymethods]
@@ -92,6 +108,7 @@ impl PyDispatcher {
         Self {
             inner: Arc::new(Mutex::new(Dispatcher::for_block(current_block))),
             suppression: Arc::new(Mutex::new(PathSuppression::new())),
+            pool_divergence: Arc::new(Mutex::new(PoolDivergence::new())),
         }
     }
 

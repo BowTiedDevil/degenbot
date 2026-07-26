@@ -146,6 +146,10 @@ pub fn dispatch_profitable_py<'py>(
     // `.await`s (A3 `LITQFF`). The `Dispatcher` arc is NOT held during the
     // fan-out (monitor-task contention is unaffected).
     let suppression_arc = dispatcher.suppression_arc();
+    // The pool-divergence arc (GMWYIU) — same standalone-arc discipline: locked
+    // ONLY at the dispatch skip (step 1.5) + feedback (step 5.5) bookends in
+    // the core, never across the `.await`s.
+    let pool_divergence_arc = dispatcher.pool_divergence_arc();
 
     // ── BotState extraction (for the in-process `BlockSimHandle` path).
     // Done under the GIL: the `Py<PyArbitrageEngine>` is borrowed, the engine
@@ -193,6 +197,7 @@ pub fn dispatch_profitable_py<'py>(
             current_block,
             min_profit_net,
             min_profit_margin_bps,
+            &pool_divergence_arc,
             bot_state,
             warm_cache,
         );

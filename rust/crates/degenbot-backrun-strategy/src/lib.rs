@@ -65,7 +65,10 @@ pub use dispatch::{
     dispatch_profitable_results, filter_thin_margin_results, DispatchCandidate, DispatchOutcome,
     BPS_DENOM, MAX_SIMULATE_CONCURRENT, MIN_PROFIT_NET,
 };
-pub use pool_divergence::{is_solver_calc_failure, PoolDivergence, POOL_DIVERGENCE_DECAY_BLOCKS};
+pub use pool_divergence::{
+    diverging_pool_keys, hop_pool_key, is_solver_calc_failure, PoolDivergence, PoolDivergenceKey,
+    POOL_DIVERGENCE_DECAY_BLOCKS,
+};
 pub use simulator::{
     compute_priority_fee, fits_int128, simulate_in_process_with_db, simulate_path_on_evm,
     FailBuckets, RevertingFrame, SimFailure, SimResult, SimulateContext, SimulatePath,
