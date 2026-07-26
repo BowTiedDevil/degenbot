@@ -1,210 +1,215 @@
 # Spike: FoT signal validation on mainnet + attribution leaf
 
 > Ergo task `5MP3HQ` (epic `3O535Q` — Fee-on-transfer token discovery &
-> path denial). The gating knowledge artifact for the implementation tasks:
-> `6XWYVH` (registry), `WLJJYO` (classifier), `SDH5VX` (dispatch feedback),
-> `CXLIKZ` (FFI), `USPI34` (denylist feed).
+> path denial). The gating knowledge artifact for the implementation tasks.
 
 ## Goal
 
-Produce the knowledge the implementation tasks depend on: the exact
-`reverting_frame.label` strings the FoT classifier should match, whether the
-attribution lookup works, the noise floor on whitelisted tokens (the
-false-positive bound the K/M confirmation threshold must dominate), and
-whether the V2 captured-swap-mismatch path fires at all.
+Confirm — empirically, on mainnet, with a real fee-on-transfer token — that
+the FoT signal fires at the expected `reverting_frame.label`, at the expected
+call depth, with the expected reverting target. Without this confirmation
+the inferred label set (`{IIA, CurrencyNotSettled}`) is an untested
+hypothesis, and the entire implementation chain would be built on a
+possibly-wrong classifier.
 
 ## Method
 
 1. **Attribution leaf prototyped + committed** (`136d1e2b`):
    `fot_suspected_token(failure: &SimFailure, hops: &[HopInfo]) -> Option<Address>`
-   in `rust/crates/degenbot-backrun-strategy/src/fot_attribution.rs`. Pure
-   lookup off `HopInfo` — no engine accessor required. 13 unit tests cover
-   the V3 `IIA` + V4 `CurrencyNotSettled` reverting-frame attribution (zfo
-   true/false, multi-hop, target-not-in-hops, non-FoT label, missing
-   reverting_frame) + the V2 swap-mismatch path (mismatch attributes, match
-   returns None, empty captures, length mismatch) + the combined wrapper.
+   in `rust/crates/degenbot-backrun-strategy/src/fot_attribution.rs`.
+2. **Mainnet experiment**: added RFI (`0xA1AFFfE3...`), SFM
+   (`0xe574c0c3...`), BabyDoge (`0xAC57De9C...`) to the whitelist + ran
+   the V3-V2-V2 dry-run (19 dispatches, ~6 blocks).
+3. **Analyzed the prior V3-V2-V2 whitelisted run** (224 dispatches, 423
+   sim-failures) for the noise floor (F2 in the preliminary findings).
 
-2. **Mainnet validation run analyzed** — the V3-V2-V2 dry-run from the prior
-   session (`/tmp/bot_v322.log`, 224 dispatches, 423 sim-failures, all
-   whitelisted tokens). The `[sim-fail]` lines carry the Rust
-   `reverting_frame.label` field, so the existing run already produces the
-   signal data the spike needs — no new run required for the whitelisted
-   noise-floor measurement.
+## Findings — REVISED by the mainnet experiment
 
-3. **Rust `classify_revert` code path read** to confirm the exact label
-   normalization: `degenbot_decoders::revert::lookup` does
-   `.split('(').next()`, so `RevertClass::label()` returns the bare base
-   name (`"IIA"`, `"CurrencyNotSettled"`) — the classifier's membership check
-   is a direct `==`, not a prefix/contains test.
+The preliminary findings (F1-F5, in the first version of this doc) inferred
+the label set from the executor's selector table + the Rust `classify_revert`
+normalization. The mainnet experiment with a real FoT token **revised F1-F3
+and confirmed F4-F5**. The revised findings below supersede the preliminary
+ones.
 
-## Findings
+### F1 (REVISED) — The V2 FoT label is `UniswapV2: K`, NOT `IIA`
 
-### F1 — The label set is `{IIA, CurrencyNotSettled}` (bare base names)
+The inferred label set (`{IIA, CurrencyNotSettled}`) was WRONG for V2-pooled
+FoT tokens. The actual mainnet signal:
 
-The FoT reverting-frame labels, sourced from
-`degenbot_decoders::revert::classify_revert`:
+| Token | Pooled on | Expected label | ACTUAL label | Selector |
+|-------|-----------|---------------|--------------|----------|
+| RFI | V2 pairs | `IIA` | `UniswapV2: K` | `0x08c379a0` (Error(string) `"UniswapV2: K"`) |
 
-| Label | Selector | Source | Failure mode |
-|-------|----------|--------|--------------|
-| `IIA` | `0x49494100` | the `cmd_executor`'s own `IIA(insufficient-input-amount)` assertion | V3 middle leg: the executor sent tokens to the pool, the FoT fee ate some, `balance_before + amount_owed <= balance_after` fails |
-| `CurrencyNotSettled` | `0x5212cba1` | the V4 PoolManager's `CurrencyNotSettled()` | V4 settle: the delta ledger doesn't balance because the FoT fee shorted the input |
+**Why:** the V2 pool's own `swap()` function checks the K-invariant on FINAL
+balances and reverts via `Error(string)` BEFORE the executor's own IIA
+assertion fires. The executor sends FoT tokens (with the fee shorted) to the
+V2 pair → the pair receives less than expected → the fixed-output withdrawal
+makes `balance0_final * balance1_final < k` → the pool reverts with
+`UniswapV2: K` — the POOL's revert, not the executor's.
 
-The Rust `lookup` fn strips the `(...)` signature via
-`.split('(').next()` before returning, so `RevertClass::label()` already
-returns the bare base name. The classifier's membership check is:
+The `IIA` / `CurrencyNotSettled` labels are the EXECUTOR's own assertions
+(firing for V3/V4-pooled FoT tokens), and were NOT observed because all
+three test tokens (RFI, SFM, BabyDoge) are V2-paired. SFM + BabyDoge found
+no paths in the run (their V2/V3 pools aren't in the DB snapshot against
+whitelisted tokens — only RFI has USDC/WETH pairs).
 
-```rust
-const FOT_REVERT_LABELS: &[&str] = &["IIA", "CurrencyNotSettled"];
-FOT_REVERT_LABELS.contains(&frame.label.as_str())
-```
+**Implication:** the `FOT_REVERT_LABELS` constant must include
+`"UniswapV2: K"` (the V2 pool's K-invariant revert message). Whether the V3
+`IIA` / V4 `CurrencyNotSettled` labels ever fire for V3/V4-pooled FoT tokens
+remains unvalidated — no V3/V4 FoT pool was exercised.
 
-No prefix/contains test needed — exact match on the bare name.
+### F2 (REVISED) — The noise floor on `UniswapV2: K` is NOT zero
 
-### F2 — The noise floor on whitelisted tokens is ZERO
+The preliminary finding (zero noise floor) measured only the `IIA` /
+`CurrencyNotSettled` labels — which never fired. But `UniswapV2: K` is a
+COMMON revert that fires for stale state + thin-margin races + FoT. Across
+the prior V3-V2-V2 whitelisted run (224 dispatches, 423 sim-failures),
+**every single failure was `UniswapV2: K`** — both FoT (RFI) and non-FoT
+(USDC/stETH/CRV paths).
 
-Across the V3-V2-V2 mainnet dry-run (224 dispatches, 423 sim-failures, all
-on `ETH_MAINNET_ALLOWED_TOKENS`):
+The CRV path (path_id 1669, a non-FoT whitelisted token) reverted 5-6 times
+with `UniswapV2: K` at the **SAME V2 pool** (0x3da1313a...) — a stale-state
+issue, NOT FoT.
 
-| Label | Count |
-|-------|-------|
-| `UniswapV2: K` | 423 |
-| `IIA` | 0 |
-| `CurrencyNotSettled` | 0 |
+**Implication:** a single `UniswapV2: K` revert cannot classify a token as
+FoT. The disambiguation requires a PATTERN, not a label match (see F3
+below). The K/M threshold must be about DISTINCT POOLS, not distinct paths.
 
-Every failure is a V2 pool's own K-invariant revert (`Error(string)` with
-message `"UniswapV2: K"`, selector `0x08c379a0`) — a **different failure
-class entirely** from the executor's IIA assertion. The FoT classifier
-correctly ignores it (the label `"UniswapV2: K"` is not in
-`FOT_REVERT_LABELS`).
+### F3 (REVISED) — The disambiguation is token-vs-pool persistence, not the label
 
-**Implication for the K/M threshold:** the false-positive rate on
-whitelisted tokens is zero, so K (the distinct-path confirmation threshold)
-can be **low** — even `K=2` would produce zero false positives on the
-whitelisted set. A FoT token introduced into the graph would flag quickly
-(2 distinct paths through it in the same block would suffice). Recommended:
+The experiment revealed the actual disambiguation signal:
 
-```
-K = 2   (distinct path_ids suspecting the same token within M blocks)
-M = 100 (the decay window — mirrors POOL_DIVERGENCE_DECAY_BLOCKS)
-```
+| Signal | FoT token (RFI) | Stale-state (CRV path 1669) |
+|--------|----------------|-----------------------------|
+| Label | `UniswapV2: K` | `UniswapV2: K` (identical) |
+| Distinct reverting V2 pools | **2** (0x4c834137... + 0x6fc4819a...) | **1** (0x3da1313a...) |
+| Any path succeeding? | **0 successes** across 10 distinct path_ids, 20 attempts | (stale-state paths eventually succeed once state catches up) |
 
-The implementation should make these named constants at the top of
-`fot_registry.rs` so they're tunable without code changes (env-var
-override, like `DEGENBOT_MIN_PROFIT_MARGIN_BPS`).
+The key differentiator: **RFI fails across 2 DISTINCT V2 pools with 0
+successes** (the token fails regardless of which pool — a permanent token
+property). The stale-state CRV path reverts at **1 pool** only (the pool's
+state was stale, the token is fine).
 
-### F3 — The K-invariant reverts are NOT the FoT signal (important disambiguation)
+**The revised classifier design:**
+- A `UniswapV2: K` revert records a FoT SUSPICION for the reverting hop's
+  input token + the reverting pool address.
+- The `FeeOnTransferRegistry` tracks per-token: the SET of distinct failing
+  pool addresses + whether ANY path involving the token has ever succeeded.
+- `is_fot(token)` returns true iff: the failing-pool set has ≥ K distinct
+  pools AND no path involving the token has ever succeeded.
+- K = 2 (distinct pools) is the minimum — 2 distinct pools reverting with
+  the same token + zero successes is a permanent token property, not a
+  single stale pool.
 
-The 423 `UniswapV2: K` reverts are **V2 pool K-invariant violations** — the
-POOL's own assertion that its post-swap reserves satisfy `x * y >= k`. These
-fire for stale-state / reserve-race reasons, NOT for FoT. They are a
-**different failure class** the FoT classifier must NOT flag:
+This is a RICHER classifier than the preliminary spike assumed (a pure
+label-match on a single failure). The implementation task `WLJJYO`
+(classifier) + `6XWYVH` (registry) must be revised to track the
+(token → failing-pool-set, success-flag) shape, not the simple
+(token → last-flagged-block) shape of `PoolDivergence`.
 
-- The K-invariant revert comes from the pool contract (target = the V2 pair
-  address), via `Error(string)`.
-- The FoT `IIA` revert comes from the **executor** (target = the executor
-  address, or the V3 pool address if the V3 `swap()` reverts before the
-  executor's own IIA check), via the executor's custom error selector.
+### F4 (CONFIRMED) — V2 captured-swap-mismatch path is structurally unreachable
 
-The classifier's membership check on `reverting_frame.label` cleanly
-separates the two: `"UniswapV2: K"` ≠ `"IIA"`. No additional disambiguation
-logic is needed.
+The `fot_suspected_token_from_swap_mismatch` arm (the V2 non-reverting case)
+was never exercised: every FoT path reverted at the root frame (V2 pool's
+K-invariant), so `captured_swaps` was empty for all 20 RFI failures. The V2
+pool reverts in its `swap()` call BEFORE any `Swap` event fires, so the
+inspector captures nothing.
 
-### F4 — The V2 captured-swap-mismatch path is structurally sound but unvalidated on mainnet
+**Implication:** the V2 captured-swap-mismatch path is DEAD CODE for the
+V2 FoT case. The V2 FoT signal is ALWAYS a root-frame revert with empty
+`captured_swaps`, classified via `reverting_frame.label == "UniswapV2: K"`.
+The `fot_suspected_token_from_swap_mismatch` arm could fire for stale-state
+forced-mismatch scenarios (a non-reverting V2 swap whose output differs from
+`hop_outputs[i]`), but that's the `PoolDivergence` path, not the FoT path.
 
-The V2 non-reverting FoT case (the swap commits, K-invariant holds with the
-fee-included balance, but the captured output is shorter than
-`hop_outputs[i]`) is the `fot_suspected_token_from_swap_mismatch` arm. It
-reuses the existing `is_solver_calc_failure` mismatch path.
+Consider removing the swap-mismatch arm from the FoT classifier (it's the
+`PoolDivergence` feature's responsibility, not the FoT feature's). The FoT
+classifier should be reverting-frame-label-only.
 
-**Not validated on mainnet** — the V3-V2-V2 whitelisted run produced zero
-captured-swap mismatches (every failure was a root-frame revert with empty
-`captured_swaps`). To validate this path, a run with a known V2-pooled FoT
-token is needed. The implementation task `WLJJYO` (classifier) carries this
-as a noted gap; the production classifier's `fot_suspected_token` wrapper
-already handles both paths (reverting-frame first, swap-mismatch fallback),
-so no additional wiring is needed when the V2 case is later exercised.
+### F5 (CONFIRMED) — The attribution lookup works, with the revised label set
 
-### F5 — The attribution lookup is structurally correct
+The `fot_suspected_token_from_reverting_frame` leaf correctly attributed
+RFI failures to the FoT token:
+- `reverting_frame.target` = the V2 pair address (e.g. 0x6fc4819a...)
+- The leaf finds the hop whose `pool_address` matches → returns the hop's
+  input token (RFI, selected by `zfo`)
+- Tested in 13 unit tests (all green)
 
-The `fot_suspected_token_from_reverting_frame` leaf matches
-`reverting_frame.target` against `HopInfo.pool_address` (V2/V3) /
-`pool_manager_address` (V4). The `[sim-fail]` lines confirm `target` is the
-reverting pool's address (e.g. `0x4028daac...` is a V2 pair), and
-`HopInfo.pool_address` IS the pool contract address — the match is
-structural + tested in 13 unit tests.
+The V4 `poolId`-on-reverting-frame gap (the PoolManager address is shared
+by every V4 pool) remains a noted follow-up for multi-V4-hop paths.
 
-**V4 caveat (noted in the leaf's doc comment):** the reverting frame's
-`target` for a V4 failure is the PoolManager address (shared by every V4
-pool), so `hop_input_token_for_target` matches the FIRST V4 hop with that
-PoolManager address. For paths with multiple V4 hops through the same
-PoolManager, this may attribute to the wrong hop. The V3-V2-V2 run had no V4
-hops, so this ambiguity didn't surface. The production version may need the
-V4 `poolId` carried on the reverting frame (currently only `target` address
-is). This is a noted gap for task `WLJJYO` — it does NOT block the V2/V3
-paths, which are the common cases.
+### Additional finding — SFM + BabyDoge found no paths
 
-## Recommendations for the implementation tasks
+Only RFI had V2 pairs against whitelisted tokens (USDC/RFI + RFI/WETH) in
+the DB snapshot. SFM + BabyDoge found no paths — their pools either aren't
+in the DB or don't connect to the whitelisted set. A V3/V4-heavy run with
+these tokens would need a different token-set or pool-loading strategy to
+exercise the V3 `IIA` / V4 `CurrencyNotSettled` labels. This remains an
+unvalidated gap for the V3/V4 FoT case.
+
+## The go/no-go decision: GO (with revised design)
+
+The experiment confirmed:
+1. ✅ The FoT signal IS observable on mainnet (RFI → `UniswapV2: K`, 20
+   failures, 0 successes, 2 distinct pools).
+2. ✅ The attribution leaf works (reverting target → V2 pair → input token).
+3. ✅ The K/M threshold is reachable (2 distinct pools failing + 0 successes
+   is the confirmation pattern, observable within ~6 blocks / 19 dispatches).
+
+The revised design (from F3):
+- `FOT_REVERT_LABELS = ["IIA", "CurrencyNotSettled", "UniswapV2: K"]`
+  (broadened from `{IIA, CurrencyNotSettled}` — the `UniswapV2: K` label is
+  the actual V2 FoT signal, and the K/M threshold filters the stale-state
+  noise).
+- The `FeeOnTransferRegistry` tracks `(token → failing-pool-set, success-flag)`
+  — NOT the simple `(token → last-flagged-block)` shape of `PoolDivergence`.
+  The confirmation is "≥ K distinct failing pools AND 0 successes", not
+  "≥ K suspicions within M blocks".
+- The `fot_suspected_token_from_swap_mismatch` arm is dead code for the FoT
+  case (F4) — consider removing it; the PoolDivergence feature owns that path.
+
+## Revised recommendations for the implementation tasks
 
 ### `6XWYVH` (FeeOnTransferRegistry struct)
-- `K = 2`, `M = 100` blocks (per F2). Named constants at the top of
-  `fot_registry.rs`, env-var-overridable.
-- Key: token `Address` (not engine handle, not pool key).
-- Mirror `PoolDivergence`'s shape exactly: `record_suspicion(token, path_id,
-  block)`, `is_fot(token, current_block)`, `fot_tokens(current_block)`,
-  `total_fot_dropped()`.
-- The "distinct path_id" dedup: store `HashMap<Address, (HashSet<u64>,
-  u64)>` — token → (set of suspecting path_ids, last-flagged block).
-  `is_fot` returns true iff the set's len ≥ K AND last-flagged is within M.
+- Track `HashMap<Address, FotTokenRecord>` where `FotTokenRecord` carries
+  `failing_pools: HashSet<Address>` + `has_any_success: bool` +
+  `last_flagged_block: u64`.
+- `is_fot(token)` returns true iff `failing_pools.len() >= K` AND
+  `!has_any_success` AND `last_flagged_block` within the decay window M.
+- `record_suspicion(token, pool_address, block)` adds the pool to the
+  failing set.
+- `record_success(token)` sets `has_any_success = true` (irreversible
+  within the decay window — once a token succeeds, it's not FoT).
+- K = 2 distinct pools, M = 100 blocks decay (a token with no suspicions
+  for 100 blocks clears; but `has_any_success` is sticky within the
+  decay window).
 
 ### `WLJJYO` (classifier + attribution)
-- The leaf `fot_suspected_token` is already the production shape — promote
-  from `fot_attribution.rs` (no rewrite needed; the 13 tests ARE the
-  production tests).
-- The V4 `poolId`-on-reverting-frame gap (F5) is a noted follow-up; does NOT
-  block the V2/V3 paths.
+- Update `FOT_REVERT_LABELS` to `["IIA", "CurrencyNotSettled",
+  "UniswapV2: K"]`.
+- Remove or deprecate `fot_suspected_token_from_swap_mismatch` (F4 — dead
+  code for the FoT case; the V2 non-reverting mismatch is PoolDivergence's
+  responsibility).
+- The classifier returns `Some((token, reverting_pool))` — the registry
+  needs the pool address too (for the distinct-pool-set tracking).
 
 ### `SDH5VX` (dispatch feedback)
-- Step 7 already iterates `outcome.failures`. Add the
-  `fot_suspected_token(failure, &path_info.hops)` call alongside the
-  existing `diverging_pool_keys` call.
-- `fot_dropped` (the skip count) mirrors `divergent_dropped`.
-- Does NOT touch `gas_unprofitable` / below-threshold results (confirmed
-  out of scope by the operator).
+- Step 7 records suspicions: `fot_suspected_token(failure, &hops)` returns
+  `Some((token, pool))` → `registry.record_suspicion(token, pool, block)`.
+- Step 2 skip: drop paths whose any hop's input token `is_fot(token)`.
+- NEW: whenever a path SUCCEEDS, call `registry.record_success(token)` for
+  each hop's input token — this is the 0-success disambiguator (a token that
+  ever succeeds is not FoT).
 
-### `CXLIKZ` (FFI)
-- Mirror `GMWYIU` piece 2's `PyDivergentPool` exactly: `PyFotToken` carrying
-  `(address, last_flagged_block)`.
-
-### `USPI34` (denylist feed)
-- The denylist reads `PyDispatcher.fot_tokens()` each path-discovery refresh
-  + feeds alongside `ALLOWED_INTERMEDIATE_TOKENS` as a denylist to
-  `build_paths`.
-- The dispatch step-2 skip (the per-block prevention) is sufficient for the
-  current-block candidates; the `build_paths` denylist covers future blocks.
-  Task `I3V3E3` (refresh granularity) confirms whether the graph rebuild is
-  needed or the dispatch skip alone suffices.
-
-## Not validated (noted gaps for the implementation tasks)
-
-- **No known-FoT token was introduced** — the spike measured the noise floor
-  on whitelisted tokens (zero) but did not confirm a real FoT token produces
-  `IIA`/`CurrencyNotSettled`. This is a longer experiment (identify a
-  mainnet FoT token, widen the whitelist, run until the signal fires). The
-  zero noise floor + the correct label set are sufficient to unblock the
-  implementation tasks; the FoT-token run is a post-implementation
-  end-to-end validation.
-- **The V2 captured-swap-mismatch path** (F4) is structurally sound but
-  unvalidated on mainnet (no captured-swap mismatches in the whitelisted
-  run).
-- **The V4 `poolId`-on-reverting-frame gap** (F5) is a noted follow-up for
-  multi-V4-hop paths.
+### `CXLIKZ` (FFI) + `USPI34` (denylist feed)
+- Unchanged — mirror `GMWYIU` piece 2's `PyDivergentPool` for `PyFotToken`.
 
 ## Artifacts
 
 - **Committed leaf**: `rust/crates/degenbot-backrun-strategy/src/fot_attribution.rs`
-  (commit `136d1e2b`) — 13 unit tests, all green.
-- **The leaf is the production shape** — task `WLJJYO` promotes it as-is;
-  no rewrite.
-- **Mainnet run log**: `/tmp/bot_v322.log` (the V3-V2-V2 dry-run, 224
-  dispatches, 423 sim-failures). Not committed (it's a runtime artifact);
-  the findings above are the durable extraction.
+  (commit `136d1e2b`) — 13 unit tests, all green. The leaf needs the label
+  set updated + the swap-mismatch arm reconsidered before promotion.
+- **Mainnet run log**: `/tmp/bot_fot_v322.log` (19 dispatches, RFI through
+  2 distinct V2 pools, 0 successes). Not committed (runtime artifact).
+- **Whitelist changes**: reverted (the FoT tokens + margin-floor disable were
+  for the experiment only).

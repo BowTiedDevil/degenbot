@@ -46,7 +46,34 @@ use crate::simulator::SimFailure;
 /// token consumed the input mid-swap. Sourced from
 /// `degenbot_decoders::revert::classify_revert` (the bare base names after
 /// `lookup`'s `.split('(').next()` normalization).
-const FOT_REVERT_LABELS: &[&str] = &["IIA", "CurrencyNotSettled"];
+///
+/// # Mainnet-validated (spike `5MP3HQ`, experiment)
+///
+/// - `UniswapV2: K` — the V2 pool's own K-invariant revert (Error(string)
+///   message). Fires when the FoT fee shorted the input, making `x*y < k`
+///   on the pool's final balances. This is the ACTUAL V2 FoT signal
+///   (confirmed with RFI on mainnet — 20 failures across 2 distinct pools,
+///   0 successes). The V2 pool reverts BEFORE the executor's IIA assertion
+///   fires, so the label is the POOL's, not the executor's.
+/// - `IIA` — the `cmd_executor`'s own IIA assertion (selector `0x49494100`).
+///   Fires for a V3-pooled FoT token (the V3 `swap()` IIA check). Inferred
+///   from the selector table but NOT mainnet-validated (no V3 FoT pool was
+///   exercised in the spike — all test tokens were V2-paired).
+/// - `CurrencyNotSettled` — the V4 PoolManager's delta-accounting assertion
+///   (`0x5212cba1`). Fires for a V4-pooled FoT token. Also inferred, NOT
+///   mainnet-validated.
+///
+/// # Noise floor (NOT zero for `UniswapV2: K`)
+///
+/// `UniswapV2: K` is a COMMON revert — it fires for stale state +
+/// thin-margin races + FoT. A single `UniswapV2: K` revert does NOT imply
+/// FoT. The disambiguation is the `FeeOnTransferRegistry`'s confirmation
+/// threshold: ≥ K distinct reverting POOLS for the same token, with 0
+/// successes for any path involving that token (a permanent token property,
+/// not a single stale pool). The registry tracks the reverting pool address
+/// alongside the token to distinguish token-level persistence (FoT) from
+/// pool-level persistence (stale state).
+const FOT_REVERT_LABELS: &[&str] = &["IIA", "CurrencyNotSettled", "UniswapV2: K"];
 
 /// Attribute a `SimFailure` to the input token of the failing hop, if the
 /// failure's `reverting_frame.label` is a FoT signature (`IIA` for V3,
@@ -283,6 +310,17 @@ mod tests {
         let hops = vec![v3_hop(V3_POOL)];
         let f = failure_no_captures("PoolNotInitialized", V3_POOL);
         assert_eq!(fot_suspected_token(&f, &hops), None);
+    }
+
+    #[test]
+    fn v2_k_invariant_revert_attributes_to_input_token() {
+        // The V2 pool's own K-invariant revert (Error(string) "UniswapV2: K")
+        // is the ACTUAL V2 FoT signal on mainnet (spike 5MP3HQ experiment).
+        // The reverting target is the V2 pair address; the attribution finds
+        // the hop with that pool_address → returns its input token.
+        let hops = vec![v2_hop_zfo(V2_POOL)];
+        let f = failure_no_captures("UniswapV2: K", V2_POOL);
+        assert_eq!(fot_suspected_token(&f, &hops), Some(TOKEN_IN));
     }
 
     #[test]
