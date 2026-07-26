@@ -54,6 +54,11 @@ pub struct PyDispatchOutcome {
     /// within the decay window. Mirrors `thin_dropped` / `suppressed_count`;
     /// the lifetime tally lives on `PyDispatcher.total_divergent_dropped`.
     pub(crate) divergent_dropped: usize,
+    /// The per-call `FoT` skip count (ergo `3O535Q`) — candidates dropped
+    /// pre-sim because a hop's input token was FoT-confirmed. Mirrors
+    /// `divergent_dropped`; the lifetime tally lives on
+    /// `PyDispatcher.total_fot_dropped`.
+    pub(crate) fot_dropped: usize,
     pub(crate) fail_buckets: FailBuckets,
     /// The per-path `SimFailure` records (one per `tally`/`record` site
     /// across the fan-out). Each carries `path_id` + the bucket label + the
@@ -100,6 +105,7 @@ impl PyDispatchOutcome {
             suppressed_count: outcome.suppressed_count,
             thin_dropped: outcome.thin_dropped,
             divergent_dropped: outcome.divergent_dropped,
+            fot_dropped: outcome.fot_dropped,
             fail_buckets: outcome.fail_buckets.clone(),
             failures: outcome.failures.clone(),
             success_captured_swaps,
@@ -163,6 +169,13 @@ impl PyDispatchOutcome {
     #[getter]
     fn divergent_dropped(&self) -> usize {
         self.divergent_dropped
+    }
+
+    /// The per-call candidate count dropped because a hop's input token was
+    /// FoT-confirmed (ergo `3O535Q`).
+    #[getter]
+    fn fot_dropped(&self) -> usize {
+        self.fot_dropped
     }
 
     /// The SUCCESS-path captured swaps — `list[dict]`, one entry per

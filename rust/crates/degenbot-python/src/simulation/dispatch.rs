@@ -150,6 +150,10 @@ pub fn dispatch_profitable_py<'py>(
     // ONLY at the dispatch skip (step 1.5) + feedback (step 5.5) bookends in
     // the core, never across the `.await`s.
     let pool_divergence_arc = dispatcher.pool_divergence_arc();
+    // The FoT registry arc (3O535Q) — same standalone-arc discipline: locked
+    // ONLY at the dispatch skip (step 2.5) + feedback (step 7.5) + success
+    // (step 8.5) bookends in the core, never across the `.await`s.
+    let fot_registry_arc = dispatcher.fot_registry_arc();
 
     // ── BotState extraction (for the in-process `BlockSimHandle` path).
     // Done under the GIL: the `Py<PyArbitrageEngine>` is borrowed, the engine
@@ -198,6 +202,7 @@ pub fn dispatch_profitable_py<'py>(
             min_profit_net,
             min_profit_margin_bps,
             &pool_divergence_arc,
+            &fot_registry_arc,
             bot_state,
             warm_cache,
         );

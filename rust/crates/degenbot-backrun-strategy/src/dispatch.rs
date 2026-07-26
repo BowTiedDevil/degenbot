@@ -47,7 +47,8 @@ use degenbot_submission::PathSuppression;
 use parking_lot::RwLock;
 
 use crate::{
-    diverging_pool_keys, hop_pool_key, is_solver_calc_failure, simulate_path_on_evm, FailBuckets,
+    diverging_pool_keys, fot_suspected_token, hop_input_token, hop_pool_key,
+    is_solver_calc_failure, simulate_path_on_evm, FailBuckets, FeeOnTransferRegistry,
     PoolDivergence, SimFailure, SimResult, SimulateContext, SimulatePath,
 };
 
@@ -210,6 +211,11 @@ pub struct DispatchOutcome {
     /// pre-filter drop count; the lifetime tally lives on
     /// [`PoolDivergence::total_divergent_dropped`].
     pub divergent_dropped: usize,
+    /// The number of candidates dropped pre-sim because any hop's input token
+    /// is FoT-confirmed (ergo `3O535Q`). Mirrors `divergent_dropped` — a
+    /// per-call pre-filter drop count; the lifetime tally lives on
+    /// [`FeeOnTransferRegistry::total_fot_dropped`].
+    pub fot_dropped: usize,
     /// The `_fail_buckets` tally — the revert/no-profit/overflow buckets
     /// accumulated across the fan-out (ports `_fail_buckets`, L1769). The
     /// aggregation rendering (`format_failure_breakdown`) stays Python (D4);
@@ -326,6 +332,16 @@ pub fn dispatch_profitable_results(
     // divergence for `SolverCalc` failures' diverging hops so the NEXT
     // block's skip drops them.
     pool_divergence: &Arc<Mutex<PoolDivergence>>,
+    // The per-token fee-on-transfer registry (ergo `3O535Q`). Parallels
+    // `pool_divergence` — a standalone `Arc<Mutex<FeeOnTransferRegistry>>`
+    // (NOT composed into the `Dispatcher`) so the sim seam locks it directly
+    // at the skip bookend (step 2) + the feedback (step 7) + the success
+    // recording (step 8), never across the fan-out `.await`s. The skip drops
+    // candidates whose any hop's input token is FoT-confirmed; the feedback
+    // records suspicions for FoT-suspected failures; the success recording
+    // feeds the 0-success disambiguator (a token that ever succeeds is not
+    // FoT — the fee always shorts the input).
+    fot_registry: &Arc<Mutex<FeeOnTransferRegistry>>,
     // The fan-out routes each candidate through the in-process revm sim
     // over the borrowed `&BotState` via a per-block shared `BlockSimHandle`
     // (Tier 1, `V5HCR5` — retired the per-path `simulate_in_process`
@@ -402,6 +418,31 @@ pub fn dispatch_profitable_results(
             .expect("pool_divergence mutex poisoned");
         for _ in 0..outcome.divergent_dropped {
             pd.record_dropped();
+        }
+    }
+
+    // 2.5. Pre-filter — fee-on-transfer tokens (ergo `3O535Q`). Drop
+    //      candidates whose any hop's input token is FoT-confirmed (counted
+    //      in `fot_dropped`). The registry is keyed by token `Address`;
+    //      the input token is derived from each hop's `HopInfo` via
+    //      `hop_input_token` (selected by `zfo`). Same standalone-arc
+    //      discipline as the divergence skip — locked only at this bookend,
+    //      never across the fan-out `.await`s.
+    let fot_before = candidates.len();
+    {
+        let fr = fot_registry.lock().expect("fot_registry mutex poisoned");
+        candidates.retain(|c| {
+            !c.path_info
+                .hops
+                .iter()
+                .any(|hop| fr.is_fot(hop_input_token(hop), current_block))
+        });
+        outcome.fot_dropped = fot_before - candidates.len();
+    }
+    if outcome.fot_dropped > 0 {
+        let mut fr = fot_registry.lock().expect("fot_registry mutex poisoned");
+        for _ in 0..outcome.fot_dropped {
+            fr.record_dropped();
         }
     }
 
@@ -589,6 +630,24 @@ pub fn dispatch_profitable_results(
         }
     }
 
+    // 7.5. FoT feedback — record suspicions for FoT-suspected failures (ergo
+    //      `3O535Q`). The `fot_suspected_token` leaf returns `(token,
+    //      reverting_pool)` for failures whose `reverting_frame.label` is in
+    //      `FOT_REVERT_LABELS` (`IIA`, `CurrencyNotSettled`, `UniswapV2: K`).
+    //      The registry tracks the distinct failing pool addresses per token
+    //      + the 0-success flag; the skip (step 2.5) drops paths whose any
+    //      hop's input token is FoT-confirmed. Same standalone-arc discipline.
+    {
+        let mut fr = fot_registry.lock().expect("fot_registry mutex poisoned");
+        for f in &outcome.failures {
+            if let Some(path_info) = path_info_by_id.get(&f.path_id) {
+                if let Some((token, pool)) = fot_suspected_token(f, &path_info.hops) {
+                    fr.record_suspicion(token, pool, current_block);
+                }
+            }
+        }
+    }
+
     // 8. Record suppression outcomes (L2573–L2577). Ports
     //    `record_success(pid)` for succeeded, `record_failure(pid)` for the
     //    rest (revert/no-profit/overflow/exception). Scope-locked (same
@@ -601,6 +660,28 @@ pub fn dispatch_profitable_results(
                 s.record_success(pid);
             } else {
                 s.record_failure(pid);
+            }
+        }
+    }
+
+    // 8.5. FoT success recording (ergo `3O535Q`). For every SUCCEEDED path,
+    //      record `record_success(token)` for each hop's input token — the
+    //      0-success disambiguator. A true FoT token can never succeed (the
+    //      fee always shorts the input), so a single success clears the
+    //      token. Both `gas_profitable` + `gas_unprofitable` are "execute()
+    //      succeeded" — the FoT check is "did the swap commit", not "was it
+    //      profitable". Failed paths are NOT recorded here (a FoT token's
+    //      failures are recorded as suspicions in step 7.5; a stale-state
+    //      failure is neither a success nor a FoT suspicion).
+    if !succeeded_path_ids.is_empty() {
+        let mut fr = fot_registry.lock().expect("fot_registry mutex poisoned");
+        for &pid in &candidate_path_ids {
+            if succeeded_path_ids.contains(&pid) {
+                if let Some(path_info) = path_info_by_id.get(&pid) {
+                    for hop in &path_info.hops {
+                        fr.record_success(hop_input_token(hop), current_block);
+                    }
+                }
             }
         }
     }
@@ -819,6 +900,7 @@ mod tests {
         let provider = mock_provider(&asserter);
         let suppression = Arc::new(Mutex::new(PathSuppression::new()));
         let pool_divergence = Arc::new(Mutex::new(crate::PoolDivergence::new()));
+        let fot_registry = Arc::new(Mutex::new(crate::FeeOnTransferRegistry::new()));
         let bot_state = Arc::new(RwLock::new(BotState::new()));
 
         let cands = vec![
@@ -833,6 +915,7 @@ mod tests {
             MIN_PROFIT_NET,
             0,
             &pool_divergence,
+            &fot_registry,
             Some(bot_state),
             Some(degenbot_simulation::WarmCodeCacheInner::shared_default()),
         );
@@ -880,6 +963,7 @@ mod tests {
         let provider = mock_provider(&asserter);
         let suppression = Arc::new(Mutex::new(PathSuppression::new()));
         let pool_divergence = Arc::new(Mutex::new(crate::PoolDivergence::new()));
+        let fot_registry = Arc::new(Mutex::new(crate::FeeOnTransferRegistry::new()));
         let bot_state = Arc::new(RwLock::new(BotState::new()));
 
         pool_divergence
@@ -899,6 +983,7 @@ mod tests {
             MIN_PROFIT_NET,
             0,
             &pool_divergence,
+            &fot_registry,
             Some(bot_state),
             Some(degenbot_simulation::WarmCodeCacheInner::shared_default()),
         );
@@ -938,6 +1023,7 @@ mod tests {
         let provider = mock_provider(&asserter);
         let suppression = Arc::new(Mutex::new(PathSuppression::new()));
         let pool_divergence = Arc::new(Mutex::new(crate::PoolDivergence::new()));
+        let fot_registry = Arc::new(Mutex::new(crate::FeeOnTransferRegistry::new()));
         let bot_state = Arc::new(RwLock::new(BotState::new()));
 
         let cands = vec![candidate_through_pool(
@@ -952,6 +1038,7 @@ mod tests {
             MIN_PROFIT_NET,
             0,
             &pool_divergence,
+            &fot_registry,
             Some(bot_state),
             Some(degenbot_simulation::WarmCodeCacheInner::shared_default()),
         );

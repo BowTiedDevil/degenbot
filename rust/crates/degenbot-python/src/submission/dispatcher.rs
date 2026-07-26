@@ -28,7 +28,7 @@
 //! DOES release the GIL across RPC is `dispatch_and_submit_py` (separate file).
 
 use crate::prelude::*;
-use degenbot_backrun_strategy::{PoolDivergence, PoolDivergenceKey};
+use degenbot_backrun_strategy::{FeeOnTransferRegistry, PoolDivergence, PoolDivergenceKey};
 use degenbot_submission::{CommittedTx, Dispatcher, PathSuppression, PoolKey};
 use pyo3::types::PyTuple;
 use std::collections::HashSet;
@@ -133,6 +133,11 @@ pub struct PyDispatcher {
     /// bookends, NEVER across the fan-out `.await`s, so the `Dispatcher`
     /// lock stays uncontended by divergence bookkeeping.
     pub(crate) pool_divergence: Arc<Mutex<PoolDivergence>>,
+    /// The standalone per-token fee-on-transfer registry (ergo `3O535Q`) —
+    /// same standalone-arc rationale as `pool_divergence`: the simulation
+    /// seam locks it at the dispatch skip (step 2.5) + feedback (step 7.5) +
+    /// success recording (step 8.5) bookends, NEVER across the `.await`s.
+    pub(crate) fot_registry: Arc<Mutex<FeeOnTransferRegistry>>,
 }
 
 impl PyDispatcher {
@@ -160,6 +165,13 @@ impl PyDispatcher {
     pub(crate) fn pool_divergence_arc(&self) -> Arc<Mutex<PoolDivergence>> {
         Arc::clone(&self.pool_divergence)
     }
+
+    /// Borrow the shared `Arc<Mutex<FeeOnTransferRegistry>>` (for the
+    /// simulation seam's `dispatch_profitable_py` — `3O535Q` — which locks
+    /// the registry at the dispatch skip + feedback + success bookends).
+    pub(crate) fn fot_registry_arc(&self) -> Arc<Mutex<FeeOnTransferRegistry>> {
+        Arc::clone(&self.fot_registry)
+    }
 }
 
 #[pymethods]
@@ -174,6 +186,7 @@ impl PyDispatcher {
             inner: Arc::new(Mutex::new(Dispatcher::for_block(current_block))),
             suppression: Arc::new(Mutex::new(PathSuppression::new())),
             pool_divergence: Arc::new(Mutex::new(PoolDivergence::new())),
+            fot_registry: Arc::new(Mutex::new(FeeOnTransferRegistry::new())),
         }
     }
 
@@ -448,6 +461,30 @@ impl PyDispatcher {
             .divergent_pools(current_block)
             .into_iter()
             .map(PyDivergentPool::from)
+            .collect()
+    }
+
+    // ── fee-on-transfer registry (ergo `3O535Q`) ────────────────────
+    /// The lifetime-total paths dropped via the `FoT` skip.
+    #[getter]
+    fn total_fot_dropped(&self) -> u64 {
+        self.fot_registry
+            .lock()
+            .expect("fot_registry mutex poisoned")
+            .total_fot_dropped()
+    }
+
+    /// The current confirmed-FoT token set — `list[str]`, one per token
+    /// confirmed `FoT` (>= K distinct failing pools, 0 successes, within the
+    /// decay window). Each entry is the token's checksummed address. Drives
+    /// the operator's `[fot]` monitoring view + the denylist feed.
+    fn fot_tokens(&self, current_block: u64) -> Vec<String> {
+        self.fot_registry
+            .lock()
+            .expect("fot_registry mutex poisoned")
+            .fot_tokens(current_block)
+            .into_iter()
+            .map(|(addr, _)| format!("{addr:?}"))
             .collect()
     }
 

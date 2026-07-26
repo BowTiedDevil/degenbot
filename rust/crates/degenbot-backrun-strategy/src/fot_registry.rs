@@ -175,7 +175,8 @@ pub fn fot_suspected_token(failure: &SimFailure, hops: &[HopInfo]) -> Option<(Ad
 /// `zfo`, else `token1`). Returns `Some` for every hop variant — kept
 /// separate from the target-matching lookup so a future "V2 only"
 /// attribution can reuse it.
-fn hop_input_token(hop: &HopInfo) -> Address {
+#[must_use]
+pub fn hop_input_token(hop: &HopInfo) -> Address {
     match hop {
         HopInfo::V2(v2) => {
             if v2.zfo {
