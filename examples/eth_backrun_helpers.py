@@ -492,3 +492,95 @@ def format_sim_diag_line(
         "captured_swaps": failure.get("captured_swaps", []),
     }
     return "[sim-diag] " + json.dumps(payload, default=str, separators=(",", ":"))
+
+
+def aggregate_pool_divergence(
+    failures: list[dict[str, object]],
+    *,
+    total_sims: int,
+) -> list[str]:
+    """Aggregate per-pool ``SolverCalc`` reverts into ``[pool-divergence]`` lines.
+
+    Ergo epic GAXXNJ (task BEGMB5): turns the per-candidate `SolverCalc`
+    signal (the solver's math disagreed with the EVM's actual output) into a
+    per-pool aggregate — a pool whose state the solver read wrong will flag
+    across every path routing through it in the same block, so aggregating
+    surfaces "this pool is the problem" instead of letting each path fail
+    N times before per-path suppression.
+
+    Per-block (resets each dispatch batch). Granularity = the
+    ``CapturedSwap.emitter`` address: for V2/V3 this is the pool contract,
+    for V4 it is the PoolManager address (collapsing all V4 pools — the
+    operator question at this layer is "is our V4 solver wrong", not "which
+    V4 pool"; the per-pool-id split is a later refinement).
+
+    Only ``SolverCalc`` counts — `Encoding` is a deterministic code bug (the
+    amount was right, calldata was wrong; the pool state was fine) and
+    `Unknown` is transient noise. A `SolverCalc` failure with empty
+    ``captured_swaps`` (orchestration-only) is NOT counted — there's no pool
+    to attribute it to.
+
+    Verdict is derived by calling ``classify_candidate`` on the SAME payload
+    ``format_sim_diag_line`` builds (single source of truth — the classifier
+    and the aggregator agree because they read the same dict).
+
+    Args:
+        failures: the ``outcome.failures`` list (dicts with
+            ``captured_swaps``/``hop_outputs``/``bucket``/``path_id``).
+        total_sims: ``outcome.candidate_count`` — the denominator for the
+            solvercalc rate (``N/total_sims``).
+
+    Returns:
+        One ``[pool-divergence] pool=0x… solvercalc=N paths=[..] total_sims=M``
+        line per divergent pool, sorted by count desc then pool address.
+        Empty list when there are no ``SolverCalc`` failures (no noise).
+    """
+    # Lazy import — classify_candidate lives in the logs analyzer, which is
+    # example-adjacent + not a degenbot dep. Keeping the import local avoids
+    # a hard coupling at module load (the helper is still unit-testable
+    # because the test path imports classify_candidate first).
+    from logs.permutation_analyzer import classify_candidate
+
+    # pool_address → {count of SolverCalc failures, set of path_ids}
+    per_pool: dict[str, dict[str, int | set[int]]] = {}
+    for failure in failures:
+        # Build the same payload format_sim_diag_line emits (single source
+        # of truth — if the emit shape drifts, this aggregator + the
+        # classifier drift together).
+        payload: dict[str, object] = {
+            "revert_info": failure.get("bucket", "") or "",
+            "optimal_input": failure.get("optimal_input"),
+            "hop_outputs": failure.get("hop_outputs", []),
+            "captured_swaps": failure.get("captured_swaps", []),
+        }
+        if classify_candidate(payload) != "SolverCalc":
+            continue
+        swaps = failure.get("captured_swaps") or []
+        if not swaps:  # orchestration-only SolverCalc — no pool to attribute
+            continue
+        path_id = failure.get("path_id")
+        for swap in swaps:
+            if not isinstance(swap, dict):
+                continue
+            emitter = swap.get("emitter")
+            if not isinstance(emitter, str) or not emitter:
+                continue
+            entry = per_pool.setdefault(emitter, {"count": 0, "paths": set()})
+            entry["count"] = entry["count"] + 1  # type: ignore[operator]
+            if isinstance(path_id, int):
+                entry["paths"].add(path_id)  # type: ignore[union-attr]
+    if not per_pool:
+        return []
+    # Sort: count desc, then pool address asc for stable output.
+    ordered = sorted(
+        per_pool.items(),
+        key=lambda kv: (-kv[1]["count"], kv[0]),  # type: ignore[index]
+    )
+    lines: list[str] = []
+    for pool, entry in ordered:
+        paths_sorted = sorted(entry["paths"])  # type: ignore[arg-type]
+        lines.append(
+            f"[pool-divergence] pool={pool} solvercalc={entry['count']} "
+            f"paths={paths_sorted} total_sims={total_sims}"
+        )
+    return lines
