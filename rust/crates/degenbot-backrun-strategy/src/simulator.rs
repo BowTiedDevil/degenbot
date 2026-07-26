@@ -325,6 +325,38 @@ impl FailBuckets {
         });
     }
 
+    /// Record a per-path failure where `execute()` SUCCEEDED (the swaps ran,
+    /// the inspector populated `captured_swaps`) but the outcome wasn't
+    /// profitable (ergo `GMWYIU` — the `no-profit` bucket is where state-drift
+    /// SolverCalc shows up: every hop's swap committed, so
+    /// `captured_swaps.len() == hop_outputs.len()`, and a divergent pool's
+    /// captured output differs from the solver's `hop_outputs[i]`).
+    ///
+    /// Like [`record`](Self::record) but populates
+    /// [`SimFailure::captured_swaps`]; `reverting_frame` is `None` (execute()
+    /// didn't revert — the path just didn't make money). The revert-branch
+    /// equivalent that also carries captured swaps is [`record_revert`].
+    pub fn record_captured(
+        &mut self,
+        path_id: u64,
+        bucket: &str,
+        captured_swaps: Vec<CapturedSwap>,
+        optimal_input: u128,
+        hop_outputs: Vec<u128>,
+    ) {
+        self.tally(bucket);
+        self.failures.push(SimFailure {
+            path_id,
+            bucket: bucket.to_string(),
+            fail_index: None,
+            revert_data: alloy::primitives::Bytes::new(),
+            reverting_frame: None,
+            captured_swaps,
+            optimal_input,
+            hop_outputs,
+        });
+    }
+
     /// Record a per-path `execute()` revert WITH the inspector-captured
     /// reverting-frame attribution. Like [`record`](Self::record) but populates
     /// [`SimFailure::reverting_frame`] — the deep (depth/target/selector/
@@ -969,11 +1001,17 @@ where
     let combined_after = weth_after + eth_after + erc6909_after;
     let gross_profit = combined_after.saturating_sub(combined_before);
     if gross_profit.is_zero() {
-        fail_buckets.record(
+        // Ergo `GMWYIU` — `execute()` succeeded (every hop's swap committed,
+        // so `captured_swaps.len() == hop_outputs.len()`); the `no-profit`
+        // bucket is where state-drift SolverCalc surfaces: a divergent pool's
+        // captured output differs from the solver's `hop_outputs[i]`, and the
+        // break-even means the divergence ate the profit. `record_captured`
+        // routes the swaps so `is_solver_calc_failure` can classify the path +
+        // the dispatch feedback (step 7) can flag the diverging pool.
+        fail_buckets.record_captured(
             path.path_id,
             "no-profit",
-            None,
-            alloy::primitives::Bytes::new(),
+            captured_swaps.clone(),
             path.optimal_input,
             path.hop_outputs.clone(),
         );
