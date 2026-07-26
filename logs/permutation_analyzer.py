@@ -4,23 +4,29 @@ Replaces the false ``Stale_Reverts``/``Bug_Reverts`` dichotomy with
 **Drift / SolverCalc / Encoding / Unknown**, parsed from the ``[sim-diag]`` JSON
 line each reverted candidate emits (added in the LAV44W task).
 
+Re-pointed in ergo epic 63I7WJ (task AM5AJW) at the inspector's captured
+swap amounts (the ACTUAL amounts the in-process EVM emitted) vs the solver's
+reported ``hop_outputs`` (the EXPECTED amounts), retiring the deleted
+``recompute.matches_solver`` (the onchain-recompute basis that retired with
+``diagnostic.rs``). V4 re-enabled in task JIXPNZ (capture proven byte-exact
+by the ``swap_capture_correctness`` mainnet probe; the reverted-frame
+over-capture fix makes captured-swaps trustworthy across V2/V3/V4).
+
 Classification logic (applied per reverted candidate, in order):
 
-- **Drift**: any hop has ``drift == true`` (engine_state != onchain_state). The
-  map basis is verified at startup (snapshot + backfill phases; see the WFDTUR
-  task), so a drift flag does NOT indict the snapshot — it means the per-block
-  event pump desynced post-backfill, or the sim block tag differs from the solve
-  block.
-- **SolverCalc**: no drift AND any hop ``recompute.matches_solver == false``
-  (an independent recompute of the on-chain output disagrees with the solver's
-  reported ``hop_outputs``). Meaningful for V2 hops (the only family with a
-  genuine recompute); V3/V4 hops carry ``matches_solver == None`` (deferred —
-  see ``HopRecompute`` docs) and so never trigger this.
-- **Encoding**: no drift AND every hop ``matches_solver == true``, yet the sim
-  reverted (the amounts were right, so the stream must be wrong).
-- **Unknown**: bare/empty revert (``0x execution reverted``) OR recompute
-  unavailable for the reverting hop family (``matches_solver == None`` on every
-  hop). Classified conservatively — never as "stale".
+- **Drift**: not detectable without the onchain recompute (the in-process
+  captured swaps reflect the engine's own state, the same state the solver
+  read); the ``Drift``/``DriftArtifact`` columns are kept for stability but
+  always tally 0. Restoring a drift signal is its own task (a fresh onchain
+  probe, not the retired recompute).
+- **SolverCalc**: any hop's captured-swap output != the solver's
+  ``hop_outputs[i]`` — the solver's math was wrong (or read stale state).
+- **Encoding**: every hop's captured-swap output MATCHES its
+  ``hop_outputs[i]``, yet the sim reverted → the amounts were right, so the
+  encoded stream must be wrong.
+- **Unknown**: bare/empty revert (``0x execution reverted``), no captured
+  swaps (orchestration-only revert before any swap ran), or a malformed
+  snapshot. Classified conservatively — never as "stale".
 
 When ``[sim-diag]`` lines are absent (older logs predating LAV44W), every revert
 falls into a legacy ``Unknown`` column with a header note (see
@@ -92,11 +98,15 @@ def classify_candidate(sim_diag: dict) -> str:
     for i, swap in enumerate(captured_swaps):
         if not isinstance(swap, dict):
             return UNKNOWN
-        family = swap.get("family")
-        # V4 amount correctness is gated on task 5RI47E (the transient seeder)
-        # — cannot validate the captured amount, so the hop is Unknown.
-        if family == "v4":
-            return UNKNOWN
+        # V4 capture correctness is PROVEN (ergo task JIXPNZ): the
+        # `swap_capture_correctness` mainnet probe asserts captured V4
+        # swaps byte-match the onchain receipt (block 25615015 tx[0],
+        # byte-exact across amounts + post-swap sqrtPriceX96/liquidity/
+        # tick), and the reverted-frame over-capture fix drops reverted
+        # sub-call swaps. So V4 hops classify on the same captured-amount-vs-
+        # hop_output basis as V2/V3 — no longer gated on the retired 5RI47E
+        # transient seeder (false premise: V4 pool state is PERSISTENT at
+        # slot 6, not transient storage).
         amount0 = swap.get("amount0", 0)
         amount1 = swap.get("amount1", 0)
         # The output is the positive amount (received); the input is negative

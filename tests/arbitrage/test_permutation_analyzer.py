@@ -79,15 +79,30 @@ def test_classify_unknown_when_no_hop_outputs_or_malformed() -> None:
     assert classify_candidate(snap) == "Unknown"
 
 
-def test_classify_unknown_when_v4_captured_swap() -> None:
-    """A V4 captured swap's amount correctness is gated on task 5RI47E (the
-    transient seeder) — cannot validate, so the hop is Unknown."""
+def test_classify_solvercalc_when_v4_captured_amount_differs_from_hop_output() -> None:
+    """A V4 captured swap's output (amount1=+3000) differs from the solver's
+    hop_outputs[0] (2900) → SolverCalc. V4 capture correctness is PROVEN
+    (ergo task JIXPNZ, mainnet probe block 25615015 tx[0] byte-exact, + the
+    reverted-frame over-capture fix), so V4 hops classify the same as V2/V3 —
+    not gated on the retired 5RI47E transient seeder (false premise: V4
+    pool state is PERSISTENT at slot 6)."""
+    snap = _line({
+        "revert_info": "0x CurrencyNotSettled",
+        "hop_outputs": [2900],
+        "captured_swaps": [_swap(family="v4", amount0=-1000, amount1=3000)],
+    })
+    assert classify_candidate(snap) == "SolverCalc"
+
+
+def test_classify_encoding_when_v4_captured_amount_matches_hop_output() -> None:
+    """A V4 captured swap's output matches hop_outputs[0], yet the sim
+    reverted → Encoding (same basis as V2/V3)."""
     snap = _line({
         "revert_info": "0x CurrencyNotSettled",
         "hop_outputs": [3000],
         "captured_swaps": [_swap(family="v4", amount0=-1000, amount1=3000)],
     })
-    assert classify_candidate(snap) == "Unknown"
+    assert classify_candidate(snap) == "Encoding"
 
 
 # ---------------------------------------------------------------------------
