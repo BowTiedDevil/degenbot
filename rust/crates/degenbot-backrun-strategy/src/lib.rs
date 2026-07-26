@@ -54,7 +54,7 @@ pub mod pool_divergence;
 /// `CurrencyNotSettled` (V4), or when the captured-swap output mismatches
 /// `hop_outputs[i]` (the V2 non-reverting case). Pure lookup off `HopInfo`,
 /// no engine accessor required.
-pub mod fot_attribution;
+pub mod fot_registry;
 
 /// The sim value types + the 7-call orchestration (`simulate_path_on_evm`).
 pub mod simulator;
@@ -73,9 +73,10 @@ pub use dispatch::{
     dispatch_profitable_results, filter_thin_margin_results, DispatchCandidate, DispatchOutcome,
     BPS_DENOM, MAX_SIMULATE_CONCURRENT, MIN_PROFIT_NET,
 };
-pub use fot_attribution::{
+pub use fot_registry::{
     fot_suspected_token, fot_suspected_token_from_reverting_frame,
-    fot_suspected_token_from_swap_mismatch,
+    fot_suspected_token_from_swap_mismatch, FeeOnTransferRegistry, FotTokenRecord,
+    FOT_DECAY_BLOCKS, FOT_SUSPICION_THRESHOLD_POOLS,
 };
 pub use pool_divergence::{
     diverging_pool_keys, hop_pool_key, is_solver_calc_failure, PoolDivergence, PoolDivergenceKey,
