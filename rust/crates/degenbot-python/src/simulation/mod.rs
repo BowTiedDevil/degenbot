@@ -71,6 +71,10 @@ pub fn add_simulation_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
         crate::simulation::in_process_probe::simulate_in_process_revert_probe,
         &submod
     )?)?;
+    submod.add_function(wrap_pyfunction!(
+        crate::simulation::in_process_probe::simulate_in_process_success_probe,
+        &submod
+    )?)?;
     m.add_submodule(&submod)?;
     py.import("sys")?
         .getattr("modules")?

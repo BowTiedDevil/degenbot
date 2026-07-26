@@ -42,6 +42,40 @@ use revm::database_interface::EmptyDB;
 
 use crate::simulation::outcome::captured_swap_to_dict;
 
+// ---- the SELFDESTRUCT-gift success-path fixture (mirrors the Rust
+//      parity_evm_sim.rs test — a non-None SimResult over CacheDB<EmptyDB>) ----
+// The executor stub CALLs a "gift" contract; the gift SELFDESTRUCTs to the
+// executor (CALLER), sending its 1 ETH balance → gross_profit = 1 ETH → the
+// only success-path (non-None SimResult) achievable over CacheDB<EmptyDB>
+// (no real pool state — the profit comes from the gift's ETH, not a swap).
+// Multicall3 bytecode is deployed so `getEthBalance` returns real balances
+// (without it, the pre/post balance reads return empty → Decoded as 0 →
+// gross_profit = 0 → no-profit).
+const SMOKE_GIFT: alloy::primitives::Address =
+    alloy::primitives::address!("dddddddddddddddddddddddddddddddddddddddd");
+const ONE_ETH: alloy::primitives::U256 =
+    alloy::primitives::U256::from_limbs([1_000_000_000_000_000_000u64, 0, 0, 0]);
+
+/// Multicall3.getEthBalance(address) → `address.balance`.
+/// `PUSH1 0x04 CALLDATALOAD BALANCE PUSH1 0x00 MSTORE PUSH1 0x20 PUSH1 0x00 RETURN`
+const MULTICALL3_BYTECODE: [u8; 12] = [
+    0x60, 0x04, 0x35, 0x31, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3,
+];
+/// Gift contract: `CALLER SELFDESTRUCT` → sends gift's ETH to the caller.
+const GIFT_BYTECODE: [u8; 2] = [0x33, 0xFF];
+
+/// Build the executor stub bytecode that CALLs the gift (joyless: the
+/// the execute(bytes,uint256) calldata is ignored — the stub just CALLs the
+/// gift + stops). `PUSH1 0x00 ×5 PUSH20 <gift> GAS CALL POP STOP`.
+fn executor_stub_bytecode(gift: alloy::primitives::Address) -> Vec<u8> {
+    let mut code = vec![
+        0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x73,
+    ];
+    code.extend_from_slice(gift.as_slice());
+    code.extend_from_slice(&[0x5A, 0xF1, 0x50, 0x00]);
+    code
+}
+
 // ---- the hardcoded smoke fixture (mirrors the Rust smoke test) ----
 // Constants are `const` (not `static`) so they're compiled inline + have no
 // `Sync` requirement — matches the `simulate_in_process_with_db_*` smoke
@@ -246,5 +280,140 @@ pub fn simulate_in_process_revert_probe<'py>(
     }
     out.set_item("fail_buckets", buckets_dict)?;
 
+    Ok(out)
+}
+
+/// Drive the SELFDESTRUCT-gift success-path fixture through the in-process
+/// revm EVM — the ADR-005 Tier-2 dual-driver parity entrypoint for the
+/// success-path `SimResult` (gross/net/gas).
+///
+/// The fixture (identical to the Rust `parity_evm_sim.rs` test): the executor
+/// stub bytecode CALLs a gift contract; the gift `SELFDESTRUCT`s to the
+/// executor (`CALLER`), sending its 1 ETH balance → `gross_profit = 1 ETH` →
+/// a non-None `SimResult`. Multicall3 bytecode is deployed so `getEthBalance`
+/// returns real ETH balances (the pre/post balance reads).
+///
+/// The caller supplies only `path_id` (round-trips through the FFI); every
+/// other fixture detail is hardcoded to mirror the Rust parity test.
+///
+/// Returns a dict:
+///   - `result` (`dict`) — the `SimResult` as a Python dict (`gross_profit`,
+///     `net_profit`, `gas_used`, `priority_fee`, `base_fee_next`, `captured_swaps`,
+///     `hop_count`) when the path is profitable. KeyError-free.
+///   - `failures` (`list[dict]`) — empty for the success path (same shape as
+///     `simulate_in_process_revert_probe` for symmetry).
+///   - `fail_buckets` (`dict`) — empty for the success path.
+///
+/// No RPC. `CacheDB<EmptyDB>` handles all reads. The provider is a mock with
+/// an empty queue (errors if somehow called).
+///
+/// # Errors
+///
+/// `RuntimeError` only on an unrecoverable revm `transact` error (cannot
+/// happen over `CacheDB<EmptyDB>`) or if the fixture regresses to a non-None
+/// bucket (a `debug_assert!` fires + is surfaced as `RuntimeError`).
+#[pyfunction]
+#[pyo3(signature = (path_id))]
+pub fn simulate_in_process_success_probe(
+    py: Python<'_>,
+    path_id: u64,
+) -> PyResult<Bound<'_, PyDict>> {
+    use crate::conversion::alloy::u256_to_py;
+
+    // 1. Build the ctx (mock provider — never called over CacheDB<EmptyDB>).
+    let provider = mock_no_rpc_provider();
+    let executor_bc = executor_stub_bytecode(SMOKE_GIFT);
+    let ctx = SimulateContext {
+        provider: &provider,
+        executor_owner: SMOKE_OWNER,
+        executor_address: SMOKE_EXECUTOR,
+        weth_address: SMOKE_WETH,
+        pool_manager_address: SMOKE_PM,
+        multicall3_address: SMOKE_MULTICALL3,
+        inject_code: true,
+        injected_address: Some(SMOKE_EXECUTOR),
+        runtime_bytecode: alloy::primitives::Bytes::copy_from_slice(&executor_bc),
+        warmup: smoke_warmup(),
+        base_fee_next: SMOKE_BASE_FEE_NEXT,
+        current_block: SMOKE_CURRENT_BLOCK,
+        block_timestamp: SMOKE_BLOCK_TIMESTAMP,
+        block_priority_fees: None,
+    };
+
+    // 2. Build the CacheDB + apply overrides (owner, executor, WETH warmup).
+    let mut cache_db: CacheDB<EmptyDB> = CacheDB::new(EmptyDB::default());
+    degenbot_simulation::apply_simulation_overrides(&mut cache_db, &ctx.override_params())
+        .map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "simulate_in_process_success_probe: override apply failed: {e}"
+            ))
+        })?;
+
+    // 3. Deploy the supporting contracts (Multicall3 + gift).
+    cache_db.insert_account_info(
+        SMOKE_MULTICALL3,
+        revm::state::AccountInfo {
+            balance: alloy::primitives::U256::ZERO,
+            nonce: 1,
+            code: Some(revm::bytecode::Bytecode::new_raw(
+                alloy::primitives::Bytes::from(MULTICALL3_BYTECODE.to_vec()),
+            )),
+            ..Default::default()
+        },
+    );
+    cache_db.insert_account_info(
+        SMOKE_GIFT,
+        revm::state::AccountInfo {
+            balance: ONE_ETH,
+            nonce: 1,
+            code: Some(revm::bytecode::Bytecode::new_raw(
+                alloy::primitives::Bytes::from(GIFT_BYTECODE.to_vec()),
+            )),
+            ..Default::default()
+        },
+    );
+
+    // 4. Run the 7-call orchestration (GIL-free).
+    let mut buckets = FailBuckets::new();
+    let path = smoke_v2_path(path_id);
+    let result = simulate_in_process_with_db(&ctx, cache_db, &path, &mut buckets).map_err(|e| {
+        pyo3::exceptions::PyRuntimeError::new_err(format!(
+            "simulate_in_process_success_probe: sim failed: {e}"
+        ))
+    })?;
+
+    // 5. Validate: the success-path fixture MUST return a SimResult.
+    let sim = result.ok_or_else(|| {
+        pyo3::exceptions::PyRuntimeError::new_err(
+            "simulate_in_process_success_probe: fixture regressed to None (check gift ETH / \
+             multicall3 bytecode). A non-None SimResult is the contract.",
+        )
+    })?;
+
+    // 6. Wrap the SimResult as a dict.
+    let result_dict = PyDict::new(py);
+    result_dict.set_item("path_id", sim.path_id)?;
+    result_dict.set_item("gross_profit", u256_to_py(py, &sim.gross_profit)?)?;
+    result_dict.set_item("net_profit", u256_to_py(py, &sim.net_profit)?)?;
+    result_dict.set_item("gas_used", sim.gas_used)?;
+    result_dict.set_item("priority_fee", sim.priority_fee)?;
+    result_dict.set_item("base_fee_next", sim.base_fee_next)?;
+    result_dict.set_item("hop_count", sim.hop_count)?;
+    let swaps_list = PyList::empty(py);
+    for s in &sim.captured_swaps {
+        swaps_list.append(captured_swap_to_dict(py, s)?)?;
+    }
+    result_dict.set_item("captured_swaps", swaps_list)?;
+
+    let out = PyDict::new(py);
+    out.set_item("result", result_dict)?;
+    // `failures` + `fail_buckets` are empty for the success path (symmetry
+    // with `simulate_in_process_revert_probe`).
+    out.set_item("failures", PyList::empty(py))?;
+    out.set_item("fail_buckets", PyDict::new(py))?;
+    debug_assert!(
+        buckets.failures().is_empty(),
+        "success-probe fixture expects no failures"
+    );
     Ok(out)
 }

@@ -14,14 +14,29 @@
 //! standalone-consumer gate.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use alloy::primitives::{address, aliases::U112, U256};
+use alloy::network::Ethereum;
+use alloy::primitives::{address, aliases::U112, Address, Bytes, U256};
+use alloy::providers::{Provider, ProviderBuilder};
+use alloy::rpc::client::ClientBuilder;
+use alloy::transports::mock::{Asserter, MockTransport};
+use degenbot::degenbot_backrun_strategy::{
+    simulate_in_process_with_db, FailBuckets, SimulateContext, SimulatePath,
+};
 use degenbot::degenbot_balancer_math::{mul_down, ONE};
 use degenbot::degenbot_curve_math::{stableswap_get_d, DVariant};
 use degenbot::degenbot_db::snapshot_db::SnapshotDb;
+use degenbot::degenbot_executor::composers::{EncodeOptions, HopInfo, PathInfo, V2HopInfo};
+use degenbot::degenbot_executor::compute_simulation_warmup_slots;
+use degenbot::degenbot_simulation::apply_simulation_overrides;
 use degenbot::degenbot_solidly_math::{calc_d as solidly_calc_d, calc_f as solidly_calc_f};
 use degenbot::dex_identity::UNISWAP_V2;
 use degenbot::{bot_core::Bot, BotState, RegisterV2PoolParams};
+use revm::bytecode::Bytecode;
+use revm::database::CacheDB;
+use revm::database_interface::EmptyDB;
+use revm::state::AccountInfo;
 
 fn fixture_db_path() -> PathBuf {
     if let Ok(p) = std::env::var("DEGENBOT_FIXTURE_DB") {
@@ -245,4 +260,146 @@ fn main() {
     } else {
         println!("standalone degenbot consumer OK: fixture DB at chain 8453 loaded with S={seed_block:?} (set SMOKE_RPC_URL='ws://...' to drive `BlockPump::subscribe()`+`resume_from_subscribe()` — gated so the example stays CI-runnable without a node; the auto-backfill path is covered by `block_pump::tests::resume_anchors_to_subscribe_block`).");
     }
+
+    // 8. Standalone-Rust consumer reaches the in-process revm EVM sim
+    //    (ADR-005 Tier-0, task 62YWCF — `cargo add degenbot` reaches
+    //    `simulate_in_process_with_db` with no Python in the build graph).
+    //    Proven via the SELFDESTRUCT-gift success path: the executor stub
+    //    CALLs a gift contract; the gift self-destructs to the executor
+    //    (CALLER), sending 1 ETH → `gross_profit = 1 ETH` → non-None
+    //    `SimResult` (the only success path achievable over
+    //    `CacheDB<EmptyDB>` — no real pool state needed). Asserts the full
+    //    `SimResult` (gross/net/gas/priority_fee) shape both the Rust +
+    //    Python consumers hold against the shared fixture JSON. No RPC
+    //    (mock transport with an empty queue).
+    in_process_sim_standalone_slice();
+}
+
+/// (62YWCF) Standalone-Rust consumer reaches the in-process revm EVM sim.
+///
+/// The SELFDESTRUCT-gift success path: the executor stub bytecode CALLs a
+/// gift contract; the gift (`CALLER SELFDESTRUCT`) sends 1 ETH to the
+/// executor → `gross_profit = 1 ETH` → non-None `SimResult`. Multicall3
+/// bytecode (`getEthBalance`) deployed so the pre/post balance reads return
+/// real ETH balances. No RPC — `CacheDB<EmptyDB>` + a mock provider with an
+/// empty queue.
+#[allow(clippy::too_many_lines)]
+fn in_process_sim_standalone_slice() {
+    const OWNER: Address = address!("9c56a29c7231974c269e24f9fb3c29203039089e");
+    const EXECUTOR: Address = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+    const PM: Address = address!("000000000004444c5dc75cb358380d2e3de08a90");
+    const MULTICALL3: Address = address!("c411372f0b8ae58585e33b78aea9e0596da9a6f1");
+    const TOKEN1: Address = address!("1111111111111111111111111111111111111111");
+    const POOL_B: Address = address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    const POOL_C: Address = address!("cccccccccccccccccccccccccccccccccccccccc");
+    const GIFT: Address = address!("dddddddddddddddddddddddddddddddddddddddd");
+    const ONE_ETH: U256 = U256::from_limbs([1_000_000_000_000_000_000u64, 0, 0, 0]);
+    /// Multicall3.getEthBalance(address) → `address.balance`.
+    const MULTICALL3_BYTECODE: [u8; 12] = [
+        0x60, 0x04, 0x35, 0x31, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3,
+    ];
+    /// Gift contract: `CALLER SELFDESTRUCT` → sends gift's ETH to the caller.
+    const GIFT_BYTECODE: [u8; 2] = [0x33, 0xFF];
+
+    // Build the executor stub bytecode: CALL the gift → gift self-destructs →
+    // 1 ETH lands on the executor.
+    let mut executor_bc = vec![
+        0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x73,
+    ];
+    executor_bc.extend_from_slice(GIFT.as_slice());
+    executor_bc.extend_from_slice(&[0x5A, 0xF1, 0x50, 0x00]);
+
+    // Mock provider — empty transport queue (never called over CacheDB<EmptyDB>).
+    let asserter = Asserter::new();
+    let client = ClientBuilder::default().transport(MockTransport::new(asserter), true);
+    let dyn_provider = ProviderBuilder::new().connect_client(client).erased();
+    let provider = degenbot::degenbot_rpc::provider::AlloyProvider::from_provider(Arc::new(
+        dyn_provider,
+    )
+        as Arc<dyn Provider<Ethereum>>);
+    let warmup = compute_simulation_warmup_slots(EXECUTOR, WETH, PM);
+    let ctx = SimulateContext {
+        provider: &provider,
+        executor_owner: OWNER,
+        executor_address: EXECUTOR,
+        weth_address: WETH,
+        pool_manager_address: PM,
+        multicall3_address: MULTICALL3,
+        inject_code: true,
+        injected_address: Some(EXECUTOR),
+        runtime_bytecode: Bytes::from(executor_bc),
+        warmup,
+        base_fee_next: 1_000_000_000u128,
+        current_block: 100,
+        block_timestamp: 0,
+        block_priority_fees: None,
+    };
+
+    let mut cache_db: CacheDB<EmptyDB> = CacheDB::new(EmptyDB::default());
+    apply_simulation_overrides(&mut cache_db, &ctx.override_params())
+        .expect("standalone: overrides apply over EmptyDB");
+    cache_db.insert_account_info(
+        MULTICALL3,
+        AccountInfo {
+            balance: U256::ZERO,
+            nonce: 1,
+            code: Some(Bytecode::new_raw(Bytes::from(MULTICALL3_BYTECODE.to_vec()))),
+            ..Default::default()
+        },
+    );
+    cache_db.insert_account_info(
+        GIFT,
+        AccountInfo {
+            balance: ONE_ETH,
+            nonce: 1,
+            code: Some(Bytecode::new_raw(Bytes::from(GIFT_BYTECODE.to_vec()))),
+            ..Default::default()
+        },
+    );
+    let path = SimulatePath {
+        path_id: 42,
+        optimal_input: 1_000_000_000_000_000_000u128,
+        hop_outputs: vec![1_100_000_000_000_000_000u128, 1_210_000_000_000_000_000u128],
+        path_info: PathInfo::new(vec![
+            HopInfo::V2(V2HopInfo {
+                pool_address: POOL_B,
+                token0_address: WETH,
+                token1_address: TOKEN1,
+                fee: 30,
+                zfo: true,
+            }),
+            HopInfo::V2(V2HopInfo {
+                pool_address: POOL_C,
+                token0_address: TOKEN1,
+                token1_address: WETH,
+                fee: 30,
+                zfo: true,
+            }),
+        ]),
+        solve_block: 100,
+        opts: EncodeOptions {
+            erc6909_profit: false,
+            use_v4_batch: false,
+        },
+    };
+    let mut buckets = FailBuckets::new();
+    let result = simulate_in_process_with_db(&ctx, cache_db, &path, &mut buckets)
+        .expect("standalone: in-process sim over CacheDB<EmptyDB> cannot RPC-fail");
+    let sim = result.expect(
+        "standalone: the SELFDESTRUCT-gift fixture must produce a non-None SimResult (gross_profit = 1 ETH)",
+    );
+    assert_eq!(
+        sim.gross_profit, ONE_ETH,
+        "standalone: gross_profit must be 1 ETH (closed form)"
+    );
+    assert!(sim.gas_used > 0, "standalone: gas_used must be non-zero");
+    assert!(
+        sim.net_profit > U256::ZERO,
+        "standalone: net_profit must be positive"
+    );
+    println!(
+        "standalone degenbot consumer OK: in-process revm sim — gross_profit=1ETH gas_used={} priority_fee={} net_profit={} wei",
+        sim.gas_used, sim.priority_fee, sim.net_profit
+    );
 }

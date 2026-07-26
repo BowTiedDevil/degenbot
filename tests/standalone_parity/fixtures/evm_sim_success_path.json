@@ -1,0 +1,19 @@
+{
+  "_comment": "Tier-2 dual-driver parity fixture for the in-process sim SUCCESS path (ADR-005 §4.2). The SELFDESTRUCT-gift fixture: the executor stub CALLs a gift contract; the gift SELFDESTRUCTs to the executor (CALLER), sending 1 ETH → gross_profit = 1 ETH → non-None SimResult. Multicall3 bytecode deployed so getEthBalance returns real ETH balances. Driven through BOTH the Rust consumer (simulate_in_process_with_db directly) + the Python consumer (simulate_in_process_success_probe PyO3 binding). The expected values are RECORDED constants (the revm EVM run is the truth — no closed-form derivation of gas_used/priority_fee exists). A deliberately-wrong edit fails BOTH halves. Oracle: recorded constant (weaker than the V2 calc parity's closed form).",
+  "fixture": {
+    "path_id": 42,
+    "comment": "SELFDESTRUCT gift success-path over CacheDB<EmptyDB>. Executor stub = PUSH1 0x00 ×5 PUSH20 <gift> GAS CALL POP STOP. Gift = CALLER SELFDESTRUCT (sends 1 ETH to executor). Multicall3 = PUSH1 0x04 CALLDATALOAD BALANCE PUSH1 0x00 MSTORE PUSH1 0x20 PUSH1 0x00 RETURN (getEthBalance). block_priority_fees=None, base_fee_next=1G, current_block=solve_block=100 (age=0, no decay)."
+  },
+  "expected": {
+    "result_present": true,
+    "gross_profit": "1000000000000000000",
+    "net_profit": "200000000000028368",
+    "gas_used": 30736,
+    "priority_fee": 26027110359187,
+    "base_fee_next": 1000000000,
+    "hop_count": 2,
+    "captured_swaps": [],
+    "failures": [],
+    "fail_buckets": {}
+  }
+}
