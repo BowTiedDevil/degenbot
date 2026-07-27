@@ -2,8 +2,10 @@
 
 import dataclasses
 import json
+import sys
 import warnings
 from collections.abc import Mapping
+from pathlib import Path
 
 from degenbot.arbitrage.verification_retry import VerificationRetryPolicy
 from degenbot.checksum_cache import get_checksum_address
@@ -539,20 +541,26 @@ def aggregate_pool_divergence(
     # example-adjacent + not a degenbot dep. Keeping the import local avoids
     # a hard coupling at module load (the helper is still unit-testable
     # because the test path imports classify_candidate first).
-    # Defensive: when the example runs as a script (`python examples/...`),
-    # Python's script-mode puts `examples/` on `sys.path[0]`, NOT the repo
-    # root where `logs/` lives — so the import fails. The aggregator is a
-    # monitoring convenience (its sibling `format_sim_diag_line` says "never
-    # raises"); crashing the dispatch path on an import gap would silently
-    # kill every subsequent dispatch (the exception is swallowed as a "Task
-    # exception was never retrieved"). Degrade to no lines + a one-time
-    # warning (pytest runs add `.` to sys.path via pyproject `pythonpath`, so
-    # the classifier IS reached under the test suite).
+    #
+    # The analyzer lives at ``<repo-root>/logs/permutation_analyzer.py``. When
+    # the example is launched as ``python examples/eth_backrun_v2_v3_v4_rust.py``,
+    # Python's script mode puts ``examples/`` on ``sys.path[0]`` and does NOT
+    # add the repo root — so a bare ``from logs.permutation_analyzer import ...``
+    # fails with ``ModuleNotFoundError: No module named 'logs'``. pytest reach
+    # it via pyproject ``pythonpath = ["src", ".", "examples"]``; for the
+    # script path we insert the repo root (computed from this file's location)
+    # so the import resolves regardless of how the process was launched.
+    repo_root = str(Path(__file__).resolve().parent.parent)
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+    # The aggregator is a monitoring convenience (its sibling
+    # `format_sim_diag_line` says "never raises"); crashing the dispatch path
+    # on an import gap would silently kill every subsequent dispatch (the
+    # exception is swallowed as a "Task exception was never retrieved").
+    # Degrade to no lines + a one-time warning.
     try:
         from logs.permutation_analyzer import classify_candidate
     except ImportError:
-        import warnings
-
         warnings.warn(
             "aggregate_pool_divergence: logs.permutation_analyzer not importable "
             "(run from the repo root, or the [pool-divergence] signal is disabled).",
