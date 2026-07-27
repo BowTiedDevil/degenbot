@@ -24,10 +24,10 @@
 //! the WETH↔native boundary, an explicit `WETH_DEPOSIT` (wrap) or
 //! `WETH_WITHDRAW` (unwrap) bridges the representation gap inside `V4_UNLOCK`.
 
-// Cosmetic lints: the composer ports mirror Python oracle names that share
-// prefixes (mid_currency_a/b); many locals look "unused" on one branch only;
-// and the dispatch API is wide (8 args) to match the Python oracle's kwargs.
-#![allow(clippy::too_many_arguments, clippy::similar_names)]
+// composers.rs — arbitrage path encoders for the `cmd_executor` contract.
+//
+// 2-hop and 3-hop composers all take a `&ComposerInputs` bundle beyond the
+// hops, so none trips `too_many_arguments`.
 
 use crate::encoders::{
     self, AddressTable, V4BatchEntry, NATIVE_ADDRESS, SENTINEL_NATIVE, SENTINEL_SELF, SENTINEL_WETH,
@@ -287,6 +287,21 @@ pub struct EncodeOptions {
     pub use_v4_batch: bool,
 }
 
+/// Bundled context every composer needs beyond the hops.
+///
+/// Built once per path (in [`encode_cmd_stream`] / [`encode_cmd_3_hop`]) and
+/// passed by reference to each composer, collapsing every signature to
+/// `(hops.., &ComposerInputs)` so no composer trips `too_many_arguments`.
+#[derive(Clone, Copy)]
+pub struct ComposerInputs<'a> {
+    pub executor_address: Address,
+    pub pool_manager_address: Address,
+    pub weth_address: Address,
+    pub optimal_input: u128,
+    pub hop_outputs: &'a [u128],
+    pub opts: EncodeOptions,
+}
+
 /// Encode an arbitrage path as a `cmd_executor` command stream.
 ///
 /// Produces a `bytes` payload for `execute(commands)` on the `cmd_executor`
@@ -316,92 +331,32 @@ pub fn encode_cmd_stream(
     // Python oracle raises if `bribe_bips != 0`; here the caller passes bribes
     // via `pack_config` at the call site, so there's nothing to reject.
     let num_hops = path_info.hops.len();
+    let inputs = ComposerInputs {
+        executor_address,
+        pool_manager_address,
+        weth_address,
+        optimal_input,
+        hop_outputs,
+        opts,
+    };
 
     // Generalized N-hop V2 (≥2 hops): flash borrow + chained V2_SWAP_CALC.
     if path_info.hops.iter().all(|h| matches!(h, HopInfo::V2(_))) {
-        return encode_cmd_v2_n_hop(
-            path_info,
-            optimal_input,
-            hop_outputs,
-            executor_address,
-            weth_address,
-        );
+        return encode_cmd_v2_n_hop(path_info, &inputs);
     }
 
     // 2-hop paths.
     if num_hops == 2 {
         let hops = &path_info.hops;
         match (&hops[0], &hops[1]) {
-            (HopInfo::V4(a), HopInfo::V4(b)) => encode_cmd_v4_v4(
-                a,
-                b,
-                optimal_input,
-                hop_outputs,
-                executor_address,
-                pool_manager_address,
-                weth_address,
-                opts,
-            ),
-            (HopInfo::V4(a), HopInfo::V3(b)) => encode_cmd_v4_v3(
-                a,
-                b,
-                optimal_input,
-                hop_outputs,
-                executor_address,
-                pool_manager_address,
-                weth_address,
-            ),
-            (HopInfo::V3(a), HopInfo::V4(b)) => encode_cmd_v3_v4(
-                a,
-                b,
-                optimal_input,
-                hop_outputs,
-                executor_address,
-                pool_manager_address,
-                weth_address,
-            ),
-            (HopInfo::V4(a), HopInfo::V2(b)) => encode_cmd_v4_v2(
-                a,
-                b,
-                optimal_input,
-                hop_outputs,
-                executor_address,
-                pool_manager_address,
-                weth_address,
-            ),
-            (HopInfo::V2(a), HopInfo::V4(b)) => encode_cmd_v2_v4(
-                a,
-                b,
-                optimal_input,
-                hop_outputs,
-                executor_address,
-                pool_manager_address,
-                weth_address,
-            ),
-            (HopInfo::V3(a), HopInfo::V3(b)) => encode_cmd_v3_v3(
-                a,
-                b,
-                optimal_input,
-                hop_outputs,
-                executor_address,
-                weth_address,
-            ),
-            (HopInfo::V2(a), HopInfo::V3(b)) => encode_cmd_v2_v3(
-                a,
-                b,
-                optimal_input,
-                hop_outputs,
-                executor_address,
-                weth_address,
-            ),
-            (HopInfo::V3(a), HopInfo::V2(b)) => encode_cmd_v3_v2(
-                a,
-                b,
-                optimal_input,
-                hop_outputs,
-                executor_address,
-                weth_address,
-            ),
+            (HopInfo::V4(a), HopInfo::V4(b)) => encode_cmd_v4_v4(a, b, &inputs),
+            (HopInfo::V4(a), HopInfo::V3(b)) => encode_cmd_v4_v3(a, b, &inputs),
+            (HopInfo::V3(a), HopInfo::V4(b)) => encode_cmd_v3_v4(a, b, &inputs),
+            (HopInfo::V4(a), HopInfo::V2(b)) => encode_cmd_v4_v2(a, b, &inputs),
+            (HopInfo::V2(a), HopInfo::V4(b)) => encode_cmd_v2_v4(a, b, &inputs),
+            (HopInfo::V3(a), HopInfo::V3(b)) => encode_cmd_v3_v3(a, b, &inputs),
+            (HopInfo::V2(a), HopInfo::V3(b)) => encode_cmd_v2_v3(a, b, &inputs),
+            (HopInfo::V3(a), HopInfo::V2(b)) => encode_cmd_v3_v2(a, b, &inputs),
             // 2-hop Solidly / mixed-V2-V3-with-Solidly: not supported.
             _ => None,
         }
@@ -435,13 +390,12 @@ pub fn encode_cmd_stream(
 /// Returns `None` if any hop is non-V2, N < 2, any output ≤ 0, or any `enc_*`
 /// step fails.
 #[allow(clippy::too_many_lines)]
-fn encode_cmd_v2_n_hop(
-    path_info: &PathInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    weth_address: Address,
-) -> Option<Vec<u8>> {
+fn encode_cmd_v2_n_hop(path_info: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let weth_address = inputs.weth_address;
+
     let v2_hops: Vec<&V2HopInfo> = path_info
         .hops
         .iter()
@@ -546,16 +500,20 @@ fn encode_cmd_v2_n_hop(
 ///   `V4_TAKE(ETH)` → `WETH_DEPOSIT` → pool B compact → `V4_SETTLE(WETH)` →
 ///   `V4_TAKE_DELTA(profit)` → `V4_SETTLE_ALL`.
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn encode_cmd_v4_v4(
     hop_a: &V4HopInfo,
     hop_b: &V4HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    pool_manager_address: Address,
-    weth_address: Address,
-    opts: EncodeOptions,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let pool_manager_address = inputs.pool_manager_address;
+    let weth_address = inputs.weth_address;
+    let opts = inputs.opts;
+
     let forward_out = *hop_outputs.first()?;
     let weth_out = *hop_outputs.get(1)?;
     if forward_out == 0 || weth_out == 0 {
@@ -752,12 +710,14 @@ fn encode_cmd_v4_v4(
 fn encode_cmd_v4_v3(
     hop_v4: &V4HopInfo,
     hop_v3: &V3HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    pool_manager_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let pool_manager_address = inputs.pool_manager_address;
+    let weth_address = inputs.weth_address;
+
     let forward_out = *hop_outputs.first()?;
     let weth_out = *hop_outputs.get(1)?;
     if forward_out == 0 || weth_out == 0 {
@@ -857,12 +817,14 @@ fn encode_cmd_v4_v3(
 fn encode_cmd_v3_v4(
     hop_v3: &V3HopInfo,
     hop_v4: &V4HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    pool_manager_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let pool_manager_address = inputs.pool_manager_address;
+    let weth_address = inputs.weth_address;
+
     let forward_out = *hop_outputs.first()?;
     let weth_out = *hop_outputs.get(1)?;
     if forward_out == 0 || weth_out == 0 {
@@ -1008,12 +970,14 @@ fn encode_cmd_v3_v4(
 fn encode_cmd_v4_v2(
     hop_v4: &V4HopInfo,
     hop_v2: &V2HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    pool_manager_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let pool_manager_address = inputs.pool_manager_address;
+    let weth_address = inputs.weth_address;
+
     let forward_out = *hop_outputs.first()?;
     let weth_out = *hop_outputs.get(1)?;
     if forward_out == 0 || weth_out == 0 {
@@ -1129,12 +1093,14 @@ fn encode_cmd_v4_v2(
 fn encode_cmd_v2_v4(
     hop_v2: &V2HopInfo,
     hop_v4: &V4HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    pool_manager_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let pool_manager_address = inputs.pool_manager_address;
+    let weth_address = inputs.weth_address;
+
     let forward_out = *hop_outputs.first()?;
     let weth_out = *hop_outputs.get(1)?;
     if forward_out == 0 || weth_out == 0 {
@@ -1270,14 +1236,18 @@ fn encode_cmd_v2_v4(
 /// Forward-order with explicit WETH payment. V3a sends its USDC output to the
 /// executor before the callback; the callback pays WETH to V3a, then V3b
 /// swaps (auto-pay) and sends WETH back to the executor.
+#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn encode_cmd_v3_v3(
     hop_a: &V3HopInfo,
     hop_b: &V3HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let weth_address = inputs.weth_address;
+
     let forward_out = *hop_outputs.first()?;
     let weth_out = *hop_outputs.get(1)?;
     if forward_out == 0 || weth_out == 0 {
@@ -1326,11 +1296,13 @@ fn encode_cmd_v3_v3(
 fn encode_cmd_v2_v3(
     hop_a: &V2HopInfo,
     hop_b: &V3HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let weth_address = inputs.weth_address;
+
     let forward_out = *hop_outputs.first()?;
     let weth_out = *hop_outputs.get(1)?;
     if forward_out == 0 || weth_out == 0 {
@@ -1394,11 +1366,13 @@ fn encode_cmd_v2_v3(
 fn encode_cmd_v3_v2(
     hop_a: &V3HopInfo,
     hop_b: &V2HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let weth_address = inputs.weth_address;
+
     let forward_out = *hop_outputs.first()?;
     let weth_out = *hop_outputs.get(1)?;
     if forward_out == 0 || weth_out == 0 {
@@ -1556,6 +1530,8 @@ impl V4V4ArbitragePayload {
 
     /// Configure pool A. `zero_for_one=None` derives `zfo` from the (unsorted)
     /// `currency0`/`currency1` ordering passed in, matching the Python oracle.
+    #[allow(clippy::too_many_arguments)] // reason: builder setters mirror the Python oracle's per-pool kwargs;
+                                         // collapsing would harm call-site ergonomics.
     pub fn set_pool_a(
         &mut self,
         currency0: Address,
@@ -1582,6 +1558,8 @@ impl V4V4ArbitragePayload {
     }
 
     /// Configure pool B. See [`Self::set_pool_a`].
+    #[allow(clippy::too_many_arguments)] // reason: builder setters mirror the Python oracle's per-pool kwargs;
+                                         // collapsing would harm call-site ergonomics.
     pub fn set_pool_b(
         &mut self,
         currency0: Address,
@@ -1815,6 +1793,8 @@ impl V4V3ArbitragePayload {
 
     /// Configure the V4 pool. `zero_for_one=None` derives `zfo` from the
     /// unsorted currency ordering.
+    #[allow(clippy::too_many_arguments)] // reason: builder setters mirror the Python oracle's per-pool kwargs;
+                                         // collapsing would harm call-site ergonomics.
     pub fn set_v4_pool(
         &mut self,
         currency0: Address,
@@ -2165,273 +2145,45 @@ pub fn encode_cmd_3_hop(
     opts: EncodeOptions,
 ) -> Option<Vec<u8>> {
     let hops = &path_info.hops;
+    let inputs = ComposerInputs {
+        executor_address,
+        pool_manager_address,
+        weth_address,
+        optimal_input,
+        hop_outputs,
+        opts,
+    };
     if hops.len() != 3 {
         return None;
     }
     match (&hops[0], &hops[1], &hops[2]) {
-        (HopInfo::V2(a), HopInfo::V2(b), HopInfo::V2(c)) => three_hop_v2_v2_v2(
-            a,
-            b,
-            c,
-            optimal_input,
-            hop_outputs,
-            executor_address,
-            weth_address,
-        ),
-        (HopInfo::V2(a), HopInfo::V2(b), HopInfo::V3(c)) => three_hop_v2_v2_v3(
-            a,
-            b,
-            c,
-            optimal_input,
-            hop_outputs,
-            executor_address,
-            weth_address,
-        ),
-        (HopInfo::V2(a), HopInfo::V2(b), HopInfo::V4(c)) => three_hop_v2_v2_v4(
-            a,
-            b,
-            c,
-            optimal_input,
-            hop_outputs,
-            executor_address,
-            pool_manager_address,
-            weth_address,
-        ),
-        (HopInfo::V2(a), HopInfo::V3(b), HopInfo::V2(c)) => three_hop_v2_v3_v2(
-            a,
-            b,
-            c,
-            optimal_input,
-            hop_outputs,
-            executor_address,
-            weth_address,
-        ),
-        (HopInfo::V2(a), HopInfo::V3(b), HopInfo::V3(c)) => three_hop_v2_v3_v3(
-            a,
-            b,
-            c,
-            optimal_input,
-            hop_outputs,
-            executor_address,
-            weth_address,
-        ),
-        (HopInfo::V2(a), HopInfo::V3(b), HopInfo::V4(c)) => three_hop_v2_v3_v4(
-            a,
-            b,
-            c,
-            optimal_input,
-            hop_outputs,
-            executor_address,
-            pool_manager_address,
-            weth_address,
-        ),
-        (HopInfo::V2(a), HopInfo::V4(b), HopInfo::V2(c)) => three_hop_v2_v4_v2(
-            a,
-            b,
-            c,
-            optimal_input,
-            hop_outputs,
-            executor_address,
-            pool_manager_address,
-            weth_address,
-        ),
-        (HopInfo::V2(a), HopInfo::V4(b), HopInfo::V3(c)) => three_hop_v2_v4_v3(
-            a,
-            b,
-            c,
-            optimal_input,
-            hop_outputs,
-            executor_address,
-            pool_manager_address,
-            weth_address,
-        ),
-        (HopInfo::V2(a), HopInfo::V4(b), HopInfo::V4(c)) => three_hop_v2_v4_v4(
-            a,
-            b,
-            c,
-            optimal_input,
-            hop_outputs,
-            executor_address,
-            pool_manager_address,
-            weth_address,
-        ),
-        (HopInfo::V3(a), HopInfo::V2(b), HopInfo::V2(c)) => three_hop_v3_v2_v2(
-            a,
-            b,
-            c,
-            optimal_input,
-            hop_outputs,
-            executor_address,
-            weth_address,
-        ),
-        (HopInfo::V3(a), HopInfo::V2(b), HopInfo::V3(c)) => three_hop_v3_v2_v3(
-            a,
-            b,
-            c,
-            optimal_input,
-            hop_outputs,
-            executor_address,
-            weth_address,
-        ),
-        (HopInfo::V3(a), HopInfo::V2(b), HopInfo::V4(c)) => three_hop_v3_v2_v4(
-            a,
-            b,
-            c,
-            optimal_input,
-            hop_outputs,
-            executor_address,
-            pool_manager_address,
-            weth_address,
-        ),
-        (HopInfo::V3(a), HopInfo::V3(b), HopInfo::V2(c)) => three_hop_v3_v3_v2(
-            a,
-            b,
-            c,
-            optimal_input,
-            hop_outputs,
-            executor_address,
-            weth_address,
-        ),
-        (HopInfo::V3(a), HopInfo::V3(b), HopInfo::V3(c)) => three_hop_v3_v3_v3(
-            a,
-            b,
-            c,
-            optimal_input,
-            hop_outputs,
-            executor_address,
-            weth_address,
-        ),
-        (HopInfo::V3(a), HopInfo::V3(b), HopInfo::V4(c)) => three_hop_v3_v3_v4(
-            a,
-            b,
-            c,
-            optimal_input,
-            hop_outputs,
-            executor_address,
-            pool_manager_address,
-            weth_address,
-        ),
-        (HopInfo::V3(a), HopInfo::V4(b), HopInfo::V2(c)) => three_hop_v3_v4_v2(
-            a,
-            b,
-            c,
-            optimal_input,
-            hop_outputs,
-            executor_address,
-            pool_manager_address,
-            weth_address,
-        ),
-        (HopInfo::V3(a), HopInfo::V4(b), HopInfo::V3(c)) => three_hop_v3_v4_v3(
-            a,
-            b,
-            c,
-            optimal_input,
-            hop_outputs,
-            executor_address,
-            pool_manager_address,
-            weth_address,
-        ),
-        (HopInfo::V3(a), HopInfo::V4(b), HopInfo::V4(c)) => three_hop_v3_v4_v4(
-            a,
-            b,
-            c,
-            optimal_input,
-            hop_outputs,
-            executor_address,
-            pool_manager_address,
-            weth_address,
-        ),
-        (HopInfo::V4(a), HopInfo::V2(b), HopInfo::V2(c)) => three_hop_v4_v2_v2(
-            a,
-            b,
-            c,
-            optimal_input,
-            hop_outputs,
-            executor_address,
-            pool_manager_address,
-            weth_address,
-        ),
-        (HopInfo::V4(a), HopInfo::V2(b), HopInfo::V3(c)) => three_hop_v4_v2_v3(
-            a,
-            b,
-            c,
-            optimal_input,
-            hop_outputs,
-            executor_address,
-            pool_manager_address,
-            weth_address,
-        ),
-        (HopInfo::V4(a), HopInfo::V2(b), HopInfo::V4(c)) => three_hop_v4_v2_v4(
-            a,
-            b,
-            c,
-            optimal_input,
-            hop_outputs,
-            executor_address,
-            pool_manager_address,
-            weth_address,
-        ),
-        (HopInfo::V4(a), HopInfo::V3(b), HopInfo::V2(c)) => three_hop_v4_v3_v2(
-            a,
-            b,
-            c,
-            optimal_input,
-            hop_outputs,
-            executor_address,
-            pool_manager_address,
-            weth_address,
-        ),
-        (HopInfo::V4(a), HopInfo::V3(b), HopInfo::V3(c)) => three_hop_v4_v3_v3(
-            a,
-            b,
-            c,
-            optimal_input,
-            hop_outputs,
-            executor_address,
-            pool_manager_address,
-            weth_address,
-        ),
-        (HopInfo::V4(a), HopInfo::V3(b), HopInfo::V4(c)) => three_hop_v4_v3_v4(
-            a,
-            b,
-            c,
-            optimal_input,
-            hop_outputs,
-            executor_address,
-            pool_manager_address,
-            weth_address,
-        ),
-        (HopInfo::V4(a), HopInfo::V4(b), HopInfo::V2(c)) => three_hop_v4_v4_v2(
-            a,
-            b,
-            c,
-            optimal_input,
-            hop_outputs,
-            executor_address,
-            pool_manager_address,
-            weth_address,
-        ),
-        (HopInfo::V4(a), HopInfo::V4(b), HopInfo::V3(c)) => three_hop_v4_v4_v3(
-            a,
-            b,
-            c,
-            optimal_input,
-            hop_outputs,
-            executor_address,
-            pool_manager_address,
-            weth_address,
-        ),
-        (HopInfo::V4(a), HopInfo::V4(b), HopInfo::V4(c)) => three_hop_v4_v4_v4(
-            a,
-            b,
-            c,
-            optimal_input,
-            hop_outputs,
-            executor_address,
-            pool_manager_address,
-            weth_address,
-            opts,
-        ),
+        (HopInfo::V2(a), HopInfo::V2(b), HopInfo::V2(c)) => three_hop_v2_v2_v2(a, b, c, &inputs),
+        (HopInfo::V2(a), HopInfo::V2(b), HopInfo::V3(c)) => three_hop_v2_v2_v3(a, b, c, &inputs),
+        (HopInfo::V2(a), HopInfo::V2(b), HopInfo::V4(c)) => three_hop_v2_v2_v4(a, b, c, &inputs),
+        (HopInfo::V2(a), HopInfo::V3(b), HopInfo::V2(c)) => three_hop_v2_v3_v2(a, b, c, &inputs),
+        (HopInfo::V2(a), HopInfo::V3(b), HopInfo::V3(c)) => three_hop_v2_v3_v3(a, b, c, &inputs),
+        (HopInfo::V2(a), HopInfo::V3(b), HopInfo::V4(c)) => three_hop_v2_v3_v4(a, b, c, &inputs),
+        (HopInfo::V2(a), HopInfo::V4(b), HopInfo::V2(c)) => three_hop_v2_v4_v2(a, b, c, &inputs),
+        (HopInfo::V2(a), HopInfo::V4(b), HopInfo::V3(c)) => three_hop_v2_v4_v3(a, b, c, &inputs),
+        (HopInfo::V2(a), HopInfo::V4(b), HopInfo::V4(c)) => three_hop_v2_v4_v4(a, b, c, &inputs),
+        (HopInfo::V3(a), HopInfo::V2(b), HopInfo::V2(c)) => three_hop_v3_v2_v2(a, b, c, &inputs),
+        (HopInfo::V3(a), HopInfo::V2(b), HopInfo::V3(c)) => three_hop_v3_v2_v3(a, b, c, &inputs),
+        (HopInfo::V3(a), HopInfo::V2(b), HopInfo::V4(c)) => three_hop_v3_v2_v4(a, b, c, &inputs),
+        (HopInfo::V3(a), HopInfo::V3(b), HopInfo::V2(c)) => three_hop_v3_v3_v2(a, b, c, &inputs),
+        (HopInfo::V3(a), HopInfo::V3(b), HopInfo::V3(c)) => three_hop_v3_v3_v3(a, b, c, &inputs),
+        (HopInfo::V3(a), HopInfo::V3(b), HopInfo::V4(c)) => three_hop_v3_v3_v4(a, b, c, &inputs),
+        (HopInfo::V3(a), HopInfo::V4(b), HopInfo::V2(c)) => three_hop_v3_v4_v2(a, b, c, &inputs),
+        (HopInfo::V3(a), HopInfo::V4(b), HopInfo::V3(c)) => three_hop_v3_v4_v3(a, b, c, &inputs),
+        (HopInfo::V3(a), HopInfo::V4(b), HopInfo::V4(c)) => three_hop_v3_v4_v4(a, b, c, &inputs),
+        (HopInfo::V4(a), HopInfo::V2(b), HopInfo::V2(c)) => three_hop_v4_v2_v2(a, b, c, &inputs),
+        (HopInfo::V4(a), HopInfo::V2(b), HopInfo::V3(c)) => three_hop_v4_v2_v3(a, b, c, &inputs),
+        (HopInfo::V4(a), HopInfo::V2(b), HopInfo::V4(c)) => three_hop_v4_v2_v4(a, b, c, &inputs),
+        (HopInfo::V4(a), HopInfo::V3(b), HopInfo::V2(c)) => three_hop_v4_v3_v2(a, b, c, &inputs),
+        (HopInfo::V4(a), HopInfo::V3(b), HopInfo::V3(c)) => three_hop_v4_v3_v3(a, b, c, &inputs),
+        (HopInfo::V4(a), HopInfo::V3(b), HopInfo::V4(c)) => three_hop_v4_v3_v4(a, b, c, &inputs),
+        (HopInfo::V4(a), HopInfo::V4(b), HopInfo::V2(c)) => three_hop_v4_v4_v2(a, b, c, &inputs),
+        (HopInfo::V4(a), HopInfo::V4(b), HopInfo::V3(c)) => three_hop_v4_v4_v3(a, b, c, &inputs),
+        (HopInfo::V4(a), HopInfo::V4(b), HopInfo::V4(c)) => three_hop_v4_v4_v4(a, b, c, &inputs),
     }
 }
 
@@ -2451,15 +2203,19 @@ fn enc_v4_swap_zero(hop: &V4HopInfo, at: &mut AddressTable) -> Option<Vec<u8>> {
 // ── V2-V2-V2 ──────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v2_v2_v2(
     ha: &V2HopInfo,
     hb: &V2HopInfo,
     hc: &V2HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let weth_address = inputs.weth_address;
+
     let out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
         return None;
@@ -2492,15 +2248,19 @@ fn three_hop_v2_v2_v2(
 // ── V2-V2-V3 ──────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v2_v2_v3(
     ha: &V2HopInfo,
     hb: &V2HopInfo,
     hc: &V3HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let weth_address = inputs.weth_address;
+
     let out_b = hop_outputs[1];
     if hop_outputs.contains(&0) {
         return None;
@@ -2532,16 +2292,20 @@ fn three_hop_v2_v2_v3(
 // ── V2-V2-V4 ──────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v2_v2_v4(
     ha: &V2HopInfo,
     hb: &V2HopInfo,
     hc: &V4HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    pool_manager_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let pool_manager_address = inputs.pool_manager_address;
+    let weth_address = inputs.weth_address;
+
     if hop_outputs.contains(&0) {
         return None;
     }
@@ -2593,15 +2357,19 @@ fn three_hop_v2_v2_v4(
 // ── V2-V3-V2 ──────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v2_v3_v2(
     ha: &V2HopInfo,
     hb: &V3HopInfo,
     hc: &V2HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let weth_address = inputs.weth_address;
+
     let out_a = hop_outputs[0];
     let out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
@@ -2637,15 +2405,19 @@ fn three_hop_v2_v3_v2(
 // ── V2-V3-V3 ───────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v2_v3_v3(
     ha: &V2HopInfo,
     hb: &V3HopInfo,
     hc: &V3HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let weth_address = inputs.weth_address;
+
     let out_a = hop_outputs[0];
     let out_b = hop_outputs[1];
     if hop_outputs.contains(&0) {
@@ -2675,16 +2447,20 @@ fn three_hop_v2_v3_v3(
 // ── V2-V3-V4 ───────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v2_v3_v4(
     ha: &V2HopInfo,
     hb: &V3HopInfo,
     hc: &V4HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    pool_manager_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let pool_manager_address = inputs.pool_manager_address;
+    let weth_address = inputs.weth_address;
+
     let out_a = hop_outputs[0];
     let out_b = hop_outputs[1];
     let out_c = hop_outputs[2];
@@ -2748,16 +2524,20 @@ fn three_hop_v2_v3_v4(
 // ── V2-V4-V2 ───────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v2_v4_v2(
     ha: &V2HopInfo,
     hb: &V4HopInfo,
     hc: &V2HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    pool_manager_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let pool_manager_address = inputs.pool_manager_address;
+    let weth_address = inputs.weth_address;
+
     let out_a = hop_outputs[0];
     let out_b = hop_outputs[1];
     let out_c = hop_outputs[2];
@@ -2822,16 +2602,20 @@ fn three_hop_v2_v4_v2(
 // ── V2-V4-V3 ───────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v2_v4_v3(
     ha: &V2HopInfo,
     hb: &V4HopInfo,
     hc: &V3HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    pool_manager_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let pool_manager_address = inputs.pool_manager_address;
+    let weth_address = inputs.weth_address;
+
     let out_a = hop_outputs[0];
     let out_b = hop_outputs[1];
     if hop_outputs.contains(&0) {
@@ -2895,16 +2679,20 @@ fn three_hop_v2_v4_v3(
 // ── V2-V4-V4 ───────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v2_v4_v4(
     ha: &V2HopInfo,
     hb: &V4HopInfo,
     hc: &V4HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    pool_manager_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let pool_manager_address = inputs.pool_manager_address;
+    let weth_address = inputs.weth_address;
+
     let out_a = hop_outputs[0];
     if hop_outputs.contains(&0) {
         return None;
@@ -2964,15 +2752,19 @@ fn three_hop_v2_v4_v4(
 // ── V3-V2-V2 ───────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v3_v2_v2(
     ha: &V3HopInfo,
     hb: &V2HopInfo,
     hc: &V2HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let weth_address = inputs.weth_address;
+
     let out_b = hop_outputs[1];
     let out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
@@ -3003,15 +2795,19 @@ fn three_hop_v3_v2_v2(
 // ── V3-V2-V3 ───────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v3_v2_v3(
     ha: &V3HopInfo,
     hb: &V2HopInfo,
     hc: &V3HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let weth_address = inputs.weth_address;
+
     let out_b = hop_outputs[1];
     if hop_outputs.contains(&0) {
         return None;
@@ -3042,16 +2838,20 @@ fn three_hop_v3_v2_v3(
 // ── V3-V2-V4 ───────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v3_v2_v4(
     ha: &V3HopInfo,
     hb: &V2HopInfo,
     hc: &V4HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    pool_manager_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let pool_manager_address = inputs.pool_manager_address;
+    let weth_address = inputs.weth_address;
+
     let out_b = hop_outputs[1];
     let out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
@@ -3109,15 +2909,19 @@ fn three_hop_v3_v2_v4(
 // ── V3-V3-V2 ───────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v3_v3_v2(
     ha: &V3HopInfo,
     hb: &V3HopInfo,
     hc: &V2HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let weth_address = inputs.weth_address;
+
     let out_a = hop_outputs[0];
     let out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
@@ -3148,15 +2952,19 @@ fn three_hop_v3_v3_v2(
 // ── V3-V3-V3 ───────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v3_v3_v3(
     ha: &V3HopInfo,
     hb: &V3HopInfo,
     hc: &V3HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let weth_address = inputs.weth_address;
+
     let out_a = hop_outputs[0];
     let out_b = hop_outputs[1];
     if hop_outputs.contains(&0) {
@@ -3187,16 +2995,20 @@ fn three_hop_v3_v3_v3(
 // ── V3-V3-V4 ───────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v3_v3_v4(
     ha: &V3HopInfo,
     hb: &V3HopInfo,
     hc: &V4HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    pool_manager_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let pool_manager_address = inputs.pool_manager_address;
+    let weth_address = inputs.weth_address;
+
     let out_a = hop_outputs[0];
     if hop_outputs.contains(&0) {
         return None;
@@ -3254,16 +3066,20 @@ fn three_hop_v3_v3_v4(
 // ── V3-V4-V2 ───────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v3_v4_v2(
     ha: &V3HopInfo,
     hb: &V4HopInfo,
     hc: &V2HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    pool_manager_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let pool_manager_address = inputs.pool_manager_address;
+    let weth_address = inputs.weth_address;
+
     let out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
         return None;
@@ -3330,16 +3146,20 @@ fn three_hop_v3_v4_v2(
 // ── V3-V4-V3 ───────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v3_v4_v3(
     ha: &V3HopInfo,
     hb: &V4HopInfo,
     hc: &V3HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    pool_manager_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let pool_manager_address = inputs.pool_manager_address;
+    let weth_address = inputs.weth_address;
+
     let out_b = hop_outputs[1];
     if hop_outputs.contains(&0) {
         return None;
@@ -3406,16 +3226,20 @@ fn three_hop_v3_v4_v3(
 // ── V3-V4-V4 ───────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v3_v4_v4(
     ha: &V3HopInfo,
     hb: &V4HopInfo,
     hc: &V4HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    pool_manager_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let pool_manager_address = inputs.pool_manager_address;
+    let weth_address = inputs.weth_address;
+
     let out_a = hop_outputs[0];
     let out_b = hop_outputs[1];
     let out_c = hop_outputs[2];
@@ -3485,16 +3309,20 @@ fn three_hop_v3_v4_v4(
 // ── V4-V2-V2 ───────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v4_v2_v2(
     ha: &V4HopInfo,
     hb: &V2HopInfo,
     hc: &V2HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    pool_manager_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let pool_manager_address = inputs.pool_manager_address;
+    let weth_address = inputs.weth_address;
+
     let out_a = hop_outputs[0];
     if hop_outputs.contains(&0) {
         return None;
@@ -3554,16 +3382,20 @@ fn three_hop_v4_v2_v2(
 // ── V4-V2-V3 ───────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v4_v2_v3(
     ha: &V4HopInfo,
     hb: &V2HopInfo,
     hc: &V3HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    pool_manager_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let pool_manager_address = inputs.pool_manager_address;
+    let weth_address = inputs.weth_address;
+
     let out_a = hop_outputs[0];
     let out_b = hop_outputs[1];
     if hop_outputs.contains(&0) {
@@ -3636,16 +3468,20 @@ fn three_hop_v4_v2_v3(
 // ── V4-V2-V4 ───────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v4_v2_v4(
     ha: &V4HopInfo,
     hb: &V2HopInfo,
     hc: &V4HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    pool_manager_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let pool_manager_address = inputs.pool_manager_address;
+    let weth_address = inputs.weth_address;
+
     let out_a = hop_outputs[0];
     let out_b = hop_outputs[1];
     if hop_outputs.contains(&0) {
@@ -3720,16 +3556,20 @@ fn three_hop_v4_v2_v4(
 // ── V4-V3-V2 ───────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v4_v3_v2(
     ha: &V4HopInfo,
     hb: &V3HopInfo,
     hc: &V2HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    pool_manager_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let pool_manager_address = inputs.pool_manager_address;
+    let weth_address = inputs.weth_address;
+
     let out_a = hop_outputs[0];
     let out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
@@ -3798,16 +3638,20 @@ fn three_hop_v4_v3_v2(
 // ── V4-V3-V3 ───────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v4_v3_v3(
     ha: &V4HopInfo,
     hb: &V3HopInfo,
     hc: &V3HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    pool_manager_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let pool_manager_address = inputs.pool_manager_address;
+    let weth_address = inputs.weth_address;
+
     let out_a = hop_outputs[0];
     let out_b = hop_outputs[1];
     if hop_outputs.contains(&0) {
@@ -3870,16 +3714,20 @@ fn three_hop_v4_v3_v3(
 // ── V4-V3-V4 ───────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v4_v3_v4(
     ha: &V4HopInfo,
     hb: &V3HopInfo,
     hc: &V4HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    pool_manager_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let pool_manager_address = inputs.pool_manager_address;
+    let weth_address = inputs.weth_address;
+
     let out_a = hop_outputs[0];
     let out_b = hop_outputs[1];
     if hop_outputs.contains(&0) {
@@ -3959,12 +3807,14 @@ fn three_hop_v4_v4_v2(
     ha: &V4HopInfo,
     hb: &V4HopInfo,
     hc: &V2HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    pool_manager_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let pool_manager_address = inputs.pool_manager_address;
+    let weth_address = inputs.weth_address;
+
     let out_b = hop_outputs[1];
     let out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
@@ -4033,16 +3883,20 @@ fn three_hop_v4_v4_v2(
 // ── V4-V4-V3 ───────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v4_v4_v3(
     ha: &V4HopInfo,
     hb: &V4HopInfo,
     hc: &V3HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    pool_manager_address: Address,
-    weth_address: Address,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let pool_manager_address = inputs.pool_manager_address;
+    let weth_address = inputs.weth_address;
+
     let out_b = hop_outputs[1];
     if hop_outputs.contains(&0) {
         return None;
@@ -4107,17 +3961,21 @@ fn three_hop_v4_v4_v3(
 // ── V4-V4-V4 ───────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v4_v4_v4(
     ha: &V4HopInfo,
     hb: &V4HopInfo,
     hc: &V4HopInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    executor_address: Address,
-    pool_manager_address: Address,
-    weth_address: Address,
-    opts: EncodeOptions,
+    inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let hop_outputs = inputs.hop_outputs;
+    let executor_address = inputs.executor_address;
+    let pool_manager_address = inputs.pool_manager_address;
+    let weth_address = inputs.weth_address;
+    let opts = inputs.opts;
+
     if hop_outputs.len() < 3 {
         return None;
     }
