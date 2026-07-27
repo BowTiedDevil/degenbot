@@ -1,14 +1,8 @@
 //! 2-hop + N-hop command-stream path composers.
 //!
-//! Ports `examples/eth_backrun_helpers.py::encode_cmd_stream` and the eight
-//! `_encode_cmd_*` two-hop functions, plus `_encode_cmd_v2_n_hop`, plus the
-//! `examples/cmd_stream.py` payload builders (`V4V4ArbitragePayload`,
-//! `V4V3ArbitragePayload`, `CmdExecutorComposer`).
-//!
 //! The composer layer combines the primitive `enc_*` opcode builders from
-//! [`crate::encoders`] into a complete command-stream `bytes` payload per path
-//! type, returning [`None`] on unsupported/failing paths (the Python oracle
-//! does the same via `try/except → None`).
+//! [`crate::encoders`] into a complete `cmd_executor` command-stream `bytes`
+//! payload per path type, returning [`None`] on unsupported or failing paths.
 //!
 //! ## Sign conventions (§10.2)
 //!
@@ -45,7 +39,7 @@ pub const NATIVE_CURRENCY_ADDRESS: Address = Address::ZERO;
 /// The `execute(bytes,uint256)` 4-byte function selector
 /// (`keccak256("execute(bytes,uint256)")[:4]` = `0xab5898e8`).
 ///
-/// Matches the Python oracle's `Web3.keccak(text="execute(bytes,uint256)")[:4]`.
+/// The 4-byte selector for `execute(bytes,uint256)`, `0xab5898e8`.
 pub const EXECUTE_SELECTOR: [u8; 4] = [0xab, 0x58, 0x98, 0xe8];
 
 /// `INT128_MAX` = 2¹²⁷ − 1 — the upper bound the Python `fits_int128` guard
@@ -275,8 +269,7 @@ pub(crate) fn emit_currency_bridge(
 // Top-level dispatcher
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Tuning knobs for [`encode_cmd_stream`] matching the Python oracle's
-/// keyword arguments. All default to `false`/`0`.
+/// Tuning knobs for [`encode_cmd_stream`]. All default to `false`/`0`.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct EncodeOptions {
     /// If `true`, use `V4_MINT_COMPACT` instead of `V4_TAKE_DELTA` for profit
@@ -308,8 +301,7 @@ pub struct ComposerInputs<'a> {
 /// contract. Uses compact command encoding (`V2_SWAP_COMPACT`, `V2_SWAP_CALC`,
 /// `V4_SWAP_COMPACT`, …) with an address table for minimal calldata size.
 ///
-/// Returns `None` if encoding fails for this path type (the Python oracle
-/// returns `None` via `try/except`).
+/// Returns `None` if encoding fails for this path type.
 ///
 /// # Path-type routing
 ///
@@ -327,9 +319,9 @@ pub fn encode_cmd_stream(
     weth_address: Address,
     opts: EncodeOptions,
 ) -> Option<Vec<u8>> {
-    // Bribes moved out of the stream into the `config` ABI parameter — the
-    // Python oracle raises if `bribe_bips != 0`; here the caller passes bribes
-    // via `pack_config` at the call site, so there's nothing to reject.
+    // Bribes are moved out of the stream into the `config` ABI parameter —
+    // the caller passes bribes via `pack_config` at the call site, so there
+    // is nothing to reject here.
     let num_hops = path_info.hops.len();
     let inputs = ComposerInputs {
         executor_address,
@@ -1481,8 +1473,7 @@ pub struct V4PoolKeyConfig {
 }
 
 /// Builder for a 2-pool V4→V4 arbitrage command stream (the simplified
-/// "9th" path dispatched via `SwapAmounts`, mirroring
-/// `examples/cmd_stream.py::V4V4ArbitragePayload`).
+/// "9th" path dispatched via `SwapAmounts`).
 ///
 /// The simplest arbitrage: two V4 swaps inside one unlock, delta netting
 /// eliminates intermediate tokens, take profit and settle input.
@@ -1529,9 +1520,9 @@ impl V4V4ArbitragePayload {
     }
 
     /// Configure pool A. `zero_for_one=None` derives `zfo` from the (unsorted)
-    /// `currency0`/`currency1` ordering passed in, matching the Python oracle.
-    #[allow(clippy::too_many_arguments)] // reason: builder setters mirror the Python oracle's per-pool kwargs;
-                                         // collapsing would harm call-site ergonomics.
+    /// `currency0`/`currency1` ordering passed in.
+    #[allow(clippy::too_many_arguments)] // reason: builder setters take the per-pool V4 kwargs directly;
+                                         // collapsing into a params struct would harm call-site ergonomics.
     pub fn set_pool_a(
         &mut self,
         currency0: Address,
@@ -1558,8 +1549,8 @@ impl V4V4ArbitragePayload {
     }
 
     /// Configure pool B. See [`Self::set_pool_a`].
-    #[allow(clippy::too_many_arguments)] // reason: builder setters mirror the Python oracle's per-pool kwargs;
-                                         // collapsing would harm call-site ergonomics.
+    #[allow(clippy::too_many_arguments)] // reason: builder setters take the per-pool V4 kwargs directly;
+                                         // collapsing into a params struct would harm call-site ergonomics.
     pub fn set_pool_b(
         &mut self,
         currency0: Address,
@@ -1740,8 +1731,7 @@ impl V4V4ArbitragePayload {
     }
 }
 
-/// Builder for a 2-pool V4→V3 arbitrage command stream (mirroring
-/// `examples/cmd_stream.py::V4V3ArbitragePayload`).
+/// Builder for a 2-pool V4→V3 arbitrage command stream.
 ///
 /// Path: V4 swap (WETH→USDC) → V3 swap (USDC→WETH, auto-pay), with a
 /// `V4_SETTLE_DELTA(WETH)` to settle the V4 input debt.
@@ -1793,8 +1783,8 @@ impl V4V3ArbitragePayload {
 
     /// Configure the V4 pool. `zero_for_one=None` derives `zfo` from the
     /// unsorted currency ordering.
-    #[allow(clippy::too_many_arguments)] // reason: builder setters mirror the Python oracle's per-pool kwargs;
-                                         // collapsing would harm call-site ergonomics.
+    #[allow(clippy::too_many_arguments)] // reason: builder setters take the per-pool V4 kwargs directly;
+                                         // collapsing into a params struct would harm call-site ergonomics.
     pub fn set_v4_pool(
         &mut self,
         currency0: Address,
@@ -1948,7 +1938,7 @@ impl V4V3ArbitragePayload {
 }
 
 /// Compose swap amounts into a single `cmd_executor` `execute(commands, config)`
-/// call (mirrors `examples/cmd_stream.py::CmdExecutorComposer`).
+/// call.
 ///
 /// Currently supports the simple 2-pool V4→V4 path. Additional path types
 /// can be added by extending the routing.
@@ -2127,11 +2117,10 @@ impl CmdExecutorComposer {
 
 /// Encode a 3-hop arbitrage path as a `cmd_executor` command stream.
 ///
-/// Dispatches to one of the 27 `_3hop_*` pattern functions based on the
-/// hop-type combination. Mirrors `eth_backrun_helpers::_encode_cmd_3_hop`.
+/// Dispatches to one of the 27 `three_hop_*` pattern functions based on the
+/// hop-type combination.
 ///
-/// Returns `None` for an unknown combination or if any `enc_*` step fails
-/// (the Python oracle returns `None` via `try/except`).
+/// Returns `None` for an unknown combination or if any `enc_*` step fails.
 #[allow(clippy::too_many_lines)]
 #[doc(hidden)]
 #[must_use]
@@ -2188,8 +2177,7 @@ pub fn encode_cmd_3_hop(
 }
 
 /// Shared helper: encode a V4 swap with amount=0 (caller overrides amount).
-/// Mirrors `_enc_v4_swap`. Unused by any 3-hop pattern but ported for
-/// completeness — the Python oracle defines it as a shared helper.
+/// Currently unused by any 3-hop pattern; retained as a reusable primitive.
 #[allow(dead_code)]
 fn enc_v4_swap_zero(hop: &V4HopInfo, at: &mut AddressTable) -> Option<Vec<u8>> {
     let c0_idx = at.add(hop.currency0_address).ok()?;
