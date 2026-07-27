@@ -14,12 +14,30 @@
     clippy::needless_pass_by_value
 )]
 
-use alloy::primitives::{address, U256};
+use alloy::primitives::{address, Address, U256};
 use degenbot_executor::composers::{
     self, encode_cmd_stream, encode_execute_call, CmdExecutorComposer, EncodeOptions, HopInfo,
     PathInfo, V2HopInfo, V3HopInfo, V4HopInfo, V4PoolKeyConfig, V4SwapAmounts,
     V4V3ArbitragePayload, V4V4ArbitragePayload,
 };
+use degenbot_executor::encoders::{
+    self, AddressTable, SENTINEL_NATIVE, SENTINEL_SELF, SENTINEL_WETH,
+};
+
+const PM: Address = address!("000000000004444c5dc75cB358380D2e3dE08A90");
+const EXECUTOR: Address = address!("DeAd0000000000000000000000000000000000Be");
+const WETH: Address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+const USDC: Address = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
+
+/// Build `enc_preamble(&at) + enc_v4_unlock(&inner)` — the V4 envelope every
+/// V4-containing composer wraps around its `inner` opcode sequence. This is
+/// NOT the opcode order under test (the `inner` appends below are); factoring
+/// the envelope cuts boilerplate without re-introducing copy-paste drift.
+fn v4_envelope(at: &AddressTable, inner: &[u8]) -> Vec<u8> {
+    let mut out = encoders::enc_preamble(at);
+    out.extend_from_slice(&encoders::enc_v4_unlock(inner).unwrap());
+    out
+}
 
 fn hx(s: &[u8]) -> Vec<u8> {
     s.to_vec()
@@ -30,36 +48,63 @@ fn parity_v4v4_same_currency() {
     let rust = encode_cmd_stream(
         &PathInfo::new(vec![
             HopInfo::V4(V4HopInfo {
-                pool_manager_address: address!("000000000004444c5dc75cB358380D2e3dE08A90"),
+                pool_manager_address: PM,
                 pool_id_hex: "0x1111111111111111111111111111111111111111111111111111111111111111"
                     .to_string(),
-                currency0_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
-                currency1_address: address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48"),
+                currency0_address: WETH,
+                currency1_address: USDC,
                 fee: 3000u32,
                 tick_spacing: 60i32,
-                hook_address: address!("0000000000000000000000000000000000000000"),
+                hook_address: Address::ZERO,
                 zfo: true,
             }),
             HopInfo::V4(V4HopInfo {
-                pool_manager_address: address!("000000000004444c5dc75cB358380D2e3dE08A90"),
+                pool_manager_address: PM,
                 pool_id_hex: "0x1111111111111111111111111111111111111111111111111111111111111111"
                     .to_string(),
-                currency0_address: address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48"),
-                currency1_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+                currency0_address: USDC,
+                currency1_address: WETH,
                 fee: 500u32,
                 tick_spacing: 10i32,
-                hook_address: address!("0000000000000000000000000000000000000000"),
+                hook_address: Address::ZERO,
                 zfo: true,
             }),
         ]),
         1000000000000000000u128,
         &[2000000000u128, 2001000000000000000u128],
-        address!("DeAd0000000000000000000000000000000000Be"),
-        address!("000000000004444c5dc75cB358380D2e3dE08A90"),
-        address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+        EXECUTOR,
+        PM,
+        WETH,
         EncodeOptions::default(),
     );
-    assert_eq!(rust, Some(hx(b"\x00\xa0\xb8\x69\x91\xc6\x21\x8b\x36\xc1\xd1\x9d\x4a\x2e\x9e\xb0\xce\x36\x06\xeb\x48\xff\x50\x22\x40\xfe\x00\x0b\xb8\x00\x3c\xff\x01\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x41\x00\xfe\x01\xf4\x00\x0a\xff\x01\x53\xfe\xfd\x57")));
+    // Expected: same intermediate currency (USDC) — delta netting, no bridge.
+    // A: V4_SWAP_COMPACT(WETH→USDC, exact-in 1e18).  B: V4_SWAP_DYNAMIC reads
+    // A's PM delta.  Profit=WETH → TAKE_DELTA(WETH→executor).  SETTLE_ALL.
+    let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
+    let usdc_idx = at.add(USDC).unwrap(); // 0
+    let weth_idx = SENTINEL_WETH;
+    let executor_idx = SENTINEL_SELF;
+    let zero_idx = SENTINEL_NATIVE; // no-hooks sentinel
+    let mut inner = Vec::new();
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            weth_idx,
+            usdc_idx,
+            3000,
+            60,
+            zero_idx,
+            true,
+            1000000000000000000u128,
+        )
+        .unwrap(),
+    );
+    inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
+        usdc_idx, weth_idx, 500, 10, zero_idx, true,
+    ));
+    inner.extend_from_slice(&encoders::enc_v4_take_delta(weth_idx, executor_idx));
+    inner.extend_from_slice(&encoders::enc_v4_settle_all());
+    let expected = v4_envelope(&at, &inner);
+    assert_eq!(rust, Some(expected));
 }
 
 #[test]
