@@ -36,7 +36,9 @@ use std::collections::BTreeMap;
 use alloy::primitives::{Address, U256};
 use alloy::rpc::types::AccessList;
 use degenbot_core::errors::{ProviderError, ProviderResult};
-use degenbot_executor::composers::{encode_cmd_stream, EncodeOptions, HopInfo, PathInfo};
+use degenbot_executor::composers::{
+    encode_cmd_stream, EncodeOptions, HopInfo, PathInfo, V2HopInfo, V4HopInfo,
+};
 use degenbot_executor::WarmupSlots;
 use degenbot_rpc::fees::BlockPriorityFees;
 use degenbot_rpc::provider::AlloyProvider;
@@ -477,6 +479,84 @@ fn u256_to_f64_lossy(v: U256) -> f64 {
     acc
 }
 
+/// The V2 hop's input token address (`zfo=true` → token0).
+fn v2_input_token(hop: &V2HopInfo) -> Address {
+    if hop.zfo {
+        hop.token0_address
+    } else {
+        hop.token1_address
+    }
+}
+
+/// The V2 hop's output token address (`zfo=true` → token1).
+fn v2_output_token(hop: &V2HopInfo) -> Address {
+    if hop.zfo {
+        hop.token1_address
+    } else {
+        hop.token0_address
+    }
+}
+
+/// The V4 hop's input currency (`zfo=true` → currency0).
+fn v4_input_currency(hop: &V4HopInfo) -> Address {
+    if hop.zfo {
+        hop.currency0_address
+    } else {
+        hop.currency1_address
+    }
+}
+
+/// The V4 hop's output currency (`zfo=true` → currency1).
+fn v4_output_currency(hop: &V4HopInfo) -> Address {
+    if hop.zfo {
+        hop.currency1_address
+    } else {
+        hop.currency0_address
+    }
+}
+
+/// Scan `hops` for a V4↔V2 adjacency that needs a representation bridge
+/// (native on the V4 side, WETH on the V2 side) — the case the 3-hop
+/// composers do NOT encode (ergo TGXBCE). Returns a human-readable
+/// description of the gap when one exists; `None` otherwise.
+///
+/// Native-ETH and WETH are economically the same token but V4 tracks them as
+/// distinct delta currencies (NATIVE_ADDRESS vs the WETH ERC20), while V2
+/// pools hold the WETH ERC20 token directly. A path whose adjacency is
+/// V4(native) → V2(WETH) or V2(WETH) → V4(native) needs an explicit
+/// `WETH_DEPOSIT` / `WETH_WITHDRAW` opcode that the 3-hop composers #[allow]
+/// (they only handle native/WETH identical to the boundary token).
+///
+/// The 2-hop `encode_cmd_v4_v2` bridges this gap; the 3-hop twins don't.
+#[must_use]
+fn scan_for_v4_v2_boundary_bridge(hops: &[HopInfo], weth_address: Address) -> Option<String> {
+    const NATIVE: Address = Address::ZERO;
+    for i in 0..hops.len().saturating_sub(1) {
+        let (a, b) = (&hops[i], &hops[i + 1]);
+        // V4 → V2: V4's output is native, V2's input is WETH.
+        if let (HopInfo::V4(va), HopInfo::V2(vb)) = (a, b) {
+            if v4_output_currency(va) == NATIVE && v2_input_token(vb) == weth_address {
+                return Some(format!(
+                    "boundary {}→{}: V4 native-out → V2 WETH-in (needs Wrap)",
+                    i,
+                    i + 1
+                ));
+            }
+        }
+        // V2 → V4: V2's output is WETH, V4's input is native.
+        if let (HopInfo::V2(vb), HopInfo::V4(va)) = (a, b) {
+            if v2_output_token(vb) == weth_address && v4_input_currency(va) == NATIVE {
+                return Some(format!(
+                    "boundary {}→{}: V2 WETH-out → V4 native-in (needs Unwrap)",
+                    i,
+                    i + 1
+                ));
+            }
+        }
+    }
+    None
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // The orchestration inputs
 // ─────────────────────────────────────────────────────────────────────────
@@ -722,6 +802,23 @@ where
                 );
                 return Ok(None);
             }
+        }
+    }
+
+    // TGXBCE investigation: scan for a V4↔V2 boundary-bridge signature
+    // (V4 side native, V2 side WETH) — a path shape the 3-hop composers do
+    // NOT encode (the 2-hop `encode_cmd_v4_v2` handles it via
+    // `V4_TAKE(native,self) + WETH_DEPOSIT + V2_SWAP_COMPACT`, but the bridge
+    // does not trivially port to 3-hop). This probe logs any such path so we
+    // can tell whether a mainnet boundary-bridge materializes; gated by the
+    // `DEGENBOT_BRIDGE_PROBE` env var so it is zero-cost in production.
+    if std::env::var_os("DEGENBOT_BRIDGE_PROBE").is_some() {
+        if let Some(desc) = scan_for_v4_v2_boundary_bridge(&path.path_info.hops, ctx.weth_address) {
+            log::info!(
+                "[bridge-probe] path_id={} {} — V4 native ↔ V2 WETH boundary; 3-hop composer does not encode this",
+                path.path_id,
+                desc,
+            );
         }
     }
 
@@ -1443,5 +1540,123 @@ mod tests {
         assert_eq!(failures[0].path_id, 11);
         assert_eq!(failures[0].bucket, "no-profit");
         assert!(failures[0].fail_index.is_none(), "no call reverted");
+    }
+
+    // ── TGXBCE: scan_for_v4_v2_boundary_bridge ─────────────────────────
+    #[test]
+    fn scan_detects_v4_native_to_v2_weth_boundary() {
+        use degenbot_executor::composers::{HopInfo, V2HopInfo, V4HopInfo};
+        let native = Address::ZERO;
+        let weth = Address::from([0xc0u8; 20]);
+        let usdc = Address::from([0xa0u8; 20]);
+        // V4a: USDC→native (zfo=false → in=c1=USDC, out=c0=native)
+        let a = V4HopInfo {
+            pool_manager_address: Address::ZERO,
+            pool_id_hex: String::new(),
+            currency0_address: native,
+            currency1_address: usdc,
+            fee: 0,
+            tick_spacing: 0,
+            hook_address: Address::ZERO,
+            zfo: false,
+        };
+        // V2b: WETH→USDC (zfo=true → in=token0=WETH)
+        let b = V2HopInfo {
+            pool_address: Address::ZERO,
+            token0_address: weth,
+            token1_address: usdc,
+            fee: 0,
+            zfo: true,
+        };
+        let hops = vec![HopInfo::V4(a), HopInfo::V2(b)];
+        let got = scan_for_v4_v2_boundary_bridge(&hops, weth);
+        assert!(
+            got.is_some(),
+            "V4 native-out → V2 WETH-in must scan as a boundary bridge"
+        );
+        assert!(got.unwrap().contains("Wrap"), "Wrap direction signalled");
+    }
+
+    #[test]
+    fn scan_detects_v2_weth_to_v4_native_boundary() {
+        use degenbot_executor::composers::{HopInfo, V2HopInfo, V4HopInfo};
+        let native = Address::ZERO;
+        let weth = Address::from([0xc0u8; 20]);
+        let usdc = Address::from([0xa0u8; 20]);
+        // V2a: USDC→WETH (zfo=false → in=token1=USDC, out=token0=WETH)
+        let a = V2HopInfo {
+            pool_address: Address::ZERO,
+            token0_address: weth,
+            token1_address: usdc,
+            fee: 0,
+            zfo: false,
+        };
+        // V4b: native→USDC (zfo=true → in=token0=native)
+        let b = V4HopInfo {
+            pool_manager_address: Address::ZERO,
+            pool_id_hex: String::new(),
+            currency0_address: native,
+            currency1_address: usdc,
+            fee: 0,
+            tick_spacing: 0,
+            hook_address: Address::ZERO,
+            zfo: true,
+        };
+        let hops = vec![HopInfo::V2(a), HopInfo::V4(b)];
+        let got = scan_for_v4_v2_boundary_bridge(&hops, weth);
+        assert!(
+            got.is_some(),
+            "V2 WETH-out → V4 native-in must scan as a boundary bridge"
+        );
+        assert!(
+            got.unwrap().contains("Unwrap"),
+            "Unwrap direction signalled"
+        );
+    }
+
+    #[test]
+    fn scan_returns_none_for_native_path_ends_v4_v2_v4() {
+        // V4a native-in, V4c native-out — native at PATH ENDS, boundary token
+        // is WETH (ERC20) on the V2 ↔ V4 sides. No bridge needed.
+        use degenbot_executor::composers::{HopInfo, V2HopInfo, V4HopInfo};
+        let native = Address::ZERO;
+        let weth = Address::from([0xc0u8; 20]);
+        let usdc = Address::from([0xa0u8; 20]);
+        let wbtc = Address::from([0xbbu8; 20]);
+        // V4a: native→USDC (zfo=true → in=c0=native, out=c1=USDC)
+        let a = V4HopInfo {
+            pool_manager_address: Address::ZERO,
+            pool_id_hex: String::new(),
+            currency0_address: native,
+            currency1_address: usdc,
+            fee: 0,
+            tick_spacing: 0,
+            hook_address: Address::ZERO,
+            zfo: true,
+        };
+        // V2b: USDC→WBTC (zfo=true, boundary token USDC is ERC20)
+        let b = V2HopInfo {
+            pool_address: Address::ZERO,
+            token0_address: usdc,
+            token1_address: wbtc,
+            fee: 0,
+            zfo: true,
+        };
+        // V4c: WBTC→native (zfo=true → in=c0=WBTC, out=c1=native)
+        let c = V4HopInfo {
+            pool_manager_address: Address::ZERO,
+            pool_id_hex: String::new(),
+            currency0_address: wbtc,
+            currency1_address: native,
+            fee: 0,
+            tick_spacing: 0,
+            hook_address: Address::ZERO,
+            zfo: true,
+        };
+        let hops = vec![HopInfo::V4(a), HopInfo::V2(b), HopInfo::V4(c)];
+        assert!(
+            scan_for_v4_v2_boundary_bridge(&hops, weth).is_none(),
+            "native-path-ends with ERC20 boundary must NOT scan as boundary bridge"
+        );
     }
 }
