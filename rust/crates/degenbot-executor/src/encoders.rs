@@ -57,6 +57,19 @@ pub const MAX_INDEXED_ADDRESSES: usize = 32;
 /// `address(0)` — the native-ETH / "no address" sentinel address.
 pub const NATIVE_ADDRESS: Address = Address::ZERO;
 
+/// The largest V4 static `fee` the cmd_executor can encode (ergo DPODAZ).
+///
+/// Both `V4_SWAP_COMPACT` and `V4_SWAP_DYNAMIC` encode `fee` as a **2-byte**
+/// field (`push_u16`); the contract decodes `fee = (pkh >> 32) & 65535`,
+/// masking to `u16`. A static fee `> u16::MAX` (65535) is protocol-valid
+/// (`< 1 << 24`, not the dynamic-fee flag `0x800000`) but cannot be encoded by
+/// the executor. Such pools are also unprofitable (32%+ per swap) and are
+/// rejected at V4 admission (`BotState::register_v4_pool`) rather than wasting
+/// a solve + encode-fail cycle.
+///
+/// `0x1_0000 = 65_536` is the first fee value the 2-byte field cannot hold.
+pub const V4_FEE_ENCODER_MAX: u32 = 0x1_0000;
+
 // ── Command opcodes ─────────────────────────────────────────────────────────
 // Only 0x00 (SET_ADDRESS) and 0xFF (BEGIN_EXECUTION) are preprocessing
 // opcodes. 0x01–0x03 are reserved — their old SKIP_PROFIT_CHECK / BRIBE behavior

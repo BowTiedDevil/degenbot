@@ -2,6 +2,7 @@
 
 from degenbot._ffi import (
     DynamicFeePoolRejectedError,
+    HighFeePoolRejectedError,
     HookedPoolRejectedError,
     PoolAlreadyRegisteredError,
     PoolRegistrationError,
@@ -101,6 +102,7 @@ __all__ = (
     "Erc20TokenError",
     "ExternalUpdateError",
     "FetchingError",
+    "HighFeePoolRejectedError",
     "HookedPoolRejectedError",
     "HookedPoolResult",
     "HopCountExceededError",

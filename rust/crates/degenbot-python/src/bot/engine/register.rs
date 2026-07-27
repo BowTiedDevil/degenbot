@@ -289,6 +289,9 @@ pub(crate) fn map_register_v3_err(err: degenbot_bot::bot_core::RegisterV3PoolErr
 ///   admission floor — the solver's CL math assumes no hook intervention).
 /// - `DynamicFee` → [`DynamicFeePoolRejectedError`] (V4 dynamic-fee
 ///   admission floor — the solver assumes a fixed fee).
+/// - `FeeExceedsEncoderLimit` → [`HighFeePoolRejectedError`] (V4 static-fee
+///   exceeds the `cmd_executor`'s 2-byte encoding field — ergo DPODAZ; the
+///   fee is protocol-valid but un-encodable and unprofitable).
 /// - `AlreadyRegistered` → [`PoolAlreadyRegisteredError`] (duplicate
 ///   `(pool_manager, pool_id)` registration — a wiring/programming error
 ///   surfaced at admission time, now unified with the V2/V3 twins under
@@ -313,6 +316,11 @@ pub(crate) fn map_register_v4_err(err: degenbot_bot::bot_core::RegisterV4PoolErr
         degenbot_bot::bot_core::RegisterV4PoolError::DynamicFee { fee } => {
             DynamicFeePoolRejectedError::new_err(format!(
                 "V4 pool has dynamic fee (fee=0x{fee:06X}) — excluded from arbitrage"
+            ))
+        }
+        degenbot_bot::bot_core::RegisterV4PoolError::FeeExceedsEncoderLimit { fee } => {
+            crate::bot::engine::HighFeePoolRejectedError::new_err(format!(
+                "V4 pool fee (fee={fee}) exceeds the cmd_executor's 2-byte encoding limit (65535) — excluded from arbitrage"
             ))
         }
         degenbot_bot::bot_core::RegisterV4PoolError::AlreadyRegistered {

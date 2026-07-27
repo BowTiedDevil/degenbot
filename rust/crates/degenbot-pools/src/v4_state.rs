@@ -127,6 +127,16 @@ pub enum RegisterV4PoolError {
     HookedPool { hook_flags: u16 },
     /// Pool uses a dynamic fee (`fee == 0x100000`).
     DynamicFee { fee: u32 },
+    /// Pool's static `fee` exceeds the `cmd_executor`'s 2-byte encoding limit
+    /// (`fee >= degenbot_executor::encoders::V4_FEE_ENCODER_MAX`, i.e.
+    /// `fee > 65_535`). Such a fee is V4-protocol-valid (`< 1 << 24`, not the
+    /// dynamic-fee flag) but the executor encodes `fee` as `u16` in both
+    /// `V4_SWAP_COMPACT` and `V4_SWAP_DYNAMIC`; any 3-hop composer hits
+    /// `u16::try_from(fee).ok()?` and returns `None` → `encode-failed`. Such
+    /// pools are also unprofitable (32%+ per swap). Rejected at admission
+    /// (ergo DPODAZ), mirroring [`DynamicFee`], so they never enter the path
+    /// graph.
+    FeeExceedsEncoderLimit { fee: u32 },
     /// A pool with the same `(pool_manager, pool_id)` is already registered —
     /// a wiring/programming error, distinct from the two admission
     /// categories. Surfaces as a plain `PyValueError`.

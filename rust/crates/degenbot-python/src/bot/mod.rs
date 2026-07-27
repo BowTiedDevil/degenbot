@@ -1198,10 +1198,12 @@ impl PyBot {
     ///
     /// Returns the auto-assigned pool ID. The hook + dynamic-fee admission
     /// floor lives in `BotState::register_v4_pool` (ADR-005 slice 9a): pools
-    /// with amount-modifying hooks (`hook_flags & 0xCC != 0`) or dynamic fees
-    /// (`fee == 0x100000`) are rejected here, surfacing as typed Python
-    /// exceptions (`HookedPoolRejectedError` / `DynamicFeePoolRejectedError`)
-    /// so Python classifies by type, not string matching.
+    /// with amount-modifying hooks (`hook_flags & 0xCC != 0`), dynamic fees
+    /// (`fee == 0x100000`), or static fees exceeding the executor's 2-byte
+    /// encoding limit (`fee > 65535`) are rejected here, surfacing as typed
+    /// Python exceptions (`HookedPoolRejectedError` /
+    /// `DynamicFeePoolRejectedError` / `HighFeePoolRejectedError`) so Python
+    /// classifies by type, not string matching.
     ///
     /// ADR-006 rolling-start race closure: the snapshot `tick_data` is seeded
     /// INLINE in `register_v4_pool` (one `BotState` write lock) so the pool is
@@ -1215,6 +1217,7 @@ impl PyBot {
     /// Raises:
     ///     `HookedPoolRejectedError`: If `hook_flags & 0xCC != 0`.
     ///     `DynamicFeePoolRejectedError`: If `fee == 0x100000`.
+    ///     `HighFeePoolRejectedError`: If `fee > 65535` (executor can't encode).
     ///     `ValueError`: If `addresses/pool_id` are malformed or already
     ///         registered.
     #[allow(clippy::too_many_arguments)]

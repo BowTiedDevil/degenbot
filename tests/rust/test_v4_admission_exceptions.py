@@ -20,6 +20,8 @@ F2EVV6 reparented the V4-specific admission names under a unified
        ├─ HookedPoolRejectedError                    (V4 admission —
        │                                              amount-modifying hook)
        ├─ DynamicFeePoolRejectedError                (V4 admission — dynamic fee)
+       ├─ HighFeePoolRejectedError                  (V4 admission — static
+       │                                              fee > 65535, DPODAZ)
        ├─ PoolAlreadyRegisteredError                (V2/V3/V4 — duplicate
        │                                              address at registration)
        └─ SpecViolationError                        (V2/V3/V4 — out-of-spec
@@ -47,6 +49,7 @@ import pytest
 import degenbot.exceptions
 from degenbot.exceptions import (
     DynamicFeePoolRejectedError,
+    HighFeePoolRejectedError,
     HookedPoolRejectedError,
     PoolRegistrationError,
 )
@@ -66,19 +69,38 @@ def test_dynamic_fee_pool_rejected_error_is_exposed() -> None:
     assert issubclass(exc_type, ValueError)
 
 
-def test_admission_errors_are_distinct_value_errors() -> None:
-    """The two admission categories are distinguishable by ``isinstance``.
+def test_high_fee_pool_rejected_error_is_exposed() -> None:
+    """``HighFeePoolRejectedError`` is exported and sub-``ValueError`` (DPODAZ).
 
-    Both subclass ``ValueError`` (broad handlers keep working), but neither is
-    a subclass of the other, so ``build_paths`` can route them to separate
+    Mirrors the dynamic-fee floor: a static fee > 65535 exceeds the
+    cmd_executor's 2-byte fee field and is un-encodable, so it is refused at
+    admission (never enters the path graph).
+    """
+    assert hasattr(degenbot.exceptions, "HighFeePoolRejectedError")
+    assert issubclass(HighFeePoolRejectedError, ValueError)
+    assert issubclass(HighFeePoolRejectedError, PoolRegistrationError)
+
+
+def test_admission_errors_are_distinct_value_errors() -> None:
+    """The admission categories are distinguishable by ``isinstance``.
+
+    All three subclass ``ValueError`` (broad handlers keep working), but none
+    is a subclass of another, so ``build_paths`` can route them to separate
     counters without re-introducing string matching. F2EVV6 reparented them
     under ``PoolRegistrationError``; they stay distinct from each other.
     """
     hooked = HookedPoolRejectedError
     dynamic = DynamicFeePoolRejectedError
+    high_fee = HighFeePoolRejectedError
     assert hooked is not dynamic
+    assert hooked is not high_fee
+    assert dynamic is not high_fee
     assert not issubclass(hooked, dynamic)
     assert not issubclass(dynamic, hooked)
+    assert not issubclass(high_fee, dynamic)
+    assert not issubclass(high_fee, hooked)
+    assert not issubclass(dynamic, high_fee)
+    assert not issubclass(hooked, high_fee)
 
 
 def test_v4_admission_errors_are_pool_registration_errors() -> None:
@@ -91,6 +113,7 @@ def test_v4_admission_errors_are_pool_registration_errors() -> None:
     base = PoolRegistrationError
     assert issubclass(HookedPoolRejectedError, base)
     assert issubclass(DynamicFeePoolRejectedError, base)
+    assert issubclass(HighFeePoolRejectedError, base)
 
 
 def test_hooked_pool_rejected_error_carries_message() -> None:
@@ -105,9 +128,20 @@ def test_dynamic_fee_pool_rejected_error_carries_message() -> None:
     assert "dynamic fee" in str(exc)
 
 
+def test_high_fee_pool_rejected_error_carries_message() -> None:
+    """A raised ``HighFeePoolRejectedError`` mentions the fee (DPODAZ)."""
+    exc = HighFeePoolRejectedError("V4 pool fee (fee=320000) exceeds 65535")
+    assert "fee" in str(exc).lower()
+    assert "65535" in str(exc)
+
+
 @pytest.mark.parametrize(
     "exc_name",
-    ["HookedPoolRejectedError", "DynamicFeePoolRejectedError"],
+    [
+        "HookedPoolRejectedError",
+        "DynamicFeePoolRejectedError",
+        "HighFeePoolRejectedError",
+    ],
 )
 def test_admission_errors_catchable_as_value_error(exc_name: str) -> None:
     """Any admission refusal must be catchable by a broad ``except ValueError``.

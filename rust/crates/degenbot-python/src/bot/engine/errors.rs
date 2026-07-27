@@ -45,11 +45,12 @@ create_exception!(
 );
 
 // V4 pool-admission refusals (Plan 102, slice 2). The Rust core refuses
-// amount-modifying-hook and dynamic-fee pools as a *correctness floor*
-// (the solver's V3-CL math assumes no hook intervention + a fixed fee).
-// Per ADR-005 that floor must protect a standalone Rust consumer, so the
-// refusal lives in `BotState::register_v4_pool` and surfaces here as typed
-// exceptions. All the pool-registration admission refusals subclass
+// amount-modifying-hook, dynamic-fee, and high-static-fee pools as a
+// *correctness floor* (the solver's V3-CL math assumes no hook
+// intervention + a fixed fee; the cmd_executor encodes fee as u16 so
+// fees > 65535 are un-encodable). Per ADR-005 that floor must protect a
+// standalone Rust consumer, so the refusal lives in
+// `BotState::register_v4_pool` and surfaces here as typed exceptions. All the pool-registration admission refusals subclass
 // `PoolRegistrationError` (which subclasses `PyValueError`) — F2EVV6 unified
 // the family so `except PoolRegistrationError:` catches every admission
 // refusal across V2/V3/V4 (already-registered + spec violation + V4 hook +
@@ -64,6 +65,8 @@ create_exception!(
 //      ├─ HookedPoolRejectedError                    (V4 admission —
 //      │                                              amount-modifying hook)
 //      ├─ DynamicFeePoolRejectedError                (V4 admission — dynamic fee)
+//      ├─ HighFeePoolRejectedError                   (V4 admission — static
+//      │                                              fee > 65535, DPODAZ)
 //      ├─ PoolAlreadyRegisteredError                (V2/V3/V4 — duplicate
 //      │                                              address at registration)
 //      └─ SpecViolationError                        (V2/V3/V4 — out-of-spec
@@ -73,7 +76,7 @@ create_exception!(
     degenbot._ffi,
     PoolRegistrationError,
     pyo3::exceptions::PyValueError,
-    "A pool was refused at registration (duplicate address, out-of-spec field, V4 amount-modifying hook, or V4 dynamic fee). Subclasses classify the specific admission reason so build_paths skips rejected pools by type, not string matching."
+    "A pool was refused at registration (duplicate address, out-of-spec field, V4 amount-modifying hook, V4 dynamic fee, or V4 high static fee > 65535). Subclasses classify the specific admission reason so build_paths skips rejected pools by type, not string matching."
 );
 create_exception!(
     degenbot._ffi,
@@ -86,6 +89,12 @@ create_exception!(
     DynamicFeePoolRejectedError,
     crate::bot::engine::PoolRegistrationError,
     "A V4 pool with a dynamic fee was rejected at registration: the solver assumes a fixed fee."
+);
+create_exception!(
+    degenbot._ffi,
+    HighFeePoolRejectedError,
+    crate::bot::engine::PoolRegistrationError,
+    "A V4 pool whose static fee exceeds the cmd_executor's 2-byte encoding limit (fee > 65535) was rejected at registration: the executor encodes fee as u16 in both V4_SWAP_COMPACT and V4_SWAP_DYNAMIC, so such pools cannot be encoded. They are also unprofitable (32%+ per swap)."
 );
 create_exception!(
     degenbot._ffi,

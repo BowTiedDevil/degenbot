@@ -1257,14 +1257,15 @@ class PoolRegistrationError(ValueError):
     """Pool registration was refused at admission time.
 
     The unified base of the F2EVV6 hierarchy — a pool was rejected at
-    ``register_vx_pool`` for one of four reasons (duplicate address, out-of-spec
-    field, V4 amount-modifying hook, or V4 dynamic fee) and the specific reason
-    is conveyed by the subclass:
+    ``register_vx_pool`` for one of five reasons (duplicate address, out-of-spec
+    field, V4 amount-modifying hook, V4 dynamic fee, or V4 high static fee)
+    and the specific reason is conveyed by the subclass:
 
     - :class:`PoolAlreadyRegisteredError` — V2/V3/V4 duplicate address.
     - :class:`SpecViolationError` — V2/V3/V4 out-of-spec field.
     - :class:`HookedPoolRejectedError` — V4 amount-modifying hook.
     - :class:`DynamicFeePoolRejectedError` — V4 dynamic fee.
+    - :class:`HighFeePoolRejectedError` — V4 static fee > 65535.
 
     Subclasses ``ValueError`` so broad ``except ValueError:`` handlers (which
     skip one rejected pool at a time in ``build_paths``) keep working; scope
@@ -1319,6 +1320,20 @@ class DynamicFeePoolRejectedError(PoolRegistrationError):
     :class:`HookedPoolRejectedError`, a correctness floor enforced in the
     Rust core (ADR-005) and reparented under :class:`PoolRegistrationError`
     in F2EVV6.
+    """
+
+class HighFeePoolRejectedError(PoolRegistrationError):
+    """A V4 pool whose static fee exceeds the executor's encoding limit.
+
+    Raised by the Rust seam
+    (``RegisterV4PoolError::FeeExceedsEncoderLimit``) when
+    ``register_v4_pool`` sees a static ``fee > 65535`` (``u16::MAX``).
+    The cmd_executor encodes V4 ``fee`` as a 2-byte field in both
+    ``V4_SWAP_COMPACT`` and ``V4_SWAP_DYNAMIC`` (the contract masks
+    ``& 65535``), so any static fee above 65535 is un-encodable. Such fees
+    are also unprofitable (32%+ per swap). Rejected at admission (ergo
+    DPODAZ) so the pool never enters the path graph and wastes a
+    solve + ``encode-failed`` cycle.
     """
 
 # ------------------------------------------------------------------

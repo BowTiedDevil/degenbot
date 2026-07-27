@@ -16,6 +16,7 @@ hierarchy shared across V2/V3/V4:
     └─ PoolRegistrationError
        ├─ HookedPoolRejectedError       (V4 admission — amount-modifying hook)
        ├─ DynamicFeePoolRejectedError    (V4 admission — dynamic fee)
+       ├─ HighFeePoolRejectedError      (V4 admission — static fee > 65535, DPODAZ)
        ├─ PoolAlreadyRegisteredError     (V2/V3/V4 duplicate at registration)
        └─ SpecViolationError            (V2/V3/V4 out-of-spec field)
 
@@ -39,6 +40,7 @@ import degenbot.exceptions
 from degenbot.bot import PyBot
 from degenbot.exceptions import (
     DynamicFeePoolRejectedError,
+    HighFeePoolRejectedError,
     HookedPoolRejectedError,
     PoolAlreadyRegisteredError,
     PoolRegistrationError,
@@ -292,3 +294,36 @@ class TestV4SeamAdmission:
         kw["hook_flags"] = 0x80  # BEFORE_SWAP — amount-modifying
         with pytest.raises(HookedPoolRejectedError):
             bot.register_v4_pool(**kw)
+
+    def test_high_static_fee_raises_high_fee_pool_rejected_error(self) -> None:
+        """DPODAZ: a static ``fee > 65535`` (u16::MAX) is protocol-valid but
+        exceeds the cmd_executor's 2-byte fee field, so it is rejected at
+        admission as ``HighFeePoolRejectedError`` (a distinct variant from the
+        dynamic-fee refusal + the ``fee >= 1<<24`` spec violation).
+
+        The check runs after the spec validators (which allow ``fee < 1<<24``)
+        and after the dynamic-fee flag check (``fee != 0x800000``), so a
+        static fee of 320_000 (a real mainnet 32%-fee pool) reaches this
+        variant and is refused with a typed message naming the fee.
+        """
+        bot = PyBot(chain_id=1)
+        kw = self._in_spec_kwargs("0x" + "e9" * 32)
+        kw["fee"] = 320_000  # > u16::MAX (65_535), < 1 << 24, not 0x800000
+        with pytest.raises(HighFeePoolRejectedError) as exc_info:
+            bot.register_v4_pool(**kw)
+        assert "320000" in str(exc_info.value)
+        assert "65535" in str(exc_info.value)
+
+    def test_fee_at_u16_boundary_is_admitted_or_rejected_correctly(self) -> None:
+        """fee = 65_535 (u16::MAX) is the last encodable value (admitted);
+        fee = 65_536 is the first un-encodable (rejected as HighFee)."""
+        bot = PyBot(chain_id=1)
+        kw_admit = self._in_spec_kwargs("0x" + "ea" * 32)
+        kw_admit["fee"] = 65_535
+        bot.register_v4_pool(**kw_admit)  # must not raise
+
+        bot = PyBot(chain_id=1)
+        kw_reject = self._in_spec_kwargs("0x" + "eb" * 32)
+        kw_reject["fee"] = 65_536
+        with pytest.raises(HighFeePoolRejectedError):
+            bot.register_v4_pool(**kw_reject)

@@ -10,6 +10,7 @@ from typing import Any
 # ``_ffi`` (ADR-013: the Pydantic barrier — ``_ffi`` only in ``__init__.py``).
 from degenbot.exceptions import (  # noqa: F401
     DynamicFeePoolRejectedError,
+    HighFeePoolRejectedError,
     HookedPoolRejectedError,
     PoolAlreadyRegisteredError,
     PoolRegistrationError,

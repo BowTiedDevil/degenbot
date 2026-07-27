@@ -2200,20 +2200,25 @@ impl BotState {
 
     /// Register a V4 pool by `(pool_manager, pool_id)`.
     ///
-    /// ADR-003 hook filter inline: pools with amount-modifying hooks or dynamic
-    /// fees are rejected. Returns `Err(RegisterV4PoolError)` on rejection.
+    /// ADR-003 hook filter inline: pools with amount-modifying hooks, dynamic
+    /// fees, or static fees exceeding the `cmd_executor`'s 2-byte encoding
+    /// limit are rejected. Returns `Err(RegisterV4PoolError)` on rejection.
     ///
     /// # Errors
     ///
     /// Returns [`RegisterV4PoolError::SpecViolation`] when `sqrt_price_x96`,
     /// `tick`, V4 `fee`, or `tick_spacing` violates its Solidity-bounded
     /// on-chain invariant (see [`spec_bounds`]). These checks fire *first* —
-    /// before the hooked / dynamic-fee / already-registered rejections — so an
-    /// impossible-CL-config rejection surfaces the primitive at fault.
+    /// before the hooked / dynamic-fee / high-fee / already-registered
+    /// rejections — so an impossible-CL-config rejection surfaces the
+    /// primitive at fault.
     ///
     /// Returns `Err` if the pool has amount-modifying hooks
     /// (`hook_flags & 0xCC != 0`), uses a dynamic fee (`fee == 0x100000`),
-    /// or a pool with the same `(pool_manager, pool_id)` is already registered.
+    /// has a static fee exceeding the executor's `u16` encoding field
+    /// (`fee >= degenbot_executor::encoders::V4_FEE_ENCODER_MAX`, ergo
+    /// DPODAZ), or a pool with the same `(pool_manager, pool_id)` is
+    /// already registered.
     pub fn register_v4_pool(
         &mut self,
         params: &RegisterV4PoolParams,
@@ -2233,6 +2238,16 @@ impl BotState {
         }
         if params.pool_key.fee == V4_DYNAMIC_FEE_FLAG {
             return Err(RegisterV4PoolError::DynamicFee {
+                fee: params.pool_key.fee,
+            });
+        }
+        // DPODAZ: the cmd_executor encodes V4 `fee` as a 2-byte field in both
+        // swap commands; a static fee > 65535 is protocol-valid but
+        // un-encodable. Reject at admission (mirroring the dynamic-fee floor)
+        // so these pools never reach the composer's `u16::try_from` guard and
+        // waste a solve cycle.
+        if params.pool_key.fee >= degenbot_executor::encoders::V4_FEE_ENCODER_MAX {
+            return Err(RegisterV4PoolError::FeeExceedsEncoderLimit {
                 fee: params.pool_key.fee,
             });
         }
@@ -3888,6 +3903,56 @@ mod tests {
                 Err(RegisterV4PoolError::SpecViolation(v)) if v.field == "fee",
             },
             "V4 fee >= 1 << 24 surfaces a V4 typed SpecViolation (not DynamicFee)"
+        );
+    }
+
+    #[test]
+    fn register_v4_pool_rejects_fee_exceeding_encoder_limit() {
+        // The cmd_executor encodes V4 `fee` as a 2-byte field in both
+        // V4_SWAP_COMPACT and V4_SWAP_DYNAMIC (the contract masks `& 65535`).
+        // A static fee > 65535 is protocol-valid (`< 1 << 24`, not the
+        // dynamic-fee flag) but un-encodable — and unprofitable (32%+ per
+        // swap). Reject at admission (ergo DPODAZ), mirroring the dynamic-fee
+        // refusal, so these pools never enter the path graph.
+        use crate::bot_core::RegisterV4PoolError;
+        let mut core = BotState::new();
+        let mut params = make_v4_params_in_spec();
+        params.pool_id = [0xe6u8; 32];
+        // fee=320000 — a real mainnet V4 pool (32% fee) seen in the bot run.
+        params.pool_key.fee = 320_000;
+        assert!(
+            matches! {
+                core.register_v4_pool(&params),
+                Err(RegisterV4PoolError::FeeExceedsEncoderLimit { fee }) if fee == 320_000,
+            },
+            "V4 fee > u16::MAX (65535) must surface the typed FeeExceedsEncoderLimit variant at admission"
+        );
+    }
+
+    #[test]
+    fn register_v4_pool_admits_fee_at_encoder_limit_boundary() {
+        // fee = 65535 (u16::MAX) is the largest encodable static fee; it must
+        // be ADMITTED (the executor's 2-byte field holds it). fee = 65536 is
+        // the first un-encodable value; it must be rejected.
+        let mut core = BotState::new();
+        let mut params = make_v4_params_in_spec();
+        params.pool_id = [0xe7u8; 32];
+        params.pool_key.fee = 65_535;
+        assert!(
+            core.register_v4_pool(&params).is_ok(),
+            "fee = u16::MAX (65535) is encodable and must be admitted"
+        );
+
+        let mut core = BotState::new();
+        let mut params = make_v4_params_in_spec();
+        params.pool_id = [0xe8u8; 32];
+        params.pool_key.fee = 65_536;
+        assert!(
+            matches! {
+                core.register_v4_pool(&params),
+                Err(crate::bot_core::RegisterV4PoolError::FeeExceedsEncoderLimit { fee }) if fee == 65_536,
+            },
+            "fee = 65536 (first value > u16::MAX) must be rejected as FeeExceedsEncoderLimit"
         );
     }
 

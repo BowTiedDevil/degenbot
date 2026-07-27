@@ -231,6 +231,12 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     )?;
     #[cfg(feature = "bot")]
     m.add(
+        "HighFeePoolRejectedError",
+        m.py()
+            .get_type::<crate::bot::engine::HighFeePoolRejectedError>(),
+    )?;
+    #[cfg(feature = "bot")]
+    m.add(
         "PoolAlreadyRegisteredError",
         m.py()
             .get_type::<crate::bot::engine::PoolAlreadyRegisteredError>(),
