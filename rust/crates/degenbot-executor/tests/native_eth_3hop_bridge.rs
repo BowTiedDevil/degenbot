@@ -27,25 +27,11 @@ const OUT_C: u128 = 1_000_000_000_000_000_000;
 
 /// V4-V4-V4 with a native→WETH gap at the A→B boundary (`bridge_ab` = Wrap).
 ///
-/// Hop A: native→USDC (c0=native, c1=USDC, zfo=true → input=native, output=USDC)
-///   wait — that outputs USDC, not native. Let me fix:
-/// Hop A: USDC→native (c0=USDC, c1=native, zfo=false → input=c1=native...
-///   no, zfo=false → input=currency1, output=currency0. So input=native? No.
-///
-/// zfo=true → input=currency0, output=currency1
-/// zfo=false → input=currency1, output=currency0
-///
-/// For hop A to OUTPUT native:
-///   zfo=true → output=currency1=native → c0=USDC, c1=NATIVE, zfo=true
-///   (input=USDC, output=native)
-/// For hop B to INPUT WETH:
-///   zfo=true → input=currency0=WETH → c0=WETH, c1=USDC, zfo=true
-///   (input=WETH, output=USDC)
-/// → `bridge_ab` = `at_boundary(output_A=native`, `input_B=WETH`) = Wrap ✓
-///
-/// Hop C: input=USDC (no gap, B outputs USDC, C inputs USDC)
-///   zfo=true → c0=USDC, c1=WETH, zfo=true (input=USDC, output=WETH)
-/// → `bridge_bc` = `at_boundary(USDC`, USDC) = None ✓
+/// Hop A: `c0=USDC, c1=NATIVE, zfo=true` → input=USDC, output=native.
+/// Hop B: `c0=WETH, c1=USDC, zfo=true` → input=WETH, output=USDC.
+///   → `bridge_ab = at_boundary(native, WETH) = Wrap` ✓
+/// Hop C: `c0=USDC, c1=WETH, zfo=true` → input=USDC, output=WETH.
+///   → `bridge_bc = at_boundary(USDC, USDC) = None` ✓
 #[test]
 fn v4_v4_v4_wrap_at_ab_boundary() {
     let hop_a = V4HopInfo {
@@ -247,47 +233,124 @@ fn v4_v4_v4_unwrap_at_ab_boundary() {
     assert_eq!(rust, Some(expected));
 }
 
-/// V4-V4-V4 with gaps at BOTH boundaries (Wrap at A→B + Unwrap at B→C).
+/// V4-V4-V4 with gaps at BOTH boundaries (Wrap at A→B + Wrap at B→C).
 ///
-/// Hop A: USDC→native (output native) → bridge Wrap at A→B
-/// Hop B: WETH→USDC (input WETH, output USDC)
-/// Hop C: native→WETH (input native) → bridge Unwrap at B→C
-///   wait: B outputs USDC, C inputs native → that's a gap but USDC≠native...
-///   The bridge only makes sense when the currency is the SAME token in
-///   different representation (native ETH ↔ WETH). USDC→native is a different
-///   token, not a representation bridge. The path graph would never produce
-///   this. Let me construct a valid double-gap:
+/// Requires hop B to be a native/WETH pool so both its input (WETH) and
+/// output (native) sit on the native↔WETH axis. Economically degenerate
+/// (a native/WETH pool is a trivial wrap), so the path graph rarely
+/// produces this — but the encoder must still handle it: the two bridges
+/// are independent and the code paths compose.
 ///
-/// Hop A: USDC→native (output native)
-/// Hop B: WETH→native (input WETH, output native) → `bridge_ab` = Wrap (native→WETH)
-/// Hop C: native→WETH (input native) → `bridge_bc` = Unwrap (native→native? No.)
-///   B outputs native, C inputs native → no gap. Hmm.
-///
-/// For a double gap:
-/// Hop A: USDC→native (output native)
-/// Hop B: WETH→USDC (input WETH) → `bridge_ab` = Wrap (native→WETH)
-///   B outputs USDC
-/// Hop C: native→WETH (input native) → `bridge_bc` = `at_boundary(USDC`, native) = Unwrap
-///   But USDC→native is NOT a valid bridge (different tokens). The path graph
-///   would never produce adjacent hops with different tokens. So a double-gap
-///   with two DIFFERENT currencies doesn't happen.
-///
-/// A true double-gap requires: A outputs native, B inputs WETH + B outputs
-/// WETH, C inputs native. OR A outputs WETH, B inputs native + B outputs
-/// native, C inputs WETH. But a V4 pool has two currencies — if B inputs WETH
-/// and outputs WETH, the pool is WETH/WETH which doesn't exist. So a double-gap
-/// in V4-V4-V4 requires different intermediate currencies, which the path graph
-/// would never connect. This test is therefore N/A — skip it.
+/// Hop A: `c0=USDC, c1=NATIVE, zfo=true` → input=USDC, output=native.
+/// Hop B: `c0=WETH, c1=NATIVE, zfo=true` → input=WETH, output=native.
+///   → `bridge_ab = at_boundary(native, WETH) = Wrap` ✓
+/// Hop C: `c0=WETH, c1=USDC, zfo=true` → input=WETH, output=USDC.
+///   → `bridge_bc = at_boundary(native, WETH) = Wrap` ✓
 #[test]
-fn v4_v4_v4_double_gap_is_path_graph_impossible() {
-    // A double native↔WETH gap in a 3-hop V4-V4-V4 path would require hop B
-    // to both input and output the same currency in different representations,
-    // which means a native/WETH pool — possible but the second gap requires
-    // B output ≠ C input, which breaks the path-graph invariant. This test
-    // documents that the double-gap path is unreachable, so the single-gap
-    // tests above are sufficient coverage for the bridge logic.
-    // (If the path graph ever produces such a path, the encoder handles it
-    // correctly — the two bridges are independent and the code path composes.)
+fn v4_v4_v4_double_gap_both_boundaries_bridge() {
+    let hop_a = V4HopInfo {
+        pool_manager_address: PM,
+        pool_id_hex: "0x1111".to_string(),
+        currency0_address: USDC,
+        currency1_address: NATIVE,
+        fee: 500,
+        tick_spacing: 10,
+        hook_address: Address::ZERO,
+        zfo: true, // input=USDC, output=native
+    };
+    let hop_b = V4HopInfo {
+        pool_manager_address: PM,
+        pool_id_hex: "0x2222".to_string(),
+        currency0_address: WETH,
+        currency1_address: NATIVE,
+        fee: 3000,
+        tick_spacing: 60,
+        hook_address: Address::ZERO,
+        zfo: true, // input=WETH, output=native
+    };
+    let hop_c = V4HopInfo {
+        pool_manager_address: PM,
+        pool_id_hex: "0x3333".to_string(),
+        currency0_address: WETH,
+        currency1_address: USDC,
+        fee: 500,
+        tick_spacing: 10,
+        hook_address: Address::ZERO,
+        zfo: true, // input=WETH, output=USDC
+    };
+
+    let rust = encode_cmd_3_hop(
+        &PathInfo::new(vec![
+            HopInfo::V4(hop_a),
+            HopInfo::V4(hop_b),
+            HopInfo::V4(hop_c),
+        ]),
+        OPTIMAL_INPUT,
+        &[OUT_A, OUT_B, OUT_C],
+        EXECUTOR,
+        PM,
+        WETH,
+        EncodeOptions::default(),
+    );
+
+    let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
+    let usdc_idx = at.add(USDC).unwrap();
+    let native_idx = SENTINEL_NATIVE;
+    let weth_idx = SENTINEL_WETH;
+    let executor_idx = SENTINEL_SELF;
+    let zero_idx = SENTINEL_NATIVE;
+
+    let mut inner = Vec::new();
+    // 1. V4_SWAP_COMPACT(A) — USDC→native
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            usdc_idx,
+            native_idx,
+            500,
+            10,
+            zero_idx,
+            true,
+            OPTIMAL_INPUT,
+        )
+        .unwrap(),
+    );
+    // 2. bridge_ab = Wrap: TAKE(native) + WETH_DEPOSIT(OUT_A)
+    inner.extend_from_slice(
+        &encoders::enc_v4_take_compact(native_idx, executor_idx, OUT_A).unwrap(),
+    );
+    inner.extend_from_slice(&encoders::enc_weth_deposit(alloy::primitives::U256::from(
+        OUT_A,
+    )));
+    // 3. V4_SWAP_COMPACT(B) — WETH→native, amount=OUT_A
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(weth_idx, native_idx, 3000, 60, zero_idx, true, OUT_A)
+            .unwrap(),
+    );
+    // 4. V4_SETTLE_DELTA(WETH) — B's input (post-wrap)
+    inner.extend_from_slice(&encoders::enc_v4_settle_delta(weth_idx));
+    // 5. bridge_bc = Wrap: TAKE(native) + WETH_DEPOSIT(OUT_B)
+    inner.extend_from_slice(
+        &encoders::enc_v4_take_compact(native_idx, executor_idx, OUT_B).unwrap(),
+    );
+    inner.extend_from_slice(&encoders::enc_weth_deposit(alloy::primitives::U256::from(
+        OUT_B,
+    )));
+    // 6. V4_SWAP_COMPACT(C) — WETH→USDC, amount=OUT_B
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(weth_idx, usdc_idx, 500, 10, zero_idx, true, OUT_B).unwrap(),
+    );
+    // 7. V4_SETTLE_DELTA(WETH) — C's input (post-wrap)
+    inner.extend_from_slice(&encoders::enc_v4_settle_delta(weth_idx));
+    // 8. Profit capture: output=USDC → TAKE_DELTA(USDC, executor)
+    inner.extend_from_slice(&encoders::enc_v4_take_delta(usdc_idx, executor_idx));
+    // 9. V4_SETTLE_ALL
+    inner.extend_from_slice(&encoders::enc_v4_settle_all());
+
+    let commands = encoders::enc_v4_unlock(&inner).unwrap();
+    let mut expected = encoders::enc_preamble(&at);
+    expected.extend_from_slice(&commands);
+
+    assert_eq!(rust, Some(expected));
 }
 
 /// V4-V4-V4 with a native→WETH gap at the B→C boundary (`bridge_bc` = Wrap).

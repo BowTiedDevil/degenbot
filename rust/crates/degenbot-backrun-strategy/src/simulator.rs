@@ -516,18 +516,25 @@ fn v4_output_currency(hop: &V4HopInfo) -> Address {
 }
 
 /// Scan `hops` for a V4↔V2 adjacency that needs a representation bridge
-/// (native on the V4 side, WETH on the V2 side) — the case the 3-hop
-/// composers do NOT encode (ergo TGXBCE). Returns a human-readable
-/// description of the gap when one exists; `None` otherwise.
+/// (native on the V4 side, WETH on the V2 side) — the one path shape the
+/// 3-hop composers do NOT encode. Returns a human-readable description of
+/// the gap when one exists; `None` otherwise.
 ///
-/// Native-ETH and WETH are economically the same token but V4 tracks them as
-/// distinct delta currencies (NATIVE_ADDRESS vs the WETH ERC20), while V2
-/// pools hold the WETH ERC20 token directly. A path whose adjacency is
-/// V4(native) → V2(WETH) or V2(WETH) → V4(native) needs an explicit
-/// `WETH_DEPOSIT` / `WETH_WITHDRAW` opcode that the 3-hop composers #[allow]
-/// (they only handle native/WETH identical to the boundary token).
+/// Native-ETH and WETH are economically the same token but V4 tracks them
+/// as distinct delta currencies (`NATIVE_ADDRESS` vs the WETH ERC-20), while
+/// V2 pools hold the WETH ERC-20 token directly. A path whose adjacency is
+/// V4(native) → V2(WETH) or V2(WETH) → V4(native) would need an explicit
+/// `WETH_DEPOSIT` / `WETH_WITHDRAW` opcode bridging the representation gap —
+/// which the 2-hop `encode_cmd_v4_v2` emits but the 3-hop V4-V2 / V2-V4
+/// composers do not (the V2 callback's received-token accounting would need
+/// per-composer sync/settle restructuring to port the 2-hop bridge).
 ///
-/// The 2-hop `encode_cmd_v4_v2` bridges this gap; the 3-hop twins don't.
+/// Empirical status (ergo TGXBCE, resolved): across ~148 mainnet blocks and
+/// ~1325 simulated V4-containing candidates, zero such paths materialized —
+/// the pathfinder's token-graph adjacency never paired a native-currency V4
+/// pool against a WETH-input V2 pool at an interior boundary. This probe
+/// stays in-tree (gated by `DEGENBOT_BRIDGE_PROBE`) so a future materialization
+/// is observed rather than silently dropping as `encode-failed`.
 #[must_use]
 fn scan_for_v4_v2_boundary_bridge(hops: &[HopInfo], weth_address: Address) -> Option<String> {
     const NATIVE: Address = Address::ZERO;
@@ -805,13 +812,15 @@ where
         }
     }
 
-    // TGXBCE investigation: scan for a V4↔V2 boundary-bridge signature
+    // TGXBCE observation probe: scan for a V4↔V2 boundary-bridge signature
     // (V4 side native, V2 side WETH) — a path shape the 3-hop composers do
     // NOT encode (the 2-hop `encode_cmd_v4_v2` handles it via
     // `V4_TAKE(native,self) + WETH_DEPOSIT + V2_SWAP_COMPACT`, but the bridge
-    // does not trivially port to 3-hop). This probe logs any such path so we
-    // can tell whether a mainnet boundary-bridge materializes; gated by the
-    // `DEGENBOT_BRIDGE_PROBE` env var so it is zero-cost in production.
+    // does not trivially port to 3-hop — the V2 callback's received-token
+    // accounting needs restructuring). Empirically unobserved across ~148
+    // mainnet blocks (TGXBCE resolved); this probe stays gated by
+    // `DEGENBOT_BRIDGE_PROBE` so a future materialization surfaces here
+    // rather than silently dropping as `encode-failed`.
     if std::env::var_os("DEGENBOT_BRIDGE_PROBE").is_some() {
         if let Some(desc) = scan_for_v4_v2_boundary_bridge(&path.path_info.hops, ctx.weth_address) {
             log::info!(

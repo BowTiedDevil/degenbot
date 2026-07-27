@@ -24,7 +24,7 @@
 //! the WETH↔native boundary, an explicit `WETH_DEPOSIT` (wrap) or
 //! `WETH_WITHDRAW` (unwrap) bridges the representation gap inside `V4_UNLOCK`.
 
-// Cosmatic lints: the composer ports mirror Python oracle names that share
+// Cosmetic lints: the composer ports mirror Python oracle names that share
 // prefixes (mid_currency_a/b); many locals look "unused" on one branch only;
 // and the dispatch API is wide (8 args) to match the Python oracle's kwargs.
 #![allow(
@@ -213,6 +213,32 @@ impl CurrencyBridge {
             (true, false) => Self::Wrap,
             (false, true) => Self::Unwrap,
             _ => Self::None,
+        }
+    }
+
+    /// The address-table indices a bridge boundary needs: `(take_idx,
+    /// settle_idx)`.
+    ///
+    /// `take_idx` is the currency to `V4_TAKE_COMPACT` *from* the PoolManager
+    /// (the source side of the representation gap: native for `Wrap`, WETH
+    /// for `Unwrap`). `settle_idx` is the currency to `V4_SETTLE_DELTA` *into*
+    /// the PoolManager after the downstream swap runs (the consumed side:
+    /// WETH for `Wrap`, native for `Unwrap`) — the swap debited the opposite
+    /// representation, so the executor settles the one it now holds.
+    ///
+    /// Call only when [`needs_bridge`] is true; for [`Self::None`] both
+    /// indices are `0` (unused). `weth_idx` / `native_idx` are the
+    /// address-table sentinels (typically `SENTINEL_WETH` / `SENTINEL_NATIVE`).
+    ///
+    /// [`needs_bridge`]: Self::needs_bridge
+    #[must_use]
+    pub const fn bridge_indices(self, weth_idx: u8, native_idx: u8) -> (u8, u8) {
+        match self {
+            Self::None => (0, 0), // caller guards `needs_bridge()`
+            // Wrap: take native out, deposit as WETH, swap consumes WETH → settle WETH.
+            Self::Wrap => (native_idx, weth_idx),
+            // Unwrap: take WETH out, withdraw to native, swap consumes native → settle native.
+            Self::Unwrap => (weth_idx, native_idx),
         }
     }
 }
@@ -4272,13 +4298,10 @@ fn three_hop_v4_v4_v4(
         )
         .ok()?;
 
-        // Hop B
+        // Hop B — bridge the A→B representation gap if present, else let
+        // V4_SWAP_DYNAMIC read the prior swap's PM delta.
         if bridge_ab.needs_bridge() {
-            let take_idx = match bridge_ab {
-                CurrencyBridge::Wrap => SENTINEL_NATIVE,
-                CurrencyBridge::Unwrap => weth_idx,
-                CurrencyBridge::None => unreachable!("bridge_ab.needs_bridge()"),
-            };
+            let (take_idx, b_input_idx) = bridge_ab.bridge_indices(weth_idx, SENTINEL_NATIVE);
             emit_currency_bridge(&mut inner, bridge_ab, take_idx, out_a)?;
             inner.extend_from_slice(
                 &encoders::enc_v4_swap_compact(
@@ -4286,11 +4309,6 @@ fn three_hop_v4_v4_v4(
                 )
                 .ok()?,
             );
-            let b_input_idx = match bridge_ab {
-                CurrencyBridge::Wrap => weth_idx,
-                CurrencyBridge::Unwrap => SENTINEL_NATIVE,
-                CurrencyBridge::None => unreachable!(),
-            };
             inner.extend_from_slice(&encoders::enc_v4_settle_delta(b_input_idx));
         } else {
             inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
@@ -4298,13 +4316,9 @@ fn three_hop_v4_v4_v4(
             ));
         }
 
-        // Hop C
+        // Hop C — same bridge logic as hop B, against the B→C boundary.
         if bridge_bc.needs_bridge() {
-            let take_idx = match bridge_bc {
-                CurrencyBridge::Wrap => SENTINEL_NATIVE,
-                CurrencyBridge::Unwrap => weth_idx,
-                CurrencyBridge::None => unreachable!("bridge_bc.needs_bridge()"),
-            };
+            let (take_idx, c_input_idx) = bridge_bc.bridge_indices(weth_idx, SENTINEL_NATIVE);
             emit_currency_bridge(&mut inner, bridge_bc, take_idx, out_b)?;
             inner.extend_from_slice(
                 &encoders::enc_v4_swap_compact(
@@ -4312,11 +4326,6 @@ fn three_hop_v4_v4_v4(
                 )
                 .ok()?,
             );
-            let c_input_idx = match bridge_bc {
-                CurrencyBridge::Wrap => weth_idx,
-                CurrencyBridge::Unwrap => SENTINEL_NATIVE,
-                CurrencyBridge::None => unreachable!(),
-            };
             inner.extend_from_slice(&encoders::enc_v4_settle_delta(c_input_idx));
         } else {
             inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
@@ -4429,6 +4438,36 @@ mod tests {
         assert_eq!(inner[1], native_idx);
         assert_eq!(inner[2], SENTINEL_SELF);
         assert_eq!(inner[15], 0x12); // CMD_WETH_DEPOSIT
+    }
+
+    #[test]
+    fn currency_bridge_indices_wrap_takes_native_settles_weth() {
+        // Wrap = native out, WETH in: take native from PM, settle WETH after the swap.
+        let (take, settle) = CurrencyBridge::Wrap.bridge_indices(SENTINEL_WETH, SENTINEL_NATIVE);
+        assert_eq!(take, SENTINEL_NATIVE, "Wrap takes native out of the PM");
+        assert_eq!(
+            settle, SENTINEL_WETH,
+            "Wrap settles WETH (the swap consumed WETH)"
+        );
+    }
+
+    #[test]
+    fn currency_bridge_indices_unwrap_takes_weth_settles_native() {
+        // Unwrap = WETH out, native in: take WETH from PM, settle native after the swap.
+        let (take, settle) = CurrencyBridge::Unwrap.bridge_indices(SENTINEL_WETH, SENTINEL_NATIVE);
+        assert_eq!(take, SENTINEL_WETH, "Unwrap takes WETH out of the PM");
+        assert_eq!(
+            settle, SENTINEL_NATIVE,
+            "Unwrap settles native (the swap consumed native)"
+        );
+    }
+
+    #[test]
+    fn currency_bridge_indices_none_is_unused_but_well_defined() {
+        // None never reaches `bridge_indices` (caller guards `needs_bridge()`);
+        // the method still returns a deterministic placeholder for safety.
+        let (take, settle) = CurrencyBridge::None.bridge_indices(SENTINEL_WETH, SENTINEL_NATIVE);
+        assert_eq!((take, settle), (0, 0));
     }
 
     #[test]
