@@ -4,12 +4,11 @@ Created at runtime by ``add_executor_module`` in the PyO3 wrapper crate
 (``degenbot-python/src/executor/mod.rs``). Holds the command-stream encoding
 + storage-slot helper functions over the ``degenbot-executor`` core crate.
 
-WEFVGE: the standalone ``encode_cmd_stream`` / ``v4_input_is_native`` /
-``v4_output_is_native`` pyfunctions are retired — the encode path moved to the
-Rust core (``dispatch_profitable_py`` calls ``composers::encode_cmd_stream``
-internally per A5), and the candidate resolves its ``composers::PathInfo``
-from a registered ``path_id`` via ``PyArbitrageEngine.path_info_for_core``
-(NXM2BF). No Python ``PathInfo`` dataclass crosses this seam anymore.
+The encode path lives in the Rust core (ADR-005):
+``dispatch_profitable_py`` calls ``composers::encode_cmd_stream``, and the
+candidate resolves its ``composers::PathInfo`` from a registered ``path_id``
+via ``PyArbitrageEngine.path_info_for_core``. No Python ``PathInfo``
+dataclass crosses this seam — ``path_infos`` returns plain dicts.
 """
 
 from typing import Any

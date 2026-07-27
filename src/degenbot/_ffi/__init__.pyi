@@ -196,16 +196,11 @@ class CancelHandle:
 
 # ------------------------------------------------------------------
 # Thin PyO3 wrappers over `degenbot_executor` (the cmd-executor core).
-# The Python encoder (`examples/eth_backrun_helpers.py::encode_cmd_stream` +
-# `examples/cmd_stream.py`) was deleted in the §4.3 oracle-retirement cutover;
-# byte-for-byte parity (§4.2) is pinned by golden-file tests in
-# `cargo test -p degenbot-executor`. The GIL is released during the warmup-slot
-# compute. WEFVGE: the standalone `encode_cmd_stream` / `v4_input_is_native` /
-# `v4_output_is_native` PyO3 pyfunctions are retired (the encode path moved
-# to the Rust core — `dispatch_profitable_py` calls `composers::encode_cmd_stream`
-# internally per A5; the candidate resolves `composers::PathInfo` from `path_id`
-# via `path_info_for_core` per NXM2BF). The Python `hop_info` dataclasses are
-# deleted (no consumer remains — `path_infos` returns plain dicts).
+# The encode path lives in the Rust core: `dispatch_profitable_py` calls
+# `composers::encode_cmd_stream` (ADR-005), and the candidate resolves
+# `composers::PathInfo` from `path_id` via `path_info_for_core`. Rust-side
+# output is pinned by golden-file tests in `cargo test -p degenbot-executor`.
+# The GIL is released during the warmup-slot compute.
 
 type WarmupDict = dict[str, dict[str, Any]]
 
