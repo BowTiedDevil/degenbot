@@ -11,7 +11,8 @@
 #![allow(
     clippy::too_many_lines,
     clippy::unreadable_literal,
-    clippy::needless_pass_by_value
+    clippy::needless_pass_by_value,
+    clippy::similar_names
 )]
 
 use alloy::primitives::{address, Address, U256};
@@ -479,7 +480,50 @@ fn parity_v4v3_native_out_deposit() {
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    assert_eq!(rust, Some(hx(b"\x00\xa0\xb8\x69\x91\xc6\x21\x8b\x36\xc1\xd1\x9d\x4a\x2e\x9e\xb0\xce\x36\x06\xeb\x48\x00\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\xff\x50\x59\x40\x00\xff\x01\xf4\x00\x0a\xff\x01\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\x52\xff\xfd\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x12\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x30\x01\x01\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\xfd\x00\x56\x00\x57")));
+    // V4 outputs native ETH → wrap to WETH for V3 (auto-pay); settle V4's
+    // USDC input debt last. All inside V4_UNLOCK.
+    let pool_v3 = address!("1111111111111111111111111111111111111111");
+    let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
+    let zero_idx = SENTINEL_NATIVE;
+    let c0_v4_idx = at.add(USDC).unwrap(); // 0
+    let c1_v4_idx = at.add(Address::ZERO).unwrap(); // SENTINEL_NATIVE
+    let v3_idx = at.add(pool_v3).unwrap(); // 1
+    let native_idx = at.add(Address::ZERO).unwrap(); // SENTINEL_NATIVE
+    let mut inner = Vec::new();
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            c0_v4_idx,
+            c1_v4_idx,
+            500,
+            10,
+            zero_idx,
+            true,
+            2_000_000_000u128,
+        )
+        .unwrap(),
+    );
+    inner.extend_from_slice(
+        &encoders::enc_v4_take_compact(native_idx, SENTINEL_SELF, 1_000_000_000_000_000_000u128)
+            .unwrap(),
+    );
+    inner.extend_from_slice(&encoders::enc_weth_deposit(U256::from(
+        1_000_000_000_000_000_000u128,
+    )));
+    inner.extend_from_slice(
+        &encoders::enc_v3_swap_compact(
+            v3_idx,
+            true,
+            1_000_000_000_000_000_000u128,
+            SENTINEL_SELF,
+            &[],
+        )
+        .unwrap(),
+    );
+    let input_idx = c0_v4_idx; // zfo → input is currency0 = USDC
+    inner.extend_from_slice(&encoders::enc_v4_settle_delta(input_idx));
+    inner.extend_from_slice(&encoders::enc_v4_settle_all());
+    let expected = v4_envelope(&at, &inner);
+    assert_eq!(rust, Some(expected));
 }
 
 #[test]
@@ -512,7 +556,40 @@ fn parity_v4v3_erc20_out_autopay() {
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    assert_eq!(rust, Some(hx(b"\x00\xa0\xb8\x69\x91\xc6\x21\x8b\x36\xc1\xd1\x9d\x4a\x2e\x9e\xb0\xce\x36\x06\xeb\x48\x00\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\xff\x50\x38\x40\xfe\x00\x0b\xb8\x00\x3c\xff\x01\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x52\x00\xfd\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\x30\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\xfd\x00\x56\xfe\x57")));
+    // V4 outputs USDC (ERC-20, currency1) → take to executor; V3 auto-pays
+    // from that balance; settle V4's WETH input debt.
+    let pool_v3 = address!("2222222222222222222222222222222222222222");
+    let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
+    let zero_idx = SENTINEL_NATIVE;
+    let c0_v4_idx = at.add(WETH).unwrap(); // SENTINEL_WETH (currency0 = WETH)
+    let c1_v4_idx = at.add(USDC).unwrap(); // 0 (currency1 = USDC)
+    let v3_idx = at.add(pool_v3).unwrap(); // 1
+    let weth_idx = SENTINEL_WETH;
+    let mut inner = Vec::new();
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            c0_v4_idx,
+            c1_v4_idx,
+            3000,
+            60,
+            zero_idx,
+            true,
+            1_000_000_000_000_000_000u128,
+        )
+        .unwrap(),
+    );
+    let forward_idx = c1_v4_idx; // zfo → output is currency1 = USDC
+    inner.extend_from_slice(
+        &encoders::enc_v4_take_compact(forward_idx, SENTINEL_SELF, 2_000_000_000u128).unwrap(),
+    );
+    inner.extend_from_slice(
+        &encoders::enc_v3_swap_compact(v3_idx, true, 2_000_000_000u128, SENTINEL_SELF, &[])
+            .unwrap(),
+    );
+    inner.extend_from_slice(&encoders::enc_v4_settle_delta(weth_idx));
+    inner.extend_from_slice(&encoders::enc_v4_settle_all());
+    let expected = v4_envelope(&at, &inner);
+    assert_eq!(rust, Some(expected));
 }
 
 #[test]
@@ -545,7 +622,45 @@ fn parity_v4v3_erc20_out_v4_in_native_unwrap() {
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    assert_eq!(rust, Some(hx(b"\x00\xa0\xb8\x69\x91\xc6\x21\x8b\x36\xc1\xd1\x9d\x4a\x2e\x9e\xb0\xce\x36\x06\xeb\x48\x00\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\xff\x50\x59\x40\xff\x00\x0b\xb8\x00\x3c\xff\x01\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x52\x00\xfd\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\x30\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\xfd\x00\x13\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x56\xff\x57")));
+    // V4 input is native ETH (currency0=NATIVE, zfo); output is USDC → take
+    // to executor for V3 auto-pay. V4's native debt settled by unwrapping
+    // WETH first.
+    let pool_v3 = address!("3333333333333333333333333333333333333333");
+    let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
+    let zero_idx = SENTINEL_NATIVE;
+    let c0_v4_idx = at.add(Address::ZERO).unwrap(); // SENTINEL_NATIVE
+    let c1_v4_idx = at.add(USDC).unwrap(); // 0
+    let v3_idx = at.add(pool_v3).unwrap(); // 1
+    let mut inner = Vec::new();
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            c0_v4_idx,
+            c1_v4_idx,
+            3000,
+            60,
+            zero_idx,
+            true,
+            1_000_000_000_000_000_000u128,
+        )
+        .unwrap(),
+    );
+    let forward_idx = c1_v4_idx; // zfo → output is currency1 = USDC
+    inner.extend_from_slice(
+        &encoders::enc_v4_take_compact(forward_idx, SENTINEL_SELF, 2_000_000_000u128).unwrap(),
+    );
+    inner.extend_from_slice(
+        &encoders::enc_v3_swap_compact(v3_idx, true, 2_000_000_000u128, SENTINEL_SELF, &[])
+            .unwrap(),
+    );
+    // V4 input is native → unwrap WETH then settle the native delta.
+    let input_idx = c0_v4_idx; // zfo → input is currency0 = NATIVE
+    inner.extend_from_slice(&encoders::enc_weth_withdraw(U256::from(
+        1_000_000_000_000_000_000u128,
+    )));
+    inner.extend_from_slice(&encoders::enc_v4_settle_delta(input_idx));
+    inner.extend_from_slice(&encoders::enc_v4_settle_all());
+    let expected = v4_envelope(&at, &inner);
+    assert_eq!(rust, Some(expected));
 }
 
 #[test]
@@ -578,7 +693,57 @@ fn parity_v3v4_v4_in_weth() {
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    assert_eq!(rust, Some(hx(b"\x00\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x00\xa0\xb8\x69\x91\xc6\x21\x8b\x36\xc1\xd1\x9d\x4a\x2e\x9e\xb0\xce\x36\x06\xeb\x48\xff\x30\x00\x01\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\xfd\x48\x50\x37\x54\x01\x10\x01\xfc\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\x55\x40\x01\xfe\x01\xf4\x00\x0a\xff\x01\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\x52\xfe\xfd\x00\x00\x00\x00\x1b\xc4\xfa\xe5\xf3\x8e\x80\x00\x57\x10\xfe\x00\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00")));
+    // V4 needs WETH (ERC-20 input) — standard sync+transfer+settle+swap+take
+    // inside V4_UNLOCK, nested as V3's forward_data callback. V3 amount is
+    // optimal_input (the WETH into V3).
+    let pool_v3 = address!("4444444444444444444444444444444444444444");
+    let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
+    let pm_idx = at.add(PM).unwrap(); // SENTINEL_PM
+    let zero_idx = SENTINEL_NATIVE;
+    let v3_idx = at.add(pool_v3).unwrap(); // 0
+    let c0_v4_idx = at.add(USDC).unwrap(); // 1
+    let c1_v4_idx = at.add(WETH).unwrap(); // SENTINEL_WETH
+    let weth_idx = SENTINEL_WETH;
+    let forward_idx = c0_v4_idx; // V3 forward token = USDC, already in table
+    let mut v4_inner = Vec::new();
+    v4_inner.extend_from_slice(&encoders::enc_v4_sync(forward_idx));
+    v4_inner.extend_from_slice(
+        &encoders::enc_erc20_transfer(forward_idx, pm_idx, 2_000_000_000u128).unwrap(),
+    );
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle());
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            c0_v4_idx,
+            c1_v4_idx,
+            500,
+            10,
+            zero_idx,
+            true,
+            2_000_000_000u128,
+        )
+        .unwrap(),
+    );
+    let output_idx = c1_v4_idx; // zfo → output is currency1 = WETH
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_take_compact(output_idx, SENTINEL_SELF, 2_001_000_000_000_000_000u128)
+            .unwrap(),
+    );
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
+    let mut callback = encoders::enc_v4_unlock(&v4_inner).unwrap();
+    callback.extend_from_slice(
+        &encoders::enc_erc20_transfer(weth_idx, v3_idx, 1_000_000_000_000_000_000u128).unwrap(),
+    );
+    let commands = encoders::enc_v3_swap_compact(
+        v3_idx,
+        true,
+        1_000_000_000_000_000_000u128,
+        SENTINEL_SELF,
+        &callback,
+    )
+    .unwrap();
+    let mut expected = encoders::enc_preamble(&at);
+    expected.extend_from_slice(&commands);
+    assert_eq!(rust, Some(expected));
 }
 
 #[test]
@@ -611,7 +776,54 @@ fn parity_v4v2_native_out_deposit() {
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    assert_eq!(rust, Some(hx(b"\x00\xa0\xb8\x69\x91\xc6\x21\x8b\x36\xc1\xd1\x9d\x4a\x2e\x9e\xb0\xce\x36\x06\xeb\x48\x00\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\xff\x50\x6a\x40\x00\xff\x01\xf4\x00\x0a\xff\x01\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\x52\xff\xfd\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x12\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x20\x01\x01\x00\x00\x00\x00\x1b\xc4\xfa\xe5\xf3\x8e\x80\x00\xfd\x00\x1e\x0f\x10\xfe\x01\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x56\x00\x57")));
+    // V4 outputs native ETH → wrap to WETH for V2 (callback pays WETH to V2);
+    // settle V4's USDC input debt last.
+    let pool_v2 = address!("6666666666666666666666666666666666666666");
+    let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
+    let zero_idx = SENTINEL_NATIVE;
+    let c0_v4_idx = at.add(USDC).unwrap(); // 0
+    let c1_v4_idx = at.add(Address::ZERO).unwrap(); // SENTINEL_NATIVE
+    let v2_idx = at.add(pool_v2).unwrap(); // 1
+    let weth_idx = SENTINEL_WETH;
+    let native_idx = at.add(Address::ZERO).unwrap(); // SENTINEL_NATIVE
+    let mut inner = Vec::new();
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            c0_v4_idx,
+            c1_v4_idx,
+            500,
+            10,
+            zero_idx,
+            true,
+            2_000_000_000u128,
+        )
+        .unwrap(),
+    );
+    inner.extend_from_slice(
+        &encoders::enc_v4_take_compact(native_idx, SENTINEL_SELF, 1_000_000_000_000_000_000u128)
+            .unwrap(),
+    );
+    inner.extend_from_slice(&encoders::enc_weth_deposit(U256::from(
+        1_000_000_000_000_000_000u128,
+    )));
+    let v2_cb_cmds =
+        encoders::enc_erc20_transfer(weth_idx, v2_idx, 1_000_000_000_000_000_000u128).unwrap();
+    inner.extend_from_slice(
+        &encoders::enc_v2_swap_compact(
+            v2_idx,
+            true,
+            2_001_000_000_000_000_000u128,
+            SENTINEL_SELF,
+            30,
+            &v2_cb_cmds,
+        )
+        .unwrap(),
+    );
+    let input_idx = c0_v4_idx; // zfo → input is currency0 = USDC
+    inner.extend_from_slice(&encoders::enc_v4_settle_delta(input_idx));
+    inner.extend_from_slice(&encoders::enc_v4_settle_all());
+    let expected = v4_envelope(&at, &inner);
+    assert_eq!(rust, Some(expected));
 }
 
 #[test]
@@ -644,7 +856,42 @@ fn parity_v4v2_erc20_out_direct() {
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    assert_eq!(rust, Some(hx(b"\x00\xa0\xb8\x69\x91\xc6\x21\x8b\x36\xc1\xd1\x9d\x4a\x2e\x9e\xb0\xce\x36\x06\xeb\x48\x00\x77\x77\x77\x77\x77\x77\x77\x77\x77\x77\x77\x77\x77\x77\x77\x77\x77\x77\x77\x77\xff\x50\x3d\x40\xfe\x00\x0b\xb8\x00\x3c\xff\x01\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x52\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\x21\x01\x01\xfd\x00\x1e\x54\xfe\x10\xfe\xfc\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x55\x57")));
+    // V4 outputs USDC (ERC-20) → take directly to V2 pool; V2_SWAP_CALC reads
+    // the excess. V4 input is WETH → sync+transfer+settle pays the debt.
+    let pool_v2 = address!("7777777777777777777777777777777777777777");
+    let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
+    let pm_idx = at.add(PM).unwrap(); // SENTINEL_PM
+    let zero_idx = SENTINEL_NATIVE;
+    let c0_v4_idx = at.add(WETH).unwrap(); // SENTINEL_WETH
+    let c1_v4_idx = at.add(USDC).unwrap(); // 0
+    let v2_idx = at.add(pool_v2).unwrap(); // 1
+    let weth_idx = SENTINEL_WETH;
+    let mut inner = Vec::new();
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            c0_v4_idx,
+            c1_v4_idx,
+            3000,
+            60,
+            zero_idx,
+            true,
+            1_000_000_000_000_000_000u128,
+        )
+        .unwrap(),
+    );
+    let forward_idx = c1_v4_idx; // zfo → output is currency1 = USDC
+    inner.extend_from_slice(
+        &encoders::enc_v4_take_compact(forward_idx, v2_idx, 2_000_000_000u128).unwrap(),
+    );
+    inner.extend_from_slice(&encoders::enc_v2_swap_calc(v2_idx, true, SENTINEL_SELF, 30));
+    inner.extend_from_slice(&encoders::enc_v4_sync(weth_idx));
+    inner.extend_from_slice(
+        &encoders::enc_erc20_transfer(weth_idx, pm_idx, 1_000_000_000_000_000_000u128).unwrap(),
+    );
+    inner.extend_from_slice(&encoders::enc_v4_settle());
+    inner.extend_from_slice(&encoders::enc_v4_settle_all());
+    let expected = v4_envelope(&at, &inner);
+    assert_eq!(rust, Some(expected));
 }
 
 #[test]
@@ -677,7 +924,40 @@ fn parity_v4v2_erc20_out_v4_in_native() {
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    assert_eq!(rust, Some(hx(b"\x00\xa0\xb8\x69\x91\xc6\x21\x8b\x36\xc1\xd1\x9d\x4a\x2e\x9e\xb0\xce\x36\x06\xeb\x48\x00\x88\x88\x88\x88\x88\x88\x88\x88\x88\x88\x88\x88\x88\x88\x88\x88\x88\x88\x88\x88\xff\x50\x4e\x40\xff\x00\x0b\xb8\x00\x3c\xff\x01\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x52\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\x21\x01\x01\xfd\x00\x1e\x13\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x56\xff\x57")));
+    // V4 outputs USDC → take to V2 (V2_SWAP_CALC). V4 input is native ETH →
+    // unwrap WETH then settle the native delta.
+    let pool_v2 = address!("8888888888888888888888888888888888888888");
+    let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
+    let zero_idx = SENTINEL_NATIVE;
+    let c0_v4_idx = at.add(Address::ZERO).unwrap(); // SENTINEL_NATIVE
+    let c1_v4_idx = at.add(USDC).unwrap(); // 0
+    let v2_idx = at.add(pool_v2).unwrap(); // 1
+    let mut inner = Vec::new();
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            c0_v4_idx,
+            c1_v4_idx,
+            3000,
+            60,
+            zero_idx,
+            true,
+            1_000_000_000_000_000_000u128,
+        )
+        .unwrap(),
+    );
+    let forward_idx = c1_v4_idx; // zfo → output is currency1 = USDC
+    inner.extend_from_slice(
+        &encoders::enc_v4_take_compact(forward_idx, v2_idx, 2_000_000_000u128).unwrap(),
+    );
+    inner.extend_from_slice(&encoders::enc_v2_swap_calc(v2_idx, true, SENTINEL_SELF, 30));
+    let input_idx = c0_v4_idx; // zfo → input is currency0 = NATIVE
+    inner.extend_from_slice(&encoders::enc_weth_withdraw(U256::from(
+        1_000_000_000_000_000_000u128,
+    )));
+    inner.extend_from_slice(&encoders::enc_v4_settle_delta(input_idx));
+    inner.extend_from_slice(&encoders::enc_v4_settle_all());
+    let expected = v4_envelope(&at, &inner);
+    assert_eq!(rust, Some(expected));
 }
 
 #[test]
@@ -710,7 +990,64 @@ fn parity_v2v4_v4_out_native() {
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    assert_eq!(rust, Some(hx(b"\x00\x99\x99\x99\x99\x99\x99\x99\x99\x99\x99\x99\x99\x99\x99\x99\x99\x99\x99\x99\x99\x00\xa0\xb8\x69\x91\xc6\x21\x8b\x36\xc1\xd1\x9d\x4a\x2e\x9e\xb0\xce\x36\x06\xeb\x48\xff\x20\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\xfd\x00\x1e\x69\x50\x37\x54\x01\x10\x01\xfc\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\x55\x40\x01\xff\x01\xf4\x00\x0a\xff\x01\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\x52\xff\xfd\x00\x00\x00\x00\x1b\xc4\xfa\xe5\xf3\x8e\x80\x00\x57\x12\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1b\xc4\xfa\xe5\xf3\x8e\x80\x00\x10\xfe\x00\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00")));
+    // V2 flash → V4 (ERC-20 input, native output) nested in V2 callback.
+    // V4 outputs native → wrap to WETH before repaying V2.
+    let pool_v2 = address!("9999999999999999999999999999999999999999");
+    let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
+    let pm_idx = at.add(PM).unwrap(); // SENTINEL_PM
+    let zero_idx = SENTINEL_NATIVE;
+    let v2_idx = at.add(pool_v2).unwrap(); // 0
+    let c0_v4_idx = at.add(USDC).unwrap(); // 1
+    let c1_v4_idx = at.add(Address::ZERO).unwrap(); // SENTINEL_NATIVE
+    let weth_idx = SENTINEL_WETH;
+    let forward_idx = c0_v4_idx; // V2 forward token = USDC
+    let native_idx_out = at.add(Address::ZERO).unwrap(); // SENTINEL_NATIVE
+    let mut v4_inner = Vec::new();
+    v4_inner.extend_from_slice(&encoders::enc_v4_sync(forward_idx));
+    v4_inner.extend_from_slice(
+        &encoders::enc_erc20_transfer(forward_idx, pm_idx, 2_000_000_000u128).unwrap(),
+    );
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle());
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            c0_v4_idx,
+            c1_v4_idx,
+            500,
+            10,
+            zero_idx,
+            true,
+            2_000_000_000u128,
+        )
+        .unwrap(),
+    );
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_take_compact(
+            native_idx_out,
+            SENTINEL_SELF,
+            2_001_000_000_000_000_000u128,
+        )
+        .unwrap(),
+    );
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
+    let mut callback = encoders::enc_v4_unlock(&v4_inner).unwrap();
+    callback.extend_from_slice(&encoders::enc_weth_deposit(U256::from(
+        2_001_000_000_000_000_000u128,
+    )));
+    callback.extend_from_slice(
+        &encoders::enc_erc20_transfer(weth_idx, v2_idx, 1_000_000_000_000_000_000u128).unwrap(),
+    );
+    let commands = encoders::enc_v2_swap_compact(
+        v2_idx,
+        true,
+        2_000_000_000u128,
+        SENTINEL_SELF,
+        30,
+        &callback,
+    )
+    .unwrap();
+    let mut expected = encoders::enc_preamble(&at);
+    expected.extend_from_slice(&commands);
+    assert_eq!(rust, Some(expected));
 }
 
 #[test]
@@ -743,7 +1080,53 @@ fn parity_v2v4_v4_in_native() {
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    assert_eq!(rust, Some(hx(b"\x00\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\x00\xa0\xb8\x69\x91\xc6\x21\x8b\x36\xc1\xd1\x9d\x4a\x2e\x9e\xb0\xce\x36\x06\xeb\x48\xff\x20\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\xfd\x00\x1e\x59\x13\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\x50\x27\x40\xff\x01\x01\xf4\x00\x0a\xff\x01\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\x56\xff\x52\x01\xfd\x00\x00\x00\x00\x1b\xc4\xfa\xe5\xf3\x8e\x80\x00\x57\x10\x01\x00\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00")));
+    // V2 flash → V4 (native ETH input) nested in V2 callback. Unwrap WETH
+    // first, then V4 swap+settle+take, then repay V2.
+    let pool_v2 = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
+    let zero_idx = SENTINEL_NATIVE;
+    let v2_idx = at.add(pool_v2).unwrap(); // 0
+    let c0_v4_idx = at.add(Address::ZERO).unwrap(); // SENTINEL_NATIVE
+    let c1_v4_idx = at.add(USDC).unwrap(); // 1
+    let native_idx_in = at.add(Address::ZERO).unwrap(); // SENTINEL_NATIVE
+    let forward_idx = c1_v4_idx; // V2 forward token = USDC
+    let mut v4_inner = Vec::new();
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            c0_v4_idx,
+            c1_v4_idx,
+            500,
+            10,
+            zero_idx,
+            true,
+            2_000_000_000u128,
+        )
+        .unwrap(),
+    );
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle_delta(native_idx_in));
+    let output_idx = c1_v4_idx; // zfo → output is currency1 = USDC
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_take_compact(output_idx, SENTINEL_SELF, 2_001_000_000_000_000_000u128)
+            .unwrap(),
+    );
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
+    let mut callback = encoders::enc_weth_withdraw(U256::from(2_000_000_000u128));
+    callback.extend_from_slice(&encoders::enc_v4_unlock(&v4_inner).unwrap());
+    callback.extend_from_slice(
+        &encoders::enc_erc20_transfer(forward_idx, v2_idx, 1_000_000_000_000_000_000u128).unwrap(),
+    );
+    let commands = encoders::enc_v2_swap_compact(
+        v2_idx,
+        true,
+        2_000_000_000u128,
+        SENTINEL_SELF,
+        30,
+        &callback,
+    )
+    .unwrap();
+    let mut expected = encoders::enc_preamble(&at);
+    expected.extend_from_slice(&commands);
+    assert_eq!(rust, Some(expected));
 }
 
 #[test]
@@ -772,7 +1155,33 @@ fn parity_v3v3_forward_order() {
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    assert_eq!(rust, Some(hx(b"\x00\xbb\xbb\xbb\xbb\xbb\xbb\xbb\xbb\xbb\xbb\xbb\xbb\xbb\xbb\xbb\xbb\xbb\xbb\xbb\xbb\x00\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xff\x30\x00\x01\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\xfd\x20\x10\xfe\x00\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x30\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\xfd\x00")));
+    // V3a sends USDC to executor before callback; callback pays WETH to V3a,
+    // then V3b swaps (auto-pay) sending WETH to executor.
+    let pool_a = address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    let pool_b = address!("cccccccccccccccccccccccccccccccccccccccc");
+    let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), None);
+    let v3_a_idx = at.add(pool_a).unwrap(); // 0
+    let v3_b_idx = at.add(pool_b).unwrap(); // 1
+    let weth_idx = SENTINEL_WETH;
+    let mut v3_a_callback = Vec::new();
+    v3_a_callback.extend_from_slice(
+        &encoders::enc_erc20_transfer(weth_idx, v3_a_idx, 1_000_000_000_000_000_000u128).unwrap(),
+    );
+    v3_a_callback.extend_from_slice(
+        &encoders::enc_v3_swap_compact(v3_b_idx, true, 2_000_000_000u128, SENTINEL_SELF, &[])
+            .unwrap(),
+    );
+    let commands = encoders::enc_v3_swap_compact(
+        v3_a_idx,
+        true,
+        1_000_000_000_000_000_000u128,
+        SENTINEL_SELF,
+        &v3_a_callback,
+    )
+    .unwrap();
+    let mut expected = encoders::enc_preamble(&at);
+    expected.extend_from_slice(&commands);
+    assert_eq!(rust, Some(expected));
 }
 
 #[test]
@@ -801,7 +1210,43 @@ fn parity_v2v3_callback_forward_data() {
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    assert_eq!(rust, Some(hx(b"\x00\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\xdd\x00\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\x00\xa0\xb8\x69\x91\xc6\x21\x8b\x36\xc1\xd1\x9d\x4a\x2e\x9e\xb0\xce\x36\x06\xeb\x48\xff\x20\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\xfd\x00\x1e\x2f\x30\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\xfd\x0f\x10\x02\x01\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\x10\xfe\x00\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00")));
+    // V2 flash borrow sends USDC to executor; callback runs V3 swap with the
+    // ERC20_TRANSFER inside V3's forward_data (IIA ordering), then WETH repays V2.
+    let pool_v2 = address!("dddddddddddddddddddddddddddddddddddddddd");
+    let pool_v3 = address!("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+    let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), None);
+    let v2_idx = at.add(pool_v2).unwrap(); // 0
+    let v3_idx = at.add(pool_v3).unwrap(); // 1
+    let weth_idx = SENTINEL_WETH;
+    let forward_idx = at.add(USDC).unwrap(); // 2 (V2 forward token = USDC)
+    let v3_callback_cmds =
+        encoders::enc_erc20_transfer(forward_idx, v3_idx, 2_000_000_000u128).unwrap();
+    let mut callback = Vec::new();
+    callback.extend_from_slice(
+        &encoders::enc_v3_swap_compact(
+            v3_idx,
+            true,
+            2_000_000_000u128,
+            SENTINEL_SELF,
+            &v3_callback_cmds,
+        )
+        .unwrap(),
+    );
+    callback.extend_from_slice(
+        &encoders::enc_erc20_transfer(weth_idx, v2_idx, 1_000_000_000_000_000_000u128).unwrap(),
+    );
+    let commands = encoders::enc_v2_swap_compact(
+        v2_idx,
+        true,
+        2_000_000_000u128,
+        SENTINEL_SELF,
+        30,
+        &callback,
+    )
+    .unwrap();
+    let mut expected = encoders::enc_preamble(&at);
+    expected.extend_from_slice(&commands);
+    assert_eq!(rust, Some(expected));
 }
 
 #[test]
@@ -830,7 +1275,45 @@ fn parity_v3v2_callback_nested() {
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    assert_eq!(rust, Some(hx(b"\x00\xf1\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x00\xf2\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x00\xa0\xb8\x69\x91\xc6\x21\x8b\x36\xc1\xd1\x9d\x4a\x2e\x9e\xb0\xce\x36\x06\xeb\x48\xff\x30\x00\x01\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\xfd\x31\x10\xfe\x00\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x10\x02\x01\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\x20\x01\x01\x00\x00\x00\x00\x1b\xc4\xfa\xe5\xf3\x8e\x80\x00\xfd\x00\x1e\x00")));
+    // V3 sends USDC to executor before callback; callback pays WETH to V3,
+    // pre-funds V2 with USDC, then runs V2 direct swap (on-chain WETH output).
+    // V3 amount is optimal_input (WETH into V3), not forward_out.
+    let pool_v3 = address!("f111111111111111111111111111111111111111");
+    let pool_v2 = address!("f222222222222222222222222222222222222222");
+    let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), None);
+    let v3_idx = at.add(pool_v3).unwrap(); // 0
+    let v2_idx = at.add(pool_v2).unwrap(); // 1
+    let weth_idx = SENTINEL_WETH;
+    let forward_idx = at.add(USDC).unwrap(); // 2 (V3 forward token = USDC)
+    let mut v3_callback = Vec::new();
+    v3_callback.extend_from_slice(
+        &encoders::enc_erc20_transfer(weth_idx, v3_idx, 1_000_000_000_000_000_000u128).unwrap(),
+    );
+    v3_callback.extend_from_slice(
+        &encoders::enc_erc20_transfer(forward_idx, v2_idx, 2_000_000_000u128).unwrap(),
+    );
+    v3_callback.extend_from_slice(
+        &encoders::enc_v2_swap_compact(
+            v2_idx,
+            true,
+            2_001_000_000_000_000_000u128,
+            SENTINEL_SELF,
+            30,
+            &[],
+        )
+        .unwrap(),
+    );
+    let commands = encoders::enc_v3_swap_compact(
+        v3_idx,
+        true,
+        1_000_000_000_000_000_000u128,
+        SENTINEL_SELF,
+        &v3_callback,
+    )
+    .unwrap();
+    let mut expected = encoders::enc_preamble(&at);
+    expected.extend_from_slice(&commands);
+    assert_eq!(rust, Some(expected));
 }
 
 #[test]
@@ -859,7 +1342,40 @@ fn parity_v2_n_hop_2() {
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    assert_eq!(rust, Some(hx(b"\x00\xf3\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x00\xf4\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x00\xa0\xb8\x69\x91\xc6\x21\x8b\x36\xc1\xd1\x9d\x4a\x2e\x9e\xb0\xce\x36\x06\xeb\x48\xff\x20\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\xfd\x00\x1e\x24\x10\x02\x01\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\x21\x01\x01\xfd\x00\x1e\x10\xfe\x00\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00")));
+    // N-hop V2 (N=2): flash borrow pool A, transfer forward token to pool B,
+    // V2_SWAP_CALC pool B → executor, then WETH repays pool A's flash.
+    let pool_a = address!("f333333333333333333333333333333333333333");
+    let pool_b = address!("f444444444444444444444444444444444444444");
+    let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), None);
+    let pool_a_idx = at.add(pool_a).unwrap(); // 0
+    let pool_b_idx = at.add(pool_b).unwrap(); // 1
+    let weth_idx = SENTINEL_WETH;
+    let forward_idx = at.add(USDC).unwrap(); // 2 (pool A forward token = USDC)
+    let mut callback = Vec::new();
+    callback.extend_from_slice(
+        &encoders::enc_erc20_transfer(forward_idx, pool_b_idx, 2_000_000_000u128).unwrap(),
+    );
+    callback.extend_from_slice(&encoders::enc_v2_swap_calc(
+        pool_b_idx,
+        true,
+        SENTINEL_SELF,
+        30,
+    ));
+    callback.extend_from_slice(
+        &encoders::enc_erc20_transfer(weth_idx, pool_a_idx, 1_000_000_000_000_000_000u128).unwrap(),
+    );
+    let commands = encoders::enc_v2_swap_compact(
+        pool_a_idx,
+        true,
+        2_000_000_000u128,
+        SENTINEL_SELF,
+        30,
+        &callback,
+    )
+    .unwrap();
+    let mut expected = encoders::enc_preamble(&at);
+    expected.extend_from_slice(&commands);
+    assert_eq!(rust, Some(expected));
 }
 
 #[test]
@@ -899,7 +1415,47 @@ fn parity_v2_n_hop_3() {
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    assert_eq!(rust, Some(hx(b"\x00\xf5\x55\x55\x55\x55\x55\x55\x55\x55\x55\x55\x55\x55\x55\x55\x55\x55\x55\x55\x55\x00\xf6\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x00\xf7\x77\x77\x77\x77\x77\x77\x77\x77\x77\x77\x77\x77\x77\x77\x77\x77\x77\x77\x77\x00\xa0\xb8\x69\x91\xc6\x21\x8b\x36\xc1\xd1\x9d\x4a\x2e\x9e\xb0\xce\x36\x06\xeb\x48\xff\x20\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\xfd\x00\x1e\x2a\x10\x03\x01\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\x21\x01\x01\x02\x00\x1e\x21\x02\x01\xfd\x00\x1e\x10\xfe\x00\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00")));
+    // N-hop V2 (N=3): flash borrow pool A, transfer forward token to pool B,
+    // V2_SWAP_CALC pool B → pool C, V2_SWAP_CALC pool C → executor, then WETH
+    // repays pool A's flash. (Intermediate WBTC held by direct custody, never
+    // registered in the table.)
+    let pool_a = address!("f555555555555555555555555555555555555555");
+    let pool_b = address!("f666666666666666666666666666666666666666");
+    let pool_c = address!("f777777777777777777777777777777777777777");
+    let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), None);
+    let pool_a_idx = at.add(pool_a).unwrap(); // 0
+    let pool_b_idx = at.add(pool_b).unwrap(); // 1
+    let pool_c_idx = at.add(pool_c).unwrap(); // 2
+    let weth_idx = SENTINEL_WETH;
+    let forward_idx = at.add(USDC).unwrap(); // 3 (pool A forward token = USDC)
+    let mut callback = Vec::new();
+    callback.extend_from_slice(
+        &encoders::enc_erc20_transfer(forward_idx, pool_b_idx, 2_000_000_000u128).unwrap(),
+    );
+    callback.extend_from_slice(&encoders::enc_v2_swap_calc(
+        pool_b_idx, true, pool_c_idx, 30,
+    ));
+    callback.extend_from_slice(&encoders::enc_v2_swap_calc(
+        pool_c_idx,
+        true,
+        SENTINEL_SELF,
+        30,
+    ));
+    callback.extend_from_slice(
+        &encoders::enc_erc20_transfer(weth_idx, pool_a_idx, 1_000_000_000_000_000_000u128).unwrap(),
+    );
+    let commands = encoders::enc_v2_swap_compact(
+        pool_a_idx,
+        true,
+        2_000_000_000u128,
+        SENTINEL_SELF,
+        30,
+        &callback,
+    )
+    .unwrap();
+    let mut expected = encoders::enc_preamble(&at);
+    expected.extend_from_slice(&commands);
+    assert_eq!(rust, Some(expected));
 }
 
 #[test]
