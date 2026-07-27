@@ -501,7 +501,54 @@ fn parity_v2_v4_v2() {
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    assert_eq!(rust, Some(hx(b"\x00\xa0\xb8\x69\x91\xc6\x21\x8b\x36\xc1\xd1\x9d\x4a\x2e\x9e\xb0\xce\x36\x06\xeb\x48\x00\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x00\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\xff\x20\x02\x01\x00\x00\x00\x00\x00\x00\x00\x00\x77\x44\xd6\x40\xfd\x00\x1e\x3e\x10\xfe\x01\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x50\x2d\x54\x00\x21\x01\x01\xfc\x00\x1e\x55\x40\x00\xfe\x01\xf4\x00\x0a\xff\x01\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\x52\xfe\x02\x00\x00\x00\x00\x1b\xc4\xfa\xe5\xf3\x8e\x80\x00")));
+    // V2a→V4b→V2c. V4_UNLOCK nests sync+V2a swap_calc+V4 swap+take to V2c.
+    // Top-level V2c flash; callback repays WETH to V2a then V4_UNLOCK.
+    let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
+    let pm_idx = at.add(PM).unwrap(); // SENTINEL_PM
+    let forward_a_idx = at.add(USDC).unwrap(); // 0 (ha forward = token1 = USDC)
+    let forward_b_idx = at.add(WETH).unwrap(); // SENTINEL_WETH (hb output = currency1 = WETH)
+    let executor_idx = SENTINEL_SELF;
+    let zero_idx = SENTINEL_NATIVE;
+    let v2a_idx = at
+        .add(address!("1111111111111111111111111111111111111111"))
+        .unwrap(); // 1
+    let v2c_idx = at
+        .add(address!("3333333333333333333333333333333333333333"))
+        .unwrap(); // 2
+    let c0_b_idx = at.add(USDC).unwrap(); // 0 (hb.currency0 = USDC, already present)
+    let c1_b_idx = at.add(WETH).unwrap(); // SENTINEL_WETH
+    let mut v4_inner = Vec::new();
+    v4_inner.extend_from_slice(&encoders::enc_v4_sync(forward_a_idx));
+    v4_inner.extend_from_slice(&encoders::enc_v2_swap_calc(v2a_idx, true, pm_idx, 30));
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle());
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            c0_b_idx,
+            c1_b_idx,
+            500,
+            10,
+            zero_idx,
+            true,
+            2_000_000_000u128,
+        )
+        .unwrap(),
+    );
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_take_compact(forward_b_idx, v2c_idx, 2_001_000_000_000_000_000u128)
+            .unwrap(),
+    );
+    let mut c_fwd = Vec::new();
+    c_fwd.extend_from_slice(
+        &encoders::enc_erc20_transfer(SENTINEL_WETH, v2a_idx, 1_000_000_000_000_000_000u128)
+            .unwrap(),
+    );
+    c_fwd.extend_from_slice(&encoders::enc_v4_unlock(&v4_inner).unwrap());
+    let commands =
+        encoders::enc_v2_swap_compact(v2c_idx, true, 2_001_000_000u128, executor_idx, 30, &c_fwd)
+            .unwrap();
+    let mut expected = encoders::enc_preamble(&at);
+    expected.extend_from_slice(&commands);
+    assert_eq!(rust, Some(expected));
 }
 
 #[test]
@@ -541,7 +588,58 @@ fn parity_v2_v4_v3() {
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    assert_eq!(rust, Some(hx(b"\x00\xa0\xb8\x69\x91\xc6\x21\x8b\x36\xc1\xd1\x9d\x4a\x2e\x9e\xb0\xce\x36\x06\xeb\x48\x00\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x00\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\x66\xff\x30\x02\x01\x00\x00\x00\x00\x1b\xc4\xfa\xe5\xf3\x8e\x80\x00\xfd\x3e\x10\xfe\x01\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x50\x2d\x54\x00\x21\x01\x01\xfc\x00\x1e\x55\x40\x00\xfe\x01\xf4\x00\x0a\xff\x01\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\x52\xfe\x02\x00\x00\x00\x00\x1b\xc4\xfa\xe5\xf3\x8e\x80\x00")));
+    // V2a→V4b→V3c. Same V4_UNLOCK shape as v2_v4_v2; top-level V3c auto-pay.
+    let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
+    let pm_idx = at.add(PM).unwrap(); // SENTINEL_PM
+    let forward_a_idx = at.add(USDC).unwrap(); // 0
+    let forward_b_idx = at.add(WETH).unwrap(); // SENTINEL_WETH
+    let executor_idx = SENTINEL_SELF;
+    let zero_idx = SENTINEL_NATIVE;
+    let v2a_idx = at
+        .add(address!("1111111111111111111111111111111111111111"))
+        .unwrap(); // 1
+    let v3c_idx = at
+        .add(address!("6666666666666666666666666666666666666666"))
+        .unwrap(); // 2
+    let c0_b_idx = at.add(USDC).unwrap(); // 0
+    let c1_b_idx = at.add(WETH).unwrap(); // SENTINEL_WETH
+    let mut v4_inner = Vec::new();
+    v4_inner.extend_from_slice(&encoders::enc_v4_sync(forward_a_idx));
+    v4_inner.extend_from_slice(&encoders::enc_v2_swap_calc(v2a_idx, true, pm_idx, 30));
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle());
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            c0_b_idx,
+            c1_b_idx,
+            500,
+            10,
+            zero_idx,
+            true,
+            2_000_000_000u128,
+        )
+        .unwrap(),
+    );
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_take_compact(forward_b_idx, v3c_idx, 2_001_000_000_000_000_000u128)
+            .unwrap(),
+    );
+    let mut c_fwd = Vec::new();
+    c_fwd.extend_from_slice(
+        &encoders::enc_erc20_transfer(SENTINEL_WETH, v2a_idx, 1_000_000_000_000_000_000u128)
+            .unwrap(),
+    );
+    c_fwd.extend_from_slice(&encoders::enc_v4_unlock(&v4_inner).unwrap());
+    let commands = encoders::enc_v3_swap_compact(
+        v3c_idx,
+        true,
+        2_001_000_000_000_000_000u128,
+        executor_idx,
+        &c_fwd,
+    )
+    .unwrap();
+    let mut expected = encoders::enc_preamble(&at);
+    expected.extend_from_slice(&commands);
+    assert_eq!(rust, Some(expected));
 }
 
 #[test]
@@ -585,7 +683,45 @@ fn parity_v2_v4_v4() {
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    assert_eq!(rust, Some(hx(b"\x00\xa0\xb8\x69\x91\xc6\x21\x8b\x36\xc1\xd1\x9d\x4a\x2e\x9e\xb0\xce\x36\x06\xeb\x48\x00\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\xff\x50\x37\x54\x00\x52\xfe\x01\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x21\x01\x01\xfc\x00\x1e\x55\x40\x00\xfe\x01\xf4\x00\x0a\xff\x01\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\x41\xfe\x00\x0b\xb8\x00\x3c\xff\x01\x57")));
+    // V2a→V4b→V4c all inside one V4_UNLOCK. take WETH to V2a, swap_calc V2a→PM,
+    // settle, V4b swap_compact, V4c swap_dynamic, settle_all.
+    let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
+    let pm_idx = at.add(PM).unwrap(); // SENTINEL_PM
+    let forward_a_idx = at.add(USDC).unwrap(); // 0
+    let zero_idx = SENTINEL_NATIVE;
+    let c0_b_idx = at.add(USDC).unwrap(); // 0
+    let c1_b_idx = at.add(WETH).unwrap(); // SENTINEL_WETH
+    let c0_c_idx = at.add(WETH).unwrap(); // SENTINEL_WETH
+    let c1_c_idx = at.add(USDC).unwrap(); // 0
+    let v2a_idx = at
+        .add(address!("1111111111111111111111111111111111111111"))
+        .unwrap(); // 1
+    let mut v4_inner = Vec::new();
+    v4_inner.extend_from_slice(&encoders::enc_v4_sync(forward_a_idx));
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_take_compact(SENTINEL_WETH, v2a_idx, 1_000_000_000_000_000_000u128)
+            .unwrap(),
+    );
+    v4_inner.extend_from_slice(&encoders::enc_v2_swap_calc(v2a_idx, true, pm_idx, 30));
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle());
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            c0_b_idx,
+            c1_b_idx,
+            500,
+            10,
+            zero_idx,
+            true,
+            2_000_000_000u128,
+        )
+        .unwrap(),
+    );
+    v4_inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
+        c0_c_idx, c1_c_idx, 3000, 60, zero_idx, true,
+    ));
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
+    let expected = v4_envelope(&at, &v4_inner);
+    assert_eq!(rust, Some(expected));
 }
 
 #[test]
@@ -772,7 +908,66 @@ fn parity_v3_v2_v4() {
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    assert_eq!(rust, Some(hx(b"\x00\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x00\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x00\xa0\xb8\x69\x91\xc6\x21\x8b\x36\xc1\xd1\x9d\x4a\x2e\x9e\xb0\xce\x36\x06\xeb\x48\xff\x30\x00\x01\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x01\x4a\x20\x01\x01\x00\x00\x00\x00\x1b\xc4\xfa\xe5\xf3\x8e\x80\x00\xfd\x00\x1e\x28\x50\x26\x40\xfe\x02\x01\xf4\x00\x0a\xff\x01\x00\x00\x00\x00\x1b\xc4\xfa\xe5\xf3\x8e\x80\x00\x52\xfe\xfd\x00\x00\x00\x00\x00\x00\x00\x00\x77\x44\xd6\x40\x56\xfe\x10\xfe\x00\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00")));
+    // V3a→V2b→V4c. V4_UNLOCK nests V4c swap+take WETH to executor+settle_delta.
+    // V2b callback (a_fwd) wraps V4_UNLOCK + WETH repay to V3a.
+    let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
+    let _ = at.add(PM); // SENTINEL_PM (discarded by the composer)
+    let executor_idx = SENTINEL_SELF;
+    let zero_idx = SENTINEL_NATIVE;
+    let v3a_idx = at
+        .add(address!("4444444444444444444444444444444444444444"))
+        .unwrap(); // 0
+    let v2b_idx = at
+        .add(address!("2222222222222222222222222222222222222222"))
+        .unwrap(); // 1
+    let forward_b_idx = at.add(WETH).unwrap(); // SENTINEL_WETH (hb forward = token1 = WETH)
+    let c0_c_idx = at.add(WETH).unwrap(); // SENTINEL_WETH
+    let c1_c_idx = at.add(USDC).unwrap(); // 2
+    let mut v4_inner = Vec::new();
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            c0_c_idx,
+            c1_c_idx,
+            500,
+            10,
+            zero_idx,
+            true,
+            2_001_000_000_000_000_000u128,
+        )
+        .unwrap(),
+    );
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_take_compact(SENTINEL_WETH, executor_idx, 2_001_000_000u128).unwrap(),
+    );
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle_delta(forward_b_idx));
+    let b_fwd = encoders::enc_v4_unlock(&v4_inner).unwrap();
+    let mut a_fwd = Vec::new();
+    a_fwd.extend_from_slice(
+        &encoders::enc_v2_swap_compact(
+            v2b_idx,
+            true,
+            2_001_000_000_000_000_000u128,
+            executor_idx,
+            30,
+            &b_fwd,
+        )
+        .unwrap(),
+    );
+    a_fwd.extend_from_slice(
+        &encoders::enc_erc20_transfer(SENTINEL_WETH, v3a_idx, 1_000_000_000_000_000_000u128)
+            .unwrap(),
+    );
+    let commands = encoders::enc_v3_swap_compact(
+        v3a_idx,
+        true,
+        1_000_000_000_000_000_000u128,
+        v2b_idx,
+        &a_fwd,
+    )
+    .unwrap();
+    let mut expected = encoders::enc_preamble(&at);
+    expected.extend_from_slice(&commands);
+    assert_eq!(rust, Some(expected));
 }
 
 #[test]
@@ -952,7 +1147,43 @@ fn parity_v3_v3_v4() {
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    assert_eq!(rust, Some(hx(b"\x00\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x44\x00\x55\x55\x55\x55\x55\x55\x55\x55\x55\x55\x55\x55\x55\x55\x55\x55\x55\x55\x55\x55\x00\xa0\xb8\x69\x91\xc6\x21\x8b\x36\xc1\xd1\x9d\x4a\x2e\x9e\xb0\xce\x36\x06\xeb\x48\xff\x54\xfe\x30\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\xfc\x21\x30\x00\x01\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x01\x10\x50\x0e\x55\x41\xfe\x02\x0b\xb8\x00\x3c\xff\x01\x53\xfe\x00\x57")));
+    // V3a→V3b→V4c. V4_UNLOCK nests settle+V4c swap_dynamic+take_delta WETH→V3a
+    // +settle_all. V3a callback = V4_UNLOCK; V3b top-level pays PM.
+    let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
+    let pm_idx = at.add(PM).unwrap(); // SENTINEL_PM
+    let zero_idx = SENTINEL_NATIVE;
+    let v3a_idx = at
+        .add(address!("4444444444444444444444444444444444444444"))
+        .unwrap(); // 0
+    let v3b_idx = at
+        .add(address!("5555555555555555555555555555555555555555"))
+        .unwrap(); // 1
+    let forward_b_idx = at.add(WETH).unwrap(); // SENTINEL_WETH (hb forward = token1 = WETH)
+    let c0_c_idx = at.add(WETH).unwrap(); // SENTINEL_WETH
+    let c1_c_idx = at.add(USDC).unwrap(); // 2
+    let mut v4_inner = Vec::new();
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle());
+    v4_inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
+        c0_c_idx, c1_c_idx, 3000, 60, zero_idx, true,
+    ));
+    v4_inner.extend_from_slice(&encoders::enc_v4_take_delta(SENTINEL_WETH, v3a_idx));
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
+    let a_fwd = encoders::enc_v4_unlock(&v4_inner).unwrap();
+    let b_fwd = encoders::enc_v3_swap_compact(
+        v3a_idx,
+        true,
+        1_000_000_000_000_000_000u128,
+        v3b_idx,
+        &a_fwd,
+    )
+    .unwrap();
+    let mut commands = encoders::enc_v4_sync(forward_b_idx);
+    commands.extend_from_slice(
+        &encoders::enc_v3_swap_compact(v3b_idx, true, 2_000_000_000u128, pm_idx, &b_fwd).unwrap(),
+    );
+    let mut expected = encoders::enc_preamble(&at);
+    expected.extend_from_slice(&commands);
+    assert_eq!(rust, Some(expected));
 }
 
 #[test]
