@@ -21,7 +21,7 @@ use degenbot_executor::composers::{
     V4V3ArbitragePayload, V4V4ArbitragePayload,
 };
 use degenbot_executor::encoders::{
-    self, AddressTable, SENTINEL_NATIVE, SENTINEL_SELF, SENTINEL_WETH,
+    self, AddressTable, V4BatchEntry, SENTINEL_NATIVE, SENTINEL_SELF, SENTINEL_WETH,
 };
 
 const PM: Address = address!("000000000004444c5dc75cB358380D2e3dE08A90");
@@ -141,7 +141,37 @@ fn parity_v4v4_native_to_weth_wrap() {
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    assert_eq!(rust, Some(hx(b"\x00\xa0\xb8\x69\x91\xc6\x21\x8b\x36\xc1\xd1\x9d\x4a\x2e\x9e\xb0\xce\x36\x06\xeb\x48\xff\x50\x60\x40\xff\x00\x0b\xb8\x00\x3c\xff\x00\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x52\xff\xfd\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\x12\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\x40\xfe\x00\x01\xf4\x00\x0a\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\x56\xfe\x53\xfe\xfd\x57")));
+    let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
+    let idx0 = at.add(USDC).unwrap(); // 0
+    let weth_idx = SENTINEL_WETH;
+    let executor_idx = SENTINEL_SELF;
+    let native_idx = SENTINEL_NATIVE;
+    let mut inner = Vec::new();
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            native_idx,
+            idx0,
+            3000,
+            60,
+            native_idx,
+            false,
+            1000000000000000000u128,
+        )
+        .unwrap(),
+    );
+    inner.extend_from_slice(
+        &encoders::enc_v4_take_compact(native_idx, executor_idx, 2000000000u128).unwrap(),
+    );
+    inner.extend_from_slice(&encoders::enc_weth_deposit(U256::from(2000000000u128)));
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(weth_idx, idx0, 500, 10, native_idx, false, 2000000000u128)
+            .unwrap(),
+    );
+    inner.extend_from_slice(&encoders::enc_v4_settle_delta(weth_idx));
+    inner.extend_from_slice(&encoders::enc_v4_take_delta(weth_idx, executor_idx));
+    inner.extend_from_slice(&encoders::enc_v4_settle_all());
+    let expected = v4_envelope(&at, &inner);
+    assert_eq!(rust, Some(expected));
 }
 
 #[test]
@@ -178,7 +208,39 @@ fn parity_v4v4_weth_to_native_unwrap() {
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    assert_eq!(rust, Some(hx(b"\x00\xa0\xb8\x69\x91\xc6\x21\x8b\x36\xc1\xd1\x9d\x4a\x2e\x9e\xb0\xce\x36\x06\xeb\x48\xff\x50\x60\x40\x00\xfe\x0b\xb8\x00\x3c\xff\x01\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\x52\xfe\xfd\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x13\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x40\xff\x00\x01\xf4\x00\x0a\xff\x01\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x56\xff\x53\x00\xfd\x57")));
+    let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
+    let idx0 = at.add(USDC).unwrap(); // 0
+    let weth_idx = SENTINEL_WETH;
+    let executor_idx = SENTINEL_SELF;
+    let native_idx = SENTINEL_NATIVE;
+    let mut inner = Vec::new();
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(idx0, weth_idx, 3000, 60, native_idx, true, 2000000000u128)
+            .unwrap(),
+    );
+    inner.extend_from_slice(
+        &encoders::enc_v4_take_compact(weth_idx, executor_idx, 1000000000000000000u128).unwrap(),
+    );
+    inner.extend_from_slice(&encoders::enc_weth_withdraw(U256::from(
+        1000000000000000000u128,
+    )));
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            native_idx,
+            idx0,
+            500,
+            10,
+            native_idx,
+            true,
+            1000000000000000000u128,
+        )
+        .unwrap(),
+    );
+    inner.extend_from_slice(&encoders::enc_v4_settle_delta(native_idx));
+    inner.extend_from_slice(&encoders::enc_v4_take_delta(idx0, executor_idx));
+    inner.extend_from_slice(&encoders::enc_v4_settle_all());
+    let expected = v4_envelope(&at, &inner);
+    assert_eq!(rust, Some(expected));
 }
 
 #[test]
@@ -218,7 +280,35 @@ fn parity_v4v4_same_currency_batch() {
             use_v4_batch: true,
         },
     );
-    assert_eq!(rust, Some(hx(b"\x00\xa0\xb8\x69\x91\xc6\x21\x8b\x36\xc1\xd1\x9d\x4a\x2e\x9e\xb0\xce\x36\x06\xeb\x48\xff\x50\x2b\x42\x02\xfe\x00\x0b\xb8\x00\x3c\xff\x01\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x00\xfe\x01\xf4\x00\x0a\xff\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x57")));
+    let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
+    let idx0 = at.add(USDC).unwrap(); // 0
+    let weth_idx = SENTINEL_WETH;
+    let native_idx = SENTINEL_NATIVE;
+    let mut inner = Vec::new();
+    let batch = [
+        V4BatchEntry {
+            c0_idx: weth_idx,
+            c1_idx: idx0,
+            fee: 3000,
+            tick_spacing: 60,
+            hooks_idx: native_idx,
+            zfo: true,
+            amount_u96: 1000000000000000000u128,
+        },
+        V4BatchEntry {
+            c0_idx: idx0,
+            c1_idx: weth_idx,
+            fee: 500,
+            tick_spacing: 10,
+            hooks_idx: native_idx,
+            zfo: true,
+            amount_u96: 0u128,
+        },
+    ];
+    inner.extend_from_slice(&encoders::enc_v4_batch(&batch).unwrap());
+    inner.extend_from_slice(&encoders::enc_v4_settle_all());
+    let expected = v4_envelope(&at, &inner);
+    assert_eq!(rust, Some(expected));
 }
 
 #[test]
@@ -258,7 +348,33 @@ fn parity_v4v4_same_currency_erc6909() {
             use_v4_batch: false,
         },
     );
-    assert_eq!(rust, Some(hx(b"\x00\xa0\xb8\x69\x91\xc6\x21\x8b\x36\xc1\xd1\x9d\x4a\x2e\x9e\xb0\xce\x36\x06\xeb\x48\xff\x50\x2e\x40\xfe\x00\x0b\xb8\x00\x3c\xff\x01\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x41\x00\xfe\x01\xf4\x00\x0a\xff\x01\x58\xfe\xfd\x00\x00\x00\x00\x0d\xe4\x44\x32\x4c\x2a\x80\x00\x57")));
+    let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
+    let idx0 = at.add(USDC).unwrap(); // 0
+    let weth_idx = SENTINEL_WETH;
+    let executor_idx = SENTINEL_SELF;
+    let native_idx = SENTINEL_NATIVE;
+    let mut inner = Vec::new();
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            weth_idx,
+            idx0,
+            3000,
+            60,
+            native_idx,
+            true,
+            1000000000000000000u128,
+        )
+        .unwrap(),
+    );
+    inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
+        idx0, weth_idx, 500, 10, native_idx, true,
+    ));
+    inner.extend_from_slice(
+        &encoders::enc_v4_mint_compact(weth_idx, executor_idx, 1001000000000000000u128).unwrap(),
+    );
+    inner.extend_from_slice(&encoders::enc_v4_settle_all());
+    let expected = v4_envelope(&at, &inner);
+    assert_eq!(rust, Some(expected));
 }
 
 #[test]
@@ -298,7 +414,39 @@ fn parity_v4v4_weth_to_native_unwrap_batch() {
             use_v4_batch: true,
         },
     );
-    assert_eq!(rust, Some(hx(b"\x00\xa0\xb8\x69\x91\xc6\x21\x8b\x36\xc1\xd1\x9d\x4a\x2e\x9e\xb0\xce\x36\x06\xeb\x48\xff\x50\x60\x40\x00\xfe\x0b\xb8\x00\x3c\xff\x01\x00\x00\x00\x00\x00\x00\x00\x00\x77\x35\x94\x00\x52\xfe\xfd\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x13\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x40\xff\x00\x01\xf4\x00\x0a\xff\x01\x00\x00\x00\x00\x0d\xe0\xb6\xb3\xa7\x64\x00\x00\x56\xff\x53\x00\xfd\x57")));
+    let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
+    let idx0 = at.add(USDC).unwrap(); // 0
+    let weth_idx = SENTINEL_WETH;
+    let executor_idx = SENTINEL_SELF;
+    let native_idx = SENTINEL_NATIVE;
+    let mut inner = Vec::new();
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(idx0, weth_idx, 3000, 60, native_idx, true, 2000000000u128)
+            .unwrap(),
+    );
+    inner.extend_from_slice(
+        &encoders::enc_v4_take_compact(weth_idx, executor_idx, 1000000000000000000u128).unwrap(),
+    );
+    inner.extend_from_slice(&encoders::enc_weth_withdraw(U256::from(
+        1000000000000000000u128,
+    )));
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            native_idx,
+            idx0,
+            500,
+            10,
+            native_idx,
+            true,
+            1000000000000000000u128,
+        )
+        .unwrap(),
+    );
+    inner.extend_from_slice(&encoders::enc_v4_settle_delta(native_idx));
+    inner.extend_from_slice(&encoders::enc_v4_take_delta(idx0, executor_idx));
+    inner.extend_from_slice(&encoders::enc_v4_settle_all());
+    let expected = v4_envelope(&at, &inner);
+    assert_eq!(rust, Some(expected));
 }
 
 #[test]
