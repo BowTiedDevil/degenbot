@@ -338,6 +338,17 @@ pub struct ArbitrageEngine {
     /// `None` means no block has been processed yet.
     /// Used by the pump to determine the backfill boundary on startup.
     last_processed_block: Option<u64>,
+    /// The last block this engine's `finalize_block` guard advanced past
+    /// (i.e. the last block whose dirty-path solve + diff send completed).
+    /// Owned by the engine since ergo task LEZJAS (the pump's `&mut` out-
+    /// params retired). Initialize to `0` so the first header/tombstone
+    /// `finalize_block(block > 0)` fires; survives a mid-flight engine
+    /// joining the pump (ADR-006 D4).
+    last_solved_block: u64,
+    /// Whether any forward log applied since the last `finalize_block`.
+    /// `true` after `record_logs_this_block()` (the pump's forward-log path),
+    /// cleared by `finalize_block`. Owned by the engine since LEZJAS.
+    has_logs_this_block: bool,
     /// Paths registered via `register_and_solve_path` that have been eagerly
     /// solved and appended to `results`. Tracked so `rebuild_and_solve_affected`
     /// can merge them instead of discarding them when it replaces `self.results`.
@@ -413,6 +424,8 @@ impl ArbitrageEngine {
             results: HashMap::new(),
             results_block: 0,
             last_processed_block: None,
+            last_solved_block: 0,
+            has_logs_this_block: false,
             pending_new_paths: HashSet::new(),
             next_path_id: 1, // path IDs start at 1
             delivered: HashMap::new(),

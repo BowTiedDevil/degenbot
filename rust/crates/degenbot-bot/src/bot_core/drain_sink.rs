@@ -45,14 +45,21 @@ pub trait DrainSink: Send + Sync {
 
     /// Solve + advance at a genuine block boundary: solve any dirty paths
     /// carried over from the previous block and emit a block-boundary batch.
-    /// Pumps the `last_solved_block` / `has_logs_this_block` bookkeeping locals.
-    fn finalize_block(
-        &self,
-        block: u64,
-        metadata: &BlockMetadata,
-        last_solved_block: &mut u64,
-        has_logs_this_block: &mut bool,
-    );
+    /// The `last_solved_block` / `has_logs_this_block` bookkeeping is owned
+    /// by the engine since ergo task LEZJAS (the pump's `&mut` out-params
+    /// retired).
+    fn finalize_block(&self, block: u64, metadata: &BlockMetadata);
+
+    /// Mark `block` as solved (the pump's `on_drain`-solved + backfill-solved
+    /// paths). Owned by the engine since ergo task LEZJAS — the pump's
+    /// `last_solved_block` local retired; the engine holds the field so a
+    /// mid-flight-joining engine can inherit it (ADR-006 D4).
+    fn set_last_solved_block(&self, block: u64);
+
+    /// Record that at least one forward log applied this block (clears on the
+    /// next `finalize_block`). Replaces the pump's `has_logs_this_block = true;`
+    /// local write (ergo task LEZJAS).
+    fn record_logs_this_block(&self);
 
     /// The last block the sink processed — the backfill-start boundary used by
     /// `Bot::start` / the pump's subscribe phase.

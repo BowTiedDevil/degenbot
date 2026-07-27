@@ -178,6 +178,40 @@ impl ArbitrageEngine {
         self.last_processed_block = Some(block);
     }
 
+    /// The last block this engine's `finalize_block` guard advanced past.
+    /// Owned by the engine since ergo task LEZJAS (the pump's `&mut` out-
+    /// params retired); enables a mid-flight engine to pick up the pump's last
+    /// solved block on join (ADR-006 D4). Starts at 0 (so the first header /
+    /// tombstone `finalize_block(block > 0)` fires).
+    #[must_use]
+    pub const fn last_solved_block(&self) -> u64 {
+        self.last_solved_block
+    }
+
+    /// Seed the engine's `last_solved_block` (e.g. on mid-flight join: a late
+    /// engine inherits the pump's current solved block). Test helper too — the
+    /// `finalize_block_threads_metadata_into_send` test pre-seeds 0 to fire the
+    /// guard. Production pump path lets `finalize_block` advance it.
+    pub fn set_last_solved_block(&mut self, block: u64) {
+        self.last_solved_block = block;
+    }
+
+    /// Whether any forward log applied since the last `finalize_block` (the
+    /// pump's forward-log path calls this before the next `finalize_block` so
+    /// the empty-block branch sends the advance diff). Owned by the engine
+    /// since LEZJAS; returns `false` until the first `record_logs_this_block`.
+    #[must_use]
+    pub const fn has_logs_this_block(&self) -> bool {
+        self.has_logs_this_block
+    }
+
+    /// Record that at least one forward log applied this block (clears on the
+    /// next `finalize_block`). Replaces the pump's `has_logs_this_block = true;`
+    /// out-param write (ergo task LEZJAS).
+    pub fn record_logs_this_block(&mut self) {
+        self.has_logs_this_block = true;
+    }
+
     /// Resolve and solve all registered paths. **Solve-only — does NOT dispatch
     /// a batch** (matches `solve_dirty`'s contract; dispatch is the pump's job
     /// via `send_result_batch`, driven by the 50ms debounce timer).

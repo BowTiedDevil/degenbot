@@ -842,16 +842,14 @@ mod tests {
             gas_limit: 30_000_000,
         };
 
-        // `last_solved_block < block(=10)` so the guard fires.
-        let mut last_solved_block: u64 = 0;
-        let mut has_logs_this_block = true;
+        // `last_solved_block < block(=10)` so the guard fires. The engine
+        // now OWNS this bookkeeping (the pump out-params retired in ergo task
+        // LEZJAS) — drive it through the engine's own accessor so the test
+        // exercises the same path the pump uses.
+        engine.set_last_solved_block(0);
+        engine.record_logs_this_block();
 
-        engine.finalize_block(
-            10,
-            &metadata,
-            &mut last_solved_block,
-            &mut has_logs_this_block,
-        );
+        engine.finalize_block(10, &metadata);
 
         // The emitted batch must carry the passed metadata, not default.
         let batch = rx
@@ -872,9 +870,10 @@ mod tests {
                 || batch.updated.iter().any(|(id, _)| *id == path_id),
             "expected the profitable path in fresh/updated"
         );
-        // Guard advanced + logs flag cleared by finalize_block.
-        assert_eq!(last_solved_block, 10);
-        assert!(!has_logs_this_block);
+        // Guard advanced + logs flag cleared — now read from the engine
+        // itself (the pump out-params were retired in ergo task LEZJAS).
+        assert_eq!(engine.last_solved_block(), 10);
+        assert!(!engine.has_logs_this_block());
     }
 
     #[test]

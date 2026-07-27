@@ -43,15 +43,18 @@ pub trait Engine: Send + Sync {
 
     /// Solve + advance at a genuine block boundary: solve any dirty paths
     /// carried over from the previous block, emit a block-boundary batch.
-    /// Pumps the `last_solved_block` / `has_logs_this_block` bookkeeping
-    /// locals owned by the pump.
-    fn finalize_block(
-        &self,
-        block: u64,
-        metadata: &BlockMetadata,
-        last_solved_block: &mut u64,
-        has_logs_this_block: &mut bool,
-    );
+    /// The `last_solved_block` + `has_logs_this_block` bookkeeping is owned
+    /// by the engine itself since ergo task LEZJAS (the pump's `&mut` out-
+    /// params retired); a mid-flight engine joining the pump can seed the
+    /// last solved block via `set_last_solved_block` (ADR-006 D4).
+    fn finalize_block(&self, block: u64, metadata: &BlockMetadata);
+
+    /// Mark `block` as solved (engine-owned bookkeeping since ergo task
+    /// LEZJAS). See `DrainSink::set_last_solved_block`.
+    fn set_last_solved_block(&self, block: u64);
+
+    /// Record a forward-log applied this block (engine-owned since LEZJAS).
+    fn record_logs_this_block(&self);
 
     /// The last block this engine solved. Used by `SolveCoordinator::start`
     /// to assert precondition 2 (cursors agree across engines before start).

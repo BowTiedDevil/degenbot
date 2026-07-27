@@ -89,21 +89,20 @@ impl ArbitrageEngine {
     /// path sent `BlockMetadata::default()`, which would make the Python
     /// consumer compute `base_fee_next = 0` and broadcast underpriced txs.
     ///
-    /// The `block > *last_solved_block` guard is load-bearing: the pump runs
+    /// The `block > last_solved_block` guard is load-bearing: the pump runs
     /// `solve_dirty` at the top of every loop iteration before awaiting the
     /// next event, so this normally only sends on a genuine block advance.
-    pub fn finalize_block(
-        &mut self,
-        block: u64,
-        metadata: &BlockMetadata,
-        last_solved_block: &mut u64,
-        has_logs_this_block: &mut bool,
-    ) {
-        if block > *last_solved_block {
+    ///
+    /// `last_solved_block` + `has_logs_this_block` are owned by the engine
+    /// since ergo task LEZJAS (the pump's `&mut` out-params retired); a
+    /// mid-flight engine joining the pump can inherit the pump's last solved
+    /// block via `set_last_solved_block` (ADR-006 D4).
+    pub fn finalize_block(&mut self, block: u64, metadata: &BlockMetadata) {
+        if block > self.last_solved_block {
             if self.has_dirty_paths() {
                 self.solve_dirty(block, metadata);
                 self.send_result_batch(metadata);
-            } else if *has_logs_this_block {
+            } else if self.has_logs_this_block {
                 // X35QKN: previously this called `process_block_and_send(&[], ...)`
                 // — the parallel log-routing API. `process_block(&[])` over an
                 // empty slice is a no-op loop + `solve_dirty` (an empty-dirty-
@@ -113,8 +112,8 @@ impl ArbitrageEngine {
                 self.solve_dirty(block, metadata);
                 self.compute_diff_and_send(metadata);
             }
-            *last_solved_block = block;
-            *has_logs_this_block = false;
+            self.last_solved_block = block;
+            self.has_logs_this_block = false;
         }
     }
 

@@ -124,16 +124,16 @@ impl Engine for EngineHandle {
     }
 
     #[hotpath::measure(label = "EngineHandle::finalize_block")]
-    fn finalize_block(
-        &self,
-        block: u64,
-        metadata: &BlockMetadata,
-        last_solved_block: &mut u64,
-        has_logs_this_block: &mut bool,
-    ) {
-        self.engine
-            .lock()
-            .finalize_block(block, metadata, last_solved_block, has_logs_this_block);
+    fn finalize_block(&self, block: u64, metadata: &BlockMetadata) {
+        self.engine.lock().finalize_block(block, metadata);
+    }
+
+    fn set_last_solved_block(&self, block: u64) {
+        self.engine.lock().set_last_solved_block(block);
+    }
+
+    fn record_logs_this_block(&self) {
+        self.engine.lock().record_logs_this_block();
     }
 
     fn last_processed_block(&self) -> Option<u64> {
@@ -169,9 +169,8 @@ mod tests {
 
         handle.solve_dirty(1, &metadata);
         handle.send_result_batch(&metadata);
-        let mut last_solved = 0u64;
-        let mut has_logs = false;
-        handle.finalize_block(1, &metadata, &mut last_solved, &mut has_logs);
+        handle.set_last_solved_block(0);
+        handle.finalize_block(1, &metadata);
 
         assert!(!handle.has_dirty_paths());
     }

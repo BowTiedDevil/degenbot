@@ -476,9 +476,13 @@ impl BlockPump {
             log::info!("BlockPump: starting from block {current_block}");
         }
 
-        // Track the last block we've solved for. Used to detect block
-        // boundaries and finalize the previous block when a new one starts.
-        let mut last_solved_block: u64 = current_block;
+        // Track the last block we've solved for: owned by the engine since
+        // ergo task LEZJAS (the pump's `last_solved_block` local retired).
+        // Seed it to the pump's starting block so the first `finalize_block`
+        // guard fires only on a genuine advance (matching the prior local
+        // init). A mid-flight-joining engine inherits via `set_last_solved_block`
+        // (ADR-006 D4).
+        self.sink.set_last_solved_block(current_block);
         // Whether we're past the first header after resume. The first
         // header establishes our anchor but shouldn't trigger a solve
         // (backfill already solved up to this point).
@@ -486,8 +490,8 @@ impl BlockPump {
         // Current block metadata — updated from headers, used for
         // solve batches when logs close out a block.
         let mut current_metadata: BlockMetadata = BlockMetadata::default();
-        // Whether any logs were applied for the current block.
-        let mut has_logs_this_block: bool = false;
+        // `has_logs_this_block` is engine-owned since LEZJAS — driven through
+        // `self.sink.record_logs_this_block()` (cleared by `finalize_block`).
         // Debounce timer: started when the first dirty log arrives, reset on
         // each new log. When it fires, we send the accumulated result batch
         // to Python. This ensures one dispatch per burst of logs rather than
@@ -528,7 +532,9 @@ impl BlockPump {
             {
                 if self.sink.has_dirty_paths() {
                     self.sink.on_drain(current_block, &current_metadata);
-                    last_solved_block = current_block;
+                    // LEZJAS: engine owns `last_solved_block` now — mark this
+                    // block solved so the next `finalize_block` guard no-ops.
+                    self.sink.set_last_solved_block(current_block);
                 }
             }
 
@@ -574,8 +580,6 @@ impl BlockPump {
                         // No activity for 60s — try to backfill
                         self.handle_timeout_eager(
                             &mut current_block,
-                            &mut last_solved_block,
-                            &mut has_logs_this_block,
                             &mut clock,
                             &mut block_metadata,
                             &mut publish_pending,
@@ -667,7 +671,10 @@ impl BlockPump {
                                 .await;
                             }
                             current_block = number;
-                            last_solved_block = number;
+                            // LEZJAS: the backfill path solved up to `number`
+                            // already; mark it solved on the engine so the next
+                            // `finalize_block` guard no-ops for this block.
+                            self.sink.set_last_solved_block(number);
                             self.sink.notify_block(current_block, &current_metadata);
                         }
                         first_header = false;
@@ -792,12 +799,7 @@ impl BlockPump {
                                 .get(&prev)
                                 .copied()
                                 .unwrap_or(current_metadata);
-                            self.finalize_if_dirty(
-                                prev,
-                                &prev_meta,
-                                &mut last_solved_block,
-                                &mut has_logs_this_block,
-                            );
+                            self.finalize_if_dirty(prev, &prev_meta);
                             clock.advance_to_drained(prev);
                             if log_block > current_block {
                                 current_block = log_block;
@@ -830,7 +832,9 @@ impl BlockPump {
                     clock.log_received(log_block);
                     clock.log_applied(log_block);
 
-                    has_logs_this_block = true;
+                    // LEZJAS: engine owns `has_logs_this_block` now — routed
+                    // through the sink so the next `finalize_block` sees it.
+                    self.sink.record_logs_this_block();
 
                     // ADR-008 D2: arm the quiesce-gated publish. The flush
                     // fires at the next settle point (timeout or stream end)
@@ -873,29 +877,19 @@ impl BlockPump {
     /// batch to Python, carrying the caller's real `current_metadata`.
     ///
     /// Delegates to the `DrainSink`'s `finalize_block` (the slice-6
-    /// `SolveCoordinator` fans to every attached `Engine`). Kept here as a thin
-    /// wrapper so the pump owns the `last_solved_block` / `has_logs_this_block`
-    /// bookkeeping locals; all engine-state mutation happens inside the sink
-    /// under its lock. ADR-006 D4: the pump no longer holds the engine `Mutex`
-    /// directly.
-    fn finalize_if_dirty(
-        &self,
-        block: u64,
-        metadata: &BlockMetadata,
-        last_solved_block: &mut u64,
-        has_logs_this_block: &mut bool,
-    ) {
-        self.sink
-            .finalize_block(block, metadata, last_solved_block, has_logs_this_block);
+    /// `SolveCoordinator` fans to every attached `Engine`). The
+    /// `last_solved_block` / `has_logs_this_block` bookkeeping is owned by
+    /// the engine since ergo task LEZJAS (the pump's out-params retired);
+    /// all engine-state mutation happens inside the sink under its lock.
+    /// ADR-006 D4: the pump no longer holds the engine `Mutex` directly.
+    fn finalize_if_dirty(&self, block: u64, metadata: &BlockMetadata) {
+        self.sink.finalize_block(block, metadata);
     }
 
     /// Handle a 60s timeout by backfilling any missed blocks (eager variant).
-    #[allow(unused_assignments)]
     async fn handle_timeout_eager(
         &self,
         current_block: &mut u64,
-        last_solved_block: &mut u64,
-        has_logs_this_block: &mut bool,
         clock: &mut BlockClock,
         block_metadata: &mut HashMap<u64, BlockMetadata>,
         publish_pending: &mut bool,
@@ -921,8 +915,10 @@ impl BlockPump {
             )
             .await;
             *current_block = lpb;
-            *last_solved_block = lpb;
-            *has_logs_this_block = false;
+            // LEZJAS: engine owns `last_solved_block` + `has_logs_this_block`
+            // now — mark the backfilled range solved + clear the logs flag
+            // through the sink (mirrors the retired pump-local writes).
+            self.sink.set_last_solved_block(lpb);
         }
     }
 
@@ -988,13 +984,7 @@ impl BlockPump {
                 match clock.observe_log(block, log.removed) {
                     LogDecision::TombstonePrevious(prev) => {
                         let prev_meta = block_metadata.get(&prev).copied().unwrap_or_default();
-                        self.sink.finalize_block(
-                            prev, &prev_meta,
-                            // backfill has no `last_solved_block`/`has_logs`
-                            // locals to pump; pass throwaways — `on_drain`
-                            // below is the solve trigger for the block itself.
-                            &mut 0, &mut false,
-                        );
+                        self.sink.finalize_block(prev, &prev_meta);
                         clock.advance_to_drained(prev);
                         self.bot.dispatch_log(log);
                         clock.log_received(block);
@@ -1300,15 +1290,11 @@ mod tests {
         fn on_send(&self, metadata: &BlockMetadata) {
             self.sent.lock().unwrap().push(*metadata);
         }
-        fn finalize_block(
-            &self,
-            block: u64,
-            metadata: &BlockMetadata,
-            _last_solved_block: &mut u64,
-            _has_logs_this_block: &mut bool,
-        ) {
+        fn finalize_block(&self, block: u64, metadata: &BlockMetadata) {
             self.finalized.lock().unwrap().push((block, *metadata));
         }
+        fn set_last_solved_block(&self, _block: u64) {}
+        fn record_logs_this_block(&self) {}
         fn last_processed_block(&self) -> Option<u64> {
             let v = self.last_processed.load(Ordering::Relaxed);
             (v != 0).then_some(v)

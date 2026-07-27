@@ -144,18 +144,29 @@ impl DrainSink for SolveCoordinator {
     }
 
     #[hotpath::measure(label = "SolveCoordinator::finalize_block")]
-    fn finalize_block(
-        &self,
-        block: u64,
-        metadata: &BlockMetadata,
-        last_solved_block: &mut u64,
-        has_logs_this_block: &mut bool,
-    ) {
+    fn finalize_block(&self, block: u64, metadata: &BlockMetadata) {
         let mut state = self.drain_lock.lock().expect("drain_lock poisoned");
         for engine in &self.engines {
-            engine.finalize_block(block, metadata, last_solved_block, has_logs_this_block);
+            engine.finalize_block(block, metadata);
         }
         state.last_drained_block = Some(block);
+    }
+
+    fn set_last_solved_block(&self, block: u64) {
+        let _guard = self.drain_lock.lock().expect("drain_lock poisoned");
+        // Fan-out mirrors `finalize_block`/`on_drain` — every engine seeds
+        // its own `last_solved_block` (engine-owned since LEZJAS; the prior
+        // shared `&mut` out-param was a latent overwrite bug across engines).
+        for engine in &self.engines {
+            engine.set_last_solved_block(block);
+        }
+    }
+
+    fn record_logs_this_block(&self) {
+        let _guard = self.drain_lock.lock().expect("drain_lock poisoned");
+        for engine in &self.engines {
+            engine.record_logs_this_block();
+        }
     }
 
     fn last_processed_block(&self) -> Option<u64> {
@@ -243,15 +254,11 @@ mod tests {
             *self.has_dirty_paths_calls.lock().unwrap() += 1;
             *self.dirty.lock().unwrap()
         }
-        fn finalize_block(
-            &self,
-            _block: u64,
-            _metadata: &BlockMetadata,
-            _last_solved_block: &mut u64,
-            _has_logs_this_block: &mut bool,
-        ) {
+        fn finalize_block(&self, _block: u64, _metadata: &BlockMetadata) {
             *self.finalize_block_calls.lock().unwrap() += 1;
         }
+        fn set_last_solved_block(&self, _block: u64) {}
+        fn record_logs_this_block(&self) {}
         fn notify_block(&self, block: u64, _metadata: &BlockMetadata) {
             *self.notify_block_calls.lock().unwrap() += 1;
             *self.last_notified.lock().unwrap() = Some(block);
