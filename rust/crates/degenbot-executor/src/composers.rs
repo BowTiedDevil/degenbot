@@ -27,15 +27,7 @@
 // Cosmetic lints: the composer ports mirror Python oracle names that share
 // prefixes (mid_currency_a/b); many locals look "unused" on one branch only;
 // and the dispatch API is wide (8 args) to match the Python oracle's kwargs.
-#![allow(
-    clippy::used_underscore_binding,
-    clippy::no_effect_underscore_binding,
-    clippy::too_many_arguments,
-    clippy::similar_names,
-    clippy::needless_late_init,
-    unused_variables,
-    unreachable_patterns
-)]
+#![allow(clippy::too_many_arguments, clippy::similar_names)]
 
 use crate::encoders::{
     self, AddressTable, V4BatchEntry, NATIVE_ADDRESS, SENTINEL_NATIVE, SENTINEL_SELF, SENTINEL_WETH,
@@ -448,7 +440,7 @@ fn encode_cmd_v2_n_hop(
     optimal_input: u128,
     hop_outputs: &[u128],
     executor_address: Address,
-    _weth_address: Address,
+    weth_address: Address,
 ) -> Option<Vec<u8>> {
     let v2_hops: Vec<&V2HopInfo> = path_info
         .hops
@@ -469,7 +461,7 @@ fn encode_cmd_v2_n_hop(
 
     let executor_idx = SENTINEL_SELF;
 
-    let mut at = AddressTable::with_sentinels(Some(_weth_address), Some(executor_address), None);
+    let mut at = AddressTable::with_sentinels(Some(weth_address), Some(executor_address), None);
 
     // Register all pool addresses (preserves insertion order).
     let pool_indices: Vec<u8> = v2_hops
@@ -613,13 +605,13 @@ fn encode_cmd_v4_v4(
     let c1_b_idx = at.add(hop_b.currency1_address).ok()?;
     let weth_idx = SENTINEL_WETH;
 
-    let mut _native_idx: u8 = SENTINEL_NATIVE;
+    let mut native_idx: u8 = SENTINEL_NATIVE;
     if a_outputs_native
         || b_needs_native
         || input_currency_a == NATIVE_CURRENCY_ADDRESS
         || output_currency_b == NATIVE_CURRENCY_ADDRESS
     {
-        _native_idx = at.add(NATIVE_CURRENCY_ADDRESS).ok()?;
+        native_idx = at.add(NATIVE_CURRENCY_ADDRESS).ok()?;
     }
 
     let a_fee = u16::try_from(hop_a.fee).ok()?;
@@ -646,7 +638,7 @@ fn encode_cmd_v4_v4(
     if currency_gap {
         // Take the intermediate token out of PM, bridge the native↔WETH gap.
         let bridge_idx = match bridge {
-            CurrencyBridge::Wrap => _native_idx,
+            CurrencyBridge::Wrap => native_idx,
             CurrencyBridge::Unwrap => weth_idx,
             CurrencyBridge::None => unreachable!("currency_gap implies a bridge"),
         };
@@ -666,13 +658,13 @@ fn encode_cmd_v4_v4(
         );
         // 5. Settle pool B's input currency.
         if b_needs_native {
-            inner.extend_from_slice(&encoders::enc_v4_settle_delta(_native_idx));
+            inner.extend_from_slice(&encoders::enc_v4_settle_delta(native_idx));
         } else {
             inner.extend_from_slice(&encoders::enc_v4_settle_delta(weth_idx));
         }
         // 6. Take profit (output currency of pool B via delta ledger).
         if output_currency_b == NATIVE_CURRENCY_ADDRESS {
-            inner.extend_from_slice(&encoders::enc_v4_take_delta(_native_idx, SENTINEL_SELF));
+            inner.extend_from_slice(&encoders::enc_v4_take_delta(native_idx, SENTINEL_SELF));
         } else if output_currency_b == weth_address {
             inner.extend_from_slice(&encoders::enc_v4_take_delta(weth_idx, SENTINEL_SELF));
         } else {
@@ -728,7 +720,7 @@ fn encode_cmd_v4_v4(
             || (output_currency_b != NATIVE_CURRENCY_ADDRESS && output_currency_b != weth_address)
         {
             if output_currency_b == NATIVE_CURRENCY_ADDRESS {
-                inner.extend_from_slice(&encoders::enc_v4_take_delta(_native_idx, SENTINEL_SELF));
+                inner.extend_from_slice(&encoders::enc_v4_take_delta(native_idx, SENTINEL_SELF));
             } else if output_currency_b == weth_address {
                 inner.extend_from_slice(&encoders::enc_v4_take_delta(weth_idx, SENTINEL_SELF));
             } else {
@@ -767,15 +759,15 @@ fn encode_cmd_v4_v3(
     weth_address: Address,
 ) -> Option<Vec<u8>> {
     let forward_out = *hop_outputs.first()?;
-    let _weth_out = *hop_outputs.get(1)?;
-    if forward_out == 0 || _weth_out == 0 {
+    let weth_out = *hop_outputs.get(1)?;
+    if forward_out == 0 || weth_out == 0 {
         return None;
     }
     if !fits_int128(optimal_input) {
         return None;
     }
 
-    let _v4_out_native = v4_output_is_native(hop_v4);
+    let v4_out_native = v4_output_is_native(hop_v4);
 
     let mut at = AddressTable::with_sentinels(
         Some(weth_address),
@@ -789,9 +781,9 @@ fn encode_cmd_v4_v3(
     let v3_idx = at.add(hop_v3.pool_address).ok()?;
     let weth_idx = SENTINEL_WETH;
 
-    let mut _native_idx: u8 = SENTINEL_NATIVE;
-    if _v4_out_native {
-        _native_idx = at.add(NATIVE_CURRENCY_ADDRESS).ok()?;
+    let mut native_idx: u8 = SENTINEL_NATIVE;
+    if v4_out_native {
+        native_idx = at.add(NATIVE_CURRENCY_ADDRESS).ok()?;
     }
 
     let v4_fee = u16::try_from(hop_v4.fee).ok()?;
@@ -809,10 +801,10 @@ fn encode_cmd_v4_v3(
     )
     .ok()?;
 
-    if _v4_out_native {
+    if v4_out_native {
         // V4 output is native ETH — take to executor, then wrap.
         inner.extend_from_slice(
-            &encoders::enc_v4_take_compact(_native_idx, SENTINEL_SELF, forward_out).ok()?,
+            &encoders::enc_v4_take_compact(native_idx, SENTINEL_SELF, forward_out).ok()?,
         );
         inner.extend_from_slice(&encoders::enc_weth_deposit(U256::from(forward_out)));
         // 3. V3 swap with auto-pay (executor has WETH after deposit).
@@ -835,8 +827,8 @@ fn encode_cmd_v4_v3(
                 .ok()?,
         );
         // 4. Settle V4's input currency debt. V3 sent WETH to executor.
-        let _v4_in_native = v4_input_is_native(hop_v4);
-        if _v4_in_native {
+        let v4_in_native = v4_input_is_native(hop_v4);
+        if v4_in_native {
             let input_idx = if hop_v4.zfo { c0_v4_idx } else { c1_v4_idx };
             inner.extend_from_slice(&encoders::enc_weth_withdraw(U256::from(optimal_input)));
             inner.extend_from_slice(&encoders::enc_v4_settle_delta(input_idx));
@@ -865,7 +857,7 @@ fn encode_cmd_v4_v3(
 fn encode_cmd_v3_v4(
     hop_v3: &V3HopInfo,
     hop_v4: &V4HopInfo,
-    _optimal_input: u128,
+    optimal_input: u128,
     hop_outputs: &[u128],
     executor_address: Address,
     pool_manager_address: Address,
@@ -880,7 +872,7 @@ fn encode_cmd_v3_v4(
         return None;
     }
 
-    let _v4_in_native = v4_input_is_native(hop_v4);
+    let v4_in_native = v4_input_is_native(hop_v4);
 
     let mut at = AddressTable::with_sentinels(
         Some(weth_address),
@@ -895,16 +887,15 @@ fn encode_cmd_v3_v4(
     let c1_v4_idx = at.add(hop_v4.currency1_address).ok()?;
     let weth_idx = SENTINEL_WETH;
 
-    let mut _native_idx: u8 = SENTINEL_NATIVE;
-    if _v4_in_native {
-        _native_idx = at.add(NATIVE_CURRENCY_ADDRESS).ok()?;
+    let mut native_idx: u8 = SENTINEL_NATIVE;
+    if v4_in_native {
+        native_idx = at.add(NATIVE_CURRENCY_ADDRESS).ok()?;
     }
 
     let v4_fee = u16::try_from(hop_v4.fee).ok()?;
     let v4_ts = i16::try_from(hop_v4.tick_spacing).ok()?;
 
-    let v3_callback: Vec<u8>;
-    if _v4_in_native {
+    let v3_callback = if v4_in_native {
         // V4 needs native ETH — unwrap WETH→ETH first, then V4 swap + settle + take.
         let mut v4_inner = encoders::enc_v4_swap_compact(
             c0_v4_idx,
@@ -916,7 +907,7 @@ fn encode_cmd_v3_v4(
             forward_out,
         )
         .ok()?;
-        v4_inner.extend_from_slice(&encoders::enc_v4_settle_delta(_native_idx));
+        v4_inner.extend_from_slice(&encoders::enc_v4_settle_delta(native_idx));
         let output_currency = if hop_v4.zfo {
             hop_v4.currency1_address
         } else {
@@ -924,7 +915,7 @@ fn encode_cmd_v3_v4(
         };
         if output_currency == NATIVE_CURRENCY_ADDRESS {
             v4_inner.extend_from_slice(
-                &encoders::enc_v4_take_compact(_native_idx, SENTINEL_SELF, weth_out).ok()?,
+                &encoders::enc_v4_take_compact(native_idx, SENTINEL_SELF, weth_out).ok()?,
             );
         } else {
             let output_idx = if hop_v4.zfo { c1_v4_idx } else { c0_v4_idx };
@@ -948,9 +939,9 @@ fn encode_cmd_v3_v4(
         }
         let forward_v3_idx = at.add(input_currency_v3).ok()?;
         cb.extend_from_slice(
-            &encoders::enc_erc20_transfer(forward_v3_idx, v3_idx, _optimal_input).ok()?,
+            &encoders::enc_erc20_transfer(forward_v3_idx, v3_idx, optimal_input).ok()?,
         );
-        v3_callback = cb;
+        cb
     } else {
         // V4 needs WETH — standard sync+transfer+settle+swap+take.
         let forward_addr = if hop_v3.zfo {
@@ -985,15 +976,15 @@ fn encode_cmd_v3_v4(
 
         // V3 callback: V4 unlock + pay V3's WETH debt.
         let mut cb = encoders::enc_v4_unlock(&v4_inner).ok()?;
-        cb.extend_from_slice(&encoders::enc_erc20_transfer(weth_idx, v3_idx, _optimal_input).ok()?);
-        v3_callback = cb;
-    }
+        cb.extend_from_slice(&encoders::enc_erc20_transfer(weth_idx, v3_idx, optimal_input).ok()?);
+        cb
+    };
 
     // Top-level: V3 swap with forward_data callback (V3 amount = optimal_input).
     let commands = encoders::enc_v3_swap_compact(
         v3_idx,
         hop_v3.zfo,
-        _optimal_input,
+        optimal_input,
         SENTINEL_SELF,
         &v3_callback,
     )
@@ -1032,7 +1023,7 @@ fn encode_cmd_v4_v2(
         return None;
     }
 
-    let _v4_out_native = v4_output_is_native(hop_v4);
+    let v4_out_native = v4_output_is_native(hop_v4);
 
     let mut at = AddressTable::with_sentinels(
         Some(weth_address),
@@ -1047,9 +1038,9 @@ fn encode_cmd_v4_v2(
     let v2_idx = at.add(hop_v2.pool_address).ok()?;
     let weth_idx = SENTINEL_WETH;
 
-    let mut _native_idx: u8 = SENTINEL_NATIVE;
-    if _v4_out_native {
-        _native_idx = at.add(NATIVE_CURRENCY_ADDRESS).ok()?;
+    let mut native_idx: u8 = SENTINEL_NATIVE;
+    if v4_out_native {
+        native_idx = at.add(NATIVE_CURRENCY_ADDRESS).ok()?;
     }
 
     let v4_fee = u16::try_from(hop_v4.fee).ok()?;
@@ -1066,10 +1057,10 @@ fn encode_cmd_v4_v2(
     )
     .ok()?;
 
-    if _v4_out_native {
+    if v4_out_native {
         // V4 output is native ETH, V2 needs WETH.
         inner.extend_from_slice(
-            &encoders::enc_v4_take_compact(_native_idx, SENTINEL_SELF, forward_out).ok()?,
+            &encoders::enc_v4_take_compact(native_idx, SENTINEL_SELF, forward_out).ok()?,
         );
         inner.extend_from_slice(&encoders::enc_weth_deposit(U256::from(forward_out)));
         // 3. V2_SWAP_COMPACT with callback — V2 sends USDC to executor, then
@@ -1103,8 +1094,8 @@ fn encode_cmd_v4_v2(
             hop_v2.fee,
         ));
         // Settle V4's input-currency debt.
-        let _v4_in_native = v4_input_is_native(hop_v4);
-        if _v4_in_native {
+        let v4_in_native = v4_input_is_native(hop_v4);
+        if v4_in_native {
             let input_idx = if hop_v4.zfo { c0_v4_idx } else { c1_v4_idx };
             inner.extend_from_slice(&encoders::enc_weth_withdraw(U256::from(optimal_input)));
             inner.extend_from_slice(&encoders::enc_v4_settle_delta(input_idx));
@@ -1138,7 +1129,7 @@ fn encode_cmd_v4_v2(
 fn encode_cmd_v2_v4(
     hop_v2: &V2HopInfo,
     hop_v4: &V4HopInfo,
-    _optimal_input: u128,
+    optimal_input: u128,
     hop_outputs: &[u128],
     executor_address: Address,
     pool_manager_address: Address,
@@ -1153,7 +1144,7 @@ fn encode_cmd_v2_v4(
         return None;
     }
 
-    let _v4_in_native = v4_input_is_native(hop_v4);
+    let v4_in_native = v4_input_is_native(hop_v4);
 
     let mut at = AddressTable::with_sentinels(
         Some(weth_address),
@@ -1168,9 +1159,9 @@ fn encode_cmd_v2_v4(
     let c1_v4_idx = at.add(hop_v4.currency1_address).ok()?;
     let weth_idx = SENTINEL_WETH;
 
-    let mut _native_idx_in: u8 = SENTINEL_NATIVE;
-    if _v4_in_native {
-        _native_idx_in = at.add(NATIVE_CURRENCY_ADDRESS).ok()?;
+    let mut native_idx_in: u8 = SENTINEL_NATIVE;
+    if v4_in_native {
+        native_idx_in = at.add(NATIVE_CURRENCY_ADDRESS).ok()?;
     }
 
     // Forward token = output of V2 swap.
@@ -1185,7 +1176,7 @@ fn encode_cmd_v2_v4(
     let v4_ts = i16::try_from(hop_v4.tick_spacing).ok()?;
 
     let callback_cmds: Vec<u8>;
-    if _v4_in_native {
+    if v4_in_native {
         // V4 needs native ETH — unwrap WETH first, then V4 swap + settle + take.
         let mut v4_inner = encoders::enc_v4_swap_compact(
             c0_v4_idx,
@@ -1197,7 +1188,7 @@ fn encode_cmd_v2_v4(
             forward_out,
         )
         .ok()?;
-        v4_inner.extend_from_slice(&encoders::enc_v4_settle_delta(_native_idx_in));
+        v4_inner.extend_from_slice(&encoders::enc_v4_settle_delta(native_idx_in));
         let output_idx = if hop_v4.zfo { c1_v4_idx } else { c0_v4_idx };
         v4_inner.extend_from_slice(
             &encoders::enc_v4_take_compact(output_idx, SENTINEL_SELF, weth_out).ok()?,
@@ -1207,12 +1198,12 @@ fn encode_cmd_v2_v4(
         let mut cb = encoders::enc_weth_withdraw(U256::from(forward_out));
         cb.extend_from_slice(&encoders::enc_v4_unlock(&v4_inner).ok()?);
         cb.extend_from_slice(
-            &encoders::enc_erc20_transfer(forward_idx, v2_idx, _optimal_input).ok()?,
+            &encoders::enc_erc20_transfer(forward_idx, v2_idx, optimal_input).ok()?,
         );
         callback_cmds = cb;
     } else {
         // V4 input is ERC-20 (not native ETH). Check V4 OUTPUT native.
-        let _v4_out_native = v4_output_is_native(hop_v4);
+        let v4_out_native = v4_output_is_native(hop_v4);
 
         let mut v4_inner = encoders::enc_v4_sync(forward_idx);
         v4_inner.extend_from_slice(
@@ -1231,11 +1222,11 @@ fn encode_cmd_v2_v4(
             )
             .ok()?,
         );
-        let _native_idx_out: u8;
-        if _v4_out_native {
-            _native_idx_out = at.add(NATIVE_CURRENCY_ADDRESS).ok()?;
+        let native_idx_out: u8;
+        if v4_out_native {
+            native_idx_out = at.add(NATIVE_CURRENCY_ADDRESS).ok()?;
             v4_inner.extend_from_slice(
-                &encoders::enc_v4_take_compact(_native_idx_out, SENTINEL_SELF, weth_out).ok()?,
+                &encoders::enc_v4_take_compact(native_idx_out, SENTINEL_SELF, weth_out).ok()?,
             );
         } else {
             let output_idx = if hop_v4.zfo { c1_v4_idx } else { c0_v4_idx };
@@ -1247,10 +1238,10 @@ fn encode_cmd_v2_v4(
 
         // V2 callback: V4 unlock first, then pay V2.
         let mut cb = encoders::enc_v4_unlock(&v4_inner).ok()?;
-        if _v4_out_native {
+        if v4_out_native {
             cb.extend_from_slice(&encoders::enc_weth_deposit(U256::from(weth_out)));
         }
-        cb.extend_from_slice(&encoders::enc_erc20_transfer(weth_idx, v2_idx, _optimal_input).ok()?);
+        cb.extend_from_slice(&encoders::enc_erc20_transfer(weth_idx, v2_idx, optimal_input).ok()?);
         callback_cmds = cb;
     }
 
@@ -1288,8 +1279,8 @@ fn encode_cmd_v3_v3(
     weth_address: Address,
 ) -> Option<Vec<u8>> {
     let forward_out = *hop_outputs.first()?;
-    let _weth_out = *hop_outputs.get(1)?;
-    if forward_out == 0 || _weth_out == 0 {
+    let weth_out = *hop_outputs.get(1)?;
+    if forward_out == 0 || weth_out == 0 {
         return None;
     }
 
@@ -1335,14 +1326,14 @@ fn encode_cmd_v3_v3(
 fn encode_cmd_v2_v3(
     hop_a: &V2HopInfo,
     hop_b: &V3HopInfo,
-    _optimal_input: u128,
+    optimal_input: u128,
     hop_outputs: &[u128],
     executor_address: Address,
     weth_address: Address,
 ) -> Option<Vec<u8>> {
     let forward_out = *hop_outputs.first()?;
-    let _weth_out = *hop_outputs.get(1)?;
-    if forward_out == 0 || _weth_out == 0 {
+    let weth_out = *hop_outputs.get(1)?;
+    if forward_out == 0 || weth_out == 0 {
         return None;
     }
 
@@ -1370,7 +1361,7 @@ fn encode_cmd_v2_v3(
     )
     .ok()?;
     callback_cmds
-        .extend_from_slice(&encoders::enc_erc20_transfer(weth_idx, v2_idx, _optimal_input).ok()?);
+        .extend_from_slice(&encoders::enc_erc20_transfer(weth_idx, v2_idx, optimal_input).ok()?);
 
     // Top-level: V2 flash swap.
     let commands = encoders::enc_v2_swap_compact(
@@ -2349,7 +2340,6 @@ pub fn encode_cmd_3_hop(
             executor_address,
             pool_manager_address,
             weth_address,
-            opts,
         ),
         (HopInfo::V4(a), HopInfo::V2(b), HopInfo::V2(c)) => three_hop_v4_v2_v2(
             a,
@@ -2442,7 +2432,6 @@ pub fn encode_cmd_3_hop(
             weth_address,
             opts,
         ),
-        _ => None,
     }
 }
 
@@ -2471,8 +2460,6 @@ fn three_hop_v2_v2_v2(
     executor_address: Address,
     weth_address: Address,
 ) -> Option<Vec<u8>> {
-    let _out_a = hop_outputs[0];
-    let _out_b = hop_outputs[1];
     let out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
         return None;
@@ -2514,9 +2501,7 @@ fn three_hop_v2_v2_v3(
     executor_address: Address,
     weth_address: Address,
 ) -> Option<Vec<u8>> {
-    let _out_a = hop_outputs[0];
     let out_b = hop_outputs[1];
-    let _out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
         return None;
     }
@@ -2571,7 +2556,6 @@ fn three_hop_v2_v2_v4(
     );
     let pm_idx = at.add(pool_manager_address).ok()?;
     let weth_idx = SENTINEL_WETH;
-    let _executor_idx = SENTINEL_SELF;
     let zero_idx = SENTINEL_NATIVE;
     let v2a_idx = at.add(ha.pool_address).ok()?;
     let v2b_idx = at.add(hb.pool_address).ok()?;
@@ -2619,7 +2603,6 @@ fn three_hop_v2_v3_v2(
     weth_address: Address,
 ) -> Option<Vec<u8>> {
     let out_a = hop_outputs[0];
-    let _out_b = hop_outputs[1];
     let out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
         return None;
@@ -2627,13 +2610,12 @@ fn three_hop_v2_v3_v2(
 
     let mut at = AddressTable::with_sentinels(Some(weth_address), Some(executor_address), None);
     let weth_idx = SENTINEL_WETH;
-    let _usdc_idx = at
-        .add(if ha.zfo {
-            ha.token1_address
-        } else {
-            ha.token0_address
-        })
-        .ok()?;
+    at.add(if ha.zfo {
+        ha.token1_address
+    } else {
+        ha.token0_address
+    })
+    .ok()?;
     let executor_idx = SENTINEL_SELF;
     let v2a_idx = at.add(ha.pool_address).ok()?;
     let v2c_idx = at.add(hc.pool_address).ok()?;
@@ -2666,7 +2648,6 @@ fn three_hop_v2_v3_v3(
 ) -> Option<Vec<u8>> {
     let out_a = hop_outputs[0];
     let out_b = hop_outputs[1];
-    let _out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
         return None;
     }
@@ -2853,7 +2834,6 @@ fn three_hop_v2_v4_v3(
 ) -> Option<Vec<u8>> {
     let out_a = hop_outputs[0];
     let out_b = hop_outputs[1];
-    let _out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
         return None;
     }
@@ -2926,8 +2906,6 @@ fn three_hop_v2_v4_v4(
     weth_address: Address,
 ) -> Option<Vec<u8>> {
     let out_a = hop_outputs[0];
-    let out_b = hop_outputs[1];
-    let _out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
         return None;
     }
@@ -2949,7 +2927,6 @@ fn three_hop_v2_v4_v4(
             ha.token0_address
         })
         .ok()?;
-    let executor_idx = SENTINEL_SELF;
     let zero_idx = SENTINEL_NATIVE;
 
     let fee_b = u16::try_from(hb.fee).ok()?;
@@ -2996,7 +2973,6 @@ fn three_hop_v3_v2_v2(
     executor_address: Address,
     weth_address: Address,
 ) -> Option<Vec<u8>> {
-    let _out_a = hop_outputs[0];
     let out_b = hop_outputs[1];
     let out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
@@ -3036,9 +3012,7 @@ fn three_hop_v3_v2_v3(
     executor_address: Address,
     weth_address: Address,
 ) -> Option<Vec<u8>> {
-    let _out_a = hop_outputs[0];
     let out_b = hop_outputs[1];
-    let _out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
         return None;
     }
@@ -3078,7 +3052,6 @@ fn three_hop_v3_v2_v4(
     pool_manager_address: Address,
     weth_address: Address,
 ) -> Option<Vec<u8>> {
-    let out_a = hop_outputs[0];
     let out_b = hop_outputs[1];
     let out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
@@ -3093,7 +3066,7 @@ fn three_hop_v3_v2_v4(
         Some(executor_address),
         Some(pool_manager_address),
     );
-    let _pm_idx = at.add(pool_manager_address).ok()?;
+    at.add(pool_manager_address).ok()?;
     let weth_idx = SENTINEL_WETH;
     let executor_idx = SENTINEL_SELF;
     let zero_idx = SENTINEL_NATIVE;
@@ -3146,7 +3119,6 @@ fn three_hop_v3_v3_v2(
     weth_address: Address,
 ) -> Option<Vec<u8>> {
     let out_a = hop_outputs[0];
-    let _out_b = hop_outputs[1];
     let out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
         return None;
@@ -3187,7 +3159,6 @@ fn three_hop_v3_v3_v3(
 ) -> Option<Vec<u8>> {
     let out_a = hop_outputs[0];
     let out_b = hop_outputs[1];
-    let _out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
         return None;
     }
@@ -3227,8 +3198,6 @@ fn three_hop_v3_v3_v4(
     weth_address: Address,
 ) -> Option<Vec<u8>> {
     let out_a = hop_outputs[0];
-    let _out_b = hop_outputs[1];
-    let _out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
         return None;
     }
@@ -3243,7 +3212,6 @@ fn three_hop_v3_v3_v4(
     );
     let pm_idx = at.add(pool_manager_address).ok()?;
     let weth_idx = SENTINEL_WETH;
-    let _executor_idx = SENTINEL_SELF;
     let zero_idx = SENTINEL_NATIVE;
     let v3a_idx = at.add(ha.pool_address).ok()?;
     let v3b_idx = at.add(hb.pool_address).ok()?;
@@ -3296,8 +3264,6 @@ fn three_hop_v3_v4_v2(
     pool_manager_address: Address,
     weth_address: Address,
 ) -> Option<Vec<u8>> {
-    let out_a = hop_outputs[0];
-    let _out_b = hop_outputs[1];
     let out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
         return None;
@@ -3374,9 +3340,7 @@ fn three_hop_v3_v4_v3(
     pool_manager_address: Address,
     weth_address: Address,
 ) -> Option<Vec<u8>> {
-    let _out_a = hop_outputs[0];
     let out_b = hop_outputs[1];
-    let _out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
         return None;
     }
@@ -3451,7 +3415,6 @@ fn three_hop_v3_v4_v4(
     executor_address: Address,
     pool_manager_address: Address,
     weth_address: Address,
-    _opts: EncodeOptions,
 ) -> Option<Vec<u8>> {
     let out_a = hop_outputs[0];
     let out_b = hop_outputs[1];
@@ -3468,19 +3431,18 @@ fn three_hop_v3_v4_v4(
         Some(executor_address),
         Some(pool_manager_address),
     );
-    let _pm_idx = at.add(pool_manager_address).ok()?;
+    at.add(pool_manager_address).ok()?;
     let weth_idx = SENTINEL_WETH;
     let executor_idx = SENTINEL_SELF;
     let zero_idx = SENTINEL_NATIVE;
     let v3a_idx = at.add(ha.pool_address).ok()?;
 
-    let forward_a_idx = at
-        .add(if ha.zfo {
-            ha.token1_address
-        } else {
-            ha.token0_address
-        })
-        .ok()?;
+    at.add(if ha.zfo {
+        ha.token1_address
+    } else {
+        ha.token0_address
+    })
+    .ok()?;
 
     let fee_b = u16::try_from(hb.fee).ok()?;
     let ts_b = i16::try_from(hb.tick_spacing).ok()?;
@@ -3534,8 +3496,6 @@ fn three_hop_v4_v2_v2(
     weth_address: Address,
 ) -> Option<Vec<u8>> {
     let out_a = hop_outputs[0];
-    let _out_b = hop_outputs[1];
-    let out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
         return None;
     }
@@ -3606,7 +3566,6 @@ fn three_hop_v4_v2_v3(
 ) -> Option<Vec<u8>> {
     let out_a = hop_outputs[0];
     let out_b = hop_outputs[1];
-    let _out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
         return None;
     }
@@ -3631,13 +3590,12 @@ fn three_hop_v4_v2_v3(
             ha.currency0_address
         })
         .ok()?;
-    let _forward_b_idx = at
-        .add(if hb.zfo {
-            hb.token1_address
-        } else {
-            hb.token0_address
-        })
-        .ok()?;
+    at.add(if hb.zfo {
+        hb.token1_address
+    } else {
+        hb.token0_address
+    })
+    .ok()?;
 
     let fee_a = u16::try_from(ha.fee).ok()?;
     let ts_a = i16::try_from(ha.tick_spacing).ok()?;
@@ -3690,7 +3648,6 @@ fn three_hop_v4_v2_v4(
 ) -> Option<Vec<u8>> {
     let out_a = hop_outputs[0];
     let out_b = hop_outputs[1];
-    let _out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
         return None;
     }
@@ -3703,7 +3660,6 @@ fn three_hop_v4_v2_v4(
         Some(executor_address),
         Some(pool_manager_address),
     );
-    let weth_idx = SENTINEL_WETH;
     let executor_idx = SENTINEL_SELF;
     let zero_idx = SENTINEL_NATIVE;
 
@@ -3714,13 +3670,12 @@ fn three_hop_v4_v2_v4(
             ha.currency0_address
         })
         .ok()?;
-    let forward_b_idx = at
-        .add(if hb.zfo {
-            hb.token1_address
-        } else {
-            hb.token0_address
-        })
-        .ok()?;
+    at.add(if hb.zfo {
+        hb.token1_address
+    } else {
+        hb.token0_address
+    })
+    .ok()?;
 
     let fee_a = u16::try_from(ha.fee).ok()?;
     let ts_a = i16::try_from(ha.tick_spacing).ok()?;
@@ -3776,7 +3731,6 @@ fn three_hop_v4_v3_v2(
     weth_address: Address,
 ) -> Option<Vec<u8>> {
     let out_a = hop_outputs[0];
-    let _out_b = hop_outputs[1];
     let out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
         return None;
@@ -3802,13 +3756,12 @@ fn three_hop_v4_v3_v2(
             ha.currency0_address
         })
         .ok()?;
-    let _forward_b_idx = at
-        .add(if hb.zfo {
-            hb.token1_address
-        } else {
-            hb.token0_address
-        })
-        .ok()?;
+    at.add(if hb.zfo {
+        hb.token1_address
+    } else {
+        hb.token0_address
+    })
+    .ok()?;
 
     let fee_a = u16::try_from(ha.fee).ok()?;
     let ts_a = i16::try_from(ha.tick_spacing).ok()?;
@@ -3857,7 +3810,6 @@ fn three_hop_v4_v3_v3(
 ) -> Option<Vec<u8>> {
     let out_a = hop_outputs[0];
     let out_b = hop_outputs[1];
-    let _out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
         return None;
     }
@@ -3870,7 +3822,7 @@ fn three_hop_v4_v3_v3(
         Some(executor_address),
         Some(pool_manager_address),
     );
-    let pm_idx = at.add(pool_manager_address).ok()?;
+    at.add(pool_manager_address).ok()?;
     let weth_idx = SENTINEL_WETH;
     let executor_idx = SENTINEL_SELF;
     let zero_idx = SENTINEL_NATIVE;
@@ -3930,7 +3882,6 @@ fn three_hop_v4_v3_v4(
 ) -> Option<Vec<u8>> {
     let out_a = hop_outputs[0];
     let out_b = hop_outputs[1];
-    let _out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
         return None;
     }
@@ -3944,8 +3895,6 @@ fn three_hop_v4_v3_v4(
         Some(pool_manager_address),
     );
     let pm_idx = at.add(pool_manager_address).ok()?;
-    let weth_idx = SENTINEL_WETH;
-    let executor_idx = SENTINEL_SELF;
     let zero_idx = SENTINEL_NATIVE;
     let v3b_idx = at.add(hb.pool_address).ok()?;
 
@@ -4016,7 +3965,6 @@ fn three_hop_v4_v4_v2(
     pool_manager_address: Address,
     weth_address: Address,
 ) -> Option<Vec<u8>> {
-    let _out_a = hop_outputs[0];
     let out_b = hop_outputs[1];
     let out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
@@ -4031,7 +3979,6 @@ fn three_hop_v4_v4_v2(
         Some(executor_address),
         Some(pool_manager_address),
     );
-    let weth_idx = SENTINEL_WETH;
     let executor_idx = SENTINEL_SELF;
     let zero_idx = SENTINEL_NATIVE;
 
@@ -4096,9 +4043,7 @@ fn three_hop_v4_v4_v3(
     pool_manager_address: Address,
     weth_address: Address,
 ) -> Option<Vec<u8>> {
-    let _out_a = hop_outputs[0];
     let out_b = hop_outputs[1];
-    let _out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
         return None;
     }
@@ -4111,7 +4056,6 @@ fn three_hop_v4_v4_v3(
         Some(executor_address),
         Some(pool_manager_address),
     );
-    let weth_idx = SENTINEL_WETH;
     let executor_idx = SENTINEL_SELF;
     let zero_idx = SENTINEL_NATIVE;
 
@@ -4186,7 +4130,6 @@ fn three_hop_v4_v4_v4(
     if !fits_int128(optimal_input) {
         return None;
     }
-    let _ = (out_a, out_b);
 
     // Mid-currencies at each V4↔V4 boundary — detect native-ETH↔WETH gaps.
     let mid_currency_a_out = if ha.zfo {
@@ -4243,9 +4186,7 @@ fn three_hop_v4_v4_v4(
     let c0_c_idx = at.add(hc.currency0_address).ok()?;
     let c1_c_idx = at.add(hc.currency1_address).ok()?;
 
-    let mut inner: Vec<u8>;
-
-    if opts.use_v4_batch && !any_gap {
+    let mut inner = if opts.use_v4_batch && !any_gap {
         let batch = [
             V4BatchEntry {
                 c0_idx: c0_a_idx,
@@ -4275,19 +4216,20 @@ fn three_hop_v4_v4_v4(
                 amount_u96: 0,
             },
         ];
-        inner = encoders::enc_v4_batch(&batch).ok()?;
+        let mut v = encoders::enc_v4_batch(&batch).ok()?;
         // For ERC-20 profit, still need explicit take.
         if output_currency_c != NATIVE_CURRENCY_ADDRESS && output_currency_c != weth_address {
             let profit_idx = at.add(output_currency_c).ok()?;
-            inner.extend_from_slice(&encoders::enc_v4_take_delta(profit_idx, executor_idx));
+            v.extend_from_slice(&encoders::enc_v4_take_delta(profit_idx, executor_idx));
         }
+        v
     } else {
         // Compact path. When a boundary has a native↔WETH gap, emit
         // TAKE + WETH_DEPOSIT/WITHDRAW + explicit V4_SWAP_COMPACT (the PM
         // delta is on the wrong currency for V4_SWAP_DYNAMIC) +
         // V4_SETTLE_DELTA for the bridged input currency. Non-gap boundaries
         // use V4_SWAP_DYNAMIC (reads the PM delta from the prior swap).
-        inner = encoders::enc_v4_swap_compact(
+        let mut v = encoders::enc_v4_swap_compact(
             c0_a_idx,
             c1_a_idx,
             fee_a,
@@ -4302,16 +4244,16 @@ fn three_hop_v4_v4_v4(
         // V4_SWAP_DYNAMIC read the prior swap's PM delta.
         if bridge_ab.needs_bridge() {
             let (take_idx, b_input_idx) = bridge_ab.bridge_indices(weth_idx, SENTINEL_NATIVE);
-            emit_currency_bridge(&mut inner, bridge_ab, take_idx, out_a)?;
-            inner.extend_from_slice(
+            emit_currency_bridge(&mut v, bridge_ab, take_idx, out_a)?;
+            v.extend_from_slice(
                 &encoders::enc_v4_swap_compact(
                     c0_b_idx, c1_b_idx, fee_b, ts_b, zero_idx, hb.zfo, out_a,
                 )
                 .ok()?,
             );
-            inner.extend_from_slice(&encoders::enc_v4_settle_delta(b_input_idx));
+            v.extend_from_slice(&encoders::enc_v4_settle_delta(b_input_idx));
         } else {
-            inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
+            v.extend_from_slice(&encoders::enc_v4_swap_dynamic(
                 c0_b_idx, c1_b_idx, fee_b, ts_b, zero_idx, hb.zfo,
             ));
         }
@@ -4319,20 +4261,21 @@ fn three_hop_v4_v4_v4(
         // Hop C — same bridge logic as hop B, against the B→C boundary.
         if bridge_bc.needs_bridge() {
             let (take_idx, c_input_idx) = bridge_bc.bridge_indices(weth_idx, SENTINEL_NATIVE);
-            emit_currency_bridge(&mut inner, bridge_bc, take_idx, out_b)?;
-            inner.extend_from_slice(
+            emit_currency_bridge(&mut v, bridge_bc, take_idx, out_b)?;
+            v.extend_from_slice(
                 &encoders::enc_v4_swap_compact(
                     c0_c_idx, c1_c_idx, fee_c, ts_c, zero_idx, hc.zfo, out_b,
                 )
                 .ok()?,
             );
-            inner.extend_from_slice(&encoders::enc_v4_settle_delta(c_input_idx));
+            v.extend_from_slice(&encoders::enc_v4_settle_delta(c_input_idx));
         } else {
-            inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
+            v.extend_from_slice(&encoders::enc_v4_swap_dynamic(
                 c0_c_idx, c1_c_idx, fee_c, ts_c, zero_idx, hc.zfo,
             ));
         }
-    }
+        v
+    };
 
     // Profit capture.
     if opts.erc6909_profit && output_currency_c == weth_address {
