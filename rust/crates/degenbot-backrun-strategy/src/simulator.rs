@@ -947,9 +947,18 @@ where
     // on the success path (its AL is meaningful for profitable paths only).
     let captured_call_trace = call_trace_handle.take_trace();
     let captured_swaps = swap_events_handle.take_swaps();
+    let reverted_swaps = swap_events_handle.take_reverted_swaps();
 
     // Classify + tally the first revert if any call failed.
     if let Some(fail_idx) = first_failure {
+        // Revert-tolerant swap diagnostic (ergo `TR6GWT`): the committed
+        // `captured_swaps` is empty for a reverting `unlock` (revm's journal
+        // pops the inner swaps), but `reverted_swaps` preserves them. For a
+        // V4-V3-V3 `CurrencyNotSettled`, comparing each reverted swap's ACTUAL
+        // output to `hop_outputs[i]` pinpoints which hop diverged (solver/state
+        // divergence if they differ; composer/encoding bug if they match but the
+        // settle still fails). Env-gated, default off.
+        log_reverted_swaps_vs_hop_outputs(path.path_id, &reverted_swaps, &path.hop_outputs);
         let revert_data = results[fail_idx]
             .output()
             .cloned()
@@ -1187,6 +1196,131 @@ fn decode_balance(data: &alloy::primitives::Bytes) -> U256 {
             buf[32 - n..].copy_from_slice(data);
             U256::from_be_slice(&buf)
         }
+    }
+}
+
+// ── Revert-tolerant swap diagnostic (ergo `TR6GWT`) ───────────────────
+//
+// The committed `captured_swaps` is empty for a reverting V4 `unlock`
+// (revm pops the inner swaps from the journal), but the inspector preserves
+// them in `reverted_swaps`. Comparing each reverted swap's ACTUAL output to
+// `hop_outputs[i]` pinpoints which hop diverged — the decisive
+// state-divergence-vs-composer-bug test for `CurrencyNotSettled`. Env-gated,
+// default off (a single atomic load per failed path).
+
+/// The env-var name gating the reverted-swap diagnostic log. Default OFF —
+/// the diagnostic is opt-in (set at launch); zero cost when off.
+const SIM_LOG_REVERTED_SWAPS_ENV: &str = "DEGENBOT_SIM_LOG_REVERTED_SWAPS";
+
+/// The `[sim-revert-swap]` log prefix — verbatim so log greps return here.
+const SIM_REVERT_SWAP_LOG_PREFIX: &str = "[sim-revert-swap]";
+
+static LOG_REVERTED_SWAPS_ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// `true` iff `DEGENBOT_SIM_LOG_REVERTED_SWAPS=1` is set at first read;
+/// cached so the per-failed-path cost is a single atomic load.
+fn log_reverted_swaps_enabled() -> bool {
+    *LOG_REVERTED_SWAPS_ENABLED
+        .get_or_init(|| std::env::var_os(SIM_LOG_REVERTED_SWAPS_ENV).is_some_and(|v| v == "1"))
+}
+
+/// The positive (output) side of a captured swap's signed amounts — the
+/// amount the swapper RECEIVED (the hop's output). `None` if neither side
+/// carries a non-zero magnitude (a degenerate zero-zero swap, shouldn't occur).
+///
+/// # Sign conventions differ per family
+///
+/// The V2/V3/V4 `Swap` event `amount0`/`amount1` signed deltas use DIFFERENT
+/// perspectives, so the output is on a different sign side per family:
+/// - **V2**: the [`from_log`](CapturedSwap::from_log) decoder maps to the
+///   `out - in` convention (positive = received by swapper) → output is the
+///   POSITIVE side.
+/// - **V4**: PoolManager amounts are the caller's delta (positive = received
+///   by swapper) → output is the POSITIVE side (verified: the V4 hop's
+///   positive side matches `hop_outputs[0]` on mainnet).
+/// - **V3**: the UniswapV3 `Swap` event amounts are the POOL's balance delta
+///   (positive = pool received = swapper paid INPUT; negative = pool paid =
+///   swapper received OUTPUT) → output is the NEGATIVE side. This was the
+///   subtle bug: picking the positive side for V3 returned the INPUT, not the
+///   output (the V3 hop's positive side = `hop_outputs[i-1]`, the prior hop's
+///   output = this hop's input).
+fn captured_swap_output_amount(swap: &CapturedSwap) -> Option<U256> {
+    use degenbot_simulation::SwapFamily;
+    // For V3, the output is the NEGATIVE side (pool paid out); for V2/V4, the
+    // POSITIVE side (swapper received). Pick the side whose sign matches the
+    // family's "received by swapper" convention.
+    match swap.family {
+        SwapFamily::V3 => negative_side_magnitude(swap.amount0, swap.amount1),
+        SwapFamily::V2 | SwapFamily::V4 => positive_side_magnitude(swap.amount0, swap.amount1),
+    }
+}
+
+/// The magnitude of the POSITIVE side (`out - in` / swapper-received).
+#[must_use]
+fn positive_side_magnitude(
+    a0: alloy::primitives::I256,
+    a1: alloy::primitives::I256,
+) -> Option<U256> {
+    if a0.is_positive() {
+        Some(U256::try_from(a0.abs()).unwrap_or(U256::ZERO))
+    } else if a1.is_positive() {
+        Some(U256::try_from(a1.abs()).unwrap_or(U256::ZERO))
+    } else {
+        None
+    }
+}
+
+/// The magnitude of the NEGATIVE side (pool-paid-out = swapper-received for
+/// V3's pool-perspective deltas).
+#[must_use]
+fn negative_side_magnitude(
+    a0: alloy::primitives::I256,
+    a1: alloy::primitives::I256,
+) -> Option<U256> {
+    if a0.is_negative() {
+        Some(U256::try_from(a0.abs()).unwrap_or(U256::ZERO))
+    } else if a1.is_negative() {
+        Some(U256::try_from(a1.abs()).unwrap_or(U256::ZERO))
+    } else {
+        None
+    }
+}
+
+/// For a reverted path, log each reverted-frame swap's ACTUAL output vs the
+/// solver's predicted `hop_outputs[i]` (by emission order). A mismatch on
+/// hop 0 (the V4 swap) means the V4 swap diverged (solver calc or engine
+/// state); a match on hop 0 but mismatch on hop 1 means V3 hop B diverged;
+/// all-match-but-still-`CurrencyNotSettled` points at the composer/encoding.
+/// Env-gated (`DEGENBOT_SIM_LOG_REVERTED_SWAPS=1`); default off.
+fn log_reverted_swaps_vs_hop_outputs(
+    path_id: u64,
+    reverted_swaps: &[CapturedSwap],
+    hop_outputs: &[u128],
+) {
+    if !log_reverted_swaps_enabled() || reverted_swaps.is_empty() {
+        return;
+    }
+    log::info!(
+        "{SIM_REVERT_SWAP_LOG_PREFIX} path={path_id} reverted_swaps={} hop_outputs={}",
+        reverted_swaps.len(),
+        hop_outputs.len(),
+    );
+    for (i, swap) in reverted_swaps.iter().enumerate() {
+        let actual = captured_swap_output_amount(swap);
+        let predicted = hop_outputs.get(i).copied();
+        let matched = match (actual, predicted) {
+            (Some(a), Some(p)) => a == U256::from(p),
+            _ => false,
+        };
+        log::info!(
+            "{SIM_REVERT_SWAP_LOG_PREFIX} path={path_id} hop={i} family={:?} \
+             emitter={:?} actual_out={} predicted_hop_output={} matched={}",
+            swap.family,
+            swap.emitter,
+            actual.map_or_else(|| "none".into(), |v| v.to_string()),
+            predicted.map_or_else(|| "none".into(), |v| v.to_string()),
+            matched,
+        );
     }
 }
 

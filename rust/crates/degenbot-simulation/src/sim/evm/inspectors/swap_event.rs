@@ -221,10 +221,21 @@ pub(super) struct SwapEventBuffer {
     /// mainnet probe at block 25615015 tx[0], where 8 reverted-frame logs
     /// were captured against 22 receipt commits).
     pub swaps: Vec<CapturedSwap>,
+    /// Swaps emitted inside a frame that **reverted** — kept SEPARATE from
+    /// [`swaps`](Self::swaps) (which holds only committed swaps, matching
+    /// revm's committed-receipt notion). The revert-tolerant diagnostic buffer:
+    /// a V4 `unlock` that reverts with `CurrencyNotSettled` drops its inner
+    /// V4/V3 swap events from `swaps`, but they land here so a driver can
+    /// compare the ACTUAL swap output (`out_a'`) to the solver's predicted
+    /// `hop_outputs[0]` — the decisive state-divergence-vs-composer-bug test
+    /// (ergo `TR6GWT`). Drained via [`SwapEventCaptureHandle::take_reverted_swaps`].
+    pub reverted_swaps: Vec<CapturedSwap>,
     /// Per-frame tentative buffers (top = innermost frame). A swap decoded by
     /// `log_full` lands in the top buffer; on `frame_end` it's either merged
-    /// into the parent (commit) or discarded (revert) — mirroring revm's
-    /// journal flattening, so only committed swaps reach `swaps`.
+    /// into the parent (commit) or moved to `reverted_swaps` (revert) —
+    /// mirroring revm's journal flattening, so only committed swaps reach
+    /// `swaps`, while reverted-frame swaps are preserved (not discarded) in
+    /// `reverted_swaps` for the divergence diagnostic.
     frame_stack: Vec<Vec<CapturedSwap>>,
     /// Every `log_full` invocation count (diagnostic — includes non-swap logs
     /// AND reverted-frame logs; counts hook firings, NOT committed swaps).
@@ -312,17 +323,27 @@ impl SwapEventCaptureInspector {
         }
     }
 
-    /// Pop the top frame + discard its tentative swaps. Called when the frame's
-    /// `FrameResult` indicates revert — the swap logs it emitted are NOT in the
-    /// committed receipt, so they must not be in `swaps` either.
+    /// Pop the top frame + move its tentative swaps into `reverted_swaps`
+    /// (NOT discarded). Called when the frame's `FrameResult` indicates revert
+    /// — the swap logs it emitted are NOT in the committed receipt, so they
+    /// must not be in `swaps` (the committed buffer) either. But they ARE
+    /// preserved in `reverted_swaps` for the revert-tolerant divergence
+    /// diagnostic (the V4 `unlock`-reverts-`CurrencyNotSettled` case where the
+    /// actual swap output `out_a'` is needed to compare to `hop_outputs[0]`).
     fn end_frame_reverted(&self) {
         let mut buf = self.buf.borrow_mut();
-        buf.frame_stack.pop();
+        if let Some(frame_swaps) = buf.frame_stack.pop() {
+            buf.reverted_swaps.extend(frame_swaps);
+        }
     }
 }
 
 impl SwapEventCaptureHandle {
     /// Drain the captured swaps + reset the buffer for reuse on the next path.
+    /// Returns only COMMITTED swaps (reverted-frame swaps are in
+    /// [`take_reverted_swaps`]).
+    ///
+    /// [`take_reverted_swaps`]: Self::take_reverted_swaps
     #[must_use]
     pub fn take_swaps(&self) -> Vec<CapturedSwap> {
         let mut buf = self.buf.borrow_mut();
@@ -330,6 +351,18 @@ impl SwapEventCaptureHandle {
         buf.frame_stack.clear();
         buf.log_full_count = 0;
         swaps
+    }
+
+    /// Drain the reverted-frame swaps (swaps emitted inside a frame that
+    /// reverted). These are NOT in the committed receipt, but preserving them
+    /// lets a driver compare the actual swap output to the solver's predicted
+    /// `hop_outputs` for a reverting path — the decisive
+    /// state-divergence-vs-composer-bug test for V4 `CurrencyNotSettled`
+    /// (ergo `TR6GWT`).
+    #[must_use]
+    pub fn take_reverted_swaps(&self) -> Vec<CapturedSwap> {
+        let mut buf = self.buf.borrow_mut();
+        std::mem::take(&mut buf.reverted_swaps)
     }
 
     /// The number of `log_full` invocations (including non-swap logs) —
@@ -584,40 +617,64 @@ mod tests {
     }
 
     #[test]
-    fn reverted_root_frame_drops_all_logs() {
+    fn reverted_root_frame_drops_all_logs_from_committed_set() {
         // The whole tx reverted → no committed swaps, even though logs fired.
+        // BUT the reverted-frame swaps are preserved in `reverted_swaps` (the
+        // revert-tolerant diagnostic buffer) — `take_swaps()` returns committed
+        // only (`[]` here), `take_reverted_swaps()` returns the dropped swaps.
         let (insp, handle) = SwapEventCaptureInspector::new();
         insp.begin_frame();
         insp.capture_swap_log(&capture_log(Address::repeat_byte(0xD1)));
         insp.end_frame_reverted();
-        let captured = handle.take_swaps();
         assert!(
-            captured.is_empty(),
-            "a reverted root frame drops all captured swaps"
+            handle.take_swaps().is_empty(),
+            "a reverted root frame drops all swaps from the committed set"
         );
+        let reverted = handle.take_reverted_swaps();
+        assert_eq!(
+            reverted.len(),
+            1,
+            "the reverted swap is preserved separately"
+        );
+        assert_eq!(reverted[0].emitter, Address::repeat_byte(0xD1));
     }
 
     #[test]
-    fn log_full_count_still_includes_reverted_frame_logs() {
-        // `log_full_count` is a per-LOG-opcode counter for the parity tests that
-        // assert the hook fires. It's bumped by the `Inspector::log_full` hook
-        // (NOT by the internal `capture_swap_log`, which only stages swaps) so
-        // it counts EVERY LOG opcode including reverted-frame ones. The unit-
-        // test methods here don't drive the hook, so this test only asserts the
-        // staging-and-drop behavior; the count-includes-reverted-frames claim
-        // is validated by the `swap_capture_correctness` mainnet probe
-        // (block 25615015 tx[0]: log_full_count=30 vs 22 receipt commits).
+    fn reverted_unlock_inner_swaps_capturable_separately() {
+        // The V4-unlock-reverts-CurrencyNotSettled shape: the unlock's INNER
+        // swaps (V4 + V3) committed at their own frame level + merged into
+        // the unlock's tentative buffer, but the unlock frame reverts → the
+        // merged swaps are dropped from `swaps` BUT preserved in
+        // `reverted_swaps` so a driver can compare actual out_a' to
+        // hop_outputs[0] (the state-divergence-vs-composer-bug test).
         let (insp, handle) = SwapEventCaptureInspector::new();
+        // root (execute) frame.
         insp.begin_frame();
-        insp.capture_swap_log(&capture_log(Address::repeat_byte(0xE1)));
+        // unlock frame (will revert at the end — CurrencyNotSettled).
         insp.begin_frame();
-        insp.capture_swap_log(&capture_log(Address::repeat_byte(0xE2)));
+        // V4 swap (inner) — commits at its own level, merges into unlock.
+        insp.begin_frame();
+        insp.capture_swap_log(&capture_log(Address::repeat_byte(0xA1)));
+        insp.end_frame_committed(); // V4 swap OK
+                                    // V3 swap (inner) — commits, merges into unlock.
+        insp.begin_frame();
+        insp.capture_swap_log(&capture_log(Address::repeat_byte(0xA2)));
+        insp.end_frame_committed(); // V3 swap OK
+                                    // unlock reverts (CurrencyNotSettled) → its merged swaps drop to
+                                    // reverted_swaps, NOT swaps.
         insp.end_frame_reverted();
-        insp.end_frame_committed();
-        assert_eq!(
-            handle.take_swaps().len(),
-            1,
-            "only the committed swap is kept"
+        insp.end_frame_committed(); // root (execute) commits
+        assert!(
+            handle.take_swaps().is_empty(),
+            "the reverted unlock drops its inner swaps from the committed set"
         );
+        let reverted = handle.take_reverted_swaps();
+        assert_eq!(
+            reverted.len(),
+            2,
+            "both inner swaps (V4 + V3) preserved in reverted_swaps"
+        );
+        assert_eq!(reverted[0].emitter, Address::repeat_byte(0xA1));
+        assert_eq!(reverted[1].emitter, Address::repeat_byte(0xA2));
     }
 }
