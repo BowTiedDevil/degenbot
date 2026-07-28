@@ -76,6 +76,14 @@ RUST_BRIDGE_LOGGER_NAMES = (
     "degenbot_rpc",
     "degenbot_decoders",
     "degenbot_uniswap",
+    # The in-process sim engine + the backrun strategy. The divergence probe
+    # (``[sim-divergence]``, ergo task 4C33DP / epic TR6GWT) + the bridge-probe
+    # (``[bridge-probe]``) emit ``log::info!`` from these crates; without
+    # configuring the crate-root here, pyo3-log's first-use cache stores the
+    # WARNING default and the records are dropped at the logger-level gate
+    # before reaching a handler (silent even with the env var on).
+    "degenbot_simulation",
+    "degenbot_backrun_strategy",
 )
 
 #: The Python package-tree root whose descendants include Python-side modules
