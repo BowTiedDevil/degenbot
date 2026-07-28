@@ -29,9 +29,9 @@ pub mod sim;
 // strategy value types (`SimResult`, `SimulateContext`, `FailBuckets`, …)
 // now live in `degenbot-backrun-strategy`.
 pub use sim::evm::{
-    apply_simulation_overrides, emit_access_list_from_state, AccessListCollector, BlockEvm,
-    BlockSimHandle, BotStateDb, CallFrame, CallTrace, CallTraceHandle, CallTraceInspector,
-    CapturedSwap, FrameOutcome, ProductionBlockDb, SimInspector, SimulationOverrideParams,
-    SwapEventCaptureHandle, SwapEventCaptureInspector, SwapFamily, WarmCodeCache,
-    WarmCodeCacheInner, WARM_CODE_CACHE_TTL_BLOCKS,
+    apply_simulation_overrides, divergence_probe, emit_access_list_from_state, AccessListCollector,
+    BlockEvm, BlockSimHandle, BotStateDb, CallFrame, CallTrace, CallTraceHandle,
+    CallTraceInspector, CapturedSwap, FrameOutcome, ProductionBlockDb, SimInspector,
+    SimulationOverrideParams, SwapEventCaptureHandle, SwapEventCaptureInspector, SwapFamily,
+    WarmCodeCache, WarmCodeCacheInner, WARM_CODE_CACHE_TTL_BLOCKS,
 };

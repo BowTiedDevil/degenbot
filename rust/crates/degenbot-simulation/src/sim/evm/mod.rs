@@ -77,6 +77,11 @@ pub mod state_override;
 /// historical note on the retired slot encoders.
 pub mod bot_state_db;
 
+/// The env-gated `[sim-divergence]` observer — pure-observation hook
+/// `BotStateDb::storage_ref` runs to log + tally the engine-vs-RPC tracked-slot
+/// gap (the spike-checkpoint answer that picks fix path A/B/C).
+pub mod divergence_probe;
+
 // (Deleted) V4 PoolManager transient-storage seeder — `v4_transient.rs` was
 // built on the false premise that V4 pool swap state (sqrtPriceX96 /
 // liquidity / tick) lives in transient storage (EIP-1153). Per the deployed

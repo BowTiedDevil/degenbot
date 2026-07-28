@@ -96,6 +96,13 @@ where
     /// `liquidity`/`ticks`) is served from the RPC, NOT the snapshot — see
     /// the module doc for the K-invariant / stale-state-divergence reason.
     ///
+    /// When `DEGENBOT_SIM_DIVERGENCE_LOG=1` is set, the env-gated divergence
+    /// probe ([`super::divergence_probe::observe_storage_read`]) compares the
+    /// engine's packed typed state against the just-fetched RPC value, logs a
+    /// `[sim-divergence]` line on a tracked-field mismatch, and accumulates the
+    /// tally — pure observation (the RPC value is returned unchanged). Off by
+    /// default (single atomic load).
+    ///
     /// # Errors
     ///
     /// Returns the fallback's error if the RPC fetch fails.
@@ -104,7 +111,9 @@ where
         address: Address,
         index: StorageKey,
     ) -> Result<StorageValue, Self::Error> {
-        self.fallback.storage_ref(address, index)
+        let rpc_value = self.fallback.storage_ref(address, index)?;
+        super::divergence_probe::observe_storage_read(self.bot_state, address, index, rpc_value);
+        Ok(rpc_value)
     }
 
     /// Forward to the fallback. `code_by_hash` is **never invoked** if

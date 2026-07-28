@@ -21,6 +21,7 @@ pub mod block_pump;
 pub mod bot;
 pub mod construction_io;
 pub mod curve_state;
+pub mod divergence_probe;
 pub mod drain_sink;
 pub mod engine;
 pub mod liquidity_verifier;
@@ -49,6 +50,7 @@ pub use balancer_weighted_state::{
     BalancerWeightedPoolIdentity, BalancerWeightedPoolState, RegisterBalancerWeightedPoolParams,
 };
 pub use curve_state::{CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams};
+pub use divergence_probe::{TrackedSlotKind, TrackedSlotProbe};
 pub use v3_state::{
     v3_simulate_swap, BufferedV3LiquidityUpdate, PoolTickCoverage, RegisterV3PoolError,
     RegisterV3PoolParams, SimulateSwapError, V3PoolIdentity, V3PoolState, V3SwapOutcome,
