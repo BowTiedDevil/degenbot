@@ -1802,4 +1802,123 @@ mod tests {
             "native-path-ends with ERC20 boundary must NOT scan as boundary bridge"
         );
     }
+
+    // ── captured_swap_output_amount sign conventions (ergo TR6GWT) ───────
+    //
+    // The decisive divergence localizer: pick the swapper-RECEIVED side of
+    // a captured swap's signed amounts so `actual_out` can be compared to
+    // the solver's `hop_outputs[i]`. The sign side DIFFERS per family — V2/V4
+    // are swapper-perspective (output = POSITIVE side), V3 is pool-perspective
+    // (output = NEGATIVE side). Picking the wrong side for V3 returned the
+    // INPUT, masking the V4-doesn't-match-V3-does signal. These tests pin the
+    // convention per family so a future refactor can't silently flip it.
+
+    /// Build a minimal `CapturedSwap` with given signed amounts (the only
+    /// fields `captured_swap_output_amount` reads).
+    fn swap_with_amounts(
+        family: degenbot_simulation::SwapFamily,
+        amount0: alloy::primitives::I256,
+        amount1: alloy::primitives::I256,
+    ) -> CapturedSwap {
+        CapturedSwap {
+            emitter: Address::ZERO,
+            family,
+            amount0,
+            amount1,
+            sqrt_price_x96: U256::ZERO,
+            liquidity: U256::ZERO,
+            tick: 0,
+        }
+    }
+
+    #[test]
+    fn v2_captured_output_is_the_positive_side_swapper_received() {
+        // V2 `out - in` convention: amount0=-1e18 (paid in), amount1=+3000e6
+        // (received). Output = the positive side (+3000e6).
+        let swap = swap_with_amounts(
+            degenbot_simulation::SwapFamily::V2,
+            alloy::primitives::I256::try_from(-1_000_000_000_000_000_000_i128).unwrap(),
+            alloy::primitives::I256::try_from(3_000_000_000_i128).unwrap(),
+        );
+        assert_eq!(
+            captured_swap_output_amount(&swap),
+            Some(U256::from(3_000_000_000_u64)),
+            "V2 output = the positive (received) side"
+        );
+    }
+
+    #[test]
+    fn v4_captured_output_is_the_positive_side_swapper_received() {
+        // V4 PoolManager amounts are the caller's delta (positive = received).
+        // amount0=+997 (received token0), amount1=-1000 (paid token1).
+        // Output = the positive side (+997) — this is the field that diverges
+        // by 1-8 units vs hop_outputs[0] on mainnet V4-V3-V3 paths.
+        let swap = swap_with_amounts(
+            degenbot_simulation::SwapFamily::V4,
+            alloy::primitives::I256::try_from(997_i128).unwrap(),
+            alloy::primitives::I256::try_from(-1000_i128).unwrap(),
+        );
+        assert_eq!(
+            captured_swap_output_amount(&swap),
+            Some(U256::from(997_u64)),
+            "V4 output = the positive (received) side"
+        );
+    }
+
+    #[test]
+    fn v3_captured_output_is_the_negative_side_pool_paid_out() {
+        // V3 Swap amounts are the POOL's balance delta: positive = pool
+        // received (swapper paid IN), negative = pool paid (swapper received
+        // OUT). amount0=+1e18 (pool got token0 = input), amount1=-3000e6
+        // (pool paid token1 = output). Output = the NEGATIVE side (-3000e6).
+        // Picking the positive side here was the bug that masked the V4
+        // divergence — it returned the V3 INPUT (= hop_outputs[i-1]).
+        let swap = swap_with_amounts(
+            degenbot_simulation::SwapFamily::V3,
+            alloy::primitives::I256::try_from(1_000_000_000_000_000_000_i128).unwrap(),
+            alloy::primitives::I256::try_from(-3_000_000_000_i128).unwrap(),
+        );
+        assert_eq!(
+            captured_swap_output_amount(&swap),
+            Some(U256::from(3_000_000_000_u64)),
+            "V3 output = the negative (pool-paid) side magnitude, NOT the input"
+        );
+    }
+
+    #[test]
+    fn v3_reverse_direction_output_is_still_the_negative_side() {
+        // Reverse V3 direction: amount0=-2e6 (pool paid token0 = output),
+        // amount1=+500 (pool got token1 = input). Output still = negative side.
+        let swap = swap_with_amounts(
+            degenbot_simulation::SwapFamily::V3,
+            alloy::primitives::I256::try_from(-2_000_000_i128).unwrap(),
+            alloy::primitives::I256::try_from(500_i128).unwrap(),
+        );
+        assert_eq!(
+            captured_swap_output_amount(&swap),
+            Some(U256::from(2_000_000_u64)),
+            "V3 reverse: output still the negative side"
+        );
+    }
+
+    #[test]
+    fn zero_amounts_return_none_for_all_families() {
+        // A degenerate zero-zero swap: neither side carries an output → None.
+        for family in [
+            degenbot_simulation::SwapFamily::V2,
+            degenbot_simulation::SwapFamily::V3,
+            degenbot_simulation::SwapFamily::V4,
+        ] {
+            let swap = swap_with_amounts(
+                family,
+                alloy::primitives::I256::ZERO,
+                alloy::primitives::I256::ZERO,
+            );
+            assert_eq!(
+                captured_swap_output_amount(&swap),
+                None,
+                "zero-zero swap → None for {family:?}"
+            );
+        }
+    }
 }

@@ -2,39 +2,37 @@
 //! packed typed pool state for tracked slots, instead of forwarding to the
 //! RPC fallback.
 //!
-//! This is the **option B** mechanism the spike
-//! (`docs/architecture/in_process_sim_served_slots.md`) identifies as the
-//! path-A serving mechanism: the in-process revm sim's `DatabaseRef::storage_ref`
-//! intercepts reads of tracked pool slots (V2 reserves slot 8, V3/V4 `slot0`/
-//! `liquidity`/`ticks(tick)`) and returns the engine's on-chain-packed word,
-//! falling through to the RPC for everything else. The divergence probe
-//! (`super::divergence_probe`) proved the engine's tracked scalar slots are
-//! byte-identical to the RPC at sim time; serving them is the first half of
-//! path A — the second half (extending the engine to carry `feeGrowthGlobal`/
-//! `feeGrowthOutside`/`tickBitmap`/observations/V2 `balanceOf`, then serving
-//! THOSE) is what retires `CurrencyNotSettled`.
+//! # Status (POC — premise refuted)
+//!
+//! This seam was built to test the "stale engine state causes
+//! `CurrencyNotSettled`" hypothesis (ergo `TR6GWT`, originally "path A"). That
+//! premise was REFUTED by mainnet data: V3 hops matched the actual swap
+//! output exactly (engine state is correct — stale state would diverge V3
+//! too), while only the V4 swap diverged by 1-8 units (a solver calc
+//! rounding divergence, not stale state). See
+//! `docs/architecture/sim_v4_swap_step_rounding.md`. The seam stays gated OFF
+//! in production and is retained as a dead switch for future re-probing; the
+//! divergence probe (`super::divergence_probe`) proved the engine's tracked
+//! scalar slots are byte-identical to the RPC at sim time.
 //!
 //! # Env gate (zero cost + zero risk when off — the production status quo)
 //!
 //! Gated by `DEGENBOT_SIM_SERVE_ENGINE_STATE=1` (set at launch). DEFAULT OFF →
 //! `storage_ref` forwards every read to the RPC fallback (the safe behavior
 //! that has held since the reverted serve was removed; a single atomic load
-//! per `storage_ref`). Turning serving on is gated on the path-A engine-state
-//! extension landing the full slot set — a partial serve (slot0/liquidity/
-//! reserves WITHOUT `feeGrowthGlobal`/`tickBitmap`/per-pair balances)
-//! reintroduces the documented K-invariant / `LOK` reverts (the engine's
-//! served slot0 is read by the same `swap()` callback that reads RPC-served
-//! fee-growth/bitmap → intra-sim inconsistency).
+//! per `storage_ref`). Enabling the seam requires the engine to carry the FULL
+//! slot set the pool's `swap()` callback reads — a partial serve
+//! (slot0/liquidity/reserves WITHOUT `feeGrowthGlobal`/`tickBitmap`/
+//! per-pair balances) reintroduces the documented K-invariant / `LOK` reverts
+//! (the engine's served slot0 is read by the same `swap()` callback that reads
+//! RPC-served fee-growth/bitmap → intra-sim inconsistency).
 //!
-//! # What it serves (today — the POC scope)
+//! # What it serves
 //!
 //! The mechanism is generic over [`BotState::probe_tracked_storage_slot`]:
 //! any tracked slot the probe can pack is served when the gate is on. Today
 //! the probe covers V2 reserves (slot 8), V3/V4 `slot0`/`liquidity`, and the
-//! per-tick `ticks(tick)` slot+0 (`liquidityGross`/`liquidityNet`). As path A
-//! extends the engine to carry fee-growth/bitmap/observations, the probe +
-//! serving seam extend in lockstep (the same `probe_tracked_storage_slot`
-//! accessor grows the new kinds).
+//! per-tick `ticks(tick)` slot+0 (`liquidityGross`/`liquidityNet`).
 //!
 //! # Log line
 //!
@@ -56,8 +54,9 @@ use degenbot_bot::bot_core::BotState;
 
 /// The env-var name gating the serving seam (set at launch). DEFAULT OFF —
 /// the sim forwards every read to the RPC (the safe status quo; the reverted
-/// serve is NOT re-introduced). Turning serving on is gated on path A's
-/// engine-state extension landing the full slot set.
+/// serve is NOT re-introduced). Enabling requires the engine to carry the
+/// full slot set the pool's `swap()` callback reads (premise refuted; retained
+/// as a dead switch).
 pub const SIM_SERVE_ENGINE_STATE_ENV: &str = "DEGENBOT_SIM_SERVE_ENGINE_STATE";
 
 /// The `[bot-state-db]` log prefix — verbatim so log greps return here.

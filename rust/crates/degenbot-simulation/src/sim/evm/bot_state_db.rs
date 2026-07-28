@@ -1,15 +1,31 @@
-//! `BotStateDb` — a thin `revm::DatabaseRef` wrapper over the RPC fallback.
+//! `BotStateDb` — a thin `revm::DatabaseRef` wrapper over the RPC fallback
+//! with an env-gated serving seam + divergence probe.
 //!
 //! ## What this is today
 //!
-//! A forwarding newtype: every `DatabaseRef` method delegates to the
-//! `fallback` (`WrapDatabaseAsync<AlloyDB>` in production). It does NOT serve
-//! typed pool state from `Bot`'s registry — that path (option B, "the engine
-//! state IS the EVM's `Database`") was deliberately not wired: serving the
-//! snapshot's V2 reserves / V3 `slot0` against the on-chain slots the pool's
-//! own `swap()` reads (fee growth, tick bitmap, `IERC20.balanceOf`) produced
-//! K-invariant / `LOK` reverts from stale-vs-fresh state divergence. See the
-//! historical note below.
+//! `storage_ref` forwards to the `fallback` (`WrapDatabaseAsync<AlloyDB>` in
+//! production) and, between the fallback read and the return, runs two
+//! DEFAULT-OFF env-gated diagnostics on tracked pool slots:
+//!
+//! - Divergence probe (`super::divergence_probe`): pure observation — compares
+//!   the engine's packed typed state against the just-fetched RPC value, logs
+//!   a `[sim-divergence]` line on mismatch, accumulates the tally. Never
+//!   changes what the sim reads.
+//! - Serving seam (`super::serving`): behavior change — for tracked slots the
+//!   engine carries authoritatively, returns the engine's packed word instead
+//!   of the RPC value. Gated OFF by default; enabling requires the engine to
+//!   carry the FULL slot set the pool's `swap()` callback reads, or a partial
+//!   serve reintroduces the documented K-invariant / `LOK` reverts (the engine
+//!   doesn't carry `feeGrowthGlobal`/`tickBitmap`/per-pair balances that the
+//!   same `swap()` callback reads).
+//!
+//! The serving seam is a POC retained for the divergence investigation. Its
+//! premise ("stale engine state causes `CurrencyNotSettled`") was REFUTED by
+//! mainnet data — V3 hops matched the actual swap output exactly (engine state
+//! is correct) while only the V4 swap diverged by 1-8 units (a solver calc
+//! rounding divergence, not stale state). See
+//! `docs/architecture/sim_v4_swap_step_rounding.md`. The seam stays gated off
+//! in production; it is a dead switch kept for future re-probing.
 //!
 //! The wrapper persists because the live `BlockSimHandle` chain
 //! (`simulator.rs`) references it as the `CacheDB` backing; collapsing it to
@@ -23,17 +39,15 @@
 //! `encode_v3_tick_info_slot`, `tick_mapping_slot`, `sign_extend_*`) plus
 //! `read_v2_slot`/`read_v3_slot`/`read_tracked_storage`/`SnapshotError`. These
 //! are deleted (no consumer; the `read_*_slot` paths returned `None` so
-//! `storage_ref` always fell through). If Tier 2 option B is ever pursued,
-//! the encoders must be re-derived from the Solidity storage layout
-//! — the old `parity_diagnostic_encoding.rs` tests that pinned them are also
-//! gone. The default Tier 2 disposition is C (reject), so re-derivation is
-//! not on any current path.
+//! `storage_ref` always fell through). Re-derivation (if a serving path is
+//! re-pursued) starts from the Solidity storage layout — the old
+//! `parity_diagnostic_encoding.rs` tests that pinned them are also gone.
 //!
 //! ## Composition
 //!
 //! ```text
 //! EVM transact -> CacheDB (sim-scoped overrides)
-//!                 -> BotStateDb (forwarding wrapper; option B seam)
+//!                 -> BotStateDb (forwarding wrapper + serving seam)
 //!                 -> WrapDatabaseAsync<AlloyDB> (RPC fallback)
 //! ```
 
@@ -45,17 +59,17 @@ use revm::state::AccountInfo;
 
 /// A thin `DatabaseRef` wrapper that forwards every read to the `fallback`.
 ///
-/// Currently a no-op pass-through. The `bot_state` borrow is the option B
-/// seam (the typed-state serving path); it is NOT read by any method today.
-/// Whether this wrapper persists or collapses to bare `WrapDatabaseAsync<
-/// AlloyDB>` is decided by the Tier 1 refactor (ergo task `V5HCR5`).
+/// Forwards to the fallback, with env-gated serving + divergence-probe
+/// diagnostics layered onto tracked pool slots (see the module docs). The
+/// `bot_state` borrow backs both diagnostics. Whether this wrapper persists
+/// or collapses to bare `WrapDatabaseAsync<AlloyDB>` is decided by the
+/// Tier 1 refactor (ergo task `V5HCR5`).
 pub struct BotStateDb<'bot, ExtDb>
 where
     ExtDb: DatabaseRef,
 {
-    /// The `Bot` typed-state read view. Retained as the option B seam; NOT
-    /// read by the current forwarding impl.
-    #[allow(dead_code)]
+    /// The `Bot` typed-state read view backing the serving seam + divergence
+    /// probe (both env-gated, default off).
     pub bot_state: &'bot BotState,
     /// The RPC cold-miss fallback (`WrapDatabaseAsync<AlloyDB>` in production).
     pub fallback: ExtDb,
@@ -65,8 +79,8 @@ impl<'bot, ExtDb> BotStateDb<'bot, ExtDb>
 where
     ExtDb: DatabaseRef,
 {
-    /// Wrap the cold-miss fallback `DatabaseRef`. The `bot_state` borrow is
-    /// the option B seam (currently unread).
+    /// Wrap the cold-miss fallback `DatabaseRef`. The `bot_state` borrow backs
+    /// the env-gated serving seam + divergence probe.
     #[must_use]
     pub fn new(bot_state: &'bot BotState, fallback: ExtDb) -> Self {
         Self {
@@ -105,8 +119,8 @@ where
     /// - `DEGENBOT_SIM_SERVE_ENGINE_STATE=1` ([`super::serving`]): the serving
     ///   seam — returns the engine's packed word for tracked slots
     ///   (V2 reserves / V3/V4 `slot0`/`liquidity`/`ticks(tick)`) instead of
-    ///   the RPC value. Gated on path A's engine-state extension for
-    ///   production enablement — a partial serve reintroduces the documented
+    ///   the RPC value. Premise (stale state) was REFUTED; the seam stays
+    ///   gated off in production (a partial serve reintroduces the documented
     ///   K-invariant / `LOK` reverts (the engine doesn't carry
     ///   `feeGrowthGlobal`/`tickBitmap`/per-pair balances the same swap
     ///   callback reads).
@@ -130,9 +144,11 @@ where
         // to a tracked pool slot the engine carries authoritatively, return
         // the engine's packed word instead of the RPC value (the sim's swap
         // callback reads the engine's state, matching what the solver read).
-        // Gated on path A's engine-state extension for production enablement
-        // — a partial serve (slot0/liquidity WITHOUT feeGrowth/bitmap)
-        // reintroduces the documented K-invariant / LOK reverts.
+        // Premise (stale engine state) was REFUTED — V3 hops matched exactly
+        // while V4 diverged by 1-8 units (solver calc rounding, not state).
+        // The seam stays gated off in production; a partial serve (slot0/
+        // liquidity WITHOUT feeGrowth/bitmap) reintroduces the documented
+        // K-invariant / LOK reverts.
         let served = super::serving::serve_tracked_slot(self.bot_state, address, index, rpc_value);
         Ok(served.unwrap_or(rpc_value))
     }
