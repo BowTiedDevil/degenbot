@@ -88,6 +88,14 @@ pub enum TrackedSlotKind {
     /// V4 `Pool.State liquidity` — same packed shape as [`V3Liquidity`], lives
     /// at `S_state+3`.
     V4Liquidity,
+    /// V3 `ticks(tick)` slot+0 — `uint128 liquidityGross | int128 liquidityNet`
+    /// (the engine's `TickInfo` DOES carry both; the slot+1/+2 fee-growth
+    /// fields are NOT tracked → rpc-fallback). Per-tick slot =
+    /// `keccak256(sign_extend_24(tick) . 5)`.
+    V3TickInfo,
+    /// V4 `ticks(tick)` slot+0 — same packed shape as [`V3TickInfo`], lives at
+    /// `keccak256(sign_extend_24(tick) . (S_state+4))`.
+    V4TickInfo,
 }
 
 impl TrackedSlotKind {
@@ -108,6 +116,10 @@ impl TrackedSlotKind {
             // uint128 liquidity (low 128); high 128 NOT tracked (zero on-chain
             // anyway, but mask to be safe against a packed-but-nonzero rpc).
             Self::V3Liquidity | Self::V4Liquidity => word_low_bits(128),
+            // ticks(tick) slot+0: uint128 liquidityGross (low 128) |
+            // int128 liquidityNet (high 128); the full 256-bit word IS tracked
+            // (the engine carries both fields in TickInfo).
+            Self::V3TickInfo | Self::V4TickInfo => word_low_bits(256),
         }
     }
 }
@@ -186,22 +198,29 @@ impl BotState {
                     }
                 }
                 PoolEntry::V3(_, state) => {
-                    // V3 slot0 = 0; liquidity = 4.
+                    // V3 slot0 = 0; liquidity = 4; ticks base = 5.
                     if index.is_zero() {
-                        Some(TrackedSlotProbe {
+                        return Some(TrackedSlotProbe {
                             kind: TrackedSlotKind::V3Slot0,
                             engine_word: pack_cl_slot0_word(state.sqrt_price_x96, state.tick),
                             update_block: state.update_block,
-                        })
-                    } else if index == U256::from(4u64) {
-                        Some(TrackedSlotProbe {
+                        });
+                    }
+                    if index == U256::from(4u64) {
+                        return Some(TrackedSlotProbe {
                             kind: TrackedSlotKind::V3Liquidity,
                             engine_word: pack_cl_liquidity_word(state.liquidity),
                             update_block: state.update_block,
-                        })
-                    } else {
-                        None
+                        });
                     }
+                    // Per-tick `ticks(tick)` slot = keccak256(sign_extend_24(tick) . 5).
+                    probe_tick_slot(
+                        state.tick_data.iter(),
+                        U256::from(5u64),
+                        index,
+                        state.update_block,
+                        TrackedSlotKind::V3TickInfo,
+                    )
                 }
                 // V2-style Aerodrome pools are NOT V2-slot-8 pools (their
                 // reserves live at a different slot — the V2 reserves junction
@@ -243,6 +262,17 @@ impl BotState {
                     engine_word: pack_cl_liquidity_word(state.liquidity),
                     update_block: state.update_block,
                 });
+            }
+            // Per-tick V4 `ticks(tick)` slot = keccak256(sign_extend_24(tick) . (S_state+4)).
+            let ticks_base = s_state.checked_add(U256::from(4u64)).unwrap_or(U256::MAX);
+            if let Some(probe) = probe_tick_slot(
+                state.tick_data.iter(),
+                ticks_base,
+                index,
+                state.update_block,
+                TrackedSlotKind::V4TickInfo,
+            ) {
+                return Some(probe);
             }
         }
         None
@@ -310,6 +340,77 @@ fn derive_v4_pool_state_base(pool_id: &degenbot_decoders::v4_swap_decoder::V4Poo
     input[63] = 6;
     let hash: [u8; 32] = keccak256(input).into();
     U256::from_be_bytes(hash)
+}
+
+/// Reverse-map a per-tick `ticks(tick)` storage slot for a CL pool: for
+/// each tick the engine tracks, compute `keccak256(sign_extend_24(tick) .
+/// base)` + return the probe if it equals `index`. O(`tick_count`) per cold
+/// tick-slot read — cached by the outer `CacheDB` after the first read, so
+/// once per tick per sim. Acceptable for an env-gated diagnostic.
+///
+/// `base` is the mapping base (V3 slot 5; V4 `S_state+4`). The packed
+/// slot+0 word is `uint128 liquidityGross | int128 liquidityNet` (the
+/// engine's `TickInfo` carries both → full 256-bit comparison).
+fn probe_tick_slot<'a, I>(
+    ticks: I,
+    base: U256,
+    index: U256,
+    update_block: u64,
+    kind: TrackedSlotKind,
+) -> Option<TrackedSlotProbe>
+where
+    I: Iterator<Item = (&'a i32, &'a degenbot_pools::TickInfo)>,
+{
+    for (&tick, info) in ticks {
+        let tick_slot = derive_tick_storage_slot(tick, base);
+        if tick_slot == index {
+            return Some(TrackedSlotProbe {
+                kind,
+                engine_word: pack_tick_info_word(info),
+                update_block,
+            });
+        }
+    }
+    None
+}
+
+/// Derive the per-tick storage slot for a CL `ticks` mapping at `base`:
+/// `keccak256(abi.encode(int24 tick, uint256 base))` — the int24 is
+/// sign-extended to 32 bytes (two's-complement), the base is BE-padded.
+fn derive_tick_storage_slot(tick: i32, base: U256) -> U256 {
+    let mut input = [0u8; 64];
+    // abi.encode(int24): sign-extend the int24 to 32 bytes (bytes 29..31 hold
+    // the 24-bit two's-complement pattern, bytes 0..28 hold the sign fill).
+    let tick_u = tick as u32; // two's-complement bit pattern (i32 has the sign on the top bit).
+                              // The int24 is the low 24 bits of the i32 cast; sign-extend to 32 bytes.
+    let tick_24 = tick_u & 0x00ff_ffff;
+    let sign_fill = if (tick_u & 0x0080_0000) != 0 {
+        0xff
+    } else {
+        0x00
+    };
+    input[..29].fill(sign_fill);
+    // The int24 occupies the low 24 bits of `tick_24`; its 3 big-endian bytes
+    // land at input[29..32] (bytes 29, 30, 31 of the 32-byte sign-extended key).
+    let tick_be = tick_24.to_be_bytes();
+    input[29..32].copy_from_slice(&tick_be[1..4]);
+    // abi.encode(uint256 base): big-endian 32 bytes.
+    input[32..64].copy_from_slice(&base.to_be_bytes::<32>());
+    let hash: [u8; 32] = keccak256(input).into();
+    U256::from_be_bytes(hash)
+}
+
+/// Pack the per-tick `ticks(tick)` slot+0 word:/// `uint128 liquidityGross | int128 liquidityNet` (gross in the low 128 bits,
+/// net in the high 128 bits as a two's-complement int128).
+fn pack_tick_info_word(info: &degenbot_pools::TickInfo) -> B256 {
+    let gross = U256::from(info.liquidity_gross.to::<u128>());
+    // The int128 liquidity_net: the engine stores it as I256; the on-chain slot
+    // holds the LOW 128 bits of the two's-complement (the value fits in int128).
+    // Take the low 16 bytes of the 256-bit two's-complement BE repr.
+    let net_bytes = info.liquidity_net.to_be_bytes::<32>();
+    let net_low = U256::from_be_slice(&net_bytes[16..32]);
+    let net = net_low << 128u32;
+    (gross | net).into()
 }
 
 #[cfg(test)]
@@ -566,6 +667,111 @@ mod tests {
         assert!(core
             .probe_tracked_storage_slot(V4_PM, s_state + U256::from(2u64))
             .is_none());
+    }
+
+    // ── the per-tick `ticks(tick)` reverse-map (V3 + V4) ──────────────
+
+    fn v3_pool_with_tick(params: &mut RegisterV3PoolParams, tick: i32, gross: u128, net: i128) {
+        params.tick_data.insert(
+            tick,
+            TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(gross),
+                liquidity_net: alloy::primitives::I256::try_from(net).unwrap(),
+                block: 0,
+            },
+        );
+    }
+
+    #[test]
+    fn v3_tick_slot_reverse_maps_via_keccak_of_tick_and_base_5() {
+        let mut params = v3_pool_params();
+        v3_pool_with_tick(&mut params, -100, 1_000, -500);
+        v3_pool_with_tick(&mut params, 200, 2_000, 300);
+        let mut core = BotState::new();
+        let _id = core.register_v3_pool(&params).expect("V3 registration");
+
+        // The on-chain slot for ticks(-100) at mapping base 5.
+        let tick_slot = derive_tick_storage_slot(-100, U256::from(5u64));
+        let probe = core
+            .probe_tracked_storage_slot(V3_ADDR, tick_slot)
+            .expect("V3 ticks(tick) slot must probe");
+        assert_eq!(probe.kind, TrackedSlotKind::V3TickInfo);
+        assert_eq!(probe.update_block, 18_012_345);
+
+        // Decode: gross in low 128, net in high 128 (two's-complement).
+        let word = U256::from_be_bytes(probe.engine_word.0);
+        let gross = word & U256::from(u128::MAX);
+        let net_high = word >> 128u32;
+        assert_eq!(gross, U256::from(1_000u64));
+        // net = -500: two's-complement int128 = u128::MAX - 499.
+        assert_eq!(net_high, U256::from(u128::MAX - 499));
+
+        // The +200 tick maps to a DIFFERENT slot + a different gross.
+        let tick_slot_200 = derive_tick_storage_slot(200, U256::from(5u64));
+        assert_ne!(tick_slot_200, tick_slot, "distinct ticks → distinct slots");
+        let probe_200 = core
+            .probe_tracked_storage_slot(V3_ADDR, tick_slot_200)
+            .expect("V3 ticks(200) probes");
+        let word_200 = U256::from_be_bytes(probe_200.engine_word.0);
+        assert_eq!(
+            word_200 & U256::from(u128::MAX),
+            U256::from(2_000u64),
+            "gross for +200 tick"
+        );
+
+        // An unknown tick slot (not in tick_data) returns None.
+        let unknown_slot = derive_tick_storage_slot(999, U256::from(5u64));
+        assert!(core
+            .probe_tracked_storage_slot(V3_ADDR, unknown_slot)
+            .is_none());
+    }
+
+    #[test]
+    fn v4_tick_slot_reverse_maps_via_keccak_of_tick_and_state_plus_4() {
+        let mut params = v4_pool_params();
+        params.tick_data.insert(
+            -50,
+            TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(7_000u64),
+                liquidity_net: alloy::primitives::I256::try_from(-250i64).unwrap(),
+                block: 0,
+            },
+        );
+        let mut core = BotState::new();
+        let _id = core.register_v4_pool(&params).expect("V4 registration");
+        let s_state = derive_v4_pool_state_base(&[0xeeu8; 32]);
+        let ticks_base = s_state + U256::from(4u64);
+
+        let tick_slot = derive_tick_storage_slot(-50, ticks_base);
+        let probe = core
+            .probe_tracked_storage_slot(V4_PM, tick_slot)
+            .expect("V4 ticks(tick) slot must probe");
+        assert_eq!(probe.kind, TrackedSlotKind::V4TickInfo);
+        let word = U256::from_be_bytes(probe.engine_word.0);
+        assert_eq!(
+            word & U256::from(u128::MAX),
+            U256::from(7_000u64),
+            "gross for V4 -50 tick"
+        );
+    }
+
+    #[test]
+    fn tick_slot_sign_extension_matches_negative_tick_keccak() {
+        // A negative tick's int24 sign-extension: bytes 0..28 are 0xff.
+        let slot = derive_tick_storage_slot(-1, U256::from(5u64));
+        // Recompute independently to cross-check the sign-extend.
+        let mut input = [0u8; 64];
+        input[..29].fill(0xff);
+        // -1 as int24: low 24 bits all set.
+        input[29] = 0xff;
+        input[30] = 0xff;
+        input[31] = 0xff;
+        input[32..64].copy_from_slice(&U256::from(5u64).to_be_bytes::<32>());
+        let expected = U256::from_be_bytes(<[u8; 32]>::from(keccak256(input)));
+        assert_eq!(
+            slot, expected,
+            "negative tick sign-extend + keccak round-trips"
+        );
     }
 
     // ── the tick (placeholder — per-tick slot reverse-map is deferred) ──

@@ -232,8 +232,13 @@ fn hex_padded_u256(word: U256) -> String {
 
 /// Log a `[sim-divergence] summary` line with the current tally (slots
 /// compared, divergent slots, divergent pools). Idempotent + cheap; safe to
-/// call from a driver per-batch or at shutdown.
+/// call from a driver per-batch or at shutdown. A no-op when the probe is
+/// off (the tally is all-zeros + the env gate cached false → the summary
+/// would spam a zero-line every block otherwise).
 pub fn dump_divergence_summary() {
+    if !probe_enabled() {
+        return;
+    }
     let tally = divergence_tally_snapshot();
     log::info!(
         "{SIM_DIVERGENCE_LOG_PREFIX} summary slots_compared={} divergent_slots={} \

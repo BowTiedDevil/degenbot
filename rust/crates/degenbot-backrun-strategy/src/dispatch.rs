@@ -694,6 +694,16 @@ pub fn dispatch_profitable_results(
         .gas_unprofitable
         .sort_by_key(|r| std::cmp::Reverse(r.net_profit));
 
+    // Emit the env-gated `[sim-divergence] summary` for this block's dispatch
+    // fan-out (ergo task 4C33DP / epic TR6GWT) — the tally of engine-vs-RPC
+    // tracked-slot comparisons run inside `BotStateDb::storage_ref` during
+    // the sim fan-out above. No-op when the probe is off; when on, logs
+    // `slots_compared/divergent_slots/divergent_pairs/divergent_pools`
+    // alongside the driver's `[sim]` per-block line. The divergence lines
+    // themselves (`[sim-divergence] pool=..`) emit per-mismatch during the
+    // fan-out; this is the per-block tally rollup.
+    degenbot_simulation::divergence_probe::dump_divergence_summary();
+
     outcome
 }
 
