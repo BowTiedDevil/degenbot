@@ -92,28 +92,49 @@ where
         self.fallback.basic_ref(address)
     }
 
-    /// Forward to the fallback. Tracked-pool storage (V2 slot 8, V3 `slot0`/
-    /// `liquidity`/`ticks`) is served from the RPC, NOT the snapshot — see
-    /// the module doc for the K-invariant / stale-state-divergence reason.
+    /// Serve tracked-pool storage from the engine's typed state, falling
+    /// through to the RPC for everything else.
     ///
-    /// When `DEGENBOT_SIM_DIVERGENCE_LOG=1` is set, the env-gated divergence
-    /// probe ([`super::divergence_probe::observe_storage_read`]) compares the
-    /// engine's packed typed state against the just-fetched RPC value, logs a
-    /// `[sim-divergence]` line on a tracked-field mismatch, and accumulates the
-    /// tally — pure observation (the RPC value is returned unchanged). Off by
-    /// default (single atomic load).
+    /// Two env-gated diagnostics run here, both DEFAULT OFF so production
+    /// behavior is unchanged (single atomic load each — zero per-SLOAD work):
+    ///
+    /// - `DEGENBOT_SIM_DIVERGENCE_LOG=1` ([`super::divergence_probe`]): pure
+    ///   observation — compares the engine's packed typed state against the
+    ///   RPC value, logs a `[sim-divergence]` line on mismatch, accumulates
+    ///   the tally. Never changes what the sim reads.
+    /// - `DEGENBOT_SIM_SERVE_ENGINE_STATE=1` ([`super::serving`]): the serving
+    ///   seam — returns the engine's packed word for tracked slots
+    ///   (V2 reserves / V3/V4 `slot0`/`liquidity`/`ticks(tick)`) instead of
+    ///   the RPC value. Gated on path A's engine-state extension for
+    ///   production enablement — a partial serve reintroduces the documented
+    ///   K-invariant / `LOK` reverts (the engine doesn't carry
+    ///   `feeGrowthGlobal`/`tickBitmap`/per-pair balances the same swap
+    ///   callback reads).
     ///
     /// # Errors
     ///
-    /// Returns the fallback's error if the RPC fetch fails.
+    /// Returns the fallback's error if the RPC fetch fails (the RPC value is
+    /// always fetched even when serving is on, so it can be logged as the
+    /// delta baseline).
     fn storage_ref(
         &self,
         address: Address,
         index: StorageKey,
     ) -> Result<StorageValue, Self::Error> {
         let rpc_value = self.fallback.storage_ref(address, index)?;
+        // Observation first (env-gated, pure — compares engine vs RPC, logs
+        // divergence, never changes what the sim reads). Independent of the
+        // serving gate below.
         super::divergence_probe::observe_storage_read(self.bot_state, address, index, rpc_value);
-        Ok(rpc_value)
+        // Serving seam (env-gated, DEFAULT OFF): if `(address, index)` maps
+        // to a tracked pool slot the engine carries authoritatively, return
+        // the engine's packed word instead of the RPC value (the sim's swap
+        // callback reads the engine's state, matching what the solver read).
+        // Gated on path A's engine-state extension for production enablement
+        // — a partial serve (slot0/liquidity WITHOUT feeGrowth/bitmap)
+        // reintroduces the documented K-invariant / LOK reverts.
+        let served = super::serving::serve_tracked_slot(self.bot_state, address, index, rpc_value);
+        Ok(served.unwrap_or(rpc_value))
     }
 
     /// Forward to the fallback. `code_by_hash` is **never invoked** if
