@@ -1,12 +1,12 @@
 //! Pure-Rust cmd-executor domain — simulation warmup-slot storage math.
 //!
-//! A pyo3-free *core leaf* that ports the Solidity storage-slot math from the
-//! Python reference (`examples/cmd_stream.py`) feeding `eth_simulateV1`
-//! warmup-slot overrides. These pre-warm three storage slots so injected
-//! runtime bytecode (no `initialize()` call) sees warm storage, replicating
-//! `cmd_executor.initialize()`'s cold-SSTORE avoidance (~22,100 gas/slot).
+//! A pyo3-free *core leaf* implementing the Solidity storage-slot math that
+//! feeds `eth_simulateV1` warmup-slot overrides. These pre-warm three storage
+//! slots so injected runtime bytecode (no `initialize()` call) sees warm
+//! storage, replicating `cmd_executor.initialize()`'s cold-SSTORE avoidance
+//! (~22,100 gas/slot).
 //!
-//! # Storage-layout domain knowledge (mirrors the Python oracle)
+//! # Storage-layout domain knowledge
 //!
 //! - **WETH9** `balanceOf` at mapping slot **3** (`name`@0, `symbol`@1,
 //!   `decimals`@2 — all occupy storage, not `constant`).
@@ -23,10 +23,9 @@
 //!
 //! # Parity
 //!
-//! Byte-for-byte parity vs `examples/cmd_stream.py::compute_simulation_warmup_slots`
-//! (§4.2). The Python oracle is retained as the parity reference — it is NOT
-//! deleted. Slot hexes are the canonical mainnet WETH (`0xC02…`) / PoolManager
-//! (`0x0000…444c`) slots.
+//! Byte-for-byte parity vs `cmd_executor.initialize()`'s storage layout
+//! (§4.2). Slot hexes are the canonical mainnet WETH (`0xC02…`) /
+//! PoolManager (`0x0000…444c`) slots.
 
 // Solidity/ERC identifiers (balanceOf, ERC6909, protocolFeesAccrued, …) are
 // ubiquitous in this crate's docs; allow the pedantic doc-markdown lint to
@@ -144,7 +143,7 @@ pub fn erc6909_id(currency: Address) -> U256 {
 /// - `executor` — the cmd_executor contract address.
 /// - `weth` — the WETH9 contract address.
 /// - `pool_manager` — the Uniswap V4 PoolManager contract address (the
-///   ERC6909-balance host); present for API fidelity with the Python oracle.
+///   ERC6909-balance host).
 #[must_use]
 pub fn compute_simulation_warmup_slots(
     executor: Address,
@@ -177,14 +176,13 @@ mod tests {
     const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
     const PM: Address = address!("000000000004444c5dc75cb358380d2e3de08a90");
 
-    /// `uint160(WETH)` — the ERC6909 WETH id (computed by the Python oracle).
+    /// `uint160(WETH)` — the ERC6909 WETH id.
     const WETH_ID: U256 =
         u256_from_hex("000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
 
     // ---------------------------------------------------------------------------
-    // Parity fixtures — generated directly from the Python oracle
-    // `examples/cmd_stream.py::compute_simulation_warmup_slots` over the three
-    // executor addresses used in the parity corpus:
+    // Parity fixtures — the slot hexes this leaf computes over the three
+    // executor addresses in the parity corpus:
     //   - `0xAA…AA`  (the canonical `EXECUTOR_ADDRESS` in test_warmup_slots_gas.py)
     //   - `0xDeAd…0001` / `0xDeAd…0002` (the eth_simulateV1 test executors)
     // Each row: (executor, WETH, PM) → (weth_balance, erc6909_weth,
@@ -274,7 +272,7 @@ mod tests {
     // ---------------------------------------------------------------------------
 
     /// The mapping_slot composition is `keccak256(key ‖ base_slot)` (key FIRST),
-    /// matching the Python oracle's `key.to_bytes(32,"big") + base_slot.to_bytes(32,"big")`.
+    /// matching the Solidity layout `key.to_bytes(32,"big") ‖ base_slot.to_bytes(32,"big")`.
     /// Cross-checks against the parity corpus's manual keccak (L271–L278):
     ///   keccak256(executor_32bytes ‖ 3_32bytes).
     #[test]
