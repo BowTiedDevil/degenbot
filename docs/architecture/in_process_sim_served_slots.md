@@ -193,6 +193,22 @@ partial serve reintroduces the LOK/K-invariant reverts. Choose the fix path:
 path determines whether the serving seam (`storage_ref`) is the mechanism at
 all (B uses a CacheDB pre-seed instead).
 
+## Resolution (ergo `2BUNU2` captured — path A selected)
+
+The divergence probe (ergo `4C33DP`, `docs/architecture/sim_divergence_probe.md`)
+measured the engine-vs-RPC gap on 5 V4-V3-V3 mainnet candidates: **18 slots
+compared (scalar slot0/liquidity + per-tick gross/net), 0 divergent** — the
+engine's tracked slots are byte-identical to the RPC at sim time
+(`update_block` current). This eliminates path C (engine lag) + path B
+(fan-out skew): the `CurrencyNotSettled` revert's root cause is the
+**untracked slot classes** the engine does NOT carry (`feeGrowthGlobal`,
+per-tick `feeGrowthOutside`, V3 `observations`, V2 per-pair `balanceOf`) →
+the solver's CL swap math diverges from the on-chain swap callback's
+fee-accrual on cross-tick swaps. **Path A (extend engine state to carry the
+full slot set the on-chain swap reads) is selected.** The deferred encoder
+tasks (V5W756/H3M6AH/PXQAEY) implement the encoders + serving; `NQ3FPV`
+lands the production `storage_ref` serving seam gated on the extension.
+
 ## Validation Gates
 This doc, committed. A reader can verify any row against the cited source / the
 pinned `cast storage` triples (RPC endpoints + pool ids + slot derivations).

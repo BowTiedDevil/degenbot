@@ -77,17 +77,51 @@ for the tick word + the V4 `S_state+4` tick base land with the deferred encoder
 tasks (V5W756 / H3M6AH / PXQAEY) — they reuse the `derive_v4_pool_state_base`
 + the V3/V4 scalar encoders built here.
 
-## Status
+## Status — CAPTURED (path A selected)
 
-- ✅ Code: landed + unit-tested (10 engine-side + 6 simulation-side tests;
-  clippy clean; no-pyo3-in-cores invariant holds).
+- ✅ Code: landed + unit-tested (13 engine-side incl. per-tick reverse-map +
+  6 simulation-side tests; clippy clean; no-pyo3-in-cores invariant holds).
 - ✅ Logger bridge: `degenbot_simulation` + `degenbot_backrun_strategy` crate-
   roots added to `RUST_BRIDGE_LOGGER_NAMES` (latent drop-on-unconfigured-root
   bug fixed alongside).
-- ⏳ **Mainnet capture**: the V4-V3-V3 dry-run's path-discovery warmup
-  (`find_paths_async` over the full pool graph) exceeds the time budget
-  available in the dev session (250s reached only 3 pump headers, 0 sims).
-  The capture is the deferred validation — re-run with a longer warmup window
-  (the previous session's run captured 246 sims, so it is achievable). The
-  captured `logs/debug/sim_divergence_V4-V3-V3.log` is the artifact that picks
-  A/B/C and unblocks the serving decision.
+- ✅ **Mainnet capture (V4-V3-V3, 5 candidates across two runs)**:
+
+  | run | candidates | slots_compared | divergent_slots | divergent_pools |
+  |----:|-----------:|---------------:|----------------:|----------------:|
+  | 1   | 2          | 8  (scalar)             | 0               | 0               |
+  | 2   | 3          | 10 (scalar + per-tick)  | 0               | 0               |
+  | **total** | **5** | **18**               | **0**           | **0**           |
+
+  Every candidate reverted `CurrencyNotSettled`, yet the engine's tracked
+  slots — V3/V4 `slot0` (sqrtPrice/tick), `liquidity`, AND each per-tick
+  `ticks(tick)` slot+0 (`liquidityGross`/`liquidityNet`) — ALL MATCHED the
+  RPC-served value at sim time (`update_block` caught up, zero divergence).
+
+  Artifact: `logs/debug/sim_divergence_V4-V3-V3.log`.
+
+### Decision: path A (extend engine state)
+
+The data **eliminates path C** (gated serve when caught up): the engine is
+NOT lagging on the slots it carries — `update_block` is current + the packed
+words are byte-identical to RPC. It also **eliminates path B** (shadow-RPC at
+sim block): the scalars already match at sim time, so the sim/solver divergence
+is NOT a fan-out-skew artifact.
+
+The `CurrencyNotSettled` revert's root cause is therefore the **untracked slot
+classes** the engine does NOT serve: V3/V4 `feeGrowthGlobal0/1X128` (slots
++1/+2), per-tick `feeGrowthOutside0/1X128` (tick slot+1/+2), and the V3
+`observations` array + V2 per-pair ERC-20 `balanceOf`. The on-chain V3/V4
+`swap()` callback reads these alongside the matching slot0/liquidity/ticks;
+the engine's CL swap math (which the solver used to derive `hop_outputs`)
+does NOT model fee-growth accrual the way the on-chain code does, so on a
+fee-accruing / cross-tick swap the solver's `hop_output` diverges from the
+sim's actual on-chain swap result → the V4 `SETTLE`/`TAKE` exact-amount comes
+up short → `CurrencyNotSettled`.
+
+This is **path A**: extend the engine state (`V3PoolState`/`V4PoolState`/
+`TickInfo`) to carry the full slot set the on-chain swap callback reads, +
+apply `feeGrowthGlobal`/`feeGrowthOutside`/observation deltas from the
+Mint/Burn/Swap events, so the solver's CL math + the sim's revm-served state
+are consistent. The deferred encoder tasks (V5W756/H3M6AH/PXQAEY) REUSE the
+encoders built here; the production `storage_ref` serving seam is gated on
+the engine-state extension landing (ergo task `NQ3FPV`).
