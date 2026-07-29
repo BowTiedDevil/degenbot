@@ -30,10 +30,13 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Constants for retry logic.
-const INITIAL_RETRY_DELAY_MS: u64 = 100;
-const MAX_RETRY_DELAY_MS: u64 = 30_000; // 30 seconds
-const BACKOFF_MULTIPLIER: u64 = 2;
+/// Constants for retry logic. `pub(crate)` so the subscription watchdog
+/// ([`crate::subscription::pump_blocks`]) reuses the same backoff curve for
+/// its reconnect retries — one retry vocabulary across the crate, not a
+/// duplicate per-module tuning.
+pub(crate) const INITIAL_RETRY_DELAY_MS: u64 = 100;
+pub(crate) const MAX_RETRY_DELAY_MS: u64 = 30_000; // 30 seconds
+pub(crate) const BACKOFF_MULTIPLIER: u64 = 2;
 const MAX_JITTER_MS: u64 = 100; // Add up to 100ms of jitter
 
 /// Retry an async operation with exponential backoff, emitting `log` records on

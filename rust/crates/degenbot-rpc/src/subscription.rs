@@ -27,12 +27,32 @@ use alloy::network::Ethereum;
 use alloy::primitives::B256;
 use alloy::providers::Provider;
 use alloy::rpc::types::Filter;
-use degenbot_core::runtime::get_runtime;
-use futures_util::StreamExt;
+use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
+
+use degenbot_core::runtime::get_runtime;
+use futures_util::StreamExt;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use tokio::time::timeout;
+
+/// Maximum elapsed time with no header before the watchdog tears down + reconnects
+/// a stalled `newHeads` subscription.
+///
+/// ~4× the ~12s Ethereum mainnet block time = ~48s, within the ≤~60s target of
+/// O3JW5S. A silently half-open socket (NAT idle timeout, provider stall with no
+/// close frame) makes `stream.next()` never resolve and never return `None`; this
+/// watchdog bounds that window so the pump reconnects instead of hanging forever.
+const HEADER_WATCHDOG_SECS: u64 = 48;
+
+/// A boxed, `'static`, `Send` stream of Ethereum block headers.
+///
+/// Both the initial `subscribe_blocks().into_stream()` and every reconnect yield
+/// this same concrete type so [`pump_header_stream`]'s generic `S` unifies across
+/// the initial and re-established streams.
+type HeaderStream = futures_util::stream::BoxStream<'static, alloy::rpc::types::Header>;
 
 // ---------------------------------------------------------------------------
 // Double-buffer subscription handle
@@ -143,12 +163,19 @@ fn signal_start_failed(handle: &SubscriptionHandle, message: String) {
 // ---------------------------------------------------------------------------
 
 /// Pump task for block header subscriptions.
+///
+/// Drives a [`HeaderStream`] through [`pump_header_stream`] with a header
+/// watchdog: a `newHeads` subscription that delivers no header within
+/// [`HEADER_WATCHDOG_SECS`] is torn down and reconnected, reusing the provider's
+/// existing backend reconnect path (`is_backend_gone` /
+/// `is_pubsub_unavailable`) rather than a duplicate WS backoff. During reconnect
+/// a [`RawSubItem::Disconnected`] is buffered so the Python side sees a clean
+/// restart, not a silent gap (O3JW5S).
 pub async fn pump_blocks(provider: Arc<dyn Provider<Ethereum>>, handle: Arc<SubscriptionHandle>) {
-    let sub_result = provider.subscribe_blocks().await;
-    let mut stream = match sub_result {
+    let stream: HeaderStream = match provider.subscribe_blocks().await {
         Ok(s) => {
             signal_started(&handle);
-            s.into_stream()
+            s.into_stream().boxed()
         }
         Err(e) => {
             signal_start_failed(&handle, format!("Failed to subscribe to blocks: {e}"));
@@ -156,16 +183,119 @@ pub async fn pump_blocks(provider: Arc<dyn Provider<Ethereum>>, handle: Arc<Subs
         }
     };
 
+    // `provider` is reused (not duplicated) by the reconnect closure: each
+    // watchdog fire re-issues `subscribe_blocks` on the same provider, leaning
+    // on alloy-pubsub's backend reconnect for a dead socket.
+    let reconnect_provider = Arc::clone(&provider);
+    pump_header_stream(
+        handle,
+        stream,
+        Duration::from_secs(HEADER_WATCHDOG_SECS),
+        move || {
+            let provider = Arc::clone(&reconnect_provider);
+            async move { reconnect_new_heads_stream(provider).await }
+        },
+    )
+    .await;
+}
+
+/// Re-establish a `newHeads` [`HeaderStream`] after the watchdog tore down a
+/// stalled subscription.
+///
+/// Reuses the provider's existing backend reconnect path: `subscribe_blocks`
+/// re-issues `eth_subscribe`; if the WS backend is dead, alloy-pubsub's
+/// `is_backend_gone` / `is_pubsub_unavailable` retry path reconnects the
+/// transport (the same path that fires on request errors during normal RPC).
+/// Each subscribe attempt is bounded by [`HEADER_WATCHDOG_SECS`] so a hung dead
+/// socket (one that accepts the `eth_subscribe` write but never responds)
+/// cannot re-stall the pump. Retries indefinitely with the shared backoff curve
+/// ([`crate::provider::INITIAL_RETRY_DELAY_MS`] etc.) so a transiently-downed
+/// provider recovers without an operator restart — the bot process stays alive.
+async fn reconnect_new_heads_stream(provider: Arc<dyn Provider<Ethereum>>) -> Option<HeaderStream> {
+    use crate::provider::{BACKOFF_MULTIPLIER, INITIAL_RETRY_DELAY_MS, MAX_RETRY_DELAY_MS};
+    let mut delay_ms = INITIAL_RETRY_DELAY_MS;
     loop {
-        let Some(header) = stream.next().await else {
-            buffer_item(&handle, RawSubItem::End);
-            return;
-        };
+        match timeout(
+            Duration::from_secs(HEADER_WATCHDOG_SECS),
+            provider.subscribe_blocks(),
+        )
+        .await
+        {
+            Ok(Ok(s)) => return Some(s.into_stream().boxed()),
+            Ok(Err(e)) => {
+                log::warn!(
+                    target: "degenbot_rpc::subscription",
+                    "newHeads reconnect subscribe failed: {e} — retrying in {delay_ms}ms"
+                );
+            }
+            Err(_) => {
+                log::warn!(
+                    target: "degenbot_rpc::subscription",
+                    "newHeads reconnect subscribe hung for {HEADER_WATCHDOG_SECS}s — retrying in {delay_ms}ms"
+                );
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+        delay_ms = std::cmp::min(
+            delay_ms.saturating_mul(BACKOFF_MULTIPLIER),
+            MAX_RETRY_DELAY_MS,
+        );
+    }
+}
 
-        buffer_item(&handle, RawSubItem::Header(header));
-
-        if handle.unsubscribed.load(Ordering::Relaxed) {
-            return;
+/// Drive a `newHeads` header stream with a header watchdog.
+///
+/// For each header from `stream`, buffer it via [`buffer_item`]. If no header
+/// arrives within `watchdog`, the subscription is treated as a silently
+/// half-open socket: a [`RawSubItem::Disconnected`] is buffered (so the Python
+/// side sees a clean restart, not a silent gap), the dead stream is dropped,
+/// and `next_stream` is called to re-establish the subscription.
+///
+/// Separated from [`pump_blocks`] so the watchdog/reconnect decision is unit-
+/// testable with an injected never-yielding stream + a tiny threshold (no live
+/// RPC — see `test_header_watchdog_fires_on_never_yielding_stream`).
+async fn pump_header_stream<S, F, Fut>(
+    handle: Arc<SubscriptionHandle>,
+    mut stream: S,
+    watchdog: Duration,
+    mut next_stream: F,
+) where
+    S: futures_util::Stream<Item = alloy::rpc::types::Header> + Unpin + Send + 'static,
+    F: FnMut() -> Fut + Send + 'static,
+    Fut: Future<Output = Option<S>> + Send + 'static,
+{
+    loop {
+        // Watchdog: bound `stream.next()` so a silently-stalled socket (no
+        // close frame, never resolves) is torn down within a bounded window
+        // instead of hanging the pump forever.
+        match timeout(watchdog, stream.next()).await {
+            Ok(Some(header)) => {
+                buffer_item(&handle, RawSubItem::Header(header));
+                if handle.unsubscribed.load(Ordering::Relaxed) {
+                    return;
+                }
+            }
+            Ok(None) => {
+                // Clean subscription end (real close frame). Match the
+                // pre-watchdog behavior: buffer End and stop.
+                buffer_item(&handle, RawSubItem::End);
+                return;
+            }
+            Err(_) => {
+                // Watchdog fired: no header within `watchdog`. Buffer a clean
+                // disconnect marker so Python sees a restart, drop the dead
+                // stream, and re-subscribe via `next_stream`.
+                buffer_item(
+                    &handle,
+                    RawSubItem::Disconnected {
+                        message: "newHeads subscription stall: no header within watchdog window, reconnecting".to_string(),
+                    },
+                );
+                match next_stream().await {
+                    Some(s) => stream = s,
+                    None => return,
+                }
+            }
         }
     }
 }
@@ -673,6 +803,83 @@ mod tests {
                 assert_eq!(message, "fail");
             }
             _ => panic!("Expected Disconnected variant"),
+        }
+    }
+
+    /// A `newHeads` stream that NEVER yields (silently half-open socket) must
+    /// trip the watchdog within the threshold and buffer a clean
+    /// `Disconnected` — not hang the pump forever (O3JW5S).
+    #[tokio::test]
+    async fn test_header_watchdog_fires_on_never_yielding_stream() {
+        use futures_util::stream;
+
+        let handle = make_handle();
+        // A header-shaped stream that NEVER yields — simulates a silently
+        // half-open WS socket where `stream.next()` never resolves.
+        let stalled: stream::Pending<alloy::rpc::types::Header> = stream::pending();
+        // Reconnect returns None → the pump exits after the first watchdog
+        // fire (we are testing the watchdog decision, not the reconnect loop).
+        let start = tokio::time::Instant::now();
+
+        pump_header_stream(
+            Arc::clone(&handle),
+            stalled,
+            Duration::from_millis(20),
+            || async move { None },
+        )
+        .await;
+
+        let elapsed = start.elapsed();
+        // The watchdog must fire within a bounded window — well below the
+        // ~48s production threshold, and not hang.
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "watchdog did not fire within bounded time (elapsed={elapsed:?})"
+        );
+
+        let result = handle.drain_raw();
+        match result {
+            RawDrainResult::Disconnected { items, message } => {
+                assert!(items.is_empty(), "no headers buffered before the stall");
+                assert!(
+                    message.contains("newHeads subscription stall"),
+                    "disconnect message must carry the greppable stall prefix: {message}"
+                );
+            }
+            other => panic!("Expected Disconnected after watchdog, got {other:?}"),
+        }
+    }
+
+    /// A healthy stream (headers arrive before the watchdog) must NOT be torn
+    /// down — the watchdog only fires on silence, not on normal flow.
+    #[tokio::test]
+    async fn test_header_watchdog_does_not_fire_on_healthy_stream() {
+        use futures_util::stream;
+
+        let handle = make_handle();
+        // Two real headers then a clean end — no gap exceeds the watchdog.
+        let headers = vec![
+            alloy::rpc::types::Header::default(),
+            alloy::rpc::types::Header::default(),
+        ];
+        let s = stream::iter(headers);
+
+        pump_header_stream(
+            Arc::clone(&handle),
+            s,
+            Duration::from_mins(1),
+            || async move { None },
+        )
+        .await;
+
+        let result = handle.drain_raw();
+        match result {
+            RawDrainResult::Ended(items) => {
+                assert_eq!(items.len(), 2, "both headers buffered, then clean End");
+            }
+            other => {
+                panic!("Expected clean Ended (no watchdog fire) on healthy stream, got {other:?}")
+            }
         }
     }
 }
