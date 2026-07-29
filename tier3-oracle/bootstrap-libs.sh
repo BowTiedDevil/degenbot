@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Fetch the canonical Uniswap v3-core (v1.0.1) + v4-core (v1.0.2) into
-# `tier3-oracle/lib/`. These are gitignored (see .gitignore) and are the
-# reference source the Tier-3 oracle harnesses compile — `git clone` (not
-# `forge install`, which would record a submodule under a gitignored path)
-# keeps them plain directories with no repo metadata to leak into the
-# degenbot tree. Idempotent: skips a lib that already contains its pool
-# contract. Run before `just test-tier3` on a fresh checkout (CI does this).
+# Fetch the canonical Uniswap v2-core (v1.0.0) + v3-core (v1.0.0) + v4-core
+# (v4.0.0) into `tier3-oracle/lib/`. These are gitignored (see .gitignore)
+# and are the reference source the Tier-3 oracle harnesses compile — `git
+# clone` (not `forge install`, which would record a submodule under a
+# gitignored path) keeps them plain directories with no repo metadata to
+# leak into the degenbot tree. Idempotent: skips a lib that already contains
+# its pool contract. Run before `just test-tier3` on a fresh checkout (CI
+# does this).
 set -euo pipefail
 TD="$(cd "$(dirname "$0")" && pwd)"
 cd "${TD}"
@@ -23,7 +24,8 @@ ensure_lib() {  # ensure_lib <name> <repo-url> <tag> <marker-file>
     rm -rf "lib/${name}/.git"
 }
 
+ensure_lib v2-core https://github.com/Uniswap/v2-core.git v1.0.0 contracts/UniswapV2Pair.sol
 ensure_lib v3-core https://github.com/Uniswap/v3-core.git v1.0.0 contracts/UniswapV3Pool.sol
 ensure_lib v4-core https://github.com/Uniswap/v4-core.git v4.0.0 src/PoolManager.sol
 
-echo "tier3-oracle libs ready: v3-core@v1.0.0, v4-core@v4.0.0"
+echo "tier3-oracle libs ready: v2-core@v1.0.0, v3-core@v1.0.0, v4-core@v4.0.0"
