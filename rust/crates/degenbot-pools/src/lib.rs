@@ -87,12 +87,28 @@ pub mod registry;
 pub mod simulate_swap;
 pub mod spec_bounds;
 pub mod state_history;
+/// Re-export the V3 storage-slot encoders at the crate root so the Tier-3b
+/// seeding layer + standalone consumers reach them without a long path.
+pub use v3_storage_slots::{
+    compute_v3_tick_bitmap_word, compute_v3_tick_bitmap_word_from_raw, decode_v3_slot0,
+    encode_v3_liquidity_slot, encode_v3_slot0, encode_v3_slot0_fresh, encode_v3_tick_info_slot,
+    sign_extend_int16, sign_extend_int24, v3_tick_bitmap_word_slot, v3_tick_mapping_slot,
+    V3Slot0Parts,
+};
+/// Re-export the V4 storage-slot encoders at the crate root (Tier-3b seeding).
+pub use v4_storage_slots::{
+    compute_v4_tick_bitmap_word, decode_v4_slot0, encode_v4_liquidity_slot, encode_v4_slot0,
+    encode_v4_tick_info_slot, v4_liquidity_slot, v4_pool_id, v4_pool_state_base_slot,
+    v4_slot0_slot, v4_tick_bitmap_word_slot, v4_tick_mapping_slot, V4Slot0Parts,
+};
 pub mod tick_bitmap;
 pub mod tick_fetch;
 pub mod tick_map;
 pub mod v2_state;
 pub mod v3_state;
+pub mod v3_storage_slots;
 pub mod v4_state;
+pub mod v4_storage_slots;
 
 // Re-export the seam traits + their value-only error/return types at the crate
 // root, so `degenbot-bot`'s transient shim modules can write
