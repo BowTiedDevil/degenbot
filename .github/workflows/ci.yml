@@ -125,6 +125,38 @@ jobs:
       - name: Run Tests
         run: just test-rust
 
+  tier3-oracle:
+    name: Tier-3 On-Chain Accuracy Oracle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install just
+        uses: extractions/setup-just@v4
+
+      - name: Install Foundry (forge + solc 0.7.6)
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Fetch canonical reference contracts (v3-core, v4-core)
+        run: tier3-oracle/bootstrap-libs.sh
+
+      - name: Run Tier-3 suites
+        run: just test-tier3
+
   rust-build:
     name: Rust Build
     runs-on: ubuntu-latest

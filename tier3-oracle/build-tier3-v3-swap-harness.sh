@@ -13,6 +13,10 @@ set -euo pipefail
 TD="$(cd "$(dirname "$0")" && pwd)"   # absolute tier3-oracle/
 cd "${TD}"
 
+# Ensure the canonical v3-core reference source is present (idempotent;
+# no-op if already cloned).
+"${TD}/bootstrap-libs.sh"
+
 SOLC_VER="0.7.6"
 SOLC_LONG="0.7.6+commit.7338295f"
 SVM_DIR="${HOME}/.local/share/svm/${SOLC_VER}"

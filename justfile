@@ -139,6 +139,7 @@ verify-deployments *args:
 test-tier3-smoke:
     #!/usr/bin/env bash
     set -euo pipefail
+    tier3-oracle/bootstrap-libs.sh
     (cd tier3-oracle && forge build)
     python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -172,6 +173,13 @@ test-tier3-swap:
     python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_v3_pool_swap_vs_revm -- --include-ignored --nocapture
+
+# Tier-3 umbrella: run every landed on-chain accuracy oracle suite.
+# Smoke (forge→revm loop) + 3a (computeSwapStep) + 3b (V3 Pool.swap deploy+
+# seed foundation). Each builds its own canonical-reference bytecode harness.
+# Slow (forge/solc builds + revm warmup); NOT in the default `just test-rust`
+# path — run explicitly, or in the CI `tier3-oracle` job.
+test-tier3: test-tier3-smoke test-tier3-step test-tier3-swap
 
 # Run all tests (Rust + Python)
 test-all: test-rust test-python
