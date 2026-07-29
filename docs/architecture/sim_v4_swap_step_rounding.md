@@ -176,3 +176,49 @@ solving). If they're IDENTICAL but `int_simulate_v3_swap` still returns 101
 while `v4_simulate_swap` returns 100 → the residual is in
 `compute_crossing`/`int_simulate_v3_swap` (fix: per CR #2 — delegate the V4
 hop-output to `v4_simulate_swap` in the solver path).
+
+---
+
+## RESOLUTION — hypothesis 2 REFUTED; residual is stale active state (ergo `W2UWZO`)
+
+The "Decisive next experiment" above proposed dumping the engine's
+`V4PoolState` vs `cast`-ing the on-chain state at the solve block. A
+**strictly stronger** experiment was run instead — one that isolates the
+solver math from state freshness entirely: feed the **identical** synthetic
+`V4PoolState` to BOTH `v4_simulate_swap` (the byte-exact full-tick-walk the
+revm sim's `actual` mirrors) AND the solver's crossing path
+(`IntV3TickRangeSequence::compute_crossing` + `int_simulate_v3_swap` for the
+ending partial step — exactly what `int_simulate_mixed_path_n` assembles for a
+CL hop's `hop_outputs[i]`). Because the input state is byte-identical, ANY
+divergence is pure solver math; conversely, byte-exact parity proves the
+observed `+1` CANNOT originate in the solver math and must be stale state.
+
+**Result: byte-exact parity across the sweep.** The test
+(`rust/crates/degenbot-solvers/tests/v4_crossing_solver_vs_sim_parity.rs`)
+sweeps:
+
+- liquidity `L` from 1e13 to 1e21 (the regime where the zfo partial-step
+  round-up previously surfaced);
+- both swap directions (zfo + ofz);
+- multi-tick crossings (5 initialized ticks → up to 4 boundary crossings);
+- amounts landing in every range interior AND boundary-adjacent / dust amounts
+  (`gin(k) ± δ` for δ ∈ {1, 2, 3, 7, 13}) — the rounding edge regime where a
+  `+1` residual would live.
+
+`v4_simulate_swap == solver_crossing_output` for every case. This REFUTES
+hypothesis 2: there is no residual rounding bug in `compute_crossing` /
+`int_simulate_v3_swap` for identical state — the round-up fixes (commits
+`1cb8c929` + `d2de7ab5`) closed the multi-range rounding gap completely.
+
+**Conclusion: the residual `+1` V4 hop over-prediction is stale active
+state (hypothesis 1).** The engine's `V4PoolState` scalars/tick_data at solve
+firing differ from the solve-block RPC state the revm sim reads — a
+pump-ORDERING gap (solve running before block-N's V4 swap/Mint/Burn events are
+applied, or the snapshot seed lagging). This is consistent with every
+empirical signature: V2 + V3 hops match exactly (deep pools, price-insensitive
+to 1-block drift); only the thin-liquidity V4 hop diverges by 1 wei. The fix is
+NOT in the solver math — it is in V4 active-state freshness at solve time.
+
+The remaining dump-vs-`cast` experiment is now only a *confirmation* step
+(capture the exact scalar/tick delta for one failing hop to pin the pump-order
+root cause), not a fork-resolver — the fork is already resolved.
