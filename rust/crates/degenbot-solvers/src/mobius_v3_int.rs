@@ -635,8 +635,13 @@ pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> V3Sw
             return V3SwapResult::default();
         }
 
-        let sp_next_u512 = numerator / denominator;
-        let sp_next = u512_to_u256(sp_next_u512);
+        // On-chain `get_next_sqrt_price_from_amount0_rounding_up` uses
+        // `muldiv_rounding_up` (CEIL) for zfo sp_next; a floor here
+        // under-shot `sp_next` → over-shot `sp_current − sp_next` →
+        // over-predicted the V3 partial-step output (zfo-only half of the
+        // V4 CurrencyNotSettled class). The ofz branch below correctly uses
+        // floor (`get_next_sqrt_price_from_amount1_rounding_down`).
+        let sp_next = degenbot_pools::int_v3_hop::u512_div_ceil(numerator, denominator);
 
         // Clamp to range: sp_next must be >= sqrt_price_lower
         let sp_final = sp_next.max(v3_hop.sqrt_price_lower_x96);
@@ -1314,6 +1319,9 @@ fn u512_to_u256(v: U512) -> U256 {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use alloy::primitives::I256;
+    use degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v3;
+    use degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal;
 
     /// Helper: create an IntV3TickRangeHop at tick 0 (1:1 price), tick spacing 60.
     fn make_v3_hop_at_1to1(liquidity: u128, zfo: bool) -> IntV3TickRangeHop {
@@ -2152,5 +2160,291 @@ mod tests {
         assert_eq!(result.hop_outputs[2], expected_out3);
 
         assert_eq!(result.final_output, expected_out3);
+    }
+
+    // ── Partial-step on-chain oracle parity ───────────────────────────────
+    // The full V4 CurrencyNotSettled fix covers TWO pieces of the solver's
+    // per-hop V3 calc: (a) `compute_crossing`'s per-range round-up
+    // (covered by degenbot-pools/int_v3_hop.rs tests), and (b) the partial
+    // (target-NOT-reached) step in `int_simulate_v3_swap`. The tests below
+    // pin (b): for a swap that stops inside a tick range WITHOUT reaching
+    // either boundary, the solver's `output`/`consumed_input`/`sqrt_price_next`
+    // MUST match `compute_swap_step_v3` (the on-chain-faithful oracle) exactly
+    // for BOTH directions:
+    //
+    //   - zfo (token0 in, price decreases): on-chain derives `sp_next` via
+    //     `get_next_sqrt_price_from_amount0_rounding_up` = CEIL; the prior
+    //     floor in `int_simulate_v3_swap` under-shot `sp_next` → over-shot
+    //     `spCur − sp_next` → over-predicted `output` (the same direction
+    //     as the CurrencyNotSettled bug).
+    //   - ofz (token1 in, price increases): on-chain uses
+    //     `get_next_sqrt_price_from_amount1_rounding_down` = floor; the solver
+    //     also floors → expected to match already (regression guard).
+    //
+    // The oracle's `sp_target` for a partial step is set to the boundary
+    // that WOULD be hit if `amount_remaining` were large enough — this is the
+    // shape computeSwapStep is invoked with on-chain inside the swap loop
+    // (target = next tick boundary); the oracle's own branch logic decides
+    // "not reached" and walks `get_next_sqrt_price_from_input` instead.
+
+    /// Build a CL tick-range hop whose `sqrt_price_x96 = sqrtPriceAt(tick_cur)`,
+    /// `sqrt_price_lower_x96 = sqrtPriceAt(tick_cur - spacing)` and
+    /// `sqrt_price_upper_x96 = sqrtPriceAt(tick_cur + spacing)`. Used to
+    /// construct both zfo and ofz partial-step hops for the parity tests.
+    fn range_hop_at_tick(
+        tick_cur: i32,
+        spacing: i32,
+        liquidity: u128,
+        zfo: bool,
+    ) -> IntV3TickRangeHop {
+        IntV3TickRangeHop {
+            liquidity,
+            sqrt_price_x96: U256::from(get_sqrt_ratio_at_tick_internal(tick_cur).unwrap()),
+            sqrt_price_lower_x96: U256::from(
+                get_sqrt_ratio_at_tick_internal(tick_cur - spacing).unwrap(),
+            ),
+            sqrt_price_upper_x96: U256::from(
+                get_sqrt_ratio_at_tick_internal(tick_cur + spacing).unwrap(),
+            ),
+            gamma_numer: 997_000,
+            fee_denom: 1_000_000,
+            zero_for_one: zfo,
+        }
+    }
+
+    /// RED→GREEN: `int_simulate_v3_swap` for a swap that does NOT reach the
+    /// lower boundary (zfo) MUST match the on-chain `compute_swap_step_v3`
+    /// step (`output`, `consumed_input`, and the implied `sqrt_price_next`).
+    /// Before the round-up fix this over-predicted `output` because `sp_next`
+    /// was floored instead of ceiled.
+    #[test]
+    fn int_simulate_v3_swap_partial_step_zfo_matches_onchain_compute_swap_step_v3() {
+        let liquidity = 10_000_000_000_000u128; // 1e13
+        let spacing = 60;
+        let hop = range_hop_at_tick(0, spacing, liquidity, /* zfo */ true);
+        // Pick an input that does NOT reach the lower boundary (tick -60).
+        // Range capacity (0 → -60) is about L · (sp_diff) / Q96; pick 0.5× that
+        // so the swap definitely stops mid-range.
+        let full_capacity = hop.max_gross_input_in_range();
+        let amount_in = full_capacity / U256::from(2u64);
+        assert!(
+            !amount_in.is_zero() && amount_in < full_capacity,
+            "inputs must be inside the range"
+        );
+
+        // On-chain oracle: sp_target = lower boundary (what the swap loop
+        // would aim at); the not-reach branch inside compute_swap_step_v3
+        // kicks in and calls get_next_sqrt_price_from_input.
+        let fee_pips = U256::from(hop.fee_denom - hop.gamma_numer);
+        let sp_target = hop.sqrt_price_lower_x96;
+        let step = compute_swap_step_v3(
+            hop.sqrt_price_x96,
+            sp_target,
+            i128::try_from(liquidity).unwrap(),
+            I256::try_from(amount_in).unwrap(),
+            fee_pips,
+        )
+        .expect("oracle compute_swap_step_v3 must succeed");
+
+        // Solver:
+        let result = int_simulate_v3_swap(amount_in, &hop);
+
+        assert_eq!(
+            result.output, step.amount_out,
+            "zfo partial-step output must match on-chain computeSwapStep (floor output from ceil sp_next)"
+        );
+        assert_eq!(
+            result.consumed_input,
+            step.amount_in.saturating_add(step.fee_amount),
+            "zfo partial-step consumed_input must match on-chain gross (amount_in + fee_amount)"
+        );
+    }
+
+    /// Sweep regression guard: `int_simulate_v3_swap` for a swap that does
+    /// NOT reach the lower boundary (zfo) MUST match the on-chain
+    /// `compute_swap_step_v3` across a sweep of inputs AND liquidity magnitudes.
+    ///
+    /// The on-chain oracle uses `muldiv_rounding_up` for `sp_next` (zfo),
+    /// while `int_simulate_v3_swap` floors; for L « Q96 the floor/ceil gap is
+    /// hidden by the `floor(L·(spCur − sp_next)/Q96)` quantization, but for
+    /// L `\approx` Q96 (realistic for highly-liquid mature pools) a divergence
+    /// could surface. This test pins the invariant across both regimes.
+    ///
+    /// Excluded are dust amounts (< 1 wei of net_in after the floor fee
+    /// deduction) which round `net_in` to 0 in the solver while on-chain still
+    /// consumes the full amount as fee-only — that's a separate corner tracked
+    /// by [`int_simulate_v3_swap_dust_amount_zfo_consumes_full_input`].
+    #[test]
+    fn int_simulate_v3_swap_partial_step_zfo_matches_onchain_compute_swap_step_v3_sweep() {
+        let spacings_and_liquids: [(i32, u128); 5] = [
+            (60, 10_000_000_000_000u128),                    // 1e13 « Q96
+            (60, 100_000_000_000_000_000_000u128),           // 1e20
+            (60, 10_000_000_000_000_000_000_000_000u128),    // 1e25 ~ Q96
+            (1, 10_000_000_000_000u128),                     // tiny spacing
+            (10, 1_000_000_000_000_000_000_000_000_000u128), // 1e27 > Q96
+        ];
+        // Sweep small offsets + 10%..90% of capacity to stress
+        // boundary-relevant rounding (the 1-2 wei gap between floor and ceil).
+        let per_amounts: [u64; 4] = [1337, 999_983, 1_000_003, 0];
+
+        for (spacing, liquidity) in spacings_and_liquids {
+            let hop = range_hop_at_tick(0, spacing, liquidity, /* zfo */ true);
+            let fee_pips = U256::from(hop.fee_denom - hop.gamma_numer);
+            let sp_target = hop.sqrt_price_lower_x96;
+            let liq_i128 = i128::try_from(liquidity).unwrap();
+            let full_capacity = hop.max_gross_input_in_range();
+
+            let mut amounts = Vec::new();
+            for small in per_amounts {
+                if small > 0 {
+                    amounts.push(U256::from(small));
+                }
+            }
+            for pct in [10u64, 25, 33, 50, 67, 75, 90, 99] {
+                let a = (full_capacity * U256::from(pct)) / U256::from(100u64);
+                if !a.is_zero() && a < full_capacity {
+                    amounts.push(a);
+                }
+            }
+
+            for amount_in in amounts {
+                // Skip dust: net_in = floor(amount_in · γ / D) would be 0.
+                if amount_in * U256::from(hop.gamma_numer) < U256::from(hop.fee_denom) {
+                    continue;
+                }
+                let step = compute_swap_step_v3(
+                    hop.sqrt_price_x96,
+                    sp_target,
+                    liq_i128,
+                    I256::try_from(amount_in).unwrap(),
+                    fee_pips,
+                )
+                .expect("oracle compute_swap_step_v3 must succeed");
+                let result = int_simulate_v3_swap(amount_in, &hop);
+                assert_eq!(
+                    result.output, step.amount_out,
+                    "zfo partial output mismatch L={} spc={} amount_in={amount_in}: solver={}, oracle={}",
+                    liquidity, spacing, result.output, step.amount_out
+                );
+                assert_eq!(
+                    result.consumed_input,
+                    step.amount_in.saturating_add(step.fee_amount),
+                    "zfo partial consumed mismatch L={liquidity} spc={spacing} amount_in={amount_in}",
+                );
+            }
+        }
+    }
+
+    /// Regression guard: `int_simulate_v3_swap` for a swap that does NOT reach
+    /// the upper boundary (ofz) MUST match the on-chain `compute_swap_step_v3`
+    /// step (sweep over L). ofz uses floor on both sides (sp_next derivation
+    /// via `get_next_sqrt_price_from_amount1_rounding_down`), so this should
+    /// always pass — it pins the invariant.
+    #[test]
+    fn int_simulate_v3_swap_partial_step_ofz_matches_onchain_compute_swap_step_v3_sweep() {
+        let spacings_and_liquids: [(i32, u128); 5] = [
+            (60, 10_000_000_000_000u128),
+            (60, 100_000_000_000_000_000_000u128),
+            (60, 10_000_000_000_000_000_000_000_000u128),
+            (1, 10_000_000_000_000u128),
+            (10, 1_000_000_000_000_000_000_000_000_000u128),
+        ];
+        let per_amounts: [u64; 4] = [1337, 999_983, 1_000_003, 0];
+
+        for (spacing, liquidity) in spacings_and_liquids {
+            let hop = range_hop_at_tick(0, spacing, liquidity, /* zfo */ false);
+            let fee_pips = U256::from(hop.fee_denom - hop.gamma_numer);
+            let sp_target = hop.sqrt_price_upper_x96;
+            let liq_i128 = i128::try_from(liquidity).unwrap();
+            let full_capacity = hop.max_gross_input_in_range();
+            let mut amounts = Vec::new();
+            for small in per_amounts {
+                if small > 0 {
+                    amounts.push(U256::from(small));
+                }
+            }
+            for pct in [10u64, 25, 33, 50, 67, 75, 90, 99] {
+                let a = (full_capacity * U256::from(pct)) / U256::from(100u64);
+                if !a.is_zero() && a < full_capacity {
+                    amounts.push(a);
+                }
+            }
+            for amount_in in amounts {
+                if amount_in * U256::from(hop.gamma_numer) < U256::from(hop.fee_denom) {
+                    continue;
+                }
+                let step = compute_swap_step_v3(
+                    hop.sqrt_price_x96,
+                    sp_target,
+                    liq_i128,
+                    I256::try_from(amount_in).unwrap(),
+                    fee_pips,
+                )
+                .expect("oracle compute_swap_step_v3 must succeed");
+                let result = int_simulate_v3_swap(amount_in, &hop);
+                assert_eq!(
+                    result.output, step.amount_out,
+                    "ofz partial output mismatch L={} spc={} amount_in={amount_in}: solver={}, oracle={}",
+                    liquidity, spacing, result.output, step.amount_out
+                );
+                assert_eq!(
+                    result.consumed_input,
+                    step.amount_in.saturating_add(step.fee_amount),
+                    "ofz partial consumed mismatch L={liquidity} spc={spacing} amount_in={amount_in}",
+                );
+            }
+        }
+    }
+
+    /// Documented dust corner: for `amount_in` so small that
+    /// `floor(amount_in · γ / D) == 0`, the solver's `int_simulate_v3_swap`
+    /// short-circuits (`consumed=0`, `output=0`) but on-chain still consumes
+    /// the full `amount_in` as fee-only (`amount_in=0, fee=amount_in, output=0`).
+    ///
+    /// This divergence is HARMLESS for the solver's profit math (output is
+    /// correctly 0 on both, so the hop yields nothing downstream), but the
+    /// `consumed_input` disagree by `amount_in`. The non-dust sweep test skips
+    /// these amounts; this test pins the documented limitation so that a future
+    /// fix (e.g. ceil on the fee path) can flip the expectation.
+    #[test]
+    fn int_simulate_v3_swap_dust_amount_zfo_consumes_full_input_onchain_only() {
+        let liquidity = 10_000_000_000_000u128;
+        let hop = range_hop_at_tick(0, 60, liquidity, /* zfo */ true);
+        let fee_pips = U256::from(hop.fee_denom - hop.gamma_numer);
+        let sp_target = hop.sqrt_price_lower_x96;
+        let liq_i128 = i128::try_from(liquidity).unwrap();
+
+        // amount_in=1: net_in = floor(1 · 997_000 / 1_000_000) = 0.
+        let amount_in = U256::from(1u64);
+        assert!(
+            amount_in * U256::from(hop.gamma_numer) < U256::from(hop.fee_denom),
+            "precondition: amount_in is dust (net_in rounds to 0)"
+        );
+
+        let step = compute_swap_step_v3(
+            hop.sqrt_price_x96,
+            sp_target,
+            liq_i128,
+            I256::try_from(amount_in).unwrap(),
+            fee_pips,
+        )
+        .expect("oracle must succeed");
+        let result = int_simulate_v3_swap(amount_in, &hop);
+
+        // AGREEMENT: output is 0 on both sides.
+        assert_eq!(result.output, U256::ZERO);
+        assert_eq!(step.amount_out, U256::ZERO);
+        // DOCUMENTED DISAGREEMENT: on-chain consumes the full amount as fee,
+        //    solver consumes 0.
+        assert_eq!(
+            result.consumed_input,
+            U256::ZERO,
+            "solver rounded net_in to 0 → consumed=0"
+        );
+        assert_eq!(step.amount_in, U256::ZERO);
+        assert_eq!(
+            step.fee_amount, amount_in,
+            "on-chain consumed full amount_in as dust fee"
+        );
     }
 }

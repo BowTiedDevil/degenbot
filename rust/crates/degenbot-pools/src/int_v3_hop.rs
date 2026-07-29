@@ -9,11 +9,14 @@
 use alloy::primitives::{U256, U512};
 use degenbot_v2_math::IntHopState;
 
-/// Ceiling division of `U512` / `U256` → `U256` (matches on-chain
-/// `get_amount_delta(..., round_up=true)` for the exact-input `amount_in`).
+/// Ceiling division of `U512` / `U512` → `U256` (matches on-chain
+/// `get_amount_delta(..., round_up=true)` and
+/// `get_next_sqrt_price_from_amount0_rounding_up` for the exact-input
+/// `amount_in` and `sqrt_price_next` derivations respectively).
+///
 /// Returns `num / denom` when `num % denom == 0`, else `num / denom + 1`.
 #[must_use]
-fn u512_div_ceil(num: U512, denom: U512) -> U256 {
+pub fn u512_div_ceil(num: U512, denom: U512) -> U256 {
     if denom.is_zero() {
         return U256::ZERO;
     }
