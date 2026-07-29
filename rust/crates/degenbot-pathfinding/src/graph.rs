@@ -16,6 +16,7 @@
 //! versus the 24-byte `Edge`, improving cache density for the hot DFS loop.
 
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 /// Discriminant for the three pool-table families.
 ///
@@ -514,7 +515,44 @@ pub struct OwnedPathFinder {
     /// path can be read directly from `working_path` on demand.
     pending_reverse: bool,
     done: bool,
+    // --- discovery-phase heartbeat diagnostics (NY4EFN) ---
+    // A silently-stalled DFS grinds here with the GIL released — the asyncio
+    // event loop on the same thread is blocked, so a Python-side progress log
+    // cannot fire. This heartbeat emits to stderr (GIL-free, zero deps) every
+    // so a future zero-yield hang is visible at a
+    // glance, not just "78% CPU, no logs". Purely diagnostic — never alters
+    // `advance()`'s return values or enumeration order.
+    search_started: Instant,
+    paths_yielded: u64,
+    advances_since_yield: u64,
+    last_heartbeat: Instant,
+    /// Peak DFS stack depth observed — distinguishes "stuck shallow" (ordering
+    /// gap) from "grinding deep" (graph-size variance) on a real run.
+    max_stack_depth: usize,
 }
+
+/// Minimum elapsed wall-clock between discovery heartbeat emissions.
+///
+/// ~10s keeps a long search quiet but surfaces a hang within the ~5-min
+/// bounded-time target (NY4EFN). Tuned so small synthetic test fixtures
+/// (which complete in µs) never emit.
+const DISCOVERY_HEARTBEAT: Duration = Duration::from_secs(10);
+
+/// Check the heartbeat clock every this many stack-frame iterations (amortizes
+/// `Instant::now` out of the hot per-edge DFS loop). Power-of-two so the modulo
+/// is a bitmask.
+const HEARTBEAT_CHECK_EVERY: u64 = 4096;
+
+// Discovery-heartbeat output interpretation on a live hang (NY4EFN root-cause
+// mapping):
+// - `paths_yielded` climbing slowly → graph-size variance (cause c);
+//   discovery is progressing, just slow.
+// - `paths_yielded` frozen at 0 with `advances_since_yield` climbing + low
+//   `max_stack_depth` → DFS not yielding a first valid cycle (cause a: an
+//   ordering/pruning gap, or no valid cycle exists for this filter).
+// - `paths_yielded` climbing while the example's `[build_paths]` registered
+//   count stays flat → the stall is per-path `build_pool` in the example
+//   (cause b), NOT the DFS.
 
 /// Outcome of one DFS advance: which path form (if any) is ready to yield.
 #[derive(PartialEq, Eq)]
@@ -584,6 +622,7 @@ impl OwnedPathFinder {
             }
         }
 
+        let now = Instant::now();
         Self {
             graph,
             end: end_idx,
@@ -599,6 +638,11 @@ impl OwnedPathFinder {
             visited: vec![false; n_pools],
             pending_reverse: false,
             done,
+            search_started: now,
+            paths_yielded: 0,
+            advances_since_yield: 0,
+            last_heartbeat: now,
+            max_stack_depth: 0,
         }
     }
 
@@ -620,13 +664,50 @@ impl OwnedPathFinder {
         // Emit a pending reversed cycle before doing any further DFS work.
         if self.pending_reverse {
             self.pending_reverse = false;
+            self.paths_yielded += 1;
+            self.advances_since_yield = 0;
             return AdvanceOutcome::Reversed;
         }
 
         let filter_slice = self.pool_type_per_depth.as_deref();
         let nvd_ref = self.node_valid_depths.as_deref();
 
-        while let Some(frame) = self.stack.last_mut() {
+        loop {
+            let stack_len = self.stack.len();
+            if stack_len == 0 {
+                break;
+            }
+            // Discovery heartbeat: amortized (checked every `HEARTBEAT_CHECK_EVERY`
+            // stack-frame iterations, not per edge) — `Instant::now` is ~10ns
+            // but the hot DFS loop runs millions of iterations, so the modulo
+            // keeps it out of the inner per-edge path. Fires a GIL-free stderr
+            // line every `DISCOVERY_HEARTBEAT` while grinding, so a zero-yield
+            // hang surfaces immediately (NY4EFN). Touches only disjoint
+            // heartbeat fields + the `stack_len` copy, so it cannot borrow
+            // `self.stack` while the mutable `frame` below is live.
+            self.advances_since_yield = self.advances_since_yield.wrapping_add(1);
+            if stack_len > self.max_stack_depth {
+                self.max_stack_depth = stack_len;
+            }
+            if self
+                .advances_since_yield
+                .is_multiple_of(HEARTBEAT_CHECK_EVERY)
+            {
+                // Inlined (not a `&mut self` method) so the heartbeat touches
+                // only disjoint fields — `pool_type_per_depth` is borrowed
+                // immutably for the whole loop body via `filter_slice`.
+                let now = Instant::now();
+                if now.duration_since(self.last_heartbeat) >= DISCOVERY_HEARTBEAT {
+                    self.last_heartbeat = now;
+                    let elapsed = now.duration_since(self.search_started);
+                    eprintln!(
+                        "[pathfinding] discovery heartbeat: elapsed={elapsed:?} \
+                         paths_yielded={} advances_since_yield={} max_stack_depth={}",
+                        self.paths_yielded, self.advances_since_yield, self.max_stack_depth
+                    );
+                }
+            }
+            let frame = &mut self.stack[stack_len - 1];
             let (node, edge_idx, yield_checked) = frame;
 
             // Check yield condition (once per frame arrival).
@@ -639,6 +720,8 @@ impl OwnedPathFinder {
                         // flag — no owned Vec to carry over.
                         self.pending_reverse = true;
                     }
+                    self.paths_yielded += 1;
+                    self.advances_since_yield = 0;
                     return AdvanceOutcome::Forward;
                 }
             }
@@ -799,9 +882,22 @@ impl OwnedPathFinder {
             }
         }
 
-        // Search exhausted.
+        // Search exhausted — emit a final heartbeat so the operator sees
+        // the total when discovery completes (even if it ran fast).
+        self.emit_discovery_complete();
         self.done = true;
         AdvanceOutcome::Exhausted
+    }
+
+    /// Emit a final discovery-complete line so the operator sees the total at
+    /// search end (cheap; covers the common fast-search case that never tripped
+    /// the throttled heartbeat).
+    fn emit_discovery_complete(&self) {
+        let elapsed = self.search_started.elapsed();
+        eprintln!(
+            "[pathfinding] discovery complete: elapsed={elapsed:?} paths_yielded={} max_stack_depth={}",
+            self.paths_yielded, self.max_stack_depth
+        );
     }
 
     /// Advance the DFS and return the next complete path, or `None` if
@@ -1292,5 +1388,32 @@ mod tests {
             assert_eq!(path[1].1, PoolKind::V4);
             assert_eq!(path[2].1, PoolKind::V2);
         }
+    }
+
+    /// The discovery-heartbeat diagnostics (NY4EFN) + the `while let` → `loop`
+    /// refactor of `OwnedPathFinder::advance` must not alter enumeration order
+    /// or yield count. Two independent searches on the same graph must produce
+    /// identical, stable output — the heartbeat is purely diagnostic stderr.
+    #[test]
+    fn test_heartbeat_diagnostics_do_not_alter_enumeration() {
+        let graph = build_fixture_graph();
+        let run_one: Vec<Vec<u64>> = graph
+            .find_paths(WETH, WETH, 2, Some(3), true, None, None)
+            .into_iter()
+            .map(|p| edges_to_pool_ids(&p))
+            .collect();
+        // Re-run on a fresh graph instance — determinism + no heartbeat side
+        // effects across runs.
+        let graph2 = build_fixture_graph();
+        let run_two: Vec<Vec<u64>> = graph2
+            .find_paths(WETH, WETH, 2, Some(3), true, None, None)
+            .into_iter()
+            .map(|p| edges_to_pool_ids(&p))
+            .collect();
+        assert!(!run_one.is_empty(), "fixture must yield paths");
+        assert_eq!(
+            run_one, run_two,
+            "enumeration must be stable + unaffected by heartbeat wiring"
+        );
     }
 }

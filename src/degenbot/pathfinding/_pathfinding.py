@@ -49,6 +49,12 @@ _POOL_KIND_TO_BASE: dict[int, type] = {
     _POOL_KIND_V4: UniswapV4PoolTable,
 }
 
+# Minimum elapsed wall-clock between `find_paths_async` progress heartbeats
+# (NY4EFN). Picked so a long search stays quiet but a hang surfaces within
+# the bounded-time target. The Rust DFS emits a separate GIL-free stderr
+# heartbeat for the zero-yield grind that blocks this coroutine.
+_DISCOVERY_HEARTBEAT_INTERVAL_S: float = 15.0
+
 
 @dataclass(slots=True, frozen=True)
 class PathStep:
@@ -680,6 +686,18 @@ async def find_paths_async(
     # iterate it synchronously and yield each result. The Rust DFS call inside
     # `find_paths` releases the GIL via `py.detach()`, so other Python tasks
     # can run during the search.
+    #
+    # Discovery-phase progress log (NY4EFN): emit a `[pathfinding]` heartbeat
+    # every `_DISCOVERY_HEARTBEAT_INTERVAL_S` of yielded paths so a future hang
+    # is visible at a glance, not just "78% CPU, no logs". This fires while
+    # paths are streaming (the common prior-run shape: ~317k yields). A
+    # zero-yield grind blocks the asyncio event loop on the same thread, so
+    # this Python-side log cannot fire there — the Rust `OwnedPathFinder`
+    # emits a GIL-free stderr heartbeat (`[pathfinding] discovery heartbeat:`)
+    # for that case; together they cover both shapes.
+    discovery_start = time.perf_counter()
+    discovery_yielded = 0
+    discovery_last_log = discovery_start
 
     for path in find_paths(
         chain_id=chain_id,
@@ -694,3 +712,18 @@ async def find_paths_async(
     ):
         await asyncio.sleep(0)
         yield path
+        discovery_yielded += 1
+        now = time.perf_counter()
+        if now - discovery_last_log >= _DISCOVERY_HEARTBEAT_INTERVAL_S:
+            logger.info(
+                "[pathfinding] discovery progress: paths_yielded=%d elapsed=%.1fs",
+                discovery_yielded,
+                now - discovery_start,
+            )
+            discovery_last_log = now
+
+    logger.info(
+        "[pathfinding] discovery complete: paths_yielded=%d elapsed=%.1fs",
+        discovery_yielded,
+        time.perf_counter() - discovery_start,
+    )
