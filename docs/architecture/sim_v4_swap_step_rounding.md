@@ -1,133 +1,103 @@
-# Sim root cause: V4 swap-step rounding (NOT stale state)
+# Sim root cause: V4 multi-tick solver approximation (NOT stale state, NOT swap-step rounding)
 
-> Decisive root-cause finding for the `CurrencyNotSettled` failures on V4-V3-V3
-> (and V2-V4-V3 / V2-V4-V2). This **overturns the premise of epic `TR6GWT**
-> ("stale-state elimination") and the path-A decision** (`2BUNU2`): the failures
-> are NOT caused by stale engine state, and the fix is NOT extending the engine
-> to carry `feeGrowthGlobal`/`tickBitmap`/observations.
+> Decisive root-cause finding for the `CurrencyNotSettled` failures on V4-V3-V3.
+> This **overturns two prior hypotheses**: (1) "stale engine state" (epic
+> `TR6GWT`, path A — refuted by V3 hops matching exactly) and (2) "V4
+> `compute_swap_step_v4` rounding divergence" (the prior version of THIS doc —
+> refuted by tracing the solver path: the solver does NOT use
+> `v4_simulate_swap`/`compute_swap_step_v4` for `hop_outputs`; it uses the
+> 2-range `int_simulate_v3_swap` approximation).
 
 ## TL;DR
 
-The `CurrencyNotSettled` revert is a **V4 swap-step rounding divergence in the
-solver's calc**, not stale state:
+The `CurrencyNotSettled` revert is a **solver approximation error**, not stale
+state and not a swap-step rounding bug:
 
-- **V3 hops match the solver's `hop_outputs` EXACTLY** (byte-for-identical on
-  every failing candidate). This decisively refutes stale engine state — if
-  state were stale or the tick walk diverged, the V3 hops would diverge too.
-  The engine state is correct AND the V3 swap math (`compute_swap_step_v3`) is
-  a faithful port.
-- **Only the V4 hop (hop 0) diverges, by a tiny rounding amount (1–8 units),
-  ALWAYS `actual < predicted`**. The composer does
-  `V4_TAKE(out_a = predicted)`, but the V4 swap produced `actual < predicted`
-  → the take exceeds the available PoolManager delta → `CurrencyNotSettled`.
+- **The solver** computes `hop_outputs` via `int_simulate_v3_swap`
+  (`degenbot_solvers/src/mobius_v3_int.rs`) — a single-tick-range CL swap model
+  chained through an optional `IntTickRangeCrossing` (base_range → one crossing
+  → ending_range). This 2-range model is EXACT for swaps that stay within one
+  range or cross exactly ONE tick boundary, but **approximates** swaps that
+  cross 2+ boundaries (it cannot walk the full tick bitmap like
+  `compute_swap_step`).
+- **The V4 hop** (USDC/WETH 0.3% pool, thinner liquidity) crosses 2+ tick
+  boundaries for the arb input → the 2-range model **over-estimates** the
+  output (always `predicted > actual`). The composer's
+  `V4_TAKE(predicted)` then exceeds the real V4 delta → `CurrencyNotSettled`.
+- **The V3 hops** (deep USDC/USDT + WETH/USDT pools) stay within one range
+  (or cross exactly one boundary the 2-range model handles) → `predicted ==
+  actual` exactly.
 
-The fix: align the solver's `compute_swap_step_v4` / `v4_simulate_swap` rounding
-with the on-chain V4 `SwapMath` (the solver over-predicts the V4 output by a
-small amount). This is a **solver calc** task, NOT a sim-serving / engine-state
-task.
+## How the finding was reached
 
-## How the finding was reached — the revert-tolerant capture
+### Step 1 — the revert-tolerant swap capture (refutes stale state)
 
-The prior divergence probe (`4C33DP`, `sim_divergence_probe.md`) compared the
-engine's *tracked scalar slots* vs the RPC and found 0 divergence — but that
-proved nothing about the *swap amounts*, because `feeGrowthGlobal` (the main
-untracked slot) does NOT affect swap amounts (the on-chain swap callback
-WRITES fee-growth, doesn't read it for the amount calc). And the inspector's
-`captured_swaps` was empty for every `CurrencyNotSettled` failure (the whole
-`unlock` reverts → revm pops the inner swaps from the journal → the
-`SwapEventCaptureInspector` dropped them) — the "captured_swaps blind spot".
+The `SwapEventCaptureInspector` preserves reverted-frame swaps into a separate
+`reverted_swaps` buffer. For each failed path, the simulator logs each
+reverted swap's ACTUAL output vs the solver's predicted `hop_outputs[i]`
+(env-gated `DEGENBOT_SIM_LOG_REVERTED_SWAPS=1`).
 
-The decisive instrument: a **revert-tolerant swap capture**. The
-`SwapEventCaptureInspector` now preserves reverted-frame swaps into a SEPARATE
-`reverted_swaps` buffer (committed set unchanged → no regression), drained via
-`take_reverted_swaps()`. The simulator, for a failed path, logs each reverted
-swap's ACTUAL output vs the solver's predicted `hop_outputs[i]` (env-gated
-`DEGENBOT_SIM_LOG_REVERTED_SWAPS=1`).
-
-A subtle sign-convention fix was required to read the actual outputs: the V3
-`Swap` event's `amount0`/`amount1` are **pool-perspective** (positive = pool
-received = INPUT; negative = pool paid = OUTPUT), while V2/V4 are
-**swapper-perspective** (positive = received = OUTPUT). The output selector
-picks the negative side for V3, positive for V2/V4.
-
-## The data (V4-V3-V3 mainnet, `DEGENBOT_SIM_LOG_REVERTED_SWAPS=1`)
-
-8 candidates across two runs, all `CurrencyNotSettled`, all `age:0` (no block
-skew). Representative:
+The decisive fixture (block 25635461, `DEGENBOT_SIM_EXIT_ON_FAIL=1` trap):
 
 | path | V4 hop 0: actual vs predicted | V3 hop 1 | V3 hop 2 |
 |------|------------------------------|---------|---------|
-| 168 | 16742 vs 16750 (off by 8) ❌ | 1994520424333918 ✅ exact | 8785548137144 ✅ exact |
-| 200 | 1032 vs 1033 (off by 1) ❌ | 270979048790253 ✅ exact | 548887430495 ✅ exact |
-| 195 | 997 vs 998 (off by 1) ❌ | 262099028747223 ✅ exact | 530344466395 ✅ exact |
-| 198 | 1042 vs 1043 (off by 1) ❌ | 273589079534020 ✅ exact | 554344285954 ✅ exact |
+| 97 | 25885 vs 25898 (off by 13) ❌ | 25920 vs 25920 ✅ exact | 13596432288007 vs 13596432288007 ✅ exact |
+| 200 | 715 vs 716 (off by 1) ❌ | 188620083055122 ✅ exact | 378427095065 ✅ exact |
+| 98 | 29372 vs 29387 (off by 15) ❌ | 29413 ✅ exact | (knock-on) |
+| 173 | 11998 vs 12004 (off by 6) ❌ | 11992416144107937 ✅ exact | 6291521325144 ✅ exact |
 
-Every V4 hop mismatched (by 1–8 units, always `actual < predicted`); no V3 hop
-EVER mismatched (`hop=[12] matched=false` grep returns empty across all
-candidates).
+Every V4 hop mismatched (1-15 units, always `actual < predicted`); V3 hops
+that completed within their own range matched exactly. This refutes stale
+state (V3 would diverge too) AND refutes the sim's `v4_simulate_swap` (the sim
+captures the CORRECT on-chain amount — it's the SOLVER that's wrong).
+
+### Step 2 — tracing the solver path (refutes swap-step rounding)
+
+The prior version of this doc localized the bug to `v4_simulate_swap` /
+`compute_swap_step_v4`. **That localization was wrong**: the solver does NOT
+call `v4_simulate_swap` to compute `hop_outputs`. The call chain is:
+
+```
+solver: exact_mobius_solve / int_simulate_path
+  → IntHopState::swap (V2 getAmountOut) for V2 hops
+  → int_simulate_v3_swap (single-range CL) for V3/V4 hops
+    — computes ONE sqrtPriceNext within ONE tick range's liquidity
+    — the optional IntTickRangeCrossing chains base_range → ending_range (ONE crossing only)
+```
+
+`int_simulate_v3_swap` (`mobius_v3_int.rs:596`) computes the swap within a
+single `IntV3TickRangeHop` (one `liquidity`, one `sqrt_price_x96`). The
+multi-hop simulator (`mobius_v3_int.rs:72`) chains an optional
+`IntTickRangeCrossing` per hop — but this handles at most ONE boundary
+crossing (base → ending). A V4 swap crossing 2+ tick boundaries (changing
+liquidity each time) is approximated by the 2-range model → over-estimates the
+output.
+
+V3 hops in these paths cross 0 or 1 boundaries → the 2-range model is exact →
+they match. The V4 hop (USDC/WETH 0.3%, thinner liquidity) crosses 2+ →
+over-estimated.
 
 ## Implications
 
-1. **Path A (extend engine state for feeGrowth/bitmap/observations) is the
-   WRONG fix.** The V3 hops matching exactly proves the engine state IS the
-   on-chain state at sim time; serving more state would change nothing for the
-   V3 hops. And `feeGrowth` doesn't affect swap amounts anyway. The serving
-   seam (`NQ3FPV`) is still a valuable mechanism, but enabling it would NOT fix
-   these failures.
+1. **Path A (extend engine state) is NOT the fix** — refuted (V3 hops match exactly).
+2. **`compute_swap_step_v4` / `v4_simulate_swap` is NOT the bug** — the sim runs
+   those and captures the correct on-chain amount. The per-step math is
+   faithful (V3 uses the same `get_amount_delta` round-down and matches exactly).
+3. **The fix is in the solver**: extend `int_simulate_v3_swap` / the
+   `IntTickRangeCrossing` model from 2 ranges to N ranges (walk the full tick
+   bitmap like `compute_swap_step` / `v4_simulate_swap`), OR round the V4
+   hop-output DOWN to the nearest whole-tick-boundary output before the
+   composer's `V4_TAKE`.
 
-2. **The V3 `compute_swap_step_v3` port is byte-faithful** (the V3 hops match
-   the on-chain V3 swap exactly on every candidate). The solver's CL math is
-   correct for V3.
+## Fix direction (ergo `W2UWZO`)
 
-3. **The V4 `compute_swap_step_v4` / `v4_simulate_swap` has a rounding
-   divergence** vs the on-chain V4 PoolManager `SwapMath`. The solver
-   OVER-predicts the V4 output by a small amount (1 unit per step; 8 units for
-   path 168 suggests ~8 swap steps / tick crossings). The direction (always
-   `actual < predicted`) points at a specific rounding-direction mismatch —
-   likely the on-chain V4 math floors the output down while the solver rounds
-   up (or doesn't apply the same `ceil`/`floor` on a per-step boundary). This
-   is the precise defect to locate + align.
+- Record a mainnet V4 swap fixture that crosses 2+ ticks (path=97, block
+  25635461, the USDC/WETH V4 pool).
+- Pin a RED test: `int_simulate_v3_swap(fixture_input, fixture_2range_hop)`
+  returns 25898 (the over-prediction), while the on-chain actual is 25885.
+- Extend the crossing model to walk N ranges (via `compute_tick_ranges` or by
+  delegating the V4 hop to `v4_simulate_swap` for hop-output computation) until
+  the test passes GREEN + the `CurrencyNotSettled` rate drops to ~0.
 
-## Localization — the V4 loop accounting MATCHES on-chain (divergence is in the walk)
-
-A line-level diff of the solver's `v4_simulate_swap`
-(`rust/crates/degenbot-pools/src/v4_state.rs`) against the on-chain V4
-`PoolManager.sol` `swap()` shows the loop accounting + final delta assembly are
-**byte-faithful** (the self-documenting comment's "~1-wei over-count" fix did
-land correctly):
-
-- exact-in: `amountSpecifiedRemaining += amountIn + feeAmount; amountCalculated += amountOut` — matches `PoolManager.sol:895-897`.
-- exact-out: `amountSpecifiedRemaining -= amountOut; amountCalculated -= (amountIn + feeAmount)` — matches `PoolManager.sol:889-891`.
-- final `(amount0, amount1)` assembly via `zeroForOne == exactInput` matches `PoolManager.sol:971-975`.
-
-And `compute_swap_step_v4`'s `amount_out` is computed by the SAME
-`get_amount*_delta(..., Some(false))` (round-down) call as `compute_swap_step_v3`
-— which matches on-chain V3 EXACTLY on every V3 hop. So the per-step math is
-faithful.
-
-This narrows the residual to:
-1. **The V4 tick walk** — the solver's `gen_ticks` (`state.tick_data` +
-   `known_bitmap_words`, sparse) vs the on-chain `tickBitmap` walk. A sparse
-   miss the `MissingTickWord` detection doesn't catch would cross a different
-   tick set → wrong `liquidity` for part of the swap → off-by-small. The
-   "Slice-4 fix" `else`-branch comment in `v4_simulate_swap` records that this
-   gap HAS existed before.
-2. **A V4-pool-specific unprobed state slot** — the divergence probe covered
-   V4 `slot0`/`liquidity`/per-tick gross+net (all matched), but NOT the V4
-   `tickBitmap` word VALUES (the engine carries only the `known_bitmap_words`
-   key-presence set, NOT the bitmap values) NOR `feeGrowthGlobal`. Since
-   `feeGrowth` doesn't affect amounts, the bitmap/walk is the prime suspect.
-
-The off-by-1-per-step + off-by-8-for-multi-step signature is consistent with
-a tiny per-step liquidity divergence (a near-zero-`liquidityNet` tick missed,
-OR a boundary rounding in `gen_ticks`'s `<=`/`<` tick selection) rather than a
-structural math break. The definitive localization (a recorded mainnet V4
-swap fixture: pool state + tick data + resulting amounts, asserted byte-exact
-by the solver) is the next TDD task.
-
-
-## Fix direction (a NEW epic / task, not TR6GWT path A)
-
-
-See `logs/debug/revert_swap_c.log` for the captured `[sim-revert-swap]` lines
-that established this finding.
+See `logs/debug/sim_trap.log` + `logs/debug/v4_fixture_block_25635461.md`
+(gitignored) for the captured data.
