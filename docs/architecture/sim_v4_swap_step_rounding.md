@@ -222,3 +222,76 @@ NOT in the solver math — it is in V4 active-state freshness at solve time.
 The remaining dump-vs-`cast` experiment is now only a *confirmation* step
 (capture the exact scalar/tick delta for one failing hop to pin the pump-order
 root cause), not a fork-resolver — the fork is already resolved.
+
+---
+
+## RESOLUTION v2 — stale-state REFUTED; root cause = V4 protocol fee (ergo `RZKFKR`)
+
+The "Conclusion: stale active state" above was **WRONG**. The dump-vs-`cast`
+experiment (run offline against the archive RPC at the failure block, ergo
+`RZKFKR`) refuted it and pinned the true root cause: the **V4 protocol fee**
+that `v4_simulate_swap` / `compute_swap_step_v4` and the solver's
+`IntV3TickRangeSequence` all OMIT.
+
+### The offline replay of the path=97 fixture
+
+Fed the EXACT on-chain V4 state at block 25635461 (read via `cast storage`
+against `ETHEREUM_ARCHIVE_NODE_HTTP_URI`; slot derivation per
+`docs/architecture/v4_poolmanager_storage_layout.md`) to `v4_simulate_swap`:
+
+| fee used | result | matches |
+|----------|--------|---------|
+| `lpFee = 3000` (what the solver + Rust twin use) | **25 898** | the solver's PREDICTION |
+| `swapFee = 3499` = `calcSwapFee(proto=500, lp=3000)` (what PoolManager charges) | **25 885** | the on-chain ACTUAL |
+
+The ONLY difference between 25 898 and 25 885 is the protocol fee. Decoded
+from `slot0.protocolFee` = `0x1f41f4` → `getOneForZeroFee` = 500 pips (the WETH
+input side). `ProtocolFeeLibrary.calculateSwapFee(500, 3000) = 500 + 3000 -
+(500·3000/1e6) = 3499` pips — the effective swap fee PoolManager's
+`computeSwapStep` charges. The Rust swap-step twin uses `lpFee` alone (3000),
+so it (and the solver, which builds its `IntV3TickRangeHop.gamma_numer` from
+`1_000_000 - fee` with `fee = lpFee`) over-predicts the output →
+`V4_TAKE(predicted)` exceeds the real V4 delta → `CurrencyNotSettled`.
+
+### Why the scalars are NOT stale
+
+Scanning blocks 25635459..25635463 confirms `sqrtPriceX96`, `tick`,
+`liquidity`, and the tick slots are byte-identical across the failure window.
+The engine's state at solve firing matched on-chain at the solve block — NOT
+stale. The divergence is purely the omitted protocol fee.
+
+### Why W2UWZO's parity test passed despite this
+
+W2UWZO compared the solver's crossing path against `v4_simulate_swap` (BOTH
+Rust, BOTH omit the protocol fee) → byte-exact agreement, as expected. Neither
+was compared against real PoolManager bytecode in that test, so the
+protocol-fee omission was invisible to it. The earlier "the sim runs
+`v4_simulate_swap` and captures the CORRECT on-chain amount" claim conflated
+the revm sim (real PoolManager bytecode, applies the protocol fee → 25 885)
+with `v4_simulate_swap` (Rust twin, omits it → 25 898). They are DIFFERENT.
+
+### Why only V4 hops diverged (the empirical signature explained)
+
+V3 applies protocol fees outside `computeSwapStep` (a post-swap deduction from
+the pool's accrued fees, NOT inside the step), so V3's `compute_swap_step_v3`
++ the solver's V3 path are byte-exact to on-chain → V3 hops `matched=true`.
+V4 folds the protocol fee INTO `computeSwapStep` (via `calculateSwapFee` → the
+`fee` arg), but the Rust `compute_swap_step_v4` twin feeds `lpFee` not
+`swapFee` → only V4 hops diverge, always `actual < predicted`. The "thin V4
+pool" framing was a red herring — the divergence is per-family (V4-only),
+not per-liquidity.
+
+### The fix (redirects `RZKFKR`)
+
+Thread the V4 protocol fee into the swap-step fee:
+1. Read `slot0.protocolFee` (already on `V4PoolState`'s slot0 — confirm the
+   field is decoded/stored) + the PoolKey `fee` (lpFee).
+2. Compute `swapFee = calculateSwapFee(protocolFee_dir, lpFee)` per direction.
+3. Pass `swapFee` (not `lpFee`) into `v4_simulate_swap` / `compute_swap_step_v4`
+   AND into the solver's `build_int_v4_sequence` (the `fee` arg →
+   `gamma_numer = 1_000_000 - swapFee`).
+
+The decisive reproduction test:
+`rust/crates/degenbot-solvers/tests/v4_stale_state_confirmation.rs` asserts
+both `lpFee→25898` and `swapFee→25885` against the on-chain state — a
+permanent regression guard.
