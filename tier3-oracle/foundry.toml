@@ -1,0 +1,21 @@
+# Foundry project for Tier-3 on-chain accuracy oracles (ergo epic UP5NH6).
+#
+# This project compiles *reference* Solidity (canonical deployed bytecode from
+# Uniswap V2/V3/V4, Curve, Balancer cores) into runtime bytecode that a Rust
+# `#[test]` deploys into an offline revm `CacheDB<EmptyDB>` and calls, so the
+# Rust swap-math / solver code is compared against the real on-chain contract
+# logic byte-for-byte — closing the "Rust == Rust" blind spot of Tier 2 (see
+# ADR-005 dual-path coverage in AGENTS.md, and the ADR filed as task 5WYE5Y).
+#
+# Smoke spike (task 767HYN): this project holds only the trivial `Echo`
+# contract proving the forge→bytecode→revm→assert loop end-to-end before any
+# real pool-math harness lands.
+
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+# Solidity version pinned for reproducibility across CI/devcontainer. The
+# reference core libraries (Uniswap V3/V4) target 0.8.x; the spike uses 0.8.26.
+solc_version = "0.8.26"
+auto_detect_solc = false

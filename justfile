@@ -129,6 +129,21 @@ record-golden *args:
 verify-deployments *args:
     DEGENBOT_VERIFY_DEPLOYMENTS=${DEGENBOT_VERIFY_DEPLOYMENTS:-1} uv run pytest -m online_rpc -q --no-header -p no:randomly {{ args }} tests/registry/test_deployment_onchain_verification.py
 
+# Tier-3 on-chain accuracy oracle — smoke (ergo task 767HYN, epic UP5NH6).
+# Builds the tier3-oracle/ Foundry harness via forge, then runs the
+# `#[ignore]`d revm smoke test (`tier3_forge_revm_smoke.rs`) which deploys
+# the forge-compiled `Echo` bytecode into an offline revm `CacheDB` and
+# asserts a round-trip call. Proves the forge→bytecode→revm→assert loop
+# before any real pool-math oracle tier lands. The real oracle tiers
+# (3a/3b) extend this recipe, not replace it.
+test-tier3-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    (cd tier3-oracle && forge build)
+    python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+    export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    cargo test --manifest-path rust/Cargo.toml -p degenbot-simulation --test tier3_forge_revm_smoke -- --include-ignored --nocapture
+
 # Run all tests (Rust + Python)
 test-all: test-rust test-python
 
