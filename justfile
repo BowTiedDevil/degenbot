@@ -162,6 +162,17 @@ test-tier3-step:
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     cargo test --manifest-path rust/Cargo.toml -p degenbot-cl-math --test tier3_compute_swap_step_vs_revm -- --include-ignored --nocapture
 
+# Tier-3b end-to-end V3 `Pool.swap` oracle (ergo UP5NH6 / 2LTKVO).
+# Builds the v3-core harness (solc 0.7.6) then drives the Rust
+# `v3_simulate_swap` against real UniswapV3Pool bytecode in revm.
+test-tier3-swap:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tier3-oracle/build-tier3-v3-swap-harness.sh
+    python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+    export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_v3_pool_swap_vs_revm -- --include-ignored --nocapture
+
 # Run all tests (Rust + Python)
 test-all: test-rust test-python
 

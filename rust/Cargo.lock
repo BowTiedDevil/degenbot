@@ -2227,8 +2227,11 @@ dependencies = [
  "degenbot-solidly-math",
  "degenbot-uniswap",
  "degenbot-v2-math",
+ "hex",
  "parking_lot",
  "proptest",
+ "revm",
+ "serde_json",
  "thiserror 2.0.19",
 ]
 
