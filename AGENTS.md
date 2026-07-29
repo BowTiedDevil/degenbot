@@ -1,6 +1,6 @@
 # AGENTS.md
 
-**Respond in English only**
+**Respond to user messages using ASD-STE100 Simplified Technical English only.**
 
 ## Architectural Vision
 
