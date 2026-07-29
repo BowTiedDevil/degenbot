@@ -31,5 +31,7 @@ pub mod mixed;
 pub mod mobius_int;
 #[allow(clippy::doc_markdown)]
 pub mod mobius_int_exact;
+
+pub mod mobius_shifted_piece;
 #[allow(clippy::doc_markdown)]
 pub mod mobius_v3_int;

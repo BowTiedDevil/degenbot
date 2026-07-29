@@ -342,7 +342,50 @@ fn simulate_walk_path(amount_in: U256, hops: &[WalkHop]) -> WalkPathOutcome {
 /// anchor precision — so the unshifted approximation is acceptable for the
 /// transition. Downstream crossings are actually paid from an upstream hop's
 /// OUTPUT, not the path input, which is the approximation EHSWSX removes.
+/// Build the per-hop shifted-piece inputs for tuple `ks`: each hop's
+/// ending-range (or V2) state plus its crossing translations.
+fn build_shifted_piece_hops(
+    hops: &[WalkHop],
+    ks: &[usize],
+) -> Vec<crate::mobius_shifted_piece::ShiftedPieceHop> {
+    use crate::mobius_shifted_piece::ShiftedPieceHop;
+    hops.iter()
+        .zip(ks.iter())
+        .map(|(hop, &k)| match hop {
+            WalkHop::ConstantProduct(hop_state) => ShiftedPieceHop {
+                hop: (*hop_state).clone(),
+                gross_input_offset: U256::ZERO,
+                output_offset: U256::ZERO,
+            },
+            WalkHop::Cl { crossings, .. } => {
+                let crossing = &crossings[k];
+                ShiftedPieceHop {
+                    hop: crossing.ending_range.to_int_hop_state(),
+                    gross_input_offset: if k > 0 {
+                        crossing.crossing_gross_input
+                    } else {
+                        U256::ZERO
+                    },
+                    output_offset: crossing.crossing_output,
+                }
+            }
+        })
+        .collect()
+}
+
 fn walk_piece_anchor(hops: &[WalkHop], ks: &[usize]) -> U256 {
+    let pieces = build_shifted_piece_hops(hops, ks);
+    let coeffs = crate::mobius_shifted_piece::compute_shifted_piece_mobius_coefficients(&pieces);
+    crate::mobius_shifted_piece::shifted_piece_model_optimal_input(&coeffs).unwrap_or(U256::ZERO)
+}
+
+/// The pre-EHSWSX transitional anchor (unshifted ending-range coefficients
+/// plus additive `Σ crossing_gross_input`): misprices downstream crossings
+/// (they are paid from an upstream hop's OUTPUT, not the path input).
+/// Retained under cfg(test) as the A/B baseline for the exact-anchor
+/// quality tests.
+#[cfg(test)]
+fn walk_piece_anchor_transitional(hops: &[WalkHop], ks: &[usize]) -> U256 {
     let mut flat_hops: Vec<IntHopState> = Vec::with_capacity(hops.len());
     let mut gross_sum = U256::ZERO;
     for (hop, &k) in hops.iter().zip(ks.iter()) {
@@ -3037,5 +3080,146 @@ mod tests {
                 WALK_PATH_SIMULATIONS.with(std::cell::Cell::get)
             );
         }
+    }
+
+    // ── Exact shifted-anchor tests (EHSWSX) ───────────────────────────────
+
+    /// The deep beyond-prefix fixture at tuple (0, 10): hop 2's crossing
+    /// gross input dominates. The transitional anchor (unshifted
+    /// coefficients + additive crossing cost) pays hop 2's crossing out of
+    /// the PATH INPUT — overshooting to ~4.29e10 where hop 2 has long
+    /// saturated (negative profit). The exact shifted anchor composes the
+    /// crossing translations through the chain, lands on-piece, and its
+    /// simulated score must beat the transitional anchor's.
+    #[test]
+    fn exact_shifted_anchor_lands_on_piece_where_transitional_overshoots() {
+        let seq1 = multi_range_sequence(750, 1300, true, &[1_000_000_000_000_000]);
+        let mut liquidities = vec![1_000_000_000u128; 10];
+        liquidities.push(10_000_000_000_000u128);
+        liquidities.push(1_000_000_000u128);
+        let seq2 = multi_range_sequence(0, 60, false, &liquidities);
+        let hops = [
+            WalkHop::Cl {
+                crossings: build_crossing_table(&seq1),
+            },
+            WalkHop::Cl {
+                crossings: build_crossing_table(&seq2),
+            },
+        ];
+        let ks = vec![0usize, 10];
+
+        let exact = walk_piece_anchor(&hops, &ks);
+        let transitional = walk_piece_anchor_transitional(&hops, &ks);
+        eprintln!("[EHSWSX] exact anchor: {exact}, transitional: {transitional}");
+
+        let exact_outcome = simulate_walk_path(exact, &hops);
+        let trans_outcome = simulate_walk_path(transitional, &hops);
+        let exact_score = walk_profit_score(exact_outcome.final_output, exact);
+        let trans_score = walk_profit_score(trans_outcome.final_output, transitional);
+        eprintln!("[EHSWSX] scores: exact={exact_score} transitional={trans_score}");
+
+        assert!(
+            exact_score > trans_score,
+            "exact anchor must beat the transitional anchor on a crossing-dominated piece"
+        );
+        // Transitional demonstrably OVERSHOOTS the piece (its landed tuple
+        // runs past (0,10) into the saturated tail).
+        assert!(
+            trans_outcome.landed[1] > ks[1] || trans_score < alloy::primitives::I256::ZERO,
+            "transitional anchor should overshoot or lose money here (got {:?}, score {trans_score})",
+            trans_outcome.landed
+        );
+    }
+
+    /// On pieces whose argmax is INTERIOR (not a saturation corner — no
+    /// unbounded Möbius model can see a corner), the exact shifted anchor
+    /// must sit within a hair of the windowed ternary/dense refinement's
+    /// score, and never materially under-perform the transitional anchor.
+    ///
+    /// The fixture family drives hop 1's crossing content high (several
+    /// thin ranges) so the shift term is material; members where the solved
+    /// optimum is NOT interior are skipped (they exercise the corner lane,
+    /// which `walk_refine_window` owns).
+    #[test]
+    fn exact_shifted_anchor_matches_refined_argmax_on_interior_optima() {
+        let mut interior_members = 0usize;
+        for hop1_tick in [700i32, 750, 800] {
+            for deep_index in [3usize, 6] {
+                for deep_liquidity in [10_000_000_000_000u128, 100_000_000_000_000] {
+                    let seq1 =
+                        multi_range_sequence(hop1_tick, 1300, true, &[1_000_000_000_000_000]);
+                    let mut liquidities = vec![1_000_000_000u128; 12];
+                    for l in liquidities.iter_mut().skip(deep_index) {
+                        *l = deep_liquidity;
+                    }
+                    let seq2 = multi_range_sequence(0, 60, false, &liquidities);
+                    let Some((x_star, profit, _)) = int_solve_cl_path(&[&seq1, &seq2]) else {
+                        continue;
+                    };
+                    assert!(!profit.is_zero());
+                    let hops = [
+                        WalkHop::Cl {
+                            crossings: build_crossing_table(&seq1),
+                        },
+                        WalkHop::Cl {
+                            crossings: build_crossing_table(&seq2),
+                        },
+                    ];
+                    let ks = simulate_walk_path(x_star, &hops).landed;
+                    let anchor = walk_piece_anchor(&hops, &ks);
+                    let x_l = piece_window_left_edge(&hops, &ks, anchor);
+                    let Some(x_r) = piece_window_right_edge(&hops, &ks, anchor) else {
+                        continue;
+                    };
+                    let mut rec = WalkRecorder::new();
+                    let (_argmax_x, piece_best_score) =
+                        walk_refine_window(&hops, x_l, x_r, &mut rec);
+
+                    // Skip corner members: the refined argmax must sit strictly
+                    // interior to the window.
+                    let x_star_i =
+                        walk_profit_score(simulate_walk_path(x_star, &hops).final_output, x_star);
+                    let near_left = x_star <= x_l.saturating_add(U256::from(8u64));
+                    let near_right = x_star.saturating_add(U256::from(8u64)) >= x_r;
+                    if near_left || near_right {
+                        continue;
+                    }
+                    interior_members += 1;
+
+                    let exact_score =
+                        walk_profit_score(simulate_walk_path(anchor, &hops).final_output, anchor);
+                    let transitional = walk_piece_anchor_transitional(&hops, &ks);
+                    let trans_score = walk_profit_score(
+                        simulate_walk_path(transitional, &hops).final_output,
+                        transitional,
+                    );
+                    eprintln!(
+                    "[EHSWSX] deep_index={deep_index} deep_liquidity={deep_liquidity} ks={ks:?}:                      exact_gap={} trans_gap={}",
+                    piece_best_score - exact_score,
+                    piece_best_score - trans_score,
+                );
+                    // Exact anchor ≈ the smooth model optimum: within
+                    // max(16 wei, best/10⁶) of the refined discrete argmax.
+                    let tolerance = alloy::primitives::I256::from_limbs([16, 0, 0, 0]).max(
+                        piece_best_score
+                            / alloy::primitives::I256::from_limbs([1_000_000, 0, 0, 0]),
+                    );
+                    assert!(
+                    piece_best_score - exact_score <= tolerance,
+                    "exact anchor off the refined argmax by more than {tolerance}                      (gap={}, ks={ks:?})",
+                    piece_best_score - exact_score
+                );
+                    // Never materially under-performs the transitional anchor.
+                    assert!(
+                        exact_score + alloy::primitives::I256::ONE >= trans_score.min(x_star_i),
+                        "exact anchor under-performs transitional by more than staircase noise"
+                    );
+                }
+            }
+        }
+        assert!(
+            interior_members >= 2,
+            "test must be non-vacuous: ≥2 interior-optimum members, got {interior_members}"
+        );
     }
 }
