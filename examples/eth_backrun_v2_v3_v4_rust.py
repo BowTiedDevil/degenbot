@@ -125,7 +125,14 @@ MIN_PROFIT_NET = 1  # was 5 * 10**9 (5 gwei)
 # S1 found the dominant IIA reverts are sub-0.2-bps-margin arb the chain has
 # already arbitraged away. 50 bps (0.5%) drops the bulk without losing genuine
 # arbs. 0 disables. Env-configurable for tuning without code changes.
-MIN_PROFIT_MARGIN_BPS = int(os.environ.get("DEGENBOT_MIN_PROFIT_MARGIN_BPS", "50"))
+#
+# AGGRESSIVE DEFAULT (DEGENBOT-459): ``0`` — keep EVERY above-zero-profit
+# candidate so the sim sees thin-margin perms too. This surfaces calc bugs
+# that hide behind the 50-bps filter (a V4 rounding divergence that only
+# manifests on a 0.1-bps edge still surfaces as a sim failure). Set
+# ``DEGENBOT_MIN_PROFIT_MARGIN_BPS=50`` for a production run that wants to
+# skip the chain-already-arb'd-away thin edges.
+MIN_PROFIT_MARGIN_BPS = int(os.environ.get("DEGENBOT_MIN_PROFIT_MARGIN_BPS", "0"))
 FEE_HISTORY_WINDOW = 10
 FEE_PERCENTILES = (10, 50)
 TARGET_PROFIT_RATIO = 1.25
@@ -303,7 +310,13 @@ RECURRING_VERIFY_INTERVAL = 50
 # measures profit without needing WETH storage overrides or
 # prefunding.
 INJECT_EXECUTOR_CODE = os.environ.get("INJECT_EXECUTOR_CODE", "1") == "1"
-STATE_DUMP_ON_REVERT = os.environ.get("STATE_DUMP_ON_REVERT", "0") == "1"
+# AGGRESSIVE DEFAULT (DEGENBOT-459): ``1`` — dump full EVM state on every
+# revert so each failing sim leaves a forensic artifact in STATE_DUMP_DIR.
+# Pairs with DEGENBOT_SIM_EXIT_ON_FAIL=1: the trap prints the [sim-fixture]
+# line AND the state dump is written for the same revert. Set
+# ``STATE_DUMP_ON_REVERT=0`` for a production run to avoid the per-revert
+# disk write.
+STATE_DUMP_ON_REVERT = os.environ.get("STATE_DUMP_ON_REVERT", "1") == "1"
 STATE_DUMP_DIR = Path(os.environ.get("STATE_DUMP_DIR", "logs/state_dumps"))
 INJECTED_EXECUTOR_ADDRESS = get_checksum_address(
     os.environ.get(
@@ -1644,8 +1657,10 @@ def _render_sim_failures(outcome: DispatchOutcome, *, current_block: int) -> Non
     amounts vs the predicted ``hop_outputs``) for the FIRST failing record
     then ``sys.exit(3)`` — a trap for capturing a mainnet fixture to pin a
     RED byte-exact calc test against (the localization loop for the V4
-    swap-step rounding divergence, ergo `W2UWZO`). Default OFF (the crate's
-    hot loop must not exit on every thin-margin revert).
+    swap-step rounding divergence, ergo `W2UWZO`). Aggressive default ON
+    (DEGENBOT-459) — each run surfaces the first sim failure as a fixture
+    + sys.exit(3); set ``DEGENBOT_SIM_EXIT_ON_FAIL=0`` for a production run
+    that must keep trading through thin-margin reverts.
     """
     failures = outcome.failures
     if not failures:
@@ -1703,8 +1718,15 @@ def _render_sim_failures(outcome: DispatchOutcome, *, current_block: int) -> Non
     # token0/token1 + zfo + fee + tick_spacing + the captured actual swap
     # amounts vs the predicted hop_outputs) then sys.exit(3). The dump is the
     # exact fingerprint needed to record an on-chain V4 swap fixture with
-    # `cast` and pin a RED byte-exact calc test. Default OFF.
-    if os.environ.get("DEGENBOT_SIM_EXIT_ON_FAIL", "0") == "1":
+    # `cast` and pin a RED byte-exact calc test.
+    #
+    # AGGRESSIVE DEFAULT (DEGENBOT-459): ON — each run surfaces the first sim
+    # failure as a fixture + sys.exit(3) so the bot stops at the bug instead
+    # of logging past it. Pairs with DEGENBOT_MIN_PROFIT_MARGIN_BPS=0 (every
+    # candidate reaches sim) and STATE_DUMP_ON_REVERT=1 (forensic dump
+    # written). Set DEGENBOT_SIM_EXIT_ON_FAIL=0 for a production run that
+    # should keep trading through thin-margin reverts.
+    if os.environ.get("DEGENBOT_SIM_EXIT_ON_FAIL", "1") == "1":
         first = failures[0]
         _dump_failure_fixture(first, path_infos.get(first["path_id"]), current_block)
         bot_logger.error(
