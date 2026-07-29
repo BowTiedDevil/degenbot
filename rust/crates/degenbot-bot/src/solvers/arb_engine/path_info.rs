@@ -330,6 +330,7 @@ mod tests {
                     hooks: Address::ZERO,
                 },
                 hook_flags: 0,
+                protocol_fee: 0,
                 sqrt_price_x96: U256::from(SQRT_PRICE_1_1),
                 liquidity: 1_000_000,
                 tick: 0,

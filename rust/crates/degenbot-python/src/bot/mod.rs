@@ -1221,7 +1221,7 @@ impl PyBot {
     ///     `ValueError`: If `addresses/pool_id` are malformed or already
     ///         registered.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_flags, sqrt_price_x96, liquidity, tick, block, tick_data=None, coverage="sparse", tick_data_fetcher=None))]
+    #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_flags, sqrt_price_x96, liquidity, tick, block, tick_data=None, coverage="sparse", tick_data_fetcher=None, protocol_fee=0))]
     fn register_v4_pool(
         &self,
         pool_manager: &str,
@@ -1238,6 +1238,7 @@ impl PyBot {
         tick_data: Option<Bound<'_, pyo3::types::PyDict>>,
         coverage: &str,
         tick_data_fetcher: Option<Bound<'_, PyAny>>,
+        protocol_fee: u32,
     ) -> PyResult<u64> {
         let pm = pool_manager.parse::<Address>().map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_manager address: {e}"))
@@ -1303,6 +1304,7 @@ impl PyBot {
                     hooks: Address::ZERO, // Hook filtering already done via hook_flags.
                 },
                 hook_flags,
+                protocol_fee,
                 sqrt_price_x96: sp,
                 liquidity,
                 tick,

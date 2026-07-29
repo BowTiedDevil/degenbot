@@ -42,6 +42,7 @@ fn make_v4_pool(liquidity: u128) -> PoolEntry {
             hooks: Address::default(),
         },
         hook_flags: 0,
+        protocol_fee: 0,
         sqrt_price_x96: U256::from(1u128) << 96,
         liquidity,
         tick: 0,

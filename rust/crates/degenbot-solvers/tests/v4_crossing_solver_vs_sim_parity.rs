@@ -113,6 +113,7 @@ fn build_multi_tick_v4_state(
             hooks: alloy::primitives::Address::ZERO,
         },
         hook_flags: 0,
+        protocol_fee: 0,
         sqrt_price_x96: sp_0,
         liquidity: base_liquidity,
         tick: 0,

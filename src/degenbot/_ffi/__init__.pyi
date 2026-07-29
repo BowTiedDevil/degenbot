@@ -897,6 +897,7 @@ class PyBot:
         coverage: str = "tracked",
         tick_data_fetcher: Callable[[int, int], dict[int, tuple[int, int, int]] | None]
         | None = None,
+        protocol_fee: int = 0,
     ) -> int: ...
 
     # ADR-006 D4 (T3+T4): pump lifecycle + verify plumbing drive the shared

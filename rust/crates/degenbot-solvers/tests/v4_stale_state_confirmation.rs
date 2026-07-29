@@ -3,14 +3,11 @@
     clippy::doc_markdown,
     clippy::doc_lazy_continuation
 )]
-//! Decisive root-cause confirmation for ergo `RZKFKR` — the V4 hop
-//! `CurrencyNotSettled` divergence is **NOT stale state** (RZKFKR's premise)
-//! and **NOT a solver-math bug** (W2UWZO exonerated that): it is the **V4
-//! protocol fee** that `v4_simulate_swap` / `compute_swap_step_v4` and the
-//! solver's `IntV3TickRangeSequence` all OMIT. PoolManager applies
-//! `swapFee = protocolFee + lpFee - (protocolFee*lpFee/1e6)`, which is HIGHER
-//! than the lpFee alone when `protocolFee > 0`; the Rust swap-step twin uses
-//! only `lpFee` → over-predicts the output → settlement overdraft.
+//! Decisive root-cause confirmation + fix guard for ergo `BZBOLL` — the V4
+//! `CurrencyNotSettled` divergence is the V4 protocol fee. `RZKFKR` pinned
+//! it (offline replay of the path=97 fixture); this test guards the FIX
+//! (`calculate_swap_fee` threaded into `v4_simulate_swap` +
+//! `build_int_v4_sequence` via `V4PoolState.protocol_fee`).
 //!
 //! ## The fixture (captured `logs/debug/v4_fixture_block_25635461.md`)
 //!
@@ -18,13 +15,20 @@
 //! block 25635461, path=97: amount_in = 13_576_418_983_678 wei WETH (ofz),
 //! on-chain actual_out = 25_885 USDC, solver predicted = 25_898 (off by +13).
 //!
-//! W2UWZO proved `solver_crossing_path == v4_simulate_swap` for identical
-//! state — which is consistent with this finding (BOTH omit the protocol fee,
-//! so they agree with each other while BOTH diverge from real bytecode). The
-//! earlier doc's claim "the sim runs `v4_simulate_swap` and captures the
-//! CORRECT on-chain amount" conflated the revm sim (real PoolManager bytecode,
-//! applies the protocol fee → 25_885) with `v4_simulate_swap` (Rust twin, omits
-//! it → 25_898). They are DIFFERENT values.
+//! ## What this test proves (post-fix)
+//!
+//! With `protocol_fee = 0x001f_41f4` stored on `V4PoolState` (the packed uint24
+//! read from `slot0.protocolFee` at registration), `v4_simulate_swap` AND the
+//! solver's crossing path (`compute_crossing` + `int_simulate_v3_swap`) both
+//! internally compute `calculateSwapFee(500, 3000) = 3499` pips and feed it as
+//! the swap-step fee. The result must be the ON-CHAIN ACTUAL (25_885), not the
+//! stale-feeling lpFee-only prediction (25_898). The two pre-fix sides —
+//! solver vs `v4_simulate_swap` — still agree byte-for-byte (W2UWZO parity),
+//! now against the REAL bytecode answer.
+//!
+//! A `protocol_fee = 0` variant reproduces the OLD prediction (25_898) — the
+//! pre-fix behaviour — so the test pins BOTH sides of the protocol-fee coin
+//! in one place.
 //!
 //! ## On-chain state at block 25635461 (read via `cast storage` against
 //! `ETHEREUM_ARCHIVE_NODE_HTTP_URI`; slot derivation per
@@ -32,32 +36,14 @@
 //!
 //! - slot0.sqrtPriceX96 = 1_809_847_926_502_557_434_949_706_007_283_582
 //! - slot0.tick         = 200_738
-//! - slot0.protocolFee  = 0x1f41f4 → `getOneForZeroFee` = 500 pips (WETH side)
+//! - slot0.protocolFee  = 0x001f_41f4 → `getOneForZeroFee` = 500 pips (WETH side)
 //! - liquidity           = 379_577_542_030
 //! - tick 216_420: gross 347_841_283_144 / net -347_841_283_144
 //! - tick 228_780: gross 31_736_257_617  / net -31_736_257_617
 //! - PoolKey.fee (lpFee) = 3000 (0.3%), tick_spacing 60, hooks = address(0)
 //!
 //! Scanning blocks 25635459..25635463 confirms the scalars are byte-identical
-//! across the failure window — NOT a block-timing / stale-state artifact.
-//!
-//! ## The quantitative proof
-//!
-//! `calculateSwapFee(protocolFee=500, lpFee=3000) = 500 + 3000 - (500*3000/1e6)
-//! = 3499` pips (the fee PoolManager's `computeSwapStep` actually charges).
-//! Asserting `v4_simulate_swap(state, fee=3000) == 25_898` (the prediction)
-//! AND `v4_simulate_swap(state, fee=3499) == 25_885` (the on-chain actual)
-//! pins it: the ONLY difference between the prediction and the actual is the
-//! protocol fee the Rust twin omits.
-//!
-//! ## Why W2UWZO's parity test passed despite this
-//!
-//! W2UWZO compared the solver's crossing path against `v4_simulate_swap` (both
-//! Rust, both omit the protocol fee) — so they agree byte-for-byte. Neither
-//! was compared against real PoolManager bytecode in that test. The
-//! `compute_swap_step_v3` oracle used there is the V3 step math (which has no
-//! protocol-fee-in-swap concept; V3 applies protocol fees differently), so the
-//! V4 protocol-fee omission was invisible to it.
+//! across the failure window — NOT stale state.
 
 use std::collections::HashMap;
 
@@ -67,21 +53,24 @@ use degenbot_pools::v3_state::PoolTickCoverage;
 use degenbot_pools::v4_state::{v4_simulate_swap, RegisterV4PoolParams, V4PoolKey, V4PoolState};
 use degenbot_pools::TickInfo;
 
-/// The on-chain actual + the solver's stale-feeling prediction for path=97.
+use degenbot_solvers::mobius_v3_int::{int_simulate_v3_swap, IntV3TickRangeSequence};
+
+/// The on-chain actual + the pre-fix lpFee-only prediction for path=97.
 const ONCHAIN_ACTUAL_OUT: u128 = 25_885;
-const SOLVER_PREDICTED_OUT: u128 = 25_898;
+const PRE_FIX_LP_FEE_PREDICTION: u128 = 25_898;
 const PATH97_AMOUNT_IN_WETH: u128 = 13_576_418_983_678;
+
+/// PoolManager `slot0.protocolFee` at block 25635461 — packed uint24,
+/// `0x001f_41f4`, both direction fees 500 pips.
+const ONCHAIN_PROTOCOL_FEE_PACKED: u32 = 0x001f_41f4;
 
 /// PoolManager PoolKey.fee for this pool (the static LP fee).
 const LP_FEE: u32 = 3_000;
-/// `calculateSwapFee(protocolFee=500, lpFee=3000)` — the fee PoolManager's
-/// `computeSwapStep` actually charges (protocol fee + LP fee combined).
-const EFFECTIVE_SWAP_FEE: u32 = 3_499;
 const TICK_SPACING: i32 = 60;
 
 /// Build the V4 pool state from the on-chain scalars + tick_data read at
-/// block 25635461.
-fn onchain_v4_state_at_block_25635461() -> V4PoolState {
+/// block 25635461, with the given `protocol_fee` (packed uint24).
+fn onchain_v4_state_at_block_25635461(protocol_fee: u32) -> V4PoolState {
     let sqrt_price_x96 = U256::from(1_809_847_926_502_557_434_949_706_007_283_582u128);
     let liquidity = 379_577_542_030u128;
     let tick = 200_738;
@@ -106,6 +95,7 @@ fn onchain_v4_state_at_block_25635461() -> V4PoolState {
             hooks: alloy::primitives::Address::ZERO,
         },
         hook_flags: 0,
+        protocol_fee,
         sqrt_price_x96,
         liquidity,
         tick,
@@ -118,16 +108,17 @@ fn onchain_v4_state_at_block_25635461() -> V4PoolState {
     state
 }
 
-/// Run `v4_simulate_swap` (the byte-exact full-tick-walk) with a given fee
-/// and return the ofz exact-in token-OUT (amount0).
-fn sim_out_with_fee(state: &V4PoolState, fee: u32, amount_in: U256) -> U256 {
+/// Run `v4_simulate_swap` (the byte-exact full-tick-walk) with the pool's
+/// `protocol_fee` set on the state (so `swap_fee = calculate_swap_fee`) and
+/// return the ofz exact-in token-OUT (amount0).
+fn sim_out_with_protocol_fee(state: &V4PoolState, amount_in: U256) -> U256 {
     let amount_specified = I256::try_from(amount_in)
         .ok()
         .and_then(|v| I256::ZERO.checked_sub(v))
         .unwrap();
     let outcome = v4_simulate_swap(
         state,
-        fee,
+        LP_FEE,
         TICK_SPACING,
         false, // ofz: WETH→USDC, price goes up
         amount_specified,
@@ -137,47 +128,78 @@ fn sim_out_with_fee(state: &V4PoolState, fee: u32, amount_in: U256) -> U256 {
     outcome.amount0 // ofz exact-in: amount0 is the output (caller receives token0=USDC)
 }
 
+/// The solver's CL-hop output for `amount_in` against a pre-built sequence —
+/// the exact assembly `int_simulate_mixed_path_n` uses for a CL hop's
+/// `hop_outputs[i]`.
+fn solver_crossing_output(amount_in: U256, seq: &IntV3TickRangeSequence) -> Option<U256> {
+    let n = seq.ranges.len();
+    let mut chosen_k = 0usize;
+    for k in 0..n {
+        let crossing = seq.compute_crossing(k)?;
+        if crossing.crossing_gross_input <= amount_in {
+            chosen_k = k;
+        } else {
+            break;
+        }
+    }
+    let crossing = seq.compute_crossing(chosen_k)?;
+    if amount_in < crossing.crossing_gross_input {
+        return Some(U256::ZERO);
+    }
+    let remaining = amount_in - crossing.crossing_gross_input;
+    let ending = int_simulate_v3_swap(remaining, &crossing.ending_range);
+    Some(crossing.crossing_output.saturating_add(ending.output))
+}
+
 #[test]
-fn v4_protocol_fee_omission_reproduces_the_divergence() {
-    let state = onchain_v4_state_at_block_25635461();
+fn v4_protocol_fee_threading_reproduces_on_chain_actual() {
     let amount_in = U256::from(PATH97_AMOUNT_IN_WETH);
 
-    // (1) The Rust twin with the LP fee ALONE (what the solver + sim twin use)
-    //     reproduces the SOLVER'S PREDICTION — the over-prediction.
-    let out_lp_fee_only = sim_out_with_fee(&state, LP_FEE, amount_in);
-    assert_eq!(
-        out_lp_fee_only,
-        U256::from(SOLVER_PREDICTED_OUT),
-        "v4_simulate_swap with lpFee={} must reproduce the solver's predicted {} (the \
-         over-prediction); got {out_lp_fee_only}",
-        LP_FEE,
-        SOLVER_PREDICTED_OUT,
-    );
+    // (1) With the on-chain `slot0.protocolFee` (0x001f_41f4 → 500 pips ofz),
+    // BOTH v4_simulate_swap AND the solver's crossing path reproduce the
+    // ON-CHAIN ACTUAL — the fix's effect.
+    let state = onchain_v4_state_at_block_25635461(ONCHAIN_PROTOCOL_FEE_PACKED);
+    let sim_out = sim_out_with_protocol_fee(&state, amount_in);
+    let seq = state
+        .build_int_v4_sequence(TICK_SPACING, LP_FEE, false, 10)
+        .expect("on-chain state builds a tick-range sequence");
+    let solver_out =
+        solver_crossing_output(amount_in, &seq).expect("solver produces a crossing output");
 
-    // (2) The Rust twin with the EFFECTIVE swap fee (lpFee + protocolFee, as
-    //     PoolManager's computeSwapStep actually charges) reproduces the
-    //     ON-CHAIN ACTUAL. The ONLY difference between (1) and (2) is the
-    //     protocol fee → it IS the root cause.
-    let out_effective_fee = sim_out_with_fee(&state, EFFECTIVE_SWAP_FEE, amount_in);
     assert_eq!(
-        out_effective_fee,
+        sim_out, solver_out,
+        "v4_simulate_swap and the solver crossing path must agree (W2UWZO parity holds post-fix); \
+         sim={sim_out} solver={solver_out}",
+    );
+    assert_eq!(
+        sim_out,
         U256::from(ONCHAIN_ACTUAL_OUT),
-        "v4_simulate_swap with effective swapFee={} (lpFee + protocolFee) must reproduce the \
-         on-chain actual {}; got {out_effective_fee} — if not, the protocol-fee hypothesis is \
-         refuted",
-        EFFECTIVE_SWAP_FEE,
-        ONCHAIN_ACTUAL_OUT,
+        "with the on-chain protocol_fee, v4_simulate_swap must reproduce the on-chain actual \
+         ({ONCHAIN_ACTUAL_OUT}); got {sim_out} (the protocol-fee threading regressed)",
     );
 
+    // (2) `protocol_fee = 0` reproduces the PRE-FIX lpFee-only prediction —
+    // the over-prediction that caused `CurrencyNotSettled`. Pins the
+    // pre-fix→post-fix delta at the protocol fee and guards against
+    // accidentally defaulting `protocol_fee` back to 0 on the production
+    // registration path.
+    let state_no_proto = onchain_v4_state_at_block_25635461(0);
+    let sim_out_no_proto = sim_out_with_protocol_fee(&state_no_proto, amount_in);
+    assert_eq!(
+        sim_out_no_proto,
+        U256::from(PRE_FIX_LP_FEE_PREDICTION),
+        "protocol_fee=0 must reproduce the pre-fix over-prediction \
+         ({PRE_FIX_LP_FEE_PREDICTION}); got {sim_out_no_proto}",
+    );
     assert_ne!(
-        out_lp_fee_only, out_effective_fee,
-        "lpFee-only and effective-swapFee outputs must differ (else the protocol fee has no effect)",
+        sim_out, sim_out_no_proto,
+        "with vs without protocol_fee must differ (else the threading is a no-op)",
     );
 
     eprintln!(
-        "[protocol-fee-confirmed] amount_in={amount_in} \
-         lpFee_out={out_lp_fee_only} (== solver predicted {SOLVER_PREDICTED_OUT}) \
-         swapFee_out={out_effective_fee} (== on-chain actual {ONCHAIN_ACTUAL_OUT}) \
-         => root cause = V4 protocol fee omitted by v4_simulate_swap + solver crossing path"
+        "[protocol-fee-fix-confirmed] amount_in={amount_in} \
+         swapFee_out={sim_out} (== on-chain actual {ONCHAIN_ACTUAL_OUT}) \
+         lpFee_out={sim_out_no_proto} (== pre-fix prediction {PRE_FIX_LP_FEE_PREDICTION}) \
+         => BZBOLL fix threads calculateSwapFee into both v4_simulate_swap + solver"
     );
 }

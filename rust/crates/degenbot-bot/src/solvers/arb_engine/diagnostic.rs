@@ -625,6 +625,7 @@ mod tests {
                     hooks: Address::ZERO,
                 },
                 hook_flags: 0,
+                protocol_fee: 0,
                 sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
                 liquidity: 2_000_000,
                 tick: 0,

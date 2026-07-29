@@ -661,6 +661,7 @@ mod tests {
                     hooks: Address::from([0xf0u8; 20]),
                 },
                 hook_flags: 0,
+                protocol_fee: 0,
                 sqrt_price_x96: U256::from(1u128) << 96,
                 liquidity: 1_000_000,
                 tick: 0,

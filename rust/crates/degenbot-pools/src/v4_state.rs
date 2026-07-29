@@ -101,6 +101,15 @@ pub struct RegisterV4PoolParams {
     /// (`BotState::register_v4_pool`) as a correctness floor, surfacing as
     /// `HookedPoolRejectedError` / `DynamicFeePoolRejectedError` at the seam.
     pub hook_flags: u16,
+    /// The V4 pool's packed `slot0.protocolFee` (`uint24` — two 12-bit
+    /// direction fees, `getZeroForOneFee | (getOneForZeroFee << 12)`).
+    /// `PoolManager` `computeSwapStep` charges the COMBINED
+    /// `calculateSwapFee(protocol_fee_dir, lp_fee)` pips, NOT `lp_fee` alone,
+    /// so this MUST be threaded into the swap-step fee for byte-exact V4 hop
+    /// outputs (the `CurrencyNotSettled` root cause — see
+    /// `docs/architecture/sim_v4_swap_step_rounding.md`). `0` for pools with
+    /// no protocol fee set (swap fee == LP fee).
+    pub protocol_fee: u32,
     pub sqrt_price_x96: U256,
     pub liquidity: u128,
     pub tick: i32,
@@ -226,6 +235,13 @@ pub struct V4PoolState {
     pub liquidity: u128,
     pub tick: i32,
     pub update_block: u64,
+    /// The packed V4 `slot0.protocolFee` (`uint24`) — two 12-bit direction
+    /// fees. Used by [`crate::v4_state::v4_simulate_swap`] +
+    /// [`V4PoolState::build_int_v4_sequence`] to compute the effective
+    /// `calculateSwapFee(protocol_fee_dir, lp_fee)` charged by V4's
+    /// `computeSwapStep`. The `CurrencyNotSettled` root cause —
+    /// `docs/architecture/sim_v4_swap_step_rounding.md`.
+    pub protocol_fee: u32,
 
     /// Initialized ticks: tick index → (`liquidity_gross`, `liquidity_net`).
     pub tick_data: HashMap<i32, TickInfo>,
@@ -278,6 +294,7 @@ impl Clone for V4PoolState {
             liquidity: self.liquidity,
             tick: self.tick,
             update_block: self.update_block,
+            protocol_fee: self.protocol_fee,
             tick_data: self.tick_data.clone(),
             coverage: self.coverage,
             known_bitmap_words: self.known_bitmap_words.clone(),
@@ -327,6 +344,7 @@ impl V4PoolState {
             liquidity: params.liquidity,
             tick: params.tick,
             update_block: params.update_block,
+            protocol_fee: params.protocol_fee,
             tick_data: params.tick_data,
             coverage: params.coverage,
             known_bitmap_words: HashSet::new(),
@@ -421,7 +439,18 @@ impl V4PoolState {
         let ranges = self.get_cached_tick_ranges(tick_spacing, zero_for_one)?;
         let use_ranges = ranges.get(..ranges.len().min(max_ranges))?;
 
-        let gamma_numer = u64::from(1_000_000 - fee);
+        // V4 charges the COMBINED `swapFee = calculateSwapFee(protocol_fee_dir,
+        // lp_fee)`, NOT `lp_fee` alone, when `slot0.protocolFee > 0`. See
+        // `v4_simulate_swap` + `docs/architecture/sim_v4_swap_step_rounding.md`.
+        let direction_protocol_fee = if zero_for_one {
+            degenbot_cl_math::cl_lib::swap_math::protocol_fee_zero_for_one(self.protocol_fee)
+        } else {
+            degenbot_cl_math::cl_lib::swap_math::protocol_fee_one_for_zero(self.protocol_fee)
+        };
+        let swap_fee =
+            degenbot_cl_math::cl_lib::swap_math::calculate_swap_fee(direction_protocol_fee, fee)
+                .ok()?;
+        let gamma_numer = u64::from(1_000_000u32.checked_sub(swap_fee)?);
         let fee_denom = 1_000_000u64;
 
         let mut int_ranges = Vec::with_capacity(use_ranges.len());
@@ -575,14 +604,31 @@ pub fn v4_simulate_swap(
     // integer-exact oracle suite in `cl_lib::swap_math::tests`.
     let exact_in = amount_specified.is_negative();
 
+    // V4 `computeSwapStep` charges the COMBINED `swapFee =
+    // calculateSwapFee(protocol_fee_dir, lp_fee)` — NOT `lp_fee` alone — when
+    // `slot0.protocolFee > 0`. PoolManager computes this in `Pool.swap` and
+    // passes it as the `fee` pips to `computeSwapStep`. Omitting it
+    // over-predicts the output → `CurrencyNotSettled` on multi-hop paths
+    // (the V4-only divergence pinned in
+    // `docs/architecture/sim_v4_swap_step_rounding.md`). `fee` here is the
+    // pool's static LP fee (`PoolKey.fee`); the protocol fee is read from
+    // `state.protocol_fee`.
+    let direction_protocol_fee = if zero_for_one {
+        degenbot_cl_math::cl_lib::swap_math::protocol_fee_zero_for_one(state.protocol_fee)
+    } else {
+        degenbot_cl_math::cl_lib::swap_math::protocol_fee_one_for_zero(state.protocol_fee)
+    };
+    let swap_fee =
+        degenbot_cl_math::cl_lib::swap_math::calculate_swap_fee(direction_protocol_fee, fee)
+            .map_err(|_| SimulateSwapError::NotComputable)?;
+    let fee_pips = U256::from(swap_fee);
+
     let mut amount_specified_remaining = amount_specified;
     let mut amount_calculated = I256::ZERO;
     let mut sqrt_price_x96 = state.sqrt_price_x96;
     let mut tick = state.tick;
     let mut liquidity =
         i128::try_from(state.liquidity).map_err(|_| SimulateSwapError::NotComputable)?;
-
-    let fee_pips = U256::from(fee);
     // `tick_spacing` is the immutable-config parameter (threaded from identity).
 
     // Sparse-map miss detection (V3/V4-shared; see `v3_simulate_swap`).
@@ -807,6 +853,7 @@ mod apply_inherent_tests {
             liquidity: liq,
             tick: 0,
             update_block: 0,
+            protocol_fee: 0,
             tick_data,
             coverage: PoolTickCoverage::Tracked,
             known_bitmap_words: HashSet::new(),

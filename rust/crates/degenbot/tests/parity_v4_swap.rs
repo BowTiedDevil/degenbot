@@ -155,6 +155,7 @@ fn standalone_rust_consumer_v4_swap_matches_recorded_constant() {
             hooks,
         },
         hook_flags: 0,
+        protocol_fee: 0,
         sqrt_price_x96,
         liquidity,
         tick: fx.fixture.tick,

@@ -309,6 +309,7 @@ class V4PoolBuilder(V4BuilderBase):
                 chain_id,
                 io=io,
             ),
+            protocol_fee=int(protocol_fee_raw),
         )
         py_pool_handle = self._py_bot.get_pool(pool_handle_pool_id)
         assert py_pool_handle is not None, "register_v4_pool returned a pool_id with no handle"

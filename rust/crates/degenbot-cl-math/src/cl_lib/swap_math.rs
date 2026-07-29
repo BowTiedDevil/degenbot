@@ -306,6 +306,157 @@ pub fn compute_swap_step_v4(
     }
 }
 
+/// The V4 protocol fee packed-`uint24` type: a single direction's
+/// protocol fee is the low 12 bits of one half (`getZeroForOneFee` =
+/// `protocolFee & 0xFFF`; `getOneForZeroFee` = `protocolFee >> 12`).
+///
+/// `PoolManager` `Pool.State.slot0.protocolFee` packs both direction fees
+/// into one `uint24`; per-direction extraction mirrors
+/// `ProtocolFeeLibrary::{getZeroForOneFee, getOneForZeroFee}`.
+///
+/// Maximum protocol fee is 1000 pips (0.1%) per direction — enforced by
+/// `ProtocolFeeLibrary::isValidProtocolFee`.
+pub const MAX_PROTOCOL_FEE: u32 = 1000;
+
+/// The denominator V4's `ProtocolFeeLibrary` uses for protocol-fee math
+/// ("hundredths of a bip" == pips, 1e6 = 100%).
+const PROTOCOL_FEE_PIPS_DENOMINATOR: u32 = 1_000_000;
+
+/// Extract the zero-for-one protocol fee (low 12 bits) from a packed V4
+/// `slot0.protocolFee` `uint24`. Mirrors
+/// `ProtocolFeeLibrary.getZeroForOneFee` — the fee charged when `token0` is
+/// the input (price goes DOWN).
+///
+/// `protocol_fee_packed` is the raw `uint24` as stored on-chain; this returns
+/// the 12-bit zero-for-one direction fee in pips. Caller validates
+/// `<= MAX_PROTOCOL_FEE` if needed (V4's `isValidProtocolFee` enforces it at
+/// `setProtocolFee` time; out-of-range on-chain state is unreachable for
+/// spec-bound pools).
+#[must_use]
+pub fn protocol_fee_zero_for_one(protocol_fee_packed: u32) -> u32 {
+    protocol_fee_packed & 0xFFF
+}
+
+/// Extract the one-for-zero protocol fee (high 12 bits) from a packed V4
+/// `slot0.protocolFee` `uint24`. Mirrors
+/// `ProtocolFeeLibrary.getOneForZeroFee` — the fee charged when `token1` is
+/// the input (price goes UP).
+#[must_use]
+pub fn protocol_fee_one_for_zero(protocol_fee_packed: u32) -> u32 {
+    protocol_fee_packed >> 12
+}
+
+/// Port of Uniswap V4 `ProtocolFeeLibrary.calculateSwapFee` — the effective
+/// swap fee `computeSwapStep` charges when a V4 pool has a non-zero protocol
+/// fee set.
+///
+/// The protocol fee is taken from the input FIRST, then the LP fee is taken
+/// from the remaining amount, so the combined fee is HIGHER than the LP fee
+/// alone (but capped at 100% = `1_000_000` pips):
+/// `swapFee = protocolFee + lpFee - (protocolFee * lpFee / 1_000_000)`
+/// with the product term rounded DOWN (`div`, NOT `muldiv_rounding_up` —
+/// matches the Solidity `assembly` in `ProtocolFeeLibrary.calculateSwapFee`).
+///
+/// # Arguments
+/// - `direction_protocol_fee` — the per-direction 12-bit protocol fee pips
+///   (`protocol_fee_zero_for_one` or `protocol_fee_one_for_zero` of the
+///   pool's packed `slot0.protocolFee`).
+/// - `lp_fee` — the pool's static `PoolKey.fee` (the LP fee pips, e.g. 3000
+///   for 0.3%).
+///
+/// # Errors
+/// Returns [`ClMathError::Uint256Overflow`] if `direction_protocol_fee + lp_fee`
+/// does not fit a `u32` (unreachable for spec-bound pools — both are ≤ 1000,
+/// sum ≤ 2000 — but the guard mirrors the Solidity `sub` underflow check).
+///
+/// # Examples
+/// ```
+/// # use degenbot_cl_math::cl_lib::swap_math::calculate_swap_fee;
+/// // The path=97 fixture pool: proto=500 pips, lpFee=3000 → 3499 pips.
+/// assert_eq!(calculate_swap_fee(500, 3_000).unwrap(), 3_499);
+/// // No protocol fee → swap fee == LP fee.
+/// assert_eq!(calculate_swap_fee(0, 3_000).unwrap(), 3_000);
+/// ```
+pub fn calculate_swap_fee(direction_protocol_fee: u32, lp_fee: u32) -> Result<u32, ClMathError> {
+    // `protocolFee + lpFee - (protocolFee * lpFee / 1_000_000)`, with `div`
+    // (round-down) for the product term — matches the `assembly` block in
+    // `ProtocolFeeLibrary.calculateSwapFee`.
+    let combined = direction_protocol_fee
+        .checked_add(lp_fee)
+        .ok_or(ClMathError::Uint256Overflow)?;
+    let product = muldiv(
+        U256::from(direction_protocol_fee),
+        U256::from(lp_fee),
+        U256::from(PROTOCOL_FEE_PIPS_DENOMINATOR),
+    )?;
+    let product_u32 = u32::try_from(product).map_err(|_| ClMathError::Uint256Overflow)?;
+    combined
+        .checked_sub(product_u32)
+        .ok_or(ClMathError::Uint256Overflow)
+}
+
+#[cfg(test)]
+mod protocol_fee_tests {
+    use super::*;
+
+    /// The path=97 fixture pool (USDC/WETH V4 0.3%, block 25635461):
+    /// `slot0.protocolFee = 0x1f41f4` → 500 pips each direction,
+    /// `lpFee = 3000` → effective `swapFee = 3499` pips. Pinned by the
+    /// offline replay in
+    /// `degenbot-solvers/tests/v4_stale_state_confirmation.rs`.
+    #[test]
+    fn calculate_swap_fee_path97_fixture_pinned() {
+        assert_eq!(calculate_swap_fee(500, 3_000).unwrap(), 3_499);
+    }
+
+    #[test]
+    fn calculate_swap_fee_zero_protocol_equals_lp_fee() {
+        assert_eq!(calculate_swap_fee(0, 3_000).unwrap(), 3_000);
+        assert_eq!(calculate_swap_fee(0, 0).unwrap(), 0);
+    }
+
+    /// `swapFee = proto + lp - (proto*lp/1e6)`. For proto=500, lp=500: product
+    /// = 250000/1e6 = 0 (floor); swapFee = 500 + 500 - 0 = 1000 pips. Pins the
+    /// floor-rounding direction (a `muldiv_rounding_up` would give 1, yielding
+    /// 999 — wrong).
+    #[test]
+    fn calculate_swap_fee_product_term_rounds_down_matching_solidity_div() {
+        assert_eq!(calculate_swap_fee(500, 500).unwrap(), 1_000);
+    }
+
+    /// Max protocol fee (1000 pips) + LP fee 1e6: swapFee caps at 100%
+    /// (`1_000_000` pips — the `sub(add(...), ...)` path in
+    /// `ProtocolFeeLibrary.calculateSwapFee`).
+    #[test]
+    fn calculate_swap_fee_max_protocol_and_lp_capped_at_one_million_pips() {
+        assert_eq!(calculate_swap_fee(1_000, 1_000_000).unwrap(), 1_000_000);
+    }
+
+    #[test]
+    fn protocol_fee_zero_for_one_extracts_low_12_bits() {
+        assert_eq!(protocol_fee_zero_for_one(0x001f_41f4), 0x1f4); // 500
+        assert_eq!(protocol_fee_zero_for_one(0), 0);
+        assert_eq!(protocol_fee_zero_for_one(0xFFF), 0xFFF);
+    }
+
+    #[test]
+    fn protocol_fee_one_for_zero_extracts_high_12_bits() {
+        assert_eq!(protocol_fee_one_for_zero(0x001f_41f4), 0x1f4); // 500
+        assert_eq!(protocol_fee_one_for_zero(0), 0);
+        assert_eq!(protocol_fee_one_for_zero(0xFFF_000), 0xFFF);
+    }
+
+    /// `slot0.protocolFee = 0x1f41f4` decodes to 500 pips in BOTH directions
+    /// (a symmetric protocol fee) — the value observed on the path=97
+    /// mainnet fixture pool.
+    #[test]
+    fn protocol_fee_decode_path97_fixture_symmetric_500_pips() {
+        let packed = 0x001f_41f4_u32;
+        assert_eq!(protocol_fee_zero_for_one(packed), 500);
+        assert_eq!(protocol_fee_one_for_zero(packed), 500);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
