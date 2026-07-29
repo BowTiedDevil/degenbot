@@ -101,3 +101,78 @@ over-estimated.
 
 See `logs/debug/sim_trap.log` + `logs/debug/v4_fixture_block_25635461.md`
 (gitignored) for the captured data.
+
+---
+
+## Addendum — refined localization (follow-up session)
+
+A follow-up run with the aggressive defaults (0-bps filter + `SIM_EXIT_ON_FAIL`)
++ `DEGENBOT_SIM_LOG_REVERTED_SWAPS=1` captured a **fresh decisive fixture**
+that REFUTES W2UWZO's "Localization so far" residual suspect (the V4 tick walk
+in `v4_simulate_swap`) and pins the divergence purely on the SOLVER side:
+
+```
+path=1402 V2-V4-V3  CurrencyNotSettled  block 25635886
+hop=0 V2  actual_out=160363438980  predicted=160363438980  matched=true   ✓
+hop=1 V4  actual_out=100            predicted=101           matched=false ✗  (+1)
+hop_outputs=[160363438980, 101, 52688562059]
+```
+
+Reproduced across 3 paths (1401/1402/1404) every block — V2 hop matches
+**exactly**, V4 hop is the **sole diverger**, always `actual < predicted`
+(off by 1 here; 1–15 in the prior corpus).
+
+### What this establishes
+
+1. **The sim's `actual` IS ground truth.** The in-process sim runs the REAL
+   V4 PoolManager bytecode in revm against RPC storage at the solve block
+   (`sim/evm/mod.rs` — EVM transact → CacheDB → `BotStateDb` →
+   `WrapDatabaseAsync<AlloyDB>`). The inspector captures the `Swap` event
+   the real bytecode emitted. So `actual=100` is what mainnet would produce.
+   W2UWZO's hypothesis that `v4_simulate_swap`'s `gen_ticks` tick walk is the
+   bug is therefore a RED HERRING for `CurrencyNotSettled`: `v4_simulate_swap`
+   is NOT in the execution path that produces `actual` — only the solver's
+   `int_simulate_v3_swap` / `compute_crossing` (the 2-range-to-N-range CL
+   model) produces the over-predicted `predicted=101`.
+2. **Not a sparse-miss.** V4 pools load from a DB snapshot (bot logs
+   `Loaded Uniswap V4 LP snapshot from db source`) → `coverage == Tracked`
+   (complete `tick_data`). `gen_ticks` sees all initialized ticks. So the
+   `known_bitmap_words` sparse-miss guard (which `v4_simulate_swap` has but
+   `compute_tick_ranges` lacks) is NOT the cause for Tracked pools.
+3. **The composer hardcodes `hop_outputs`.** `degenbot_executor::composers`
+   bakes the solver's predicted `hop_outputs[i]` into the chained
+   `V4_TAKE` / next-hop `amountSpecified` as a fixed bytecode amount — it
+   cannot read the runtime `BalanceDelta`. So a +1 over-prediction on the V4
+   hop directly overdrafts settlement → `CurrencyNotSettled`.
+
+### Residual suspect (narrowed)
+
+With sparse-miss ruled out (Tracked) and `v4_simulate_swap` exonerated, the V4
+hop over-prediction is one of:
+
+- **Stale active state** — the V4 pool's `sqrtPriceX96`/`liquidity`/`tick` at
+  solve time lags the solve-block RPC state the revm sim reads. Thin-liquidity
+  0.8%/1% V4 pools are price-sensitive to 1-block drift; deep V3 pools are not
+  → explains why V3 matches exactly while V4 diverges. (V3/V4 swaps +
+  Mint/Burn ARE pumped via `on_v4_swap`/`on_v4_liquidity_update` in
+  `log_dispatcher`, so this would be a pump-ORDERING gap: solve running before
+  block-N's events are applied, or the snapshot lagging.)
+- **A residual in `compute_crossing` / `int_simulate_v3_swap`'s hand-rolled
+  per-range formula** diverging from `compute_swap_step_v4`'s steppiwise
+  amount-accumulation on a multi-tick crossing. (The single-range partial-step
+  formula was verified field-by-field to match on-chain `get_amount1_delta`
+  floor + `get_next_sqrt_price_from_amount0_rounding_up` ceil, so a SINGLE-range
+  single-step cannot diverge — the +1 REQUIRES a multi-range crossing or stale
+  state.)
+
+### Decisive next experiment
+
+Dump, for ONE failing V4 hop, BOTH (a) the engine's `V4PoolState`
+(`sqrtPriceX96`, `liquidity`, `tick`, `tick_data` keys, `coverage`) at solve
+firing AND (b) the on-chain V4 state at the solve block via `cast` (archive RPC
+`ETHEREUM_ARCHIVE_NODE_HTTP_URI` is available). If they DIFFER → stale active
+state (fix: pump ordering / refresh V4 active state to solve block before
+solving). If they're IDENTICAL but `int_simulate_v3_swap` still returns 101
+while `v4_simulate_swap` returns 100 → the residual is in
+`compute_crossing`/`int_simulate_v3_swap` (fix: per CR #2 — delegate the V4
+hop-output to `v4_simulate_swap` in the solver path).
