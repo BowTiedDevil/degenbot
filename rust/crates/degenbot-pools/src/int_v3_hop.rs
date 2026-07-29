@@ -9,6 +9,19 @@
 use alloy::primitives::{U256, U512};
 use degenbot_v2_math::IntHopState;
 
+/// Ceiling division of `U512` / `U256` → `U256` (matches on-chain
+/// `get_amount_delta(..., round_up=true)` for the exact-input `amount_in`).
+/// Returns `num / denom` when `num % denom == 0`, else `num / denom + 1`.
+#[must_use]
+fn u512_div_ceil(num: U512, denom: U512) -> U256 {
+    if denom.is_zero() {
+        return U256::ZERO;
+    }
+    let q = num / denom;
+    let r = num % denom;
+    u512_to_u256(if r.is_zero() { q } else { q + U512::from(1u64) })
+}
+
 /// Narrow `U512` → `U256` with an overflow assert (mirrors the helper in
 /// `degenbot-bot`/`u512_to_u256_internal`; consolidated into a shared
 /// `v2-math` pub fn by the `degenbot-solvers` extraction epic).
@@ -115,12 +128,16 @@ impl IntV3TickRangeHop {
     /// Maximum gross input (including fees) that this range can absorb
     /// without pushing the price past the range boundary.
     ///
-    /// For zero_for_one: L · (1/√P_lower - 1/√P_current) / γ
-    /// For one_for_zero: L · (√P_upper - √P_current) / γ
+    /// This is the single-range case (`i = 0`) of the crossing computation
+    /// in [`IntV3TickRangeSequence::compute_crossing`], so it MUST use the
+    /// same per-step rounding as on-chain `computeSwapStep` exact-in:
+    /// `amount_in` rounded UP (`get_amount_delta(..., round_up=true)`) and
+    /// `fee_amount` rounded UP (`muldiv_rounding_up`), so `gross = amount_in + fee_amount`
+    /// is the CEILING. See `compute_crossing` for the full derivation.
     ///
-    /// where γ = gamma_numer / fee_denom, so gross = net · fee_denom / gamma_numer.
-    ///
-    /// All in integer math with Q128.96 sqrt prices.
+    /// Rounding up keeps this consistent with `compute_crossing(k=1)` and
+    /// on-chain behaviour; the prior FLOOR version under-estimated the
+    /// boundary-reaching input and over-predicted V4 multi-range swap output.
     #[must_use]
     pub fn max_gross_input_in_range(&self) -> U256 {
         if self.liquidity == 0 || self.gamma_numer == 0 {
@@ -130,49 +147,43 @@ impl IntV3TickRangeHop {
         let l = U256::from(self.liquidity);
         let gamma_numer = U256::from(self.gamma_numer);
         let fee_denom = U256::from(self.fee_denom);
+        let q96 = U256::from(1u128) << 96;
 
-        if self.zero_for_one {
-            // max_net_input = L · 2^96 · (sp_cur - sp_low) / (sp_low · sp_cur)
-            // max_gross = max_net · fee_denom / gamma_numer
+        // `amount_in` (round-up), matching `get_amount_delta(..., round_up=true)`.
+        let net_in = if self.zero_for_one {
             let sp_diff = self
                 .sqrt_price_x96
                 .saturating_sub(self.sqrt_price_lower_x96);
             if sp_diff.is_zero() {
                 return U256::ZERO;
             }
-            // numerator = L · 2^96 · sp_diff · fee_denom
-            // denominator = gamma_numer · sp_low · sp_cur
-            let l_u512 = U512::from(l);
-            let q96_u512 = U512::from(U256::from(1u128) << 96);
-            let sp_diff_u512 = U512::from(sp_diff);
-            let fee_denom_u512 = U512::from(fee_denom);
-            let denom_u512 = U512::from(gamma_numer)
-                * U512::from(self.sqrt_price_lower_x96)
-                * U512::from(self.sqrt_price_x96);
-
+            let net_in_u512 = U512::from(l) * U512::from(q96) * U512::from(sp_diff);
+            let denom_u512 =
+                U512::from(self.sqrt_price_lower_x96) * U512::from(self.sqrt_price_x96);
             if denom_u512.is_zero() {
                 return U256::ZERO;
             }
-
-            let numerator = l_u512 * q96_u512 * sp_diff_u512 * fee_denom_u512;
-            u512_to_u256(numerator / denom_u512)
+            u512_div_ceil(net_in_u512, denom_u512)
         } else {
-            // max_net_input = L · (sp_upper - sp_current) / 2^96
-            // max_gross = max_net · fee_denom / gamma_numer
             let sp_diff = self
                 .sqrt_price_upper_x96
                 .saturating_sub(self.sqrt_price_x96);
             if sp_diff.is_zero() {
                 return U256::ZERO;
             }
+            u512_div_ceil(U512::from(l) * U512::from(sp_diff), U512::from(q96))
+        };
 
-            // numerator = L · sp_diff · fee_denom
-            // denominator = gamma_numer · 2^96
-            let numerator_u512 = U512::from(l) * U512::from(sp_diff) * U512::from(fee_denom);
-            let denom_u512 = U512::from(gamma_numer) * U512::from(U256::from(1u128) << 96);
-
-            u512_to_u256(numerator_u512 / denom_u512)
+        // `fee_amount` (round-up), matching `muldiv_rounding_up(amount_in · fee / γ)`.
+        let fee = fee_denom - gamma_numer;
+        if gamma_numer.is_zero() {
+            return net_in;
         }
+        let fee_amount = u512_div_ceil(
+            U512::from(net_in) * U512::from(fee),
+            U512::from(gamma_numer),
+        );
+        net_in.saturating_add(fee_amount)
     }
 }
 
@@ -286,12 +297,24 @@ impl IntV3TickRangeSequence {
     ///
     /// Returns `None` if `k` is out of bounds.
     ///
-    /// # Integer math
+    /// # Integer math (rounding matches on-chain `computeSwapStep` exact-in)
+    ///
+    /// On-chain, each tick-range step that REACHES its boundary computes
+    /// `amount_in` with ROUND-UP (`get_amount_delta(..., round_up=true)`) and
+    /// `fee_amount` with ROUND-UP (`muldiv_rounding_up`), so the consumed
+    /// `amount_in + fee_amount` is the CEILING. The output (`amount_out`) uses
+    /// ROUND-DOWN (`get_amount_delta(..., round_down=false)`).
+    ///
+    /// This function mirrors that per-step rounding exactly (otherwise the
+    /// accumulated `crossing_gross_input` under-estimates the on-chain consumed
+    /// input → the solver over-estimates the remaining input → over-predicts the
+    /// output for multi-range swaps — the V4 `CurrencyNotSettled` divergence)
     ///
     /// For zero_for_one (price decreasing):
-    /// - net_in = L · (1/√P_end - 1/√P_start) = L · 2^96 · (sp_start - sp_end) / (sp_end · sp_start)
-    /// - output  = L · (√P_start - √P_end) = L · (sp_start - sp_end) / 2^96
-    /// - gross_in = net_in / γ = net_in · fee_denom / gamma_numer
+    /// - amount_in (ceil) = L · 2^96 · (sp_start - sp_end) / (sp_end · sp_start) [round-up]
+    /// - output  (floor)  = L · (sp_start - sp_end) / 2^96                       [round-down]
+    /// - fee_amount (ceil) = ceil(amount_in · fee / γ)  where γ = 1e6 - fee
+    /// - gross_in = amount_in + fee_amount
     ///
     /// For one_for_zero (price increasing):
     /// - net_in = L · (√P_end - √P_start) = L · (sp_end - sp_start) / 2^96
@@ -341,13 +364,16 @@ impl IntV3TickRangeSequence {
                 if sp_diff.is_zero() {
                     (U256::ZERO, U256::ZERO)
                 } else {
+                    // On-chain `amount_in` for an exact-in step reaching the
+                    // boundary uses `get_amount0_delta(round_up=true)` (CEIL).
                     let net_in_u512 = U512::from(l) * U512::from(q96) * U512::from(sp_diff);
                     let denom_u512 = U512::from(sp_end) * U512::from(sp_start);
                     let net_in = if denom_u512.is_zero() {
                         U256::ZERO
                     } else {
-                        u512_to_u256(net_in_u512 / denom_u512)
+                        u512_div_ceil(net_in_u512, denom_u512)
                     };
+                    // `amount_out` uses round-down (floor) — matches on-chain.
                     let out_u512 = U512::from(l) * U512::from(sp_diff);
                     let out = u512_to_u256(out_u512 / U512::from(q96));
                     (net_in, out)
@@ -360,8 +386,10 @@ impl IntV3TickRangeSequence {
                 if sp_diff.is_zero() {
                     (U256::ZERO, U256::ZERO)
                 } else {
+                    // `amount_in` (ofz) = `get_amount1_delta(round_up=true)` (CEIL).
                     let net_in_u512 = U512::from(l) * U512::from(sp_diff);
-                    let net_in = u512_to_u256(net_in_u512 / U512::from(q96));
+                    let net_in = u512_div_ceil(net_in_u512, U512::from(q96));
+                    // `amount_out` uses round-down (floor) — matches on-chain.
                     let out_u512 = U512::from(l) * U512::from(q96) * U512::from(sp_diff);
                     let denom_u512 = U512::from(sp_start) * U512::from(sp_end);
                     let out = if denom_u512.is_zero() {
@@ -373,13 +401,21 @@ impl IntV3TickRangeSequence {
                 }
             };
 
-            // gross_input = net_input / γ = net_input · fee_denom / gamma_numer
-            let gross_input_u512 = U512::from(net_input) * U512::from(fee_denom);
-            let gross_input = if gamma_numer.is_zero() {
-                U256::MAX
+            // gross_input = amount_in + fee_amount, where on-chain computes
+            // `fee_amount = ceil(amount_in · fee / γ)` (muldiv_rounding_up) and
+            // γ = fee_denom - fee (== gamma_numer). This is the exact-in
+            // target-reachable branch of `computeSwapStep`: the consumed input
+            // is `amount_in + fee_amount` with BOTH terms rounded up.
+            let fee = fee_denom - gamma_numer;
+            let fee_amount = if gamma_numer.is_zero() {
+                U256::ZERO
             } else {
-                u512_to_u256(gross_input_u512 / U512::from(gamma_numer))
+                u512_div_ceil(
+                    U512::from(net_input) * U512::from(fee),
+                    U512::from(gamma_numer),
+                )
             };
+            let gross_input = net_input.saturating_add(fee_amount);
 
             crossing_gross_input = crossing_gross_input.saturating_add(gross_input);
             crossing_output = crossing_output.saturating_add(output);
@@ -408,5 +444,121 @@ impl IntV3TickRangeSequence {
             crossing_output,
             ending_range,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::too_many_lines)]
+    use super::*;
+    use alloy::primitives::I256;
+    use degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v3;
+    use degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal;
+
+    /// Build a 3-range sequence crossing ticks -60, 0, +60 (tick_spacing=60)
+    /// with liquidity `L` at every range + the standard net at each boundary.
+    /// A multi-range swap through this MUST match a step-by-step
+    /// `compute_swap_step_v3` walk (the on-chain-faithful oracle V3 uses),
+    /// since V3 single-range matches exactly on mainnet — the divergence the
+    /// V4 CurrencyNotSettled fix targets is in `compute_crossing`'s per-range
+    /// rounding for multi-range crossings.
+    fn three_range_sequence(liq: u128) -> IntV3TickRangeSequence {
+        let gamma_numer = 997_000u64; // 0.3% fee
+        let fee_denom = 1_000_000u64;
+        let sp_neg60 = U256::from(get_sqrt_ratio_at_tick_internal(-60).unwrap());
+        let sp_pos60 = U256::from(get_sqrt_ratio_at_tick_internal(60).unwrap());
+        let sp_zero = U256::from(get_sqrt_ratio_at_tick_internal(0).unwrap());
+        let make_hop = |liquidity, sp, lower, upper, zfo| IntV3TickRangeHop {
+            liquidity,
+            sqrt_price_x96: sp,
+            sqrt_price_lower_x96: lower,
+            sqrt_price_upper_x96: upper,
+            gamma_numer,
+            fee_denom,
+            zero_for_one: zfo,
+        };
+        // ofz: ranges [0,60), [60,120)... but for a 3-range test we use
+        // [-60,0), [0,60), [60,120) with crossing from sp_zero upward.
+        let r0 = make_hop(liq, sp_zero, sp_neg60, sp_pos60, false);
+        let r1 = make_hop(
+            liq,
+            sp_pos60,
+            sp_pos60,
+            U256::from(get_sqrt_ratio_at_tick_internal(120).unwrap()),
+            false,
+        );
+        let r2 = make_hop(
+            liq,
+            U256::from(get_sqrt_ratio_at_tick_internal(120).unwrap()),
+            sp_pos60,
+            U256::from(get_sqrt_ratio_at_tick_internal(180).unwrap()),
+            false,
+        );
+        IntV3TickRangeSequence::new(vec![r0, r1, r2]).unwrap()
+    }
+
+    /// Step-by-step oracle: walk `compute_swap_step_v3` across the 3 ranges,
+    /// matching on-chain `computeSwapStep` exact-in rounding exactly. Returns
+    /// `(total_gross_consumed, total_output)` to reach range `k`'s entry.
+    fn oracle_crossing(seq: &IntV3TickRangeSequence, k: usize, amount_in: u128) -> (U256, U256) {
+        let fee_pips = U256::from(seq.ranges[0].fee_denom - seq.ranges[0].gamma_numer);
+        let zfo = seq.ranges[0].zero_for_one;
+        let mut remaining = I256::try_from(amount_in).unwrap(); // exact-in positive (V3 convention)
+        let mut total_consumed = U256::ZERO;
+        let mut total_output = U256::ZERO;
+        for i in 0..k {
+            let r = &seq.ranges[i];
+            let sp_current = if i == 0 {
+                r.sqrt_price_x96
+            } else if zfo {
+                seq.ranges[i - 1].sqrt_price_lower_x96
+            } else {
+                seq.ranges[i - 1].sqrt_price_upper_x96
+            };
+            let sp_target = if zfo {
+                r.sqrt_price_lower_x96
+            } else {
+                r.sqrt_price_upper_x96
+            };
+            let step = compute_swap_step_v3(
+                sp_current,
+                sp_target,
+                i128::try_from(r.liquidity).unwrap(),
+                remaining,
+                fee_pips,
+            )
+            .unwrap();
+            // exact-in (V3 positive): consumed = amount_in + fee_amount
+            let consumed = step.amount_in.saturating_add(step.fee_amount);
+            total_consumed = total_consumed.saturating_add(consumed);
+            total_output = total_output.saturating_add(step.amount_out);
+            remaining = remaining
+                .checked_sub(I256::try_from(consumed).unwrap())
+                .unwrap();
+        }
+        (total_consumed, total_output)
+    }
+
+    /// RED→GREEN: `compute_crossing` for a multi-range swap MUST match the
+    /// step-by-step `compute_swap_step_v3` walk (the on-chain-faithful oracle).
+    /// Before the round-up fix, `compute_crossing` used FLOOR for `amount_in`
+    /// and the fee, under-estimating the consumed input → over-predicting the
+    /// output for multi-range swaps (the V4 CurrencyNotSettled divergence).
+    #[test]
+    fn compute_crossing_matches_onchain_step_walk_for_multi_range() {
+        let liq = 1_000_000_000_000_000u128; // 1e15 liquidity
+        let seq = three_range_sequence(liq);
+        // A large-enough input to cross 2 ranges (k=2).
+        let amount_in: u128 = 50_000_000_000_000_000u128;
+        let crossing = seq.compute_crossing(2).unwrap();
+        let (oracle_consumed, oracle_output) = oracle_crossing(&seq, 2, amount_in);
+        assert_eq!(
+            crossing.crossing_gross_input, oracle_consumed,
+            "crossing_gross_input must match on-chain per-step consumed (round-up amount_in + fee)"
+        );
+        assert_eq!(
+            crossing.crossing_output, oracle_output,
+            "crossing_output must match on-chain per-step output (round-down)"
+        );
     }
 }
