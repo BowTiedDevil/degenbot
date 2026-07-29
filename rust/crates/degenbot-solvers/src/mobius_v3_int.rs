@@ -37,7 +37,6 @@
 
 use alloy::primitives::{U256, U512};
 
-use crate::mobius_int::IntMobiusCoefficients;
 use degenbot_v2_math::{IntHopState, SimulationResult};
 
 // ---------------------------------------------------------------------------
@@ -65,6 +64,13 @@ pub use ::degenbot_pools::int_v3_hop::{
 ///
 /// Returns a [`SimulationResult`] with per-hop output amounts and the final output.
 #[must_use]
+// TRANSITION (ergo 7J22EQ → PXSY47): assumed-tuple piecewise
+// simulator. Production solving now uses the self-determining
+// `simulate_walk_path`; this remains as the validation oracle for the
+// ON5QMD rounding-parity nets and the uncapped enumeration
+// references in the test module. PXSY47 retires it when the solver
+// objective unifies with the step-faithful walker.
+#[cfg_attr(not(test), allow(dead_code))]
 fn int_simulate_cl_path_n(
     amount_in: U256,
     crossings: &[Option<IntTickRangeCrossing>],
@@ -150,6 +156,13 @@ fn int_simulate_cl_path_n(
 ///
 /// Returns a [`SimulationResult`] with per-hop output amounts and the final output.
 #[must_use]
+// TRANSITION (ergo 7J22EQ → PXSY47): assumed-tuple piecewise
+// simulator. Production solving now uses the self-determining
+// `simulate_walk_path`; this remains as the validation oracle for the
+// ON5QMD rounding-parity nets and the uncapped enumeration
+// references in the test module. PXSY47 retires it when the solver
+// objective unifies with the step-faithful walker.
+#[cfg_attr(not(test), allow(dead_code))]
 fn int_simulate_v3_v3_path(
     amount_in: U256,
     crossing1: Option<&IntTickRangeCrossing>,
@@ -215,147 +228,603 @@ fn int_simulate_v3_v3_path(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Active-set piecewise Möbius walk (ergo 7J22EQ)
+// ---------------------------------------------------------------------------
+//
+// The path profit function `P(x) = O(x) − x` over any mix of constant-product
+// (V2) and concentrated-liquidity (V3/V4) hops is concave, C¹ (the spot price
+// is continuous across tick crossings; a liquidity change moves only the
+// second derivative), and piecewise Möbius in the path input `x`. The piece
+// containing the argmax is therefore found by a MONOTONE walk over pieces —
+// no combinatorial enumeration of ending-range tuples and no `max_candidates`
+// prefix cap. See
+// `docs/architecture/mobius_v3_ending_range_enumeration_evaluation.md`.
+
+/// A hop in the active-set walk: constant-product (a single piece — no tick
+/// ranges; V2-family) or concentrated-liquidity (one piece per ending range).
+enum WalkHop<'a> {
+    /// V2-family constant-product hop. The landed tuple entry is always 0.
+    ConstantProduct(&'a IntHopState),
+    /// CL hop with its pre-computed per-index crossing table (`crossings[k]`
+    /// is [`IntV3TickRangeSequence::compute_crossing`]`(k)`).
+    Cl {
+        /// Crossing data for every ending-range index `k` in `0..ranges.len()`.
+        crossings: Vec<IntTickRangeCrossing>,
+    },
+}
+
+/// Largest ending-range index whose crossing is affordable with `available`
+/// gross input.
+///
+/// `crossing_gross_input` is non-decreasing in `k` (it is a prefix sum of
+/// non-negative per-range gross inputs), so the landed index is a partition
+/// point. Ties (zero-liquidity ranges cost nothing to cross) resolve to the
+/// LARGEST index — the swap entered every zero-cost range.
+fn landed_ending_range_index(crossings: &[IntTickRangeCrossing], available: U256) -> usize {
+    debug_assert!(!crossings.is_empty());
+    debug_assert!(crossings[0].crossing_gross_input.is_zero());
+    crossings.partition_point(|c| c.crossing_gross_input <= available) - 1
+}
+
+/// Result of a [`simulate_walk_path`] evaluation: the per-hop outputs plus
+/// the ending-range tuple the input actually landed in.
+struct WalkPathOutcome {
+    /// Output after the last hop.
+    final_output: U256,
+    /// `hop_outputs[i]` = output after hop `i`.
+    hop_outputs: Vec<U256>,
+    /// Ending-range index landed in per hop (always 0 for V2 hops).
+    landed: Vec<usize>,
+}
+
+/// Simulate the path with SELF-DETERMINED crossings: each CL hop's ending
+/// range is derived from the gross input actually available at that hop
+/// (hop 0: `amount_in`; hop i: hop `i−1`'s output).
+///
+/// Unlike `int_simulate_cl_path_n` (which simulates under an ASSUMED crossing
+/// tuple and returns the zero-exhaustion shape when the input cannot afford
+/// the assumption), this walker always simulates the piece the input truly
+/// lands in — which is what makes it usable as the walk's ground truth for
+/// any candidate.
+fn simulate_walk_path(amount_in: U256, hops: &[WalkHop]) -> WalkPathOutcome {
+    #[cfg(test)]
+    WALK_PATH_SIMULATIONS.with(|c| c.set(c.get() + 1));
+    let n_hops = hops.len();
+    let mut hop_outputs = Vec::with_capacity(n_hops);
+    let mut landed = Vec::with_capacity(n_hops);
+    let mut current = amount_in;
+
+    for hop in hops {
+        if current.is_zero() {
+            hop_outputs.push(U256::ZERO);
+            landed.push(0);
+            continue;
+        }
+        match hop {
+            WalkHop::ConstantProduct(hop_state) => {
+                landed.push(0);
+                let out = match hop_state.swap(current) {
+                    Ok(o) => o,
+                    // V2 hop overflow-reverts on-chain → path yields nothing.
+                    Err(_) => U256::ZERO,
+                };
+                hop_outputs.push(out);
+                current = out;
+            }
+            WalkHop::Cl { crossings, .. } => {
+                let k = landed_ending_range_index(crossings, current);
+                landed.push(k);
+                let crossing = &crossings[k];
+                let remaining = current - crossing.crossing_gross_input;
+                let ending = int_simulate_v3_swap(remaining, &crossing.ending_range);
+                let out = crossing.crossing_output.saturating_add(ending.output);
+                hop_outputs.push(out);
+                current = out;
+            }
+        }
+    }
+
+    WalkPathOutcome {
+        final_output: hop_outputs.last().copied().unwrap_or(U256::ZERO),
+        hop_outputs,
+        landed,
+    }
+}
+
+/// Transitional per-piece anchor (ergo EHSWSX replaces it with the exact
+/// affine-shifted closed form): model-optimal input of the piece's
+/// UNshifted ending-range Möbius composition, plus the sum of per-hop
+/// crossing gross inputs.
+///
+/// The anchor is a heuristic entry point into the piece — the walk's
+/// correcting signal is the landed tuple of the simulated candidate, not
+/// anchor precision — so the unshifted approximation is acceptable for the
+/// transition. Downstream crossings are actually paid from an upstream hop's
+/// OUTPUT, not the path input, which is the approximation EHSWSX removes.
+fn walk_piece_anchor(hops: &[WalkHop], ks: &[usize]) -> U256 {
+    let mut flat_hops: Vec<IntHopState> = Vec::with_capacity(hops.len());
+    let mut gross_sum = U256::ZERO;
+    for (hop, &k) in hops.iter().zip(ks.iter()) {
+        match hop {
+            WalkHop::ConstantProduct(hop_state) => flat_hops.push((*hop_state).clone()),
+            WalkHop::Cl { crossings, .. } => {
+                let crossing = &crossings[k];
+                if k > 0 {
+                    gross_sum = gross_sum.saturating_add(crossing.crossing_gross_input);
+                }
+                flat_hops.push(crossing.ending_range.to_int_hop_state());
+            }
+        }
+    }
+    let Ok(result) = crate::mobius_int_exact::exact_mobius_solve(&flat_hops) else {
+        return gross_sum;
+    };
+    if !result.is_profitable || result.optimal_input.is_zero() {
+        return gross_sum;
+    }
+    result.optimal_input.saturating_add(gross_sum)
+}
+
+/// Componentwise comparison helpers on landed tuples.
+fn landed_any_above(landed: &[usize], ks: &[usize]) -> bool {
+    landed.iter().zip(ks.iter()).any(|(a, &b)| *a > b)
+}
+
+/// Profit score as a SIGNED value (`output − input`), so ternary refinement
+/// can compare candidates on the unprofitable side without U256 underflow.
+fn walk_profit_score(output: U256, input: U256) -> alloy::primitives::I256 {
+    use alloy::primitives::I256;
+    let o = I256::try_from(output).unwrap_or(I256::MAX);
+    let i = I256::try_from(input).unwrap_or(I256::MAX);
+    o - i
+}
+
+/// Book-keeping for the best validated candidate seen by the walk.
+struct WalkRecorder {
+    input: U256,
+    profit: U256,
+    hop_outputs: Vec<U256>,
+    /// Best signed score across every evaluated candidate (including
+    /// unprofitable ones) — the direction test's reference level.
+    top_score: alloy::primitives::I256,
+}
+
+impl WalkRecorder {
+    fn new() -> Self {
+        Self {
+            input: U256::ZERO,
+            profit: U256::ZERO,
+            hop_outputs: Vec::new(),
+            top_score: alloy::primitives::I256::MIN,
+        }
+    }
+
+    /// Simulate `candidate`, update the bests, and return the outcome (the
+    /// caller needs `landed` / `final_output` for direction decisions).
+    fn eval_and_record(&mut self, candidate: U256, hops: &[WalkHop]) -> WalkPathOutcome {
+        let outcome = simulate_walk_path(candidate, hops);
+        let score = walk_profit_score(outcome.final_output, candidate);
+        if score > self.top_score {
+            self.top_score = score;
+        }
+        if outcome.final_output > candidate {
+            let profit = outcome.final_output - candidate;
+            if profit > self.profit {
+                self.profit = profit;
+                self.input = candidate;
+                self.hop_outputs.clone_from(&outcome.hop_outputs);
+            }
+        }
+        outcome
+    }
+}
+
+/// First input of the tuple-`ks` window: the smallest `x` whose landed tuple
+/// is componentwise ≥ `ks` (0 when `ks` is all zeros).
+///
+/// `landed(x)` is componentwise non-decreasing in `x`, so the predicate is
+/// monotone and bisection is sound.
+fn piece_window_left_edge(hops: &[WalkHop], ks: &[usize], hint: U256) -> U256 {
+    if ks.iter().all(|&k| k == 0) {
+        return U256::ZERO;
+    }
+    // Predicate: every landed component ≥ ks. lo = 0 is false (landed(0) is
+    // all-zeros and ks has a positive component).
+    let mut lo = U256::ZERO;
+    let mut hi = hint.max(U256::ONE);
+    for _ in 0..256 {
+        let landed = simulate_walk_path(hi, hops).landed;
+        if !landed.iter().zip(ks.iter()).any(|(a, &b)| *a < b) {
+            break; // predicate true
+        }
+        lo = hi;
+        hi = match hi.checked_mul(U256::from(2u64)) {
+            Some(v) => v,
+            None => break, // domain edge; treat the bracket as terminal
+        };
+    }
+    // Bisect [lo (predicate false), hi (predicate true)] to a ≤64 bracket,
+    // then scan for the exact first in-window input.
+    while hi.saturating_sub(lo) > U256::from(64u64) {
+        let mid = lo + (hi - lo) / U256::from(2u64);
+        let landed = simulate_walk_path(mid, hops).landed;
+        if landed.iter().zip(ks.iter()).any(|(a, &b)| *a < b) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    let mut x = lo + U256::from(1u64);
+    while x < hi {
+        let landed = simulate_walk_path(x, hops).landed;
+        if !landed.iter().zip(ks.iter()).any(|(a, &b)| *a < b) {
+            return x;
+        }
+        x += U256::from(1u64);
+    }
+    hi
+}
+
+/// Last input of the `≤ ks` region: the largest `x` whose landed tuple is
+/// componentwise ≤ `ks`. Returns `None` when the region is unbounded (no hop
+/// crosses any further — the piece is terminal).
+///
+/// Sound by the same monotonicity argument as [`piece_window_left_edge`].
+fn piece_window_right_edge(hops: &[WalkHop], ks: &[usize], hint: U256) -> Option<U256> {
+    let mut lo = U256::ZERO; // landed(0) = all zeros ≤ ks for any ks
+    let mut hi = hint.max(U256::ONE);
+    let mut confirmed = false;
+    for _ in 0..256 {
+        let landed = simulate_walk_path(hi, hops).landed;
+        if landed_any_above(&landed, ks) {
+            confirmed = true;
+            break;
+        }
+        lo = hi;
+        hi = hi.checked_mul(U256::from(2u64))?;
+    }
+    if !confirmed {
+        return None; // unbounded region — terminal piece
+    }
+    // Bisect to a ≤4 bracket: lo is the largest known ≤ ks input.
+    while hi.saturating_sub(lo) > U256::from(4u64) {
+        let mid = lo + (hi - lo) / U256::from(2u64);
+        let landed = simulate_walk_path(mid, hops).landed;
+        if landed_any_above(&landed, ks) {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    Some(lo)
+}
+
+/// Maximize profit over the piece window `[lo, hi]` by ternary search to a
+/// ≤64-wide bracket, then a dense sweep of the bracket.
+///
+/// Returns `(piece_argmax_x, piece_best_score)` — the direction test needs
+/// the argmax LOCATION: an argmax hugging the window's right edge (within 4)
+/// means the profit is still climbing into the next piece.
+///
+/// `P(x)` is concave (the EVM floor staircase perturbs it at wei scale
+/// only), so ternary search converges to the discrete argmax neighborhood
+/// and the dense sweep picks the discrete maximizer — the same two-layer
+/// discipline as `exact_mobius_solve`'s closed form + ±2 sweep, generalized
+/// to windows.
+fn walk_refine_window(
+    hops: &[WalkHop],
+    lo: U256,
+    hi: U256,
+    rec: &mut WalkRecorder,
+) -> (U256, alloy::primitives::I256) {
+    use alloy::primitives::I256;
+    let mut argmax_x = lo;
+    let mut best_score = I256::MIN;
+    let mut probe = |x: U256, hops: &[WalkHop], rec: &mut WalkRecorder| -> I256 {
+        let o = rec.eval_and_record(x, hops);
+        let s = walk_profit_score(o.final_output, x);
+        if s > best_score {
+            best_score = s;
+            argmax_x = x;
+        }
+        s
+    };
+    let mut l = lo;
+    let mut r = hi;
+    while r.saturating_sub(l) > U256::from(64u64) {
+        let third = ((r - l) / U256::from(3u64)).max(U256::ONE);
+        let m1 = l + third;
+        let m2 = r - third;
+        let s1 = probe(m1, hops, rec);
+        let s2 = probe(m2, hops, rec);
+        if s1 < s2 {
+            l = m1 + U256::from(1u64);
+        } else {
+            r = m2.saturating_sub(U256::from(1u64));
+        }
+    }
+    // Dense sweep of the final bracket (≤65 points).
+    let mut x = l;
+    loop {
+        probe(x, hops, rec);
+        if x >= r {
+            break;
+        }
+        x += U256::from(1u64);
+    }
+    (argmax_x, best_score)
+}
+
+// Test-only instrumentation for the active-set walk: pieces visited and
+// path simulations executed per solve. Guard tests bound both (regression
+// net against re-introducing combinatorial behavior).
+//
+// Thread-local because `cargo test` runs tests (and their solves) on
+// separate threads concurrently — a shared static would mix counts.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static WALK_PIECES_VISITED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    // See `WALK_PIECES_VISITED`.
+    pub(crate) static WALK_PATH_SIMULATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Solve an arbitrary V2/CL path with the active-set piecewise Möbius walk.
+///
+/// Per visited piece (hypothesis tuple `ks`):
+/// 1. Transitional closed-form anchor — extra candidates (±2 sweep) and an
+///    edge-growth hint ONLY; correctness never depends on anchor precision
+///    (the unshifted per-piece anchor models the ending range as an
+///    unbounded constant-product pool, so it cannot see range-saturation
+///    corner optima).
+/// 2. Compute the piece's input window `[x_l, x_r]`
+///    ([`piece_window_left_edge`] / [`piece_window_right_edge`]; consecutive
+///    pieces share window edges, so the left edge reuses the previous
+///    piece's right edge).
+/// 3. Direction test: straddle probes at ±64 around the right edge with
+///    +1-wei staircase tolerance. Climbing ⇒ advance ONE piece (never
+///    hopscotch past unrefined pieces — concavity makes the refined
+///    piece-maxima sequence unimodal, so consecutive visits cannot vault
+///    the peak).
+/// 4. Stop: refine the current piece AND its forward neighbor with a
+///    windowed ternary + dense sweep ([`walk_refine_window`]) — refinement
+///    is what makes the walk exact at range-saturation corners.
+///
+/// Termination is structural: each advance moves the tuple strictly forward
+/// in the product order and landed tuples never retreat along an
+/// x-increasing walk, so at most Σ ranges pieces are visited (+2 slack); a
+/// visited set guards the pathological anchor-oscillation case.
+fn solve_active_set_path(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256>)> {
+    /// Advance the landed tuple one piece past the window's right edge
+    /// (the edge-bisection bracket is ≤4 wide, so scan a few steps).
+    fn landed_beyond(hops: &[WalkHop], right_edge: U256, ks: &[usize]) -> Option<Vec<usize>> {
+        for d in 1u64..=8 {
+            let landed = simulate_walk_path(right_edge.saturating_add(U256::from(d)), hops).landed;
+            if landed_any_above(&landed, ks) {
+                return Some(landed);
+            }
+        }
+        None
+    }
+
+    /// Stop-time refinement: ternary + dense sweep over this piece's window
+    /// AND over its immediate forward neighbor's window. Refinement of
+    /// climbed-through pieces is skipped during the walk (their interior
+    /// maxima cannot beat the walk's terminal region under concavity); the
+    /// neighbor refinement covers a peak straddling the edge that the ±1-wei
+    /// staircase-tolerant direction test could mis-attribute.
+    fn refine_at_stop(
+        hops: &[WalkHop],
+        ks: &[usize],
+        x_l: U256,
+        x_r: Option<U256>,
+        hint: U256,
+        rec: &mut WalkRecorder,
+    ) {
+        let hi_current = x_r.unwrap_or_else(|| {
+            hint.saturating_mul(U256::from(4u64))
+                .max(x_l.saturating_mul(U256::from(2u64)))
+                .max(x_l.saturating_add(U256::from(1024u64)))
+        });
+        if x_l <= hi_current {
+            walk_refine_window(hops, x_l, hi_current, rec);
+        }
+        let Some(xr) = x_r else {
+            return;
+        };
+        let Some(next) = landed_beyond(hops, xr, ks) else {
+            return;
+        };
+        let n_l = xr + U256::from(1u64);
+        let n_r = piece_window_right_edge(hops, &next, hint);
+        let n_hi = n_r.unwrap_or_else(|| {
+            hint.saturating_mul(U256::from(4u64))
+                .max(n_l.saturating_mul(U256::from(2u64)))
+                .max(n_l.saturating_add(U256::from(1024u64)))
+        });
+        if n_l <= n_hi {
+            walk_refine_window(hops, n_l, n_hi, rec);
+        }
+    }
+
+    use alloy::primitives::I256;
+    if hops.is_empty() {
+        return None;
+    }
+
+    #[cfg(test)]
+    WALK_PIECES_VISITED.with(|c| c.set(0));
+
+    let iteration_cap: usize = hops
+        .iter()
+        .map(|h| match h {
+            WalkHop::ConstantProduct(_) => 1,
+            WalkHop::Cl { crossings, .. } => crossings.len(),
+        })
+        .sum::<usize>()
+        + 2;
+
+    let mut ks = vec![0usize; hops.len()];
+    let mut visited: std::collections::HashSet<Vec<usize>> = std::collections::HashSet::new();
+    let mut rec = WalkRecorder::new();
+    // Right edge of the previously visited piece: consecutive pieces share
+    // window boundaries, so it doubles as the next piece's left-edge scan
+    // start (saves a full bisection per visited piece).
+    let mut prev_right_edge: Option<U256> = None;
+
+    let single_piece_path = hops.iter().all(|h| match h {
+        WalkHop::ConstantProduct(_) => true,
+        WalkHop::Cl { crossings } => crossings.len() == 1,
+    });
+
+    for _ in 0..iteration_cap {
+        if !visited.insert(ks.clone()) {
+            break;
+        }
+        #[cfg(test)]
+        WALK_PIECES_VISITED.with(|c| c.set(c.get() + 1));
+
+        // Transitional anchor: extra candidates (±2 sweep) and edge-growth
+        // hint; never trusted for the direction decision.
+        let anchor = walk_piece_anchor(hops, &ks);
+        if !anchor.is_zero() {
+            for delta in -2i32..=2 {
+                let candidate = if delta >= 0 {
+                    anchor.saturating_add(U256::from(delta.cast_unsigned()))
+                } else {
+                    anchor.saturating_sub(U256::from((-delta).cast_unsigned()))
+                };
+                if candidate.is_zero() {
+                    continue;
+                }
+                rec.eval_and_record(candidate, hops);
+            }
+        }
+        if single_piece_path {
+            break;
+        }
+
+        // Window left edge: reuse the previous piece's right edge when
+        // walking consecutively (scan a few steps forward); fall back to a
+        // full bisection otherwise.
+        let x_l = if ks.iter().all(|&k| k == 0) {
+            U256::ZERO
+        } else if let Some(prev) = prev_right_edge {
+            let mut found = None;
+            for d in 1u64..=9 {
+                let probe = prev + U256::from(d);
+                let landed = simulate_walk_path(probe, hops).landed;
+                if !landed.iter().zip(ks.iter()).any(|(a, &b)| *a < b) {
+                    found = Some(probe);
+                    break;
+                }
+            }
+            match found {
+                Some(x) => x,
+                None => piece_window_left_edge(hops, &ks, anchor),
+            }
+        } else {
+            piece_window_left_edge(hops, &ks, anchor)
+        };
+
+        // Skipped tuple: `x_l` lands strictly ABOVE `ks` in some component —
+        // the lattice path never lands exactly on `ks`. Advance without
+        // treating this as a real piece.
+        {
+            let landed = simulate_walk_path(x_l, hops).landed;
+            if landed != ks {
+                if landed_any_above(&landed, &ks) {
+                    ks = landed;
+                    prev_right_edge = None;
+                    continue;
+                }
+                // landed BELOW ks means the left-edge search went wrong;
+                // fall back to a full edge computation before giving up.
+                let x_l_full = piece_window_left_edge(hops, &ks, anchor);
+                let landed_full = simulate_walk_path(x_l_full, hops).landed;
+                if landed_full != ks {
+                    if landed_any_above(&landed_full, &ks) {
+                        ks = landed_full;
+                        prev_right_edge = None;
+                        continue;
+                    }
+                    break; // degenerate piece — terminate with what we have
+                }
+            }
+        }
+
+        let x_r = piece_window_right_edge(hops, &ks, anchor);
+        let Some(xr) = x_r else {
+            // Terminal piece (unbounded right): refine and finish.
+            refine_at_stop(hops, &ks, x_l, None, anchor, &mut rec);
+            break;
+        };
+        prev_right_edge = Some(xr);
+
+        // Direction test: straddle probes at ±64 around the window's right
+        // edge, with +1-wei staircase tolerance. Climbing ⇒ advance one
+        // piece; falling or level ⇒ the peak is at or behind this edge —
+        // stop and refine this piece plus its forward neighbor.
+        let back = xr.saturating_sub(U256::from(64u64)).max(x_l);
+        let fwd = xr.saturating_add(U256::from(64u64));
+        let score_back = walk_profit_score(rec.eval_and_record(back, hops).final_output, back);
+        let score_fwd = walk_profit_score(rec.eval_and_record(fwd, hops).final_output, fwd);
+        let climbing = score_fwd + I256::ONE >= score_back;
+        if climbing {
+            if let Some(next) = landed_beyond(hops, xr, &ks) {
+                ks = next;
+                continue;
+            }
+        }
+        refine_at_stop(hops, &ks, x_l, Some(xr), anchor, &mut rec);
+        break;
+    }
+
+    if rec.profit.is_zero() {
+        None
+    } else {
+        Some((rec.input, rec.profit, rec.hop_outputs))
+    }
+}
 // Clippy: allow manual_ok_err in int_solve_v3_v3 match arms
 // (the None/Err branches have side effects so let-else doesn't apply)
 
-/// Solve a 2-hop V3-V3 arbitrage path using integer-exact Möbius solver.
-///
-/// For each candidate pair of ending tick ranges (k1, k2):
-/// 1. Build `IntHopState` from each ending range's effective reserves
-/// 2. Compute closed-form optimal input via `exact_mobius_solve`
-/// 3. Validate with full piecewise simulation (`int_simulate_v3_v3_path`)
-/// 4. Search ±2 neighbors for integer rounding
+/// Solve a 2-hop V3-V3 arbitrage path with the active-set piecewise Möbius
+/// walk (ergo 7J22EQ; replaces the capped ending-range enumeration).
 ///
 /// Returns `(optimal_input, profit, hop_outputs)` or `None` if not profitable.
 /// `hop_outputs[0]` = intermediate output from hop 1, `hop_outputs[1]` = final output.
-///
-/// This replaces the f64 `solve_v3_v3` which uses golden-section search.
-/// The closed-form approach is both faster and EVM-exact.
 #[must_use]
 pub fn int_solve_v3_v3(
     seq1: &IntV3TickRangeSequence,
     seq2: &IntV3TickRangeSequence,
 ) -> Option<(U256, U256, Vec<U256>)> {
-    let max_candidates = 10;
-
-    // Fast path: both single-range → standard 2-hop Möbius
-    if seq1.ranges.len() == 1 && seq2.ranges.len() == 1 {
-        let hop1 = seq1.ranges[0].to_int_hop_state();
-        let hop2 = seq2.ranges[0].to_int_hop_state();
-        let result = crate::mobius_int_exact::exact_mobius_solve(&[hop1, hop2]).ok()?;
-
-        if !result.is_profitable || result.optimal_input.is_zero() || result.profit.is_zero() {
-            return None;
-        }
-
-        // Validate with integer simulation
-        let sim = int_simulate_v3_v3_path(
-            result.optimal_input,
-            None,
-            None,
-            &seq1.ranges[0],
-            &seq2.ranges[0],
-        );
-        if sim.final_output > result.optimal_input {
-            let profit = sim.final_output - result.optimal_input;
-            return Some((result.optimal_input, profit, sim.hop_outputs));
-        }
-        return None;
-    }
-
-    // General case: enumerate (k1, k2) ending-range combinations
-    let n1 = max_candidates.min(seq1.ranges.len());
-    let n2 = max_candidates.min(seq2.ranges.len());
-
-    let mut best_x = U256::ZERO;
-    let mut best_profit = U256::ZERO;
-    let mut best_hop_outputs: Vec<U256> = Vec::new();
-
-    for k1 in 0..n1 {
-        for k2 in 0..n2 {
-            let Some(crossing1) = seq1.compute_crossing(k1) else {
-                continue;
-            };
-            let Some(crossing2) = seq2.compute_crossing(k2) else {
-                continue;
-            };
-
-            // Build IntHopState from ending ranges
-            let hop1 = crossing1.ending_range.to_int_hop_state();
-            let hop2 = crossing2.ending_range.to_int_hop_state();
-
-            // Closed-form optimal input for this piece
-            let Ok(result) = crate::mobius_int_exact::exact_mobius_solve(&[hop1, hop2]) else {
-                continue;
-            };
-
-            if !result.is_profitable || result.optimal_input.is_zero() {
-                continue;
-            }
-
-            // The optimal input must be at least crossing_gross_input for hop 1
-            // to reach the ending range k1
-            let total_optimal_input = result
-                .optimal_input
-                .saturating_add(crossing1.crossing_gross_input);
-
-            // Also check: the output of hop 1 at optimal must cover crossing_gross_input for hop 2
-            // This is validated by the full piecewise simulation below
-
-            // Search ±2 around total_optimal_input
-            for delta in -2i32..=2 {
-                let candidate = if delta >= 0 {
-                    total_optimal_input.saturating_add(U256::from(delta.cast_unsigned()))
-                } else {
-                    total_optimal_input.saturating_sub(U256::from((-delta).cast_unsigned()))
-                };
-
-                if candidate.is_zero() {
-                    continue;
-                }
-
-                let sim = int_simulate_v3_v3_path(
-                    candidate,
-                    if k1 == 0 { None } else { Some(&crossing1) },
-                    if k2 == 0 { None } else { Some(&crossing2) },
-                    &seq1.ranges[0],
-                    &seq2.ranges[0],
-                );
-
-                if sim.final_output > candidate {
-                    let profit = sim.final_output - candidate;
-                    if profit > best_profit {
-                        best_profit = profit;
-                        best_x = candidate;
-                        best_hop_outputs = sim.hop_outputs;
-                    }
-                }
-            }
-        }
-    }
-
-    if best_profit.is_zero() {
-        None
-    } else {
-        Some((best_x, best_profit, best_hop_outputs))
-    }
+    solve_active_set_path(&[
+        WalkHop::Cl {
+            crossings: build_crossing_table(seq1),
+        },
+        WalkHop::Cl {
+            crossings: build_crossing_table(seq2),
+        },
+    ])
 }
 
-/// Solve an N-hop concentrated-liquidity arbitrage path using integer-exact
-/// Möbius solver.
-///
-/// Generalizes `int_solve_v3_v3` from exactly 2 sequences to N sequences.
-/// For each combination of ending tick ranges (k0, k1, ..., k_{n-1}):
-/// 1. Build `IntHopState` from each ending range's effective reserves
-/// 2. Compute crossing costs (sum of `crossing_gross_input` for all hops with k > 0)
-/// 3. Compute closed-form optimal input via `exact_mobius_solve`
-/// 4. Add crossing costs to get total optimal input
-/// 5. Validate with full piecewise simulation (`int_simulate_cl_path_n`)
-/// 6. Search ±2 neighbors for integer rounding
-///
-/// The enumeration uses iterative mixed-radix counting to avoid deeply nested
-/// loops. For 3 hops with up to 10 candidates each, this is at most 1000
-/// combinations — feasible for the solver.
+/// Pre-compute the crossing data for every ending-range index of a CL
+/// sequence.
+fn build_crossing_table(seq: &IntV3TickRangeSequence) -> Vec<IntTickRangeCrossing> {
+    // `compute_crossing(k)` is O(k); the full table is O(len²) with len
+    // typically ≤ 15 — negligible against a single simulation.
+    (0..seq.ranges.len())
+        .map(|k| {
+            seq.compute_crossing(k)
+                .expect("k in 0..ranges.len() is always in bounds")
+        })
+        .collect()
+}
+
+/// Solve an N-hop concentrated-liquidity arbitrage path with the active-set
+/// piecewise Möbius walk (ergo 7J22EQ; replaces the capped mixed-radix
+/// ending-range enumeration — there is no tuple budget any more).
 ///
 /// Returns `(optimal_input, profit, hop_outputs)` or `None` if not profitable.
 /// `hop_outputs[i]` = output after hop `i`.
@@ -364,186 +833,13 @@ pub fn int_solve_cl_path(sequences: &[&IntV3TickRangeSequence]) -> Option<(U256,
     if sequences.is_empty() {
         return None;
     }
-
-    // Delegate to the 2-hop solver for the simple case
-    if sequences.len() == 2 {
-        return int_solve_v3_v3(sequences[0], sequences[1]);
-    }
-
-    let max_candidates = 10;
-    let n_hops = sequences.len();
-
-    // Fast path: all single-range → standard N-hop Möbius (no crossing needed)
-    let all_single = sequences.iter().all(|s| s.ranges.len() == 1);
-    if all_single {
-        let flat_hops: Vec<IntHopState> = sequences
-            .iter()
-            .map(|s| s.ranges[0].to_int_hop_state())
-            .collect();
-        let result = crate::mobius_int_exact::exact_mobius_solve(&flat_hops).ok()?;
-
-        if !result.is_profitable || result.optimal_input.is_zero() || result.profit.is_zero() {
-            return None;
-        }
-
-        // Validate with N-hop CL simulation (no crossings)
-        let base_ranges: Vec<IntV3TickRangeHop> =
-            sequences.iter().map(|s| s.ranges[0].clone()).collect();
-        let crossings: Vec<Option<IntTickRangeCrossing>> = vec![None; n_hops];
-        let sim = int_simulate_cl_path_n(result.optimal_input, &crossings, &base_ranges);
-        if sim.final_output > result.optimal_input {
-            let profit = sim.final_output - result.optimal_input;
-            return Some((result.optimal_input, profit, sim.hop_outputs));
-        }
-        return None;
-    }
-
-    // General case: enumerate (k0, k1, ..., k_{n-1}) ending-range combinations
-    let radices: Vec<usize> = sequences
+    let hops: Vec<WalkHop> = sequences
         .iter()
-        .map(|s| max_candidates.min(s.ranges.len()))
-        .collect();
-
-    let mut best_x = U256::ZERO;
-    let mut best_profit = U256::ZERO;
-    let mut best_hop_outputs: Vec<U256> = Vec::new();
-
-    // Pre-compute base ranges
-    let base_ranges: Vec<IntV3TickRangeHop> =
-        sequences.iter().map(|s| s.ranges[0].clone()).collect();
-
-    // Iterate over all combinations using mixed-radix counting
-    let mut ks: Vec<usize> = vec![0; n_hops];
-    let mut crossings: Vec<Option<IntTickRangeCrossing>> = Vec::with_capacity(n_hops);
-    'outer: loop {
-        crossings.clear();
-        let mut total_crossing_cost = U256::ZERO;
-        let mut valid = true;
-
-        for i in 0..n_hops {
-            if ks[i] == 0 {
-                crossings.push(None);
-            } else {
-                let Some(crossing) = sequences[i].compute_crossing(ks[i]) else {
-                    valid = false;
-                    break;
-                };
-                total_crossing_cost =
-                    total_crossing_cost.saturating_add(crossing.crossing_gross_input);
-                crossings.push(Some(crossing));
-            }
-        }
-
-        if valid {
-            // Build flat IntHopState list from ending ranges
-            let flat_hops: Vec<IntHopState> = (0..n_hops)
-                .map(|i| {
-                    if let Some(ref crossing) = crossings[i] {
-                        crossing.ending_range.to_int_hop_state()
-                    } else {
-                        base_ranges[i].to_int_hop_state()
-                    }
-                })
-                .collect();
-
-            // Closed-form optimal input for this piece
-            if let Ok(result) = crate::mobius_int_exact::exact_mobius_solve(&flat_hops) {
-                if result.is_profitable && !result.optimal_input.is_zero() {
-                    let total_optimal_input =
-                        result.optimal_input.saturating_add(total_crossing_cost);
-
-                    // Search ±2 around total_optimal_input
-                    for delta in -2i32..=2 {
-                        let candidate = if delta >= 0 {
-                            total_optimal_input.saturating_add(U256::from(delta.cast_unsigned()))
-                        } else {
-                            total_optimal_input.saturating_sub(U256::from((-delta).cast_unsigned()))
-                        };
-
-                        if candidate.is_zero() {
-                            continue;
-                        }
-
-                        let sim = int_simulate_cl_path_n(candidate, &crossings, &base_ranges);
-
-                        if sim.final_output > candidate {
-                            let profit = sim.final_output - candidate;
-                            if profit > best_profit {
-                                best_profit = profit;
-                                best_x = candidate;
-                                best_hop_outputs = sim.hop_outputs;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Increment mixed-radix counter
-        let mut carry = true;
-        for i in 0..n_hops {
-            if !carry {
-                break;
-            }
-            ks[i] += 1;
-            if ks[i] >= radices[i] {
-                ks[i] = 0;
-                // carry continues
-            } else {
-                carry = false;
-            }
-        }
-        if carry {
-            // All digits rolled over — enumeration complete
-            break 'outer;
-        }
-    }
-
-    if best_profit.is_zero() {
-        None
-    } else {
-        Some((best_x, best_profit, best_hop_outputs))
-    }
-}
-
-/// Compute Möbius coefficients for a mixed V2-V3 path.
-///
-/// Takes a slice of hops where each hop is either a V2 `IntHopState` or
-/// a V3 `IntV3TickRangeHop`, and produces a single (K, M, N) triple that
-/// represents the composed Möbius transformation.
-///
-/// For V2 hops, this is the standard `compute_int_mobius_coefficients`.
-/// For V3 hops, we compute effective reserves and use those.
-///
-/// Returns the composed coefficients, or `None` if the path is not profitable.
-#[must_use]
-pub fn compute_mixed_int_mobius_coefficients(
-    hops: &[MixedIntHop],
-) -> Option<IntMobiusCoefficients> {
-    if hops.is_empty() {
-        return None;
-    }
-
-    // Build flat IntHopState list: each V3 sequence becomes one hop
-    let flat_hops: Vec<IntHopState> = hops
-        .iter()
-        .map(|hop| match hop {
-            MixedIntHop::V2(state) => state.clone(),
-            MixedIntHop::V3(int_v3) => int_v3.to_int_hop_state(),
+        .map(|seq| WalkHop::Cl {
+            crossings: build_crossing_table(seq),
         })
         .collect();
-
-    crate::mobius_int::compute_int_mobius_coefficients(&flat_hops).ok()
-}
-
-/// A hop in a mixed V2-V3 path — either a V2 constant-product hop
-/// or a V3 concentrated-liquidity tick range.
-#[derive(Clone, Debug)]
-pub enum MixedIntHop {
-    /// V2 constant-product hop.
-    V2(IntHopState),
-    /// V3 concentrated-liquidity tick range.
-    V3(IntV3TickRangeHop),
+    solve_active_set_path(&hops)
 }
 
 // ---------------------------------------------------------------------------
@@ -695,14 +991,22 @@ pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> V3Sw
         // Solidity: sqrtPriceNext = sqrtPriceCurrent + amountRemaining * 2^96 / liquidity
 
         // sp_next = sp_current + net_in · 2^96 / L
+        // An increment beyond U256 (absurd input at thin liquidity) means the
+        // swap blows straight through the range — saturate at the boundary
+        // instead of panicking on the narrowing (on-chain the pool simply
+        // runs out of range; pre-7J22EQ callers never proposed such inputs,
+        // the active-set walk's window-edge probes can).
         let increment_u512 = U512::from(net_in) * U512::from(q96);
-        let increment = u512_to_u256(increment_u512 / U512::from(l));
-
-        let sp_next = sp_current.saturating_add(increment);
-
-        // Clamp to range: sp_next must be <= sqrt_price_upper
-        let sp_final = sp_next.min(v3_hop.sqrt_price_upper_x96);
-        let hit_boundary = sp_final == v3_hop.sqrt_price_upper_x96;
+        let increment_u512 = increment_u512 / U512::from(l);
+        let (sp_final, hit_boundary) = if increment_u512 > U512::from(U256::MAX) {
+            (v3_hop.sqrt_price_upper_x96, true)
+        } else {
+            let increment = u512_to_u256(increment_u512);
+            let sp_next = sp_current.saturating_add(increment);
+            // Clamp to range: sp_next must be <= sqrt_price_upper
+            let sp_final = sp_next.min(v3_hop.sqrt_price_upper_x96);
+            (sp_final, sp_final == v3_hop.sqrt_price_upper_x96)
+        };
 
         // Output = L · (1/√P_current - 1/√P_final) = L · (√P_final - √P_current) / (√P_current · √P_final / 2^96)
         // In Q96: L · 2^96 · (sp_final - sp_current) / (sp_current · sp_final)
@@ -743,130 +1047,9 @@ pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> V3Sw
 // Integer V3 Exact Solver
 // ---------------------------------------------------------------------------
 
-/// Solve mixed V2-V3 arbitrage path using exact integer Möbius solver.
-///
-/// Computes Möbius coefficients from V3 effective reserves + V2 reserves,
-/// then uses the closed-form `exact_mobius_solve` to find the optimal input.
-///
-/// Simulate a mixed V2-V3 path where the V3 hop may cross tick ranges.
-///
-/// If `v3_crossing` is `Some`, the V3 hop is split into:
-/// 1. Crossing `k` ranges (consuming `crossing_gross_input`, producing `crossing_output`)
-/// 2. Remaining input goes into the ending range
-///
-/// The `base_v3_hop` is used only when `v3_crossing` is `None` (k=0 case).
-///
-/// Returns a [`SimulationResult`] with per-hop output amounts and the final output.
-#[must_use]
-fn int_simulate_mixed_path_with_crossing(
-    amount_in: U256,
-    v2_hops: &[IntHopState],
-    base_v3_hop: &IntV3TickRangeHop,
-    v3_crossing: Option<&IntTickRangeCrossing>,
-    v3_first: bool,
-) -> SimulationResult {
-    if amount_in.is_zero() {
-        return SimulationResult {
-            final_output: U256::ZERO,
-            hop_outputs: Vec::new(),
-            consumed_inputs: vec![U256::ZERO, U256::ZERO],
-        };
-    }
-
-    if v3_first {
-        // V3 → V2: input goes through V3 first, then V2
-        let (v3_consumed, v3_output) = if let Some(crossing) = v3_crossing {
-            if amount_in < crossing.crossing_gross_input {
-                return SimulationResult {
-                    final_output: U256::ZERO,
-                    hop_outputs: Vec::new(),
-                    consumed_inputs: vec![U256::ZERO, U256::ZERO],
-                };
-            }
-            let remaining = amount_in - crossing.crossing_gross_input;
-            let ending = int_simulate_v3_swap(remaining, &crossing.ending_range);
-            let out = crossing.crossing_output.saturating_add(ending.output);
-            let consumed = crossing
-                .crossing_gross_input
-                .saturating_add(ending.consumed_input);
-            (consumed, out)
-        } else {
-            let result = int_simulate_v3_swap(amount_in, base_v3_hop);
-            (result.consumed_input, result.output)
-        };
-
-        // V3 output goes through V2 hops (V2 always consumes full input)
-        let v2_output = int_simulate_v2_hops(v3_output, v2_hops);
-        SimulationResult {
-            final_output: v2_output,
-            hop_outputs: vec![v3_output, v2_output],
-            consumed_inputs: vec![v3_consumed, v3_output],
-        }
-    } else {
-        // V2 → V3: input goes through V2 first, then V3
-        let v2_output = int_simulate_v2_hops(amount_in, v2_hops);
-
-        // V2 output goes through V3 (with optional crossing)
-        let (v3_consumed, v3_output) = if let Some(crossing) = v3_crossing {
-            if v2_output < crossing.crossing_gross_input {
-                return SimulationResult {
-                    final_output: U256::ZERO,
-                    hop_outputs: vec![v2_output],
-                    consumed_inputs: vec![amount_in, U256::ZERO],
-                };
-            }
-            let remaining = v2_output - crossing.crossing_gross_input;
-            let ending = int_simulate_v3_swap(remaining, &crossing.ending_range);
-            let out = crossing.crossing_output.saturating_add(ending.output);
-            let consumed = crossing
-                .crossing_gross_input
-                .saturating_add(ending.consumed_input);
-            (consumed, out)
-        } else {
-            let result = int_simulate_v3_swap(v2_output, base_v3_hop);
-            (result.consumed_input, result.output)
-        };
-        SimulationResult {
-            final_output: v3_output,
-            hop_outputs: vec![v2_output, v3_output],
-            consumed_inputs: vec![amount_in, v3_consumed],
-        }
-    }
-}
-
-/// Simulate a chain of V2 hops sequentially.
-#[must_use]
-fn int_simulate_v2_hops(amount_in: U256, v2_hops: &[IntHopState]) -> U256 {
-    let mut current = amount_in;
-    for hop in v2_hops {
-        if current.is_zero() {
-            return U256::ZERO;
-        }
-        current = match degenbot_v2_math::int_simulate_path(current, std::slice::from_ref(hop)) {
-            Ok(r) => r.final_output,
-            // V2 hop overflow-reverts on-chain → path yields nothing.
-            Err(_) => return U256::ZERO,
-        };
-    }
-    current
-}
-
-/// Solve mixed V2-V3 arbitrage path using integer-exact Möbius solver
-/// with full tick-range sequence for the V3 side.
-///
-/// This is the production solver for mixed paths. It enumerates V3 ending
-/// ranges (like `int_solve_v3_v3`), computing the optimal input for each
-/// piece and validating with full crossing-aware simulation.
-///
-/// # Algorithm
-///
-/// For each candidate ending range `k` in the V3 sequence:
-/// 1. Compute crossing data (input/output to reach range k)
-/// 2. Build `MixedIntHop` list with V3 ending range + V2 hops
-/// 3. Compute Möbius coefficients → closed-form optimal input for this piece
-/// 4. Total optimal input = crossing_gross_input + piecewise optimal input
-/// 5. Validate with crossing-aware simulation
-/// 6. Search ±2 neighbors for integer rounding
+/// Solve a mixed V2-V3 arbitrage path with the active-set piecewise Möbius
+/// walk (ergo 7J22EQ; replaces the capped ending-range enumeration over the
+/// V3 side — there is no tuple budget any more).
 ///
 /// Returns `(optimal_input, profit, hop_outputs)` or `None` if not profitable.
 /// `hop_outputs[0]` = output from the first hop, `hop_outputs[1]` = output from the second.
@@ -876,85 +1059,18 @@ pub fn exact_solve_mixed_v2_v3_sequence(
     v3_sequence: &IntV3TickRangeSequence,
     v3_first: bool,
 ) -> Option<(U256, U256, Vec<U256>)> {
-    let max_candidates = 10;
-    let n_v3 = max_candidates.min(v3_sequence.ranges.len());
-
-    let mut best_x = U256::ZERO;
-    let mut best_profit = U256::ZERO;
-    let mut best_hop_outputs: Vec<U256> = Vec::new();
-
-    for k in 0..n_v3 {
-        let Some(crossing) = v3_sequence.compute_crossing(k) else {
-            continue;
-        };
-
-        // Build MixedIntHop list with ending V3 range + V2 hops
-        let mixed_hops: Vec<MixedIntHop> = if v3_first {
-            let mut h = vec![MixedIntHop::V3(crossing.ending_range.clone())];
-            h.extend(v2_hops.iter().map(|h| MixedIntHop::V2(h.clone())));
-            h
-        } else {
-            let mut h: Vec<MixedIntHop> =
-                v2_hops.iter().map(|h| MixedIntHop::V2(h.clone())).collect();
-            h.push(MixedIntHop::V3(crossing.ending_range.clone()));
-            h
-        };
-
-        // Compute Möbius coefficients for this piece
-        let Some(coeffs) = compute_mixed_int_mobius_coefficients(&mixed_hops) else {
-            continue;
-        };
-
-        if !coeffs.is_profitable {
-            continue;
-        }
-
-        // Closed-form optimal input for the remaining (post-crossing) swap
-        let x_piece = crate::mobius_int_exact::compute_mobius_model_optimal_input(&coeffs);
-
-        if x_piece.is_zero() {
-            continue;
-        }
-
-        // Total optimal input = crossing cost + piecewise optimal input
-        let total_optimal_input = x_piece.saturating_add(crossing.crossing_gross_input);
-
-        // Search ±2 around total_optimal_input
-        for delta in -2i32..=2 {
-            let candidate = if delta >= 0 {
-                total_optimal_input.saturating_add(U256::from(delta.cast_unsigned()))
-            } else {
-                total_optimal_input.saturating_sub(U256::from((-delta).cast_unsigned()))
-            };
-
-            if candidate.is_zero() {
-                continue;
-            }
-
-            let sim = int_simulate_mixed_path_with_crossing(
-                candidate,
-                v2_hops,
-                &v3_sequence.ranges[0],
-                if k == 0 { None } else { Some(&crossing) },
-                v3_first,
-            );
-
-            if sim.final_output > candidate {
-                let profit = sim.final_output - candidate;
-                if profit > best_profit {
-                    best_profit = profit;
-                    best_x = candidate;
-                    best_hop_outputs = sim.hop_outputs;
-                }
-            }
-        }
-    }
-
-    if best_profit.is_zero() {
-        None
+    let mut hops: Vec<WalkHop> = Vec::with_capacity(v2_hops.len() + 1);
+    let cl_hop = WalkHop::Cl {
+        crossings: build_crossing_table(v3_sequence),
+    };
+    if v3_first {
+        hops.push(cl_hop);
+        hops.extend(v2_hops.iter().map(WalkHop::ConstantProduct));
     } else {
-        Some((best_x, best_profit, best_hop_outputs))
+        hops.extend(v2_hops.iter().map(WalkHop::ConstantProduct));
+        hops.push(cl_hop);
     }
+    solve_active_set_path(&hops)
 }
 
 // ---------------------------------------------------------------------------
@@ -972,6 +1088,11 @@ pub fn exact_solve_mixed_v2_v3_sequence(
 ///
 /// Returns a [`SimulationResult`] with per-hop output and consumed-input amounts.
 #[must_use]
+// TRANSITION (ergo 7J22EQ → PXSY47): assumed-tuple piecewise
+// simulator; production solving now uses `simulate_walk_path`.
+// Retained for the test module's uncapped-enumeration reference and
+// N-hop parity nets.
+#[cfg_attr(not(test), allow(dead_code))]
 fn int_simulate_mixed_path_n(
     amount_in: U256,
     v2_hops: &[Option<IntHopState>],
@@ -1089,16 +1210,13 @@ fn int_simulate_mixed_path_n(
     }
 }
 
-/// Solve an N-hop mixed V2 + CL (V3/V4) arbitrage path.
+/// Solve an N-hop mixed V2 + CL (V3/V4) arbitrage path with the active-set
+/// piecewise Möbius walk (ergo 7J22EQ; replaces the capped mixed-radix
+/// enumeration over CL ending ranges — there is no tuple budget any more).
 ///
-/// Takes the full path decomposition:
-/// - `v2_hops`: V2 hop states (at their path positions, `None` for CL positions)
-/// - `cl_sequences`: CL tick-range sequences (at their path positions, `None` for V2 positions)
+/// - `v2_hops[i]`: V2 hop state at position `i` (`None` for CL positions)
+/// - `cl_sequences[i]`: CL tick-range sequence at position `i` (`None` for V2 positions)
 /// - `hop_order`: true = V2 hop, false = CL hop
-///
-/// The algorithm enumerates CL ending-range combinations, builds a flat
-/// `IntHopState` list, computes Möbius coefficients, and validates with
-/// full N-hop mixed simulation.
 ///
 /// Returns `(optimal_input, profit, hop_outputs)` or `None` if not profitable.
 #[must_use]
@@ -1108,198 +1226,20 @@ pub fn exact_solve_mixed_path_n(
     hop_order: &[bool], // true = V2, false = CL
 ) -> Option<(U256, U256, Vec<U256>)> {
     let n_hops = hop_order.len();
-    if n_hops < 2 {
+    if n_hops < 2 || v2_hops.len() != n_hops || cl_sequences.len() != n_hops {
         return None;
     }
-
-    // Delegate to the 2-hop solver for the simple mixed V2+CL case
-    if n_hops == 2 {
-        let hop0_is_v2 = hop_order[0];
-        let hop1_is_v2 = hop_order[1];
-        if hop0_is_v2 != hop1_is_v2 {
-            // One V2, one CL — use the existing 2-hop mixed solver
-            let (v2_hop, cl_sequence, cl_first) = if hop0_is_v2 {
-                let v2 = v2_hops[0].as_ref()?;
-                let cl_seq = cl_sequences[1].as_ref()?;
-                (v2, cl_seq, false)
-            } else {
-                let cl_seq = cl_sequences[0].as_ref()?;
-                let v2 = v2_hops[1].as_ref()?;
-                (v2, cl_seq, true)
-            };
-            return exact_solve_mixed_v2_v3_sequence(
-                std::slice::from_ref(v2_hop),
-                cl_sequence,
-                cl_first,
-            );
-        }
-        // Both V2 or both CL — not a mixed path, should be handled by other dispatches
-        return None;
-    }
-
-    let max_candidates = 10;
-
-    // Build hop_order: true = V2, false = CL
-    // hop_order is already provided directly
-
-    // Count CL hops and their candidate radices
-    let cl_indices: Vec<usize> = hop_order
-        .iter()
-        .enumerate()
-        .filter(|(_, &is_v2)| !is_v2)
-        .map(|(i, _)| i)
-        .collect();
-
-    let cl_radices: Vec<usize> = cl_indices
-        .iter()
-        .map(|&i| {
-            cl_sequences[i]
-                .as_ref()
-                .map_or(0, |s| max_candidates.min(s.ranges.len()))
-        })
-        .collect();
-
-    // Pre-compute base ranges for all hops
-    let cl_base_ranges: Vec<Option<IntV3TickRangeHop>> = hop_order
-        .iter()
-        .enumerate()
-        .map(|(i, &is_v2)| {
-            if is_v2 {
-                None
-            } else {
-                cl_sequences[i].as_ref().map(|s| s.ranges[0].clone())
-            }
-        })
-        .collect();
-
-    let mut best_x = U256::ZERO;
-    let mut best_profit = U256::ZERO;
-    let mut best_hop_outputs: Vec<U256> = Vec::new();
-
-    // Initialize crossing indices for CL hops
-    let mut cl_ks: Vec<usize> = vec![0; cl_indices.len()];
-
-    // If no CL hops at all, this shouldn't be a mixed path
-    if cl_indices.is_empty() {
-        return None;
-    }
-
-    'outer: loop {
-        // Build crossings for all hops (None for V2, Some/None for CL based on k)
-        let mut crossings: Vec<Option<IntTickRangeCrossing>> = vec![None; n_hops];
-        let mut total_crossing_cost = U256::ZERO;
-        let mut valid = true;
-
-        for (cl_idx, &hop_idx) in cl_indices.iter().enumerate() {
-            let k = cl_ks[cl_idx];
-            if k > 0 {
-                let Some(cl_seq) = cl_sequences[hop_idx].as_ref() else {
-                    valid = false;
-                    break;
-                };
-                let Some(crossing) = cl_seq.compute_crossing(k) else {
-                    valid = false;
-                    break;
-                };
-                total_crossing_cost =
-                    total_crossing_cost.saturating_add(crossing.crossing_gross_input);
-                crossings[hop_idx] = Some(crossing);
-            }
-        }
-
-        if valid {
-            // Build flat IntHopState list for this piece
-            let mut flat_hops = Vec::with_capacity(n_hops);
-            for i in 0..n_hops {
-                if hop_order[i] {
-                    // V2 hop
-                    let Some(v2) = v2_hops[i].as_ref() else {
-                        valid = false;
-                        break;
-                    };
-                    flat_hops.push(v2.clone());
-                } else {
-                    // CL hop: use ending range if crossing, base range otherwise
-                    let hop_state = if let Some(ref crossing) = crossings[i] {
-                        crossing.ending_range.to_int_hop_state()
-                    } else {
-                        let Some(cl_seq) = cl_sequences[i].as_ref() else {
-                            valid = false;
-                            break;
-                        };
-                        cl_seq.ranges[0].to_int_hop_state()
-                    };
-                    flat_hops.push(hop_state);
-                }
-            }
-
-            if valid {
-                // Closed-form optimal input for this piece
-                if let Ok(result) = crate::mobius_int_exact::exact_mobius_solve(&flat_hops) {
-                    if result.is_profitable && !result.optimal_input.is_zero() {
-                        let total_optimal_input =
-                            result.optimal_input.saturating_add(total_crossing_cost);
-
-                        // Search ±2 around total_optimal_input
-                        for delta in -2i32..=2 {
-                            let candidate = if delta >= 0 {
-                                total_optimal_input
-                                    .saturating_add(U256::from(delta.cast_unsigned()))
-                            } else {
-                                total_optimal_input
-                                    .saturating_sub(U256::from((-delta).cast_unsigned()))
-                            };
-
-                            if candidate.is_zero() {
-                                continue;
-                            }
-
-                            let sim = int_simulate_mixed_path_n(
-                                candidate,
-                                v2_hops,
-                                &cl_base_ranges,
-                                &crossings,
-                                hop_order,
-                            );
-
-                            if sim.final_output > candidate {
-                                let profit = sim.final_output - candidate;
-                                if profit > best_profit {
-                                    best_profit = profit;
-                                    best_x = candidate;
-                                    best_hop_outputs = sim.hop_outputs;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Increment mixed-radix counter for CL crossings
-        let mut carry = true;
-        for cl_idx in 0..cl_indices.len() {
-            if !carry {
-                break;
-            }
-            cl_ks[cl_idx] += 1;
-            if cl_ks[cl_idx] >= cl_radices[cl_idx] {
-                cl_ks[cl_idx] = 0;
-                // carry continues
-            } else {
-                carry = false;
-            }
-        }
-        if carry {
-            break 'outer;
+    let mut hops: Vec<WalkHop> = Vec::with_capacity(n_hops);
+    for (i, &is_v2) in hop_order.iter().enumerate() {
+        if is_v2 {
+            hops.push(WalkHop::ConstantProduct(v2_hops[i].as_ref()?));
+        } else {
+            hops.push(WalkHop::Cl {
+                crossings: build_crossing_table(cl_sequences[i].as_ref()?),
+            });
         }
     }
-
-    if best_profit.is_zero() {
-        None
-    } else {
-        Some((best_x, best_profit, best_hop_outputs))
-    }
+    solve_active_set_path(&hops)
 }
 
 // ---------------------------------------------------------------------------
@@ -2446,5 +2386,656 @@ mod tests {
             step.fee_amount, amount_in,
             "on-chain consumed full amount_in as dust fee"
         );
+    }
+
+    // ── Active-set piecewise walk tests (7J22EQ) ────────────────────────────
+    //
+    // The legacy solver enumerated ending-range tuples up to
+    // `max_candidates = 10` per CL hop — a silent accuracy cap: when the
+    // argmax piece sits beyond index 9 on any hop, the enumeration never
+    // proposes a candidate there. The active-set piecewise Möbius walk
+    // (docs/architecture/mobius_v3_ending_range_enumeration_evaluation.md)
+    // has no prefix cap. The reference implementations below re-create the
+    // enumeration WITHOUT the cap; the tests assert the production solver
+    // matches the uncapped reference exactly — an equality the capped
+    // enumeration cannot satisfy when the optimum crosses > 9 ranges.
+
+    fn sp_at(tick: i32) -> U256 {
+        U256::from(get_sqrt_ratio_at_tick_internal(tick).unwrap())
+    }
+
+    /// Build a multi-range CL sequence in swap order around `anchor_tick`.
+    /// Range 0 contains the anchor-tick price; later ranges step by `step`
+    /// ticks in the swap direction (descending for zfo, ascending for ofz),
+    /// each `liquidities[i]` wide. Matches `compute_crossing`'s convention
+    /// that range i>0's entry price is the previous range's far boundary.
+    fn multi_range_sequence(
+        anchor_tick: i32,
+        step: i32,
+        zfo: bool,
+        liquidities: &[u128],
+    ) -> IntV3TickRangeSequence {
+        let ranges: Vec<IntV3TickRangeHop> = liquidities
+            .iter()
+            .enumerate()
+            .map(|(i, &liquidity)| {
+                let i = i32::try_from(i).unwrap();
+                let (tick_lo, tick_hi) = if zfo {
+                    (anchor_tick - (i + 1) * step, anchor_tick - i * step)
+                } else {
+                    (anchor_tick + i * step, anchor_tick + (i + 1) * step)
+                };
+                let sqrt_price_x96 = if i == 0 {
+                    sp_at(anchor_tick)
+                } else if zfo {
+                    sp_at(anchor_tick - i * step)
+                } else {
+                    sp_at(anchor_tick + i * step)
+                };
+                IntV3TickRangeHop {
+                    liquidity,
+                    sqrt_price_x96,
+                    sqrt_price_lower_x96: sp_at(tick_lo),
+                    sqrt_price_upper_x96: sp_at(tick_hi),
+                    gamma_numer: 997_000,
+                    fee_denom: 1_000_000,
+                    zero_for_one: zfo,
+                }
+            })
+            .collect();
+        IntV3TickRangeSequence::new(ranges).unwrap()
+    }
+
+    /// The legacy all-CL enumeration with NO `max_candidates` cap. This is
+    /// the pre-7J22EQ `int_solve_cl_path` general case verbatim except the
+    /// radix is the full range count. Kept in-tree as the brute-force
+    /// reference: the production solver must equal it (concavity ⇒ both find
+    /// the same argmax piece), while the historical capped enumeration
+    /// provably cannot when the optimum lives past index 9.
+    fn reference_uncapped_cl_solve(
+        sequences: &[&IntV3TickRangeSequence],
+    ) -> Option<(U256, U256, Vec<U256>)> {
+        let n_hops = sequences.len();
+        let radices: Vec<usize> = sequences.iter().map(|s| s.ranges.len()).collect();
+        let base_ranges: Vec<IntV3TickRangeHop> =
+            sequences.iter().map(|s| s.ranges[0].clone()).collect();
+
+        let mut best_x = U256::ZERO;
+        let mut best_profit = U256::ZERO;
+        let mut best_hop_outputs: Vec<U256> = Vec::new();
+
+        let mut ks: Vec<usize> = vec![0; n_hops];
+        let mut crossings: Vec<Option<IntTickRangeCrossing>> = Vec::with_capacity(n_hops);
+        'outer: loop {
+            crossings.clear();
+            let mut total_crossing_cost = U256::ZERO;
+            for (i, &k) in ks.iter().enumerate() {
+                if k >= sequences[i].ranges.len() {
+                    // Defensive: radix bookkeeping keeps k in range.
+                    return None;
+                }
+                let crossing = sequences[i].compute_crossing(k)?;
+                if k > 0 {
+                    total_crossing_cost =
+                        total_crossing_cost.saturating_add(crossing.crossing_gross_input);
+                    crossings.push(Some(crossing));
+                } else {
+                    crossings.push(None);
+                }
+            }
+
+            let flat_hops: Vec<IntHopState> = (0..n_hops)
+                .map(|i| {
+                    if let Some(ref crossing) = crossings[i] {
+                        crossing.ending_range.to_int_hop_state()
+                    } else {
+                        base_ranges[i].to_int_hop_state()
+                    }
+                })
+                .collect();
+
+            if let Ok(result) = crate::mobius_int_exact::exact_mobius_solve(&flat_hops) {
+                if result.is_profitable && !result.optimal_input.is_zero() {
+                    let total_optimal_input =
+                        result.optimal_input.saturating_add(total_crossing_cost);
+                    for delta in -2i32..=2 {
+                        let candidate = if delta >= 0 {
+                            total_optimal_input.saturating_add(U256::from(delta.cast_unsigned()))
+                        } else {
+                            total_optimal_input.saturating_sub(U256::from((-delta).cast_unsigned()))
+                        };
+                        if candidate.is_zero() {
+                            continue;
+                        }
+                        let sim = int_simulate_cl_path_n(candidate, &crossings, &base_ranges);
+                        if sim.final_output > candidate {
+                            let profit = sim.final_output - candidate;
+                            if profit > best_profit {
+                                best_profit = profit;
+                                best_x = candidate;
+                                best_hop_outputs = sim.hop_outputs;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Mixed-radix increment over FULL range counts (no cap).
+            let mut carry = true;
+            for i in 0..n_hops {
+                if !carry {
+                    break;
+                }
+                ks[i] += 1;
+                if ks[i] >= radices[i] {
+                    ks[i] = 0;
+                } else {
+                    carry = false;
+                }
+            }
+            if carry {
+                break 'outer;
+            }
+        }
+
+        if best_profit.is_zero() {
+            None
+        } else {
+            Some((best_x, best_profit, best_hop_outputs))
+        }
+    }
+
+    /// The legacy mixed V2+CL enumeration with NO `max_candidates` cap
+    /// (uncapped twin of the pre-7J22EQ `exact_solve_mixed_path_n`).
+    fn reference_uncapped_mixed_solve(
+        v2_hops: &[Option<IntHopState>],
+        cl_sequences: &[Option<IntV3TickRangeSequence>],
+        hop_order: &[bool],
+    ) -> Option<(U256, U256, Vec<U256>)> {
+        let n_hops = hop_order.len();
+        let cl_indices: Vec<usize> = hop_order
+            .iter()
+            .enumerate()
+            .filter(|(_, &is_v2)| !is_v2)
+            .map(|(i, _)| i)
+            .collect();
+        let mut cl_radices: Vec<usize> = Vec::with_capacity(cl_indices.len());
+        for &i in &cl_indices {
+            cl_radices.push(cl_sequences[i].as_ref()?.ranges.len());
+        }
+        let cl_base_ranges: Vec<Option<IntV3TickRangeHop>> = hop_order
+            .iter()
+            .enumerate()
+            .map(|(i, &is_v2)| {
+                if is_v2 {
+                    None
+                } else {
+                    cl_sequences[i].as_ref().map(|s| s.ranges[0].clone())
+                }
+            })
+            .collect();
+
+        let mut best_x = U256::ZERO;
+        let mut best_profit = U256::ZERO;
+        let mut best_hop_outputs: Vec<U256> = Vec::new();
+
+        let mut cl_ks: Vec<usize> = vec![0; cl_indices.len()];
+        'outer: loop {
+            let mut crossings: Vec<Option<IntTickRangeCrossing>> = vec![None; n_hops];
+            let mut total_crossing_cost = U256::ZERO;
+            for (cl_idx, &hop_idx) in cl_indices.iter().enumerate() {
+                let k = cl_ks[cl_idx];
+                if k > 0 {
+                    let seq = cl_sequences[hop_idx].as_ref()?;
+                    let crossing = seq.compute_crossing(k)?;
+                    total_crossing_cost =
+                        total_crossing_cost.saturating_add(crossing.crossing_gross_input);
+                    crossings[hop_idx] = Some(crossing);
+                }
+            }
+
+            let mut flat_hops = Vec::with_capacity(n_hops);
+            let mut valid = true;
+            for i in 0..n_hops {
+                if hop_order[i] {
+                    let Some(v2) = v2_hops[i].as_ref() else {
+                        valid = false;
+                        break;
+                    };
+                    flat_hops.push(v2.clone());
+                } else if let Some(ref crossing) = crossings[i] {
+                    flat_hops.push(crossing.ending_range.to_int_hop_state());
+                } else {
+                    let Some(cl_seq) = cl_sequences[i].as_ref() else {
+                        valid = false;
+                        break;
+                    };
+                    flat_hops.push(cl_seq.ranges[0].to_int_hop_state());
+                }
+            }
+
+            if valid {
+                if let Ok(result) = crate::mobius_int_exact::exact_mobius_solve(&flat_hops) {
+                    if result.is_profitable && !result.optimal_input.is_zero() {
+                        let total_optimal_input =
+                            result.optimal_input.saturating_add(total_crossing_cost);
+                        for delta in -2i32..=2 {
+                            let candidate = if delta >= 0 {
+                                total_optimal_input
+                                    .saturating_add(U256::from(delta.cast_unsigned()))
+                            } else {
+                                total_optimal_input
+                                    .saturating_sub(U256::from((-delta).cast_unsigned()))
+                            };
+                            if candidate.is_zero() {
+                                continue;
+                            }
+                            let sim = int_simulate_mixed_path_n(
+                                candidate,
+                                v2_hops,
+                                &cl_base_ranges,
+                                &crossings,
+                                hop_order,
+                            );
+                            if sim.final_output > candidate {
+                                let profit = sim.final_output - candidate;
+                                if profit > best_profit {
+                                    best_profit = profit;
+                                    best_x = candidate;
+                                    best_hop_outputs = sim.hop_outputs;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            let mut carry = true;
+            for cl_idx in 0..cl_indices.len() {
+                if !carry {
+                    break;
+                }
+                cl_ks[cl_idx] += 1;
+                if cl_ks[cl_idx] >= cl_radices[cl_idx] {
+                    cl_ks[cl_idx] = 0;
+                } else {
+                    carry = false;
+                }
+            }
+            if carry {
+                break 'outer;
+            }
+        }
+
+        if best_profit.is_zero() {
+            None
+        } else {
+            Some((best_x, best_profit, best_hop_outputs))
+        }
+    }
+
+    /// RED→GREEN (7J22EQ): a 2-hop CL cycle whose argmax piece is at
+    /// hop-2 range index 10 — strictly beyond the legacy
+    /// `max_candidates = 10` enumeration prefix (indices 0..=9).
+    ///
+    /// Geometry: hop 1 is a deep, wide zfo pool pegged near tick +750
+    /// (p₁ ≈ 1.0716 token1 per token0, price impact negligible). Hop 2 is an
+    /// ofz pool starting at tick 0 with tick-thin liquidity through
+    /// tick 600, then a deep range on [600, 660]. Round-trip marginal profit
+    /// is positive while p₂ < γ²·p₁ ≈ 1.0652, i.e. up to tick ≈ 646 —
+    /// *inside* range index 10. The capped enumeration only proposes ending
+    /// ranges 0..=9 (tick-thin liquidity; near-zero capacity) and misses the
+    /// profit concentrated in range 10.
+    /// RED→GREEN (7J22EQ): a 2-hop CL cycle whose argmax piece is at
+    /// hop-2 range index 10 — strictly beyond the legacy
+    /// `max_candidates = 10` enumeration prefix (indices 0..=9).
+    ///
+    /// Geometry: hop 1 is a deep, wide zfo pool pegged near tick +750
+    /// (p₁ ≈ 1.0779 token1 per token0, price impact negligible). Hop 2 is an
+    /// ofz pool starting at tick 0 with tick-thin liquidity through
+    /// tick 600, then a deep range on [600, 660]. Round-trip marginal profit
+    /// is positive while p₂ < γ²·p₁ ≈ 1.0714, i.e. up to tick ≈ 708 —
+    /// beyond range index 10's entry.
+    ///
+    /// This fixture ALSO exposes the legacy enumeration's second failure
+    /// mode: its per-piece anchors model the ending range as an UNBOUNDED
+    /// constant-product pool, so when the optimum sits at a range-saturation
+    /// corner, the anchor overshoots, the validation sim reports negative
+    /// profit, and even an UNcapped reference enumeration finds nothing
+    /// (asserted below as `reference == None` — the reference is
+    /// corner-blind on this geometry). The active-set walk refines each
+    /// visited piece with a windowed ternary search, which sees the corner.
+    #[test]
+    fn int_solve_cl_path_beyond_ten_range_prefix_finds_corner_profit() {
+        // Hop 1: single 1300-tick-wide deep zfo range, price pinned at tick 750.
+        let seq1 = multi_range_sequence(750, 1300, true, &[1_000_000_000_000_000]);
+        // Hop 2: 12 ofz ranges of width 60; thin until tick 600, deep on
+        // [600, 660], thin again on [660, 720].
+        let mut liquidities = vec![1_000_000_000u128; 10];
+        liquidities.push(10_000_000_000_000u128);
+        liquidities.push(1_000_000_000u128);
+        let seq2 = multi_range_sequence(0, 60, false, &liquidities);
+
+        let reference = reference_uncapped_cl_solve(&[&seq1, &seq2]);
+        assert!(
+            reference.is_none(),
+            "oracle sanity: the corner-blind reference must find NOTHING here ({reference:?})"
+        );
+
+        let (x, profit, _hop_outputs) = int_solve_cl_path(&[&seq1, &seq2])
+            .expect("the active-set walk must find the deep range-10/11 profit");
+
+        // Non-vacuity floor: a coarse ×2 grid scan of the same path already
+        // shows ≥ 1.2e8 profit; the walk's refined optimum must clear it.
+        assert!(
+            profit >= U256::from(100_000_000u64),
+            "corner profit must clear the coarse-grid floor, got {profit}"
+        );
+
+        // The solver's optimal input must LAND hop 2 BEYOND the legacy
+        // 10-tuple prefix (indices 0..=9): in the deep range 10, possibly
+        // spilling into the last thin range 11 at the saturation corner.
+        let hops = [
+            WalkHop::Cl {
+                crossings: build_crossing_table(&seq1),
+            },
+            WalkHop::Cl {
+                crossings: build_crossing_table(&seq2),
+            },
+        ];
+        let landed = simulate_walk_path(x, &hops).landed;
+        assert!(
+            landed[1] >= 10,
+            "solver input must land hop 2 past the legacy prefix (indices 0..=9), got landed[1]={}",
+            landed[1]
+        );
+
+        // Never worse than the (here empty) legacy enumeration answer.
+        let reference_profit = reference.map_or(U256::ZERO, |(_, p, _)| p);
+        assert!(profit >= reference_profit);
+    }
+
+    /// RED→GREEN (7J22EQ): mixed V2→CL 3-hop path with the same
+    /// deep-late-liquidity CL construction; the CL hop's argmax piece sits
+    /// beyond the legacy 10-tuple prefix.
+    #[test]
+    fn exact_solve_mixed_path_n_beyond_ten_range_prefix_matches_uncapped_reference() {
+        // V2 entry pool priced at tick +750: price(token0) = r1/r0
+        // ≈ 1.0001^750 ≈ 1.07163.
+        let r0 = U256::from(1_000_000_000_000_000u128);
+        let r1 = U256::from(1_071_633_064_014_504u128);
+        let v2_entry = IntHopState::new(r0, r1, 997, 1000);
+
+        let mut liquidities = vec![1_000_000_000u128; 10];
+        liquidities.push(10_000_000_000_000u128);
+        liquidities.push(1_000_000_000u128);
+        let cl_seq = multi_range_sequence(0, 60, false, &liquidities);
+
+        let reference = reference_uncapped_mixed_solve(
+            &[Some(v2_entry.clone()), None],
+            &[None, Some(cl_seq.clone())],
+            &[true, false],
+        );
+        let result = exact_solve_mixed_path_n(
+            &[Some(v2_entry), None],
+            &[None, Some(cl_seq)],
+            &[true, false],
+        );
+
+        // Not exact equality: the reference's ±2 sweep around its piecewise
+        // anchor can sit one staircase jog off the discrete argmax, while
+        // the walk's dense final sweep picks the exact discrete maximizer —
+        // the walk may beat the reference by a wei here (observed: 25189262
+        // vs 25189261). The assertion that matters is NEVER WORSE.
+        let solver_profit = result.map_or(U256::ZERO, |(_, profit, _)| profit);
+        let reference_profit = reference.map_or(U256::ZERO, |(_, profit, _)| profit);
+        assert!(
+            solver_profit >= reference_profit,
+            "mixed-path solver ({solver_profit}) must never be worse than the \
+             uncapped reference ({reference_profit})"
+        );
+        assert!(
+            !reference_profit.is_zero(),
+            "oracle sanity: this fixture must have real profit past the legacy prefix"
+        );
+    }
+
+    /// Property (7J22EQ): across a family of deep-late-liquidity
+    /// constructions, the solver must equal the uncapped reference — the
+    /// walk never does worse than ANY enumeration prefix, capped or not.
+    #[test]
+    fn cl_path_solver_matches_uncapped_reference_across_late_liquidity_family() {
+        for hop1_tick in [700i32, 750, 800] {
+            let seq1 = multi_range_sequence(hop1_tick, 1300, true, &[1_000_000_000_000_000]);
+            for deep_liquidity in [
+                1_000_000_000_000u128,
+                10_000_000_000_000,
+                100_000_000_000_000,
+            ] {
+                let mut liquidities = vec![1_000_000_000u128; 10];
+                liquidities.push(deep_liquidity);
+                liquidities.push(1_000_000_000u128);
+                let seq2 = multi_range_sequence(0, 60, false, &liquidities);
+
+                let solver = int_solve_cl_path(&[&seq1, &seq2]);
+                let reference = reference_uncapped_cl_solve(&[&seq1, &seq2]);
+                let solver_profit = solver.map_or(U256::ZERO, |(_, profit, _)| profit);
+                let reference_profit = reference.map_or(U256::ZERO, |(_, profit, _)| profit);
+                assert!(
+                    solver_profit >= reference_profit,
+                    "hop1_tick={hop1_tick} deep_liquidity={deep_liquidity}: \
+                     solver ({solver_profit}) must never be worse than the uncapped \
+                     reference ({reference_profit}) — the reference is corner-blind, \
+                     so equality is expected only for interior-optimum members"
+                );
+            }
+        }
+    }
+
+    /// Guard (7J22EQ): the walk must visit ≤ Σ ranges + 2 pieces and bound
+    /// its simulation count — the regression net against re-introducing
+    /// combinatorial tuple enumeration (the legacy solver evaluated
+    /// 10^n_hops tuples × 5 simulations regardless of where the optimum is).
+    ///
+    /// Counters are thread-local, so the reset → solve → read sequence is
+    /// race-free under multi-threaded `cargo test`.
+    #[test]
+    fn active_set_walk_piece_and_simulation_counts_are_bounded() {
+        // Deep fixture (Σ ranges = 13): optimum beyond the legacy prefix.
+        let seq1 = multi_range_sequence(750, 1300, true, &[1_000_000_000_000_000]);
+        let mut liquidities = vec![1_000_000_000u128; 10];
+        liquidities.push(10_000_000_000_000u128);
+        liquidities.push(1_000_000_000u128);
+        let seq2 = multi_range_sequence(0, 60, false, &liquidities);
+
+        WALK_PIECES_VISITED.with(|c| c.set(0));
+        WALK_PATH_SIMULATIONS.with(|c| c.set(0));
+        let result = int_solve_cl_path(&[&seq1, &seq2]);
+        assert!(result.is_some());
+        let pieces = WALK_PIECES_VISITED.with(std::cell::Cell::get);
+        let sims = WALK_PATH_SIMULATIONS.with(std::cell::Cell::get);
+        eprintln!("[guard] deep fixture: pieces_visited={pieces} path_simulations={sims}");
+        assert!(
+            pieces <= 13 + 2,
+            "visited pieces must be bounded by Σ ranges + 2, got {pieces}"
+        );
+        // Generous but combinatorial-proof bound: ≤ 512 sims per range.
+        assert!(
+            sims <= 512 * 13,
+            "simulation count must be linear-ish in Σ ranges, got {sims}"
+        );
+
+        // Common case: 3-hop, moderate multi-range sequences.
+        let s1 = multi_range_sequence(-100, 60, true, &[5_000_000_000_000u128; 8]);
+        let s2 = multi_range_sequence(0, 60, false, &[10_000_000_000_000u128; 8]);
+        let s3 = multi_range_sequence(100, 60, true, &[5_000_000_000_000u128; 8]);
+        WALK_PIECES_VISITED.with(|c| c.set(0));
+        WALK_PATH_SIMULATIONS.with(|c| c.set(0));
+        let _ = int_solve_cl_path(&[&s1, &s2, &s3]);
+        let pieces = WALK_PIECES_VISITED.with(std::cell::Cell::get);
+        let sims = WALK_PATH_SIMULATIONS.with(std::cell::Cell::get);
+        eprintln!("[guard] 3-hop: pieces_visited={pieces} path_simulations={sims}");
+        assert!(pieces <= 24 + 2);
+        assert!(sims <= 512 * 24);
+    }
+
+    /// Property (7J22EQ): the walk's profit must match a fine grid
+    /// maximization oracle (band tolerance — see the assertion) across BOTH the
+    /// shallow/interior and deep/corner liquidity families. The uncapped
+    /// enumeration reference is corner-blind (it can find NOTHING on these
+    /// geometries), so the grid is the only sound oracle here.
+    ///
+    /// Oracle: coarse ×1.05 scan, then a ±10%×400-point scan around the
+    /// coarse argmax, then an exact ±64 dense sweep.
+    #[test]
+    fn cl_path_solver_matches_fine_grid_oracle_across_families() {
+        fn grid_oracle_profit(hops: &[WalkHop]) -> U256 {
+            let mut best = U256::ZERO;
+            let mut best_x = U256::ZERO;
+            // Coarse ×1.05 scan over the plausible input range.
+            let mut x = U256::from(1000u64);
+            for _ in 0..1200 {
+                let out = simulate_walk_path(x, hops).final_output;
+                if out > x && out - x > best {
+                    best = out - x;
+                    best_x = x;
+                }
+                x = x.saturating_mul(U256::from(105u64)) / U256::from(100u64);
+                if x > (U256::from(1u128) << 128) {
+                    break;
+                }
+            }
+            if best.is_zero() {
+                return U256::ZERO;
+            }
+            // ±10% local scan (400 points).
+            let lo = best_x / U256::from(11u64) * U256::from(10u64);
+            let hi = best_x / U256::from(10u64) * U256::from(11u64);
+            let step = ((hi - lo) / U256::from(400u64)).max(U256::ONE);
+            let mut y = lo;
+            while y <= hi {
+                let out = simulate_walk_path(y, hops).final_output;
+                if out > y && out - y > best {
+                    best = out - y;
+                    best_x = y;
+                }
+                y += step;
+            }
+            // Exact local dense sweep ±64.
+            let lo = best_x.saturating_sub(U256::from(64u64));
+            let hi = best_x.saturating_add(U256::from(64u64));
+            let mut y = lo;
+            while y <= hi {
+                let out = simulate_walk_path(y, hops).final_output;
+                if out > y && out - y > best {
+                    best = out - y;
+                }
+                y += U256::from(1u64);
+            }
+            best
+        }
+
+        let seq1 = multi_range_sequence(750, 1300, true, &[1_000_000_000_000_000]);
+        for deep_liquidity in [1_000_000_000_000u128, 10_000_000_000_000] {
+            for deep_index in [3usize, 10] {
+                let mut liquidities = vec![1_000_000_000u128; 12];
+                liquidities[deep_index] = deep_liquidity;
+                let seq2 = multi_range_sequence(0, 60, false, &liquidities);
+                let seqs = [&seq1, &seq2];
+                let hops = [
+                    WalkHop::Cl {
+                        crossings: build_crossing_table(&seq1),
+                    },
+                    WalkHop::Cl {
+                        crossings: build_crossing_table(&seq2),
+                    },
+                ];
+                let oracle = grid_oracle_profit(&hops);
+                let solver = int_solve_cl_path(&seqs);
+                let solver_profit = solver.map_or(U256::ZERO, |(_, p, _)| p);
+                eprintln!(
+                    "[grid] deep_liquidity={deep_liquidity} deep_index={deep_index}:                      oracle={oracle} solver={solver_profit}"
+                );
+                // The grid is a max over SAMPLED points only — a lower
+                // bound on the true optimum. The walk may beat it slightly
+                // (its dense final sweep finds the discrete maximizer), so
+                // assert: never materially below the grid, and never above
+                // it by more than a 0.1% band (catches gross divergence).
+                assert!(
+                    solver_profit + U256::from(4u64) >= oracle,
+                    "walk must never under-shoot the grid oracle: solver={solver_profit} oracle={oracle}"
+                );
+                let band = (oracle / U256::from(1000u64)).max(U256::from(4u64));
+                assert!(
+                    solver_profit <= oracle + band,
+                    "walk must not exceed the grid beyond a 0.1% band: solver={solver_profit} oracle={oracle}"
+                );
+            }
+        }
+    }
+
+    /// Perf probe for the active-set walk (run manually with --ignored
+    /// --nocapture). Not a gate — prints µs per solve for the hot path.
+    #[test]
+    #[ignore = "perf probe; run manually"]
+    fn bench_active_set_walk_solve() {
+        use std::time::Instant;
+
+        fn time_solve(label: &str, f: impl Fn()) {
+            // warmup
+            for _ in 0..10 {
+                f();
+            }
+            let start = Instant::now();
+            let n = 200;
+            for _ in 0..n {
+                f();
+            }
+            let per = start.elapsed() / n;
+            eprintln!("[bench] {label}: {per:?}/solve");
+        }
+
+        // single-range 2-hop (previously the O(1)-lookup fast path)
+        let sr1 = multi_range_sequence(-100, 200, true, &[5_000_000_000_000u128]);
+        let sr2 = multi_range_sequence(0, 200, false, &[10_000_000_000_000u128]);
+        time_solve("2-hop single-range", || {
+            let _ = int_solve_cl_path(&[&sr1, &sr2]);
+        });
+
+        // 8-range 2-hop
+        let mr2h1 = multi_range_sequence(-100, 60, true, &[5_000_000_000_000u128; 8]);
+        let mr2h2 = multi_range_sequence(0, 60, false, &[10_000_000_000_000u128; 8]);
+        time_solve("2-hop 8-range", || {
+            let _ = int_solve_cl_path(&[&mr2h1, &mr2h2]);
+        });
+
+        // 3-hop 8-range each
+        let mr3h1 = multi_range_sequence(-100, 60, true, &[5_000_000_000_000u128; 8]);
+        let mr3h2 = multi_range_sequence(0, 60, false, &[10_000_000_000_000u128; 8]);
+        let mr3h3 = multi_range_sequence(100, 60, true, &[5_000_000_000_000u128; 8]);
+        time_solve("3-hop 8-range", || {
+            let _ = int_solve_cl_path(&[&mr3h1, &mr3h2, &mr3h3]);
+        });
+
+        // Legacy-style enumeration (uncapped) on the same 8-range 2-hop —
+        // the old production shape (10-tuples cap → 100 tuples) at reduced
+        // scale. Cost per tuple is identical in both.
+        time_solve("2-hop 8-range legacy-enumeration (reference)", || {
+            let _ = reference_uncapped_cl_solve(&[&mr2h1, &mr2h2]);
+        });
+
+        #[cfg(test)]
+        {
+            use std::sync::atomic::Ordering::Relaxed;
+            let _ = Relaxed;
+            WALK_PATH_SIMULATIONS.with(|c| c.set(0));
+            WALK_PIECES_VISITED.with(|c| c.set(0));
+            let _ = int_solve_cl_path(&[&mr2h1, &mr2h2]);
+            eprintln!(
+                "[bench] 2-hop 8-range walk: pieces={} sims={}",
+                WALK_PIECES_VISITED.with(std::cell::Cell::get),
+                WALK_PATH_SIMULATIONS.with(std::cell::Cell::get)
+            );
+        }
     }
 }

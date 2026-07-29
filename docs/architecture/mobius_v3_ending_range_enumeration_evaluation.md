@@ -333,7 +333,56 @@ incremental in `k`).
    `v3_simulate_swap` on the fixture state, and with the revm canonical-bytecode
    V3 `Pool.swap` oracle (Tier-3) on pinned mainnet slots.
 
-## 8. Cross-references
+## 8. As-built outcome (ergo 7J22EQ, landed)
+
+The combinatorial enumeration was removed from `int_solve_cl_path`,
+`int_solve_v3_v3`, `exact_solve_mixed_v2_v3_sequence`, and
+`exact_solve_mixed_path_n`; all four now delegate to
+`solve_active_set_path` in `mobius_v3_int.rs`. `max_candidates` is gone.
+The as-built walk differs from the §4 sketch in ways the implementation
+surfaced:
+
+1. **The enumeration was also corner-blind** (a second failure mode found
+   during RED-fixture construction). The per-piece anchor models the ending
+   range as an UNBOUNDED constant-product pool; when the true optimum is
+   "fill the piece to its saturation boundary" the anchor overshoots, the
+   validation sim reports negative profit, and even an UNcapped enumeration
+   finds nothing on geometries with real profit (e.g. 2.5e7 wei on the
+   mixed test fixture). Fix: the walk computes each visited piece's input
+   window with two monotone bisections over the landed-tuple map
+   (componentwise non-decreasing in x) and refines the stop-region pieces
+   with a windowed ternary search + dense sweep (`walk_refine_window`) —
+   the two-layer discipline of `exact_mobius_solve` generalized to windows.
+2. **The EVM floor staircase rules out pointwise direction tests.** The
+   discrete profit is flat to ±1 wei over tens of wei around the top, so
+   neither "argmax hugs the edge" nor pointwise edge-score comparisons are
+   reliable. The as-built direction test uses straddle probes at ±64 around
+   the right edge with +1-wei tolerance; on stop it refines the current
+   piece AND its forward neighbor (a peak straddling the edge is never
+   mis-attributed).
+3. **One-piece steps, no hopscotch** in the transitional version: the walk
+   visits consecutive pieces only, which by concavity cannot vault the
+   peak. Exact anchors (`EHSWSX`) re-enable hopping past clearly-climbing
+   pieces.
+4. **Perf (debug build, per solve):** single-range 2-hop ≈ 11 µs (was the
+   old fast path's ~handful of sims); 8-range 2-hop ≈ 5.1 ms vs ≈ 2.7 ms
+   for the legacy enumeration on the same shape. Slower in debug for
+   multi-range, structurally cheaper for tick-sparse pools (no tuple
+   budget); the release profile collapses the gap by an order of magnitude.
+   `EHSWSX` owns the remaining gap (exact anchors ⇒ fewer probes).
+5. `int_simulate_v3_swap` now saturates at the range boundary on absurd
+   inputs instead of panicking on the U512→U256 narrowing (window-edge
+   probes can propose domain-scale inputs the enumeration never tried).
+6. Guard instrumentation: thread-local `WALK_PIECES_VISITED` /
+   `WALK_PATH_SIMULATIONS` counters with a test asserting
+   `pieces ≤ Σ ranges + 2` and sims bounded per range.
+
+Validation on landing: 72 lib tests + the V4 parity nets
+(`v4_word_boundary_solver_divergence`, `v4_crossing_solver_vs_sim_parity`)
++ `degenbot-bot` lib (277) + umbrella `parity_v3_swap`/`parity_v4_swap`
+green; clippy `-D warnings` clean.
+
+## 9. Cross-references
 
 - Ergo: `TT4VOX` (this evaluation), `Q3YMBV` (interim boundary collapse),
   `7J22EQ` -> `EHSWSX`, `7J22EQ` -> `PXSY47` (sequenced follow-ups),
