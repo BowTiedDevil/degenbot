@@ -2118,6 +2118,7 @@ dependencies = [
  "alloy",
  "degenbot-core",
  "proptest",
+ "revm",
  "serde_json",
  "thiserror 2.0.19",
 ]

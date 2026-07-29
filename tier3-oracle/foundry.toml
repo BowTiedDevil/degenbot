@@ -15,7 +15,11 @@
 src = "src"
 out = "out"
 libs = ["lib"]
-# Solidity version pinned for reproducibility across CI/devcontainer. The
-# reference core libraries (Uniswap V3/V4) target 0.8.x; the spike uses 0.8.26.
+# Solidity version: multi-version compilation. v3-core's FullMath declares
+# `pragma >=0.4.0 <0.8.0` (must compile under solc 0.7.x); v4-core + the Tier-3
+# harnesses declare `^0.8.x`. `auto_detect_solc = true` lets foundry pick the
+# matching solc per source file (0.7.6 for v3-core, 0.8.26 for v4-core/Echo),
+# so both oracle harnesses build in one `forge build`. `solc_version` is the
+# fallback for ambiguous pragmas (the spike's Echo + the V4 harness pin 0.8.26).
 solc_version = "0.8.26"
-auto_detect_solc = false
+auto_detect_solc = true

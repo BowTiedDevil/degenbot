@@ -144,6 +144,24 @@ test-tier3-smoke:
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     cargo test --manifest-path rust/Cargo.toml -p degenbot-simulation --test tier3_forge_revm_smoke -- --include-ignored --nocapture
 
+# Tier-3a byte-exact oracle: SwapMath.computeSwapStep (V3 + V4) vs real
+# canonical core libraries run as EVM bytecode in revm (ergo task OZRQS6,
+# epic UP5NH6). Builds BOTH harnesses (V3 via direct solc 0.7.6 — v3-core
+# pragmas <0.8 + foundry can't resolve solc <0.8 here; V4 via forge 0.8.26)
+# via tier3-oracle/build-tier3-harnesses.sh, then runs the proptest with
+# --include-ignored. The proptest asserts each Rust output field === the
+# on-chain output byte-for-byte. The V3 direct-solc + V4 forge split is a
+# documented toolchain deviation (foundry's solc-list endpoint is
+# unreachable for <0.8 in this env); the script caches solc 0.7.6 in the svm
+# dir for reuse.
+test-tier3-step:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tier3-oracle/build-tier3-harnesses.sh
+    python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+    export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    cargo test --manifest-path rust/Cargo.toml -p degenbot-cl-math --test tier3_compute_swap_step_vs_revm -- --include-ignored --nocapture
+
 # Run all tests (Rust + Python)
 test-all: test-rust test-python
 
