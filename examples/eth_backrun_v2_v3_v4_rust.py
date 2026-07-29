@@ -34,6 +34,7 @@ import gc
 import os
 import pathlib
 import signal
+import sys
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -1554,6 +1555,71 @@ def _render_profit_logs(outcome: DispatchOutcome) -> None:
         )
 
 
+def _dump_failure_fixture(
+    rec: dict[str, Any],
+    path_info: dict[str, Any] | None,
+    current_block: int,
+) -> None:
+    """Dump the full hop detail for a failing candidate — the W2UWZO trap.
+
+    Emits one ``[sim-fixture]`` block with every field needed to record an
+    on-chain V4 swap fixture via ``cast``: each hop's family, pool address /
+    V4 pool_manager+pool_id, token0/token1 (or currency0/currency1), fee,
+    tick_spacing, zfo, + the captured actual swap amounts (amount0/amount1,
+    post-swap sqrtPrice/liquidity/tick) vs the predicted ``hop_outputs``.
+    This is the exact fingerprint the V4 calc-divergence localization needs:
+    record the on-chain V4 pool ``slot0``/``liquidity``/the tick bitmap +
+    ``ticks(tick)``-slot values at ``current_block``, re-derive the on-chain
+    amount via a ``cast call`` to the PoolManager ``swap``, and pin both in
+    a RED byte-exact ``v4_simulate_swap`` test.
+    """
+    path_id = rec["path_id"]
+    captured = rec.get("captured_swaps") or []
+    # hop_outputs + optimal_input ride on the failure record (the
+    # candidate's predicted hop outputs + the solver's input amount).
+    hop_outputs = rec.get("hop_outputs")
+    optimal_input = rec.get("optimal_input")
+    bot_logger.error(
+        f"[sim-fixture] path={path_id} block={current_block} "
+        f"bucket={rec.get('bucket')} fail_index={rec.get('fail_index')} "
+        f"optimal_input={optimal_input} "
+        f"revert={rec.get('revert_data', '')[:10]}…",
+    )
+    if path_info is None:
+        bot_logger.error("[sim-fixture] (path_info missing — cannot dump hops)")
+        return
+    hops = path_info.get("hops", [])
+    bot_logger.error(
+        f"[sim-fixture] path_type={path_info.get('path_type')} hops={len(hops)} "
+        f"hop_outputs={hop_outputs}",
+    )
+    for i, h in enumerate(hops):
+        family = h.get("family")
+        if family in ("V2", "V3"):
+            addr = h.get("pool_address")
+            t0, t1 = h.get("token0_address", "?"), h.get("token1_address", "?")
+            bot_logger.error(
+                f"[sim-fixture] hop[{i}] {family} pool={addr} "
+                f"t0={t0} t1={t1} fee={h.get('fee')} zfo={h.get('zfo')}",
+            )
+        else:  # V4
+            pm = h.get("pool_manager_address", "?")
+            pid = h.get("pool_id_hex", "?")
+            c0, c1 = h.get("currency0_address", "?"), h.get("currency1_address", "?")
+            bot_logger.error(
+                f"[sim-fixture] hop[{i}] V4 pool_manager={pm} pool_id={pid} "
+                f"c0={c0} c1={c1} fee={h.get('fee')} "
+                f"tick_spacing={h.get('tick_spacing')} zfo={h.get('zfo')}",
+            )
+    for j, s in enumerate(captured):
+        bot_logger.error(
+            f"[sim-fixture] captured[{j}] family={s.get('family')} "
+            f"emitter={s.get('emitter')} amount0={s.get('amount0')} "
+            f"amount1={s.get('amount1')} sqrt_price={s.get('sqrt_price_x96')} "
+            f"liquidity={s.get('liquidity')} tick={s.get('tick')}",
+        )
+
+
 def _render_sim_failures(outcome: DispatchOutcome, *, current_block: int) -> None:
     """Render one ``[sim-fail]`` + one ``[sim-diag]`` line per reverted / failed
     candidate (D3 + AM5AJW).
@@ -1571,6 +1637,15 @@ def _render_sim_failures(outcome: DispatchOutcome, *, current_block: int) -> Non
     Rust outcome reports ``N > 0`` failures. Capped at
     :data:`_SIM_FAIL_RENDER_CAP` records per batch with a ``… (+M more)``
     trailing line so a thin-margin revert storm doesn't flood the log.
+
+    If ``DEGENBOT_SIM_EXIT_ON_FAIL=1`` is set, dump the full hop-detail
+    (V2/V3 pool addresses, V4 pool_manager + pool_id, per-hop
+    token0/token1 + zfo + fee + tick_spacing, + the captured actual swap
+    amounts vs the predicted ``hop_outputs``) for the FIRST failing record
+    then ``sys.exit(3)`` — a trap for capturing a mainnet fixture to pin a
+    RED byte-exact calc test against (the localization loop for the V4
+    swap-step rounding divergence, ergo `W2UWZO`). Default OFF (the crate's
+    hot loop must not exit on every thin-margin revert).
     """
     failures = outcome.failures
     if not failures:
@@ -1622,6 +1697,25 @@ def _render_sim_failures(outcome: DispatchOutcome, *, current_block: int) -> Non
                 age=0,
             )
         )
+    # ── Trap: exit on first sim failure (ergo W2UWZO fixture capture) ───
+    # When DEGENBOT_SIM_EXIT_ON_FAIL=1, dump the FIRST failing record's full
+    # hop detail (V2/V3 pool addresses, V4 pool_manager + pool_id, per-hop
+    # token0/token1 + zfo + fee + tick_spacing + the captured actual swap
+    # amounts vs the predicted hop_outputs) then sys.exit(3). The dump is the
+    # exact fingerprint needed to record an on-chain V4 swap fixture with
+    # `cast` and pin a RED byte-exact calc test. Default OFF.
+    if os.environ.get("DEGENBOT_SIM_EXIT_ON_FAIL", "0") == "1":
+        first = failures[0]
+        _dump_failure_fixture(first, path_infos.get(first["path_id"]), current_block)
+        bot_logger.error(
+            f"[sim-trap] exiting on first sim failure at block={current_block} "
+            f"(DEGENBOT_SIM_EXIT_ON_FAIL=1) — see [sim-fixture] above",
+        )
+        # Flush + exit(3): the consumer task raising SystemExit propagates up
+        # through __aexit__ → shutdown() stops the pump cleanly.
+        for h in bot_logger.handlers:
+            h.flush()
+        sys.exit(3)
     overflow = len(failures) - cap
     if overflow > 0:
         bot_logger.info(f"[sim-fail] … (+{overflow} more)")
