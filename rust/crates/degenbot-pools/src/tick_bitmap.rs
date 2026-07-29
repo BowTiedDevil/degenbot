@@ -255,7 +255,9 @@ pub fn compute_tick_ranges<S: std::hash::BuildHasher>(
     tick_data: &HashMap<i32, TickInfo, S>,
     current_tick: i32,
     tick_spacing: i32,
-    liquidity: u128,
+    // Kept for API stability; unused since word-boundary ticks carry
+    // `liquidity_net = 0` (the real PM floors without changing liquidity).
+    _liquidity: u128,
     zero_for_one: bool,
     max_ranges: usize,
 ) -> Option<(Vec<V3TickRangeForSolver>, usize)> {
@@ -265,17 +267,31 @@ pub fn compute_tick_ranges<S: std::hash::BuildHasher>(
     // tick_lower > tick_upper (invalid for the solver).
     let less_than_or_equal = zero_for_one;
 
+    // Boundary ticks (uninitialized word-boundary ticks yielded by `gen_ticks`)
+    // MUST be kept as range boundaries: the real V3/V4 PoolManager floors
+    // `computeSwapStep` at every word boundary (its `_nextInitializedTick-
+    // WithinOneWord` returns the next word boundary when no initialized tick
+    // exists in the current bitmap word). Dropping them made the solver do a
+    // single-shot `compute_swap_step` per initialized-tick range, over-
+    // predicting output by the missing per-boundary rounding — the root cause
+    // of the residual V4 `CurrencyNotSettled` (ergo ON5QMD). See
+    // `v4_word_boundary_solver_divergence.rs`.
     let ticks = gen_ticks(
         tick_data,
         current_tick,
         tick_spacing,
         less_than_or_equal,
-        max_ranges + 10,
+        // Boundaries can dominate for sparse-tick pools (one initialized tick
+        // every several words); request generously so `max_ranges` initialized-
+        // tick ranges are still reachable after boundary interleaving.
+        max_ranges * 4 + 16,
     )
     .ok()?;
 
-    // Collect initialized ticks (and the current tick), clamping to MIN/MAX tick
-    let mut initialized_ticks: Vec<i32> = Vec::new();
+    // Collect all walk ticks (initialized AND word-boundary), clamping to
+    // MIN/MAX tick. We over-collect here and filter to interior boundaries
+    // below, so the cap is just a hard work ceiling.
+    let mut all_walk: Vec<(i32, bool)> = Vec::new(); // (tick, is_initialized)
     for tp in &ticks {
         let tick = tp.tick;
 
@@ -290,12 +306,9 @@ pub fn compute_tick_ranges<S: std::hash::BuildHasher>(
             break;
         }
 
-        if initialized_ticks.len() > max_ranges {
+        all_walk.push((tick, tp.is_initialized));
+        if all_walk.len() > max_ranges * 4 + 16 {
             break;
-        }
-
-        if tp.is_initialized || tick == current_tick {
-            initialized_ticks.push(tick);
         }
     }
 
@@ -305,26 +318,57 @@ pub fn compute_tick_ranges<S: std::hash::BuildHasher>(
     // Prepend it if missing.
     //   Descending (zfo=true):  [current_tick, next_below, next_next_below, ...]
     //   Ascending  (zfo=false): [current_tick, next_above, next_next_above, ...]
-    if initialized_ticks.first() != Some(&current_tick) {
-        initialized_ticks.insert(0, current_tick);
+    if all_walk.first().map(|(t, _)| *t) != Some(current_tick) {
+        all_walk.insert(0, (current_tick, tick_data.contains_key(&current_tick)));
     }
 
-    if initialized_ticks.len() < 2 {
+    // Keep the current tick, initialized ticks, AND word-boundary ticks —
+    // but ONLY boundaries that are INTERIOR to the initialized-tick span
+    // (an initialized tick exists farther in the swap direction). Trailing
+    // boundary ticks beyond the last initialized tick form a constant-
+    // liquidity unbounded tail the solver's bounded sequence cannot model,
+    // so they are dropped (matching the original contract and keeping the
+    // parity fixtures interior to initialized ticks).
+    let n = all_walk.len();
+    let mut has_init_after = vec![false; n];
+    let mut seen_init = false;
+    for j in (0..n).rev() {
+        has_init_after[j] = seen_init;
+        if all_walk[j].1 {
+            seen_init = true;
+        }
+    }
+
+    let mut range_boundary_ticks: Vec<i32> = Vec::new();
+    for (j, &(tick, is_init)) in all_walk.iter().enumerate() {
+        // j==0 keeps the current tick (range 0's near boundary) even when it
+        // is uninitialized and has no initialized tick beyond it.
+        let keep = j == 0 || is_init || has_init_after[j];
+        if !keep {
+            continue;
+        }
+        if range_boundary_ticks.len() > max_ranges {
+            break;
+        }
+        range_boundary_ticks.push(tick);
+    }
+
+    if range_boundary_ticks.len() < 2 {
         return None;
     }
 
     let mut ranges: Vec<V3TickRangeForSolver> = Vec::new();
 
-    for i in 0..(initialized_ticks.len() - 1) {
+    for i in 0..(range_boundary_ticks.len() - 1) {
         // Ticks are ordered in the swap direction:
         //   Descending (zfo=true):  [0, -60, -120]  → lower=[i+1], upper=[i]
         //   Ascending  (zfo=false): [0, 60, 120]    → lower=[i], upper=[i+1]
         let (tick_lower, tick_upper) = if zero_for_one {
             // Descending: [i+1] is the numerically lower tick
-            (initialized_ticks[i + 1], initialized_ticks[i])
+            (range_boundary_ticks[i + 1], range_boundary_ticks[i])
         } else {
             // Ascending: [i] is the numerically lower tick
-            (initialized_ticks[i], initialized_ticks[i + 1])
+            (range_boundary_ticks[i], range_boundary_ticks[i + 1])
         };
 
         // The liquidity_net comes from the boundary tick being crossed
@@ -333,7 +377,11 @@ pub fn compute_tick_ranges<S: std::hash::BuildHasher>(
         //   zfo=false (going UP): cross tick_upper from below → use tick_upper's net
         let tick_key = if zero_for_one { tick_lower } else { tick_upper };
         let range_liquidity = tick_data.get(&tick_key).map_or_else(
-            || i128::try_from(liquidity).unwrap_or(0),
+            // Uninitialized boundary tick (word boundary with no liquidity
+            // change) → liquidity_net = 0, so the next range keeps the prior
+            // liquidity. This matches the real PM, which floors
+            // `computeSwapStep` at the boundary without changing liquidity.
+            || 0i128,
             |info| {
                 // liquidity_net is I256 — extract the low 128 bits as i128
                 let bytes = info.liquidity_net.to_be_bytes::<32>();
