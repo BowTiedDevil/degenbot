@@ -295,3 +295,64 @@ The decisive reproduction test:
 `rust/crates/degenbot-solvers/tests/v4_stale_state_confirmation.rs` asserts
 both `lpFee→25898` and `swapFee→25885` against the on-chain state — a
 permanent regression guard.
+
+---
+
+## RESOLUTION v3 — V3 hops do NOT always match exactly: sparse-tick
+`compute_tick_ranges` collapse (ergo `E7ALWT`)
+
+RESOLUTION v2's "V3 hops `matched=true` ... V3 applies protocol fees outside
+`computeSwapStep` ... byte-exact to on-chain" claim held for the DEEP pools in
+the original corpus (USDC/USDT, WETH/USDT — dense initialized ticks, one per
+bitmap word). It is **refuted** for sparse-tick V3 pools. A live
+`DEGENBOT_SIM_EXIT_ON_FAIL=1` soak at block 25647669 captured a +13 wei V3-hop
+over-prediction on pool `0x57D7…dF80` (UNI/DAI fee=500, `liquidity≈2.6e10`)
+across four V3-V3-V3 paths — all with the SAME UNI/DAI hop over-predicting by
++13/+14 while hop[0] matched exactly.
+
+### The fork was solver-math, NOT stale state (decisive on-chain replay)
+
+`rust/crates/degenbot-solvers/tests/v3_iia_fixture_reproduction.rs` (env-gated)
+fetches the real `V3PoolState` at block 25647669 via the archive RPC and runs
+`v3_simulate_swap` on byte-identical state with `amount_in=50868891135` ofz.
+Result: **150836781502** — EXACTLY the captured revm-sim `actual`. The Rust
+twin reproduces the sim on on-chain@N state, so the sim did NOT run against
+stale state; the engine state matched on-chain for the walked region. Stale
+state (hypothesis 1) is exonerated for V3 here — the +13 is pure solver math.
+
+### Root cause: `compute_tick_ranges` interior-boundary collapse
+
+`compute_tick_ranges` (tick_bitmap.rs) DELIBERATELY collapses interior
+word-boundary ticks in constant-liquidity runs (the ON5QMD fix kept only
+boundaries FLANKING initialized ticks, but a multi-word-gap span still has
+interior boundaries that get collapsed). Effect: the solver does ONE
+`compute_swap_step_v3` per collapsed span while `v3_simulate_swap` floors at
+EVERY word boundary. `amount_out = L·2^96·Δ√P/(√P_cur·√P_next)` is a pure
+function of the FINAL price, and the final price differs because
+`get_next_sqrt_price_from_input` is nonlinear in the per-step fee allocation →
+accumulated per-step fee-rounding divergence = the +13 class. The dense
+synthetic sweep (`v3_crossing_solver_vs_sim_parity.rs`) is blind to this
+because its fixtures place initialized ticks at `±spacing·i` (every word) → no
+range spans a word boundary.
+
+### The decisive reproduction
+
+`rust/crates/degenbot-solvers/tests/v3_crossing_solver_vs_sim_parity.rs`:
+- `v3_crossing_solver_matches_v3_simulate_swap_across_liquidity_and_amounts`
+  (GREEN) — dense-topology parity, liquidities 1e9–1e21, both directions,
+  fee/spacing 3000/60 and 500/10, including +13 dust amounts.
+- `v3_sparse_tick_topology_reproduces_onchain_plus_thirteen_class` (`#[ignore]`,
+  RED) — sparse-tick topology (initialized ticks every 3 bitmap words) at the
+  failing pool's exact liquidity; deltas 1–3 wei, same class as the on-chain
+  +13. Turns GREEN with the fix.
+
+### The fix surface (documented in `E7ALWT`)
+
+Make the solver replicate `v3_simulate_swap`'s per-word-boundary flooring
+WITHOUT exploding the range count: `compute_crossing(k)` walks the constant-
+liquidity span between two initialized ticks with per-word-boundary
+`compute_swap_step_v3` steps (floored like the sim) instead of a single
+big-step — bounded budget, restored per-step flooring parity. Same shared
+`compute_tick_ranges` affects V4; `v4_word_boundary_solver_divergence.rs`
+only covers a 1-word gap (handled by the flanking rule), NOT multi-word gaps,
+so V4 has the same latent bug for sparse-tick V4 pools.
