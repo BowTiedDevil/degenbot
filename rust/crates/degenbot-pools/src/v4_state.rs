@@ -465,10 +465,32 @@ impl V4PoolState {
                 use_ranges[i - 1].sqrt_price_lower
             };
 
-            let range_liquidity = if i == 0 {
-                self.liquidity
+            // V4 step-1 current-tick drain (zfo only) — same semantics as the
+            // V3 case: the PoolManager swap loop resolves `tickNext = current
+            // tick` (lte, inclusive) for zfo, a zero-amount step that crosses
+            // the tick and applies `liquidity -= liquidityNet(currentTick)`.
+            // See the V3 sibling in `v3_state.rs` and the mainnet fixture
+            // logs/fixtures/v2_v3_v3_solver_divergence_25641093.md. ofz uses
+            // `gt` (exclusive) and does NOT re-cross the current tick.
+            let current_tick_drain: i128 = if zero_for_one {
+                self.tick_data.get(&self.tick).map_or(0, |info| {
+                    let bytes = info.liquidity_net.to_be_bytes::<32>();
+                    let low: [u8; 16] = bytes[16..32].try_into().unwrap_or([0u8; 16]);
+                    i128::from_be_bytes(low)
+                })
             } else {
-                let mut l = self.liquidity.cast_signed();
+                0
+            };
+            let base_liquidity: i128 = self.liquidity.cast_signed() - current_tick_drain;
+
+            let range_liquidity = if i == 0 {
+                if base_liquidity < 0 {
+                    0
+                } else {
+                    base_liquidity.cast_unsigned()
+                }
+            } else {
+                let mut l = base_liquidity;
                 for prev_range in &use_ranges[..i] {
                     let net = prev_range.liquidity_net;
                     if zero_for_one {

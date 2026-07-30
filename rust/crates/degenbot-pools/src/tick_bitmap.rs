@@ -339,6 +339,28 @@ pub fn compute_tick_ranges<S: std::hash::BuildHasher>(
         }
     }
 
+    // Build the kept-tick list, collapsing runs of consecutive
+    // zero-`liquidity_net` word-boundary ticks so the `max_ranges` budget is
+    // not starved by tick-sparse pools (tick_spacing=1 with initialized
+    // ticks separated by many word boundaries — see the mainnet fixture
+    // `logs/fixtures/v2_v3_v3_solver_divergence_25641093.md`).
+    //
+    // A boundary tick whose `liquidity_net == 0` carries no liquidity change;
+    // a run of them between two initialized ticks (or between the current
+    // tick and the first initialized tick) is mathematically identical to a
+    // single span of the same constant liquidity. Dropping the interior
+    // boundaries collapses the span without loss of correctness for the
+    // solver's piecewise-constant-product model.
+    //
+    // The ON5QMD per-step rounding parity (V3/V4 floors `computeSwapStep` at
+    // each word boundary) is preserved by keeping the boundary tick
+    // IMMEDIATELY ADJACENT to each initialized tick in the swap direction —
+    // that is the flooring whose rounding the solver must mirror. Interior
+    // boundaries between two constant-liquidity regions contribute only
+    // their own per-step rounding, which is a second-order effect the
+    // solver's range-collapse deliberately drops (the alternative is
+    // starving the budget and missing the liquidity change entirely —
+    // strictly worse).
     let mut range_boundary_ticks: Vec<i32> = Vec::new();
     for (j, &(tick, is_init)) in all_walk.iter().enumerate() {
         // j==0 keeps the current tick (range 0's near boundary) even when it
@@ -346,6 +368,18 @@ pub fn compute_tick_ranges<S: std::hash::BuildHasher>(
         let keep = j == 0 || is_init || has_init_after[j];
         if !keep {
             continue;
+        }
+        // Collapse: drop an uninitialized boundary tick when BOTH its walk
+        // neighbors are also uninitialized boundaries — i.e. it is strictly
+        // interior to a constant-liquidity run, not flanking an initialized
+        // tick. The flanking boundary ticks (one or both neighbors
+        // initialized) are kept for ON5QMD rounding parity.
+        if !is_init && j > 0 && j + 1 < all_walk.len() {
+            let prev_is_boundary = !all_walk[j - 1].1;
+            let next_is_boundary = !all_walk[j + 1].1;
+            if prev_is_boundary && next_is_boundary {
+                continue;
+            }
         }
         if range_boundary_ticks.len() > max_ranges {
             break;
@@ -899,6 +933,136 @@ mod tests {
         assert_eq!(ranges[1].tick_lower, 1);
         assert_eq!(ranges[1].tick_upper, 2);
         assert_eq!(current_idx, 0);
+    }
+
+    /// Regression: `tick_spacing=1` pools with initialized ticks separated by
+    /// many word boundaries (the mainnet fixture
+    /// `logs/fixtures/v2_v3_v3_solver_divergence_25641093.md` — DAI/WETH pool
+    /// `0xD8dEC118e1215F02e10DB846DCbBfE27d477aC19`, fee=100, `tick_spacing=1`)
+    /// starved `compute_tick_ranges`'s `max_ranges` budget: ~40 word-boundary
+    /// ticks all passed the `has_init_after` filter before the first
+    /// initialized tick was reached, so the solver saw only `liquidity_net=0`
+    /// ranges and computed the no-slippage output (over-predicted ~2.7×).
+    ///
+    /// This geometry replicates it minimally: `tick_spacing=1`, current tick at
+    /// an initialized tick `0`, the next initialized tick below at `-10354`
+    /// (≈40 word boundaries away at word size 256). With `max_ranges=15`, the
+    /// initialized tick at `-10354` MUST be reachable as a range boundary so
+    /// the solver sees the real liquidity change. Before the collapse fix,
+    /// the ~40 intervening word-boundary ticks exhausted the budget first.
+    #[test]
+    fn test_compute_tick_ranges_tick_spacing_one_reaches_distant_initialized_tick() {
+        let mut tick_data = HashMap::new();
+        // Current tick (0) is initialized; the nearest lower initialized
+        // tick is -10354 (≈40 word boundaries below at tick_spacing=1).
+        // Insert a couple more below it so the boundary-tick tail is bounded
+        // (mirrors the fixture: two clusters of initialized ticks).
+        tick_data.insert(
+            0,
+            make_tick_info(5_407_362_545_736_161_987, 5_407_362_545_736_161_987),
+        );
+        tick_data.insert(
+            -7408,
+            make_tick_info(8_246_173_613_278_771_746, 8_246_173_613_278_771_746),
+        );
+        tick_data.insert(
+            -7402,
+            make_tick_info(5_283_388_076_511_134_702, 5_283_388_076_511_134_702),
+        );
+        // The distant initialized tick the solver must reach:
+        tick_data.insert(
+            -10354,
+            make_tick_info(64_914_675_035_050_604, -64_914_675_035_050_604),
+        );
+
+        let result = compute_tick_ranges(&tick_data, 0, 1, 5_407_362_545_736_161_987, true, 15);
+        let (ranges, _current_idx) = result.expect("should produce ranges");
+        assert_ranges_well_formed(&ranges);
+
+        // The initialized tick at -10354 MUST appear as a range boundary
+        // (tick_lower of some zfo range). Before the collapse fix, the
+        // 40 intervening word-boundary ticks starved the budget and the
+        // list truncated before -10354 was reached.
+        let reaches_distant_initialized = ranges
+            .iter()
+            .any(|r| r.tick_lower == -10354 || r.tick_upper == -10354);
+        assert!(
+            reaches_distant_initialized,
+            "distant initialized tick -10354 must be a range boundary; got ticks {:?}",
+            ranges
+                .iter()
+                .flat_map(|r| [r.tick_lower, r.tick_upper])
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// Diagnostic: run `compute_tick_ranges` against the EXACT mainnet
+    /// tick data for pool `0xD8dE…7aC19` (DAI/WETH, fee=100, `tick_spacing=1`)
+    /// at block 25641224, where a V2-V3-V3 cycle over-predicted hop[2]
+    /// by ~2.7×. Prints the resulting ranges so we can see whether the
+    /// distant initialized tick at -84382 is reached within `max_ranges=15`.
+    /// The 12 ticks below are copied verbatim from the degenbot snapshot DB.
+    #[test]
+    fn test_diag_compute_tick_ranges_mainnet_dai_weth_pool() {
+        // (tick, liquidity_gross, liquidity_net) — verbatim from DB.
+        let raw: [(i32, u128, i128); 12] = [
+            (-84469, 9_223_372_036_854_775_807, 9_223_372_036_854_775_807),
+            (
+                -84460,
+                9_223_372_036_854_775_807,
+                -9_223_372_036_854_775_808,
+            ),
+            (-84440, 2_319_993_473_851_491_971, 2_319_993_473_851_491_971),
+            (-84422, 64_914_675_035_050_604, 64_914_675_035_050_604),
+            (
+                -84401,
+                2_319_993_473_851_491_971,
+                -2_319_993_473_851_491_971,
+            ),
+            (-84382, 64_914_675_035_050_604, -64_914_675_035_050_604),
+            (-74028, 5_407_362_545_736_161_987, 5_407_362_545_736_161_987),
+            (-74021, 8_246_173_613_278_771_746, 8_246_173_613_278_771_746),
+            (-74017, 5_283_388_076_511_134_702, 5_283_388_076_511_134_702),
+            (
+                -74008,
+                5_407_362_545_736_161_987,
+                -5_407_362_545_736_161_987,
+            ),
+            (
+                -74001,
+                8_246_173_613_278_771_746,
+                -8_246_173_613_278_771_746,
+            ),
+            (
+                -73990,
+                5_283_388_076_511_134_702,
+                -5_283_388_076_511_134_702,
+            ),
+        ];
+        let mut tick_data = HashMap::new();
+        for (t, gross, net) in raw {
+            tick_data.insert(t, make_tick_info(gross, net));
+        }
+        // Pre-swap state: tick=-74028, liquidity=5_407_362_545_736_161_987,
+        // swap is zero_for_one (DAI->WETH, price descending).
+        let result =
+            compute_tick_ranges(&tick_data, -74028, 1, 5_407_362_545_736_161_987, true, 15);
+        if let Some((ranges, _)) = result {
+            eprintln!("[diag] mainnet DAI/WETH pool: {} ranges", ranges.len());
+            for (i, r) in ranges.iter().enumerate() {
+                eprintln!(
+                    "[diag] range[{i}] tick=[{},{}] liq_net={}",
+                    r.tick_lower, r.tick_upper, r.liquidity_net
+                );
+            }
+            let reaches_distant = ranges
+                .iter()
+                .any(|r| r.tick_lower == -84382 || r.tick_upper == -84382);
+            eprintln!("[diag] reaches -84382 (the first liquidity-changing tick below)? {reaches_distant}");
+        } else {
+            eprintln!("[diag] mainnet DAI/WETH pool: compute_tick_ranges returned None");
+            panic!("returned None for real pool data");
+        }
     }
 
     /// Property: for any tick data with enough initialized ticks on both sides,

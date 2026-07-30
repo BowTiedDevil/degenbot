@@ -480,10 +480,42 @@ impl V3PoolState {
                 use_ranges[i - 1].sqrt_price_lower
             };
 
-            let range_liquidity = if i == 0 {
-                self.liquidity
+            // V3 step-1 current-tick drain (zfo only). When the current tick
+            // is initialized, the V3 swap loop's first step resolves
+            // `tickNext = current tick` (its `_nextInitializedTickWithinOneWord`
+            // uses `lte=true`, inclusive, for zfo) and `sqrtPriceTarget ==
+            // sqrtPriceNext == current sqrtPrice` — a zero-amount step that
+            // still crosses the tick, applying `liquidity -= liquidityNet(
+            // currentTick)`. The closed-form solver MUST mirror this drain or
+            // it models the starting liquidity as constant through a region
+            // the contract has already drained (to zero, or to a far lower
+            // value) → catastrophic no-slippage over-prediction. See the
+            // mainnet fixture logs/fixtures/v2_v3_v3_solver_divergence_25641093.md
+            // (hop[2], DAI/WETH pool 0xD8dE…7aC19: current tick -74028 carries
+            // liq_net +5.407e18 == the current liquidity, so a zfo swap drains
+            // to zero in step 1 and free-falls to -84382). ofz uses `gt`
+            // (exclusive) and does NOT re-cross the current tick, so no drain.
+            let current_tick_drain: i128 = if zero_for_one {
+                self.tick_data.get(&self.tick).map_or(0, |info| {
+                    // liquidity_net is I256; extract the low 128 bits as
+                    // i128 (same extraction as `compute_tick_ranges`).
+                    let bytes = info.liquidity_net.to_be_bytes::<32>();
+                    let low: [u8; 16] = bytes[16..32].try_into().unwrap_or([0u8; 16]);
+                    i128::from_be_bytes(low)
+                })
             } else {
-                let mut l = self.liquidity.cast_signed();
+                0
+            };
+            let base_liquidity: i128 = self.liquidity.cast_signed() - current_tick_drain;
+
+            let range_liquidity = if i == 0 {
+                if base_liquidity < 0 {
+                    0
+                } else {
+                    base_liquidity.cast_unsigned()
+                }
+            } else {
+                let mut l = base_liquidity;
                 for prev_range in &use_ranges[..i] {
                     let net = prev_range.liquidity_net;
                     if zero_for_one {
@@ -1212,5 +1244,127 @@ mod apply_inherent_tests {
         assert_eq!(state.journal_len(), 0);
         state.apply_swap(U256::from(2u128) << 96, liq + 1, 1, 7, &[]);
         assert_eq!(state.journal_len(), 1);
+    }
+
+    /// Regression: the closed-form solver's `build_int_v3_sequence` MUST drain
+    /// the current tick's `liquidity_net` at step 1 for `zero_for_one` swaps
+    /// when the current tick is initialized. The mainnet DAI/WETH pool
+    /// `0xD8dE…7aC19` (fee=100, `tick_spacing=1`) at block 25641224 had its
+    /// current tick `-74028` initialized with `liq_net = +5_407_362_545_736_161_987`
+    /// — exactly the active liquidity. A zfo swap's first V3 step crosses the
+    /// current tick (lte, inclusive) in a zero-amount step, draining liquidity
+    /// to ZERO; the price then free-falls through the 10k-tick gap to `-84382`
+    /// where liquidity recovers to `6_491_467_503_505_060_4`. Without the drain,
+    /// the solver models range 0 as carrying the full `5.407e18` liquidity
+    /// through the whole region → no-slippage over-prediction of ~2.7× (the
+    /// `no-profit` trap; see `logs/fixtures/v2_v3_v3_solver_divergence_25641093.md`).
+    #[test]
+    fn build_int_v3_sequence_drains_current_tick_on_zfo_when_current_is_initialized() {
+        // 12 initialized ticks copied verbatim from the degenbot snapshot DB
+        // for pool 0xD8dE…7aC19 at block 25641224.
+        let raw: [(i32, u128, i128); 12] = [
+            (-84469, 9_223_372_036_854_775_807, 9_223_372_036_854_775_807),
+            (
+                -84460,
+                9_223_372_036_854_775_807,
+                -9_223_372_036_854_775_808,
+            ),
+            (-84440, 2_319_993_473_851_491_971, 2_319_993_473_851_491_971),
+            (-84422, 64_914_675_035_050_604, 64_914_675_035_050_604),
+            (
+                -84401,
+                2_319_993_473_851_491_971,
+                -2_319_993_473_851_491_971,
+            ),
+            (-84382, 64_914_675_035_050_604, -64_914_675_035_050_604),
+            (-74028, 5_407_362_545_736_161_987, 5_407_362_545_736_161_987),
+            (-74021, 8_246_173_613_278_771_746, 8_246_173_613_278_771_746),
+            (-74017, 5_283_388_076_511_134_702, 5_283_388_076_511_134_702),
+            (
+                -74008,
+                5_407_362_545_736_161_987,
+                -5_407_362_545_736_161_987,
+            ),
+            (
+                -74001,
+                8_246_173_613_278_771_746,
+                -8_246_173_613_278_771_746,
+            ),
+            (
+                -73990,
+                5_283_388_076_511_134_702,
+                -5_283_388_076_511_134_702,
+            ),
+        ];
+        let mut tick_data = HashMap::new();
+        for (t, gross, net) in raw {
+            tick_data.insert(
+                t,
+                TickInfo {
+                    liquidity_gross: U256::from(gross).to::<U128>(),
+                    liquidity_net: I256::try_from(net).unwrap(),
+                    block: 0,
+                },
+            );
+        }
+        // Pre-swap on-chain state (verified via cast at block 25641093).
+        let sqrt_price_x96 = U256::from(1_956_421_190_421_993_762_013_571_523u128);
+        let state = V3PoolState {
+            sqrt_price_x96,
+            liquidity: 5_407_362_545_736_161_987,
+            tick: -74028,
+            update_block: 0,
+            tick_data,
+            coverage: PoolTickCoverage::Tracked,
+            known_bitmap_words: HashSet::new(),
+            fetcher: None,
+            journal: ReorgJournal::<V3BlockDelta>::new(8),
+            snapshot_seed: None,
+            post_drain_snapshot: None,
+            cached_tick_ranges: parking_lot::Mutex::new(TickRangeCache::default()),
+        };
+
+        // zfo (DAI->WETH). Collapsed ranges (verified in
+        // `tick_bitmap::tests::test_diag_compute_tick_ranges_mainnet_dai_weth_pool`):
+        //   r0 = [-74240, -74028] liq_net=0   (current tick -74028 = r0 UPPER bound)
+        //   r1 = [-84224, -74240] liq_net=0   (the 10k-tick free-fall gap)
+        //   r2 = [-84382, -84224] liq_net=-6.49e16
+        //   r3 = [-84401, -84382] liq_net=-2.32e18  ← holds captured post-swap tick -84383
+        // After the current-tick drain the in-range liquidity must be:
+        //   r0,r1,r2 → 0                          (drained at -74028; no net until -84382)
+        //   r3       → 64_914_675_035_050_604     (crossing -84382 recovers liq)
+        let seq = state
+            .build_int_v3_sequence(1, 100, true, 15)
+            .expect("should build a sequence");
+
+        let liqs: Vec<u128> = seq.ranges.iter().map(|r| r.liquidity).collect();
+        eprintln!("[drain-test] range liquidities: {liqs:?}");
+
+        assert_eq!(
+            liqs[0], 0,
+            "r0 must be drained to 0 (current-tick -74028 zfo drain)"
+        );
+        assert_eq!(liqs[1], 0, "r1 must be 0 (free-fall gap above -84382)");
+        assert_eq!(
+            liqs[2], 0,
+            "r2 must be 0 (still above -84382, no net applied)"
+        );
+        assert_eq!(
+            liqs[3], 64_914_675_035_050_604,
+            "r3 must recover to 6.49e16 after crossing -84382"
+        );
+
+        // ofz must NOT drain: current tick -74028 is r0's LOWER bound for ofz,
+        // and gt is exclusive → no zero-amount crossing at step 1.
+        state.invalidate_tick_range_cache();
+        let seq_ofz = state
+            .build_int_v3_sequence(1, 100, false, 15)
+            .expect("should build an ofz sequence");
+        let ofz_r0 = seq_ofz.ranges[0].liquidity;
+        eprintln!("[drain-test] ofz r0 liquidity: {ofz_r0}");
+        assert_eq!(
+            ofz_r0, 5_407_362_545_736_161_987,
+            "ofz r0 must NOT drain (gt exclusive)"
+        );
     }
 }
