@@ -35,7 +35,9 @@
 #![allow(clippy::module_name_repetitions)]
 #![allow(clippy::similar_names)]
 
-use alloy::primitives::{U256, U512};
+use alloy::primitives::U256;
+#[cfg(test)]
+use alloy::primitives::U512;
 
 use degenbot_v2_math::{IntHopState, SimulationResult};
 
@@ -933,156 +935,51 @@ pub struct V3SwapResult {
 /// reach the target is consumed.
 #[must_use = "the V3 swap result should be used"]
 pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> V3SwapResult {
+    // PXSY47: per-step rounding is delegated to the canonical V3 step function
+    // `compute_swap_step_v3` — the single source of ON5QMD word-boundary
+    // flooring parity (previously re-implemented here as a parallel closed
+    // form; the two-track seam produced the V4 `CurrencyNotSettled` revert
+    // class). Byte-exact with the prior impl for all non-dust inputs — see
+    // `int_simulate_v3_swap_partial_step_zfo_matches_onchain_compute_swap_step_v3*`.
+    //
+    // Behavior change (improvement): the dust-input regime now consumes the
+    // full `amount_in` as fee (matching on-chain V3 partial-fill fee
+    // saturation), where the closed form previously rounded `net_in` to 0 and
+    // reported `consumed_input = 0`. See the updated
+    // `int_simulate_v3_swap_dust_amount_zfo_consumes_full_input_onchain_only`
+    // test which now asserts AGREEMENT (was: DOCUMENTED DISAGREEMENT).
+    use alloy::primitives::I256;
+    use degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v3;
+
     if amount_in.is_zero() || v3_hop.liquidity == 0 {
         return V3SwapResult::default();
     }
 
-    let gamma = U256::from(v3_hop.gamma_numer);
-    let fee_denom = U256::from(v3_hop.fee_denom);
-
-    // Net input after fees
-    // net_in = amount_in * gamma / fee_denom
-    let net_in_u512 = U512::from(amount_in) * U512::from(gamma);
-    let net_in = u512_to_u256(net_in_u512 / U512::from(fee_denom));
-
-    if net_in.is_zero() {
-        return V3SwapResult::default();
-    }
-
-    let l = U256::from(v3_hop.liquidity);
-    let sp_current = v3_hop.sqrt_price_x96;
-    let q96 = U256::from(1u128) << 96;
-
-    if v3_hop.zero_for_one {
-        // zfo: price decreases from √P_current toward √P_lower
-        // Solidity: sqrtPriceNext = (liquidity * sqrtPriceCurrent * 2^96) /
-        //          (liquidity * 2^96 + amountRemaining * sqrtPriceCurrent)
-        // where amountRemaining is net_in (already fee-deducted)
-
-        // numerator = L · √P_current · 2^96 = L · sp_current · q96
-        // denominator = L · 2^96 + net_in · sp_current = L · q96 + net_in · sp_current
-        //
-        // Both numerator and denominator need U512 (L=128 bits, sp=160 bits, q96=97 bits)
-        // numerator: 128+160+97 = 385 bits → fits in U512
-        // denominator: max(128+97, 256+160) = 416 bits → fits in U512
-
-        let numerator = U512::from(l) * U512::from(sp_current) * U512::from(q96);
-        let denominator =
-            U512::from(l) * U512::from(q96) + U512::from(net_in) * U512::from(sp_current);
-
-        if denominator.is_zero() {
-            return V3SwapResult::default();
-        }
-
-        // On-chain `get_next_sqrt_price_from_amount0_rounding_up` uses
-        // `muldiv_rounding_up` (CEIL) for zfo sp_next; a floor here
-        // under-shot `sp_next` → over-shot `sp_current − sp_next` →
-        // over-predicted the V3 partial-step output (zfo-only half of the
-        // V4 CurrencyNotSettled class). The ofz branch below correctly uses
-        // floor (`get_next_sqrt_price_from_amount1_rounding_down`).
-        let sp_next = degenbot_pools::int_v3_hop::u512_div_ceil(numerator, denominator);
-
-        // Clamp to range: sp_next must be >= sqrt_price_lower
-        let sp_final = sp_next.max(v3_hop.sqrt_price_lower_x96);
-        let hit_boundary = sp_final == v3_hop.sqrt_price_lower_x96;
-
-        // Output = L · (√P_current - √P_final) / 2^96
-        // In Q96: L · (sp_current - sp_final) / q96
-        let sp_diff = sp_current.saturating_sub(sp_final);
-        if sp_diff.is_zero() {
-            return V3SwapResult::default();
-        }
-
-        let output_u512 = U512::from(l) * U512::from(sp_diff);
-        let output = u512_to_u256(output_u512 / U512::from(q96));
-
-        let consumed_input = if hit_boundary {
-            // Compute the gross input that produces the boundary output.
-            // net_in_for_boundary = output * fee_denom / gamma  (inverse of the fee deduction)
-            // consumed_input = net_in_for_boundary * fee_denom / gamma
-            // Since output = L * (sp_current - sp_lower) / q96 (the full range output),
-            // and net_in_for_output = output (for zfo, output = amount1 delta),
-            // we need to recover the gross input from the output amount.
-            //
-            // In V3's computeSwapStep: if price target is reached,
-            //   amountIn = SqrtPriceMath.getAmount0Delta(sp_final, sp_current, L, roundUp=true)
-            //   feeAmount = amountRemaining - amountIn   (for exact input)
-            //   consumed = amountIn + feeAmount = amountRemaining (full net_in)
-            //
-            // But we need GROSS consumed, which includes the fee:
-            //   consumed_gross = consumed_net * fee_denom / gamma_numer
-            //
-            // The consumed net input for zfo hitting the lower boundary:
-            //   net_consumed = L * 2^96 * (sp_current - sp_lower) / (sp_current * sp_lower)
-            //   gross_consumed = net_consumed * fee_denom / gamma_numer
-            let net_consumed_u512 = U512::from(l) * U512::from(q96) * U512::from(sp_diff);
-            let net_consumed =
-                u512_to_u256(net_consumed_u512 / (U512::from(sp_current) * U512::from(sp_final)));
-            // gross_consumed = net_consumed * fee_denom / gamma
-            let gross_u512 = U512::from(net_consumed) * U512::from(fee_denom);
-            u512_to_u256(gross_u512 / U512::from(gamma))
-        } else {
-            amount_in
-        };
-
-        V3SwapResult {
-            consumed_input,
-            output,
-        }
+    let liquidity = i128::try_from(v3_hop.liquidity).unwrap_or(i128::MAX);
+    let fee_pips = U256::from(v3_hop.fee_denom - v3_hop.gamma_numer);
+    let sqrt_target = if v3_hop.zero_for_one {
+        v3_hop.sqrt_price_lower_x96
     } else {
-        // ofz: price increases from √P_current toward √P_upper
-        // Solidity: sqrtPriceNext = sqrtPriceCurrent + amountRemaining * 2^96 / liquidity
+        v3_hop.sqrt_price_upper_x96
+    };
+    // Absurd inputs (>= 2^255 — the active-set walk's window-edge probes can
+    // synthesize them) saturate to `I256::MAX`; the canonical step then hits
+    // the range boundary and reports the boundary-crossing consumed amount
+    // (matching the prior closed form's saturating semantics).
+    let amount_remaining = I256::try_from(amount_in).unwrap_or(I256::MAX);
 
-        // sp_next = sp_current + net_in · 2^96 / L
-        // An increment beyond U256 (absurd input at thin liquidity) means the
-        // swap blows straight through the range — saturate at the boundary
-        // instead of panicking on the narrowing (on-chain the pool simply
-        // runs out of range; pre-7J22EQ callers never proposed such inputs,
-        // the active-set walk's window-edge probes can).
-        let increment_u512 = U512::from(net_in) * U512::from(q96);
-        let increment_u512 = increment_u512 / U512::from(l);
-        let (sp_final, hit_boundary) = if increment_u512 > U512::from(U256::MAX) {
-            (v3_hop.sqrt_price_upper_x96, true)
-        } else {
-            let increment = u512_to_u256(increment_u512);
-            let sp_next = sp_current.saturating_add(increment);
-            // Clamp to range: sp_next must be <= sqrt_price_upper
-            let sp_final = sp_next.min(v3_hop.sqrt_price_upper_x96);
-            (sp_final, sp_final == v3_hop.sqrt_price_upper_x96)
-        };
-
-        // Output = L · (1/√P_current - 1/√P_final) = L · (√P_final - √P_current) / (√P_current · √P_final / 2^96)
-        // In Q96: L · 2^96 · (sp_final - sp_current) / (sp_current · sp_final)
-        let sp_diff = sp_final.saturating_sub(sp_current);
-        if sp_diff.is_zero() {
-            return V3SwapResult::default();
-        }
-
-        let numerator_u512 = U512::from(l) * U512::from(q96) * U512::from(sp_diff);
-        let denominator_u512 = U512::from(sp_current) * U512::from(sp_final);
-
-        if denominator_u512.is_zero() {
-            return V3SwapResult::default();
-        }
-
-        let output = u512_to_u256(numerator_u512 / denominator_u512);
-
-        let consumed_input = if hit_boundary {
-            // The consumed net input for ofz hitting the upper boundary:
-            //   net_consumed = L * (sp_upper - sp_current) / 2^96
-            //   gross_consumed = net_consumed * fee_denom / gamma
-            let net_consumed_u512 = U512::from(l) * U512::from(sp_diff);
-            let net_consumed = u512_to_u256(net_consumed_u512 / U512::from(q96));
-            let gross_u512 = U512::from(net_consumed) * U512::from(fee_denom);
-            u512_to_u256(gross_u512 / U512::from(gamma))
-        } else {
-            amount_in
-        };
-
-        V3SwapResult {
-            consumed_input,
-            output,
-        }
+    match compute_swap_step_v3(
+        v3_hop.sqrt_price_x96,
+        sqrt_target,
+        liquidity,
+        amount_remaining,
+        fee_pips,
+    ) {
+        Ok(step) => V3SwapResult {
+            consumed_input: step.amount_in.saturating_add(step.fee_amount),
+            output: step.amount_out,
+        },
+        Err(_) => V3SwapResult::default(),
     }
 }
 
@@ -1290,6 +1187,7 @@ pub fn exact_solve_mixed_path_n(
 // ---------------------------------------------------------------------------
 
 /// Convert U512 to U256, capping at U256::MAX on overflow.
+#[cfg(test)]
 fn u512_to_u256(v: U512) -> U256 {
     crate::mobius_int_exact::u512_to_u256_internal(v)
 }
@@ -2380,15 +2278,15 @@ mod tests {
     }
 
     /// Documented dust corner: for `amount_in` so small that
-    /// `floor(amount_in · γ / D) == 0`, the solver's `int_simulate_v3_swap`
-    /// short-circuits (`consumed=0`, `output=0`) but on-chain still consumes
-    /// the full `amount_in` as fee-only (`amount_in=0, fee=amount_in, output=0`).
+    /// Dust-input regime: `amount_in` small enough that the fee-deducted
+    /// `net_in = floor(amount_in · γ / D) == 0`. On-chain V3 still consumes
+    /// the full `amount_in` as fee-only (`amount_in=0, fee=amount_in,
+    /// output=0`).
     ///
-    /// This divergence is HARMLESS for the solver's profit math (output is
-    /// correctly 0 on both, so the hop yields nothing downstream), but the
-    /// `consumed_input` disagree by `amount_in`. The non-dust sweep test skips
-    /// these amounts; this test pins the documented limitation so that a future
-    /// fix (e.g. ceil on the fee path) can flip the expectation.
+    /// PXSY47 (delegation to `compute_swap_step_v3`): the solver now MATCHES
+    /// on-chain byte-for-byte here too. Previously the closed form rounded
+    /// `net_in` to 0 and reported `consumed_input = 0` (a documented
+    /// limitation that the dust-agreement test below has now flipped).
     #[test]
     fn int_simulate_v3_swap_dust_amount_zfo_consumes_full_input_onchain_only() {
         let liquidity = 10_000_000_000_000u128;
@@ -2414,15 +2312,15 @@ mod tests {
         .expect("oracle must succeed");
         let result = int_simulate_v3_swap(amount_in, &hop);
 
-        // AGREEMENT: output is 0 on both sides.
+        // AGREEMENT (PXSY47): output is 0 on both sides.
         assert_eq!(result.output, U256::ZERO);
         assert_eq!(step.amount_out, U256::ZERO);
-        // DOCUMENTED DISAGREEMENT: on-chain consumes the full amount as fee,
-        //    solver consumes 0.
+        // AGREEMENT (PXSY47): on-chain consumes the full `amount_in` as fee —
+        // the delegated `compute_swap_step_v3` path now mirrors this
+        // (previously the closed form reported `consumed_input = 0`).
         assert_eq!(
-            result.consumed_input,
-            U256::ZERO,
-            "solver rounded net_in to 0 → consumed=0"
+            result.consumed_input, amount_in,
+            "solver dust consumed_input must equal on-chain (full amount as fee)"
         );
         assert_eq!(step.amount_in, U256::ZERO);
         assert_eq!(
