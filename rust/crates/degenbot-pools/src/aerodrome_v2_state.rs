@@ -74,6 +74,8 @@ pub struct AerodromeV2PoolState {
     pub reserve1: U112,
     /// Block number of the last update.
     pub update_block: u64,
+    /// Per-mutation nonce — see [`V3PoolState::state_nonce`].
+    pub state_nonce: u64,
     /// Reorg journal — reuses the V2 delta shape (two reserves).
     pub journal: ReorgJournal<V2BlockDelta>,
 }
@@ -131,6 +133,7 @@ impl AerodromeV2PoolState {
             reserve0: params.reserve0,
             reserve1: params.reserve1,
             update_block: params.update_block,
+            state_nonce: 0,
             journal,
         };
         (identity, state)
@@ -156,6 +159,7 @@ impl ReservePairPoolState for AerodromeV2PoolState {
         self.reserve0 = reserve0;
         self.reserve1 = reserve1;
         self.update_block = block_number;
+        self.state_nonce = self.state_nonce.wrapping_add(1);
     }
 }
 
@@ -170,6 +174,7 @@ impl ReorgPoolState for AerodromeV2PoolState {
         self.reserve0 = reserve0;
         self.reserve1 = reserve1;
         self.update_block = landed_block;
+        self.state_nonce = self.state_nonce.wrapping_add(1);
         Ok(())
     }
 
@@ -200,6 +205,7 @@ mod apply_inherent_tests {
             reserve0: U112::from(r0),
             reserve1: U112::from(r1),
             update_block: 0,
+            state_nonce: 0,
             journal: ReorgJournal::<V2BlockDelta>::new(8),
         }
     }

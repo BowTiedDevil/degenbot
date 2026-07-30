@@ -852,6 +852,7 @@ mod tests {
             profit: U256::from(1_u64),
             hop_outputs: hop_outputs.clone(),
             consumed_inputs: vec![amount_in],
+            state_nonces: vec![],
         };
 
         super::thread_solver_result_onto_snapshot(&mut snapshot, Some(&solve_result));

@@ -25,6 +25,7 @@ fn make_v2_pool(reserve0: u128, reserve1: u128) -> PoolEntry {
         reserve0: U112::from(reserve0),
         reserve1: U112::from(reserve1),
         update_block: 100,
+        state_nonce: 0,
         journal: ReorgJournal::<V2BlockDelta>::new(8),
     };
     PoolEntry::V2(identity, state)

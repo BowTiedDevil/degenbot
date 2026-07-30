@@ -221,6 +221,7 @@ fn evm_sim_success_path_dual_driver_parity() {
             erc6909_profit: false,
             use_v4_batch: false,
         },
+        state_nonces: vec![],
     };
 
     let mut buckets = FailBuckets::new();

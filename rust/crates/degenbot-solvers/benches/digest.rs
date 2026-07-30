@@ -101,6 +101,7 @@ fn balancer_stable_path() -> ResolvedMixedPath {
             },
         ],
         valid: true,
+        state_nonces: vec![],
     }
 }
 
@@ -172,6 +173,7 @@ fn curve_stable_path() -> ResolvedMixedPath {
             },
         ],
         valid: true,
+        state_nonces: vec![],
     }
 }
 

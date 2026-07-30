@@ -235,6 +235,8 @@ pub struct V4PoolState {
     pub liquidity: u128,
     pub tick: i32,
     pub update_block: u64,
+    /// Per-mutation nonce — see [`V3PoolState::state_nonce`] (V4 twin).
+    pub state_nonce: u64,
     /// The packed V4 `slot0.protocolFee` (`uint24`) — two 12-bit direction
     /// fees. Used by [`crate::v4_state::v4_simulate_swap`] +
     /// [`V4PoolState::build_int_v4_sequence`] to compute the effective
@@ -294,6 +296,7 @@ impl Clone for V4PoolState {
             liquidity: self.liquidity,
             tick: self.tick,
             update_block: self.update_block,
+            state_nonce: self.state_nonce,
             protocol_fee: self.protocol_fee,
             tick_data: self.tick_data.clone(),
             coverage: self.coverage,
@@ -344,6 +347,7 @@ impl V4PoolState {
             liquidity: params.liquidity,
             tick: params.tick,
             update_block: params.update_block,
+            state_nonce: 0,
             protocol_fee: params.protocol_fee,
             tick_data: params.tick_data,
             coverage: params.coverage,
@@ -544,6 +548,7 @@ impl ReorgPoolState for V4PoolState {
             self.tick = p.tick_before;
         }
         self.update_block = result.block;
+        self.state_nonce = self.state_nonce.wrapping_add(1);
         self.invalidate_tick_range_cache();
 
         // Reverse-apply tick priors accumulated across all popped deltas.
@@ -877,6 +882,7 @@ mod apply_inherent_tests {
             liquidity: liq,
             tick: 0,
             update_block: 0,
+            state_nonce: 0,
             protocol_fee: 0,
             tick_data,
             coverage: PoolTickCoverage::Tracked,

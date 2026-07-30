@@ -200,6 +200,28 @@ impl PoolEntry {
         some_cl_mut(self)
     }
 
+    /// The pool's per-mutation state nonce (AV42C7). Bumped on every state
+    /// change (`apply_swap`, `apply_liquidity_update`, `replace_tick_data`,
+    /// `merge_tick_word`, `apply_sync`, `apply_balance_update`,
+    /// `restore_before_block`). The solver snapshots this per-hop at resolve
+    /// time so the dispatch seam can detect staleness: if a pool's current
+    /// nonce has advanced past the snapshot, the solver computed its result
+    /// against state that has since been superseded → skip the stale
+    /// candidate (the block-N solve used pool@N-1 while on-chain@N has pool@N
+    /// after a user swap landed between the solve and the sim).
+    #[must_use]
+    pub fn state_nonce(&self) -> u64 {
+        match self {
+            PoolEntry::V2(_, s) => s.state_nonce,
+            PoolEntry::V3(_, s) => s.state_nonce,
+            PoolEntry::V4(_, s) => s.state_nonce,
+            PoolEntry::Curve(_, s) => s.state_nonce,
+            PoolEntry::BalancerWeighted(_, s) => s.state_nonce,
+            PoolEntry::BalancerStable(_, s) => s.state_nonce,
+            PoolEntry::AerodromeV2(_, s) => s.state_nonce,
+        }
+    }
+
     /// Project to `&dyn ReorgPoolState` (ADR-016). One match over all 7
     /// variants — used by `BotState`'s unified reorg dispatchers
     /// (`restore_pool_before_block` / `discard_pool_before_block` /
@@ -495,6 +517,7 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
         self.liquidity = liquidity;
         self.tick = tick;
         self.update_block = block_number;
+        self.state_nonce = self.state_nonce.wrapping_add(1);
         self.invalidate_tick_range_cache();
     }
 
@@ -532,6 +555,7 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
         });
 
         self.update_block = block_number;
+        self.state_nonce = self.state_nonce.wrapping_add(1);
         self.invalidate_tick_range_cache();
     }
 }
@@ -547,6 +571,7 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
         if update_block > self.update_block {
             self.update_block = update_block;
         }
+        self.state_nonce = self.state_nonce.wrapping_add(1);
         self.seed_known_bitmap_words(tick_spacing);
         self.invalidate_tick_range_cache();
         true
@@ -557,6 +582,7 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
             self.tick_data.insert(*tick, info.clone());
         }
         self.known_bitmap_words.insert(fetched.word);
+        self.state_nonce = self.state_nonce.wrapping_add(1);
         self.invalidate_tick_range_cache();
         true
     }
@@ -596,6 +622,7 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
         self.liquidity = liquidity;
         self.tick = tick;
         self.update_block = block_number;
+        self.state_nonce = self.state_nonce.wrapping_add(1);
         self.invalidate_tick_range_cache();
     }
 
@@ -633,6 +660,7 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
         });
 
         self.update_block = block_number;
+        self.state_nonce = self.state_nonce.wrapping_add(1);
         self.invalidate_tick_range_cache();
     }
 }

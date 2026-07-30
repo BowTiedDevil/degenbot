@@ -166,6 +166,7 @@ fn state_at_tick_zero(liq: u128, tick_spacing: i32) -> V3PoolState {
         known_bitmap_words: HashSet::new(),
         fetcher: None,
         journal: ReorgJournal::<V3BlockDelta>::new(8),
+        state_nonce: 0,
         cached_tick_ranges: parking_lot::Mutex::new(TickRangeCache::default()),
     }
 }

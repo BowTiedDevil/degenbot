@@ -356,6 +356,12 @@ pub struct ResolvedMixedPath {
     pub hops: Vec<ResolvedHop>,
     /// Whether this path is valid for solving
     pub valid: bool,
+    /// Per-hop state nonces captured at resolve time (AV42C7 staleness gate).
+    /// `state_nonces[i]` is `pool_state_nonce(pool_refs[i].pool_key)` at the
+    /// resolve-time `core.read()` snapshot. The dispatch seam re-reads each
+    /// hop's current nonce and skips candidates whose nonce has advanced —
+    /// the solver computed against state the pump has since superseded.
+    pub state_nonces: Vec<u64>,
 }
 
 /// Result from solving a single arbitrage path.
@@ -363,7 +369,7 @@ pub struct ResolvedMixedPath {
 /// Includes optimality data, per-hop output amounts for the encoder, and
 /// per-hop consumed input amounts for correct profit calculation and V4
 /// int128 overflow detection.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct SolvePathResult {
     /// Optimal input amount (uint256).
     pub optimal_input: U256,
@@ -380,6 +386,12 @@ pub struct SolvePathResult {
     /// is hit, this may be less than the input — the unused remainder is
     /// retained by the caller (matching on-chain partial-fill behavior).
     pub consumed_inputs: Vec<U256>,
+    /// Per-hop state nonces captured at resolve time (AV42C7 staleness gate).
+    /// The dispatch seam re-reads each hop's current nonce and skips
+    /// candidates whose nonce has advanced — the solver computed against
+    /// state the pump has since superseded (the block-N solve used pool@N-1
+    /// while on-chain@N has pool@N after a user swap).
+    pub state_nonces: Vec<u64>,
 }
 
 // ---------------------------------------------------------------------------

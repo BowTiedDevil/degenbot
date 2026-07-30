@@ -681,6 +681,8 @@ pub struct SimulatePath {
     pub path_info: PathInfo,
     /// The block the solver produced the result on.
     pub solve_block: u64,
+    /// Per-hop state nonces captured at solve time (AV42C7 staleness gate).
+    pub state_nonces: Vec<u64>,
     /// The encode options (the `erc6909_profit` / `use_v4_batch` knobs the
     /// Python seam exposes).
     pub opts: EncodeOptions,
@@ -1650,6 +1652,7 @@ mod tests {
                 erc6909_profit: false,
                 use_v4_batch: false,
             },
+            state_nonces: vec![],
         }
     }
 

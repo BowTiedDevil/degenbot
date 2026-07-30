@@ -171,6 +171,7 @@ fn smoke_v2_path(path_id: u64) -> SimulatePath {
             erc6909_profit: false,
             use_v4_batch: false,
         },
+        state_nonces: vec![],
     }
 }
 

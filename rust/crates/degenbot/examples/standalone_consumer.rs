@@ -382,6 +382,7 @@ fn in_process_sim_standalone_slice() {
             erc6909_profit: false,
             use_v4_batch: false,
         },
+        state_nonces: vec![],
     };
     let mut buckets = FailBuckets::new();
     let result = simulate_in_process_with_db(&ctx, cache_db, &path, &mut buckets)

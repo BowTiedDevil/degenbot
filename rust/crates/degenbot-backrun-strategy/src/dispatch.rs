@@ -154,6 +154,11 @@ pub struct DispatchCandidate {
     pub hop_outputs: Vec<u128>,
     /// `solve_block` — the block the solver produced the result on.
     pub solve_block: u64,
+    /// Per-hop state nonces captured at solve time (AV42C7 staleness gate).
+    /// The dispatch seam re-reads each hop's current nonce from `BotState`
+    /// and skips candidates whose nonce has advanced — the solver computed
+    /// against state the pump has since superseded.
+    pub state_nonces: Vec<u64>,
     /// `path_info` — the resolved path hops (consumed by `encode_cmd_stream`).
     pub path_info: PathInfo,
     /// `opts` — the encode options (`erc6909_profit` / `use_v4_batch`).
@@ -170,6 +175,7 @@ impl DispatchCandidate {
             hop_outputs: self.hop_outputs.clone(),
             path_info: self.path_info.clone(),
             solve_block: self.solve_block,
+            state_nonces: self.state_nonces.clone(),
             opts: self.opts,
         }
     }
@@ -216,6 +222,10 @@ pub struct DispatchOutcome {
     /// per-call pre-filter drop count; the lifetime tally lives on
     /// [`FeeOnTransferRegistry::total_fot_dropped`].
     pub fot_dropped: usize,
+    /// AV42C7: candidates dropped because a pool's state nonce advanced past
+    /// the snapshot captured at solve time (the solver computed against
+    /// state the pump has since superseded — simulating would revert).
+    pub stale_dropped: usize,
     /// The `_fail_buckets` tally — the revert/no-profit/overflow buckets
     /// accumulated across the fan-out (ports `_fail_buckets`, L1769). The
     /// aggregation rendering (`format_failure_breakdown`) stays Python (D4);
@@ -450,6 +460,22 @@ pub fn dispatch_profitable_results(
     let (kept, thin_dropped) = filter_thin_margin_results(candidates, min_profit_margin_bps);
     outcome.thin_dropped = thin_dropped;
     candidates = kept;
+
+    // 3.5. Pre-filter — stale solve results (AV42C7). The solver computed
+    //      each candidate's hop_outputs against pool state captured at
+    //      resolve time; the pump may have advanced a pool's state since (a
+    //      user swap landed between the solve and the sim). The executor
+    //      chains the solver's PREDICTED hop outputs as exact-in amounts for
+    //      downstream hops, so any per-hop over-prediction becomes an IIA
+    //      underpayment revert. Drop candidates whose any hop's current
+    //      state nonce has advanced past the snapshot captured at solve
+    //      time — the result is stale and would revert on-chain.
+    let stale_before = candidates.len();
+    if let Some(ref arc) = bot_state {
+        let guard = arc.read();
+        candidates.retain(|c| !candidate_is_stale(&guard, c));
+    }
+    outcome.stale_dropped = stale_before - candidates.len();
 
     // 4. Cap (L2491). The candidates are expected pre-sorted by engine profit
     //    descending (the caller's responsibility — ports L1684's sort).
@@ -707,6 +733,46 @@ pub fn dispatch_profitable_results(
     outcome
 }
 
+/// Resolve a hop's `pool_id` on `BotState` and check whether its current
+/// `state_nonce` has advanced past the snapshot `candidate.state_nonces[hop]`.
+/// Returns `true` (stale) if ANY hop's nonce has advanced. A hop whose
+/// `pool_id` cannot be resolved is treated as fresh (the path-validity guard
+/// at resolve time already dropped unresolvable paths; a transient miss here
+/// is the registry's responsibility, not a staleness signal).
+///
+/// AV42C7: the executor chains the solver's predicted hop outputs as exact-in
+/// amounts, so a stale hop's over-prediction becomes an IIA underpayment
+/// revert. Dropping the candidate pre-sim avoids the revert.
+fn candidate_is_stale(core: &BotState, candidate: &DispatchCandidate) -> bool {
+    use degenbot_executor::composers::HopInfo;
+    for (i, hop) in candidate.path_info.hops.iter().enumerate() {
+        let Some(&snapshot_nonce) = candidate.state_nonces.get(i) else {
+            return false; // Mismatched lengths — let the sim path handle it.
+        };
+        let current_nonce = match hop {
+            HopInfo::V2(h) => core
+                .pool_id_by_address(&h.pool_address)
+                .map_or(0, |pid| core.pool_state_nonce(pid)),
+            HopInfo::V3(h) => core
+                .pool_id_by_address(&h.pool_address)
+                .map_or(0, |pid| core.pool_state_nonce(pid)),
+            HopInfo::V4(h) => match alloy::hex::decode(h.pool_id_hex.trim_start_matches("0x")) {
+                Ok(bytes) if bytes.len() == 32 => {
+                    let mut pid = [0u8; 32];
+                    pid.copy_from_slice(&bytes);
+                    core.v4_pool_id_by_key(h.pool_manager_address, &pid)
+                        .map_or(0, |p| core.pool_state_nonce(p))
+                }
+                _ => 0,
+            },
+        };
+        if current_nonce != snapshot_nonce {
+            return true;
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::too_many_lines)]
@@ -807,6 +873,7 @@ mod tests {
                 erc6909_profit: false,
                 use_v4_batch: false,
             },
+            state_nonces: vec![],
         }
     }
 
@@ -822,6 +889,7 @@ mod tests {
                 erc6909_profit: false,
                 use_v4_batch: false,
             },
+            state_nonces: vec![],
         }
     }
 

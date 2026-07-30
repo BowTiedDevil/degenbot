@@ -86,6 +86,7 @@ impl BalanceVectorPostSwap {
             update_block: SWAP_BLOCK,
             journal,
             data_provider: None,
+            state_nonce: 0,
         }
     }
 
@@ -105,6 +106,7 @@ impl BalanceVectorPostSwap {
             balances: self.after.clone(),
             update_block: SWAP_BLOCK,
             journal,
+            state_nonce: 0,
         }
     }
 
@@ -125,6 +127,7 @@ impl BalanceVectorPostSwap {
             update_block: SWAP_BLOCK,
             journal,
             rate_provider: None,
+            state_nonce: 0,
         }
     }
 
@@ -142,6 +145,7 @@ impl BalanceVectorPostSwap {
             update_block: GENESIS_BLOCK,
             journal,
             data_provider: None,
+            state_nonce: 0,
         }
     }
 
@@ -156,6 +160,7 @@ impl BalanceVectorPostSwap {
             balances: self.genesis.clone(),
             update_block: GENESIS_BLOCK,
             journal,
+            state_nonce: 0,
         }
     }
 }
@@ -428,6 +433,7 @@ fn v2_post_swap() -> V2PoolState {
         reserve1: a1,
         update_block: SWAP_BLOCK,
         journal,
+        state_nonce: 0,
     }
 }
 
@@ -488,6 +494,7 @@ fn aerodrome_post_swap() -> AerodromeV2PoolState {
         reserve1: a1,
         update_block: SWAP_BLOCK,
         journal,
+        state_nonce: 0,
     }
 }
 

@@ -414,12 +414,18 @@ fn solve_result_to_py_tuple<'py>(
         consumed_inputs_py.append(consumed_py)?;
     }
 
+    let state_nonces_py = PyList::empty(py);
+    for &nonce in &result.state_nonces {
+        state_nonces_py.append(nonce.into_pyobject(py)?)?;
+    }
+
     (
         path_id_py,
         input_py,
         profit_py,
         hop_outputs_py,
         consumed_inputs_py,
+        state_nonces_py,
     )
         .into_pyobject(py)
 }

@@ -78,6 +78,7 @@ mod tests {
                 cached_tick_ranges: parking_lot::Mutex::new(super::TickRangeCache::default()),
                 snapshot_seed: None,
                 post_drain_snapshot: None,
+                state_nonce: 0,
             },
         )
     }

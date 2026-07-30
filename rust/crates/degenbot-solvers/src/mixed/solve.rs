@@ -106,6 +106,7 @@ pub fn solve_path(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
                             profit: r.profit,
                             hop_outputs: r.hop_outputs,
                             consumed_inputs,
+                            ..Default::default()
                         })
                     } else {
                         None
@@ -144,6 +145,7 @@ pub fn solve_path(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
                         profit,
                         hop_outputs,
                         consumed_inputs,
+                        ..Default::default()
                     }
                 },
             )
@@ -206,7 +208,10 @@ pub fn solve_path(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
         }
     }
 
-    result
+    result.map(|mut r| {
+        r.state_nonces.clone_from(&resolved.state_nonces);
+        r
+    })
 }
 
 /// Solve a mixed V2 + CL (V3 or V4) path using integer-exact Möbius solver.
@@ -266,6 +271,7 @@ fn solve_mixed_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResult>
                 profit,
                 hop_outputs,
                 consumed_inputs,
+                ..Default::default()
             }
         },
     )
@@ -413,6 +419,7 @@ fn solidly_brute_force_best(hops: &[ResolvedHop], center: U256) -> Option<SolveP
         profit: best_profit,
         hop_outputs,
         consumed_inputs,
+        ..Default::default()
     })
 }
 
@@ -719,6 +726,7 @@ fn balancer_weighted_brute_force_best(
         profit: best_profit,
         hop_outputs,
         consumed_inputs,
+        ..Default::default()
     })
 }
 
@@ -856,6 +864,7 @@ fn solve_balancer_stable_path_int(resolved: &ResolvedMixedPath) -> Option<SolveP
             profit: best_profit,
             hop_outputs,
             consumed_inputs,
+            ..Default::default()
         });
     }
 
@@ -907,6 +916,7 @@ fn solve_balancer_stable_path_int(resolved: &ResolvedMixedPath) -> Option<SolveP
         profit: best_profit,
         hop_outputs,
         consumed_inputs,
+        ..Default::default()
     })
 }
 
@@ -1093,6 +1103,7 @@ fn curve_build_result(hops: &[ResolvedHop], best_input: U256) -> Option<SolvePat
         profit: best_profit,
         hop_outputs,
         consumed_inputs,
+        ..Default::default()
     })
 }
 

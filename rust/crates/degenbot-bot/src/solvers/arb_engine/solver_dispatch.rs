@@ -171,12 +171,14 @@ impl ArbitrageEngine {
     ) {
         resolved.hops.clear();
         resolved.valid = false;
+        resolved.state_nonces.clear();
 
         if pool_refs.len() < 2 {
             return;
         }
 
         resolved.hops.reserve(pool_refs.len());
+        resolved.state_nonces.reserve(pool_refs.len());
 
         for pool_ref in pool_refs {
             match pool_ref.hop_type {
@@ -214,6 +216,7 @@ impl ArbitrageEngine {
                         fee_denom,
                     );
                     resolved.hops.push(ResolvedHop::V2 { state: hop_state });
+                    resolved.state_nonces.push(state.state_nonce);
                 }
                 HopType::V3 => {
                     // Look up V3 pool state (now owned by BotState — ADR-003) and
@@ -238,6 +241,7 @@ impl ArbitrageEngine {
                     };
 
                     resolved.hops.push(ResolvedHop::V3 { int_seq });
+                    resolved.state_nonces.push(pool_state.state_nonce);
                 }
                 HopType::V4 => {
                     // V4 pools use identical CL math as V3 (BotState-owned, ADR-003).
@@ -259,6 +263,7 @@ impl ArbitrageEngine {
                     };
 
                     resolved.hops.push(ResolvedHop::V4 { int_seq });
+                    resolved.state_nonces.push(pool_state.state_nonce);
                 }
                 // Solidly-stable (Aerodrome stable / Camelot stable_swap) resolve. Reads
                 // reserves + identity off the per-family `PoolEntry` arm, then
@@ -292,6 +297,7 @@ impl ArbitrageEngine {
                                 variant: id.variant,
                             },
                         });
+                        resolved.state_nonces.push(state.state_nonce);
                     } else if let Some(id) = core.get_v2_identity(pool_ref.pool_key) {
                         // Camelot stable_swap path (V2PoolIdentity with
                         // `stable_swap=true`).
@@ -329,6 +335,7 @@ impl ArbitrageEngine {
                                 variant: id.variant,
                             },
                         });
+                        resolved.state_nonces.push(state.state_nonce);
                     } else {
                         return; // Not an Aerodrome/Camelot pool → invalid
                     }
@@ -388,6 +395,7 @@ impl ArbitrageEngine {
                             scaling_factor_out: sf_out,
                         },
                     });
+                    resolved.state_nonces.push(state.state_nonce);
                 }
                 HopType::BalancerStable => {
                     let Some(id) = core.get_balancer_stable_identity(pool_ref.pool_key) else {
@@ -455,6 +463,7 @@ impl ArbitrageEngine {
                             scaling_factor_out: id.scaling_factors[raw_idx_out],
                         },
                     });
+                    resolved.state_nonces.push(state.state_nonce);
                 }
                 HopType::CurveStableswap => {
                     let Some(id) = core.get_curve_identity(pool_ref.pool_key) else {
@@ -514,6 +523,7 @@ impl ArbitrageEngine {
                             d_variant,
                         },
                     });
+                    resolved.state_nonces.push(state.state_nonce);
                 }
             }
         }

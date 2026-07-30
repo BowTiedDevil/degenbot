@@ -694,6 +694,7 @@ mod tests {
                 profit: huge_profit,
                 hop_outputs: vec![U256::from(1u64), huge_profit],
                 consumed_inputs: vec![U256::from(1_000u64)],
+                state_nonces: vec![],
             },
         );
 
@@ -735,6 +736,7 @@ mod tests {
                 profit,
                 hop_outputs: vec![U256::from(1u64), profit],
                 consumed_inputs: vec![U256::from(1_000u64)],
+                state_nonces: vec![],
             },
         );
 
@@ -769,6 +771,7 @@ mod tests {
                 profit,
                 hop_outputs: vec![U256::from(1u64), profit],
                 consumed_inputs: vec![U256::from(1_000u64)],
+                state_nonces: vec![],
             },
         );
 

@@ -257,6 +257,8 @@ pub struct CurvePoolState {
     pub balances: Vec<U256>,
     /// Block number of the last balance update.
     pub update_block: u64,
+    /// Per-mutation nonce — see [`V3PoolState::state_nonce`].
+    pub state_nonce: u64,
 
     /// Reorg journal — balance priors for rollback.
     pub journal: ReorgJournal<BalancesBlockDelta>,
@@ -327,6 +329,7 @@ impl CurvePoolState {
         let state = CurvePoolState {
             balances: params.balances,
             update_block: params.update_block,
+            state_nonce: 0,
             journal,
             data_provider: params.data_provider,
         };
@@ -345,6 +348,7 @@ impl ReorgPoolState for CurvePoolState {
         let (balances, landed_block) = self.journal.restore_before_block(block)?;
         self.balances.clone_from(&balances);
         self.update_block = landed_block;
+        self.state_nonce = self.state_nonce.wrapping_add(1);
         Ok(())
     }
 
@@ -382,5 +386,6 @@ impl BalanceVectorPoolState for CurvePoolState {
         });
         self.balances = balances;
         self.update_block = block_number;
+        self.state_nonce = self.state_nonce.wrapping_add(1);
     }
 }

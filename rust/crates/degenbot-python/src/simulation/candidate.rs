@@ -62,6 +62,9 @@ impl PyDispatchCandidate {
     ///         (that's `SimResult::gross_profit`).
     ///     `hop_outputs`: the per-hop solver outputs (`list[int]`).
     ///     `solve_block`: the block the solver produced the result on.
+    ///     `state_nonces`: per-hop state nonces captured at solve time
+    ///         (AV42C7 staleness gate — the dispatch seam skips candidates
+    ///         whose pool state has advanced since the solve).
     ///     `erc6909_profit`: encode the V4 profit as an ERC6909 transfer
     ///         (default `False`).
     ///     `use_v4_batch`: encode V4 hops as a batched `unlock`-callback
@@ -71,7 +74,7 @@ impl PyDispatchCandidate {
     /// `ValueError`: if `path_id` is not registered in `engine`, or a hop
     ///         has no command-stream encoder arm (Solidly / Balancer / Curve).
     #[new]
-    #[pyo3(signature = (engine, path_id, optimal_input, engine_profit, hop_outputs, solve_block, *, erc6909_profit=false, use_v4_batch=false))]
+    #[pyo3(signature = (engine, path_id, optimal_input, engine_profit, hop_outputs, solve_block, state_nonces, *, erc6909_profit=false, use_v4_batch=false))]
     #[allow(clippy::too_many_arguments, clippy::needless_pass_by_value)]
     fn new(
         py: Python<'_>,
@@ -81,6 +84,7 @@ impl PyDispatchCandidate {
         engine_profit: u128,
         hop_outputs: Vec<u128>,
         solve_block: u64,
+        state_nonces: Vec<u64>,
         erc6909_profit: bool,
         use_v4_batch: bool,
     ) -> PyResult<Self> {
@@ -117,6 +121,7 @@ impl PyDispatchCandidate {
                 engine_profit,
                 hop_outputs,
                 solve_block,
+                state_nonces,
                 path_info: rust_path,
                 opts,
             },

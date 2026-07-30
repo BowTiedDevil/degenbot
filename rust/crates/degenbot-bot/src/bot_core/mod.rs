@@ -156,6 +156,17 @@ impl BotState {
         self.pools.get(&pool_id)
     }
 
+    /// The pool's per-mutation state nonce (AV42C7 staleness gate). Returns
+    /// `0` for an unregistered pool (the dispatch seam treats an unknown
+    /// pool as fresh — it will fail the path-validity check elsewhere).
+    /// Used by the dispatch fan-out to detect a stale solve result: the
+    /// solver snapshots each hop's nonce at resolve time; the sim seam
+    /// re-reads it and skips candidates whose pool state advanced since.
+    #[must_use]
+    pub fn pool_state_nonce(&self, pool_id: u64) -> u64 {
+        self.pools.get(&pool_id).map_or(0, PoolEntry::state_nonce)
+    }
+
     /// Create a new, empty `BotState` with a custom reorg journal depth.
     #[must_use]
     pub fn with_journal_depth(journal_depth: usize) -> Self {

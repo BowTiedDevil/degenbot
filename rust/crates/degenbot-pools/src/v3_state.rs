@@ -207,6 +207,16 @@ pub struct V3PoolState {
     pub tick: i32,
     pub update_block: u64,
 
+    /// Per-mutation nonce — bumped on every state change (`apply_swap`,
+    /// `apply_liquidity_update`, `replace_tick_data`, `merge_tick_word`,
+    /// `restore_before_block`). The solver snapshots this per-hop at resolve
+    /// time so the dispatch seam can detect staleness: if a pool's current
+    /// nonce has advanced past the snapshot, the solver computed its result
+    /// against state that has since been superseded → skip the stale
+    /// candidate (AV42C7: the block-N solve used pool@N-1 while on-chain@N
+    /// has pool@N after the user swap).
+    pub state_nonce: u64,
+
     /// Initialized ticks: tick index → (`liquidity_gross`, `liquidity_net`).
     pub tick_data: HashMap<i32, TickInfo>,
 
@@ -289,6 +299,7 @@ impl Clone for V3PoolState {
             liquidity: self.liquidity,
             tick: self.tick,
             update_block: self.update_block,
+            state_nonce: self.state_nonce,
             tick_data: self.tick_data.clone(),
             coverage: self.coverage,
             known_bitmap_words: self.known_bitmap_words.clone(),
@@ -361,6 +372,7 @@ impl V3PoolState {
             liquidity: params.liquidity,
             tick: params.tick,
             update_block: params.update_block,
+            state_nonce: 0,
             tick_data: params.tick_data,
             coverage: params.coverage,
             known_bitmap_words: HashSet::new(),
@@ -569,6 +581,7 @@ impl ReorgPoolState for V3PoolState {
             self.tick = p.tick_before;
         }
         self.update_block = result.block;
+        self.state_nonce = self.state_nonce.wrapping_add(1);
         self.invalidate_tick_range_cache();
 
         // Reverse-apply tick priors accumulated across all popped deltas.
@@ -948,6 +961,7 @@ mod apply_inherent_tests {
             liquidity: liq,
             tick: 0,
             update_block: 0,
+            state_nonce: 0,
             tick_data,
             coverage: PoolTickCoverage::Tracked,
             known_bitmap_words: HashSet::new(),
@@ -1314,6 +1328,7 @@ mod apply_inherent_tests {
             liquidity: 5_407_362_545_736_161_987,
             tick: -74028,
             update_block: 0,
+            state_nonce: 0,
             tick_data,
             coverage: PoolTickCoverage::Tracked,
             known_bitmap_words: HashSet::new(),

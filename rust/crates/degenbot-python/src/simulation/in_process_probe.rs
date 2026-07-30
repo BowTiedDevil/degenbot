@@ -142,6 +142,7 @@ fn smoke_v2_path(path_id: u64) -> SimulatePath {
             }),
         ]),
         solve_block: SMOKE_SOLVE_BLOCK,
+        state_nonces: vec![],
         opts: EncodeOptions {
             erc6909_profit: false,
             use_v4_batch: false,
