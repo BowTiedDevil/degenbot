@@ -989,7 +989,12 @@ where
         // output to `hop_outputs[i]` pinpoints which hop diverged (solver/state
         // divergence if they differ; composer/encoding bug if they match but the
         // settle still fails). Env-gated, default off.
-        log_reverted_swaps_vs_hop_outputs(path.path_id, &reverted_swaps, &path.hop_outputs);
+        log_reverted_swaps_vs_hop_outputs(
+            path.path_id,
+            &reverted_swaps,
+            &path.path_info.hops,
+            &path.hop_outputs,
+        );
         let revert_data = results[fail_idx]
             .output()
             .cloned()
@@ -1322,34 +1327,117 @@ fn negative_side_magnitude(
 /// state); a match on hop 0 but mismatch on hop 1 means V3 hop B diverged;
 /// all-match-but-still-`CurrencyNotSettled` points at the composer/encoding.
 /// Env-gated (`DEGENBOT_SIM_LOG_REVERTED_SWAPS=1`); default off.
+/// One captured reverted swap attributed to its path hop. Built by
+/// [`match_reverted_swaps_to_hops`] so the log layer formats instead of
+/// re-deriving (and so the attribution is unit-tested independently of the
+/// env-gated log path).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RevertedSwapMatch {
+    /// Path hop index this captured swap was attributed to. `None` when the
+    /// swap's emitter matches no hop on the path (a stray emit from a pool the
+    /// solver did not register — should not occur, handled defensively).
+    hop_index: Option<usize>,
+    /// Emission order of the captured swap (0-based), preserved for the log so
+    /// a reader can reconstruct revm's execution order independently of the
+    /// hop attribution.
+    emit_index: usize,
+    family: degenbot_simulation::SwapFamily,
+    emitter: Address,
+    actual_out: Option<U256>,
+    predicted: Option<u128>,
+    matched: bool,
+}
+
+/// Attribute each captured reverted swap to its path hop by the swap's
+/// EMITTER, not by capture index. Capture (emission) order is revm's
+/// execution order: the deepest nested swap emits first, the outermost
+/// frame emits last. For a `V3-V4-V3` whose V3c (outer) frame reverts, revm
+/// captures `[V4_emit, V3a_emit]` — the V4 swap (hop 1) emits before the V3a
+/// swap (hop 0). Index-based attribution crosses them, so the V4 swap is
+/// compared to `hop_outputs[0]` (the V3a prediction) and vice versa, making
+/// the actual-vs-predicted diagnostic lie about WHICH hop diverged.
+///
+/// Emitter attribution fixes this for the common case: each hop emits from a
+/// distinct pool address (V2/V3) or the single PoolManager (V4). A path with
+/// TWO V4 hops shares the PoolManager emitter for both — those are
+/// disambiguated by stable order within the V4 subset (first-emitted V4 swap
+/// → first V4 hop), documented as a residual imprecision.
+fn match_reverted_swaps_to_hops(
+    reverted_swaps: &[CapturedSwap],
+    hops: &[HopInfo],
+    hop_outputs: &[u128],
+) -> Vec<RevertedSwapMatch> {
+    // Claimed hop indices (a hop matches at most one captured swap).
+    let mut claimed: Vec<bool> = vec![false; hops.len()];
+    let mut matches = Vec::with_capacity(reverted_swaps.len());
+    for (emit_index, swap) in reverted_swaps.iter().enumerate() {
+        // Lowest-index unclaimed hop whose emitter matches this swap's.
+        let mut hop_index = None;
+        for (i, h) in hops.iter().enumerate() {
+            if !claimed[i] && hop_emitter_match(h, swap) {
+                claimed[i] = true;
+                hop_index = Some(i);
+                break;
+            }
+        }
+        let actual = captured_swap_output_amount(swap);
+        let predicted = hop_index.and_then(|i| hop_outputs.get(i).copied());
+        let is_match = match (actual, predicted) {
+            (Some(a), Some(p)) => a == U256::from(p),
+            _ => false,
+        };
+        matches.push(RevertedSwapMatch {
+            hop_index,
+            emit_index,
+            family: swap.family,
+            emitter: swap.emitter,
+            actual_out: actual,
+            predicted,
+            matched: is_match,
+        });
+    }
+    matches
+}
+
+/// `true` iff `hop`'s emitter address equals the captured swap's emitter.
+/// Separate from [`hop_emitter`] so the matcher allocates no `Address` copies
+/// in the hot inner loop (the comparison is by value on `hop_*_address`).
+fn hop_emitter_match(hop: &HopInfo, swap: &CapturedSwap) -> bool {
+    match hop {
+        HopInfo::V2(h) => h.pool_address == swap.emitter,
+        HopInfo::V3(h) => h.pool_address == swap.emitter,
+        HopInfo::V4(h) => h.pool_manager_address == swap.emitter,
+    }
+}
+
 fn log_reverted_swaps_vs_hop_outputs(
     path_id: u64,
     reverted_swaps: &[CapturedSwap],
+    hops: &[HopInfo],
     hop_outputs: &[u128],
 ) {
     if !log_reverted_swaps_enabled() || reverted_swaps.is_empty() {
         return;
     }
+    let matches = match_reverted_swaps_to_hops(reverted_swaps, hops, hop_outputs);
     log::info!(
         "{SIM_REVERT_SWAP_LOG_PREFIX} path={path_id} reverted_swaps={} hop_outputs={}",
         reverted_swaps.len(),
         hop_outputs.len(),
     );
-    for (i, swap) in reverted_swaps.iter().enumerate() {
-        let actual = captured_swap_output_amount(swap);
-        let predicted = hop_outputs.get(i).copied();
-        let matched = match (actual, predicted) {
-            (Some(a), Some(p)) => a == U256::from(p),
-            _ => false,
-        };
+    for m in &matches {
+        let hop_str = m
+            .hop_index
+            .map_or_else(|| "unmatched".into(), |i| i.to_string());
         log::info!(
-            "{SIM_REVERT_SWAP_LOG_PREFIX} path={path_id} hop={i} family={:?} \
-             emitter={:?} actual_out={} predicted_hop_output={} matched={}",
-            swap.family,
-            swap.emitter,
-            actual.map_or_else(|| "none".into(), |v| v.to_string()),
-            predicted.map_or_else(|| "none".into(), |v| v.to_string()),
-            matched,
+            "{SIM_REVERT_SWAP_LOG_PREFIX} path={path_id} hop={hop_str} (emit #{emit}) family={family:?} \
+             emitter={emitter:?} actual_out={actual} predicted_hop_output={pred} matched={matched}",
+            emit = m.emit_index,
+            family = m.family,
+            emitter = m.emitter,
+            actual = m.actual_out.map_or_else(|| "none".into(), |v| v.to_string()),
+            pred = m.predicted.map_or_else(|| "none".into(), |v| v.to_string()),
+            matched = m.matched,
         );
     }
 }
@@ -1957,5 +2045,132 @@ mod tests {
                 "zero-zero swap → None for {family:?}"
             );
         }
+    }
+
+    // ── match_reverted_swaps_to_hops emitter attribution (the IIA log lie) ─
+    //
+    // The bug this pins: a V3-V4-V3 whose V3c (outer) frame reverts captures
+    // swaps in revm's EMISSION order [V4_emit, V3a_emit], because the V4 swap
+    // (nested deepest) emits before the V3a swap (outer) completes. The OLD
+    // index-based log compared captured[0]→hop_outputs[0], crossing V4↔V3a,
+    // so the log lied about which hop diverged. Emitter attribution fixes it.
+
+    /// Build a `CapturedSwap` from a (family, emitter, signed-amount pair),
+    /// letting the matcher test pin emitters without decoding a real log.
+    fn captured(
+        family: degenbot_simulation::SwapFamily,
+        emitter: Address,
+        out_amount: u128,
+    ) -> CapturedSwap {
+        // V2/V4 output = positive side (swapper received); V3 output = negative
+        // side (pool paid). Encode `out_amount` on the correct side per family.
+        let (a0, a1) = match family {
+            degenbot_simulation::SwapFamily::V3 => (
+                -alloy::primitives::I256::try_from(out_amount).unwrap(),
+                alloy::primitives::I256::ZERO,
+            ),
+            degenbot_simulation::SwapFamily::V2 | degenbot_simulation::SwapFamily::V4 => (
+                alloy::primitives::I256::try_from(out_amount).unwrap(),
+                alloy::primitives::I256::ZERO,
+            ),
+        };
+        CapturedSwap {
+            emitter,
+            family,
+            amount0: a0,
+            amount1: a1,
+            sqrt_price_x96: U256::ZERO,
+            liquidity: U256::ZERO,
+            tick: 0,
+        }
+    }
+
+    /// A V3-V4-V3 path whose V3c outer frame reverts: revm captures the
+    /// nested V4 swap (hop 1) and the V3a swap (hop 0) in emission order
+    /// [V4, V3a]. Index-based attribution crossed them; emitter attribution
+    /// must map each to its true hop.
+    #[test]
+    fn match_v3_v4_v3_captures_by_emitter_not_emit_index() {
+        use degenbot_executor::composers::{HopInfo, V3HopInfo, V4HopInfo};
+        let v3a = address!("1111111111111111111111111111111111111111");
+        let v3c = address!("2222222222222222222222222222222222222222");
+        let pm = SMOKE_PM; // the V4 PoolManager (same emitter as every V4 hop)
+        let hops = vec![
+            HopInfo::V3(V3HopInfo {
+                pool_address: v3a,
+                token0_address: Address::ZERO,
+                token1_address: Address::ZERO,
+                fee: 3000,
+                zfo: false,
+            }),
+            HopInfo::V4(V4HopInfo {
+                pool_manager_address: pm,
+                pool_id_hex: String::new(),
+                currency0_address: Address::ZERO,
+                currency1_address: Address::ZERO,
+                fee: 100,
+                tick_spacing: 1,
+                hook_address: Address::ZERO,
+                zfo: true,
+            }),
+            HopInfo::V3(V3HopInfo {
+                pool_address: v3c,
+                token0_address: Address::ZERO,
+                token1_address: Address::ZERO,
+                fee: 500,
+                zfo: true,
+            }),
+        ];
+        // Emission order: V4 (hop 1) emits first, then V3a (hop 0). The V4
+        // actual (124_645) DIVERGES from its prediction (122_707) — the real
+        // mainnet-fixture shape at block 25642187. V3a matches its prediction.
+        let reverted_swaps = vec![
+            captured(degenbot_simulation::SwapFamily::V4, pm, 124_645),
+            captured(degenbot_simulation::SwapFamily::V3, v3a, 191),
+        ];
+        let hop_outputs = vec![191u128, 122_707u128, 64_688_975_647_480u128];
+        let matches = match_reverted_swaps_to_hops(&reverted_swaps, &hops, &hop_outputs);
+        // emit order preserved for the log...
+        assert_eq!(matches[0].emit_index, 0);
+        assert_eq!(matches[1].emit_index, 1);
+        // ...but hop attribution is by emitter, NOT by emit index:
+        assert_eq!(
+            matches[0].hop_index,
+            Some(1),
+            "V4 emit must map to hop 1, not hop 0"
+        );
+        assert_eq!(
+            matches[1].hop_index,
+            Some(0),
+            "V3a emit must map to hop 0, not hop 1"
+        );
+        // The V4 divergence is now correctly flagged (was masked by the cross):
+        assert!(
+            !matches[0].matched,
+            "V4 actual 124645 ≠ predicted 122707 — divergence"
+        );
+        assert!(matches[1].matched, "V3a actual 191 == predicted 191");
+    }
+
+    /// A captured swap whose emitter matches no hop on the path is
+    /// `hop_index = None` (defensive — should not occur, but must not panic).
+    #[test]
+    fn unmatched_emitter_attributes_to_none_without_panicking() {
+        use degenbot_executor::composers::{HopInfo, V2HopInfo};
+        let stranger = address!("9999999999999999999999999999999999999999");
+        let hops = vec![HopInfo::V2(V2HopInfo {
+            pool_address: address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+            token0_address: Address::ZERO,
+            token1_address: Address::ZERO,
+            fee: 30,
+            zfo: true,
+        })];
+        let reverted_swaps = vec![captured(degenbot_simulation::SwapFamily::V2, stranger, 7)];
+        let matches = match_reverted_swaps_to_hops(&reverted_swaps, &hops, &[10u128]);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].hop_index, None);
+        assert_eq!(matches[0].actual_out, Some(U256::from(7u128)));
+        assert_eq!(matches[0].predicted, None);
+        assert!(!matches[0].matched);
     }
 }
