@@ -167,6 +167,23 @@ impl BotState {
         self.pools.get(&pool_id).map_or(0, PoolEntry::state_nonce)
     }
 
+    /// The `update_block` of the pool at `pool_id` — the block its reserves /
+    /// `sqrt_price` / `tick` / liquidity were last mutated by a forward `Sync` /
+    /// `Swap` / Mint-Burn event. `0` for an unregistered pool (the freshness
+    /// gate treats 0 as stale: a missing pool defers its path until registered).
+    ///
+    /// Used by the per-path state-freshness gate (ergo AV42C7): before solving
+    /// a path at `solve_block`, every hop's `update_block` must be `>=
+    /// solve_block`, else the path is deferred — its backrun would otherwise
+    /// land at a block where one pool still holds the prior block's state, and
+    /// the solver's prediction diverges from on-chain reality by the mid-block
+    /// move (the constant, amount-independent +1 V3 / V4 drift class that turned
+    /// the V3-V3-V3 IIA reverts on the USDC/WETH anchor).
+    #[must_use]
+    pub fn pool_update_block(&self, pool_id: u64) -> u64 {
+        self.pools.get(&pool_id).map_or(0, PoolEntry::update_block)
+    }
+
     /// Create a new, empty `BotState` with a custom reorg journal depth.
     #[must_use]
     pub fn with_journal_depth(journal_depth: usize) -> Self {
@@ -3233,6 +3250,37 @@ mod tests {
             fee_denominator: None,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn pool_update_block_tracks_forward_sync_and_returns_zero_for_unknown() {
+        // AV42C7 accessor: `pool_update_block` is the per-pool freshness
+        // signal the block-boundary FSM (ergo 3M5PO5/ZU7RAF) will use to
+        // re-solve at block completion. Registers a V2 pool at `update_block=0`,
+        // applies a forward Sync, and asserts the accessor advances + returns 0
+        // for an unregistered id (the FSM treats 0 as stale: a missing pool
+        // defers its path until registered).
+        let mut core = BotState::new();
+        let pool_id = core
+            .register_v2_pool(&make_params(U112::from(1000), U112::from(2000)))
+            .expect("test setup: V2 registration");
+        assert_eq!(
+            core.pool_update_block(pool_id),
+            0,
+            "freshly-registered V2 pool is at update_block 0"
+        );
+        assert_eq!(
+            core.pool_update_block(999_999),
+            0,
+            "an unregistered pool_id reports update_block 0 (stale sentinel)"
+        );
+        core.apply_v2_sync(make_pool_addr(), U112::from(900), U112::from(2222), 7)
+            .expect("forward Sync at block 7 applies");
+        assert_eq!(
+            core.pool_update_block(pool_id),
+            7,
+            "forward Sync advances the pool's update_block to the event block"
+        );
     }
 
     #[test]

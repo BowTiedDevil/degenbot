@@ -65,6 +65,19 @@ impl ArbitrageEngine {
         // reads from the per-family block engines here; Slices 2/3 migrate
         // those into BotState too. The guard drops before `solve_path` runs,
         // which is pure `&self`.
+        //
+        // AV42C7 note: a per-path `update_block`-mix freshness gate was
+        // attempted here and REVERTED — it defers every legitimate
+        // single-pool-update arb (Sync pool A, solve with a stable reference
+        // pool B at an older `update_block`). The real mid-block staleness
+        // signal (a pool whose block-N log is in a later WS batch) cannot be
+        // distinguished from "this pool had no block-N event" using
+        // `update_block` alone, so the gate's false-positive rate is
+        // catastrophic. The correct fix is the block-boundary FSM (ergo
+        // 3M5PO5 / ZU7RAF) that re-solves at block completion, NOT an
+        // `update_block`-based mid-block deferral. The `pool_update_block` /
+        // `PoolEntry::update_block` accessors stay for that FSM work.
+        let deferred_paths: Vec<u64> = Vec::new(); // (no-op; FSM will repopulate)
         {
             let core = self.core.read();
             for &path_id in &affected_path_ids {
@@ -77,10 +90,14 @@ impl ArbitrageEngine {
             }
         }
 
-        // Remove old results for affected paths (they'll be re-solved below)
+        // Remove old results for affected paths (they'll be re-solved below).
         for &path_id in &affected_path_ids {
             self.results.remove(&path_id);
         }
+
+        // No mid-block deferral (see note above); solve the full affected set.
+        let solve_path_ids: HashSet<u64> = affected_path_ids.iter().copied().collect();
+        let _ = &deferred_paths; // retained for the FSM repoint
 
         // Solve affected paths and insert new results.
         //
@@ -101,7 +118,7 @@ impl ArbitrageEngine {
         // Pre-collect the work items (path_id + resolved-snapshot). The clone
         // drops the immutable borrow on `self.path_resolved` that would block
         // parallel dispatch.
-        let to_solve: Vec<(u64, ResolvedMixedPath)> = affected_path_ids
+        let to_solve: Vec<(u64, ResolvedMixedPath)> = solve_path_ids
             .iter()
             .filter_map(|&pid| {
                 let resolved = self.path_resolved.get(&pid)?;

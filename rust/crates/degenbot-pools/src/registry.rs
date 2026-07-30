@@ -222,6 +222,25 @@ impl PoolEntry {
         }
     }
 
+    /// The block the pool's reserves / `sqrt_price` / `tick` / liquidity were
+    /// last mutated by a forward event — the freshness signal for the per-path
+    /// mid-block solve gate (ergo AV42C7). A path is solved at `solve_block`
+    /// only when EVERY hop's `update_block >= solve_block`; a stale pool defers
+    /// its path until its block-N log lands and re-dirties it (the backrun
+    /// otherwise lands at a block where one pool still holds N-1 state).
+    #[must_use]
+    pub fn update_block(&self) -> u64 {
+        match self {
+            PoolEntry::V2(_, s) => s.update_block,
+            PoolEntry::V3(_, s) => s.update_block,
+            PoolEntry::V4(_, s) => s.update_block,
+            PoolEntry::Curve(_, s) => s.update_block,
+            PoolEntry::BalancerWeighted(_, s) => s.update_block,
+            PoolEntry::BalancerStable(_, s) => s.update_block,
+            PoolEntry::AerodromeV2(_, s) => s.update_block,
+        }
+    }
+
     /// Project to `&dyn ReorgPoolState` (ADR-016). One match over all 7
     /// variants — used by `BotState`'s unified reorg dispatchers
     /// (`restore_pool_before_block` / `discard_pool_before_block` /
