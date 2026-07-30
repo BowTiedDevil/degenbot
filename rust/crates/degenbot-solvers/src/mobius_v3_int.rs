@@ -935,19 +935,20 @@ pub struct V3SwapResult {
 /// reach the target is consumed.
 #[must_use = "the V3 swap result should be used"]
 pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> V3SwapResult {
-    // PXSY47: per-step rounding is delegated to the canonical V3 step function
-    // `compute_swap_step_v3` — the single source of ON5QMD word-boundary
-    // flooring parity (previously re-implemented here as a parallel closed
-    // form; the two-track seam produced the V4 `CurrencyNotSettled` revert
-    // class). Byte-exact with the prior impl for all non-dust inputs — see
-    // `int_simulate_v3_swap_partial_step_zfo_matches_onchain_compute_swap_step_v3*`.
-    //
-    // Behavior change (improvement): the dust-input regime now consumes the
-    // full `amount_in` as fee (matching on-chain V3 partial-fill fee
-    // saturation), where the closed form previously rounded `net_in` to 0 and
-    // reported `consumed_input = 0`. See the updated
-    // `int_simulate_v3_swap_dust_amount_zfo_consumes_full_input_onchain_only`
-    // test which now asserts AGREEMENT (was: DOCUMENTED DISAGREEMENT).
+    // PXSY47 + E7ALWT: per-step rounding is delegated to the canonical V3
+    // step function `compute_swap_step_v3` — the single source of ON5QMD
+    // word-boundary flooring parity (previously re-implemented here as a
+    // parallel closed form; the two-track seam produced the V4
+    // `CurrencyNotSettled` revert class). E7ALWT extends this to the
+    // interior word boundaries a collapsed multi-word range spans: the
+    // on-chain V3/V4 PoolManager floors `computeSwapStep` at EVERY word
+    // boundary, so this function walks `word_boundary_prices` (entry→exit,
+    // swap order) one `compute_swap_step_v3` per boundary — exactly mirroring
+    // `v3_simulate_swap`'s loop — so the accumulated per-step fee rounding
+    // matches the sim byte-for-byte on sparse-tick pools (the on-chain V3
+    // `+13` IIA class). For a single-word range (`word_boundary_prices`
+    // empty) the walk degenerates to one step to the exit boundary — the
+    // prior single-step behaviour, unchanged for dense topologies.
     use alloy::primitives::I256;
     use degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v3;
 
@@ -957,7 +958,7 @@ pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> V3Sw
 
     let liquidity = i128::try_from(v3_hop.liquidity).unwrap_or(i128::MAX);
     let fee_pips = U256::from(v3_hop.fee_denom - v3_hop.gamma_numer);
-    let sqrt_target = if v3_hop.zero_for_one {
+    let exit_price = if v3_hop.zero_for_one {
         v3_hop.sqrt_price_lower_x96
     } else {
         v3_hop.sqrt_price_upper_x96
@@ -966,20 +967,46 @@ pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> V3Sw
     // synthesize them) saturate to `I256::MAX`; the canonical step then hits
     // the range boundary and reports the boundary-crossing consumed amount
     // (matching the prior closed form's saturating semantics).
-    let amount_remaining = I256::try_from(amount_in).unwrap_or(I256::MAX);
+    let mut remaining = I256::try_from(amount_in).unwrap_or(I256::MAX);
 
-    match compute_swap_step_v3(
-        v3_hop.sqrt_price_x96,
-        sqrt_target,
-        liquidity,
-        amount_remaining,
-        fee_pips,
-    ) {
-        Ok(step) => V3SwapResult {
-            consumed_input: step.amount_in.saturating_add(step.fee_amount),
-            output: step.amount_out,
-        },
-        Err(_) => V3SwapResult::default(),
+    let mut sp = v3_hop.sqrt_price_x96;
+    let mut total_output = U256::ZERO;
+    let mut total_consumed = U256::ZERO;
+
+    // Walk entry → [interior word boundaries] → exit, one
+    // `compute_swap_step_v3` per target. The walk stops early when the
+    // remaining input is exhausted before reaching a target (the partial
+    // landing step) — identical to `v3_simulate_swap`'s loop.
+    for target in v3_hop
+        .word_boundary_prices
+        .iter()
+        .chain(std::iter::once(&exit_price))
+    {
+        if remaining <= I256::ZERO {
+            break;
+        }
+        let Ok(step) = compute_swap_step_v3(sp, *target, liquidity, remaining, fee_pips) else {
+            return V3SwapResult::default();
+        };
+        let consumed = step.amount_in.saturating_add(step.fee_amount);
+        total_consumed = total_consumed.saturating_add(consumed);
+        total_output = total_output.saturating_add(step.amount_out);
+        sp = step.sqrt_price_next;
+        // Subtract the consumed gross input from remaining (exact-in: the
+        // step consumed `amount_in + fee_amount`). If the step did NOT reach
+        // the target (`sqrt_price_next != target`), the remaining input was
+        // exhausted at a partial landing — stop the walk.
+        remaining = remaining
+            .checked_sub(I256::try_from(consumed).unwrap_or(I256::MAX))
+            .unwrap_or(I256::ZERO);
+        if sp != *target {
+            break;
+        }
+    }
+
+    V3SwapResult {
+        consumed_input: total_consumed,
+        output: total_output,
     }
 }
 
@@ -1223,6 +1250,7 @@ mod tests {
             gamma_numer: 997_000, // 0.3% fee → gamma = 997_000 / 1_000_000
             fee_denom: 1_000_000,
             zero_for_one: zfo,
+            word_boundary_prices: Vec::new(),
         }
     }
 
@@ -1322,6 +1350,7 @@ mod tests {
             gamma_numer: 997_000,
             fee_denom: 1_000_000,
             zero_for_one: true,
+            word_boundary_prices: Vec::new(),
         };
         let result = int_simulate_v3_swap(U256::from(1000u64), &hop);
         assert!(result.output.is_zero());
@@ -1356,6 +1385,7 @@ mod tests {
             gamma_numer: 997_000,
             fee_denom: 1_000_000,
             zero_for_one: false, // Different direction!
+            word_boundary_prices: Vec::new(),
         };
 
         let result = IntV3TickRangeSequence::new(vec![hop1, hop2]);
@@ -1394,6 +1424,7 @@ mod tests {
             gamma_numer: 997_000,
             fee_denom: 1_000_000,
             zero_for_one: false,
+            word_boundary_prices: Vec::new(),
         };
 
         let v3_seq = IntV3TickRangeSequence::new(vec![v3_hop]).unwrap();
@@ -1464,6 +1495,7 @@ mod tests {
             gamma_numer: 997_000,
             fee_denom: 1_000_000,
             zero_for_one: true,
+            word_boundary_prices: Vec::new(),
         };
         let hop1 = IntV3TickRangeHop {
             liquidity: 5_000_000_000_000u128,
@@ -1473,6 +1505,7 @@ mod tests {
             gamma_numer: 997_000,
             fee_denom: 1_000_000,
             zero_for_one: true,
+            word_boundary_prices: Vec::new(),
         };
 
         let seq = IntV3TickRangeSequence::new(vec![hop0, hop1]).unwrap();
@@ -1518,6 +1551,7 @@ mod tests {
             gamma_numer: 997_000,
             fee_denom: 1_000_000,
             zero_for_one: false,
+            word_boundary_prices: Vec::new(),
         };
         let hop1 = IntV3TickRangeHop {
             liquidity: 5_000_000_000_000u128,
@@ -1527,6 +1561,7 @@ mod tests {
             gamma_numer: 997_000,
             fee_denom: 1_000_000,
             zero_for_one: false,
+            word_boundary_prices: Vec::new(),
         };
 
         let seq = IntV3TickRangeSequence::new(vec![hop0, hop1]).unwrap();
@@ -1563,6 +1598,7 @@ mod tests {
             gamma_numer: 997_000,
             fee_denom: 1_000_000,
             zero_for_one: true,
+            word_boundary_prices: Vec::new(),
         };
         let hop1 = IntV3TickRangeHop {
             liquidity: 5_000_000_000_000u128,
@@ -1572,6 +1608,7 @@ mod tests {
             gamma_numer: 997_000,
             fee_denom: 1_000_000,
             zero_for_one: true,
+            word_boundary_prices: Vec::new(),
         };
 
         let expected_max_input = hop0.max_gross_input_in_range();
@@ -1623,6 +1660,7 @@ mod tests {
             gamma_numer: 997_000,
             fee_denom: 1_000_000,
             zero_for_one: true,
+            word_boundary_prices: Vec::new(),
         };
         // Shift the price for hop 2 to create arb opportunity
         let sp_shifted = sp_0 * U256::from(101u32) / U256::from(100u32); // 1% price shift
@@ -1634,6 +1672,7 @@ mod tests {
             gamma_numer: 997_000,
             fee_denom: 1_000_000,
             zero_for_one: false,
+            word_boundary_prices: Vec::new(),
         };
 
         let seq1 = IntV3TickRangeSequence::new(vec![hop1]).unwrap();
@@ -1665,6 +1704,7 @@ mod tests {
             gamma_numer: 997_000,
             fee_denom: 1_000_000,
             zero_for_one: true,
+            word_boundary_prices: Vec::new(),
         };
         let range1_1 = IntV3TickRangeHop {
             liquidity: 5_000_000_000_000u128,
@@ -1674,6 +1714,7 @@ mod tests {
             gamma_numer: 997_000,
             fee_denom: 1_000_000,
             zero_for_one: true,
+            word_boundary_prices: Vec::new(),
         };
 
         let sp_shifted = sp_0 * U256::from(101u32) / U256::from(100u32);
@@ -1685,6 +1726,7 @@ mod tests {
             gamma_numer: 997_000,
             fee_denom: 1_000_000,
             zero_for_one: false,
+            word_boundary_prices: Vec::new(),
         };
 
         let seq1 = IntV3TickRangeSequence::new(vec![range1_0, range1_1]).unwrap();
@@ -1870,6 +1912,7 @@ mod tests {
             gamma_numer: 997_000,
             fee_denom: 1_000_000,
             zero_for_one: true,
+            word_boundary_prices: Vec::new(),
         };
 
         // Pool 2: ofz at 1:1
@@ -1892,6 +1935,7 @@ mod tests {
             gamma_numer: 997_000,
             fee_denom: 1_000_000,
             zero_for_one: true,
+            word_boundary_prices: Vec::new(),
         };
 
         let seq1 = IntV3TickRangeSequence::new(vec![hop1]).unwrap();
@@ -2090,6 +2134,7 @@ mod tests {
             gamma_numer: 997_000,
             fee_denom: 1_000_000,
             zero_for_one: zfo,
+            word_boundary_prices: Vec::new(),
         }
     }
 
@@ -2381,6 +2426,7 @@ mod tests {
                     gamma_numer: 997_000,
                     fee_denom: 1_000_000,
                     zero_for_one: zfo,
+                    word_boundary_prices: Vec::new(),
                 }
             })
             .collect();

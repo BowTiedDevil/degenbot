@@ -572,6 +572,21 @@ impl V4PoolState {
                 gamma_numer,
                 fee_denom,
                 zero_for_one,
+                // Convert collapsed interior word-boundary ticks → sqrt
+                // prices (swap order) so `compute_crossing` /
+                // `int_simulate_v3_swap` re-walk them per boundary (ergo
+                // E7ALWT). V4 shares `compute_tick_ranges` + the V3-family
+                // solver hop, so V4 gets the same per-step flooring parity fix.
+                word_boundary_prices: r
+                    .interior_boundaries
+                    .iter()
+                    .map(|&t| {
+                        U256::from(
+                            degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(t)
+                                .unwrap_or(alloy::primitives::U160::ZERO),
+                        )
+                    })
+                    .collect(),
             });
         }
 

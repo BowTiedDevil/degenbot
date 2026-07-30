@@ -49,6 +49,20 @@
 //! cross-version reasoning. The failing UNI/DAI pool uses fee=500 /
 //! tick_spacing=10, a configuration the V4 sweep (fee=3000 / spacing=60)
 //! does not exercise, so this adds a configuration-matching corner.
+//!
+//! ## RESOLUTION (fix landed — ergo E7ALWT)
+//!
+//! Suspect (2) was CONFIRMED and FIXED. Root cause: `compute_tick_ranges`
+//! collapsed interior word-boundary ticks in constant-liquidity runs (to
+//! keep `max_ranges` bounded on sparse-tick pools), so the solver modelled
+//! a multi-word span as a SINGLE `compute_swap_step_v3` while `v3_simulate_swap`
+//! floors `computeSwapStep` at EVERY word boundary → accumulated per-step
+//! fee-rounding divergence = the on-chain `+13`. The fix records the collapsed
+//! interior boundaries on `V3TickRangeForSolver::interior_boundaries` /
+//! `IntV3TickRangeHop::word_boundary_prices` and makes `compute_crossing` +
+//! `int_simulate_v3_swap` re-walk them per boundary (per-step flooring parity).
+//! `v3_sparse_tick_topology_reproduces_onchain_plus_thirteen_class` is now a
+//! GREEN regression guard (was `#[ignore]`d RED).
 
 #![allow(
     clippy::too_many_lines,
@@ -499,12 +513,15 @@ fn run_sparse_range0_sweep(
 }
 
 #[test]
-#[ignore = "RED regression for ergo E7ALWT — the solver's `compute_tick_ranges` \
- collapses interior word-boundary ticks in constant-liquidity runs, losing the \
- per-step `computeSwapStep` flooring `v3_simulate_swap` performs at every word \
- boundary. The on-chain `+13` IIA trap (block 25647669, pool 0x57D7…dF80) \
- reproduces here on a synthetic sparse topology. Run with --ignored to see RED; \
- the fix turns this GREEN."]
+// GREEN regression guard for ergo E7ALWT — the solver's `compute_tick_ranges`
+// collapses interior word-boundary ticks in constant-liquidity runs; the solver
+// now RE-WALKS the collapsed interior boundaries per word boundary in
+// `compute_crossing` / `int_simulate_v3_swap` (via `word_boundary_prices`),
+// restoring the per-step `computeSwapStep` flooring `v3_simulate_swap`
+// performs at every word boundary. The on-chain `+13` IIA trap (block
+// 25647669, pool 0x57D7…dF80) is reproduced here on a synthetic sparse
+// topology and now matches byte-for-byte. Re-introducing the collapse-without-
+// re-walk regression makes this RED.
 fn v3_sparse_tick_topology_reproduces_onchain_plus_thirteen_class() {
     // The decisive reproduction. Sparse initialized ticks (every 3 words)
     // with low liquidity in the failing pool's fee/spacing bucket — the

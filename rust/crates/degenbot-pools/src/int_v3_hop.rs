@@ -36,6 +36,128 @@ fn u512_to_u256(v: U512) -> U256 {
     );
     v.to::<U256>()
 }
+
+/// One ON5QMD-faithful exact-in swap step that REACHES its target price —
+/// the per-word-boundary flooring the on-chain V3/V4 PoolManager performs in
+/// `computeSwapStep`. Returns `(gross_input, output)` where `gross_input =
+/// amount_in + fee_amount` with `amount_in` rounded UP
+/// (`get_amount_delta(..., round_up=true)`) and `fee_amount` rounded UP
+/// (`muldiv_rounding_up`), and `output` rounded DOWN. This is byte-identical
+/// to the target-reachable branch of `compute_swap_step_v3` (the canonical
+/// `v3_simulate_swap` step) — proven by the dense-topology parity sweep
+/// `v3_crossing_solver_matches_v3_simulate_swap_across_liquidity_and_amounts`.
+///
+/// [`compute_crossing`](IntV3TickRangeSequence::compute_crossing) walks one
+/// of these per word boundary (`word_boundary_prices`) within a collapsed
+/// range so the accumulated per-step rounding matches `v3_simulate_swap`'s
+/// per-boundary flooring — closing ergo E7ALWT (the V3 `+13` IIA class).
+#[must_use]
+fn exact_in_step_to_target(
+    sp_start: U256,
+    sp_end: U256,
+    liquidity: u128,
+    zero_for_one: bool,
+    gamma_numer: U256,
+    fee_denom: U256,
+) -> (U256, U256) {
+    let l = U256::from(liquidity);
+    let q96 = U256::from(1u128) << 96;
+
+    let (net_input, output) = if zero_for_one {
+        // zfo: price decreases sp_start → sp_end.
+        // net_in = L·2^96·(sp_start - sp_end) / (sp_end·sp_start)  [round-up]
+        // output = L·(sp_start - sp_end) / 2^96                  [round-down]
+        let sp_diff = sp_start.saturating_sub(sp_end);
+        if sp_diff.is_zero() {
+            (U256::ZERO, U256::ZERO)
+        } else {
+            let net_in_u512 = U512::from(l) * U512::from(q96) * U512::from(sp_diff);
+            let denom_u512 = U512::from(sp_end) * U512::from(sp_start);
+            let net_in = if denom_u512.is_zero() {
+                U256::ZERO
+            } else {
+                u512_div_ceil(net_in_u512, denom_u512)
+            };
+            let out = u512_to_u256((U512::from(l) * U512::from(sp_diff)) / U512::from(q96));
+            (net_in, out)
+        }
+    } else {
+        // ofz: price increases sp_start → sp_end.
+        // net_in = L·(sp_end - sp_start) / 2^96                  [round-up]
+        // output = L·2^96·(sp_end - sp_start) / (sp_start·sp_end) [round-down]
+        let sp_diff = sp_end.saturating_sub(sp_start);
+        if sp_diff.is_zero() {
+            (U256::ZERO, U256::ZERO)
+        } else {
+            let net_in = u512_div_ceil(U512::from(l) * U512::from(sp_diff), U512::from(q96));
+            let out_u512 = U512::from(l) * U512::from(q96) * U512::from(sp_diff);
+            let denom_u512 = U512::from(sp_start) * U512::from(sp_end);
+            let out = if denom_u512.is_zero() {
+                U256::ZERO
+            } else {
+                u512_to_u256(out_u512 / denom_u512)
+            };
+            (net_in, out)
+        }
+    };
+
+    // gross_input = amount_in + fee_amount, fee_amount = ceil(amount_in · fee / γ)
+    // (muldiv_rounding_up), γ = fee_denom - fee == gamma_numer.
+    let fee = fee_denom - gamma_numer;
+    let fee_amount = if gamma_numer.is_zero() {
+        U256::ZERO
+    } else {
+        u512_div_ceil(
+            U512::from(net_input) * U512::from(fee),
+            U512::from(gamma_numer),
+        )
+    };
+    let gross_input = net_input.saturating_add(fee_amount);
+    (gross_input, output)
+}
+
+/// Walk a range's full crossing — entry price → each interior word boundary
+/// (`word_boundary_prices`, swap order) → exit boundary — with per-step
+/// [`exact_in_step_to_target`] flooring, accumulating `(gross_input, output)`.
+/// This is the per-range core of
+/// [`IntV3TickRangeSequence::compute_crossing`]: for ranges that span multiple
+/// word boundaries (collapsed by `compute_tick_ranges`), it replicates
+/// `v3_simulate_swap`'s per-boundary `computeSwapStep` walk. For a single-word
+/// range (`word_boundary_prices` empty), it degenerates to one step to the
+/// exit boundary — the prior single-step behaviour, unchanged.
+#[must_use]
+fn full_crossing_of_range(
+    sp_start: U256,
+    exit_price: U256,
+    hop: &IntV3TickRangeHop,
+) -> (U256, U256) {
+    let gamma_numer = U256::from(hop.gamma_numer);
+    let fee_denom = U256::from(hop.fee_denom);
+
+    let mut crossing_gross_input = U256::ZERO;
+    let mut crossing_output = U256::ZERO;
+    let mut sp = sp_start;
+
+    for &boundary_price in hop
+        .word_boundary_prices
+        .iter()
+        .chain(std::iter::once(&exit_price))
+    {
+        let (gross, out) = exact_in_step_to_target(
+            sp,
+            boundary_price,
+            hop.liquidity,
+            hop.zero_for_one,
+            gamma_numer,
+            fee_denom,
+        );
+        crossing_gross_input = crossing_gross_input.saturating_add(gross);
+        crossing_output = crossing_output.saturating_add(out);
+        sp = boundary_price;
+    }
+
+    (crossing_gross_input, crossing_output)
+}
 /// precision for EVM-exact computation.
 #[derive(Clone, Debug)]
 pub struct IntV3TickRangeHop {
@@ -54,6 +176,18 @@ pub struct IntV3TickRangeHop {
     pub fee_denom: u64,
     /// True if the swap direction is token0 → token1.
     pub zero_for_one: bool,
+    /// Interior word-boundary SQRT PRICES (Q128.96, swap order entry→exit)
+    /// that [`compute_tick_ranges`](crate::tick_bitmap::compute_tick_ranges)
+    /// collapsed out of this range's constant-liquidity span. The solver
+    /// re-walks these per boundary in [`IntV3TickRangeSequence::compute_crossing`]
+    /// and [`int_simulate_v3_swap`] to restore the per-step `computeSwapStep`
+    /// flooring the on-chain V3/V4 PoolManager performs at every word
+    /// boundary (ergo E7ALWT — without this, a collapsed multi-word span
+    /// is modelled as a single big step and the accumulated per-step fee
+    /// rounding diverges from `v3_simulate_swap` / `v4_simulate_swap`, the
+    /// on-chain V3 `+13` IIA class on sparse-tick pools). Empty for ranges
+    /// that span no interior word boundaries (the common dense case).
+    pub word_boundary_prices: Vec<U256>,
 }
 
 impl IntV3TickRangeHop {
@@ -141,52 +275,23 @@ impl IntV3TickRangeHop {
     /// Rounding up keeps this consistent with `compute_crossing(k=1)` and
     /// on-chain behaviour; the prior FLOOR version under-estimated the
     /// boundary-reaching input and over-predicted V4 multi-range swap output.
+    ///
+    /// E7ALWT: for a collapsed multi-word range the on-chain V3/V4
+    /// `PoolManager` floors `computeSwapStep` at EVERY word boundary, so this
+    /// walks `word_boundary_prices` (entry→exit) one `exact_in_step_to_target`
+    /// per boundary — keeping `max_gross_input_in_range ==
+    /// compute_crossing(1).crossing_gross_input` for sparse-tick pools too.
+    /// For a single-word range (`word_boundary_prices` empty) it degenerates
+    /// to one step to the exit boundary — the prior single-step behaviour.
     #[must_use]
     pub fn max_gross_input_in_range(&self) -> U256 {
-        if self.liquidity == 0 || self.gamma_numer == 0 {
-            return U256::ZERO;
-        }
-
-        let l = U256::from(self.liquidity);
-        let gamma_numer = U256::from(self.gamma_numer);
-        let fee_denom = U256::from(self.fee_denom);
-        let q96 = U256::from(1u128) << 96;
-
-        // `amount_in` (round-up), matching `get_amount_delta(..., round_up=true)`.
-        let net_in = if self.zero_for_one {
-            let sp_diff = self
-                .sqrt_price_x96
-                .saturating_sub(self.sqrt_price_lower_x96);
-            if sp_diff.is_zero() {
-                return U256::ZERO;
-            }
-            let net_in_u512 = U512::from(l) * U512::from(q96) * U512::from(sp_diff);
-            let denom_u512 =
-                U512::from(self.sqrt_price_lower_x96) * U512::from(self.sqrt_price_x96);
-            if denom_u512.is_zero() {
-                return U256::ZERO;
-            }
-            u512_div_ceil(net_in_u512, denom_u512)
+        let exit_price = if self.zero_for_one {
+            self.sqrt_price_lower_x96
         } else {
-            let sp_diff = self
-                .sqrt_price_upper_x96
-                .saturating_sub(self.sqrt_price_x96);
-            if sp_diff.is_zero() {
-                return U256::ZERO;
-            }
-            u512_div_ceil(U512::from(l) * U512::from(sp_diff), U512::from(q96))
+            self.sqrt_price_upper_x96
         };
-
-        // `fee_amount` (round-up), matching `muldiv_rounding_up(amount_in · fee / γ)`.
-        let fee = fee_denom - gamma_numer;
-        if gamma_numer.is_zero() {
-            return net_in;
-        }
-        let fee_amount = u512_div_ceil(
-            U512::from(net_in) * U512::from(fee),
-            U512::from(gamma_numer),
-        );
-        net_in.saturating_add(fee_amount)
+        let (gross, _output) = full_crossing_of_range(self.sqrt_price_x96, exit_price, self);
+        gross
     }
 }
 
@@ -337,9 +442,6 @@ impl IntV3TickRangeSequence {
             });
         }
 
-        let gamma_numer = U256::from(self.ranges[0].gamma_numer);
-        let fee_denom = U256::from(self.ranges[0].fee_denom);
-        let q96 = U256::from(1u128) << 96;
         let zfo = self.ranges[0].zero_for_one;
 
         let mut crossing_gross_input = U256::ZERO;
@@ -347,78 +449,32 @@ impl IntV3TickRangeSequence {
 
         for i in 0..k {
             let r = &self.ranges[i];
-            let l = U256::from(r.liquidity);
 
-            // Determine start and end sqrt prices for this range
+            // Entry price of range i: the current price for range 0, else the
+            // previous range's exit boundary (zfo exits at its lower bound,
+            // ofz at its upper bound).
             let sp_start = if i == 0 {
                 r.sqrt_price_x96
             } else if zfo {
-                // Previous range's lower boundary is this range's entry point
                 self.ranges[i - 1].sqrt_price_lower_x96
             } else {
                 self.ranges[i - 1].sqrt_price_upper_x96
             };
 
-            let (net_input, output) = if zfo {
-                let sp_end = r.sqrt_price_lower_x96; // zfo: price decreases to lower bound
-                                                     // net_in = L · 2^96 · (sp_start - sp_end) / (sp_end · sp_start)
-                                                     // output  = L · (sp_start - sp_end) / 2^96
-                let sp_diff = sp_start.saturating_sub(sp_end);
-                if sp_diff.is_zero() {
-                    (U256::ZERO, U256::ZERO)
-                } else {
-                    // On-chain `amount_in` for an exact-in step reaching the
-                    // boundary uses `get_amount0_delta(round_up=true)` (CEIL).
-                    let net_in_u512 = U512::from(l) * U512::from(q96) * U512::from(sp_diff);
-                    let denom_u512 = U512::from(sp_end) * U512::from(sp_start);
-                    let net_in = if denom_u512.is_zero() {
-                        U256::ZERO
-                    } else {
-                        u512_div_ceil(net_in_u512, denom_u512)
-                    };
-                    // `amount_out` uses round-down (floor) — matches on-chain.
-                    let out_u512 = U512::from(l) * U512::from(sp_diff);
-                    let out = u512_to_u256(out_u512 / U512::from(q96));
-                    (net_in, out)
-                }
+            // Exit boundary of range i: the sqrt price the swap reaches by
+            // fully crossing it (lower bound for zfo, upper for ofz).
+            let exit_price = if zfo {
+                r.sqrt_price_lower_x96
             } else {
-                let sp_end = r.sqrt_price_upper_x96; // ofz: price increases to upper bound
-                                                     // net_in = L · (sp_end - sp_start) / 2^96
-                                                     // output  = L · 2^96 · (sp_end - sp_start) / (sp_start · sp_end)
-                let sp_diff = sp_end.saturating_sub(sp_start);
-                if sp_diff.is_zero() {
-                    (U256::ZERO, U256::ZERO)
-                } else {
-                    // `amount_in` (ofz) = `get_amount1_delta(round_up=true)` (CEIL).
-                    let net_in_u512 = U512::from(l) * U512::from(sp_diff);
-                    let net_in = u512_div_ceil(net_in_u512, U512::from(q96));
-                    // `amount_out` uses round-down (floor) — matches on-chain.
-                    let out_u512 = U512::from(l) * U512::from(q96) * U512::from(sp_diff);
-                    let denom_u512 = U512::from(sp_start) * U512::from(sp_end);
-                    let out = if denom_u512.is_zero() {
-                        U256::ZERO
-                    } else {
-                        u512_to_u256(out_u512 / denom_u512)
-                    };
-                    (net_in, out)
-                }
+                r.sqrt_price_upper_x96
             };
 
-            // gross_input = amount_in + fee_amount, where on-chain computes
-            // `fee_amount = ceil(amount_in · fee / γ)` (muldiv_rounding_up) and
-            // γ = fee_denom - fee (== gamma_numer). This is the exact-in
-            // target-reachable branch of `computeSwapStep`: the consumed input
-            // is `amount_in + fee_amount` with BOTH terms rounded up.
-            let fee = fee_denom - gamma_numer;
-            let fee_amount = if gamma_numer.is_zero() {
-                U256::ZERO
-            } else {
-                u512_div_ceil(
-                    U512::from(net_input) * U512::from(fee),
-                    U512::from(gamma_numer),
-                )
-            };
-            let gross_input = net_input.saturating_add(fee_amount);
+            // Walk the full crossing entry → [interior word boundaries] →
+            // exit, flooring `computeSwapStep` per word boundary like
+            // `v3_simulate_swap` (ergo E7ALWT). For a collapsed multi-word
+            // span this restores the per-step rounding the prior single-step
+            // model dropped (the on-chain V3 `+13` class).
+            let (gross_input, output) = full_crossing_of_range(sp_start, exit_price, r);
 
             crossing_gross_input = crossing_gross_input.saturating_add(gross_input);
             crossing_output = crossing_output.saturating_add(output);
@@ -440,6 +496,7 @@ impl IntV3TickRangeSequence {
             gamma_numer: ending.gamma_numer,
             fee_denom: ending.fee_denom,
             zero_for_one: ending.zero_for_one,
+            word_boundary_prices: ending.word_boundary_prices.clone(),
         };
 
         Some(IntTickRangeCrossing {
@@ -479,6 +536,7 @@ mod tests {
             gamma_numer,
             fee_denom,
             zero_for_one: zfo,
+            word_boundary_prices: Vec::new(),
         };
         // ofz: ranges [0,60), [60,120)... but for a 3-range test we use
         // [-60,0), [0,60), [60,120) with crossing from sp_zero upward.

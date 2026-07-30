@@ -632,6 +632,21 @@ impl V3PoolState {
                 gamma_numer,
                 fee_denom,
                 zero_for_one,
+                // Convert the interior word-boundary ticks `compute_tick_ranges`
+                // collapsed out of this range into sqrt prices (swap order) so
+                // the solver's `compute_crossing` / `int_simulate_v3_swap` can
+                // re-walk them per boundary, restoring the per-step
+                // `computeSwapStep` flooring (ergo E7ALWT).
+                word_boundary_prices: r
+                    .interior_boundaries
+                    .iter()
+                    .map(|&t| {
+                        U256::from(
+                            degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(t)
+                                .unwrap_or(alloy::primitives::U160::ZERO),
+                        )
+                    })
+                    .collect(),
             });
         }
 

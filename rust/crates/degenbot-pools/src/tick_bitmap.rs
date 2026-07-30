@@ -247,6 +247,88 @@ pub fn gen_ticks<S: std::hash::BuildHasher>(
 /// * `zero_for_one` - Swap direction
 /// * `max_ranges` - Maximum number of tick ranges to produce (default 3)
 ///
+/// Collapse a swap-direction walk (`all_walk`, swap order) into the kept
+/// range-boundary ticks plus the interior word-boundary ticks collapsed OUT of
+/// each emitted range.
+///
+/// Returns `(range_boundary_ticks, range_interiors)` where `range_interiors[i]`
+/// holds the interior word-boundary ticks (swap order, entry→exit) collapsed
+/// out of range `i` = `[boundary_ticks[i], boundary_ticks[i+1]]`.
+///
+/// # Collapse policy (sparse-tick budget + ON5QMD/E7ALWT parity)
+///
+/// Runs of consecutive zero-`liquidity_net` word-boundary ticks are collapsed
+/// so the `max_ranges` budget is not starved by tick-sparse pools
+/// (`tick_spacing=1` with initialized ticks separated by many word boundaries
+/// — see mainnet fixture `logs/fixtures/v2_v3_v3_solver_divergence_25641093.md`).
+/// The on-chain V3/V4 `PoolManager` floors `computeSwapStep` at EVERY word
+/// boundary; the `ON5QMD` per-step rounding parity is preserved TWO ways:
+/// (1) the boundary tick IMMEDIATELY ADJACENT to each initialized tick in the
+/// swap direction is kept as a range endpoint (flanking flooring), and (2) the
+/// interior word-boundary ticks dropped here are RECORDED on the emitted range
+/// (`V3TickRangeForSolver::interior_boundaries`) so the solver's
+/// `compute_crossing` / `int_simulate_v3_swap` re-walks them per boundary —
+/// restoring the per-step flooring `v3_simulate_swap` / `v4_simulate_swap`
+/// performs at every word boundary. Dropping them from the range-endpoint list
+/// keeps `max_ranges` bounded (the sparse-tick starvation fix) while recording
+/// them for the solver's per-step walk closes ergo E7ALWT (the on-chain V3 `+13`
+/// IIA class). The earlier claim that interior boundaries' per-step rounding
+/// was a "second-order effect the solver deliberately drops" is REFUTED by
+/// `v3_sparse_tick_topology_reproduces_onchain_plus_thirteen_class`.
+///
+/// `has_init_after[j]` = an initialized tick exists strictly farther in the
+/// swap direction than `all_walk[j]` (computed by the caller). Trailing
+/// boundary ticks beyond the last initialized tick form a constant-liquidity
+/// unbounded tail the solver's bounded sequence cannot model, so they are
+/// dropped (keeping the parity fixtures interior to initialized ticks).
+fn collapse_walk_to_range_boundaries(
+    all_walk: &[(i32, bool)],
+    has_init_after: &[bool],
+    max_ranges: usize,
+) -> (Vec<i32>, Vec<Vec<i32>>) {
+    let mut range_boundary_ticks: Vec<i32> = Vec::new();
+    let mut range_interiors: Vec<Vec<i32>> = Vec::new();
+    let mut pending_interior: Vec<i32> = Vec::new();
+    for (j, &(tick, is_init)) in all_walk.iter().enumerate() {
+        // j==0 keeps the current tick (range 0's near boundary) even when it
+        // is uninitialized and has no initialized tick beyond it.
+        let keep = j == 0 || is_init || has_init_after[j];
+        if !keep {
+            continue;
+        }
+        // Collapse: drop an uninitialized boundary tick when BOTH its walk
+        // neighbors are also uninitialized boundaries — i.e. it is strictly
+        // interior to a constant-liquidity run, not flanking an initialized
+        // tick. The flanking boundary ticks (one or both neighbors
+        // initialized) are kept for ON5QMD rounding parity.
+        if !is_init && j > 0 && j + 1 < all_walk.len() {
+            let prev_is_boundary = !all_walk[j - 1].1;
+            let next_is_boundary = !all_walk[j + 1].1;
+            if prev_is_boundary && next_is_boundary {
+                // Collapsed interior word-boundary tick — record it for the
+                // range that ends at the NEXT kept tick (below). Only
+                // accumulate once a leading kept tick exists; j==0 is always
+                // kept and never collapsed, so a leading kept tick always
+                // precedes any collapsed tick.
+                if !range_boundary_ticks.is_empty() {
+                    pending_interior.push(tick);
+                }
+                continue;
+            }
+        }
+        if range_boundary_ticks.len() > max_ranges {
+            break;
+        }
+        // This kept tick closes the range [prev_kept, this_kept]; attach the
+        // pending interior boundaries collected since the last kept tick.
+        if !range_boundary_ticks.is_empty() {
+            range_interiors.push(std::mem::take(&mut pending_interior));
+        }
+        range_boundary_ticks.push(tick);
+    }
+    (range_boundary_ticks, range_interiors)
+}
+
 /// # Returns
 ///
 /// A tuple `(ranges, current_range_index)` or `None` if insufficient ranges.
@@ -339,53 +421,8 @@ pub fn compute_tick_ranges<S: std::hash::BuildHasher>(
         }
     }
 
-    // Build the kept-tick list, collapsing runs of consecutive
-    // zero-`liquidity_net` word-boundary ticks so the `max_ranges` budget is
-    // not starved by tick-sparse pools (tick_spacing=1 with initialized
-    // ticks separated by many word boundaries — see the mainnet fixture
-    // `logs/fixtures/v2_v3_v3_solver_divergence_25641093.md`).
-    //
-    // A boundary tick whose `liquidity_net == 0` carries no liquidity change;
-    // a run of them between two initialized ticks (or between the current
-    // tick and the first initialized tick) is mathematically identical to a
-    // single span of the same constant liquidity. Dropping the interior
-    // boundaries collapses the span without loss of correctness for the
-    // solver's piecewise-constant-product model.
-    //
-    // The ON5QMD per-step rounding parity (V3/V4 floors `computeSwapStep` at
-    // each word boundary) is preserved by keeping the boundary tick
-    // IMMEDIATELY ADJACENT to each initialized tick in the swap direction —
-    // that is the flooring whose rounding the solver must mirror. Interior
-    // boundaries between two constant-liquidity regions contribute only
-    // their own per-step rounding, which is a second-order effect the
-    // solver's range-collapse deliberately drops (the alternative is
-    // starving the budget and missing the liquidity change entirely —
-    // strictly worse).
-    let mut range_boundary_ticks: Vec<i32> = Vec::new();
-    for (j, &(tick, is_init)) in all_walk.iter().enumerate() {
-        // j==0 keeps the current tick (range 0's near boundary) even when it
-        // is uninitialized and has no initialized tick beyond it.
-        let keep = j == 0 || is_init || has_init_after[j];
-        if !keep {
-            continue;
-        }
-        // Collapse: drop an uninitialized boundary tick when BOTH its walk
-        // neighbors are also uninitialized boundaries — i.e. it is strictly
-        // interior to a constant-liquidity run, not flanking an initialized
-        // tick. The flanking boundary ticks (one or both neighbors
-        // initialized) are kept for ON5QMD rounding parity.
-        if !is_init && j > 0 && j + 1 < all_walk.len() {
-            let prev_is_boundary = !all_walk[j - 1].1;
-            let next_is_boundary = !all_walk[j + 1].1;
-            if prev_is_boundary && next_is_boundary {
-                continue;
-            }
-        }
-        if range_boundary_ticks.len() > max_ranges {
-            break;
-        }
-        range_boundary_ticks.push(tick);
-    }
+    let (range_boundary_ticks, range_interiors) =
+        collapse_walk_to_range_boundaries(&all_walk, &has_init_after, max_ranges);
 
     if range_boundary_ticks.len() < 2 {
         return None;
@@ -446,6 +483,7 @@ pub fn compute_tick_ranges<S: std::hash::BuildHasher>(
             liquidity_net: range_liquidity,
             sqrt_price_lower: U256::from(sqrt_price_lower),
             sqrt_price_upper: U256::from(sqrt_price_upper),
+            interior_boundaries: range_interiors.get(i).cloned().unwrap_or_default(),
         });
 
         // Note: we do NOT search for current_idx here. The Python code's
@@ -480,6 +518,17 @@ pub struct V3TickRangeForSolver {
     pub sqrt_price_lower: U256,
     /// Sqrt price at the upper tick boundary (Q128.96 as U256).
     pub sqrt_price_upper: U256,
+    /// Interior word-boundary ticks (swap order, entry→exit) that
+    /// [`compute_tick_ranges`] collapsed OUT of this range's constant-
+    /// liquidity span. The on-chain V3/V4 `PoolManager` floors
+    /// `computeSwapStep` at EVERY word boundary; the solver must re-walk
+    /// these per boundary to restore that per-step flooring or the
+    /// accumulated fee-rounding diverges from `v3_simulate_swap` /
+    /// `v4_simulate_swap` (ergo E7ALWT — the on-chain V3 `+13` IIA class
+    /// on sparse-tick pools). Empty for ranges that span no interior word
+    /// boundaries (the common dense case). Converted to sqrt prices by
+    /// `build_int_v3_sequence` / `build_int_v4_sequence`.
+    pub interior_boundaries: Vec<i32>,
 }
 
 /// Update a single tick's `liquidity_gross` and `liquidity_net` in-place.

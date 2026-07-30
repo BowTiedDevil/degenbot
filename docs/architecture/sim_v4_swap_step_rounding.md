@@ -356,3 +356,27 @@ big-step — bounded budget, restored per-step flooring parity. Same shared
 `compute_tick_ranges` affects V4; `v4_word_boundary_solver_divergence.rs`
 only covers a 1-word gap (handled by the flanking rule), NOT multi-word gaps,
 so V4 has the same latent bug for sparse-tick V4 pools.
+
+### FIX LANDED (E7ALWT)
+
+The fix described above is implemented. `compute_tick_ranges` now RECORDS the
+interior word-boundary ticks it collapses out of each constant-liquidity span
+on `V3TickRangeForSolver::interior_boundaries`; `build_int_v3_sequence` /
+`build_int_v4_sequence` convert them to sqrt prices on
+`IntV3TickRangeHop::word_boundary_prices` (swap order, entry→exit). The solver
+then re-walks them per boundary:
+
+- `IntV3TickRangeSequence::compute_crossing` + `max_gross_input_in_range` use
+  `full_crossing_of_range` — one `exact_in_step_to_target` (the on-chain
+  `computeSwapStep` target-reachable formula: round-up `amount_in`, round-up
+  `fee_amount`, round-down `amount_out`) per word boundary.
+- `int_simulate_v3_swap` walks one `compute_swap_step_v3` per word boundary,
+  stopping at the partial landing — byte-identical to `v3_simulate_swap`'s loop.
+- The `ending_range` carries `word_boundary_prices` so the landing partial
+  step also floors per boundary.
+
+For single-word ranges (`word_boundary_prices` empty — the common dense case)
+both walks degenerate to the prior single-step behaviour, so dense-topology
+parity is unchanged. `v3_sparse_tick_topology_reproduces_onchain_plus_thirteen_class`
+is now a GREEN regression guard (un-`#[ignore]`d). V4 shares `compute_tick_ranges`
++ the V3-family solver hop, so V4 multi-word-gap spans get the same fix.
