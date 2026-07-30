@@ -2494,7 +2494,17 @@ fn three_hop_v2_v3_v4(
         &encoders::enc_v4_take_compact(weth_idx, executor_idx, out_c - optimal_input).ok()?,
     );
     v4_inner.extend_from_slice(&encoders::enc_v4_sync(weth_idx));
-    v4_inner.extend_from_slice(&encoders::enc_v4_settle());
+    // CurrencyNotSettled under-prediction guard: the encoded V4_TAKE amounts
+    // are built from the solver's predicted `out_c` (WETH output). When the
+    // actual V4 PoolManager swap produces MORE WETH than the solver predicts
+    // (residual under-prediction class — see `sim_v4_swap_step_rounding.md`
+    // residual addendum + ergo ON5QMD post-fix soak logs), the executor's
+    // fixed take amounts leave a positive WETH delta on the PoolManager at
+    // unlock exit → `CurrencyNotSettled(WETH, surplus)`. `V4_SETTLE` (bare)
+    // is one-directional (pays in owed deltas); `V4_SETTLE_ALL` mirrors
+    // `three_hop_v3_v3_v4`'s proven close pattern — it sweeps positive
+    // residuals via `PM.take(WETH, self)` for the executor too.
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
 
     let mut b_fwd = encoders::enc_v4_unlock(&v4_inner).ok()?;
     b_fwd.extend_from_slice(&encoders::enc_v2_swap_direct(v2a_idx, ha.zfo, out_a, v3b_idx).ok()?);

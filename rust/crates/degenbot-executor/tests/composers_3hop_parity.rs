@@ -447,7 +447,14 @@ fn parity_v2_v3_v4() {
             .unwrap(),
     );
     v4_inner.extend_from_slice(&encoders::enc_v4_sync(SENTINEL_WETH));
-    v4_inner.extend_from_slice(&encoders::enc_v4_settle());
+    // Mirrors `three_hop_v3_v3_v4`'s closing pattern: `V4_SETTLE_ALL` (not
+    // bare `V4_SETTLE`) is bidirectional — it pays in positive deltas and
+    // also `PM.take(WETH, self)`s any surplus credit the executor under-claimed.
+    // Without it, a V4 swap whose actual output exceeds the predicted
+    // `hop_outputs[2]` leaves a positive WETH delta on the PoolManager at
+    // unlock exit → `CurrencyNotSettled(WETH, surplus)` (the residual class
+    // observed for V2-V3-V4 post protocol-fee fix).
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
     let mut b_fwd = encoders::enc_v4_unlock(&v4_inner).unwrap();
     b_fwd.extend_from_slice(
         &encoders::enc_v2_swap_direct(v2a_idx, true, 2_000_000_000u128, v3b_idx).unwrap(),
