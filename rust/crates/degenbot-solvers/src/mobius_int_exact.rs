@@ -56,6 +56,11 @@
 
 use alloy::primitives::{U256, U512};
 
+/// 2048-bit unsigned integer — width for the composed determinant magnitude
+/// in the shifted-piece fast path (`mobius_shifted_piece`). Not re-exported
+/// at the alloy root; construct via `Uint<2048, 32>`.
+type U2048 = alloy::primitives::Uint<2048, 32>;
+
 use crate::mobius_int::{compute_int_mobius_coefficients, IntMobiusCoefficients, MobiusError};
 use degenbot_v2_math::{int_simulate_path, IntHopState};
 
@@ -299,6 +304,48 @@ pub fn isqrt_u512(n: U512) -> U512 {
     // If (x+1)^2 <= n, increment.
     while (x + U512::from(1u64)) * (x + U512::from(1u64)) <= n {
         x += U512::from(1u64);
+    }
+
+    x
+}
+
+/// Integer square root of a U2048 value.
+///
+/// Used by the shifted-piece Möbius model-optimum computation
+/// (`mobius_shifted_piece`): the composed determinant `A·D − B·C`, widened
+/// from the I1024 fast-path coefficients, reaches up to ~2046 bits for
+/// deep paths whose coefficients still fit I1024 — which overflows U1024.
+/// Newton's method, same shape as [`isqrt_u512`].
+///
+/// Returns the floor of √n. Panics are impossible: `U2048` is wide enough
+/// that no input from a valid I1024-coefficient determinant overflows.
+pub fn isqrt_u2048(n: U2048) -> U2048 {
+    if n.is_zero() {
+        return U2048::ZERO;
+    }
+
+    let bit_len = n.bit_len();
+    if bit_len == 1 {
+        return U2048::from(1u64);
+    }
+
+    let half_bits = (bit_len + 1).div_ceil(2);
+    let mut x = U2048::from(1u64) << half_bits;
+
+    loop {
+        let q = n / x;
+        let next = (x + q) >> 1;
+        if next >= x {
+            break;
+        }
+        x = next;
+    }
+
+    while x * x > n {
+        x -= U2048::from(1u64);
+    }
+    while (x + U2048::from(1u64)) * (x + U2048::from(1u64)) <= n {
+        x += U2048::from(1u64);
     }
 
     x
