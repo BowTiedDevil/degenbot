@@ -30,10 +30,13 @@ front means ``pyo3-log``'s first-use cache stores the lowered level for every
 target, so no caller wiring is required and no cache reset is needed.
 """
 
+import atexit
 import functools
 import inspect
 import logging
+import logging.handlers
 import os
+import queue
 import sys
 from collections.abc import Callable
 
@@ -52,8 +55,45 @@ else:
 
 logger.setLevel(_LOG_LEVEL)
 
+# The real stdout writer — owned SOLELY by the ``QueueListener`` thread below
+# (never attached directly to any logger). When stdout is piped (e.g. the
+# bot driver ``run_bot.sh`` redirects stdout as
+# ``> >(tee -a "$LOG" > /dev/null) 2>&1``), ``sys.stdout`` is block-buffered;
+# ``StreamHandler.emit`` then calls ``stream.flush()`` which blocks on a full
+# pipe or on the ``BufferedWriter._write_lock`` futex under concurrent writers
+# — holding the GIL across the I/O wait. Under pyo3-log every Rust
+# ``log::info!`` acquires the GIL via ``Python::attach`` and runs the full
+# Python ``logging`` pipeline under it, so a slow stdout flush stalls every
+# thread waiting on the GIL (the asyncio main loop, the pump's tokio worker).
+# The ``QueueHandler``/``QueueListener`` pair below decouples producers from
+# the slow writer: producers do a fast non-blocking ``put_nowait`` (no stream
+# I/O, no GIL held across slow writes); the listener thread is the only thread
+# that ever calls ``stream.flush()`` (single writer → no lock contention,
+# slow ``os.write`` blocks only the listener thread whose sole job is
+# writing). See ``tests/test_rust_logging_bridge.py`` (the
+# ``QueueHandler-not-StreamHandler`` + listener-drains guards).
 _STDOUT_HANDLER = logging.StreamHandler(sys.stdout)
-logger.addHandler(_STDOUT_HANDLER)
+
+# In-process queue + listener. ``SimpleQueue`` is ``thread.Lock``-based (no
+# ``Condition``, no notifier thread) — ``put_nowait`` is a few microseconds and never
+# blocks. ``respect_handler_level=True`` so the listener still honors each
+# destination handler's level (mirrors direct-emit semantics).
+_LOG_QUEUE: queue.SimpleQueue = queue.SimpleQueue()
+_QUEUED_HANDLER = logging.handlers.QueueHandler(_LOG_QUEUE)
+_QUEUED_HANDLER.setLevel(_LOG_LEVEL)
+_LOG_LISTENER = logging.handlers.QueueListener(
+    _LOG_QUEUE,
+    _STDOUT_HANDLER,
+    respect_handler_level=True,
+)
+_LOG_LISTENER.start()
+# ``atexit`` rather than ``__del__``: ``QueueListener``'s thread is a daemon
+# by default, so without an explicit ``stop()`` the listener could be torn
+# down by interpreter shutdown while a queued record is mid-``emit`` → a
+# truncated final log line. ``atexit`` drains the queue before shutdown.
+atexit.register(_LOG_LISTENER.stop)
+
+logger.addHandler(_QUEUED_HANDLER)
 
 #: The Rust crate-root Python logger names that ``pyo3-log`` forwards ``log::``
 #: records into. Each Rust target ``degenbot_<crate>::...`` maps to the Python
@@ -109,7 +149,7 @@ PY_PACKAGE_ROOT_LOGGER_NAMES = ("degenbot",)
 for _name in RUST_BRIDGE_LOGGER_NAMES:
     _rust_logger = logging.getLogger(_name)
     _rust_logger.setLevel(_LOG_LEVEL)
-    _rust_logger.addHandler(_STDOUT_HANDLER)
+    _rust_logger.addHandler(_QUEUED_HANDLER)
     _rust_logger.propagate = False
 
 # Configure the Python package root so the ``degenbot.arbitrage.*`` subtree
@@ -122,7 +162,7 @@ for _name in RUST_BRIDGE_LOGGER_NAMES:
 for _name in PY_PACKAGE_ROOT_LOGGER_NAMES:
     _pkg_logger = logging.getLogger(_name)
     _pkg_logger.setLevel(_LOG_LEVEL)
-    _pkg_logger.addHandler(_STDOUT_HANDLER)
+    _pkg_logger.addHandler(_QUEUED_HANDLER)
     _pkg_logger.propagate = False
 
 
