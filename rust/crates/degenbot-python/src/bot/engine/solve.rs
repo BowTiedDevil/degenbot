@@ -10,6 +10,7 @@ use super::{
     V4StateSync,
 };
 use crate::prelude::*;
+use std::sync::Arc;
 
 #[pymethods]
 impl PyArbitrageEngine {
@@ -86,19 +87,27 @@ impl PyArbitrageEngine {
     /// `register_with_cl_buffers`. Safe to call on an already-registered pool;
     /// a no-op if the pool is unregistered or has no buffered events.
     #[pyo3(signature = (pool_address))]
-    fn apply_buffer_v3(&self, pool_address: &str) -> PyResult<()> {
+    fn apply_buffer_v3(&self, py: Python<'_>, pool_address: &str) -> PyResult<()> {
         let addr = pool_address.parse::<Address>().map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
         })?;
-        let engine = self.engine.lock();
-        // SINGLE core.write() hold across both drains AND the post-drain pin so
-        // a pump Mint/Burn cannot land between the drain and the pin (the
-        // step-2 rolling-start race — see pin_v3_post_drain_snapshot). Pre-fix
-        // two separate write() calls left an inter-drain race window too.
-        let mut core = engine.core.write();
-        core.apply_backfill_buffer_v3(&addr);
-        core.apply_pump_buffer_v3(&addr);
-        core.pin_v3_post_drain_snapshot(addr);
+        let engine = Arc::clone(&self.engine);
+        // YLYJM2: release the GIL across the engine `Mutex` + `core.write()`
+        // hold so the live pump + asyncio loop keep making GIL progress while
+        // the main thread awaits the locks. The SINGLE `core.write()` hold
+        // across both drains AND the post-drain pin is PRESERVED (the step-2
+        // rolling-start race fix — see `pin_v3_post_drain_snapshot`);
+        // `py.detach` wraps the OUTSIDE, it does NOT split the hold. Pre-fix
+        // this widened hold was the worst GIL-carrying park in `build_paths`
+        // (engine.lock() + core.write() across drain+pin). The closure touches
+        // no Python objects.
+        py.detach(move || {
+            let engine = engine.lock();
+            let mut core = engine.core.write();
+            core.apply_backfill_buffer_v3(&addr);
+            core.apply_pump_buffer_v3(&addr);
+            core.pin_v3_post_drain_snapshot(addr);
+        });
         Ok(())
     }
 
@@ -106,18 +115,28 @@ impl PyArbitrageEngine {
     /// on top of the snapshot-seeded tick data. V4 analogue of
     /// [`apply_buffer_v3`][Self::apply_buffer_v3].
     #[pyo3(signature = (pool_manager, pool_id_hex))]
-    fn apply_buffer_v4(&self, pool_manager: &str, pool_id_hex: &str) -> PyResult<()> {
+    fn apply_buffer_v4(
+        &self,
+        py: Python<'_>,
+        pool_manager: &str,
+        pool_id_hex: &str,
+    ) -> PyResult<()> {
         let pm = pool_manager.parse::<Address>().map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_manager address: {e}"))
         })?;
         let pool_id = crate::bot::engine::hex_string_to_pool_id(pool_id_hex)?;
-        let engine = self.engine.lock();
-        // Single core.write() hold across both drains + the pin (V4 twin of the
-        // step-2 race fix in apply_buffer_v3).
-        let mut core = engine.core.write();
-        core.apply_backfill_buffer_v4(pm, pool_id);
-        core.apply_pump_buffer_v4(pm, pool_id);
-        core.pin_v4_post_drain_snapshot(pm, &pool_id);
+        let engine = Arc::clone(&self.engine);
+        // YLYJM2: release the GIL across the engine `Mutex` + `core.write()`
+        // hold (V4 twin of `apply_buffer_v3`). The single-write-hold invariant
+        // (the step-2 race fix) is preserved — `py.detach` wraps the
+        // OUTSIDE.
+        py.detach(move || {
+            let engine = engine.lock();
+            let mut core = engine.core.write();
+            core.apply_backfill_buffer_v4(pm, pool_id);
+            core.apply_pump_buffer_v4(pm, pool_id);
+            core.pin_v4_post_drain_snapshot(pm, &pool_id);
+        });
         Ok(())
     }
 

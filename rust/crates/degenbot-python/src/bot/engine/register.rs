@@ -90,7 +90,7 @@ impl PyArbitrageEngine {
     /// Each entry is (`hop_type_str`, `pool_key`, `zero_for_one`) where
     /// `hop_type_str` is "V2" or "V3".
     #[pyo3(signature = (pool_refs))]
-    fn register_path(&self, pool_refs: &Bound<'_, PyList>) -> PyResult<u64> {
+    fn register_path(&self, py: Python<'_>, pool_refs: &Bound<'_, PyList>) -> PyResult<u64> {
         let mut hops = Vec::with_capacity(pool_refs.len());
         for item in pool_refs.iter() {
             let tuple = item.cast::<pyo3::types::PyTuple>()?;
@@ -115,11 +115,14 @@ impl PyArbitrageEngine {
         }
 
         let pool_ids: Vec<u64> = hops.iter().map(|h| h.pool_id).collect();
-        let path_id = self
-            .engine
-            .lock()
-            .register_path(hops)
-            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+        let engine = Arc::clone(&self.engine);
+        // YLYJM2: release the GIL across the engine `Mutex` acquisition +
+        // `register_path` (which internally takes `core.read()`) so the live
+        // pump + asyncio loop keep making GIL progress while the main thread
+        // awaits `engine.lock()`. `PoolHop` is `Send`; the error maps to a
+        // `PyErr` OUTSIDE the closure (GIL-held).
+        let result = py.detach(move || engine.lock().register_path(hops));
+        let path_id = result.map_err(pyo3::exceptions::PyValueError::new_err)?;
         // ADR-006 D4: subscribe the engine to each pool_id's state updates so
         // `Bot::dispatch_log` (driven by BlockPump) dirties the engine via the
         // `EngineSubscriber` adapter. Without this, dispatched logs apply to
@@ -146,7 +149,11 @@ impl PyArbitrageEngine {
     /// Used when the engine is already running (after the pump has started)
     /// so that new paths are immediately available to `latest_results()`.
     #[pyo3(signature = (pool_refs))]
-    fn register_and_solve_path(&self, pool_refs: &Bound<'_, PyList>) -> PyResult<u64> {
+    fn register_and_solve_path(
+        &self,
+        py: Python<'_>,
+        pool_refs: &Bound<'_, PyList>,
+    ) -> PyResult<u64> {
         let mut hops = Vec::with_capacity(pool_refs.len());
         for item in pool_refs.iter() {
             let tuple = item.cast::<pyo3::types::PyTuple>()?;
@@ -171,11 +178,13 @@ impl PyArbitrageEngine {
         }
 
         let pool_ids: Vec<u64> = hops.iter().map(|h| h.pool_id).collect();
-        let path_id = self
-            .engine
-            .lock()
-            .register_and_solve_path(hops)
-            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+        let engine = Arc::clone(&self.engine);
+        // YLYJM2: release the GIL across the engine `Mutex` acquisition +
+        // `register_and_solve_path` (engine.lock() + core.read() + the single
+        // eager `solve_path`). See `register_path`. `PoolHop` is `Send`; the
+        // error maps to a `PyErr` OUTSIDE the closure.
+        let result = py.detach(move || engine.lock().register_and_solve_path(hops));
+        let path_id = result.map_err(pyo3::exceptions::PyValueError::new_err)?;
         // ADR-006 D4: subscribe the engine to each pool_id (see `register_path`).
         let subscriber = self.engine_handle.subscriber_weak();
         for pool_id in pool_ids {

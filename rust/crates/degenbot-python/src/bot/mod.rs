@@ -1095,6 +1095,7 @@ impl PyBot {
     #[pyo3(signature = (address, token0, token1, fee, tick_spacing, factory, sqrt_price_x96, liquidity, tick, tick_data=None, update_block=0, coverage="sparse", tick_data_fetcher=None))]
     fn register_v3_pool(
         &self,
+        py: Python<'_>,
         address: &str,
         token0: &str,
         token1: &str,
@@ -1162,36 +1163,42 @@ impl PyBot {
 
         // Resolve the JSON-sourced CREATE2 deployer + init hash for this
         // (chain, factory) (Fork A, P62DKO). Stored on the pool identity so the
-        // Python companion reads it off the handle (retired ClassVar / no
-        // per-class `_verified_address`). Non-JSON pools default to
+        // Python companion reads it off the handle. Non-JSON pools default to
         // factory-as-deployer + the Uniswap V3 mainnet fallback init hash.
         let chain_id = self.bot.chain_id();
         let deployer = degenbot_uniswap::deployments::resolve_deployer(chain_id, fac);
         let init_hash_b256 = degenbot_uniswap::deployments::resolve_v3_init_hash(chain_id, fac);
 
-        self.bot
-            .state_arc()
-            .write()
-            .register_v3_pool(&RegisterV3PoolParams {
-                address: addr,
-                token0: t0,
-                token1: t1,
-                fee,
-                tick_spacing,
-                factory: fac,
-                deployer,
-                init_hash: init_hash_b256,
-                sqrt_price_x96: spx,
-                liquidity: liq,
-                tick,
-                tick_data: rust_tick_data,
-                update_block,
-                coverage: cov,
-                fetcher: tick_data_fetcher
-                    .filter(|f| !f.is_none())
-                    .map(|f| crate::bot::pool::make_tick_fetcher(f.clone().unbind())),
-            })
-            .map_err(map_register_v3_err)
+        let params = RegisterV3PoolParams {
+            address: addr,
+            token0: t0,
+            token1: t1,
+            fee,
+            tick_spacing,
+            factory: fac,
+            deployer,
+            init_hash: init_hash_b256,
+            sqrt_price_x96: spx,
+            liquidity: liq,
+            tick,
+            tick_data: rust_tick_data,
+            update_block,
+            coverage: cov,
+            fetcher: tick_data_fetcher
+                .filter(|f| !f.is_none())
+                .map(|f| crate::bot::pool::make_tick_fetcher(f.clone().unbind())),
+        };
+        let state = self.bot.state_arc();
+        // YLYJM2: release the GIL across the BotState write-lock acquisition +
+        // `register_v3_pool` so the live pump + asyncio loop keep making GIL
+        // progress while the main thread awaits `core.write()` (the startup-
+        // stall enabler — see `register_token`). `RegisterV3PoolParams` is
+        // `Send` (all-`Send` fields; `fetcher` is `Option<Arc<dyn
+        // TickWordFetcher>>`, `TickWordFetcher: Send + Sync`); the error is
+        // mapped to a `PyErr` OUTSIDE the closure (GIL-held) since `PyErr`
+        // construction needs the interpreter.
+        let result = py.detach(move || state.write().register_v3_pool(&params));
+        result.map_err(map_register_v3_err)
     }
 
     /// Register a V4 pool by `(pool_manager, pool_id)`.
@@ -1224,6 +1231,7 @@ impl PyBot {
     #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_flags, sqrt_price_x96, liquidity, tick, block, tick_data=None, coverage="sparse", tick_data_fetcher=None, protocol_fee=0))]
     fn register_v4_pool(
         &self,
+        py: Python<'_>,
         pool_manager: &str,
         pool_id_hex: &str,
         currency0: &str,
@@ -1290,32 +1298,34 @@ impl PyBot {
                 )));
             }
         };
-        self.bot
-            .state_arc()
-            .write()
-            .register_v4_pool(&RegisterV4PoolParams {
-                pool_manager: pm,
-                pool_id,
-                pool_key: V4PoolKey {
-                    currency0: c0,
-                    currency1: c1,
-                    fee,
-                    tick_spacing,
-                    hooks: Address::ZERO, // Hook filtering already done via hook_flags.
-                },
-                hook_flags,
-                protocol_fee,
-                sqrt_price_x96: sp,
-                liquidity,
-                tick,
-                tick_data: rust_tick_data,
-                update_block: block,
-                coverage: cov,
-                fetcher: tick_data_fetcher
-                    .filter(|f| !f.is_none())
-                    .map(|f| crate::bot::pool::make_tick_fetcher(f.clone().unbind())),
-            })
-            .map_err(map_register_v4_err)
+        let params = RegisterV4PoolParams {
+            pool_manager: pm,
+            pool_id,
+            pool_key: V4PoolKey {
+                currency0: c0,
+                currency1: c1,
+                fee,
+                tick_spacing,
+                hooks: Address::ZERO, // Hook filtering already done via hook_flags.
+            },
+            hook_flags,
+            protocol_fee,
+            sqrt_price_x96: sp,
+            liquidity,
+            tick,
+            tick_data: rust_tick_data,
+            update_block: block,
+            coverage: cov,
+            fetcher: tick_data_fetcher
+                .filter(|f| !f.is_none())
+                .map(|f| crate::bot::pool::make_tick_fetcher(f.clone().unbind())),
+        };
+        let state = self.bot.state_arc();
+        // YLYJM2: release the GIL across the BotState write-lock acquisition +
+        // `register_v4_pool` (see `register_token`). `RegisterV4PoolParams` is
+        // `Send`; the error is mapped to a `PyErr` OUTSIDE the closure.
+        let result = py.detach(move || state.write().register_v4_pool(&params));
+        result.map_err(map_register_v4_err)
     }
 
     /// Register a Curve `StableSwap` pool by contract address.
@@ -1792,6 +1802,7 @@ impl PyBot {
     #[pyo3(signature = (address, name, symbol, decimals, chain_id))]
     fn register_token(
         &self,
+        py: Python<'_>,
         address: &str,
         name: &str,
         symbol: &str,
@@ -1799,13 +1810,24 @@ impl PyBot {
         chain_id: u64,
     ) -> PyResult<PyErc20Token> {
         let addr = parse_address(address)?;
-        self.bot.state_arc().write().register_token(
-            addr,
-            name.to_string(),
-            symbol.to_string(),
-            decimals,
-            chain_id,
-        );
+        let name = name.to_string();
+        let symbol = symbol.to_string();
+        let state = self.bot.state_arc();
+        // YLYJM2: release the GIL across the BotState write-lock acquisition +
+        // insert so the live pump (tokio) + the asyncio loop keep making GIL
+        // progress while the main thread awaits `core.write()`. Pre-fix no
+        // registration seam released the GIL, so a parked `core.write()` /
+        // `engine.lock()` carried the GIL with it — the startup-stall enabler
+        // (the asyncio loop froze for the whole park; the pump's GIL-requiring
+        // notify/log path could not progress). The closure touches no Python
+        // objects: `BotState::register_token` is pure Rust insertion; the
+        // `PyErc20Token` handle is built afterward from the returned `addr`.
+        // Behavior-preserving (lock + insert unchanged).
+        py.detach(move || {
+            state
+                .write()
+                .register_token(addr, name, symbol, decimals, chain_id);
+        });
         Ok(PyErc20Token::new(self.bot.state_arc(), addr))
     }
 
