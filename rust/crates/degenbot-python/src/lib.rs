@@ -44,6 +44,7 @@ pub mod conversion;
 pub mod curve_math;
 #[cfg(feature = "db")]
 pub mod db;
+pub mod diagnostics;
 #[cfg(feature = "executor")]
 pub mod executor;
 #[cfg(feature = "fork")]

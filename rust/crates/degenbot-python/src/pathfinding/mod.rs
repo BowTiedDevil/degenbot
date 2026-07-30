@@ -14,7 +14,11 @@
 
 use crate::prelude::*;
 #[cfg(all(feature = "pathfinding", feature = "db"))]
-use alloy::primitives::Address;
+// Note: `alloy::primitives::Address` is no longer named in this module
+// after the ergo-66H3KJ GIL fix — the address maps are pre-computed to
+// checksum STRINGS inside the `py.detach` span in `build_path_graph`, so
+// `build_graph_dict` holds no `Address` values. Re-add the import if a
+// downstream helper here regains an `Address`-typed surface.
 #[cfg(all(feature = "pathfinding", feature = "db"))]
 use degenbot_db::DegenbotDb;
 use degenbot_pathfinding::graph::{OwnedPathFinder, PoolKind};
@@ -231,11 +235,19 @@ pub fn build_path_graph<'py>(
 /// The Rust-side result of `fetch_graph_data`: the filtered edge list + the
 /// three address/kind maps + the candidate-token set, ready for
 /// `build_graph_dict` to wrap into Python types.
+///
+/// The address maps hold PRE-COMPUTED checksum strings (not `Address`) so
+/// `build_graph_dict` does no keccak/EIP-55 work under the GIL — the
+/// `to_checksum(None)` calls run inside the `py.detach` span in
+/// `build_path_graph` (ergo 66H3KJ: the keccak loop over tens of thousands
+/// of V2/V3 addresses previously held the GIL for ~24 s, starving every
+/// tokio worker that needs `PyGILState_Ensure` and triggering the dispatch
+/// circular deadlock during the rolling-start `build_paths` overlap).
 #[cfg(all(feature = "pathfinding", feature = "db"))]
 type GraphBuildResult = (
     Vec<(u64, u64, u64, u8)>,
-    std::collections::HashMap<u64, Address>,
-    std::collections::HashMap<u64, (Address, String)>,
+    std::collections::HashMap<u64, String>,
+    std::collections::HashMap<u64, (String, String)>,
     std::collections::HashMap<u64, PoolKind>,
     std::collections::HashMap<u64, String>,
     HashSet<u64>,
@@ -272,10 +284,28 @@ fn fetch_graph_data(
         .map(|(t0, t1, pid, kind)| (t0, t1, pid, kind.as_u8()))
         .collect();
 
+    // Pre-compute EIP-55 checksum strings for every V2/V3 pool address +
+    // every V4 manager address inside this GIL-released span (ergo 66H3KJ).
+    // `Address::to_checksum(None)` is pure Rust (a keccak256 over the
+    // lowercase-hex address) and does NOT need the GIL; doing it here keeps
+    // `build_graph_dict`'s dict-build loop GIL-light (only `set_item` calls).
+    // Previously `build_graph_dict` called `to_checksum` PER pool while
+    // holding the GIL, a ~24 s keccak loop that starved tokio workers.
+    let v2v3_checksums: std::collections::HashMap<u64, String> = data
+        .v2v3_addresses
+        .iter()
+        .map(|(pid, addr)| (*pid, addr.to_checksum(None)))
+        .collect();
+    let v4_checksums: std::collections::HashMap<u64, (String, String)> = data
+        .v4_lookups
+        .iter()
+        .map(|(pid, (mgr, hash))| (*pid, (mgr.to_checksum(None), hash.clone())))
+        .collect();
+
     Ok((
         edges,
-        data.v2v3_addresses,
-        data.v4_lookups,
+        v2v3_checksums,
+        v4_checksums,
         data.pool_id_to_kind,
         data.pool_id_to_kind_string,
         candidate_tokens,
@@ -288,8 +318,8 @@ fn fetch_graph_data(
 fn build_graph_dict<'py>(
     py: Python<'py>,
     edges: &[(u64, u64, u64, u8)],
-    v2v3_addresses: &std::collections::HashMap<u64, Address>,
-    v4_lookups: &std::collections::HashMap<u64, (Address, String)>,
+    v2v3_addresses: &std::collections::HashMap<u64, String>,
+    v4_lookups: &std::collections::HashMap<u64, (String, String)>,
     pool_id_to_kind: &std::collections::HashMap<u64, PoolKind>,
     pool_id_to_kind_string: &std::collections::HashMap<u64, String>,
     candidate_tokens: &HashSet<u64>,
@@ -300,13 +330,13 @@ fn build_graph_dict<'py>(
 
     let v2v3 = PyDict::new(py);
     for (pid, addr) in v2v3_addresses {
-        v2v3.set_item(pid, addr.to_checksum(None))?;
+        v2v3.set_item(pid, addr.as_str())?;
     }
     out.set_item("v2v3_addresses", v2v3)?;
 
     let v4 = PyDict::new(py);
     for (pid, (mgr, hash)) in v4_lookups {
-        v4.set_item(pid, (mgr.to_checksum(None), hash.clone()))?;
+        v4.set_item(pid, (mgr.as_str(), hash.as_str()))?;
     }
     out.set_item("v4_lookups", v4)?;
 

@@ -18,12 +18,11 @@ not the retired ``*HopInfo`` dataclasses.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import Any
+
+import pytest
 
 from examples.eth_backrun_v2_v3_v4_rust import _render_sim_failures
-
-if TYPE_CHECKING:
-    import pytest
 
 # ── Fixtures ─────────────────────────────────────────────────────────────
 
@@ -65,6 +64,20 @@ def _outcome(failures: list[dict[str, Any]]) -> Any:
         failures=failures,
         path_infos={1: path_info, 2: path_info},
     )
+
+
+@pytest.fixture(autouse=True)
+def _disable_sim_exit_on_fail(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Disable the ``sys.exit(3)`` trap for renderer unit tests.
+
+    ``_render_sim_failures`` exits on the first non-ignored failure bucket when
+    ``DEGENBOT_SIM_EXIT_ON_FAIL`` is set (default ``"1"`` — the aggressive
+    production default per AGENTS-DEGENBOT-459). These tests exercise the
+    RENDERING contract (the ``[sim-fail]`` / ``[sim-diag]`` lines), NOT the
+    trap, so the trap is force-disabled here to keep the failure records
+    renderable.
+    """
+    monkeypatch.setenv("DEGENBOT_SIM_EXIT_ON_FAIL", "0")
 
 
 # ── Tests ─────────────────────────────────────────────────────────────────

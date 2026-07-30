@@ -233,7 +233,7 @@ class TestBlockClockFromStream:
         # expected under asyncio.wait; the load-bearing claim is that the
         # batch's solve_block is never used as the clock).
         batch = dict(_empty_batch(999))
-        batch["fresh"] = [(1, 100, 50, (1, 2), (3,))]  # one profitable result
+        batch["fresh"] = [(1, 100, 50, (1, 2), (3,), (0,))]  # one profitable result (state_nonces=(0,) — AV42C7)
         dispatcher, _w3, dispatched = await _run(
             blocks=[_block(301), _block(302)],
             batches=[batch],

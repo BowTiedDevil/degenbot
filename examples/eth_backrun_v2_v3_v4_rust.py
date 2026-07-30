@@ -82,6 +82,7 @@ from degenbot.exceptions import (
     VerificationRpcError,
 )
 from degenbot.logging import logger as bot_logger
+from degenbot._ffi.diagnostics import start_gil_probe, mark_progress
 from degenbot.pathfinding import find_paths_async
 from degenbot.provider import AlloyProvider, AsyncAlloyProvider
 from degenbot.uniswap.deployments import EthereumMainnetUniswapV4
@@ -1875,6 +1876,10 @@ async def consume_result_batches(
                     operator_private_key,
                     dry_run,
                 )
+        # ergo 66H3KJ: mark main-loop forward progress for the Rust stuck-
+        # watchdog (start_gil_probe). A stale timestamp here means the loop
+        # is parked mid-`_apply_result_if_ready` (the dispatch deadlock site).
+        mark_progress()
 
 
 _TEE_SENTINEL: Any = object()
@@ -2137,6 +2142,14 @@ async def main() -> None:
     parser = _build_arg_parser()
     args = parser.parse_args()
     dry_run = not args.live
+
+    # ergo 66H3KJ: start the GIL-acquire-latency probe + main-loop stuck-
+    # watchdog BEFORE any other work (build_paths + the live pump overlap is
+    # the suspected deadlock window). The probe runs on its own std::thread
+    # and never needs the GIL to make progress, so it keeps sampling even
+    # during a permanent GIL deadlock.
+    start_gil_probe(interval_ms=50, threshold_ms=100, stuck_ms=30_000)
+    mark_progress()
 
     # Override PATH_PERMUTATION_FILTER from CLI if --permutation is set
     global PATH_PERMUTATION_FILTER

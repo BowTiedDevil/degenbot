@@ -284,6 +284,11 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "submission")]
     crate::submission::add_submission_module(m)?;
 
+    // Diagnostics instrumentation (ergo 66H3KJ): GIL-acquire-latency probe
+    // + main-loop stuck-watchdog. Unconditional (no feature gate) so the
+    // probe is available in every build; the example opts in at startup.
+    crate::diagnostics::add_diagnostics_module(m)?;
+
     // Simulation seam (feature = "simulation") — the PyO3 binding over
     // `degenbot-backrun-strategy` (per-block profitability pipeline:
     // `dispatch_profitable_results` + the 7-call `simulate_path_on_evm`,

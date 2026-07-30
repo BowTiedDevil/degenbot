@@ -78,7 +78,11 @@ use std::sync::Arc;
 /// only ever locked for short synchronous spans).
 #[pyfunction]
 #[pyo3(signature = (candidates, context, dispatcher, base_fee_next, current_block, block_timestamp, min_profit_net, min_profit_margin_bps, *, engine=None))]
-#[allow(clippy::too_many_arguments, clippy::needless_pass_by_value)]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::needless_pass_by_value,
+    clippy::too_many_lines
+)]
 pub fn dispatch_profitable_py<'py>(
     py: Python<'py>,
     candidates: &Bound<'_, PyList>,
@@ -177,7 +181,26 @@ pub fn dispatch_profitable_py<'py>(
             .map(|eng| eng.borrow(py).warm_code_cache_arc());
 
     // ── GIL release across the per-path simulation fan-out ──
+    // ergo 66H3KJ instrumentation: phase timestamps so the log shows how far
+    // the dispatch future progressed if/when it deadlocks. `log::info!` here
+    // goes through pyo3-log (a GIL acquire) — only at phase boundaries, so it
+    // cannot itself cause the fan-out's per-candidate GIL contention; it tags
+    // the start/end of the body on a tokio worker.
+    let phase_candidate_count = built.len();
+    log::info!(
+        "[dispatch-phase] future body START block={current_block} candidates={phase_candidate_count}"
+    );
     future_into_py(py, async move {
+        let phase_started = std::time::Instant::now();
+        // ergo 66H3KJ phase marker: the dispatch fan-out body is about to run
+        // on a tokio worker. The pyo3-log emit here is the FIRST GIL-acquire
+        // the future does — if the main thread already holds the GIL
+        // (build_paths sync pyo3 call / _asyncio futex park), this line will
+        // NOT appear until the GIL frees; its absence in the log vs the
+        // `[dispatch-phase] future body START` line above pinpoints the block.
+        log::info!(
+            "[dispatch-phase] fan-out ENTER block={current_block} candidates={phase_candidate_count}"
+        );
         let ctx = SimulateContext {
             provider: &provider,
             executor_owner,
@@ -206,6 +229,11 @@ pub fn dispatch_profitable_py<'py>(
             bot_state,
             warm_cache,
         );
+        log::info!(
+            "[dispatch-phase] fan-out EXIT block={current_block} elapsed={phase_elapsed:?} survivors={survivors}",
+            phase_elapsed = phase_started.elapsed(),
+            survivors = outcome.gas_profitable.len()
+        );
 
         // ── Join survivors → SubmitCandidates (pure Rust — no GIL needed) ──
         // The cockpit chains dispatch_profitable_py → dispatch_and_submit_py
@@ -228,6 +256,16 @@ pub fn dispatch_profitable_py<'py>(
             .map(|r| (r.path_id, r.captured_swaps.clone()))
             .collect();
 
+        // ergo 66H3KJ phase marker: the future body has produced its
+        // outcome and is about to return. pyo3-async-runtimes then schedules
+        // `spawn_blocking(|| Python::attach(set_result))` to hand the result to
+        // the awaiting asyncio future — that `Python::attach` is the SECOND
+        // GIL acquire on this dispatch path, and the one the parked main
+        // thread starves. If this line appears but the next block never
+        // advances, the result-setter is the blocked step.
+        log::info!(
+            "[dispatch-phase] future body END block={current_block} — handing to set_result via Python::attach"
+        );
         Ok(PyDispatchOutcome::from_join(
             joined,
             path_info_by_id,
