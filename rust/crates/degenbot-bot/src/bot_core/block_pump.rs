@@ -147,7 +147,6 @@ pub struct BlockPump {
     /// backfill regardless of log activity (dead-`newHeads` recovery — see
     /// `HEADER_STALENESS_SECS`). Overridable in tests via
     /// `set_header_staleness_for_test`.
-    #[allow(dead_code)] // wired in a follow-up commit (header-staleness watchdog)
     header_staleness: Duration,
 }
 
@@ -517,11 +516,32 @@ impl BlockPump {
         // N's OWN metadata, retrieved here (VTWCIG).
         let mut block_metadata: HashMap<u64, BlockMetadata> = HashMap::new();
 
-        // [DIAG]
+        // [DIAG] newHeads-stall counters (JIABO3: `last_header_at` is shared
+        // with the header-staleness watchdog below — not DIAG-only).
         let mut diag_header_count: u64 = 0;
         let mut diag_log_count: u64 = 0;
-        let mut diag_last_header_at = tokio::time::Instant::now();
+        let mut last_header_at = tokio::time::Instant::now();
         let mut diag_last_stats = tokio::time::Instant::now();
+
+        // JIABO3 Option A — header-staleness watchdog. A `tokio::time::interval`
+        // selected against `combined.next()` (below) whose internal `Sleep`
+        // elapses independently of stream activity. This catches a silent
+        // `newHeads` (dead/stalled WS subscription) even under dense-log
+        // pressure, where the in-loop `timeout(.. combined.next())` `Err(_)`
+        // no-activity path never elapses because `combined.next()` keeps
+        // yielding logs. When the tick wins the select AND headers are
+        // genuinely stale (>= `header_staleness`), it runs the SAME
+        // `handle_timeout_eager` catch-up the no-activity path uses.
+        //
+        // Limitation (documented in JIABO3 Option A): this fires only when the
+        // pump is parked AT the select. If the pump parks BEFORE the select
+        // (GIL re-entry park via `PySubscriberAdapter`, or engine-lock
+        // contention inside `on_drain`/`apply_buffer_v3`), the interval can't
+        // advance — that residual unbounded risk is Option B's
+        // notify-delocalization work, out of scope here.
+        let mut staleness_tick = tokio::time::interval(self.header_staleness);
+        staleness_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        staleness_tick.tick().await; // discard the immediate first tick
 
         loop {
             // Solve any dirty paths accumulated from the previous iteration's
@@ -562,7 +582,30 @@ impl BlockPump {
             } else {
                 Duration::from_secs(BACKFILL_TIMEOUT_SECS)
             };
-            let event = timeout(wait_timeout, combined.next()).await;
+            let event = tokio::select! {
+                biased;
+                // JIABO3 header-staleness watchdog — see the interval setup
+                // above. Firing here does NOT consume the stream event; it runs
+                // `handle_timeout_eager` then re-loops (the top-of-loop drain
+                // picks up any dirty paths the backfill created). The
+                // `timeout(wait_timeout, combined.next())` future is dropped on
+                // this arm winning, so the inactivity/debounce countdown
+                // restarts — acceptable since `DEBOUNCE_MS << header_staleness`
+                // and the no-activity path is now superseded by this watchdog.
+                _ = staleness_tick.tick() => {
+                    if last_header_at.elapsed() >= self.header_staleness {
+                        self.handle_timeout_eager(
+                            &mut current_block,
+                            &mut clock,
+                            &mut block_metadata,
+                            &mut publish_pending,
+                        )
+                        .await;
+                    }
+                    continue;
+                }
+                event = timeout(wait_timeout, combined.next()) => event,
+            };
 
             match event {
                 // Settle point — no new event in the window. Flush the
@@ -601,19 +644,17 @@ impl BlockPump {
                     let diag_gap = if diag_header_count == 1 {
                         0.0
                     } else {
-                        diag_last_header_at.elapsed().as_secs_f64()
+                        last_header_at.elapsed().as_secs_f64()
                     };
                     log::info!(
                         "BlockPump: [DIAG] HEADER block={number} (#{diag_header_count}) gap={diag_gap:.1}s"
                     );
-                    if diag_header_count > 1
-                        && diag_last_header_at.elapsed() > Duration::from_secs(20)
-                    {
+                    if diag_header_count > 1 && last_header_at.elapsed() > Duration::from_secs(20) {
                         log::warn!(
                             "BlockPump: [DIAG] *** HEADER STALL: headers were silent {diag_gap:.1}s before block {number}"
                         );
                     }
-                    diag_last_header_at = tokio::time::Instant::now();
+                    last_header_at = tokio::time::Instant::now();
                     // Snapshot the just-finished block's metadata BEFORE
                     // overwriting `current_metadata` with the incoming
                     // header's. `current_metadata` at this point holds the
@@ -856,7 +897,7 @@ impl BlockPump {
                     // otherwise lacks.
                     diag_log_count += 1;
                     if diag_last_stats.elapsed() >= DIAG_STATS_INTERVAL {
-                        let diag_since_header = diag_last_header_at.elapsed().as_secs();
+                        let diag_since_header = last_header_at.elapsed().as_secs();
                         log::info!(
                             "BlockPump: [DIAG] stats headers={diag_header_count} logs={diag_log_count} last_header_ago={diag_since_header}s current_block={current_block}"
                         );
@@ -1172,6 +1213,14 @@ impl BlockPump {
     ) {
         self.run_with_stream(combined, first_observed_block).await;
     }
+
+    /// Test-only override of the header-staleness watchdog window (JIABO3).
+    /// Lets tests drive the watchdog `tokio::time::interval` to a sub-second
+    /// period instead of the 30s production default, so the select-arm fire
+    /// is observable without a 30s wait.
+    pub fn set_header_staleness_for_test(&mut self, staleness: Duration) {
+        self.header_staleness = staleness;
+    }
 }
 
 /// Build an Alloy `Filter` for backfill via `eth_getLogs`.
@@ -1269,6 +1318,11 @@ mod tests {
         sent: Mutex<Vec<BlockMetadata>>,
         drained: Mutex<Vec<(u64, BlockMetadata)>>,
         notified: Mutex<Vec<(u64, BlockMetadata)>>,
+        /// Records every `set_last_solved_block` call (JIABO3: proves the
+        /// header-staleness watchdog reached `handle_timeout_eager` because
+        /// only the backfill path + the header anchor call this — the watchdog
+        /// is the sole path that backfills past the stream's observed block).
+        solved: Mutex<Vec<u64>>,
         last_processed: AtomicU64,
     }
 
@@ -1279,6 +1333,7 @@ mod tests {
                 sent: Mutex::new(Vec::new()),
                 drained: Mutex::new(Vec::new()),
                 notified: Mutex::new(Vec::new()),
+                solved: Mutex::new(Vec::new()),
                 last_processed: AtomicU64::new(last_processed.unwrap_or(0)),
             }
         }
@@ -1302,7 +1357,9 @@ mod tests {
         fn finalize_block(&self, block: u64, metadata: &BlockMetadata) {
             self.finalized.lock().unwrap().push((block, *metadata));
         }
-        fn set_last_solved_block(&self, _block: u64) {}
+        fn set_last_solved_block(&self, block: u64) {
+            self.solved.lock().unwrap().push(block);
+        }
         fn record_logs_this_block(&self) {}
         fn last_processed_block(&self) -> Option<u64> {
             let v = self.last_processed.load(Ordering::Relaxed);
@@ -1348,6 +1405,163 @@ mod tests {
         let sink = Arc::new(FakeDrainSink::new(last_processed));
         let pump = BlockPump::for_test(bot, sink.clone(), reorg, provider, shutdown);
         (pump, sink)
+    }
+
+    /// Same shape as `pump_for_test` but also returns the mock transport's
+    /// `Asserter` (JIABO3) so tests can queue `eth_blockNumber` /
+    /// `eth_getLogs` responses reached by the header-staleness watchdog's
+    /// `handle_timeout_eager`. `pump_for_test` discards the asserter; this
+    /// variant exposes it.
+    fn pump_for_test_sink_and_asserter(
+        last_processed: Option<u64>,
+    ) -> (
+        BlockPump,
+        Arc<FakeDrainSink>,
+        alloy::transports::mock::Asserter,
+        Arc<AtomicBool>,
+    ) {
+        use alloy::network::Ethereum as NetEth;
+        use alloy::providers::{Provider, ProviderBuilder};
+        use alloy::rpc::client::ClientBuilder;
+        use alloy::transports::mock::{Asserter, MockTransport};
+
+        let asserter = Asserter::new();
+        let client = ClientBuilder::default().transport(MockTransport::new(asserter.clone()), true);
+        let dyn_provider = ProviderBuilder::new().connect_client(client).erased();
+        let provider = Arc::new(AlloyProvider::from_provider(
+            Arc::new(dyn_provider) as Arc<dyn alloy::providers::Provider<NetEth>>
+        ));
+        let bot = Arc::new(Bot::new(1));
+        let reorg = Arc::new(crate::bot_core::reorg_coordinator::ReorgCoordinator::new(
+            Arc::clone(&bot),
+        ));
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let sink = Arc::new(FakeDrainSink::new(last_processed));
+        let pump = BlockPump::for_test(bot, sink.clone(), reorg, provider, Arc::clone(&shutdown));
+        (pump, sink, asserter, shutdown)
+    }
+
+    /// JIABO3 Option A — header-staleness watchdog independence.
+    ///
+    /// Contract: a `tokio::time::interval` selected against `combined.next()`
+    /// wakes the pump even when the WS stream is silent (no new headers / no
+    /// logs after an initial header), firing `handle_timeout_eager` and
+    /// backfilling past the stream's observed block. This is the independence
+    /// the in-loop `timeout(.. combined.next())` lacked: that timeout only
+    /// arms once the loop body reaches its select await, and under dense-log
+    /// pressure `combined.next()` keeps yielding so the 60s no-activity path
+    /// never elapses — a silent `newHeads` goes undetected. The watchdog tick
+    /// elapses on its OWN internal `Sleep`, racing `combined.next()`.
+    ///
+    /// Stream: header(101), then 250ms silence, then end. `header_staleness`
+    /// overridden to 100ms. Mock RPC: `eth_blockNumber` → 102,
+    /// `eth_getLogs`(102) → empty. The only way `set_last_solved_block(102)`
+    /// lands is the watchdog's backfill — the stream delivered only 101.
+    #[tokio::test]
+    async fn header_staleness_watchdog_fires_under_silent_stream() {
+        let (mut pump, sink, asserter, _shutdown) = pump_for_test_sink_and_asserter(Some(100));
+        pump.set_header_staleness_for_test(Duration::from_millis(100));
+
+        // FIFO mock queue: the watchdog's `get_block_number` (returns 102 so
+        // `latest > current` triggers backfill), then `get_logs` for block 102
+        // (empty — `backfill_range` still stamps `last_processed_block=102`
+        // per iteration). Extra `0x66` results pad later ticks (current already
+        // 102 → `latest > current` is false → no second backfill, no `get_logs`).
+        asserter.push_success(&"0x66".to_string()); // eth_blockNumber → 102
+        asserter.push_success(&Vec::<Log>::new()); // eth_getLogs(102) → []
+        asserter.push_success(&"0x66".to_string());
+        asserter.push_success(&"0x66".to_string());
+        asserter.push_success(&"0x66".to_string());
+
+        // Stream: one header (anchors current_block=101, sets last_header_at),
+        // then 250ms of silence (combined.next() stays pending → only the
+        // watchdog tick can win the select), then end.
+        let combined = stream::unfold(0u8, |phase| async move {
+            match phase {
+                0 => Some((
+                    WsEvent::BlockHeader {
+                        number: 101,
+                        timestamp: 1,
+                        base_fee_per_gas: None,
+                        gas_used: 0,
+                        gas_limit: 0,
+                    },
+                    1,
+                )),
+                1 => {
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    None
+                }
+                _ => None,
+            }
+        })
+        .boxed();
+
+        pump.run_test_loop(combined, 100).await;
+
+        let solved = sink.solved.lock().unwrap().clone();
+        assert!(
+            solved.contains(&102),
+            "watchdog must backfill block 102 under a silent stream; \
+             set_last_solved_block calls were {solved:?}"
+        );
+    }
+
+    /// JIABO3 Option A — guard: the watchdog does NOT spuriously fire when
+    /// headers keep arriving within the staleness window. The
+    /// `last_header_at.elapsed() >= header_staleness` guard must prevent
+    /// backfill under a live `newHeads` stream, even though the interval tick
+    /// still elapses. Locks the guard so a future regression that drops it (and
+    /// backfills on every tick) fails here.
+    #[tokio::test]
+    async fn header_staleness_watchdog_does_not_fire_when_headers_fresh() {
+        let (mut pump, sink, asserter, _shutdown) = pump_for_test_sink_and_asserter(Some(100));
+        // Generous margin (200ms staleness, headers every 50ms) so the test is
+        // not timing-flaky: at any tick elapse, `last_header_at` is <100ms old.
+        pump.set_header_staleness_for_test(Duration::from_millis(200));
+
+        // If the watchdog fired spuriously, it would consume these and
+        // backfill block 999 (way beyond the stream's observed blocks) →
+        // `set_last_solved_block(999)` would land. The assertion is the
+        // negative: 999 absent AND the queue unconsumed.
+        asserter.push_success(&"0x3e7".to_string()); // eth_blockNumber → 999
+        asserter.push_success(&Vec::<Log>::new());
+
+        // Headers 101..105 arriving every 50ms (well within the 200ms
+        // staleness window), then end at 300ms.
+        let combined = stream::unfold((0u8, 101u64), |(phase, block)| async move {
+            match phase {
+                _ if block <= 105 => {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    Some((
+                        WsEvent::BlockHeader {
+                            number: block,
+                            timestamp: block,
+                            base_fee_per_gas: None,
+                            gas_used: 0,
+                            gas_limit: 0,
+                        },
+                        (phase, block + 1),
+                    ))
+                }
+                _ => None,
+            }
+        })
+        .boxed();
+
+        pump.run_test_loop(combined, 100).await;
+
+        let solved = sink.solved.lock().unwrap().clone();
+        assert!(
+            !solved.contains(&999),
+            "watchdog must NOT backfill while headers are fresh; \
+             set_last_solved_block calls were {solved:?}"
+        );
+        assert_eq!(
+            asserter.read_q().len(),
+            2,
+            "watchdog must not have polled the provider while headers were fresh"
+        );
     }
 
     #[tokio::test]
