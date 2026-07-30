@@ -429,7 +429,12 @@ impl V3PoolState {
             tick_spacing,
             self.liquidity,
             zero_for_one,
-            15,
+            // T47PPB: the active-set walk has no tuple budget, so feed depth is
+            // bounded by data, not solvability. 24 visible ranges ≈ 2× the
+            // word-boundary ring around the current tick for dense inserted
+            // liquidity (block-25641093 pool 0xDcA4…65c9 needs ≥17 to see the
+            // -22900 liquidity activation past the mid-spine flank pairs).
+            24,
         )
         .map(|(ranges, _)| Arc::<[V3TickRangeForSolver]>::from(ranges));
 

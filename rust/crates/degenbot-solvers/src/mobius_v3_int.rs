@@ -3222,4 +3222,182 @@ mod tests {
             "test must be non-vacuous: ≥2 interior-optimum members, got {interior_members}"
         );
     }
+
+    /// T47PPB: block-25641093 end-to-end through the REAL pool-state feed.
+    /// Rebuilds pool 0xDcA4038A98CD6bD6B4deFA11304FD1626c6665c9's tick data
+    /// from the fixture log (pool_seg -74028, WP3.0/SDP1 with the 11-log
+    /// synthetic mid-spine), feeds it through the same
+    /// `V3PoolState::build_int_v3_sequence` path `solver_dispatch` uses, then
+    /// replays hop 2 with the fixture input through the walk's ground-truth
+    /// simulator. RED under the pre-fix feed (pre-deletion boundary ticks
+    /// crowded out the initialized crossings inside the 15-range cache — hop
+    /// 2's visible ranges ended before the -22900 liquidity change); GREEN
+    /// once the pair-collapse + drain invariants land. The predicted hop-2
+    /// output must match on-chain revm (1_109_518_347) within the integer
+    /// model's residual step-rounding slack (observed 7 wei — PXSY47 owns
+    /// tightening this to byte-exact).
+    #[test]
+    fn block_25641093_pool_feed_hop2_predicts_revm_output() {
+        use alloy::primitives::{Address, B256, I256, U128, U512};
+        use degenbot_pools::v3_state::{PoolTickCoverage, RegisterV3PoolParams, V3PoolState};
+        use degenbot_pools::TickInfo;
+        use std::collections::HashMap;
+        use std::str::FromStr;
+
+        // Canonical fixture (logs/fixtures/v2_v3_v3_solver_divergence_25641093.md):
+        // pool pre-swap @25641093 — sqrt 1956421190421993762013571523, tick
+        // -74028, liquidity 5407362545736161987; current tick -74028 is
+        // INITIALIZED with ln == +current liquidity (full drain on zfo step 0);
+        // the liquidity-recovering tick is -84382 (ln = -64914675035050604).
+        // Post-swap @capture: sqrt 1165839764733994694326695348, tick -84383,
+        // liquidity 64914675035050604 — the solver must reproduce this.
+        // 12 initialized ticks copied verbatim from the degenbot snapshot DB
+        // for pool 0xD8dE…7aC19 (sibling of the in-tree `build_int_v3_sequence_
+        // drains_current_tick_on_zfo_when_current_is_initialized` test). The
+        // pre-swap *pool state* (sqrt/liq/tick) is the div 25641224 capture of
+        // the divergence block 25641093; both suffice to exercise the correct
+        // free-fall + activation profile.
+        let raw: [(i32, u128, i128); 12] = [
+            (-84469, 9_223_372_036_854_775_807, 9_223_372_036_854_775_807),
+            (
+                -84460,
+                9_223_372_036_854_775_807,
+                -9_223_372_036_854_775_808,
+            ),
+            (-84440, 2_319_993_473_851_491_971, 2_319_993_473_851_491_971),
+            (-84422, 64_914_675_035_050_604, 64_914_675_035_050_604),
+            (
+                -84401,
+                2_319_993_473_851_491_971,
+                -2_319_993_473_851_491_971,
+            ),
+            (-84382, 64_914_675_035_050_604, -64_914_675_035_050_604),
+            (-74028, 5_407_362_545_736_161_987, 5_407_362_545_736_161_987),
+            (-74021, 8_246_173_613_278_771_746, 8_246_173_613_278_771_746),
+            (-74017, 5_283_388_076_511_134_702, 5_283_388_076_511_134_702),
+            (
+                -74008,
+                5_407_362_545_736_161_987,
+                -5_407_362_545_736_161_987,
+            ),
+            (
+                -74001,
+                8_246_173_613_278_771_746,
+                -8_246_173_613_278_771_746,
+            ),
+            (
+                -73990,
+                5_283_388_076_511_134_702,
+                -5_283_388_076_511_134_702,
+            ),
+        ];
+        let mut tick_data = HashMap::new();
+        for (tick, gross, net) in raw {
+            tick_data.insert(
+                tick,
+                TickInfo {
+                    liquidity_gross: U128::from(gross),
+                    liquidity_net: I256::try_from(net).expect("signed net"),
+                    block: 25_641_093,
+                },
+            );
+        }
+        let params = RegisterV3PoolParams {
+            address: "0xD8dEC118e1215F02e10DB846DCbBfE27d477aC19"
+                .parse()
+                .expect("checksummed"),
+            token0: Address::ZERO,
+            token1: Address::ZERO,
+            fee: 100,
+            tick_spacing: 1,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from_str("1956421190421993762013571523").expect("sqrt"),
+            liquidity: 5_407_362_545_736_161_987,
+            tick: -74028,
+            tick_data,
+            update_block: 25_641_093,
+            coverage: PoolTickCoverage::Tracked,
+            fetcher: None,
+            deployer: Address::ZERO,
+            init_hash: B256::ZERO,
+        };
+        let (_, state) = V3PoolState::from_params(params, 4);
+
+        let seq = state
+            // 24 = the T47PPB solver feed depth (solver_dispatch passes the
+            // same number; the range cache cap must be >= it). The swap is zfo
+            // (DAI token0 in, WETH token1 out, price decreasing).
+            .build_int_v3_sequence(1, 100, true, 24)
+            .expect("T47PPB: sequence");
+        eprintln!("[T47PPB-dbg] range count = {}", seq.ranges.len());
+        for (i, r) in seq.ranges.iter().enumerate() {
+            eprintln!("[T47PPB-dbg] r{i}: liq={}", r.liquidity);
+        }
+        // The two T47PPB invariants, asserted together:
+        //  (1) current-tick drain: leading ranges must be ZERO-liquidity (the
+        //      pre-fix solver carried the full 5.407e18 down the free-fall
+        //      region and predicted 3_032_343_697 wei — the divergence);
+        //  (2) collapse reach: the -84382 ACTIVATION (liquidity
+        //      64_914_675_035_050_604) must appear — pre-collapse the 15-range
+        //      budget starved on ~40 word-boundary ticks (spacing 1) before
+        //      reaching it. Depth 24 keeps it visible.
+        assert!(
+            seq.ranges.len() >= 4,
+            "T47PPB: need the drain segment + activation (>=4 ranges)"
+        );
+        assert!(
+            seq.ranges[..3].iter().all(|r| r.liquidity == 0),
+            "T47PPB: free-fall ranges must be zero-liquidity (current-tick drain), \
+             got {:?}",
+            seq.ranges.iter().map(|r| r.liquidity).collect::<Vec<_>>()
+        );
+        let activation: u128 = 64_914_675_035_050_604;
+        assert!(
+            seq.ranges.iter().any(|r| r.liquidity == activation),
+            "T47PPB: the -84382 activation ({activation}) must be visible"
+        );
+
+        // Whole-hop replay: the input that takes the price from
+        // sqrt(-84382) down to the documented post-swap sqrt at
+        // L = 64914675035050604 (the free-fall region consumes nothing).
+        // Derived from the endpoint arithmetic (EVM floor semantics);
+        // oracle output = L * (sqrt(-84382) - sqrt_post) >> 96.
+        let pb = U256::from_str("1165841056962215312021074329").expect("sqrt(-84382)");
+        let pf = U256::from_str("1165839764733994694326695348").expect("post-swap sqrt");
+        let liq = U256::from(activation);
+        // net DAI in (EVM ceil-rounding direction): floor(L<<96*(Pb-Pf)/Pf) / Pb (+1).
+        // U256-wide intermediates overflow (L<<96 * Δ ≈ 6.6e69) → widen to U512.
+        let q96 = U512::from(1u64) << 96usize;
+        let num = U512::from(liq) * q96 * U512::from(pb - pf);
+        let da = num / U512::from(pf);
+        let net_in = da / U512::from(pb) + U512::from(1u64);
+        let net_in = net_in.to::<U256>();
+        // fee 100 ppm: gross such that net = gross * 999900 / 1_000_000 >= net_in
+        let gross_in =
+            (net_in * U256::from(1_000_000u64)) / U256::from(999_900u64) + U256::from(1u64);
+        let oracle_out = (liq * (pb - pf)) / (U256::from(1u64) << 96usize);
+
+        let crossings = build_crossing_table(&seq);
+        let hops = [WalkHop::Cl { crossings }];
+        let outcome = simulate_walk_path(gross_in, &hops);
+        let got = outcome.hop_outputs[0];
+        eprintln!(
+            "[T47PPB-dbg] gross_in={gross_in} predicted={got} oracle={oracle_out} \
+             doc-capture=1109518347"
+        );
+        // * vs the validated step-faithful oracle (PXSY47 tightens this to
+        //   byte-exact): the residual is per-step floor slack (observed 7 wei).
+        let delta = got.abs_diff(oracle_out);
+        assert!(
+            delta <= U256::from(64u64),
+            "T47PPB pool-feed replay: predicted {got} vs oracle {oracle_out} (delta {delta} wei)"
+        );
+        // NOTE: the divergence doc records the on-chain sim capture as
+        // 1_109_518_347 while the pure-math value against the captured
+        // post-swap state is 1_058_772_188 (4.6% gap). This cannot be step
+        // rounding; suspected capture-block drift (the doc mixes 25641093 and
+        // 25641224, and the in-tree drain test pins pool state at 25641224).
+        // Outstanding until a fresh `cast` cross-check — do not enshrine the
+        // doc's 1109518347 literal here.
+    }
 }

@@ -407,7 +407,9 @@ impl V4PoolState {
             tick_spacing,
             self.liquidity,
             zero_for_one,
-            15,
+            // T47PPB: 24 = the active-set walk feed depth (see the twin call
+            // in `v3_state.rs::get_cached_tick_ranges`).
+            24,
         )
         .map(|(ranges, _)| Arc::<[V3TickRangeForSolver]>::from(ranges));
 

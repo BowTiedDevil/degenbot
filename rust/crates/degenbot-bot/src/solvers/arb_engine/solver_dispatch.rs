@@ -228,7 +228,11 @@ impl ArbitrageEngine {
                         identity.tick_spacing,
                         identity.fee,
                         pool_ref.zero_for_one,
-                        10,
+                        // T47PPB: 24 = the active-set walk feed depth. The
+                        // enumeration-era value was 10 (tuple cap); the walk
+                        // has no tuple cap, so depth is bounded by data
+                        // availability (the range cache stores 24).
+                        24,
                     ) else {
                         return; // No integer sequence → invalid
                     };
@@ -247,7 +251,9 @@ impl ArbitrageEngine {
                         identity.pool_key.tick_spacing,
                         identity.pool_key.fee,
                         pool_ref.zero_for_one,
-                        10,
+                        // T47PPB: 24 = the active-set walk feed depth (twin of
+                        // the V3 site above).
+                        24,
                     ) else {
                         return; // No integer sequence → invalid
                     };
