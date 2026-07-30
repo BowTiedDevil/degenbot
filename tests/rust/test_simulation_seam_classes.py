@@ -65,6 +65,7 @@ class TestPyDispatchCandidate:
             engine_profit=2_000_000_000_000_000_000,
             hop_outputs=[1_500_000_000_000_000_000, 1_400_000_000_000_000_000],
             solve_block=19_000_000,
+            state_nonces=[0, 0],
         )
         # No public fields yet (A4 reads `inner`); construction-not-erroring
         # is the contract. The instance confirms the projection resolved the
@@ -83,6 +84,7 @@ class TestPyDispatchCandidate:
             engine_profit=1,
             hop_outputs=[1, 1],
             solve_block=0,
+            state_nonces=[0, 0],
         )
         assert isinstance(candidate, PyDispatchCandidate)
 
@@ -97,6 +99,7 @@ class TestPyDispatchCandidate:
             engine_profit=1,
             hop_outputs=[1, 1],
             solve_block=0,
+            state_nonces=[0, 0],
             erc6909_profit=True,
             use_v4_batch=True,
         )
@@ -114,6 +117,7 @@ class TestPyDispatchCandidate:
                 engine_profit=1,
                 hop_outputs=[1, 1],
                 solve_block=0,
+                state_nonces=[0, 0],
             )
 
     def test_hop_outputs_length_mismatch_raises_value_error(
@@ -129,6 +133,7 @@ class TestPyDispatchCandidate:
                 engine_profit=1,
                 hop_outputs=[1],
                 solve_block=0,
+                state_nonces=[0],
             )
 
 

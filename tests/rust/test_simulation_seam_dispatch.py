@@ -247,6 +247,7 @@ class TestDispatchWithCandidateButNoRpc:
             engine_profit=2_000_000_000_000_000_000,
             hop_outputs=[1_500_000_000_000_000_000, 1_400_000_000_000_000_000],
             solve_block=100,
+            state_nonces=[0, 0],
         )
         outcome = await dispatch_profitable_py(
             candidates=[candidate],
