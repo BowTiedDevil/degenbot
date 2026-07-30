@@ -140,6 +140,87 @@ impl PyArbitrageEngine {
         Ok(())
     }
 
+    /// Set a V3 pool's registration lifecycle to `Quarantined` (6N7XVR). The
+    /// live pump then defers the pool's Swap/Mint/Burn events to the pump
+    /// buffer until [`set_v3_pool_live`] transitions it back. Call at the
+    /// start of `register_v3_pool` (before the first RPC await) so a live
+    /// event landing during the drain+pin+verify window cannot advance
+    /// `update_block` past `last_complete_block` (the live direct-apply gap
+    /// YLYJM2's `drain_pump_completed` buffer gate does NOT cover). No-op for
+    /// unregistered pools.
+    #[pyo3(signature = (pool_address))]
+    fn set_v3_pool_quarantined(&self, py: Python<'_>, pool_address: &str) -> PyResult<()> {
+        let addr = pool_address.parse::<Address>().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
+        })?;
+        let engine = Arc::clone(&self.engine);
+        py.detach(move || {
+            engine.lock().core.write().set_v3_pool_quarantined(addr);
+        });
+        Ok(())
+    }
+
+    /// Set a V4 pool's registration lifecycle to `Quarantined` (6N7XVR). V4
+    /// twin of [`set_v3_pool_quarantined`]. Call at the start of
+    /// `register_v4_pool` (before the first RPC await).
+    #[pyo3(signature = (pool_manager, pool_id_hex))]
+    fn set_v4_pool_quarantined(
+        &self,
+        py: Python<'_>,
+        pool_manager: &str,
+        pool_id_hex: &str,
+    ) -> PyResult<()> {
+        let pm = pool_manager.parse::<Address>().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_manager address: {e}"))
+        })?;
+        let pool_id = crate::bot::engine::hex_string_to_pool_id(pool_id_hex)?;
+        let engine = Arc::clone(&self.engine);
+        py.detach(move || {
+            engine
+                .lock()
+                .core
+                .write()
+                .set_v4_pool_quarantined(pm, pool_id);
+        });
+        Ok(())
+    }
+
+    /// Transition a V3 pool from `Quarantined` to `Live` (6N7XVR): flush the
+    /// retained in-progress-block pump tail via the unguarded `drain_pump`
+    /// in insertion order, then mark `Live`. Call after step-2 post-drain
+    /// verify passes. No-op for unregistered / already-`Live` pools.
+    #[pyo3(signature = (pool_address))]
+    fn set_v3_pool_live(&self, py: Python<'_>, pool_address: &str) -> PyResult<()> {
+        let addr = pool_address.parse::<Address>().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
+        })?;
+        let engine = Arc::clone(&self.engine);
+        py.detach(move || {
+            engine.lock().core.write().set_v3_pool_live(addr);
+        });
+        Ok(())
+    }
+
+    /// Transition a V4 pool from `Quarantined` to `Live` (6N7XVR). V4 twin
+    /// of [`set_v3_pool_live`]. Call after step-2 post-drain verify passes.
+    #[pyo3(signature = (pool_manager, pool_id_hex))]
+    fn set_v4_pool_live(
+        &self,
+        py: Python<'_>,
+        pool_manager: &str,
+        pool_id_hex: &str,
+    ) -> PyResult<()> {
+        let pm = pool_manager.parse::<Address>().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_manager address: {e}"))
+        })?;
+        let pool_id = crate::bot::engine::hex_string_to_pool_id(pool_id_hex)?;
+        let engine = Arc::clone(&self.engine);
+        py.detach(move || {
+            engine.lock().core.write().set_v4_pool_live(pm, pool_id);
+        });
+        Ok(())
+    }
+
     /// Debug/test seam: buffer a V3 backfill liquidity update (Mint/Burn) for
     /// a pool address WITHOUT applying it. If the pool is already registered it
     /// is applied directly (mirroring `BotState::buffer_backfill_v3_liquidity_update`);

@@ -450,6 +450,17 @@ class EngineRegistry:
         # `register_v2_pool` documents the same shared-state invariant.)
         key = pool._py_pool.pool_id  # noqa: SLF001
 
+        # 6N7XVR: quarantine the pool BEFORE the first RPC await so the live
+        # pump DEFERS this pool's events to the pump buffer during the
+        # drain+pin+verify window. Without this, a live Swap @ an in-progress
+        # block N+1 would apply directly, advancing `update_block` to N+1 —
+        # the pin then captures `(tick_data_without_burn, N+1)` while a
+        # same-block Burn stays retained in the buffer → the mismatch YLYJM2's
+        # `drain_pump_completed` buffer gate does NOT cover (block 25647112).
+        # Quarantining routes BOTH swap AND liquidity through the gated buffer,
+        # so the pin's `update_block` <= `last_complete_block` provably.
+        self.engine.set_v3_pool_quarantined(pool.address)
+
         # T6 (ADR-006 D4): fail-fast two-step verify at the drain seam — the
         # fail-fast detection the dead `engine.register_v3_pool` +
         # `verify_on_register` gate was meant to provide, now at the method
@@ -488,6 +499,13 @@ class EngineRegistry:
         # advanced the drained state to a later block — 2026-06-29 crash).
         # Per-pool (not batch) + race-free.
         await self._verify_pool_post_drain("v3", pool.address)
+
+        # 6N7XVR: transition to Live — flush the retained in-progress-block
+        # pump tail (the events `drain_pump_completed` kept) via the unguarded
+        # drain in insertion order, then mark Live. Subsequent live events
+        # apply directly (the steady-state contract). The pin is a clone, so
+        # the flush does not disturb the verified pair.
+        self.engine.set_v3_pool_live(pool.address)
 
         self._v3_keys[pool.address] = key
         return key
@@ -534,6 +552,12 @@ class EngineRegistry:
         # the builder, not here.
         key = pool._py_pool.pool_id  # noqa: SLF001
 
+        # 6N7XVR: quarantine before the first RPC await (see register_v3_pool
+        # for the full rationale). Defers the pool's live Swap/ModifyLiquidity
+        # to the pump buffer during drain+pin+verify so the pin's
+        # `update_block` cannot outrun `last_complete_block`.
+        self.engine.set_v4_pool_quarantined(pool.address, pool_id_hex)
+
         # T6 (ADR-006 D4): fail-fast two-step verify at the drain seam.
         # Step 1: snapshot verify (pinned seed vs on-chain @ snapshot block).
         # CBCH6H: `verify_seed=True` compares the pinned snapshot seed, not
@@ -557,6 +581,10 @@ class EngineRegistry:
             pool.address,
             pool_id_hex=pool_id_hex,
         )
+
+        # 6N7XVR: transition to Live — flush the retained pump tail, then mark
+        # Live (see register_v3_pool).
+        self.engine.set_v4_pool_live(pool.address, pool_id_hex)
 
         self._v4_keys[pool_id_hex] = key
         return key

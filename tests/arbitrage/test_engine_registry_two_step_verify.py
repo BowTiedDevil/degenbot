@@ -79,6 +79,22 @@ class _RecordingVerifyEngine:
     def apply_buffer_v4(self, address: str, pool_id_hex: str) -> None:
         self.calls.append(f"apply_buffer_v4:{pool_id_hex}")
 
+    # 6N7XVR: the pool-registration lifecycle FSM. `set_*_quarantined` is
+    # called at register-start (before the first RPC await); `set_*_live` after
+    # post-drain verify passes. Recorded so the wiring test can pin the call
+    # order relative to the verify awaits + the drain.
+    def set_v3_pool_quarantined(self, address: str) -> None:
+        self.calls.append(f"set_v3_pool_quarantined:{address}")
+
+    def set_v4_pool_quarantined(self, address: str, pool_id_hex: str) -> None:
+        self.calls.append(f"set_v4_pool_quarantined:{pool_id_hex}")
+
+    def set_v3_pool_live(self, address: str) -> None:
+        self.calls.append(f"set_v3_pool_live:{address}")
+
+    def set_v4_pool_live(self, address: str, pool_id_hex: str) -> None:
+        self.calls.append(f"set_v4_pool_live:{pool_id_hex}")
+
     # the verify seam (async). CBCH6H: the two-step verify routes step-1
     # (snapshot) through the *_snapshot_seed variants (pinned seed, not
     # engine-current) and step-2 (backfill) through the *_post_drain_snapshot
@@ -286,6 +302,76 @@ def test_register_v4_pool_runs_two_step_verify_around_drain(monkeypatch) -> None
         f"step-1 → *_snapshot_seed, step-2 → *_post_drain_snapshot; got {fake.verify_calls}"
     )
     assert sum("apply_buffer_v4" in c for c in fake.calls) == 1
+
+
+def test_register_v3_pool_quarantines_before_seed_verify_and_lives_after_post_drain(
+    monkeypatch,
+) -> None:
+    """6N7XVR: register_v3_pool sets the pool `Quarantined` BEFORE the first
+    RPC await (the seed-verify) so a live event landing during the
+    drain+pin+verify window is deferred to the pump buffer, and sets it `Live`
+    AFTER step-2 post-drain verify passes. This ordering is what closes the
+    25647112 race (a live Swap advancing `update_block` past
+    `last_complete_block` while a same-block Burn stays buffered)."""
+    registry, fake = _registry_started_with_snapshots(monkeypatch)
+    pre_call_count = len(fake.calls)
+
+    async def _go() -> int:
+        return await registry.register_v3_pool(_FakeV3Pool())
+
+    asyncio.run(_go())
+
+    calls = fake.calls[pre_call_count:]
+
+    # The quarantine call precedes EVERYTHING in the register sequence (the
+    # seed-verify is the first await; quarantine must run before it). The live
+    # call follows the post-drain verify (the last await).
+    quarantine_idx = next(
+        i for i, c in enumerate(calls) if "set_v3_pool_quarantined" in c
+    )
+    live_idx = next(i for i, c in enumerate(calls) if "set_v3_pool_live" in c)
+    drain_idx = next(i for i, c in enumerate(calls) if "apply_buffer_v3" in c)
+    assert quarantine_idx == 0, (
+        f"quarantine must be the FIRST call in the register sequence (before "
+        f"the seed verify); got calls={calls}"
+    )
+    assert live_idx > drain_idx, (
+        f"live must follow the drain+verify; got calls={calls}"
+    )
+    assert live_idx == len(calls) - 1, (
+        f"live must be the LAST call (after post-drain verify); got calls={calls}"
+    )
+
+
+def test_register_v4_pool_quarantines_before_seed_verify_and_lives_after_post_drain(
+    monkeypatch,
+) -> None:
+    """6N7XVR: register_v4_pool's quarantine→drain→pin→verify→Live sequence.
+    V4 twin of the V3 wiring test."""
+    registry, fake = _registry_started_with_snapshots(monkeypatch)
+    pre_call_count = len(fake.calls)
+
+    async def _go() -> int:
+        return await registry.register_v4_pool(_FakeV4Pool())
+
+    asyncio.run(_go())
+
+    calls = fake.calls[pre_call_count:]
+    quarantine_idx = next(
+        i for i, c in enumerate(calls) if "set_v4_pool_quarantined" in c
+    )
+    live_idx = next(i for i, c in enumerate(calls) if "set_v4_pool_live" in c)
+    drain_idx = next(i for i, c in enumerate(calls) if "apply_buffer_v4" in c)
+    assert quarantine_idx == 0, (
+        f"quarantine must be the FIRST call in the register sequence (before "
+        f"the seed verify); got calls={calls}"
+    )
+    assert live_idx > drain_idx, (
+        f"live must follow the drain; got calls={calls}"
+    )
+    assert live_idx == len(calls) - 1, (
+        f"live must be the LAST call (after post-drain verify); got calls={calls}"
+    )
 
 
 def test_register_v3_pool_fail_fast_raises_at_offending_pool(monkeypatch) -> None:
