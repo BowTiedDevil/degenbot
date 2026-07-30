@@ -327,6 +327,37 @@ impl FailBuckets {
         });
     }
 
+    /// Record a per-path success-path failure WITH the captured swap events
+    /// but WITHOUT a reverting frame (no call reverted). The companion to
+    /// [`record`](Self::record) for the success-path-no-profit case: the
+    /// inspector-captured `execute()` swap events ARE in scope at the
+    /// `no-profit` recording site (they are drained before the profit check),
+    /// but [`record`](Self::record) hardcodes `captured_swaps: Vec::new()`.
+    /// This variant surfaces them so the `[sim-fixture]` / `[sim-diag]` dumps
+    /// distinguish a no-op encoding (`captured_swaps` empty — `execute()` did
+    /// nothing) from a solver calc divergence (`captured_swaps` non-empty but
+    /// the balance delta netted to zero).
+    pub fn record_no_profit(
+        &mut self,
+        path_id: u64,
+        bucket: &str,
+        captured_swaps: Vec<CapturedSwap>,
+        optimal_input: u128,
+        hop_outputs: Vec<u128>,
+    ) {
+        self.tally(bucket);
+        self.failures.push(SimFailure {
+            path_id,
+            bucket: bucket.to_string(),
+            fail_index: None,
+            revert_data: alloy::primitives::Bytes::new(),
+            reverting_frame: None,
+            captured_swaps,
+            optimal_input,
+            hop_outputs,
+        });
+    }
+
     /// Record a per-path `execute()` revert WITH the inspector-captured
     /// reverting-frame attribution. Like [`record`](Self::record) but populates
     /// [`SimFailure::reverting_frame`] — the deep (depth/target/selector/
@@ -1084,11 +1115,10 @@ where
     let combined_after = weth_after + eth_after + erc6909_after;
     let gross_profit = combined_after.saturating_sub(combined_before);
     if gross_profit.is_zero() {
-        fail_buckets.record(
+        fail_buckets.record_no_profit(
             path.path_id,
             "no-profit",
-            None,
-            alloy::primitives::Bytes::new(),
+            captured_swaps.clone(),
             path.optimal_input,
             path.hop_outputs.clone(),
         );
@@ -1683,6 +1713,13 @@ mod tests {
         assert_eq!(failures[0].path_id, 11);
         assert_eq!(failures[0].bucket, "no-profit");
         assert!(failures[0].fail_index.is_none(), "no call reverted");
+        // Empty-bytecode executor emits no Swap events; record_no_profit
+        // surfaces the (empty) captured swaps instead of hardcoding Vec::new()
+        // like the plain record() — proves the field is plumbed end-to-end.
+        assert!(
+            failures[0].captured_swaps.is_empty(),
+            "empty bytecode swaps"
+        );
     }
 
     // ── TGXBCE: scan_for_v4_v2_boundary_bridge ─────────────────────────

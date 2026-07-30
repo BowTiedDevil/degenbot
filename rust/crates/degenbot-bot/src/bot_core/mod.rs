@@ -922,8 +922,11 @@ impl BotState {
     /// to `restore_before_block` and `update_block` stayed frozen at the
     /// registration block.
     pub fn apply_backfill_buffer_v3(&mut self, address: &Address) {
-        const DBG: &str = "a6cc3c2531fdaa6ae1a3ca84c2855806728693e8";
-        let dbg = format!("{address:x}").eq_ignore_ascii_case(DBG);
+        // Debug-drain gate: log per-event apply when `DEGENBOT_DRAIN_DBG` is set
+        // to this pool's address. Diagnoses same-block Mint+Bun net-zero races
+        // where one half is lost between fetch and drain.
+        let dbg = std::env::var("DEGENBOT_DRAIN_DBG")
+            .is_ok_and(|v| format!("{address:x}").eq_ignore_ascii_case(v.trim_start_matches("0x")));
         let Some(&key) = self.pool_addresses.get(address) else {
             if dbg {
                 log::info!("[dbg-drain] backfill addr={address} NOT REGISTERED");
@@ -943,9 +946,18 @@ impl BotState {
             );
         }
         for update in buffered {
+            if dbg {
+                log::info!(
+                    "[dbg-drain] backfill addr={address} apply tl={} tu={} delta={} block={}",
+                    update.tick_lower,
+                    update.tick_upper,
+                    update.liquidity_delta,
+                    update.block_number
+                );
+            }
             if let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&key) {
                 // ADR-017 slice 3: delegate to the CL trait method (formerly
-                // re-inlined here byte-identically to the inherent
+                // re-inlined here byte-for-byte-identically to the inherent
                 // `apply_liquidity_update`). Mint/Burn carry no scalar priors —
                 // the trait method journals the two boundary-tick priors +
                 // pushes a `scalar_priors: None` `V3BlockDelta`.
@@ -965,8 +977,8 @@ impl BotState {
     /// Same journal + `update_block` contract as
     /// [`apply_backfill_buffer_v3`] — see its docs.
     pub fn apply_pump_buffer_v3(&mut self, address: &Address) {
-        const DBG: &str = "a6cc3c2531fdaa6ae1a3ca84c2855806728693e8";
-        let dbg = format!("{address:x}").eq_ignore_ascii_case(DBG);
+        let dbg = std::env::var("DEGENBOT_DRAIN_DBG")
+            .is_ok_and(|v| format!("{address:x}").eq_ignore_ascii_case(v.trim_start_matches("0x")));
         let Some(&key) = self.pool_addresses.get(address) else {
             if dbg {
                 log::info!("[dbg-drain] pump addr={address} NOT REGISTERED");
@@ -983,6 +995,15 @@ impl BotState {
             log::info!("[dbg-drain] pump addr={address} count={}", buffered.len());
         }
         for update in buffered {
+            if dbg {
+                log::info!(
+                    "[dbg-drain] pump addr={address} apply tl={} tu={} delta={} block={}",
+                    update.tick_lower,
+                    update.tick_upper,
+                    update.liquidity_delta,
+                    update.block_number
+                );
+            }
             if let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&key) {
                 // ADR-017 slice 3: delegate to the CL trait method (formerly
                 // re-inlined here byte-identically to `apply_liquidity_update`).

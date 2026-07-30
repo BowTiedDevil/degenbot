@@ -1144,8 +1144,12 @@ fn parity_v3_v3_v4() {
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    // V3a→V3b→V4c. V4_UNLOCK nests settle+V4c swap_dynamic+take_delta WETH→V3a
-    // +settle_all. V3a callback = V4_UNLOCK; V3b top-level pays PM.
+    // V3a→V3b→V4c. V4_UNLOCK nests settle+V4c swap_dynamic+take_compact
+    // WETH→V3a (EXACT optimal_input, not full delta — the V4 output exceeds
+    // optimal_input by the profit; paying the full delta would donate the
+    // profit to the V3 pool, which has no skim) +settle_all (sweeps the
+    // residual WETH delta, == the profit, to the executor). V3a callback =
+    // V4_UNLOCK; V3b top-level pays PM.
     let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
     let pm_idx = at.add(PM).unwrap(); // SENTINEL_PM
     let zero_idx = SENTINEL_NATIVE;
@@ -1163,7 +1167,10 @@ fn parity_v3_v3_v4() {
     v4_inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
         c0_c_idx, c1_c_idx, 3000, 60, zero_idx, true,
     ));
-    v4_inner.extend_from_slice(&encoders::enc_v4_take_delta(SENTINEL_WETH, v3a_idx));
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_take_compact(SENTINEL_WETH, v3a_idx, 1_000_000_000_000_000_000u128)
+            .unwrap(),
+    );
     v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
     let a_fwd = encoders::enc_v4_unlock(&v4_inner).unwrap();
     let b_fwd = encoders::enc_v3_swap_compact(

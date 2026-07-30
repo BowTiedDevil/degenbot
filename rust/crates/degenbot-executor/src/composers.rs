@@ -3033,7 +3033,17 @@ fn three_hop_v3_v3_v4(
     v4_inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
         c0_c_idx, c1_c_idx, fee_c, ts_c, zero_idx, hc.zfo,
     ));
-    v4_inner.extend_from_slice(&encoders::enc_v4_take_delta(weth_idx, v3a_idx));
+    // Pay hop[0]'s V3 pool EXACTLY its owed WETH (`optimal_input`), not the
+    // full V4 WETH delta. The V4 swap output (`hop_outputs[2]`) exceeds
+    // `optimal_input` by the arbitrage profit; `V4_TAKE_DELTA` (full delta)
+    // would send the entire V4 output to the pool and donate the profit to
+    // its liquidity providers (V3 has no skim, so the residue is unrecoverable).
+    // `V4_TAKE_COMPACT` with `optimal_input` pays the exact debt; the residual
+    // WETH delta (== the profit) is then swept to the executor by the
+    // following `V4_SETTLE_ALL` (positive WETH delta → `PM.take(WETH, self)`).
+    // Mirrors the proven `encode_cmd_v3_v4` 2-hop WETH-debt pattern.
+    v4_inner
+        .extend_from_slice(&encoders::enc_v4_take_compact(weth_idx, v3a_idx, optimal_input).ok()?);
     v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
 
     let a_fwd = encoders::enc_v4_unlock(&v4_inner).ok()?;
