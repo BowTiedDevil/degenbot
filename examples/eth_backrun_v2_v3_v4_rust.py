@@ -1409,7 +1409,7 @@ async def _dispatch_profitable(
     the submit seam.
     """
     candidates: list[DispatchCandidate] = []
-    for pid, inp, prof, ho, _ci, sb in results:
+    for pid, inp, prof, ho, _ci, sb, sn in results:
         # NXM2BF: the candidate resolves its `composers::PathInfo` from
         # `path_id` via `PyArbitrageEngine.path_info_for_core` (Rust-side, over
         # the shared `BotState`) — no Python `PathInfo` dataclass round-trip.
@@ -1428,6 +1428,7 @@ async def _dispatch_profitable(
                 engine_profit=prof,
                 hop_outputs=list(ho),
                 solve_block=sb,
+                state_nonces=list(sn),
             ),
         )
 
@@ -2033,9 +2034,9 @@ async def _apply_result_if_ready(
     operator_nonce = await async_w3.get_transaction_count(cast("ChecksumAddress", operator_address))
     solve_block = int(cast("Any", batch["solve_block"]))  # per-result age metadata, not the clock
 
-    results: list[tuple[int, int, int, tuple[int, ...], tuple[int, ...], int]] = []
+    results: list[tuple[int, int, int, tuple[int, ...], tuple[int, ...], int, tuple[int, ...]]] = []
     for item in cast("Any", batch["fresh"]):
-        path_id, opt_input, profit, hop_outs, consumed_ins = item
+        path_id, opt_input, profit, hop_outs, consumed_ins, state_nonces = item
         results.append((
             int(path_id),
             int(opt_input),
@@ -2043,9 +2044,10 @@ async def _apply_result_if_ready(
             tuple(int(h) for h in hop_outs),
             tuple(int(c) for c in consumed_ins),
             solve_block,
+            tuple(int(n) for n in state_nonces),
         ))
     for item in cast("Any", batch["updated"]):
-        path_id, opt_input, profit, hop_outs, consumed_ins = item
+        path_id, opt_input, profit, hop_outs, consumed_ins, state_nonces = item
         results.append((
             int(path_id),
             int(opt_input),
@@ -2053,6 +2055,7 @@ async def _apply_result_if_ready(
             tuple(int(h) for h in hop_outs),
             tuple(int(c) for c in consumed_ins),
             solve_block,
+            tuple(int(n) for n in state_nonces),
         ))
 
     for path_id in cast("Any", batch["removed"]):

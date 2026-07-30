@@ -262,6 +262,41 @@ impl ArbitrageEngine {
                         return; // No integer sequence → invalid
                     };
 
+                    // AV42C7-debug: dump V4 solver intermediates for the
+                    // closed-form vs on-chain divergence hunt. Gated by
+                    // `DEGENBOT_DEBUG_V4_SOLVE`; grep the log for the failing
+                    // pool_id (from the [sim-fixture] dump) to localize the
+                    // over-prediction to a drain/coverage/range cause.
+                    if std::env::var_os("DEGENBOT_DEBUG_V4_SOLVE").is_some() {
+                        let pid_hex = alloy::hex::encode(identity.pool_id);
+                        let drain: i128 = if pool_ref.zero_for_one {
+                            pool_state
+                                .tick_data
+                                .get(&pool_state.tick)
+                                .map_or(0, |info| {
+                                    let bytes = info.liquidity_net.to_be_bytes::<32>();
+                                    let low: [u8; 16] =
+                                        bytes[16..32].try_into().unwrap_or([0u8; 16]);
+                                    i128::from_be_bytes(low)
+                                })
+                        } else {
+                            0
+                        };
+                        log::info!(
+                            "[debug-v4-solve] pm={:?} pid=0x{} zfo={} tick={} liq={} \n                            sqrt_price_x96={} protocol_fee={} coverage={:?} \
+                             n_ranges={} drainL={drain}",
+                            identity.pool_manager,
+                            pid_hex,
+                            pool_ref.zero_for_one,
+                            pool_state.tick,
+                            pool_state.liquidity,
+                            pool_state.sqrt_price_x96,
+                            pool_state.protocol_fee,
+                            pool_state.coverage,
+                            int_seq.ranges.len(),
+                        );
+                    }
+
                     resolved.hops.push(ResolvedHop::V4 { int_seq });
                     resolved.state_nonces.push(pool_state.state_nonce);
                 }
