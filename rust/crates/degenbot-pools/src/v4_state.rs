@@ -19,7 +19,7 @@ use crate::liquidity_event::LiquidityEvent;
 use crate::state_history::{JournalError, ReorgJournal, ReorgPoolState, V3BlockDelta};
 use crate::tick_bitmap::{compute_tick_ranges, gen_ticks, V3TickRangeForSolver};
 use crate::tick_fetch::TickWordFetcher;
-use crate::v3_state::{PoolTickCoverage, SimulateSwapError, V3SwapOutcome};
+use crate::v3_state::{PoolTickCoverage, RegistrationLifecycle, SimulateSwapError, V3SwapOutcome};
 use crate::TickInfo;
 use degenbot_cl_math::cl_lib::functions::tick_position;
 use degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v4;
@@ -82,6 +82,54 @@ pub struct BufferedV4LiquidityUpdate {
 impl LiquidityEvent for BufferedV4LiquidityUpdate {
     fn block_number(&self) -> u64 {
         self.block_number
+    }
+}
+
+/// A buffered V4 `Swap` event awaiting application — either the
+/// unregistered drop path (retained for symmetry) or the 6N7XVR quarantine
+/// deferral. Carries the scalar fields `apply_swap` mutates; no `tick_priors`
+/// (the pump path passes `&[]`). The `(pool_manager, pool_id)` key lives on
+/// the buffer, not here.
+#[derive(Clone, Debug)]
+pub struct BufferedV4SwapEvent {
+    /// The post-swap `sqrtPriceX96`.
+    pub sqrt_price_x96: U256,
+    /// The post-swap active liquidity.
+    pub liquidity: u128,
+    /// The post-swap active tick.
+    pub tick: i32,
+    /// The block number of this event.
+    pub block_number: u64,
+}
+
+impl LiquidityEvent for BufferedV4SwapEvent {
+    fn block_number(&self) -> u64 {
+        self.block_number
+    }
+}
+
+/// A buffered V4 pool event — a `Swap` or a `ModifyLiquidity` update, unified
+/// in one enum so the `LiquidityEventBuffer` preserves cross-type arrival order
+/// within a block. 6N7XVR: the quarantine deferral routes BOTH variants through
+/// the same gated drain, so the pin's `update_block` cannot outrun
+/// `last_complete_block` regardless of event type (a live `Swap` alone would
+/// otherwise advance `update_block` past the frontier while a same-block
+/// `ModifyLiquidity` Burn stays retained → the 25647112 mismatch by exactly
+/// the Burn's delta). V4 twin of `BufferedV3PoolEvent`.
+#[derive(Clone, Debug)]
+pub enum BufferedV4PoolEvent {
+    /// A `ModifyLiquidity` (Mint/Burn-equivalent) update.
+    Liquidity(BufferedV4LiquidityUpdate),
+    /// A `Swap` (scalar update — does not touch `tick_data`).
+    Swap(BufferedV4SwapEvent),
+}
+
+impl LiquidityEvent for BufferedV4PoolEvent {
+    fn block_number(&self) -> u64 {
+        match self {
+            Self::Liquidity(u) => u.block_number,
+            Self::Swap(s) => s.block_number,
+        }
     }
 }
 
@@ -237,6 +285,10 @@ pub struct V4PoolState {
     pub update_block: u64,
     /// Per-mutation nonce — see [`V3PoolState::state_nonce`] (V4 twin).
     pub state_nonce: u64,
+    /// The per-pool registration lifecycle (6N7XVR — V4 twin of
+    /// `V3PoolState::registration_lifecycle`). `Quarantined` during
+    /// `register_v4_pool`'s drain+pin+verify; `Live` thereafter.
+    pub registration_lifecycle: RegistrationLifecycle,
     /// The packed V4 `slot0.protocolFee` (`uint24`) — two 12-bit direction
     /// fees. Used by [`crate::v4_state::v4_simulate_swap`] +
     /// [`V4PoolState::build_int_v4_sequence`] to compute the effective
@@ -297,6 +349,7 @@ impl Clone for V4PoolState {
             tick: self.tick,
             update_block: self.update_block,
             state_nonce: self.state_nonce,
+            registration_lifecycle: self.registration_lifecycle,
             protocol_fee: self.protocol_fee,
             tick_data: self.tick_data.clone(),
             coverage: self.coverage,
@@ -348,6 +401,7 @@ impl V4PoolState {
             tick: params.tick,
             update_block: params.update_block,
             state_nonce: 0,
+            registration_lifecycle: RegistrationLifecycle::default(),
             protocol_fee: params.protocol_fee,
             tick_data: params.tick_data,
             coverage: params.coverage,
@@ -883,6 +937,7 @@ mod apply_inherent_tests {
             tick: 0,
             update_block: 0,
             state_nonce: 0,
+            registration_lifecycle: RegistrationLifecycle::default(),
             protocol_fee: 0,
             tick_data,
             coverage: PoolTickCoverage::Tracked,

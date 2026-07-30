@@ -36,7 +36,9 @@ use revm::primitives::TxKind;
 use revm::{ExecuteCommitEvm, ExecuteEvm, MainBuilder, MainContext};
 
 use degenbot_pools::state_history::{ReorgJournal, V3BlockDelta};
-use degenbot_pools::v3_state::{PoolTickCoverage, TickRangeCache, V3PoolState};
+use degenbot_pools::v3_state::{
+    PoolTickCoverage, RegistrationLifecycle, TickRangeCache, V3PoolState,
+};
 use degenbot_pools::v3_storage_slots::{
     compute_v3_tick_bitmap_word_from_raw, encode_v3_liquidity_slot, encode_v3_slot0_fresh,
     encode_v3_tick_info_slot, v3_tick_bitmap_word_slot, v3_tick_mapping_slot,
@@ -167,6 +169,7 @@ fn state_at_tick_zero(liq: u128, tick_spacing: i32) -> V3PoolState {
         fetcher: None,
         journal: ReorgJournal::<V3BlockDelta>::new(8),
         state_nonce: 0,
+        registration_lifecycle: RegistrationLifecycle::default(),
         cached_tick_ranges: parking_lot::Mutex::new(TickRangeCache::default()),
     }
 }

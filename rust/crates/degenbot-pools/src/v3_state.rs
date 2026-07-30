@@ -49,6 +49,33 @@ pub enum PoolTickCoverage {
 }
 
 // ---------------------------------------------------------------------------
+// Pool registration lifecycle (Quarantined / Live)
+// ---------------------------------------------------------------------------
+
+/// The per-pool registration lifecycle for V3/V4 CL pools. Controls whether
+/// the live pump applies events directly (`Live`) or defers them to the pump
+/// buffer (`Quarantined`).
+///
+/// `Quarantined` is set at the start of `register_v3/v4_pool` (before the
+/// first RPC await in the two-step verify) so a live `Swap`/`Mint`/`Burn`
+/// landing during the drain+pin+verify window cannot advance `update_block`
+/// past the pump's `last_complete_block` — which would desync the pinned
+/// `(tick_data, update_block)` pair (the 6N7XVR race; the live direct-apply
+/// gap YLYJM2's `drain_pump_completed` buffer gate does NOT cover).
+///
+/// Defaults to `Live`: pools registered outside the two-step verify path
+/// (test/standalone construction) keep the existing direct-apply behavior.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RegistrationLifecycle {
+    /// Live events apply directly to pool state (the steady-state contract).
+    #[default]
+    Live,
+    /// Live events are deferred to the pump buffer until `set_pool_live`
+    /// flushes them. Used during `register_v3/v4_pool`'s drain+pin+verify.
+    Quarantined,
+}
+
+// ---------------------------------------------------------------------------
 // Buffered liquidity update for unregistered V3 pools
 // ---------------------------------------------------------------------------
 
@@ -70,6 +97,51 @@ pub struct BufferedV3LiquidityUpdate {
 impl crate::liquidity_event::LiquidityEvent for BufferedV3LiquidityUpdate {
     fn block_number(&self) -> u64 {
         self.block_number
+    }
+}
+
+/// A buffered V3 `Swap` event awaiting application — either because the pool
+/// is unregistered (the live drop path, retained for symmetry with liquidity)
+/// or because the pool is `Quarantined` (6N7XVR deferral). Carries the scalar
+/// fields `apply_swap` mutates; no `tick_priors` (the pump path passes `&[]`).
+#[derive(Clone, Debug)]
+pub struct BufferedV3SwapEvent {
+    /// The post-swap `sqrtPriceX96`.
+    pub sqrt_price_x96: U256,
+    /// The post-swap active liquidity.
+    pub liquidity: u128,
+    /// The post-swap active tick.
+    pub tick: i32,
+    /// The block number of this event.
+    pub block_number: u64,
+}
+
+impl crate::liquidity_event::LiquidityEvent for BufferedV3SwapEvent {
+    fn block_number(&self) -> u64 {
+        self.block_number
+    }
+}
+
+/// A buffered V3 pool event — a `Swap` or a liquidity update (`Mint`/`Burn`),
+/// unified in one enum so the `LiquidityEventBuffer` preserves cross-type
+/// arrival order within a block (a `Swap` at logIdx 1433 must apply after a
+/// `Mint` at logIdx 120). 6N7XVR: the quarantine deferral routes BOTH variants
+/// through the same gated drain, so the pin's `update_block` cannot outrun
+/// `last_complete_block` regardless of event type.
+#[derive(Clone, Debug)]
+pub enum BufferedV3PoolEvent {
+    /// A `Mint`/`Burn` liquidity update.
+    Liquidity(BufferedV3LiquidityUpdate),
+    /// A `Swap` (scalar update — does not touch `tick_data`).
+    Swap(BufferedV3SwapEvent),
+}
+
+impl crate::liquidity_event::LiquidityEvent for BufferedV3PoolEvent {
+    fn block_number(&self) -> u64 {
+        match self {
+            Self::Liquidity(u) => u.block_number,
+            Self::Swap(s) => s.block_number,
+        }
     }
 }
 
@@ -207,6 +279,13 @@ pub struct V3PoolState {
     pub tick: i32,
     pub update_block: u64,
 
+    /// The per-pool registration lifecycle (6N7XVR): `Quarantined` during
+    /// `register_v3_pool`'s drain+pin+verify (live events deferred to the pump
+    /// buffer so the pin's `update_block` cannot outrun `last_complete_block`),
+    /// `Live` thereafter (direct apply). Defaults to `Live` (pools registered
+    /// outside the two-step verify keep the steady-state direct-apply path).
+    pub registration_lifecycle: RegistrationLifecycle,
+
     /// Per-mutation nonce — bumped on every state change (`apply_swap`,
     /// `apply_liquidity_update`, `replace_tick_data`, `merge_tick_word`,
     /// `restore_before_block`). The solver snapshots this per-hop at resolve
@@ -300,6 +379,7 @@ impl Clone for V3PoolState {
             tick: self.tick,
             update_block: self.update_block,
             state_nonce: self.state_nonce,
+            registration_lifecycle: self.registration_lifecycle,
             tick_data: self.tick_data.clone(),
             coverage: self.coverage,
             known_bitmap_words: self.known_bitmap_words.clone(),
@@ -373,6 +453,7 @@ impl V3PoolState {
             tick: params.tick,
             update_block: params.update_block,
             state_nonce: 0,
+            registration_lifecycle: RegistrationLifecycle::default(),
             tick_data: params.tick_data,
             coverage: params.coverage,
             known_bitmap_words: HashSet::new(),
@@ -962,6 +1043,7 @@ mod apply_inherent_tests {
             tick: 0,
             update_block: 0,
             state_nonce: 0,
+            registration_lifecycle: RegistrationLifecycle::default(),
             tick_data,
             coverage: PoolTickCoverage::Tracked,
             known_bitmap_words: HashSet::new(),
@@ -1329,6 +1411,7 @@ mod apply_inherent_tests {
             tick: -74028,
             update_block: 0,
             state_nonce: 0,
+            registration_lifecycle: RegistrationLifecycle::default(),
             tick_data,
             coverage: PoolTickCoverage::Tracked,
             known_bitmap_words: HashSet::new(),

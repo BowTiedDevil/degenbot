@@ -79,6 +79,7 @@ mod tests {
                 snapshot_seed: None,
                 post_drain_snapshot: None,
                 state_nonce: 0,
+                registration_lifecycle: RegistrationLifecycle::default(),
             },
         )
     }
