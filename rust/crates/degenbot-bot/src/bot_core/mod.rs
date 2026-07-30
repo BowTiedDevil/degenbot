@@ -985,9 +985,13 @@ impl BotState {
             }
             return;
         };
-        let Some(buffered) = self.v3_buffer.drain_pump(address) else {
+        // YLYJM2: drain ONLY fully-completed blocks. The block pump marks a
+        // block complete at its ADR-008 D1 tombstone (first log of N+1 closes
+        // N); a drain mid-block would pin `update_block=N` missing a later
+        // same-block log. Events for the in-progress block stay buffered.
+        let Some(buffered) = self.v3_buffer.drain_pump_completed(address) else {
             if dbg {
-                log::info!("[dbg-drain] pump addr={address} EMPTY");
+                log::info!("[dbg-drain] pump addr={address} EMPTY (no completed blocks)");
             }
             return;
         };
@@ -1038,6 +1042,16 @@ impl BotState {
     /// No-op if `max_age` is `None`. Backfill buffer is never expired.
     pub fn expire_v3_buffered(&mut self, current_block: u64) {
         self.v3_buffer.expire(current_block);
+    }
+
+    /// Mark `block` as fully processed by the pump (every V3 log for `block`
+    /// has been buffered). The block pump calls this from its ADR-008 D1
+    /// tombstone path (the first log of block N+1 closes block N).
+    /// [`apply_pump_buffer_v3`](Self::apply_pump_buffer_v3) then drains only
+    /// events at or below this block, so the registration drain+pin cannot
+    /// capture a half-delivered block (the YLYJM2 rolling-start race).
+    pub fn mark_v3_pump_block_complete(&mut self, block: u64) {
+        self.v3_buffer.mark_block_complete(block);
     }
 
     /// Read a registered V3 pool's state by `pool_id`.
@@ -2582,7 +2596,11 @@ impl BotState {
         let Some(&id) = self.v4_pool_ids.get(&key) else {
             return;
         };
-        let Some(buffered) = self.v4_buffer.drain_pump(&key) else {
+        // YLYJM2: drain ONLY fully-completed blocks. The block pump marks a
+        // block complete at its ADR-008 D1 tombstone (first log of N+1 closes
+        // N); a drain mid-block would pin `update_block=N` missing a later
+        // same-block log. Events for the in-progress block stay buffered.
+        let Some(buffered) = self.v4_buffer.drain_pump_completed(&key) else {
             return;
         };
         for update in buffered {
@@ -2613,6 +2631,16 @@ impl BotState {
 
     pub fn expire_v4_buffered(&mut self, current_block: u64) {
         self.v4_buffer.expire(current_block);
+    }
+
+    /// Mark `block` as fully processed by the pump (every V4 `ModifyLiquidity`
+    /// log for `block` has been buffered). The block pump calls this from its
+    /// ADR-008 D1 tombstone path (the first log of block N+1 closes block N).
+    /// [`apply_pump_buffer_v4`](Self::apply_pump_buffer_v4) then drains only
+    /// events at or below this block, so the registration drain+pin cannot
+    /// capture a half-delivered block (the YLYJM2 rolling-start race).
+    pub fn mark_v4_pump_block_complete(&mut self, block: u64) {
+        self.v4_buffer.mark_block_complete(block);
     }
 
     /// Apply a backfill chunk's logs to the snapshot-seeded state WITHOUT
@@ -3571,6 +3599,11 @@ mod tests {
 
         // 2. Register on the SAME core + 3. apply pump buffer.
         let pool_id = register_v3_on_core(&mut core, pool_addr, 0);
+        // YLYJM2: the gated drain only yields fully-completed blocks. The
+        // live pump marks `block_b` complete at its ADR-008 D1 tombstone (the
+        // first log of block_b+1); mirror that here so the drain takes the
+        // buffered Mint instead of leaving it pinned behind the gate.
+        core.mark_v3_pump_block_complete(block_b);
         core.apply_pump_buffer_v3(&pool_addr);
 
         {
@@ -5004,6 +5037,11 @@ mod tests {
         // Drain both buffers + pin — exactly what `apply_buffer_v3` does
         // inside its single `core.write()` hold.
         core.apply_backfill_buffer_v3(&v3_addr);
+        // YLYJM2: the gated pump drain only yields fully-completed blocks.
+        // Mirror the live pump's ADR-008 D1 tombstone (first log of
+        // `pump_block`+1 closes `pump_block`) so the drain takes the pump
+        // Mint at `pump_block` rather than leaving it behind the gate.
+        core.mark_v3_pump_block_complete(pump_block);
         core.apply_pump_buffer_v3(&v3_addr);
         core.pin_v3_post_drain_snapshot(v3_addr);
 

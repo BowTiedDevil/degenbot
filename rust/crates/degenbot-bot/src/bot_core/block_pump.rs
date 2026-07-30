@@ -794,7 +794,16 @@ impl BlockPump {
                             // which may now hold N+1's — VTWCIG. The terminal
                             // publish (finalize_block) supersedes any pending
                             // quiesce publish for the open block.
+                            //
+                            // YLYJM2: the tombstone is the ADR-008 D1 signal
+                            // that block `prev` is FULLY delivered — every log
+                            // for `prev` has been buffered. Mark the V3/V4
+                            // pump-buffer completeness marker so the
+                            // registration drain+pin cannot capture a
+                            // half-delivered `prev` (the rolling-start race
+                            // where a later same-block log lands after the pin).
                             publish_pending = false;
+                            self.bot.mark_pump_blocks_complete(prev);
                             let prev_meta = block_metadata
                                 .get(&prev)
                                 .copied()
