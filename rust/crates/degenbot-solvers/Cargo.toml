@@ -35,6 +35,13 @@ degenbot-uniswap = { path = "../degenbot-uniswap" }
 [dev-dependencies]
 proptest = "^1.11"
 criterion = { version = "^0.8", default-features = false, features = ["cargo_bench_support"] }
+# Network-gated V3 mainnet-fixture reproduction (ergo E7ALWT): the live trap
+# captured a +13 V3-hop over-prediction whose bias is INDEPENDENT of amount —
+# pointing at a topology-specific `compute_crossing` divergence the synthetic
+# parity sweep (regular, symmetric ticks) cannot construct. These deps fetch
+# the real pool state on demand; the test is env-gated so CI never hits the net.
+degenbot-rpc = { path = "../degenbot-rpc" }
+tokio = { version = "^1.53", features = ["rt-multi-thread", "macros"] }
 
 
 [[bench]]

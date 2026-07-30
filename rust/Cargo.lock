@@ -2308,6 +2308,7 @@ dependencies = [
  "degenbot-cl-math",
  "degenbot-curve-math",
  "degenbot-pools",
+ "degenbot-rpc",
  "degenbot-solidly-math",
  "degenbot-uniswap",
  "degenbot-v2-math",
@@ -2315,6 +2316,7 @@ dependencies = [
  "num-integer",
  "proptest",
  "thiserror 2.0.19",
+ "tokio",
 ]
 
 [[package]]
