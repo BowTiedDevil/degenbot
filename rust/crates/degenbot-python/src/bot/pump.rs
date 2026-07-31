@@ -127,7 +127,7 @@ impl PumpState {
     /// # Errors
     /// `PyRuntimeError` if the pump is already started/subscribed, or the WS
     /// subscribe fails.
-    pub(crate) fn subscribe(&self, rpc_url: &str) -> PyResult<u64> {
+    pub(crate) fn subscribe(&self, py: Python<'_>, rpc_url: &str) -> PyResult<u64> {
         let phase = self.current_phase();
         phase
             .allow_subscribe("subscribe")
@@ -147,9 +147,18 @@ impl PumpState {
         let reorg_coordinator = Arc::clone(&self.reorg_coordinator);
         let shutdown = Arc::clone(&self.shutdown);
         let runtime = degenbot_core::runtime::get_runtime();
-        let subscribe_result = runtime
-            .block_on(async {
-                BlockPump::subscribe(rpc_url, bot, sink, reorg_coordinator, shutdown).await
+        // GIL-release across the WS handshake `block_on`: the handshake future
+        // (BlockPump::subscribe -> observe_complete_block — pure Rust async:
+        // WS subscribe + header polling) does NOT need the GIL to complete, so
+        // `py.detach` is safe (no re-entry deadlock). Without it the calling
+        // (asyncio main) thread holds the GIL for the whole handshake (~12s,
+        // one block time) — the `gil-probe` recorded a 16.6s `GIL held`
+        // acquire here. PyO3 0.29 renamed `allow_threads` to `detach`.
+        let subscribe_result = py
+            .detach(|| {
+                runtime.block_on(async {
+                    BlockPump::subscribe(rpc_url, bot, sink, reorg_coordinator, shutdown).await
+                })
             })
             .map_err(PyRuntimeError::new_err)?;
         let (pump, state) = subscribe_result;
@@ -181,7 +190,7 @@ impl PumpState {
     ///
     /// # Errors
     /// `PyRuntimeError` if the phase is wrong or subscribe wasn't called.
-    pub(crate) fn resume(&self) -> PyResult<()> {
+    pub(crate) fn resume(&self, py: Python<'_>) -> PyResult<()> {
         let phase = self.current_phase();
         phase
             .require(EnginePhase::SnapshotLoaded, "resume")
@@ -210,13 +219,27 @@ impl PumpState {
         // so the post-drain verify mismatched on-chain and crashed the backrun
         // bot (`VerificationMismatchError`, 2026-07-12). `block_on` on the
         // shared runtime mirrors `subscribe`'s sync discipline.
+        //
+        // GIL-release across the backfill `block_on`: `backfill_to_ws_block`
+        // -> `backfill_from_snapshot` -> `process_backfill_logs` is pure Rust
+        // async (eth_getLogs RPC + BotState mutation — no `Python::attach`,
+        // no `sink.notify_block` which fires only in `run_with_stream`). It
+        // does NOT need the GIL to complete, so `py.detach` is safe (no
+        // re-entry deadlock). Without it the asyncio main thread holds the GIL
+        // for the whole backfill (~168k logs) — the `gil-probe` recorded 8.4s
+        // + 5.0s `GIL held` acquires here. J3FMDO invariant preserved: `block_on`
+        // still awaits the backfill synchronously before `resume` returns; only
+        // the GIL is released during the wait. PyO3 0.29 renamed `allow_threads`
+        // to `detach`.
         let pump_ref = &pump;
-        degenbot_core::runtime::get_runtime().block_on(async {
-            if let Err(e) = pump_ref.backfill_to_ws_block(first_block).await {
-                log::error!(
-                    "BlockPump: auto-backfill failed — starting live loop from {first_block} (gap not closed): {e}"
-                );
-            }
+        py.detach(|| {
+            degenbot_core::runtime::get_runtime().block_on(async {
+                if let Err(e) = pump_ref.backfill_to_ws_block(first_block).await {
+                    log::error!(
+                        "BlockPump: auto-backfill failed — starting live loop from {first_block} (gap not closed): {e}"
+                    );
+                }
+            });
         });
         let handle = degenbot_core::runtime::get_runtime().spawn(async move {
             pump.run_with_stream(combined_stream, first_block).await;

@@ -208,11 +208,11 @@ impl PyArbitrageEngine {
     /// Raises `RuntimeError` if the pump is already started or subscribed.
     #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (rpc_url))]
-    fn subscribe(&self, rpc_url: String) -> PyResult<u64> {
+    fn subscribe(&self, py: Python<'_>, rpc_url: String) -> PyResult<u64> {
         // ADR-006 D4 (T3): delegates to the shared `PumpState::subscribe` —
         // the Bot-owned entry point. Kept on the engine for the engine-only
         // test seam; production routes through PyBot::subscribe.
-        self.pump.subscribe(&rpc_url)
+        self.pump.subscribe(py, &rpc_url)
     }
 
     /// Resume phase: begin normal pump processing.
@@ -225,9 +225,9 @@ impl PyArbitrageEngine {
     /// via `wait_for_block()`.
     ///
     /// Raises `RuntimeError` if `subscribe()` has not been called first.
-    fn resume(&self, _py: Python<'_>) -> PyResult<()> {
+    fn resume(&self, py: Python<'_>) -> PyResult<()> {
         // ADR-006 D4 (T3): delegates to the shared `PumpState`.
-        self.pump.resume()
+        self.pump.resume(py)
     }
 
     /// Stop the pump and signal the Rust core to clean up (ADR-006 D4).

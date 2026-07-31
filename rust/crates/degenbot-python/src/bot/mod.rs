@@ -406,8 +406,8 @@ impl PyBot {
     /// `PyRuntimeError` if no engine is attached, the pump is already
     /// started/subscribed, or the WS subscribe fails.
     #[pyo3(signature = (rpc_url))]
-    fn subscribe(&self, rpc_url: &str) -> PyResult<u64> {
-        self.pump_state()?.subscribe(rpc_url)
+    fn subscribe(&self, py: Python<'_>, rpc_url: &str) -> PyResult<u64> {
+        self.pump_state()?.subscribe(py, rpc_url)
     }
 
     /// Resume the pump — begin normal WS processing (ADR-006 D4 T3).
@@ -416,8 +416,8 @@ impl PyBot {
     /// `BlockPump::resume_from_subscribe` (J3FMDO); the pyo3
     /// `backfill_from_snapshot` method is retired (2SM4Y7). Delegates to the
     /// shared `PumpState`.
-    fn resume(&self, _py: Python<'_>) -> PyResult<()> {
-        self.pump_state()?.resume()
+    fn resume(&self, py: Python<'_>) -> PyResult<()> {
+        self.pump_state()?.resume(py)
     }
 
     /// Stop the pump and signal the Rust core to clean up (ADR-006 D4).
