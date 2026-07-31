@@ -23,10 +23,7 @@ that wrapper's ref. A running engine that took its own ref (via
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol
-
-if TYPE_CHECKING:
-    from degenbot.types.abstract.pool_tracker import AbstractPoolTracker
+from typing import Any, Protocol
 
 
 class _BotLike(Protocol):
@@ -39,12 +36,23 @@ class _BotLike(Protocol):
     cycles for a structural protocol that only needs call-site shape.
     """
 
-    _trackers: dict[str, AbstractPoolTracker[Any]]
+    _trackers: Any
     pools: Any
     tokens: Any
+    managed_pools: Any
     db: Any
     _provider: Any
     _py_bot: Any
+    _io: Any
+    _async_adapter: Any
+    _erc20_builder: Any
+    _v2_builder: Any
+    _aerodrome_v2_builder: Any
+    _v3_builder: Any
+    _v4_builder: Any
+    _curve_builder: Any
+    _balancer_builder: Any
+    _builders: Any
     _closed: bool
 
 
@@ -107,3 +115,34 @@ def close(bot: _BotLike) -> None:
     # 5. Drop our own references (engine keeps its own PyBot ref)
     bot._py_bot = None  # type: ignore[attr-defined]  # noqa: SLF001
     bot._provider = None  # type: ignore[attr-defined]  # noqa: SLF001
+
+    # 6. Drop the I/O seam (`PyBotIo`) and the on-demand async adapter. Both
+    #    hold a strong reference to the shared provider's `Arc<dyn Provider>`;
+    #    leaving them live pins that Arc — and if the provider's backing
+    #    endpoint is a locally-owned anvil fork that is torn down next, alloy's
+    #    pubsub service reconnects into the now-dead socket, logging
+    #    `Reconnection attempt N/10 …` for up to 10 backoff attempts. Dropping
+    #    them here lets the provider's pubsub shut down cleanly
+    #    ("request channel closed") before any consumer of the endpoint dies.
+    bot._io = None  # noqa: SLF001
+    bot._async_adapter = None  # noqa: SLF001
+
+    # 7. Drop the registries + builders + ctx that each hold a strong ref to
+    #    `_py_bot` (PoolRegistry → PyBot, Tokens/Trackers, BuilderContext →
+    #    PyBot). Rust `PyBot` is refcounted; until EVERY Python holder is
+    #    dropped the rust core stays alive and keeps its `ConstructionIo`'s
+    #    `Arc<dyn Provider>` — the same reconnect-into-a-dead-socket hazard as
+    #    `_io`. Dropping all of them lets the rust `PyBot`/`BotState` release
+    #    the provider when the last one goes.
+    bot.pools = None
+    bot.tokens = None
+    bot.managed_pools = None
+    bot._trackers = None  # noqa: SLF001
+    bot._erc20_builder = None  # noqa: SLF001
+    bot._v2_builder = None  # noqa: SLF001
+    bot._aerodrome_v2_builder = None  # noqa: SLF001
+    bot._v3_builder = None  # noqa: SLF001
+    bot._v4_builder = None  # noqa: SLF001
+    bot._curve_builder = None  # noqa: SLF001
+    bot._balancer_builder = None  # noqa: SLF001
+    bot._builders = None  # noqa: SLF001

@@ -281,7 +281,10 @@ impl AnvilForkBuilder {
             })?
             .erased();
 
-        let fork = AnvilFork { instance, provider };
+        let fork = AnvilFork {
+            instance,
+            provider: Some(provider),
+        };
 
         // Apply queued state overrides post-spawn.
         for (addr, bal) in &self.balance_overrides {
@@ -354,19 +357,38 @@ impl AnvilForkBuilder {
 ///
 /// Call [`AnvilForkBuilder::try_spawn`] to construct.
 pub struct AnvilFork {
+    /// The alloy Provider wired to the anvil node over IPC.
+    ///
+    /// Stored as an `Option` so `Drop` can cleanly shut it down BEFORE the
+    /// `instance` kills the spawn anvil subprocess. The IPC provider's
+    /// pubsub backend takes the clean alloy "pubsub service request channel
+    /// closed" shutdown path only while the socket is still alive; dropping
+    /// it *after* the subprocess is killed leaves the backend to enter the
+    /// reconnect loop (``WARN alloy_pubsub::service: Reconnection attempt …``)
+    /// against the dead socket. See [`Drop`] for the ordering.
+    provider: Option<DynProvider>,
     /// Owns the anvil subprocess lifecycle (drop = kill).
     instance: alloy::node_bindings::AnvilInstance,
-    /// The alloy Provider wired to the anvil node over IPC.
-    provider: DynProvider,
 }
 
 impl Drop for AnvilFork {
     fn drop(&mut self) {
-        // Remove the IPC socket file before the fields are dropped.  Unix
-        // domain sockets can be unlinked while a process still holds an open
-        // fd, so this is safe even though the provider connection may still
-        // be alive.  After this returns alloy kills the anvil child process
-        // and the provider transport is closed.
+        // Teardown ORDER matters and is intentional:
+        //
+        // 1. Take (drop) the IPC provider FIRST, while the anvil subprocess
+        //    is still alive and the socket fd is still open. Dropping the
+        //    pubsub frontend closes the service's request channel, so alloy
+        //    exits via the clean "pubsub service request channel closed"
+        //    path. (A blocked select! is biased to the `reqs.recv()` branch,
+        //    which resolves the instant the frontend is dropped, beating the
+        //    socket-close branch because the peer is still up.) This avoids
+        //    the reconnect loop that would otherwise log repeated
+        //    ``alloy_pubsub::service`` reconnection warnings when the socket
+        //    is torn down beneath the open provider.
+        self.provider.take();
+        // 2. Unlink the IPC socket file (safe while the fd is open), then
+        //    drop `instance`, which kills the anvil child process and closes
+        //    the transport.
         let _ = std::fs::remove_file(self.instance.ipc_path());
     }
 }
@@ -375,9 +397,15 @@ impl AnvilFork {
     /// Borrow the connected alloy [`Provider`] for general RPC
     /// (`get_block`, `get_balance`, `eth_call`, etc.) over the same IPC
     /// transport. This replaces the legacy Python `self.w3` handle.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the fork is closed (its provider was taken by `Drop`).
     #[must_use]
-    pub const fn provider(&self) -> &DynProvider {
-        &self.provider
+    pub fn provider(&self) -> &DynProvider {
+        self.provider
+            .as_ref()
+            .expect("AnvilFork provider dropped (fork closed)")
     }
 
     /// The resolved IPC socket path the spawned anvil process is listening on
@@ -418,7 +446,7 @@ impl AnvilFork {
     /// # Errors
     /// [`ForkError::Rpc`] if the call fails.
     pub async fn mine(&self) -> Result<(), ForkError> {
-        self.provider
+        self.provider()
             .evm_mine(None)
             .await
             .map(|_| ())
@@ -434,7 +462,10 @@ impl AnvilFork {
             json_rpc_url: None,
             block_number: Some(bn),
         });
-        self.provider.anvil_reset(forking).await.map_err(Into::into)
+        self.provider()
+            .anvil_reset(forking)
+            .await
+            .map_err(Into::into)
     }
 
     /// `anvil_snapshot` — take a snapshot, returning the snapshot id.
@@ -442,7 +473,7 @@ impl AnvilFork {
     /// # Errors
     /// [`ForkError::Rpc`] if the call fails.
     pub async fn snapshot(&self) -> Result<U256, ForkError> {
-        self.provider.anvil_snapshot().await.map_err(Into::into)
+        self.provider().anvil_snapshot().await.map_err(Into::into)
     }
 
     /// `anvil_revert` — revert to a snapshot. Returns `true` if reverted.
@@ -450,7 +481,7 @@ impl AnvilFork {
     /// # Errors
     /// [`ForkError::Rpc`] if the call fails.
     pub async fn revert(&self, id: U256) -> Result<bool, ForkError> {
-        self.provider.anvil_revert(id).await.map_err(Into::into)
+        self.provider().anvil_revert(id).await.map_err(Into::into)
     }
 
     /// `anvil_set_balance`.
@@ -458,7 +489,7 @@ impl AnvilFork {
     /// # Errors
     /// [`ForkError::Rpc`] if the call fails.
     pub async fn set_balance(&self, address: Address, balance: U256) -> Result<(), ForkError> {
-        self.provider
+        self.provider()
             .anvil_set_balance(address, balance)
             .await
             .map_err(Into::into)
@@ -469,7 +500,7 @@ impl AnvilFork {
     /// # Errors
     /// [`ForkError::Rpc`] if the call fails.
     pub async fn set_code(&self, address: Address, code: Bytes) -> Result<(), ForkError> {
-        self.provider
+        self.provider()
             .anvil_set_code(address, code)
             .await
             .map_err(Into::into)
@@ -480,7 +511,7 @@ impl AnvilFork {
     /// # Errors
     /// [`ForkError::Rpc`] if the call fails.
     pub async fn set_nonce(&self, address: Address, nonce: u64) -> Result<(), ForkError> {
-        self.provider
+        self.provider()
             .anvil_set_nonce(address, nonce)
             .await
             .map_err(Into::into)
@@ -496,7 +527,7 @@ impl AnvilFork {
         slot: U256,
         value: U256,
     ) -> Result<(), ForkError> {
-        self.provider
+        self.provider()
             .anvil_set_storage_at(address, slot, value.into())
             .await
             .map(|_| ())
@@ -508,7 +539,7 @@ impl AnvilFork {
     /// # Errors
     /// [`ForkError::Rpc`] if the call fails.
     pub async fn set_next_block_base_fee(&self, basefee: u128) -> Result<(), ForkError> {
-        self.provider
+        self.provider()
             .anvil_set_next_block_base_fee_per_gas(basefee)
             .await
             .map_err(Into::into)
@@ -519,7 +550,7 @@ impl AnvilFork {
     /// # Errors
     /// [`ForkError::Rpc`] if the call fails.
     pub async fn set_next_block_timestamp(&self, timestamp: u64) -> Result<(), ForkError> {
-        self.provider
+        self.provider()
             .anvil_set_next_block_timestamp(timestamp)
             .await
             .map_err(Into::into)
@@ -530,7 +561,7 @@ impl AnvilFork {
     /// # Errors
     /// [`ForkError::Rpc`] if the call fails.
     pub async fn set_block_timestamp_interval(&self, seconds: u64) -> Result<(), ForkError> {
-        self.provider
+        self.provider()
             .anvil_set_block_timestamp_interval(seconds)
             .await
             .map_err(Into::into)
@@ -541,7 +572,7 @@ impl AnvilFork {
     /// # Errors
     /// [`ForkError::Rpc`] if the call fails.
     pub async fn set_coinbase(&self, address: Address) -> Result<(), ForkError> {
-        self.provider
+        self.provider()
             .anvil_set_coinbase(address)
             .await
             .map_err(Into::into)
@@ -552,7 +583,7 @@ impl AnvilFork {
     /// # Errors
     /// [`ForkError::Rpc`] if the call fails.
     pub async fn node_info(&self) -> Result<NodeInfo, ForkError> {
-        self.provider.anvil_node_info().await.map_err(Into::into)
+        self.provider().anvil_node_info().await.map_err(Into::into)
     }
 }
 

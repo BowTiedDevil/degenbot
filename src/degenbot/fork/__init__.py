@@ -12,8 +12,10 @@ core (added in epic `NXYVYU` FF2/FF3) owns the spawned anvil subprocess
   `set_snapshot` / `return_to_snapshot` / `set_balance` / ...);
 - re-exposes general RPC against the forked node as
   `self.provider` — a `degenbot._ffi.AlloyProvider` constructed over the
-  rust-resolved IPC socket path (replaces the legacy `self.w3` Web3
-  handle, since the underlying provider is now rust-owned).
+  fork's HTTP endpoint (replaces the legacy `self.w3` Web3 handle; the
+  rust-owned core's dev-RPC runs over its own IPC `DynProvider`, while the
+  companion general-RPC provider is HTTP so borrowed consumers never hold
+  an alloy pubsub).
 
 The breaking change vs the pre-0.7 Python `AnvilFork` is `self.w3` →
 `self.provider` (and the dropped capture-file / middlewares / free-port
@@ -196,11 +198,19 @@ class AnvilFork:
         # the spawn / IPC connect).
         self._fork: PyAnvilFork | None = PyAnvilFork(**self._init_kwargs)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
-        # General-RPC `AlloyProvider` over the same UNIX-domain IPC socket
-        # that the rust core's `DynProvider` is connected to (IPC supports
-        # multiple connection handles). Replaces the legacy `self.w3`
-        # Web3 handle.
-        self.provider: AlloyProvider = AlloyProvider(self._fork.ipc_path)
+        # General-RPC `AlloyProvider` over the fork's HTTP endpoint. The
+        # rust core's dev-RPC (`mine`/`reset`/`anvil_*`) runs over its own
+        # IPC-bound `DynProvider`; the companion general-RPC provider is HTTP
+        # so that consumers which borrow it (bots, pools, tracks) never hold
+        # an alloy IPC/WS pubsub. An IPC/WS provider keeps a live pubsub
+        # service that, when the fork subprocess dies on close, reconnects
+        # into the dead socket (the ``alloy_pubsub::service Reconnection
+        # attempt …`` log storm). HTTP has no pubsub, so a borrowed provider
+        # over a closed fork simply fails calls instead of reconnecting.
+        # Kept in `_provider` so `close()`/`reset()` can drop it before the
+        # rust subprocess is killed — the `provider` property exposes it and
+        # guards the closed state like the other accessors.
+        self._provider: AlloyProvider | None = AlloyProvider(self._fork.http_url)
 
         # Post-spawn state overrides — applied via the registered dev
         # methods so the rust `AnvilApi` calls go through the same
@@ -225,6 +235,28 @@ class AnvilFork:
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
+
+    @property
+    def provider(self) -> AlloyProvider:
+        """The general-RPC `AlloyProvider` bound to the fork over HTTP.
+
+        Use for retry-aware ``eth_call`` / ``get_logs`` against the in-memory
+        fork (mirrors the legacy ``self.w3`` handle). HTTP (not the rust
+        core's IPC `DynProvider`) so that consumers which borrow it never
+        hold an alloy IPC/WS pubsub that would reconnect into a dead socket
+        when the fork closes. Raising once the fork is closed guarantees a
+        provider over a dead subprocess is never silently handed out.
+
+        Raises:
+            AnvilError: If the fork was closed.
+
+        """
+        if self._provider is None:
+            raise AnvilError(
+                method="<closed>",
+                error="AnvilFork was closed; spawn a new instance to use it again.",
+            )
+        return self._provider
 
     @property
     def fork_url(self) -> str | None:
@@ -288,6 +320,14 @@ class AnvilFork:
         the rust handle — there is no separate IPC-socket cleanup needed
         (alloy's `AnvilInstance` `Drop` impl handles it).
         """
+        # Teardown ORDER matters: shut down our own `AlloyProvider` FIRST, while
+        # the anvil subprocess is still alive, so no consumer that borrowed it
+        # can touch a dead endpoint. The companion provider is HTTP (no alloy
+        # pubsub) and the rust core's dev-RPC `DynProvider` is cleanly closed
+        # in its own `Drop` -- so no reconnect loop is possible. Drop the
+        # provider reference, then the rust-core handle, which kills the
+        # subprocess.
+        self._provider = None
         # Clearing the Python-side reference forces the rust-side `Drop`
         # (the `AnvilInstance` `Drop` kills the spawned anvil subprocess +
         # closes the IPC transport). Any subsequent call surfaces a clear
@@ -376,14 +416,18 @@ class AnvilFork:
             new_kwargs["fork_block"] = block_number if transaction_hash is None else None
             new_kwargs["fork_transaction_hash"] = transaction_hash
 
-            # Drop the old handle (kills the old subprocess) before
-            # spawning the new one — frees the IPC socket the old
-            # instance was listening on.
+            # Drop the old `AlloyProvider` (HTTP — no pubsub to leak) then
+            # the old handle (kills the old subprocess) BEFORE spawning the
+            # new one — frees the HTTP/IPC socket the old instance was
+            # listening on.
+            self._provider = None
             self._fork = None
             self._fork = PyAnvilFork(**new_kwargs)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
             self._fork_url = new_kwargs["fork_url"]  # type: ignore[assignment]
-            # Replace the general-RPC provider over the new IPC socket.
-            self.provider = AlloyProvider(self._fork.ipc_path)
+            # Replace the general-RPC provider over the new fork's HTTP
+            # endpoint (HTTP: no IPC/WS pubsub, so consumers that borrow it
+            # cannot keep a reconnect loop alive across fork teardown).
+            self._provider = AlloyProvider(self._fork.http_url)
         elif block_number is not None:
             # In-place anvil_reset to a new block.
             try:
