@@ -74,10 +74,10 @@ const SUBSCRIBER_FLUSH_INTERVAL: Duration = Duration::from_millis(50);
 ///
 /// Uses a raw `*mut ffi::PyObject` pointer (with incremented refcount) so
 /// the notification can be sent between threads without the GIL. The drainer
-/// reconstructs a `Py<PyAny>` from the pointer and decrefs when done.
+/// reconstructs a `Bound<PyAny>` from the pointer and decrefs when done.
 struct SubscriberNotification {
     /// Raw Python object pointer with incremented reference count.
-    /// Reconstruct via `Py::from_borrowed_ptr(py, ptr)` in the drainer.
+    /// Reconstruct via `Bound::from_borrowed_ptr(py, ptr)` in the drainer.
     callback_ptr: *mut ffi::PyObject,
     pool_id: u64,
 }
@@ -224,19 +224,16 @@ fn flush_notification_batch(notifications: &[SubscriberNotification]) {
 
     Python::attach(|py| {
         for notification in &coalesced {
-            // Reconstruct Py<PyAny> from the raw pointer. The refcount
-            // was incremented at push time; the Drop of the notification
-            // will decref it. But `coalesced` holds references to the
-            // original notifications, so the Py<PyAny> we create here
-            // is a borrowed reference (no additional Py_INCREF needed).
-            // Just use from_borrowed_ptr which does NOT increment refcount.
-            // Reconstruct Py<PyAny> from the raw pointer.
+            // Reconstruct a `Bound<PyAny>` from the raw pointer. The refcount
+            // was incremented at push time; `SubscriberNotification::drop`
+            // decrefs it. `coalesced` holds references to the original
+            // notifications, so the `Bound` we create here is a borrowed
+            // reference (from_borrowed_ptr does NOT incref).
             // Safety: the refcount was incremented at push time and the
             // pointer is valid for the lifetime of the notification.
-            #[allow(deprecated)]
-            let callback: Py<PyAny> =
-                unsafe { pyo3::Py::from_borrowed_ptr(py, notification.callback_ptr) };
-            if let Err(err) = callback.call1(py, (notification.pool_id,)) {
+            let callback: Bound<'_, PyAny> =
+                unsafe { pyo3::Bound::from_borrowed_ptr(py, notification.callback_ptr) };
+            if let Err(err) = callback.call1((notification.pool_id,)) {
                 // Log via tracing (not log::) to avoid re-entering the log
                 // drainer on the GIL-holding drainer thread.
                 tracing::warn!(
