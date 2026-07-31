@@ -334,6 +334,16 @@ const MAX_CONCURRENT_REQUESTS_CAP: usize = 32;
 /// need a longer value via the builder/constructor arg.
 const DEFAULT_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Per-subscription WS channel size (alloy `PubSubFrontend::set_channel_size`).
+/// Alloy's default is 16, and `tokio::sync::broadcast` DROPS the OLDEST
+/// messages for a lagging receiver — so a 16-slot buffer overflows during the
+/// blocking snapshot→WS backfill (which does not drain the live stream) and
+/// silently loses the freshly-mined live logs (DFQYM5). This value effectively
+/// unbounds the receiver: it far exceeds any realistic backlog accumulated
+/// while the pump is not draining the stream, so a slow consumer can never lag
+/// the node's log stream out of existence.
+pub const SUBSCRIPTION_CHANNEL_SIZE: usize = 1_000_000;
+
 /// Default maximum total attempts for provider operations (1 initial + 2
 /// retries). 65F2N7 #4: this is the actual production default the bot hotpath
 /// (`degenbot-bot` pump) uses — previously `10` but every `new()` call site
@@ -967,6 +977,14 @@ impl AlloyProvider {
                     message: format!("Unsupported transport scheme: {scheme}"),
                 });
             };
+
+        // Effectively unbounded the pubsub receiver (DFQYM5): see
+        // `SUBSCRIPTION_CHANNEL_SIZE`. Must be set BEFORE any subscription is
+        // created (the channel size is read at subscription dispatch time);
+        // `new` runs before the pump's `subscribe_blocks`/`subscribe_logs`.
+        if let Some(frontend) = provider.client().pubsub_frontend() {
+            frontend.set_channel_size(SUBSCRIPTION_CHANNEL_SIZE);
+        }
 
         Ok(Self {
             inner: provider,

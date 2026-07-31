@@ -23,7 +23,9 @@
 //!    unfiltered logs) and observes until the first *complete* block — both the
 //!    header and a log for block N. N is returned as the backfill boundary W.
 //!    No events are buffered during subscribe — backfill is the sole authority
-//!    for blocks S+1..W-1; the pump (resume) is sole authority for W onward.
+//!    for blocks S+1..W (inclusive); the pump (resume) is sole authority for
+//!    W+1 onward (it drops any WS log for block ≤ W — the boundary backfill
+//!    already applied W's logs).
 //!
 //! 2. **Resume phase** (`resume_from_subscribe()`): Begins normal processing —
 //!    logs applied eagerly, solved + sent on block boundaries / debounce.
@@ -94,6 +96,12 @@ const LOG_SILENCE_SECS: u64 = 60;
 /// (J3FMDO). Mirrors the `pyo3` `backfill_from_snapshot` default (`chunk_size` = 2000):
 /// the per-chunk response size stays under `eth_getLogs` payload caps.
 const DEFAULT_BACKFILL_CHUNK_SIZE: u64 = 2000;
+
+/// How long the subscribe handshake waits for the WS `logs` stream to deliver
+/// its first log after the head is header-confirmed, before falling back to the
+/// header-confirmed boundary. Bounds startup latency on a quiet/log-free chain
+/// while still capturing the log stream's true live-from block on active ones.
+const LOG_CATCHUP_SETTLE_SECS: u64 = 15;
 
 /// Whether a log confirms that a tracked header block is "complete".
 ///
@@ -187,7 +195,8 @@ impl BlockPump {
     /// 2. Call `resume(subscribe_state)` to begin normal processing
     ///
     /// During this phase, no events are buffered. The backfill is the sole
-    /// authority for blocks S+1..W-1. The subscribe phase only observes until
+    /// authority for blocks S+1..W (inclusive). The subscribe phase only
+    /// observes until
     /// both a newHeads notification and a log for the same block arrive,
     /// confirming the logs subscription is live and caught up.
     #[allow(clippy::missing_errors_doc)]
@@ -271,16 +280,32 @@ impl BlockPump {
         })
     }
 
-    /// Header-only handshake (MJXP5Z / Alternative B): observe WS headers until
-    /// two consecutive distinct block headers confirm the boundary (the first
-    /// header `W` is confirmed closed when `W+1` arrives). Polls headers ONLY;
-    /// any `WsEvent::Log` the fused stream interleaves is collected into
-    /// `pending` (preserving arrival order) so `subscribe_with_stream` can
-    /// re-inject it — the handshake never loses, matches, or drops a log.
+    /// Handshake (MJXP5Z / Alternative B) that confirms the boundary from the
+    /// LOG STREAM's actual liveness, not headers alone (DFQYM5). Polls the
+    /// fused stream until (a) two consecutive distinct headers confirm the
+    /// head is near/finalized AND (b) the `logs` sub has delivered at least one
+    /// log — the block of that first log (`first_log_block`) is where the log
+    /// stream is PROVABLY live. The boundary `W` returned is `first_log_block`
+    /// (falls back to the header-confirmed head if the log stream stays silent
+    /// past `LOG_CATCHUP_SETTLE_SECS`).
+    ///
+    /// Why this matters: the node's `logs` sub can become live one or more
+    /// blocks AFTER the header stream confirms the boundary (headers confirm
+    /// the moment a block finalizes; the log sub registration lags). A
+    /// header-only boundary then leaves `[W+1, logs_sub_live_from-1]` delivered
+    /// by NEITHER the backfill (stops at W) NOR the WS (starts at `live_from`) —
+    /// the systematic delivery hole the WS-completeness abort caught. Anchoring
+    /// the boundary on the first-delivered log closes it: backfill owns
+    /// `[S+1, W]`, the live WS owns `[W+1, ∞)` with no gap.
+    ///
+    /// Any `WsEvent::Log` the fused stream interleaves is collected into
+    /// `pending` (preserving arrival order) for `subscribe_with_stream` to
+    /// re-inject — the handshake never loses, matches, or drops a log.
     ///
     /// No events are buffered to pool state here. The backfill
-    /// (`backfill_from_snapshot`) is the sole authority for blocks S+1..W-1,
-    /// and the pump (resume phase) is the sole authority for W onward.
+    /// (`backfill_from_snapshot`) is the sole authority for blocks S+1..W
+    /// (inclusive), and the pump (resume phase) is the sole authority for W+1
+    /// onward.
     ///
     /// Returns (`first_block` W, `timestamp_of_W`, `pending_logs`).
     #[allow(clippy::too_many_lines)]
@@ -290,6 +315,18 @@ impl BlockPump {
     ) -> (u64, u64, Vec<WsEvent>) {
         let mut prev_header: Option<u64> = None;
         let mut prev_timestamp: u64 = 0;
+        // The block of the FIRST log the WS `logs` sub delivers — the earliest
+        // proof the log stream is provably LIVE. The resume boundary + backfill
+        // inclusive target = this block (DFQYM5).
+        let mut first_log_block: Option<u64> = None;
+        // The highest header-confirmed-finalized block (two consecutive
+        // headers). Advances as headers flow; used to know we're near the head
+        // and that the chosen boundary is (or will be) finalized.
+        let mut confirmed_head: Option<u64> = None;
+        // Deadline to keep waiting for the log stream's first log after the
+        // head is header-confirmed. Falls back to the header boundary on a
+        // genuinely quiet/log-free head so the handshake cannot hang.
+        let mut settle_deadline: Option<tokio::time::Instant> = None;
         let mut pending: Vec<WsEvent> = Vec::new();
 
         loop {
@@ -327,16 +364,24 @@ impl BlockPump {
                 })) => {
                     if let Some(prev) = prev_header {
                         if number == prev + 1 {
-                            // Two consecutive headers: `prev` (= W) confirmed
-                            // closed by `number` (= W+1). The boundary is W.
+                            // Two consecutive headers: `prev` confirmed
+                            // finalized. Advance the confirmed head (and arm
+                            // the log-catch-up settle deadline on first
+                            // confirmation).
+                            if confirmed_head.is_none() {
+                                settle_deadline = Some(
+                                    tokio::time::Instant::now()
+                                        + Duration::from_secs(LOG_CATCHUP_SETTLE_SECS),
+                                );
+                            }
+                            confirmed_head = Some(prev);
+                            prev_timestamp = timestamp;
                             tracing::info!(
                                 prev,
                                 number,
-                                "BlockPump: subscribe observed complete block (confirmed by header)"
+                                "BlockPump: subscribe confirmed head at {prev} (header {number})"
                             );
-                            return (prev, prev_timestamp, pending);
-                        }
-                        if number > prev {
+                        } else if number > prev {
                             // Gap or jump - re-anchor on the newer header.
                             prev_header = Some(number);
                             prev_timestamp = timestamp;
@@ -350,18 +395,47 @@ impl BlockPump {
                 }
 
                 Ok(Some(WsEvent::Log(log))) => {
-                    // The handshake must NOT touch the data plane - logs are
-                    // neither matched against a header nor dropped. Any log the
-                    // fused stream interleaves during header polling is
-                    // collected and re-injected by `subscribe_with_stream`.
-                    // This makes "lost log during handshake" structurally
-                    // impossible (the block-W drop the resubscribe caused).
+                    if first_log_block.is_none() {
+                        if let Some(lb) = log.block_number {
+                            first_log_block = Some(lb);
+                        }
+                    }
+                    // Collect every log observed during the handshake; the
+                    // handshake never touches the data plane (some may be for
+                    // the boundary block and are already backfilled).
                     pending.push(WsEvent::Log(log));
                 }
 
                 Ok(None) => {
                     tracing::warn!("BlockPump: subscription streams ended during subscribe");
                     return (prev_header.unwrap_or(0), prev_timestamp, pending);
+                }
+            }
+
+            // Finalize once we're near the head (headers confirmed) AND we know
+            // the log stream's live-from block — or the settle window elapsed.
+            if let Some(head) = confirmed_head {
+                let deadline_passed =
+                    settle_deadline.is_some_and(|d| tokio::time::Instant::now() >= d);
+                let boundary_ok = match first_log_block {
+                    // Boundary (first_log_block) is finalizable once the
+                    // confirmed head reaches it; accept past the deadline.
+                    Some(l) => l <= head || deadline_passed,
+                    None => deadline_passed,
+                };
+                if boundary_ok {
+                    let boundary = first_log_block.unwrap_or(head);
+                    tracing::info!(
+                        confirmed_head = head,
+                        boundary,
+                        source = if first_log_block.is_some() {
+                            "first-delivered-log"
+                        } else {
+                            "header-fallback"
+                        },
+                        "BlockPump: subscribe boundary set to {boundary}"
+                    );
+                    return (boundary, prev_timestamp, pending);
                 }
             }
         }
@@ -374,7 +448,7 @@ impl BlockPump {
     /// `Bot::load_snapshot_from_db` or `load_*_from_py`) strictly less than
     /// the first observed WS block `W`, this method first awaits
     /// [`backfill_from_snapshot`](Self::backfill_from_snapshot) with the
-    /// pump's own provider — applying `S+1..W-1` log state under
+    /// pump's own provider — applying `S+1..W` (inclusive) log state under
     /// `BotState::process_backfill_logs` with zero result batches. The Python
     /// `engine_registry.start()` no longer calls the pyo3
     /// `backfill_from_snapshot`; one Python `resume()` invocation drives both.
@@ -388,24 +462,73 @@ impl BlockPump {
     /// Panics if `subscribe_state.combined_stream` is `None` (i.e., `subscribe()`
     /// was not called first).
     pub async fn resume_from_subscribe(&mut self, subscribe_state: SubscribeState) {
-        let combined = subscribe_state
+        let mut combined = subscribe_state
             .combined_stream
             .expect("resume() called without WS stream — did you call subscribe() first?");
         let first_block = subscribe_state.first_block;
-        // J3FMDO: auto-backfill the snapshot→WS gap before the live loop. The
-        // backfill only buffers state into BotState (no solve, no on_send);
-        // result batches therefore do not flow pre-resume.
-        if let Err(e) = self.backfill_to_ws_block(first_block).await {
+        // Drain the WS stream DURING the blocking backfill (DFQYM5 root cause).
+        // The alloy `logs` subscription buffers into a small broadcast channel
+        // (default capacity 16) that DROPS the OLDEST messages for a lagging
+        // receiver. If the backfill awaits without draining `combined`, the
+        // freshly-mined live blocks' logs (oldest in the channel) overflow and
+        // are lost permanently — the first live block then shows most of its
+        // logs missing, immediately tripping the WS-completeness abort even
+        // though no message was ever dropped by the node. Poll `combined`
+        // concurrently here and collect its events so the buffer never
+        // overflows; the drained events are re-injected ahead of the live loop.
+        let (backfill_res, drained) = self
+            .drain_stream_during_backfill(first_block, &mut combined)
+            .await;
+        if let Err(e) = backfill_res {
             tracing::error!(
                 first_block,
                 %e,
                 "BlockPump: auto-backfill failed — starting live loop from gap (not closed)"
             );
         }
+        // Re-inject any WS events drained during the backfill ahead of the
+        // still-owned stream tail, preserving arrival order (single-stream
+        // invariant MJXP5Z).
+        let combined = stream::iter(drained).chain(combined).boxed();
         self.run_with_stream(combined, first_block).await;
     }
 
-    /// Close the snapshot→WS gap by buffering `eth_getLogs(S+1..W-1)` into the
+    /// Concurrently drain the live WS stream while the blocking snapshot→WS
+    /// gap backfill runs, returning `(backfill_result, drained_events)`.
+    ///
+    /// Rationale/member-fn boundary: isolating the `&self`-borrowing backfill
+    /// future inside this method lets its borrow end on return, so the caller
+    /// can then re-borrow `&mut self` for the live loop (see caller). See
+    /// [`resume_from_subscribe`](Self::resume_from_subscribe) for the
+    /// broadcast-overflow root cause this drains around.
+    async fn drain_stream_during_backfill(
+        &self,
+        first_block: u64,
+        combined: &mut stream::BoxStream<'static, WsEvent>,
+    ) -> (Result<u64, String>, Vec<WsEvent>) {
+        let mut drained: Vec<WsEvent> = Vec::new();
+        let backfill = self.backfill_to_ws_block(first_block);
+        tokio::pin!(backfill);
+        loop {
+            tokio::select! {
+                biased;
+                res = &mut backfill => return (res, drained),
+                ev = combined.next() => {
+                    if let Some(ev) = ev {
+                        drained.push(ev);
+                    } else {
+                        tracing::warn!(
+                            "BlockPump: WS stream ended during backfill (no re-inject gap)"
+                        );
+                        return (Ok(0), drained);
+                    }
+                },
+            }
+        }
+    }
+
+    /// Close the snapshot→WS gap by buffering `eth_getLogs(S+1..W)` (inclusive)
+    /// into the
     /// core `BotState`'s per-pool backfill buffer (no solve, no `on_send`).
     ///
     /// This is the SYNCHRONOUSLY-awaitable half of `resume_from_subscribe` —
@@ -486,7 +609,7 @@ impl BlockPump {
                     tracing::info!(
                         first_observed_block,
                         backfill_start = seed + 1,
-                        backfill_end = first_observed_block - 1,
+                        backfill_end = first_observed_block,
                         "BlockPump: resuming from block (backfilled snapshot gap)"
                     );
                 } else {
@@ -840,6 +963,25 @@ impl BlockPump {
                     }
 
                     let log_block = log.block_number.unwrap_or(current_block);
+                    // Boundary-block delivery alignment (DFQYM5): when the
+                    // snapshot→WS gap was closed (snapshot seed S <
+                    // first_observed_block W), the backfill above covered
+                    // [S+1, W] INCLUSIVE — block W's logs are ALREADY fully
+                    // applied to BotState. The fresh WS `logs` subscription,
+                    // however, delivers only the PARTIAL set of W's logs mined
+                    // after it engaged (observed: 6 of 35 at the boundary).
+                    // Those partial duplicates must NOT be re-applied
+                    // (double-apply → state corruption), and must not re-anchor
+                    // the clock at W (which would tombstone W and trip the
+                    // WS-completeness check on a block the backfill owns, not
+                    // the WS). Drop any WS log for block ≤ W when backfill
+                    // covered W — this is the single-writer rule: backfill owns
+                    // [S+1, W], the live WS owns [W+1, ∞).
+                    if snapshot_seed.is_some_and(|s| s > 0 && s < first_observed_block)
+                        && log_block <= first_observed_block
+                    {
+                        continue;
+                    }
                     // WS-completeness tracker: record the delivered relevant
                     // log index for this block so the tombstone can cross-check
                     // it against authoritative on-chain logs (a missing index =
@@ -1302,7 +1444,7 @@ impl BlockPump {
         }
     }
 
-    /// Backfill the snapshot→WS gap `S+1..W-1` using the NO-SOLVE path
+    /// Backfill the snapshot→WS gap `S+1..W` (inclusive) using the NO-SOLVE path
     /// (FD7NFG, epic P73ER6). Reads `S` from `BotState::snapshot_seed_block`
     /// (set by `Bot::load_snapshot_from_db`) and `W` from the `ws_block` param
     /// (the block the WS subscription landed on — `SubscribeState::first_block`,
@@ -1313,9 +1455,9 @@ impl BlockPump {
     /// loop). No `solve_dirty` / no batches — the `Backfilled` phase invariant
     /// is "state advanced, no dispatch".
     ///
-    /// Returns the count of blocks backfilled (`W-1 - (S+1) + 1 = W-1-S`), or
+    /// Returns the count of blocks backfilled (`W - (S+1) + 1 = W-S`), or
     /// `Ok(0)` for a no-op (cold start / S≥W). The post-backfill boundary is
-    /// `W-1`; the pump's resume anchors on `first_observed_block = W` regardless
+    /// `W`; the pump's resume anchors on `first_observed_block = W` regardless
     /// (the WS anchor, NOT `last_processed_block`), so this method does NOT stamp
     /// the sink's cursor.
     ///
@@ -1352,7 +1494,15 @@ impl BlockPump {
             return Ok(0);
         }
         let from_block = s + 1;
-        let to_block = w - 1;
+        // Include `w` (the resume boundary block) so the backfill covers
+        // [S+1, W] INCLUSIVE (DFQYM5). Block W is a delivery hole if excluded:
+        // the snapshot→WS gap backfill stops at W-1, and the fresh WS `logs`
+        // subscription streams ONLY logs mined after it engages — block W's
+        // pre-existing logs are never delivered by the WS (observed: 6 of 35
+        // at the boundary block). Fetching W deterministically via eth_getLogs
+        // closes the hole; the pump drops the sparse WS partial-W-dup logs in
+        // `run_with_stream` (see the `log_block <= W` guard).
+        let to_block = w;
         let total_blocks = to_block - from_block + 1;
         tracing::info!(
             from_block,
@@ -3176,7 +3326,7 @@ mod tests {
     /// J3FMDO: `resume_from_subscribe` auto-backfills the snapshot→WS gap
     /// (S < W) before the live loop begins — proving the core path closes the
     /// gap with zero Python orchestration. The Asserter queue drains by exactly
-    /// one `eth_getLogs` response (S+1..W-1 fits in a single default-size chunk).
+    /// one `eth_getLogs` response (S+1..W fits in a single default-size chunk).
     #[tokio::test]
     async fn auto_backfill_runs_inside_resume_when_s_lt_w() {
         let bot = Arc::new(Bot::new(1));
