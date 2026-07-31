@@ -178,6 +178,15 @@ pub async fn verify_v3_liquidity_map<S: std::hash::BuildHasher>(
         })?;
     let on_chain: std::collections::HashMap<i32, &MulticallResult> =
         ticks.iter().copied().zip(&results).collect();
+    // Scan EVERY tick (not just until the first divergence) so a single
+    // verify failure surfaces the FULL divergence set under
+    // `DEGENBOT_VERIFY_DBG`. A Mint-without-its-Burn leaves the upper tick
+    // divergent while the lower tick is +L vs 0 — one row per divergent tick
+    // reveals that pairing without re-running. The returned error keeps the
+    // EXACT historical message for the first mismatch (tests pin it); only
+    // the diagnostic log is additive.
+    let mut first_mismatch: Option<String> = None;
+    let mut all_mismatches: Vec<String> = Vec::new();
     for (&tick_idx, our_info) in tick_data {
         let our_gross = our_info.liquidity_gross.to::<u128>();
         let our_net: i128 = our_info.liquidity_net.try_into().unwrap_or_default();
@@ -188,12 +197,29 @@ pub async fn verify_v3_liquidity_map<S: std::hash::BuildHasher>(
         let (on_chain_gross, on_chain_net) =
             decode_v3_ticks_result(result, pool_address, tick_idx, &block_tag)?;
         if our_gross != on_chain_gross || our_net != on_chain_net {
-            return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
-                message: format!(
+            all_mismatches.push(format!(
+                "tick {tick_idx}: snapshot (lg={our_gross}, ln={our_net}) vs on-chain (lg={on_chain_gross}, ln={on_chain_net})"
+            ));
+            if first_mismatch.is_none() {
+                first_mismatch = Some(format!(
                     "V3 pool {pool_address} at snapshot block {block_number}: tick {tick_idx} mismatch — snapshot: (lg={our_gross}, ln={our_net}), on-chain: (lg={on_chain_gross}, ln={on_chain_net})"
-                ),
-            }));
+                ));
+            }
         }
+    }
+    if let Some(msg) = first_mismatch {
+        if std::env::var("DEGENBOT_VERIFY_DBG").is_ok() && !all_mismatches.is_empty() {
+            tracing::warn!(
+                %pool_address,
+                block_number,
+                divergent_tick_count = all_mismatches.len(),
+                rows = ?all_mismatches,
+                "[verify-dbg] V3 divergence set"
+            );
+        }
+        return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
+            message: msg,
+        }));
     }
     Ok(())
 }

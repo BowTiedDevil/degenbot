@@ -453,7 +453,19 @@ impl V3PoolState {
             tick: params.tick,
             update_block: params.update_block,
             state_nonce: 0,
-            registration_lifecycle: RegistrationLifecycle::default(),
+            // ADR-close of the rolling-start direct-apply gap (DFQYM5): a
+            // freshly-registered `Tracked` pool starts `Quarantined` so NO live
+            // event can direct-apply before the two-step verify; `set_pool_live`
+            // (post-verify) is the sole transition to `Live`. `Sparse` pools
+            // (no complete liquidity map → no pin, no step-2 verify) stay
+            // `Live`/direct-apply — quarantining them would defer events with
+            // nothing to protect and re-raise the retained-tail flush hazard at
+            // `set_live`.
+            registration_lifecycle: if params.coverage == PoolTickCoverage::Tracked {
+                RegistrationLifecycle::Quarantined
+            } else {
+                RegistrationLifecycle::Live
+            },
             tick_data: params.tick_data,
             coverage: params.coverage,
             known_bitmap_words: HashSet::new(),

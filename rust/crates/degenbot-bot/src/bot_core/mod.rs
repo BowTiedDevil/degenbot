@@ -151,6 +151,42 @@ pub struct BotState {
 /// (no insertion log). `tag` ∈ {'L' (unregistered Live-eligible path),
 /// 'Q' (Quarantined deferral)}. Gated on the env var so it is a no-op in
 /// production runs that don't opt in.
+/// Whether `DEGENBOT_DRAIN_DBG` is set to `address` (hex, with or without
+/// `0x`). The single pool-match predicate shared by every per-pool trace probe
+/// — keeps the `[trace]` / `[dbg-buf]` / `[dbg-drain]` series gated on ONE
+/// env var so a single run surfaces the full event flow (WS delivery →
+/// decode → apply-route → buffer → drain → pin → verify) for the failing
+/// pool with no behavior change when unset.
+pub(crate) fn drain_dbg_pool_match(address: Address) -> bool {
+    std::env::var("DEGENBOT_DRAIN_DBG")
+        .is_ok_and(|v| format!("{address:x}").eq_ignore_ascii_case(v.trim_start_matches("0x")))
+}
+
+/// Whether the global liquidity-events trace is on (env
+/// `DEGENBOT_TRACE_LIQUIDITY=1`). When set, the `[trace] apply-route` and
+/// `[trace] ws-log` probes fire for EVERY V3 Mint/Burn + V4 `ModifyLiquidity`
+/// event across ALL pools (not just the `DEGENBOT_DRAIN_DBG` one). Liquidity
+/// events are rare vs Swaps, so the volume is bounded; the value is that a
+/// non-deterministic failure that HOPS pools (the add-applied/remove-buffered
+/// split of a same-block `ModifyLiquidity` pair) is captured for whichever
+/// pool it lands on. Pairs with `DEGENBOT_DRAIN_DBG` (per-pool) — either gate
+/// fires the probe.
+pub(crate) fn trace_liquidity_global() -> bool {
+    std::env::var("DEGENBOT_TRACE_LIQUIDITY")
+        .is_ok_and(|v| v.trim() == "1" || v.trim().eq_ignore_ascii_case("true"))
+}
+
+/// Optional watch tick for the per-pool trace (env `DEGENBOT_TRACE_TICK`, a
+/// signed decimal). When set, the pin summary + drain-apply probes log the
+/// value of THAT tick after each mutation, so a single known-divergent tick
+/// (e.g. the ghost-value upper tick of a same-block Mint+Burn) can be tracked
+/// across the rolling-start lifecycle. Unset = no per-tick watch.
+pub(crate) fn trace_watch_tick() -> Option<i32> {
+    std::env::var("DEGENBOT_TRACE_TICK")
+        .ok()
+        .and_then(|v| v.trim().parse::<i32>().ok())
+}
+
 fn drain_dbg_log_buf(
     address: Address,
     tag: char,
@@ -159,9 +195,7 @@ fn drain_dbg_log_buf(
     liquidity_delta: i128,
     block_number: u64,
 ) {
-    if !std::env::var("DEGENBOT_DRAIN_DBG")
-        .is_ok_and(|v| format!("{address:x}").eq_ignore_ascii_case(v.trim_start_matches("0x")))
-    {
+    if !drain_dbg_pool_match(address) {
         return;
     }
     tracing::info!(
@@ -172,6 +206,114 @@ fn drain_dbg_log_buf(
         liquidity_delta,
         block_number,
         "[dbg-buf] INSERT"
+    );
+}
+
+/// Per-pool WS-pump trace: log every relevant-topic log the live pump
+/// dispatches for the traced pool. Emits block, log-index, tx-index,
+/// topic0, removed flag, and the ADR-008 clock decision — so the
+/// delivery order of same-block Mint/Burn/ModifyLiquidity logs is visible
+/// (a Burn arriving after the registration drain+pin is the rolling-start
+/// race this probe exists to catch). Fires when the pool matches
+/// `DEGENBOT_DRAIN_DBG` OR the global liquidity trace is on AND the topic is
+/// a liquidity-mutating one (V3 Mint/Burn, V4 `ModifyLiquidity`)..
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn trace_ws_log_dispatch(
+    address: Address,
+    block_number: u64,
+    log_index: Option<u64>,
+    tx_index: Option<u64>,
+    topic0: alloy::primitives::B256,
+    removed: bool,
+    decision: &str,
+) {
+    use degenbot_decoders::v3_mint_burn_decoder::{V3_BURN_TOPIC, V3_MINT_TOPIC};
+    use degenbot_decoders::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC;
+    let is_liquidity =
+        topic0 == V3_MINT_TOPIC || topic0 == V3_BURN_TOPIC || topic0 == V4_MODIFY_LIQUIDITY_TOPIC;
+    let pool_match = drain_dbg_pool_match(address);
+    let global_liquidity_hit = trace_liquidity_global() && is_liquidity;
+    if !pool_match && !global_liquidity_hit {
+        return;
+    }
+    tracing::info!(
+        pool_addr = %format!("{address:x}"),
+        block = block_number,
+        log_index = ?log_index,
+        tx_index = ?tx_index,
+        topic0 = %topic0, // full topic — greppable by short prefix
+        removed,
+        decision = %decision,
+        "[trace] ws-log"
+    );
+}
+
+/// Per-pool apply-route trace: log how a V3 liquidity update was routed —
+///`(lifecycle, routed_to)` where `routed_to` ∈ {"buffer-pump",
+/// "buffer-pump-quarantined", "direct-live", "no-pool"}. Answers whether the
+/// Mint/Burn hit the pump buffer (then drained) or was direct-applied to a
+/// Live pool (then captured by the pin or missed it). Fires when the pool
+/// matches `DEGENBOT_DRAIN_DBG` OR the global liquidity trace is on.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn trace_apply_route_v3(
+    address: Address,
+    tick_lower: i32,
+    tick_upper: i32,
+    liquidity_delta: i128,
+    block_number: u64,
+    lifecycle: &str,
+    routed_to: &str,
+) {
+    if !drain_dbg_pool_match(address) && !trace_liquidity_global() {
+        return;
+    }
+    tracing::info!(
+        pool_addr = %format!("{address:x}"),
+        family = "V3",
+        tick_lower,
+        tick_upper,
+        liquidity_delta,
+        block = block_number,
+        lifecycle = %lifecycle,
+        routed_to = %routed_to,
+        "[trace] apply-route"
+    );
+}
+
+/// V4 twin of [`trace_apply_route_v3`] — logs how a V4 `ModifyLiquidity`
+/// update was routed (`buffer-pump` / `buffer-pump-quarantined` /
+/// `direct-live` / `no-pool`). Keyed by `(pool_manager, pool_id_hex)` so the
+/// failing V4 pool's add/remove split is visible across the registration
+/// lifecycle transition. Fires on the global liquidity trace OR when
+/// `DEGENBOT_DRAIN_DBG` names this pool's `pool_id_hex`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn trace_apply_route_v4(
+    pool_manager: Address,
+    pool_id_hex: &str,
+    tick_lower: i32,
+    tick_upper: i32,
+    liquidity_delta: alloy::primitives::I256,
+    block_number: u64,
+    lifecycle: &str,
+    routed_to: &str,
+) {
+    if !trace_liquidity_global()
+        && !std::env::var("DEGENBOT_DRAIN_DBG")
+            .is_ok_and(|v| v.trim_start_matches("0x").eq_ignore_ascii_case(pool_id_hex))
+    {
+        return;
+    }
+    tracing::info!(
+        pool_manager = %format!("{pool_manager:x}"),
+        pool_id = %pool_id_hex,
+        family = "V4",
+        tick_lower,
+        tick_upper,
+        liquidity_delta = %liquidity_delta,
+        block = block_number,
+        lifecycle = %lifecycle,
+        routed_to = %routed_to,
+        "[trace] apply-route"
     );
 }
 
@@ -192,6 +334,13 @@ fn drain_dbg_log_buf(
 /// - `pin_v3/v4_post_drain_snapshot` logs the pinned `(update_block,
 ///   tick_data.len(), pump_count_at_or_below, last_complete_block)` so a
 ///   step-2 mismatch can be correlated to the drain that produced the pin.
+///   NOTE: `update_block` may legitimately exceed `last_complete_block` when
+///   the registration seed carries the live WS head while the pump buffer has
+///   not yet tombstoned it (a benign `pump_count_at_or_below == 0` case). It
+///   is NOT by itself a bug signal — the real failure symptom is a divergent
+///   `tick_data` entry (ghost gross/net) against on-chain at the pinned block
+///   (the `[verify-dbg] divergence set`). Do not read `update_block >
+///   last_complete_block` alone as evidence of a leaked in-progress event.
 /// - `set_v3/v4_pool_live` logs the count + block numbers of the retained
 ///   in-progress-block tail flushed via the unguarded `drain_pump`.
 fn verify_dbg_enabled() -> bool {
@@ -895,6 +1044,15 @@ impl BotState {
         block_number: u64,
     ) -> Option<u64> {
         let Some(&pool_id) = self.pool_addresses.get(&pool_address) else {
+            trace_apply_route_v3(
+                pool_address,
+                tick_lower,
+                tick_upper,
+                liquidity_delta,
+                block_number,
+                "none",
+                "buffer-pump",
+            );
             drain_dbg_log_buf(
                 pool_address,
                 'L',
@@ -921,6 +1079,15 @@ impl BotState {
         // block (a same-block `Swap` and `Mint` both land in the one buffer).
         if let Some(PoolEntry::V3(_, state)) = self.pools.get(&pool_id) {
             if state.registration_lifecycle == RegistrationLifecycle::Quarantined {
+                trace_apply_route_v3(
+                    pool_address,
+                    tick_lower,
+                    tick_upper,
+                    liquidity_delta,
+                    block_number,
+                    "Quarantined",
+                    "buffer-pump-quarantined",
+                );
                 drain_dbg_log_buf(
                     pool_address,
                     'Q',
@@ -941,6 +1108,15 @@ impl BotState {
                 return None;
             }
         }
+        trace_apply_route_v3(
+            pool_address,
+            tick_lower,
+            tick_upper,
+            liquidity_delta,
+            block_number,
+            "Live",
+            "direct-live",
+        );
         self.apply_v3_liquidity_update_by_pool_id(
             pool_id,
             tick_lower,
@@ -1367,9 +1543,9 @@ impl BotState {
     /// stays `None` (no complete `tick_data` → step-2 is a no-op). Idempotent
     /// if called twice (the second pin overwrites; only step-2 consumes it).
     pub fn pin_v3_post_drain_snapshot(&mut self, address: Address) {
-        // Capture the pin scalars in an inner scope so the `&mut state` borrow
-        // of `self.pools` ends before the diagnostic reads `self.v3_buffer`
-        // (a second `&self` borrow) — Rust forbids both alive at once.
+        // Capture the pin scalars + an optional watch-tick snapshot in an
+        // inner scope so the `&mut state` borrow of `self.pools` ends before
+        // the diagnostic reads `self.v3_buffer` (a second `&self` borrow).
         let diag = {
             let Some(&pool_id) = self.pool_addresses.get(&address) else {
                 return;
@@ -1378,21 +1554,48 @@ impl BotState {
                 return;
             };
             if state.coverage == PoolTickCoverage::Tracked {
+                let watch = trace_watch_tick()
+                    .and_then(|t| state.tick_data.get(&t))
+                    .map(|info| (info.liquidity_gross, info.liquidity_net));
                 state.post_drain_snapshot = Some((state.tick_data.clone(), state.update_block));
-                Some(state.update_block)
+                Some((state.update_block, state.tick_data.len(), watch))
             } else {
                 None
             }
         };
-        if let Some(update_block) = diag {
+        if let Some((update_block, tick_count, watch)) = diag {
+            let pool_match = drain_dbg_pool_match(address);
             if verify_dbg_enabled() {
                 tracing::info!(
                     pool_addr = %format!("{address:x}"),
                     update_block,
+                    tick_count,
                     pump_count = self.v3_buffer.pump_count_at_or_below(&address, update_block),
                     last_complete_block = ?self.v3_buffer.last_complete_block(),
                     "[verify-dbg] V3 pin"
                 );
+            }
+            // Per-pool watch-tick probe: log (gross, net) at `DEGENBOT_TRACE_TICK`
+            // right at the pin, so a ghost-value tick (e.g. an un-burned Mint
+            // upper tick) is visible at the moment step-2 verify compares it.
+            if pool_match {
+                if let Some((g, n)) = watch {
+                    tracing::info!(
+                        pool_addr = %format!("{address:x}"),
+                        update_block,
+                        watch_tick = ?trace_watch_tick(),
+                        gross = %g,
+                        net = %n,
+                        "[trace] pin watch-tick"
+                    );
+                } else {
+                    tracing::info!(
+                        pool_addr = %format!("{address:x}"),
+                        update_block,
+                        watch_tick = ?trace_watch_tick(),
+                        "[trace] pin watch-tick absent"
+                    );
+                }
             }
         }
     }
@@ -2588,7 +2791,18 @@ impl BotState {
         block_number: u64,
     ) -> Option<u64> {
         let key = (pool_manager, pool_id);
+        let pool_id_hex = degenbot_core::hex_utils::encode_hex(&pool_id);
         let Some(&pool_id) = self.v4_pool_ids.get(&key) else {
+            trace_apply_route_v4(
+                pool_manager,
+                &pool_id_hex,
+                tick_lower,
+                tick_upper,
+                liquidity_delta,
+                block_number,
+                "none",
+                "buffer-pump",
+            );
             self.v4_buffer.buffer_pump(
                 key,
                 BufferedV4PoolEvent::Liquidity(BufferedV4LiquidityUpdate {
@@ -2608,6 +2822,16 @@ impl BotState {
         // `ModifyLiquidity` both land in the one buffer).
         if let Some(PoolEntry::V4(_, state)) = self.pools.get(&pool_id) {
             if state.registration_lifecycle == RegistrationLifecycle::Quarantined {
+                trace_apply_route_v4(
+                    pool_manager,
+                    &pool_id_hex,
+                    tick_lower,
+                    tick_upper,
+                    liquidity_delta,
+                    block_number,
+                    "Quarantined",
+                    "buffer-pump-quarantined",
+                );
                 self.v4_buffer.buffer_pump(
                     key,
                     BufferedV4PoolEvent::Liquidity(BufferedV4LiquidityUpdate {
@@ -2620,6 +2844,16 @@ impl BotState {
                 return None;
             }
         }
+        trace_apply_route_v4(
+            pool_manager,
+            &pool_id_hex,
+            tick_lower,
+            tick_upper,
+            liquidity_delta,
+            block_number,
+            "Live",
+            "direct-live",
+        );
         // ADR-014 D1: delegate to the pool_id-keyed dispatcher (the V3
         // address-keyed wrapper pattern). The inline body that previously
         // lived here was byte-identical to `impl ConcentratedLiquidityPoolMut
@@ -2933,11 +3167,16 @@ impl BotState {
     /// live pump then defers the pool's `Swap`/`Mint`/`Burn` events to the
     /// pump buffer until [`set_pool_live`] transitions it back. Call at the
     /// start of `register_v3_pool` (before the first RPC await). No-op for
-    /// unregistered / non-V3 pools.
+    /// unregistered / non-V3 pools AND for non-`Tracked` pools (a `Sparse`
+    /// pool has no pin / step-2 verify to protect, so quarantining it would
+    /// only defer events with nothing to gain — it stays `Live`/direct-apply;
+    /// DFQYM5 coverage-aware carve-out).
     pub fn set_v3_pool_quarantined(&mut self, address: Address) {
         if let Some(&id) = self.pool_addresses.get(&address) {
             if let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&id) {
-                state.registration_lifecycle = RegistrationLifecycle::Quarantined;
+                if state.coverage == PoolTickCoverage::Tracked {
+                    state.registration_lifecycle = RegistrationLifecycle::Quarantined;
+                }
             }
         }
     }
@@ -2945,7 +3184,7 @@ impl BotState {
     /// Set a V4 pool's registration lifecycle to `Quarantined` (6N7XVR). V4
     /// twin of [`set_v3_pool_quarantined`]. Call at the start of
     /// `register_v4_pool` (before the first RPC await). No-op for unregistered
-    /// V4 pools.
+    /// V4 pools and for non-`Tracked` pools (Sparse stays `Live`; DFQYM5).
     pub fn set_v4_pool_quarantined(
         &mut self,
         pool_manager: Address,
@@ -2954,7 +3193,9 @@ impl BotState {
         let key = (pool_manager, pool_id);
         if let Some(&id) = self.v4_pool_ids.get(&key) {
             if let Some(PoolEntry::V4(_, state)) = self.pools.get_mut(&id) {
-                state.registration_lifecycle = RegistrationLifecycle::Quarantined;
+                if state.coverage == PoolTickCoverage::Tracked {
+                    state.registration_lifecycle = RegistrationLifecycle::Quarantined;
+                }
             }
         }
     }
@@ -3049,7 +3290,73 @@ impl BotState {
         }
     }
 
-    /// Apply a backfill chunk's logs to the snapshot-seeded state WITHOUT
+    /// Batch-release every pool still `Quarantined` (DFQYM5 orphan sweep).
+    ///
+    /// With Tracked pools now registering `Quarantined` by default, a Tracked
+    /// pool built via `build_pool`/`build_managed_pool` but never reached by
+    /// the driver's `register_v3/v4_pool` (e.g. its path was skipped before
+    /// registration) would otherwise defer events to its buffer indefinitely.
+    /// Call once after `build_paths` finishes: flush each still-`Quarantined`
+    /// pool's retained pump tail (same unguarded `drain_pump` as
+    /// [`set_v3_pool_live`]/[`set_v4_pool_live`]) and mark it `Live`, so no
+    /// registered pool is left buffering forever. No-op when nothing is
+    /// quarantined.
+    pub fn release_all_v3_v4_quarantined(&mut self) {
+        // Collect the still-Quarantined V3 addresses and V4 (pm, pool_id) keys
+        // first (drain buffers are keyed by those, not `pool_id`), then release
+        // each via the existing set_live flush+mark. Collect-then-apply avoids
+        // holding a `&mut self.pools` borrow across the drain calls.
+        let v3_addrs: Vec<Address> = self
+            .pools
+            .iter()
+            .filter_map(|(&id, e)| match e {
+                PoolEntry::V3(_, s)
+                    if s.registration_lifecycle == RegistrationLifecycle::Quarantined =>
+                {
+                    if let PoolEntry::V3(i, _) = &self.pools[&id] {
+                        Some(i.address)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+            .collect();
+        let v4_keys: Vec<(Address, degenbot_decoders::v4_swap_decoder::V4PoolId)> = self
+            .pools
+            .iter()
+            .filter_map(|(&id, e)| match e {
+                PoolEntry::V4(_, s)
+                    if s.registration_lifecycle == RegistrationLifecycle::Quarantined =>
+                {
+                    if let PoolEntry::V4(i, _) = &self.pools[&id] {
+                        Some((i.pool_manager, i.pool_id))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+            .collect();
+        let total = v3_addrs.len() + v4_keys.len();
+        if total == 0 {
+            return;
+        }
+        if verify_dbg_enabled() {
+            tracing::info!(
+                v3 = v3_addrs.len(),
+                v4 = v4_keys.len(),
+                "[verify-dbg] release-all quarantined"
+            );
+        }
+        for addr in v3_addrs {
+            self.set_v3_pool_live(addr);
+        }
+        for (pm, pid) in v4_keys {
+            self.set_v4_pool_live(pm, pid);
+        }
+    }
+
     /// solving (B3 move, FD7NFG). Decodes V3 swap/mint/burn + V4 swap/modify-
     /// liquidity logs and applies each via the same `apply_v3_swap` /
     /// `buffer_backfill_*_liquidity_update` / `apply_v4_swap` path the live
@@ -4253,22 +4560,197 @@ mod tests {
         .expect("test setup: V4 registration")
     }
 
-    /// A freshly-registered V3/V4 pool defaults to `RegistrationLifecycle::Live`
-    /// (the steady-state direct-apply contract — pools registered outside the
-    /// two-step verify keep the existing behavior).
+    /// A freshly-registered CL pool's lifecycle is COVERAGE-AWARE (DFQYM5):
+    /// `Tracked` (complete liquidity map, pins + step-2 verifies) defaults to
+    /// `Quarantined` so no live event direct-applies before the two-step
+    /// verify; `Sparse` (no complete map → no pin / step-2 verify) stays
+    /// `Live`/direct-apply. True for both V3 and V4.
     #[test]
-    fn fresh_pool_defaults_to_live_lifecycle() {
-        use alloy::primitives::U128;
-        let _ = U128::from(0);
+    fn fresh_pool_lifecycle_is_coverage_aware() {
+        use crate::bot_core::{RegisterV3PoolParams, RegisterV4PoolParams, TickInfo, V4PoolKey};
+        use crate::solvers::arb_engine::PoolTickCoverage;
+        use alloy::primitives::{I256, U128};
         let mut core = BotState::new();
-        let v3_id = register_v3_on_core(&mut core, Address::from([0x88u8; 20]), 0);
-        let v4_id = register_v4_on_core(&mut core, 0);
+
+        // Tracked V4 → Quarantined (register_v4_on_core uses Tracked).
+        let tracked_v4 = register_v4_on_core(&mut core, 0);
         assert_eq!(
-            core.get_v3_pool(v3_id).unwrap().registration_lifecycle,
+            core.get_v4_pool(tracked_v4).unwrap().registration_lifecycle,
+            RegistrationLifecycle::Quarantined
+        );
+
+        // Sparse V3 → Live (register_v3_on_core uses Sparse).
+        let sparse_v3 = register_v3_on_core(&mut core, Address::from([0x88u8; 20]), 0);
+        assert_eq!(
+            core.get_v3_pool(sparse_v3).unwrap().registration_lifecycle,
+            RegistrationLifecycle::Live
+        );
+
+        // Sparse V4 → Live: trim the Tracked helper's params to Sparse, then
+        // release the Tracked pool to free its key space isn't needed — use a
+        // fresh pool_id.
+        let mut tick_data = HashMap::new();
+        tick_data.insert(
+            60,
+            TickInfo {
+                liquidity_gross: U128::from(100),
+                liquidity_net: I256::try_from(100i128).unwrap(),
+                block: 0,
+            },
+        );
+        let pm = Address::from([0x44u8; 20]);
+        let pid = [0xabu8; 32];
+        let sparse_v4 = core
+            .register_v4_pool(&RegisterV4PoolParams {
+                pool_manager: pm,
+                pool_id: pid,
+                pool_key: V4PoolKey {
+                    currency0: Address::ZERO,
+                    currency1: Address::from([1u8; 20]),
+                    fee: 500,
+                    tick_spacing: 10,
+                    hooks: Address::ZERO,
+                },
+                hook_flags: 0,
+                protocol_fee: 0,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 1_000_000,
+                tick: 0,
+                tick_data,
+                update_block: 0,
+                coverage: PoolTickCoverage::Sparse,
+                fetcher: None,
+            })
+            .expect("sparse V4 registration");
+        assert_eq!(
+            core.get_v4_pool(sparse_v4).unwrap().registration_lifecycle,
+            RegistrationLifecycle::Live
+        );
+
+        // Tracked V3 → Quarantined: reuse the V3 Sparse helper's shape but
+        // override coverage to Tracked.
+        let mut tick_data = HashMap::new();
+        tick_data.insert(
+            60,
+            TickInfo {
+                liquidity_gross: U128::from(100),
+                liquidity_net: I256::try_from(100i128).unwrap(),
+                block: 0,
+            },
+        );
+        let tracked_v3 = core
+            .register_v3_pool(&RegisterV3PoolParams {
+                address: Address::from([0x99u8; 20]),
+                token0: Address::ZERO,
+                token1: Address::from([1u8; 20]),
+                fee: 3000,
+                tick_spacing: 60,
+                factory: Address::ZERO,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 1_000_000,
+                tick: 0,
+                tick_data,
+                update_block: 0,
+                coverage: PoolTickCoverage::Tracked,
+                fetcher: None,
+                ..Default::default()
+            })
+            .expect("tracked V3 registration");
+        assert_eq!(
+            core.get_v3_pool(tracked_v3).unwrap().registration_lifecycle,
+            RegistrationLifecycle::Quarantined
+        );
+    }
+
+    /// `set_v3/v4_pool_quarantined` is a no-op for non-`Tracked` pools: a
+    /// `Sparse` pool has no pin / step-2 verify to protect, so it must stay
+    /// `Live`/direct-apply (DFQYM5 carve-out). The driver calls `set_*_quarantined`
+    /// for every registered pool, so this guard is what keeps Sparse out of the
+    /// `quarantine→buffer→set_live` round trip.
+    #[test]
+    fn sparse_pool_ignores_set_quarantined() {
+        let mut core = BotState::new();
+        let pool_addr = Address::from([0x77u8; 20]);
+        // register_v3_on_core uses Sparse coverage.
+        register_v3_on_core(&mut core, pool_addr, 0);
+        core.set_v3_pool_quarantined(pool_addr);
+        assert_eq!(
+            core.get_v3_pool(core.pool_id_by_address(&pool_addr).unwrap())
+                .unwrap()
+                .registration_lifecycle,
+            RegistrationLifecycle::Live,
+            "Sparse pool must ignore set_quarantined and stay Live"
+        );
+    }
+
+    /// `release_all_v3_v4_quarantined` flushes + marks `Live` every pool still
+    /// `Quarantined` — the orphan sweep that stops a Tracked pool registered
+    /// but never reaching `set_live` (path skipped before registration) from
+    /// deferring events to its buffer indefinitely. Already-`Live` (Sparse) and
+    /// non-CL pools are untouched.
+    #[test]
+    fn release_all_quarantined_flushes_and_marks_live() {
+        use alloy::primitives::{I256, U128};
+        let mut core = BotState::new();
+        // Two Tracked pools — both register Quarantined under DFQYM5.
+        let tracked_v3 = register_v3_on_core(&mut core, Address::from([0x55u8; 20]), 0);
+        // register_v3_on_core is Sparse — build a Tracked V3 explicitly.
+        let mut tick_data = HashMap::new();
+        tick_data.insert(
+            60,
+            TickInfo {
+                liquidity_gross: U128::from(100),
+                liquidity_net: I256::try_from(100i128).unwrap(),
+                block: 0,
+            },
+        );
+        let tracked_v3b = core
+            .register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
+                address: Address::from([0x66u8; 20]),
+                token0: Address::ZERO,
+                token1: Address::from([1u8; 20]),
+                fee: 3000,
+                tick_spacing: 60,
+                factory: Address::ZERO,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 1_000_000,
+                tick: 0,
+                tick_data,
+                update_block: 0,
+                coverage: PoolTickCoverage::Tracked,
+                fetcher: None,
+                ..Default::default()
+            })
+            .expect("tracked V3");
+        let tracked_v4 = register_v4_on_core(&mut core, 0);
+        let _ = tracked_v3; // Sparse → Live from the start, not in the sweep.
+        assert_eq!(
+            core.get_v3_pool(tracked_v3b)
+                .unwrap()
+                .registration_lifecycle,
+            RegistrationLifecycle::Quarantined
+        );
+        assert_eq!(
+            core.get_v4_pool(tracked_v4).unwrap().registration_lifecycle,
+            RegistrationLifecycle::Quarantined
+        );
+
+        core.release_all_v3_v4_quarantined();
+
+        assert_eq!(
+            core.get_v3_pool(tracked_v3b)
+                .unwrap()
+                .registration_lifecycle,
             RegistrationLifecycle::Live
         );
         assert_eq!(
-            core.get_v4_pool(v4_id).unwrap().registration_lifecycle,
+            core.get_v4_pool(tracked_v4).unwrap().registration_lifecycle,
+            RegistrationLifecycle::Live
+        );
+        // The Sparse V3 (register_v3_on_core) was already Live; release
+        // (which would be idempotent) is safe here too.
+        assert_eq!(
+            core.get_v3_pool(tracked_v3).unwrap().registration_lifecycle,
             RegistrationLifecycle::Live
         );
     }
@@ -4518,7 +5000,11 @@ mod tests {
         let pool_id_bytes: [u8; 32] = [0xeeu8; 32];
         let mut core = BotState::new();
         let pool_id = register_v4_on_core(&mut core, 10);
-        // No quarantine — pool is Live (default).
+        // A Tracked pool registers `Quarantined` under DFQYM5 — transition it
+        // to `Live` (the driver's `set_v4_pool_live` is the sole path to the
+        // steady-state direct-apply contract).
+        core.set_v4_pool_live(pool_manager, pool_id_bytes);
+        // Now Live — applies directly, never buffers.
         core.apply_v4_liquidity_update(
             pool_manager,
             pool_id_bytes,
@@ -5929,6 +6415,10 @@ mod tests {
             ..Default::default()
         })
         .expect("test setup: V3 registration");
+        // DFQYM5: Tracked pools register `Quarantined`; transition to `Live`
+        // (the driver's post-verify `set_live`) so the pump update below
+        // direct-applies as this test models.
+        core.set_v3_pool_live(v3_addr);
 
         // The seed is pinned at registration for Tracked (snapshot) pools.
         assert_eq!(
@@ -6014,6 +6504,9 @@ mod tests {
             ..Default::default()
         })
         .expect("test setup: V3 registration");
+        // DFQYM5: Tracked pools register `Quarantined`; transition to `Live` so
+        // the pump Mint below direct-applies (this test's model).
+        core.set_v3_pool_live(v3_addr);
 
         // Pin the post-drain state atomically with the drain (no buffer here →
         // pin == current tick_data == the seed at registration). This is what
@@ -6240,6 +6733,10 @@ mod tests {
             fetcher: None,
         })
         .expect("V4 pool registers");
+        // DFQYM5: Tracked pools register `Quarantined`; transition to `Live`
+        // (the driver's post-verify `set_live`) so the pump update below
+        // direct-applies as this test models.
+        core.set_v4_pool_live(pool_manager, pool_id_bytes);
 
         assert_eq!(
             core.v4_snapshot_seed(pool_manager, &pool_id_bytes).cloned(),
@@ -6339,6 +6836,9 @@ mod tests {
             fetcher: None,
         })
         .expect("V4 pool registers");
+        // DFQYM5: Tracked pools register `Quarantined`; transition to `Live` so
+        // the pump ModifyLiquidity below direct-applies (this test's model).
+        core.set_v4_pool_live(pool_manager, pool_id_bytes);
 
         // Pin post-drain state atomically with the drain (what apply_buffer_v4
         // does inside its single core.write() hold).

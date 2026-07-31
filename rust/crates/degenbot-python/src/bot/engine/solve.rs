@@ -221,6 +221,20 @@ impl PyArbitrageEngine {
         Ok(())
     }
 
+    /// Batch-release every pool still `Quarantined` (DFQYM5 orphan sweep).
+    /// With Tracked pools now registering `Quarantined` by default, call once
+    /// after `build_paths` finishes so a Tracked pool built but never reached
+    /// by `register_v3/v4_pool` (path skipped before registration) is released
+    /// to `Live` instead of deferring events to its buffer indefinitely.
+    #[allow(clippy::unnecessary_wraps)]
+    fn release_all_v3_v4_quarantined(&self, py: Python<'_>) -> PyResult<()> {
+        let engine = Arc::clone(&self.engine);
+        py.detach(move || {
+            engine.lock().core.write().release_all_v3_v4_quarantined();
+        });
+        Ok(())
+    }
+
     /// Debug/test seam: buffer a V3 backfill liquidity update (Mint/Burn) for
     /// a pool address WITHOUT applying it. If the pool is already registered it
     /// is applied directly (mirroring `BotState::buffer_backfill_v3_liquidity_update`);

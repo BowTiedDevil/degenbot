@@ -836,7 +836,32 @@ impl BlockPump {
                     // The clock decides whether this is a forward dispatch, a
                     // tombstone (first removed:false log for N+1), a reorg
                     // signal, or an unreliable-WS late forward (→ shutdown).
-                    match clock.observe_log(log_block, log.removed) {
+                    let log_decision = clock.observe_log(log_block, log.removed);
+                    // Per-pool trace: log EVERY relevant-topic WS log for the
+                    // `DEGENBOT_DRAIN_DBG` pool — block, log-index, tx-index,
+                    // topic0, removed, and the clock decision — so the
+                    // delivery order of same-block Mint/Burn logs is visible
+                    // against the registration drain+pin that follows. No-op
+                    // for other pools / when the env var is unset.
+                    crate::bot_core::trace_ws_log_dispatch(
+                        log.address(),
+                        log_block,
+                        log.log_index,
+                        log.transaction_index,
+                        *log.topics()
+                            .first()
+                            .unwrap_or(&alloy::primitives::B256::ZERO),
+                        log.removed,
+                        match log_decision {
+                            LogDecision::EnterReorg(_) => "EnterReorg",
+                            LogDecision::ContinueReorg => "ContinueReorg",
+                            LogDecision::CloseReorg { .. } => "CloseReorg",
+                            LogDecision::TombstonePrevious(_) => "TombstonePrevious",
+                            LogDecision::DispatchForward => "DispatchForward",
+                            LogDecision::PanicLateForward(_) => "PanicLateForward",
+                        },
+                    );
+                    match log_decision {
                         LogDecision::EnterReorg(reorg_block) => {
                             // Reorg: per-event per-pool restore via the
                             // coordinator (ADR-006 slice 7). A too-deep reorg

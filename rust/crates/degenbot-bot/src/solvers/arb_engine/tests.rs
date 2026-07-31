@@ -1858,6 +1858,11 @@ mod tests {
             ..Default::default()
         });
 
+        // DFQYM5: Tracked pools register `Quarantined`; the driver's post-verify
+        // `set_live` is what makes it apply directly. Transition to `Live` so
+        // this test's swap/Mint direct-apply (its model).
+        engine.core.write().set_v3_pool_live(pool_addr);
+
         // Capture the registration scalar state.
         let reg_sp = U256::from(79_228_162_514_264_337_593_543_950_336_u128);
         let reg_liq = 1_000_000u128;
@@ -2105,6 +2110,9 @@ mod tests {
             fetcher: None,
             ..Default::default()
         });
+        // DFQYM5: Tracked pools register `Quarantined`; this test drives
+        // backfill swaps that must direct-apply + journal, so release to Live.
+        engine.core.write().set_v3_pool_live(pool_addr);
 
         // Two swaps at distinct blocks inside one backfill chunk.
         let b1 = 10u64;

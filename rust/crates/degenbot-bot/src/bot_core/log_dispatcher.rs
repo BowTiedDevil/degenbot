@@ -665,6 +665,10 @@ mod tests {
                 ..Default::default()
             })
             .expect("test setup: V3 registration");
+        // DFQYM5: Tracked pools register `Quarantined`; transition to `Live`
+        // (the driver's post-verify `set_live`) so the dispatched Mint
+        // direct-applies as this test models.
+        state.write().set_v3_pool_live(pool_addr);
 
         // The exact Mint log emitted at block 25390812 (decoded from cast).
         // topics[1]=owner, topics[2]=tickLower=0x03113c=201020,

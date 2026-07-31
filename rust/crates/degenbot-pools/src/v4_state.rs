@@ -401,7 +401,18 @@ impl V4PoolState {
             tick: params.tick,
             update_block: params.update_block,
             state_nonce: 0,
-            registration_lifecycle: RegistrationLifecycle::default(),
+            // ADR-close of the rolling-start direct-apply gap (DFQYM5, V4 twin
+            // of the V3 `from_params` change): `Tracked` pools start
+            // `Quarantined` (no live event direct-applies before the two-step
+            // verify; `set_pool_live` is the sole transition to `Live`);
+            // `Sparse` pools stay `Live`/direct-apply (no pin, no step-2
+            // verify to protect — quarantining would re-raise the retained-tail
+            // flush hazard at `set_live`).
+            registration_lifecycle: if params.coverage == PoolTickCoverage::Tracked {
+                RegistrationLifecycle::Quarantined
+            } else {
+                RegistrationLifecycle::Live
+            },
             protocol_fee: params.protocol_fee,
             tick_data: params.tick_data,
             coverage: params.coverage,
