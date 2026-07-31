@@ -144,6 +144,64 @@ where
         }
     }
 
+    /// The highest block the pump has marked fully processed (every log for
+    /// that block has been buffered). Set by `mark_block_complete`; read by
+    /// the diagnostic logs that correlate a drain/pin against the
+    /// completeness gate (the rolling-start "missed Mint/Burn at block W"
+    /// reproduction). `None` until the first tombstone.
+    #[must_use]
+    pub fn last_complete_block(&self) -> Option<u64> {
+        self.last_complete_block
+    }
+
+    /// Count pump-buffer events for `key` whose `block_number` is at or below
+    /// `cutoff`. Used by the `mark_block_complete` diagnostic so a block
+    /// marked complete with zero/partial pump events for a pool is visible —
+    /// the strongest single signal for the subscribe→resume "block W's first
+    /// logs were dropped" reproduction (a `mark_complete(W)` with
+    /// `pump_count_at_or_below(key, W) == 0` for an active pool proves the
+    /// pump never delivered block W's events for that pool).
+    #[must_use]
+    pub fn pump_count_at_or_below(&self, key: &K, cutoff: u64) -> usize
+    where
+        U: LiquidityEvent,
+    {
+        self.pump.get(key).map_or(0, |evs| {
+            evs.iter().filter(|e| e.block_number() <= cutoff).count()
+        })
+    }
+
+    /// Total pump-buffer events (across ALL keys) whose `block_number` is at
+    /// or below `cutoff`. Used by the `mark_block_complete` diagnostic to
+    /// answer "did ANY pool receive a pump event for this block?" — a
+    /// `mark_complete(W)` with `pump_total_at_or_below(W) == 0` proves the
+    /// pump delivered ZERO logs for block W (the subscribe→resume drop).
+    #[must_use]
+    pub fn pump_total_at_or_below(&self, cutoff: u64) -> usize
+    where
+        U: LiquidityEvent,
+    {
+        self.pump
+            .values()
+            .map(|evs| evs.iter().filter(|e| e.block_number() <= cutoff).count())
+            .sum()
+    }
+
+    /// Total backfill-buffer events (across ALL keys). Used by the
+    /// `mark_block_complete` + pin diagnostics to correlate the snapshot→WS
+    /// gap close against the live-pump delivery.
+    #[must_use]
+    pub fn backfill_total(&self) -> usize {
+        self.backfill.values().map(Vec::len).sum()
+    }
+
+    /// Total pump-buffer events (across ALL keys), regardless of block.
+    /// Companion to `backfill_total` for the pin-time drainage summary.
+    #[must_use]
+    pub fn pump_total(&self) -> usize {
+        self.pump.values().map(Vec::len).sum()
+    }
+
     /// Set the maximum age (in blocks) for pump buffer events.
     ///
     /// `None` means unbounded (no automatic expiry).
@@ -353,5 +411,77 @@ mod tests {
             "no complete block → nothing drains"
         );
         assert_eq!(buf.event_count(&1), 1, "event retained");
+    }
+
+    // ── diagnostic measurement helpers (verify-dbg visibility probes) ─────
+
+    /// `last_complete_block` mirrors `mark_block_complete`'s monotonic high.
+    /// `None` until the first call; a lower block than the current marker is
+    /// ignored (the pump may re-report on a racing re-drain).
+    #[test]
+    fn last_complete_block_tracks_mark_block_complete() {
+        let mut buf: LiquidityEventBuffer<u32, Ev> = LiquidityEventBuffer::new();
+        assert_eq!(buf.last_complete_block(), None, "none until first mark");
+        buf.mark_block_complete(100);
+        assert_eq!(buf.last_complete_block(), Some(100));
+        // Lower re-report is ignored (monotonic).
+        buf.mark_block_complete(99);
+        assert_eq!(buf.last_complete_block(), Some(100));
+        // Higher advances.
+        buf.mark_block_complete(200);
+        assert_eq!(buf.last_complete_block(), Some(200));
+    }
+
+    /// `pump_count_at_or_below(key, cutoff)` counts only that key's pump
+    /// events at or below the cutoff — the per-pool witness used by the
+    /// `mark_block_complete` diagnostic to detect a block marked complete
+    /// with zero delivered pump events for an active pool.
+    #[test]
+    fn pump_count_at_or_below_filters_key_and_block() {
+        let mut buf: LiquidityEventBuffer<u32, Ev> = LiquidityEventBuffer::new();
+        buf.buffer_pump(1, Ev { block: 100, tag: 1 });
+        buf.buffer_pump(1, Ev { block: 100, tag: 2 });
+        buf.buffer_pump(1, Ev { block: 101, tag: 3 }); // above cutoff
+        buf.buffer_pump(2, Ev { block: 100, tag: 4 }); // other key
+                                                       // Key 1, cutoff 100 → both block-100 events.
+        assert_eq!(buf.pump_count_at_or_below(&1, 100), 2);
+        // Key 1, cutoff 101 → all three (block 101 included).
+        assert_eq!(buf.pump_count_at_or_below(&1, 101), 3);
+        // Key 2 isolated.
+        assert_eq!(buf.pump_count_at_or_below(&2, 100), 1);
+        // Unknown key → 0.
+        assert_eq!(buf.pump_count_at_or_below(&99, 100), 0);
+        // Below all → 0.
+        assert_eq!(buf.pump_count_at_or_below(&1, 99), 0);
+    }
+
+    /// `pump_total_at_or_below(cutoff)` sums across ALL keys — the
+    /// "did ANY pool receive a pump event for this block?" witness. A
+    /// `mark_complete(W)` with `pump_total_at_or_below(W) == 0` proves the
+    /// pump delivered ZERO logs for block W (the subscribe→resume drop).
+    #[test]
+    fn pump_total_at_or_below_sums_across_keys() {
+        let mut buf: LiquidityEventBuffer<u32, Ev> = LiquidityEventBuffer::new();
+        buf.buffer_pump(1, Ev { block: 100, tag: 1 });
+        buf.buffer_pump(2, Ev { block: 100, tag: 2 });
+        buf.buffer_pump(3, Ev { block: 101, tag: 3 }); // above cutoff
+        assert_eq!(buf.pump_total_at_or_below(100), 2);
+        assert_eq!(buf.pump_total_at_or_below(101), 3);
+        assert_eq!(buf.pump_total_at_or_below(99), 0);
+    }
+
+    /// `backfill_total` / `pump_total` give the whole-buffer drainage summary
+    /// used by the pin-time diagnostic to correlate the snapshot→WS gap close
+    /// against the live-pump delivery.
+    #[test]
+    fn backfill_total_and_pump_total_sum_unconditionally() {
+        let mut buf: LiquidityEventBuffer<u32, Ev> = LiquidityEventBuffer::new();
+        buf.buffer_backfill(1, Ev { block: 90, tag: 1 });
+        buf.buffer_backfill(2, Ev { block: 91, tag: 2 });
+        buf.buffer_pump(1, Ev { block: 100, tag: 3 });
+        buf.buffer_pump(1, Ev { block: 101, tag: 4 });
+        assert_eq!(buf.backfill_total(), 2);
+        assert_eq!(buf.pump_total(), 2);
+        assert_eq!(buf.pump_total_at_or_below(100), 1);
     }
 }

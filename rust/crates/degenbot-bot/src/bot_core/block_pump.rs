@@ -85,16 +85,6 @@ const DEFAULT_BACKFILL_CHUNK_SIZE: u64 = 2000;
 
 /// Whether a log confirms that a tracked header block is "complete".
 ///
-/// A log confirms the header block only when its `block_number` is known
-/// and matches the header block exactly. Pending logs with an unknown
-/// block number (`None`) are intentionally ignored — otherwise a log
-/// arriving before the logs subscription has caught the current block
-/// could make `subscribe_phase` return early and miss events.
-#[must_use]
-fn log_confirms_header_block(log_block_number: Option<u64>, first_block: u64) -> bool {
-    log_block_number == Some(first_block)
-}
-
 /// Block data sent from the pump to Python via the watch channel.
 /// Topics we care about — used for in-Rust filtering of incoming logs.
 pub const RELEVANT_TOPICS: [B256; 6] = [
@@ -208,7 +198,7 @@ impl BlockPump {
 
         let combined = stream_select(block_stream, log_stream).boxed();
 
-        let pump = Self {
+        let mut pump = Self {
             bot,
             sink,
             reorg_coordinator,
@@ -217,80 +207,92 @@ impl BlockPump {
             header_staleness: Duration::from_secs(HEADER_STALENESS_SECS),
         };
 
-        // Observe until we see a "complete" block — both a header and at
-        // least one log for the same block. This guarantees the logs
-        // subscription did not miss the start of the block. The block number
-        // is returned as the backfill boundary W.
-        let (first_block, first_timestamp) = pump.subscribe_phase(combined).await;
-
-        // Re-subscribe to get a fresh stream for the resume phase.
-        // The subscribe_phase consumed events from the first stream.
-        let block_stream2 = provider_arc
-            .subscribe_blocks()
+        // Re-subscribe factory: production opens a FRESH subscribe (#2) on
+        // the same WS — the OLD drop+resubscribe behavior the GREEN handshake
+        // (MJXP5Z) replaces. Captured by a closure so `subscribe_with_stream`
+        // (test seam) can inject an empty-stream factory under a mock provider
+        // that can't do pubsub, exposing the block-W log drop structurally.
+        // MJXP5Z (Alternative B): single-stream handshake - NO resubscribe.
+        // `subscribe_with_stream` hands the SAME `combined` onward, re-injecting
+        // any logs consumed during header-only polling. One WS, one handoff.
+        pump.subscribe_with_stream(combined)
             .await
-            .map_err(|e| format!("BlockPump: failed to re-subscribe to blocks: {e}"))?
-            .into_stream();
-
-        let log_stream2 = provider_arc
-            .subscribe_logs(&log_filter)
-            .await
-            .map_err(|e| format!("BlockPump: failed to re-subscribe to logs: {e}"))?
-            .into_stream();
-
-        let combined2 = stream_select(block_stream2, log_stream2).boxed();
-
-        let subscribe_state = SubscribeState {
-            first_block,
-            first_timestamp,
-            combined_stream: Some(combined2),
-        };
-
-        Ok((pump, subscribe_state))
+            .map(|state| (pump, state))
     }
 
-    /// Subscribe phase: observe WS subscriptions until the first complete block.
+    /// Single-stream handshake seam (MJXP5Z / Alternative B): runs
+    /// `observe_complete_block` against `combined` (polling headers ONLY until
+    /// two consecutive headers confirm the boundary, collecting any logs the
+    /// fused stream interleaves during the handshake and re-injecting them),
+    /// then hands the SAME `combined` onward — the OLD
+    /// drop+resubscribe behavior. With production's resubscribe, `combined`
+    /// (which may still hold queued W logs after the confirming one) is
+    /// DROPPED and a fresh live-only `eth_subscribe "logs"` (#2) replaces it —
+    /// W's remaining logs are not replayed → the block-W Mint/Burn drop. The
+    /// GREEN task (MJXP5Z) replaces this with a single-stream handshake (same
+    /// `combined` handed onward).
     ///
-    /// A "complete" block is one where both a `newHeads` notification and at
-    /// least one log from the same block have been received. This guarantees
-    /// that the logs subscription did not miss the start of the block (which
-    /// could happen if the subscription was opened mid-block).
+    /// `resubscribe` is a factory so a test can inject an empty-stream producer
+    /// (`MockTransport` cannot do pubsub) and assert the drop: the returned
+    /// `combined_stream` carries NONE of `combined`'s queued W logs.
+    pub(crate) async fn subscribe_with_stream(
+        &mut self,
+        mut combined: stream::BoxStream<'static, WsEvent>,
+    ) -> Result<SubscribeState, String> {
+        let (first_block, first_timestamp, pending) =
+            self.observe_complete_block(&mut combined).await;
+        // Re-inject any logs the handshake consumed while polling for headers.
+        let combined = if pending.is_empty() {
+            combined
+        } else {
+            stream::iter(pending).chain(combined).boxed()
+        };
+        Ok(SubscribeState {
+            first_block,
+            first_timestamp,
+            combined_stream: Some(combined),
+        })
+    }
+
+    /// Header-only handshake (MJXP5Z / Alternative B): observe WS headers until
+    /// two consecutive distinct block headers confirm the boundary (the first
+    /// header `W` is confirmed closed when `W+1` arrives). Polls headers ONLY;
+    /// any `WsEvent::Log` the fused stream interleaves is collected into
+    /// `pending` (preserving arrival order) so `subscribe_with_stream` can
+    /// re-inject it — the handshake never loses, matches, or drops a log.
     ///
-    /// No events are buffered during this phase. The backfill
+    /// No events are buffered to pool state here. The backfill
     /// (`backfill_from_snapshot`) is the sole authority for blocks S+1..W-1,
     /// and the pump (resume phase) is the sole authority for W onward.
-    /// This eliminates any overlap between the two sources.
     ///
-    /// Returns (`first_block_number`, `first_timestamp`).
-    async fn subscribe_phase(
+    /// Returns (`first_block` W, `timestamp_of_W`, `pending_logs`).
+    #[allow(clippy::too_many_lines)]
+    async fn observe_complete_block(
         &self,
-        mut combined: stream::BoxStream<'static, WsEvent>,
-    ) -> (u64, u64) {
-        let mut first_block: Option<u64> = None;
-        let mut first_timestamp: u64 = 0;
-        // Whether we've seen at least one log for the header block.
-        // When both header and log are seen, that block is "complete".
-        let mut saw_log_for_header_block: bool = false;
+        combined: &mut stream::BoxStream<'static, WsEvent>,
+    ) -> (u64, u64, Vec<WsEvent>) {
+        let mut prev_header: Option<u64> = None;
+        let mut prev_timestamp: u64 = 0;
+        let mut pending: Vec<WsEvent> = Vec::new();
 
         loop {
             if self.shutdown.load(Ordering::Relaxed) {
                 log::info!("BlockPump: shutting down during subscribe phase");
-                return (0, 0);
+                return (0, 0, pending);
             }
 
             let event = timeout(Duration::from_secs(BACKFILL_TIMEOUT_SECS), combined.next()).await;
 
             match event {
                 Err(_) => {
-                    // Timeout during subscribe — try to get current block via RPC.
-                    // This is a degraded path: we don't have confirmation that
-                    // both subscriptions are live, but it's better than hanging.
+                    // Timeout — fall back to eth_blockNumber RPC (degraded path).
                     log::warn!("BlockPump: timeout during subscribe, fetching current block");
                     match self.provider.provider_arc().get_block_number().await {
                         Ok(block) => {
                             log::info!(
-                                "BlockPump: subscribe observed block {block} via RPC (degraded — no log confirmation)"
+                                "BlockPump: subscribe observed block {block} via RPC (degraded - no two-header confirmation)"
                             );
-                            return (block, 0);
+                            return (block, 0, pending);
                         }
                         Err(e) => {
                             log::error!("BlockPump: can't get block number during subscribe: {e}");
@@ -305,45 +307,41 @@ impl BlockPump {
                     gas_used: _,
                     gas_limit: _,
                 })) => {
-                    if let Some(fb) = first_block {
-                        if number > fb {
-                            // New header for a later block. If we already saw
-                            // a log for the previous header's block, we're done.
-                            if saw_log_for_header_block {
-                                log::info!("BlockPump: subscribe observed complete block {fb}");
-                                return (fb, first_timestamp);
-                            }
-                            // Previous block had no logs from our subscription.
-                            // Advance to the new header and reset the flag.
-                            first_block = Some(number);
-                            first_timestamp = timestamp;
-                            saw_log_for_header_block = false;
+                    if let Some(prev) = prev_header {
+                        if number == prev + 1 {
+                            // Two consecutive headers: `prev` (= W) confirmed
+                            // closed by `number` (= W+1). The boundary is W.
+                            log::info!(
+                                "BlockPump: subscribe observed complete block {prev} (confirmed by header {number})"
+                            );
+                            return (prev, prev_timestamp, pending);
                         }
-                        // else: duplicate/stale header for the same block — ignore
+                        if number > prev {
+                            // Gap or jump - re-anchor on the newer header.
+                            prev_header = Some(number);
+                            prev_timestamp = timestamp;
+                        }
+                        // else: duplicate/stale header for the same block - ignore.
                     } else {
                         // First header ever observed.
-                        first_block = Some(number);
-                        first_timestamp = timestamp;
-                        saw_log_for_header_block = false;
+                        prev_header = Some(number);
+                        prev_timestamp = timestamp;
                     }
                 }
 
                 Ok(Some(WsEvent::Log(log))) => {
-                    // Check if this log is for the header block we're tracking.
-                    if let Some(fb) = first_block {
-                        if log_confirms_header_block(log.block_number, fb) {
-                            log::info!(
-                                "BlockPump: subscribe observed complete block {fb} (header + log)"
-                            );
-                            return (fb, first_timestamp);
-                        }
-                    }
-                    // Log arrived before any header, or for a different/pending block — keep waiting.
+                    // The handshake must NOT touch the data plane - logs are
+                    // neither matched against a header nor dropped. Any log the
+                    // fused stream interleaves during header polling is
+                    // collected and re-injected by `subscribe_with_stream`.
+                    // This makes "lost log during handshake" structurally
+                    // impossible (the block-W drop the resubscribe caused).
+                    pending.push(WsEvent::Log(log));
                 }
 
                 Ok(None) => {
                     log::warn!("BlockPump: subscription streams ended during subscribe");
-                    return (first_block.unwrap_or(0), first_timestamp);
+                    return (prev_header.unwrap_or(0), prev_timestamp, pending);
                 }
             }
         }
@@ -1297,16 +1295,6 @@ mod tests {
         assert_eq!(BACKFILL_TIMEOUT_SECS, 60);
     }
 
-    #[test]
-    fn log_confirms_header_block_requires_matching_block_number() {
-        assert!(super::log_confirms_header_block(Some(100), 100));
-        assert!(!super::log_confirms_header_block(Some(101), 100));
-        // Pending logs with no block number must not confirm the header block.
-        assert!(!super::log_confirms_header_block(None, 100));
-        // A log explicitly tagged as block 0 does not confirm a non-zero header.
-        assert!(!super::log_confirms_header_block(Some(0), 100));
-    }
-
     /// A `DrainSink` test double (AGENTS.md: `Fake` prefix, no mocking).
     ///
     /// Records every `finalize_block` / `on_send` / `on_drain` invocation with
@@ -1763,7 +1751,123 @@ mod tests {
     /// `first_observed_block = W` (the real subscribe block, NOT the legacy
     /// hard-coded `0`) the pump processes W+1, W+2 in order — the
     /// "applies logs in block order against DB-snapshot-seeded engine state"
-    /// invariant — with no out-of-order jump from 0.
+    /// MJXP5Z (GREEN): the single-stream handshake does NOT drop block-W logs.
+    ///
+    /// `observe_complete_block` polls headers ONLY (two consecutive headers
+    /// W, W+1 confirm the boundary), collecting any `WsEvent::Log` the fused
+    /// stream interleaves and re-injecting it. With the OLD drop+resubscribe,
+    /// the Mint/Burn queued after the confirming log were lost (XBQNJ5 RED).
+    /// Under Alternative B they survive in `pending` and reach `run_with_stream`.
+    #[tokio::test]
+    async fn subscribe_with_stream_preserves_w_logs() {
+        let (mut pump, _sink) = pump_for_test(None);
+        let w = 21_500_000u64;
+        let pool = Address::from([0xaau8; 20]);
+
+        let header_w = WsEvent::BlockHeader {
+            number: w,
+            timestamp: 0,
+            base_fee_per_gas: None,
+            gas_used: 0,
+            gas_limit: 0,
+        };
+        let sync_log = make_v2_sync_log(pool, U256::ZERO, U256::ZERO, w, false);
+        let mint_log = make_v3_mint_log_with_block(pool, -100, 100, 1, w);
+        let burn_log = make_v3_burn_log_with_block(pool, -100, 100, 1, w);
+        let header_w_plus_1 = WsEvent::BlockHeader {
+            number: w + 1,
+            timestamp: 0,
+            base_fee_per_gas: None,
+            gas_used: 0,
+            gas_limit: 0,
+        };
+
+        let combined = stream::iter(vec![
+            header_w,
+            WsEvent::Log(sync_log),
+            WsEvent::Log(mint_log),
+            WsEvent::Log(burn_log),
+            header_w_plus_1,
+        ])
+        .boxed();
+
+        let state = pump.subscribe_with_stream(combined).await.unwrap();
+        assert_eq!(
+            state.first_block, w,
+            "handshake must anchor on block W (confirmed by W+1)"
+        );
+
+        let mut got_mint = false;
+        let mut got_burn = false;
+        let mut stream = state
+            .combined_stream
+            .expect("subscribe_with_stream must return a stream");
+        while let Some(ev) = stream.next().await {
+            if let WsEvent::Log(log) = ev {
+                match log.topics().first().copied() {
+                    Some(t) if t == V3_MINT_TOPIC => got_mint = true,
+                    Some(t) if t == V3_BURN_TOPIC => got_burn = true,
+                    _ => {}
+                }
+            }
+        }
+        assert!(
+            got_mint,
+            "block-W Mint MUST survive the handshake (Alternative B re-injects it)"
+        );
+        assert!(
+            got_burn,
+            "block-W Burn MUST survive the handshake (Alternative B re-injects it)"
+        );
+    }
+
+    /// MJXP5Z: the handshake consumes ONLY headers (and collects logs); it
+    /// never matches or interprets a log. Both W logs arrive between header(W)
+    /// and header(W+1) and must be re-injected into `pending` for the resume
+    /// stream.
+    #[tokio::test]
+    async fn observe_complete_block_does_not_consume_logs() {
+        let (mut pump, _sink) = pump_for_test(None);
+        let w = 42u64;
+        let pool = Address::from([0xbbu8; 20]);
+
+        let combined = stream::iter(vec![
+            WsEvent::BlockHeader {
+                number: w,
+                timestamp: 0,
+                base_fee_per_gas: None,
+                gas_used: 0,
+                gas_limit: 0,
+            },
+            WsEvent::Log(make_v3_mint_log_with_block(pool, -10, 10, 1, w)),
+            WsEvent::Log(make_v3_burn_log_with_block(pool, -10, 10, 1, w)),
+            WsEvent::BlockHeader {
+                number: w + 1,
+                timestamp: 0,
+                base_fee_per_gas: None,
+                gas_used: 0,
+                gas_limit: 0,
+            },
+        ])
+        .boxed();
+
+        let state = pump.subscribe_with_stream(combined).await.unwrap();
+        assert_eq!(state.first_block, w);
+
+        let mut logs = 0u32;
+        let mut stream = state.combined_stream.unwrap();
+        while let Some(ev) = stream.next().await {
+            if matches!(ev, WsEvent::Log(_)) {
+                logs += 1;
+            }
+        }
+        assert_eq!(
+            logs, 2,
+            "both Mint and Burn must be re-injected from pending"
+        );
+    }
+
+    /// `resume_anchors_to_subscribe_block` invariant — with no out-of-order jump from 0.
     ///
     /// Previously named `legacy_spawn_processes_blocks_in_order_…` and framed
     /// around the deleted `BlockPump::spawn` one-shot; the invariant it
@@ -1901,6 +2005,59 @@ mod tests {
             transaction_index: None,
             log_index: None,
             removed,
+        }
+    }
+
+    /// Build a V3 `Mint` log with `block_number` set. Twin of
+    /// `make_v3_burn_log_with_block`. Topics = [`V3_MINT_TOPIC`, owner,
+    /// tickLower, tickUpper]; data = abi.encode(address sender, uint128
+    /// amount, uint256 amount0, uint256 amount1) = 4×32 = 128 bytes
+    /// (matches `decode_v3_mint_log`).
+    fn make_v3_mint_log_with_block(
+        pool_address: Address,
+        tick_lower: i32,
+        tick_upper: i32,
+        amount: u128,
+        block_number: u64,
+    ) -> Log {
+        use alloy::primitives::{I256, U128};
+        let tick_to_topic = |tick: i32| {
+            let i = I256::try_from(i128::from(tick)).unwrap_or(I256::ZERO);
+            alloy::primitives::B256::from(i.to_be_bytes::<32>())
+        };
+        let owner = alloy::primitives::Address::from([0xccu8; 20]);
+        let sender = alloy::primitives::Address::from([0xddu8; 20]);
+        let mut amount_word = [0u8; 32];
+        amount_word[16..32].copy_from_slice(&U128::from(amount).to_be_bytes::<16>());
+        let mut data = Vec::with_capacity(128);
+        // word 0: sender (address, right-aligned)
+        data.extend_from_slice(&[0u8; 12]);
+        data.extend_from_slice(sender.as_slice());
+        // word 1: amount (uint128, right-aligned)
+        data.extend_from_slice(&amount_word);
+        // word 2: amount0 (uint256)
+        data.extend_from_slice(&alloy::primitives::U256::ZERO.to_be_bytes::<32>());
+        // word 3: amount1 (uint256)
+        data.extend_from_slice(&alloy::primitives::U256::ZERO.to_be_bytes::<32>());
+        let inner = alloy::primitives::Log::new_unchecked(
+            pool_address,
+            vec![
+                V3_MINT_TOPIC,
+                owner.into_word(),
+                tick_to_topic(tick_lower),
+                tick_to_topic(tick_upper),
+            ],
+            Bytes::from(data),
+        );
+        Log {
+            inner,
+            block_hash: None,
+            block_number: Some(block_number),
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: None,
+            removed: false,
         }
     }
 
@@ -2188,6 +2345,370 @@ mod tests {
         assert!(
             shutdown.load(Ordering::Relaxed),
             "late removed:false on a tombstoned block must shut the pump down (ADR-008 D3)"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // DFQYM5: verify-mismatch drain/buffer race characterization.
+    //
+    // The bot dies at registration `verify_v3_post_drain_snapshot` with a tick
+    // gross mismatch: the pin reports `update_block = N` but is missing one
+    // Mint whose on-chain `ticks()` value changed at block N. Two candidate
+    // causes: (A) a Mint buffered then missed by the drain (a race the verify-
+    // seam FSM would close), or (B) a Mint never delivered to the buffer at
+    // all (a WS/decode hole no FSM can fix). These tests drive the REAL pump
+    // (`run_test_loop`) with a controlled V3 log feed to distinguish them.
+    // -----------------------------------------------------------------
+
+    /// Register a `Tracked` V3 pool on a fresh `Bot`, seed tick 7 with
+    /// `seed_gross`, set `Quarantined` (so live Mints buffer to the pump
+    /// buffer — the `build_paths` contract). Returns `(bot, pool_addr)`.
+    /// Tick spacing 1 so tick 7 is a valid tick.
+    fn bot_with_quarantined_v3_tracked(seed_gross: u128, update_block: u64) -> (Arc<Bot>, Address) {
+        use crate::bot_core::{PoolTickCoverage, RegisterV3PoolParams, TickInfo};
+        use alloy::primitives::{I256, U128};
+        let pool_addr = Address::from([0x34u8; 20]);
+        let bot = Arc::new(Bot::new(1));
+        let mut tick_data = HashMap::new();
+        tick_data.insert(
+            7,
+            TickInfo {
+                liquidity_gross: U128::from(seed_gross),
+                liquidity_net: I256::try_from(seed_gross.cast_signed()).unwrap(),
+                block: 0,
+            },
+        );
+        {
+            let state = bot.state_arc();
+            let mut core = state.write();
+            core.register_v3_pool(&RegisterV3PoolParams {
+                address: pool_addr,
+                token0: Address::from([0xa0u8; 20]),
+                token1: Address::from([0xa1u8; 20]),
+                fee: 10000,
+                tick_spacing: 1,
+                factory: Address::from([0xf0u8; 20]),
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 1_000_000,
+                tick: 0,
+                tick_data,
+                update_block,
+                coverage: PoolTickCoverage::Tracked,
+                fetcher: None,
+                ..Default::default()
+            })
+            .expect("test setup: V3 registration");
+            core.set_v3_pool_quarantined(pool_addr);
+        }
+        (bot, pool_addr)
+    }
+
+    /// Build a V3 `Swap` log (tombstone trigger — its block number N+1
+    /// tombstones N via `observe_log`). Minimal data: the decoder reads
+    /// `sqrtPriceX96`, `tick`, `liquidity`, `amount0`, `amount1` from 5 words.
+    fn make_v3_swap_log_with_block(pool_address: Address, block_number: u64) -> Log {
+        let mut data = Vec::with_capacity(160);
+        // amount0 (int256), amount1 (int256), sqrtPriceX96 (uint160),
+        // liquidity (uint128), tick (int24)
+        data.extend_from_slice(&alloy::primitives::U256::ZERO.to_be_bytes::<32>());
+        data.extend_from_slice(&alloy::primitives::U256::ZERO.to_be_bytes::<32>());
+        data.extend_from_slice(&alloy::primitives::U256::from(1u128).to_be_bytes::<32>());
+        data.extend_from_slice(&alloy::primitives::U256::ZERO.to_be_bytes::<32>());
+        data.extend_from_slice(&alloy::primitives::U256::ZERO.to_be_bytes::<32>());
+        let inner = alloy::primitives::Log::new_unchecked(
+            pool_address,
+            vec![V3_SWAP_TOPIC],
+            Bytes::from(data),
+        );
+        Log {
+            inner,
+            block_hash: None,
+            block_number: Some(block_number),
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: None,
+            removed: false,
+        }
+    }
+
+    /// Scenario A — the normal path: a Mint@N in the WS feed IS buffered by
+    /// the pump, the tombstone@N+1 sets `last_complete_block = N`, and the
+    /// registration drain+pin captures it. PASSES → the drain/buffer path is
+    /// correct for delivered logs. If this test ever FAILS the race (A) is
+    /// real and an FSM on the verify seam is the fix.
+    #[tokio::test]
+    async fn scenario_a_buffered_mint_is_drained_into_pin() {
+        let seed_gross: u128 = 10_000_000_000_000_000;
+        let delta: u128 = 454_021;
+        let block_n = 10u64;
+        let (bot, pool_addr) = bot_with_quarantined_v3_tracked(seed_gross, block_n - 1);
+        let (mut pump, _sink, _shutdown) =
+            pump_for_test_with_bot(Arc::clone(&bot), Some(block_n - 1));
+
+        // Feed: Mint@N (tick -100..7, +delta) then Swap@N+1 (tombstones N).
+        let mint = make_v3_mint_log_with_block(pool_addr, -100, 7, delta, block_n);
+        let swap = make_v3_swap_log_with_block(pool_addr, block_n + 1);
+        let combined = stream::iter(vec![WsEvent::Log(mint), WsEvent::Log(swap)]).boxed();
+        pump.run_test_loop(combined, block_n - 1).await;
+
+        // The tombstone@N+1 set `last_complete_block = N`. Drain + pin.
+        let (tick_data, pinned_block) = {
+            let state = bot.state_arc();
+            let mut core = state.write();
+            core.apply_backfill_buffer_v3(&pool_addr);
+            core.apply_pump_buffer_v3(&pool_addr);
+            core.pin_v3_post_drain_snapshot(pool_addr);
+            core.take_v3_post_drain_snapshot(pool_addr)
+                .expect("Tracked pool pins after drain")
+        };
+        assert_eq!(pinned_block, block_n, "pin's update_block advanced to N");
+        assert_eq!(
+            tick_data.get(&7).unwrap().liquidity_gross,
+            alloy::primitives::U128::from(seed_gross + delta),
+            "scenario A: the buffered Mint WAS drained into the pin"
+        );
+    }
+
+    /// Scenario C — the EXACT on-chain topology at block 25648846: TWO
+    /// same-block Mints where tick 7 is the UPPER tick of one (li=1213,
+    /// tl=6,tu=7,amount=454021) and the LOWER tick of the other (li=1215,
+    /// tl=7,tu=8,amount=400353245599). On chain, tick-7 gross grows by their
+    /// sum (+400353699620). Production pin captured only li=1215's amount
+    /// (+400353245599) — missing exactly li=1213's +454021. This test feeds
+    /// BOTH Mints in log-index order (li=1213 first, li=1215 second) + the
+    /// tombstone Swap@N+1, drains, pins, and asserts BOTH Mints landed in
+    /// the pin. If this test FAILS, the pump→drain→pin path drops the first
+    /// of two adjacent same-block Mints — the real bug. If it PASSES, the
+    /// drop is not in this in-process path (it's a real-bot concurrency /
+    /// bucket-boundary issue the test harness can't reach).
+    #[tokio::test]
+    async fn scenario_c_two_adjacent_same_block_mints_both_applied_to_pin() {
+        let seed_gross: u128 = 10_953_626_740_480_101; // on-chain@845
+        let amt_lower: u128 = 454_021; // li=1213: tl=6, tu=7 (tick 7 = upper)
+        let amt_upper: u128 = 400_353_245_599; // li=1215: tl=7, tu=8 (tick 7 = lower)
+        let block_n = 10u64;
+        let (bot, pool_addr) = bot_with_quarantined_v3_tracked(seed_gross, block_n - 1);
+        let (mut pump, _sink, _shutdown) =
+            pump_for_test_with_bot(Arc::clone(&bot), Some(block_n - 1));
+
+        // Feed the two Mints in log-index order (li=1213 then li=1215) then a
+        // Swap@N+1 to tombstone N. Pre-seed tick 6 so the tl=6,tu=7 Mint has a
+        // lower tick to mutate (mirrors on-chain where tick 6 is initialized).
+        {
+            let state = bot.state_arc();
+            let mut core = state.write();
+            let pool_id = *core.pool_addresses.get(&pool_addr).unwrap();
+            if let Some(crate::bot_core::PoolEntry::V3(_, pool)) = core.pools.get_mut(&pool_id) {
+                use alloy::primitives::{I256, U128};
+                pool.tick_data
+                    .entry(6)
+                    .or_insert(crate::bot_core::TickInfo {
+                        liquidity_gross: U128::from(21_446_194_157_938_844u128),
+                        liquidity_net: I256::try_from(21_446_194_157_938_844i128).unwrap(),
+                        block: 0,
+                    });
+                pool.tick_data
+                    .entry(8)
+                    .or_insert(crate::bot_core::TickInfo {
+                        liquidity_gross: U128::from(18_506_953_544_795_537u128),
+                        liquidity_net: I256::try_from(-18_506_953_544_795_537i128).unwrap(),
+                        block: 0,
+                    });
+            }
+        }
+        let mint_lower = make_v3_mint_log_with_block(pool_addr, 6, 7, amt_lower, block_n);
+        let mint_upper = make_v3_mint_log_with_block(pool_addr, 7, 8, amt_upper, block_n);
+        let swap = make_v3_swap_log_with_block(pool_addr, block_n + 1);
+        let combined = stream::iter(vec![
+            WsEvent::Log(mint_lower),
+            WsEvent::Log(mint_upper),
+            WsEvent::Log(swap),
+        ])
+        .boxed();
+        pump.run_test_loop(combined, block_n - 1).await;
+
+        let (tick_data, pinned_block) = {
+            let state = bot.state_arc();
+            let mut core = state.write();
+            core.apply_backfill_buffer_v3(&pool_addr);
+            core.apply_pump_buffer_v3(&pool_addr);
+            core.pin_v3_post_drain_snapshot(pool_addr);
+            core.take_v3_post_drain_snapshot(pool_addr)
+                .expect("Tracked pool pins after drain")
+        };
+        assert_eq!(pinned_block, block_n, "pin's update_block advanced to N");
+        // On-chain@846 tick-7 gross = seed + amt_lower + amt_upper.
+        assert_eq!(
+            tick_data.get(&7).unwrap().liquidity_gross,
+            alloy::primitives::U128::from(seed_gross + amt_lower + amt_upper),
+            "scenario C: BOTH adjacent same-block Mints drained into the pin \
+             (on-chain@846 value). If this fails with only +amt_upper present, \
+             the first of two adjacent same-block Mints is dropped by the \
+             pump→drain→pin path."
+        );
+        // And the per-tick net: tick 7 net = seed_net - amt_lower + amt_upper.
+        // And the per-tick net: seed_net - amt_lower (upper tick) + amt_upper (lower tick).
+        // The helper seeds tick-7 net = +seed_gross.
+        assert_eq!(
+            tick_data.get(&7).unwrap().liquidity_net,
+            alloy::primitives::I256::try_from(
+                i128::try_from(seed_gross).unwrap() - i128::try_from(amt_lower).unwrap()
+                    + i128::try_from(amt_upper).unwrap()
+            )
+            .unwrap(),
+            "scenario C: tick-7 net reflects both Mints (upper: -amt_lower, lower: +amt_upper)"
+        );
+    }
+
+    /// Scenario B — the WS-drop reproduction: feed Mint1@N but NOT Mint2@N
+    /// (simulating a WS transport drop). The drain captures `update_block = N`
+    /// (from Mint1) but the pin is missing Mint2 — exactly the production
+    /// symptom. A verify vs on-chain@N (which has both) would mismatch. This
+    /// confirms the production failure is cause (B), which a verify-seam FSM
+    /// does NOT fix (re-draining an empty buffer still misses it).
+    #[tokio::test]
+    async fn scenario_b_dropped_mint_reproduces_verify_mismatch_symptom() {
+        let seed_gross: u128 = 10_000_000_000_000_000;
+        let delta1: u128 = 400_000_000_000u128; // the +400M burst
+        let delta2: u128 = 454_021; // the ONE missed Mint
+        let block_n = 10u64;
+        let (bot, pool_addr) = bot_with_quarantined_v3_tracked(seed_gross, block_n - 1);
+        let (mut pump, _sink, _shutdown) =
+            pump_for_test_with_bot(Arc::clone(&bot), Some(block_n - 1));
+
+        // Feed Mint1@N then Swap@N+1 (tombstones N). Mint2@N is NOT fed —
+        // simulating the WS dropping exactly ONE of block N's Mints.
+        let mint1 = make_v3_mint_log_with_block(pool_addr, -100, 7, delta1, block_n);
+        let swap = make_v3_swap_log_with_block(pool_addr, block_n + 1);
+        let combined = stream::iter(vec![WsEvent::Log(mint1), WsEvent::Log(swap)]).boxed();
+        pump.run_test_loop(combined, block_n - 1).await;
+
+        let (tick_data, pinned_block) = {
+            let state = bot.state_arc();
+            let mut core = state.write();
+            core.apply_backfill_buffer_v3(&pool_addr);
+            core.apply_pump_buffer_v3(&pool_addr);
+            core.pin_v3_post_drain_snapshot(pool_addr);
+            core.take_v3_post_drain_snapshot(pool_addr)
+                .expect("Tracked pool pins after drain")
+        };
+        // The pin advanced to N (from Mint1) but is missing Mint2.
+        assert_eq!(pinned_block, block_n, "update_block = N (from Mint1)");
+        assert_eq!(
+            tick_data.get(&7).unwrap().liquidity_gross,
+            alloy::primitives::U128::from(seed_gross + delta1),
+            "scenario B: the dropped Mint2 is NOT in the pin — reproduces the symptom"
+        );
+        // On-chain@N would be seed + delta1 + delta2 (Mint2 was applied
+        // on-chain at block N). The pin lacks delta2 → a verify would fatal.
+        assert_ne!(
+            tick_data.get(&7).unwrap().liquidity_gross,
+            alloy::primitives::U128::from(seed_gross + delta1 + delta2),
+            "pin diverges from on-chain@N (the production mismatch)"
+        );
+    }
+
+    /// Scenario A-race — the concurrent drain window: spawn the pump, feed
+    /// Mint1@N, run the registration drain (cutoff < N so Mint1 is RETAINED,
+    /// not drained), then feed Mint2@N + Swap@N+1. The pin captures
+    /// `update_block = backfill block` (< N) — NOT the production symptom
+    /// (which has `update_block = N`). This PROVES the race cannot produce
+    /// the observed symptom: a pin at `update_block = N` requires the
+    /// tombstone to have fired (cutoff = N), and the tombstone can only fire
+    /// AFTER all of N's logs were dispatched (else `PanicLateForward`). So all
+    /// delivered Mints@N are drained together. The missing Mint must have
+    /// been never delivered (scenario B).
+    #[tokio::test]
+    async fn scenario_a_race_concurrent_drain_cannot_produce_symptom() {
+        use tokio::sync::oneshot;
+        let seed_gross: u128 = 10_000_000_000_000_000;
+        let delta1: u128 = 400_000_000_000u128;
+        let delta2: u128 = 454_021;
+        let block_n = 10u64;
+        let (bot, pool_addr) = bot_with_quarantined_v3_tracked(seed_gross, block_n - 1);
+        let (mut pump, _sink, _shutdown) =
+            pump_for_test_with_bot(Arc::clone(&bot), Some(block_n - 1));
+
+        let mint1 = make_v3_mint_log_with_block(pool_addr, -100, 7, delta1, block_n);
+        let mint2 = make_v3_mint_log_with_block(pool_addr, -200, 7, delta2, block_n);
+        let swap = make_v3_swap_log_with_block(pool_addr, block_n + 1);
+
+        // Stream: Mint1@N, then await the drain-done signal, then Mint2@N +
+        // Swap@N+1 (tombstone), then end. The pump dispatches Mint1 into the
+        // buffer (cutoff < N), parks on the oneshot receive; the test runs
+        // the drain+pin (cutoff < N → Mint1 retained); then signals.
+        let (drain_done_tx, drain_done_rx) = oneshot::channel::<()>();
+        let logs: Vec<Log> = vec![mint1, mint2, swap];
+        let combined = stream::unfold(
+            (0u8, Some(drain_done_rx), logs.into_iter()),
+            |(phase, rx_opt, mut logs)| async move {
+                match phase {
+                    0 => Some((WsEvent::Log(logs.next().unwrap()), (1, rx_opt, logs))),
+                    1 => {
+                        let _ = rx_opt.unwrap().await; // park until drain completes
+                        Some((WsEvent::Log(logs.next().unwrap()), (2, None, logs)))
+                    }
+                    2 => Some((WsEvent::Log(logs.next().unwrap()), (3, None, logs))),
+                    _ => None,
+                }
+            },
+        )
+        .boxed();
+        let pump_handle = tokio::spawn(async move {
+            pump.run_test_loop(combined, block_n - 1).await;
+        });
+        // Let the pump process Mint1 (cutoff still < N — no tombstone yet).
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        // Run the registration drain+pin NOW (cutoff < N → Mint1 retained,
+        // NOT drained). The pin captures the backfill seed state.
+        let pin_after_mint1 = {
+            let state = bot.state_arc();
+            let mut core = state.write();
+            core.apply_backfill_buffer_v3(&pool_addr);
+            core.apply_pump_buffer_v3(&pool_addr);
+            core.pin_v3_post_drain_snapshot(pool_addr);
+            core.take_v3_post_drain_snapshot(pool_addr)
+        };
+        // Release the pump to feed Mint2 + Swap (tombstone N, cutoff = N).
+        let _ = drain_done_tx.send(());
+        let _ = pump_handle.await;
+
+        // The pin captured at the race window has update_block = backfill
+        // block (< N), NOT N — because cutoff was < N at drain time, Mint1
+        // was retained. This is NOT the production symptom (update_block = N).
+        let (tick_data, pinned_block) = pin_after_mint1.expect("pin captured");
+        assert_eq!(
+            pinned_block,
+            block_n - 1,
+            "race drain (cutoff < N) pins the backfill block, NOT N — not the symptom"
+        );
+        assert_eq!(
+            tick_data.get(&7).unwrap().liquidity_gross,
+            alloy::primitives::U128::from(seed_gross),
+            "race drain retained Mint1 (cutoff < N) — pin has only the seed"
+        );
+
+        // After the tombstone, a SECOND drain (cutoff = N) drains both
+        // retained Mints onto the LIVE state — proving they were buffered,
+        // just not drained into the pin.
+        let live_gross = {
+            let state = bot.state_arc();
+            let mut core = state.write();
+            core.apply_pump_buffer_v3(&pool_addr);
+            let pool_id = *core.pool_addresses.get(&pool_addr).unwrap();
+            core.get_v3_pool(pool_id)
+                .unwrap()
+                .tick_data
+                .get(&7)
+                .unwrap()
+                .liquidity_gross
+        };
+        assert_eq!(
+            live_gross,
+            alloy::primitives::U128::from(seed_gross + delta1 + delta2),
+            "both Mints WERE buffered — a post-tombstone drain recovers them onto live state"
         );
     }
 

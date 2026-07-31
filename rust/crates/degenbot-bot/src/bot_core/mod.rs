@@ -142,6 +142,56 @@ pub struct BotState {
     snapshot_seed_block: Option<u64>,
 }
 
+/// Diagnostic: log every V3 pump-buffer INSERTION for the pool address named
+/// by `DEGENBOT_DRAIN_DBG` (a hex address, with or without `0x`). Companion
+/// to the drain-side `[dbg-drain]` logs in `apply_backfill_buffer_v3`/
+/// `apply_pump_buffer_v3` — diffing insertion vs drain logs reveals whether a
+/// Mint that on-chain shows at block N was (a) buffered-then-missed-by-drain
+/// (insertion logged, no matching drain apply) or (b) never buffered at all
+/// (no insertion log). `tag` ∈ {'L' (unregistered Live-eligible path),
+/// 'Q' (Quarantined deferral)}. Gated on the env var so it is a no-op in
+/// production runs that don't opt in.
+fn drain_dbg_log_buf(
+    address: Address,
+    tag: char,
+    tick_lower: i32,
+    tick_upper: i32,
+    liquidity_delta: i128,
+    block_number: u64,
+) {
+    if !std::env::var("DEGENBOT_DRAIN_DBG")
+        .is_ok_and(|v| format!("{address:x}").eq_ignore_ascii_case(v.trim_start_matches("0x")))
+    {
+        return;
+    }
+    log::info!(
+        "[dbg-buf] {tag} addr={address:x} INSERT tl={tick_lower} tu={tick_upper} delta={liquidity_delta} block={block_number}"
+    );
+}
+
+/// Whether the verify-diagnostics probes are enabled.
+///
+/// Set `DEGENBOT_VERIFY_DBG` (any value) to opt the bot into the structural
+/// visibility probes that diagnose intermittent liquidity-map
+/// verification misses at startup (the pump / drain / verifier concurrency
+/// window). The probes are pure `log::info!` emission gated on this flag —
+/// zero behavior change, zero runtime cost when unset (a single env-var
+/// `is_ok` check per call site, same posture as `DEGENBOT_DRAIN_DBG`).
+///
+/// Probes gated here:
+/// - `mark_v3/v4_pump_block_complete` logs the count of pump events at or
+///   below the marked block (a `mark_complete(W)` with zero pump events for
+///   an active pool proves the pump never delivered block W's logs — the
+///   subscribe→resume drop).
+/// - `pin_v3/v4_post_drain_snapshot` logs the pinned `(update_block,
+///   tick_data.len(), pump_count_at_or_below, last_complete_block)` so a
+///   step-2 mismatch can be correlated to the drain that produced the pin.
+/// - `set_v3/v4_pool_live` logs the count + block numbers of the retained
+///   in-progress-block tail flushed via the unguarded `drain_pump`.
+fn verify_dbg_enabled() -> bool {
+    std::env::var("DEGENBOT_VERIFY_DBG").is_ok()
+}
+
 impl BotState {
     /// Create a new, empty `BotState` with the default 32-block reorg journal.
     #[must_use]
@@ -839,6 +889,14 @@ impl BotState {
         block_number: u64,
     ) -> Option<u64> {
         let Some(&pool_id) = self.pool_addresses.get(&pool_address) else {
+            drain_dbg_log_buf(
+                pool_address,
+                'L',
+                tick_lower,
+                tick_upper,
+                liquidity_delta,
+                block_number,
+            );
             self.v3_buffer.buffer_pump(
                 pool_address,
                 BufferedV3PoolEvent::Liquidity(BufferedV3LiquidityUpdate {
@@ -857,6 +915,14 @@ impl BotState {
         // block (a same-block `Swap` and `Mint` both land in the one buffer).
         if let Some(PoolEntry::V3(_, state)) = self.pools.get(&pool_id) {
             if state.registration_lifecycle == RegistrationLifecycle::Quarantined {
+                drain_dbg_log_buf(
+                    pool_address,
+                    'Q',
+                    tick_lower,
+                    tick_upper,
+                    liquidity_delta,
+                    block_number,
+                );
                 self.v3_buffer.buffer_pump(
                     pool_address,
                     BufferedV3PoolEvent::Liquidity(BufferedV3LiquidityUpdate {
@@ -1161,6 +1227,17 @@ impl BotState {
     /// capture a half-delivered block (the YLYJM2 rolling-start race).
     pub fn mark_v3_pump_block_complete(&mut self, block: u64) {
         self.v3_buffer.mark_block_complete(block);
+        if verify_dbg_enabled() {
+            log::info!(
+                "[verify-dbg] V3 mark_block_complete block={block} \
+                 pump_total_at_or_below={v3_below} pump_total={v3_total} backfill_total={v3_back} \
+                 last_complete_block={lcb:?}",
+                v3_below = self.v3_buffer.pump_total_at_or_below(block),
+                v3_total = self.v3_buffer.pump_total(),
+                v3_back = self.v3_buffer.backfill_total(),
+                lcb = self.v3_buffer.last_complete_block(),
+            );
+        }
     }
 
     /// Read a registered V3 pool's state by `pool_id`.
@@ -1275,14 +1352,33 @@ impl BotState {
     /// stays `None` (no complete `tick_data` → step-2 is a no-op). Idempotent
     /// if called twice (the second pin overwrites; only step-2 consumes it).
     pub fn pin_v3_post_drain_snapshot(&mut self, address: Address) {
-        let Some(&pool_id) = self.pool_addresses.get(&address) else {
-            return;
+        // Capture the pin scalars in an inner scope so the `&mut state` borrow
+        // of `self.pools` ends before the diagnostic reads `self.v3_buffer`
+        // (a second `&self` borrow) — Rust forbids both alive at once.
+        let diag = {
+            let Some(&pool_id) = self.pool_addresses.get(&address) else {
+                return;
+            };
+            let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&pool_id) else {
+                return;
+            };
+            if state.coverage == PoolTickCoverage::Tracked {
+                state.post_drain_snapshot = Some((state.tick_data.clone(), state.update_block));
+                Some(state.update_block)
+            } else {
+                None
+            }
         };
-        let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&pool_id) else {
-            return;
-        };
-        if state.coverage == PoolTickCoverage::Tracked {
-            state.post_drain_snapshot = Some((state.tick_data.clone(), state.update_block));
+        if let Some(update_block) = diag {
+            if verify_dbg_enabled() {
+                log::info!(
+                    "[verify-dbg] V3 pin addr={address:x} update_block={update_block} \
+                     pump_count_at_or_below={} last_complete_block={:?}",
+                    self.v3_buffer
+                        .pump_count_at_or_below(&address, update_block),
+                    self.v3_buffer.last_complete_block(),
+                );
+            }
         }
     }
 
@@ -2781,6 +2877,17 @@ impl BotState {
     /// capture a half-delivered block (the YLYJM2 rolling-start race).
     pub fn mark_v4_pump_block_complete(&mut self, block: u64) {
         self.v4_buffer.mark_block_complete(block);
+        if verify_dbg_enabled() {
+            log::info!(
+                "[verify-dbg] V4 mark_block_complete block={block} \
+                 pump_total_at_or_below={v4_below} pump_total={v4_total} backfill_total={v4_back} \
+                 last_complete_block={lcb:?}",
+                v4_below = self.v4_buffer.pump_total_at_or_below(block),
+                v4_total = self.v4_buffer.pump_total(),
+                v4_back = self.v4_buffer.backfill_total(),
+                lcb = self.v4_buffer.last_complete_block(),
+            );
+        }
     }
 
     /// Apply one buffered V4 pool event (`Liquidity` or `Swap`) to a
@@ -2855,6 +2962,21 @@ impl BotState {
         // Flush the retained pump tail first (backfill already fully drained
         // during `apply_backfill_buffer_v3`).
         if let Some(buffered) = self.v3_buffer.drain_pump(&address) {
+            if verify_dbg_enabled() {
+                use ::degenbot_pools::liquidity_event::LiquidityEvent;
+                let blocks: Vec<u64> = buffered.iter().map(LiquidityEvent::block_number).collect();
+                let mut sorted = blocks.clone();
+                sorted.sort_unstable();
+                let distinct: Vec<u64> = sorted
+                    .into_iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .collect();
+                log::info!(
+                    "[verify-dbg] V3 set_live addr={address:x} drained_retained_tail={n} blocks={blocks:?} distinct_blocks={distinct:?}",
+                    n = buffered.len(),
+                );
+            }
             for event in buffered {
                 if let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&id) {
                     Self::apply_buffered_v3_event(state, event);
@@ -2880,6 +3002,22 @@ impl BotState {
             return;
         };
         if let Some(buffered) = self.v4_buffer.drain_pump(&key) {
+            if verify_dbg_enabled() {
+                use ::degenbot_pools::liquidity_event::LiquidityEvent;
+                let blocks: Vec<u64> = buffered.iter().map(LiquidityEvent::block_number).collect();
+                let mut sorted = blocks.clone();
+                sorted.sort_unstable();
+                let distinct: Vec<u64> = sorted
+                    .into_iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .collect();
+                log::info!(
+                    "[verify-dbg] V4 set_live pm={pool_manager:x} pool_id={} drained_retained_tail={n} blocks={blocks:?} distinct_blocks={distinct:?}",
+                    degenbot_core::hex_utils::encode_hex(&pool_id),
+                    n = buffered.len(),
+                );
+            }
             for event in buffered {
                 if let Some(PoolEntry::V4(_, state)) = self.pools.get_mut(&id) {
                     Self::apply_buffered_v4_event(state, event);
@@ -3063,14 +3201,34 @@ impl BotState {
         pool_manager: Address,
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) {
-        let Some(pid) = self.v4_pool_id_by_key(pool_manager, pool_id) else {
-            return;
+        let key = (pool_manager, *pool_id);
+        // Capture the pin scalar in an inner scope so the `&mut state` borrow
+        // of `self.pools` ends before the diagnostic reads `self.v4_buffer`
+        // (a second `&self` borrow) — Rust forbids both alive at once.
+        let diag = {
+            let Some(pid) = self.v4_pool_id_by_key(pool_manager, pool_id) else {
+                return;
+            };
+            let Some(PoolEntry::V4(_, state)) = self.pools.get_mut(&pid) else {
+                return;
+            };
+            if state.coverage == PoolTickCoverage::Tracked {
+                state.post_drain_snapshot = Some((state.tick_data.clone(), state.update_block));
+                Some(state.update_block)
+            } else {
+                None
+            }
         };
-        let Some(PoolEntry::V4(_, state)) = self.pools.get_mut(&pid) else {
-            return;
-        };
-        if state.coverage == PoolTickCoverage::Tracked {
-            state.post_drain_snapshot = Some((state.tick_data.clone(), state.update_block));
+        if let Some(update_block) = diag {
+            if verify_dbg_enabled() {
+                log::info!(
+                    "[verify-dbg] V4 pin pm={pool_manager:x} pool_id={} update_block={update_block} \
+                     pump_count_at_or_below={} last_complete_block={:?}",
+                    degenbot_core::hex_utils::encode_hex(pool_id),
+                    self.v4_buffer.pump_count_at_or_below(&key, update_block),
+                    self.v4_buffer.last_complete_block(),
+                );
+            }
         }
     }
 
@@ -6590,5 +6748,70 @@ mod tests {
             None,
             "empty chain → no seed block (cold start)"
         );
+    }
+
+    // ── verify-dbg visibility probes (DEGENBOT_VERIFY_DBG) ───────────────────
+    //
+    // Asserts the WIRING the probes rely on: a tracked V3 pool's pump
+    // Mint/Burn is counted by `v3_buffer.pump_count_at_or_below` through the
+    // `BotState` field, `mark_v3_pump_block_complete` advances
+    // `last_complete_block`, and `pin_v3_post_drain_snapshot` +
+    // `set_v3_pool_live` remain behavior-preserving under the buffered
+    // tail (the apply path executes regardless of the gate — the
+    // `verify_dbg_enabled()` branch is pure logging).
+    #[test]
+    fn verify_dbg_mark_complete_and_pin_are_behavior_preserving() {
+        use crate::bot_core::RegisterV3PoolParams;
+        use crate::solvers::arb_engine::PoolTickCoverage;
+        let mut core = BotState::new();
+        let pool_addr = Address::from([0xf7u8; 20]);
+        let _id = core
+            .register_v3_pool(&RegisterV3PoolParams {
+                address: pool_addr,
+                token0: Address::ZERO,
+                token1: Address::from([1u8; 20]),
+                fee: 500,
+                tick_spacing: 10,
+                factory: Address::ZERO,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 1_000_000,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block: 0,
+                coverage: PoolTickCoverage::Tracked,
+                fetcher: None,
+                ..Default::default()
+            })
+            .expect("test setup: V3 registration");
+        // Quarantine so live Mint/Burn route to the pump buffer (the
+        // registration-seam posture during drain+pin+verify).
+        core.set_v3_pool_quarantined(pool_addr);
+        // Pump-buffer a Mint + a same-block Burn for block 100.
+        core.apply_v3_liquidity_update(pool_addr, -10, 10, 500_i128, 100);
+        core.apply_v3_liquidity_update(pool_addr, -10, 10, -500_i128, 100);
+        // Pre-mark: two pump events, no complete block yet.
+        assert_eq!(core.v3_buffer.pump_count_at_or_below(&pool_addr, 100), 2);
+        assert_eq!(core.v3_buffer.last_complete_block(), None);
+        assert_eq!(core.v3_buffer.pump_total_at_or_below(100), 2);
+        // Mark block 100 complete (what the pump does at N+1's tombstone).
+        core.mark_v3_pump_block_complete(100);
+        assert_eq!(core.v3_buffer.last_complete_block(), Some(100));
+        // Drain + pin: the gated drain yields both events, then the pin
+        // captures the post-drain pair. (apply_pump_buffer_v3 + pin are the
+        // exact sequence the registration seam runs.)
+        core.apply_pump_buffer_v3(&pool_addr);
+        core.pin_v3_post_drain_snapshot(pool_addr);
+        let (pinned_ticks, pinned_block) = core
+            .take_v3_post_drain_snapshot(pool_addr)
+            .expect("pin was captured for a Tracked pool");
+        assert_eq!(pinned_block, 100, "pin captured the drained update_block");
+        // The net-zero Mint+Burn leaves gross=0 on the boundary ticks and
+        // creates NO initialized tick (a zero gross is pruned) → the pin carries
+        // an empty map. The point: the pin pair is self-consistent with the
+        // drain the probe correlates.
+        assert_eq!(pinned_ticks.len(), 0, "net-zero Mint+Burn yields no tick");
+        // set_live under an empty retained tail is a no-op flush (the probe
+        // would log drained_retained_tail=0).
+        core.set_v3_pool_live(pool_addr);
     }
 }
