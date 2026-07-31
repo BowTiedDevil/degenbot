@@ -26,6 +26,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyModule;
 use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::registry::LookupSpan;
+use tracing_subscriber::EnvFilter;
 
 /// Maximum number of log records buffered before dropping oldest.
 const QUEUE_CAPACITY: usize = 1024;
@@ -347,6 +348,42 @@ static GLOBAL_LAYER_STATE: std::sync::OnceLock<Arc<PythonLogLayerState>> =
 /// Guard against calling `init_logging_subscriber` more than once.
 static INIT_DONE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
 
+/// The default tracing `EnvFilter` when `RUST_LOG` is unset.
+///
+/// Defaults to `info` globally, EXCEPT the alloy-internal transport/network
+/// crates are throttled to `warn`. alloy emits routine lifecycle INFO from its
+/// internal pubsub/transport services (e.g. ``INFO alloy_pubsub::service:
+/// Pubsub service request channel closed. Shutting down.`` on a clean provider
+/// teardown) which is third-party noise on the Python-driven log / stderr
+/// stream, not a degenbot-originated diagnostic. Their WARN/ERROR records
+/// still pass (a `warn` directive enables ERROR and WARN — those signal real
+/// connection failures); only INFO/DEBUG/TRACE are dropped. degenbot's own
+/// `degenbot_*` targets are untouched. An explicit `RUST_LOG` overrides this
+/// default entirely.
+fn default_env_filter() -> EnvFilter {
+    let mut filter = EnvFilter::new("info");
+    for target in [
+        "alloy_pubsub",
+        "alloy_transport",
+        "alloy_transport_ws",
+        "alloy_transport_ipc",
+        "alloy_transport_http",
+        "alloy_provider",
+        "alloy_rpc",
+        "alloy_network",
+        "alloy_contract",
+        "tungstenite",
+    ] {
+        // Directives are static and always valid; parse defensively (an
+        // unrecognized directive would just leave the target unfiltered rather
+        // than abort subscriber setup).
+        if let Ok(directive) = format!("{target}=warn").parse() {
+            filter = filter.add_directive(directive);
+        }
+    }
+    filter
+}
+
 /// Install the tracing subscriber stack.
 ///
 /// This function:
@@ -363,7 +400,6 @@ pub fn init_logging_subscriber() {
     let () = INIT_DONE.get_or_init(|| {
         use tracing_subscriber::layer::SubscriberExt;
         use tracing_subscriber::util::SubscriberInitExt;
-        use tracing_subscriber::EnvFilter;
 
         // Build the Python-forwarding layer.
         let python_layer = PythonLogLayer::new();
@@ -381,38 +417,7 @@ pub fn init_logging_subscriber() {
         // `RUST_LOG` if set, otherwise default to `info` (matching pyo3-log's
         // unconditional forwarding — Python `logging` handles its own
         // per-logger level filtering).
-        let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-            // Default `info` globally, EXCEPT the alloy-internal transport/
-            // network crates are throttled to `warn`. alloy emits routine
-            // lifecycle INFO from its internal pubsub/transport services (e.g.
-            // ``INFO alloy_pubsub::service: Pubsub service request channel
-            // closed. Shutting down.`` on a clean provider teardown) which is
-            // third-party noise on the Python-driven log / stderr stream, not
-            // a degenbot-originated diagnostic. Their WARN/ERROR records still
-            // pass (those signal real connection failures); an explicit
-            // `RUST_LOG` overrides this default entirely.
-            let mut filter = EnvFilter::new("info");
-            for target in [
-                "alloy_pubsub",
-                "alloy_transport",
-                "alloy_transport_ws",
-                "alloy_transport_ipc",
-                "alloy_transport_http",
-                "alloy_provider",
-                "alloy_rpc",
-                "alloy_network",
-                "alloy_contract",
-                "tungstenite",
-            ] {
-                // Directives are static and always valid; parse defensively
-                // (an unrecognized directive would just leave the target
-                // unfiltered rather than abort subscriber setup).
-                if let Ok(directive) = format!("{target}=warn").parse() {
-                    filter = filter.add_directive(directive);
-                }
-            }
-            filter
-        });
+        let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| default_env_filter());
         let subscriber = tracing_subscriber::registry()
             .with(env_filter)
             .with(
@@ -425,4 +430,89 @@ pub fn init_logging_subscriber() {
         // Set as the global default.
         subscriber.init();
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    use tracing::Level;
+    use tracing_subscriber::layer::{Context, Layer};
+    use tracing_subscriber::prelude::*;
+    use tracing_subscriber::registry::LookupSpan;
+    use tracing_subscriber::Registry;
+
+    /// A layer that records every event it receives as `(target, level)`,
+    /// so a test can assert exactly which events the default filter lets
+    /// through.
+    #[derive(Clone, Default)]
+    struct Capture(Arc<Mutex<Vec<(String, Level)>>>);
+
+    impl<S> Layer<S> for Capture
+    where
+        S: tracing::Subscriber + for<'a> LookupSpan<'a>,
+    {
+        fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+            self.0.lock().unwrap().push((
+                event.metadata().target().to_string(),
+                *event.metadata().level(),
+            ));
+        }
+    }
+
+    fn run_with_default_filter<R>(f: impl FnOnce() -> R) -> (R, Vec<(String, Level)>) {
+        let capture = Capture::default();
+        let subscriber = Registry::default()
+            .with(default_env_filter())
+            .with(capture.clone());
+        let ret = tracing::dispatcher::with_default(&tracing::Dispatch::new(subscriber), f);
+        let records = capture.0.lock().unwrap().clone();
+        (ret, records)
+    }
+
+    #[test]
+    fn default_filter_keeps_alloy_error_but_drops_alloy_info_debug() {
+        let ((), records) = run_with_default_filter(|| {
+            // ERROR on an alloy target — must still surface (real failures).
+            tracing::event!(target: "alloy_pubsub::service", Level::ERROR, "backend error");
+            // Routine INFO/DEBUG — the noise being throttled.
+            tracing::event!(
+                target: "alloy_pubsub::service",
+                Level::INFO,
+                "Pubsub service request channel closed. Shutting down."
+            );
+            tracing::event!(target: "alloy_pubsub::service", Level::DEBUG, "detail");
+        });
+
+        let on_alloy = |level: Level| {
+            records
+                .iter()
+                .any(|(target, lvl)| target.starts_with("alloy") && *lvl == level)
+        };
+        assert!(
+            on_alloy(Level::ERROR),
+            "alloy ERROR must pass the `=warn` throttle"
+        );
+        assert!(
+            !on_alloy(Level::INFO),
+            "alloy INFO must be throttled by the default filter"
+        );
+        assert!(
+            !on_alloy(Level::DEBUG),
+            "alloy DEBUG must be throttled by the default filter"
+        );
+    }
+
+    #[test]
+    fn default_filter_keeps_degenbot_targets_at_info() {
+        let ((), records) = run_with_default_filter(|| {
+            tracing::event!(target: "degenbot_bot::bot_core::block_pump", Level::INFO, "mine");
+        });
+        assert!(
+            records
+                .iter()
+                .any(|(target, level)| target.starts_with("degenbot") && *level == Level::INFO),
+            "degenbot's own INFO records must not be throttled"
+        );
+    }
 }
