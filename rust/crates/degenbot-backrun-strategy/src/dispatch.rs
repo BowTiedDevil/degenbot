@@ -47,7 +47,7 @@ use degenbot_submission::PathSuppression;
 use parking_lot::RwLock;
 
 use crate::{
-    diverging_pool_keys, fot_suspected_token, hop_input_token, hop_pool_key,
+    diverging_pool_keys, fot_suspected_token, hop_input_token, hop_output_token, hop_pool_key,
     is_solver_calc_failure, simulate_path_on_evm, FailBuckets, FeeOnTransferRegistry,
     PoolDivergence, SimFailure, SimResult, SimulateContext, SimulatePath,
 };
@@ -691,14 +691,19 @@ pub fn dispatch_profitable_results(
     }
 
     // 8.5. FoT success recording (ergo `3O535Q`). For every SUCCEEDED path,
-    //      record `record_success(token)` for each hop's input token — the
-    //      0-success disambiguator. A true FoT token can never succeed (the
-    //      fee always shorts the input), so a single success clears the
-    //      token. Both `gas_profitable` + `gas_unprofitable` are "execute()
-    //      succeeded" — the FoT check is "did the swap commit", not "was it
-    //      profitable". Failed paths are NOT recorded here (a FoT token's
-    //      failures are recorded as suspicions in step 7.5; a stale-state
-    //      failure is neither a success nor a FoT suspicion).
+    //      record `record_success(token)` for EVERY token on the path — each
+    //      hop's input AND output (via `hop_input_token` + `hop_output_token`)
+    //      — the 0-success disambiguator. A true FoT token can never succeed
+    //      (the fee always shorts the input), so a single success clears the
+    //      token. Recording BOTH sides (not just hop inputs) is important: a
+    //      committed swap proves EVERY token that crossed a leg transferred
+    //      without shorting the fee (any short would have reverted), so a
+    //      token appearing only as a hop OUTPUT (e.g. WBTC on the final leg)
+    //      is also cleared. Both `gas_profitable` + `gas_unprofitable` are
+    //      "execute() succeeded" — the FoT check is "did the swap commit",
+    //      not "was it profitable". Failed paths are NOT recorded here (a FoT
+    //      token's failures are recorded as suspicions in step 7.5; a
+    //      stale-state failure is neither a success nor a FoT suspicion).
     if !succeeded_path_ids.is_empty() {
         let mut fr = fot_registry.lock().expect("fot_registry mutex poisoned");
         for &pid in &candidate_path_ids {
@@ -706,6 +711,7 @@ pub fn dispatch_profitable_results(
                 if let Some(path_info) = path_info_by_id.get(&pid) {
                     for hop in &path_info.hops {
                         fr.record_success(hop_input_token(hop), current_block);
+                        fr.record_success(hop_output_token(hop), current_block);
                     }
                 }
             }

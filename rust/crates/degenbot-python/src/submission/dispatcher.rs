@@ -478,6 +478,10 @@ impl PyDispatcher {
     /// confirmed `FoT` (>= K distinct failing pools, 0 successes, within the
     /// decay window). Each entry is the token's checksummed address. Drives
     /// the operator's `[fot]` monitoring view + the denylist feed.
+    ///
+    /// Panics (crashes the driver) if any confirmed token is in the
+    /// operator's verified-non-FoT set — the hard classifier-invariant guard
+    /// (coarse, per the operator's directive).
     fn fot_tokens(&self, current_block: u64) -> Vec<String> {
         self.fot_registry
             .lock()
@@ -486,6 +490,39 @@ impl PyDispatcher {
             .into_iter()
             .map(|(addr, _)| format!("{addr:?}"))
             .collect()
+    }
+
+    /// Register the operator's manually-verified standard-ERC-20 (non-FoT)
+    /// token set — a hard classifier-INVARIANT guard, NOT an exemption.
+    ///
+    /// If the `FoT` classifier ever CONFIRMS one of these, ``fot_tokens()``
+    /// (and the dispatch skip via ``is_fot``) PANICS rather than silently
+    /// dropping that token's real arbitrage — a verified standard ERC-20 must
+    /// never be confirmed fee-on-transfer, so a confirmation means the
+    /// classifier is broken and the operator wants a loud failure.
+    ///
+    /// Call once at bot startup with the operator's verified set (e.g. the
+    /// example's ``ETH_MAINNET_ALLOWED_TOKENS``). Passing an empty list
+    /// disables the guard.
+    ///
+    /// Args:
+    ///     `tokens`: `list[str]` of token addresses.
+    ///
+    /// Raises `ValueError` on an unparseable address.
+    fn set_fot_verified_non_fot(&self, tokens: Vec<String>) -> PyResult<()> {
+        let mut verified = HashSet::with_capacity(tokens.len());
+        for t in tokens {
+            verified.insert(crate::address_utils::parse_address(&t).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "invalid verified non-FoT token: {e}"
+                ))
+            })?);
+        }
+        self.fot_registry
+            .lock()
+            .expect("fot_registry mutex poisoned")
+            .set_verified_non_fot(verified);
+        Ok(())
     }
 
     // ── introspection (the [dispatch]/[sim] summary reads) ────────

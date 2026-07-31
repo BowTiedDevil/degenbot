@@ -75,8 +75,8 @@ pub use dispatch::{
 };
 pub use fot_registry::{
     fot_suspected_token, fot_suspected_token_from_reverting_frame,
-    fot_suspected_token_from_swap_mismatch, hop_input_token, FeeOnTransferRegistry, FotTokenRecord,
-    FOT_DECAY_BLOCKS, FOT_SUSPICION_THRESHOLD_POOLS,
+    fot_suspected_token_from_swap_mismatch, hop_input_token, hop_output_token,
+    FeeOnTransferRegistry, FotTokenRecord, FOT_DECAY_BLOCKS, FOT_SUSPICION_THRESHOLD_POOLS,
 };
 pub use pool_divergence::{
     diverging_pool_keys, hop_pool_key, is_solver_calc_failure, PoolDivergence, PoolDivergenceKey,

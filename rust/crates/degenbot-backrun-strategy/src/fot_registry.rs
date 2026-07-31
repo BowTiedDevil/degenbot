@@ -202,6 +202,39 @@ pub fn hop_input_token(hop: &HopInfo) -> Address {
     }
 }
 
+/// The output token for a hop — the OTHER side of the `token0`/`token1`
+/// pair selected by `zfo` (the mirror of [`hop_input_token`]: `token1` if
+/// `zfo`, else `token0`). Used by the dispatch success-recording (step 8.5)
+/// so a committed swap clears EVERY token on the path, not only the hop
+/// inputs — a token at any position that transferred without shorting a leg
+/// demonstrably is not a fee-on-transfer token.
+#[must_use]
+pub fn hop_output_token(hop: &HopInfo) -> Address {
+    match hop {
+        HopInfo::V2(v2) => {
+            if v2.zfo {
+                v2.token1_address
+            } else {
+                v2.token0_address
+            }
+        }
+        HopInfo::V3(v3) => {
+            if v3.zfo {
+                v3.token1_address
+            } else {
+                v3.token0_address
+            }
+        }
+        HopInfo::V4(v4) => {
+            if v4.zfo {
+                v4.currency1_address
+            } else {
+                v4.currency0_address
+            }
+        }
+    }
+}
+
 /// The input token of the hop whose pool address matches `target`. V2/V3
 /// pools match on `pool_address`; V4 matches on `pool_manager_address` (the
 /// PoolManager; the spike notes the multi-V4-hop ambiguity). Returns `None`
@@ -265,6 +298,16 @@ pub struct FotTokenRecord {
 /// leaf skips paths whose any hop's input token `is_fot`; the feedback loop
 /// records suspicions (failing paths) + successes (succeeded paths).
 ///
+/// # Verified-non-FoT invariant (hard guard, NOT an exemption)
+///
+/// `set_verified_non_fot` registers the operator's manually-verified
+/// standard-ERC-20 token set (a positive attestation: "this token transfers
+/// normally"). If the classifier ever CONFIRMS (`is_fot` / `fot_tokens`)
+/// one of these, that is a classifier bug — every path routed through it is
+/// a REAL arbitrage being silently dropped. The guard PANICS rather than
+/// silently exempting the token: the operator wants a loud failure when the
+/// classifier contradicts an explicit verification, not a quiet permission.
+///
 /// # Why this shape (not the `PoolDivergence` shape)
 ///
 /// `PoolDivergence` tracks `(pool_key → last-flagged-block)` — a simple
@@ -281,6 +324,11 @@ pub struct FeeOnTransferRegistry {
     /// Total paths skipped via the FoT registry (for logging parity with
     /// `PoolDivergence::total_divergent_dropped`).
     total_fot_dropped: u64,
+    /// The operator's manually-verified standard-ERC-20 set — a hard
+    /// invariant, NOT an exemption: confirming one of these is a classifier
+    /// bug that panics (see the struct docs). Populated from the FFI seam's
+    /// `set_fot_verified_non_fot`; empty (no guard) by default.
+    verified_non_fot: HashSet<Address>,
 }
 
 impl FeeOnTransferRegistry {
@@ -288,6 +336,15 @@ impl FeeOnTransferRegistry {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Register the operator's verified standard-ERC-20 (non-FoT) token set
+    /// — a hard invariant, NOT an exemption. If the classifier later confirms
+    /// one of these, `is_fot` / `fot_tokens` panic (see the struct docs).
+    /// Pass the full operator set; subsequent calls replace it wholesale
+    /// (the dedup `HashSet` is the parse of the FFI list).
+    pub fn set_verified_non_fot(&mut self, verified: HashSet<Address>) {
+        self.verified_non_fot = verified;
     }
 
     /// Record that `token` flagged a FoT suspicion at `pool_address` at
@@ -314,14 +371,16 @@ impl FeeOnTransferRegistry {
     ///   reverting pool addresses,
     /// - AND no path involving the token has succeeded (`!has_any_success`),
     /// - AND the last suspicion was within [`FOT_DECAY_BLOCKS`] blocks.
+    ///
+    /// Panics if `true` AND `token` is in the verified-non-FoT set (hard
+    /// invariant — a verified standard ERC-20 must never be confirmed).
     #[must_use]
     pub fn is_fot(&self, token: Address, current_block: u64) -> bool {
-        let Some(record) = self.records.get(&token) else {
-            return false;
-        };
-        !record.has_any_success
-            && record.failing_pools.len() >= FOT_SUSPICION_THRESHOLD_POOLS
-            && current_block.saturating_sub(record.last_flagged_block) < FOT_DECAY_BLOCKS
+        let confirmed = self
+            .records
+            .get(&token)
+            .is_some_and(|r| Self::confirmed_within_window(r, current_block));
+        self.assert_not_verified_non_fot(token, confirmed)
     }
 
     /// Total paths skipped via the FoT registry (mirrors
@@ -340,17 +399,45 @@ impl FeeOnTransferRegistry {
     /// The current confirmed-FoT token set (for the FFI getter + the
     /// `[fot]` rendering). One `(token, &record)` per confirmed-FoT token.
     /// Clears entries past the decay window.
+    ///
+    /// Panics if any confirmed token is in the verified-non-FoT set (hard
+    /// invariant — see the struct docs).
     #[must_use]
     pub fn fot_tokens(&self, current_block: u64) -> Vec<(Address, &FotTokenRecord)> {
-        self.records
+        let confirmed: Vec<(Address, &FotTokenRecord)> = self
+            .records
             .iter()
-            .filter(|(_, record)| {
-                !record.has_any_success
-                    && record.failing_pools.len() >= FOT_SUSPICION_THRESHOLD_POOLS
-                    && current_block.saturating_sub(record.last_flagged_block) < FOT_DECAY_BLOCKS
-            })
+            .filter(|(_, record)| Self::confirmed_within_window(record, current_block))
             .map(|(token, record)| (*token, record))
-            .collect()
+            .collect();
+        for (token, _) in &confirmed {
+            self.assert_not_verified_non_fot(*token, true);
+        }
+        confirmed
+    }
+
+    /// The confirmation predicate shared by `is_fot` + `fot_tokens`.
+    fn confirmed_within_window(record: &FotTokenRecord, current_block: u64) -> bool {
+        !record.has_any_success
+            && record.failing_pools.len() >= FOT_SUSPICION_THRESHOLD_POOLS
+            && current_block.saturating_sub(record.last_flagged_block) < FOT_DECAY_BLOCKS
+    }
+
+    /// Panic if `confirmed` is true AND `token` is in the operator's
+    /// verified-non-FoT set — the hard invariant guard. Returns `confirmed`
+    /// unchanged when `token` is not verified (the normal path).
+    ///
+    /// The panic fires while the caller holds the registry `Mutex` and thus
+    /// poisons it — intentional: this is a coarse crash the operator asked
+    /// for ("panic if a whitelisted token is flagged"), and poisoning the
+    /// registry only guarantees every concurrent/dispatch caller also aborts
+    /// instead of continuing to silently drop the token's arbitrage.
+    fn assert_not_verified_non_fot(&self, token: Address, confirmed: bool) -> bool {
+        assert!(
+            !(confirmed && self.verified_non_fot.contains(&token)),
+            "[fot] verified non-FoT token confirmed as fee-on-transfer: {token:?} — classifier bug; refusing to silently drop a real token"
+        );
+        confirmed
     }
 
     /// The raw record for `token`, if any (for inspection / FFI).
@@ -720,5 +807,93 @@ mod tests {
         let reg = FeeOnTransferRegistry::new();
         assert!(!reg.is_fot(TOKEN_IN, 100));
         assert!(reg.fot_tokens(100).is_empty());
+    }
+
+    // =====================================================================
+    // verified-non-FoT hard guard (panic, NOT exemption)
+    // =====================================================================
+
+    fn reg_flagged_at_two_pools(reg: &mut FeeOnTransferRegistry, token: Address) {
+        reg.record_suspicion(token, V2_POOL, 100);
+        reg.record_suspicion(token, SECOND_POOL, 100);
+    }
+
+    #[test]
+    #[should_panic(expected = "verified non-FoT token confirmed")]
+    fn verified_token_confirmed_via_is_fot_panics() {
+        // The operator verified TOKEN_IN as standard ERC-20; the classifier
+        // confirms it (2 distinct failing pools, 0 successes). Hard invariant:
+        // panic, do NOT silently exempt.
+        let mut reg = FeeOnTransferRegistry::new();
+        reg.set_verified_non_fot([TOKEN_IN].into_iter().collect());
+        reg_flagged_at_two_pools(&mut reg, TOKEN_IN);
+        let _ = reg.is_fot(TOKEN_IN, 100);
+    }
+
+    #[test]
+    #[should_panic(expected = "verified non-FoT token confirmed")]
+    fn verified_token_confirmed_via_fot_tokens_panics() {
+        let mut reg = FeeOnTransferRegistry::new();
+        reg.set_verified_non_fot([TOKEN_IN].into_iter().collect());
+        reg_flagged_at_two_pools(&mut reg, TOKEN_IN);
+        let _ = reg.fot_tokens(100);
+    }
+
+    #[test]
+    fn verified_token_not_confirmed_does_not_panic() {
+        // Verified token with only 1 distinct failing pool (< K) is NOT
+        // confirmed, so the guard passes and no panic fires.
+        let mut reg = FeeOnTransferRegistry::new();
+        reg.set_verified_non_fot([TOKEN_IN].into_iter().collect());
+        reg.record_suspicion(TOKEN_IN, V2_POOL, 100);
+        assert!(!reg.is_fot(TOKEN_IN, 100));
+        assert!(reg.fot_tokens(100).is_empty());
+    }
+
+    #[test]
+    fn verified_token_success_clears_without_panic() {
+        // A verified token that has succeeded (`has_any_success`) is never
+        // confirmed, so the guard passes.
+        let mut reg = FeeOnTransferRegistry::new();
+        reg.set_verified_non_fot([TOKEN_IN].into_iter().collect());
+        reg_flagged_at_two_pools(&mut reg, TOKEN_IN);
+        reg.record_success(TOKEN_IN, 101);
+        assert!(!reg.is_fot(TOKEN_IN, 101));
+    }
+
+    #[test]
+    fn unverified_confirmed_token_does_not_panic() {
+        // A NON-verified token confirmed FoT is normal — no guard fires.
+        let mut reg = FeeOnTransferRegistry::new();
+        reg_flagged_at_two_pools(&mut reg, TOKEN_IN);
+        assert!(reg.is_fot(TOKEN_IN, 100));
+        assert_eq!(reg.fot_tokens(100).len(), 1);
+    }
+
+    #[test]
+    fn set_verified_replaces_previous_set_wholesale() {
+        let mut reg = FeeOnTransferRegistry::new();
+        reg.set_verified_non_fot([TOKEN_IN].into_iter().collect());
+        // Replace with an empty set (e.g. a fresh operator config): the guard
+        // is now inert, so a later confirmation of TOKEN_IN no longer panics.
+        reg.set_verified_non_fot(HashSet::default());
+        reg_flagged_at_two_pools(&mut reg, TOKEN_IN);
+        assert!(reg.is_fot(TOKEN_IN, 100));
+    }
+
+    // =====================================================================
+    // hop_output_token (the broadened success-clearing leg)
+    // =====================================================================
+
+    #[test]
+    fn hop_output_token_mirrors_input_across_families() {
+        // zfo = true → input token0, output token1.
+        assert_eq!(hop_output_token(&v2_hop_zfo(V2_POOL)), TOKEN_OUT);
+        assert_eq!(hop_input_token(&v2_hop_zfo(V2_POOL)), TOKEN_IN);
+        // zfo = false → input token1, output token0.
+        assert_eq!(hop_output_token(&v2_hop_one_for_zero(V2_POOL)), TOKEN_OUT);
+        assert_eq!(hop_input_token(&v2_hop_one_for_zero(V2_POOL)), TOKEN_IN);
+        assert_eq!(hop_output_token(&v3_hop(V3_POOL)), TOKEN_OUT);
+        assert_eq!(hop_output_token(&v4_hop(V4_PM)), TOKEN_OUT);
     }
 }

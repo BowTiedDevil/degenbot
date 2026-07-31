@@ -622,6 +622,12 @@ class BackrunSession:
         # ── Coordination state ──
         self.dispatcher = Dispatcher.for_block(self.current_block)
 
+        # Register the operator-verified standard-ERC-20 set as a hard
+        # classifier invariant: if the FoT registry ever confirms one of
+        # these, the driver panics rather than silently dropping that token's
+        # real arbitrage (coarse guard, not an exemption).
+        self.dispatcher.set_fot_verified_non_fot(list(ETH_MAINNET_ALLOWED_TOKENS))
+
         # ── Simulation seam context (A5) — one SimulateContext per session,
         # held alongside the dispatcher. The runtime-bytecode file-load stays
         # Python (A2 disposition `stays-python`); the bytes cross here. The
@@ -1333,6 +1339,15 @@ async def build_paths(
         f"{other_exc_count} other-Exception, "
         f"{engine_registry.engine.path_count()} engine paths",
     )
+
+    # DFQYM5 orphan sweep: Tracked pools now register `Quarantined` (so no
+    # live event can direct-apply before the two-step verify). Any Tracked
+    # pool built via `build_pool`/`build_managed_pool` but whose path was
+    # skipped before `register_v3/v4_pool` (never reached `set_live`) would
+    # otherwise defer events to its buffer indefinitely — release those now
+    # that path discovery is complete. Sparse/V2 pools are unaffected (they
+    # register Live).
+    engine_registry.engine.release_all_v3_v4_quarantined()
 
 
 def get_snapshots(
