@@ -18,7 +18,6 @@ Regenerate candidate entries from a clean tree with:
     vulture src/degenbot --min-confidence 80 --make-whitelist
 """
 
-preserve_capture  # anvil_fork.py: AnvilFork.__init__ keyword arg, API-stable call-site compat
 BlockParams  # cli/aave.py: imported for string-form forward refs in cast() — vulture can't parse str-annotations
 dialect  # database/models/base.py: SQLAlchemy TypeDecorator.process_bind_param signature (framework-required)
 dialect  # database/models/base.py: SQLAlchemy TypeDecorator.process_result_value signature (framework-required)

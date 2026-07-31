@@ -160,7 +160,6 @@ class AnvilFork:
         ) = None,
         coinbase: HexAddress | None = None,
         anvil_opts: list[str] | None = None,
-        preserve_capture: bool = False,  # noqa: ARG002
     ) -> None:
         """Initialize the instance.
 
