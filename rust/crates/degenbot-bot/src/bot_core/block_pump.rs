@@ -1248,8 +1248,18 @@ impl BlockPump {
                 return;
             }
         };
-        let onchain: std::collections::HashSet<u64> =
-            logs.iter().filter_map(|l| l.log_index).collect();
+        // Filter the fetched logs CLIENT-SIDE by exact topic0 ∈ RELEVANT_TOPICS
+        // before collecting log_index. `build_backfill_filter`'s server-side
+        // topic[0] OR-list over-matches on some nodes (returns a superset —
+        // observed: a block with 35 exact-topic relevant logs came back as 43),
+        // inflating the "missing" set and creating FALSE drop positives. The
+        // WS-delivered side is exact, so the on-chain side must be exact too
+        // for an apples-to-apples comparison.
+        let onchain: std::collections::HashSet<u64> = logs
+            .iter()
+            .filter(|l| matches!(l.topic0(), Some(t0) if RELEVANT_TOPICS.contains(t0)))
+            .filter_map(|l| l.log_index)
+            .collect();
         let missing: Vec<u64> = onchain
             .iter()
             .filter(|li| !delivered_log_indices.contains(li))
