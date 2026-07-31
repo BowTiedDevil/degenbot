@@ -3248,9 +3248,6 @@ fn three_hop_v3_v4_v4(
     let pool_manager_address = inputs.pool_manager_address;
     let weth_address = inputs.weth_address;
 
-    let out_a = hop_outputs[0];
-    let out_b = hop_outputs[1];
-    let out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
         return None;
     }
@@ -3286,22 +3283,23 @@ fn three_hop_v3_v4_v4(
     let c0_c_idx = at.add(hc.currency0_address).ok()?;
     let c1_c_idx = at.add(hc.currency1_address).ok()?;
 
-    let mut v4_inner =
-        encoders::enc_v4_swap_compact(c0_b_idx, c1_b_idx, fee_b, ts_b, zero_idx, hb.zfo, out_a)
-            .ok()?;
-    v4_inner.extend_from_slice(
-        &encoders::enc_v4_swap_compact(c0_c_idx, c1_c_idx, fee_c, ts_c, zero_idx, hc.zfo, out_b)
-            .ok()?,
-    );
-    v4_inner.extend_from_slice(&encoders::enc_v4_take_compact(weth_idx, executor_idx, out_c).ok()?);
-
-    // Settlement: V3a sent forward_a to executor, so the executor holds
-    // forward_a tokens. V4_SETTLE credits any PM delta from prior sync+transfer.
-    let v4_inner = {
-        let mut combined = encoders::enc_v4_settle();
-        combined.extend_from_slice(&v4_inner);
-        combined
-    };
+    // Dynamic/delta-driven V4 settlement (W2UWZO/CurrencyNotSettled fix).
+    // V3a sends its actual forward_a output to the PoolManager via the
+    // callback's V4_SETTLE; the inner V4 swaps consume the ACTUAL deltas
+    // (V4_SWAP_DYNAMIC) rather than the solver's predicted hop_outputs —
+    // this nets the intermediate currency to zero by construction,
+    // eliminating the residual-delta class of CurrencyNotSettled.
+    // V4_TAKE_DELTA reads the resulting WETH delta; V4_SETTLE_ALL sweeps
+    // any rounding dust.
+    let mut v4_inner = encoders::enc_v4_settle();
+    v4_inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
+        c0_b_idx, c1_b_idx, fee_b, ts_b, zero_idx, hb.zfo,
+    ));
+    v4_inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
+        c0_c_idx, c1_c_idx, fee_c, ts_c, zero_idx, hc.zfo,
+    ));
+    v4_inner.extend_from_slice(&encoders::enc_v4_take_delta(weth_idx, executor_idx));
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
 
     let mut a_fwd = encoders::enc_v4_unlock(&v4_inner).ok()?;
     a_fwd.extend_from_slice(&encoders::enc_erc20_transfer(weth_idx, v3a_idx, optimal_input).ok()?);
