@@ -513,6 +513,15 @@ impl BlockPump {
         // Current block metadata — updated from headers, used for
         // solve batches when logs close out a block.
         let mut current_metadata: BlockMetadata = BlockMetadata::default();
+        // WS-delivery completeness tracker (see `assert_ws_block_complete`):
+        // the set of relevant-topic log indices delivered per block, cross-
+        // checked against `eth_getLogs` at the block's tombstone to panic on a
+        // live websocket log drop. Gated on `DEGENBOT_WS_COMPLETENESS`; the map
+        // is only populated when the gate is on (so the hot loop adds no work
+        // when disabled).
+        let ws_completeness_enabled = std::env::var("DEGENBOT_WS_COMPLETENESS").is_ok();
+        let mut ws_delivered: std::collections::HashMap<u64, std::collections::HashSet<u64>> =
+            std::collections::HashMap::new();
         // `has_logs_this_block` is engine-owned since LEZJAS — driven through
         // `self.sink.record_logs_this_block()` (cleared by `finalize_block`).
         // Debounce timer: started when the first dirty log arrives, reset on
@@ -831,6 +840,16 @@ impl BlockPump {
                     }
 
                     let log_block = log.block_number.unwrap_or(current_block);
+                    // WS-completeness tracker: record the delivered relevant
+                    // log index for this block so the tombstone can cross-check
+                    // it against authoritative on-chain logs (a missing index =
+                    // a websocket drop → panic). Only tracked when the gate is
+                    // on to keep the default hot loop at zero-cost.
+                    if ws_completeness_enabled {
+                        if let Some(li) = log.log_index {
+                            ws_delivered.entry(log_block).or_default().insert(li);
+                        }
+                    }
 
                     // ADR-008: route the log via the per-block state machine.
                     // The clock decides whether this is a forward dispatch, a
@@ -931,6 +950,14 @@ impl BlockPump {
                             // where a later same-block log lands after the pin).
                             publish_pending = false;
                             self.bot.mark_pump_blocks_complete(prev);
+                            // LOUD WS-completeness check: block `prev` is now
+                            // confirmed complete (tombstoned by the first log of
+                            // N+1); cross-check delivered relevant logs vs
+                            // `eth_getLogs` and panic on a websocket drop.
+                            if ws_completeness_enabled {
+                                let delivered = ws_delivered.remove(&prev).unwrap_or_default();
+                                self.assert_ws_block_complete(prev, delivered).await;
+                            }
                             let prev_meta = block_metadata
                                 .get(&prev)
                                 .copied()
@@ -1176,6 +1203,91 @@ impl BlockPump {
                 from_block,
                 to_block,
                 "BlockPump: backfill found no relevant events"
+            );
+        }
+    }
+
+    /// LOUD assertion of the core WS-delivery invariant (ADR-008 D1): when
+    /// block `block` is tombstoned, EVERY relevant-topic log that exists
+    /// on-chain@block must have been delivered by the live WS subscription.
+    ///
+    /// The pump's correctness model assumes the websocket delivers every log;
+    /// a silently dropped log (observed while driving the bot — a single `Mint`
+    /// missing from an otherwise-delivered block) produces a pin/verify
+    /// mismatch later and, worse, silently stale solve state. This check
+    /// cross-references the delivered relevant-topic log-index set against the
+    /// authoritative `eth_getLogs` for the block and PANICS if any on-chain
+    /// relevant log is missing — a catastrophic websocket delivery failure that
+    /// must NOT be masked or silently corrected.
+    ///
+    /// Gated on `DEGENBOT_WS_COMPLETENESS`; when unset (default, incl. tests
+    /// that feed synthetic logs through `run_test_loop`) it is a no-op. On an
+    /// `eth_getLogs` transport error (not a mismatch) it logs loudly and
+    /// returns — the check cannot run, but the bot is not taken down by a
+    /// transient RPC failure.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `eth_getLogs` reveals a relevant-topic log for `block` that
+    /// the live websocket did not deliver — a catastrophic WS delivery drop
+    /// that must fail loudly rather than silently stale the engine state.
+    pub async fn assert_ws_block_complete(
+        &self,
+        block: u64,
+        delivered_log_indices: std::collections::HashSet<u64>,
+    ) {
+        let filter = build_backfill_filter(block, block);
+        let logs = match self.provider.provider_arc().get_logs(&filter).await {
+            Ok(logs) => logs,
+            Err(e) => {
+                tracing::error!(
+                    block,
+                    %e,
+                    "BlockPump: WS-completeness eth_getLogs failed (not a mismatch; "
+                );
+                return;
+            }
+        };
+        let onchain: std::collections::HashSet<u64> =
+            logs.iter().filter_map(|l| l.log_index).collect();
+        let missing: Vec<u64> = onchain
+            .iter()
+            .filter(|li| !delivered_log_indices.contains(li))
+            .copied()
+            .collect();
+        if !missing.is_empty() {
+            // LOUD immediate failure: a websocket legitimately failed to
+            // deliver events — the very failure mode surfaced loudly rather
+            // than masked or silently corrected. Log the full message to
+            // stderr/a tracing sink, then ABORT the process so the bot dies
+            // HARD and immediately. A contained worker-thread panic would
+            // leave the bot half-alive (silent-ish), which is itself a failure
+            // mode; `std::process::abort` guarantees termination.
+            tracing::error!(
+                "[WS-INVARIANT] LIVE WEBSOCKET LOG DROP at block {block}: {} relevant on-chain log(s) missing from WS delivery: log_index {:?}. eth_getLogs={} logs, WS delivered={} logs. The websocket/pump delivery path dropped a relevant event — ABORT (DFQYM5/WS-DROP). Investigate the subscription/reconnect path; do NOT silence this.",
+                missing.len(),
+                missing,
+                onchain.len(),
+                delivered_log_indices.len(),
+            );
+            // Flush best-effort before abort.
+            eprintln!(
+                "[WS-INVARIANT] ABORT: live websocket log drop at block {block} ({} of {} relevant logs missing); eth_getLogs vs WS divergence — see the untraced log for the log_index list.",
+                missing.len(),
+                onchain.len(),
+            );
+            std::process::abort();
+        }
+        let extra: Vec<u64> = delivered_log_indices
+            .iter()
+            .filter(|li| !onchain.contains(li))
+            .copied()
+            .collect();
+        if !extra.is_empty() {
+            tracing::warn!(
+                block,
+                extras = ?extra,
+                "BlockPump: WS delivered relevant logs not present in eth_getLogs"
             );
         }
     }

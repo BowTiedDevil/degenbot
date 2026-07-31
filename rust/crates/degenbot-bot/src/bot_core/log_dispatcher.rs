@@ -27,6 +27,15 @@ use degenbot_decoders::v3_swap_decoder::decode_v3_swap_log;
 use degenbot_decoders::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log;
 use degenbot_decoders::v4_swap_decoder::decode_v4_swap_log;
 
+/// Whether `topic0` is one of the six degenbot pool-event signatures we
+/// dispatch on (`crate::bot_core::block_pump::RELEVANT_TOPICS`). A log carrying
+/// a KNOWN signature that nonetheless fails every decoder is malformed event
+/// data — a silent-drop class `dispatch` asserts on loudly rather than silently
+/// skipping (the WS-decoder-drop failure mode).
+fn is_known_pool_topic(topic0: Option<&alloy::primitives::B256>) -> bool {
+    matches!(topic0, Some(t) if crate::bot_core::block_pump::RELEVANT_TOPICS.contains(t))
+}
+
 /// A subscriber to pool-state updates (ADR-006 D4).
 ///
 /// `on_pool_state_updated` fires after `BotState` has been mutated and the
@@ -358,6 +367,12 @@ impl LogDispatcher {
     /// skipped (no panic). No-op if no decoder recognizes the log or the pool
     /// isn't registered.
     ///
+    /// # Panics
+    ///
+    /// Panics (in strict `DEGENBOT_WS_COMPLETENESS` mode) if a log carrying a
+    /// KNOWN pool-event topic0 fails every decoder — malformed event data that
+    /// must fail loudly rather than be silently dropped.
+    ///
     /// **Lock order:** the `state` write guard is acquired and released BEFORE
     /// any subscriber notify — subscribers take only their own lock (D2's
     /// engine-then-core order preserved by not nesting).
@@ -374,6 +389,26 @@ impl LogDispatcher {
             self.decoders.iter().find_map(|d| d.try_decode(log))
         });
         let Some(decoded) = decoded else {
+            // LOUD failure: a log carrying a KNOWN degenbot event signature
+            // (topic0 in RELEVANT_TOPICS) failed every decoder. The forward
+            // path only dispatches logs that already passed the relevant-topic
+            // pre-filter, so a decode miss means malformed event data — a
+            // silently-dropped event is exactly the class that stalls the
+            // engine. Panic loudly rather than silently skip. Gated on
+            // `DEGENBOT_WS_COMPLETENESS` (the strict loud mode) so synthetic
+            // test fixtures that use a relevant-topic log purely as a block
+            // tombstone (not for state) don't trip it; production enables it.
+            assert!(
+                std::env::var("DEGENBOT_WS_COMPLETENESS").is_err()
+                    || !is_known_pool_topic(log.topics().first()),
+                "dispatch: relevant-topic log failed to decode (malformed event?): \
+                 block={block:?} tx={tx:?} log_index={idx:?} topic0={t0:x?} address={addr}",
+                block = log.block_number,
+                tx = log.transaction_hash,
+                idx = log.log_index,
+                t0 = log.topics().first(),
+                addr = log.address(),
+            );
             return;
         };
         // Apply under the write guard, then RELEASE before notifying.
