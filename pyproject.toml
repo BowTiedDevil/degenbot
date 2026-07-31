@@ -194,6 +194,20 @@ allow-star-arg-any = true
 "src/degenbot/uniswap/deployments.py" = [
     "PLC0415",  # lazy import avoids circular dependency (deployment_loader → pool classes → this module)
 ]
+"examples/*" = [
+    "ANN401",   # the FFI/live-bot callables take `Any` (e.g. injected builders/consumers)
+    "ARG",      # example function signatures keep meaningful-but-unused slots (logging, fakes)
+    "BLE001",   # example sim loops catch broad Exception to log + continue per-path
+    "D",        # docstring strictness (D100/D103/D104/D105/D107/D205/D413) not enforced on demo scripts
+    "DOC",      # pydoclint Return:/Raises: sections not enforced on demo scripts
+    "FBT001",   # boolean flag args (dry_run / live toggles) are fine in a CLI example
+    "PLC0415",  # lazy imports avoid circular deps + resolve under script-mode sys.path
+    "PLC2701",  # the example intentionally imports the private `degenbot._ffi` seam
+    "PLR0917",  # internal example functions carry many positional args (dispatcher plumbing)
+    "PLR2004",  # example constants (revert layout, block/fee thresholds) read cleaner inline
+    "PLW0603",  # module-top tunables are reassigned from CLI args (intentional)
+    "PLW0717",  # the guarded sim-verify try-blocks contain many statements by design
+]
 
 [tool.pytest.ini_options]
 addopts = [

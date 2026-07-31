@@ -38,7 +38,7 @@ import sys
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Self, cast
 
 import dotenv
 from eth_backrun_helpers import (
@@ -50,6 +50,7 @@ from eth_backrun_helpers import (
 from eth_typing import ChainId, ChecksumAddress
 
 from degenbot import Bot, UniswapV2Pool, UniswapV3Pool, get_checksum_address
+from degenbot._ffi.diagnostics import mark_progress, start_gil_probe
 from degenbot.arbitrage.engine_registry import EngineRegistry
 from degenbot.arbitrage.verification_retry import (
     VerificationRetryPolicy,
@@ -82,7 +83,6 @@ from degenbot.exceptions import (
     VerificationRpcError,
 )
 from degenbot.logging import logger as bot_logger
-from degenbot._ffi.diagnostics import start_gil_probe, mark_progress
 from degenbot.pathfinding import find_paths_async
 from degenbot.provider import AlloyProvider, AsyncAlloyProvider
 from degenbot.uniswap.deployments import EthereumMainnetUniswapV4
@@ -407,7 +407,7 @@ def _load_executor_runtime_bytecode() -> str:
 def _hop_display_addr(hop: dict[str, Any]) -> str:
     """Return a short display address for logging (WEFVGE: plain-dict hop)."""
     family = hop["family"]
-    if family in ("V2", "V3"):
+    if family in {"V2", "V3"}:
         return hop["pool_address"]
     return hop["pool_id_hex"]
 
@@ -421,7 +421,7 @@ def _hop_token_summary(hops: list[dict[str, Any]] | tuple[dict[str, Any], ...]) 
     parts: list[str] = []
     for h in hops:
         family = h["family"]
-        if family in ("V2", "V3"):
+        if family in {"V2", "V3"}:
             t0, t1 = h["token0_address"], h["token1_address"]
         else:
             t0, t1 = h["currency0_address"], h["currency1_address"]
@@ -558,6 +558,7 @@ class BackrunSession:
         consumer: Any = None,
         install_sigint: bool = True,
     ) -> None:
+        """Store config + injectable test actors; the real actors are built in ``start()``."""
         self.cfg = cfg
         self._injected_bot = bot
         self._injected_engine_registry = engine_registry
@@ -613,6 +614,9 @@ class BackrunSession:
         # Note: main()'s start-phase base_fee_next/operator_nonce fetches were
         # dead state (recomputed per-batch inside consume_result_batches) — dropped.
         latest_block = await self.async_w3.get_block("latest")
+        if latest_block is None:
+            msg = "Failed to fetch the latest block at session start"
+            raise RuntimeError(msg)
         self.current_block = latest_block["number"]
 
         # ── Coordination state ──
@@ -718,8 +722,8 @@ class BackrunSession:
         # previously crashed entering the main loop (the consumer self-acquired
         # one, run() acquired another for recurring-verify). See
         # `_tee_block_stream` for the full rationale + regression.
-        _block_stream = self.engine_registry.engine.block_stream()
-        _consumer_branch, _verify_branch, _tee_driver = _tee_block_stream(_block_stream)
+        block_stream = self.engine_registry.engine.block_stream()
+        consumer_branch, verify_branch, tee_driver = _tee_block_stream(block_stream)
 
         # Attach the consumer BEFORE resume (consumer-safety invariant).
         self._result_consumer_task = asyncio.create_task(
@@ -732,7 +736,7 @@ class BackrunSession:
                 operator_private_key=cfg.operator_private_key,
                 dispatcher=self.dispatcher,
                 dry_run=cfg.dry_run,
-                block_stream=_consumer_branch,
+                block_stream=consumer_branch,
             ),
             name="result-consumer",
         )
@@ -757,9 +761,9 @@ class BackrunSession:
         # release the WAL snapshot so the updater's checkpoint can reclaim
         # `-wal` space for the hot loop. No-op for the cold-start path (no DB).
         # `getattr` so test fakes (`_FakeBot`) without a real `_py_bot` skip.
-        _py_bot = getattr(self.bot, "_py_bot", None)
-        if _py_bot is not None:
-            _py_bot.close_snapshot_tx()
+        py_bot = getattr(self.bot, "_py_bot", None)
+        if py_bot is not None:
+            py_bot.close_snapshot_tx()
 
         # 3b. STARTUP batch verify REMOVED — redundant with the per-pool two-step
         # verify and racy at the moving head. Step-1 (seed @ snapshot block) runs
@@ -801,7 +805,7 @@ class BackrunSession:
         recurring_verify = asyncio.ensure_future(
             run_recurring_verify_until_done(
                 registry=self.engine_registry,
-                block_ticker=(b["number"] async for b in _verify_branch),
+                block_ticker=(b["number"] async for b in verify_branch),
                 interval=RECURRING_VERIFY_INTERVAL,
                 retry_policy=cfg.verification_retry_policy,
             ),
@@ -810,11 +814,11 @@ class BackrunSession:
             await self._result_consumer_task
         finally:
             recurring_verify.cancel()
-            _tee_driver.cancel()
+            tee_driver.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await recurring_verify
             with contextlib.suppress(asyncio.CancelledError):
-                await _tee_driver
+                await tee_driver
 
     # ── Actor builders (production path — only used when not injected) ──
     @staticmethod
@@ -849,11 +853,11 @@ class BackrunSession:
             An ``AsyncAlloyProvider`` (alloy backend) for the dispatch path.
 
         """
-        alloy = await AsyncAlloyProvider.create(cfg.node_http)
-        return alloy
+        return await AsyncAlloyProvider.create(cfg.node_http)
 
     # ── Async context manager ────────────────────────────────────────
-    async def __aenter__(self) -> "BackrunSession":
+    async def __aenter__(self) -> Self:
+        """Start the pump, then hand the started session back to the ``async with`` block."""
         await self.start()
         return self
 
@@ -901,10 +905,8 @@ class BackrunSession:
             # Stop the pump first — fires even while the main thread is
             # blocked in find_paths (Rust DFS released the GIL). Wrapped
             # because the engine may have been torn down concurrently.
-            try:
+            with contextlib.suppress(Exception):
                 engine.stop()
-            except Exception:  # noqa: BLE001
-                pass
             # Re-raise KeyboardInterrupt so the awaiting coroutine unwinds
             # through __aexit__ → shutdown() (idempotent) + consumer cancel.
             raise KeyboardInterrupt
@@ -915,10 +917,8 @@ class BackrunSession:
     def _restore_sigint_handler(self) -> None:
         if not self._sigint_installed:
             return
-        try:
+        with contextlib.suppress(ValueError, TypeError):
             signal.signal(signal.SIGINT, cast("Any", self._previous_sigint_handler))
-        except (ValueError, TypeError):
-            pass
         self._sigint_installed = False
 
     async def __aexit__(self, *exc: object) -> None:
@@ -971,7 +971,7 @@ class BackrunSession:
             return
         try:
             engine.stop()
-        except Exception as exc:  # noqa: BLE001 — best-effort teardown
+        except Exception as exc:
             bot_logger.warning(f"[shutdown] engine.stop() failed: {exc!r}")
 
 
@@ -1034,7 +1034,7 @@ async def build_paths(
     Admission errors (``HookedPoolRejectedError`` / ``DynamicFeePoolRejectedError``
     / ``ValueError``) are not in the retry set and propagate immediately.
     """
-    _retry_policy = retry_policy or VerificationRetryPolicy()
+    retry_policy_obj = retry_policy or VerificationRetryPolicy()
     # V3 snapshot provides tick data for Python pool builds via trackers.
     # Event backfill is handled by the Rust engine.
     # Trackers use it for tick data at build time.
@@ -1076,7 +1076,8 @@ async def build_paths(
     pool_types = _pool_types_from_filter(PATH_PERMUTATION_FILTER)
     if pool_type_per_depth is not None:
         bot_logger.info(
-            f"[build_paths] Permutation filter active: {PATH_PERMUTATION_FILTER} → depths={pool_type_per_depth}",
+            "[build_paths] Permutation filter active: "
+            f"{PATH_PERMUTATION_FILTER} → depths={pool_type_per_depth}",
         )
     bot_logger.info(f"[build_paths] Pool types: {[t.__name__ for t in pool_types]}")
     async for path_steps in find_paths_async(  # noqa:PLR1702
@@ -1211,17 +1212,19 @@ async def build_paths(
         try:
             for pool, pt in zip(pools, pool_type_strs, strict=True):
                 if pt == "V2":
-                    retry_verification_call(_retry_policy, engine_registry.register_v2_pool, pool)
+                    retry_verification_call(
+                        retry_policy_obj, engine_registry.register_v2_pool, pool
+                    )
                 elif pt == "V3":
                     await retry_verification_call_async(
-                        _retry_policy,
+                        retry_policy_obj,
                         engine_registry.register_v3_pool,
                         pool,
                     )
                 elif pt == "V4":
                     v4_pool_count += 1
                     await retry_verification_call_async(
-                        _retry_policy,
+                        retry_policy_obj,
                         engine_registry.register_v4_pool,
                         pool,
                     )
@@ -1387,10 +1390,10 @@ def get_snapshots(
 
 async def _dispatch_profitable(
     *,
-    results: list[tuple[int, int, int, tuple[int, ...], tuple[int, ...], int]],
+    results: list[tuple[int, int, int, tuple[int, ...], tuple[int, ...], int, tuple[int, ...]]],
     engine_registry: EngineRegistry,
     async_w3: AsyncAlloyProvider,
-    sim_ctx: SimulateContext,
+    sim_ctx: SimulateContext | None,
     operator_private_key: str,
     operator_nonce: int,
     dispatcher: Dispatcher,
@@ -1435,6 +1438,12 @@ async def _dispatch_profitable(
 
     if not candidates:
         return
+
+    if sim_ctx is None:
+        # Only reachable with a non-Alloy provider / test fake that never
+        # built a SimulateContext — dispatch cannot proceed without one.
+        msg = "SimulateContext is required to dispatch (non-Alloy provider or sim context unbuilt)"
+        raise RuntimeError(msg)
 
     outcome = await dispatch_profitable(
         candidates=candidates,
@@ -1610,7 +1619,7 @@ def _dump_failure_fixture(
     )
     for i, h in enumerate(hops):
         family = h.get("family")
-        if family in ("V2", "V3"):
+        if family in {"V2", "V3"}:
             addr = h.get("pool_address")
             t0, t1 = h.get("token0_address", "?"), h.get("token1_address", "?")
             bot_logger.error(
@@ -1677,7 +1686,9 @@ def _render_sim_failures(outcome: DispatchOutcome, *, current_block: int) -> Non
         path_info = path_infos.get(path_id)
         path_type = path_info["path_type"] if path_info is not None else "?"
         hops = (
-            _hop_token_summary(path_info["hops"]) if path_info is not None else "(path_info missing)"
+            _hop_token_summary(path_info["hops"])
+            if path_info is not None
+            else "(path_info missing)"
         )
         # Ergo epic 63I7WJ — the inspector-captured deep attribution: the
         # reverting CONTRACT + call depth + selector + classify_revert label
@@ -1696,8 +1707,7 @@ def _render_sim_failures(outcome: DispatchOutcome, *, current_block: int) -> Non
         else:
             revert_line = f"fail_idx={fail_idx} revert={revert_hex}"
         bot_logger.info(
-            f"[sim-fail] path={path_id} type={path_type} bucket={bucket} "
-            f"{revert_line} hops={hops}",
+            f"[sim-fail] path={path_id} type={path_type} bucket={bucket} {revert_line} hops={hops}",
         )
         # Ergo epic 63I7WJ (task AM5AJW) — emit the structured [sim-diag] JSON
         # line the ``logs/permutation_analyzer.py`` classifier parses. Built
@@ -1739,17 +1749,15 @@ def _render_sim_failures(outcome: DispatchOutcome, *, current_block: int) -> Non
         # default `CurrencyNotSettled`; set empty to trap on everything).
         ignore = {
             b.strip()
-            for b in os.environ.get(
-                "DEGENBOT_SIM_EXIT_IGNORE_BUCKETS", "CurrencyNotSettled"
-            ).split(",")
+            for b in os.environ.get("DEGENBOT_SIM_EXIT_IGNORE_BUCKETS", "CurrencyNotSettled").split(
+                ","
+            )
             if b.strip()
         }
         trap_failures = [f for f in failures if f.get("bucket") not in ignore]
         if trap_failures:
             first = trap_failures[0]
-            _dump_failure_fixture(
-                first, path_infos.get(first["path_id"]), current_block
-            )
+            _dump_failure_fixture(first, path_infos.get(first["path_id"]), current_block)
             bot_logger.error(
                 f"[sim-trap] exiting on first sim failure at block={current_block} "
                 f"(DEGENBOT_SIM_EXIT_ON_FAIL=1) — see [sim-fixture] above",
@@ -1776,7 +1784,8 @@ def _render_pool_divergence(outcome: DispatchOutcome) -> None:
     `eth_backrun_helpers.aggregate_pool_divergence` so it's unit-testable.
     """
     for line in aggregate_pool_divergence(
-        outcome.failures, total_sims=outcome.candidate_count,
+        outcome.failures,
+        total_sims=outcome.candidate_count,
     ):
         bot_logger.info(line)
 
@@ -1795,15 +1804,13 @@ def _render_fot_tokens(dispatcher: Dispatcher, current_block: int) -> None:
     for token in fot_tokens:
         bot_logger.info(f"[fot] confirmed fee-on-transfer token: {token}")
     if fot_tokens:
-        bot_logger.info(
-            f"[fot] total dropped (lifetime): {dispatcher.total_fot_dropped}"
-        )
+        bot_logger.info(f"[fot] total dropped (lifetime): {dispatcher.total_fot_dropped}")
 
 
 async def consume_result_batches(
     engine_registry: EngineRegistry,
     async_w3: AsyncAlloyProvider,
-    sim_ctx: SimulateContext,
+    sim_ctx: SimulateContext | None,
     executor_address: str,
     operator_address: str,
     operator_private_key: str,
@@ -1947,7 +1954,7 @@ def _reprime(
     except StopAsyncIteration:
         bot_logger.info("[consumer] %s ended", label)
         return None
-    except BaseException:  # noqa: BLE001 — surfaced via fut.result() in caller
+    except BaseException:
         return None
     return asyncio.ensure_future(anext(stream))
 
@@ -2016,7 +2023,7 @@ async def _apply_result_if_ready(
     dispatcher: Dispatcher,
     engine_registry: EngineRegistry,
     async_w3: AsyncAlloyProvider,
-    sim_ctx: SimulateContext,
+    sim_ctx: SimulateContext | None,
     executor_address: str,
     operator_address: str,
     operator_private_key: str,
@@ -2139,6 +2146,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 
 async def main() -> None:
+    """Parse CLI args, build + run the backrun session, and await the pump loop."""
     parser = _build_arg_parser()
     args = parser.parse_args()
     dry_run = not args.live

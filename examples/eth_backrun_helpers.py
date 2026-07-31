@@ -1,11 +1,10 @@
-# ruff: noqa: DOC201,D100
-
 import dataclasses
 import json
 import sys
 import warnings
 from collections.abc import Mapping
 from pathlib import Path
+from typing import TypedDict
 
 from degenbot.arbitrage.verification_retry import VerificationRetryPolicy
 from degenbot.checksum_cache import get_checksum_address
@@ -95,7 +94,7 @@ def _verification_retry_policy_from_env(env: Mapping[str, str | None]) -> Verifi
 
 
 def _parse_int_env(raw: str | None, default: int, name_suffix: str) -> int:
-    if raw is None or raw == "":
+    if raw is None or not raw:
         return default
     try:
         return int(raw)
@@ -105,7 +104,7 @@ def _parse_int_env(raw: str | None, default: int, name_suffix: str) -> int:
 
 
 def _parse_float_env(raw: str | None, default: float, name_suffix: str) -> float:
-    if raw is None or raw == "":
+    if raw is None or not raw:
         return default
     try:
         return float(raw)
@@ -348,6 +347,12 @@ _EXECUTOR_REVERT_SELECTORS: dict[str, str] = {
 _ERROR_STRING_SELECTOR = "08c379a0"  # Error(string)
 _PANIC_SELECTOR = "4e487b71"  # Panic(uint256)
 
+# Hex-string layout constants for revert return-data (bytes are hex-encoded,
+# so one byte = two chars). Used by ``classify_revert`` below.
+_HEX_SELECTOR_LEN = 8  # 4-byte function selector
+_HEX_WORD_LEN = 64  # one 32-byte word
+_HEX_PANIC_ARG_END = _HEX_SELECTOR_LEN + _HEX_WORD_LEN  # after Panic's uint256 arg
+
 
 def classify_revert(revert_data: bytes) -> str:
     """Classify raw simulation revert return-data into a short stable label.
@@ -364,12 +369,16 @@ def classify_revert(revert_data: bytes) -> str:
     if not revert_data:
         return "empty"
     hexed = revert_data.hex()
-    if len(hexed) < 8:
+    if len(hexed) < _HEX_SELECTOR_LEN:
         return f"short:{hexed}"
-    selector = hexed[:8]
+    selector = hexed[:_HEX_SELECTOR_LEN]
     if selector == _PANIC_SELECTOR:
         # Panic(uint256 code) — code is the first 32-byte arg.
-        code = int(hexed[8:72], 16) if len(hexed) >= 72 else 0
+        code = (
+            int(hexed[_HEX_SELECTOR_LEN:_HEX_PANIC_ARG_END], 16)
+            if len(hexed) >= _HEX_PANIC_ARG_END
+            else 0
+        )
         return f"Panic(0x{code:x})"
     if selector == _ERROR_STRING_SELECTOR:
         # Error(string): [sel][offset:32][len:32][data:N]
@@ -387,7 +396,7 @@ def classify_revert(revert_data: bytes) -> str:
     if selector in _EXECUTOR_REVERT_SELECTORS:
         return _EXECUTOR_REVERT_SELECTORS[selector].split("(", 1)[0]
     # Bare 32-byte numeric revert (Vyper): 0x00..00<value>
-    if len(hexed) >= 64 and hexed[:24] == "0" * 24:
+    if len(hexed) >= _HEX_WORD_LEN and hexed[:24] == "0" * 24:
         return "numeric-revert"
     return f"unknown:0x{selector}"
 
@@ -419,7 +428,7 @@ def filter_thin_margin_results(
     """Drop solver results whose gross-profit margin is too low.
 
     S1 found that the dominant IIA reverts in V3/V4-heavy perms are razor-thin
-    arb (gross profit ≈ $0.001 on ≈ $0.06–$1.30 input = sub-0.2 bps margin)
+    arb (gross profit ≈ $0.001 on ≈ $0.06-$1.30 input = sub-0.2 bps margin)
     that cannot survive 1-block drift. The chain has already arbitraged these
     away by the time the sim runs. Filtering them pre-sim saves an RPC + a
     revert per attempt and keeps them out of the TSV ``Reverts`` column.
@@ -496,6 +505,17 @@ def format_sim_diag_line(
     return "[sim-diag] " + json.dumps(payload, default=str, separators=(",", ":"))
 
 
+class _PoolDivergenceAccumulator(TypedDict):
+    """Per-pool ``SolverCalc`` tally: failure count + the set of routing path ids.
+
+    Typed so ``aggregate_pool_divergence`` doesn't juggle a raw
+    ``int | set[int]`` union inside the dict values.
+    """
+
+    count: int
+    paths: set[int]
+
+
 def aggregate_pool_divergence(
     failures: list[dict[str, object]],
     *,
@@ -536,6 +556,7 @@ def aggregate_pool_divergence(
         One ``[pool-divergence] pool=0x… solvercalc=N paths=[..] total_sims=M``
         line per divergent pool, sorted by count desc then pool address.
         Empty list when there are no ``SolverCalc`` failures (no noise).
+
     """
     # Lazy import — classify_candidate lives in the logs analyzer, which is
     # example-adjacent + not a degenbot dep. Keeping the import local avoids
@@ -569,7 +590,7 @@ def aggregate_pool_divergence(
         return []
 
     # pool_address → {count of SolverCalc failures, set of path_ids}
-    per_pool: dict[str, dict[str, int | set[int]]] = {}
+    per_pool: dict[str, _PoolDivergenceAccumulator] = {}
     for failure in failures:
         # Build the same payload format_sim_diag_line emits (single source
         # of truth — if the emit shape drifts, this aggregator + the
@@ -583,6 +604,9 @@ def aggregate_pool_divergence(
         if classify_candidate(payload) != "SolverCalc":
             continue
         swaps = failure.get("captured_swaps") or []
+        if not isinstance(swaps, list):
+            # orchestration-only SolverCalc — no pool to attribute
+            continue
         if not swaps:  # orchestration-only SolverCalc — no pool to attribute
             continue
         path_id = failure.get("path_id")
@@ -593,19 +617,19 @@ def aggregate_pool_divergence(
             if not isinstance(emitter, str) or not emitter:
                 continue
             entry = per_pool.setdefault(emitter, {"count": 0, "paths": set()})
-            entry["count"] = entry["count"] + 1  # type: ignore[operator]
+            entry["count"] += 1
             if isinstance(path_id, int):
-                entry["paths"].add(path_id)  # type: ignore[union-attr]
+                entry["paths"].add(path_id)
     if not per_pool:
         return []
     # Sort: count desc, then pool address asc for stable output.
     ordered = sorted(
         per_pool.items(),
-        key=lambda kv: (-kv[1]["count"], kv[0]),  # type: ignore[index]
+        key=lambda kv: (-kv[1]["count"], kv[0]),
     )
     lines: list[str] = []
     for pool, entry in ordered:
-        paths_sorted = sorted(entry["paths"])  # type: ignore[arg-type]
+        paths_sorted = sorted(entry["paths"])
         lines.append(
             f"[pool-divergence] pool={pool} solvercalc={entry['count']} "
             f"paths={paths_sorted} total_sims={total_sims}"

@@ -175,7 +175,10 @@ async def _run(
         await runner.consume_result_batches(
             engine_registry=object(),  # type: ignore[arg-type] — not read (streams injected)
             async_w3=w3,  # type: ignore[arg-type]
-            sim_ctx=None,  # type: ignore[arg-type] — see comment above
+            # sim_ctx is typed `SimulateContext | None` since the A5 cutover; a
+            # test fake deliberately passes None (see comment above) — the real
+            # ``_dispatch_profitable`` never runs.
+            sim_ctx=None,
             executor_address="0x" + "0" * 40,
             operator_address="0x" + "0" * 40,
             # dry-run placeholder must be a valid secp256k1 scalar (the real

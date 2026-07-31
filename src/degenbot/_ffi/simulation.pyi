@@ -54,6 +54,7 @@ class PyDispatchCandidate:
         engine_profit: int,
         hop_outputs: list[int],
         solve_block: int,
+        state_nonces: list[int],
         *,
         erc6909_profit: bool = False,
         use_v4_batch: bool = False,
@@ -77,6 +78,10 @@ class PyDispatchOutcome:
     @property
     def thin_dropped(self) -> int: ...
     @property
+    def divergent_dropped(self) -> int: ...
+    @property
+    def fot_dropped(self) -> int: ...
+    @property
     def fail_buckets(self) -> dict[str, int]: ...
     @property
     def failures(self) -> list[dict[str, Any]]: ...
@@ -89,8 +94,11 @@ def dispatch_profitable_py(
     dispatcher: PyDispatcher,
     base_fee_next: int,
     current_block: int,
+    block_timestamp: int,
     min_profit_net: int,
     min_profit_margin_bps: int,
+    *,
+    engine: ArbitrageEngine | None = None,
 ) -> Coroutine[Any, Any, PyDispatchOutcome]: ...
 
 __all__ = [
