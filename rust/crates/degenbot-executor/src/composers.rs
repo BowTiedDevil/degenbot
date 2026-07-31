@@ -3260,18 +3260,22 @@ fn three_hop_v3_v4_v4(
         Some(executor_address),
         Some(pool_manager_address),
     );
-    at.add(pool_manager_address).ok()?;
+    let pm_idx = at.add(pool_manager_address).ok()?;
     let weth_idx = SENTINEL_WETH;
     let executor_idx = SENTINEL_SELF;
     let zero_idx = SENTINEL_NATIVE;
     let v3a_idx = at.add(ha.pool_address).ok()?;
 
-    at.add(if ha.zfo {
-        ha.token1_address
-    } else {
-        ha.token0_address
-    })
-    .ok()?;
+    // forward_a is the V3a output currency; routed into the PoolManager via
+    // the V3a swap (recipient = pm_idx) and settled by V4_SYNC/enc_v4_settle
+    // so the inner V4 swaps consume the actual delta.
+    let forward_a_idx = at
+        .add(if ha.zfo {
+            ha.token1_address
+        } else {
+            ha.token0_address
+        })
+        .ok()?;
 
     let fee_b = u16::try_from(hb.fee).ok()?;
     let ts_b = i16::try_from(hb.tick_spacing).ok()?;
@@ -3301,11 +3305,19 @@ fn three_hop_v3_v4_v4(
     v4_inner.extend_from_slice(&encoders::enc_v4_take_delta(weth_idx, executor_idx));
     v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
 
-    let mut a_fwd = encoders::enc_v4_unlock(&v4_inner).ok()?;
-    a_fwd.extend_from_slice(&encoders::enc_erc20_transfer(weth_idx, v3a_idx, optimal_input).ok()?);
+    let mut a_fwd = encoders::enc_erc20_transfer(weth_idx, v3a_idx, optimal_input).ok()?;
+    a_fwd.extend_from_slice(&encoders::enc_v4_unlock(&v4_inner).ok()?);
 
-    let commands =
-        encoders::enc_v3_swap_compact(v3a_idx, ha.zfo, optimal_input, executor_idx, &a_fwd).ok()?;
+    // V4_SYNC must precede the V3a swap: V3's optimistic output transfer
+    // delivers forward_a to the PoolManager before V3a's callback runs the
+    // V4 unlock, and V4_SYNC(forward_a) is what lets that deposit become a
+    // settlable PM delta. V3a routes forward_a to pm_idx (not the executor) so
+    // the unlock's V4_SETTLE sees it. Without this, _read_pm_delta(forward_a)
+    // is zero and V4_SWAP_DYNAMIC(B) reverts SwapAmountCannotBeZero (0xbe8b8507).
+    let mut commands = encoders::enc_v4_sync(forward_a_idx);
+    commands.extend_from_slice(
+        &encoders::enc_v3_swap_compact(v3a_idx, ha.zfo, optimal_input, pm_idx, &a_fwd).ok()?,
+    );
 
     let mut out = encoders::enc_preamble(&at);
     out.extend_from_slice(&commands);
