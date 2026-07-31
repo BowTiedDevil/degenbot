@@ -77,6 +77,18 @@ const DEBOUNCE_MS: u64 = 50;
 /// `handle_timeout_eager` catch-up the no-activity path uses.
 const HEADER_STALENESS_SECS: u64 = 30;
 
+/// Default window (seconds) for the logs-subscription liveness watchdog: if
+/// headers keep flowing (`newHeads` fresh) but the pump has received NO log
+/// from the `eth_subscribe "logs"` arm within this window, the logs
+/// subscription is presumed dead/stalled and a warning is emitted. This is
+/// the INVERSE of `header_staleness` (a dead `newHeads`): it catches a
+/// dead/stalled LOGS sub while the blocks sub is alive — the failure mode
+/// Alternative B's header-only handshake no longer catches at startup (the
+/// handshake never touches the data plane by design). Runs for the whole
+/// pump lifetime, not only at startup. Overridable in tests via
+/// `set_log_silence_for_test`.
+const LOG_SILENCE_SECS: u64 = 60;
+
 /// Default backfill chunk size (blocks per `eth_getLogs` request) for the
 /// snapshot→WS gap closed automatically inside `resume_from_subscribe`
 /// (J3FMDO). Mirrors the `pyo3` `backfill_from_snapshot` default (`chunk_size` = 2000):
@@ -138,6 +150,17 @@ pub struct BlockPump {
     /// `HEADER_STALENESS_SECS`). Overridable in tests via
     /// `set_header_staleness_for_test`.
     header_staleness: Duration,
+    /// If no log arrives within this window WHILE headers stay fresh, the
+    /// `eth_subscribe "logs"` subscription is presumed dead/stalled and the
+    /// logs-silence watchdog emits a `[pump] logs subscription silent`
+    /// warning (see `LOG_SILENCE_SECS`). Overridable in tests via
+    /// `set_log_silence_for_test`.
+    log_silence: Duration,
+    /// Count of logs-silence alarms fired since the pump started. Incremented
+    /// once per silence episode (re-armed when the next `WsEvent::Log` resumes
+    /// the sub) so the liveness watchdog is test-observable without depending
+    /// on log-capture infrastructure.
+    log_silence_alarms: u64,
 }
 
 /// State held between `subscribe()` and `resume()` calls.
@@ -205,13 +228,10 @@ impl BlockPump {
             provider: Arc::new(provider),
             shutdown,
             header_staleness: Duration::from_secs(HEADER_STALENESS_SECS),
+            log_silence: Duration::from_secs(LOG_SILENCE_SECS),
+            log_silence_alarms: 0,
         };
 
-        // Re-subscribe factory: production opens a FRESH subscribe (#2) on
-        // the same WS — the OLD drop+resubscribe behavior the GREEN handshake
-        // (MJXP5Z) replaces. Captured by a closure so `subscribe_with_stream`
-        // (test seam) can inject an empty-stream factory under a mock provider
-        // that can't do pubsub, exposing the block-W log drop structurally.
         // MJXP5Z (Alternative B): single-stream handshake - NO resubscribe.
         // `subscribe_with_stream` hands the SAME `combined` onward, re-injecting
         // any logs consumed during header-only polling. One WS, one handoff.
@@ -221,20 +241,17 @@ impl BlockPump {
     }
 
     /// Single-stream handshake seam (MJXP5Z / Alternative B): runs
+    /// Single-stream handshake seam (MJXP5Z / Alternative B): runs
     /// `observe_complete_block` against `combined` (polling headers ONLY until
     /// two consecutive headers confirm the boundary, collecting any logs the
     /// fused stream interleaves during the handshake and re-injecting them),
-    /// then hands the SAME `combined` onward — the OLD
-    /// drop+resubscribe behavior. With production's resubscribe, `combined`
-    /// (which may still hold queued W logs after the confirming one) is
-    /// DROPPED and a fresh live-only `eth_subscribe "logs"` (#2) replaces it —
-    /// W's remaining logs are not replayed → the block-W Mint/Burn drop. The
-    /// GREEN task (MJXP5Z) replaces this with a single-stream handshake (same
-    /// `combined` handed onward).
+    /// then hands the SAME `combined` onward. One WS connection, one handoff,
+    /// no resubscribe — making a structurally lost log impossible (the
+    /// handshake never touches the data plane).
     ///
-    /// `resubscribe` is a factory so a test can inject an empty-stream producer
-    /// (`MockTransport` cannot do pubsub) and assert the drop: the returned
-    /// `combined_stream` carries NONE of `combined`'s queued W logs.
+    /// The logs consumed during header polling are re-injected via
+    /// `stream::iter(pending).chain(combined)` so `run_with_stream` receives
+    /// every log the node pushed during the handshake window.
     pub(crate) async fn subscribe_with_stream(
         &mut self,
         mut combined: stream::BoxStream<'static, WsEvent>,
@@ -519,6 +536,15 @@ impl BlockPump {
         let mut diag_header_count: u64 = 0;
         let mut diag_log_count: u64 = 0;
         let mut last_header_at = tokio::time::Instant::now();
+        // Logs-subscription liveness watchdog (the INVERSE of
+        // `header_staleness`): anchored at pump start and refreshed on EVERY
+        // `WsEvent::Log` (before the topic pre-filter, so an irrelevant log
+        // still proves the `eth_subscribe "logs"` arm is alive). When the
+        // staleness tick wins and headers are FRESH but this has elapsed past
+        // `self.log_silence`, the logs sub is presumed stalled → one warning
+        // per silence episode (re-armed when the next log resumes).
+        let mut last_log_at = tokio::time::Instant::now();
+        let mut log_silence_alarm_armed = false;
         let mut diag_last_stats = tokio::time::Instant::now();
 
         // JIABO3 Option A — header-staleness watchdog. A `tokio::time::interval`
@@ -599,6 +625,22 @@ impl BlockPump {
                             &mut publish_pending,
                         )
                         .await;
+                    } else if last_log_at.elapsed() >= self.log_silence {
+                        // Logs-subscription liveness watchdog (inverse of
+                        // header staleness): headers are FRESH (above branch did
+                        // not fire) but no `WsEvent::Log` has arrived in
+                        // `self.log_silence` — the `eth_subscribe "logs"` arm
+                        // is presumed stalled/dead while `newHeads` is alive.
+                        // One warning per silence episode (re-armed when the
+                        // next log resumes the sub).
+                        if !log_silence_alarm_armed {
+                            log::warn!(
+                                "[pump] logs subscription silent: headers flowing but no log in {}s",
+                                self.log_silence.as_secs()
+                            );
+                            self.log_silence_alarms = self.log_silence_alarms.saturating_add(1);
+                            log_silence_alarm_armed = true;
+                        }
                     }
                     continue;
                 }
@@ -750,6 +792,13 @@ impl BlockPump {
                 // Solve happens at the top of the next iteration. Batch send
                 // is debounced — the timer starts/resets on each log.
                 Ok(Some(WsEvent::Log(log))) => {
+                    // Logs-subscription liveness: ANY log (even one the topic
+                    // pre-filter drops below) proves the `eth_subscribe
+                    // "logs"` arm is delivering. Refresh before the pre-filter
+                    // and re-arm the silence alarm so a single warning fires
+                    // per silence episode (not per tick).
+                    last_log_at = tokio::time::Instant::now();
+                    log_silence_alarm_armed = false;
                     // Fast-path topic pre-filter: the `logs` WS subscription
                     // is unfiltered (no topic/address filter on the server —
                     // see `stream_select`), so the overwhelming majority of
@@ -1191,6 +1240,8 @@ impl BlockPump {
             provider,
             shutdown,
             header_staleness: Duration::from_secs(HEADER_STALENESS_SECS),
+            log_silence: Duration::from_secs(LOG_SILENCE_SECS),
+            log_silence_alarms: 0,
         }
     }
 
@@ -1218,6 +1269,24 @@ impl BlockPump {
     /// is observable without a 30s wait.
     pub fn set_header_staleness_for_test(&mut self, staleness: Duration) {
         self.header_staleness = staleness;
+    }
+
+    /// Test-only override of the logs-subscription liveness window
+    /// (the INVERSE watchdog: headers fresh but no log for N seconds).
+    /// Lets tests drive the alarm threshold to a sub-second value instead of
+    /// the 60s production default. Pair with `set_header_staleness_for_test`
+    /// so the staleness tick elapses often AND the silence threshold is short.
+    pub fn set_log_silence_for_test(&mut self, silence: Duration) {
+        self.log_silence = silence;
+    }
+
+    /// Count of logs-silence alarms fired since the pump started (test
+    /// observable for the logs-subscription liveness watchdog — incremented
+    /// once per silence episode, re-armed when the next `WsEvent::Log`
+    /// resumes the sub).
+    #[must_use]
+    pub fn log_silence_alarm_count(&self) -> u64 {
+        self.log_silence_alarms
     }
 }
 
@@ -1549,6 +1618,92 @@ mod tests {
             asserter.read_q().len(),
             2,
             "watchdog must not have polled the provider while headers were fresh"
+        );
+    }
+
+    /// Logs-subscription liveness watchdog (inverse of header staleness):
+    /// headers keep flowing but the `eth_subscribe "logs"` arm delivers
+    /// NOTHING for `log_silence` → one warning per silence episode. Proves the
+    /// detector fires under the failure mode Alternative B's header-only
+    /// handshake no longer catches at startup.
+    #[tokio::test]
+    async fn logs_silence_watchdog_fires_when_headers_flow_but_no_logs() {
+        let (mut pump, _sink, _asserter, _shutdown) = pump_for_test_sink_and_asserter(Some(100));
+        // Tick every 100ms so the silence check runs often; headers fresh
+        // every 40ms (well within the 100ms window); silence threshold 150ms.
+        pump.set_header_staleness_for_test(Duration::from_millis(100));
+        pump.set_log_silence_for_test(Duration::from_millis(150));
+
+        // Headers 101..110 every 40ms (kept fresh), NO logs at all, then end.
+        // At ~150ms `last_log_at` (anchored at start) crosses the threshold;
+        // the next staleness tick (headers fresh) fires the alarm.
+        let combined = stream::unfold(101u64, |block| async move {
+            if block > 110 {
+                return None;
+            }
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            Some((
+                WsEvent::BlockHeader {
+                    number: block,
+                    timestamp: block,
+                    base_fee_per_gas: None,
+                    gas_used: 0,
+                    gas_limit: 0,
+                },
+                block + 1,
+            ))
+        })
+        .boxed();
+
+        pump.run_test_loop(combined, 100).await;
+
+        assert!(
+            pump.log_silence_alarm_count() >= 1,
+            "logs-silence alarm MUST fire when headers flow but no log arrives \
+             within log_silence (got {})",
+            pump.log_silence_alarm_count()
+        );
+    }
+
+    /// Guard: the logs-silence alarm does NOT fire while logs are flowing
+    /// (each `WsEvent::Log` refreshes `last_log_at` and re-arms the alarm).
+    /// Locks the refresh path so a regression that drops it (and alarms on
+    /// every tick despite live logs) fails here.
+    #[tokio::test]
+    async fn logs_silence_watchdog_does_not_fire_when_logs_flowing() {
+        let (mut pump, _sink, _asserter, _shutdown) = pump_for_test_sink_and_asserter(Some(100));
+        pump.set_header_staleness_for_test(Duration::from_millis(100));
+        pump.set_log_silence_for_test(Duration::from_millis(150));
+
+        let pool = Address::from([0x11u8; 20]);
+        // Header + one V2 Sync log every 40ms (both subs alive):
+        // `last_log_at` never reaches 150ms. Header+log pairs for blocks 101..110, then end.
+        let combined = stream::unfold((101u64, 0u8, pool), |(block, toggle, pool)| async move {
+            if block > 110 {
+                return None;
+            }
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            let event = if toggle == 0 {
+                WsEvent::BlockHeader {
+                    number: block,
+                    timestamp: block,
+                    base_fee_per_gas: None,
+                    gas_used: 0,
+                    gas_limit: 0,
+                }
+            } else {
+                WsEvent::Log(make_v2_sync_log(pool, U256::ZERO, U256::ZERO, block, false))
+            };
+            Some((event, (block + u64::from(toggle), toggle ^ 1, pool)))
+        })
+        .boxed();
+
+        pump.run_test_loop(combined, 100).await;
+
+        assert_eq!(
+            pump.log_silence_alarm_count(),
+            0,
+            "logs-silence alarm must NOT fire while logs are flowing"
         );
     }
 
