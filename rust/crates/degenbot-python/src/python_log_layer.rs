@@ -381,8 +381,38 @@ pub fn init_logging_subscriber() {
         // `RUST_LOG` if set, otherwise default to `info` (matching pyo3-log's
         // unconditional forwarding — Python `logging` handles its own
         // per-logger level filtering).
-        let env_filter =
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+        let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            // Default `info` globally, EXCEPT the alloy-internal transport/
+            // network crates are throttled to `warn`. alloy emits routine
+            // lifecycle INFO from its internal pubsub/transport services (e.g.
+            // ``INFO alloy_pubsub::service: Pubsub service request channel
+            // closed. Shutting down.`` on a clean provider teardown) which is
+            // third-party noise on the Python-driven log / stderr stream, not
+            // a degenbot-originated diagnostic. Their WARN/ERROR records still
+            // pass (those signal real connection failures); an explicit
+            // `RUST_LOG` overrides this default entirely.
+            let mut filter = EnvFilter::new("info");
+            for target in [
+                "alloy_pubsub",
+                "alloy_transport",
+                "alloy_transport_ws",
+                "alloy_transport_ipc",
+                "alloy_transport_http",
+                "alloy_provider",
+                "alloy_rpc",
+                "alloy_network",
+                "alloy_contract",
+                "tungstenite",
+            ] {
+                // Directives are static and always valid; parse defensively
+                // (an unrecognized directive would just leave the target
+                // unfiltered rather than abort subscriber setup).
+                if let Ok(directive) = format!("{target}=warn").parse() {
+                    filter = filter.add_directive(directive);
+                }
+            }
+            filter
+        });
         let subscriber = tracing_subscriber::registry()
             .with(env_filter)
             .with(
