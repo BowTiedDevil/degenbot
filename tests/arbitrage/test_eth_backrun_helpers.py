@@ -7,12 +7,9 @@ regression coverage for the **stays-Python** helpers: ``format_sim_diag_line``
 (display-only) and ``filter_thin_margin_results`` (display-only thinning over
 the now-Rust ``classify_revert`` label).
 
-Also pins the emit→classify seam (ergo epic 63I7WJ task AM5AJW step 1
-validation): a failure record rendered by ``format_sim_diag_line`` must,
-when parsed back, drive ``logs.permutation_analyzer.classify_candidate`` to
-the correct verdict. Catches field-name drift between the emit shape
-(``revert_info``/``hop_outputs``/``captured_swaps``) and the classify shape
-that isolation tests on each half would miss.
+The ``classify_candidate`` round-trip tests were removed along with the
+``logs.permutation_analyzer`` module (Rust tracing replaced Python-side
+classifier infra).
 """
 
 import json
@@ -21,12 +18,6 @@ from examples.eth_backrun_helpers import (
     filter_thin_margin_results,
     format_sim_diag_line,
 )
-from logs.permutation_analyzer import classify_candidate
-
-# ---------------------------------------------------------------------------
-# [sim-diag] structured per-revert emission (ergo epic 63I7WJ task AM5AJW)
-# ---------------------------------------------------------------------------
-
 
 def _failure(**overrides: object) -> dict[str, object]:
     """A minimal failure-record dict (the shape outcome.failures() emits)."""
@@ -123,63 +114,6 @@ def test_format_sim_diag_line_omits_retired_recompute_fields() -> None:
     assert "recompute" not in payload
     assert "engine_processed_block" not in payload
     assert "onchain_block" not in payload
-
-
-def _classify_rendered(failure: dict[str, object], **kwargs: object) -> str:
-    """Render a failure → parse the [sim-diag] line → classify it.
-
-    The emit→classify round-trip: proves ``format_sim_diag_line``'s output is
-    parseable by ``classify_candidate`` AND that the captured-swap-vs-
-    hop_outputs comparison survives the FFI dict shape (the ``bucket``→
-    ``revert_info`` rename, the amount direction, the family field).
-    """
-    line = format_sim_diag_line(failure, path_id=1, path_type="V2", solve_block=1, block=1, age=0, **kwargs)
-    payload = json.loads(line[len("[sim-diag] ") :])
-    return classify_candidate(payload)
-
-
-def test_sim_diag_round_trip_solvercalc_when_captured_amount_differs() -> None:
-    """Emit a V2 failure whose captured swap's output (3000) differs from
-    hop_outputs[0] (2900) → the rendered [sim-diag] line, when classified,
-    yields SolverCalc. Proves the emit→classify seam carries the
-    captured-amount-vs-hop_output comparison intact."""
-    assert _classify_rendered(_failure(hop_outputs=[2900])) == "SolverCalc"
-
-
-def test_sim_diag_round_trip_encoding_when_captured_amount_matches() -> None:
-    """Emit a V2 failure whose captured swap's output (3000) matches
-    hop_outputs[0] (3000) → the rendered line classifies as Encoding
-    (amounts right, sim reverted)."""
-    assert _classify_rendered(_failure(hop_outputs=[3000])) == "Encoding"
-
-
-def test_sim_diag_round_trip_v4_solvercalc_after_repoint() -> None:
-    """A V4 captured swap (output 3000) vs hop_outputs[0] (2900) → SolverCalc.
-    V4 was re-pointed off the retired 5RI47E gate (ergo task JIXPNZ, commit
-    7a129a3d); this pins the emit→classify seam carries the V4 family through
-    intact, not silently Unknown."""
-    v4_failure = _failure(
-        captured_swaps=[
-            {
-                "family": "v4",
-                "emitter": "0x" + "bb" * 20,
-                "amount0": -1000,
-                "amount1": 3000,
-                "sqrt_price_x96": 0,
-                "liquidity": 0,
-                "tick": 0,
-            }
-        ],
-        hop_outputs=[2900],
-    )
-    assert _classify_rendered(v4_failure) == "SolverCalc"
-
-
-def test_sim_diag_round_trip_unknown_when_rendered_revert_info_empty() -> None:
-    """An empty bucket renders with ``revert_info``="" → Unknown (a bare
-    revert), never raising. Pins the ``bucket``→``revert_info`` rename the
-    classifier keys on."""
-    assert _classify_rendered(_failure(bucket="")) == "Unknown"
 
 
 # ── T3: thin-margin profit filter (GTOD23-IKJRGO) ───────────────────────────

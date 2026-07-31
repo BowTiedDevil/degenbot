@@ -43,7 +43,6 @@ from typing import Any, Self, cast
 import dotenv
 from eth_backrun_helpers import (
     BackrunConfig,
-    aggregate_pool_divergence,
     format_failure_breakdown,
     format_sim_diag_line,
 )
@@ -1473,7 +1472,6 @@ async def _dispatch_profitable(
     )
     _render_sim_summary(outcome)
     _render_sim_failures(outcome, current_block=current_block)
-    _render_pool_divergence(outcome)
     _render_fot_tokens(dispatcher, current_block)
     _render_profit_logs(outcome)
 
@@ -1785,24 +1783,6 @@ def _render_sim_failures(outcome: DispatchOutcome, *, current_block: int) -> Non
     overflow = len(failures) - cap
     if overflow > 0:
         bot_logger.info(f"[sim-fail] … (+{overflow} more)")
-
-
-def _render_pool_divergence(outcome: DispatchOutcome) -> None:
-    """Render one ``[pool-divergence]`` line per pool that flagged ``SolverCalc``.
-
-    Ergo epic GAXXNJ (task BEGMB5): aggregates the per-candidate SolverCalc
-    signal across the dispatch batch into a per-pool view — a pool whose
-    state the solver read wrong will flag across every path routing through
-    it in the same block, so aggregating surfaces "this pool is the problem"
-    instead of per-path failures. Pure rendering over `outcome.failures`
-    (no FFI/engine change); the aggregation lives in
-    `eth_backrun_helpers.aggregate_pool_divergence` so it's unit-testable.
-    """
-    for line in aggregate_pool_divergence(
-        outcome.failures,
-        total_sims=outcome.candidate_count,
-    ):
-        bot_logger.info(line)
 
 
 def _render_fot_tokens(dispatcher: Dispatcher, current_block: int) -> None:

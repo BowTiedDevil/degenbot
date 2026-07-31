@@ -1411,63 +1411,58 @@ fn parity_v3_v4_v4() {
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    // V3a→V4b→V4c, all inside one V4_UNLOCK. Inner = settle + swap_compact(B) +
-    // swap_compact(C) + take_compact(WETH→executor). V3a callback wraps V4_UNLOCK + WETH repay.
+    // V3a→V4b→V4c, all inside one V4_UNLOCK, driven by dynamic/delta settlement
+    // (W2UWZO/CurrencyNotSettled fix) + the V3a-forward-through-PM routing
+    // (0xbe8b8507 SwapAmountCannotBeZero fix): V4_SYNC(forward_a) precedes the
+    // V3a swap so the generous V3 optimistic output transfer that delivers
+    // forward_a to the PoolManager becomes a settlable PM delta; the V3a
+    // callback wraps WETH repay + the V4_UNLOCK and routes forward_a to pm_idx
+    // (not the executor) so the unlock's V4_SETTLE sees the positive delta.
     let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
-    let _ = at.add(PM); // SENTINEL_PM (discarded by the composer)
+    let pm_idx = at.add(PM).unwrap(); // SENTINEL_PM
     let executor_idx = SENTINEL_SELF;
     let v3a_idx = at
         .add(address!("4444444444444444444444444444444444444444"))
         .unwrap();
-    let _ = at.add(USDC); // V3a output currency (zfo→token1) — idx discarded
+    let forward_a_idx = at.add(USDC).unwrap(); // V3a output currency (zfo→token1)
     let c0_b_idx = at.add(USDC).unwrap();
     let c1_b_idx = at.add(WETH).unwrap();
     let c0_c_idx = at.add(WETH).unwrap();
     let c1_c_idx = at.add(USDC).unwrap();
-    let mut v4_inner = encoders::enc_v4_swap_compact(
+    let mut v4_inner = encoders::enc_v4_settle();
+    v4_inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
         c0_b_idx,
         c1_b_idx,
         500,
         10,
         SENTINEL_NATIVE,
         true,
-        2_000_000_000u128,
-    )
-    .unwrap();
-    v4_inner.extend_from_slice(
-        &encoders::enc_v4_swap_compact(
-            c0_c_idx,
-            c1_c_idx,
-            3000,
-            60,
-            SENTINEL_NATIVE,
+    ));
+    v4_inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
+        c0_c_idx,
+        c1_c_idx,
+        3000,
+        60,
+        SENTINEL_NATIVE,
+        true,
+    ));
+    v4_inner.extend_from_slice(&encoders::enc_v4_take_delta(SENTINEL_WETH, executor_idx));
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
+    let mut a_fwd =
+        encoders::enc_erc20_transfer(SENTINEL_WETH, v3a_idx, 1_000_000_000_000_000_000u128)
+            .unwrap();
+    a_fwd.extend_from_slice(&encoders::enc_v4_unlock(&v4_inner).unwrap());
+    let mut commands = encoders::enc_v4_sync(forward_a_idx);
+    commands.extend_from_slice(
+        &encoders::enc_v3_swap_compact(
+            v3a_idx,
             true,
-            2_001_000_000_000_000_000u128,
+            1_000_000_000_000_000_000u128,
+            pm_idx,
+            &a_fwd,
         )
         .unwrap(),
     );
-    v4_inner.extend_from_slice(
-        &encoders::enc_v4_take_compact(SENTINEL_WETH, executor_idx, 2_001_000_000u128).unwrap(),
-    );
-    // Prepend V4_SETTLE (V3a sent forward_a to executor; PM delta from prior sync+transfer).
-    let v4_inner = {
-        let mut combined = encoders::enc_v4_settle();
-        combined.extend_from_slice(&v4_inner);
-        combined
-    };
-    let mut a_fwd = encoders::enc_v4_unlock(&v4_inner).unwrap();
-    a_fwd.extend_from_slice(
-        &encoders::enc_erc20_transfer(SENTINEL_WETH, v3a_idx, 1_000_000_000_000_000_000u128)
-            .unwrap(),
-    );
-    let commands = encoders::enc_v3_swap_compact(
-        v3a_idx,
-        true,
-        1_000_000_000_000_000_000u128,
-        executor_idx,
-        &a_fwd,
-    )
-    .unwrap();
     let mut expected = encoders::enc_preamble(&at);
     expected.extend_from_slice(&commands);
     assert_eq!(rust, Some(expected));
