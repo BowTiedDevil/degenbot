@@ -16,7 +16,11 @@ export DEGENBOT_SIM_LOG_REVERTED_SWAPS=1
 export DEGENBOT_DEBUG_V4_SOLVE=1
 # Exit on the first sim failure so the failing block's context is intact
 # in the log (no continued-progress noise overwriting it).
-export DEGENBOT_SIM_EXIT_ON_FAIL=1
+# DISABLED for the +1 / V4 ~0.01% residual characterization (post-E7ALWT):
+# the bot must keep running so we can gather frequency + a reproducible
+# fixture across blocks, rather than dying on first occurrence. Re-enable
+# once the FSM (3M5PO5) lands and the residuals are diagnosed.
+export DEGENBOT_SIM_EXIT_ON_FAIL=0
 # Process substitution: stdout -> tee (writes log, discards its own stdout);
 # stderr merged into that same stream so tracebacks land in the log too.
 exec uv run python examples/eth_backrun_v2_v3_v4_rust.py > >(tee -a "$LOG" > /dev/null) 2>&1
