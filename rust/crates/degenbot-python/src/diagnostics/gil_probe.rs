@@ -51,6 +51,15 @@ use pyo3::prelude::*;
 /// until the first `mark_progress()` call.
 static LAST_PROGRESS_MS: AtomicU64 = AtomicU64::new(0);
 
+/// Wall-clock ms of the probe thread's LAST successful `Python::attach`
+/// acquire (updated after every sample). A true permanent GIL deadlock
+/// blocks the probe thread itself on `PyGILState_Ensure`, so this timestamp
+/// stops advancing — distinguishing a real deadlock (probe blocked) from
+/// the main loop merely being busy in `build_paths` (probe still sampling,
+/// `LAST_PROGRESS_MS` alone goes stale because the consumer has no work
+/// yet). Read by the watchdog; 0 until the first sample completes.
+static LAST_PROBE_SAMPLE_MS: AtomicU64 = AtomicU64::new(0);
+
 /// `true` once the probe threads are running (idempotent start guard).
 static PROBE_RUNNING: AtomicBool = AtomicBool::new(false);
 
@@ -118,6 +127,12 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
                 let now = now_ms();
                 let gap = now.saturating_sub(last_sample_ms);
                 last_sample_ms = now;
+                // Publish the probe's own last-acquire timestamp so the
+                // watchdog can distinguish a real GIL deadlock (this thread
+                // blocks on ``PyGILState_Ensure`` -> this store never runs ->
+                // ``LAST_PROBE_SAMPLE_MS`` goes stale) from the main loop
+                // merely being busy (probe still sampling).
+                LAST_PROBE_SAMPLE_MS.store(now, Ordering::Relaxed);
                 if elapsed >= threshold {
                     log::warn!(
                         "[gil-probe] GIL held: acquire took {elapsed:?} (gap since last sample {gap}ms) — \
@@ -139,24 +154,43 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
 
     // ── Watchdog thread: detect main-loop stuck (no `mark_progress()`). ──
     // Never acquires the GIL — runs even during a permanent GIL deadlock.
+    //
+    // Two signals, one verdict:
+    //  - `LAST_PROGRESS_MS`        = Python consumer-loop heartbeat
+    //    (`mark_progress()` per batch). Goes stale while the consumer has no
+    //    work — a NORMAL rolling-start window (`build_paths` registers no
+    //    paths yet, so no batches flow). Alone it is NOT a deadlock signal.
+    //  - `LAST_PROBE_SAMPLE_MS`    = the probe thread's own last successful
+    //    `Python::attach`. A permanent GIL deadlock blocks the probe thread too,
+    //    so this stops advancing. THIS is the true deadlock signal.
+    // The watchdog alarms `*** GIL DEADLOCK` only when BOTH are stale (the
+    // probe itself stopped sampling) — a busy-but-alive main loop (probe still
+    // sampling) emits a softer `main loop idle` note instead, so a normal
+    // rolling start no longer false-alarms as a permanent deadlock.
     thread::Builder::new()
         .name("gil-probe-watchdog".to_string())
         .spawn(move || {
             log::info!(
                 "[gil-probe] stuck-watchdog armed (stuck threshold {stuck:?})"
             );
+            let stuck_ms = u64::try_from(stuck.as_millis()).unwrap_or(u64::MAX);
             loop {
                 thread::sleep(Duration::from_secs(5));
-                let last = LAST_PROGRESS_MS.load(Ordering::Relaxed);
+                let progress = LAST_PROGRESS_MS.load(Ordering::Relaxed);
+                let sample = LAST_PROBE_SAMPLE_MS.load(Ordering::Relaxed);
                 let now = now_ms();
-                if last == 0 {
-                    continue;
-                }
-                let since = now.saturating_sub(last);
-                if since >= u64::try_from(stuck.as_millis()).unwrap_or(u64::MAX) {
-                    log::error!(
-                        "[gil-probe] *** MAIN LOOP STUCK: no mark_progress() for {since}ms (threshold {stuck:?}) — permanent GIL deadlock suspected"
-                    );
+                match watchdog_verdict(progress, sample, now, stuck_ms) {
+                    WatchdogVerdict::NotArmed | WatchdogVerdict::Healthy => {}
+                    WatchdogVerdict::Busy { since_progress, since_sample } => log::info!(
+                        "[gil-probe] main loop idle: no mark_progress() for {since_progress}ms \
+                         but probe still sampling (attach gap {since_sample}ms) — busy in build_paths / \
+                         awaiting first consumer batch, not a GIL deadlock"
+                    ),
+                    WatchdogVerdict::Deadlocked { since_progress, since_sample } => log::error!(
+                        "[gil-probe] *** GIL DEADLOCK: no mark_progress() for {since_progress}ms \
+                         AND probe's own attach blocked for {since_sample}ms (threshold {stuck:?}) — \
+                         a thread holds the GIL without yielding (permanent deadlock confirmed)"
+                    ),
                 }
             }
         })
@@ -167,6 +201,68 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
         })?;
 
     Ok(())
+}
+
+/// Pure watchdog verdict — the dual-signal deadlock logic, factored out of
+/// the spawned watchdog thread so it is unit-testable without GIL/threading.
+///
+/// Inputs are wall-clock-ms timestamps (0 = not yet set):
+/// - `progress_ms` = `LAST_PROGRESS_MS` (Python consumer heartbeat)
+/// - `sample_ms`   = `LAST_PROBE_SAMPLE_MS` (probe thread's own last acquire)
+/// - `now_ms`      = current wall-clock ms
+/// - `stuck_ms`    = the threshold
+///
+/// The verdict: a permanent GIL deadlock blocks the probe thread itself on
+/// `PyGILState_Ensure`, so `sample_ms` stops advancing. Thus BOTH signals
+/// must be stale for a true deadlock; a stale `progress_ms` alone (probe still
+/// sampling) is just the main loop being busy (e.g. `build_paths` registering
+/// no paths yet -> consumer has no batches -> heartbeat naturally idle).
+#[must_use]
+fn watchdog_verdict(
+    progress_ms: u64,
+    sample_ms: u64,
+    now_ms: u64,
+    stuck_ms: u64,
+) -> WatchdogVerdict {
+    if progress_ms == 0 || sample_ms == 0 {
+        return WatchdogVerdict::NotArmed;
+    }
+    let since_progress = now_ms.saturating_sub(progress_ms);
+    let since_sample = now_ms.saturating_sub(sample_ms);
+    if since_progress >= stuck_ms && since_sample >= stuck_ms {
+        WatchdogVerdict::Deadlocked {
+            since_progress,
+            since_sample,
+        }
+    } else if since_progress >= stuck_ms {
+        WatchdogVerdict::Busy {
+            since_progress,
+            since_sample,
+        }
+    } else {
+        WatchdogVerdict::Healthy
+    }
+}
+
+/// The watchdog's verdict on a single tick. See [`watchdog_verdict`].
+enum WatchdogVerdict {
+    /// Probe hasn't completed its first sample yet (or `mark_progress` never
+    /// called) — wait for more data before alarming.
+    NotArmed,
+    /// Both signals fresh — no alarm.
+    Healthy,
+    /// Heartbeat stale but probe still sampling — main loop busy, NOT a
+    /// deadlock.
+    Busy {
+        since_progress: u64,
+        since_sample: u64,
+    },
+    /// Both signals stale — probe thread blocked on `PyGILState_Ensure` ->
+    /// a thread holds the GIL without yielding -> permanent deadlock.
+    Deadlocked {
+        since_progress: u64,
+        since_sample: u64,
+    },
 }
 
 /// Register the diagnostics pyfunctions on the module.
@@ -189,4 +285,76 @@ pub fn add_diagnostics_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
 #[allow(dead_code)]
 fn _unused_imports_keep_arc() -> Arc<()> {
     Arc::new(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A normal rolling-start window: `mark_progress()` is stale (consumer
+    /// has no batches yet during `build_paths`) BUT the probe thread is still
+    /// sampling (GIL released). Must NOT alarm as a deadlock.
+    #[test]
+    fn busy_main_loop_with_fresh_probe_is_not_a_deadlock() {
+        // 5-min rolling start; probe sampled 1s ago (fresh).
+        let now = 5_000_000;
+        let progress = 4_500_000; // 500s stale — alone looks stuck
+        let sample = 4_999_000; // 1s ago — fresh (GIL released)
+        let stuck = 30_000;
+        assert!(
+            matches!(
+                watchdog_verdict(progress, sample, now, stuck),
+                WatchdogVerdict::Busy { .. }
+            ),
+            "fresh probe sample must downgrade a stale heartbeat to Busy, not Deadlocked"
+        );
+    }
+
+    /// A genuine permanent GIL deadlock: the probe thread itself blocks on
+    /// `PyGILState_Ensure`, so BOTH `mark_progress` AND the probe's own sample
+    /// stop advancing. Must alarm as Deadlocked.
+    #[test]
+    fn both_signals_stale_is_a_deadlock() {
+        let now = 5_000_000;
+        let progress = 4_000_000; // 1000s stale
+        let sample = 4_000_000; // 1000s stale — probe blocked
+        let stuck = 30_000;
+        assert!(
+            matches!(
+                watchdog_verdict(progress, sample, now, stuck),
+                WatchdogVerdict::Deadlocked { .. }
+            ),
+            "both signals stale must alarm as a permanent GIL deadlock"
+        );
+    }
+
+    /// Before the first `mark_progress()` OR the probe's first sample, the
+    /// watchdog must NOT alarm (insufficient data).
+    #[test]
+    fn not_armed_until_both_signals_seen() {
+        let now = 1_000_000;
+        let stuck = 30_000;
+        assert!(matches!(
+            watchdog_verdict(0, 1_000_000, now, stuck),
+            WatchdogVerdict::NotArmed
+        ));
+        assert!(matches!(
+            watchdog_verdict(1_000_000, 0, now, stuck),
+            WatchdogVerdict::NotArmed
+        ));
+        assert!(matches!(
+            watchdog_verdict(0, 0, now, stuck),
+            WatchdogVerdict::NotArmed
+        ));
+    }
+
+    /// Both signals fresh — Healthy (no alarm at all).
+    #[test]
+    fn both_fresh_is_healthy() {
+        let now = 1_000_000;
+        assert!(matches!(
+            watchdog_verdict(999_999, 999_990, now, 30_000),
+            WatchdogVerdict::Healthy
+        ));
+    }
 }
