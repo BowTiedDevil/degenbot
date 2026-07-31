@@ -43,9 +43,13 @@ parity here is the notification SET + order, not the message payload.
 
 from __future__ import annotations
 
+import time
 from fractions import Fraction
 
 from degenbot.bot import PyBot
+
+
+_SUBSCRIBER_FLUSH_S = 0.15  # max seconds to wait for subscriber drainer flush
 from tests.fakes.subscribers import FakeSubscriber
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
@@ -134,6 +138,13 @@ class TestFakeSubscriberRustSeamRouting:
         # ``None`` publisher slot is the payload-fidelity gap flagged in the
         # ``FakeSubscriber`` docstring + this module's: the full
         # ``PoolStateUpdated(state)`` reconstruction is a deferred sibling).
+        #
+        # Wait for the subscriber drainer to flush (batched notify).
+        deadline = time.monotonic() + _SUBSCRIBER_FLUSH_S
+        while time.monotonic() < deadline:
+            if sub.inbox == [{"pool_id": pool_id}]:
+                break
+            time.sleep(0.01)
         assert sub.inbox == [{"pool_id": pool_id}], (
             f"Rust-routed FakeSubscriber must receive pool_id={pool_id} once; "
             f"got inbox={sub.inbox!r}"
@@ -191,6 +202,13 @@ class TestFakeSubscriberRustSeamRouting:
             block_number=100,
         )
 
+        # Wait for subscriber drainer to flush.
+        deadline = time.monotonic() + _SUBSCRIBER_FLUSH_S
+        while time.monotonic() < deadline:
+            if all(len(n) == 1 for n in [sub1.notifications, sub2.notifications, sub3.notifications]):
+                break
+            time.sleep(0.01)
+
         order = [sub1.notifications, sub2.notifications, sub3.notifications]
         assert all(len(n) == 1 for n in order), (
             f"each subscriber must fire exactly once; got {order!r}"
@@ -218,6 +236,11 @@ class TestFakeSubscriberRustSeamRouting:
             data=_sync_data(reserve0=1_500, reserve1=2_500),
             block_number=100,
         )
+        deadline = time.monotonic() + _SUBSCRIBER_FLUSH_S
+        while time.monotonic() < deadline:
+            if sub.notifications == [(None, pool_id)]:
+                break
+            time.sleep(0.01)
         assert sub.notifications == [(None, pool_id)]
 
         sub.unsubscribe_rust()  # release the PySubscription handles.
@@ -228,6 +251,8 @@ class TestFakeSubscriberRustSeamRouting:
             data=_sync_data(reserve0=1_600, reserve1=2_600),
             block_number=101,
         )
+        # Wait to confirm NO new notification arrives.
+        time.sleep(_SUBSCRIBER_FLUSH_S)
         # No new notification — the handle was released, the Weak went dead.
         assert sub.notifications == [(None, pool_id)], (
             "after unsubscribe_rust(), the Rust-routed subscriber must be skipped"

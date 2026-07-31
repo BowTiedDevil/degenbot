@@ -292,13 +292,10 @@ impl PyBot {
                         .close_with_canary(s_snapshot, chain)
                         .map_err(|e| crate::db::db_err_to_py(&e))?;
                     if report.advanced {
-                        log::warn!(
-                            "DB advanced during startup (S_snapshot={} → S_live={}) — \
-                             operator discipline violation (correctness preserved by \
-                             held snapshot tx); the pool_updater committed \
-                             concurrently with `build_paths`",
-                            report.s_snapshot.unwrap_or(0),
-                            report.s_live.unwrap_or(0),
+                        tracing::warn!(
+                            s_snapshot = report.s_snapshot.unwrap_or(0),
+                            s_live = report.s_live.unwrap_or(0),
+                            "DB advanced during startup — operator discipline violation"
                         );
                     }
                 }
@@ -368,9 +365,10 @@ impl PyBot {
                 match py.detach(|| degenbot_db::DegenbotDb::open_for_writes(&path_buf)) {
                     Ok((db, _state)) => std::sync::Arc::new(DegenbotDbConstruction::new(db)),
                     Err(e) => {
-                        log::debug!(
-                            "Construction-I/O DB open failed for {path}: {e}; \
-                                 falling back to NoDb (DB methods return None)"
+                        tracing::debug!(
+                            path = %path,
+                            %e,
+                            "Construction-I/O DB open failed; falling back to NoDb"
                         );
                         std::sync::Arc::new(NoDb)
                     }

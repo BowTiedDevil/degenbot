@@ -74,9 +74,10 @@ pub fn solve_balancer_weighted_basket(
 /// Register every Rust-wrapped symbol on the Python module `m`.
 ///
 /// Order and set of registered symbols must stay byte-equivalent to the
-/// pre-extraction `#[pymodule]` body (ergo UG6FKN task KFVI5F). The logging
-/// bridge init (`pyo3_log::init()`) stays in `lib.rs`'s `#[pymodule]` because it
-/// is module-lifecycle setup, not symbol registration.
+/// pre-extraction `#[pymodule]` body (ergo UG6FKN task KFVI5F). The tracing
+/// subscriber init (`python_log_layer::init_logging_subscriber()`) stays in
+/// `lib.rs`'s `#[pymodule]` because it is module-lifecycle setup, not symbol
+/// registration.
 ///
 /// # Errors
 ///

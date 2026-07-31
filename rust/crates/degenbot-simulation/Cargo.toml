@@ -52,7 +52,7 @@ degenbot-pools = { path = "../degenbot-pools" }
 # the V4 swap-event decoder + the swap-capture inspector).
 degenbot-decoders = { path = "../degenbot-decoders" }
 thiserror = { version = "^2.0" }
-log = { version = "^0.4" }
+tracing = { version = "^0.1" }
 # `Serialize` derive for the inspector captured structs (`CallTrace`,
 # `CapturedSwap`) — the diagnostic surface crosses the FFI as `#[pyclass]`
 # thin shells (ADR-019 D7).

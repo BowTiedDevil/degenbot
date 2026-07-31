@@ -75,12 +75,12 @@ impl ProgressSink for PyProgressSink {
             let dict = match aave_progress_report_to_dict(py, progress) {
                 Ok(d) => d,
                 Err(e) => {
-                    log::error!("run_aave_update: failed to build progress dict: {e}");
+                    tracing::error!(%e, "run_aave_update: failed to build progress dict");
                     return;
                 }
             };
             if let Err(err) = self.callback.call1(py, (dict,)) {
-                log::warn!("run_aave_update: Python progress callback raised: {err}");
+                tracing::warn!(%err, "run_aave_update: Python progress callback raised");
             }
         });
     }

@@ -223,15 +223,18 @@ async fn reconnect_new_heads_stream(provider: Arc<dyn Provider<Ethereum>>) -> Op
         {
             Ok(Ok(s)) => return Some(s.into_stream().boxed()),
             Ok(Err(e)) => {
-                log::warn!(
+                tracing::warn!(
                     target: "degenbot_rpc::subscription",
-                    "newHeads reconnect subscribe failed: {e} — retrying in {delay_ms}ms"
+                    %e,
+                    delay_ms,
+                    "newHeads reconnect subscribe failed — retrying"
                 );
             }
             Err(_) => {
-                log::warn!(
+                tracing::warn!(
                     target: "degenbot_rpc::subscription",
-                    "newHeads reconnect subscribe hung for {HEADER_WATCHDOG_SECS}s — retrying in {delay_ms}ms"
+                    delay_ms,
+                    "newHeads reconnect subscribe hung — retrying"
                 );
             }
         }

@@ -164,8 +164,14 @@ fn drain_dbg_log_buf(
     {
         return;
     }
-    log::info!(
-        "[dbg-buf] {tag} addr={address:x} INSERT tl={tick_lower} tu={tick_upper} delta={liquidity_delta} block={block_number}"
+    tracing::info!(
+        %tag,
+        pool_addr = %format!("{address:x}"),
+        tick_lower,
+        tick_upper,
+        liquidity_delta,
+        block_number,
+        "[dbg-buf] INSERT"
     );
 }
 
@@ -1073,36 +1079,44 @@ impl BotState {
             .is_ok_and(|v| format!("{address:x}").eq_ignore_ascii_case(v.trim_start_matches("0x")));
         let Some(&key) = self.pool_addresses.get(address) else {
             if dbg {
-                log::info!("[dbg-drain] backfill addr={address} NOT REGISTERED");
+                tracing::info!(pool_addr = %format!("{address:x}"), "[dbg-drain] backfill NOT REGISTERED");
             }
             return;
         };
         let Some(buffered) = self.v3_buffer.drain_backfill(address) else {
             if dbg {
-                log::info!("[dbg-drain] backfill addr={address} EMPTY");
+                tracing::info!(pool_addr = %format!("{address:x}"), "[dbg-drain] backfill EMPTY");
             }
             return;
         };
         if dbg {
-            log::info!(
-                "[dbg-drain] backfill addr={address} count={}",
-                buffered.len()
+            tracing::info!(
+                pool_addr = %format!("{address:x}"),
+                count = buffered.len(),
+                "[dbg-drain] backfill"
             );
         }
         for update in buffered {
             if dbg {
                 match &update {
                     BufferedV3PoolEvent::Liquidity(u) => {
-                        log::info!(
-                        "[dbg-drain] backfill addr={address} apply tl={} tu={} delta={} block={}",
-                        u.tick_lower, u.tick_upper, u.liquidity_delta, u.block_number
-                    );
+                        tracing::info!(
+                            pool_addr = %format!("{address:x}"),
+                            tick_lower = u.tick_lower,
+                            tick_upper = u.tick_upper,
+                            delta = u.liquidity_delta,
+                            block = u.block_number,
+                            "[dbg-drain] backfill apply liq"
+                        );
                     }
                     BufferedV3PoolEvent::Swap(s) => {
-                        log::info!(
-                        "[dbg-drain] backfill addr={address} apply swap liq={} tick={} block={}",
-                        s.liquidity, s.tick, s.block_number
-                    );
+                        tracing::info!(
+                            pool_addr = %format!("{address:x}"),
+                            liquidity = s.liquidity,
+                            tick = s.tick,
+                            block = s.block_number,
+                            "[dbg-drain] backfill apply swap"
+                        );
                     }
                 }
             }
@@ -1122,7 +1136,7 @@ impl BotState {
             .is_ok_and(|v| format!("{address:x}").eq_ignore_ascii_case(v.trim_start_matches("0x")));
         let Some(&key) = self.pool_addresses.get(address) else {
             if dbg {
-                log::info!("[dbg-drain] pump addr={address} NOT REGISTERED");
+                tracing::info!(pool_addr = %format!("{address:x}"), "[dbg-drain] pump NOT REGISTERED");
             }
             return;
         };
@@ -1132,28 +1146,30 @@ impl BotState {
         // same-block log. Events for the in-progress block stay buffered.
         let Some(buffered) = self.v3_buffer.drain_pump_completed(address) else {
             if dbg {
-                log::info!("[dbg-drain] pump addr={address} EMPTY (no completed blocks)");
+                tracing::info!(pool_addr = %format!("{address:x}"), "[dbg-drain] pump EMPTY (no completed blocks)");
             }
             return;
         };
         if dbg {
-            log::info!("[dbg-drain] pump addr={address} count={}", buffered.len());
+            tracing::info!(pool_addr = %format!("{address:x}"), count = buffered.len(), "[dbg-drain] pump");
         }
         for update in buffered {
             if dbg {
                 match &update {
-                    BufferedV3PoolEvent::Liquidity(u) => log::info!(
-                        "[dbg-drain] pump addr={address} apply tl={} tu={} delta={} block={}",
-                        u.tick_lower,
-                        u.tick_upper,
-                        u.liquidity_delta,
-                        u.block_number
+                    BufferedV3PoolEvent::Liquidity(u) => tracing::info!(
+                        pool_addr = %format!("{address:x}"),
+                        tick_lower = u.tick_lower,
+                        tick_upper = u.tick_upper,
+                        delta = u.liquidity_delta,
+                        block = u.block_number,
+                        "[dbg-drain] pump apply liq"
                     ),
-                    BufferedV3PoolEvent::Swap(s) => log::info!(
-                        "[dbg-drain] pump addr={address} apply swap liq={} tick={} block={}",
-                        s.liquidity,
-                        s.tick,
-                        s.block_number
+                    BufferedV3PoolEvent::Swap(s) => tracing::info!(
+                        pool_addr = %format!("{address:x}"),
+                        liquidity = s.liquidity,
+                        tick = s.tick,
+                        block = s.block_number,
+                        "[dbg-drain] pump apply swap"
                     ),
                 }
             }
@@ -1228,14 +1244,13 @@ impl BotState {
     pub fn mark_v3_pump_block_complete(&mut self, block: u64) {
         self.v3_buffer.mark_block_complete(block);
         if verify_dbg_enabled() {
-            log::info!(
-                "[verify-dbg] V3 mark_block_complete block={block} \
-                 pump_total_at_or_below={v3_below} pump_total={v3_total} backfill_total={v3_back} \
-                 last_complete_block={lcb:?}",
-                v3_below = self.v3_buffer.pump_total_at_or_below(block),
-                v3_total = self.v3_buffer.pump_total(),
-                v3_back = self.v3_buffer.backfill_total(),
-                lcb = self.v3_buffer.last_complete_block(),
+            tracing::info!(
+                block,
+                pump_at_or_below = self.v3_buffer.pump_total_at_or_below(block),
+                pump_total = self.v3_buffer.pump_total(),
+                backfill_total = self.v3_buffer.backfill_total(),
+                last_complete_block = ?self.v3_buffer.last_complete_block(),
+                "[verify-dbg] V3 mark_block_complete"
             );
         }
     }
@@ -1371,12 +1386,12 @@ impl BotState {
         };
         if let Some(update_block) = diag {
             if verify_dbg_enabled() {
-                log::info!(
-                    "[verify-dbg] V3 pin addr={address:x} update_block={update_block} \
-                     pump_count_at_or_below={} last_complete_block={:?}",
-                    self.v3_buffer
-                        .pump_count_at_or_below(&address, update_block),
-                    self.v3_buffer.last_complete_block(),
+                tracing::info!(
+                    pool_addr = %format!("{address:x}"),
+                    update_block,
+                    pump_count = self.v3_buffer.pump_count_at_or_below(&address, update_block),
+                    last_complete_block = ?self.v3_buffer.last_complete_block(),
+                    "[verify-dbg] V3 pin"
                 );
             }
         }
@@ -2878,14 +2893,13 @@ impl BotState {
     pub fn mark_v4_pump_block_complete(&mut self, block: u64) {
         self.v4_buffer.mark_block_complete(block);
         if verify_dbg_enabled() {
-            log::info!(
-                "[verify-dbg] V4 mark_block_complete block={block} \
-                 pump_total_at_or_below={v4_below} pump_total={v4_total} backfill_total={v4_back} \
-                 last_complete_block={lcb:?}",
-                v4_below = self.v4_buffer.pump_total_at_or_below(block),
-                v4_total = self.v4_buffer.pump_total(),
-                v4_back = self.v4_buffer.backfill_total(),
-                lcb = self.v4_buffer.last_complete_block(),
+            tracing::info!(
+                block,
+                pump_at_or_below = self.v4_buffer.pump_total_at_or_below(block),
+                pump_total = self.v4_buffer.pump_total(),
+                backfill_total = self.v4_buffer.backfill_total(),
+                last_complete_block = ?self.v4_buffer.last_complete_block(),
+                "[verify-dbg] V4 mark_block_complete"
             );
         }
     }
@@ -2972,9 +2986,12 @@ impl BotState {
                     .collect::<std::collections::BTreeSet<_>>()
                     .into_iter()
                     .collect();
-                log::info!(
-                    "[verify-dbg] V3 set_live addr={address:x} drained_retained_tail={n} blocks={blocks:?} distinct_blocks={distinct:?}",
-                    n = buffered.len(),
+                tracing::info!(
+                    pool_addr = %format!("{address:x}"),
+                    drained_tail = buffered.len(),
+                    blocks = ?blocks,
+                    distinct_blocks = ?distinct,
+                    "[verify-dbg] V3 set_live"
                 );
             }
             for event in buffered {
@@ -3012,10 +3029,13 @@ impl BotState {
                     .collect::<std::collections::BTreeSet<_>>()
                     .into_iter()
                     .collect();
-                log::info!(
-                    "[verify-dbg] V4 set_live pm={pool_manager:x} pool_id={} drained_retained_tail={n} blocks={blocks:?} distinct_blocks={distinct:?}",
-                    degenbot_core::hex_utils::encode_hex(&pool_id),
-                    n = buffered.len(),
+                tracing::info!(
+                    pool_manager = %format!("{pool_manager:x}"),
+                    pool_id = %degenbot_core::hex_utils::encode_hex(&pool_id),
+                    drained_tail = buffered.len(),
+                    blocks = ?blocks,
+                    distinct_blocks = ?distinct,
+                    "[verify-dbg] V4 set_live"
                 );
             }
             for event in buffered {
@@ -3221,12 +3241,13 @@ impl BotState {
         };
         if let Some(update_block) = diag {
             if verify_dbg_enabled() {
-                log::info!(
-                    "[verify-dbg] V4 pin pm={pool_manager:x} pool_id={} update_block={update_block} \
-                     pump_count_at_or_below={} last_complete_block={:?}",
-                    degenbot_core::hex_utils::encode_hex(pool_id),
-                    self.v4_buffer.pump_count_at_or_below(&key, update_block),
-                    self.v4_buffer.last_complete_block(),
+                tracing::info!(
+                    pool_manager = %format!("{pool_manager:x}"),
+                    pool_id = %degenbot_core::hex_utils::encode_hex(pool_id),
+                    update_block,
+                    pump_count = self.v4_buffer.pump_count_at_or_below(&key, update_block),
+                    last_complete_block = ?self.v4_buffer.last_complete_block(),
+                    "[verify-dbg] V4 pin"
                 );
             }
         }

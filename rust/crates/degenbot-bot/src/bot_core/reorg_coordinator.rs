@@ -111,9 +111,10 @@ impl ReorgCoordinator {
         // which leaves "duplicate block" indistinguishable from a reorg vs.
         // an unreliable-WS duplication. `warn!` (not `info!`) because a chain
         // reorg is an operator-actionable event, not routine traffic.
-        log::warn!(
-            "ReorgCoordinator: restored pool {pool_id} to its pre-block-{block} \
-             state + notified subscribers"
+        tracing::warn!(
+            pool_id,
+            block,
+            "ReorgCoordinator: restored pool to its pre-block state + notified subscribers"
         );
         bot.notify_pool_state_updated(pool_id);
         Ok(())

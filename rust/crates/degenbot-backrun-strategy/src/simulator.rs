@@ -856,10 +856,10 @@ where
     // rather than silently dropping as `encode-failed`.
     if std::env::var_os("DEGENBOT_BRIDGE_PROBE").is_some() {
         if let Some(desc) = scan_for_v4_v2_boundary_bridge(&path.path_info.hops, ctx.weth_address) {
-            log::info!(
-                "[bridge-probe] path_id={} {} — V4 native ↔ V2 WETH boundary; 3-hop composer does not encode this",
-                path.path_id,
-                desc,
+            tracing::info!(
+                path_id = path.path_id,
+                desc = %desc,
+                "[bridge-probe] V4 native to V2 WETH boundary; 3-hop composer does not encode this"
             );
         }
     }
@@ -1422,24 +1422,26 @@ fn log_reverted_swaps_vs_hop_outputs(
         return;
     }
     let matches = match_reverted_swaps_to_hops(reverted_swaps, hops, hop_outputs);
-    log::info!(
-        "{SIM_REVERT_SWAP_LOG_PREFIX} path={path_id} reverted_swaps={} hop_outputs={}",
-        reverted_swaps.len(),
-        hop_outputs.len(),
+    tracing::info!(
+        path_id,
+        reverted_swaps = reverted_swaps.len(),
+        hop_outputs = hop_outputs.len(),
+        "{SIM_REVERT_SWAP_LOG_PREFIX}"
     );
     for m in &matches {
         let hop_str = m
             .hop_index
             .map_or_else(|| "unmatched".into(), |i| i.to_string());
-        log::info!(
-            "{SIM_REVERT_SWAP_LOG_PREFIX} path={path_id} hop={hop_str} (emit #{emit}) family={family:?} \
-             emitter={emitter:?} actual_out={actual} predicted_hop_output={pred} matched={matched}",
+        tracing::info!(
+            path_id,
+            hop = %hop_str,
             emit = m.emit_index,
-            family = m.family,
-            emitter = m.emitter,
-            actual = m.actual_out.map_or_else(|| "none".into(), |v| v.to_string()),
-            pred = m.predicted.map_or_else(|| "none".into(), |v| v.to_string()),
+            family = ?m.family,
+            emitter = ?m.emitter,
+            actual_out = %m.actual_out.map_or_else(|| "none".into(), |v| v.to_string()),
+            predicted = %m.predicted.map_or_else(|| "none".into(), |v| v.to_string()),
             matched = m.matched,
+            "{SIM_REVERT_SWAP_LOG_PREFIX}"
         );
     }
 }

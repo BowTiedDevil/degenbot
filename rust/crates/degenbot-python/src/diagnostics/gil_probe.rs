@@ -101,7 +101,7 @@ fn mark_progress() {
 #[allow(clippy::too_many_arguments)]
 fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResult<()> {
     if PROBE_RUNNING.swap(true, Ordering::SeqCst) {
-        log::warn!("[gil-probe] already running — start_gil_probe() call ignored (idempotent)");
+        tracing::warn!("[gil-probe] already running — start_gil_probe() call ignored (idempotent)");
         return Ok(());
     }
     LAST_PROGRESS_MS.store(now_ms(), Ordering::Relaxed);
@@ -113,8 +113,10 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
     thread::Builder::new()
         .name("gil-probe".to_string())
         .spawn(move || {
-            log::info!(
-                "[gil-probe] sampling every {interval:?} (warn threshold {threshold:?})"
+            tracing::info!(
+                interval = ?interval,
+                threshold = ?threshold,
+                "[gil-probe] sampling"
             );
             let mut last_sample_ms: u64 = now_ms();
             loop {
@@ -134,13 +136,16 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
                 // merely being busy (probe still sampling).
                 LAST_PROBE_SAMPLE_MS.store(now, Ordering::Relaxed);
                 if elapsed >= threshold {
-                    log::warn!(
-                        "[gil-probe] GIL held: acquire took {elapsed:?} (gap since last sample {gap}ms) — \
-                         main thread is holding the GIL without yielding (sync pyo3 call or _asyncio futex park)"
+                    tracing::warn!(
+                        acquire_ms = %elapsed.as_millis(),
+                        gap,
+                        "[gil-probe] GIL held: acquire took ms — main thread holding GIL"
                     );
                 } else {
-                    log::debug!(
-                        "[gil-probe] GIL acquire {elapsed:?} (gap {gap}ms)"
+                    tracing::debug!(
+                        acquire_ms = %elapsed.as_millis(),
+                        gap,
+                        "[gil-probe] GIL acquire"
                     );
                 }
                 thread::sleep(interval);
@@ -170,8 +175,9 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
     thread::Builder::new()
         .name("gil-probe-watchdog".to_string())
         .spawn(move || {
-            log::info!(
-                "[gil-probe] stuck-watchdog armed (stuck threshold {stuck:?})"
+            tracing::info!(
+                stuck = ?stuck,
+                "[gil-probe] stuck-watchdog armed"
             );
             let stuck_ms = u64::try_from(stuck.as_millis()).unwrap_or(u64::MAX);
             loop {
@@ -181,15 +187,22 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
                 let now = now_ms();
                 match watchdog_verdict(progress, sample, now, stuck_ms) {
                     WatchdogVerdict::NotArmed | WatchdogVerdict::Healthy => {}
-                    WatchdogVerdict::Busy { since_progress, since_sample } => log::info!(
-                        "[gil-probe] main loop idle: no mark_progress() for {since_progress}ms \
-                         but probe still sampling (attach gap {since_sample}ms) — busy in build_paths / \
-                         awaiting first consumer batch, not a GIL deadlock"
+                    WatchdogVerdict::Busy {
+                        since_progress,
+                        since_sample,
+                    } => tracing::info!(
+                        since_progress,
+                        since_sample,
+                        "[gil-probe] main loop idle: no progress — busy, not a GIL deadlock"
                     ),
-                    WatchdogVerdict::Deadlocked { since_progress, since_sample } => log::error!(
-                        "[gil-probe] *** GIL DEADLOCK: no mark_progress() for {since_progress}ms \
-                         AND probe's own attach blocked for {since_sample}ms (threshold {stuck:?}) — \
-                         a thread holds the GIL without yielding (permanent deadlock confirmed)"
+                    WatchdogVerdict::Deadlocked {
+                        since_progress,
+                        since_sample,
+                    } => tracing::error!(
+                        since_progress,
+                        since_sample,
+                        stuck = ?stuck,
+                        "[gil-probe] GIL DEADLOCK confirmed"
                     ),
                 }
             }

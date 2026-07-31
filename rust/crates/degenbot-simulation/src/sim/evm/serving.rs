@@ -120,14 +120,15 @@ pub fn serve_tracked_slot(
     let probe = bot_state.probe_tracked_storage_slot(address, index)?;
     let served = U256::from_be_bytes(probe.engine_word.0);
     let delta_xor = served ^ rpc_value;
-    log::info!(
-        "{BOT_STATE_DB_LOG_PREFIX} pool={address:?} slot={index} kind={:?} \
-         served=0x{} rpc=0x{} delta_xor=0x{} update_block={}",
-        probe.kind,
-        hex_padded_u256(served),
-        hex_padded_u256(rpc_value),
-        hex_padded_u256(delta_xor),
-        probe.update_block,
+    tracing::info!(
+        pool_addr = %format!("{address:?}"),
+        slot = %index,
+        kind = ?probe.kind,
+        served = %hex_padded_u256(served),
+        rpc = %hex_padded_u256(rpc_value),
+        delta_xor = %hex_padded_u256(delta_xor),
+        update_block = probe.update_block,
+        "{BOT_STATE_DB_LOG_PREFIX}"
     );
     Some(served)
 }

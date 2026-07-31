@@ -187,8 +187,10 @@ pub fn dispatch_profitable_py<'py>(
     // cannot itself cause the fan-out's per-candidate GIL contention; it tags
     // the start/end of the body on a tokio worker.
     let phase_candidate_count = built.len();
-    log::info!(
-        "[dispatch-phase] future body START block={current_block} candidates={phase_candidate_count}"
+    tracing::info!(
+        current_block,
+        phase_candidate_count,
+        "[dispatch-phase] future body START"
     );
     future_into_py(py, async move {
         let phase_started = std::time::Instant::now();
@@ -198,8 +200,10 @@ pub fn dispatch_profitable_py<'py>(
         // (build_paths sync pyo3 call / _asyncio futex park), this line will
         // NOT appear until the GIL frees; its absence in the log vs the
         // `[dispatch-phase] future body START` line above pinpoints the block.
-        log::info!(
-            "[dispatch-phase] fan-out ENTER block={current_block} candidates={phase_candidate_count}"
+        tracing::info!(
+            current_block,
+            phase_candidate_count,
+            "[dispatch-phase] fan-out ENTER"
         );
         let ctx = SimulateContext {
             provider: &provider,
@@ -229,10 +233,11 @@ pub fn dispatch_profitable_py<'py>(
             bot_state,
             warm_cache,
         );
-        log::info!(
-            "[dispatch-phase] fan-out EXIT block={current_block} elapsed={phase_elapsed:?} survivors={survivors}",
-            phase_elapsed = phase_started.elapsed(),
-            survivors = outcome.gas_profitable.len()
+        tracing::info!(
+            current_block,
+            elapsed_ms = %phase_started.elapsed().as_millis(),
+            survivors = outcome.gas_profitable.len(),
+            "[dispatch-phase] fan-out EXIT"
         );
 
         // ── Join survivors → SubmitCandidates (pure Rust — no GIL needed) ──
@@ -263,8 +268,9 @@ pub fn dispatch_profitable_py<'py>(
         // GIL acquire on this dispatch path, and the one the parked main
         // thread starves. If this line appears but the next block never
         // advances, the result-setter is the blocked step.
-        log::info!(
-            "[dispatch-phase] future body END block={current_block} — handing to set_result via Python::attach"
+        tracing::info!(
+            current_block,
+            "[dispatch-phase] future body END — handing to set_result via Python::attach"
         );
         Ok(PyDispatchOutcome::from_join(
             joined,

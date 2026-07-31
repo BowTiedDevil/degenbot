@@ -110,9 +110,10 @@ impl AavePriceOracle {
                     prices.insert(*asset, price);
                 }
                 Err(e) => {
-                    log::warn!(
-                        "Aave oracle: failed to fetch price for {}: {e}",
-                        asset.to_checksum(None)
+                    tracing::warn!(
+                        asset = %asset.to_checksum(None),
+                        %e,
+                        "Aave oracle: failed to fetch price"
                     );
                 }
             }

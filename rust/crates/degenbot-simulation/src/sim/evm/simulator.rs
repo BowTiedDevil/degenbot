@@ -192,7 +192,7 @@ impl<'a> BlockSimHandle<'a> {
             BlockId::Number(current_block.into()),
         );
         let Some(wrap_db) = WrapDatabaseAsync::new(alloy_db) else {
-            log::warn!(
+            tracing::warn!(
                 "BlockSimHandle: no ambient multi-threaded tokio runtime — \
                  WrapDatabaseAsync unavailable; block sim disabled"
             );
@@ -213,7 +213,7 @@ impl<'a> BlockSimHandle<'a> {
             // The override-params are operator config, so a failure here is a
             // wiring error, not a per-path revert — tally `rpc-failed` for
             // every candidate (the whole block's sim is dead).
-            log::warn!("BlockSimHandle: state-override application failed: {err}");
+            tracing::warn!(%err, "BlockSimHandle: state-override application failed");
             return None;
         }
         let mut revm_ctx = revm::context::Context::mainnet();

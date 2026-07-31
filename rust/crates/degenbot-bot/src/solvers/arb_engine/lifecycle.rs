@@ -227,6 +227,7 @@ impl ArbitrageEngine {
     /// Callers read results via `latest_results()`; none reads a dispatched
     /// `ResultBatch` from this entry (grep-verified across `tests/`, `examples/`,
     /// and `src/degenbot/`).
+    #[tracing::instrument(skip(self), fields(block_number, path_count = self.path_pools.len()))]
     pub fn solve_all_paths(&mut self, block_number: u64) {
         // Resolve all paths under the core lock (single consistent V2
         // snapshot). V3/V4 state still reads the per-family block engines.

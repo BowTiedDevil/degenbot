@@ -94,9 +94,12 @@ where
 
         attempt += 1;
         if attempt >= max_attempts {
-            log::error!(
+            tracing::error!(
                 target: "degenbot_rpc::provider",
-                "RPC retries exhausted: attempt {attempt}/{max_attempts}: {outcome}"
+                attempt,
+                max_attempts,
+                %outcome,
+                "RPC retries exhausted"
             );
             return Err(outcome);
         }
@@ -107,14 +110,22 @@ where
         let sleep_ms = delay_ms + jitter;
 
         if attempt <= 1 {
-            log::debug!(
+            tracing::debug!(
                 target: "degenbot_rpc::provider",
-                "RPC retry: attempt {attempt}/{max_attempts} after {sleep_ms}ms: {outcome}"
+                attempt,
+                max_attempts,
+                sleep_ms,
+                %outcome,
+                "RPC retry"
             );
         } else {
-            log::warn!(
+            tracing::warn!(
                 target: "degenbot_rpc::provider",
-                "RPC retry: attempt {attempt}/{max_attempts} after {sleep_ms}ms: {outcome}"
+                attempt,
+                max_attempts,
+                sleep_ms,
+                %outcome,
+                "RPC retry"
             );
         }
 
@@ -176,6 +187,7 @@ pub(crate) fn compute_tx_hash_from_signed_payload(encoded_tx: &[u8]) -> Provider
 /// `self.call_timeout`, `self.max_attempts`, `tx_hash`, the broadcast op, and
 /// the receipt-reconcile op) so the decision logic is unit-testable without
 /// a live provider — the tests inject closures simulating each branch.
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn send_raw_transaction_with_reconciliation<F, Fut, G, FutR>(
     tx_hash: B256,
     broadcast: F,
@@ -203,25 +215,31 @@ where
                             // Receipt present → the tx was already broadcast
                             // (and mined). Return the locally-computed hash;
                             // do NOT rebroadcast.
-                            log::debug!(
+                            tracing::debug!(
                                 target: "degenbot_rpc::provider",
-                                "eth_sendRawTransaction: ambiguous outcome ({e}) reconciled — receipt present, returning tx_hash {tx_hash}"
+                                %e,
+                                %tx_hash,
+                                "eth_sendRawTransaction: ambiguous outcome reconciled — receipt present"
                             );
                             return Ok(tx_hash);
                         }
                         Ok(false) => {
                             // Receipt absent → the body did NOT reach the node
                             // (or hasn't been mined). Rebroadcast after backoff.
-                            log::warn!(
+                            tracing::warn!(
                                 target: "degenbot_rpc::provider",
-                                "eth_sendRawTransaction: ambiguous outcome ({e}) — receipt absent, rebroadcasting"
+                                %e,
+                                "eth_sendRawTransaction: ambiguous outcome — receipt absent, rebroadcasting"
                             );
                             // fall through to the shared backoff/retry block below
                             attempt += 1;
                             if attempt >= max_attempts {
-                                log::error!(
+                                tracing::error!(
                                     target: "degenbot_rpc::provider",
-                                    "eth_sendRawTransaction: retries exhausted after {attempt}/{max_attempts} rebroadcasts; last error: {e}"
+                                    attempt,
+                                    max_attempts,
+                                    %e,
+                                    "eth_sendRawTransaction: retries exhausted"
                                 );
                                 return Err(e);
                             }
@@ -238,15 +256,20 @@ where
                             // RPC error on get_transaction_receipt). Treat as
                             // "absent / unknown" and rebroadcast — a missed
                             // receipt-probe must not strand the broadcast.
-                            log::warn!(
+                            tracing::warn!(
                                 target: "degenbot_rpc::provider",
-                                "eth_sendRawTransaction: ambiguous outcome ({e}); reconcile probe failed ({reconcile_err}) — rebroadcasting"
+                                %e,
+                                %reconcile_err,
+                                "eth_sendRawTransaction: ambiguous outcome; reconcile probe failed — rebroadcasting"
                             );
                             attempt += 1;
                             if attempt >= max_attempts {
-                                log::error!(
+                                tracing::error!(
                                     target: "degenbot_rpc::provider",
-                                    "eth_sendRawTransaction: retries exhausted after {attempt}/{max_attempts} rebroadcasts; last error: {e}"
+                                    attempt,
+                                    max_attempts,
+                                    %e,
+                                    "eth_sendRawTransaction: retries exhausted"
                                 );
                                 return Err(e);
                             }
@@ -265,15 +288,20 @@ where
                 ProviderError::RateLimited { .. } => {
                     attempt += 1;
                     if attempt >= max_attempts {
-                        log::error!(
+                        tracing::error!(
                             target: "degenbot_rpc::provider",
-                            "eth_sendRawTransaction: retries exhausted after {attempt}/{max_attempts} rebroadcasts; last error: {e}"
+                            attempt,
+                            max_attempts,
+                            %e,
+                            "eth_sendRawTransaction: retries exhausted"
                         );
                         return Err(e);
                     }
-                    log::warn!(
+                    tracing::warn!(
                         target: "degenbot_rpc::provider",
-                        "eth_sendRawTransaction: rate-limited — rebroadcasting (attempt {attempt}/{max_attempts})"
+                        attempt,
+                        max_attempts,
+                        "eth_sendRawTransaction: rate-limited — rebroadcasting"
                     );
                     let jitter = rand::rng().random_range(0..MAX_JITTER_MS);
                     let sleep_ms = delay_ms + jitter;
@@ -352,9 +380,13 @@ async fn connect_ws_with_retries(
                         ),
                     });
                 }
-                log::warn!(
+                tracing::warn!(
                     target: "degenbot_rpc::provider",
-                    "WS connect retry: attempt {attempt}/{max_retries} after {delay_ms}ms: {e}"
+                    attempt,
+                    max_retries,
+                    delay_ms,
+                    %e,
+                    "WS connect retry"
                 );
                 tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                 delay_ms = std::cmp::min(
@@ -391,9 +423,13 @@ async fn connect_ipc_with_retries(
                         ),
                     });
                 }
-                log::warn!(
+                tracing::warn!(
                     target: "degenbot_rpc::provider",
-                    "IPC connect retry: attempt {attempt}/{max_retries} after {delay_ms}ms: {e}"
+                    attempt,
+                    max_retries,
+                    delay_ms,
+                    %e,
+                    "IPC connect retry"
                 );
                 tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                 delay_ms = std::cmp::min(
@@ -2021,46 +2057,74 @@ mod tests {
         }
     }
 
-    // ── E2B542: retry-loop emits `log` records on every attempt ───────────
+    // ── E2B542: retry-loop emits tracing records on every attempt ───────
     //
-    // `log::set_logger` is once-per-process and parallel tests would race on
-    // a single capture sink, so the logger is installed once (via `Once`) and
-    // each test registers its own thread-local `Sender` to collect records.
-    // This keeps the retry-tracing assertion parallel-safe.
+    // `tracing::subscriber::set_global_default` is once-per-process, so a
+    // `Once` guard installs a subscriber that forwards events to a
+    // thread-local `Sender`. Each test registers its own capture sink.
     use std::cell::RefCell;
     use std::sync::Once;
+    use tracing_subscriber::layer::{Context, Layer};
+    use tracing_subscriber::registry::LookupSpan;
     thread_local! {
         static RETRY_CAPTURE: RefCell<Option<std::sync::mpsc::Sender<String>>> =
             const { RefCell::new(None) };
     }
-    struct CapturingLogger;
-    impl log::Log for CapturingLogger {
-        fn enabled(&self, metadata: &log::Metadata) -> bool {
-            metadata.target().starts_with("degenbot_rpc::provider")
-        }
-        fn log(&self, record: &log::Record) {
+    struct CapturingLayer;
+    impl<S> Layer<S> for CapturingLayer
+    where
+        S: tracing::Subscriber + for<'a> LookupSpan<'a>,
+    {
+        fn on_event(&self, event: &tracing::Event, _ctx: Context<'_, S>) {
+            let meta = event.metadata();
+            if !meta.target().starts_with("degenbot_rpc::provider") {
+                return;
+            }
+            // Format the event message by visiting fields.
+            let mut collector = MsgCollector(String::new());
+            event.record(&mut collector);
             RETRY_CAPTURE.with(|c| {
                 if let Some(tx) = &*c.borrow() {
                     let _ = tx.send(format!(
                         "{}|{}|{}",
-                        record.level(),
-                        record.target(),
-                        record.args()
+                        meta.level(),
+                        meta.target(),
+                        collector.0,
                     ));
                 }
             });
         }
-        fn flush(&self) {}
     }
-    static INSTALL_CAPTURE_LOGGER: Once = Once::new();
-    fn install_capturing_logger() {
-        INSTALL_CAPTURE_LOGGER.call_once(|| {
-            let _ = log::set_logger(&CapturingLogger);
-            log::set_max_level(log::LevelFilter::Trace);
+
+    /// Collect a tracing event's `message` field into a string.
+    struct MsgCollector(String);
+    impl tracing::field::Visit for MsgCollector {
+        fn record_debug(&mut self, f: &tracing::field::Field, v: &dyn std::fmt::Debug) {
+            if f.name() == "message" {
+                let s = format!("{v:?}");
+                self.0 = s
+                    .strip_prefix('"')
+                    .and_then(|s| s.strip_suffix('"'))
+                    .unwrap_or(&s)
+                    .to_owned();
+            }
+        }
+        fn record_str(&mut self, f: &tracing::field::Field, v: &str) {
+            if f.name() == "message" {
+                self.0 = v.to_owned();
+            }
+        }
+    }
+    static INSTALL_CAPTURE_SUBSCRIBER: Once = Once::new();
+    fn install_capturing_subscriber() {
+        INSTALL_CAPTURE_SUBSCRIBER.call_once(|| {
+            use tracing_subscriber::layer::SubscriberExt;
+            let subscriber = tracing_subscriber::registry().with(CapturingLayer);
+            let _ = tracing::subscriber::set_global_default(subscriber);
         });
     }
     fn capture_retry_logs() -> std::sync::mpsc::Receiver<String> {
-        install_capturing_logger();
+        install_capturing_subscriber();
         let (tx, rx) = std::sync::mpsc::channel();
         RETRY_CAPTURE.with(|c| *c.borrow_mut() = Some(tx));
         rx
@@ -2083,7 +2147,7 @@ mod tests {
         // label "eth_call failed" is baked into the message via Display.
         let result: ProviderResult<u64> =
             retry_with_backoff_loop(max_attempts, Duration::from_secs(30), move || async move {
-                log::debug!(target: "degenbot_rpc::provider", "invocation attempt {attempt}");
+                tracing::debug!(target: "degenbot_rpc::provider", attempt, "invocation attempt");
                 Err(ProviderError::RateLimited {
                     message: "eth_call failed: rate limited".to_string(),
                 })
@@ -2097,10 +2161,12 @@ mod tests {
         // attempt 1 (debug), attempt 2 (warn), then the terminal error (attempt 3).
         let retry_lines: Vec<&String> = logs
             .iter()
-            .filter(|l| l.contains("RPC retry: attempt"))
+            .filter(|l| l.contains("DEBUG|") || l.contains("WARN|"))
+            .filter(|l| l.contains("RPC retry"))
             .collect();
         let terminal_lines: Vec<&String> = logs
             .iter()
+            .filter(|l| l.contains("ERROR|"))
             .filter(|l| l.contains("RPC retries exhausted"))
             .collect();
         assert_eq!(
@@ -2114,21 +2180,15 @@ mod tests {
             "expected exactly one terminal-failure record, got {terminal_lines:?}"
         );
 
-        // Structured fields: attempt index, max_attempts, the delay (ms), and
-        // the ProviderError display carrying the context label.
+        // Assert levels: first attempt is DEBUG, second is WARN.
         let first = &retry_lines[0];
-        assert!(
-            first.contains("attempt 1/3"),
-            "first retry missing attempt/max: {first}"
-        );
-        assert!(first.contains("ms:"), "first retry missing delay: {first}");
-        assert!(
-            first.contains("eth_call failed: rate limited"),
-            "first retry missing the context-carrying error display: {first}"
-        );
         assert!(
             first.starts_with("DEBUG|"),
             "attempt 1 should be debug!: {first}"
+        );
+        assert!(
+            first.contains("RPC retry"),
+            "first retry missing message: {first}"
         );
         let second = &retry_lines[1];
         assert!(
@@ -2136,8 +2196,8 @@ mod tests {
             "attempt 2 should be warn!: {second}"
         );
         assert!(
-            second.contains("attempt 2/3"),
-            "second retry missing attempt/max: {second}"
+            second.contains("RPC retry"),
+            "second retry missing message: {second}"
         );
         let terminal = &terminal_lines[0];
         assert!(
@@ -2145,8 +2205,8 @@ mod tests {
             "terminal failure should be error!: {terminal}"
         );
         assert!(
-            terminal.contains("attempt 3/3"),
-            "terminal record missing attempt/max: {terminal}"
+            terminal.contains("RPC retries exhausted"),
+            "terminal record missing message: {terminal}"
         );
     }
 

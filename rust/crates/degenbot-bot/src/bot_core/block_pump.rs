@@ -294,7 +294,7 @@ impl BlockPump {
 
         loop {
             if self.shutdown.load(Ordering::Relaxed) {
-                log::info!("BlockPump: shutting down during subscribe phase");
+                tracing::info!("BlockPump: shutting down during subscribe phase");
                 return (0, 0, pending);
             }
 
@@ -303,16 +303,17 @@ impl BlockPump {
             match event {
                 Err(_) => {
                     // Timeout — fall back to eth_blockNumber RPC (degraded path).
-                    log::warn!("BlockPump: timeout during subscribe, fetching current block");
+                    tracing::warn!("BlockPump: timeout during subscribe, fetching current block");
                     match self.provider.provider_arc().get_block_number().await {
                         Ok(block) => {
-                            log::info!(
-                                "BlockPump: subscribe observed block {block} via RPC (degraded - no two-header confirmation)"
+                            tracing::info!(
+                                block,
+                                "BlockPump: subscribe observed block via RPC (degraded - no two-header confirmation)"
                             );
                             return (block, 0, pending);
                         }
                         Err(e) => {
-                            log::error!("BlockPump: can't get block number during subscribe: {e}");
+                            tracing::error!(%e, "BlockPump: can't get block number during subscribe");
                         }
                     }
                 }
@@ -328,8 +329,10 @@ impl BlockPump {
                         if number == prev + 1 {
                             // Two consecutive headers: `prev` (= W) confirmed
                             // closed by `number` (= W+1). The boundary is W.
-                            log::info!(
-                                "BlockPump: subscribe observed complete block {prev} (confirmed by header {number})"
+                            tracing::info!(
+                                prev,
+                                number,
+                                "BlockPump: subscribe observed complete block (confirmed by header)"
                             );
                             return (prev, prev_timestamp, pending);
                         }
@@ -357,7 +360,7 @@ impl BlockPump {
                 }
 
                 Ok(None) => {
-                    log::warn!("BlockPump: subscription streams ended during subscribe");
+                    tracing::warn!("BlockPump: subscription streams ended during subscribe");
                     return (prev_header.unwrap_or(0), prev_timestamp, pending);
                 }
             }
@@ -393,8 +396,10 @@ impl BlockPump {
         // backfill only buffers state into BotState (no solve, no on_send);
         // result batches therefore do not flow pre-resume.
         if let Err(e) = self.backfill_to_ws_block(first_block).await {
-            log::error!(
-                "BlockPump: auto-backfill failed — starting live loop from {first_block} (gap not closed): {e}"
+            tracing::error!(
+                first_block,
+                %e,
+                "BlockPump: auto-backfill failed — starting live loop from gap (not closed)"
             );
         }
         self.run_with_stream(combined, first_block).await;
@@ -425,8 +430,10 @@ impl BlockPump {
         if seed == 0 || ws_block == 0 || seed >= ws_block {
             return Ok(0);
         }
-        log::info!(
-            "BlockPump: auto-backfill from snapshot block {seed} to WS block {ws_block} before resume"
+        tracing::info!(
+            seed,
+            ws_block,
+            "BlockPump: auto-backfill from snapshot block to WS block before resume"
         );
         self.backfill_from_snapshot(ws_block, DEFAULT_BACKFILL_CHUNK_SIZE)
             .await
@@ -439,6 +446,7 @@ impl BlockPump {
     /// waiting for a block header. Block headers provide metadata
     /// (timestamp, fees) and handle empty-block detection.
     #[allow(unused_assignments, clippy::too_many_lines)]
+    #[tracing::instrument(skip(self, combined), fields(first_observed_block))]
     pub async fn run_with_stream(
         &mut self,
         mut combined: stream::BoxStream<'static, WsEvent>,
@@ -475,19 +483,20 @@ impl BlockPump {
             current_block = first_observed_block;
             if let Some(seed) = snapshot_seed {
                 if seed > 0 && seed < first_observed_block {
-                    log::info!(
-                        "BlockPump: resuming from block {first_observed_block} (backfilled snapshot gap {start}–{end})",
-                        start = seed + 1,
-                        end = first_observed_block - 1
+                    tracing::info!(
+                        first_observed_block,
+                        backfill_start = seed + 1,
+                        backfill_end = first_observed_block - 1,
+                        "BlockPump: resuming from block (backfilled snapshot gap)"
                     );
                 } else {
-                    log::info!("BlockPump: cold start from block {first_observed_block}");
+                    tracing::info!(first_observed_block, "BlockPump: cold start from block");
                 }
             } else {
-                log::info!("BlockPump: cold start from block {first_observed_block}");
+                tracing::info!(first_observed_block, "BlockPump: cold start from block");
             }
         } else {
-            log::info!("BlockPump: starting from block {current_block}");
+            tracing::info!(current_block, "BlockPump: starting from block");
         }
 
         // Track the last block we've solved for: owned by the engine since
@@ -592,7 +601,7 @@ impl BlockPump {
 
             // Check shutdown
             if self.shutdown.load(Ordering::Relaxed) {
-                log::info!("BlockPump: shutting down");
+                tracing::info!("BlockPump: shutting down");
                 return;
             }
 
@@ -634,9 +643,9 @@ impl BlockPump {
                         // One warning per silence episode (re-armed when the
                         // next log resumes the sub).
                         if !log_silence_alarm_armed {
-                            log::warn!(
-                                "[pump] logs subscription silent: headers flowing but no log in {}s",
-                                self.log_silence.as_secs()
+                            tracing::warn!(
+                                silence_secs = self.log_silence.as_secs(),
+                                "[pump] logs subscription silent: headers flowing but no log"
                             );
                             self.log_silence_alarms = self.log_silence_alarms.saturating_add(1);
                             log_silence_alarm_armed = true;
@@ -686,12 +695,17 @@ impl BlockPump {
                     } else {
                         last_header_at.elapsed().as_secs_f64()
                     };
-                    log::info!(
-                        "BlockPump: [DIAG] HEADER block={number} (#{diag_header_count}) gap={diag_gap:.1}s"
+                    tracing::info!(
+                        number,
+                        diag_header_count,
+                        gap_secs = %format!("{:.1}", diag_gap),
+                        "BlockPump: [DIAG] HEADER"
                     );
                     if diag_header_count > 1 && last_header_at.elapsed() > Duration::from_secs(20) {
-                        log::warn!(
-                            "BlockPump: [DIAG] *** HEADER STALL: headers were silent {diag_gap:.1}s before block {number}"
+                        tracing::warn!(
+                            number,
+                            silent_secs = %format!("{:.1}", diag_gap),
+                            "BlockPump: [DIAG] *** HEADER STALL: headers were silent"
                         );
                     }
                     last_header_at = tokio::time::Instant::now();
@@ -736,10 +750,10 @@ impl BlockPump {
                         // skip solving. Set up for normal operation.
                         if number > current_block {
                             if number > current_block + 1 {
-                                log::info!(
-                                    "BlockPump: gap from block {} to {} — backfilling",
-                                    current_block + 1,
-                                    number,
+                                tracing::info!(
+                                    from_block = current_block + 1,
+                                    to_block = number,
+                                    "BlockPump: gap from block to block — backfilling"
                                 );
                                 self.backfill_range(
                                     current_block + 1,
@@ -764,10 +778,10 @@ impl BlockPump {
                         // finalized here — only the tombstone (first log for
                         // N+1) closes it (ADR-008 D1). Gap backfill still runs.
                         if number > current_block + 1 {
-                            log::info!(
-                                "BlockPump: gap from block {} to {} — backfilling",
-                                current_block + 1,
-                                number,
+                            tracing::info!(
+                                from_block = current_block + 1,
+                                to_block = number,
+                                "BlockPump: gap from block to block — backfilling"
                             );
                             self.backfill_range(
                                 current_block + 1,
@@ -832,12 +846,12 @@ impl BlockPump {
                             // silent — the prior success path logged nothing,
                             // making a duplicate block log ambiguous (reorg
                             // vs. WS duplication).
-                            log::warn!(
-                                "BlockPump: chain reorg detected at block \
-                                 {reorg_block} (removed log) — entering unwind path"
+                            tracing::warn!(
+                                reorg_block,
+                                "BlockPump: chain reorg detected (removed log) — entering unwind path"
                             );
                             if let Err(err) = self.reorg_coordinator.dispatch_reorg_log(&log) {
-                                log::error!("BlockPump: too-deep reorg — shutting down. {err:?}");
+                                tracing::error!(?err, "BlockPump: too-deep reorg — shutting down");
                                 self.shutdown.store(true, Ordering::Relaxed);
                                 return;
                             }
@@ -851,12 +865,12 @@ impl BlockPump {
                             // restore another pool at `log_block`. Trailing the
                             // first event lets the operator correlate successive
                             // unwinds in the same reorg.
-                            log::warn!(
-                                "BlockPump: reorg continues — restoring pool for \
-                                 removed log at block {log_block}"
+                            tracing::warn!(
+                                log_block,
+                                "BlockPump: reorg continues — restoring pool for removed log"
                             );
                             if let Err(err) = self.reorg_coordinator.dispatch_reorg_log(&log) {
-                                log::error!("BlockPump: too-deep reorg — shutting down. {err:?}");
+                                tracing::error!(?err, "BlockPump: too-deep reorg — shutting down");
                                 self.shutdown.store(true, Ordering::Relaxed);
                                 return;
                             }
@@ -867,9 +881,9 @@ impl BlockPump {
                             // Reorg window closed — the coordinator restored
                             // unwound pools per-event; this forward log's block
                             // is the new head. Resume forward tracking from it.
-                            log::info!(
-                                "BlockPump: reorg window closed — resuming \
-                                 forward tracking from block {new_head}"
+                            tracing::info!(
+                                new_head,
+                                "BlockPump: reorg window closed — resuming forward tracking"
                             );
                             current_block = new_head;
                             publish_pending = false;
@@ -912,9 +926,9 @@ impl BlockPump {
                             // in a reorg → unreliable WS (out-of-order /
                             // duplicated forward events). Unrecoverable for
                             // correctness — shut down (ADR-008 D3).
-                            log::error!(
-                                "BlockPump: ADR-008 D3 late forward log on \
-                                 tombstoned block {b} — unreliable WS, shutting down"
+                            tracing::error!(
+                                b,
+                                "BlockPump: ADR-008 D3 late forward log on tombstoned block — unreliable WS, shutting down"
                             );
                             self.shutdown.store(true, Ordering::Relaxed);
                             return;
@@ -945,8 +959,12 @@ impl BlockPump {
                     diag_log_count += 1;
                     if diag_last_stats.elapsed() >= DIAG_STATS_INTERVAL {
                         let diag_since_header = last_header_at.elapsed().as_secs();
-                        log::info!(
-                            "BlockPump: [DIAG] stats headers={diag_header_count} logs={diag_log_count} last_header_ago={diag_since_header}s current_block={current_block}"
+                        tracing::info!(
+                            diag_header_count,
+                            diag_log_count,
+                            last_header_secs = diag_since_header,
+                            current_block,
+                            "BlockPump: [DIAG] stats"
                         );
                         diag_last_stats = tokio::time::Instant::now();
                     }
@@ -963,7 +981,7 @@ impl BlockPump {
                         }
                         publish_pending = false;
                     }
-                    log::warn!("BlockPump: both subscription streams ended");
+                    tracing::warn!("BlockPump: both subscription streams ended");
                     return;
                 }
             }
@@ -991,11 +1009,14 @@ impl BlockPump {
         block_metadata: &mut HashMap<u64, BlockMetadata>,
         publish_pending: &mut bool,
     ) {
-        log::warn!("BlockPump: no activity for {BACKFILL_TIMEOUT_SECS}s — attempting backfill");
+        tracing::warn!(
+            backfill_timeout_secs = BACKFILL_TIMEOUT_SECS,
+            "BlockPump: no activity — attempting backfill"
+        );
         let latest_block = match self.provider.provider_arc().get_block_number().await {
             Ok(n) => n,
             Err(e) => {
-                log::error!("BlockPump: backfill failed — can't get block number: {e}");
+                tracing::error!(%e, "BlockPump: backfill failed — can't get block number");
                 return;
             }
         };
@@ -1041,13 +1062,13 @@ impl BlockPump {
             return;
         }
 
-        log::info!("BlockPump: backfilling blocks {from_block} to {to_block}");
+        tracing::info!(from_block, to_block, "BlockPump: backfilling blocks");
 
         let filter = build_backfill_filter(from_block, to_block);
         let logs = match self.provider.provider_arc().get_logs(&filter).await {
             Ok(logs) => logs,
             Err(e) => {
-                log::error!("BlockPump: backfill eth_getLogs failed: {e}");
+                tracing::error!(%e, "BlockPump: backfill eth_getLogs failed");
                 return;
             }
         };
@@ -1072,7 +1093,7 @@ impl BlockPump {
         let mut any_processed = false;
         for block in from_block..=to_block {
             if self.shutdown.load(Ordering::Relaxed) {
-                log::info!("BlockPump: shutting down during backfill");
+                tracing::info!("BlockPump: shutting down during backfill");
                 return;
             }
 
@@ -1101,8 +1122,9 @@ impl BlockPump {
                     | LogDecision::ContinueReorg
                     | LogDecision::CloseReorg { .. }
                     | LogDecision::PanicLateForward(_) => {
-                        log::warn!(
-                            "BlockPump: backfill saw unexpected decision for block {block}; skipping log"
+                        tracing::warn!(
+                            block,
+                            "BlockPump: backfill saw unexpected decision; skipping log"
                         );
                     }
                 }
@@ -1119,10 +1141,16 @@ impl BlockPump {
         }
 
         if any_processed {
-            log::info!("BlockPump: backfill complete for blocks {from_block}–{to_block}");
+            tracing::info!(
+                from_block,
+                to_block,
+                "BlockPump: backfill complete for blocks"
+            );
         } else {
-            log::info!(
-                "BlockPump: backfill found no relevant events in blocks {from_block}–{to_block}"
+            tracing::info!(
+                from_block,
+                to_block,
+                "BlockPump: backfill found no relevant events"
             );
         }
     }
@@ -1159,26 +1187,32 @@ impl BlockPump {
             state.snapshot_seed_block()
         };
         let Some(s) = s else {
-            log::info!(
-                "BlockPump::backfill_from_snapshot: no snapshot loaded (S=None), cold-start path"
+            tracing::info!(
+                "BlockPump::backfill_from_snapshot: no snapshot loaded, cold-start path"
             );
             return Ok(0);
         };
         if s == 0 {
-            log::warn!("BlockPump::backfill_from_snapshot: snapshot block S=0, skipping");
+            tracing::warn!("BlockPump::backfill_from_snapshot: snapshot block S=0, skipping");
             return Ok(0);
         }
         if s >= w {
-            log::info!(
-                "BlockPump::backfill_from_snapshot: snapshot at {s} ≥ WS block {w}, nothing to backfill"
+            tracing::info!(
+                s,
+                ws_block = w,
+                "BlockPump::backfill_from_snapshot: snapshot >= WS block, nothing to backfill"
             );
             return Ok(0);
         }
         let from_block = s + 1;
         let to_block = w - 1;
         let total_blocks = to_block - from_block + 1;
-        log::info!(
-            "BlockPump::backfill_from_snapshot: fetching events {from_block}–{to_block} ({total_blocks} blocks, chunk_size={chunk_size})"
+        tracing::info!(
+            from_block,
+            to_block,
+            total_blocks,
+            chunk_size,
+            "BlockPump::backfill_from_snapshot: fetching events"
         );
         let provider = self.provider.provider_arc();
         let mut total_logs = 0usize;
@@ -1186,8 +1220,10 @@ impl BlockPump {
         while chunk_start <= to_block {
             let chunk_end = (chunk_start + chunk_size - 1).min(to_block);
             let filter = build_backfill_filter(chunk_start, chunk_end);
-            log::info!(
-                "BlockPump::backfill_from_snapshot: fetching chunk {chunk_start}-{chunk_end}"
+            tracing::info!(
+                chunk_start,
+                chunk_end,
+                "BlockPump::backfill_from_snapshot: fetching chunk"
             );
             let t0 = std::time::Instant::now();
             let logs = provider.get_logs(&filter).await.map_err(|e| {
@@ -1195,8 +1231,12 @@ impl BlockPump {
             })?;
             let n = logs.len();
             let fetch_ms = t0.elapsed().as_millis();
-            log::info!(
-                "BlockPump::backfill_from_snapshot: chunk {chunk_start}-{chunk_end} fetched {n} logs in {fetch_ms}ms"
+            tracing::info!(
+                chunk_start,
+                chunk_end,
+                log_count = n,
+                fetch_ms = %fetch_ms,
+                "BlockPump::backfill_from_snapshot: chunk fetched logs"
             );
             total_logs += n;
             // Hold the write guard across the chunk so the apply + buffer-expire
@@ -1205,13 +1245,18 @@ impl BlockPump {
                 .state_arc()
                 .write()
                 .process_backfill_logs(&logs, chunk_end);
-            log::info!(
-                "BlockPump::backfill_from_snapshot: blocks {chunk_start}-{chunk_end}: {n} logs applied"
+            tracing::info!(
+                chunk_start,
+                chunk_end,
+                log_count = n,
+                "BlockPump::backfill_from_snapshot: chunk logs applied"
             );
             chunk_start = chunk_end + 1;
         }
-        log::info!(
-            "BlockPump::backfill_from_snapshot: complete — {total_logs} logs across {total_blocks} blocks"
+        tracing::info!(
+            total_logs,
+            total_blocks,
+            "BlockPump::backfill_from_snapshot: complete"
         );
         Ok(total_blocks)
     }

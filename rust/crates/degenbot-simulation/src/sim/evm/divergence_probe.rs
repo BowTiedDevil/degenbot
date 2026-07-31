@@ -194,13 +194,14 @@ pub fn observe_storage_read(bot_state: &BotState, address: Address, index: U256,
     if matched {
         return;
     }
-    log::info!(
-        "{SIM_DIVERGENCE_LOG_PREFIX} pool={address:?} slot={index} kind={:?} \
-         engine=0x{} rpc=0x{} update_block={}",
-        probe.kind,
-        hex_padded(probe.engine_word),
-        hex_padded_u256(rpc_value),
-        probe.update_block,
+    tracing::info!(
+        pool_addr = %format!("{address:?}"),
+        slot = %index,
+        kind = ?probe.kind,
+        engine = %hex_padded(probe.engine_word),
+        rpc = %hex_padded_u256(rpc_value),
+        update_block = probe.update_block,
+        "{SIM_DIVERGENCE_LOG_PREFIX}"
     );
 }
 
@@ -240,13 +241,12 @@ pub fn dump_divergence_summary() {
         return;
     }
     let tally = divergence_tally_snapshot();
-    log::info!(
-        "{SIM_DIVERGENCE_LOG_PREFIX} summary slots_compared={} divergent_slots={} \
-         divergent_pairs={} divergent_pools={}",
-        tally.slots_compared,
-        tally.divergent_slots,
-        tally.divergent_pairs,
-        tally.divergent_pools,
+    tracing::info!(
+        slots_compared = tally.slots_compared,
+        divergent_slots = tally.divergent_slots,
+        divergent_pairs = tally.divergent_pairs,
+        divergent_pools = tally.divergent_pools,
+        "{SIM_DIVERGENCE_LOG_PREFIX} summary"
     );
 }
 

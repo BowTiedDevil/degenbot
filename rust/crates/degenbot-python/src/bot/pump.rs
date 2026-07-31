@@ -127,6 +127,7 @@ impl PumpState {
     /// # Errors
     /// `PyRuntimeError` if the pump is already started/subscribed, or the WS
     /// subscribe fails.
+    #[tracing::instrument(skip(self, py), fields(rpc_url = %rpc_url))]
     pub(crate) fn subscribe(&self, py: Python<'_>, rpc_url: &str) -> PyResult<u64> {
         let phase = self.current_phase();
         phase
@@ -190,6 +191,7 @@ impl PumpState {
     ///
     /// # Errors
     /// `PyRuntimeError` if the phase is wrong or subscribe wasn't called.
+    #[tracing::instrument(skip(self, py))]
     pub(crate) fn resume(&self, py: Python<'_>) -> PyResult<()> {
         let phase = self.current_phase();
         phase
@@ -235,8 +237,10 @@ impl PumpState {
         py.detach(|| {
             degenbot_core::runtime::get_runtime().block_on(async {
                 if let Err(e) = pump_ref.backfill_to_ws_block(first_block).await {
-                    log::error!(
-                        "BlockPump: auto-backfill failed — starting live loop from {first_block} (gap not closed): {e}"
+                    tracing::error!(
+                        first_block,
+                        %e,
+                        "BlockPump: auto-backfill failed — starting live loop with gap"
                     );
                 }
             });
@@ -287,9 +291,9 @@ impl PumpState {
             // runtime matches the existing `subscribe`/`backfill_from_snapshot`
             // sync discipline; the aborted task completes promptly.
             let _ = degenbot_core::runtime::get_runtime().block_on(handle);
-            log::info!("[shutdown] BlockPump task aborted");
+            tracing::info!("[shutdown] BlockPump task aborted");
         } else {
-            log::info!("[shutdown] BlockPump not running (no pump handle to abort)");
+            tracing::info!("[shutdown] BlockPump not running (no pump handle to abort)");
         }
         // Drop half-built subscribe state so a later `subscribe()` is allowed
         // (the phase guard + the `subscribe_state.is_some()` check would
@@ -387,9 +391,9 @@ impl PumpState {
             if let Err(err) = v4_result {
                 return Err(map_liquidity_verify_error(err));
             }
-            log::info!(
-                "[verify] V3 + V4 liquidity maps OK at block {}",
-                block_number.unwrap_or_default()
+            tracing::info!(
+                block = block_number.unwrap_or_default(),
+                "[verify] V3 + V4 liquidity maps OK"
             );
             Ok(())
         })
@@ -430,9 +434,9 @@ impl PumpState {
             if let Err(err) = v3_result {
                 return Err(map_liquidity_verify_error(err));
             }
-            log::info!(
-                "[verify] V3 liquidity maps OK at block {}",
-                block_number.unwrap_or_default()
+            tracing::info!(
+                block = block_number.unwrap_or_default(),
+                "[verify] V3 liquidity maps OK"
             );
             Ok(())
         })
@@ -476,9 +480,9 @@ impl PumpState {
             if let Err(err) = v4_result {
                 return Err(map_liquidity_verify_error(err));
             }
-            log::info!(
-                "[verify] V4 liquidity maps OK at block {}",
-                block_number.unwrap_or_default()
+            tracing::info!(
+                block = block_number.unwrap_or_default(),
+                "[verify] V4 liquidity maps OK"
             );
             Ok(())
         })
@@ -540,10 +544,10 @@ impl PumpState {
             if let Err(err) = result {
                 return Err(map_liquidity_verify_error(err));
             }
-            log::debug!(
-                "[verify-seed] V3 snapshot seed OK for {} at block {}",
-                pool_addr,
-                block_number.unwrap_or(0)
+            tracing::debug!(
+                pool_addr = %pool_addr,
+                block = block_number.unwrap_or(0),
+                "[verify-seed] V3 snapshot seed OK"
             );
             Ok(())
         })
@@ -602,10 +606,10 @@ impl PumpState {
             if let Err(err) = result {
                 return Err(map_liquidity_verify_error(err));
             }
-            log::debug!(
-                "[verify-seed] V4 snapshot seed OK for pool_id {} at block {}",
-                degenbot_core::hex_utils::encode_hex(&pool_id),
-                block_number.unwrap_or(0)
+            tracing::debug!(
+                pool_id = %degenbot_core::hex_utils::encode_hex(&pool_id),
+                block = block_number.unwrap_or(0),
+                "[verify-seed] V4 snapshot seed OK"
             );
             Ok(())
         })
@@ -682,8 +686,10 @@ impl PumpState {
             if let Err(err) = result {
                 return Err(map_liquidity_verify_error(err));
             }
-            log::debug!(
-                "[verify-drain] V3 post-drain snapshot OK for {pool_addr} at block {pinned_block}"
+            tracing::debug!(
+                pool_addr = %pool_addr,
+                pinned_block,
+                "[verify-drain] V3 post-drain snapshot OK"
             );
             Ok(())
         })
@@ -747,10 +753,10 @@ impl PumpState {
             if let Err(err) = result {
                 return Err(map_liquidity_verify_error(err));
             }
-            log::debug!(
-                "[verify-drain] V4 post-drain snapshot OK for pool_id {} at block {}",
-                degenbot_core::hex_utils::encode_hex(&pool_id),
-                pinned_block
+            tracing::debug!(
+                pool_id = %degenbot_core::hex_utils::encode_hex(&pool_id),
+                pinned_block,
+                "[verify-drain] V4 post-drain snapshot OK"
             );
             Ok(())
         })

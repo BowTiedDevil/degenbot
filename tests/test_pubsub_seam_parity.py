@@ -40,12 +40,16 @@ message-payload fidelity lands with the cutover.
 """
 
 import gc
+import time
 import weakref
 
 import pytest
 
 from degenbot._ffi.subscriber import register_subscriber
 from degenbot.bot import PyBot
+
+
+_SUBSCRIBER_FLUSH_S = 0.15  # max seconds to wait for subscriber drainer flush (2x interval + margin)
 
 # keccak256("Sync(uint112,uint112)") — the V2 Sync event signature.
 _V2_SYNC_TOPIC = "0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1"
@@ -117,7 +121,25 @@ class _PyOracleOracle:
 
 class TestPySubscriberAdapterParity:
     """§4.2 parity: Rust `LogDispatcher` fan-out matches the Python
-    `PublisherMixin` notification ordering + skip-on-drop contract."""
+    `PublisherMixin` notification ordering + skip-on-drop contract.
+
+    Notifications are delivered via a batched drainer (50ms flush interval),
+    so each test waits up to `_SUBSCRIBER_FLUSH_S` after dispatch for the
+    expected notification to arrive.
+    """
+
+    @staticmethod
+    def _wait_for(condition, timeout=_SUBSCRIBER_FLUSH_S) -> None:
+        """Poll until `condition` returns truthy, or raise after timeout."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            result = condition()
+            if result:
+                return
+            time.sleep(0.01)
+        raise AssertionError(
+            f"Condition not met within {timeout}s: {condition!r}"
+        )
 
     def test_register_subscriber_receives_pool_id_on_dispatch(self):
         """A Python callback registered via `register_subscriber` receives
@@ -136,6 +158,8 @@ class TestPySubscriberAdapterParity:
             data=_sync_data(reserve0=1_500, reserve1=2_500),
             block_number=100,
         )
+        self._wait_for(lambda: record == [pool_id],
+            timeout=_SUBSCRIBER_FLUSH_S)
         assert record == [pool_id], (
             "the Python callback must fire exactly once with the mutated pool_id"
         )
@@ -173,6 +197,9 @@ class TestPySubscriberAdapterParity:
             data=_sync_data(reserve0=1_500, reserve1=2_500),
             block_number=100,
         )
+        # Wait for the Rust seam to flush (batched drainer).
+        self._wait_for(lambda: len(rust_record) >= 3,
+            timeout=_SUBSCRIBER_FLUSH_S)
         rust_order = list(rust_record)
         oracle_order = oracle.notify()
 
@@ -209,6 +236,8 @@ class TestPySubscriberAdapterParity:
             data=_sync_data(reserve0=9_000, reserve1=9_000),
             block_number=200,
         )
+        self._wait_for(lambda: live_record == ["live"],
+            timeout=_SUBSCRIBER_FLUSH_S)
         assert live_record == ["live"]
         assert dropped_record == ["dropped"]
 
@@ -223,6 +252,8 @@ class TestPySubscriberAdapterParity:
             data=_sync_data(reserve0=9_100, reserve1=9_100),
             block_number=201,
         )
+        self._wait_for(lambda: live_record == ["live", "live"],
+            timeout=_SUBSCRIBER_FLUSH_S)
         assert live_record == ["live", "live"], "live subscriber keeps firing"
         assert dropped_record == ["dropped"], (
             "dropped subscriber must be silently skipped after its handle drops"
@@ -243,6 +274,8 @@ class TestPySubscriberAdapterParity:
             data=_sync_data(reserve0=1_500, reserve1=2_500),
             block_number=100,
         )
+        self._wait_for(lambda: record == [pool_id],
+            timeout=_SUBSCRIBER_FLUSH_S)
         assert record == [pool_id]
 
         handle.unsubscribe()
@@ -252,6 +285,8 @@ class TestPySubscriberAdapterParity:
             data=_sync_data(reserve0=1_600, reserve1=2_600),
             block_number=101,
         )
+        # Wait a full flush cycle to confirm NO new notification arrives.
+        time.sleep(_SUBSCRIBER_FLUSH_S)
         assert record == [pool_id], (
             "after unsubscribe(), the subscriber must be skipped on subsequent dispatches"
         )

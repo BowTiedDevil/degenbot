@@ -49,10 +49,10 @@ futures-util = { version = "^0.3", default-features = false, features = ["async-
 # the `hotpath` / `hotpath-cpu` / `hotpath-alloc` features below (or in a
 # consumer crate) to turn the macros into real instrumentation.
 hotpath = { version = "^0.21", default-features = false }
-log = { version = "^0.4" }
 parking_lot = { version = "^0.12" }
 rand = { version = "^0.10" }
 rayon = { version = "^1.12" }
+tracing = { version = "^0.1" }
 serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }
 thiserror = { version = "^2.0" }

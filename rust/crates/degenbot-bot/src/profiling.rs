@@ -80,13 +80,17 @@ pub fn hotpath_guard(caller_name: &'static str) -> Option<Guard> {
         // normal pump exit.
         if std::env::var("HOTPATH_SHUTDOWN_MS").is_ok() {
             builder.build_with_shutdown(std::time::Duration::from_secs(0));
-            log::info!(
-                "hotpath: profiling active for `{caller_name}` — timed exit via HOTPATH_SHUTDOWN_MS"
+            tracing::info!(
+                caller_name,
+                "hotpath: profiling active — timed exit via HOTPATH_SHUTDOWN_MS"
             );
             return None;
         }
         let guard = builder.build();
-        log::info!("hotpath: profiling guard active for `{caller_name}` (report on pump exit)");
+        tracing::info!(
+            caller_name,
+            "hotpath: profiling guard active (report on pump exit)"
+        );
         Some(guard)
     }
     #[cfg(not(feature = "hotpath"))]
@@ -96,9 +100,9 @@ pub fn hotpath_guard(caller_name: &'static str) -> Option<Guard> {
         // enabling the Cargo feature). Surface that instead of silently
         // profiling nothing.
         let _ = caller_name;
-        log::warn!(
-            "hotpath: DEGENBOT_HOTPATH=1 set but the `hotpath` Cargo feature is \
-             not enabled on degenbot-bot — rebuild with --features hotpath"
+        tracing::warn!(
+            "hotpath: DEGENBOT_HOTPATH=1 set but the hotpath Cargo feature is not \
+             enabled on degenbot-bot — rebuild with --features hotpath"
         );
         None
     }

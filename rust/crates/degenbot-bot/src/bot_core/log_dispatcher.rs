@@ -361,6 +361,7 @@ impl LogDispatcher {
     /// **Lock order:** the `state` write guard is acquired and released BEFORE
     /// any subscriber notify — subscribers take only their own lock (D2's
     /// engine-then-core order preserved by not nesting).
+    #[tracing::instrument(skip(self, log, state), fields(block = %log.block_number.unwrap_or_default()))]
     pub fn dispatch(&self, log: &Log, state: &Arc<parking_lot::RwLock<BotState>>) {
         // Phase-labeled `measure_block!` for the rolling-start dirty-path
         // diagnostic: distinguishes "decode miss" (no decoder recognized the

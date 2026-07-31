@@ -1878,6 +1878,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam-queue"
+version = "0.3.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "803d13fb3b09d88be9f4dbc29062c66b19bf7170867ceb746d2a8689bf6c7a26"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "crossbeam-utils"
 version = "0.8.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2059,12 +2068,12 @@ dependencies = [
  "degenbot-rpc",
  "degenbot-simulation",
  "degenbot-submission",
- "log",
  "parking_lot",
  "revm",
  "serde_json",
  "thiserror 2.0.19",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2099,7 +2108,6 @@ dependencies = [
  "degenbot-v2-math",
  "futures-util",
  "hotpath",
- "log",
  "parking_lot",
  "proptest",
  "rand 0.10.2",
@@ -2108,6 +2116,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.19",
  "tokio",
+ "tracing",
  "tracing-subscriber",
 ]
 
@@ -2128,11 +2137,11 @@ name = "degenbot-core"
 version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
- "log",
  "proptest",
  "pyo3",
  "thiserror 2.0.19",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2213,6 +2222,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.19",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2243,9 +2253,9 @@ dependencies = [
  "degenbot-abi",
  "degenbot-core",
  "degenbot-rpc",
- "log",
  "pyo3",
  "thiserror 2.0.19",
+ "tracing",
 ]
 
 [[package]]
@@ -2259,7 +2269,6 @@ dependencies = [
  "degenbot-core",
  "degenbot-pools",
  "futures-util",
- "log",
  "parking_lot",
  "rand 0.10.2",
  "serde",
@@ -2267,6 +2276,8 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tower",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2280,13 +2291,13 @@ dependencies = [
  "degenbot-executor",
  "degenbot-pools",
  "degenbot-rpc",
- "log",
  "parking_lot",
  "revm",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2357,6 +2368,7 @@ name = "degenbot_rs"
 version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
+ "crossbeam-queue",
  "ctor",
  "dashmap",
  "degenbot-aave",
@@ -2388,13 +2400,15 @@ dependencies = [
  "proptest",
  "pyo3",
  "pyo3-async-runtimes",
- "pyo3-log",
  "rand 0.10.2",
  "revm",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
  "tokio",
+ "tracing",
+ "tracing-log",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -4297,17 +4311,6 @@ checksum = "ca85c467da1bbc8d866eea5deff9cf29ea5f7785054a17da36e65bda9c05845b"
 dependencies = [
  "libc",
  "pyo3-build-config",
-]
-
-[[package]]
-name = "pyo3-log"
-version = "0.13.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f64083bd3a16a353d9d62335808e8e13d0552d2a2b83fdb084496192dcfa9fcd"
-dependencies = [
- "arc-swap",
- "log",
- "pyo3",
 ]
 
 [[package]]

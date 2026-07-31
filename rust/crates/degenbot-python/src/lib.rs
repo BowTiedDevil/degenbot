@@ -56,6 +56,7 @@ pub mod pool;
 pub mod prelude;
 #[cfg(feature = "price")]
 pub mod price;
+pub mod python_log_layer;
 #[cfg(feature = "rpc")]
 pub mod rpc;
 #[cfg(feature = "simulation")]
@@ -173,10 +174,16 @@ use pyo3::prelude::*;
 
 #[pymodule]
 fn _ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // Initialize logging bridge from Rust to Python. Stays in the module init
-    // (not `c_api::register`) because it is module-lifecycle setup rather than
-    // symbol registration.
-    pyo3_log::init();
+    // Initialize tracing subscriber stack with batched Python-forwarding layer.
+    // Replaces the previous `pyo3_log::init()` (per-record GIL round-trip)
+    // with a `tracing_subscriber` registry + a custom `PythonLogLayer` that
+    // batches events and flushes to Python `logging` via one `Python::attach`
+    // per batch. Stays in the module init (not `c_api::register`) because it
+    // is module-lifecycle setup, not symbol registration.
+    python_log_layer::init_logging_subscriber();
+
+    // Register the shutdown pyfunction on the module.
+    python_log_layer::PythonLogLayer::register_pyfunction(m)?;
 
     // Register every `#[pyfunction]`/`#[pyclass]` surface on the module.
     // See `c_api.rs` (ergo UG6FKN task KFVI5F) — mirrors polars-python's

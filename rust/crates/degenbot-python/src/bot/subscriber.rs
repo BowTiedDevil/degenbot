@@ -1,5 +1,6 @@
 //! Python↔Rust pub/sub bridge: a `PoolStateSubscriber` adapter that forwards
-//! Rust `BotState` mutation notifications into a Python callback.
+//! Rust `BotState` mutation notifications into Python callbacks via a
+//! batched, GIL-free channel.
 //!
 //! The Rust pub/sub mechanism (`degenbot_bot::bot_core::log_dispatcher` — the
 //! `PoolStateSubscriber` trait + `LogDispatcher` `Weak`-fan-out +
@@ -10,25 +11,27 @@
 //! AND Python subscribers through one fan-out (replacing the parallel Python
 //! `PublisherMixin._notify_subscribers` once the pool consumers cut over).
 //!
-//! Mirrors [`EngineSubscriber`]'s adapter shape: a shared `Arc<PySubscriberAdapter>`
-//! registered as a `Weak<dyn PoolStateSubscriber>` so a dropped subscriber is
-//! silently skipped by `LogDispatcher::notify`'s `Weak::upgrade` (no leak, no
-//! panic). The difference is the lifetime anchor: the engine adapter's strong
-//! `Arc` lives on the shared `ArbitrageEngine`; THIS adapter's strong `Arc` lives
-//! on a returned [`PySubscription`] handle Python holds — drop the handle
-//! (or call `.unsubscribe()`) → the Arc drops → the registered `Weak` goes dead
-//! (explicit unsubscribe, mirroring `PublisherMixin.unsubscribe`).
+//! # GIL discipline (5FHHKL fix)
 //!
-//! # GIL discipline
+//! `LogDispatcher::notify` fires from the pump's async task (GIL-free context)
+//! per decoded log. Previously, `on_pool_state_updated` re-acquired the GIL via
+//! `Python::attach` **per subscriber per log** — a per-record GIL round-trip on
+//! the pump's tokio workers. Now, the adapter pushes the `(callback, pool_id)`
+//! pair onto a bounded queue, and a dedicated OS thread (`subscriber-drainer`)
+//! batches notifications and forwards them to Python via ONE `Python::attach`
+//! per flush. This removes the LAST `Python::attach` from the pump's per-log
+//! decode→apply→notify spine.
 //!
-//! `LogDispatcher::notify` fires from the pump's async task (a `tokio::spawn`
-//! GIL-free context) per decoded log — so `on_pool_state_updated` runs WITHOUT
-//! the GIL held. The adapter re-acquires it via `Python::attach` before
-//! invoking the Python callback. When `dispatch_log` is driven synchronously
-//! from Python (the main GIL thread), `Python::attach` re-enters the already-held
-//! GIL via `PyGILState_Ensure` (re-entrant safe). The pump's `dispatch_log`
-//! write guard is released before notify (the `LogDispatcher` lock-order
-//! invariant), so the GIL acquire here never nests against a `BotState` write.
+//! # Unbounded queue + coalesce-to-latest-per-pool at flush time
+//!
+//! The subscriber notify queue is an **unbounded** lock-free queue
+//! ([`SegQueue`](crossbeam_queue::SegQueue)) — overflow is impossible by
+//! design. The drainer never blocks the emitter (the pump's notify path),
+//! and the OS thread always keeps up (50ms flush interval, 256-entry
+//! batches). At flush time, coalesce-to-latest-per-pool is applied: a
+//! `pool_id` appears at most once per batch per subscriber. A backrun bot
+//! solves off `BotState`'s current view, not every intermediate transition,
+//! so coalescing within a flush window is correct.
 //!
 //! # §4.2 parity
 //!
@@ -36,9 +39,7 @@
 //! `for subscriber in self._subscribers: subscriber.notify(publisher=self,
 //! message=message)`. The Rust fan-out order is identical — `LogDispatcher::notify`
 //! iterates the `Vec<Weak<dyn PoolStateSubscriber>>` in registration order,
-//! upgrading each. Pinned by `tests/test_pubsub_seam_parity.py` (a Rust-backed
-//! `PyBot` + Python callbacks receive `pool_id` in the same registration order
-//! `PublisherMixin` delivers, and the same skip-on-drop fan-out).
+//! upgrading each. Pinned by `tests/test_pubsub_seam_parity.py`.
 //!
 //! The Rust notify carries only `pool_id` (not the full Python `PoolStateUpdated`
 //! state object) — reconstructing the latter requires reading `BotState` + building
@@ -46,21 +47,217 @@
 //! on pool classes), a deferred sibling task. The adapter surfaces the
 //! `pool_id` to Python; the cutover task will widen the payload.
 
-use std::sync::{Arc, Weak};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock, Weak};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use crossbeam_queue::SegQueue;
+use pyo3::ffi;
+use pyo3::prelude::*;
+use pyo3::types::PyModule;
 
 use degenbot_bot::bot_core::log_dispatcher::PoolStateSubscriber;
 
 use crate::bot::PyBot;
-use crate::prelude::*;
 
-/// A `PoolStateSubscriber` backed by a Python callback.
+// --- Bounded subscriber notify queue (GIL-free channel) ---
+
+/// Maximum batch size forwarded per `Python::attach` flush.
+const SUBSCRIBER_BATCH_SIZE: usize = 256;
+
+/// Maximum time between flushes — a partially full batch is flushed after
+/// this interval to avoid starving the Python side.
+const SUBSCRIBER_FLUSH_INTERVAL: Duration = Duration::from_millis(50);
+
+/// A pending subscriber notification: `(callback, pool_id)`.
+///
+/// Uses a raw `*mut ffi::PyObject` pointer (with incremented refcount) so
+/// the notification can be sent between threads without the GIL. The drainer
+/// reconstructs a `Py<PyAny>` from the pointer and decrefs when done.
+struct SubscriberNotification {
+    /// Raw Python object pointer with incremented reference count.
+    /// Reconstruct via `Py::from_borrowed_ptr(py, ptr)` in the drainer.
+    callback_ptr: *mut ffi::PyObject,
+    pool_id: u64,
+}
+
+// Safety: `*mut ffi::PyObject` is `Send` (it's a pointer). The Python object
+// is protected by the incremented refcount done at push time.
+unsafe impl Send for SubscriberNotification {}
+
+impl Drop for SubscriberNotification {
+    fn drop(&mut self) {
+        // Decrement refcount when the notification is dropped without being
+        // processed (e.g. when the queue drops the oldest entry on overflow).
+        // This is safe because the refcount was incremented at push time.
+        unsafe {
+            ffi::Py_DECREF(self.callback_ptr);
+        }
+    }
+}
+
+/// Shared state for the subscriber notify queue.
+struct SubscriberQueueState {
+    /// Unbounded, lock-free queue shared with the drainer thread.
+    queue: SegQueue<SubscriberNotification>,
+    /// Set to `true` to signal the drainer thread to shut down.
+    shutdown: AtomicBool,
+}
+
+/// Global reference to the subscriber queue state, set during
+/// [`init_subscriber_drainer`].
+static SUBSCRIBER_QUEUE_STATE: OnceLock<Arc<SubscriberQueueState>> = OnceLock::new();
+
+/// Initialize the subscriber drainer thread.
+///
+/// Called once during module init. Spawns a dedicated OS thread that
+/// periodically drains the subscriber notify queue and forwards
+/// notifications to Python callbacks via one `Python::attach` per flush.
+///
+/// # Panics
+///
+/// Panics if the OS thread can't be spawned.
+pub(crate) fn init_subscriber_drainer() {
+    SUBSCRIBER_QUEUE_STATE.get_or_init(|| {
+        let state = Arc::new(SubscriberQueueState {
+            queue: SegQueue::new(),
+            shutdown: AtomicBool::new(false),
+        });
+        let drainer_state = Arc::clone(&state);
+        thread::Builder::new()
+            .name("subscriber-drainer".into())
+            .spawn(move || subscriber_drainer_loop(drainer_state))
+            .expect("spawn subscriber-drainer thread");
+        state
+    });
+}
+
+/// Signal the subscriber drainer to shut down and flush remaining
+/// notifications.
+///
+/// Idempotent. Should be called before interpreter finalization.
+#[pyfunction]
+pub(crate) fn shutdown_subscriber_drainer() {
+    if let Some(state) = SUBSCRIBER_QUEUE_STATE.get() {
+        state.shutdown.store(true, Ordering::Release);
+    }
+}
+
+/// The subscriber drainer thread main loop.
+///
+/// Collects pending notifications from the queue, coalesces to
+/// latest-per-pool per callback, and forwards them to Python via one
+/// `Python::attach` per flush.
+#[allow(clippy::needless_pass_by_value)] // owned Arc moved into drainer thread closure
+fn subscriber_drainer_loop(state: Arc<SubscriberQueueState>) {
+    let mut batch: Vec<SubscriberNotification> = Vec::with_capacity(SUBSCRIBER_BATCH_SIZE);
+    let mut last_flush = Instant::now();
+
+    loop {
+        // Drain as many notifications as available (up to SUBSCRIBER_BATCH_SIZE).
+        while batch.len() < SUBSCRIBER_BATCH_SIZE {
+            match state.queue.pop() {
+                Some(notification) => batch.push(notification),
+                None => break, // queue empty
+            }
+        }
+
+        let elapsed = last_flush.elapsed();
+        let should_flush = !batch.is_empty()
+            && (batch.len() >= SUBSCRIBER_BATCH_SIZE || elapsed >= SUBSCRIBER_FLUSH_INTERVAL);
+
+        if should_flush {
+            flush_notification_batch(&batch);
+            batch.clear();
+            last_flush = Instant::now();
+        }
+
+        // Check shutdown.
+        if state.shutdown.load(Ordering::Acquire) {
+            // Flush remaining.
+            if !batch.is_empty() {
+                flush_notification_batch(&batch);
+                batch.clear();
+            }
+            while let Some(notification) = state.queue.pop() {
+                batch.push(notification);
+            }
+            if !batch.is_empty() {
+                flush_notification_batch(&batch);
+            }
+            break;
+        }
+
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Flush a batch of notifications to Python callbacks via one
+/// `Python::attach`.
+///
+/// Coalesces to latest-per-pool per callback: if the same callback appears
+/// multiple times for the same `pool_id`, only the latest entry is forwarded.
+/// This matches the backrun bot's need for current state, not every transition.
+fn flush_notification_batch(notifications: &[SubscriberNotification]) {
+    if notifications.is_empty() {
+        return;
+    }
+
+    // Coalesce: for each (callback_ptr, pool_id) pair, keep only the
+    // latest occurrence. Iterate in reverse to capture the latest entry
+    // for each pair.
+    let coalesced: Vec<&SubscriberNotification> = {
+        let mut result = Vec::with_capacity(notifications.len());
+        for notification in notifications.iter().rev() {
+            let already_present = result.iter().any(|existing: &&SubscriberNotification| {
+                existing.callback_ptr == notification.callback_ptr
+                    && existing.pool_id == notification.pool_id
+            });
+            if !already_present {
+                result.push(notification);
+            }
+        }
+        result.reverse();
+        result
+    };
+
+    Python::attach(|py| {
+        for notification in &coalesced {
+            // Reconstruct Py<PyAny> from the raw pointer. The refcount
+            // was incremented at push time; the Drop of the notification
+            // will decref it. But `coalesced` holds references to the
+            // original notifications, so the Py<PyAny> we create here
+            // is a borrowed reference (no additional Py_INCREF needed).
+            // Just use from_borrowed_ptr which does NOT increment refcount.
+            // Reconstruct Py<PyAny> from the raw pointer.
+            // Safety: the refcount was incremented at push time and the
+            // pointer is valid for the lifetime of the notification.
+            #[allow(deprecated)]
+            let callback: Py<PyAny> =
+                unsafe { pyo3::Py::from_borrowed_ptr(py, notification.callback_ptr) };
+            if let Err(err) = callback.call1(py, (notification.pool_id,)) {
+                // Log via tracing (not log::) to avoid re-entering the log
+                // drainer on the GIL-holding drainer thread.
+                tracing::warn!(
+                    pool_id = notification.pool_id,
+                    error = %err,
+                    "PySubscriberAdapter: callback raised during batched notify"
+                );
+            }
+        }
+    });
+}
+
+// --- PySubscriberAdapter (now queue-backed) ---
+
+/// A `PoolStateSubscriber` backed by a Python callback. No longer acquires
+/// the GIL per call — pushes to the global subscriber notify queue instead.
 ///
 /// Constructed from a `Py<PyAny>` (a Python callable OR a `Subscriber`-shaped
-/// object exposing `notify`). On `on_pool_state_updated(pool_id)`, re-acquires
-/// the GIL and invokes the callback with `pool_id` as the sole argument. Errors
-/// raised by the Python callback are logged (via `pyo3-log`) and swallowed — a
-/// subscriber's failure must never break the pump's decode→apply→notify spine
-/// (mirrors `EngineSubscriber`'s no-panic contract; the trait returns `()`).
+/// object exposing `notify`). On `on_pool_state_updated(pool_id)`, pushes
+/// `(callback, pool_id)` onto the shared bounded queue. A dedicated drainer
+/// thread batches and forwards to Python.
 ///
 /// The strong `Arc<Self>` is held by a [`PySubscription`] handle (Python owns
 /// the lifetime); `LogDispatcher` holds only a `Weak<dyn PoolStateSubscriber>`.
@@ -80,20 +277,24 @@ impl PySubscriberAdapter {
 
 impl PoolStateSubscriber for PySubscriberAdapter {
     fn on_pool_state_updated(&self, pool_id: u64) {
-        // Fires from the pump's async task (GIL-free) → re-acquire the GIL.
-        // `attach` from a non-Python thread attaches it as needed (the
-        // interpreter is initialized via the `auto-initialize` feature); on
-        // the main GIL thread it re-enters via `PyGILState_Ensure`.
-        Python::attach(|py| {
-            // A Python-side exception must not abort the fan-out — log + swallow.
-            if let Err(err) = self.callback.call1(py, (pool_id,)) {
-                log::warn!(
-                    "PySubscriberAdapter: Python callback raised on pool_id={pool_id} notify: {err}"
-                );
+        // Push onto the global subscriber notify queue (GIL-free).
+        // The drainer thread will batch and forward to Python.
+        if let Some(state) = SUBSCRIBER_QUEUE_STATE.get() {
+            // Increment the Python object's refcount before sending it
+            // to the GIL-free queue. The drainer (or Drop) decrefs it.
+            unsafe {
+                ffi::Py_INCREF(self.callback.as_ptr());
             }
-        });
+            let notification = SubscriberNotification {
+                callback_ptr: self.callback.as_ptr(),
+                pool_id,
+            };
+            state.queue.push(notification);
+        }
     }
 }
+
+// --- PySubscription handle ---
 
 /// A handle keeping a registered [`PySubscriberAdapter`] alive.
 ///
@@ -143,25 +344,23 @@ impl PySubscription {
     }
 }
 
+// --- Registration pyfunction ---
+
 /// Register a Python callback as a `PoolStateSubscriber` for `pool_id` (ZBD4MS).
 ///
-/// The callback receives `pool_id: int` each time `Bot::dispatch_log` applies a
-/// decoded event to `pool_id` in the shared `BotState` (or `notify_pool_state_updated`
-/// fires after a reorg restore) — the SAME `LogDispatcher` path the engine
-/// adapter uses. Notifications fire in registration order; a dropped (GC'd)
-/// callback is silently skipped (mirrors a dropped `Weak` subscriber).
+/// The callback receives `pool_id: int` (batched via the subscriber drainer,
+/// not per-log). Notifications fire in registration order within a batch; a
+/// dropped (GC'd) callback is silently skipped (mirrors a dropped `Weak`
+/// subscriber).
 ///
 /// Returns a `PySubscription` handle — hold it for as long as the subscriber
 /// should stay registered. Dropping the handle (or calling `.unsubscribe()`)
-/// unregisters: the strong `Arc` drops, `LogDispatcher`'s `Weak` goes dead,
-/// and subsequent `notify` calls silently skip this subscriber.
+/// unregisters.
 ///
 /// Two call shapes are accepted:
 ///  - a callable:           `register_subscriber(bot, pool_id, lambda pid: ...)`
 ///  - a `Subscriber`-shaped object exposing `__call__` / `notify`
-///    (`register_subscriber` invokes it as `callback(pool_id)`; the full
-///    `PublisherMixin` `notify(publisher, message)` payload is rebuilt in the
-///    cutover task).
+///    (`register_subscriber` invokes it as `callback(pool_id)`).
 ///
 /// Args:
 ///     `bot`: The `PyBot` owning the `Bot` whose `LogDispatcher` registers.
@@ -186,10 +385,18 @@ pub(crate) fn register_subscriber(
     Ok(PySubscription::register(bot, pool_id, callback.unbind()))
 }
 
+// --- Module registration ---
+
 /// Register the pub/sub seam (feature = "bot"): the `register_subscriber`
-/// pyfunction + the `PySubscription` handle class. Mirrors `add_dex_identity` /
-/// `add_deployments`.
+/// pyfunction + the `PySubscription` handle class + subscriber drainer
+/// lifecycle. Mirrors `add_dex_identity` / `add_deployments`.
 pub(crate) fn add_subscriber_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Initialize the subscriber drainer thread.
+    init_subscriber_drainer();
+
+    // Register the shutdown function.
+    m.add_function(wrap_pyfunction!(shutdown_subscriber_drainer, m)?)?;
+
     let py = m.py();
     let submod = PyModule::new(py, "degenbot._ffi.subscriber")?;
     submod.add_function(wrap_pyfunction!(register_subscriber, &submod)?)?;

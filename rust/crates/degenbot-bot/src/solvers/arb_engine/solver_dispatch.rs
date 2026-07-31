@@ -299,18 +299,18 @@ impl ArbitrageEngine {
                         } else {
                             0
                         };
-                        log::info!(
-                            "[debug-v4-solve] pm={:?} pid=0x{} zfo={} tick={} liq={} \n                            sqrt_price_x96={} protocol_fee={} coverage={:?} \
-                             n_ranges={} drainL={drain}",
-                            identity.pool_manager,
-                            pid_hex,
-                            pool_ref.zero_for_one,
-                            pool_state.tick,
-                            pool_state.liquidity,
-                            pool_state.sqrt_price_x96,
-                            pool_state.protocol_fee,
-                            pool_state.coverage,
-                            int_seq.ranges.len(),
+                        tracing::info!(
+                            pool_manager = ?identity.pool_manager,
+                            pool_id = %pid_hex,
+                            zero_for_one = %pool_ref.zero_for_one,
+                            tick = pool_state.tick,
+                            liquidity = pool_state.liquidity,
+                            sqrt_price_x96 = %pool_state.sqrt_price_x96,
+                            protocol_fee = pool_state.protocol_fee,
+                            coverage = ?pool_state.coverage,
+                            n_ranges = int_seq.ranges.len(),
+                            drain = %drain,
+                            "[debug-v4-solve] pool details"
                         );
                     }
 
