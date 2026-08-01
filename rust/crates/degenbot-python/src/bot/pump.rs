@@ -67,9 +67,6 @@ pub(crate) struct PumpState {
     pub(crate) pump_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// Subscribe state held between `subscribe()` and `resume()` calls.
     pub(crate) subscribe_state: Mutex<Option<PySubscribeState>>,
-    /// Engine lifecycle phase (Plan 098). Enforces ordering:
-    /// Created → Subscribed → `SnapshotLoaded` → Backfilled → Resumed.
-    pub(crate) phase: std::sync::atomic::AtomicU8,
     /// When True, verify each V3/V4 pool's tick data against on-chain state
     /// immediately after registration (T5 deletes this — the verify gate moves
     /// to the registry drain seam in T6).
@@ -97,22 +94,22 @@ impl PumpState {
             shutdown: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             pump_handle: Mutex::new(None),
             subscribe_state: Mutex::new(None),
-            phase: std::sync::atomic::AtomicU8::new(EnginePhase::Created as u8),
             verify_rpc_url: Mutex::new(None),
             verify_provider: Mutex::new(None),
             verify_state_view: Mutex::new(None),
         }
     }
 
-    /// Read the current engine lifecycle phase.
+    /// Read the current engine lifecycle phase (delegates to the core
+    /// `ArbitrageEngine` source of truth — ZU7RAF).
     pub(crate) fn current_phase(&self) -> EnginePhase {
-        EnginePhase::from_u8(self.phase.load(std::sync::atomic::Ordering::Relaxed))
+        self.engine.lock().current_phase()
     }
 
     /// Advance to `phase` (no ordering check — the caller validates).
+    /// Delegates to the core `ArbitrageEngine` (ZU7RAF).
     pub(crate) fn set_phase(&self, phase: EnginePhase) {
-        self.phase
-            .store(phase as u8, std::sync::atomic::Ordering::Relaxed);
+        self.engine.lock().set_phase(phase);
     }
 
     /// Subscribe to the WS `newHeads` + logs streams (ADR-006 D4 T3).

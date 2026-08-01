@@ -395,6 +395,15 @@ pub struct ArbitrageEngine {
     /// `newHeads` (not from `ResultBatch::solve_block`). Plumbed parallel to
     /// `result_tx`; `compute_diff_and_send` never touches it.
     block_tx: Option<tokio::sync::mpsc::UnboundedSender<BlockNotification>>,
+    /// Engine lifecycle phase (ZU7RAF — core-OWNED). Enforces ordering
+    /// `Created → Subscribed → SnapshotLoaded → Backfilled → Resumed`.
+    /// Previously the `AtomicU8` lived on the pyo3 `PumpState` wrapper;
+    /// moving it to the core engine lets a standalone Rust consumer observe +
+    /// guard the lifecycle with no Python in the build. Read/written via
+    /// [`Self::current_phase`] / [`Self::set_phase`]; the engine sits behind
+    /// `Arc<Mutex<..>>` so the atomic read is lock-free across the pyo3
+    /// wrappers and the pump task.
+    phase: std::sync::atomic::AtomicU8,
 }
 
 impl ArbitrageEngine {
@@ -437,7 +446,55 @@ impl ArbitrageEngine {
             max_profit: U256::MAX,
             result_tx: None,
             block_tx: None,
+            phase: std::sync::atomic::AtomicU8::new(EnginePhase::Created as u8),
         }
+    }
+}
+
+impl ArbitrageEngine {
+    /// Read the current engine lifecycle phase (core-owned source of truth,
+    /// ZU7RAF).
+    /// Atomic + lock-free (the engine is behind `Arc<Mutex<..>>` across the
+    /// pyo3 wrappers and the pump). Reconstructs from the `u8` discriminant;
+    /// an unknown discriminant falls back to `Created` (the safest default —
+    /// any phase-gated method re-validates via `require`/`require_before`).
+    #[must_use]
+    pub fn current_phase(&self) -> EnginePhase {
+        EnginePhase::from_u8(self.phase.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
+    /// Advance to `phase` with NO ordering check — the caller validates against
+    /// the gated helpers [`Self::require_phase`] / [`Self::require_phase_before`]
+    /// (or `EnginePhase::allow_subscribe` / `after_subscribe`). Core-owned
+    /// source of truth.
+    pub fn set_phase(&self, phase: EnginePhase) {
+        self.phase
+            .store(phase as u8, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Gate a lifecycle-ordered method: succeed only when the current phase is
+    /// at or past `required`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(String)` describing the invalid transition when the phase
+    /// is below `required`.
+    pub fn require_phase(&self, required: EnginePhase, method_name: &str) -> Result<(), String> {
+        self.current_phase().require(required, method_name)
+    }
+
+    /// Gate a lifecycle-ordered method: succeed only when the current phase is
+    /// strictly BEFORE `phase`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(String)` when the engine has already reached `phase`.
+    pub fn require_phase_before(
+        &self,
+        phase: EnginePhase,
+        method_name: &str,
+    ) -> Result<(), String> {
+        self.current_phase().require_before(phase, method_name)
     }
 }
 

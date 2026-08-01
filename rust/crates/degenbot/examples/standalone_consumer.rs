@@ -110,6 +110,9 @@ fn fixture_snapshot_seed_block() -> Option<u64> {
 }
 
 fn main() {
+    // 2b reaches ArbitrageEngine for the standalone lifecycle slice.
+    use degenbot::solvers::arb_engine::{ArbitrageEngine, EnginePhase};
+
     // 1. Construct the Rust-owned per-chain bot state (no Python).
     let mut bot = BotState::new();
 
@@ -147,6 +150,14 @@ fn main() {
         .register_v2_pool(&params)
         .expect("standalone: register V2");
     assert_eq!(pool_id, 1, "first registered pool gets id 1");
+
+    // 2b. Standalone engine lifecycle (ZU7RAF): the core `ArbitrageEngine`
+    //    owns EnginePhase — a cargo-add degenbot consumer observes + guards it.
+    let engine = ArbitrageEngine::new();
+    assert_eq!(engine.current_phase(), EnginePhase::Created);
+    assert!(engine.current_phase().allow_subscribe("subscribe").is_ok());
+    engine.set_phase(EnginePhase::Subscribed);
+    assert_eq!(engine.current_phase(), EnginePhase::Subscribed);
 
     // 3. Run a swap calc through the Rust core (the `degenbot-v2-math`
     //    `IntHopState` constant-product path). The same code path the PyO3 binding ships to

@@ -3585,6 +3585,46 @@ mod tests {
         );
     }
 
+    /// ZU7RAF: the core `ArbitrageEngine` OWNS the lifecycle phase — a
+    /// standalone Rust consumer can observe + guard the state machine directly
+    /// (`current_phase` / `set_phase` / `require_phase` / `require_phase_before`)
+    /// with no Python in the loop. Pins the Created → Subscribed →
+    /// `SnapshotLoaded` → `Backfilled` → `Resumed` ordering with gate
+    /// enforcement.
+    #[test]
+    fn core_engine_owns_and_guards_the_lifecycle_phase() {
+        let engine = ArbitrageEngine::new();
+
+        // Fresh engine → Created.
+        assert_eq!(engine.current_phase(), EnginePhase::Created);
+
+        // Gate: require_phase(SnapshotLoaded) fails from Created.
+        assert!(engine
+            .require_phase(EnginePhase::SnapshotLoaded, "resume")
+            .is_err());
+        // require_phase_before(Subscribed) succeeds while Created.
+        assert!(engine
+            .require_phase_before(EnginePhase::Subscribed, "subscribe")
+            .is_ok());
+        // subscribe is allowed from Created, advances to Subscribed.
+        assert!(engine.current_phase().allow_subscribe("subscribe").is_ok());
+        engine.set_phase(EnginePhase::Subscribed);
+        assert_eq!(engine.current_phase(), EnginePhase::Subscribed);
+
+        // Advance through the full ordering.
+        engine.set_phase(EnginePhase::SnapshotLoaded);
+        engine.set_phase(EnginePhase::Backfilled);
+        engine.set_phase(EnginePhase::Resumed);
+        assert_eq!(engine.current_phase(), EnginePhase::Resumed);
+
+        // Once Resumed, require_phase_before(Resumed) fails (already past),
+        // and require_phase(Resumed) is satisfied.
+        assert!(engine
+            .require_phase_before(EnginePhase::Resumed, "resume")
+            .is_err());
+        assert!(engine.require_phase(EnginePhase::Resumed, "solve").is_ok());
+    }
+
     /// TJT63P: `allow_subscribe` accepts `Created` (legacy subscribe-first path)
     /// AND `SnapshotLoaded` (construction-time-load path: load snapshot, then
     /// subscribe). Rejects `Subscribed`/`Backfilled`/`Resumed`.
