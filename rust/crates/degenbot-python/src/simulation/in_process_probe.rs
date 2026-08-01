@@ -255,6 +255,8 @@ pub fn simulate_in_process_revert_probe<'py>(
                     format!("0x{}", alloy::primitives::hex::encode(&rf.revert_data)),
                 )?;
                 rdict.set_item("label", &rf.label)?;
+                rdict.set_item("outcome_kind", rf.outcome_kind)?;
+                rdict.set_item("gas_used", rf.gas_used)?;
                 fdict.set_item("reverting_frame", rdict)?;
             }
             None => fdict.set_item("reverting_frame", py.None())?,
@@ -264,6 +266,12 @@ pub fn simulate_in_process_revert_probe<'py>(
             swaps_list.append(captured_swap_to_dict(py, s)?)?;
         }
         fdict.set_item("captured_swaps", swaps_list)?;
+        // Compact per-frame EVM call-trace summary (no-profit diagnostic).
+        let ct_list = PyList::empty(py);
+        for s in &f.call_trace {
+            ct_list.append(s)?;
+        }
+        fdict.set_item("call_trace", ct_list)?;
         // optimal_input + hop_outputs as Python ints (u128 fits in PyLong).
         fdict.set_item("optimal_input", f.optimal_input)?;
         let hop_outputs_list = PyList::empty(py);

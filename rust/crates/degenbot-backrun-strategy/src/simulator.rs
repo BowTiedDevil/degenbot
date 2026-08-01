@@ -238,6 +238,12 @@ pub struct SimFailure {
     /// `recompute.matches_solver`). Empty for orchestration-only buckets where
     /// no hop ran (the int128-overflow guard, the encode-failed guard).
     pub hop_outputs: Vec<u128>,
+    /// Compact per-frame summary of the full EVM call trace captured during
+    /// `execute()` (`depth,target,selector,outcome_kind,gas_used`). Populated
+    /// for inspectable calls ([3]) to show hop-entry/completion — e.g. a
+    /// `no-profit` where hop0 + mid hops emit but the outermost V3 swap does
+    /// not. Empty when no trace was captured.
+    pub call_trace: Vec<String>,
 }
 
 /// The inspector-captured attribution of a failing `execute()` frame — the
@@ -261,6 +267,14 @@ pub struct RevertingFrame {
     pub revert_data: alloy::primitives::Bytes,
     /// The `classify_revert` label run on `revert_data`.
     pub label: String,
+    /// Whether the frame is a clean `REVERT` or a hard `HALT` (OOG, `0xfe`
+    /// invalid opcode, call-too-deep …). A `Halt` carries no revert data, so it
+    /// lands in the `"empty"` bucket — this discriminant + `gas_used` let the
+    /// operator tell an OOG/invalid from a clean `require` failure.
+    pub outcome_kind: &'static str,
+    /// Gas spent by the failing frame (useful to confirm an OOG: compares
+    /// against the frame's `gas_limit`).
+    pub gas_used: u64,
 }
 
 /// A revert-bucket tally accumulator (ports `_tally_fail`, L1769–L1771).
@@ -324,6 +338,7 @@ impl FailBuckets {
             captured_swaps: Vec::new(),
             optimal_input,
             hop_outputs,
+            call_trace: Vec::new(),
         });
     }
 
@@ -344,6 +359,7 @@ impl FailBuckets {
         captured_swaps: Vec<CapturedSwap>,
         optimal_input: u128,
         hop_outputs: Vec<u128>,
+        call_trace: Vec<String>,
     ) {
         self.tally(bucket);
         self.failures.push(SimFailure {
@@ -355,6 +371,7 @@ impl FailBuckets {
             captured_swaps,
             optimal_input,
             hop_outputs,
+            call_trace,
         });
     }
 
@@ -383,6 +400,7 @@ impl FailBuckets {
             captured_swaps,
             optimal_input,
             hop_outputs,
+            call_trace: Vec::new(),
         });
     }
 
@@ -1030,6 +1048,25 @@ where
                     selector: frame.selector,
                     revert_data: frame_revert_data,
                     label: frame_label,
+                    outcome_kind: match &frame.outcome {
+                        Some(degenbot_simulation::FrameOutcome::Revert { .. }) => "revert",
+                        Some(degenbot_simulation::FrameOutcome::Success { .. }) => {
+                            "success-unexpected"
+                        }
+                        _ => "halt",
+                    },
+                    gas_used: frame
+                        .outcome
+                        .as_ref()
+                        .map(|o| {
+                            use degenbot_simulation::FrameOutcome;
+                            match o {
+                                FrameOutcome::Revert { gas_used, .. }
+                                | FrameOutcome::Halt { gas_used }
+                                | FrameOutcome::Success { gas_used, .. } => *gas_used,
+                            }
+                        })
+                        .unwrap_or_default(),
                 },
                 captured_swaps.clone(),
                 path.optimal_input,
@@ -1122,12 +1159,45 @@ where
     let combined_after = weth_after + eth_after + erc6909_after;
     let gross_profit = combined_after.saturating_sub(combined_before);
     if gross_profit.is_zero() {
+        // Build a compact per-frame summary for the FFI-surfaced `call_trace`
+        // (Python renders it in the `[sim-diag]` line) so we can see whether
+        // the outermost V3 hop of a `no-profit` was entered + completed.
+        use degenbot_simulation::FrameOutcome as FO;
+        let call_trace: Vec<String> = captured_call_trace
+            .frames
+            .iter()
+            .map(|f| {
+                let kind = match &f.outcome {
+                    Some(FO::Revert { .. }) => "revert",
+                    Some(FO::Success { .. }) => "ok",
+                    _ => "halt",
+                };
+                let gas = f
+                    .outcome
+                    .as_ref()
+                    .map(|o| match o {
+                        FO::Revert { gas_used, .. }
+                        | FO::Halt { gas_used }
+                        | FO::Success { gas_used, .. } => *gas_used,
+                    })
+                    .unwrap_or_default();
+                format!(
+                    "d{}:{:#x}:0x{}:{}=g{}",
+                    f.depth,
+                    f.target,
+                    alloy::primitives::hex::encode(f.selector),
+                    kind,
+                    gas
+                )
+            })
+            .collect();
         fail_buckets.record_no_profit(
             path.path_id,
             "no-profit",
             captured_swaps.clone(),
             path.optimal_input,
             path.hop_outputs.clone(),
+            call_trace,
         );
         return Ok(None);
     }

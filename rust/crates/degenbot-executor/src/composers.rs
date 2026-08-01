@@ -2818,7 +2818,16 @@ fn three_hop_v3_v2_v3(
     let v3a_idx = at.add(ha.pool_address).ok()?;
     let v3c_idx = at.add(hc.pool_address).ok()?;
 
-    let mut v3a_fwd = encoders::enc_v2_swap_direct(v2b_idx, hb.zfo, out_b, v3c_idx).ok()?;
+    // V2_SWAP_CALC (not V2_SWAP_DIRECT): compute the V2 output ON-CHAIN from
+    // the ACTUAL input hop0 deposited to the pair (excess balance) rather than
+    // the solver's predicted `out_b`. V2_SWAP_DIRECT forces the predicted
+    // `out_b` as a fixed amount_out; when the predicted output exceeds what
+    // the real (possibly near-empty) pair can fund from the deposited input,
+    // the pair's K-invariant reverts (UniswapV2: K). Computing from the actual
+    // excess makes the K-check satisfiable by construction and routes the
+    // ACTUAL output to v3c (the outermost final V3 hop). Aligns with the
+    // prediction→actual settlement class of the V3-V4-V4/V3-V4-V3 fixes.
+    let mut v3a_fwd = encoders::enc_v2_swap_calc(v2b_idx, hb.zfo, v3c_idx, hb.fee);
     v3a_fwd
         .extend_from_slice(&encoders::enc_erc20_transfer(weth_idx, v3a_idx, optimal_input).ok()?);
 

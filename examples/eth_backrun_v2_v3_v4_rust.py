@@ -1714,7 +1714,8 @@ def _render_sim_failures(outcome: DispatchOutcome, *, current_block: int) -> Non
         if rf is not None:
             revert_line = (
                 f"revert@depth={rf['depth']} target={rf['target']} "
-                f"sel={rf['selector']} label={rf['label']} "
+                f"sel={rf['selector']} label={rf['label']} kind={rf.get('outcome_kind')} "
+                f"gas={rf.get('gas_used')} "
                 f"swaps_before={len(swaps)} revert={rf['revert_data']}"
             )
         else:
@@ -1722,6 +1723,9 @@ def _render_sim_failures(outcome: DispatchOutcome, *, current_block: int) -> Non
         bot_logger.info(
             f"[sim-fail] path={path_id} type={path_type} bucket={bucket} {revert_line} hops={hops}",
         )
+        ct = (rec.get("call_trace") or [])
+        if ct:
+            bot_logger.info(f"[sim-trace] path={path_id} frames={";".join(str(x) for x in ct)}")
         # Ergo epic 63I7WJ (task AM5AJW) — emit the structured [sim-diag] JSON
         # line the ``logs/permutation_analyzer.py`` classifier parses. Built
         # from the failure record's captured_swaps (actual) + hop_outputs

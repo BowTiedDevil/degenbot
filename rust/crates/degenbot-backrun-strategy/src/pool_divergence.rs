@@ -343,6 +343,7 @@ mod tests {
             captured_swaps,
             optimal_input: 1000,
             hop_outputs,
+            call_trace: Vec::new(),
         }
     }
 

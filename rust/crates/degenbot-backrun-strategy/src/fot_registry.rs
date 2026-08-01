@@ -510,6 +510,8 @@ mod tests {
             selector: [0x49, 0x49, 0x41, 0x00],
             revert_data: Bytes::default(),
             label: label.to_string(),
+            outcome_kind: "revert",
+            gas_used: 0,
         }
     }
 
@@ -523,6 +525,7 @@ mod tests {
             captured_swaps: Vec::new(),
             optimal_input: 1000,
             hop_outputs: Vec::new(),
+            call_trace: Vec::new(),
         }
     }
 
@@ -635,6 +638,7 @@ mod tests {
             captured_swaps: captured,
             optimal_input: 1000,
             hop_outputs,
+            call_trace: Vec::new(),
         }
     }
 

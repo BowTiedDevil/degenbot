@@ -271,6 +271,8 @@ impl PyDispatchOutcome {
                     )?;
                     rdict.set_item("revert_data", encode_hex(&rf.revert_data))?;
                     rdict.set_item("label", &rf.label)?;
+                    rdict.set_item("outcome_kind", rf.outcome_kind)?;
+                    rdict.set_item("gas_used", rf.gas_used)?;
                     dict.set_item("reverting_frame", rdict)?;
                 }
                 None => dict.set_item("reverting_frame", py.None())?,
@@ -281,6 +283,12 @@ impl PyDispatchOutcome {
                 swaps_list.append(captured_swap_to_dict(py, s)?)?;
             }
             dict.set_item("captured_swaps", swaps_list)?;
+            // Compact per-frame EVM call-trace summary (no-profit diagnostic).
+            let ct_list = PyList::empty(py);
+            for s in &f.call_trace {
+                ct_list.append(s)?;
+            }
+            dict.set_item("call_trace", ct_list)?;
             // The solver's expected amounts — the [sim-diag] classifier's
             // EXPECTED half (the ACTUAL half is `captured_swaps`). The gap
             // between `hop_outputs[i]` and the i-th captured swap's amount
