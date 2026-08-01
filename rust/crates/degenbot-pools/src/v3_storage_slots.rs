@@ -39,7 +39,11 @@
 //! tick crossing but **never read into the output amounts** — so seeding them
 //! to zero (a self-consistent fresh-pool initial state) yields a correct
 //! swap-math read with no engine-state extension. The encoders here zero-fill
-//! every on-chain field the engine does not carry.
+//! every on-chain field the engine does not carry, EXCEPT the observation
+//! cardinal/next values in a fresh `slot0`, which are seeded to `1` (the
+//! post-`initialize()` value): a 0 cardinality makes the on-chain `swap()`'s
+//! observation bookkeeping (`observeSingle`/`_updateObservation`) walk an
+//! infinite loop and OOG — the oracle fixture needs the swap to terminate.
 //!
 //! ## Storage layout reference (UniswapV3Pool, v3-core v1.0.0)
 //!
@@ -209,17 +213,20 @@ pub fn decode_v3_slot0(word: U256) -> V3Slot0Parts {
 }
 
 /// Encode a fresh-pool V3 `slot0` from just the swap-math-relevant fields:
-/// observation/fee fields zero-filled, `unlocked = true` (a `swap()` reverts
-/// with `LOK` when locked). This is the form the Tier-3b seeding layer uses to
-/// seed a `CacheDB` from a `V3PoolState`.
+/// `unlocked = true` (a `swap()` reverts with `LOK` when locked), and the
+/// observation cardinality set to 1 (the post-`initialize()` value — a swap's
+/// `observeSingle`/`_updateObservation` bookkeeping path expects ≥1, and a 0
+/// cardinality sends the observation-grow walk into an infinite loop that OOGs
+/// the swap). This is the form the Tier-3b seeding layer uses to seed a
+/// `CacheDB` from a `V3PoolState`.
 #[must_use]
 pub fn encode_v3_slot0_fresh(sqrt_price_x96: U256, tick: i32) -> U256 {
     encode_v3_slot0(V3Slot0Parts {
         sqrt_price_x96,
         tick,
         observation_index: 0,
-        observation_cardinality: 0,
-        observation_cardinality_next: 0,
+        observation_cardinality: 1,
+        observation_cardinality_next: 1,
         fee_protocol: 0,
         unlocked: true,
     })
@@ -405,8 +412,11 @@ mod tests {
         let parts = decode_v3_slot0(word);
         assert!(parts.unlocked, "fresh slot0 must be unlocked");
         assert_eq!(parts.observation_index, 0);
-        assert_eq!(parts.observation_cardinality, 0);
-        assert_eq!(parts.observation_cardinality_next, 0);
+        // Cardinality = 1 is the post-`initialize()` value (the ORACLE path
+        // needs the swap's observation bookkeeping to terminate; see the
+        // `v3_slot0_fresh` doc).
+        assert_eq!(parts.observation_cardinality, 1);
+        assert_eq!(parts.observation_cardinality_next, 1);
         assert_eq!(parts.fee_protocol, 0);
         assert_eq!(
             parts.sqrt_price_x96,

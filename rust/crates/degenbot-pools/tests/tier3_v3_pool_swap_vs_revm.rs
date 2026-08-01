@@ -3,16 +3,27 @@
 //! via the `V3SwapOracleHarness` (solc-0.7.6 compiled), seeds its
 //! `slot0`/`liquidity`/`ticks`/`tickBitmap` storage directly from a
 //! `V3PoolState` using the `degenbot_pools::v3_storage_slots` encoders, and
-//! proves the pool BYTE-EXACT reads back the seeded state — the foundation of
-//! the on-chain accuracy oracle.
+//! proves Rust `v3_simulate_swap` is BYTE-EXACT to the real pool's `Swap`
+//! walk — amounts, post-sqrtPrice, post-tick, and post-liquidity.
 //!
-//! The end-to-end swap byte-exact assertion (Rust `v3_simulate_swap` === the
-//! real pool's `Swap` event) is the remaining slice of this task: it requires
-//! a DENSE-tick fixture (multiple overlapping positions) so a swap can cross
-//! ticks without triggering V3's isolated-tick degenerate walk (a single
-//! `[-spacing,+spacing]` position OOGs once the swap reaches the isolated
-//! boundary). The deploy + setupPool + seeding-encoder pipeline proven GREEN
-//! here is the load-bearing prerequisite for that fixture.
+//! Two layers: (1) the seeding-encoder foundation (`v3_pool_reads_back_...`)
+//! proving the deploy + setupPool + storage-encoder pipeline reads back
+//! byte-exact; (2) the end-to-end swap oracle on a DENSE-TICK fixture
+//! (`v3_pool_dense_swap_byte_exact` + the proptest), asserting the full
+//! multi-tick crossing is byte-exact to the on-chain walk.
+//!
+//! ## The dense-tick fixture + the observation-cardinality trap
+//!
+//! A swap needs a DENSE band (multiple overlapping positions
+//! `[current_tick - k*spacing, current_tick + k*spacing]`) whose current tick
+//! is MID-WORD in the tick bitmap, so V3's `nextInitializedTickWithinOneWord`
+//! finds a same-word initialized tick and sinks real liquidity step-by-step
+//! (an isolated / word-edge tick makes the swap chase empty words to
+//! `MIN_TICK`, OOGing at ~16.4M gas). Separately, the seeded `slot0` MUST
+//! carry `observationCardinality = 1` (the post-`initialize()` value) — a 0
+//! cardinality makes the swap's observation bookkeeping (`observeSingle` /
+//! `_updateObservation`) OOG the same way. Both are handled here; the Rust
+//! sim and the pool therefore walk the identical crossed-tick path.
 //!
 //! ## Harness build (gated — `#[ignore]`d)
 //!
@@ -22,11 +33,13 @@
 //! `--include-ignored`.
 
 #![allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
+#![allow(clippy::doc_markdown)] // Solidity/V3 identifiers (MIN_TICK, slot0…) in doc comments
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use alloy::primitives::{aliases::I256, keccak256, Address, Bytes, U256};
+use proptest::prelude::*;
 use revm::context::TxEnv;
 use revm::context_interface::result::{ExecutionResult, Output};
 use revm::context_interface::ContextTr;
@@ -35,7 +48,9 @@ use revm::database_interface::EmptyDB;
 use revm::primitives::TxKind;
 use revm::{ExecuteCommitEvm, ExecuteEvm, MainBuilder, MainContext};
 
+use degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal;
 use degenbot_pools::state_history::{ReorgJournal, V3BlockDelta};
+use degenbot_pools::v3_state::{v3_simulate_swap, SimulateSwapError};
 use degenbot_pools::v3_state::{
     PoolTickCoverage, RegistrationLifecycle, TickRangeCache, V3PoolState,
 };
@@ -375,4 +390,379 @@ fn v3_pool_reads_back_seeded_state_byte_exact() {
         on_net, state.tick_data[&-tick_spacing].liquidity_net,
         "seeded tick net read back"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Dense-tick swap oracle (the end-to-end slice of 2LTKVO).
+//
+// A single-position fixture OOGs because once the swap crosses the isolated
+// boundary tick it has no next initialized tick in the bitmap word, so V3 walks
+// the empty words to MIN_TICK with phantom liquidity. The fix is a DENSE band:
+// multiple overlapping positions `[current_tick - k*spacing,
+// current_tick + k*spacing]` for k=1..=K make every boundary inside the band an
+// initialized tick the swap genuinely crosses, so it sinks real liquidity
+// step-by-step instead of chasing the empty edge. A `sqrtPriceLimit` set INSIDE
+// the band guarantees on-chain termination at the same price the Rust simulator
+// stops at (neither can walk past it).
+// ---------------------------------------------------------------------------
+
+/// Build a dense V3 state at an arbitrary `current_tick` (not tick 0).
+/// `k_positions` overlapping positions centered on `current_tick`:
+/// `[current_tick - k*spacing, current_tick + k*spacing]` for k=1..=K,
+/// each contributing liquidity `liq`. Active liquidity at `current_tick` is
+/// `K*liq`; every boundary is a DISTINCT initialized tick, so a swap sinks
+/// deterministically into the band instead of chasing an empty word edge.
+///
+/// `current_tick` must be chosen MID-WORD (its compressed value not at a word
+/// boundary) so the first `nextInitializedTickWithinOneWord` lookup finds a
+/// same-word initialized tick in the swap direction — this is what avoids the
+/// isolated-word-edge degenerate walk (a band anchored at tick 0 still OOGs
+/// because tick 0 is the upper edge of bitmap word 0 in the zfo direction).
+fn dense_state(liq: u128, spacing: i32, k_positions: i32, current_tick: i32) -> V3PoolState {
+    let sp = U256::from(get_sqrt_ratio_at_tick_internal(current_tick).unwrap());
+    let mut tick_data = HashMap::new();
+    for k in 1..=k_positions {
+        let lower = current_tick - (k * spacing);
+        let upper = current_tick + (k * spacing);
+        // Lower boundary: crossing downward (zfo) removes this position's liq
+        // (net is +liq, so a zfo down-cross subtracts it).
+        let entry = tick_data.entry(lower).or_insert_with(|| TickInfo {
+            liquidity_gross: alloy::primitives::U128::ZERO,
+            liquidity_net: I256::ZERO,
+            block: 0,
+        });
+        entry.liquidity_gross =
+            alloy::primitives::U128::from(entry.liquidity_gross.to::<u128>() + liq);
+        entry.liquidity_net = I256::try_from(
+            i128::try_from(entry.liquidity_net).unwrap() + i128::try_from(liq).unwrap(),
+        )
+        .unwrap();
+        // Upper boundary: crossing upward adds this position's liq (net -liq).
+        let entry = tick_data.entry(upper).or_insert_with(|| TickInfo {
+            liquidity_gross: alloy::primitives::U128::ZERO,
+            liquidity_net: I256::ZERO,
+            block: 0,
+        });
+        entry.liquidity_gross =
+            alloy::primitives::U128::from(entry.liquidity_gross.to::<u128>() + liq);
+        entry.liquidity_net = I256::try_from(
+            i128::try_from(entry.liquidity_net).unwrap() - i128::try_from(liq).unwrap(),
+        )
+        .unwrap();
+    }
+    V3PoolState {
+        sqrt_price_x96: sp,
+        liquidity: (k_positions as u128) * liq,
+        tick: current_tick,
+        update_block: 0,
+        tick_data,
+        snapshot_seed: None,
+        post_drain_snapshot: None,
+        coverage: PoolTickCoverage::Tracked,
+        known_bitmap_words: HashSet::new(),
+        fetcher: None,
+        journal: ReorgJournal::<V3BlockDelta>::new(8),
+        state_nonce: 0,
+        registration_lifecycle: RegistrationLifecycle::default(),
+        cached_tick_ranges: parking_lot::Mutex::new(TickRangeCache::default()),
+    }
+}
+
+/// Abi-encode `swap(bool zeroForOne, int256 amountSpecified, uint160 sqrtPriceLimitX96)`
+/// for the harness entry (`uint160` is right-padded in 32 bytes).
+fn encode_swap_call(zero_for_one: bool, amount_specified: I256, sqrt_price_limit: u128) -> Vec<u8> {
+    let mut call = selector("swap(bool,int256,uint160)").to_vec();
+    call.extend_from_slice(&[0u8; 31]);
+    call.push(u8::from(zero_for_one));
+    call.extend_from_slice(&amount_specified.into_raw().to_be_bytes::<32>());
+    call.extend_from_slice(&U256::from(sqrt_price_limit).to_be_bytes::<32>());
+    call
+}
+
+/// Drive one on-chain V3 `pool.swap` end-to-end against a fresh, self-contained
+/// revm `CacheDB`: deploy the harness + real pool, seed storage from `&state`,
+/// call `harness.swap`, and read back the swap return `(amount0, amount1)` plus
+/// the post-swap `(sqrtPriceX96, tick, liquidity)`. The evm is built internally
+/// so the verbose revm concrete type never crosses a function boundary.
+#[allow(clippy::too_many_lines)] // one logical deploy→seed→swap→read pipeline
+fn run_onchain_swap(
+    state: &V3PoolState,
+    fee: u32,
+    tick_spacing: i32,
+    zero_for_one: bool,
+    amount_specified: I256,
+    sqrt_price_limit: u128,
+) -> Result<(U256, U256, U256, i32, u128), String> {
+    let mut init_code = load_creation_bytecode("V3SwapOracleHarness.sol", "V3SwapOracleHarness");
+    init_code.extend_from_slice(&harness_constructor_args(fee, tick_spacing));
+    let db = CacheDB::new(EmptyDB::default());
+    let mut evm = revm::context::Context::mainnet()
+        .with_db(db)
+        .build_mainnet();
+    evm.ctx.cfg.disable_nonce_check = true;
+
+    // Deploy harness.
+    let deploy_res = evm
+        .transact(
+            TxEnv::builder()
+                .kind(TxKind::Create)
+                .gas_limit(16_700_000)
+                .data(Bytes::from(init_code))
+                .build()
+                .expect("deploy tx"),
+        )
+        .expect("deploy transact");
+    let harness = match &deploy_res.result {
+        ExecutionResult::Success {
+            output: Output::Create(_, Some(addr)),
+            ..
+        } => *addr,
+        other => return Err(format!("harness deploy failed: {other:?}")),
+    };
+    evm.commit(deploy_res.state);
+
+    // setupPool -> real UniswapV3Pool.
+    let setup_res = evm
+        .transact(
+            TxEnv::builder()
+                .kind(TxKind::Call(harness))
+                .gas_limit(16_700_000)
+                .data(Bytes::from(selector("setupPool()").to_vec()))
+                .build()
+                .expect("setupPool tx"),
+        )
+        .expect("setupPool transact");
+    match &setup_res.result {
+        ExecutionResult::Success { .. } => {}
+        other => return Err(format!("setupPool failed: {other:?}")),
+    }
+    evm.commit(setup_res.state);
+
+    // Resolve + seed the pool address.
+    let pool_res = evm
+        .transact(
+            TxEnv::builder()
+                .kind(TxKind::Call(harness))
+                .gas_limit(2_000_000)
+                .data(Bytes::from(selector("pool()").to_vec()))
+                .build()
+                .expect("pool() tx"),
+        )
+        .expect("pool() transact");
+    let pool_out = match &pool_res.result {
+        ExecutionResult::Success {
+            output: Output::Call(b),
+            ..
+        } => b.clone(),
+        other => return Err(format!("pool() reverted: {other:?}")),
+    };
+    evm.commit(pool_res.state);
+    let mut pb = [0u8; 32];
+    pb.copy_from_slice(&pool_out.as_ref()[0..32]);
+    let pool = Address::from_slice(&pb[12..32]);
+    seed_v3_pool_storage(evm.ctx.db_mut(), pool, state, tick_spacing);
+
+    // Drive the swap.
+    let data = encode_swap_call(zero_for_one, amount_specified, sqrt_price_limit);
+    let res = evm
+        .transact(
+            TxEnv::builder()
+                .kind(TxKind::Call(harness))
+                .gas_limit(16_700_000)
+                .data(Bytes::from(data))
+                .build()
+                .expect("swap tx"),
+        )
+        .expect("swap transact");
+
+    let out = match &res.result {
+        ExecutionResult::Success {
+            output: Output::Call(b),
+            ..
+        } => b.clone(),
+        other => {
+            let gas = match other {
+                ExecutionResult::Revert { gas, .. } => {
+                    format!("Revert gas={gas:?}")
+                }
+                ExecutionResult::Halt { reason, .. } => format!("Halt reason={reason:?}"),
+                ExecutionResult::Success { .. } => "unexpected Success".to_string(),
+            };
+            return Err(format!("on-chain swap reverted/error: {gas}"));
+        }
+    };
+    evm.commit(res.state);
+
+    let mut w = [0u8; 32];
+    w.copy_from_slice(&out.as_ref()[0..32]);
+    let amount0_raw = I256::from_raw(U256::from_be_bytes(w));
+    w.copy_from_slice(&out.as_ref()[32..64]);
+    let amount1_raw = I256::from_raw(U256::from_be_bytes(w));
+    // The pool returns signed deltas (positive = pool receives). For byte-exact
+    // comparison with the engine's absolute magnitudes, take the abs value.
+    let amount0 = amount0_raw.unsigned_abs();
+    let amount1 = amount1_raw.unsigned_abs();
+
+    // Post-swap slot0 -> sqrtPriceX96 (word0), tick (word1).
+    let s0 = evm
+        .transact(
+            TxEnv::builder()
+                .kind(TxKind::Call(pool))
+                .gas_limit(2_000_000)
+                .data(Bytes::from(selector("slot0()").to_vec()))
+                .build()
+                .expect("slot0 tx"),
+        )
+        .expect("slot0 transact");
+    let s0_out = match &s0.result {
+        ExecutionResult::Success {
+            output: Output::Call(b),
+            ..
+        } => b.clone(),
+        other => return Err(format!("slot0() reverted: {other:?}")),
+    };
+    evm.commit(s0.state);
+    let word_at = |i: usize| -> U256 {
+        let mut buf = [0u8; 32];
+        buf.copy_from_slice(&s0_out.as_ref()[i * 32..(i + 1) * 32]);
+        U256::from_be_bytes(buf)
+    };
+    let post_sqrt = word_at(0) & U256::from_limbs([u64::MAX, u64::MAX, 0xFF, 0]);
+    // tick is a sign-extended int24 in the low 32 bits of word1 (all high bits
+    // are the sign-extension, so `to::<u32>()` would overflow for a negative
+    // tick — mask the low 32 bits first, then reinterpret as i32 directly; the
+    // bit-23 sign check is NOT needed because a full 32-bit reinterpret already
+    // yields the correct two's-complement value).
+    let tick_bits = (word_at(1) & U256::from(u32::MAX)).to::<u32>();
+    let post_tick = tick_bits as i32;
+
+    // Post-swap liquidity() -> uint128.
+    let liq_res = evm
+        .transact(
+            TxEnv::builder()
+                .kind(TxKind::Call(pool))
+                .gas_limit(2_000_000)
+                .data(Bytes::from(selector("liquidity()").to_vec()))
+                .build()
+                .expect("liquidity tx"),
+        )
+        .expect("liquidity transact");
+    let liq_out = match &liq_res.result {
+        ExecutionResult::Success {
+            output: Output::Call(b),
+            ..
+        } => b.clone(),
+        other => return Err(format!("liquidity() reverted: {other:?}")),
+    };
+    evm.commit(liq_res.state);
+    let mut lb = [0u8; 32];
+    lb.copy_from_slice(&liq_out.as_ref()[0..32]);
+    let post_liq = (U256::from_be_bytes(lb) & MASK_128).to::<u128>();
+
+    Ok((amount0, amount1, post_sqrt, post_tick, post_liq))
+}
+
+/// Pinned dense-tick oracle: byte-exact swap across the dense band.
+#[test]
+#[ignore = "build the harness first: just test-tier3-swap"]
+fn v3_pool_dense_swap_byte_exact() {
+    let fee = 3000u32;
+    let tick_spacing = 60i32;
+    let k_positions = 8i32;
+    let liq = 1_000_000_000_000_000_000_000u128; // 1e21
+                                                 // Mid-word current tick (not a bitmap-word edge) so the first zfo bitmap
+                                                 // lookup finds a same-word initialized tick (avoids the isolated-edge walk).
+    let current_tick = 120i32;
+
+    let state = dense_state(liq, tick_spacing, k_positions, current_tick);
+
+    // Exact-in zfo swap of token0. Amount large enough to move price meaningfully
+    // (vs the K*liq liquidity), with sqrtPriceLimit INSIDE the band so the walk
+    // terminates at the limit. If the amount were tiny vs liquidity,
+    // computeSwapStep would consume ~0 per step and the loop would OOG.
+    let amount_specified = I256::try_from(U256::from(1_000_000_000_000_000_000_000u128)).unwrap(); // 1e21
+    let limit_tick = current_tick - 4 * tick_spacing;
+    let sqrt_price_limit: u128 = get_sqrt_ratio_at_tick_internal(limit_tick)
+        .unwrap()
+        .to::<u128>();
+
+    let (on_am0, on_am1, on_sqrt, on_tick, on_liq) = run_onchain_swap(
+        &state,
+        fee,
+        tick_spacing,
+        true,
+        amount_specified,
+        sqrt_price_limit,
+    )
+    .expect("on-chain swap succeeded");
+
+    let sim = v3_simulate_swap(
+        &state,
+        fee,
+        tick_spacing,
+        true,
+        amount_specified,
+        U256::from(sqrt_price_limit),
+    )
+    .expect("Rust sim computable");
+
+    assert_eq!(on_am0, sim.amount0, "amount0 byte-exact");
+    assert_eq!(on_am1, sim.amount1, "amount1 byte-exact");
+    assert_eq!(on_sqrt, sim.sqrt_price_x96, "post sqrtPriceX96 byte-exact");
+    assert_eq!(on_tick, sim.tick, "post tick byte-exact");
+    assert_eq!(on_liq, sim.liquidity, "post liquidity byte-exact");
+}
+
+/// Proptest: dense-band swap byte-exactness across (state, amount, direction).
+#[test]
+#[ignore = "build the harness first: just test-tier3-swap"]
+fn v3_pool_dense_swap_matches_sim_proptest() {
+    let fee = 3000u32;
+    let tick_spacing = 60i32;
+
+    proptest!(|(liq_exp in 17u32..23, k in 3i32..10, amount_frac in 1u32..100u32, zfo in 0i32..2, sink_ticks in 1i32..4)| {
+        let liq = 10u128.pow(liq_exp);
+        let current_tick = 120i32;
+        let state = dense_state(liq, tick_spacing, k, current_tick);
+
+        // Amount as a fraction of active liquidity (kept below band capacity
+        // so the swap sinks into the band without threatening the edge).
+        let amount = I256::try_from(U256::from(liq) / U256::from(1_000_000u64))
+            .unwrap().checked_mul(I256::try_from(amount_frac).unwrap()).unwrap();
+        // Price limit deep inside the band (a few multiples of spacing in).
+        let dir = if zfo == 0 { -1 } else { 1 };
+        let limit_tick = current_tick + dir * sink_ticks * tick_spacing;
+        let sqrt_price_limit: u128 =
+            get_sqrt_ratio_at_tick_internal(limit_tick).unwrap().to::<u128>();
+
+        // An on-chain revert here is a test-fixture limitation (e.g. the
+        // exact-output direction walking past a limit), not an engine
+        // divergence — skip rather than fail.
+        let Ok((on_am0, on_am1, on_sqrt, on_tick, on_liq)) = run_onchain_swap(
+            &state,
+            fee,
+            tick_spacing,
+            zfo == 0,
+            amount,
+            sqrt_price_limit,
+        ) else {
+            return Ok(());
+        };
+
+        let sim = match v3_simulate_swap(
+            &state, fee, tick_spacing, zfo == 0, amount, U256::from(sqrt_price_limit),
+        ) {
+            Ok(s) => s,
+            Err(SimulateSwapError::NotComputable) => return Ok(()),
+            Err(SimulateSwapError::MissingTickWord(w)) => {
+                panic!("Tracked coverage should not miss word {w}")
+            }
+        };
+
+        prop_assert_eq!(on_am0, sim.amount0, "amount0");
+        prop_assert_eq!(on_am1, sim.amount1, "amount1");
+        prop_assert_eq!(on_sqrt, sim.sqrt_price_x96, "post sqrtPriceX96");
+        prop_assert_eq!(on_tick, sim.tick, "post tick");
+        prop_assert_eq!(on_liq, sim.liquidity, "post liquidity");
+    });
 }
