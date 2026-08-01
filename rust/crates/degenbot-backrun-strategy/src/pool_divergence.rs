@@ -344,6 +344,8 @@ mod tests {
             optimal_input: 1000,
             hop_outputs,
             call_trace: Vec::new(),
+            weth_before: 0,
+            weth_after: 0,
         }
     }
 

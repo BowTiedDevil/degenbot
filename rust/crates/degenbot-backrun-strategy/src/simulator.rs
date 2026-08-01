@@ -244,6 +244,13 @@ pub struct SimFailure {
     /// `no-profit` where hop0 + mid hops emit but the outermost V3 swap does
     /// not. Empty when no trace was captured.
     pub call_trace: Vec<String>,
+    /// The executor's WETH balance before `execute()` (its net-WETH baseline;
+    /// 0 in a fresh sim — the executor flash-borrows). Diagnostic for the
+    /// `no-profit` family: whether the outermost hop actually returned WETH.
+    pub weth_before: u128,
+    /// The executor's WETH balance after `execute()`. `no-profit` ⇔
+    /// `weth_after <= weth_before` (+ ETH/ERC-6909 which net to 0 here).
+    pub weth_after: u128,
 }
 
 /// The inspector-captured attribution of a failing `execute()` frame — the
@@ -339,6 +346,8 @@ impl FailBuckets {
             optimal_input,
             hop_outputs,
             call_trace: Vec::new(),
+            weth_before: 0,
+            weth_after: 0,
         });
     }
 
@@ -352,6 +361,7 @@ impl FailBuckets {
     /// distinguish a no-op encoding (`captured_swaps` empty — `execute()` did
     /// nothing) from a solver calc divergence (`captured_swaps` non-empty but
     /// the balance delta netted to zero).
+    #[allow(clippy::too_many_arguments)] // path attribution + swap/trace/weth detail
     pub fn record_no_profit(
         &mut self,
         path_id: u64,
@@ -360,6 +370,8 @@ impl FailBuckets {
         optimal_input: u128,
         hop_outputs: Vec<u128>,
         call_trace: Vec<String>,
+        weth_before: u128,
+        weth_after: u128,
     ) {
         self.tally(bucket);
         self.failures.push(SimFailure {
@@ -372,6 +384,8 @@ impl FailBuckets {
             optimal_input,
             hop_outputs,
             call_trace,
+            weth_before,
+            weth_after,
         });
     }
 
@@ -401,6 +415,8 @@ impl FailBuckets {
             optimal_input,
             hop_outputs,
             call_trace: Vec::new(),
+            weth_before: 0,
+            weth_after: 0,
         });
     }
 
@@ -1198,6 +1214,8 @@ where
             path.optimal_input,
             path.hop_outputs.clone(),
             call_trace,
+            u128::try_from(weth_before).unwrap_or_default(),
+            u128::try_from(weth_after).unwrap_or_default(),
         );
         return Ok(None);
     }

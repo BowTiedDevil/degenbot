@@ -1726,6 +1726,10 @@ def _render_sim_failures(outcome: DispatchOutcome, *, current_block: int) -> Non
         ct = (rec.get("call_trace") or [])
         if ct:
             bot_logger.info(f"[sim-trace] path={path_id} frames={";".join(str(x) for x in ct)}")
+        if rec.get("weth_before") is not None:
+            bot_logger.info(
+                f"[sim-weth] path={path_id} before={rec.get('weth_before')} after={rec.get('weth_after')}"
+            )
         # Ergo epic 63I7WJ (task AM5AJW) — emit the structured [sim-diag] JSON
         # line the ``logs/permutation_analyzer.py`` classifier parses. Built
         # from the failure record's captured_swaps (actual) + hop_outputs

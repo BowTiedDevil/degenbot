@@ -272,6 +272,8 @@ pub fn simulate_in_process_revert_probe<'py>(
             ct_list.append(s)?;
         }
         fdict.set_item("call_trace", ct_list)?;
+        fdict.set_item("weth_before", f.weth_before)?;
+        fdict.set_item("weth_after", f.weth_after)?;
         // optimal_input + hop_outputs as Python ints (u128 fits in PyLong).
         fdict.set_item("optimal_input", f.optimal_input)?;
         let hop_outputs_list = PyList::empty(py);
