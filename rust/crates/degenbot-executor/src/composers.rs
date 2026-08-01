@@ -3212,7 +3212,13 @@ fn three_hop_v3_v4_v3(
     v4_inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
         c0_b_idx, c1_b_idx, fee_b, ts_b, zero_idx, hb.zfo,
     ));
-    v4_inner.extend_from_slice(&encoders::enc_v4_take_delta(forward_b_idx, v3c_idx));
+    // Take EXACTLY `out_b` USDT to v3c, matching v3c.swap(out_b). The take
+    // amount must equal the V3 swap's fixed input or v3c's IIA check fails
+    // (v3c received more/less USDT than its swap demands). This aligns with
+    // the executor's canonical V4→V3 pattern (V2-V4-V3 test: take_compact
+    // with the same b_out as the V3 swap), and avoids the silent no-profit
+    // from a take_delta(actual) that diverges from the predicted out_b.
+    v4_inner.extend_from_slice(&encoders::enc_v4_take_compact(forward_b_idx, v3c_idx, out_b).ok()?);
     v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
 
     let mut a_fwd = encoders::enc_erc20_transfer(weth_idx, v3a_idx, optimal_input).ok()?;

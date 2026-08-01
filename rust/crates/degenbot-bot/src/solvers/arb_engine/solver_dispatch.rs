@@ -23,6 +23,12 @@ impl ArbitrageEngine {
         block_number: u64,
         _metadata: &BlockMetadata,
     ) {
+        tracing::info!(
+            "[solver-dbg] rebuild_and_solve_affected called block={block_number} dirty v2={} v3={} v4={}",
+            v2_affected.len(),
+            v3_affected.len(),
+            v4_affected.len()
+        );
         // Collect affected path IDs from the reverse index
         let mut affected_path_ids: HashSet<u64> = HashSet::new();
 
@@ -163,6 +169,10 @@ impl ArbitrageEngine {
 
     /// Solve all registered paths using `solve_path`.
     ///
+    /// `solve_all` is not currently used live — the pump calls
+    /// `solve_all_paths` which calls this only at cold start; subsequent
+    /// re-solves go through `rebuild_and_solve_affected`.
+    ///
     /// ADR-005 slice 15b-1: the solve loop runs under rayon `par_iter` over
     /// the registered `path_resolved` map. `Self::solve_path` is receiver-free
     /// (slice 15b-1: pure dispatch to the freestanding math helpers), so the
@@ -174,6 +184,10 @@ impl ArbitrageEngine {
     /// `solve_all_paths` entry).
     #[must_use]
     pub fn solve_all(&self) -> HashMap<u64, SolvePathResult> {
+        tracing::info!(
+            "[solver-dbg] solve_all called, resolved_paths={}",
+            self.path_resolved.len()
+        );
         self.path_resolved
             .par_iter()
             .filter_map(|(&path_id, resolved)| {
