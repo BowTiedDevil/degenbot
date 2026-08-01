@@ -910,3 +910,128 @@ fn v3_pool_dense_swap_matches_solver_crossing_dual() {
         assert_eq!(on_am1, solver_out, "{err}");
     }
 }
+
+/// Build a SPARSE V3 state: initialized tick boundaries separated by far more
+/// than one bitmap word (`256 * spacing` ticks), so a swap crossing from the
+/// current tick to a distant boundary must walk through MANY EMPTY bitmap
+/// words. This is the exact topology the Tier-3b oracle exists for — the
+/// `compute_tick_ranges` word-boundary flooring divergence (the V4
+/// `CurrencyNotSettled` root cause) manifests only when a range spans
+/// uninitialized word boundaries. Two overlapping wide positions around
+/// `current_tick` (mid-word, away from a word edge) provide real liquidity the
+/// swap sinks into while its boundaries sit in far-apart bitmap words.
+fn sparse_state(liq: u128, spacing: i32, current_tick: i32) -> V3PoolState {
+    let sp = U256::from(get_sqrt_ratio_at_tick_internal(current_tick).unwrap());
+    // Word boundary = 256 compressed ticks. Place the two positions' bounds far
+    // beyond ±2 words so the walk between them crosses several empty words.
+    let far = 300 * spacing; // ~1.2 words past load-bearing range on each side
+    let mut tick_data = HashMap::new();
+    for (lower, upper, amount) in [
+        (current_tick - far, current_tick + far, liq),
+        (
+            current_tick - far + spacing,
+            current_tick + far - spacing,
+            liq,
+        ),
+    ] {
+        let entry = tick_data.entry(lower).or_insert_with(|| TickInfo {
+            liquidity_gross: alloy::primitives::U128::ZERO,
+            liquidity_net: I256::ZERO,
+            block: 0,
+        });
+        entry.liquidity_gross =
+            alloy::primitives::U128::from(entry.liquidity_gross.to::<u128>() + amount);
+        entry.liquidity_net = I256::try_from(
+            i128::try_from(entry.liquidity_net).unwrap() + i128::try_from(amount).unwrap(),
+        )
+        .unwrap();
+        let entry = tick_data.entry(upper).or_insert_with(|| TickInfo {
+            liquidity_gross: alloy::primitives::U128::ZERO,
+            liquidity_net: I256::ZERO,
+            block: 0,
+        });
+        entry.liquidity_gross =
+            alloy::primitives::U128::from(entry.liquidity_gross.to::<u128>() + amount);
+        entry.liquidity_net = I256::try_from(
+            i128::try_from(entry.liquidity_net).unwrap() - i128::try_from(amount).unwrap(),
+        )
+        .unwrap();
+    }
+    V3PoolState {
+        sqrt_price_x96: sp,
+        // Active liquidity = both positions cover current_tick.
+        liquidity: 2 * liq,
+        tick: current_tick,
+        update_block: 0,
+        tick_data,
+        snapshot_seed: None,
+        post_drain_snapshot: None,
+        coverage: PoolTickCoverage::Tracked,
+        known_bitmap_words: HashSet::new(),
+        fetcher: None,
+        journal: ReorgJournal::<V3BlockDelta>::new(8),
+        state_nonce: 0,
+        registration_lifecycle: RegistrationLifecycle::default(),
+        cached_tick_ranges: parking_lot::Mutex::new(TickRangeCache::default()),
+    }
+}
+
+/// SPARSE-crossing oracle: initialized ticks far apart (spanning empty bitmap
+/// words) — the topology the word-boundary flooring divergence lives in.
+/// Asserts `v3_simulate_swap` + solver crossing are byte-exact to the on-chain
+/// pool across the sparse walk (validates the observation-cardinality fix made
+/// even sparse topologies terminate, not just the dense band).
+#[test]
+#[ignore = "build the harness first: just test-tier3-swap"]
+fn v3_pool_sparse_crossing_byte_exact() {
+    let fee = 3000u32;
+    let tick_spacing = 60i32;
+    // Mid-word current tick; boundaries ~1.5 words out → the walk crosses
+    // empty bitmap words.
+    let current_tick = 30_000i32;
+    let liq = 1_000_000_000_000_000_000_000u128; // 1e21
+
+    let state = sparse_state(liq, tick_spacing, current_tick);
+
+    // Sink a few ticks toward the lower (zfo) boundary — well inside the band
+    // so neither walk approaches the empty outer region.
+    for shift in [30i32, 60i32, 120i32] {
+        let amount_u = U256::from(liq) / U256::from(10_000u64) * U256::from(shift as u64);
+        let amount_in = I256::try_from(amount_u).unwrap();
+        // Limit anchored a couple words short of the far lower boundary (which
+        // sits 300*spacing below current_tick) so both walks stop INSIDE the
+        // band at the same price.
+        let limit_tick = current_tick - 300 * tick_spacing + shift;
+        let sqrt_price_limit: u128 = get_sqrt_ratio_at_tick_internal(limit_tick)
+            .unwrap()
+            .to::<u128>();
+
+        let (on_am0, on_am1, on_sqrt, on_tick, on_liq) =
+            run_onchain_swap(&state, fee, tick_spacing, true, amount_in, sqrt_price_limit)
+                .expect("sparse on-chain swap succeeded");
+
+        let sim = v3_simulate_swap(
+            &state,
+            fee,
+            tick_spacing,
+            true,
+            amount_in,
+            U256::from(sqrt_price_limit),
+        )
+        .expect("sparse Rust sim");
+
+        assert_eq!(on_am0, sim.amount0, "sparse amount0");
+        assert_eq!(on_am1, sim.amount1, "sparse amount1");
+        assert_eq!(on_sqrt, sim.sqrt_price_x96, "sparse post sqrtPriceX96");
+        assert_eq!(on_tick, sim.tick, "sparse post tick");
+        assert_eq!(on_liq, sim.liquidity, "sparse post liquidity");
+
+        // Solver crossing dual assert.
+        let seq = state
+            .build_int_v3_sequence(tick_spacing, fee, true, 15)
+            .expect("build sparse int sequence");
+        if let Some(solver_out) = solver_crossing_output_v3(amount_u, &seq) {
+            assert_eq!(on_am1, solver_out, "sparse solver == onchain");
+        }
+    }
+}
