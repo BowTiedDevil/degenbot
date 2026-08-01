@@ -847,10 +847,7 @@ fn parity_v3_v2_v3() {
         .add(address!("6666666666666666666666666666666666666666"))
         .unwrap(); // 2
     let mut v3a_fwd = Vec::new();
-    v3a_fwd.extend_from_slice(
-        &encoders::enc_v2_swap_direct(v2b_idx, true, 2_001_000_000_000_000_000u128, v3c_idx)
-            .unwrap(),
-    );
+    v3a_fwd.extend_from_slice(&encoders::enc_v2_swap_calc(v2b_idx, true, v3c_idx, 30));
     v3a_fwd.extend_from_slice(
         &encoders::enc_erc20_transfer(weth_idx, v3a_idx, 1_000_000_000_000_000_000u128).unwrap(),
     );
@@ -1321,8 +1318,11 @@ fn parity_v3_v4_v3() {
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    // V3a→V4b→V3c. V4_UNLOCK nests V4b swap_dynamic + take_delta(WETH→V3c) + settle_all.
-    // V3a callback (a_fwd) wraps WETH repay + V4_UNLOCK; V3c callback (c_fwd) wraps V3a.
+    // V3a→V4b→V3c. V4_UNLOCK nests V4b swap_dynamic + take_compact(WETH→V3c)
+    // + settle_all. V3a callback (a_fwd) wraps WETH repay + V4_UNLOCK; V3c
+    // callback (c_fwd) wraps V3a. take_compact carries the EXACT out_b (the
+    // V3c swap's fixed input) so V3c's IIA is satisfied by construction — the
+    // prediction→actual settlement fix for the V3-V4-V3 no-profit.
     let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
     let pm_idx = at.add(PM).unwrap();
     let executor_idx = SENTINEL_SELF;
@@ -1345,7 +1345,10 @@ fn parity_v3_v4_v3() {
         SENTINEL_NATIVE,
         true,
     ));
-    v4_inner.extend_from_slice(&encoders::enc_v4_take_delta(forward_b_idx, v3c_idx));
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_take_compact(forward_b_idx, v3c_idx, 2_001_000_000_000_000_000u128)
+            .unwrap(),
+    );
     v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
     let mut a_fwd =
         encoders::enc_erc20_transfer(SENTINEL_WETH, v3a_idx, 1_000_000_000_000_000_000u128)
