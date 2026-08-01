@@ -224,7 +224,12 @@ class TestReleasePythonState:
             tick=-76020,
             tick_data={-201000: (100, 1000, 18_000_000)},
             update_block=18_000_000,
-            coverage="tracked",
+            # Sparse coverage so the pool starts Live (not Quarantined).
+            # Tracked pools begin Quarantined — no live event applies until
+            # set_pool_live, which the test never calls. The test's purpose
+            # is to assert that post-release events apply directly, not that
+            # the quarantine lifecycle is honored.
+            coverage="sparse",
         )
         bot.pools.add(pool_address=address, pool=object(), chain_id=1)  # type: ignore[arg-type]
 
