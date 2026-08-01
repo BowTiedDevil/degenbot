@@ -764,5 +764,149 @@ fn v3_pool_dense_swap_matches_sim_proptest() {
         prop_assert_eq!(on_sqrt, sim.sqrt_price_x96, "post sqrtPriceX96");
         prop_assert_eq!(on_tick, sim.tick, "post tick");
         prop_assert_eq!(on_liq, sim.liquidity, "post liquidity");
+
+        // SOLVER-CROSSING DUAL: for the zfo exact-in cases the solver's
+        // crossing assembly must also equal the on-chain pool byte-exact
+        // (closing the solver-vs-twin-vs-onchain triangle — a shared
+        // solver+twin bug would diverge from the pool here even if the twin
+        // asserts above pass).
+        if zfo == 0 {
+            let seq = state
+                .build_int_v3_sequence(tick_spacing, fee, true, 15)
+                .expect("build int sequence");
+            if let Some(solver_out) = solver_crossing_output_v3(amount.unsigned_abs(), &seq) {
+                prop_assert_eq!(on_am1, solver_out, "solver crossing == onchain");
+            }
+        }
     });
+}
+
+/// Solver-side output for an exact-in amount, mirroring the `degenbot-solvers`
+/// `solver_crossing_output` (the definitive solve-block assembly the engine
+/// runs): find the largest crossed range `k` with
+/// `compute_crossing(k).crossing_gross_input <= amount_in`, take its cumulative
+/// output, then run the ending partial step via the canonical
+/// `compute_swap_step_v3` (exactly what `int_simulate_v3_swap` delegates to).
+/// Reachable in-crate (no solvers cycle): `IntV3TickRangeSequence` +
+/// `compute_crossing` live in `degenbot_pools::int_v3_hop`, and the final step
+/// re-uses the same `degenbot_cl_math::compute_swap_step_v3` the solver calls.
+fn solver_crossing_output_v3(
+    amount_in: U256,
+    seq: &degenbot_pools::int_v3_hop::IntV3TickRangeSequence,
+) -> Option<U256> {
+    use degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v3;
+
+    if amount_in.is_zero() {
+        return Some(U256::ZERO);
+    }
+    let mut chosen_k = 0usize;
+    for k in 0..seq.ranges.len() {
+        let crossing = seq.compute_crossing(k)?;
+        if crossing.crossing_gross_input <= amount_in {
+            chosen_k = k;
+        } else {
+            break;
+        }
+    }
+    let crossing = seq.compute_crossing(chosen_k)?;
+    if amount_in < crossing.crossing_gross_input {
+        // Amount insufficient to cross into the chosen range — land in range 0.
+        let hop = &seq.ranges[0];
+        let fee_pips = U256::from(hop.fee_denom - hop.gamma_numer);
+        let exit = if hop.zero_for_one {
+            hop.sqrt_price_lower_x96
+        } else {
+            hop.sqrt_price_upper_x96
+        };
+        let step = compute_swap_step_v3(
+            hop.sqrt_price_x96,
+            exit,
+            i128::try_from(hop.liquidity).ok()?,
+            I256::try_from(amount_in).ok()?,
+            fee_pips,
+        )
+        .ok()?;
+        return Some(step.amount_out);
+    }
+    let remaining = amount_in - crossing.crossing_gross_input;
+    let ending = crossing.ending_range;
+    let fee_pips = U256::from(ending.fee_denom - ending.gamma_numer);
+    // Walk the ending range's interior word boundaries + exit boundary (the
+    // E7ALWT per-boundary flooring `int_simulate_v3_swap` mirrors).
+    let mut sp = ending.sqrt_price_x96;
+    let mut out = crossing.crossing_output;
+    let mut remaining_in = I256::try_from(remaining).ok()?;
+    let exit_price = if ending.zero_for_one {
+        ending.sqrt_price_lower_x96
+    } else {
+        ending.sqrt_price_upper_x96
+    };
+    for target in ending
+        .word_boundary_prices
+        .iter()
+        .chain(std::iter::once(&exit_price))
+    {
+        if remaining_in <= I256::ZERO {
+            break;
+        }
+        let step = compute_swap_step_v3(
+            sp,
+            *target,
+            i128::try_from(ending.liquidity).ok()?,
+            remaining_in,
+            fee_pips,
+        )
+        .ok()?;
+        let consumed = step.amount_in.saturating_add(step.fee_amount);
+        remaining_in = remaining_in.checked_sub(I256::try_from(consumed).ok()?)?;
+        out = out.saturating_add(step.amount_out);
+        sp = step.sqrt_price_next;
+    }
+    Some(out)
+}
+
+/// The dual-driver assertion the tier exists for: drive the SAME dense state +
+/// amount through the on-chain pool AND through the solver's crossing assembly
+/// (`build_int_v3_sequence` + `compute_crossing` + canonical final step), and
+/// assert SOLVER === ON-CHAIN. `v3_simulate_swap` (the twin) is already proven
+/// byte-exact to on-chain in the earlier test; this closes the
+/// solver-vs-twin-vs-onchain triangle (a shared solver+twin bug diverging from
+/// the pool would RED here even if the twin tests pass).
+#[test]
+#[ignore = "build the harness first: just test-tier3-swap"]
+fn v3_pool_dense_swap_matches_solver_crossing_dual() {
+    let fee = 3000u32;
+    let tick_spacing = 60i32;
+    let k_positions = 8i32;
+    let liq = 1_000_000_000_000_000_000_000u128;
+    let current_tick = 120i32;
+
+    let state = dense_state(liq, tick_spacing, k_positions, current_tick);
+
+    let seq = state
+        .build_int_v3_sequence(tick_spacing, fee, true, 15)
+        .expect("build int sequence");
+
+    for amount in 1u64..=5u64 {
+        let amount_u = U256::from(liq) / U256::from(1_000u64) * U256::from(amount);
+        let amount_in = I256::try_from(amount_u).unwrap();
+        let limit_tick = current_tick - 4 * tick_spacing;
+        let sqrt_price_limit: u128 = get_sqrt_ratio_at_tick_internal(limit_tick)
+            .unwrap()
+            .to::<u128>();
+
+        let (on_am0, on_am1, _, _, _) =
+            run_onchain_swap(&state, fee, tick_spacing, true, amount_in, sqrt_price_limit)
+                .expect("on-chain swap succeeded");
+
+        // The pool returns a negative signed delta for the output token (zfo
+        // pays token1 out); `run_onchain_swap` already abs()'d it, so on_am1
+        // is the absolute output. Compare against the solver's crossing output.
+        let solver_out = solver_crossing_output_v3(amount_u, &seq);
+        let err = format!(
+            "solver vs on-chain: amount={amount_u} on_am0={on_am0} on_am1={on_am1} solver_out={solver_out:?}"
+        );
+        let solver_out = solver_out.expect("solver crossing output");
+        assert_eq!(on_am1, solver_out, "{err}");
+    }
 }
