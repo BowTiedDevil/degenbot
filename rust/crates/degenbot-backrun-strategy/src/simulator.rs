@@ -256,13 +256,18 @@ pub struct SimFailure {
     /// `no-profit` where hop0 + mid hops emit but the outermost V3 swap does
     /// not. Empty when no trace was captured.
     pub call_trace: Vec<String>,
-    /// The executor's WETH balance before `execute()` (its net-WETH baseline;
-    /// 0 in a fresh sim — the executor flash-borrows). Diagnostic for the
-    /// `no-profit` family: whether the outermost hop actually returned WETH.
+    /// The executor's asset balances around `execute()` (its profitability
+    /// basis): pre/post WETH, ETH, and ERC-6909. `no-profit` ⇔
+    /// `(w + e + f)_after <= (w + e + f)_before` (gross, no gas). Surfacing
+    /// all three legs — not just WETH — debugs a spurious `no-profit` where
+    /// one component delta (e.g. an ETH/ERC-6909 leg) is measured anomalously
+    /// while the others net positive.
     pub weth_before: u128,
-    /// The executor's WETH balance after `execute()`. `no-profit` ⇔
-    /// `weth_after <= weth_before` (+ ETH/ERC-6909 which net to 0 here).
     pub weth_after: u128,
+    pub eth_before: u128,
+    pub eth_after: u128,
+    pub erc6909_before: u128,
+    pub erc6909_after: u128,
 }
 
 /// The inspector-captured attribution of a failing `execute()` frame — the
@@ -362,6 +367,10 @@ impl FailBuckets {
             call_trace: Vec::new(),
             weth_before: 0,
             weth_after: 0,
+            eth_before: 0,
+            eth_after: 0,
+            erc6909_before: 0,
+            erc6909_after: 0,
         });
     }
 
@@ -388,6 +397,10 @@ impl FailBuckets {
         call_trace: Vec<String>,
         weth_before: u128,
         weth_after: u128,
+        eth_before: u128,
+        eth_after: u128,
+        erc6909_before: u128,
+        erc6909_after: u128,
     ) {
         self.tally(bucket);
         self.failures.push(SimFailure {
@@ -404,6 +417,10 @@ impl FailBuckets {
             call_trace,
             weth_before,
             weth_after,
+            eth_before,
+            eth_after,
+            erc6909_before,
+            erc6909_after,
         });
     }
 
@@ -437,6 +454,10 @@ impl FailBuckets {
             call_trace: Vec::new(),
             weth_before: 0,
             weth_after: 0,
+            eth_before: 0,
+            eth_after: 0,
+            erc6909_before: 0,
+            erc6909_after: 0,
         });
     }
 
@@ -1238,6 +1259,10 @@ where
             call_trace,
             u128::try_from(weth_before).unwrap_or_default(),
             u128::try_from(weth_after).unwrap_or_default(),
+            u128::try_from(eth_before).unwrap_or_default(),
+            u128::try_from(eth_after).unwrap_or_default(),
+            u128::try_from(erc6909_before).unwrap_or_default(),
+            u128::try_from(erc6909_after).unwrap_or_default(),
         );
         return Ok(None);
     }

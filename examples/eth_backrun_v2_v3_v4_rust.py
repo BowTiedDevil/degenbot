@@ -1727,8 +1727,12 @@ def _render_sim_failures(outcome: DispatchOutcome, *, current_block: int) -> Non
         if ct:
             bot_logger.info(f"[sim-trace] path={path_id} frames={";".join(str(x) for x in ct)}")
         if rec.get("weth_before") is not None:
+            wb, wa = rec.get("weth_before"), rec.get("weth_after")
+            eb, ea = rec.get("eth_before") or 0, rec.get("eth_after") or 0
+            fb, fa = rec.get("erc6909_before") or 0, rec.get("erc6909_after") or 0
+            d_w, d_e, d_f = wa - wb, ea - eb, fa - fb
             bot_logger.info(
-                f"[sim-weth] path={path_id} before={rec.get('weth_before')} after={rec.get('weth_after')}"
+                f"[sim-bals] path={path_id} weth {wb}->{wa} (d={d_w:+d}) | eth {eb}->{ea} (d={d_e:+d}) | erc6909 {fb}->{fa} (d={d_f:+d}) | combined d={d_w + d_e + d_f:+d}"
             )
         if rec.get("log_full_count") is not None:
             n_swap = len(rec.get("captured_swaps") or [])

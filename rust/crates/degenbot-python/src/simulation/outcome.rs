@@ -298,6 +298,10 @@ impl PyDispatchOutcome {
             dict.set_item("call_trace", ct_list)?;
             dict.set_item("weth_before", f.weth_before)?;
             dict.set_item("weth_after", f.weth_after)?;
+            dict.set_item("eth_before", f.eth_before)?;
+            dict.set_item("eth_after", f.eth_after)?;
+            dict.set_item("erc6909_before", f.erc6909_before)?;
+            dict.set_item("erc6909_after", f.erc6909_after)?;
             // The solver's expected amounts — the [sim-diag] classifier's
             // EXPECTED half (the ACTUAL half is `captured_swaps`). The gap
             // between `hop_outputs[i]` and the i-th captured swap's amount

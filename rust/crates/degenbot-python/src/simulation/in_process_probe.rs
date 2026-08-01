@@ -178,6 +178,7 @@ fn smoke_v2_path(path_id: u64) -> SimulatePath {
 /// `ProviderResult` is honored for parity with the production signature).
 #[pyfunction]
 #[pyo3(signature = (path_id, runtime_bytecode))]
+#[allow(clippy::too_many_lines)] // PyO3 FFI dict-building surface; one set_item per field
 pub fn simulate_in_process_revert_probe<'py>(
     py: Python<'py>,
     path_id: u64,
@@ -280,6 +281,10 @@ pub fn simulate_in_process_revert_probe<'py>(
         fdict.set_item("call_trace", ct_list)?;
         fdict.set_item("weth_before", f.weth_before)?;
         fdict.set_item("weth_after", f.weth_after)?;
+        fdict.set_item("eth_before", f.eth_before)?;
+        fdict.set_item("eth_after", f.eth_after)?;
+        fdict.set_item("erc6909_before", f.erc6909_before)?;
+        fdict.set_item("erc6909_after", f.erc6909_after)?;
         // optimal_input + hop_outputs as Python ints (u128 fits in PyLong).
         fdict.set_item("optimal_input", f.optimal_input)?;
         let hop_outputs_list = PyList::empty(py);
