@@ -226,6 +226,11 @@ pub struct SimFailure {
     /// that blew the price limit). Empty for orchestration-only buckets + the
     /// balance-decode branch (no `inspect_one` ran). Ergo epic 63I7WJ.
     pub captured_swaps: Vec<CapturedSwap>,
+    /// Total `log_full` hook firings during `execute()` (ALL logs, incl.
+    /// non-swap + reverted-frame). Diagnostic: if it exceeds
+    /// `captured_swaps.len() + reverted_swaps.len()`, some swap-side LOGs were
+    /// dropped from BOTH buffers (the outermost-committed-swap capture gap).
+    pub log_full_count: usize,
     /// Swaps emitted inside REVERTED frames — preserved for the divergence
     /// diagnostic (revm pops reverted-fame logs, so they don't reach
     /// [`captured_swaps`](Self::captured_swaps)). For a `no-profit`, if the
@@ -350,6 +355,7 @@ impl FailBuckets {
             revert_data,
             reverting_frame: None,
             captured_swaps: Vec::new(),
+            log_full_count: 0,
             reverted_swaps: Vec::new(),
             optimal_input,
             hop_outputs,
@@ -376,6 +382,7 @@ impl FailBuckets {
         bucket: &str,
         captured_swaps: Vec<CapturedSwap>,
         reverted_swaps: Vec<CapturedSwap>,
+        log_full_count: usize,
         optimal_input: u128,
         hop_outputs: Vec<u128>,
         call_trace: Vec<String>,
@@ -390,6 +397,7 @@ impl FailBuckets {
             revert_data: alloy::primitives::Bytes::new(),
             reverting_frame: None,
             captured_swaps,
+            log_full_count,
             reverted_swaps,
             optimal_input,
             hop_outputs,
@@ -422,6 +430,7 @@ impl FailBuckets {
             revert_data: reverting_frame.revert_data.clone(),
             reverting_frame: Some(reverting_frame),
             captured_swaps,
+            log_full_count: 0,
             reverted_swaps: Vec::new(),
             optimal_input,
             hop_outputs,
@@ -1223,6 +1232,7 @@ where
             "no-profit",
             captured_swaps.clone(),
             reverted_swaps.clone(),
+            swap_events_handle.log_full_count(),
             path.optimal_input,
             path.hop_outputs.clone(),
             call_trace,

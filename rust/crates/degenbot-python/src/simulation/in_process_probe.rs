@@ -266,6 +266,7 @@ pub fn simulate_in_process_revert_probe<'py>(
             swaps_list.append(captured_swap_to_dict(py, s)?)?;
         }
         fdict.set_item("captured_swaps", swaps_list)?;
+        fdict.set_item("log_full_count", f.log_full_count)?;
         let rsw = PyList::empty(py);
         for s in &f.reverted_swaps {
             rsw.append(captured_swap_to_dict(py, s)?)?;

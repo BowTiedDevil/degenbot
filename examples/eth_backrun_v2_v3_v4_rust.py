@@ -1730,6 +1730,12 @@ def _render_sim_failures(outcome: DispatchOutcome, *, current_block: int) -> Non
             bot_logger.info(
                 f"[sim-weth] path={path_id} before={rec.get('weth_before')} after={rec.get('weth_after')}"
             )
+        if rec.get("log_full_count") is not None:
+            n_swap = len(rec.get("captured_swaps") or [])
+            n_rev = len(rec.get("reverted_swaps") or [])
+            bot_logger.info(
+                f"[sim-logfull] path={path_id} log_full={rec.get('log_full_count')} captured={n_swap} reverted={n_rev} (dropped if log_full>captured+reverted)"
+            )
         rs = rec.get("reverted_swaps") or []
         if rs:
             brief = ";".join(f"{s.get('family')}:{str(s.get('emitter'))[0:10]}:a0={s.get('amount0')}:a1={s.get('amount1')}" for s in rs)

@@ -523,6 +523,7 @@ mod tests {
             revert_data: Bytes::default(),
             reverting_frame: Some(frame(label, target)),
             captured_swaps: Vec::new(),
+            log_full_count: 0,
             reverted_swaps: Vec::new(),
             optimal_input: 1000,
             hop_outputs: Vec::new(),
@@ -639,6 +640,7 @@ mod tests {
             revert_data: Bytes::default(),
             reverting_frame: None, // V2 case: no revert.
             captured_swaps: captured,
+            log_full_count: 0,
             reverted_swaps: Vec::new(),
             optimal_input: 1000,
             hop_outputs,

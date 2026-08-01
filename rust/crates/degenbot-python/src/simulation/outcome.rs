@@ -283,6 +283,7 @@ impl PyDispatchOutcome {
                 swaps_list.append(captured_swap_to_dict(py, s)?)?;
             }
             dict.set_item("captured_swaps", swaps_list)?;
+            dict.set_item("log_full_count", f.log_full_count)?;
             // Swaps emitted inside REVERTED frames (frame-misclassification diag).
             let rsw = PyList::empty(py);
             for s in &f.reverted_swaps {
