@@ -574,6 +574,12 @@ impl BlockPump {
     /// guard is not `Send` and must not be held across an `.await`). Env-gated
     /// by `DEGENBOT_ASSERT_SOLVER_STATE=1` at the call site; off the hot loop
     /// by default.
+    ///
+    /// NOTE (AV42C7): the on-chain diff is performed at each hop's OWN
+    /// `update_block` anchor (see `verify_solver_hop_states`), not at `block`
+    /// — a solver holding 1-2 blocks of normal latency must not panic; only a
+    /// state that diverges from the chain even at its own anchor is a true
+    /// desync. `block` appears in the message for staleness context.
     #[allow(clippy::missing_panics_doc)]
     async fn verify_solver_state_against_chain(&self, block: u64) {
         let path_refs = self.sink.solver_path_pool_refs();
@@ -593,6 +599,37 @@ impl BlockPump {
         for (path_idx, hop_states) in path_hop_states.iter().enumerate() {
             if let Err(mismatch) = verify_solver_hop_states(&self.provider, hop_states, block).await
             {
+                // Diagnose the cause class before panicking: log every hop's
+                // solver-stored update_block and its staleness vs. the solve
+                // block. `stale == 0` on the failing hop is the sub-tick
+                // corruption signal (state advanced to solve_block but the
+                // within-tick scalar still diverges); `stale > 0` is a WS
+                // delivery/backfill lag. The first hop reported by the verifier
+                // is also in this log, but this captures the whole path at once.
+                let hops_diag: Vec<String> = hop_states
+                    .iter()
+                    .filter(|h| h.update_block != 0)
+                    .map(|h| {
+                        let meta = h
+                            .cl_meta
+                            .as_ref()
+                            .map(|(c, l)| format!(" cov={c}, lifecycle={l}"))
+                            .unwrap_or_default();
+                        format!(
+                            "hop {:?} update_block={} stale_by={}{}",
+                            h.hop_type,
+                            h.update_block,
+                            block.saturating_sub(h.update_block),
+                            meta
+                        )
+                    })
+                    .collect();
+                tracing::error!(
+                    path_idx,
+                    block,
+                    hops = %hops_diag.join(", ").as_str(),
+                    "DEGENBOT_ASSERT_SOLVER_STATE: solve used desynced pool state; panicking"
+                );
                 let SolverStateMismatch { message } = mismatch;
                 panic!(
                     "DEGENBOT_ASSERT_SOLVER_STATE: path {path_idx} solver pool state does not \
@@ -766,17 +803,6 @@ impl BlockPump {
                     // LEZJAS: engine owns `last_solved_block` now — mark this
                     // block solved so the next `finalize_block` guard no-ops.
                     self.sink.set_last_solved_block(current_block);
-
-                    // Option-A solver-state accuracy gate (AV42C7): when enabled,
-                    // the solver's just-consumed per-hop pool states are diffed
-                    // against the chain at the solve block BEFORE they can be
-                    // encoded/simulated. A mismatch means the solver ran on a
-                    // desynced snapshot → panic immediately (never chase the
-                    // resulting impossible hop_outputs). Runs only when a solve
-                    // actually happened this iteration (not on idle loops).
-                    if solver_state_verify_enabled {
-                        self.verify_solver_state_against_chain(current_block).await;
-                    }
                 }
             }
 
@@ -854,6 +880,25 @@ impl BlockPump {
                         if let Some(open) = clock.latest_observed() {
                             if clock.consume_quiesced(open) {
                                 self.sink.on_send(&current_metadata);
+                                // Option-A solver-state accuracy gate (AV42C7),
+                                // run at the PUBLISH point: the result being
+                                // sent here is the coalesced, quiesce-gated
+                                // (block-final) solve — the one Python will
+                                // actually simulate. Verifying here, not after
+                                // every transient `on_drain`, means a mid-block
+                                // stale solve that the eager design discards
+                                // (re-solved when the block completes) never
+                                // trips the hard panic, while a desync on a
+                                // result that SURVIVES to publication still
+                                // panics before Python simulates it. Each hop is
+                                // diffed against the chain at its own anchor
+                                // block (`verify_solver_hop_states`); hops
+                                // touched in the in-progress block are skipped
+                                // (mid-block captures are unverifiable via
+                                // historical slot0).
+                                if solver_state_verify_enabled {
+                                    self.verify_solver_state_against_chain(current_block).await;
+                                }
                             }
                         }
                         publish_pending = false;

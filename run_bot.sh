@@ -23,12 +23,33 @@ mkdir -p "$LOGDIR"
 export DEGENBOT_SIM_LOG_REVERTED_SWAPS=1
 export DEGENBOT_DEBUG_V4_SOLVE=1
 
-# Option-A solver-state accuracy gate (AV42C7): after every on_drain solve,
-# diff each solved path's per-hop pool state against the chain at the solve
-# block and PANIC immediately on any mismatch, BEFORE the hop outputs can
-# reach the encoder/simulator. Catches a solver running on a desynced
-# snapshot (nonce proves change, not accuracy). See solver_state_verifier.rs.
+# Option-A solver-state accuracy gate (AV42C7): run at the PUBLISH point —
+# when a quiesce-gated (block-final/coalesced) result is about to be sent to
+# Python for simulation — diff each path's per-hop pool state against the
+# chain at its own anchor `update_block` and PANIC on a genuine desync. It
+# does NOT run after every transient on_drain solve: mid-block stale results
+# that the eager design discards (re-solved at block completion) never trip
+# it, while a desync on a result that SURVIVES to publication does. See
+# solver_state_verifier.rs. The monotonic-update_block fix (backfill drain no
+# longer rewinds a head-fresh pool's metadata) removes the 160-218-block
+# stale false alarms. Env-gated:
 export DEGENBOT_ASSERT_SOLVER_STATE=1
+
+# Per-pool swap-arrival / liquidity-route diagnostics. Set to a V3 pool
+# address (0x…) or a V4 pool_id hex to emit a `[trace] swap-apply` line for
+# every Swap dispatched for that pool — with its on-chain sqrtPriceX96,
+# liquidity, tick, and block. This proves whether a within-tick swap that
+# should have advanced the solver's sqrtPrice actually ARRIVED and was
+# applied (vs. never delivered). Default empty (off).
+#   DEGENBOT_DRAIN_DBG=0xaCDb27b266142223e1e676841C1E809255Fc6d07 ./run_bot.sh
+# To trace ALL liquidity routing instead: DEGENBOT_TRACE_LIQUIDITY_GLOBAL=1
+export DEGENBOT_DRAIN_DBG="${DEGENBOT_DRAIN_DBG:-}"
+
+# [diag] registration-seed probe: log every V3 pool's seed (update_block +
+# sqrtPriceX96 + tick) at register_v3_pool time, so a solver-state mismatch
+# can be traced to its seed — head-fresh means a post-registration rewind;
+# historical means the seed source is stale. Default off.
+export DEGENBOT_TRACE_REGISTER_SEED="${DEGENBOT_TRACE_REGISTER_SEED:-}"
 
 # Exit on the first sim failure so the failing block's context is intact
 # in the log (no continued-progress noise overwriting it).

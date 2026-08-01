@@ -535,7 +535,9 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
         self.sqrt_price_x96 = sqrt_price_x96;
         self.liquidity = liquidity;
         self.tick = tick;
-        self.update_block = block_number;
+        if block_number > self.update_block {
+            self.update_block = block_number;
+        }
         self.state_nonce = self.state_nonce.wrapping_add(1);
         self.invalidate_tick_range_cache();
     }
@@ -573,7 +575,9 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
             tick_priors: journaled_priors,
         });
 
-        self.update_block = block_number;
+        if block_number > self.update_block {
+            self.update_block = block_number;
+        }
         self.state_nonce = self.state_nonce.wrapping_add(1);
         self.invalidate_tick_range_cache();
     }
@@ -640,7 +644,9 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
         self.sqrt_price_x96 = sqrt_price_x96;
         self.liquidity = liquidity;
         self.tick = tick;
-        self.update_block = block_number;
+        if block_number > self.update_block {
+            self.update_block = block_number;
+        }
         self.state_nonce = self.state_nonce.wrapping_add(1);
         self.invalidate_tick_range_cache();
     }
@@ -678,7 +684,9 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
             tick_priors: journaled_priors,
         });
 
-        self.update_block = block_number;
+        if block_number > self.update_block {
+            self.update_block = block_number;
+        }
         self.state_nonce = self.state_nonce.wrapping_add(1);
         self.invalidate_tick_range_cache();
     }

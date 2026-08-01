@@ -264,6 +264,64 @@ pub(crate) fn trace_ws_log_dispatch(
 /// Mint/Burn hit the pump buffer (then drained) or was direct-applied to a
 /// Live pool (then captured by the pin or missed it). Fires when the pool
 /// matches `DEGENBOT_DRAIN_DBG` OR the global liquidity trace is on.
+/// V3 `Swap`-arrival trace: log every swap the live pump dispatches for a
+/// `DEGENBOT_DRAIN_DBG`-named pool, with its on-chain `sqrt_price_x96`,
+/// `liquidity`, `tick`, and `block`. Answers whether a within-tick swap that
+/// should have advanced the pool's sqrtPrice actually ARRIVED (and with what
+/// value) — the discriminator between a swap that was never delivered and one
+/// that was delivered but not applied. Fires only when the pool matches
+/// `DEGENBOT_DRAIN_DBG`; zero cost otherwise.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn trace_apply_swap_v3(
+    pool_address: Address,
+    sqrt_price_x96: U256,
+    liquidity: u128,
+    tick: i32,
+    block_number: u64,
+) {
+    if !drain_dbg_pool_match(pool_address) {
+        return;
+    }
+    tracing::info!(
+        pool_addr = %format!("{pool_address:x}"),
+        family = "V3",
+        sqrt_price_x96 = %sqrt_price_x96,
+        liquidity,
+        tick,
+        block = block_number,
+        "[trace] swap-apply"
+    );
+}
+
+/// V4 twin of [`trace_apply_swap_v3`] — logs a V4 `Swap` dispatch keyed by
+/// `pool_id_hex` (the V4 analog of the pool address for `DEGENBOT_DRAIN_DBG`
+/// matching). Fires when `DEGENBOT_DRAIN_DBG` names this `pool_id_hex`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn trace_apply_swap_v4(
+    pool_manager: Address,
+    pool_id_hex: &str,
+    sqrt_price_x96: U256,
+    liquidity: u128,
+    tick: i32,
+    block_number: u64,
+) {
+    if !std::env::var("DEGENBOT_DRAIN_DBG")
+        .is_ok_and(|v| v.trim_start_matches("0x").eq_ignore_ascii_case(pool_id_hex))
+    {
+        return;
+    }
+    tracing::info!(
+        pool_manager = %format!("{pool_manager:x}"),
+        pool_id = %pool_id_hex,
+        family = "V4",
+        sqrt_price_x96 = %sqrt_price_x96,
+        liquidity,
+        tick,
+        block = block_number,
+        "[trace] swap-apply"
+    );
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn trace_apply_route_v3(
     address: Address,
@@ -492,6 +550,25 @@ impl BotState {
             return Err(RegisterV3PoolError::AlreadyRegistered {
                 address: params.address,
             });
+        }
+
+        // [diag] registration-seed probe: log every V3 pool's seed scalar state
+        // (update_block + sqrtPriceX96 + tick) so a solver-state mismatch can be
+        // traced to its seed. Gated on `DEGENBOT_TRACE_REGISTER_SEED=1` (off by
+        // default; run_bot.sh sets it for diagnosis). A pool seeded with an
+        // `update_block` well behind the head + an old sqrt is the stale-seed
+        // hypothesis; a head-fresh seed points the finger at a post-registration
+        // rewind instead.
+        if std::env::var("DEGENBOT_TRACE_REGISTER_SEED").is_ok() {
+            tracing::info!(
+                pool_addr = %format!("{:x}", params.address),
+                family = "V3",
+                seed_update_block = params.update_block,
+                seed_sqrt = %params.sqrt_price_x96,
+                seed_tick = params.tick,
+                coverage = ?params.coverage,
+                "[diag] register-v3-seed"
+            );
         }
 
         let pool_id = self.next_pool_id;
@@ -983,6 +1060,7 @@ impl BotState {
         tick_priors: &[(i32, TickInfo)],
     ) -> Option<u64> {
         let &pool_id = self.pool_addresses.get(&pool_address)?;
+        trace_apply_swap_v3(pool_address, sqrt_price_x96, liquidity, tick, block_number);
         // 6N7XVR: a `Quarantined` pool defers the live `Swap` to the pump
         // buffer. A `Swap` does NOT touch `tick_data` (the pump path passes
         // `tick_priors: &[]`), but it DOES set `update_block = block_number` —
@@ -1308,7 +1386,16 @@ impl BotState {
                 }
             }
             if let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&key) {
+                let ub_before = state.update_block;
                 Self::apply_buffered_v3_event(state, update);
+                if dbg && state.update_block < ub_before {
+                    tracing::warn!(
+                        pool_addr = %format!("{address:x}"),
+                        ub_before,
+                        ub_after = state.update_block,
+                        "[dbg-drain] update_block REWIND (backfill)"
+                    );
+                }
             }
         }
     }
@@ -1361,7 +1448,16 @@ impl BotState {
                 }
             }
             if let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&key) {
+                let ub_before = state.update_block;
                 Self::apply_buffered_v3_event(state, update);
+                if dbg && state.update_block < ub_before {
+                    tracing::warn!(
+                        pool_addr = %format!("{address:x}"),
+                        ub_before,
+                        ub_after = state.update_block,
+                        "[dbg-drain] update_block REWIND (pump)"
+                    );
+                }
             }
         }
     }
@@ -2776,6 +2872,15 @@ impl BotState {
         // was written to kill) is removed; the (pool_manager, pool_id)→pool_id
         // resolution is what this wrapper owns.
         let key = (update.pool_manager, update.pool_id);
+        let pool_id_hex = degenbot_core::hex_utils::encode_hex(&update.pool_id);
+        trace_apply_swap_v4(
+            update.pool_manager,
+            &pool_id_hex,
+            update.sqrt_price_x96,
+            update.liquidity,
+            update.tick,
+            block_number,
+        );
         let &pool_id = self.v4_pool_ids.get(&key)?;
         // 6N7XVR: a `Quarantined` pool defers the live `Swap` to the pump
         // buffer. A `Swap` does NOT touch `tick_data` (the pump path passes
@@ -5168,10 +5273,16 @@ mod tests {
         let (tick_data, pinned_block) = core
             .take_v4_post_drain_snapshot(pool_manager, &pool_id_bytes)
             .expect("Tracked pool pins");
-        // The backfill event applied (ungated) → pin reflects it.
+        // The backfill event applied (ungated) → the tick (seed 100 + 40) is
+        // present. `update_block` is MONOTONIC (no rewind): the pool registered
+        // at block 10 and the backfill event is at the older block 9, so the
+        // seed block 10 is retained — applying an older event must not rewind
+        // the metadata to look stale (AV42C7: the backfill drain rewinding a
+        // head-fresh pool's `update_block` to the backfill boundary produced
+        // the solver-state false positives).
         assert_eq!(
-            pinned_block, 9,
-            "backfill event advanced update_block (ungated)"
+            pinned_block, 10,
+            "update_block must not rewind to an older backfill block"
         );
         assert_eq!(
             tick_data.get(&60).unwrap().liquidity_gross,
