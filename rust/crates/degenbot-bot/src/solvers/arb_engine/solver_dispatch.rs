@@ -136,6 +136,17 @@ impl ArbitrageEngine {
             .filter_map(|(pid, resolved)| {
                 ::degenbot_solvers::mixed::solve_path(resolved).map(|r| (*pid, r))
             })
+            // Log solver pool state for every solved path (including
+            // unprofitable) — diagnostic cross-referencing against sim
+            // captured swaps.
+            .inspect(|(pid, r)| {
+                if !r.solver_pool_states.is_empty() {
+                    println!(
+                        "[solver-st] path_id={pid} hops=[{}]",
+                        r.solver_pool_states.join(";")
+                    );
+                }
+            })
             .filter(|(_, r)| !r.optimal_input.is_zero() && !r.profit.is_zero())
             .collect();
 
