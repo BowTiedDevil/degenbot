@@ -48,7 +48,7 @@ futures-util = { version = "^0.3", default-features = false, features = ["async-
 # `lib_off.rs`) — zero compile-time or runtime cost in default builds. Enable
 # the `hotpath` / `hotpath-cpu` / `hotpath-alloc` features below (or in a
 # consumer crate) to turn the macros into real instrumentation.
-hotpath = { version = "^0.21", default-features = false }
+hotpath = { version = "^0.22", default-features = false }
 parking_lot = { version = "^0.12" }
 rand = { version = "^0.10" }
 rayon = { version = "^1.12" }
