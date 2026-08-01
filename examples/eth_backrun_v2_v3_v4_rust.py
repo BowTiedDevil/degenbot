@@ -121,32 +121,19 @@ ETH_MAINNET_ALLOWED_TOKENS: set[str] = {
 }
 
 MIN_PROFIT_NET = 1  # was 5 * 10**9 (5 gwei)
-# T3 (GTOD23-IKJRGO): pre-sim profit-margin floor in bps of optimal_input.
-# S1 found the dominant IIA reverts are sub-0.2-bps-margin arb the chain has
-# already arbitraged away. 50 bps (0.5%) drops the bulk without losing genuine
-# arbs. 0 disables. Env-configurable for tuning without code changes.
-#
-# AGGRESSIVE DEFAULT (DEGENBOT-459): ``0`` — keep EVERY above-zero-profit
+# AGGRESSIVE DEFAULT: ``0`` — keep EVERY above-zero-profit
 # candidate so the sim sees thin-margin perms too. This surfaces calc bugs
-# that hide behind the 50-bps filter (a V4 rounding divergence that only
-# manifests on a 0.1-bps edge still surfaces as a sim failure). Set
-# ``DEGENBOT_MIN_PROFIT_MARGIN_BPS=50`` for a production run that wants to
-# skip the chain-already-arb'd-away thin edges.
+# that hide behind a higher production filter
 MIN_PROFIT_MARGIN_BPS = int(os.environ.get("DEGENBOT_MIN_PROFIT_MARGIN_BPS", "0"))
 FEE_HISTORY_WINDOW = 10
 FEE_PERCENTILES = (10, 50)
 TARGET_PROFIT_RATIO = 1.25
 BLOCKS_BEFORE_NONCE_EXPIRES = 5
-MAX_SIMULATE_CONCURRENT = 50  # Cap concurrent simulation RPC calls (Slice 1)
+MAX_SIMULATE_CONCURRENT = 500  # Cap concurrent simulation RPC calls (Slice 1)
 AGE_DECAY_CONSTANT = 0.25  # Priority fee age decay factor (Slice 3)
 MIN_PRIORITY_FEE_PERCENTILE = 10  # Use Nth percentile from feeHistory as floor (Slice 3)
 MAX_PRIORITY_FEE_PERCENTILE = 50  # Use Nth percentile from feeHistory as ceiling (Slice 3)
 
-# ── Path simulation failure suppression ──────────────────────────
-# After a path fails simulation N consecutive times, it is
-# "suppressed" — excluded from the candidate list so the simulation
-# budget goes to paths with a real chance of succeeding. Suppressed
-# paths are retried periodically in case conditions change.
 
 # ── Path permutation filter ─────────────────────────────────────
 # Only build paths matching these pool-version permutations.
@@ -170,10 +157,7 @@ PATH_PERMUTATION_FILTER: set[str] | None = None  # e.g. {"V3-V4-V3"}
 # gas and always revert.
 #
 # All tokens below are verified standard ERC-20 (no transfer fees,
-# no rebase mechanics). Do NOT add tokens without verifying:
-#   - stETH: rebase token (balance changes without transfers) — use wstETH instead
-#   - AMPL: rebase token — exclude
-#   - HEX: origin fee on transfer — exclude
+# no rebase mechanics). Do NOT add tokens without verifying
 ALLOWED_INTERMEDIATE_TOKENS: set[str] | None = ETH_MAINNET_ALLOWED_TOKENS
 
 
@@ -1723,16 +1707,17 @@ def _render_sim_failures(outcome: DispatchOutcome, *, current_block: int) -> Non
         bot_logger.info(
             f"[sim-fail] path={path_id} type={path_type} bucket={bucket} {revert_line} hops={hops}",
         )
-        ct = (rec.get("call_trace") or [])
+        ct = rec.get("call_trace") or []
         if ct:
-            bot_logger.info(f"[sim-trace] path={path_id} frames={";".join(str(x) for x in ct)}")
-        if rec.get("weth_before") is not None:
-            wb, wa = rec.get("weth_before"), rec.get("weth_after")
+            bot_logger.info(f"[sim-trace] path={path_id} frames={';'.join(str(x) for x in ct)}")
+        weth_before = rec.get("weth_before")
+        weth_after = rec.get("weth_after")
+        if weth_before is not None and weth_after is not None:
             eb, ea = rec.get("eth_before") or 0, rec.get("eth_after") or 0
             fb, fa = rec.get("erc6909_before") or 0, rec.get("erc6909_after") or 0
-            d_w, d_e, d_f = wa - wb, ea - eb, fa - fb
+            d_w, d_e, d_f = weth_after - weth_before, ea - eb, fa - fb
             bot_logger.info(
-                f"[sim-bals] path={path_id} weth {wb}->{wa} (d={d_w:+d}) | eth {eb}->{ea} (d={d_e:+d}) | erc6909 {fb}->{fa} (d={d_f:+d}) | combined d={d_w + d_e + d_f:+d}"
+                f"[sim-bals] path={path_id} weth {weth_before}->{weth_after} (d={d_w:+d}) | eth {eb}->{ea} (d={d_e:+d}) | erc6909 {fb}->{fa} (d={d_f:+d}) | combined d={d_w + d_e + d_f:+d}"
             )
         if rec.get("log_full_count") is not None:
             n_swap = len(rec.get("captured_swaps") or [])
@@ -1742,7 +1727,10 @@ def _render_sim_failures(outcome: DispatchOutcome, *, current_block: int) -> Non
             )
         rs = rec.get("reverted_swaps") or []
         if rs:
-            brief = ";".join(f"{s.get('family')}:{str(s.get('emitter'))[0:10]}:a0={s.get('amount0')}:a1={s.get('amount1')}" for s in rs)
+            brief = ";".join(
+                f"{s.get('family')}:{str(s.get('emitter'))[0:10]}:a0={s.get('amount0')}:a1={s.get('amount1')}"
+                for s in rs
+            )
             bot_logger.info(f"[sim-revswaps] path={path_id} n={len(rs)} {brief}")
         # Ergo epic 63I7WJ (task AM5AJW) — emit the structured [sim-diag] JSON
         # line the ``logs/permutation_analyzer.py`` classifier parses. Built
