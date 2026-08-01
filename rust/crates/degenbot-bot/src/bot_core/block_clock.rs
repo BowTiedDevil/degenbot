@@ -19,6 +19,9 @@
 //! `advance_to_drained` requires `LogsApplied`, which requires the tombstone
 //! (first `removed: false` log for N+1).
 
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+
 /// The state of a single tracked block.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BlockState {
@@ -102,6 +105,15 @@ pub struct BlockClock {
     /// Whether the clock is currently in the reorg path (accepting a
     /// contiguous `removed: true` chunk).
     in_reorg: bool,
+    /// The deepest block that has reached the TOMBSTONE (`LogsApplied` or,
+    /// transiently, `Drained`) — i.e. the highest FULLY-DELIVERED block. This
+    /// is the single source of truth the registration drain
+    /// (`BotState::apply_pump_buffer_v3/_v4` → `drain_pump_completed`) reads
+    /// for its cutoff, replacing the retired buffer shadow marker (3M5PO5).
+    /// Shared by `Arc` so both the pump task (which owns `BlockClock`) and the
+    /// registration path (`BotState` on the asyncio thread) read the same value
+    /// without a cross-runtime lock. `0` until the first tombstone.
+    highest_applied: Arc<AtomicU64>,
 }
 
 impl BlockClock {
@@ -310,11 +322,36 @@ impl BlockClock {
         }
     }
 
-    /// Transition `block` from `LogsArriving` to `LogsApplied` (the tombstone).
+    /// Transition `block` from `LogsArriving` to `LogsApplied` (the tombstone)
+    /// and advance the shared [`highest_applied`](Self::highest_applied)
+    /// cutoff — the one signal the registration drain relies on.
     fn tombstone(&mut self, block: u64) {
         if let Some(state) = self.blocks.get_mut(&block) {
             *state = BlockState::LogsApplied;
         }
+        // Monotonic store — a re-reported/re-awaited block never rewinds the
+        // cutoff (mirrors the retired `mark_block_complete` contract).
+        let mut cur = self.highest_applied.load(Ordering::Relaxed);
+        while block > cur {
+            match self.highest_applied.compare_exchange_weak(
+                cur,
+                block,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(actual) => cur = actual,
+            }
+        }
+    }
+
+    /// Shared handle to the deepest tombstoned (`LogsApplied`/`Drained`)
+    /// block. The pump hands this to `BotState` at startup so the
+    /// registration drain reads the same completeness cutoff the pump's own
+    /// clock tracks — the single source of truth (3M5PO5).
+    #[must_use]
+    pub fn highest_applied_handle(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.highest_applied)
     }
 
     /// Mark every tracked block strictly before `head` as `Tainted` (reorg
@@ -410,6 +447,41 @@ mod tests {
             None,
             "headers alone can never reach Drained"
         );
+    }
+
+    /// The shared `highest_applied` cutoff (3M5PO5) — the registration drain's
+    /// single source of truth — advances ONLY on the tombstone (the first
+    /// `removed: false` log of N+1), exactly as the retired buffer
+    /// `last_complete_block` marker did, and the handle is shareable by `Arc`.
+    #[test]
+    fn highest_applied_cutoff_advances_on_tombstone_only() {
+        let mut clock = BlockClock::new();
+        let handle = clock.highest_applied_handle();
+        assert_eq!(handle.load(Ordering::Relaxed), 0, "no tombstone yet");
+
+        // Observe headers — a header alone must NOT advance the cutoff.
+        clock.observe_header(100);
+        assert_eq!(handle.load(Ordering::Relaxed), 0);
+        clock.observe_header(101);
+        assert_eq!(handle.load(Ordering::Relaxed), 0);
+
+        // The first removed:false log for 101 tombstones 100.
+        assert_eq!(
+            clock.observe_log(101, false),
+            LogDecision::TombstonePrevious(100)
+        );
+        assert_eq!(
+            handle.load(Ordering::Relaxed),
+            100,
+            "a successor log tombstones the predecessor into the cutoff"
+        );
+
+        // A further tombstone (a log for 102 closes 101) advances monotonically.
+        assert_eq!(
+            clock.observe_log(102, false),
+            LogDecision::TombstonePrevious(101)
+        );
+        assert_eq!(handle.load(Ordering::Relaxed), 101);
     }
 
     /// The full happy path: `Observed → LogsArriving → LogsApplied → Drained`,

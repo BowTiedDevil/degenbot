@@ -5,6 +5,7 @@
 //! `BotState`'s `HashMaps`.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use alloy::primitives::{aliases::U112, Address, I256, U256};
@@ -150,6 +151,13 @@ pub struct BotState {
     /// closes the `S+1..W-1` gap before resume. `None` when no snapshot was
     /// loaded (cold-start path — the pump anchors on `first_observed_block`).
     snapshot_seed_block: Option<u64>,
+    /// The highest FULLY-DELIVERED block — the shared handle to the pump's
+    /// `BlockClock` tombstone cutoff (3M5PO5). The registration drain reads
+    /// this as the `drain_pump_completed` cutoff instead of a buffer-local
+    /// shadow marker; `0` (or the buffer as a whole not yet seeded) means no
+    /// block has been tombstoned → nothing drains. Seeded by the pump at
+    /// startup via [`set_pump_complete_cutoff`](Self::set_pump_complete_cutoff).
+    pump_complete_cutoff: Arc<AtomicU64>,
 }
 
 /// Diagnostic: log every V3 pump-buffer INSERTION for the pool address named
@@ -471,6 +479,33 @@ impl BotState {
             v4_pool_ids: HashMap::new(),
             v4_state_views: HashMap::new(),
             snapshot_seed_block: None,
+            pump_complete_cutoff: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    /// Share the pump's `BlockClock` tombstone cutoff with `BotState` so the
+    /// registration drain reads the same "highest fully-delivered block" the
+    /// pump's own clock tracks — the single source of truth (3M5PO5). Called
+    /// once by the pump at startup; a no-op elsewhere.
+    pub fn set_pump_complete_cutoff(&mut self, handle: Arc<AtomicU64>) {
+        self.pump_complete_cutoff = handle;
+    }
+
+    /// The current shared pump-completeness cutoff (`0` until the first
+    /// tombstone). Test/diagnostic read of the value the registration drain
+    /// gates on.
+    #[must_use]
+    pub fn pump_complete_cutoff(&self) -> u64 {
+        self.pump_complete_cutoff.load(Ordering::Relaxed)
+    }
+
+    /// Monotonically advance the shared pump-completeness cutoff. The live
+    /// pump mutates the SAME value via `BlockClock::tombstone`; this direct
+    /// advance is for tests that drive the registration drain without a pump.
+    pub fn advance_pump_complete_cutoff(&mut self, block: u64) {
+        let cur = self.pump_complete_cutoff.load(Ordering::Relaxed);
+        if block > cur {
+            self.pump_complete_cutoff.store(block, Ordering::Relaxed);
         }
     }
 
@@ -1414,11 +1449,19 @@ impl BotState {
             }
             return;
         };
-        // YLYJM2: drain ONLY fully-completed blocks. The block pump marks a
-        // block complete at its ADR-008 D1 tombstone (first log of N+1 closes
-        // N); a drain mid-block would pin `update_block=N` missing a later
-        // same-block log. Events for the in-progress block stay buffered.
-        let Some(buffered) = self.v3_buffer.drain_pump_completed(address) else {
+        // YLYJM2: drain ONLY fully-completed blocks. The cutoff is the pump's
+        // `BlockClock` tombstone cutoff (3M5PO5) — a block is complete when
+        // the first log of N+1 closes N; a drain mid-block would pin
+        // `update_block=N` missing a later same-block log. Events for the
+        // in-progress block stay buffered.
+        let cutoff = self.pump_complete_cutoff.load(Ordering::Relaxed);
+        if cutoff == 0 {
+            if dbg {
+                tracing::info!(pool_addr = %format!("{address:x}"), "[dbg-drain] pump NO-COMPLETE (no tombstone yet)");
+            }
+            return;
+        }
+        let Some(buffered) = self.v3_buffer.drain_pump_completed(address, cutoff) else {
             if dbg {
                 tracing::info!(pool_addr = %format!("{address:x}"), "[dbg-drain] pump EMPTY (no completed blocks)");
             }
@@ -1519,25 +1562,6 @@ impl BotState {
     }
 
     /// Mark `block` as fully processed by the pump (every V3 log for `block`
-    /// has been buffered). The block pump calls this from its ADR-008 D1
-    /// tombstone path (the first log of block N+1 closes block N).
-    /// [`apply_pump_buffer_v3`](Self::apply_pump_buffer_v3) then drains only
-    /// events at or below this block, so the registration drain+pin cannot
-    /// capture a half-delivered block (the YLYJM2 rolling-start race).
-    pub fn mark_v3_pump_block_complete(&mut self, block: u64) {
-        self.v3_buffer.mark_block_complete(block);
-        if verify_dbg_enabled() {
-            tracing::info!(
-                block,
-                pump_at_or_below = self.v3_buffer.pump_total_at_or_below(block),
-                pump_total = self.v3_buffer.pump_total(),
-                backfill_total = self.v3_buffer.backfill_total(),
-                last_complete_block = ?self.v3_buffer.last_complete_block(),
-                "[verify-dbg] V3 mark_block_complete"
-            );
-        }
-    }
-
     /// Read a registered V3 pool's state by `pool_id`.
     ///
     /// The solve engine reads state by reference through this accessor
@@ -1678,7 +1702,7 @@ impl BotState {
                     update_block,
                     tick_count,
                     pump_count = self.v3_buffer.pump_count_at_or_below(&address, update_block),
-                    last_complete_block = ?self.v3_buffer.last_complete_block(),
+                    last_complete_block = self.pump_complete_cutoff(),
                     "[verify-dbg] V3 pin"
                 );
             }
@@ -3226,11 +3250,15 @@ impl BotState {
         let Some(&id) = self.v4_pool_ids.get(&key) else {
             return;
         };
-        // YLYJM2: drain ONLY fully-completed blocks. The block pump marks a
-        // block complete at its ADR-008 D1 tombstone (first log of N+1 closes
-        // N); a drain mid-block would pin `update_block=N` missing a later
-        // same-block log. Events for the in-progress block stay buffered.
-        let Some(buffered) = self.v4_buffer.drain_pump_completed(&key) else {
+        // YLYJM2: drain ONLY fully-completed blocks. The cutoff is the pump's
+        // `BlockClock` tombstone cutoff (3M5PO5) — a block is complete when
+        // the first log of N+1 closes N; a drain mid-block would pin
+        // `update_block=N` missing a later same-block log.
+        let cutoff = self.pump_complete_cutoff.load(Ordering::Relaxed);
+        if cutoff == 0 {
+            return;
+        }
+        let Some(buffered) = self.v4_buffer.drain_pump_completed(&key, cutoff) else {
             return;
         };
         for update in buffered {
@@ -3252,26 +3280,6 @@ impl BotState {
 
     pub fn expire_v4_buffered(&mut self, current_block: u64) {
         self.v4_buffer.expire(current_block);
-    }
-
-    /// Mark `block` as fully processed by the pump (every V4 `ModifyLiquidity`
-    /// log for `block` has been buffered). The block pump calls this from its
-    /// ADR-008 D1 tombstone path (the first log of block N+1 closes block N).
-    /// [`apply_pump_buffer_v4`](Self::apply_pump_buffer_v4) then drains only
-    /// events at or below this block, so the registration drain+pin cannot
-    /// capture a half-delivered block (the YLYJM2 rolling-start race).
-    pub fn mark_v4_pump_block_complete(&mut self, block: u64) {
-        self.v4_buffer.mark_block_complete(block);
-        if verify_dbg_enabled() {
-            tracing::info!(
-                block,
-                pump_at_or_below = self.v4_buffer.pump_total_at_or_below(block),
-                pump_total = self.v4_buffer.pump_total(),
-                backfill_total = self.v4_buffer.backfill_total(),
-                last_complete_block = ?self.v4_buffer.last_complete_block(),
-                "[verify-dbg] V4 mark_block_complete"
-            );
-        }
     }
 
     /// Apply one buffered V4 pool event (`Liquidity` or `Swap`) to a
@@ -3689,7 +3697,7 @@ impl BotState {
                     pool_id = %degenbot_core::hex_utils::encode_hex(pool_id),
                     update_block,
                     pump_count = self.v4_buffer.pump_count_at_or_below(&key, update_block),
-                    last_complete_block = ?self.v4_buffer.last_complete_block(),
+                    last_complete_block = self.pump_complete_cutoff(),
                     "[verify-dbg] V4 pin"
                 );
             }
@@ -4504,7 +4512,7 @@ mod tests {
         // live pump marks `block_b` complete at its ADR-008 D1 tombstone (the
         // first log of block_b+1); mirror that here so the drain takes the
         // buffered Mint instead of leaving it pinned behind the gate.
-        core.mark_v3_pump_block_complete(block_b);
+        core.advance_pump_complete_cutoff(block_b);
         core.apply_pump_buffer_v3(&pool_addr);
 
         {
@@ -5012,7 +5020,7 @@ mod tests {
         // Quarantine BEFORE any live event lands (the registration seam's job).
         core.set_v4_pool_quarantined(pool_manager, pool_id_bytes);
         // The pump has fully delivered block 10 (tombstone at 11).
-        core.mark_v4_pump_block_complete(10);
+        core.advance_pump_complete_cutoff(10);
         // A live Swap lands at block 11 (in-progress; `last_complete_block` is
         // still 10 — no tombstone for 11 yet).
         core.apply_v4_swap(
@@ -5062,7 +5070,7 @@ mod tests {
         let mut core = BotState::new();
         let pool_id = register_v4_on_core(&mut core, 10);
         core.set_v4_pool_quarantined(pool_manager, pool_id_bytes);
-        core.mark_v4_pump_block_complete(10);
+        core.advance_pump_complete_cutoff(10);
         // Buffer a Burn (block 11, in-progress) + a Swap (block 11) — both
         // retained by the gate during quarantine.
         core.apply_v4_liquidity_update(
@@ -5192,7 +5200,7 @@ mod tests {
         let pool_id = register_v4_on_core(&mut core, 10);
         core.set_v4_pool_quarantined(pool_manager, pool_id_bytes);
         // The pump has tombstoned block 10 (live events at 10 are complete).
-        core.mark_v4_pump_block_complete(10);
+        core.advance_pump_complete_cutoff(10);
         // A complete-block pump event (block 10) + an in-progress-block pump
         // event (block 11) — both deferred to the pump buffer.
         core.apply_v4_liquidity_update(
@@ -5265,7 +5273,7 @@ mod tests {
         );
         let pool_id = register_v4_on_core(&mut core, 10);
         core.set_v4_pool_quarantined(pool_manager, pool_id_bytes);
-        // NO `mark_v4_pump_block_complete` — the gated pump drain would yield
+        // NO cutoff set (no tombstone yet) — the gated pump drain would yield
         // nothing, but the backfill drain is UNGATED and must still apply.
         core.apply_backfill_buffer_v4(pool_manager, pool_id_bytes);
         core.apply_pump_buffer_v4(pool_manager, pool_id_bytes);
@@ -5313,7 +5321,7 @@ mod tests {
             })
             .collect();
         // The pump has fully delivered block 10 (tombstone).
-        core.mark_v4_pump_block_complete(10);
+        core.advance_pump_complete_cutoff(10);
         // Interleaved live events: a ModifyLiquidity on pool 0, a Swap on
         // pool 1, a ModifyLiquidity on pool 2 — all at the in-progress block
         // 11. All deferred to their respective pump buffers.
@@ -5388,7 +5396,7 @@ mod tests {
         let mut core = BotState::new();
         let _pool_id = register_v4_on_core(&mut core, 10);
         core.set_v4_pool_quarantined(pool_manager, pool_id_bytes);
-        core.mark_v4_pump_block_complete(10);
+        core.advance_pump_complete_cutoff(10);
         // Swap arrives FIRST (logIdx 120), then Mint (logIdx 1433) — both at
         // the in-progress block 11. Cross-type arrival order is preserved in
         // the buffer (Swap before Mint in the Vec).
@@ -5444,7 +5452,7 @@ mod tests {
         let mut core = BotState::new();
         let pool_id = register_v4_on_core(&mut core, 10);
         core.set_v4_pool_quarantined(pool_manager, pool_id_bytes);
-        core.mark_v4_pump_block_complete(10);
+        core.advance_pump_complete_cutoff(10);
         // A complete-block Mint at 10 (applied at drain), then pin.
         core.apply_v4_liquidity_update(
             pool_manager,
@@ -6795,7 +6803,7 @@ mod tests {
         // Mirror the live pump's ADR-008 D1 tombstone (first log of
         // `pump_block`+1 closes `pump_block`) so the drain takes the pump
         // Mint at `pump_block` rather than leaving it behind the gate.
-        core.mark_v3_pump_block_complete(pump_block);
+        core.advance_pump_complete_cutoff(pump_block);
         core.apply_pump_buffer_v3(&v3_addr);
         core.pin_v3_post_drain_snapshot(v3_addr);
 
@@ -7417,8 +7425,9 @@ mod tests {
     //
     // Asserts the WIRING the probes rely on: a tracked V3 pool's pump
     // Mint/Burn is counted by `v3_buffer.pump_count_at_or_below` through the
-    // `BotState` field, `mark_v3_pump_block_complete` advances
-    // `last_complete_block`, and `pin_v3_post_drain_snapshot` +
+    // `BotState` field, `advance_pump_complete_cutoff` advances the shared
+    // pump-completeness cutoff (the BlockClock tombstone, 3M5PO5), and
+    // `pin_v3_post_drain_snapshot` +
     // `set_v3_pool_live` remain behavior-preserving under the buffered
     // tail (the apply path executes regardless of the gate — the
     // `verify_dbg_enabled()` branch is pure logging).
@@ -7454,11 +7463,11 @@ mod tests {
         core.apply_v3_liquidity_update(pool_addr, -10, 10, -500_i128, 100);
         // Pre-mark: two pump events, no complete block yet.
         assert_eq!(core.v3_buffer.pump_count_at_or_below(&pool_addr, 100), 2);
-        assert_eq!(core.v3_buffer.last_complete_block(), None);
+        assert_eq!(core.pump_complete_cutoff(), 0);
         assert_eq!(core.v3_buffer.pump_total_at_or_below(100), 2);
         // Mark block 100 complete (what the pump does at N+1's tombstone).
-        core.mark_v3_pump_block_complete(100);
-        assert_eq!(core.v3_buffer.last_complete_block(), Some(100));
+        core.advance_pump_complete_cutoff(100);
+        assert_eq!(core.pump_complete_cutoff(), 100);
         // Drain + pin: the gated drain yields both events, then the pin
         // captures the post-drain pair. (apply_pump_buffer_v3 + pin are the
         // exact sequence the registration seam runs.)

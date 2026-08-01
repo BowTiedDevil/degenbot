@@ -743,6 +743,13 @@ impl BlockPump {
         // backfill + shutdown. A header alone NEVER advances the cursor —
         // only `advance_to_drained` (after the tombstone) does.
         let mut clock = BlockClock::new();
+        // 3M5PO5: share the clock's tombstone cutoff with BotState so the
+        // registration drain reads the SAME "highest fully-delivered block"
+        // the pump's clock tracks (no buffer-local shadow marker).
+        self.bot
+            .state_arc()
+            .write()
+            .set_pump_complete_cutoff(clock.highest_applied_handle());
         // Per-block metadata, snapshotted from each block's header. A block's
         // tombstone (first log for N+1) may arrive AFTER header N+1 overwrote
         // `current_metadata`, so the result batch that finalizes N must carry
@@ -1193,7 +1200,10 @@ impl BlockPump {
                             // half-delivered `prev` (the rolling-start race
                             // where a later same-block log lands after the pin).
                             publish_pending = false;
-                            self.bot.mark_pump_blocks_complete(prev);
+                            // 3M5PO5: no explicit `mark_pump_blocks_complete`
+                            // here — the clock's own `tombstone(prev)` (inside
+                            // `observe_log`) already advanced the shared cutoff
+                            // the registration drain reads.
                             // LOUD WS-completeness check: block `prev` is now
                             // confirmed complete (tombstoned by the first log of
                             // N+1); cross-check delivered relevant logs vs

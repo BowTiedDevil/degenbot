@@ -197,20 +197,6 @@ impl Bot {
         self.dispatcher.dispatch(log, &self.state);
     }
 
-    /// Mark `block` as fully processed by the live pump (every log for `block`
-    /// has been dispatched → buffered). The block pump calls this from its
-    /// ADR-008 D1 tombstone path (the first log of block N+1 closes block N).
-    /// A single `state.write()` hold advances BOTH the V3 and V4 pump-buffer
-    /// completeness markers; the gated drain
-    /// [`apply_pump_buffer_v3`/`_v4`](BotState) then yields only events at or
-    /// below this block, so the registration drain+pin cannot capture a
-    /// half-delivered block (the YLYJM2 rolling-start race).
-    pub fn mark_pump_blocks_complete(&self, block: u64) {
-        let mut state = self.state.write();
-        state.mark_v3_pump_block_complete(block);
-        state.mark_v4_pump_block_complete(block);
-    }
-
     /// Decode `log` into a [`DecodedPoolEvent`] without applying (ADR-006 slice 7).
     /// `ReorgCoordinator` uses this on `removed: true` logs to identify the
     /// target pool before restoring it from the journal.

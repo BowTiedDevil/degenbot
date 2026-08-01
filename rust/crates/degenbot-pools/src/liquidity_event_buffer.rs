@@ -42,15 +42,6 @@ where
     /// Maximum age (in blocks) for pump buffer events.
     /// `None` means unbounded.
     max_age: Option<u64>,
-
-    /// The highest block number whose logs the pump has FULLY processed
-    /// (every log for that block has been buffered). `drain_pump_completed`
-    /// yields only events with `block_number <= last_complete_block`, leaving
-    /// any partly-arrived same-block tail buffered — closing the rolling-
-    /// start race where `apply_buffer` drains mid-block and pins a state that
-    /// has `update_block == N` but is missing a later same-block log. Set by
-    /// `mark_block_complete` from the pump's per-block finalize path.
-    last_complete_block: Option<u64>,
 }
 
 impl<K, U> LiquidityEventBuffer<K, U>
@@ -64,7 +55,6 @@ where
             backfill: HashMap::new(),
             pump: HashMap::new(),
             max_age: None,
-            last_complete_block: None,
         }
     }
 
@@ -104,30 +94,20 @@ where
         self.pump.remove(key)
     }
 
-    /// Mark `block` as fully processed by the pump — every log for `block`
-    /// has been buffered. Called from the pump's per-block finalize path.
-    /// Monotonic: a lower block than the current marker is ignored (the pump
-    /// may re-report an already-completed block on a racing re-drain).
-    pub fn mark_block_complete(&mut self, block: u64) {
-        self.last_complete_block =
-            Some(std::cmp::max(self.last_complete_block.unwrap_or(0), block));
-    }
-
     /// Drain and return the pump events for `key` whose `block_number` is at
-    /// or below [`mark_block_complete`](Self::mark_block_complete)'s highest
-    /// fully-processed block. Events for a block the pump has NOT finished
-    /// processing stay buffered, so a drain+pin at the registration seam
-    /// cannot capture a half-delivered block.
+    /// or below `cutoff` — the highest block the pump has tombstoned (the
+    /// shared `BlockClock` completeness cutoff, 3M5PO5). Events for a block
+    /// the pump has NOT finished processing stay buffered, so a drain+pin at
+    /// the registration seam cannot capture a half-delivered block.
     ///
     /// Returns `None` if no completable pump events exist for this key (no
-    /// events at all, or `mark_block_complete` was never called, or all
-    /// buffered events are for a still-in-progress block). Events left below
-    /// the completeness gate are retained for a subsequent drain.
-    pub fn drain_pump_completed(&mut self, key: &K) -> Option<Vec<U>>
+    /// events at all, `cutoff == 0` — no tombstone yet, or all buffered
+    /// events are for a still-in-progress block). Events left below the
+    /// completeness gate are retained for a subsequent drain.
+    pub fn drain_pump_completed(&mut self, key: &K, cutoff: u64) -> Option<Vec<U>>
     where
         U: LiquidityEvent,
     {
-        let cutoff = self.last_complete_block?;
         let events = self.pump.get_mut(key)?;
         // Partition: completable (block_number <= cutoff) stays; the in-progress
         // tail (block_number > cutoff) is retained for the next drain.
@@ -142,16 +122,6 @@ where
         } else {
             Some(completable)
         }
-    }
-
-    /// The highest block the pump has marked fully processed (every log for
-    /// that block has been buffered). Set by `mark_block_complete`; read by
-    /// the diagnostic logs that correlate a drain/pin against the
-    /// completeness gate (the rolling-start "missed Mint/Burn at block W"
-    /// reproduction). `None` until the first tombstone.
-    #[must_use]
-    pub fn last_complete_block(&self) -> Option<u64> {
-        self.last_complete_block
     }
 
     /// Count pump-buffer events for `key` whose `block_number` is at or below
@@ -342,10 +312,9 @@ mod tests {
         // Block 101: the in-progress block — the pump has buffered one of its
         // logs (logIdx 120) but not the later same-block log (logIdx 1433).
         buf.buffer_pump(1, Ev { block: 101, tag: 3 });
-        buf.mark_block_complete(100);
-
+        // cutoff == 100 (block 101 not yet tombstoned) → only block 100 drains.
         let drained = buf
-            .drain_pump_completed(&1)
+            .drain_pump_completed(&1, 100)
             .expect("block 100 events drain");
         assert_eq!(drained.len(), 2, "both events for the complete block 100");
         assert!(drained.iter().all(|e| e.block == 100));
@@ -369,9 +338,10 @@ mod tests {
                 tag: 120,
             },
         );
-        buf.mark_block_complete(25_642_265);
-        // `apply_buffer` drains RIGHT NOW — before logIdx 1433 arrives.
-        let drained = buf.drain_pump_completed(&1);
+        // `apply_buffer` drains RIGHT NOW — before logIdx 1433 arrives, with
+        // the cutoff at 25642265 (the PREVIOUS block; block 25642266 not yet
+        // tombstoned).
+        let drained = buf.drain_pump_completed(&1, 25_642_265);
         assert!(
             drained.is_none(),
             "block 25642266 is NOT complete; nothing drains"
@@ -384,11 +354,9 @@ mod tests {
                 tag: 1433,
             },
         );
-        // ...the pump finishes the block...
-        buf.mark_block_complete(25_642_266);
-        // ...now BOTH same-block events drain together, atomically.
+        // ...the pump finishes the block (cutoff advances to 25642266)...
         let drained = buf
-            .drain_pump_completed(&1)
+            .drain_pump_completed(&1, 25_642_266)
             .expect("both events after block completes");
         assert_eq!(drained.len(), 2, "both same-block events drain together");
         let mut tags: Vec<_> = drained.iter().map(|e| e.tag).collect();
@@ -400,37 +368,20 @@ mod tests {
         );
     }
 
-    /// `drain_pump_completed` with no `mark_block_complete` ever called drains
-    /// nothing (defensive — the gate defaults closed, not open).
+    /// `drain_pump_completed` with cutoff 0 (no tombstone yet) drains nothing
+    /// (defensive — the gate defaults closed, not open).
     #[test]
     fn drain_pump_completed_defaults_closed_with_no_marker() {
         let mut buf: LiquidityEventBuffer<u32, Ev> = LiquidityEventBuffer::new();
         buf.buffer_pump(1, Ev { block: 100, tag: 1 });
         assert!(
-            buf.drain_pump_completed(&1).is_none(),
+            buf.drain_pump_completed(&1, 0).is_none(),
             "no complete block → nothing drains"
         );
         assert_eq!(buf.event_count(&1), 1, "event retained");
     }
 
     // ── diagnostic measurement helpers (verify-dbg visibility probes) ─────
-
-    /// `last_complete_block` mirrors `mark_block_complete`'s monotonic high.
-    /// `None` until the first call; a lower block than the current marker is
-    /// ignored (the pump may re-report on a racing re-drain).
-    #[test]
-    fn last_complete_block_tracks_mark_block_complete() {
-        let mut buf: LiquidityEventBuffer<u32, Ev> = LiquidityEventBuffer::new();
-        assert_eq!(buf.last_complete_block(), None, "none until first mark");
-        buf.mark_block_complete(100);
-        assert_eq!(buf.last_complete_block(), Some(100));
-        // Lower re-report is ignored (monotonic).
-        buf.mark_block_complete(99);
-        assert_eq!(buf.last_complete_block(), Some(100));
-        // Higher advances.
-        buf.mark_block_complete(200);
-        assert_eq!(buf.last_complete_block(), Some(200));
-    }
 
     /// `pump_count_at_or_below(key, cutoff)` counts only that key's pump
     /// events at or below the cutoff — the per-pool witness used by the
