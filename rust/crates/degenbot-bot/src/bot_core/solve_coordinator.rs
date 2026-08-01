@@ -40,6 +40,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::bot_core::drain_sink::DrainSink;
 use crate::bot_core::BlockMetadata;
+use degenbot_solvers::mixed::MixedPoolRef;
 
 use super::engine::Engine;
 
@@ -190,6 +191,14 @@ impl DrainSink for SolveCoordinator {
         for engine in &self.engines {
             engine.notify_block(block, metadata);
         }
+    }
+
+    fn solver_path_pool_refs(&self) -> Vec<Vec<MixedPoolRef>> {
+        let _guard = self.drain_lock.lock().expect("drain_lock poisoned");
+        self.engines
+            .iter()
+            .flat_map(|engine| engine.solver_path_pool_refs())
+            .collect()
     }
 }
 

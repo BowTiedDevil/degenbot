@@ -46,6 +46,9 @@ use alloy::rpc::types::{Filter, Log, Topic};
 use futures_util::{stream, StreamExt};
 use tokio::time::timeout;
 
+use crate::bot_core::solver_state_verifier::{
+    extract_solver_hop_states, verify_solver_hop_states, SolverStateMismatch,
+};
 use crate::bot_core::{drain_sink::DrainSink, BlockMetadata, Bot};
 use crate::bot_core::{BlockClock, HeaderDecision, LogDecision};
 use degenbot_decoders::v2_sync_decoder::V2_SYNC_TOPIC;
@@ -562,6 +565,43 @@ impl BlockPump {
             .await
     }
 
+    /// Option-A solver-state accuracy gate (AV42C7): diff every registered
+    /// path's per-hop solver pool state against the chain at `block` (the
+    /// solve block) and PANIC on the first mismatch or read failure.
+    ///
+    /// The scalar state is extracted under a short core read-guard and the
+    /// guard dropped before the async on-chain reads begin (a `parking_lot`
+    /// guard is not `Send` and must not be held across an `.await`). Env-gated
+    /// by `DEGENBOT_ASSERT_SOLVER_STATE=1` at the call site; off the hot loop
+    /// by default.
+    #[allow(clippy::missing_panics_doc)]
+    async fn verify_solver_state_against_chain(&self, block: u64) {
+        let path_refs = self.sink.solver_path_pool_refs();
+        if path_refs.is_empty() {
+            return;
+        }
+        // Extract per-path scalar states under a short read guard, then drop
+        // the guard BEFORE awaiting the RPC reads.
+        let mut path_hop_states = Vec::with_capacity(path_refs.len());
+        {
+            let state_arc = self.bot.state_arc();
+            let core = state_arc.read();
+            for pools in &path_refs {
+                path_hop_states.push(extract_solver_hop_states(&core, pools));
+            }
+        }
+        for (path_idx, hop_states) in path_hop_states.iter().enumerate() {
+            if let Err(mismatch) = verify_solver_hop_states(&self.provider, hop_states, block).await
+            {
+                let SolverStateMismatch { message } = mismatch;
+                panic!(
+                    "DEGENBOT_ASSERT_SOLVER_STATE: path {path_idx} solver pool state does not \
+                     match the chain at block {block}: {message}"
+                );
+            }
+        }
+    }
+
     /// Run the main pump loop with an existing WS stream.
     ///
     /// Processes logs eagerly: each WS log is applied to engine state
@@ -688,6 +728,12 @@ impl BlockPump {
         let mut log_silence_alarm_armed = false;
         let mut diag_last_stats = tokio::time::Instant::now();
 
+        // Option-A solver-state accuracy gate (AV42C7): when `DEGENBOT_ASSERT_SOLVER_STATE`
+        // is set, diff each solved path's per-hop pool state against the chain
+        // at the solve block after every drain, panicking on any mismatch. Off
+        // by default (adds an RPC read per path per solve on the hot loop).
+        let solver_state_verify_enabled = std::env::var("DEGENBOT_ASSERT_SOLVER_STATE").is_ok();
+
         // JIABO3 Option A — header-staleness watchdog. A `tokio::time::interval`
         // selected against `combined.next()` (below) whose internal `Sleep`
         // elapses independently of stream activity. This catches a silent
@@ -720,6 +766,17 @@ impl BlockPump {
                     // LEZJAS: engine owns `last_solved_block` now — mark this
                     // block solved so the next `finalize_block` guard no-ops.
                     self.sink.set_last_solved_block(current_block);
+
+                    // Option-A solver-state accuracy gate (AV42C7): when enabled,
+                    // the solver's just-consumed per-hop pool states are diffed
+                    // against the chain at the solve block BEFORE they can be
+                    // encoded/simulated. A mismatch means the solver ran on a
+                    // desynced snapshot → panic immediately (never chase the
+                    // resulting impossible hop_outputs). Runs only when a solve
+                    // actually happened this iteration (not on idle loops).
+                    if solver_state_verify_enabled {
+                        self.verify_solver_state_against_chain(current_block).await;
+                    }
                 }
             }
 

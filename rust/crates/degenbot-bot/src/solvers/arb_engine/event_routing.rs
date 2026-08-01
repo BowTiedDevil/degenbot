@@ -5,6 +5,7 @@ use alloy::primitives::{aliases::U112, Address};
 
 #[cfg(test)]
 use crate::bot_core::{V3SwapUpdate, V4SwapUpdate};
+use degenbot_solvers::mixed::MixedPoolRef;
 
 #[cfg(test)]
 use super::HashSet;
@@ -72,6 +73,18 @@ impl ArbitrageEngine {
     #[must_use]
     pub fn has_dirty_paths(&self) -> bool {
         !self.dirty_v2.is_empty() || !self.dirty_v3.is_empty() || !self.dirty_v4.is_empty()
+    }
+
+    /// Snapshot every registered path's per-hop pool refs for the Option-A
+    /// solver-state accuracy gate (`solver_state_verifier`). The pump extracts
+    /// the `BotState` scalar state + diffs it against the chain at the solve
+    /// block; engines with non-scalar-diffable paths override the default.
+    #[must_use]
+    pub fn solver_path_pool_refs(&self) -> Vec<Vec<MixedPoolRef>> {
+        self.path_pools
+            .values()
+            .map(|path| path.pools.clone())
+            .collect()
     }
 
     /// Finalize the current block: if dirty paths accumulated since the last

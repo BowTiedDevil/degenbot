@@ -20,6 +20,7 @@
 //! `dispatch` before notify fired — slice 4's `EngineSubscriber` invariant).
 
 use crate::bot_core::BlockMetadata;
+use degenbot_solvers::mixed::MixedPoolRef;
 
 /// The drain-side engine seam: the 6 methods [`DrainSink`](super::drain_sink::DrainSink)
 /// fans out across engines (ADR-006 D4).
@@ -69,4 +70,12 @@ pub trait Engine: Send + Sync {
     /// (the result batch stays the solver's concern; the block channel is the
     /// authoritative block clock, not `ResultBatch::solve_block`).
     fn notify_block(&self, block: u64, metadata: &BlockMetadata);
+
+    /// Snapshot every registered path's per-hop pool refs (the Option-A
+    /// solver-state accuracy gate — see `solver_state_verifier`). Engines
+    /// whose paths are not scalar-diffable (Solidly/Balancer/Curve) return
+    /// empty; the arbitrage engine overrides with its `path_pools`.
+    fn solver_path_pool_refs(&self) -> Vec<Vec<MixedPoolRef>> {
+        Vec::new()
+    }
 }

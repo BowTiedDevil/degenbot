@@ -29,6 +29,7 @@ pub mod log_dispatcher;
 pub mod reorg_coordinator;
 pub mod snapshot_verify;
 pub mod solve_coordinator;
+pub mod solver_state_verifier;
 pub mod tick_assembly;
 pub mod v3_state;
 
