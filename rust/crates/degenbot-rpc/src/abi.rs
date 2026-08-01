@@ -85,25 +85,6 @@ alloy::sol! {
         function getTickBitmap(bytes32 poolId, int16 wordPosition) external view returns (uint256 word);
         function getTickLiquidity(bytes32 poolId, int24 tick) external view returns (uint128 gross, int128 net);
     }
-
-    /// The Uniswap-V4 `Pool` struct returned by `PoolManager.getPool(bytes32)`.
-    /// `currency0`/`currency1`/`hooks` are user-defined value types that ABI-
-    /// encode as 20-byte addresses; the full struct is 8 words.
-    struct Pool {
-        address currency0;
-        address currency1;
-        uint24 fee;
-        int24 tickSpacing;
-        address hooks;
-        uint160 sqrtPriceX96;
-        uint128 liquidity;
-        int24 tick;
-    }
-
-    /// Uniswap-V4 `PoolManager` interface (`getPool`, for authoritative pool state).
-    interface IUniswapV4PoolManager {
-        function getPool(bytes32 poolId) external view returns (Pool pool);
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -289,48 +270,6 @@ pub async fn fetch_v4_slot0_liquidity(
         .await?;
     let liquidity = decode_liquidity(&liq_bytes)?;
     Ok((sqrt_price_x96, tick, protocol_fee, lp_fee, liquidity))
-}
-
-/// Encode the `getPool(bytes32)` calldata.
-#[must_use]
-pub fn encode_get_pool(pool_id: &[u8; 32]) -> Vec<u8> {
-    IUniswapV4PoolManager::getPoolCall {
-        poolId: (*pool_id).into(),
-    }
-    .abi_encode()
-}
-
-/// Fetch a V4 pool's canonical on-chain `getPool(bytes32)` scalar state
-/// `(sqrtPriceX96, tick, liquidity)` from the `PoolManager`.
-///
-/// This is the authoritative pool state (the same cold-slot the solver's
-/// post-swap event state must equal) and needs only the `PoolManager` address,
-/// not a separate `StateView` deployment — so the solver-state verifier can
-/// drive it directly from a V4 hop's `pool_manager` identity.
-///
-/// # Errors
-///
-/// Returns [`ProviderError`] from the underlying `eth_call` or
-/// [`ProviderError::DecodingError`] if the return data does not decode as the
-/// 8-word `Pool` struct.
-pub async fn fetch_v4_pool_state(
-    provider: &AlloyProvider,
-    pool_manager: &Address,
-    pool_id: &[u8; 32],
-    block: Option<u64>,
-) -> ProviderResult<(U256, I256, U256)> {
-    let calldata = Bytes::from(encode_get_pool(pool_id));
-    let bytes = provider.eth_call(pool_manager, calldata, block).await?;
-    let pool = IUniswapV4PoolManager::getPoolCall::abi_decode_returns(&bytes).map_err(|e| {
-        ProviderError::DecodingError {
-            message: format!("getPool decode: {e}"),
-        }
-    })?;
-    Ok((
-        U256::from(pool.sqrtPriceX96),
-        widen_int24(pool.tick.as_i32()),
-        U256::from(pool.liquidity),
-    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -1069,44 +1008,5 @@ mod tests {
         assert_eq!(&cd[4..36], &pool_id[..]);
         // word -1 sign-extended: bytes [36..68) all 0xff
         assert!(cd[36..68].iter().all(|&b| b == 0xff));
-    }
-
-    #[test]
-    fn get_pool_selector_and_struct_roundtrip() {
-        // `getPool(bytes32)` selector must match `keccak256(signature)[..4]`.
-        let pool_id: [u8; 32] = [0xaa; 32];
-        let cd = encode_get_pool(&pool_id);
-        assert_eq!(cd.len(), 4 + 32);
-        let expected_sel = alloy::primitives::keccak256(b"getPool(bytes32)");
-        assert_eq!(&cd[..4], &expected_sel[..4]);
-        assert_eq!(&cd[4..36], &pool_id[..]);
-
-        // Round-trip the 8-word Pool struct through the sol! ABI decoder,
-        // confirming the sqrtPrice/liquidity/tick fields land in the positions
-        // `fetch_v4_pool_state` reads. Struct returns are ABI-encoded as a
-        // leading offset word + 8 contiguous 32-byte fields.
-        let sqrt_price_x96 = U256::from(2u128.pow(120));
-        let liquidity = 12_345u128;
-        let tick = -4321i32;
-        let tick_spacing = 60i32;
-        // ABI-encode an int24 as a 32-byte word, sign-extended to 256 bits.
-        let int24_word = |v: i32| I256::unchecked_from(v).into_raw().to_be_bytes();
-        let words: Vec<[u8; 32]> = vec![
-            U256::from(0).to_be_bytes(),         // currency0
-            U256::from(0).to_be_bytes(),         // currency1
-            U256::from(3000u32).to_be_bytes(),   // fee
-            int24_word(tick_spacing),            // tickSpacing
-            U256::from(0).to_be_bytes(),         // hooks
-            sqrt_price_x96.to_be_bytes(),        // sqrtPriceX96
-            U256::from(liquidity).to_be_bytes(), // liquidity
-            int24_word(tick),                    // tick (sign-extended)
-        ];
-        let bytes: Vec<u8> = words.into_iter().flatten().collect();
-
-        let pool = IUniswapV4PoolManager::getPoolCall::abi_decode_returns(&bytes)
-            .expect("getPool struct should decode");
-        assert_eq!(U256::from(pool.sqrtPriceX96), sqrt_price_x96);
-        assert_eq!(pool.liquidity, liquidity);
-        assert_eq!(pool.tick.as_i32(), tick);
     }
 }

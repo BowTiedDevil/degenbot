@@ -271,6 +271,11 @@ class V4PoolBuilder(V4BuilderBase):
 
         # If tick data was populated, pass both. Otherwise pass None (sparse mode).
         assert state_view_address is not None
+        # Seed the Rust-owned V4 StateView registry (ADR-005 / Option 2): the
+        # solver-state accuracy gate verifies V4 hops via the StateView's
+        # getSlot0/getLiquidity, and Rust must own the pool_manager→state_view
+        # mapping. Idempotent on the Rust side (one insert per manager).
+        self._py_bot.register_v4_state_view(pool_manager_address, state_view_address)
         # Register the V4 pool in Rust (BotState) and wrap the returned
         # PyLiquidityPool handle in the companion. Mirrors the V3 builder cut-
         # over (ADR-005 slice 9a/9c): the companion owns NO mutable state;

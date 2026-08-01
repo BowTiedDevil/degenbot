@@ -17,7 +17,7 @@
 //! the caller panics immediately (see `AV42C7` Option A).
 
 use alloy::primitives::{Address, I256, U256};
-use degenbot_rpc::abi::{fetch_v2_reserves, fetch_v3_slot0_liquidity, fetch_v4_pool_state};
+use degenbot_rpc::abi::{fetch_v2_reserves, fetch_v3_slot0_liquidity, fetch_v4_slot0_liquidity};
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_solvers::mixed::{HopType, MixedPoolRef};
 
@@ -34,8 +34,8 @@ pub struct SolverHopScalarState {
     pub v2: Option<(Address, U256, U256)>,
     /// V3: `(pool, sqrt_price_x96, liquidity, tick)`.
     pub v3: Option<(Address, U256, u128, i32)>,
-    /// V4: `(pool_manager, pool_id, sqrt_price_x96, liquidity, tick)`.
-    pub v4: Option<(Address, [u8; 32], U256, u128, i32)>,
+    /// V4: `(pool_manager, pool_id, state_view, sqrt_price_x96, liquidity, tick)`.
+    pub v4: Option<(Address, [u8; 32], Address, U256, u128, i32)>,
 }
 
 /// Extract the solver's stored per-hop scalar state from `BotState` (the
@@ -83,14 +83,19 @@ pub fn extract_solver_hop_states(
                 HopType::V4 => core
                     .get_v4_pool(pool_ref.pool_key)
                     .zip(core.get_v4_identity(pool_ref.pool_key))
-                    .map(|(state, identity)| {
-                        (
-                            identity.pool_manager,
-                            identity.pool_id,
-                            state.sqrt_price_x96,
-                            state.liquidity,
-                            state.tick,
-                        )
+                    .and_then(|(state, identity)| {
+                        core.state_view_for(identity.pool_manager)
+                            .map(|state_view| {
+                                let pool_manager = identity.pool_manager;
+                                (
+                                    pool_manager,
+                                    identity.pool_id,
+                                    state_view,
+                                    state.sqrt_price_x96,
+                                    state.liquidity,
+                                    state.tick,
+                                )
+                            })
                     }),
                 _ => None,
             },
@@ -148,8 +153,9 @@ pub fn cl_state_matches(
 /// matches the chain at `block` (the solve block). Fails fast on the FIRST
 /// mismatch or any read error.
 ///
-/// V2 reads `getReserves`, V3 `slot0`+`liquidity`, and V4 `getPool` on the
-/// hop's own `PoolManager` — no external `StateView` address required. Non-CL hop
+/// V2 reads `getReserves`, V3 `slot0`+`liquidity`, and V4 the `StateView`'s
+/// `getSlot0`+`getLiquidity` at the hop's Rust-owned `state_view` (ADR-005 /
+/// Option 2 — not `getPool`, which reverts on the canonical `PoolManager`). Non-CL hop
 /// families (Solidly / Balancer / Curve) are skipped — their solve state is
 /// not a simple scalar slot0/getReserves diff.
 ///
@@ -202,11 +208,11 @@ pub async fn verify_solver_hop_states(
                 }
             }
             HopType::V4 => {
-                let Some((pm, pool_id, s_sqrt, s_liq, s_tick)) = hop.v4 else {
+                let Some((pm, pool_id, state_view, s_sqrt, s_liq, s_tick)) = hop.v4 else {
                     continue;
                 };
-                let (c_sqrt, c_tick, c_liq) =
-                    fetch_v4_pool_state(provider, &pm, &pool_id, Some(block))
+                let (c_sqrt, c_tick, _protocol_fee, _lp_fee, c_liq) =
+                    fetch_v4_slot0_liquidity(provider, &state_view, &pool_id, Some(block))
                         .await
                         .map_err(|e| mismatch(i, &format!("V4 eth_call at block {block}: {e}")))?;
                 if !cl_state_matches(s_sqrt, s_liq, s_tick, c_sqrt, c_liq, c_tick) {

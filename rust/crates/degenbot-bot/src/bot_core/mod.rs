@@ -135,6 +135,15 @@ pub struct BotState {
     /// per pool — ADR-003 Option I: orientation derived at solve from
     /// `zero_for_one`, not stored as separate forward/reverse entries).
     v4_pool_ids: HashMap<(Address, degenbot_decoders::v4_swap_decoder::V4PoolId), u64>,
+    /// Rust-owned V4 pool-manager → `StateView` registry (ADR-005 / Option 2).
+    /// The canonical V4 scalar state is read via the `StateView`'s
+    /// `getSlot0`/`getLiquidity`, not `getPool(poolManager)` (which reverts on
+    /// the canonical deployment). Keyed by `pool_manager`; each `V4PoolState`
+    /// under a manager shares its manager's `StateView`. Seeded once per manager
+    /// via `register_v4_state_view` (the driver reads it from the
+    /// `pool_managers` DB row); the solver-state verifier reads it via
+    /// [`BotState::state_view_for`].
+    v4_state_views: HashMap<Address, Address>,
     /// The snapshot seed block `S = min(fetch_newest_update_block(V3), V4)`.
     /// Set by `Bot::load_snapshot_from_db` (or `load_snapshot_from_py`) when a
     /// snapshot is loaded; consumed by the auto-backfill (B1/J3FMDO) that
@@ -402,6 +411,7 @@ impl BotState {
             v3_buffer: ::degenbot_pools::liquidity_event_buffer::LiquidityEventBuffer::new(),
             v4_buffer: ::degenbot_pools::liquidity_event_buffer::LiquidityEventBuffer::new(),
             v4_pool_ids: HashMap::new(),
+            v4_state_views: HashMap::new(),
             snapshot_seed_block: None,
         }
     }
@@ -2659,6 +2669,26 @@ impl BotState {
     // V4 state (ADR-003: single entry per `(pool_manager, pool_id)`;
     // orientation derived at solve from `zero_for_one`)
     // -----------------------------------------------------------------------
+
+    /// Record the canonical V4 `StateView` contract address for a `pool_manager`
+    /// (ADR-005 / Option 2 — Rust owns the mapping). V4 scalar state is read
+    /// via the `StateView`'s `getSlot0`/`getLiquidity`, not `getPool` on the
+    /// `PoolManager` (which reverts on the canonical deployment); the
+    /// solver-state verifier resolves it per-hop via [`BotState::state_view_for`].
+    /// Idempotent: the seed for a manager is supplied once by the driver
+    /// (read from the `pool_managers` DB row) before V4 pools solve.
+    pub fn register_v4_state_view(&mut self, pool_manager: Address, state_view: Address) {
+        self.v4_state_views.insert(pool_manager, state_view);
+    }
+
+    /// The canonical V4 `StateView` address for `pool_manager`, if registered.
+    /// `None` when unknown — the solver-state verifier skips a V4 hop whose
+    /// manager's `StateView` has not been seeded (no false alarm on an
+    /// un-verifiable hop).
+    #[must_use]
+    pub fn state_view_for(&self, pool_manager: Address) -> Option<Address> {
+        self.v4_state_views.get(&pool_manager).copied()
+    }
 
     /// Register a V4 pool by `(pool_manager, pool_id)`.
     ///
