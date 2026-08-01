@@ -266,6 +266,11 @@ pub fn simulate_in_process_revert_probe<'py>(
             swaps_list.append(captured_swap_to_dict(py, s)?)?;
         }
         fdict.set_item("captured_swaps", swaps_list)?;
+        let rsw = PyList::empty(py);
+        for s in &f.reverted_swaps {
+            rsw.append(captured_swap_to_dict(py, s)?)?;
+        }
+        fdict.set_item("reverted_swaps", rsw)?;
         // Compact per-frame EVM call-trace summary (no-profit diagnostic).
         let ct_list = PyList::empty(py);
         for s in &f.call_trace {

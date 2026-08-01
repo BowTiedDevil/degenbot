@@ -1730,6 +1730,10 @@ def _render_sim_failures(outcome: DispatchOutcome, *, current_block: int) -> Non
             bot_logger.info(
                 f"[sim-weth] path={path_id} before={rec.get('weth_before')} after={rec.get('weth_after')}"
             )
+        rs = rec.get("reverted_swaps") or []
+        if rs:
+            brief = ";".join(f"{s.get('family')}:{str(s.get('emitter'))[0:10]}:a0={s.get('amount0')}:a1={s.get('amount1')}" for s in rs)
+            bot_logger.info(f"[sim-revswaps] path={path_id} n={len(rs)} {brief}")
         # Ergo epic 63I7WJ (task AM5AJW) — emit the structured [sim-diag] JSON
         # line the ``logs/permutation_analyzer.py`` classifier parses. Built
         # from the failure record's captured_swaps (actual) + hop_outputs

@@ -341,6 +341,7 @@ mod tests {
             revert_data: alloy::primitives::Bytes::default(),
             reverting_frame: None,
             captured_swaps,
+            reverted_swaps: Vec::new(),
             optimal_input: 1000,
             hop_outputs,
             call_trace: Vec::new(),
