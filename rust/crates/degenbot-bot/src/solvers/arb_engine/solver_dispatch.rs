@@ -141,7 +141,7 @@ impl ArbitrageEngine {
             // captured swaps.
             .inspect(|(pid, r)| {
                 if !r.solver_pool_states.is_empty() {
-                    println!(
+                    tracing::info!(
                         "[solver-st] path_id={pid} hops=[{}]",
                         r.solver_pool_states.join(";")
                     );
@@ -185,7 +185,7 @@ impl ArbitrageEngine {
                     // (path_id -> pool state at solve time).
                     .inspect(|r| {
                         if !r.solver_pool_states.is_empty() {
-                            println!(
+                            tracing::info!(
                                 "[solver-st] path_id={path_id} hops=[{}]",
                                 r.solver_pool_states.join(";")
                             );
