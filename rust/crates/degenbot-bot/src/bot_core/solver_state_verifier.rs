@@ -179,6 +179,30 @@ pub fn cl_state_matches(
         && solver_tick == chain_tick.as_i32()
 }
 
+/// The solver's anchor block to diff a hop against: its own `update_block`
+/// when the pool has been updated (`> 0`), else the solve block (a never-
+/// updated pool is verified at the solve block for want of a better anchor).
+#[must_use]
+fn solver_anchor_block(update_block: u64, block: u64) -> u64 {
+    if update_block > 0 {
+        update_block
+    } else {
+        block
+    }
+}
+
+/// Whether a hop at `update_block` must be SKIPPED when verifying at solve
+/// `block`: skip hops touched IN the in-progress block (`update_block >= block`)
+/// — their scalar reflects a mid-block capture (an early swap of the block,
+/// e.g. 0xE0554a @ 25658682 captured swap #1) that a historical `slot0` read
+/// (block-final) can never reproduce. Only hops whose state reflects a
+/// COMPLETED block (`update_block < block`) are diffed, against the chain at
+/// that completed anchor.
+#[must_use]
+fn skip_in_progress_hop(update_block: u64, block: u64) -> bool {
+    update_block >= block
+}
+
 /// Verify that every hop's solver-stored scalar state (`extract_solver_hop_states`)
 /// matches the chain at the SOLVER'S OWN anchor block (`hop.update_block`) — the
 /// block its stored state claims to reflect. A pool 1-2 blocks behind the solve
@@ -217,21 +241,12 @@ pub async fn verify_solver_hop_states(
         // Only a state that diverges even AT its own anchor is a true
         // desync (a missed log / reorg / storage mutation). `block` (the
         // solve block) remains for message context / staleness reporting.
-        let anchor = if hop.update_block > 0 {
-            hop.update_block
-        } else {
-            block
-        };
+        let anchor = solver_anchor_block(hop.update_block, block);
         // A hop whose `update_block >= block` was touched IN the solve block
-        // (`block` is the pump's in-progress header block). Its scalar reflects
-        // a mid-block capture (an early swap of the block), which a historical
-        // `slot0` read can never reproduce — the RPC returns the BLOCK-FINAL
-        // value, after later same-block swaps. Such a state is honest-by-
-        // construction and unverifiable here; skip it (it is also provably
-        // active, never the frozen-stale class the gate exists to catch). Only
-        // a hop whose state reflects a COMPLETED block (`update_block < block`)
-        // is diffed, against the chain at that completed anchor.
-        if hop.update_block >= block {
+        // (`block` is the pump's in-progress header block) is honest-by-
+        // construction and unverifiable via historical slot0 — skip it. Only
+        // a hop whose state reflects a COMPLETED block is diffed.
+        if skip_in_progress_hop(hop.update_block, block) {
             continue;
         }
         match hop.hop_type {
@@ -317,6 +332,30 @@ fn mismatch(index: usize, message: &str) -> SolverStateMismatch {
 mod tests {
     use super::*;
     use alloy::primitives::{I256, U256};
+
+    #[test]
+    fn anchor_block_uses_update_block_when_set() {
+        // A pool with a real update_block is diffed at ITS anchor.
+        assert_eq!(solver_anchor_block(100, 102), 100);
+        // A never-updated pool (update_block == 0) falls back to the solve block.
+        assert_eq!(solver_anchor_block(0, 102), 102);
+    }
+
+    #[test]
+    fn in_progress_hop_is_skipped_completed_hop_is_not() {
+        // A hop touched IN the solve block (mid-block capture) is skipped.
+        assert!(skip_in_progress_hop(25_658_682, 25_658_682));
+        // A hop equal to or ahead of the solve block is skipped too.
+        assert!(skip_in_progress_hop(25_658_683, 25_658_682));
+        // A hop one block behind (normal latency) reflects a COMPLETED block
+        // and is diffed, NOT skipped.
+        assert!(!skip_in_progress_hop(25_658_682, 25_658_683));
+        // A never-updated pool (0) is diffed at the solve block, not skipped.
+        assert!(!skip_in_progress_hop(0, 100));
+        // A genuinely frozen pool (far behind) is NOT skipped — the gate
+        // verifies it and would catch the desync.
+        assert!(!skip_in_progress_hop(25_658_442, 25_658_682));
+    }
 
     #[test]
     fn v2_match_and_mismatch() {
