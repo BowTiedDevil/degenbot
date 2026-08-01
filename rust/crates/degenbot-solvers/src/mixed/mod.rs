@@ -392,6 +392,15 @@ pub struct SolvePathResult {
     /// state the pump has since superseded (the block-N solve used pool@N-1
     /// while on-chain@N has pool@N after a user swap).
     pub state_nonces: Vec<u64>,
+    /// Per-hop solver pool state at solve time — for diagnostic cross-
+    /// referencing against the sim's captured swaps. Each element is a
+    /// hop-family-specific string, e.g.
+    /// `"V3:sq=0x...,liq=...,fee=...,zfo=..."` or
+    /// `"V2:rin=...,rout=..."`. Empty when the hop type has no pool-state
+    /// diagnostic. Populated by `solve_path`; threaded into the
+    /// `[sim-diag]` JSON so solver-state vs sim-state can be compared
+    /// directly on `no-profit` / revert failures.
+    pub solver_pool_states: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------

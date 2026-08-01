@@ -210,6 +210,38 @@ pub fn solve_path(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
 
     result.map(|mut r| {
         r.state_nonces.clone_from(&resolved.state_nonces);
+        // Capture solver pool state for diagnostic cross-referencing.
+        let pool_states: Vec<String> = resolved
+            .hops
+            .iter()
+            .map(|hop| match hop {
+                ResolvedHop::V3 { int_seq } | ResolvedHop::V4 { int_seq } => {
+                    if let Some(range) = int_seq.ranges.first() {
+                        let family = if matches!(hop, ResolvedHop::V3 { .. }) {
+                            "V3"
+                        } else {
+                            "V4"
+                        };
+                        #[allow(clippy::cast_possible_truncation)]
+                        let fee_bps = 10000u64.saturating_sub(range.gamma_numer / 100) as u16;
+                        format!(
+                            "{family}:sq={},liq={},fee={fee_bps},zfo={}",
+                            range.sqrt_price_x96, range.liquidity, range.zero_for_one
+                        )
+                    } else {
+                        String::new()
+                    }
+                }
+                ResolvedHop::V2 { state } => {
+                    format!("V2:rin={},rout={}", state.reserve_in, state.reserve_out)
+                }
+                ResolvedHop::SolidlyStable { state } => {
+                    format!("Solidly:r0={},r1={}", state.reserves_0, state.reserves_1)
+                }
+                _ => String::new(),
+            })
+            .collect();
+        r.solver_pool_states = pool_states;
         r
     })
 }

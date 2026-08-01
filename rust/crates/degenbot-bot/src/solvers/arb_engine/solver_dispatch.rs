@@ -170,6 +170,16 @@ impl ArbitrageEngine {
                     return None;
                 }
                 ::degenbot_solvers::mixed::solve_path(resolved)
+                    // Log solver pool state for diagnostic cross-referencing
+                    // (path_id -> pool state at solve time).
+                    .inspect(|r| {
+                        if !r.solver_pool_states.is_empty() {
+                            println!(
+                                "[solver-st] path_id={path_id} hops=[{}]",
+                                r.solver_pool_states.join(";")
+                            );
+                        }
+                    })
                     .filter(|r| !r.optimal_input.is_zero() && !r.profit.is_zero())
                     .map(|r| (path_id, r))
             })

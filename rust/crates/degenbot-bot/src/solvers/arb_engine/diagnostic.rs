@@ -853,6 +853,7 @@ mod tests {
             hop_outputs: hop_outputs.clone(),
             consumed_inputs: vec![amount_in],
             state_nonces: vec![],
+            solver_pool_states: vec![],
         };
 
         super::thread_solver_result_onto_snapshot(&mut snapshot, Some(&solve_result));
