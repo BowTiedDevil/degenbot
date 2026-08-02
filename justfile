@@ -186,13 +186,26 @@ test-tier3-v2:
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_v2_pair_swap_vs_revm -- --include-ignored --nocapture
 
+# Tier-3b V4 `PoolManager.swap` end-to-end oracle (ergo UP5NH6 / 2LTKVO —
+# the V4 half). Builds the v4-core harness (solc 0.8.26: PoolManager singleton
+# + unlocker + mock tokens) then drives the Rust `v4_simulate_swap` against the
+# canonical `PoolManager` bytecode in revm through the unlock/settle dance,
+# asserting amount0/amount1 byte-exact to the on-chain BalanceDelta.
+test-tier3-v4:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tier3-oracle/build-tier3-v4-swap-harness.sh
+    python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+    export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_v4_pool_swap_vs_revm -- --include-ignored --nocapture
+
 # Tier-3 umbrella: run every landed on-chain accuracy oracle suite.
-# Smoke (forge→revm loop) + 3a (computeSwapStep) + 3b (V3 Pool.swap deploy+
-# seed foundation) + V2 (Pair.swap K-boundary byte-exact). Each builds its own
-# canonical-reference bytecode harness. Slow (forge/solc builds + revm
+# Smoke (forge→revm loop) + 3a (computeSwapStep) + 3b (V3 + V4 Pool.swap
+# deploy+seed foundation) + V2 (Pair.swap K-boundary byte-exact). Each builds
+# its own canonical-reference bytecode harness. Slow (forge/solc builds + revm
 # warmup); NOT in the default `just test-rust` path — run explicitly, or in
 # the CI `tier3-oracle` job.
-test-tier3: test-tier3-smoke test-tier3-step test-tier3-swap test-tier3-v2
+test-tier3: test-tier3-smoke test-tier3-step test-tier3-swap test-tier3-v2 test-tier3-v4
 
 # Run all tests (Rust + Python)
 test-all: test-rust test-python

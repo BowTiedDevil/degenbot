@@ -28,4 +28,9 @@ ensure_lib v2-core https://github.com/Uniswap/v2-core.git v1.0.0 contracts/Unisw
 ensure_lib v3-core https://github.com/Uniswap/v3-core.git v1.0.0 contracts/UniswapV3Pool.sol
 ensure_lib v4-core https://github.com/Uniswap/v4-core.git v4.0.0 src/PoolManager.sol
 
-echo "tier3-oracle libs ready: v2-core@v1.0.0, v3-core@v1.0.0, v4-core@v4.0.0"
+# v4-core's ProtocolFees imports solmate's `Owned.sol`; the depth-1 clone above
+# drops submodules, so vendor solmate separately (needed by the V4 swap oracle
+# harness, 2LTKVO).
+ensure_lib v4-core/lib/solmate https://github.com/transmissions11/solmate.git master src/auth/Owned.sol
+
+echo "tier3-oracle libs ready: v2-core@v1.0.0, v3-core@v1.0.0, v4-core@v4.0.0 (with solmate)"

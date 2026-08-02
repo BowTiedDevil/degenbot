@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-import {SwapMath as V4SwapMath} from "v4-core/libraries/SwapMath.sol";
+import {SwapMath as V4SwapMath} from "v4-core/src/libraries/SwapMath.sol";
 
 /// Tier-3a byte-exact oracle harness for V4 `SwapMath.computeSwapStep`
 /// (ergo task OZRQS6, epic UP5NH6). A thin external wrapper exposing the
