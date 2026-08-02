@@ -40,4 +40,32 @@ ensure_lib v4-core https://github.com/Uniswap/v4-core.git v4.0.0 src/PoolManager
 # harness, 2LTKVO).
 ensure_lib v4-core/lib/solmate https://github.com/transmissions11/solmate.git master src/auth/Owned.sol
 
-echo "tier3-oracle libs ready: v2-core@v1.0.0, v3-core@v1.0.0, v4-core@v4.0.0 (with solmate)"
+# Balancer math cores (FixedPoint/LogExpMath/WeightedMath/StableMath + their
+# FixedPoint imports) for the Balancer tier-3 oracle (task EZLECC). The
+# canonical sources are Solidity (not Vyper), so we vendor the exact files at a
+# pinned balancer-v2-monorepo commit under `lib/balancer-src/` preserving their
+# `@balancer-labs/v2-solidity-utils` / `@balancer-labs/v2-interfaces` import
+# paths. Idempotent: skips a file that already exists.
+BALANCER_PIN="f8b6f44f21afaf3c802536ed478277f945e7f256"
+BALANCER_RAW="https://raw.githubusercontent.com/balancer/balancer-v2-monorepo/${BALANCER_PIN}"
+ensure_balancer_ref() {  # ensure_balancer_ref <package-rel-path> <local-rel-path>
+    local url="${BALANCER_RAW}/$1"
+    local dest="lib/balancer-src/$2"
+    if [ -f "${dest}" ]; then
+        echo "balancer-src/$2: present, skipping"
+        return 0
+    fi
+    echo "balancer-src/$2: fetching ${url}"
+    mkdir -p "$(dirname "${dest}")"
+    curl -fsSL -o "${dest}" "${url}"
+}
+ensure_balancer_ref pkg/solidity-utils/contracts/math/LogExpMath.sol                  solidity-utils/contracts/math/LogExpMath.sol
+ensure_balancer_ref pkg/solidity-utils/contracts/math/FixedPoint.sol                 solidity-utils/contracts/math/FixedPoint.sol
+ensure_balancer_ref pkg/solidity-utils/contracts/math/Math.sol                       solidity-utils/contracts/math/Math.sol
+ensure_balancer_ref pkg/solidity-utils/contracts/helpers/InputHelpers.sol            solidity-utils/contracts/helpers/InputHelpers.sol
+ensure_balancer_ref pkg/pool-weighted/contracts/WeightedMath.sol                     solidity-utils/contracts/math/WeightedMath.sol
+ensure_balancer_ref pkg/pool-stable/contracts/StableMath.sol                         solidity-utils/contracts/math/StableMath.sol
+ensure_balancer_ref pkg/interfaces/contracts/solidity-utils/helpers/BalancerErrors.sol interfaces/contracts/solidity-utils/helpers/BalancerErrors.sol
+ensure_balancer_ref pkg/interfaces/contracts/solidity-utils/openzeppelin/IERC20.sol  interfaces/contracts/solidity-utils/openzeppelin/IERC20.sol
+
+echo "tier3-oracle libs ready: v2-core@v1.0.0, v3-core@v1.0.0, v4-core@v4.0.0 (with solmate), balancer-src@${BALANCER_PIN}"
