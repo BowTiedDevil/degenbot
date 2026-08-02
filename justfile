@@ -199,13 +199,27 @@ test-tier3-v4:
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_v4_pool_swap_vs_revm -- --include-ignored --nocapture
 
+# Tier-3 Curve stableswap `get_dy` oracle (ergo UP5NH6 / YXMNWB — family 2/3
+# of SH6HAK's Tier-3 cutover). Builds the src-curve harness (solc 0.8.26 — a
+# faithful Solidity port of the STANDARD stableswap `get_dy`; Curve's canonical
+# source is Vyper, absent here) then drives the engine's `simulate_swap`
+# standard path against the on-chain `getDy`, asserting byte-exact across a
+# pinned case + proptest.
+test-tier3-curve:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tier3-oracle/build-tier3-curve-swap-harness.sh
+    python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+    export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_curve_swap_vs_revm -- --include-ignored --nocapture
+
 # Tier-3 umbrella: run every landed on-chain accuracy oracle suite.
 # Smoke (forge→revm loop) + 3a (computeSwapStep) + 3b (V3 + V4 Pool.swap
 # deploy+seed foundation) + V2 (Pair.swap K-boundary byte-exact). Each builds
 # its own canonical-reference bytecode harness. Slow (forge/solc builds + revm
 # warmup); NOT in the default `just test-rust` path — run explicitly, or in
 # the CI `tier3-oracle` job.
-test-tier3: test-tier3-smoke test-tier3-step test-tier3-swap test-tier3-v2 test-tier3-v4
+test-tier3: test-tier3-smoke test-tier3-step test-tier3-swap test-tier3-v2 test-tier3-v4 test-tier3-curve
 
 # Run all tests (Rust + Python)
 test-all: test-rust test-python

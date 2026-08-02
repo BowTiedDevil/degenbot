@@ -28,6 +28,13 @@ ensure_lib v2-core https://github.com/Uniswap/v2-core.git v1.0.0 contracts/Unisw
 ensure_lib v3-core https://github.com/Uniswap/v3-core.git v1.0.0 contracts/UniswapV3Pool.sol
 ensure_lib v4-core https://github.com/Uniswap/v4-core.git v4.0.0 src/PoolManager.sol
 
+# NOTE: the Curve stableswap oracle (`src-curve/CurveSwapOracleHarness.sol`, task
+# YXMNWB) has NO `ensure_lib` entry: Curve's canonical source is VYPER (not
+# compilable in this env — no vyper toolchain), so the harness is a faithful
+# Solidity 0.8.26 port of the STANDARD `get_dy` and is itself the on-chain
+# reference (a documented toolchain deviation). Its build is self-contained via
+# `build-tier3-curve-swap-harness.sh` (direct solc 0.8.26, no imports).
+
 # v4-core's ProtocolFees imports solmate's `Owned.sol`; the depth-1 clone above
 # drops submodules, so vendor solmate separately (needed by the V4 swap oracle
 # harness, 2LTKVO).

@@ -151,7 +151,7 @@ jobs:
       - name: Install Foundry (forge + solc 0.7.6)
         uses: foundry-rs/foundry-toolchain@v1
 
-      - name: Fetch canonical reference contracts (v3-core, v4-core)
+      - name: Fetch canonical reference contracts (v2/v3/v4-core) + solc binaries
         run: tier3-oracle/bootstrap-libs.sh
 
       - name: Run Tier-3 suites
