@@ -53,6 +53,7 @@ use crate::bot_core::{drain_sink::DrainSink, BlockMetadata, Bot};
 use crate::bot_core::{BlockClock, HeaderDecision, LogDecision};
 use degenbot_decoders::v2_sync_decoder::V2_SYNC_TOPIC;
 use degenbot_decoders::v3_mint_burn_decoder::{V3_BURN_TOPIC, V3_MINT_TOPIC};
+use degenbot_decoders::v3_pancakeswap_swap_decoder::V3_PANCAKESWAP_SWAP_TOPIC;
 use degenbot_decoders::v3_swap_decoder::V3_SWAP_TOPIC;
 use degenbot_decoders::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC;
 use degenbot_decoders::v4_swap_decoder::V4_SWAP_TOPIC;
@@ -110,9 +111,10 @@ const LOG_CATCHUP_SETTLE_SECS: u64 = 15;
 ///
 /// Block data sent from the pump to Python via the watch channel.
 /// Topics we care about — used for in-Rust filtering of incoming logs.
-pub const RELEVANT_TOPICS: [B256; 6] = [
+pub const RELEVANT_TOPICS: [B256; 7] = [
     V2_SYNC_TOPIC,
     V3_SWAP_TOPIC,
+    V3_PANCAKESWAP_SWAP_TOPIC,
     V3_MINT_TOPIC,
     V3_BURN_TOPIC,
     V4_SWAP_TOPIC,
@@ -1804,8 +1806,8 @@ mod tests {
     }
 
     #[test]
-    fn relevant_topics_contains_all_six() {
-        assert_eq!(RELEVANT_TOPICS.len(), 6);
+    fn relevant_topics_contains_all_seven() {
+        assert_eq!(RELEVANT_TOPICS.len(), 7);
         // Verify each is non-zero
         for topic in &RELEVANT_TOPICS {
             assert_ne!(topic, &B256::ZERO);

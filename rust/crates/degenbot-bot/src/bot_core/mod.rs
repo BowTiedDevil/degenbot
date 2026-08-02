@@ -3515,6 +3515,7 @@ impl BotState {
     /// `BlockPump::backfill_from_snapshot` (core) reaches it via `self.bot`.
     pub fn process_backfill_logs(&mut self, logs: &[alloy::rpc::types::Log], chunk_end: u64) {
         use degenbot_decoders::v3_mint_burn_decoder::{decode_v3_burn_log, decode_v3_mint_log};
+        use degenbot_decoders::v3_pancakeswap_swap_decoder::decode_v3_pancakeswap_swap_log;
         use degenbot_decoders::v3_swap_decoder::decode_v3_swap_log;
         use degenbot_decoders::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log;
         use degenbot_decoders::v4_swap_decoder::decode_v4_swap_log;
@@ -3528,6 +3529,24 @@ impl BotState {
             let Some(topic0) = log.topic0() else { continue };
             if *topic0 == degenbot_decoders::v3_swap_decoder::V3_SWAP_TOPIC {
                 if let Some(event) = decode_v3_swap_log(log) {
+                    self.apply_v3_swap(
+                        event.pool_address,
+                        event.sqrt_price_x96,
+                        event.liquidity.to::<u128>(),
+                        event.tick,
+                        log_block,
+                        &[],
+                    );
+                    v3_touched = true;
+                }
+            } else if *topic0
+                == degenbot_decoders::v3_pancakeswap_swap_decoder::V3_PANCAKESWAP_SWAP_TOPIC
+            {
+                // PancakeSwap V3 swaps carry a non-canonical topic0 (the fork
+                // added two trailing data fields to the Swap event) — decode
+                // them via the dedicated decoder so these pools stay live. See
+                // docs/exploration-no-profit-crash.md (stale-state root cause).
+                if let Some(event) = decode_v3_pancakeswap_swap_log(log) {
                     self.apply_v3_swap(
                         event.pool_address,
                         event.sqrt_price_x96,

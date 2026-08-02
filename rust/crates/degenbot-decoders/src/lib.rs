@@ -49,6 +49,7 @@ pub mod uniswap_tick_range;
 pub mod v2_swap_decoder;
 pub mod v2_sync_decoder;
 pub mod v3_mint_burn_decoder;
+pub mod v3_pancakeswap_swap_decoder;
 pub mod v3_swap_decoder;
 pub mod v4_modify_liquidity_decoder;
 pub mod v4_swap_decoder;

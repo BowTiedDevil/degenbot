@@ -1,6 +1,7 @@
 # Exploration: The `no-profit` Backrun-Bot Crash (path 13308)
 
-Status: **ACTIVE INVESTIGATION** — last updated 2026-08-02
+Status: **RESOLVED + FIXED** — root cause confirmed and both a defensive
+diagnostic gate and a production decoder fix implemented. Last updated 2026-08-02.
 
 ## Symptom
 
@@ -212,11 +213,27 @@ stale/desynced hop. Combined signals avoid false positives:
   divergence -> flagged -> the AV42C7 assert-gate panics with a precise
   "STALE at solve block" message instead of the opaque no-profit.
 
-Unit tests added (fresh_pool_is_not_stale, stale_pool_is_flagged_after_threshold;
-6 pass). This surfaces the desync loudly at runtime. It does NOT keep the bot
-running in production (gate is off by default; still optionally panics). The
-PRODUCTION fix is the PancakeSwap-V3 swap decoder (root) and/or refreshing stale
-CL pool scalars from on-chain immediately before solving.
+## PRODUCTION FIX IMPLEMENTED (root — PancakeSwap swaps now decoded)
+
+- `v3_pancakeswap_swap_decoder.rs` (degenbot-decoders): decodes the PancakeSwap
+  V3 Swap (topic0 `0x19b47279…`; state fields byte-identical to Uniswap V3, two
+  extra trailing fee-accounting words). Verified against a REAL on-chain log at
+  block 25655667 (sqrt/liq/tick match `slot0()`/`liquidity()` exactly); 3 unit
+  tests incl. the real-log decode.
+- `block_pump.rs`: added `V3_PANCAKESWAP_SWAP_TOPIC` to `RELEVANT_TOPICS`
+  (6 -> 7), so the WS + backfill pre-filter no longer drops PancakeSwap swaps.
+- `bot_core/mod.rs` `process_backfill_logs`: added the PancakeSwap topic0 arm,
+  feeding the same `apply_v3_swap` as canonical V3.
+- `log_dispatcher.rs`: registered a `V3PancakeSwapDecoder` beside `V3SwapDecoder`.
+
+So PancakeSwap-V3-family pools stay LIVE (their swaps are applied), eliminating
+the stale-state phantom-arb class at the source instead of only surfacing it.
+
+## Unit tests added
+- fresh_pool_is_not_stale, stale_pool_is_flagged_after_threshold (verifier).
+- decode_real_pancake_swap / wrong_topic / truncated_data (decoder).
+Validate: degenbot-bot 314 tests pass; decoders 109 pass; clippy + fmt clean;
+full workspace (lib+tests+examples) builds.
 
 ## Key numbers (for quick reference)
 - recorded `optimal_input` = 1982369771046931

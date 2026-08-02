@@ -15,6 +15,8 @@
 //! self-notify under the engine's non-reentrant `Mutex` — a deadlock; the
 //! pump-side relocation in slice 5 avoids that).
 
+#![allow(clippy::doc_markdown)]
+
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
@@ -23,6 +25,7 @@ use alloy::rpc::types::Log;
 use crate::bot_core::BotState;
 use degenbot_decoders::v2_sync_decoder::decode_sync_log;
 use degenbot_decoders::v3_mint_burn_decoder::{decode_v3_burn_log, decode_v3_mint_log};
+use degenbot_decoders::v3_pancakeswap_swap_decoder::decode_v3_pancakeswap_swap_log;
 use degenbot_decoders::v3_swap_decoder::decode_v3_swap_log;
 use degenbot_decoders::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log;
 use degenbot_decoders::v4_swap_decoder::decode_v4_swap_log;
@@ -249,6 +252,24 @@ impl LogDecoder for V3SwapDecoder {
     }
 }
 
+/// Decode PancakeSwap V3 `Swap` events (a forked V3 Swap with a non-canonical
+/// topic0 — see `v3_pancakeswap_swap_decoder`). Same `DecodedPoolEvent::V3Swap`
+/// shape as the canonical V3 decoder; only `topic0` and the trailing words
+/// differ, so the decoded state feeds `apply_v3_swap` unchanged.
+struct V3PancakeSwapDecoder;
+impl LogDecoder for V3PancakeSwapDecoder {
+    fn try_decode(&self, log: &Log) -> Option<DecodedPoolEvent> {
+        let ev = decode_v3_pancakeswap_swap_log(log)?;
+        Some(DecodedPoolEvent::V3Swap {
+            pool_address: ev.pool_address,
+            sqrt_price_x96: ev.sqrt_price_x96,
+            liquidity: alloy::primitives::U256::from(ev.liquidity.to::<u128>()),
+            tick: ev.tick,
+            block_number: log.block_number.unwrap_or_default(),
+        })
+    }
+}
+
 /// Decode V3 `Mint`/`Burn` events (both produce a liquidity delta on a tick range).
 struct V3MintBurnDecoder;
 impl LogDecoder for V3MintBurnDecoder {
@@ -341,6 +362,7 @@ impl LogDispatcher {
         let mut d = Self::new();
         d.register_decoder(Box::new(V2SyncDecoder));
         d.register_decoder(Box::new(V3SwapDecoder));
+        d.register_decoder(Box::new(V3PancakeSwapDecoder));
         d.register_decoder(Box::new(V3MintBurnDecoder));
         d.register_decoder(Box::new(V4SwapDecoder));
         d.register_decoder(Box::new(V4ModifyLiquidityDecoder));
