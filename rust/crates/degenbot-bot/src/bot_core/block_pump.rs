@@ -579,9 +579,11 @@ impl BlockPump {
     ///
     /// NOTE (AV42C7): the on-chain diff is performed at each hop's OWN
     /// `update_block` anchor (see `verify_solver_hop_states`), not at `block`
-    /// — a solver holding 1-2 blocks of normal latency must not panic; only a
+    /// — a solver holding 1-2 blocks of normal latency must not fail; only a
     /// state that diverges from the chain even at its own anchor is a true
-    /// desync. `block` appears in the message for staleness context.
+    /// desync. `block` appears in the message for staleness context. On a
+    /// genuine desync the gate sets `shutdown` (a CLEAN stop, not a
+    /// wedging `panic!` — see the fail-safe block below).
     #[allow(clippy::missing_panics_doc)]
     async fn verify_solver_state_against_chain(&self, block: u64) {
         let path_refs = self.sink.solver_path_pool_refs();
@@ -626,17 +628,25 @@ impl BlockPump {
                         )
                     })
                     .collect();
+                let SolverStateMismatch { message } = mismatch;
+                // Fail-SAFE & CLEANLY (AV42C7): the gate's detection is correct
+                // (a >MAX_CL_STALENESS_BLOCKS-stale CL pool re-checked at the
+                // solve block genuinely means the solver is solving on stale
+                // state), but the previous `panic!` here UNWOUND the pump tokio
+                // task while the process kept running — wedging the bot into a
+                // no-progress busy loop (2026-08-02 observation). Setting
+                // `shutdown` instead lets `run_with_stream` exit cleanly at the
+                // loop top (same fail-safe: never trade on desynced state, no
+                // wedge). Env-gated off by default.
+                self.shutdown.store(true, Ordering::Relaxed);
                 tracing::error!(
                     path_idx,
                     block,
                     hops = %hops_diag.join(", ").as_str(),
-                    "DEGENBOT_ASSERT_SOLVER_STATE: solve used desynced pool state; panicking"
+                    %message,
+                    "DEGENBOT_ASSERT_SOLVER_STATE: solve used desynced pool state; cleanly stopping the pump"
                 );
-                let SolverStateMismatch { message } = mismatch;
-                panic!(
-                    "DEGENBOT_ASSERT_SOLVER_STATE: path {path_idx} solver pool state does not \
-                     match the chain at block {block}: {message}"
-                );
+                return;
             }
         }
     }
@@ -1892,6 +1902,9 @@ mod tests {
         /// is the sole path that backfills past the stream's observed block).
         solved: Mutex<Vec<u64>>,
         last_processed: AtomicU64,
+        /// Configurable path-pool refs for the Option-A AV42C7 gate tests
+        /// (default empty — the gate early-returns). Set via `set_path_refs`.
+        path_refs: Mutex<Vec<Vec<degenbot_solvers::mixed::MixedPoolRef>>>,
     }
 
     impl FakeDrainSink {
@@ -1903,11 +1916,21 @@ mod tests {
                 notified: Mutex::new(Vec::new()),
                 solved: Mutex::new(Vec::new()),
                 last_processed: AtomicU64::new(last_processed.unwrap_or(0)),
+                path_refs: Mutex::new(Vec::new()),
             }
+        }
+
+        /// Configure the path-pool refs the AV42C7 gate verifies (test-only).
+        #[allow(clippy::type_complexity)]
+        fn set_path_refs(&self, refs: Vec<Vec<degenbot_solvers::mixed::MixedPoolRef>>) {
+            *self.path_refs.lock().unwrap() = refs;
         }
     }
 
     impl DrainSink for FakeDrainSink {
+        fn solver_path_pool_refs(&self) -> Vec<Vec<degenbot_solvers::mixed::MixedPoolRef>> {
+            self.path_refs.lock().unwrap().clone()
+        }
         fn has_dirty_paths(&self) -> bool {
             false
         }
@@ -3243,6 +3266,71 @@ mod tests {
         } else {
             panic!("test setup: V2 pool not found for {pool_addr}");
         }
+    }
+
+    /// AV42C7 fix — the solver-state gate must FAIL CLEANLY (set `shutdown`
+    /// and return) instead of `panic!`-ing, which previously unwound the pump
+    /// tokio task and wedged the bot into a no-progress busy loop. Drive the
+    /// gate directly against a registered V2 pool whose on-chain `getReserves`
+    /// (mocked) MISMATCHES the solver's stored reserves → the verifier returns a
+    /// `SolverStateMismatch` → the gate must set `shutdown`, not panic.
+    #[tokio::test]
+    async fn av42c7_gate_sets_shutdown_cleanly_instead_of_panicking() {
+        use degenbot_solvers::mixed::HopType;
+        use degenbot_solvers::mixed::MixedPoolRef;
+
+        let pool_addr = Address::from([0x44u8; 20]);
+        let (pump, sink, asserter, shutdown) = pump_for_test_sink_and_asserter(Some(100));
+        let bot = pump.bot_arc_for_test();
+        let pool_id = {
+            let state = bot.state_arc();
+            let mut core = state.write();
+            core.register_v2_pool(&RegisterV2PoolParams {
+                address: pool_addr,
+                token0: Address::from([0xa0u8; 20]),
+                token1: Address::from([0xa1u8; 20]),
+                reserve0: U112::from(1_000),
+                reserve1: U112::from(2_000),
+                fee_token0: (997, 1000),
+                fee_token1: (997, 1000),
+                factory: Address::from([0xf0u8; 20]),
+                update_block: 100,
+                variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+                stable_swap: false,
+                fee_denominator: None,
+                ..Default::default()
+            })
+            .expect("test setup: V2 registration")
+        };
+        sink.set_path_refs(vec![vec![MixedPoolRef {
+            hop_type: HopType::V2,
+            pool_key: pool_id,
+            zero_for_one: false,
+        }]]);
+
+        // Mock getReserves -> (777, 888, 0): MISMATCHES solver (1000, 2000),
+        // so verify_solver_hop_states returns Err and the gate must shut down.
+        let word = |v: U256| {
+            let mut w = [0u8; 32];
+            w[..].copy_from_slice(&v.to_be_bytes::<32>());
+            w
+        };
+        let mut resp = Vec::new();
+        resp.extend_from_slice(&word(U256::from(777u64)));
+        resp.extend_from_slice(&word(U256::from(888u64)));
+        resp.extend_from_slice(&word(U256::ZERO));
+        let hex_resp = format!("0x{}", alloy::primitives::hex::encode(&resp));
+        asserter.push_success(&hex_resp);
+
+        // The gate must RETURN (not panic) and set shutdown.
+        let before = shutdown.load(Ordering::Relaxed);
+        assert!(!before, "shutdown starts false");
+        pump.verify_solver_state_against_chain(200).await;
+
+        assert!(
+            shutdown.load(Ordering::Relaxed),
+            "AV42C7 gate must set shutdown (clean stop) on a desync, not panic/wedge"
+        );
     }
 
     // -----------------------------------------------------------------

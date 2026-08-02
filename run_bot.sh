@@ -31,7 +31,8 @@ export DEGENBOT_DUMP_CALL_TRACE=1
 # Option-A solver-state accuracy gate (AV42C7): run at the PUBLISH point —
 # when a quiesce-gated (block-final/coalesced) result is about to be sent to
 # Python for simulation — diff each path's per-hop pool state against the
-# chain at its own anchor `update_block` and PANIC on a genuine desync. It
+# chain at its own anchor `update_block` and STOP THE PUMP CLEANLY on a genuine
+# desync (sets shutdown; was a wedging panic pre-AV42C7-fix). It
 # does NOT run after every transient on_drain solve: mid-block stale results
 # that the eager design discards (re-solved at block completion) never trip
 # it, while a desync on a result that SURVIVES to publication does. See
