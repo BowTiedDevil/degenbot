@@ -68,4 +68,48 @@ ensure_balancer_ref pkg/pool-stable/contracts/StableMath.sol                    
 ensure_balancer_ref pkg/interfaces/contracts/solidity-utils/helpers/BalancerErrors.sol interfaces/contracts/solidity-utils/helpers/BalancerErrors.sol
 ensure_balancer_ref pkg/interfaces/contracts/solidity-utils/openzeppelin/IERC20.sol  interfaces/contracts/solidity-utils/openzeppelin/IERC20.sol
 
-echo "tier3-oracle libs ready: v2-core@v1.0.0, v3-core@v1.0.0, v4-core@v4.0.0 (with solmate), balancer-src@${BALANCER_PIN}"
+# PancakeSwap V3 pool reference source (task: PancakeSwap V3 variant harness).
+# Unlike the Uniswap forks, there is no public git ref matching the DEPLOYED
+# PancakeV3Pool exactly, so we pull the Etherscan-verified source of a real
+# deployed pool (WETH/USDC, fee 100, 0x1445..12b31 — solc 0.7.6) and extract
+# the solc-input files into `lib/pancake-src/` (gitignored). Requires
+# `ETHERSCAN_API_KEY` (a CI secret for the tier3-oracle job) only when the
+# source is not already vendored.
+PANCAKE_POOL="0x1445F32D1A74872bA41f3D8cF4022E9996120b31"
+ensure_pancake_v3() {
+    local marker="lib/pancake-src/contracts/PancakeV3Pool.sol"
+    if [ -f "${marker}" ]; then
+        echo "pancake-src: present (PancakeV3Pool.sol), skipping"
+        return 0
+    fi
+    if [ -z "${ETHERSCAN_API_KEY:-}" ]; then
+        echo "ERROR: ETHERSCAN_API_KEY is required to vendor the PancakeSwap V3 source (not present)." >&2
+        echo "  Set ETHERSCAN_API_KEY (Etherscan V2 API key) to fetch the verified PancakeV3Pool source." >&2
+        exit 1
+    fi
+    echo "pancake-src: fetching verified PancakeV3Pool source from Etherscan (pool ${PANCAKE_POOL})…"
+    local tmp
+    tmp="$(mktemp)"
+    curl -fsSL "https://api.etherscan.io/v2/api?chainid=1&module=contract&action=getsourcecode&address=${PANCAKE_POOL}&apikey=${ETHERSCAN_API_KEY}" -o "${tmp}"
+    python3 - "${tmp}" <<'PY'
+import json, os, sys
+raw=json.load(open(sys.argv[1]))
+assert raw.get("status")=="1", f"Etherscan getSourceCode failed: {raw.get('result')}"
+src=(raw["result"][0].get("SourceCode") or "")
+assert src, "empty SourceCode"
+obj=json.loads(src[1:-1]) if src.startswith("{{") else json.loads(src)
+for path,c in obj["sources"].items():
+    # Rewrite the @pancakeswap/v3-lm-pool import to the vendored tree path.
+    rel=path
+    if rel.startswith("@pancakeswap/v3-lm-pool/"):
+        rel="v3-lm-pool/"+rel[len("@pancakeswap/v3-lm-pool/"):]
+    dest=os.path.join("lib/pancake-src", rel)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    open(dest,"w").write(c["content"])
+print(f"wrote {len(obj['sources'])} PancakeSwap source files to lib/pancake-src/")
+PY
+    rm -f "${tmp}"
+}
+ensure_pancake_v3
+
+echo "tier3-oracle libs ready: v2-core@v1.0.0, v3-core@v1.0.0, v4-core@v4.0.0 (with solmate), balancer-src@${BALANCER_PIN}, pancake-src@${PANCAKE_POOL}"

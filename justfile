@@ -224,6 +224,21 @@ test-tier3-balancer:
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_balancer_swap_vs_revm
 
+# Tier-3 PancakeSwap V3 `PancakeV3Pool.swap` oracle (task: PancakeSwap V3
+# variant harness). Builds the src-pancake harness (solc 0.7.6) over the REAL
+# `PancakeV3Pool` — the Etherscan-verified deployed source (pool
+# 0x1445F32D1A74872bA41f3D8cF4022E9996120b31) vendored under `lib/pancake-src/`
+# — then drives the engine's `v3_simulate_swap` against the on-chain swap,
+# asserting byte-exact math AND that the 9-field `Swap` event variant decodes
+# only via the PancakeSwap decoder (not the Uniswap one), matching the sim.
+test-tier3-pancake:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tier3-oracle/build-tier3-pancake-swap-harness.sh
+    python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+    export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_pancake_v3_swap_vs_revm
+
 # Tier-3 umbrella: rebuild + republish every canonical-reference harness, then
 # run the full on-chain oracle suite. The individual tests ALSO run in the
 # default `just test-rust` (they load the COMMITTED bytecode from
@@ -231,7 +246,7 @@ test-tier3-balancer:
 # publish the artifacts (after a harness-source edit) and re-run each family.
 # Recompiling dozens of revm harnesses makes this slow — run explicitly, or in
 # the CI `tier3-oracle` job.
-test-tier3: test-tier3-smoke test-tier3-step test-tier3-swap test-tier3-v2 test-tier3-v4 test-tier3-curve test-tier3-balancer
+test-tier3: test-tier3-smoke test-tier3-step test-tier3-swap test-tier3-v2 test-tier3-v4 test-tier3-curve test-tier3-balancer test-tier3-pancake
 
 # Validate the committed tier-3 harness bytecode: recompile EVERY harness with
 # the real solc/forge toolchain (into a throwaway dir, PUBLISH=0 — committed
@@ -257,6 +272,7 @@ rebuild-tier3-artifacts:
     tier3-oracle/build-tier3-v4-swap-harness.sh
     tier3-oracle/build-tier3-curve-swap-harness.sh
     tier3-oracle/build-tier3-balancer-swap-harness.sh
+    tier3-oracle/build-tier3-pancake-swap-harness.sh
 
 # Run all tests (Rust + Python)
 test-all: test-rust test-python

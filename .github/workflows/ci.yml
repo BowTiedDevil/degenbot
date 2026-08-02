@@ -128,6 +128,12 @@ jobs:
   tier3-oracle:
     name: Tier-3 On-Chain Accuracy Oracle
     runs-on: ubuntu-latest
+    env:
+      # Required by bootstrap-libs.sh to vendor the PancakeSwap V3 source from
+      # Etherscan (no public git ref matches the deployed PancakeV3Pool exactly).
+      # Only the tier3-oracle job (which recompiles harnesses) needs it — the
+      # default rust-test job runs the committed bytecode without network.
+      ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
     steps:
       - uses: actions/checkout@v6
         with:
