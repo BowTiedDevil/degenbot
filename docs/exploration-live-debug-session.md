@@ -20,7 +20,22 @@ each class. The two current live-debug enablers:
 
 ## Session log
 
-### 2026-08-02T23:19Z — AV42C7 solver-state gate PANIC on 37-block-stale pools; pump WEDGED (not clean exit)
+### 2026-08-02T23:40Z — AV42C7 fixed + bot re-operating (no wedge)
+- The AV42C7 gate's `panic!` was converted to a CLEAN shutdown (`shutdown`
+  store + return) so `run_with_stream` exits at the loop top instead of
+  unwinding the pump task and wedging the bot (commit `6834e132`). Detection
+  logic unchanged — it still catches a >3-block-stale CL pool via the solve-
+  block re-check; only the response is now fail-safe-clean.
+- Added `av42c7_gate_sets_shutdown_cleanly_instead_of_panicking` (mocked
+  getReserves mismatch -> gate sets shutdown, returns, no panic); FakeDrainSink
+  gained configurable `path_refs`. 318 tests pass, clippy clean.
+- Restarted bot (pid 11468): advanced 25670441 → 25670552+, alive, **0 AV42C7
+  panics / 0 wedges / 0 WS shutdowns**, 4 header-stall→backfill recoveries
+  (FSM recovery handling the slow-but-connected WS), CPU ~115% (solving). The
+  bot now operates reliably through WS slack instead of wedging.
+
+### 2026-08-02T23:19Z — AV42C7 gate PANIC wedged the pump (pre-fix)
+
 - `DEGENBOT_ASSERT_SOLVER_STATE` gate panicked at solve block 25670441,
   path_idx=20: hop2 V3 `0xaCDb27b2…` solver snapshot
   `(sqrt=3435805256447190374086530, liq=13454508496170479, tick=-200927)`
