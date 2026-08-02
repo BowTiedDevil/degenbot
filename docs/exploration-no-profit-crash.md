@@ -238,6 +238,61 @@ the stale-state phantom-arb class at the source instead of only surfacing it.
 Validate: degenbot-bot 314 tests pass; decoders 109 pass; clippy + fmt clean;
 full workspace (lib+tests+examples) builds.
 
+## FOLLOW-ON: reproducible `empty`-bucket V3-V4-V3 sim-Halt (UNI/MATIC V4)
+
+### Symptom (deterministic)
+A DIFFERENT, non-PancakeSwap crash surfaced via the `DEGENBOT_SIM_EXIT_ON_FAIL=1`
+trap (W2UWZO / DEGENBOT-459) and reproduced on a second independent run at a
+different live block (25668480 then 25669640):
+
+```
+[sim-fail] path=22398 type=V3-V4-V3 bucket=empty
+  revert@depth=8 target=0x0000…4A90 (PoolManager) sel=0x00000000
+  label=empty kind=halt gas=~4328k swaps_before=0 revert=0x
+[sim-trap] exiting on first sim failure … (DEGENBOT_SIM_EXIT_ON_FAIL=1)
+```
+
+- path = `V3(MATIC/WETH 0x290A, 0.3%) → V4(UNI/MATIC 0x929b9b09…c2d40) →
+  V3(UNI/WETH 0x360b, 1%)`, route WETH→MATIC→UNI→WETH.
+- Reverting frame = the V4 `PoolManager`, call depth 8, EMPTY calldata,
+  `kind=halt` (an EVM Halt: INVALID/OOG — not a clean `Error(string)`), 0
+  captured swaps. Bucket `empty` is NOT in the trap ignore-set (which only
+  holds `CurrencyNotSettled`), so it traps by design.
+
+### What was verified (the conservative checks pass — NOT stale state)
+- `[debug-v4-solve]` for `0x929b9b09` (engine's own dump): `protocol_fee=102425`,
+  `coverage=Tracked`, `n_ranges=1`, `drain=0`, `zero_for_one=false`, and
+  `sqrt_price_x96`/`tick`/`liquidity` match on-chain EXACTLY.
+- Raw `slot0` read straight from PoolManager storage at `S_state`:
+  `sqrtPriceX96=457034773347195373970576742286`, `tick=35050`,
+  `lpFee=100`, `protocolFee=0x19019` → 25 pips ​/direction.
+- On-chain effective swap fee = `calculateSwapFee(25, 100)` = **125 pips**
+  (0.0125%). The solver models the SAME (its `pool_key.fee=100`, threaded
+  through `calculate_swap_fee` incl. the protocol fee: 25+100−0 = 125).
+  **The fee is consistent — there is NO fee-model bug.**
+
+### Correction: the `fee_bps=2` `[solver-st]` display is a ROUNDING artifact
+An earlier read concluded the solver over-charged (200 vs 125 pips). That was
+WRONG: `fee_bps = 10000 − (1_000_000 − swap_fee) / 100` (integer division)
+yields 2 for EVERY `swap_fee` in [101, 200], so `fee_bps=2` is fully
+consistent with the true 125 pips. Pinned by a new unit test
+(`calculate_swap_fee_uni_matic_929b9b09_pool_fixture_125_pips` in
+`degenbot-cl-math`): assert `calculate_swap_fee(25, 100) == 125` + the
+`fee_bps=2` rounding. The RZKFKR protocol-fee threading fix IS present and
+correct here.
+
+### What remains OPEN (the real lead)
+With state exact AND fee consistent, the `Halt` (empty-calldata call into the
+PoolManager at depth 8, `swaps_before=0`) is a STRUCTURAL/executor-execution
+divergence, not a solver-fee or stale-state one. The canonical executor is
+shipped only as compiled Vyper bytecode (`contracts/cmd_executor_*`) with no
+source in-repo and an empty `contracts/tests/`, so the exact Halt can't be
+pinned from source here. This is the known W2UWZO / tier-3-oracle open item
+(root `2LTKVO`): reproduce the executor's exact V3→V4→V3 call through real
+PoolManager bytecode and attribute the reverting frame. Until root-caused,
+the `empty` bucket should NOT be added to the trap ignore-set (it signals a
+genuine divergence, not a thin-margin false positive).
+
 ## Key numbers (for quick reference)
 - recorded `optimal_input` = 1982369771046931
 - recorded `hop_outputs` = [3720117117094320378, 3719677, 1982489173871955]

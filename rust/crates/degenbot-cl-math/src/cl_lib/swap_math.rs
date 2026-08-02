@@ -455,6 +455,30 @@ mod protocol_fee_tests {
         assert_eq!(protocol_fee_zero_for_one(packed), 500);
         assert_eq!(protocol_fee_one_for_zero(packed), 500);
     }
+
+    /// The UNI/MATIC V4 pool `0x929b9b09…c2d40` (the reproducible
+    /// `empty`-bucket V3-V4-V3 sim-Halt pool, see the no-profit/sim-failure
+    /// exploration doc). On-chain `slot0.protocolFee = 0x19019` decodes to 25
+    /// pips in BOTH directions; `lpFee = 100`. The effective swap fee is
+    /// therefore 125 pips (0.0125%) — NOT 200 and NOT the bare `lpFee` 100.
+    ///
+    /// This pins the RZKFKR fix (thread `calculateSwapFee(protocol_dir,
+    /// lp_fee)` into the V4 swap-step fee): if the protocol fee were omitted
+    /// the solver would model 100 pips and diverge from on-chain. The
+    /// `fee_bps=2` `[solver-st]` display of this hop is a rounding artifact
+    /// of `10000 - (1_000_000 - swap_fee) / 100` (125 → 2), NOT a 200-pip
+    /// fee — verified against the on-chain raw `slot0`.
+    #[test]
+    fn calculate_swap_fee_uni_matic_929b9b09_pool_fixture_125_pips() {
+        let packed = 0x0001_9019_u32;
+        assert_eq!(packed, 102_425);
+        assert_eq!(protocol_fee_zero_for_one(packed), 25);
+        assert_eq!(protocol_fee_one_for_zero(packed), 25);
+        assert_eq!(calculate_swap_fee(25, 100).unwrap(), 125);
+        // fee_bps = 10000 - (1_000_000 - swap_fee) / 100 → 2 for swap_fee=125.
+        let gamma = 1_000_000u32 - 125;
+        assert_eq!(10000 - (gamma / 100), 2);
+    }
 }
 
 #[cfg(test)]
