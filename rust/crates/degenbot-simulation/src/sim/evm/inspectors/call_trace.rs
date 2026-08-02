@@ -123,6 +123,51 @@ impl CallTrace {
             .find(|f| matches!(f.outcome, Some(FrameOutcome::Revert { .. })))
     }
 
+    /// Render the whole trace as an indented, chronological listing — one
+    /// line per frame, indented by call depth, showing target + selector +
+    /// outcome + gas. Frames are kept in call order (pushed at `call`;
+    /// `call_end` LIFO-pairs the outcome in place), so iterating in order and
+    /// indenting by `depth` reconstructs the full nested call sequence — e.g.
+    /// `execute() → v3c.swap → callback → v3a.swap → callback → V4_UNLOCK →
+    /// unlockCallback → swap → … Halt`. `#[must_use]` debug aid for the
+    /// `V4 dynamic swap Halt` attribution (2LTKVO / W2UWZO).
+    #[must_use]
+    pub fn render_debug(&self) -> String {
+        use FrameOutcome as FO;
+        let mut out = String::new();
+        for f in &self.frames {
+            let kind = match &f.outcome {
+                Some(FO::Revert { .. }) => "revert",
+                Some(FO::Success { .. }) => "ok",
+                _ => "halt",
+            };
+            let gas = f
+                .outcome
+                .as_ref()
+                .map(|o| match o {
+                    FO::Revert { gas_used, .. }
+                    | FO::Halt { gas_used }
+                    | FO::Success { gas_used, .. } => *gas_used,
+                })
+                .unwrap_or_default();
+            for _ in 0..f.depth.saturating_sub(1) {
+                out.push_str("  ");
+            }
+            let _ = std::fmt::Write::write_fmt(
+                &mut out,
+                format_args!(
+                    "d{} {}:0x{}:{} g{}\n",
+                    f.depth,
+                    f.target,
+                    alloy::primitives::hex::encode(f.selector),
+                    kind,
+                    gas
+                ),
+            );
+        }
+        out
+    }
+
     /// The deepest `Revert` frame + its `classify_revert` label (the
     /// bytes→label taxonomy from `degenbot_decoders::revert`, fed by the
     /// reverting *frame*'s data — NOT the top-level bubble). Returns `None`
@@ -323,6 +368,45 @@ mod tests {
         let trace = CallTrace::default();
         assert!(trace.deepest_revert().is_none());
         assert!(trace.reverting_frame_label().is_none());
+    }
+
+    #[test]
+    fn render_debug_indents_by_depth_in_call_order() {
+        // Frames in call order: execute → v3c.swap → callback → halt frame.
+        let trace = CallTrace {
+            frames: vec![
+                CallFrame {
+                    depth: 1,
+                    caller: Address::ZERO,
+                    target: Address::repeat_byte(0xaa),
+                    selector: [0x12, 0x34, 0x56, 0x78],
+                    gas_limit: 0,
+                    outcome: Some(FrameOutcome::Success {
+                        gas_used: 1000,
+                        output: Bytes::new(),
+                    }),
+                },
+                CallFrame {
+                    depth: 2,
+                    caller: Address::repeat_byte(0xaa),
+                    target: Address::repeat_byte(0xbb),
+                    selector: [0xde, 0xad, 0xbe, 0xef],
+                    gas_limit: 0,
+                    outcome: Some(FrameOutcome::Revert {
+                        gas_used: 500,
+                        data: Bytes::new(),
+                    }),
+                },
+            ],
+        };
+        let rendered = trace.render_debug();
+        // Depth-1 line un-indented; depth-2 line indented; selector/kind/gas shown.
+        assert!(rendered.contains(":0x12345678:ok g1000"), "{rendered}");
+        assert!(
+            rendered.contains("  d2 ") && rendered.contains(":0xdeadbeef:revert g500"),
+            "{rendered}"
+        );
+        assert!(rendered.ends_with('\n'), "{rendered}");
     }
 
     #[test]

@@ -23,6 +23,11 @@ mkdir -p "$LOGDIR"
 export DEGENBOT_SIM_LOG_REVERTED_SWAPS=1
 export DEGENBOT_DEBUG_V4_SOLVE=1
 
+# On a sim failure, dump the FULL nested revm call trace (every frame:
+# depth/target/selector/outcome) so a depth-8 empty-calldata PoolManager Halt
+# can be attributed against the executor Vyper source (2LTKVO / W2UWZO).
+export DEGENBOT_DUMP_CALL_TRACE=1
+
 # Option-A solver-state accuracy gate (AV42C7): run at the PUBLISH point —
 # when a quiesce-gated (block-final/coalesced) result is about to be sent to
 # Python for simulation — diff each path's per-hop pool state against the

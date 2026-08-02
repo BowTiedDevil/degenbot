@@ -284,14 +284,56 @@ correct here.
 ### What remains OPEN (the real lead)
 With state exact AND fee consistent, the `Halt` (empty-calldata call into the
 PoolManager at depth 8, `swaps_before=0`) is a STRUCTURAL/executor-execution
-divergence, not a solver-fee or stale-state one. The canonical executor is
-shipped only as compiled Vyper bytecode (`contracts/cmd_executor_*`) with no
-source in-repo and an empty `contracts/tests/`, so the exact Halt can't be
-pinned from source here. This is the known W2UWZO / tier-3-oracle open item
-(root `2LTKVO`): reproduce the executor's exact V3→V4→V3 call through real
-PoolManager bytecode and attribute the reverting frame. Until root-caused,
-the `empty` bucket should NOT be added to the trap ignore-set (it signals a
-genuine divergence, not a thin-margin false positive).
+divergence, not a solver-fee or stale-state one. This is the known W2UWZO /
+tier-3-oracle open item (root `2LTKVO`): reproduce the executor's exact
+V3→V4→V3 call through real PoolManager bytecode and attribute the reverting
+frame. Until root-caused, the `empty` bucket should NOT be added to the trap
+ignore-set (it signals a genuine divergence, not a thin-margin false positive).
+
+#### Executor source located + structural hypotheses ruled OUT (HRT357)
+The canonical executor source IS available: `/workspaces/executor`, written in
+**Vyper 0.5.0a3** — `contracts/cmd_executor.vy` (2077 lines, command-stream
+VM), with `contracts/recompile.py` producing the shipped runtime bytecode by
+injecting the 5 mainnet immutables (owner, WETH, POOL_MANAGER, WETH/NATIVE
+delta slots) after the CBOR metadata. This is the same contract the simulator
+injects (`INJECT_EXECUTOR_CODE`).
+
+The V3→V4→V3 command stream (`three_hop_v3_v4_v3` in
+`degenbot-executor/src/composers.rs`) nests the V4 hop deep in the callback
+chain: top `V3_SWAP` on `v3c` (UNI/WETH) → callback runs `V3_SWAP` on `v3a`
+(MATIC/WETH) → its callback runs `ERC20_TRANSFER(weth→v3a)` + `V4_UNLOCK` →
+`unlockCallback` runs `[V4_SETTLE, V4_SWAP_DYNAMIC(UNI/MATIC), V4_TAKE_COMPACT,
+V4_SETTLE_ALL]` → `poolManager.swap`. `V4_SWAP_DYNAMIC` reads the input
+delta via `exttload` and calls `swap` with `amountSpecified = −delta` and
+`sqrtPriceLimitX96 = MIN/MAX_SQRT_PRICE` — the extreme bounds.
+
+Cross-checking the executor against the **real mainnet** verified source
+(`PoolManager v0.8.26`, fetched via Etherscan) RULED OUT every structural
+mismatch hypothesis:
+
+1. **Callback name** (`unlockCallback` vs `lockAcquired`) — the deployed
+   mainnet interface is `IUnlockCallback.unlockCallback`; the executor's
+   `unlockCallback(bytes) → bytes` MATCHES. The project's *fake* PM also calls
+   `unlockCallback` (line 623 of `fake_uniswap_v4_pool_manager.vy`), so this
+   was never a divergence.
+2. **`exttload`** (the delta reader `_read_pm_delta` uses) — present on
+   mainnet (`src/Exttload.sol`).
+3. **`IPoolManager` ABI** — the executor's `interfaces/UniswapV4/IPoolManager.vyi`
+   (`swap(PoolKey,SwapParams,bytes)`, `settle() payable`, `sync`, `take`,
+   `PoolKey{currency0,currency1,fee:uint24,tick_spacing:int24,hooks}`,
+   `SwapParams{zero_for_one,amount_specified,sqrt_price_limit_x96}`) matches
+the v0.8.26 ABI exactly — no wrong-selector/fallback path.
+4. **Fee model** — consistent (125 pips; see correction above).
+5. **Pool-key encoding** — `c0=UNI, c1=MATIC, fee=100, ts=1, hooks=0` routes
+to the real `0x929b9b09` pool.
+
+So the executor is **structurally compatible** with the deployed mainnet PM;
+the bug is a subtle runtime flow issue (delta/sync-settle ordering, or a
+native/WETH custody detail in the real PM's stricter accounting). The
+remaining step — and the actual `2LTKVO` slice — is the **revm replay with a
+Vyper source-map**: compile `cmd_executor.vy` with `bytecode_runtime` +
+`source_map`, seed the 3 pools + canonical PM in revm, drive the live command
+stream, and map the depth-8 empty-calldata `Halt` PC back to a Vyper line.
 
 ## Key numbers (for quick reference)
 - recorded `optimal_input` = 1982369771046931

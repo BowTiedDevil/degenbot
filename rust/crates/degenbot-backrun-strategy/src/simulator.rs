@@ -1087,6 +1087,21 @@ where
         // fall back to the plain `record` (top-level revert data, no deep
         // attribution).
         if let Some(frame) = captured_call_trace.failing_frame() {
+            // Env-gated FULL call-trace dump (2LTKVO / W2UWZO): when a sim
+            // fails, print every frame (depth/target/selector/outcome) so the
+            // exact nested call sequence leading to the failing frame is
+            // attributable against the executor Vyper source — e.g. the
+            // `execute → v3c.swap → callback → v3a.swap → callback →
+            // V4_UNLOCK → unlockCallback → swap → …` chain that ends in a
+            // depth-8 empty-calldata PoolManager Halt.
+            if std::env::var_os("DEGENBOT_DUMP_CALL_TRACE").is_some() {
+                eprintln!(
+                    "[sim-trace] path={} first_fail_call={} full_call_trace\n{}",
+                    path.path_id,
+                    fail_idx,
+                    captured_call_trace.render_debug()
+                );
+            }
             let frame_revert_data = match &frame.outcome {
                 Some(degenbot_simulation::FrameOutcome::Revert { data, .. }) => data.clone(),
                 _ => alloy::primitives::Bytes::new(),
