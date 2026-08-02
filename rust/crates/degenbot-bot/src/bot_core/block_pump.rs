@@ -3133,6 +3133,118 @@ mod tests {
         );
     }
 
+    /// BQ7ZBC — FULL FSM lifecycle on a mocked websocket. One session drives
+    /// `LIVE → RESET/CATCH_UP → back-to-LIVE`:
+    ///   1. LIVE: a forward Sync@102 is applied (reserves 1500/2500).
+    ///   2. Stall → the header-staleness watchdog does an authoritative catch-up
+    ///      to block 103 (mocked `eth_blockNumber`/`eth_getLogs`), setting
+    ///      `recovery_anchor = 103` (the RESET transition).
+    ///   3. back-to-LIVE: a fresh Sync@104 (> anchor) is applied (reserves
+    ///      2600/3600).
+    ///   4. A recovering WS then flushes a STALE Sync@103 (9999/9999, ≤ anchor).
+    ///      The single-writer discard must DROP it — if it were re-asserted it
+    ///      would overwrite the pool reserves back to the older 9999/9999.
+    /// Asserts: the pump did NOT shut down (it survived the recovery) AND the
+    /// V2 pool reserves are 2600/3600 (the stale log was not re-applied).
+    #[tokio::test]
+    async fn fsm_lifecycle_recovers_and_does_not_reassert_stale() {
+        let pool_addr = Address::from([0x44u8; 20]);
+
+        let (mut pump, _sink, asserter, shutdown) = pump_for_test_sink_and_asserter(Some(100));
+        pump.set_header_staleness_for_test(Duration::from_millis(100));
+        // Register the pool on the pump's OWN bot (the one it applies logs to),
+        // so the V2 reserves reflect the dispatched Sync events.
+        let bot = pump.bot_arc_for_test();
+        {
+            let state = bot.state_arc();
+            let mut core = state.write();
+            core.register_v2_pool(&RegisterV2PoolParams {
+                address: pool_addr,
+                token0: Address::from([0xa0u8; 20]),
+                token1: Address::from([0xa1u8; 20]),
+                reserve0: U112::from(1_000),
+                reserve1: U112::from(2_000),
+                fee_token0: (997, 1000),
+                fee_token1: (997, 1000),
+                factory: Address::from([0xf0u8; 20]),
+                update_block: 100,
+                variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+                stable_swap: false,
+                fee_denominator: None,
+                ..Default::default()
+            })
+            .expect("test setup: V2 registration");
+        }
+
+        // Watchdog catch-up to 103: `get_block_number` → 103, then `get_logs`
+        // for the range → []. Extra `0x67` pads later ticks (once caught up,
+        // `latest > current` is false → no second backfill).
+        asserter.push_success(&"0x67".to_string()); // eth_blockNumber → 103
+        asserter.push_success(&Vec::<Log>::new()); // eth_getLogs(range) → []
+        asserter.push_success(&"0x67".to_string());
+        asserter.push_success(&"0x67".to_string());
+        asserter.push_success(&"0x67".to_string());
+
+        let s102 = make_v2_sync_log(pool_addr, U256::from(1_500), U256::from(2_500), 102, false);
+        let s104 = make_v2_sync_log(pool_addr, U256::from(2_600), U256::from(3_600), 104, false);
+        let stale103 =
+            make_v2_sync_log(pool_addr, U256::from(9_999), U256::from(9_999), 103, false);
+        let combined = stream::unfold(0u8, move |phase| {
+            let s102 = s102.clone();
+            let s104 = s104.clone();
+            let stale103 = stale103.clone();
+            async move {
+                match phase {
+                    0 => Some((
+                        WsEvent::BlockHeader {
+                            number: 101,
+                            timestamp: 1,
+                            base_fee_per_gas: None,
+                            gas_used: 0,
+                            gas_limit: 0,
+                        },
+                        1,
+                    )),
+                    1 => Some((WsEvent::Log(s102), 2)),
+                    2 => {
+                        // Stall: let the watchdog catch up, then the WS resumes.
+                        tokio::time::sleep(Duration::from_millis(250)).await;
+                        Some((WsEvent::Log(s104), 3))
+                    }
+                    3 => Some((WsEvent::Log(stale103), 4)),
+                    _ => None,
+                }
+            }
+        })
+        .boxed();
+
+        pump.run_test_loop(combined, 100).await;
+
+        assert!(
+            !shutdown.load(Ordering::Relaxed),
+            "the FSM must survive a stall-recovery and stay alive (BQ7ZBC)"
+        );
+        // The stale Sync@103 must NOT have been re-asserted: final reserves are
+        // those of the last applied forward (Sync@104), not the stale 9999/9999.
+        let state = bot.state_arc();
+        let core = state.read();
+        let pool_id = *core.pool_addresses.get(&pool_addr).unwrap();
+        if let Some(crate::bot_core::PoolEntry::V2(_, pool)) = core.pools.get(&pool_id) {
+            assert_eq!(
+                pool.reserve0.to::<u128>(),
+                2_600,
+                "stale forward ≤ recovery_anchor must be dropped, not re-asserted (BQ7ZBC)"
+            );
+            assert_eq!(
+                pool.reserve1.to::<u128>(),
+                3_600,
+                "stale forward ≤ recovery_anchor must be dropped, not re-asserted (BQ7ZBC)"
+            );
+        } else {
+            panic!("test setup: V2 pool not found for {pool_addr}");
+        }
+    }
+
     // -----------------------------------------------------------------
     // DFQYM5: verify-mismatch drain/buffer race characterization.
     //
