@@ -37,7 +37,7 @@
 //! core, driven automatically by `resume`.)
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -158,6 +158,12 @@ pub struct BlockPump {
     provider: Arc<AlloyProvider>,
     /// Shutdown flag — set by `stop()` or by a too-deep reorg (graceful exit)
     shutdown: Arc<AtomicBool>,
+    /// The highest block finalized by a pump-initiated gap / `handle_timeout_eager`
+    /// backfill (`backfill_range`). Used by the `PanicLateForward` guard to
+    /// amnesty a trailing WS re-delivery of an already-backfilled block (a
+    /// benign stall-recovery duplicate) instead of falsely declaring the WS
+    /// unreliable (UH2BEZ). `fetch_max` keeps it monotonic across backfills.
+    pump_backfilled_up_to: AtomicU64,
     /// If no header arrives within this window, poll `eth_blockNumber` and
     /// backfill regardless of log activity (dead-`newHeads` recovery — see
     /// `HEADER_STALENESS_SECS`). Overridable in tests via
@@ -244,6 +250,7 @@ impl BlockPump {
             header_staleness: Duration::from_secs(HEADER_STALENESS_SECS),
             log_silence: Duration::from_secs(LOG_SILENCE_SECS),
             log_silence_alarms: 0,
+            pump_backfilled_up_to: AtomicU64::new(0),
         };
 
         // MJXP5Z (Alternative B): single-stream handshake - NO resubscribe.
@@ -1230,10 +1237,30 @@ impl BlockPump {
                             }
                         }
                         LogDecision::PanicLateForward(b) => {
-                            // A removed:false log on a tombstoned block, NOT
-                            // in a reorg → unreliable WS (out-of-order /
-                            // duplicated forward events). Unrecoverable for
-                            // correctness — shut down (ADR-008 D3).
+                            // A removed:false log on a tombstoned block, NOT in a
+                            // reorg → could be unreliable WS (out-of-order /
+                            // duplicated forward events). BUT it can ALSO be the
+                            // trailing flush of a block the pump ITSELF just
+                            // finalised: during a WS stall (slow/bursty endpoint)
+                            // the live-loop gap/`handle_timeout_eager` backfill
+                            // processes + tombstones the range authoritatively via
+                            // `eth_getLogs`, and the delayed WS stream then
+                            // re-delivers a log for that same already-backfilled
+                            // block. That is a benign stall-recovery duplicate —
+                            // the state was already applied — so amnesty it (skip)
+                            // instead of shutting down (UH2BEZ). Any late forward
+                            // ABOVE `pump_backfilled_up_to` (a block the pump did
+                            // NOT itself backfill) still means unreliable WS → shut
+                            // down (ADR-008 D3).
+                            let backfilled_to = self.pump_backfilled_up_to.load(Ordering::Relaxed);
+                            if b <= backfilled_to && backfilled_to > 0 {
+                                tracing::warn!(
+                                    b,
+                                    backfilled_to,
+                                    "BlockPump: late forward for pump-backfilled block — stall-recovery duplicate, skipping (ADR-008 D3 amnesty)"
+                                );
+                                continue;
+                            }
                             tracing::error!(
                                 b,
                                 "BlockPump: ADR-008 D3 late forward log on tombstoned block — unreliable WS, shutting down"
@@ -1461,6 +1488,13 @@ impl BlockPump {
                 "BlockPump: backfill found no relevant events"
             );
         }
+        // Record the highest block THIS pump backfilled so the live-loop's
+        // `PanicLateForward` guard can amnesty the trailing WS re-delivery of
+        // an already-backfilled block (a benign stall-recovery duplicate)
+        // instead of falsely declaring the WS unreliable (UH2BEZ). `fetch_max`
+        // keeps the ceiling monotonic across consecutive gap/timeout backfills.
+        self.pump_backfilled_up_to
+            .fetch_max(to_block, Ordering::Relaxed);
     }
 
     /// LOUD assertion of the core WS-delivery invariant (ADR-008 D1): when
@@ -1698,6 +1732,7 @@ impl BlockPump {
             header_staleness: Duration::from_secs(HEADER_STALENESS_SECS),
             log_silence: Duration::from_secs(LOG_SILENCE_SECS),
             log_silence_alarms: 0,
+            pump_backfilled_up_to: AtomicU64::new(0),
         }
     }
 
@@ -2956,6 +2991,63 @@ mod tests {
         assert!(
             shutdown.load(Ordering::Relaxed),
             "late removed:false on a tombstoned block must shut the pump down (ADR-008 D3)"
+        );
+    }
+
+    /// Green (UH2BEZ): when the pump ITSELF just backfilled through a block,
+    /// a trailing WS `removed:false` log for that block is a benign
+    /// stall-recovery duplicate (the state was already applied authoritatively
+    /// via `eth_getLogs`) — it MUST NOT trigger the ADR-008 D3 shutdown.
+    ///
+    /// Mirrors the live stall scenario: gaps backfilled to block 8
+    /// (`pump_backfilled_up_to = 8`), the WS flushes a late sync at block 7
+    /// (≤ 8) — must be skipped, not fatal.
+    #[tokio::test]
+    async fn late_forward_below_pump_backfill_ceiling_does_not_shutdown() {
+        let pool_addr = Address::from([0x44u8; 20]);
+        let (bot, _pool_id, _sub) = bot_with_registered_v2(pool_addr, 5);
+
+        let (mut pump, _sink, shutdown) = pump_for_test_with_bot(Arc::clone(&bot), Some(5));
+        // Simulate the pump's own gap/timeout backfill having finalized through 8.
+        pump.pump_backfilled_up_to.store(8, Ordering::Relaxed);
+
+        let s7 = make_v2_sync_log(pool_addr, U256::from(1_500), U256::from(2_500), 7, false);
+        let s8 = make_v2_sync_log(pool_addr, U256::from(1_600), U256::from(2_600), 8, false);
+        let late = make_v2_sync_log(pool_addr, U256::from(9_999), U256::from(9_999), 7, false);
+        let combined =
+            stream::iter(vec![WsEvent::Log(s7), WsEvent::Log(s8), WsEvent::Log(late)]).boxed();
+        pump.run_test_loop(combined, 5).await;
+
+        assert!(
+            !shutdown.load(Ordering::Relaxed),
+            "late forward for a pump-backfilled block must be amnestied (UH2BEZ), not fatal"
+        );
+    }
+
+    /// Guard (UH2BEZ): the amnesty is scoped to blocks the pump itself
+    /// backfilled. A `removed:false` forward log for a tombstoned block ABOVE
+    /// the pump-backfill ceiling is a genuine out-of-order/duplicated WS
+    /// delivery and MUST still shut the pump down (ADR-008 D3 preserved).
+    #[tokio::test]
+    async fn late_forward_above_pump_backfill_ceiling_still_shuts_down() {
+        let pool_addr = Address::from([0x44u8; 20]);
+        let (bot, _pool_id, _sub) = bot_with_registered_v2(pool_addr, 5);
+
+        let (mut pump, _sink, shutdown) = pump_for_test_with_bot(Arc::clone(&bot), Some(5));
+        // The pump only backfilled through 6; block 7's tombstone + late
+        // forward are genuine steady-state anomalies → not amnestied.
+        pump.pump_backfilled_up_to.store(6, Ordering::Relaxed);
+
+        let s7 = make_v2_sync_log(pool_addr, U256::from(1_500), U256::from(2_500), 7, false);
+        let s8 = make_v2_sync_log(pool_addr, U256::from(1_600), U256::from(2_600), 8, false);
+        let late = make_v2_sync_log(pool_addr, U256::from(9_999), U256::from(9_999), 7, false);
+        let combined =
+            stream::iter(vec![WsEvent::Log(s7), WsEvent::Log(s8), WsEvent::Log(late)]).boxed();
+        pump.run_test_loop(combined, 5).await;
+
+        assert!(
+            shutdown.load(Ordering::Relaxed),
+            "late forward ABOVE the pump-backfill ceiling must still shut down (ADR-008 D3)"
         );
     }
 
