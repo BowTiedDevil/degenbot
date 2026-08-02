@@ -20,7 +20,30 @@ each class. The two current live-debug enablers:
 
 ## Session log
 
-### 2026-08-02T23:18Z — **REPRODUCIBLE V3-→V4→V3 failure: 1-wei V4 rounding → USDC overdraw** (the 2LTKVO family, no rare pool needed)
+### 2026-08-02T23:19Z — AV42C7 solver-state gate PANIC on 37-block-stale pools; pump WEDGED (not clean exit)
+- `DEGENBOT_ASSERT_SOLVER_STATE` gate panicked at solve block 25670441,
+  path_idx=20: hop2 V3 `0xaCDb27b2…` solver snapshot
+  `(sqrt=3435805256447190374086530, liq=13454508496170479, tick=-200927)`
+  no longer matches on-chain at 25670441 (`sqrt=3437958426149627176209284`).
+  The three hops were stale by 4–37 blocks (V3 by 37, V4 by 17, V3 by 4).
+- Immediately preceded by `HEADER STALL`s of **56.7s and 62.5s** — the WS is
+  slow/bursty, so pool state lags on-chain by many blocks. Contrary to the
+  earlier clean-catch-up, the WS is NOT keeping pools fresh this run.
+- **Secondary bug:** after the AV42C7 `panic!` in the tokio worker, the pump
+  did NOT shut down cleanly — it burned CPU in a no-progress busy loop
+  (`[gil-probe] main loop idle: no progress … since_progress=498091`) for ~8
+  min. The panic wedged the pump instead of exiting (or restarting).
+- Stopped the bot (pid 346) at 23:28Z. Left healthy otherwise.
+
+**Theme:** the WS instability (60s header stalls) → pool states lag 4–37
+blocks → solver over-predicts on stale sqrt (the IIA cluster) AND trips the
+AV42C7 gate. This is distinct from the FSM disconnect recovery: it's a
+SLOW-but-connected WS causing lag, not a drop. The overcome is either faster
+state refresh (apply missed swaps) or treating >N-block staleness as a
+recovery trigger (not just a panic).
+
+### 2026-08-02T23:18Z — REPRODUCIBLE V3-→V4→V3 failure: 1-wei V4 rounding → USDC overdraw (2LTKVO family)
+
 - `[sim-fail] bucket=ERC20: transfer amount exceeds balance` on 2× **V3-V4-V3**
   paths (10338, 10234), depth=9, target=USDC `0xa0b86991…`, `swaps_before=0`.
 - Path 10338 solver-st: `[V3 fee=30 zfo=true; V4 fee=1 zfo=false; V3 fee=25
