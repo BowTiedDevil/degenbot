@@ -1,20 +1,22 @@
 //! PancakeSwap V3 Swap event decoder.
 //!
-//! Decodes `Swap(address,address,int256,int256,uint160,uint128,int24,uint24,uint24)`
+//! Decodes `Swap(address,address,int256,int256,uint160,uint128,int24,uint128,uint128)`
 //! events from PancakeSwap V3 pool contracts. PancakeSwap V3 forked Uniswap V3
-//! but ADDED two trailing data fields to the Swap event (after `tick`), which
-//! changed its `topic[0]` from the canonical Uniswap V3 `0xc42079f9…` to
-//! `0x19b47279…`. The degenbot `V3_SWAP_TOPIC` matches ONLY the Uniswap V3
-//! hash, so PancakeSwap V3 swaps were never decoded; their pool state froze
-//! while on-chain price drifted, and the solver manufactured phantom arbitrage
-//! from the stale state (see `docs/exploration-no-profit-crash.md`).
+//! but REPLACED Uniswap's single trailing `uint24 fee` field with two
+//! `uint128 protocolFeesToken0/1` fields, which changed its `topic[0]` from the
+//! canonical Uniswap V3 `0xc42079f9…` to `0x19b47279…`. The degenbot
+//! `V3_SWAP_TOPIC` matches ONLY the Uniswap V3 hash, so PancakeSwap V3 swaps
+//! were never decoded; their pool state froze while on-chain price drifted, and
+//! the solver manufactured phantom arbitrage from the stale state (see
+//! `docs/exploration-no-profit-crash.md`).
 //!
 //! The fields that drive pool-state updates are byte-identical to Uniswap V3:
 //! `amount0`, `amount1`, `sqrtPriceX96`, `liquidity`, `tick` occupy the same
 //! first 160 data bytes (verified against on-chain `slot0()`/`liquidity()` at
 //! the event block — each word matches exactly). Only `topic[0]` differs and
-//! the trailing two words (fee-accounting fields, unused by the swap-state
-//! update) add 64 bytes of data.
+//! the trailing two words (the protocol-fee accumulators, unused by the
+//! swap-state update) add 64 bytes of data. ABI confirmed against the verified
+//! `PancakeV3Pool.sol` source (Etherscan, solidity 0.7.6).
 //!
 //! ```text
 //! event Swap(
@@ -25,10 +27,11 @@
 //!     uint160 sqrtPriceX96,
 //!     uint128 liquidity,
 //!     int24  tick,
-//!     uint24 fee,           // extra (recorded 0)
-//!     uint24 feeProtocol    // extra (recorded ~1.2e13..1.6e13)
+//!     uint128 protocolFeesToken0,  // extra (recorded 0)
+//!     uint128 protocolFeesToken1   // extra (recorded ~1.2e13..1.6e13)
 //! )
 //!
+//! signature = Swap(address,address,int256,int256,uint160,uint128,int24,uint128,uint128)
 //! topic[0] = 0x19b47279256b2a23a1665c810c8d55a1758940ee09377d4f8d26497a3577dc83
 //! topic[1] = sender (indexed)
 //! topic[2] = recipient (indexed)
@@ -42,9 +45,10 @@ use crate::uniswap_tick_range::extract_int24_from_word;
 use alloy::primitives::{Address, B256, I256, U128, U256};
 use alloy::rpc::types::Log;
 
-/// Keccak256 of `Swap(address,address,int256,int256,uint160,uint128,int24,uint24,uint24)`
-/// — the PancakeSwap V3 Swap topic0 (confirmed against on-chain logs; differs
-/// from the canonical Uniswap V3 `V3_SWAP_TOPIC`).
+/// Keccak256 of `Swap(address,address,int256,int256,uint160,uint128,int24,uint128,uint128)`
+/// — the PancakeSwap V3 Swap topic0 (confirmed against the verified
+/// `PancakeV3Pool.sol` source; differs from the canonical Uniswap V3
+/// `V3_SWAP_TOPIC`).
 pub const V3_PANCAKESWAP_SWAP_TOPIC: B256 = B256::new([
     0x19, 0xb4, 0x72, 0x79, 0x25, 0x6b, 0x2a, 0x23, 0xa1, 0x66, 0x5c, 0x81, 0x0c, 0x8d, 0x55, 0xa1,
     0x75, 0x89, 0x40, 0xee, 0x09, 0x37, 0x7d, 0x4f, 0x8d, 0x26, 0x49, 0x7a, 0x35, 0x77, 0xdc, 0x83,

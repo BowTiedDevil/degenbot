@@ -195,10 +195,13 @@ arb -> executing against true on-chain nets -2.58e-6 WETH -> no-profit crash.
 Evidence: v3_2 on-chain tick slid 201057 (seed 25609605) -> 200941 (25664704)
 while the solver held 200950 (~state at ~25664520). The swap log at the drift
 carries amount0/amount1/sqrt/liq/tick (tick `0x310fb`=200955) with topic0
-0x19b47279 and 7 data words. ABI brute-force (int128/int256, 6/7 fields) did not
-resolve the exact signature; the trailing two data words (0, ~1.2e13) suggest an
-extra event param beyond Uniswap's Swap. Follow-on task: reverse + decode this
-ABI so PancakeSwap-V3-family pools become live.
+0x19b47279 and 7 data words. The ABI is CONFIRMED against the verified
+`PancakeV3Pool.sol` source (Etherscan): the trailing two words are
+`uint128 protocolFeesToken0` (recorded 0) / `uint128 protocolFeesToken1`
+(recorded ~1.2e13..1.6e13) — PancakeSwap replaced Uniswap's `uint24 fee` with
+these two protocol-fee accumulators, changing the signature to
+`Swap(address,address,int256,int256,uint160,uint128,int24,uint128,uint128)`
+= `0x19b47279…`. The decoder's five state words remain byte-identical to V3.
 
 ## FIX IMPLEMENTED (defensive; diagnostic-gate)
 
