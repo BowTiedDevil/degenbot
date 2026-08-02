@@ -6,7 +6,7 @@
 //! 1. The `tier3-oracle/` Foundry project is compiled by `forge build`
 //!    (run by the `just test-tier3-smoke` recipe) into standard `out/` JSON.
 //! 2. This test parses the `deployedBytecode.object` hex from
-//!    `tier3-oracle/out/Echo.sol/Echo.json`.
+//!    `tier3-oracle/artifacts/Echo.sol/Echo.json`.
 //! 3. It deploys that runtime bytecode into an offline revm `CacheDB<EmptyDB>`
 //!    (the same `CacheDB<EmptyDB>` + `MainBuilder` + `transact` stack proven
 //!    in `inspector_composition.rs`, but without the inspector — a plain
@@ -18,15 +18,15 @@
 //! tiers (3a `computeSwapStep`, 3b `Pool.swap`) need, validated before any
 //! pool math lands.
 //!
-//! ## Why this is `#[ignore]`d (and the recipe un-ignores it)
+//! ## Harness bytecode (committed)
 //!
-//! Plain `cargo test --workspace` (the pre-push hook + CI `test-rust`) does
-//! NOT run `forge build` first, so `out/Echo.json` would be absent. The test
-//! is therefore gated behind `#[ignore]` so the existing gate stays green
-//! while the Tier-3 work is additive-only. The `just test-tier3-smoke` recipe
-//! builds the harness via forge, then runs this test with `--include-ignored`.
-//! The enforcement task (BQ43DK) is what eventually wires `test-tier3` into
-//! `test-rust` so the foundry build is a hard CI prerequisite.
+//! Runs in the default `cargo test --workspace` suite. `Echo.sol` bytecode is
+//! loaded from the committed `tier3-oracle/artifacts/` tree (no forge needed
+//! to RUN). Artifact integrity is enforced two ways: `tier3_harness_artifacts.rs`
+//! hashes the tracked sources (toolchain-free), and
+//! `tier3-oracle/verify-tier3-artifacts.sh` recompiles every harness and
+//! byte-compares it to the committed artifact. After a harness-source edit,
+//! regenerate + publish via `tier3-oracle/build-tier3-harnesses.sh`.
 
 use std::path::PathBuf;
 
@@ -41,9 +41,10 @@ use revm::{ExecuteEvm, MainBuilder, MainContext};
 
 /// Path to the forge-emitted `Echo.json` artifact, resolved from this crate's
 /// `CARGO_MANIFEST_DIR` (`rust/crates/degenbot-simulation`) up to the repo
-/// root then into `tier3-oracle/out/`.
+/// root then into `tier3-oracle/artifacts/`.
 fn forge_echo_artifact_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tier3-oracle/out/Echo.sol/Echo.json")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../tier3-oracle/artifacts/Echo.sol/Echo.json")
 }
 
 /// Load the runtime (`deployedBytecode.object`) hex from the forge JSON
@@ -101,7 +102,6 @@ fn db_with_contract(addr: Address, code: Bytecode) -> CacheDB<EmptyDB> {
 }
 
 #[test]
-#[ignore = "Tier-3 smoke: run via `just test-tier3-smoke` (runs `forge build` first)"]
 fn forge_compiled_echo_contract_returns_doubled_value_in_revm() {
     let echo = Address::repeat_byte(0xEC);
     let code = load_echo_deployed_bytecode();

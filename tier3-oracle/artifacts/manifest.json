@@ -1,0 +1,34 @@
+{
+  "BalancerSwapOracleHarness.sol/BalancerSwapOracleHarness.json": {
+    "sha256": "a560e49534f72cc0618af5ddde29117c25cf4337aea5f7a46547eadfe8b2b675",
+    "source": "src-balancer/BalancerSwapOracleHarness.sol"
+  },
+  "CurveSwapOracleHarness.sol/CurveSwapOracleHarness.json": {
+    "sha256": "826b8f3e10ccab1ff7ef72b3260d5424716fe238aac6d5c074a0d1d6156a2e8a",
+    "source": "src-curve/CurveSwapOracleHarness.sol"
+  },
+  "Echo.sol/Echo.json": {
+    "sha256": "245f590d0cef30581016c0e2b6b878bff831e9b08dd196bb27ad23c867075272",
+    "source": "src/Echo.sol"
+  },
+  "SwapMathV3Harness.sol/SwapMathV3Harness.json": {
+    "sha256": "15da79c2131f65df1a2796d7aa835f8d467455bd272deb53bece4b06fac5eac4",
+    "source": "src-v3/SwapMathV3Harness.sol"
+  },
+  "SwapMathV4Harness.sol/SwapMathV4Harness.json": {
+    "sha256": "493215b030c6afa9e56601e8f76a68d9c8f9721b613e81c576b81a50bd84b5fe",
+    "source": "src/SwapMathV4Harness.sol"
+  },
+  "V2SwapOracleHarness.sol/V2SwapOracleHarness.json": {
+    "sha256": "3a23262e2c90d0c520fca826018576e17f41cd859275d8ccbd6276c635b37b0c",
+    "source": "src-v2/V2SwapOracleHarness.sol"
+  },
+  "V3SwapOracleHarness.sol/V3SwapOracleHarness.json": {
+    "sha256": "31fae1873b921b47f0aef058a8842d6a161419cf5cd88225f5ceaf762b947efb",
+    "source": "src-v3/V3SwapOracleHarness.sol"
+  },
+  "V4SwapOracleHarness.sol/V4SwapOracleHarness.json": {
+    "sha256": "a5c362fe2ae2aff407449a533172031627b2d39fb097c6f1c981cb012b0748d3",
+    "source": "src/V4SwapOracleHarness.sol"
+  }
+}

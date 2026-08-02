@@ -154,8 +154,14 @@ jobs:
       - name: Fetch canonical reference contracts (v2/v3/v4-core) + solc binaries
         run: tier3-oracle/bootstrap-libs.sh
 
-      - name: Run Tier-3 suites
-        run: just test-tier3
+      # The oracle TESTS themselves run in the default `rust-test` job (they load
+      # the committed bytecode from tier3-oracle/artifacts/ — no toolchain at
+      # runtime). This job's unique role is the AUTHORITATIVE compile-vs-use
+      # check: recompile every harness with the real solc/forge toolchain and
+      # assert the committed bytecode matches a fresh build (catches a harness-
+      # source or pinned-vendored-lib edit without a rebuild).
+      - name: Verify committed harness bytecode matches a fresh compile
+        run: just verify-tier3-artifacts
 
   rust-build:
     name: Rust Build

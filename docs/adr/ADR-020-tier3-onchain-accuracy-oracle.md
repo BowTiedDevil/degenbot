@@ -128,11 +128,18 @@ Two fixture shapes, in that order:
 
 ## Consequences
 
-- Tier 3 is **additive**. The default `cargo test`/`just test-rust` path is
-  unchanged: Tier-3 tests are `#[ignore]d` and gated behind `just
-  test-tier3-{smoke,step,swap}` recipes that build the harness bytecode
-  first. CI may opt in; the pre-push hook does not run them (they need the
-  compiled reference contract, not just the Rust tree).
+- Tier 3 is now **part of the default suite**. The harness bytecode is committed
+  under `tier3-oracle/artifacts/`, so the oracle tests run in the default
+  `cargo test`/`just test-rust` path with NO toolchain at runtime. Stale-bytecode
+  drift is guarded two ways: `tier3_harness_artifacts.rs` (toolchain-free) hashes
+  the tracked harness sources against `artifacts/manifest.json`, and
+  `just verify-tier3-artifacts` (the authoritative compile-vs-use check, in the
+  CI `tier3-oracle` job) recompiles every harness with the real solc/forge
+  toolchain and asserts the committed bytecode equals a fresh build. `just
+  test-tier3-{smoke,step,swap,v2,v4,curve,balancer}` rebuild + republish the
+  artifacts and re-run the families; `just rebuild-tier3-artifacts` republishes
+  without running. The pre-push hook runs the oracle tests (committed bytecode);
+  the toolchain compile check runs only in CI.
 - The standalone-Rust-core invariant (ADR-005) is unaffected: Tier-3 oracle
   *tests* live in `rust/crates/<crate>/tests/` and depend on `revm` as a
   **dev-dependency** (gated), never as a core-crate dependency. The no-pyo3

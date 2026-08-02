@@ -16,6 +16,8 @@ set -euo pipefail
 
 TD="$(cd "$(dirname "$0")" && pwd)"   # absolute tier3-oracle/
 cd "${TD}"
+OUT_DIR="${OUT_DIR:-${TD}/out}"
+PUBLISH="${PUBLISH:-1}"
 
 # Ensure the canonical Balancer reference sources are present (idempotent).
 "${TD}/bootstrap-libs.sh"
@@ -54,8 +56,8 @@ RAW="$(mktemp)"
 rm -f "${STD_JSON}"
 
 # Reshape standard-json into foundry's single-contract out/ shape.
-mkdir -p "${TD}/out/BalancerSwapOracleHarness.sol"
-python3 - "${RAW}" "${TD}/out/BalancerSwapOracleHarness.sol/BalancerSwapOracleHarness.json" <<'PY'
+mkdir -p "${OUT_DIR}/BalancerSwapOracleHarness.sol"
+python3 - "${RAW}" "${OUT_DIR}/BalancerSwapOracleHarness.sol/BalancerSwapOracleHarness.json" <<'PY'
 import json, sys
 raw = json.load(open(sys.argv[1]))
 errs = [e for e in raw.get("errors", []) if e.get("severity") == "error"]
@@ -77,5 +79,10 @@ print(f"wrote {sys.argv[2]}")
 PY
 rm -f "${RAW}"
 
+
+# Publish committed bytecode + drift manifest (toolchain-free `cargo test` path).
+if [ "${PUBLISH}" != "0" ]; then
+  "${TD}/publish-artifacts.sh"
+fi
 echo "Tier-3 Balancer weighted/stable swap oracle harness built:"
 echo "  Balancer (solc 0.7.6): ${TD}/out/BalancerSwapOracleHarness.sol/BalancerSwapOracleHarness.json"

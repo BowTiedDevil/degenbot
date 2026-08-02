@@ -27,10 +27,14 @@
 //! - `v4_simulate_swap` takes a NEGATIVE `amount_specified` for exact-in (V4
 //!   sign convention, opposite to V3) — mirrored here.
 //!
-//! Plain `cargo test --workspace` does not build the harness bytecode, so this
-//! test is `#[ignore]`d. `just test-tier3-v4` runs
-//! `tier3-oracle/build-tier3-v4-swap-harness.sh` then runs this test with
-//! `--include-ignored`.
+//! Runs in the default `cargo test --workspace` suite. The canonical
+//! v4-core bytecode is loaded from the committed `tier3-oracle/artifacts/`
+//! tree (no solc/forge needed to RUN). Artifact integrity is enforced two
+//! ways: `tier3_harness_artifacts.rs` hashes the tracked sources
+//! (toolchain-free), and `tier3-oracle/verify-tier3-artifacts.sh` recompiles
+//! every harness and byte-compares it to the committed artifact. After a
+//! harness-source edit, regenerate + publish via
+//! `tier3-oracle/build-tier3-v4-swap-harness.sh`.
 
 #![allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
 #![allow(clippy::doc_markdown)] // Solidity/V4 identifiers (PoolManager, slot0…)
@@ -75,7 +79,7 @@ fn repo_root() -> PathBuf {
 fn load_creation_bytecode(file: &str, contract: &str) -> Vec<u8> {
     let artifact_path = repo_root()
         .join("tier3-oracle")
-        .join("out")
+        .join("artifacts")
         .join(file)
         .join(format!("{contract}.json"));
     let raw = std::fs::read_to_string(&artifact_path)
@@ -384,7 +388,6 @@ fn run_v4_onchain_swap(
 /// `v4_simulate_swap` amount0/amount1 === on-chain BalanceDelta for a pinned
 /// set of amounts across both directions.
 #[test]
-#[ignore = "build the harness first: just test-tier3-v4"]
 fn v4_pool_dense_swap_matches_sim_byte_exact() {
     let fee = 3000u32;
     let tick_spacing = 60i32;
@@ -444,7 +447,6 @@ fn v4_pool_dense_swap_matches_sim_byte_exact() {
 /// settle dance). Skips the rare on-chain revert (test-fixture limit, e.g. the
 /// exact-output walk past a limit) rather than treating it as a divergence.
 #[test]
-#[ignore = "build the harness first: just test-tier3-v4"]
 fn v4_pool_dense_swap_matches_sim_proptest() {
     proptest!(|(
         k in 4i32..=8i32,

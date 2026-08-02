@@ -25,12 +25,16 @@
 //! `_updateObservation`) OOG the same way. Both are handled here; the Rust
 //! sim and the pool therefore walk the identical crossed-tick path.
 //!
-//! ## Harness build (gated — `#[ignore]`d)
+//! ## Harness bytecode (committed)
 //!
-//! Plain `cargo test --workspace` does not build the harness bytecode, so
-//! this test is `#[ignore]`d. `just test-tier3-swap` runs
-//! `tier3-oracle/build-tier3-v3-swap-harness.sh` then runs this test with
-//! `--include-ignored`.
+//! Runs in the default `cargo test --workspace` suite. The canonical
+//! v3-core bytecode is loaded from the committed `tier3-oracle/artifacts/`
+//! tree (no solc/forge needed to RUN). Artifact integrity is enforced two
+//! ways: `tier3_harness_artifacts.rs` hashes the tracked sources
+//! (toolchain-free), and `tier3-oracle/verify-tier3-artifacts.sh` recompiles
+//! every harness and byte-compares it to the committed artifact. After a
+//! harness-source edit, regenerate + publish via
+//! `tier3-oracle/build-tier3-v3-swap-harness.sh`.
 
 #![allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
 #![allow(clippy::doc_markdown)] // Solidity/V3 identifiers (MIN_TICK, slot0…) in doc comments
@@ -74,7 +78,7 @@ fn selector(sig: &str) -> [u8; 4] {
 /// Repo path to a built harness artifact (foundry `out/<File>.sol/<Contract>.json`).
 fn harness_artifact_path(file: &str, contract: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../tier3-oracle/out")
+        .join("../../../tier3-oracle/artifacts")
         .join(file)
         .join(format!("{contract}.json"))
 }
@@ -198,7 +202,6 @@ fn state_at_tick_zero(liq: u128, tick_spacing: i32) -> V3PoolState {
 /// load-bearing prerequisite for the swap byte-exact assertion (the remaining
 /// slice, gated on a dense-tick fixture).
 #[test]
-#[ignore = "build the harness first: just test-tier3-swap"]
 #[allow(clippy::too_many_lines)]
 fn v3_pool_reads_back_seeded_state_byte_exact() {
     let fee = 3000u32;
@@ -664,7 +667,6 @@ fn run_onchain_swap(
 
 /// Pinned dense-tick oracle: byte-exact swap across the dense band.
 #[test]
-#[ignore = "build the harness first: just test-tier3-swap"]
 fn v3_pool_dense_swap_byte_exact() {
     let fee = 3000u32;
     let tick_spacing = 60i32;
@@ -715,7 +717,6 @@ fn v3_pool_dense_swap_byte_exact() {
 
 /// Proptest: dense-band swap byte-exactness across (state, amount, direction).
 #[test]
-#[ignore = "build the harness first: just test-tier3-swap"]
 fn v3_pool_dense_swap_matches_sim_proptest() {
     let fee = 3000u32;
     let tick_spacing = 60i32;
@@ -873,7 +874,6 @@ fn solver_crossing_output_v3(
 /// solver-vs-twin-vs-onchain triangle (a shared solver+twin bug diverging from
 /// the pool would RED here even if the twin tests pass).
 #[test]
-#[ignore = "build the harness first: just test-tier3-swap"]
 fn v3_pool_dense_swap_matches_solver_crossing_dual() {
     let fee = 3000u32;
     let tick_spacing = 60i32;
@@ -982,7 +982,6 @@ fn sparse_state(liq: u128, spacing: i32, current_tick: i32) -> V3PoolState {
 /// pool across the sparse walk (validates the observation-cardinality fix made
 /// even sparse topologies terminate, not just the dense band).
 #[test]
-#[ignore = "build the harness first: just test-tier3-swap"]
 fn v3_pool_sparse_crossing_byte_exact() {
     let fee = 3000u32;
     let tick_spacing = 60i32;

@@ -16,6 +16,8 @@ set -euo pipefail
 
 TD="$(cd "$(dirname "$0")" && pwd)"   # absolute tier3-oracle/
 cd "${TD}"
+OUT_DIR="${OUT_DIR:-${TD}/out}"
+PUBLISH="${PUBLISH:-1}"
 
 SOLC_VER="0.8.26"
 SOLC_LONG="0.8.26+commit.8a97fa7a"
@@ -46,8 +48,8 @@ RAW="$(mktemp)"
 "${SOLC_BIN}" --base-path . --allow-paths . --standard-json < "${STD_JSON}" > "${RAW}"
 rm -f "${STD_JSON}"
 
-mkdir -p "${TD}/out/CurveSwapOracleHarness.sol"
-python3 - "${RAW}" "${TD}/out/CurveSwapOracleHarness.sol/CurveSwapOracleHarness.json" <<'PY'
+mkdir -p "${OUT_DIR}/CurveSwapOracleHarness.sol"
+python3 - "${RAW}" "${OUT_DIR}/CurveSwapOracleHarness.sol/CurveSwapOracleHarness.json" <<'PY'
 import json, sys
 raw = json.load(open(sys.argv[1]))
 errs = [e for e in raw.get("errors", []) if e.get("severity") == "error"]
@@ -69,5 +71,10 @@ print(f"wrote {sys.argv[2]}")
 PY
 rm -f "${RAW}"
 
+
+# Publish committed bytecode + drift manifest (toolchain-free `cargo test` path).
+if [ "${PUBLISH}" != "0" ]; then
+  "${TD}/publish-artifacts.sh"
+fi
 echo "Tier-3 Curve stableswap get_dy oracle harness built:"
 echo "  Curve (solc 0.8.26): ${TD}/out/CurveSwapOracleHarness.sol/CurveSwapOracleHarness.json"

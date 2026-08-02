@@ -130,12 +130,8 @@ verify-deployments *args:
     DEGENBOT_VERIFY_DEPLOYMENTS=${DEGENBOT_VERIFY_DEPLOYMENTS:-1} uv run pytest -m online_rpc -q --no-header -p no:randomly {{ args }} tests/registry/test_deployment_onchain_verification.py
 
 # Tier-3 on-chain accuracy oracle — smoke (ergo task 767HYN, epic UP5NH6).
-# Builds the tier3-oracle/ Foundry harness via forge, then runs the
-# `#[ignore]`d revm smoke test (`tier3_forge_revm_smoke.rs`) which deploys
-# the forge-compiled `Echo` bytecode into an offline revm `CacheDB` and
-# asserts a round-trip call. Proves the forge→bytecode→revm→assert loop
-# before any real pool-math oracle tier lands. The real oracle tiers
-# (3a/3b) extend this recipe, not replace it.
+# Rebuild + publish the Echo wire-probe harness, then run the revm smoke test
+# (`tier3_forge_revm_smoke.rs`). Proves the forge→bytecode→revm→assert loop.
 test-tier3-smoke:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -143,7 +139,7 @@ test-tier3-smoke:
     (cd tier3-oracle && forge build)
     python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    cargo test --manifest-path rust/Cargo.toml -p degenbot-simulation --test tier3_forge_revm_smoke -- --include-ignored --nocapture
+    cargo test --manifest-path rust/Cargo.toml -p degenbot-simulation --test tier3_forge_revm_smoke
 
 # Tier-3a byte-exact oracle: SwapMath.computeSwapStep (V3 + V4) vs real
 # canonical core libraries run as EVM bytecode in revm (ergo task OZRQS6,
@@ -161,7 +157,7 @@ test-tier3-step:
     tier3-oracle/build-tier3-harnesses.sh
     python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    cargo test --manifest-path rust/Cargo.toml -p degenbot-cl-math --test tier3_compute_swap_step_vs_revm -- --include-ignored --nocapture
+    cargo test --manifest-path rust/Cargo.toml -p degenbot-cl-math --test tier3_compute_swap_step_vs_revm
 
 # Tier-3b end-to-end V3 `Pool.swap` oracle (ergo UP5NH6 / 2LTKVO).
 # Builds the v3-core harness (solc 0.7.6) then drives the Rust
@@ -172,7 +168,7 @@ test-tier3-swap:
     tier3-oracle/build-tier3-v3-swap-harness.sh
     python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_v3_pool_swap_vs_revm -- --include-ignored --nocapture
+    cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_v3_pool_swap_vs_revm
 
 # Tier-3 V2 `Pair.swap` oracle (ergo UP5NH6 / TLBUNW — family 1/3 of SH6HAK).
 # Builds the v2-core harness (solc 0.5.16) then drives the engine's
@@ -184,7 +180,7 @@ test-tier3-v2:
     tier3-oracle/build-tier3-v2-swap-harness.sh
     python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_v2_pair_swap_vs_revm -- --include-ignored --nocapture
+    cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_v2_pair_swap_vs_revm
 
 # Tier-3b V4 `PoolManager.swap` end-to-end oracle (ergo UP5NH6 / 2LTKVO —
 # the V4 half). Builds the v4-core harness (solc 0.8.26: PoolManager singleton
@@ -197,7 +193,7 @@ test-tier3-v4:
     tier3-oracle/build-tier3-v4-swap-harness.sh
     python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_v4_pool_swap_vs_revm -- --include-ignored --nocapture
+    cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_v4_pool_swap_vs_revm
 
 # Tier-3 Curve stableswap `get_dy` oracle (ergo UP5NH6 / YXMNWB — family 2/3
 # of SH6HAK's Tier-3 cutover). Builds the src-curve harness (solc 0.8.26 — a
@@ -211,7 +207,7 @@ test-tier3-curve:
     tier3-oracle/build-tier3-curve-swap-harness.sh
     python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_curve_swap_vs_revm -- --include-ignored --nocapture
+    cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_curve_swap_vs_revm
 
 # Tier-3 Balancer weighted/stable swap oracle (ergo UP5NH6 / EZLECC — family
 # 3/3 of SH6HAK's Tier-3 cutover). Builds the src-balancer harness (solc
@@ -226,15 +222,41 @@ test-tier3-balancer:
     tier3-oracle/build-tier3-balancer-swap-harness.sh
     python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_balancer_swap_vs_revm -- --include-ignored --nocapture
+    cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_balancer_swap_vs_revm
 
-# Tier-3 umbrella: run every landed on-chain accuracy oracle suite.
-# Smoke (forge→revm loop) + 3a (computeSwapStep) + 3b (V3 + V4 Pool.swap
-# deploy+seed foundation) + V2 (Pair.swap K-boundary byte-exact). Each builds
-# its own canonical-reference bytecode harness. Slow (forge/solc builds + revm
-# warmup); NOT in the default `just test-rust` path — run explicitly, or in
+# Tier-3 umbrella: rebuild + republish every canonical-reference harness, then
+# run the full on-chain oracle suite. The individual tests ALSO run in the
+# default `just test-rust` (they load the COMMITTED bytecode from
+# `tier3-oracle/artifacts/`), so this recipe's unique role is regenerate +
+# publish the artifacts (after a harness-source edit) and re-run each family.
+# Recompiling dozens of revm harnesses makes this slow — run explicitly, or in
 # the CI `tier3-oracle` job.
 test-tier3: test-tier3-smoke test-tier3-step test-tier3-swap test-tier3-v2 test-tier3-v4 test-tier3-curve test-tier3-balancer
+
+# Validate the committed tier-3 harness bytecode: recompile EVERY harness with
+# the real solc/forge toolchain (into a throwaway dir, PUBLISH=0 — committed
+# artifacts are never mutated) and byte-compare the creation bytecode against
+# what the Rust tests load from `tier3-oracle/artifacts/`. This is the
+# authoritative compile-vs-use check (covers a harness-source OR pinned
+# vendored-lib edit without a rebuild); the toolchain-free complement
+# `tier3_harness_artifacts.rs` runs in the default suite. Requires the
+# toolchain (bootstrap-libs + svm solc). Wired into the CI `tier3-oracle` job.
+verify-tier3-artifacts:
+    tier3-oracle/verify-tier3-artifacts.sh
+
+# Rebuild + publish every Tier-3 harness artifact (bytecode + source-hash
+# manifest) from the current sources, without running the test suites. Run this
+# after editing a `tier3-oracle/src*/**/*.sol` harness (or bumping a pinned
+# vendored lib), then commit the updated `tier3-oracle/artifacts/`.
+rebuild-tier3-artifacts:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tier3-oracle/build-tier3-harnesses.sh
+    tier3-oracle/build-tier3-v2-swap-harness.sh
+    tier3-oracle/build-tier3-v3-swap-harness.sh
+    tier3-oracle/build-tier3-v4-swap-harness.sh
+    tier3-oracle/build-tier3-curve-swap-harness.sh
+    tier3-oracle/build-tier3-balancer-swap-harness.sh
 
 # Run all tests (Rust + Python)
 test-all: test-rust test-python

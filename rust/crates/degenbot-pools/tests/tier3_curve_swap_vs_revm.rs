@@ -11,12 +11,15 @@
 //! across a pinned case + a proptest over balances × rates × fee × A × amount
 //! × direction.
 //!
-//! ## Harness build (gated — `#[ignore]`d)
+//! ## Harness bytecode (committed)
 //!
-//! Plain `cargo test --workspace` does not build the harness bytecode, so
-//! these tests are `#[ignore]`d. `just test-tier3-curve` runs
-//! `tier3-oracle/build-tier3-curve-swap-harness.sh` then runs them with
-//! `--include-ignored`.
+//! Runs in the default `cargo test --workspace` suite. The harness bytecode
+//! is loaded from the committed `tier3-oracle/artifacts/` tree (no
+//! solc/forge needed to RUN). Artifact integrity is enforced two ways:
+//! `tier3_harness_artifacts.rs` hashes the tracked sources (toolchain-free),
+//! and `tier3-oracle/verify-tier3-artifacts.sh` recompiles every harness and
+//! byte-compares it to the committed artifact. After a harness-source edit,
+//! regenerate + publish via `tier3-oracle/build-tier3-curve-swap-harness.sh`.
 
 use std::path::PathBuf;
 
@@ -47,7 +50,7 @@ fn selector(sig: &str) -> [u8; 4] {
 /// Repo path to a built harness artifact (foundry `out/<File>.sol/<Contract>.json`).
 fn harness_artifact_path(file: &str, contract: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../tier3-oracle/out")
+        .join("../../../tier3-oracle/artifacts")
         .join(file)
         .join(format!("{contract}.json"))
 }
@@ -238,7 +241,6 @@ fn onchain_get_dy(case: &CurveCase, coin_in: u64, coin_out: u64, amount_in: U256
 /// `934112765606210873`); here the same engine value is asserted byte-exact
 /// to the on-chain Solidity reference.
 #[test]
-#[ignore = "build the harness first: just test-tier3-curve"]
 fn curve_get_dy_output_is_byte_exact_to_onchain_reference() {
     let case = CurveCase {
         balances: [CURVE_PRECISION, CURVE_PRECISION],
@@ -267,7 +269,6 @@ proptest! {
     /// reject identically), and keep `xp[out] > y` so the `-1` is well-formed.
     /// Each assertion runs on a fresh pristine harness.
     #[test]
-    #[ignore = "build the harness first: just test-tier3-curve"]
     fn curve_get_dy_matches_onchain_proptest(
         balance0 in 1_000_000_000_000_000_000u64..5_000_000_000_000_000_000u64,
         balance1 in 1_000_000_000_000_000_000u64..5_000_000_000_000_000_000u64,

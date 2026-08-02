@@ -29,12 +29,16 @@
 //! fork-bytecode Tier-3 harness would re-prove the same formula at the
 //! fork's fee and is deferred as gilding.
 //!
-//! ## Harness build (gated — `#[ignore]`d)
+//! ## Harness bytecode (committed)
 //!
-//! Plain `cargo test --workspace` does not build the harness bytecode, so
-//! these tests are `#[ignore]`d. `just test-tier3-v2` runs
-//! `tier3-oracle/build-tier3-v2-swap-harness.sh` then runs them with
-//! `--include-ignored`.
+//! Runs in the default `cargo test --workspace` suite. The canonical
+//! v2-core bytecode is loaded from the committed `tier3-oracle/artifacts/`
+//! tree (no solc/forge needed to RUN). Artifact integrity is enforced two
+//! ways: `tier3_harness_artifacts.rs` hashes the tracked sources
+//! (toolchain-free), and `tier3-oracle/verify-tier3-artifacts.sh` recompiles
+//! every harness and byte-compares it to the committed artifact. After a
+//! harness-source edit, regenerate + publish via
+//! `tier3-oracle/build-tier3-v2-swap-harness.sh`.
 
 #![allow(clippy::cast_possible_wrap)]
 
@@ -66,7 +70,7 @@ fn selector(sig: &str) -> [u8; 4] {
 /// Repo path to a built harness artifact (foundry `out/<File>.sol/<Contract>.json`).
 fn harness_artifact_path(file: &str, contract: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../tier3-oracle/out")
+        .join("../../../tier3-oracle/artifacts")
         .join(file)
         .join(format!("{contract}.json"))
 }
@@ -176,7 +180,6 @@ fn pristine_swap_accepts(r0: u128, r1: u128, amount_in: U256, zfo: bool, amount_
 /// `UniswapV2: K`). Each assertion runs on a fresh pristine harness (a
 /// `doSwap` mutates reserves/balances, so reuse would compound).
 #[test]
-#[ignore = "build the harness first: just test-tier3-v2"]
 fn v2_pair_swap_is_byte_exact_to_v2_core_get_amount_out() {
     // 1000 token0 ↔ 2000 token1 (1e21 / 2e21 wei); swap 100 token0 in.
     let r0: u128 = 1_000_000_000_000_000_000_000;
@@ -217,7 +220,6 @@ proptest! {
     /// (Solidity 0.5.16 has no overflow checks — an underflow wraps and the
     /// K-check would spuriously pass, masking the byte-exact boundary).
     #[test]
-    #[ignore = "build the harness first: just test-tier3-v2"]
     fn v2_pair_byte_exact_proptest(
         r0 in 1_000_000u128..1_000_000_000_000_000_000u128,
         r1 in 1_000_000u128..1_000_000_000_000_000_000u128,

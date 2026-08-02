@@ -16,12 +16,16 @@
 //! follow-on slice tracked in the task body — it is not part of the current
 //! canonical `StableMath` library.
 //!
-//! ## Harness build (gated — `#[ignore]`d)
+//! ## Harness bytecode (committed)
 //!
-//! Plain `cargo test --workspace` does not build the harness bytecode, so
-//! these tests are `#[ignore]`d. `just test-tier3-balancer` runs
-//! `tier3-oracle/build-tier3-balancer-swap-harness.sh` then runs them with
-//! `--include-ignored`.
+//! Runs in the default `cargo test --workspace` suite. The canonical
+//! balancer-v2-monorepo bytecode is loaded from the committed
+//! `tier3-oracle/artifacts/` tree (no solc/forge needed to RUN). Artifact
+//! integrity is enforced two ways: `tier3_harness_artifacts.rs` hashes the
+//! tracked sources (toolchain-free), and
+//! `tier3-oracle/verify-tier3-artifacts.sh` recompiles every harness and
+//! byte-compares it to the committed artifact. After a harness-source edit,
+//! regenerate + publish via `tier3-oracle/build-tier3-balancer-swap-harness.sh`.
 
 use std::path::PathBuf;
 
@@ -59,7 +63,7 @@ fn selector(sig: &str) -> [u8; 4] {
 /// Repo path to a built harness artifact (foundry `out/<File>.sol/<Contract>.json`).
 fn harness_artifact_path(file: &str, contract: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../tier3-oracle/out")
+        .join("../../../tier3-oracle/artifacts")
         .join(file)
         .join(format!("{contract}.json"))
 }
@@ -282,7 +286,6 @@ fn assert_stable_parity(case: &StableCase, zfo: bool, amount_in: U256) {
 /// `WeightedMath`/`FixedPoint` bytecode, which routes the exponent-ONE fast
 /// path in `powUp` exactly as the engine's `PowVersion::V2`.
 #[test]
-#[ignore = "build the harness first: just test-tier3-balancer"]
 fn weighted_out_given_in_is_byte_exact_to_onchain_reference() {
     let case = WeightedCase {
         balances: [U256::from(1_000_000u64), U256::from(1_000_000u64)],
@@ -307,7 +310,6 @@ fn weighted_out_given_in_is_byte_exact_to_onchain_reference() {
 /// oracle fixture for `1_000` into equal `1_000_000` reserves yields 989 here too
 /// for equal balances (the swapped amount is small relative to reserves).
 #[test]
-#[ignore = "build the harness first: just test-tier3-balancer"]
 fn stable_out_given_in_is_byte_exact_to_onchain_reference() {
     let case = StableCase {
         balances: [U256::from(1_000_000u64), U256::from(1_000_000u64)],
@@ -333,7 +335,6 @@ proptest! {
     /// that exercises both the fast-path (exact 1/2/4 ratios) and general
     /// LogExpMath pow.
     #[test]
-    #[ignore = "build the harness first: just test-tier3-balancer"]
     fn weighted_out_given_in_matches_onchain_proptest(
         balance0 in 1_000_000_000_000_000_000u64..5_000_000_000_000_000_000u64,
         balance1 in 1_000_000_000_000_000_000u64..5_000_000_000_000_000_000u64,
@@ -361,7 +362,6 @@ proptest! {
     /// Proptest the byte-exact stable oracle (invariant_version == 1) over
     /// (balances × scaling-factors × fee × amp × amount × direction).
     #[test]
-    #[ignore = "build the harness first: just test-tier3-balancer"]
     fn stable_out_given_in_matches_onchain_proptest(
         balance0 in 1_000_000_000_000_000_000u64..5_000_000_000_000_000_000u64,
         balance1 in 1_000_000_000_000_000_000u64..5_000_000_000_000_000_000u64,

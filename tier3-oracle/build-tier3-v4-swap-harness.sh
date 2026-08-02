@@ -13,6 +13,8 @@ set -euo pipefail
 
 TD="$(cd "$(dirname "$0")" && pwd)"   # absolute tier3-oracle/
 cd "${TD}"
+OUT_DIR="${OUT_DIR:-${TD}/out}"
+PUBLISH="${PUBLISH:-1}"
 
 # Ensure the canonical v4-core reference source + its libs are present
 # (idempotent; no-op if already cloned).
@@ -57,8 +59,8 @@ RAW="$(mktemp)"
 "${SOLC_BIN}" --base-path . --allow-paths . --standard-json < "${STD_JSON}" > "${RAW}"
 rm -f "${STD_JSON}"
 
-mkdir -p "${TD}/out/V4SwapOracleHarness.sol"
-python3 - "${RAW}" "${TD}/out/V4SwapOracleHarness.sol/V4SwapOracleHarness.json" <<'PY'
+mkdir -p "${OUT_DIR}/V4SwapOracleHarness.sol"
+python3 - "${RAW}" "${OUT_DIR}/V4SwapOracleHarness.sol/V4SwapOracleHarness.json" <<'PY'
 import json, sys
 raw = json.load(open(sys.argv[1]))
 errs = [e for e in raw.get("errors", []) if e.get("severity") == "error"]
@@ -87,5 +89,10 @@ print(f"wrote {sys.argv[2]}")
 PY
 rm -f "${RAW}"
 
+
+# Publish committed bytecode + drift manifest (toolchain-free `cargo test` path).
+if [ "${PUBLISH}" != "0" ]; then
+  "${TD}/publish-artifacts.sh"
+fi
 echo "Tier-3b V4 swap oracle harness built:"
 echo "  V4 (solc 0.8.26): ${TD}/out/V4SwapOracleHarness.sol/V4SwapOracleHarness.json"

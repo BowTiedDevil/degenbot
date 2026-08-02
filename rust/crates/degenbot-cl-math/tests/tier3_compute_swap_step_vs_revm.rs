@@ -29,12 +29,16 @@
 //! The harness-from-reference-library loop (forge/solc → bytecode → revm →
 //! assert) is the real deliverable; the end-to-end payoff is 3b.
 //!
-//! ## Harness build (gated — `#[ignore]`d)
+//! ## Harness bytecode (committed)
 //!
-//! Plain `cargo test --workspace` does not build the harness bytecode, so
-//! this test is `#[ignore]`d. The `just test-tier3-step` recipe runs
-//! `tier3-oracle/build-tier3-harnesses.sh` (compiles V3 via solc 0.7.6 +
-//! V4 via forge 0.8.26) then runs this test with `--include-ignored`.
+//! Runs in the default `cargo test --workspace` suite. The V3/V4
+//! `SwapMath`-harness bytecode is loaded from the committed
+//! `tier3-oracle/artifacts/` tree (no solc/forge needed to RUN). Artifact
+//! integrity is enforced two ways: `tier3_harness_artifacts.rs` hashes the
+//! tracked sources (toolchain-free), and `tier3-oracle/verify-tier3-artifacts.sh`
+//! recompiles every harness and byte-compares it to the committed artifact.
+//! After a harness-source edit, regenerate + publish via
+//! `tier3-oracle/build-tier3-harnesses.sh`.
 
 use std::path::PathBuf;
 
@@ -66,7 +70,7 @@ const _INT24_SIGN_BIT: u32 = 0x0080_0000;
 /// shape — the V3 direct-solc build reshapes to this same shape).
 fn harness_artifact_path(contract_dir: &str, contract: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../tier3-oracle/out")
+        .join("../../../tier3-oracle/artifacts")
         .join(contract_dir)
         .join(format!("{contract}.json"))
 }
@@ -187,7 +191,6 @@ proptest! {
     /// V3 byte-exact: `compute_swap_step_v3` === v3-core `SwapMath.computeSwapStep`
     /// (solc 0.7.6, real bytecode). Amount sign convention: positive = exact-in.
     #[test]
-    #[ignore = "Tier-3a: run via `just test-tier3-step` (builds V3+V4 harness bytecode first)"]
     fn v3_compute_swap_step_is_byte_exact_to_v3_core_bytecode(
         sp_current in arb_sqrt_price(),
         sp_target in arb_sqrt_price(),
@@ -225,7 +228,6 @@ proptest! {
     /// V3; the protocol-fee threading happens at the `Pool.swap` caller, so this
     /// single-step oracle takes the pre-computed combined feePips directly).
     #[test]
-    #[ignore = "Tier-3a: run via `just test-tier3-step` (builds V3+V4 harness bytecode first)"]
     fn v4_compute_swap_step_is_byte_exact_to_v4_core_bytecode(
         sp_current in arb_sqrt_price(),
         sp_target in arb_sqrt_price(),
@@ -270,7 +272,6 @@ proptest! {
 /// step-level math was already byte-exact; the word-boundary divergence lived
 /// in the solver's multi-step orchestration, not here).
 #[test]
-#[ignore = "Tier-3a: run via `just test-tier3-step`"]
 fn v3_pinned_input_anchors_byte_exact_oracle() {
     // Hand-picked: small sqrt prices straddling (current > target → zero_for_one),
     // exact-in, non-trivial liquidity + 0.3% fee (3000 pips).

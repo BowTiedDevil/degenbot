@@ -21,6 +21,8 @@ set -euo pipefail
 
 TD="$(cd "$(dirname "$0")" && pwd)"   # absolute tier3-oracle/
 cd "${TD}"
+OUT_DIR="${OUT_DIR:-${TD}/out}"
+PUBLISH="${PUBLISH:-1}"
 
 # Ensure the canonical v3-core/v4-core reference sources are present
 # (idempotent; no-op if already cloned).
@@ -59,8 +61,8 @@ rm -f "${STD_JSON}"
 
 # Reshape standard-json (contracts["src-v3/...:SwapMathV3Harness"] under `evm`)
 # into foundry's single-contract out/ shape so the Rust loader is uniform.
-mkdir -p "${TD}/out/SwapMathV3Harness.sol"
-python3 - "${RAW}" "${TD}/out/SwapMathV3Harness.sol/SwapMathV3Harness.json" <<'PY'
+mkdir -p "${OUT_DIR}/SwapMathV3Harness.sol"
+python3 - "${RAW}" "${OUT_DIR}/SwapMathV3Harness.sol/SwapMathV3Harness.json" <<'PY'
 import json, sys
 raw = json.load(open(sys.argv[1]))
 errs = [e for e in raw.get("errors", []) if e.get("severity") == "error"]
@@ -80,8 +82,13 @@ PY
 rm -f "${RAW}"
 
 # ── 2. V4 harness + Echo: forge 0.8.26 ─────────────────────────────────────
-(cd "${TD}" && forge build)
+(cd "${TD}" && forge build --out "${OUT_DIR}")
 
+
+# Publish committed bytecode + drift manifest (toolchain-free `cargo test` path).
+if [ "${PUBLISH}" != "0" ]; then
+  "${TD}/publish-artifacts.sh"
+fi
 echo "Tier-3a harnesses built:"
 echo "  V3 (solc 0.7.6): ${TD}/out/SwapMathV3Harness.sol/SwapMathV3Harness.json"
 echo "  V4 (forge 0.8.26): ${TD}/out/SwapMathV4Harness.sol/SwapMathV4Harness.json"
