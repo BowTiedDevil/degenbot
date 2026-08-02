@@ -86,12 +86,20 @@ pub fn calculate_invariant(amp: U256, balances: &[U256]) -> Result<U256> {
         .checked_mul(invariant)
         .ok_or(BalancerMathError::MulOverflow)?;
         // denominator = (A_tot - A_prec) * D / A_prec + (n + 1) * D_P
+        // Canonical `StableMath._calculateInvariant` computes
+        // `divDown((ampTimesTotal - _AMP_PRECISION) * invariant, _AMP_PRECISION)`
+        // — MULTIPLY FIRST, then divide. The earlier divide-then-multiply
+        // ordering dropped up to `AMP_PRECISION - 1` wei and diverged from
+        // the deployed bytecode (caught by the Tier-3 balancer oracle).
         let amp_minus_prec = amp_times_total
             .checked_sub(AMP_PRECISION)
             .ok_or(BalancerMathError::SubOverflow)?;
-        let denom_lhs = math_div_down(amp_minus_prec, AMP_PRECISION)?
-            .checked_mul(invariant)
-            .ok_or(BalancerMathError::MulOverflow)?;
+        let denom_lhs = math_div_down(
+            amp_minus_prec
+                .checked_mul(invariant)
+                .ok_or(BalancerMathError::MulOverflow)?,
+            AMP_PRECISION,
+        )?;
         let n_plus_1 = num_tokens + U256::from(1u64);
         let denom_rhs = n_plus_1
             .checked_mul(d_p)
@@ -440,5 +448,54 @@ mod tests {
             math_div_up(U256::ZERO, U256::from(7u64)).unwrap(),
             U256::ZERO
         );
+    }
+
+    /// Regression (Tier-3 balancer oracle): the V1 `_calculateInvariant`
+    /// denominator must compute `(ampTimesTotal - AMP_PRECISION) * invariant /
+    /// AMP_PRECISION` — MULTIPLY first, then divide (matching canonical
+    /// `StableMath._calculateInvariant`). The earlier divide-then-multiply
+    /// ordering leaked `AMP_PRECISION - 1` wei and diverged from the deployed
+    /// bytecode. A fixture whose `(amp*2 - AMP) / AMP` is non-exact selects the
+    /// divergent branch.
+    #[test]
+    fn v1_invariant_denominator_multiply_before_divide_matches_canonical() {
+        let amp = U256::from(100_111u64); // (amp*2 - 1000) % 1000 != 0
+        let balances = [ONE * U256::from(3u64), ONE * U256::from(7u64)];
+
+        let got = calculate_invariant(amp, &balances).expect("converges");
+
+        // Reference loops with the canonical (multiply-before-divide) and the
+        // buggy (divide-before-multiply) denominator — a mini fingerprint of
+        // the Newton iteration for this 2-token fixture.
+        let n = U256::from(2u64);
+        let amp_times_total = amp * n;
+        let sum_ = balances[0] + balances[1];
+        let mut canonical = sum_;
+        let mut buggy = sum_;
+        for _ in 0..255 {
+            let d_p_c = math_div_down(canonical * canonical, balances[0] * n).unwrap();
+            let d_p_c = math_div_down(d_p_c * canonical, balances[1] * n).unwrap();
+            let d_p_b = math_div_down(buggy * buggy, balances[0] * n).unwrap();
+            let d_p_b = math_div_down(d_p_b * buggy, balances[1] * n).unwrap();
+            let amp_minus = amp_times_total - U256::from(1000u64);
+            let denom_c = math_div_down(amp_minus * canonical, U256::from(1000u64)).unwrap()
+                + (n + U256::from(1u64)) * d_p_c;
+            let denom_b = math_div_down(amp_minus, U256::from(1000u64)).unwrap() * buggy
+                + (n + U256::from(1u64)) * d_p_b;
+            let num_c = (math_div_down(amp_times_total * sum_, U256::from(1000u64)).unwrap()
+                + d_p_c * n)
+                * canonical;
+            let num_b = (math_div_down(amp_times_total * sum_, U256::from(1000u64)).unwrap()
+                + d_p_b * n)
+                * buggy;
+            canonical = math_div_down(num_c, denom_c).unwrap();
+            buggy = math_div_down(num_b, denom_b).unwrap();
+        }
+
+        // The buggy ordering must actually diverge on this fixture (guards
+        // against the regression test silently becoming a no-op).
+        assert_ne!(canonical, buggy, "fixture must select the divergent branch");
+        // And the fixed function took the canonical ordering.
+        assert_eq!(got, canonical);
     }
 }
