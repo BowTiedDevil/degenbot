@@ -37,7 +37,7 @@
 //! core, driven automatically by `resume`.)
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -158,12 +158,6 @@ pub struct BlockPump {
     provider: Arc<AlloyProvider>,
     /// Shutdown flag — set by `stop()` or by a too-deep reorg (graceful exit)
     shutdown: Arc<AtomicBool>,
-    /// The highest block finalized by a pump-initiated gap / `handle_timeout_eager`
-    /// backfill (`backfill_range`). Used by the `PanicLateForward` guard to
-    /// amnesty a trailing WS re-delivery of an already-backfilled block (a
-    /// benign stall-recovery duplicate) instead of falsely declaring the WS
-    /// unreliable (UH2BEZ). `fetch_max` keeps it monotonic across backfills.
-    pump_backfilled_up_to: AtomicU64,
     /// If no header arrives within this window, poll `eth_blockNumber` and
     /// backfill regardless of log activity (dead-`newHeads` recovery — see
     /// `HEADER_STALENESS_SECS`). Overridable in tests via
@@ -250,7 +244,6 @@ impl BlockPump {
             header_staleness: Duration::from_secs(HEADER_STALENESS_SECS),
             log_silence: Duration::from_secs(LOG_SILENCE_SECS),
             log_silence_alarms: 0,
-            pump_backfilled_up_to: AtomicU64::new(0),
         };
 
         // MJXP5Z (Alternative B): single-stream handshake - NO resubscribe.
@@ -746,6 +739,20 @@ impl BlockPump {
         // gated on the truth condition (all dispatched logs applied).
         let mut publish_pending = false;
 
+        // BQ7ZBC — FSM recovery state: `recovery_anchor` is the highest block an
+        // authoritative (eth_getLogs) catch-up has OWNEed — either a live-loop
+        // gap/`handle_timeout_eager` backfill, or (at resume) the backfilled
+        // snapshot→WS first block. Per the single-writer rule (DFQYM5
+        // precedent), the live WS NO LONGER owns any block ≤ `recovery_anchor`:
+        // when a stalled WS recovers and flushes buffered forward logs for
+        // those blocks, they are duplicates of state we already applied and are
+        // dropped (they never reach the `PanicLateForward` hard fault). Reorg
+        // logs (`removed: true`) are NEVER dropped — they always reach the
+        // reorg classifier. A forward ABOVE `recovery_anchor` that is stale
+        // still faults (ADR-008 D3): only blocks the pump itself backfilled are
+        // benign duplicates by construction.
+        let mut recovery_anchor: u64 = 0;
+
         // ADR-008 per-block state machine. The clock is the authority for
         // block completeness (the tombstone) and the cursor; the pump loop is
         // a thin async driver translating its decisions into sink calls +
@@ -863,6 +870,7 @@ impl BlockPump {
                             &mut clock,
                             &mut block_metadata,
                             &mut publish_pending,
+                            &mut recovery_anchor,
                         )
                         .await;
                     } else if last_log_at.elapsed() >= self.log_silence {
@@ -925,6 +933,7 @@ impl BlockPump {
                             &mut clock,
                             &mut block_metadata,
                             &mut publish_pending,
+                            &mut recovery_anchor,
                         )
                         .await;
                     }
@@ -1014,6 +1023,11 @@ impl BlockPump {
                                     &mut publish_pending,
                                 )
                                 .await;
+                                // BQ7ZBC — FSM RESET: the header-gap backfill
+                                // now owns `[old+1, number-1]`; a recovering WS
+                                // flushing buffered logs for that range must be
+                                // discarded (single-writer), not re-asserted.
+                                recovery_anchor = recovery_anchor.max(number - 1);
                             }
                             current_block = number;
                             // LEZJAS: the backfill path solved up to `number`
@@ -1042,6 +1056,12 @@ impl BlockPump {
                                 &mut publish_pending,
                             )
                             .await;
+                            // BQ7ZBC — FSM RESET: extend the single-writer
+                            // recovery anchor for the authoritative header-gap
+                            // catch-up (see the first-header branch above — the
+                            // range this backfill owns must not be re-asserted
+                            // by the recovering WS).
+                            recovery_anchor = recovery_anchor.max(number - 1);
                         }
 
                         current_block = number;
@@ -1081,6 +1101,21 @@ impl BlockPump {
                     }
 
                     let log_block = log.block_number.unwrap_or(current_block);
+                    // BQ7ZBC — FSM single-writer recovery discard. After an
+                    // authoritative eth_getLogs catch-up (`recovery_anchor`), a
+                    // stalled WS that recovers flushes buffered forward logs for
+                    // blocks ≤ the anchor — those are duplicates of state the
+                    // backfill already applied and are DROPPED (they never reach
+                    // `observe_log`/`PanicLateForward`). This mirrors the DFQYM5
+                    // resume-boundary rule, generalized to mid-run recovery.
+                    // Reorg logs (`removed: true`) are NEVER dropped — they must
+                    // reach the reorg classifier to unwind the backfilled range.
+                    // A forward ABOVE `recovery_anchor` that is still stale
+                    // remains a hard ADR-008 D3 fault (only the pump's own
+                    // single-writer range is benign).
+                    if !log.removed && recovery_anchor > 0 && log_block <= recovery_anchor {
+                        continue;
+                    }
                     // Boundary-block delivery alignment (DFQYM5): when the
                     // snapshot→WS gap was closed (snapshot seed S <
                     // first_observed_block W), the backfill above covered
@@ -1238,29 +1273,14 @@ impl BlockPump {
                         }
                         LogDecision::PanicLateForward(b) => {
                             // A removed:false log on a tombstoned block, NOT in a
-                            // reorg → could be unreliable WS (out-of-order /
-                            // duplicated forward events). BUT it can ALSO be the
-                            // trailing flush of a block the pump ITSELF just
-                            // finalised: during a WS stall (slow/bursty endpoint)
-                            // the live-loop gap/`handle_timeout_eager` backfill
-                            // processes + tombstones the range authoritatively via
-                            // `eth_getLogs`, and the delayed WS stream then
-                            // re-delivers a log for that same already-backfilled
-                            // block. That is a benign stall-recovery duplicate —
-                            // the state was already applied — so amnesty it (skip)
-                            // instead of shutting down (UH2BEZ). Any late forward
-                            // ABOVE `pump_backfilled_up_to` (a block the pump did
-                            // NOT itself backfill) still means unreliable WS → shut
-                            // down (ADR-008 D3).
-                            let backfilled_to = self.pump_backfilled_up_to.load(Ordering::Relaxed);
-                            if b <= backfilled_to && backfilled_to > 0 {
-                                tracing::warn!(
-                                    b,
-                                    backfilled_to,
-                                    "BlockPump: late forward for pump-backfilled block — stall-recovery duplicate, skipping (ADR-008 D3 amnesty)"
-                                );
-                                continue;
-                            }
+                            // reorg → unreliable WS (out-of-order / duplicated
+                            // forward events). Blocks ≤ the authoritative
+                            // `recovery_anchor` are already dropped by the
+                            // single-writer recovery discard (BQ7ZBC) before they
+                            // reach this classifier — so firing HERE means b is a
+                            // genuine late forward ABOVE the recovery anchor that
+                            // the pump did NOT itself backfill → unrecoverable
+                            // for correctness → shut down (ADR-008 D3).
                             tracing::error!(
                                 b,
                                 "BlockPump: ADR-008 D3 late forward log on tombstoned block — unreliable WS, shutting down"
@@ -1343,6 +1363,7 @@ impl BlockPump {
         clock: &mut BlockClock,
         block_metadata: &mut HashMap<u64, BlockMetadata>,
         publish_pending: &mut bool,
+        recovery_anchor: &mut u64,
     ) {
         tracing::warn!(
             backfill_timeout_secs = BACKFILL_TIMEOUT_SECS,
@@ -1372,6 +1393,13 @@ impl BlockPump {
             // now — mark the backfilled range solved + clear the logs flag
             // through the sink (mirrors the retired pump-local writes).
             self.sink.set_last_solved_block(lpb);
+            // BQ7ZBC — FSM RESET: the authoritative eth_getLogs catch-up now
+            // OWNS `[old+1, latest]`. A stalled WS that recovers will flush
+            // buffered logs for those same blocks; they are single-writer
+            // duplicates of what we just applied and are dropped (never
+            // reaching `PanicLateForward`). Anomalies ABOVE `recovery_anchor`
+            // still fault.
+            *recovery_anchor = (*recovery_anchor).max(latest_block);
         }
     }
 
@@ -1488,13 +1516,6 @@ impl BlockPump {
                 "BlockPump: backfill found no relevant events"
             );
         }
-        // Record the highest block THIS pump backfilled so the live-loop's
-        // `PanicLateForward` guard can amnesty the trailing WS re-delivery of
-        // an already-backfilled block (a benign stall-recovery duplicate)
-        // instead of falsely declaring the WS unreliable (UH2BEZ). `fetch_max`
-        // keeps the ceiling monotonic across consecutive gap/timeout backfills.
-        self.pump_backfilled_up_to
-            .fetch_max(to_block, Ordering::Relaxed);
     }
 
     /// LOUD assertion of the core WS-delivery invariant (ADR-008 D1): when
@@ -1732,7 +1753,6 @@ impl BlockPump {
             header_staleness: Duration::from_secs(HEADER_STALENESS_SECS),
             log_silence: Duration::from_secs(LOG_SILENCE_SECS),
             log_silence_alarms: 0,
-            pump_backfilled_up_to: AtomicU64::new(0),
         }
     }
 
@@ -2994,60 +3014,122 @@ mod tests {
         );
     }
 
-    /// Green (UH2BEZ): when the pump ITSELF just backfilled through a block,
-    /// a trailing WS `removed:false` log for that block is a benign
-    /// stall-recovery duplicate (the state was already applied authoritatively
-    /// via `eth_getLogs`) — it MUST NOT trigger the ADR-008 D3 shutdown.
+    /// BQ7ZBC — FSM RECOVERY green path: after the header-staleness watchdog
+    /// performs an authoritative catch-up to block 102 (`recovery_anchor = 102`),
+    /// a recovering WS flushes a buffered forward Sync log at block 102 (≤ the
+    /// anchor). It is a single-writer duplicate of the already-applied backfill
+    /// and MUST be dropped — NOT a false ADR-008 D3 shutdown.
     ///
-    /// Mirrors the live stall scenario: gaps backfilled to block 8
-    /// (`pump_backfilled_up_to = 8`), the WS flushes a late sync at block 7
-    /// (≤ 8) — must be skipped, not fatal.
+    /// This is the exact observed failure (block 25670138): catch-up OWNs the
+    /// range, the delayed WS re-delivers it, and the pump must discard.
     #[tokio::test]
-    async fn late_forward_below_pump_backfill_ceiling_does_not_shutdown() {
+    async fn recovery_single_writer_discards_stale_forward_after_backfill() {
         let pool_addr = Address::from([0x44u8; 20]);
-        let (bot, _pool_id, _sub) = bot_with_registered_v2(pool_addr, 5);
+        let (_bot, _pool_id, _sub) = bot_with_registered_v2(pool_addr, 5);
 
-        let (mut pump, _sink, shutdown) = pump_for_test_with_bot(Arc::clone(&bot), Some(5));
-        // Simulate the pump's own gap/timeout backfill having finalized through 8.
-        pump.pump_backfilled_up_to.store(8, Ordering::Relaxed);
+        let (mut pump, _sink, asserter, shutdown) = pump_for_test_sink_and_asserter(Some(100));
+        pump.set_header_staleness_for_test(Duration::from_millis(100));
 
-        let s7 = make_v2_sync_log(pool_addr, U256::from(1_500), U256::from(2_500), 7, false);
-        let s8 = make_v2_sync_log(pool_addr, U256::from(1_600), U256::from(2_600), 8, false);
-        let late = make_v2_sync_log(pool_addr, U256::from(9_999), U256::from(9_999), 7, false);
-        let combined =
-            stream::iter(vec![WsEvent::Log(s7), WsEvent::Log(s8), WsEvent::Log(late)]).boxed();
-        pump.run_test_loop(combined, 5).await;
+        // Watchdog path: `get_block_number` → 102 (triggers backfill), then
+        // `get_logs(102)` → [] (recovery_anchor = 102). Extra `0x66` pads later
+        // ticks (current already 102 → latest>current false → no second backfill).
+        asserter.push_success(&"0x66".to_string()); // eth_blockNumber → 102
+        asserter.push_success(&Vec::<Log>::new()); // eth_getLogs(102) → []
+        asserter.push_success(&"0x66".to_string());
+        asserter.push_success(&"0x66".to_string());
+        asserter.push_success(&"0x66".to_string());
+
+        // Header 101 (anchor), then silence so the watchdog backfills to 102,
+        // then the recovering WS flushes a STALE forward sync at block 102.
+        let stale = make_v2_sync_log(pool_addr, U256::from(9_999), U256::from(9_999), 102, false);
+        let combined = stream::unfold(0u8, move |phase| {
+            let stale = stale.clone();
+            async move {
+                match phase {
+                    0 => Some((
+                        WsEvent::BlockHeader {
+                            number: 101,
+                            timestamp: 1,
+                            base_fee_per_gas: None,
+                            gas_used: 0,
+                            gas_limit: 0,
+                        },
+                        1,
+                    )),
+                    1 => {
+                        tokio::time::sleep(Duration::from_millis(250)).await;
+                        Some((WsEvent::Log(stale), 2))
+                    }
+                    _ => None,
+                }
+            }
+        })
+        .boxed();
+
+        pump.run_test_loop(combined, 100).await;
 
         assert!(
             !shutdown.load(Ordering::Relaxed),
-            "late forward for a pump-backfilled block must be amnestied (UH2BEZ), not fatal"
+            "a stale forward ≤ recovery_anchor (single-writer duplicate) must be discarded, not fatal (BQ7ZBC)"
         );
     }
 
-    /// Guard (UH2BEZ): the amnesty is scoped to blocks the pump itself
-    /// backfilled. A `removed:false` forward log for a tombstoned block ABOVE
-    /// the pump-backfill ceiling is a genuine out-of-order/duplicated WS
-    /// delivery and MUST still shut the pump down (ADR-008 D3 preserved).
+    /// BQ7ZBC — FSM guard: the single-writer discard is scoped to blocks the
+    /// pump itself backfilled (≤ `recovery_anchor`). The header-staleness
+    /// watchdog catch-up anchors at 102, then a `removed:false` forward at
+    /// block 103 arrives late (103 tombstoned by 104, 103 > 102) — a GENUINE
+    /// steady-state anomaly above the recovery anchor → MUST still shut the
+    /// pump down (ADR-008 D3 preserved).
     #[tokio::test]
-    async fn late_forward_above_pump_backfill_ceiling_still_shuts_down() {
+    async fn recovery_anchor_still_faults_stale_forward_above_anchor() {
         let pool_addr = Address::from([0x44u8; 20]);
-        let (bot, _pool_id, _sub) = bot_with_registered_v2(pool_addr, 5);
+        let (_bot, _pool_id, _sub) = bot_with_registered_v2(pool_addr, 5);
 
-        let (mut pump, _sink, shutdown) = pump_for_test_with_bot(Arc::clone(&bot), Some(5));
-        // The pump only backfilled through 6; block 7's tombstone + late
-        // forward are genuine steady-state anomalies → not amnestied.
-        pump.pump_backfilled_up_to.store(6, Ordering::Relaxed);
+        let (mut pump, _sink, asserter, shutdown) = pump_for_test_sink_and_asserter(Some(100));
+        pump.set_header_staleness_for_test(Duration::from_millis(100));
 
-        let s7 = make_v2_sync_log(pool_addr, U256::from(1_500), U256::from(2_500), 7, false);
-        let s8 = make_v2_sync_log(pool_addr, U256::from(1_600), U256::from(2_600), 8, false);
-        let late = make_v2_sync_log(pool_addr, U256::from(9_999), U256::from(9_999), 7, false);
-        let combined =
-            stream::iter(vec![WsEvent::Log(s7), WsEvent::Log(s8), WsEvent::Log(late)]).boxed();
-        pump.run_test_loop(combined, 5).await;
+        asserter.push_success(&"0x66".to_string()); // eth_blockNumber → 102
+        asserter.push_success(&Vec::<Log>::new()); // eth_getLogs(102) → []
+        asserter.push_success(&"0x66".to_string());
+        asserter.push_success(&"0x66".to_string());
+        asserter.push_success(&"0x66".to_string());
+
+        let s103 = make_v2_sync_log(pool_addr, U256::from(1_500), U256::from(2_500), 103, false);
+        let s104 = make_v2_sync_log(pool_addr, U256::from(1_600), U256::from(2_600), 104, false);
+        let late103 = make_v2_sync_log(pool_addr, U256::from(9_999), U256::from(9_999), 103, false);
+        let combined = stream::unfold(0u8, move |phase| {
+            let s103 = s103.clone();
+            let s104 = s104.clone();
+            let late103 = late103.clone();
+            async move {
+                match phase {
+                    0 => Some((
+                        WsEvent::BlockHeader {
+                            number: 101,
+                            timestamp: 1,
+                            base_fee_per_gas: None,
+                            gas_used: 0,
+                            gas_limit: 0,
+                        },
+                        1,
+                    )),
+                    1 => {
+                        tokio::time::sleep(Duration::from_millis(250)).await;
+                        Some((WsEvent::Log(s103), 2))
+                    }
+                    2 => Some((WsEvent::Log(s104), 3)),
+                    3 => Some((WsEvent::Log(late103), 4)),
+                    _ => None,
+                }
+            }
+        })
+        .boxed();
+
+        pump.run_test_loop(combined, 100).await;
 
         assert!(
             shutdown.load(Ordering::Relaxed),
-            "late forward ABOVE the pump-backfill ceiling must still shut down (ADR-008 D3)"
+            "a stale forward ABOVE recovery_anchor must still shut down (ADR-008 D3)"
         );
     }
 
