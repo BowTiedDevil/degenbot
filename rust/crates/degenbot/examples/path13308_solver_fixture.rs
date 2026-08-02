@@ -1,5 +1,6 @@
 //! Path-13308 (V3-V4-V3) snapshot: Möbius solver vs on-chain reality.
 //!
+#![allow(clippy::too_many_lines)]
 //! Loads `tests/fixtures/path13308_v3v4v3_block25664704.json` (the exact pool
 //! states for block 25664704 captured by `scripts/capture_path_13308_fixture.py`
 //! from the DB stale snapshot + verified-current liquidity maps + on-chain
@@ -101,12 +102,15 @@ fn parse_addr(s: &str) -> Address {
     s.parse().unwrap()
 }
 
-fn register_v3(core: &mut BotState, p: &PoolData) -> u64 {
-    let sqrt_override: Option<U256> = std::env::var("FIXTURE_V3_2_SQRT")
-        .ok()
-        .map(|s| s.parse().unwrap());
+fn register_v3(
+    core: &mut BotState,
+    p: &PoolData,
+    sqrt_override: Option<U256>,
+    tick_override: Option<i32>,
+) -> u64 {
     let sqrt_price_x96 =
         sqrt_override.unwrap_or_else(|| p.sqrt_price_x96.as_ref().unwrap().parse().unwrap());
+    let tick = tick_override.unwrap_or_else(|| p.tick.unwrap());
     core.register_v3_pool(&RegisterV3PoolParams {
         address: parse_addr(p.address.as_ref().unwrap()),
         token0: parse_addr(p.token0.as_ref().unwrap()),
@@ -116,7 +120,7 @@ fn register_v3(core: &mut BotState, p: &PoolData) -> u64 {
         factory: Address::ZERO,
         sqrt_price_x96,
         liquidity: p.liquidity.as_ref().unwrap().parse().unwrap(),
-        tick: p.tick.unwrap(),
+        tick,
         tick_data: tick_map(&p.tick_data),
         update_block: p.liquidity_update_block.as_ref().copied().unwrap(),
         coverage: PoolTickCoverage::Tracked,
@@ -133,8 +137,20 @@ fn main() {
     let fx: Fixture = serde_json::from_str(&text).expect("parse fixture");
 
     let engine = ArbitrageEngine::new();
-    let pid0 = register_v3(&mut engine.core.write(), &fx.pools.v3_0);
-    let pid2 = register_v3(&mut engine.core.write(), &fx.pools.v3_2);
+    let v3_2_sqrt: Option<U256> = std::env::var("FIXTURE_V3_2_SQRT")
+        .ok()
+        .map(|s| s.parse().unwrap());
+    let v3_2_tick: Option<i32> = std::env::var("FIXTURE_V3_2_TICK")
+        .ok()
+        .map(|s| s.parse().unwrap());
+    println!("v3_2 override sqrt={v3_2_sqrt:?} tick={v3_2_tick:?}");
+    let pid0 = register_v3(&mut engine.core.write(), &fx.pools.v3_0, None, None);
+    let pid2 = register_v3(
+        &mut engine.core.write(),
+        &fx.pools.v3_2,
+        v3_2_sqrt,
+        v3_2_tick,
+    );
 
     let pv = &fx.pools.v4;
     let pid_hex = pv.pool_id.as_ref().unwrap();

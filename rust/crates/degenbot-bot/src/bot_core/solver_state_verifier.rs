@@ -15,6 +15,15 @@
 //! same fields the existing `liquidity_verifier` deliberately does NOT touch
 //! (it only checks the immutable-init tick *map*). Env-gated; on any mismatch
 //! the caller panics immediately (see `AV42C7` Option A).
+//!
+//! The anchor diff (each hop at its OWN `update_block`) catches reorgs /
+//! same-block sub-tick corruption but tolerates normal latency — a pool honest
+//! at an OLD anchor can still be a frozen snapshot whose on-chain price moved
+//! past it (missed swap events). The staleness re-check closes that gap: for a
+//! CL hop whose `update_block` trails the solve block by more than
+//! [`MAX_CL_STALENESS_BLOCKS`], a FRESH solve-block read that still diverges is
+//! reported as a stale/desynced hop (the PancakeSwap-V3 non-canonical-Swap-
+//! topic0 root cause — see `docs/exploration-no-profit-crash.md`).
 
 use alloy::primitives::{Address, I256, U256};
 use degenbot_rpc::abi::{fetch_v2_reserves, fetch_v3_slot0_liquidity, fetch_v4_slot0_liquidity};
@@ -191,6 +200,26 @@ fn solver_anchor_block(update_block: u64, block: u64) -> u64 {
     }
 }
 
+/// Maximum acceptable lag (in blocks) of a CL pool's stored `update_block`
+/// behind the solve block before it is considered suspicious. The anchor-match
+/// (exact diff at the hop's OWN `update_block`) tolerates 1-2 blocks of normal
+/// pump latency, so this threshold is only reached by a genuinely stale hop
+/// (missed swap events / a non-canonical Swap topic0 that the pump never
+/// decodes, e.g. the PancakeSwap-V3 family — see the no-profit exploration
+/// doc). `is_cl_pool_stale` at the solve block (a fresh read) then confirms
+/// whether on-chain actually MOVED past the solver's snapshot; a quiet-but-
+/// correct pool (chain unchanged) is not flagged.
+const MAX_CL_STALENESS_BLOCKS: u64 = 3;
+
+/// Whether a CL hop's stored `update_block` is old enough to warrant a
+/// fresh solve-block re-check. Skips never-updated pools (`update_block == 0`,
+/// verified at the solve block via the anchor path) and pools at/after the
+/// solve block (skipped by `skip_in_progress_hop`).
+#[must_use]
+fn is_cl_pool_stale(update_block: u64, block: u64) -> bool {
+    update_block > 0 && block.saturating_sub(update_block) > MAX_CL_STALENESS_BLOCKS
+}
+
 /// Whether a hop at `update_block` must be SKIPPED when verifying at solve
 /// `block`: skip hops touched IN the in-progress block (`update_block >= block`)
 /// — their scalar reflects a mid-block capture (an early swap of the block,
@@ -291,6 +320,35 @@ pub async fn verify_solver_hop_states(
                         ),
                     ));
                 }
+                // Staleness re-check: a hop accurate at its OWN (old) anchor can
+                // still be a frozen snapshot whose on-chain price moved past it
+                // (missed swap events — e.g. a PancakeSwap-V3 pool whose Swap
+                // topic0 the pump does not decode). Compare against a FRESH
+                // solve-block read; only flag when the solve-block state diverges
+                // AND the hop is genuinely old. A quiet-but-correct pool (on-chain
+                // unchanged) is not flagged.
+                if is_cl_pool_stale(hop.update_block, block) {
+                    let (b_sqrt, b_tick, b_liq) =
+                        fetch_v3_slot0_liquidity(provider, &pool, Some(block))
+                            .await
+                            .map_err(|e| {
+                                mismatch(i, &format!("V3 solve-block eth_call at {block}: {e}"))
+                            })?;
+                    if !cl_state_matches(s_sqrt, s_liq, s_tick, b_sqrt, b_liq, b_tick) {
+                        return Err(mismatch(
+                            i,
+                            &format!(
+                                "V3 pool {pool} STALE at solve block {block} (solver \
+                                 update_block={ub}, behind by {} blocks): solver snapshot \
+                                 (sqrt={s_sqrt}, liq={s_liq}, tick={s_tick}) no longer matches \
+                                 on-chain at {block} (sqrt={b_sqrt}, liq={b_liq}, tick={b_tick}); \
+                                 likely missed swap events (non-canonical Swap topic0)\n",
+                                block.saturating_sub(hop.update_block),
+                                ub = hop.update_block,
+                            ),
+                        ));
+                    }
+                }
             }
             HopType::V4 => {
                 let Some((pm, pool_id, state_view, s_sqrt, s_liq, s_tick)) = hop.v4 else {
@@ -313,6 +371,28 @@ pub async fn verify_solver_hop_states(
                             ub = hop.update_block,
                         ),
                     ));
+                }
+                if is_cl_pool_stale(hop.update_block, block) {
+                    let (b_sqrt, b_tick, _b_pf, _b_lp, b_liq) =
+                        fetch_v4_slot0_liquidity(provider, &state_view, &pool_id, Some(block))
+                            .await
+                            .map_err(|e| {
+                                mismatch(i, &format!("V4 solve-block eth_call at {block}: {e}"))
+                            })?;
+                    if !cl_state_matches(s_sqrt, s_liq, s_tick, b_sqrt, b_liq, b_tick) {
+                        return Err(mismatch(
+                            i,
+                            &format!(
+                                "V4 pool {pm} (id {:02x}…) STALE at solve block {block} (solver \
+                                 update_block={ub}, behind by {} blocks): solver snapshot \
+                                 (sqrt={s_sqrt}, liq={s_liq}, tick={s_tick}) no longer matches \
+                                 on-chain at {block} (sqrt={b_sqrt}, liq={b_liq}, tick={b_tick})",
+                                pool_id[0],
+                                block.saturating_sub(hop.update_block),
+                                ub = hop.update_block,
+                            ),
+                        ));
+                    }
                 }
             }
             // Solidly / Balancer / Curve — no scalar diff in scope; pass-through.
@@ -355,6 +435,29 @@ mod tests {
         // A genuinely frozen pool (far behind) is NOT skipped — the gate
         // verifies it and would catch the desync.
         assert!(!skip_in_progress_hop(25_658_442, 25_658_682));
+    }
+
+    #[test]
+    fn fresh_pool_is_not_stale() {
+        // A hop 1-2 blocks behind (normal pump latency) is NOT stale.
+        assert!(!is_cl_pool_stale(100, 101));
+        assert!(!is_cl_pool_stale(100, 102));
+        // A hop at/beyond the solve block is not stale (handled by skip).
+        assert!(!is_cl_pool_stale(102, 102));
+        assert!(!is_cl_pool_stale(102, 101));
+        // A never-updated pool (update_block == 0) is not flagged here; the
+        // anchor path verifies it at the solve block instead.
+        assert!(!is_cl_pool_stale(0, 100));
+    }
+
+    #[test]
+    fn stale_pool_is_flagged_after_threshold() {
+        // Exactly at threshold is not stale.
+        assert!(!is_cl_pool_stale(100, 103));
+        // One past the threshold -> stale.
+        assert!(is_cl_pool_stale(100, 104));
+        // The observed failure: a pool ~100 blocks behind IS stale.
+        assert!(is_cl_pool_stale(25_664_550, 25_664_704));
     }
 
     #[test]
