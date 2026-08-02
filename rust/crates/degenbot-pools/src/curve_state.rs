@@ -74,6 +74,12 @@ pub struct RegisterCurvePoolParams {
     /// calculation time via the `CurveDataProvider` + per-block timestamp —
     /// not ported in this sub-slice).
     pub a_coefficient: u128,
+    /// A precision divisor (`A_PRECISION`, typically 100 for a standard
+    /// stableswap). Needed by `stableswap_get_y` (`a_precision` param). The
+    /// `a_coefficient` here is the RAW A (the on-chain stored value); the
+    /// effective internal A used in the invariant is `a_coefficient *
+    /// A_PRECISION` — see the Vyper-equivalent `_a()`.
+    pub a_precision: u128,
     /// Swap fee (in `FEE_DENOMINATOR = 1e10` units — Curve's denominator).
     pub fee: u64,
     /// Admin fee share of the swap fee (in `FEE_DENOMINATOR` units).
@@ -180,6 +186,8 @@ pub struct CurvePoolIdentity {
     pub tokens: Vec<Address>,
     /// Amplification coefficient `A` (raw).
     pub a_coefficient: u128,
+    /// A precision divisor (`A_PRECISION`, typically 100).
+    pub a_precision: u128,
     /// Swap fee (in `FEE_DENOMINATOR = 1e10` units).
     pub fee: u64,
     /// Admin fee share (in `FEE_DENOMINATOR` units).
@@ -300,6 +308,7 @@ impl CurvePoolState {
             address: params.address,
             tokens: params.tokens,
             a_coefficient: params.a_coefficient,
+            a_precision: params.a_precision,
             fee: params.fee,
             admin_fee: params.admin_fee,
             rate_multipliers: params.rate_multipliers,

@@ -23,11 +23,18 @@ use degenbot_balancer_math::fixed_point::{div_down, mul_down};
 use degenbot_balancer_math::stable_math;
 use degenbot_balancer_math::weighted_math;
 use degenbot_balancer_math::PowVersion;
+use degenbot_curve_math::stableswap::{stableswap_get_y, DVariant, YVariant};
 use degenbot_v2_math::IntHopState;
 
 use crate::registry::PoolEntry;
 use crate::v3_state::{v3_simulate_swap, SimulateSwapError, V3PoolState};
 use crate::v4_state::v4_simulate_swap;
+
+// Curve stableswap structural constants (Vyper contract literal values).
+/// Curve native precision scale (1e18).
+const CURVE_PRECISION: u64 = 1_000_000_000_000_000_000;
+/// Curve fee denominator (1e10).
+const CURVE_FEE_DENOMINATOR: u64 = 10_000_000_000;
 
 /// Exact-input swap over a [`PoolEntry`]: returns the output amount, or
 /// [`SimulateSwapError::MissingTickWord(word)`] / [`NotComputable`](SimulateSwapError::NotComputable).
@@ -158,12 +165,14 @@ pub fn simulate_swap(
             simulate_balancer_stable_swap(id, state, zero_for_one, amount_in)
         }
         // Curve (11a): the stableswap pure math (`stableswap_get_y`) is ported
-        // in `degenbot-curve-math` (slice 11c), but the full `get_dy` flow —
+        // in `degenbot-curve-math` (slice 11c). The full `get_dy` flow —
         // variant dispatch, rate-multiplier `xp` scaling, A precision, admin-fee
         // split — is non-trivial enough that the Python companion keeps doing
         // its own math via `swap_fn` until the dedicated wiring slice lands. This
         // Rust core path returns the not-yet-Rust-side sentinel.
-        PoolEntry::Curve(..) => Ok(U256::ZERO),
+        PoolEntry::Curve(id, state) => {
+            simulate_curve_stableswap_swap(id, state, zero_for_one, amount_in)
+        }
     }
 }
 
@@ -288,6 +297,124 @@ fn skip_bpt(
             (v, adj(idx_in), adj(idx_out))
         }
     }
+}
+
+/// Curve standard stableswap exact-input swap.
+///
+/// Mirrors the Python companion `StandardStableswapCalculator.calculate` for
+/// the **standard** stableswap path (`swap_style == 1`): rate-adjust balances
+/// into `xp`, add the rate-scaled input, solve `get_y`, then apply
+/// `dy = xp[j] - y - 1`, deduct the swap fee, and descale by the output token's
+/// rate multiplier (`ConversionStyle.FEE_THEN_RATE`).
+///
+/// Non-`STANDARD` swap styles (crypto, live-admin, etc.) are not yet ported to
+/// the Rust core; those return the `Ok(U256::ZERO)` not-yet-Rust-side sentinel
+/// (the Python companion keeps doing its own math via `swap_fn` for them).
+fn simulate_curve_stableswap_swap(
+    id: &crate::curve_state::CurvePoolIdentity,
+    state: &crate::curve_state::CurvePoolState,
+    zero_for_one: bool,
+    amount_in: U256,
+) -> Result<U256, SimulateSwapError> {
+    // Only the standard stableswap path is ported; advertise the missing ones
+    // as the pre-port sentinel (matches the previous `Ok(U256::ZERO)` arm).
+    if id.swap_style != 1 {
+        return Ok(U256::ZERO);
+    }
+    if amount_in.is_zero() {
+        return Ok(U256::ZERO);
+    }
+    let n_coins = id.n_coins();
+    if n_coins < 2 {
+        return Ok(U256::ZERO);
+    }
+    // 2-token structural convention: zero_for_one → coin (0, 1), else (1, 0).
+    let (coin_in, coin_out) = if zero_for_one {
+        (0usize, 1usize)
+    } else {
+        (1usize, 0usize)
+    };
+
+    let a_precision = U256::from(id.a_precision);
+    let n_u = U256::from(n_coins);
+
+    // Resolve A. Python `_a()` returns `a_coefficient * A_PRECISION`; the
+    // stableswap `amp` is that raw product for the standard path (only
+    // `VARIANT_0` divides by A_PRECISION).
+    let amp = U256::from(id.a_coefficient)
+        .checked_mul(a_precision)
+        .ok_or(SimulateSwapError::NotComputable)?;
+
+    // Rate-adjust balances into xp (Python: `rate * balance // PRECISION`).
+    let xp: Vec<U256> = state
+        .balances
+        .iter()
+        .zip(&id.rate_multipliers)
+        .map(|(&balance, &rate_mult)| {
+            rate_mult
+                .checked_mul(balance)
+                .ok_or(SimulateSwapError::NotComputable)
+                .map(|v| v / U256::from(CURVE_PRECISION))
+        })
+        .collect::<Result<_, _>>()?;
+    if xp.len() != n_coins {
+        return Ok(U256::ZERO);
+    }
+
+    // x = xp[coin_in] + (dx * rates[coin_in] // PRECISION)
+    let dx_scaled = amount_in
+        .checked_mul(id.rate_multipliers[coin_in])
+        .ok_or(SimulateSwapError::NotComputable)?
+        / U256::from(CURVE_PRECISION);
+    let x = xp[coin_in]
+        .checked_add(dx_scaled)
+        .ok_or(SimulateSwapError::NotComputable)?;
+
+    // Variant dispatch: map the opaque u8 discriminants (1-based auto(); the
+    // standard path defaults to STANDARD when an unrecognised/zero value is
+    // carried, as the slice fixtures do).
+    let y_variant = YVariant::try_from_u8(id.y_variant).unwrap_or(YVariant::Standard);
+    let d_variant = DVariant::try_from_u8(id.d_variant).unwrap_or(DVariant::Standard);
+
+    let y = stableswap_get_y(
+        coin_in,
+        coin_out,
+        x,
+        &xp,
+        amp,
+        n_u,
+        a_precision,
+        y_variant,
+        d_variant,
+    )
+    .map_err(|_| SimulateSwapError::NotComputable)?;
+
+    // dy = xp[coin_out] - y - 1
+    let one = U256::from(1u8);
+    let raw_dy = xp[coin_out]
+        .checked_sub(y)
+        .ok_or(SimulateSwapError::NotComputable)?;
+    let raw_dy = if raw_dy.is_zero() {
+        raw_dy
+    } else {
+        raw_dy
+            .checked_sub(one)
+            .ok_or(SimulateSwapError::NotComputable)?
+    };
+
+    // fee = fee * dy // FEE_DENOMINATOR; return (dy - fee) * PRECISION // rate_out
+    let fee = U256::from(id.fee)
+        .checked_mul(raw_dy)
+        .ok_or(SimulateSwapError::NotComputable)?
+        / U256::from(CURVE_FEE_DENOMINATOR);
+    let dy_less_fee = raw_dy
+        .checked_sub(fee)
+        .ok_or(SimulateSwapError::NotComputable)?;
+    let out = dy_less_fee
+        .checked_mul(U256::from(CURVE_PRECISION))
+        .ok_or(SimulateSwapError::NotComputable)?
+        / id.rate_multipliers[coin_out];
+    Ok(out)
 }
 
 #[cfg(test)]

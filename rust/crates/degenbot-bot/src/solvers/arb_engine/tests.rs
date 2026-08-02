@@ -3926,6 +3926,7 @@ mod tests {
             address: addr,
             tokens: vec![Address::repeat_byte(0x01), Address::repeat_byte(0x02)],
             a_coefficient: 10,
+            a_precision: 100,
             fee: 4_000_000, // 0.04% of 1e10
             admin_fee: 0,
             rate_multipliers: vec![precision, precision], // identity rates

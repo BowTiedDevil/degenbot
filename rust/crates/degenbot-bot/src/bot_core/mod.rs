@@ -4020,6 +4020,7 @@ mod tests {
             address: Address::from([0xc0u8; 20]),
             tokens: vec![Address::ZERO, Address::from([0x01u8; 20])],
             a_coefficient: 100,
+            a_precision: 100,
             fee: 4_000_000,
             admin_fee: 5_000_000_000,
             rate_multipliers: vec![U256::from(1u64), U256::from(1u64)],

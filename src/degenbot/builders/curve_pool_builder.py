@@ -275,6 +275,7 @@ class CurvePoolBuilder:
             address=address,
             tokens=[t.address for t in tokens],
             a_coefficient=a_coefficient,
+            a_precision=100,
             fee=fee,
             admin_fee=admin_fee,
             rate_multipliers=list(rate_multipliers),

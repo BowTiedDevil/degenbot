@@ -958,6 +958,7 @@ class PyBot:
         address: str,
         tokens: list[str],
         a_coefficient: int,
+        a_precision: int,
         fee: int,
         admin_fee: int,
         rate_multipliers: list[int],

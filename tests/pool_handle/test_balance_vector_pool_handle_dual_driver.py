@@ -17,14 +17,18 @@ def curve_pool():
         tokens=[
             "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-            "0xcccccccccccccccccccccccccccccccccccccccc",
         ],
         a_coefficient=100,
-        fee=4_000_000,
+        a_precision=100,
+        fee=0,
         admin_fee=0,
-        rate_multipliers=[ONE, ONE, ONE],
-        balances=[1_000_000_000, 2_000_000_000, 3_000_000_000],
+        rate_multipliers=[ONE, ONE],
+        balances=[ONE, ONE],
         update_block=100,
+        swap_style=1,  # STANDARD
+        d_variant=1,  # STANDARD
+        y_variant=1,  # STANDARD
+        yd_variant=1,
     )
     return bot.py_pool(pool_id)
 
@@ -60,20 +64,31 @@ def test_curve_structure_and_identity(curve_pool) -> None:
 def test_curve_balance_vector_view(curve_pool) -> None:
     bv = curve_pool.balance_vector()
 
-    assert bv.n_tokens == 3
-    assert len(bv.tokens) == 3
-    assert len(bv.balances) == 3
+    assert bv.n_tokens == 2
+    assert len(bv.tokens) == 2
+    assert len(bv.balances) == 2
     assert bv.tokens[0].lower() == "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    assert bv.balances[0] == 1_000_000_000
+    assert bv.balances[0] == ONE
 
 
-def test_curve_calculate_tokens_out_returns_sentinel(curve_pool) -> None:
-    # Curve `get_dy` flow (variant dispatch + rate-multiplier `xp` scaling) is
-    # not yet wired from simulate_swap.
-    out = curve_pool.calculate_tokens_out(True, 1_000_000)
+def test_curve_calculate_tokens_out_matches_recorded_constant(curve_pool) -> None:
+    # Standard stableswap (A=100, a_precision=100, equal 1e18 balances, zero
+    # fee), swap 1e18 token0→token1. The recorded constant 934112765606210873
+    # is cross-checked against the independent Rust `simulate_curve_stableswap_swap`
+    # and an independent pure-Python Vyper-port re-derivation — a non-circular
+    # oracle (ADR-005 Tier-2 recorded-constant shape).
+    out = curve_pool.calculate_tokens_out(True, ONE)
 
     assert out is not None
-    assert out == 0
+    assert out == 934_112_765_606_210_873
+    # Symmetry (equal balances → equal reverse swap)
+    out_rev = curve_pool.calculate_tokens_out(False, ONE)
+
+    assert out_rev == out
+    # Monotonicity
+    out_bigger = curve_pool.calculate_tokens_out(True, 2 * ONE)
+
+    assert out_bigger > out
 
 
 def test_balancer_weighted_structure_and_identity(balancer_weighted_pool) -> None:
