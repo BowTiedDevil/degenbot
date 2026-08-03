@@ -37,17 +37,20 @@ TARGET = 0  # FILL: solve block from the live [sim-revert-swap] log
 DB = os.path.expanduser("~/.config/degenbot/degenbot.db")
 SV = "0x7fFE42C4a5DEeA5b0feC41C94C136Cf115597227"  # V4 StateView
 
-# FILL: the identity of the fee-1 V3-V4-V3 path (live paths 10234/10338).
-V3_0 = "0x0000000000000000000000000000000000000000"  # hop0 V3 (fee 30)
-V3_2 = "0x0000000000000000000000000000000000000000"  # hop2 V3 (fee 25)
+# The fee-1 V3-V4-V3 path identity recovered from bot_run.log (paths 10234/10338):
+#   hop0 V3 = Uniswap USDT/WETH 0.30% (solver fee "30")
+#   hop1 V4 = USDC/USDT pool_id 0x76f75965... (lp_fee=50/1e6, protocol_fee=53261, t.s.=1)
+#   hop2 V3 = PancakeSwap USDC/WETH 0.25% (solver fee "25")
+V3_0 = "0x4e68ccd3e89f51c3074ca5072bbac773960dfa36"  # hop0 V3 (Uniswap WETH/USDT 3000)
+V3_2 = "0x19ac5f80ec17497d0e585b953100e6d18c330040"  # hop2 V3 (Pancake USDC/WETH 2500)
 V4_MGR = "0x000000000004444c5dc75cb358380d2e3de08a90"  # canonical PoolManager
-V4_PID = None  # FILL: v4_pool_id of the fee-1 pool (USDC-currency0, fee=1)
+V4_PID = "0x76f75965083b5bfcc0b96f9c5e77e9e00f80b377def5e7625866013fa3059080"
 
-# FILL: the recorded live-observed V4 hop (from the [sim-revert-swap] log).
+# historical overdraw reproduction from the prior live session (paths 10234/10338)
 RECORDED_V4_HOP_INDEX = 1
-RECORDED_V4_INPUT = None  # FILL: exact-in USDT fed to the V4 pool (prev hop out)
-RECORDED_V4_PREDICTED = None  # FILL: solver hop_outputs[i] (was 9586)
-RECORDED_V4_ACTUAL = None  # FILL: on-chain actual_out (was 9585)
+RECORDED_V4_INPUT = None  # FILL when re-observed: exact-in USDT fed to the V4 pool
+RECORDED_V4_PREDICTED = 9586  # solver hop_outputs[1]
+RECORDED_V4_ACTUAL = 9585  # on-chain actual_out
 
 # selectors
 SLOT0 = "0x3850c7bd"

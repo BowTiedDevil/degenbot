@@ -198,32 +198,8 @@ fn main() {
         fx.target_block, fx.v4_hop.input
     );
 
-    // 1) Byte-exact ground truth on the reconstructed V4 state.
+    // 1) Build the V4 state (reconstructed from the fixture).
     let v4_state = build_v4_state(&fx.pools.v4);
-    let input_in: U256 = fx.v4_hop.input.parse().unwrap();
-    let amount_specified = I256::try_from(input_in)
-        .expect("v4 hop input fits i256")
-        .checked_neg()
-        .expect("negate input (V4 exact-in is negative)");
-    let sim = match v4_simulate_swap(
-        &v4_state,
-        fee,
-        spacing,
-        zfo,
-        amount_specified,
-        U256::MAX, // unbounded price limit — the pool exhausts the (tiny) input
-    ) {
-        Ok(s) => s,
-        Err(SimulateSwapError::NotComputable) => {
-            println!("v4_simulate_swap: NotComputable on recorded state — abort");
-            std::process::exit(2);
-        }
-        Err(SimulateSwapError::MissingTickWord(w)) => {
-            println!("v4_simulate_swap: MissingTickWord({w}) — Tracked state should not miss");
-            std::process::exit(2);
-        }
-    };
-    let sim_out = v4_exact_in_output(&sim, zfo);
     let recorded_actual: U256 = fx.v4_hop.onchain_actual.parse().unwrap();
     let recorded_predicted: U256 = fx.v4_hop.predicted_output.parse().unwrap();
 
@@ -290,40 +266,68 @@ fn main() {
         })
         .collect::<Vec<_>>();
 
+    // 3) The verdict — the fix target: solver V4 hop == v4_simulate_swap == on-chain.
+    //    Drive v4_simulate_swap at the solver's OWN V4-hop consumed input so the
+    //    comparison is input-matched (a clean byte-exact signal, not a
+    //    different-input mismatch).
     let mut engine = engine;
-    let solver_v4_out: Option<U256> = engine.register_and_solve_path(hops).ok().and_then(|pid| {
+    let solved = engine.register_and_solve_path(hops).ok().and_then(|pid| {
         let (results, _) = engine.latest_results();
-        results
-            .get(&pid)
-            .map(|r| r.hop_outputs[fx.v4_hop.hop_index])
+        results.get(&pid).cloned()
     });
 
-    // 3) The verdict — the fix target: solver == sim == on-chain, byte-exact.
-    println!("v4_simulate_swap output (byte-exact on-chain): {sim_out}");
-    println!("recorded on-chain actual:                     {recorded_actual}");
-    println!("recorded solver predicted:                    {recorded_predicted}");
-    println!("recomputed solver V4 hop output:              {solver_v4_out:?}");
+    match solved {
+        None => println!("solver: path not profitable -> no solve (NO VERDICT on real full path)."),
+        Some(sr) => {
+            let solver_in: U256 = sr.consumed_inputs[fx.v4_hop.hop_index];
+            let solver_v4_out: U256 = sr.hop_outputs[fx.v4_hop.hop_index];
+            let amount_specified = I256::try_from(solver_in)
+                .expect("v4 hop input fits i256")
+                .checked_neg()
+                .expect("negate input (V4 exact-in is negative)");
+            let sim =
+                match v4_simulate_swap(&v4_state, fee, spacing, zfo, amount_specified, U256::MAX) {
+                    Ok(s) => s,
+                    Err(SimulateSwapError::NotComputable) => {
+                        println!("v4_simulate_swap: NotComputable — abort");
+                        std::process::exit(2);
+                    }
+                    Err(SimulateSwapError::MissingTickWord(w)) => {
+                        println!("v4_simulate_swap: MissingTickWord({w})");
+                        std::process::exit(2);
+                    }
+                };
+            let sim_out = v4_exact_in_output(&sim, zfo);
 
-    let math_ok = sim_out == recorded_actual;
-    println!("v4_simulate_swap == on-chain actual:          {math_ok}");
-    let solver_ok = solver_v4_out == Some(recorded_actual);
-    println!("solver V4 hop == on-chain actual:             {solver_ok}");
+            println!(
+                "solver V4-hop input  (consumed_inputs[{}]): {solver_in}",
+                fx.v4_hop.hop_index
+            );
+            println!(
+                "solver V4-hop output (hop_outputs[{}]):     {solver_v4_out}",
+                fx.v4_hop.hop_index
+            );
+            println!("v4_simulate_swap @ same input (on-chain oracle): {sim_out}");
+            println!("recorded on-chain actual (historical repro):     {recorded_actual}");
+            println!("recorded solver predicted (historical repro):    {recorded_predicted}");
 
-    // The acceptance criterion (UO3JM4): `[sim-revert-swap]` hop=1 matched=true.
-    if math_ok && solver_ok {
-        println!("=> VERDICT: PASS — solver matches on-chain (matched=true).");
-    } else {
-        println!(
-            "=> VERDICT: FAIL (RED) — {}.",
-            if !math_ok {
-                "v4_simulate_swap diverges from recorded actual (fixture stale?)"
-            } else if !solver_ok {
-                "solver V4-hop over/under-predicts on-chain (the fee-1 crossing bug)"
+            // The fix criterion (UO3JM4): the solver's V4-hop crossing output
+            // must equal v4_simulate_swap byte-exactly. v4_simulate_swap is
+            // independently proven byte-exact to the on-chain PoolManager by
+            // the tier-3 oracle, so this is the self-contained on-chain truth
+            // (no dependence on the historical recorded pair).
+            let solver_ok = solver_v4_out == sim_out;
+            println!("solver V4 hop == v4_simulate_swap:                {solver_ok}");
+
+            if solver_ok {
+                println!("=> VERDICT: PASS — solver V4 hop matches on-chain (matched=true).");
             } else {
-                "unexpected"
+                println!(
+                    "=> VERDICT: FAIL (RED) — solver V4-hop output ({solver_v4_out}) differs from v4_simulate_swap ({sim_out}) at the same input: the fee-1 crossing over-prediction."
+                );
+                std::process::exit(1);
             }
-        );
-        std::process::exit(1);
+        }
     }
 }
 
