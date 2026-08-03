@@ -660,17 +660,30 @@ impl ReorgJournal<V3BlockDelta> {
             for (tick_idx, tick_before) in &popped.tick_priors {
                 accumulated_priors.insert(*tick_idx, tick_before.clone());
             }
-            // scalar_priors: newest-with-`Some` wins. We pop newest → oldest,
-            // so the first popped-with-`Some` is the newest-with-`Some`; that
-            // delta's "before" scalars ARE the scalar state just before the
-            // target block (scalars are sequential: each delta records its own
-            // pre-state, and the pre-state of the most recent scalar-changing
-            // event in the rolled-back range = the scalar state just before
-            // the target block). If no popped delta has `Some` (all-tick-only
-            // rollback), `scalar_priors` stays `None` — caller skips scalar
-            // write-back (current scalars already correct). See ADR-004.
-            if scalar_priors.is_none() {
-                scalar_priors = popped.scalar_priors;
+            // scalar_priors: oldest-with-`Some` wins. We pop newest → oldest,
+            // so the LAST popped-with-`Some` is the OLDEST scalar-changing
+            // delta in the rolled-back range. Scalars are sequential: each
+            // delta records its own pre-state, so the pre-state of the oldest
+            // scalar-changing event in the rolled-back range = the scalar
+            // state just after everything below the target (all tick-only /
+            // pre-target deltas, which are NOT popped) = the scalar state just
+            // before the target block. This holds for ANY number of scalar
+            // deltas in the range (a Swap chain, or a Swap + an in-range
+            // Mint/Burn — in-range liquidity events now adjust the scalar).
+            // "Newest-with-`Some`" would return the OLDER scalar delta's
+            // AFTER-state when two or more distinct-block scalar deltas are
+            // rolled back together, silently leaving scalars mid-chain instead
+            // of at the pre-target value.
+            //
+            // Same-block scalar deltas never appear here: `push_delta`
+            // coalesces them into one delta keeping the EARLIEST scalar priors
+            // (see `push_delta_coalesce_*` tests), so this loop sees at most
+            // one scalar delta per block. If no popped delta has `Some`
+            // (all-tick-only rollback), `scalar_priors` stays `None` — caller
+            // skips scalar write-back (current scalars already correct). See
+            // ADR-004.
+            if let Some(p) = popped.scalar_priors {
+                scalar_priors = Some(p);
             }
             oldest_popped_block = Some(popped.block);
         }
@@ -1171,21 +1184,20 @@ mod v3_delta_priors_tests {
     }
 
     #[test]
-    fn restore_picks_newest_with_some_scalar_priors_across_tick_only_gap() {
+    fn restore_returns_single_popped_scalar_delta_before_state() {
         // What: journal blocks 1 (Some, S0), 5 (None, tick-only), 10 (Some, S1).
-        // Restoring before block 7 pops blocks 10 and 5 and must return
+        // Restoring before block 7 pops ONLY block 10 (block 5 and block 1 are
+        // below the target and NOT popped) and must return
         // `scalar_priors: Some(S1)` — the pre-block-10 scalars, which equal
         // the post-block-5 scalars (block 5 was tick-only) = the scalar state
         // just before block 7.
         //
-        // Why: pins the **newest-with-`Some`** rule for `scalar_priors`
-        // (scalars are sequential; the pre-state of the most recent
-        // scalar-changing event in the rolled-back range = the scalar state
-        // just before the target block). This is the INVERSE of the tick-priors
-        // "oldest wins" rule and a subtle correctness property invented by
-        // ADR-004's `Option<ScalarPriors>` refactor — a future maintainer who
-        // flips it to "oldest wins" would silently corrupt reorg rollback
-        // across mixed tick-only + scalar-changing events.
+        // Why: pins the oldest-with-`Some` rule for the rolled-back range's
+        // scalar priors. Here the range contains exactly ONE scalar-changing
+        // delta (block 10), so its "before" IS the pre-target scalar state —
+        // the rule is only distinguishable from a naive "first `Some`" when
+        // the range holds TWO or more distinct-block scalar deltas (covered by
+        // `restore_rolls_back_two_distinct_block_scalar_deltas_to_oldest`).
         let s0 = ScalarPriors {
             sqrt_price_x96_before: U256::from(100u64),
             liquidity_before: 10,
@@ -1206,12 +1218,50 @@ mod v3_delta_priors_tests {
         assert_eq!(
             result.scalar_priors,
             Some(s1),
-            "newest-with-Some (block 10's S1) must win across the tick-only gap at block 5"
+            "single scalar delta in the popped range (block 10's S1) is the pre-target state"
         );
         assert_eq!(
             result.block, 10,
             "the popped delta's block (block 10) is the restore point — only block 10 had block >= target (7); block 5 is below the target and is NOT popped"
         );
+    }
+
+    #[test]
+    fn restore_rolls_back_two_distinct_block_scalar_deltas_to_oldest() {
+        // What: journal has TWO scalar-changing deltas at DIFFERENT blocks — a
+        // Swap at block 5 (prior = pre-Swap S0) and an in-range Mint at block 6
+        // (prior = post-Swap S1). Restoring before block 5 pops BOTH and must
+        // return S0 (the OLDEST popped scalar delta's before-state = the scalar
+        // state just before the target), NOT S1 (the newer delta's before,
+        // which equals the older delta's AFTER — mid-chain, wrong).
+        //
+        // Why: an in-range Mint/Burn is now a scalar-changing event (it
+        // adjusts active liquidity), so reorg rollback across a Swap followed
+        // by an in-range liquidity event is a real, reachable shape. The
+        // old "newest-with-`Some`" rule returned S1 and silently left scalars
+        // one event into the chain instead of at the pre-target state.
+        let s0 = ScalarPriors {
+            sqrt_price_x96_before: U256::from(100u64),
+            liquidity_before: 10,
+            tick_before: 0,
+        };
+        let s1 = ScalarPriors {
+            sqrt_price_x96_before: U256::from(200u64),
+            liquidity_before: 20,
+            tick_before: 5,
+        };
+
+        let mut j = ReorgJournal::<V3BlockDelta>::new(8);
+        j.push_delta(v3_delta(5, Some(s0))); // Swap @5
+        j.push_delta(v3_delta(6, Some(s1))); // in-range Mint @6
+
+        let result = j.restore_before_block(5);
+        assert_eq!(
+            result.scalar_priors,
+            Some(s0),
+            "rollback across two distinct-block scalar deltas unwinds to the OLDEST before-state (S0), not the newer mint's S1"
+        );
+        assert_eq!(result.block, 5, "restore point is the oldest popped block");
     }
 
     #[test]

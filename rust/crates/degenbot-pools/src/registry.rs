@@ -463,10 +463,14 @@ pub trait ConcentratedLiquidityPoolMut: ConcentratedLiquidityPool {
     /// `Tick.update`), advances `update_block`, invalidates the tick-range
     /// cache.
     ///
-    /// Journal-capture policy (ADR-004): the delta carries `scalar_priors: None`
-    /// — Mint/Burn/ModifyLiquidity mutate `tick_data` only, NOT the active
-    /// `liquidity` scalar, so restore skips the scalar write-back. Only the
-    /// two boundary-tick priors (captured BEFORE mutation) are reverse-applied.
+    /// Journal-capture policy: when the `[tick_lower, tick_upper)` region
+    /// straddles the pool's current `tick`, the event ALSO changes the on-chain
+    /// active `liquidity` scalar by `delta` (a Mint adds range liquidity to the
+    /// active pool; a Burn removes it). In that case the delta carries
+    /// `scalar_priors: Some(..)` so restore rolls the scalar back. Out-of-range
+    /// events mutate `tick_data` only and carry `scalar_priors: None` (ADR-004
+    /// — restore skips the scalar write-back). The two boundary-tick priors
+    /// (captured BEFORE mutation) are reverse-applied in both cases.
     fn apply_liquidity_update(
         &mut self,
         tick_lower: i32,
@@ -474,6 +478,51 @@ pub trait ConcentratedLiquidityPoolMut: ConcentratedLiquidityPool {
         liquidity_delta: i128,
         block_number: u64,
     );
+}
+
+/// Compute the new active (in-range) `liquidity` scalar when a Mint/Burn/
+/// `ModifyLiquidity` event's `[tick_lower, tick_upper)` region straddles the
+/// pool's current `tick`.
+///
+/// Parity with the pure reference
+/// `degenbot-cl-math::cl_lib::liquidity_mapping::apply_liquidity_mapping_update`
+/// and the Python companions (`UniswapV3Pool`/`UniswapV4Pool.update_liquidity_map`):
+/// an in-range liquidity event changes the pool's on-chain `liquidity` field by
+/// `delta` in addition to the boundary-tick map mutation. Without this the
+/// solver's active-liquidity scalar drifts from on-chain even though
+/// `sqrt_price_x96` / `tick` stay byte-identical — an in-range Burn leaves it
+/// too high (capable of overdrawing / wrong-crossing estimates), an in-range
+/// Mint leaves it too low.
+///
+/// Computed in wide `I256` so the intermediate never overflows for valid
+/// inputs. Returns `Some(new_liquidity)` when the current tick is in range,
+/// else `None` (out-of-range events leave the scalar untouched).
+///
+/// # Panics
+///
+/// Panics if the in-range result would be negative (an invariant violation —
+/// on-chain liquidity can never be negative) or exceeds `u128::MAX` (real
+/// surprise overflow). Out-of-range events never reach the arithmetic.
+fn in_range_active_liquidity(
+    current_liquidity: u128,
+    current_tick: i32,
+    tick_lower: i32,
+    tick_upper: i32,
+    liquidity_delta: i128,
+) -> Option<u128> {
+    if !(tick_lower <= current_tick && current_tick < tick_upper) {
+        return None;
+    }
+    let base = I256::try_from(U256::from(current_liquidity)).expect("u128 fits I256");
+    let delta = I256::try_from(liquidity_delta).expect("i128 fits I256");
+    let new_active = base + delta;
+    assert!(
+        new_active >= I256::ZERO,
+        "in-range liquidity adjustment violated invariant: {base} + {delta} < 0"
+    );
+    let narrowed =
+        u128::try_from(new_active).expect("non-negative in-range reachable liquidity fits u128");
+    Some(narrowed)
 }
 
 impl ConcentratedLiquidityPoolMut for V3PoolState {
@@ -549,6 +598,8 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
         liquidity_delta: i128,
         block_number: u64,
     ) {
+        let in_range = tick_lower <= self.tick && self.tick < tick_upper;
+
         let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(2);
         for &tick_idx in &[tick_lower, tick_upper] {
             let prior = self.tick_data.get(&tick_idx).cloned();
@@ -571,9 +622,28 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
 
         self.journal.push_delta(V3BlockDelta {
             block: block_number,
-            scalar_priors: None,
+            scalar_priors: if in_range {
+                Some(ScalarPriors {
+                    sqrt_price_x96_before: self.sqrt_price_x96,
+                    liquidity_before: self.liquidity,
+                    tick_before: self.tick,
+                })
+            } else {
+                None
+            },
             tick_priors: journaled_priors,
         });
+
+        if in_range {
+            self.liquidity = in_range_active_liquidity(
+                self.liquidity,
+                self.tick,
+                tick_lower,
+                tick_upper,
+                liquidity_delta,
+            )
+            .expect("in-range branch implies the range straddles the current tick");
+        }
 
         if block_number > self.update_block {
             self.update_block = block_number;
@@ -658,6 +728,8 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
         liquidity_delta: i128,
         block_number: u64,
     ) {
+        let in_range = tick_lower <= self.tick && self.tick < tick_upper;
+
         let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(2);
         for &tick_idx in &[tick_lower, tick_upper] {
             let prior = self.tick_data.get(&tick_idx).cloned();
@@ -680,9 +752,28 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
 
         self.journal.push_delta(V3BlockDelta {
             block: block_number,
-            scalar_priors: None,
+            scalar_priors: if in_range {
+                Some(ScalarPriors {
+                    sqrt_price_x96_before: self.sqrt_price_x96,
+                    liquidity_before: self.liquidity,
+                    tick_before: self.tick,
+                })
+            } else {
+                None
+            },
             tick_priors: journaled_priors,
         });
+
+        if in_range {
+            self.liquidity = in_range_active_liquidity(
+                self.liquidity,
+                self.tick,
+                tick_lower,
+                tick_upper,
+                liquidity_delta,
+            )
+            .expect("in-range branch implies the range straddles the current tick");
+        }
 
         if block_number > self.update_block {
             self.update_block = block_number;

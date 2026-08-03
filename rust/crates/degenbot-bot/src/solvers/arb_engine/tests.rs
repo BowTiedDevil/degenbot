@@ -1819,13 +1819,16 @@ mod tests {
 
     #[test]
     fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
-        // What: a V3 pool gets a Swap (scalar state change at block 5) and a
-        // Mint (tick_data mutation at block 6). A reorg targeting block 5
-        // must roll both back: swap scalars return to registration values, and
-        // the Mint-initialized tick is removed from tick_data.
+        // What: a V3 pool gets a Swap (scalar state change at block 5) and an
+        // in-range Mint (tick_data mutation + active-liquidity scalar bump at
+        // block 6; the swap moved the tick to 60, inside [60, 120)). A reorg
+        // targeting block 5 must roll both back: swap scalars return to
+        // registration values, the Mint's active-liquidity bump is unwound,
+        // and the Mint-initialized tick is removed from tick_data.
         // Why: ADR-003 — V3 reorg rollback reaches the live hot path for the
         // first time (S2b). apply_v3_swap journals scalars; the restore path
-        // pops them + reverse-applies tick priors.
+        // pops them + reverse-applies tick priors. An in-range Mint journals
+        // scalar_priors: Some so the bump rolls back too.
         use crate::bot_core::TickInfo;
         use crate::solvers::arb_engine::PoolTickCoverage;
         use alloy::primitives::{I256, U128};
@@ -1882,7 +1885,9 @@ mod tests {
             .write()
             .apply_v3_swap(pool_addr, swapped_sp, swapped_liq, swapped_tick, 5, &[]);
 
-        // Mint at block 6: adds liquidity at [+60, +120].
+        // Mint at block 6: adds liquidity at [+60, +120] — in-range because the
+        // swap moved the tick to 60, so the active `liquidity` scalar also gets
+        // +500 (parity with on-chain + the cl-math pure reference).
         engine
             .core
             .write()
@@ -1892,7 +1897,11 @@ mod tests {
             let core = engine.core.read();
             let s = core.get_v3_pool(pool_id).expect("v3 pool registered");
             assert_eq!(s.sqrt_price_x96, swapped_sp, "swap applied at block 5");
-            assert_eq!(s.liquidity, swapped_liq);
+            assert_eq!(
+                s.liquidity,
+                swapped_liq + 500,
+                "in-range mint adds 500 to the active liquidity scalar"
+            );
             assert_eq!(s.tick, swapped_tick);
             assert_eq!(
                 s.tick_data.len(),

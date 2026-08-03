@@ -1067,9 +1067,15 @@ mod apply_inherent_tests {
     }
 
     #[test]
-    fn apply_liquidity_update_mutates_ticks_advances_block_without_changing_scalars() {
+    fn apply_liquidity_update_out_of_range_is_tick_only_without_changing_scalars() {
+        // Out-of-range Mint/Burn ([lower, upper) does not straddle the current
+        // tick) mutates the boundary ticks only — active `liquidity` scalar is
+        // untouched. Mirrors the V3 tick-only contract (ADR-004).
         let liq = 1_000_000u128;
         let mut state = state_with_position(liq);
+        // Move current tick outside [-60, 60) so the applied range is
+        // out-of-range.
+        state.tick = 500;
 
         let sp_before = state.sqrt_price_x96;
         let liq_before = state.liquidity;
@@ -1106,6 +1112,58 @@ mod apply_inherent_tests {
         assert_eq!(state.tick, tick_before);
         assert_eq!(state.journal.len(), before_len + 1);
         assert_eq!(state.journal.newest_block(), Some(9));
+    }
+
+    #[test]
+    fn apply_liquidity_update_in_range_mint_adjusts_active_liquidity_and_restores() {
+        // In-range Mint adds the delta to the ACTIVE `liquidity` scalar (V4
+        // twin of the V3 in-range adjust). scalar_priors: Some is journaled so
+        // a reorg restore rolls the scalar back.
+        let liq = 1_000_000u128;
+        let mut state = state_with_position(liq); // current tick 0 ∈ [-60, 60)
+        let pre_liq = state.liquidity;
+        let pre_sqrt = state.sqrt_price_x96;
+
+        state.apply_liquidity_update(-60, 60, 123_456i128, 9);
+
+        assert_eq!(
+            state.liquidity,
+            pre_liq + 123_456,
+            "in-range mint adds to active liquidity"
+        );
+        assert_eq!(
+            state.sqrt_price_x96, pre_sqrt,
+            "liquidity event does not move price"
+        );
+        assert_eq!(state.tick, 0);
+        assert_eq!(state.update_block, 9);
+
+        let res: Result<(), JournalError> = state.restore_before_block(9);
+        assert!(res.is_ok());
+        assert_eq!(
+            state.liquidity, pre_liq,
+            "restore undoes the in-range scalar adjust"
+        );
+        assert_eq!(state.sqrt_price_x96, pre_sqrt);
+        assert_eq!(state.tick, 0);
+    }
+
+    #[test]
+    fn apply_liquidity_update_in_range_burn_reduces_active_liquidity() {
+        // In-range Burn removes the magnitude from the ACTIVE `liquidity`
+        // scalar (V4 twin) — the desync direction that over-predicts pool
+        // liquidity on mainnet.
+        let liq = 1_000_000u128;
+        let mut state = state_with_position(liq);
+        let pre_liq = state.liquidity;
+
+        state.apply_liquidity_update(-60, 60, -250_000i128, 9);
+
+        assert_eq!(
+            state.liquidity,
+            pre_liq - 250_000,
+            "in-range burn removes active liquidity"
+        );
     }
 
     #[test]
