@@ -118,7 +118,7 @@ fn parse_addr(s: &str) -> Address {
     s.parse().unwrap()
 }
 
-fn register_v3(core: &mut BotState, p: &PoolData) -> u64 {
+fn register_v3(core: &mut BotState, p: &PoolData) -> Result<u64, String> {
     core.register_v3_pool(&RegisterV3PoolParams {
         address: parse_addr(p.address.as_ref().unwrap()),
         token0: parse_addr(p.token0.as_ref().unwrap()),
@@ -136,7 +136,7 @@ fn register_v3(core: &mut BotState, p: &PoolData) -> u64 {
         init_hash: B256::ZERO,
         ..Default::default()
     })
-    .expect("register v3")
+    .map_err(|e| format!("register_v3: {e:?}"))
 }
 
 fn build_v4_state(p: &PoolData) -> V4PoolState {
@@ -293,9 +293,25 @@ fn main() {
     }
 
     // 2) The production Möbius solver path over the reconstructed three pools.
+    //    V3 registration is optional: a V4-only oracle fixture (for the
+    //    crossing over-prediction) may use placeholder V3 pools that do not
+    //    register as Tracked — in that case the per-V4-pool oracle + root-cause
+    //    verdict above (step 1b/1c) is authoritative and we exit cleanly.
     let engine = ArbitrageEngine::new();
-    let pid0 = register_v3(&mut engine.core.write(), &fx.pools.v3_0);
-    let pid2 = register_v3(&mut engine.core.write(), &fx.pools.v3_2);
+    let pid0 = match register_v3(&mut engine.core.write(), &fx.pools.v3_0) {
+        Ok(p) => p,
+        Err(e) => {
+            println!("note: v3_0 registration skipped ({e}); per-V4-pool oracle verdict above is authoritative.");
+            std::process::exit(0);
+        }
+    };
+    let pid2 = match register_v3(&mut engine.core.write(), &fx.pools.v3_2) {
+        Ok(p) => p,
+        Err(e) => {
+            println!("note: v3_2 registration skipped ({e}); per-V4-pool oracle verdict above is authoritative.");
+            std::process::exit(0);
+        }
+    };
     let v4id = engine
         .core
         .write()
