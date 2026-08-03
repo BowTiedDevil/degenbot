@@ -445,16 +445,17 @@ fn v4_fee1_solver_path_matches_v4_simulate_swap() {
     );
 }
 
-/// Mechanism-A regression (UO3JM4, resolved): the REAL UNI V4 pool
-/// `0x9a5c1d2f...` at block 25673381 (path 57150) - deep 134-range tick
-/// topology, protocol_fee 2048500. The tier-3 on-chain oracle
-/// `v4_simulate_swap` at the solver's recorded V4 input (3135) reproduces the
-/// recorded on-chain `actual` EXACTLY (772076574181336). The reconstructed
-/// solver crossing at the delivered input is ALSO exact (proven below), so the
-/// live over-prediction (772833263957077) is an inter-hop forward-amount gap
-/// (a ~3-unit-larger input in the solver's accounting, not crossing math). This
-/// pins the on-chain truth from the committed fixture so any fix to the V4
-/// crossing math must keep `v4_simulate_swap(state, 3135) == 772076574181336`.
+/// UO3JM4 regression: the REAL UNI V4 pool `0x9a5c1d2f...` at block 25673381
+/// (path 57150) - deep 134-range tick topology, protocol_fee 2048500. The
+/// tier-3 on-chain oracle `v4_simulate_swap` at the solver's recorded V4 input
+/// (3135) reproduces the recorded on-chain `actual` EXACTLY (772076574181336),
+/// and the reconstructed solver crossing at the delivered input is byte-exact
+/// to it (proven below). This exonerates the V4 crossing math: the live
+/// over-prediction (772833263957077) is NOT reproducible at input 3135 on the
+/// on-chain or solver-snapshot state (it maps to ~3 units MORE input) - a
+/// solve-vs-sim state/amount divergence, see
+/// docs/tracked-failures-log-review-2026-08-03.md. Pins the on-chain truth so
+/// any fix keeps `v4_simulate_swap(state, 3135) == 772076574181336`.
 fn build_uni_9a5c1d2f_v4_state() -> V4PoolState {
     let mut tick_data: HashMap<i32, TickInfo> = HashMap::new();
     tick_data.insert(
@@ -1574,9 +1575,11 @@ fn v4_uni_9a5c1d2f_oracle_matches_recorded_actual_not_solver_overprediction() {
     );
 
     // Crossing-exactness proof: the reconstructed solver crossing at the
-    // DELIVERED input (3135) equals the oracle. The live solver's predicted
-    // 772833263957077 corresponds to a ~3-unit-LARGER input (~3138), i.e. an
-    // inter-hop forward-amount over-statement, NOT a crossing-math error.
+    // DELIVERED input (3135) equals the oracle byte-exactly. The live solver's
+    // predicted 772833263957077 is NOT reproducible at input 3135 on either the
+    // on-chain-at-block state or the solver's snapshot (it maps to ~3 units MORE
+    // input) -> a solve-vs-sim state/amount divergence, NOT a crossing-math error
+    // (see docs/tracked-failures-log-review-2026-08-03.md).
     let seq = state
         .build_int_v4_sequence(60, 3_000, zero_for_one, 10)
         .expect("build int v4 sequence");
@@ -1585,10 +1588,10 @@ fn v4_uni_9a5c1d2f_oracle_matches_recorded_actual_not_solver_overprediction() {
     assert_eq!(
         solver_out, sim_out,
         "reconstructed solver crossing at the delivered input must equal v4_simulate_swap \
-         (the V4 crossing math is exact; the live over-prediction is a ~3-unit forward-amount gap)"
+         (the V4 crossing math is exact; the live over-prediction is a solve-vs-sim divergence)"
     );
     println!(
         "v4-uni oracle+probe: oracle/solver@3135 = {sim_out} == recorded actual; \
-         live predicted 772833263957077 (@~input 3138) -> forward-amount gap"
+         live predicted 772833263957077 not reproducible at input 3135 (solve-vs-sim divergence)"
     );
 }

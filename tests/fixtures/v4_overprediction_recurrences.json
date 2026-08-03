@@ -1,108 +1,200 @@
 {
-  "_comment": "Live-recurrence reproduction data for the UO3JM4 V4-hop solver over-prediction, mined from logs/bot_run.log (10.5h run, 2026-08-03T04:56Z..15:26Z). Each entry is a V3-V4-V3 path whose V4 hop produced [sim-revert-swap] actual_out < predicted (matched=false) and overdrew the output token (ERC20: transfer amount exceeds balance / Uni::_transferTokens). Validated: solver-state desync aborts = 0, panics = 0 over the whole run (the desync fix held).",
-  "observed": {
-    "max_block": 25672303,
-    "run_start_utc": "2026-08-03T04:56",
-    "run_end_utc": "2026-08-03T15:26",
-    "solver_state_aborts": 0,
-    "panics": 0,
-    "sim_revert_swap_matched_false_total": 90,
-    "genuine_v4_overdraw_paths": 6
+ "_comment": "Live-recurrence reproduction data for the UO3JM4 V4-hop solver over-prediction, mined from logs/bot_run.log (10.5h run, 2026-08-03T04:56Z..15:26Z). Each entry is a V3-V4-V3 path whose V4 hop produced [sim-revert-swap] actual_out < predicted (matched=false) and overdrew the output token (ERC20: transfer amount exceeds balance / Uni::_transferTokens). Validated: solver-state desync aborts = 0, panics = 0 over the whole run (the desync fix held).",
+ "observed": {
+  "max_block": 25672303,
+  "run_start_utc": "2026-08-03T04:56",
+  "run_end_utc": "2026-08-03T15:26",
+  "solver_state_aborts": 0,
+  "panics": 0,
+  "sim_revert_swap_matched_false_total": 90,
+  "genuine_v4_overdraw_paths": 6
+ },
+ "oracle_verification": {
+  "_note": "PROVEN: V4 crossing math is byte-exact (parity sweep solver==oracle on identical states; reconstructing the UNI pool and running the solver's own crossing at the delivered input 3135 returns the oracle == recorded actual byte-exactly, asserted in v4_crossing_solver_vs_sim_parity.rs). Protocol fee irrelevant (2048500 vs 0 identical). The solver's predicted output at the recorded input is NOT reproducible from single-block reconstruction on either on-chain-at-block or the solver's own snapshot scalars (big pool + fee-1: actual reproduces at a SMALLER input, 185->184 / 9652->9643; UNI: predicted maps to ~3 units MORE input than delivered 3135). Honest conclusion: the six overdrafts are a few-unit solve-vs-sim state/amount divergence (W2UWZO stale-state direction), not a crossing-math bug; not fully localizable from logs. Make [sim-revert-swap] record exact sim-time pool scalars + composed input so the next recurrence is fully reproducible. See docs/tracked-failures-log-review-2026-08-03.md.",
+  "forward_amount_gap_inputs": {
+   "big_pool_2a6d5b75_block_25672140": {
+    "solver_v4_input": 185,
+    "oracle_at_input": 631737964053287,
+    "input_reproducing_actual": 184,
+    "recorded_actual": 628304616211100,
+    "gap_units": 1
+   },
+   "fee1_76f75965_block_25672332_35396": {
+    "solver_v4_input": 9652,
+    "oracle_at_input": 9649,
+    "input_reproducing_actual": 9643,
+    "recorded_actual": 9640,
+    "gap_units": 9
+   },
+   "uni_9a5c1d2f_block_25673381_57150": {
+    "solver_v4_input": 3135,
+    "oracle_at_input": 772076574181336,
+    "solver_predicted": 772833263957077,
+    "recorded_actual": 772076574181336,
+    "predicted_maps_to_input_about": 3138
+   }
   },
-  "oracle_verification": {
-    "_note": "UNIFIED ROOT CAUSE (verified via v4_simulate_swap, the tier-3 byte-exact on-chain oracle, PLUS re-running the solver's own crossing on the reconstructed states). There is NO V4 crossing-math error: on the big pool + fee-1 the oracle at the recorded input equals the solver's prediction; on the UNI pool the recorded actual equals the oracle at input 3135 and the solver's crossing re-run at that input reproduces the oracle/actual byte-exactly. In every case the recorded actual reproduces at a SMALLER input than the solver's hop_outputs[0] (185->184, 9652->9643, and UNI predicted corresponds to ~3138 while delivered 3135). Root cause = the solver's V4 exact-in forward amount (hop_outputs[0]) runs a few units LARGER than the amount actually delivered -> V4_TAKE(predicted) overdrafts. Inter-hop forward-amount composition error, NOT crossing math, NOT protocol fee (on/off identical). See docs/tracked-failures-log-review-2026-08-03.md.",
-    "forward_amount_gap_inputs": {
-      "big_pool_2a6d5b75_block_25672140": {"solver_v4_input": 185, "oracle_at_input": 631737964053287, "input_reproducing_actual": 184, "recorded_actual": 628304616211100, "gap_units": 1},
-      "fee1_76f75965_block_25672332_35396": {"solver_v4_input": 9652, "oracle_at_input": 9649, "input_reproducing_actual": 9643, "recorded_actual": 9640, "gap_units": 9},
-      "uni_9a5c1d2f_block_25673381_57150": {"solver_v4_input": 3135, "oracle_at_input": 772076574181336, "solver_predicted": 772833263957077, "recorded_actual": 772076574181336, "predicted_maps_to_input_about": 3138}
-    },
-    "crossing_exactness_proven": {
-      "_note": "Re-running the solver's own crossing (build_int_v4_sequence + compute_crossing/int_simulate_v3_swap) on the reconstructed UNI state at the delivered input 3135 returns 772076574181336 == oracle == recorded actual byte-exactly (asserted in v4_crossing_solver_vs_sim_parity.rs test v4_uni_9a5c1d2f_*).",
-      "uni_delivered_input_3135_solver_crossing": 772076574181336,
-      "uni_delivered_input_3135_oracle": 772076574181336
-    },
-    "protocol_fee_eliminated": {
-      "_note": "protocol_fee 2048500 vs 0 give identical v4_simulate_swap output on pool 2a6d5b75",
-      "on_206": 631737964053287,
-      "off": 631737964053287
-    }
+  "crossing_exactness_proven": {
+   "_note": "Re-running the solver's own crossing (build_int_v4_sequence + compute_crossing/int_simulate_v3_swap) on the reconstructed UNI state at the delivered input 3135 returns 772076574181336 == oracle == recorded actual byte-exactly (asserted in v4_crossing_solver_vs_sim_parity.rs test v4_uni_9a5c1d2f_*).",
+   "uni_delivered_input_3135_solver_crossing": 772076574181336,
+   "uni_delivered_input_3135_oracle": 772076574181336
   },
-  "v4_pool_manager": "0x000000000004444c5dc75cb358380d2e3de08a90",
-  "recurrences": [
-    {
-      "block": 25672140,
-      "path_type": "V3-V4-V3",
-      "output_token": "0x163f8c2467924be0ae7b5347228cabf260318753",
-      "path_ids": [9354, 9356],
-      "v4": {
-        "pool_id": "0x2a6d5b755cb9fc43fbe9cce0bc5cd5867732c79eec520e141f5a419d5bf2274f",
-        "tick": -288661,
-        "liquidity": 109231844006814,
-        "sqrt_price_x96": "42758191622663401234955",
-        "protocol_fee": 2048500,
-        "n_ranges": 1,
-        "zfo": false
-      },
-      "solve": {
-        "path_9354": {"optimal_input": 99984598173, "hop_outputs": [185, 631737964053287, 106784897797]},
-        "path_9356": {"optimal_input": 99984598173, "hop_outputs": [185, 631737964053287, 106867927525]}
-      },
-      "v4_hop": {"predicted": 631737964053287, "actual": 628304616211100, "over_by": 3433360189274, "over_bps": 55}
-    },
-    {
-      "block": 25672332,
-      "path_type": "V3-V4-V3",
-      "output_token": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
-      "path_ids": [35396, 35397],
-      "v4": {
-        "pool_id": "0x76f75965083b5bfcc0b96f9c5e77e9e00f80b377def5e7625866013fa3059080",
-        "tick": 0,
-        "liquidity": 94294142,
-        "sqrt_price_x96": "79231869042278935382727675145",
-        "protocol_fee": 53261,
-        "n_ranges": 1,
-        "note": "SAME fee-1 USDC/USDT pool as the existing fee1_v3v4v3_solver_fixture harness",
-        "zfo": false
-      },
-      "solve": {
-        "path_35397": {"optimal_input": 1713133026003, "hop_outputs": [3184, 3182, 1713590180425]},
-        "path_35396": {"optimal_input": 5193203514023, "hop_outputs": [9652, 9649, 5195787949840]}
-      },
-      "v4_hop": {
-        "path_35397": {"predicted": 3182, "actual": 3179, "over_by": 3},
-        "path_35396": {"predicted": 9649, "actual": 9640, "over_by": 9}
-      }
-    },
-    {
-      "block": 25673381,
-      "path_type": "V3-V4-V3",
-      "output_token": "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984",
-      "path_ids": [57150, 43047],
-      "v4": {
-        "pool_id": "0x9a5c1d2f4a7a7962a63259de6fcc1afb1d0aa1abdf5d19c23d22fd78953c5167",
-        "tick": -262345,
-        "liquidity": 1432650976603835442,
-        "sqrt_price_x96": "159379589444074970543365",
-        "protocol_fee": 2048500,
-        "n_ranges": 24,
-        "zfo": false
-      },
-      "solve": {
-        "path_57150": {"optimal_input": 1700593327682, "hop_outputs": [3135, 772833263957077, null]},
-        "path_43047": {"optimal_input": 31307372017924, "hop_outputs": [57718, 14228641859916626, null]}
-      },
-      "v4_hop": {
-        "path_57150": {"predicted": 772833263957077, "actual": 772076574181336, "over_by": 756689783741, "over_bps": 10},
-        "path_43047": {"predicted": 14228641859916626, "actual": 14147240238759279, "over_by": 81401621157347, "over_bps": 57}
-      }
-    }
-  ],
-  "other_fail_buckets_logged": {
-    "IIA": 39,
-    "empty": 34,
-    "no-profit": 34,
-    "CurrencyNotSettled": 3,
-    "Pancake_K": 2,
-    "UniswapV2_K": 1
+  "protocol_fee_eliminated": {
+   "_note": "protocol_fee 2048500 vs 0 give identical v4_simulate_swap output on pool 2a6d5b75",
+   "on_206": 631737964053287,
+   "off": 631737964053287
   }
+ },
+ "v4_pool_manager": "0x000000000004444c5dc75cb358380d2e3de08a90",
+ "recurrences": [
+  {
+   "block": 25672140,
+   "path_type": "V3-V4-V3",
+   "output_token": "0x163f8c2467924be0ae7b5347228cabf260318753",
+   "path_ids": [
+    9354,
+    9356
+   ],
+   "v4": {
+    "pool_id": "0x2a6d5b755cb9fc43fbe9cce0bc5cd5867732c79eec520e141f5a419d5bf2274f",
+    "tick": -288661,
+    "liquidity": 109231844006814,
+    "sqrt_price_x96": "42758191622663401234955",
+    "protocol_fee": 2048500,
+    "n_ranges": 1,
+    "zfo": false
+   },
+   "solve": {
+    "path_9354": {
+     "optimal_input": 99984598173,
+     "hop_outputs": [
+      185,
+      631737964053287,
+      106784897797
+     ]
+    },
+    "path_9356": {
+     "optimal_input": 99984598173,
+     "hop_outputs": [
+      185,
+      631737964053287,
+      106867927525
+     ]
+    }
+   },
+   "v4_hop": {
+    "predicted": 631737964053287,
+    "actual": 628304616211100,
+    "over_by": 3433360189274,
+    "over_bps": 55
+   }
+  },
+  {
+   "block": 25672332,
+   "path_type": "V3-V4-V3",
+   "output_token": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+   "path_ids": [
+    35396,
+    35397
+   ],
+   "v4": {
+    "pool_id": "0x76f75965083b5bfcc0b96f9c5e77e9e00f80b377def5e7625866013fa3059080",
+    "tick": 0,
+    "liquidity": 94294142,
+    "sqrt_price_x96": "79231869042278935382727675145",
+    "protocol_fee": 53261,
+    "n_ranges": 1,
+    "note": "SAME fee-1 USDC/USDT pool as the existing fee1_v3v4v3_solver_fixture harness",
+    "zfo": false
+   },
+   "solve": {
+    "path_35397": {
+     "optimal_input": 1713133026003,
+     "hop_outputs": [
+      3184,
+      3182,
+      1713590180425
+     ]
+    },
+    "path_35396": {
+     "optimal_input": 5193203514023,
+     "hop_outputs": [
+      9652,
+      9649,
+      5195787949840
+     ]
+    }
+   },
+   "v4_hop": {
+    "path_35397": {
+     "predicted": 3182,
+     "actual": 3179,
+     "over_by": 3
+    },
+    "path_35396": {
+     "predicted": 9649,
+     "actual": 9640,
+     "over_by": 9
+    }
+   }
+  },
+  {
+   "block": 25673381,
+   "path_type": "V3-V4-V3",
+   "output_token": "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984",
+   "path_ids": [
+    57150,
+    43047
+   ],
+   "v4": {
+    "pool_id": "0x9a5c1d2f4a7a7962a63259de6fcc1afb1d0aa1abdf5d19c23d22fd78953c5167",
+    "tick": -262345,
+    "liquidity": 1432650976603835442,
+    "sqrt_price_x96": "159379589444074970543365",
+    "protocol_fee": 2048500,
+    "n_ranges": 24,
+    "zfo": false
+   },
+   "solve": {
+    "path_57150": {
+     "optimal_input": 1700593327682,
+     "hop_outputs": [
+      3135,
+      772833263957077,
+      null
+     ]
+    },
+    "path_43047": {
+     "optimal_input": 31307372017924,
+     "hop_outputs": [
+      57718,
+      14228641859916626,
+      null
+     ]
+    }
+   },
+   "v4_hop": {
+    "path_57150": {
+     "predicted": 772833263957077,
+     "actual": 772076574181336,
+     "over_by": 756689783741,
+     "over_bps": 10
+    },
+    "path_43047": {
+     "predicted": 14228641859916626,
+     "actual": 14147240238759279,
+     "over_by": 81401621157347,
+     "over_bps": 57
+    }
+   }
+  }
+ ],
+ "other_fail_buckets_logged": {
+  "IIA": 39,
+  "empty": 34,
+  "no-profit": 34,
+  "CurrencyNotSettled": 3,
+  "Pancake_K": 2,
+  "UniswapV2_K": 1
+ }
 }
