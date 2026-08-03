@@ -1495,6 +1495,22 @@ struct RevertedSwapMatch {
     emit_index: usize,
     family: degenbot_simulation::SwapFamily,
     emitter: Address,
+    /// V4 PoolManager has no address-level identity (its emitter is shared by
+    /// every V4 hop), so carry the matched hop's pool_id — or the V2/V3 pool
+    /// address — letting a log reader resolve the exact pool. `None` when the
+    /// swap matched no hop on the path.
+    pool_id: Option<String>,
+    /// Post-swap active-liquidity scalars captured at SIM time (the moment
+    /// `actual_out` was produced). This is the fix-enabler: it pins the exact
+    /// pool state the oracle (`v4_simulate_swap`) must be driven at to
+    /// reproduce a recurrence, closing the solve-vs-sim state gap the log's
+    /// solve-time values cannot close (see docs/tracked-failures-log-review-2026-08-03.md).
+    sim_sqrt_price_x96: U256,
+    sim_tick: i32,
+    sim_liquidity: U256,
+    /// The exact-in amount the swap consumed (the negative-side delta
+    /// magnitude) — the `amountSpecified` that produced `actual_out`.
+    actual_in: Option<U256>,
     actual_out: Option<U256>,
     predicted: Option<u128>,
     matched: bool,
@@ -1543,6 +1559,11 @@ fn match_reverted_swaps_to_hops(
             emit_index,
             family: swap.family,
             emitter: swap.emitter,
+            pool_id: hop_index.and_then(|i| hop_pool_id(hops, i)),
+            sim_sqrt_price_x96: swap.sqrt_price_x96,
+            sim_tick: swap.tick,
+            sim_liquidity: swap.liquidity,
+            actual_in: negative_side_magnitude(swap.amount0, swap.amount1),
             actual_out: actual,
             predicted,
             matched: is_match,
@@ -1559,6 +1580,17 @@ fn hop_emitter_match(hop: &HopInfo, swap: &CapturedSwap) -> bool {
         HopInfo::V2(h) => h.pool_address == swap.emitter,
         HopInfo::V3(h) => h.pool_address == swap.emitter,
         HopInfo::V4(h) => h.pool_manager_address == swap.emitter,
+    }
+}
+
+/// A hop's resolvable pool identifier for the log: the V4 `pool_id_hex`
+/// (identity is the pool hash, since every V4 hop shares the PoolManager
+/// emitter) or the V2/V3 pool address. `None` if `i` is out of range.
+fn hop_pool_id(hops: &[HopInfo], i: usize) -> Option<String> {
+    match hops.get(i)? {
+        HopInfo::V2(h) => Some(h.pool_address.to_string()),
+        HopInfo::V3(h) => Some(h.pool_address.to_string()),
+        HopInfo::V4(h) => Some(h.pool_id_hex.clone()),
     }
 }
 
@@ -1588,8 +1620,13 @@ fn log_reverted_swaps_vs_hop_outputs(
             emit = m.emit_index,
             family = ?m.family,
             emitter = ?m.emitter,
+            pool_id = %m.pool_id.as_deref().unwrap_or("unmatched"),
+            actual_in = %m.actual_in.map_or_else(|| "none".into(), |v| v.to_string()),
             actual_out = %m.actual_out.map_or_else(|| "none".into(), |v| v.to_string()),
             predicted = %m.predicted.map_or_else(|| "none".into(), |v| v.to_string()),
+            sim_sqrt_price_x96 = %m.sim_sqrt_price_x96,
+            sim_tick = m.sim_tick,
+            sim_liquidity = %m.sim_liquidity,
             matched = m.matched,
             "{SIM_REVERT_SWAP_LOG_PREFIX}"
         );
@@ -2327,5 +2364,55 @@ mod tests {
         assert_eq!(matches[0].actual_out, Some(U256::from(7u128)));
         assert_eq!(matches[0].predicted, None);
         assert!(!matches[0].matched);
+    }
+
+    /// The fix-enabler fields: the `[sim-revert-swap]` match must carry the
+    /// V4 pool_id (the PoolManager emitter is shared, so identity = pool hash),
+    /// the exact-in amount, and the post-swap sim scalars — so a recurrence can
+    /// be driven through `v4_simulate_swap` at the EXACT state+input that
+    /// produced `actual_out` (closing the solve-vs-sim gap). Shape mirrors the
+    /// real UNI pool 0x9a5c1d2f UO3JM4 recurrence (block 25673381, path 57150).
+    #[test]
+    fn reverted_swap_carries_pool_id_input_and_sim_scalars() {
+        use degenbot_executor::composers::{HopInfo, V4HopInfo};
+        let pm = SMOKE_PM;
+        let hops = vec![HopInfo::V4(V4HopInfo {
+            pool_manager_address: pm,
+            pool_id_hex: "0x9a5c1d2f4a7a7962a63259de6fcc1afb1d0aa1abdf5d19c23d22fd78953c5167"
+                .to_string(),
+            currency0_address: Address::ZERO,
+            currency1_address: Address::ZERO,
+            fee: 100,
+            tick_spacing: 1,
+            hook_address: Address::ZERO,
+            zfo: true,
+        })];
+        // Exact-in: currency0 in (negative), currency1 out (positive).
+        let swap = CapturedSwap {
+            emitter: pm,
+            family: degenbot_simulation::SwapFamily::V4,
+            amount0: -alloy::primitives::I256::try_from(3_135u128).unwrap(),
+            amount1: alloy::primitives::I256::try_from(772_076_574_181_336u128).unwrap(),
+            sqrt_price_x96: U256::from(159_369_389_255_773_083_394_993u128),
+            liquidity: U256::from(1_432_650_976_603_835_442u128),
+            tick: -262_346,
+        };
+        let matches = match_reverted_swaps_to_hops(&[swap], &hops, &[772_076_574_181_336u128]);
+        assert_eq!(matches.len(), 1);
+        let m = &matches[0];
+        assert_eq!(m.hop_index, Some(0));
+        assert_eq!(
+            m.pool_id.as_deref(),
+            Some("0x9a5c1d2f4a7a7962a63259de6fcc1afb1d0aa1abdf5d19c23d22fd78953c5167")
+        );
+        assert_eq!(m.actual_in, Some(U256::from(3_135u128)));
+        assert_eq!(m.actual_out, Some(U256::from(772_076_574_181_336u128)));
+        assert_eq!(m.sim_tick, -262_346);
+        assert_eq!(m.sim_liquidity, U256::from(1_432_650_976_603_835_442u128));
+        assert_eq!(
+            m.sim_sqrt_price_x96,
+            U256::from(159_369_389_255_773_083_394_993u128)
+        );
+        assert!(m.matched);
     }
 }
