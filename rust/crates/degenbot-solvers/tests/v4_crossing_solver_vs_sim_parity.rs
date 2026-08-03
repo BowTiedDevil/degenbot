@@ -1692,15 +1692,14 @@ fn fee1_76f75965_crossing_overprediction_at_4728() {
     );
 }
 
-/// TEMP: sweep the RED-pin test's amounts on the REAL fee-1 pool state
-/// (fee=50, ts=1) vs the RED-pin's wrong fee=1, to check which fee the +
-/// over-prediction belongs to.
-/// Confirms the localized mechanism: for the fee-1 pool at zfo=true the on-chain
-/// `v4_simulate_swap` result (4724 at input 4728) equals a TWO-step floored walk
-/// (current → current-tick-0 boundary → tick−2), whereas the int-solve
-/// single-step range-collapse gives 4727 — the +3 over-prediction being the
-/// current-tick interior flooring the collapse skips. PASSES (durable guard on
-/// the oracle path); pairs with the ignored RED pin above.
+/// Regression guard: localizes the fee-1 pool's (fee=50, ts=1) zfo=true
+/// over-prediction to the current-tick interior flooring the int-solve
+/// range-collapse skips. On-chain `v4_simulate_swap` (4724 at input 4728)
+/// equals a TWO-step floored walk (current → current-tick-0 boundary → tick−2),
+/// whereas the single-step collapse gives 4727 — the +3 the
+/// `compute_tick_ranges` step-0 drain insert now floors. Pairs with
+/// `fee1_76f75965_crossing_overprediction_at_4728` (which pins the same
+/// oracle-vs-collapse split on the full crossing path).
 #[test]
 fn fee1_zfo_true_two_step_floored_equivalence() {
     use degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v4;

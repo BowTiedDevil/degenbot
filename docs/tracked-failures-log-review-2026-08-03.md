@@ -105,10 +105,14 @@ The bug fires at **zfo=true only**, and only when the current tick sits exactly 
 **Fix (committed):** `tick_bitmap.rs::compute_tick_ranges` now re-inserts sqrt(current_tick) as the first interior boundary of range 0 for zfo=true when current_tick is a word boundary, so the int-solve path (`compute_crossing`/`int_simulate_v3_swap`) floors at the current tick exactly like the on-chain PoolManager. This makes the solver byte-exact to `v4_simulate_swap` on the fee-1 pool in BOTH directions — the former RED pin `v4_fee1_solver_path_matches_v4_simulate_swap` is now GREEN, plus the mechanism guard `fee1_zfo_true_two_step_floored_equivalence`. Fix is shared V3/V4 (same `compute_tick_ranges` + `int_simulate_v3_swap`) and validated against the full pools/solvers/bot/tier-3 suites (no regressions).
 
 **Closure (reconstructed real V3-30 pool):** the live path-10338 `+1` is a
-STALE-STATE artifact, not a crossing-math bug. The fixture `v3_0` was rebuilt
-from the stale 424-tick proxy (`0xc7bBeC68…`, spacing 1) to the real V3-30 pool
-`0x4e68ccd3` (561 ticks, spacing 60, `sqrt=3423133541652388997239203`,
-`tick=-201001`, `liq=1.237e19` at block 25675755). The `v3v30_hop0_probe`
+STALE-STATE artifact, not a crossing-math bug. The original `block25675755`
+fixture's `v3_0` wrongly captured the fee-1 / tick-spacing-1 WETH-USDT pool
+`0xc7bBeC68…` (424 ticks) — which IS the correct hop0 for other solves (e.g.
+block 25672332, whose `[solver-st]` hop0 `liq=1.14e17` matches it) — instead
+of the V3-30 pool `0x4e68ccd3` (`liq=1.237e19`) the block-25675755
+`[solver-st]` hop0 demands (`liq=1.237e19`, fee=30). Rebuilding to the real
+V3-30 (561 ticks, spacing 60, `sqrt=3423133541652388997239203`,
+`tick=-201001`, `liq=1.237e19` at block 25675755), the `v3v30_hop0_probe`
 example reconstructs it and races the solver int-solve crossing path against
 `v3_simulate_swap` (the on-chain oracle) over a dense sweep INCLUDING the
 recorded input `2540883010212`, in BOTH directions — fully byte-exact (0

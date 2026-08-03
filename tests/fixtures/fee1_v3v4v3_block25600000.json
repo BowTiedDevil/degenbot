@@ -1,6 +1,6 @@
 {
  "_doc": "REAL capture \u2014 pool identities recovered from bot_run.log (UO3JM4): V3 hop0 = 0x4e68ccd3e89f51c3074ca5072bbac773960dfa36 (Uniswap V3 WETH/USDT 0.30%, spacing 60); V4 hop1 = PoolManager 0x000000000004444c5dc75cb358380d2e3de08a90 pool_id 0x76f75965083b5bfcc0b96f9c5e77e9e00f80b377def5e7625866013fa3059080 (USDC/USDT lp_fee=50/1e6=0.005%, protocol_fee=53261, spacing 1, tick 0, active liq=94294142); V3 hop2 = 0x19ac5f80ec17497d0e585b953100e6d18c330040 (PancakeSwap V3 USDC/WETH 0.25%, spacing 50). Live scalars + DB liquidity snapshots (hop0 561 ticks, hop2 6 ticks, V4 single position [-2,+3]). Historical overdraw repro recorded: predicted=9586 actual=9585 (state/input specific \u2014 not triggered by the current optimal input, hence PASS at current state; the capture script + live [sim-revert-swap] re-captures it when it recurs).",
- "target_block": 0,
+ "target_block": 25600000,
  "v4_hop": {
   "hop_index": 1,
   "zero_for_one": false,

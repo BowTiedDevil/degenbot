@@ -557,7 +557,6 @@ fn v3_sparse_tick_topology_reproduces_onchain_plus_thirteen_class() {
 /// current-tick drain is a real non-zero floored step (the trigger the fee-1
 /// V4 recurrence exposed, which a price exactly on the boundary cannot
 /// exercise). Initialized ticks on both sides so both directions work.
-#[allow(dead_code)]
 fn build_real_position_v3_state(base_liquidity: u128, tick_spacing: i32, fee: u32) -> V3PoolState {
     use degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal;
     let sq_t = get_sqrt_ratio_at_tick_internal(0).unwrap();
