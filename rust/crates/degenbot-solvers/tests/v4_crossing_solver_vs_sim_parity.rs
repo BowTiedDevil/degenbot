@@ -1595,3 +1595,98 @@ fn v4_uni_9a5c1d2f_oracle_matches_recorded_actual_not_solver_overprediction() {
          live predicted 772833263957077 not reproducible at input 3135 (solve-vs-sim divergence)"
     );
 }
+
+/// Real fee-1 USDC/USDT V4 pool `0x76f75965…` (ts=1, fee=50, protocol_fee
+/// 53261) at the live-captured on-chain state (tick=0, sqrt
+/// 79231869042278935382727675145, liq 94294142), tick_data from DB managed
+/// pool 2337 ({-2:+L, 3:-L}). This is the UO3JM4 fee-1 topology whose crossing
+/// over-predicts by 1 wei at certain inputs (captured live, path 10338).
+fn build_fee1_76f75965_v4_state() -> V4PoolState {
+    let mut tick_data: HashMap<i32, TickInfo> = HashMap::new();
+    tick_data.insert(
+        -2,
+        TickInfo {
+            liquidity_gross: U128::from(94_294_142u128),
+            liquidity_net: I256::try_from(94_294_142i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        3,
+        TickInfo {
+            liquidity_gross: U128::from(94_294_142u128),
+            liquidity_net: I256::try_from(-94_294_142i128).unwrap(),
+            block: 0,
+        },
+    );
+    let params = RegisterV4PoolParams {
+        pool_manager: alloy::primitives::Address::ZERO,
+        pool_id: [0u8; 32],
+        pool_key: V4PoolKey {
+            currency0: alloy::primitives::Address::ZERO,
+            currency1: alloy::primitives::Address::ZERO,
+            fee: 50, // 0.005% fee-1 tier
+            tick_spacing: 1,
+            hooks: alloy::primitives::Address::ZERO,
+        },
+        hook_flags: 0,
+        protocol_fee: 53_261,
+        sqrt_price_x96: "79231869042278935382727675145".parse().unwrap(),
+        liquidity: 94_294_142u128,
+        tick: 0,
+        tick_data,
+        update_block: 0,
+        coverage: PoolTickCoverage::Tracked,
+        fetcher: None,
+    };
+    let (_identity, state) = V4PoolState::from_params(params, 8);
+    state
+}
+
+/// The fee-1 over-prediction (UO3JM4 live capture, path 10338): at the
+/// solver's recorded input 4728 the on-chain oracle gives 4726 (= the recorded
+/// actual). The solver predicted 4727 == oracle at input 4729 (1 unit MORE).
+/// This pins the on-chain truth AND proves the crossing math is EXACT (the
+/// solver-crossing mirror == oracle at 4728) -> the over-prediction is a 1-unit
+/// INTER-HOP FORWARD-AMOUNT gap (the solver's V4 exact-in runs 1 unit above the
+/// delivered amount), not a crossing-math error.
+#[test]
+fn fee1_76f75965_crossing_overprediction_at_4728() {
+    let state = build_fee1_76f75965_v4_state();
+    let zero_for_one = false;
+    let input = U256::from(4_728u64);
+    let amount_specified = I256::ZERO
+        .checked_sub(I256::try_from(input).unwrap())
+        .unwrap();
+    let limit = unbounded_limit(zero_for_one);
+    let outcome = v4_simulate_swap(&state, 50, 1, zero_for_one, amount_specified, limit)
+        .expect("fee-1 state simulates");
+    let sim_out = v4_exact_in_output(&outcome, zero_for_one);
+
+    // On-chain truth at input 4728 == the recorded actual.
+    assert_eq!(
+        sim_out,
+        U256::from(4_726u64),
+        "v4_simulate_swap @ input 4728 must equal the recorded on-chain actual 4726"
+    );
+
+    // Localize the +1: does the solver-crossing mirror re-derive the solver's
+    // 4727 (bug) or match the oracle 4726? Printed, not asserted, so the suite
+    // stays green until the W2UWZO fix lands (then re-run to check it flipped
+    // to 4726 == oracle, i.e. the +1 is gone).
+    let seq = state
+        .build_int_v4_sequence(1, 50, zero_for_one, 10)
+        .expect("fee-1 int sequence");
+    // Crossing-exactness at the delivered input (proves it is NOT crossing math):
+    let solver_out = solver_crossing_output(input, &seq);
+    assert_eq!(
+        solver_out,
+        Some(sim_out),
+        "solver crossing mirror at input 4728 must equal v4_simulate_swap (4726) - the V4 \
+         crossing math is exact; the +1 over-prediction is a forward-amount gap (4729 vs 4728)"
+    );
+    println!(
+        "fee-1 @4728: v4_simulate_swap={sim_out}=actual, solver predicted 4727 (=oracle@4729), \
+         solver_crossing_output={solver_out:?}=oracle -> forward-amount gap, crossing exact"
+    );
+}

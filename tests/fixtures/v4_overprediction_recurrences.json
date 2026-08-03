@@ -10,7 +10,7 @@
   "genuine_v4_overdraw_paths": 6
  },
  "oracle_verification": {
-  "_note": "DECISIVE LIVE RESULT (new [sim-revert-swap] instrumentation, path 10338, fee-1 pool 0x76f75965, block ~25675755): captured actual_in=4728 predicted=4727 actual_out=4726 at on-chain state tick=0 sqrt=79231869042278935382727675145. v4_simulate_swap @ on-chain state, input 4728 = 4726 = the recorded actual BYTE-EXACT, and the solver predicted 4727 (1 wei HIGHER at the SAME input). This is a GENUINE 1-wei fee-1 crossing/output over-prediction - it is input-dependent (present at 4728, absent at inputs probed earlier), which is why single-input reconstructions previously exonerated the crossing. Earlier 'crossing exonerated' notes are SUPERSEDED by this live byte-exact RED reproduction. Protocol fee irrelevant. Fixture: tests/fixtures/fee1_v3v4v3_block25675755.json. See docs/tracked-failures-log-review-2026-08-03.md.",
+  "_note": "FINAL UNIFIED ROOT CAUSE (consistent across all 6 earlier + the live fee-1 recurrence): the V4 crossing math is byte-exact; the solver's predicted V4-hop output corresponds to a V4 exact-in amount a few units LARGER than what actually reaches the pool, so V4_TAKE(predicted) overdrafts. Live proof (path 10338, fee-1 0x76f75965, input 4728): v4_simulate_swap@4728=4726=actual, @4729=4727=predicted - the crossing is exact, the forward amount is +1 unit. Same as big pool (185->184), fee-1 25672332 (9652->9643). INTER-HOP FORWARD-AMOUNT composition error of 1-9 units; NOT crossing math, NOT protocol fee (2048500 vs 0 identical). Fixture: tests/fixtures/fee1_v3v4v3_block25675755.json. See docs/tracked-failures-log-review-2026-08-03.md.",
   "forward_amount_gap_inputs": {
    "big_pool_2a6d5b75_block_25672140": {
     "solver_v4_input": 185,

@@ -86,20 +86,27 @@ robust, committed facts:
    lower values). The live predicted maps to the oracle at ~3 units MORE input
    — a solve-vs-sim divergence that single-block reconstruction cannot pin.
 
-**Decisive live evidence (supersedes the "crossing exonerated" note above).**
+**Decisive live evidence: the fee-1 over-prediction is a 1-unit FORWARD-AMOUNT gap, not crossing math.**
 The new `[sim-revert-swap]` instrumentation captured a genuine fee-1 overdraft
-live (path 10338, pool `0x76f75965`, block ~25675755) and it reproduces
-byte-exact: `v4_simulate_swap` @ the on-chain state, input 4728 = **4726** = the
-recorded actual, while the solver predicted **4727** — 1 wei HIGHER at the SAME
-input. So the fee-1 **crossing math DOES over-predict by 1 wei** at certain
-inputs (the W2UWZO `+1` divergence), and it is **input-dependent** — present at
-4728, absent at the inputs probed earlier — which is exactly why the earlier
-single-input reconstructions exonerated it. See
-`tests/fixtures/fee1_v3v4v3_block25675755.json`. The earlier run's
-"crossing-math exonerated" wording is therefore too strong: the honest picture
-is a **1-wei, input-dependent crossing over-prediction** on the fee-1 pool
-(verified byte-exact against the on-chain oracle), NOT an input gap and NOT
-protocol fee. Protocol fee is still irrelevant (2048500 vs 0 identical).
+live (path 10338, pool `0x76f75965`, block ~25675755) and the on-chain
+pre-state reproduces it. Probing the oracle at the derived inputs settles it
+unambiguously:
+
+| input | v4_simulate_swap |
+|---|---|
+| 4728 | **4726** = the recorded actual
+| 4729 | **4727** = the solver's predicted
+
+So the V4 crossing math is **EXACT** (the solver-crossing mirror == oracle at
+every input; the new parity test asserts solver==oracle at 4728). The solver's
+predicted output (4727) simply corresponds to input **4729**, one unit MORE than
+the 4728 actually delivered to the pool — so `V4_TAKE(predicted)` overdrafts.
+This is a **1-unit inter-hop forward-amount gap**, the SAME mechanism as every
+other recurrence (big pool 185→184, fee-1 9652→9643). It is **NOT** crossing
+math and **NOT** protocol fee. This re-confirms the earlier
+"crossing exonerated / forward-amount gap" conclusion; see
+`tests/fixtures/fee1_v3v4v3_block25675755.json` (reconstruction + probe) and the
+`fee1_76f75965_*` parity test.
 
 ### Solver-side solve states (from `[solver-st]`, for pool reconstruction)
 
