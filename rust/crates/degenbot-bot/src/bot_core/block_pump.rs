@@ -619,10 +619,15 @@ impl BlockPump {
                             .as_ref()
                             .map(|(c, l)| format!(" cov={c}, lifecycle={l}"))
                             .unwrap_or_default();
+                        // OB7UNY two-stamp: surface BOTH clocks in the abort
+                        // diagnostic so a staged-clock desync (fresh price,
+                        // stale tick map — the `0x5653` class the scalar-only
+                        // diff cannot see) is visible in the fatal message.
                         format!(
-                            "hop {:?} update_block={} stale_by={}{}",
+                            "hop {:?} update_block={} tick_data_block={} stale_by={}{}",
                             h.hop_type,
                             h.update_block,
+                            h.tick_data_block,
                             block.saturating_sub(h.update_block),
                             meta
                         )

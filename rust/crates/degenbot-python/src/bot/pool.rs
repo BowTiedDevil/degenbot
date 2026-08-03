@@ -922,6 +922,23 @@ impl PyLiquidityPool {
         0
     }
 
+    /// The pool's **liquidity** clock (`tick_data_block`, two-stamp OB7UNY) —
+    /// the block its tick map reflects. CL (V3/V4) only; the families without
+    /// a tick-data clock (V2/Curve/Balancer) and unregistered ids return `0`.
+    /// Mirrors the [`Self::update_block`] getter's family-falling-through
+    /// discipline. A CL pool whose `tick_data_block` is well below its
+    /// `update_block` is the staged-clock desync class (`0x5653`: fresh price,
+    /// stale liquidity map) — expose both clocks so a Python driver can tell
+    /// them apart.
+    #[getter]
+    fn tick_data_block(&self) -> u64 {
+        let core = self.core.read();
+        if let Some(s) = core.get_v3_or_v4_pool(self.pool_id) {
+            return s.tick_data_block();
+        }
+        0
+    }
+
     /// Atomic snapshot of (reserve0, reserve1, `update_block`) under one read guard.
     ///
     /// The companion's `state` property + `simulate_*` methods build their

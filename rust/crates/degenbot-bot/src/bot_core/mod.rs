@@ -465,6 +465,19 @@ impl BotState {
         self.pools.get(&pool_id).map_or(0, PoolEntry::update_block)
     }
 
+    /// The pool's **liquidity** clock (`tick_data_block`, two-stamp OB7UNY) —
+    /// the block its tick map reflects. See [`PoolEntry::tick_data_block`]. A
+    /// CL pool with `pool_tick_data_block` well behind `pool_update_block` is
+    /// the staged-clock desync class (`0x5653`): fresh price, stale tick map.
+    /// Returns `0` for an unregistered id (the freshness gate treats 0 as
+    /// stale, mirroring [`Self::pool_update_block`]).
+    #[must_use]
+    pub fn pool_tick_data_block(&self, pool_id: u64) -> u64 {
+        self.pools
+            .get(&pool_id)
+            .map_or(0, PoolEntry::tick_data_block)
+    }
+
     /// Create a new, empty `BotState` with a custom reorg journal depth.
     #[must_use]
     pub fn with_journal_depth(journal_depth: usize) -> Self {
@@ -3965,6 +3978,52 @@ mod tests {
             core.pool_update_block(pool_id),
             7,
             "forward Sync advances the pool's update_block to the event block"
+        );
+    }
+
+    #[test]
+    fn pool_tick_data_block_exposes_staged_liquidity_clock() {
+        // OB7UNY two-stamp / the `0x5653` staged-clock class: a CL pool whose
+        // PRICE clock (`update_block`) is fresh but whose LIQUIDITY clock
+        // (`tick_data_block`) lags. The scalar-only ADR-021 diff keys on
+        // `update_block` and therefore cannot see this stagger; the new
+        // `pool_tick_data_block` accessor makes it observable so a tick-map
+        // consumer can key on the right clock.
+        let mut core = BotState::new();
+        let pool_addr = Address::from([0xabu8; 20]);
+        let pool_id = register_v3_on_core(&mut core, pool_addr, 100);
+        assert_eq!(
+            core.pool_update_block(pool_id),
+            100,
+            "registered pool: price clock at seed block"
+        );
+        assert_eq!(
+            core.pool_tick_data_block(pool_id),
+            100,
+            "registered pool: liquidity clock at seed block"
+        );
+        // Simulate a buggy scalar-only advance that moves the price clock
+        // without touching the tick map (direct poke — the two-stamp mutators
+        // keep them in lockstep, which is exactly why this class only arises
+        // from a bug / non-CL-advancing path).
+        if let Some(crate::bot_core::PoolEntry::V3(_, state)) = core.pools.get_mut(&pool_id) {
+            state.update_block = 200;
+        }
+        assert_eq!(core.pool_update_block(pool_id), 200, "price clock advanced");
+        assert_eq!(
+            core.pool_tick_data_block(pool_id),
+            100,
+            "liquidity clock still lags → the stagger is observable"
+        );
+        // Non-CL families fall back to `update_block` for the total accessor.
+        let v2_id = core
+            .register_v2_pool(&make_params(U112::from(1000), U112::from(2000)))
+            .expect("test setup: V2 registration");
+        assert_eq!(core.pool_tick_data_block(v2_id), 0);
+        assert_eq!(
+            core.pool_tick_data_block(999_999),
+            0,
+            "unknown id → stale sentinel"
         );
     }
 

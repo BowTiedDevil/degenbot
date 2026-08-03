@@ -241,6 +241,28 @@ impl PoolEntry {
         }
     }
 
+    /// The **liquidity** clock — the block the tick map reflects (two-stamp
+    /// OB7UNY; the `tick_data_block` twin of [`Self::update_block`]). Only
+    /// the concentrated-liquidity families carry a tick map; the AMM/Curve/
+    /// Balancer variants have no tick-data clock and fall back to their
+    /// `update_block`. A CL pool can have a FRESH price clock but a liquidity
+    /// map that lags (the staged-clock `0x5653` class) — consumers that read
+    /// the tick map MUST key on this clock, not `update_block`.
+    #[must_use]
+    pub fn tick_data_block(&self) -> u64 {
+        match self {
+            PoolEntry::V3(_, s) => s.tick_data_block,
+            PoolEntry::V4(_, s) => s.tick_data_block,
+            // No tick-data clock on these families — fall back to the price
+            // clock so the accessor is total.
+            PoolEntry::V2(_, s) => s.update_block,
+            PoolEntry::Curve(_, s) => s.update_block,
+            PoolEntry::BalancerWeighted(_, s) => s.update_block,
+            PoolEntry::BalancerStable(_, s) => s.update_block,
+            PoolEntry::AerodromeV2(_, s) => s.update_block,
+        }
+    }
+
     /// Project to `&dyn ReorgPoolState` (ADR-016). One match over all 7
     /// variants — used by `BotState`'s unified reorg dispatchers
     /// (`restore_pool_before_block` / `discard_pool_before_block` /

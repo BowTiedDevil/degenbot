@@ -45,6 +45,14 @@ pub struct SolverHopScalarState {
     /// (`update_block < block`) vs. a same-block sub-tick corruption
     /// (`update_block == block` yet sqrtPrice/liquidity/tick diverges).
     pub update_block: u64,
+    /// The **liquidity** clock (`tick_data_block`, two-stamp OB7UNY) — the
+    /// block this hop's tick map reflects. A CL hop whose `tick_data_block`
+    /// lags its `update_block` is the staged-clock desync class (`0x5653`: a
+    /// fresh price but a stale liquidity map) that the scalar-only ADR-021
+    /// anchor diff cannot see — this surface makes it observable. Falls back
+    /// to `update_block` for families with no tick-data clock and to `0` for
+    /// an unregistered hop.
+    pub tick_data_block: u64,
     /// CL hop registration metadata (CL pools only; `None` for V2):
     /// `(coverage, lifecycle)` as Debug strings — `Tracked`/`Sparse` and
     /// `Live`/`Quarantined`. A pool frozen far behind the solve block that is
@@ -90,6 +98,7 @@ pub fn extract_solver_hop_states(
             SolverHopScalarState {
                 hop_type: pool_ref.hop_type,
                 update_block: core.pool_update_block(pool_ref.pool_key),
+                tick_data_block: core.pool_tick_data_block(pool_ref.pool_key),
                 cl_meta,
                 v2: match pool_ref.hop_type {
                     HopType::V2 => core
