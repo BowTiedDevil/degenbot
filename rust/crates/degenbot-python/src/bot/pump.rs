@@ -617,9 +617,10 @@ impl PumpState {
     /// the rolling-start race fix, twin of `verify_v3_snapshot_seed`).
     ///
     /// The block compared against is the one captured atomically with the
-    /// drain inside `pin_v3_post_drain_snapshot` — the `update_block` at pin
-    /// time (the last drained backfill OR pump event's block, or the
-    /// registration block if neither buffer had events). For an active pool
+    /// drain inside `pin_v3_post_drain_snapshot` — the `tick_data_block`
+    /// (liquidity clock, two-stamp OB7UNY) at pin time (the last drained
+    /// backfill OR pump event's block, or the registration block if neither
+    /// buffer had events). For an active pool
     /// on a slow `build_paths`, pump Mint/Burn events land at blocks PAST the
     /// start()-time `verify_backfill_block`; draining them advances `tick_data`
     /// to a state matching on-chain at a LATER block, so verifying against
@@ -696,8 +697,9 @@ impl PumpState {
     /// on-chain state at the **pinned block** (step-2 of the two-step verify —
     /// V4 twin of `verify_v3_post_drain_snapshot`). Keyed by
     /// `(pool_manager, pool_id_hex)`. The block compared against is the
-    /// `update_block` captured atomically with the drain inside
-    /// `pin_v4_post_drain_snapshot` — NOT a caller-supplied constant (see
+    /// `tick_data_block` (liquidity clock, two-stamp OB7UNY) captured
+    /// atomically with the drain inside `pin_v4_post_drain_snapshot` — NOT a
+    /// caller-supplied constant (see
     /// `verify_v3_post_drain_snapshot` for the full rationale). The pin is
     /// taken (consumed) — verified exactly once; `None` for sparse /
     /// un-drained / already-verified pools.

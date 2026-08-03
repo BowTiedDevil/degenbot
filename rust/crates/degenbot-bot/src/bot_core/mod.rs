@@ -407,12 +407,13 @@ pub(crate) fn trace_apply_route_v4(
 ///   below the marked block (a `mark_complete(W)` with zero pump events for
 ///   an active pool proves the pump never delivered block W's logs — the
 ///   subscribe→resume drop).
-/// - `pin_v3/v4_post_drain_snapshot` logs the pinned `(update_block,
+/// - `pin_v3/v4_post_drain_snapshot` logs the pinned `(tick_data_block,
 ///   tick_data.len(), pump_count_at_or_below, last_complete_block)` so a
 ///   step-2 mismatch can be correlated to the drain that produced the pin.
-///   NOTE: `update_block` may legitimately exceed `last_complete_block` when
-///   the registration seed carries the live WS head while the pump buffer has
-///   not yet tombstoned it (a benign `pump_count_at_or_below == 0` case). It
+///   NOTE: `tick_data_block` may legitimately exceed `last_complete_block`
+///   when the registration seed carries the live WS head while the pump
+///   buffer has not yet tombstoned it (a benign
+///   `pump_count_at_or_below == 0` case). It
 ///   is NOT by itself a bug signal — the real failure symptom is a divergent
 ///   `tick_data` entry (ghost gross/net) against on-chain at the pinned block
 ///   (the `[verify-dbg] divergence set`). Do not read `update_block >
@@ -1728,14 +1729,14 @@ impl BotState {
                 None
             }
         };
-        if let Some((update_block, tick_count, watch)) = diag {
+        if let Some((tick_data_block, tick_count, watch)) = diag {
             let pool_match = drain_dbg_pool_match(address);
             if verify_dbg_enabled() {
                 tracing::info!(
                     pool_addr = %format!("{address:x}"),
-                    update_block,
+                    tick_data_block,
                     tick_count,
-                    pump_count = self.v3_buffer.pump_count_at_or_below(&address, update_block),
+                    pump_count = self.v3_buffer.pump_count_at_or_below(&address, tick_data_block),
                     last_complete_block = self.pump_complete_cutoff(),
                     "[verify-dbg] V3 pin"
                 );
@@ -1747,7 +1748,7 @@ impl BotState {
                 if let Some((g, n)) = watch {
                     tracing::info!(
                         pool_addr = %format!("{address:x}"),
-                        update_block,
+                        tick_data_block,
                         watch_tick = ?trace_watch_tick(),
                         gross = %g,
                         net = %n,
@@ -1756,7 +1757,7 @@ impl BotState {
                 } else {
                     tracing::info!(
                         pool_addr = %format!("{address:x}"),
-                        update_block,
+                        tick_data_block,
                         watch_tick = ?trace_watch_tick(),
                         "[trace] pin watch-tick absent"
                     );
@@ -1769,7 +1770,8 @@ impl BotState {
     /// for a V3 pool. Step-2 verify calls this to read+free the pin in one
     /// pass — the pin is verified exactly once (at the pinned block during
     /// `build_paths`), then released to bound memory. The returned block is the
-    /// `update_block` captured atomically with the drain; the verify compares
+    /// `tick_data_block` (liquidity clock, two-stamp OB7UNY) captured
+    /// atomically with the drain; the verify compares
     /// `tick_data` against on-chain@THIS block, NOT a caller-supplied
     /// `verify_backfill_block` constant. Returns `None` for sparse pools, pools
     /// with no drain-yet pin, or if already taken (no-op Ok at the seam).
@@ -3755,13 +3757,13 @@ impl BotState {
                 None
             }
         };
-        if let Some(update_block) = diag {
+        if let Some(tick_data_block) = diag {
             if verify_dbg_enabled() {
                 tracing::info!(
                     pool_manager = %format!("{pool_manager:x}"),
                     pool_id = %degenbot_core::hex_utils::encode_hex(pool_id),
-                    update_block,
-                    pump_count = self.v4_buffer.pump_count_at_or_below(&key, update_block),
+                    tick_data_block,
+                    pump_count = self.v4_buffer.pump_count_at_or_below(&key, tick_data_block),
                     last_complete_block = self.pump_complete_cutoff(),
                     "[verify-dbg] V4 pin"
                 );
@@ -3771,10 +3773,11 @@ impl BotState {
 
     /// Take (move out + clear) the V4 post-drain `(tick_data, block)` pair.
     /// Step-2 verify consumes it once (at the pinned block). The returned
-    /// block is the `update_block` captured atomically with the drain; the
-    /// verify compares `tick_data` against on-chain@THIS block, NOT a
-    /// caller-supplied `verify_backfill_block` constant. `None` for sparse /
-    /// un-drained / already-taken pools (no-op Ok at the seam).
+    /// block is the `tick_data_block` (liquidity clock, two-stamp OB7UNY)
+    /// captured atomically with the drain; the verify compares `tick_data`
+    /// against on-chain@THIS block, NOT a caller-supplied
+    /// `verify_backfill_block` constant. `None` for sparse / un-drained /
+    /// already-taken pools (no-op Ok at the seam).
     pub fn take_v4_post_drain_snapshot(
         &mut self,
         pool_manager: Address,
