@@ -551,3 +551,122 @@ fn v3_sparse_tick_topology_reproduces_onchain_plus_thirteen_class() {
             .join("\n"),
     );
 }
+
+/// Build a V3 pool at current_tick 0 (a word boundary) with the current price
+/// STRICTLY between sqrt(0) and sqrt(spacing) — so the on-chain step-0
+/// current-tick drain is a real non-zero floored step (the trigger the fee-1
+/// V4 recurrence exposed, which a price exactly on the boundary cannot
+/// exercise). Initialized ticks on both sides so both directions work.
+#[allow(dead_code)]
+fn build_real_position_v3_state(base_liquidity: u128, tick_spacing: i32, fee: u32) -> V3PoolState {
+    use degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal;
+    let sq_t = get_sqrt_ratio_at_tick_internal(0).unwrap();
+    let sq_n = get_sqrt_ratio_at_tick_internal(tick_spacing).unwrap();
+    let sp = (U256::from(sq_t) + U256::from(sq_n)) / U256::from(2u64);
+
+    let liq_gross = U256::from(base_liquidity).to::<U128>();
+    let net_pos = I256::try_from(i128::try_from(base_liquidity).unwrap()).unwrap();
+    let net_neg = -net_pos;
+    let mut tick_data: HashMap<i32, TickInfo> = HashMap::new();
+    for sig in [-1i32, 1] {
+        tick_data.insert(
+            sig * tick_spacing,
+            TickInfo {
+                liquidity_gross: liq_gross,
+                liquidity_net: net_pos,
+                block: 0,
+            },
+        );
+        tick_data.insert(
+            sig * 2 * tick_spacing,
+            TickInfo {
+                liquidity_gross: liq_gross,
+                liquidity_net: net_neg,
+                block: 0,
+            },
+        );
+    }
+    let params = RegisterV3PoolParams {
+        address: alloy::primitives::Address::ZERO,
+        token0: alloy::primitives::Address::ZERO,
+        token1: alloy::primitives::Address::ZERO,
+        fee,
+        tick_spacing,
+        factory: alloy::primitives::Address::ZERO,
+        sqrt_price_x96: sp,
+        liquidity: base_liquidity,
+        tick: 0,
+        tick_data,
+        update_block: 0,
+        coverage: PoolTickCoverage::Tracked,
+        fetcher: None,
+        deployer: alloy::primitives::Address::ZERO,
+        init_hash: B256::ZERO,
+    };
+    let (_identity, state) = V3PoolState::from_params(params, 8);
+    state
+}
+
+/// GREEN guard for the shared `compute_tick_ranges` current-tick step-0 floor
+/// fix on the V3 side: with the current price strictly inside a word-boundary
+/// current tick (V4 fee-1 trigger, shared V3/V4 code path), the V3 solver
+/// int-solve path must equal `v3_simulate_swap` (the on-chain oracle) in BOTH
+/// directions. Pre-fix this over-predicted by a few wei at zfo=true.
+#[test]
+fn fee1_word_boundary_current_tick_v3_parity() {
+    let liq = 1_000_000_000_000_000_000u128; // 1e18
+    let mut failures = Vec::new();
+    for ts in [60i32, 1i32] {
+        for zfo in [true, false] {
+            let state = build_real_position_v3_state(liq, ts, 3_000);
+            let Some(seq) = state.build_int_v3_sequence(ts, 3_000, zfo, 12) else {
+                continue;
+            };
+            let limit = unbounded_limit(zfo);
+            let n = seq.ranges.len();
+            if n < 3 {
+                continue;
+            }
+            let gins: Vec<U256> = (0..n)
+                .map(|k| seq.compute_crossing(k).unwrap().crossing_gross_input)
+                .collect();
+            let mut amounts: Vec<U256> = vec![gins[1] / U256::from(2u64)];
+            for k in 1..n - 1 {
+                let span = gins[k + 1].saturating_sub(gins[k]);
+                amounts.push(gins[k] + span / U256::from(2u64));
+                for delta in [1u64, 2, 3, 5, 13] {
+                    amounts.push(gins[k].saturating_add(U256::from(delta)));
+                    amounts.push(gins[k + 1].saturating_sub(U256::from(delta)));
+                }
+            }
+            for a in amounts {
+                if a.is_zero() {
+                    continue;
+                }
+                let Ok(amt) = I256::try_from(a) else { continue };
+                let outcome = v3_simulate_swap(&state, 3_000, ts, zfo, amt, limit).expect("v3 sim");
+                let sim = v3_exact_in_output(&outcome, zfo);
+                let Some(sol) = solver_crossing_output(a, &seq) else {
+                    continue;
+                };
+                if sim != sol {
+                    failures.push(format!(
+                        "tick=0 ts={ts} dir={} amount={a} sim={sim} solver={sol}",
+                        if zfo { "zfo" } else { "ofz" },
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "V3 word-boundary real-position parity diverged (shared compute_tick_ranges fix). {}:\n{}",
+        failures.len(),
+        failures
+            .iter()
+            .take(10)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+}
