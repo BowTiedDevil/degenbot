@@ -504,3 +504,174 @@ fn v4_pool_dense_swap_matches_sim_proptest() {
         prop_assert_eq!(on_am1, sim.amount1, "amount1");
     });
 }
+
+// ---------------------------------------------------------------------------
+// Fee-1 / tiny-liquidity discriminator (ergo UO3JM4 — the V3→V4→V3 1-wei
+// take-overdraw observed on a fee-1 V4 pool at ~1:1 price).
+//
+// The live reproduction (paths 10234/10338): V4(fee=1, zfo=false),
+// `sq=79_231_869_042_278_935_382_727_675_145, liq=94294142` — a fee-1 stable pool at
+// essentially price 1 (current_tick 0). On-chain PoolManager yielded
+// `actual_out=9585` vs the solver's `predicted=9586` (1 wei over-prediction).
+//
+// This is the TDD-first discriminator: feed the IDENTICAL `V4PoolState` to
+// BOTH `v4_simulate_swap` (the Rust twin) and the on-chain PoolManager via
+// this revm harness and assert byte-exact. If it matches, the 1-wei cannot be
+// in `v4_simulate_swap`'s math and must be solver stale-state; if it diverges,
+// a genuine fee-1/tiny-amount rounding bug lives in `compute_swap_step_v4` /
+// `v4_simulate_swap`.
+// ---------------------------------------------------------------------------
+
+/// Reproduction scalars — the fee-1 V4 hop that over-drew by 1 wei
+/// (paths 10234/10338, observed 2026-08-02).
+const FEE1_REPRO_SQ_X96: u128 = 79_231_869_042_278_935_382_727_675_145;
+const FEE1_REPRO_LIQ: u128 = 94_294_142;
+const FEE1_REPRO_FEE: u32 = 1;
+
+/// Clean fee-1 byte-exact discriminator (ergo UO3JM4): a PHYSICALLY VALID
+/// single-position state (lower tick +liq, upper tick -liq; constant active
+/// liquidity L across the whole walk), seeded at the exact reproduction
+/// scalars (`sq=79_231_869_042_278_935_382_727_675_145`, `liq=94294142`, fee=1).
+/// Asserts `v4_simulate_swap` amount0/amount1 === on-chain PoolManager
+/// BalanceDelta byte-for-byte.
+#[test]
+fn v4_pool_fee1_valid_single_position_matches_sim() {
+    let liq = FEE1_REPRO_LIQ;
+    let fee = FEE1_REPRO_FEE;
+    let tick_spacing = 1i32;
+    let mut tick_data: HashMap<i32, TickInfo> = HashMap::new();
+    tick_data.insert(
+        -100,
+        TickInfo {
+            liquidity_gross: alloy::primitives::U128::from(liq),
+            liquidity_net: I256::try_from(i128::try_from(liq).unwrap()).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        100,
+        TickInfo {
+            liquidity_gross: alloy::primitives::U128::from(liq),
+            liquidity_net: I256::try_from(-i128::try_from(liq).unwrap()).unwrap(),
+            block: 0,
+        },
+    );
+    let params = degenbot_pools::v4_state::RegisterV4PoolParams {
+        pool_manager: Address::ZERO,
+        pool_id: [0u8; 32],
+        pool_key: V4PoolKey {
+            currency0: Address::ZERO,
+            currency1: Address::ZERO,
+            fee,
+            tick_spacing,
+            hooks: Address::ZERO,
+        },
+        hook_flags: 0,
+        protocol_fee: 0,
+        sqrt_price_x96: U256::from(FEE1_REPRO_SQ_X96),
+        liquidity: liq,
+        tick: 0,
+        tick_data,
+        update_block: 0,
+        coverage: PoolTickCoverage::Tracked,
+        fetcher: None,
+    };
+    let (_identity, state) = V4PoolState::from_params(params, 8);
+
+    for zfo in [false, true] {
+        for amount in [9_000u64, 9_586, 10_000, 20_000, 50_000] {
+            let amount_specified = I256::ZERO
+                .checked_sub(I256::try_from(U256::from(amount)).unwrap())
+                .unwrap();
+            let dir = if zfo { -1i32 } else { 1i32 };
+            let limit_tick = dir * 10 * tick_spacing;
+            let sqrt_price_limit: u128 = get_sqrt_ratio_at_tick_internal(limit_tick)
+                .unwrap()
+                .to::<u128>();
+
+            let (on_am0, on_am1) = run_v4_onchain_swap(
+                &state,
+                fee,
+                tick_spacing,
+                zfo,
+                amount_specified,
+                sqrt_price_limit,
+            )
+            .expect("v4 on-chain swap succeeded");
+            let sim = v4_simulate_swap(
+                &state,
+                fee,
+                tick_spacing,
+                zfo,
+                amount_specified,
+                U256::from(sqrt_price_limit),
+            )
+            .expect("v4 Rust sim");
+            let err = format!(
+                "zfo={zfo} amount={amount} on_am0={on_am0} on_am1={on_am1} sim0={} sim1={}",
+                sim.amount0, sim.amount1
+            );
+            assert_eq!(on_am0, sim.amount0, "v4 amount0 {err}");
+            assert_eq!(on_am1, sim.amount1, "v4 amount1 {err}");
+        }
+    }
+}
+
+/// Multi-tick fee-1 byte-exact check (ergo UO3JM4): a dense VALID overlapping-
+/// position state at current_tick 0 (price 1, matching the fee-1 repro regime)
+/// with the identical scalar, driven at fee=1 with tiny exact-in amounts that
+/// Clean multi-tick fee-1 byte-exact oracle (ergo UO3JM4): mirrors the proven
+/// fee-3000 dense test (`v4_pool_dense_swap_matches_sim_byte_exact`) but with
+/// fee=1 and a smaller per-position liquidity, crossing 4 of 8 tick boundaries
+/// (liquidity stays healthy — never drains to the degenerate tail-0 regime).
+/// Asserts `v4_simulate_swap` amount0/amount1 === on-chain BalanceDelta.
+#[test]
+fn v4_pool_fee1_dense_matches_sim_byte_exact() {
+    let fee = 1u32;
+    let tick_spacing = 60i32;
+    let k_positions = 8i32;
+    let current_tick = 120i32;
+    let liq = 10_000_000_000u128;
+    let state = dense_v4_state(liq, tick_spacing, k_positions, current_tick);
+
+    for zfo in [true, false] {
+        // V4 exact-in (negative) — magnitude scaled to the tiny liquidity.
+        let amount = I256::try_from(U256::from(liq) / U256::from(100u64)).unwrap();
+        let amount_specified = I256::ZERO.checked_sub(amount).unwrap();
+
+        let limit_tick = if zfo {
+            current_tick - 4 * tick_spacing
+        } else {
+            current_tick + 4 * tick_spacing
+        };
+        let sqrt_price_limit: u128 = get_sqrt_ratio_at_tick_internal(limit_tick)
+            .unwrap()
+            .to::<u128>();
+
+        let (on_am0, on_am1) = run_v4_onchain_swap(
+            &state,
+            fee,
+            tick_spacing,
+            zfo,
+            amount_specified,
+            sqrt_price_limit,
+        )
+        .expect("v4 on-chain swap succeeded");
+        let sim = v4_simulate_swap(
+            &state,
+            fee,
+            tick_spacing,
+            zfo,
+            amount_specified,
+            U256::from(sqrt_price_limit),
+        )
+        .expect("v4 Rust sim");
+
+        let err = format!(
+            "zfo={zfo} on_am0={on_am0} on_am1={on_am1} sim0={} sim1={}",
+            sim.amount0, sim.amount1
+        );
+        assert_eq!(on_am0, sim.amount0, "v4 amount0 {err}");
+        assert_eq!(on_am1, sim.amount1, "v4 amount1 {err}");
+    }
+}

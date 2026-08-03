@@ -319,3 +319,124 @@ fn v4_crossing_solver_matches_v4_simulate_swap_single_high_liquidity_corner() {
             .join("\n"),
     );
 }
+
+/// Build a fee-1/tiny-liquidity V4 state at ~price 1 (current_tick 0), with
+/// initialized ticks at ±`spacing·i`, alternating nets (liquidity toggles
+/// `L ↔ 2L`), mirroring `build_multi_tick_v4_state` but with fee=1, the
+/// tightest tick spacing, and the reproduction's tiny liquidity + active price.
+fn build_fee1_tiny_state(
+    base_liquidity: u128,
+    tick_count: usize,
+    zero_for_one: bool,
+    sqrt_price_x96: U256,
+) -> V4PoolState {
+    let net_pos = I256::try_from(i128::try_from(base_liquidity).unwrap()).unwrap();
+    let net_neg = -net_pos;
+    let liq_gross = U256::from(base_liquidity).to::<U128>();
+    let mut tick_data: HashMap<i32, TickInfo> = HashMap::new();
+    for i in 1..=tick_count {
+        let tick = if zero_for_one { -(i as i32) } else { i as i32 };
+        let net = if i % 2 == 1 { net_pos } else { net_neg };
+        tick_data.insert(
+            tick,
+            TickInfo {
+                liquidity_gross: liq_gross,
+                liquidity_net: net,
+                block: 0,
+            },
+        );
+    }
+    let params = RegisterV4PoolParams {
+        pool_manager: alloy::primitives::Address::ZERO,
+        pool_id: [0u8; 32],
+        pool_key: V4PoolKey {
+            currency0: alloy::primitives::Address::ZERO,
+            currency1: alloy::primitives::Address::ZERO,
+            fee: 1,
+            tick_spacing: 1,
+            hooks: alloy::primitives::Address::ZERO,
+        },
+        hook_flags: 0,
+        protocol_fee: 0,
+        sqrt_price_x96,
+        liquidity: base_liquidity,
+        tick: 0,
+        tick_data,
+        update_block: 0,
+        coverage: PoolTickCoverage::Tracked,
+        fetcher: None,
+    };
+    let (_identity, state) = V4PoolState::from_params(params, 8);
+    state
+}
+
+/// RED regression pin (ergo UO3JM4) — #[ignore]d because it is a NOT-YET-FIXED
+/// reproduction, not a passing guard.
+///
+/// The reproduction's `hop_outputs[i]` for a CL hop come from the SOLVER's
+/// int-solve crossing path, which the docs proved equals `v4_simulate_swap`
+/// only on fee-3000 fixtures. This pin asserts the solver path is byte-exact to
+/// `v4_simulate_swap` for the fee-1 / tiny-amount regime (the 1-wei
+/// `predicted≠actual` class). It is currently RED: the solver's
+/// `compute_crossing` / `int_simulate_v3_swap` over-predicts `v4_simulate_swap`
+/// by 2–3 wei on fee-1 zfo (e.g. amount_in=9586 → sim=9580, solver=9582) while
+/// `v4_simulate_swap` itself is byte-exact to the on-chain PoolManager (see
+/// `degenbot-pools/tests/tier3_v4_pool_swap_vs_revm.rs` fee-1 oracle). So the
+/// live 1-wei is the solver crossing path (NOT stale state and NOT
+/// `v4_simulate_swap`); this test turns GREEN when that path is made
+/// byte-exact.
+#[test]
+#[ignore = "RED pin: solver int-solve crossing path over-predicts v4_simulate_swap on fee-1/tiny (ergo UO3JM4 follow-up)"]
+fn v4_fee1_solver_path_matches_v4_simulate_swap() {
+    // Reproduction scalars (paths 10234/10338): sq & liq of the fee-1 V4 hop.
+    let sq = U256::from(79_231_869_042_278_935_382_727_675_145u128);
+    let liq = 94_294_142u128;
+    let mut failures: Vec<String> = Vec::new();
+
+    for &zfo in &[true, false] {
+        let state = build_fee1_tiny_state(liq, 5, zfo, sq);
+        let seq = state
+            .build_int_v4_sequence(1, 1, zfo, 10)
+            .expect("V4 state builds a tick-range sequence");
+        let limit = unbounded_limit(zfo);
+
+        // Amounts in the tiny-output regime (10 wei → a few thousand wei).
+        for amount_in_u256 in [
+            10u64, 100, 500, 1_000, 5_000, 9_000, 9_586, 12_000, 20_000, 50_000,
+        ] {
+            let amount_in_u256 = U256::from(amount_in_u256);
+            let Some(amount_specified) = I256::try_from(amount_in_u256)
+                .ok()
+                .and_then(|v| I256::ZERO.checked_sub(v))
+            else {
+                continue;
+            };
+            let Ok(outcome) = v4_simulate_swap(&state, 1, 1, zfo, amount_specified, limit) else {
+                continue; // sim not computable on a degenerate edge — skip
+            };
+            let sim_out = v4_exact_in_output(&outcome, zfo);
+            let Some(solver_out) = solver_crossing_output(amount_in_u256, &seq) else {
+                continue;
+            };
+            if sim_out != solver_out {
+                let delta = if sim_out > solver_out {
+                    sim_out - solver_out
+                } else {
+                    solver_out - sim_out
+                };
+                failures.push(format!(
+                    "DIVERGENCE dir={} L={liq} amount_in={amount_in_u256} sim={sim_out} solver={solver_out} delta={delta}",
+                    if zfo { "zfo" } else { "ofz" },
+                ));
+            }
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "V4 fee-1 solver crossing path diverges from v4_simulate_swap (the 1-wei `predicted≠actual` \
+         is in the int-solve path, NOT stale state). First {}:\n{}",
+        failures.len(),
+        failures.iter().take(10).cloned().collect::<Vec<_>>().join("\n"),
+    );
+}

@@ -307,3 +307,98 @@ fn v3_pinned_input_anchors_byte_exact_oracle() {
     assert_eq!(rust.amount_out, onchain.amount_out, "pinned: amountOut");
     assert_eq!(rust.fee_amount, onchain.fee_amount, "pinned: feeAmount");
 }
+
+#[test]
+fn v4_compute_swap_step_pinned_fee1_tiny_liquidity_first_step() {
+    // The exact FIRST step of ergo UO3JM4's fee-1 reproduction (zfo=false, ofz):
+    //   sqrt_current = 79_231_869_042_278_935_382_727_675_145 (the repro active price)
+    //   tick_spacing=1, current_tick=0 → first ofz target = tick +1
+    //   liquidity = 94294142, amount = -20000 (exact-in), fee = 1 pip.
+    // Isolates compute_swap_step_v4 from the v4_simulate_swap loop.
+    use degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal;
+
+    let sqrt_current = U256::from(79_231_869_042_278_935_382_727_675_145u128);
+    let sqrt_target = U256::from(get_sqrt_ratio_at_tick_internal(1).unwrap());
+    let liquidity = 94_294_142i128;
+    let amount = I256::try_from(-20000i64).unwrap(); // exact-in (negative)
+    let fee_pips = 1u32;
+
+    let addr = Address::repeat_byte(0x42);
+    let db = db_with_contract(
+        addr,
+        load_harness_bytecode("SwapMathV4Harness.sol", "SwapMathV4Harness"),
+    );
+    let calldata = compute_swap_step_calldata(
+        sqrt_current,
+        sqrt_target,
+        liquidity.cast_unsigned(),
+        amount,
+        fee_pips,
+    );
+
+    let rust = compute_swap_step_v4(
+        sqrt_current,
+        sqrt_target,
+        liquidity,
+        amount,
+        U256::from(fee_pips),
+    )
+    .expect("rust step");
+    let onchain = call_harness(addr, db, calldata).expect("onchain step");
+    assert_eq!(
+        rust.sqrt_price_next, onchain.sqrt_price_next,
+        "sqrtPriceNext"
+    );
+    assert_eq!(rust.amount_in, onchain.amount_in, "amountIn");
+    assert_eq!(rust.amount_out, onchain.amount_out, "amountOut");
+    assert_eq!(rust.fee_amount, onchain.fee_amount, "feeAmount");
+}
+
+#[test]
+fn v4_compute_swap_step_pinned_fee1_final_partial_step() {
+    // The FINAL (partial/"can't reach target") step of ergo UO3JM4's fee-1
+    // ofz-repro 20000-token swap: after crossing ticks 1,2,3 the swap lands
+    // partway into tick 4's range. Sim yields amt_out=5544; on-chain 5547.
+    let sqrt_current = U256::from(79_240_047_035_742_135_098_198_828_268u128);
+    let sqrt_target = U256::from(79_242_376_975_757_412_558_469_338_999u128);
+    let liquidity = 188_588_284i128;
+    let amount = I256::try_from(-5547i64).unwrap(); // partial-step exact-in
+    let fee_pips = 1u32;
+
+    let addr = Address::repeat_byte(0x43);
+    let db = db_with_contract(
+        addr,
+        load_harness_bytecode("SwapMathV4Harness.sol", "SwapMathV4Harness"),
+    );
+    let calldata = compute_swap_step_calldata(
+        sqrt_current,
+        sqrt_target,
+        liquidity.cast_unsigned(),
+        amount,
+        fee_pips,
+    );
+    let rust = compute_swap_step_v4(
+        sqrt_current,
+        sqrt_target,
+        liquidity,
+        amount,
+        U256::from(fee_pips),
+    )
+    .expect("rust step");
+    let onchain = call_harness(addr, db, calldata).expect("onchain step");
+    println!(
+        "rust: sqrt_next={} in={} out={} fee={}",
+        rust.sqrt_price_next, rust.amount_in, rust.amount_out, rust.fee_amount
+    );
+    println!(
+        "onchain: sqrt_next={} in={} out={} fee={}",
+        onchain.sqrt_price_next, onchain.amount_in, onchain.amount_out, onchain.fee_amount
+    );
+    assert_eq!(
+        rust.sqrt_price_next, onchain.sqrt_price_next,
+        "sqrtPriceNext"
+    );
+    assert_eq!(rust.amount_in, onchain.amount_in, "amountIn");
+    assert_eq!(rust.amount_out, onchain.amount_out, "amountOut");
+    assert_eq!(rust.fee_amount, onchain.fee_amount, "feeAmount");
+}
