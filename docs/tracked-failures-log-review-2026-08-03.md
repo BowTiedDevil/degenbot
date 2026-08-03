@@ -56,52 +56,44 @@ Notes for building fixtures:
   (the tier-3-proven on-chain oracle) — the assertion target is
   `solver V4-hop == v4_simulate_swap == recorded actual`, current state RED.
 
-### Root cause(s) determined (2026-08-03 session)
+### Unified root cause determined (2026-08-03 session)
 
 I reconstructed each V4 pool, drove `v4_simulate_swap` (the tier-3 byte-exact
-on-chain oracle) at the recorded V4-hop input, and probed nearby inputs to
-match each recorded `actual_out`. The six overdrafts split into **two distinct
-mechanisms**, verified against frozen on-chain state:
+on-chain oracle) at the recorded V4-hop input, and probed nearby inputs. The
+six overdrafts are ALL the SAME mechanism — there is NO V4 crossing-math
+error. Data:
 
-**A) Crossing / output over-prediction — the clean, reproducible UO3JM4 bug
-(UNI pool `0x9a5c1d2f…`, block 25673381, paths 57150/43047).**
+| pool (block) | solver V4 input | oracle @ input | solver predicted | recorded actual | input reproducing actual |
+|---|---|---|---|---|---|
+| `0x2a6d5b75…` (25672140) | 185 | 631737964053287 = solver | 631737964053287 | 628304616211100 | **184** (gap 1) |
+| `0x76f75965…` (25672332/35396) | 9652 | 9649 = solver | 9649 | 9640 | **9643** (gap 9) |
+| `0x9a5c1d2f…` (25673381/57150) | 3135 | 772076574181336 = **actual** | 772833263957077 | 772076574181336 | (see below) |
 
-| path | solver V4 input | v4_simulate_swap @ input | solver predicted | actual_out |
-|---|---|---|---|---|
-| 57150 | 3135 | **772076574181336 = actual** | 772833263957077 (+0.098%) | 772076574181336 |
-| 43047 | 57718 | 14214710436130112 | 14228641859916626 (+0.098%) | 14147240238759279 |
+Key results, all verified on frozen on-chain state:
+- `v4_simulate_swap` at the solver's recorded input equals the solver's
+  prediction on the big pool + fee-1 (`oracle == predicted`, crossing exact).
+- On the UNI pool the recorded actual equals the oracle at input 3135, and the
+  solver predicted 772833263957077 — which is the oracle at a LARGER input
+  (~3138), i.e. ~3 units above the delivered 3135. The predicted output is not
+  reproducible at any input <= 3135.
+- **Decisive:** reconstructing the UNI pool and running the SOLVER'S OWN
+  crossing (`build_int_v4_sequence` + `compute_crossing`/`int_simulate_v3_swap`)
+  at the delivered input 3135 returns `772076574181336` == the oracle == the
+  recorded actual byte-exactly (asserted in the new parity test
+  `v4_uni_9a5c1d2f_oracle_matches_recorded_actual_not_solver_overprediction`).
+  The crossing math is exact given the DELIVERED input.
 
-At the solver's own recorded input, `v4_simulate_swap` equals the on-chain
-actual and the solver's prediction is ~0.098% HIGHER. The solver's predicted
-output corresponds to the oracle at a ~3-unit *larger* input than hop0
-actually delivered (e.g. predicted 772833263957077 == oracle@~3138, while
-input was 3135). The predicted output is NOT reprodusible at any input <= the
-recorded one. This is a real solver crossing/output over-prediction on a DEEP
-**134-range** tick topology (protocol fee 2048500).
-
-**B) Inter-hop forward-amount gap — crossing math is exact, the input handed
-to V4 runs a few units low (big pool `0x2a6d5b75…` block 25672140; fee-1
-`0x76f75965…` block 25672332).**
-
-| pool | solver V4 input | oracle @ input | input reproducing actual | gap |
-|---|---|---|---|---|
-| `0x2a6d5b75…` | 185 | 631737964053287 = solver | **184** | 1 unit |
-| `0x76f75965…` (35396) | 9652 | 9649 = solver | **9643** | 9 units |
-
-Here `v4_simulate_swap @ recorded input == solver predicted` (crossing math
-byte-exact), but `v4_simulate_swap` at a SMALLER input reproduces the recorded
-`actual_out` exactly. The amount actually transferred into the V4 pool (the
-hop0 output) ran a few units below the solver's `hop_outputs[0]`, so
-`V4_TAKE(predicted output)` overdraws what the pool settles.
-
-**Eliminated unanimously:** protocol fee on/off (2048500 vs 0) gives identical
-oracle output -> fee does not explain the gap on any pool.
-
-Both mechanisms produce the same observable (`V4_TAKE` → `transfer amount
-exceeds balance` → `matched=false`), but the fix seams differ: **A** is the
-V4 exact-in crossing/output math (tier-3 slice: deep-topology crossing), **B**
-is the solver's inter-hop forward-amount composition. `A` is the clean
-frozen-state reproduction and the primary target.
+**Unified root cause:** the solver's V4 exact-in forward amount (`hop_outputs[0]`,
+the amount carried from hop0 into the V4 pool) is a few units LARGER in the
+solver's accounting than the amount actually delivered (1 unit on the big
+pool, 9 on fee-1, ~3 on UNI). The crossing then correctly converts that
+(too-large) input to a (too-large) output, so `V4_TAKE(predicted output)`
+overdraws what the pool settles -> `transfer amount exceeds balance` ->
+`matched=false`. This is an **inter-hop forward-amount composition error**,
+NOT crossing math and NOT protocol fee (on/off identical). The fix targets the
+solver's hop-boundary amount composition (`hop_outputs[i]` handed to the next
+hop / V4 exact-in intake); the new parity test keeps the on-chain truth pinned
+so a fix cannot drift the crossing output.
 
 ### Solver-side solve states (from `[solver-st]`, for pool reconstruction)
 

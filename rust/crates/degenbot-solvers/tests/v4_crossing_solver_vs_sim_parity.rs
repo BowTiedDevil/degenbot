@@ -43,6 +43,10 @@
     clippy::cast_possible_wrap,
     reason = "60·i (i ≤ tick_count ≤ 8) fits i32"
 )]
+#![allow(
+    clippy::unreadable_literal,
+    reason = "machine-generated 134-tick UNI fixture payload; separators would be noise"
+)]
 
 use std::collections::HashMap;
 
@@ -438,5 +442,1153 @@ fn v4_fee1_solver_path_matches_v4_simulate_swap() {
          is in the int-solve path, NOT stale state). First {}:\n{}",
         failures.len(),
         failures.iter().take(10).cloned().collect::<Vec<_>>().join("\n"),
+    );
+}
+
+/// Mechanism-A regression (UO3JM4, resolved): the REAL UNI V4 pool
+/// `0x9a5c1d2f...` at block 25673381 (path 57150) - deep 134-range tick
+/// topology, protocol_fee 2048500. The tier-3 on-chain oracle
+/// `v4_simulate_swap` at the solver's recorded V4 input (3135) reproduces the
+/// recorded on-chain `actual` EXACTLY (772076574181336). The reconstructed
+/// solver crossing at the delivered input is ALSO exact (proven below), so the
+/// live over-prediction (772833263957077) is an inter-hop forward-amount gap
+/// (a ~3-unit-larger input in the solver's accounting, not crossing math). This
+/// pins the on-chain truth from the committed fixture so any fix to the V4
+/// crossing math must keep `v4_simulate_swap(state, 3135) == 772076574181336`.
+fn build_uni_9a5c1d2f_v4_state() -> V4PoolState {
+    let mut tick_data: HashMap<i32, TickInfo> = HashMap::new();
+    tick_data.insert(
+        -887220,
+        TickInfo {
+            liquidity_gross: U128::from(3095796326960008u128),
+            liquidity_net: I256::try_from(3095796326960008i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -273960,
+        TickInfo {
+            liquidity_gross: U128::from(2569758449300718u128),
+            liquidity_net: I256::try_from(2569758449300718i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -272460,
+        TickInfo {
+            liquidity_gross: U128::from(423606468713367u128),
+            liquidity_net: I256::try_from(423606468713367i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -272280,
+        TickInfo {
+            liquidity_gross: U128::from(64137966113587u128),
+            liquidity_net: I256::try_from(64137966113587i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -270840,
+        TickInfo {
+            liquidity_gross: U128::from(6059498619583658u128),
+            liquidity_net: I256::try_from(6059498619583658i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -270720,
+        TickInfo {
+            liquidity_gross: U128::from(1442416500734322u128),
+            liquidity_net: I256::try_from(1442416500734322i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -270660,
+        TickInfo {
+            liquidity_gross: U128::from(1072538255797962u128),
+            liquidity_net: I256::try_from(1072538255797962i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -269880,
+        TickInfo {
+            liquidity_gross: U128::from(746254119994175u128),
+            liquidity_net: I256::try_from(746254119994175i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -269640,
+        TickInfo {
+            liquidity_gross: U128::from(1063979019046437u128),
+            liquidity_net: I256::try_from(1063979019046437i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -269460,
+        TickInfo {
+            liquidity_gross: U128::from(4392735532859774u128),
+            liquidity_net: I256::try_from(4392735532859774i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -269400,
+        TickInfo {
+            liquidity_gross: U128::from(3301964538422661603u128),
+            liquidity_net: I256::try_from(3301964538422661603i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -269340,
+        TickInfo {
+            liquidity_gross: U128::from(60648748642817u128),
+            liquidity_net: I256::try_from(60648748642817i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -269220,
+        TickInfo {
+            liquidity_gross: U128::from(42054372060004u128),
+            liquidity_net: I256::try_from(42054372060004i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -268500,
+        TickInfo {
+            liquidity_gross: U128::from(884671098135251u128),
+            liquidity_net: I256::try_from(884671098135251i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -268440,
+        TickInfo {
+            liquidity_gross: U128::from(41758110177656u128),
+            liquidity_net: I256::try_from(41758110177656i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -267900,
+        TickInfo {
+            liquidity_gross: U128::from(5250989243683818u128),
+            liquidity_net: I256::try_from(5250989243683818i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -267660,
+        TickInfo {
+            liquidity_gross: U128::from(652579615864060u128),
+            liquidity_net: I256::try_from(652579615864060i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -267600,
+        TickInfo {
+            liquidity_gross: U128::from(621060394843147u128),
+            liquidity_net: I256::try_from(621060394843147i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -267300,
+        TickInfo {
+            liquidity_gross: U128::from(958471229359559285u128),
+            liquidity_net: I256::try_from(-958471229359559285i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -267240,
+        TickInfo {
+            liquidity_gross: U128::from(368946244160946u128),
+            liquidity_net: I256::try_from(368946244160946i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -267180,
+        TickInfo {
+            liquidity_gross: U128::from(10186277318479783u128),
+            liquidity_net: I256::try_from(10186277318479783i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -267120,
+        TickInfo {
+            liquidity_gross: U128::from(2422135248561103149u128),
+            liquidity_net: I256::try_from(-2264621070134041011i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -267060,
+        TickInfo {
+            liquidity_gross: U128::from(7734991288379668u128),
+            liquidity_net: I256::try_from(7734991288379668i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -266820,
+        TickInfo {
+            liquidity_gross: U128::from(9534897714990701u128),
+            liquidity_net: I256::try_from(9534897714990701i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -266700,
+        TickInfo {
+            liquidity_gross: U128::from(813322091222952u128),
+            liquidity_net: I256::try_from(813322091222952i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -266640,
+        TickInfo {
+            liquidity_gross: U128::from(6987956816277586u128),
+            liquidity_net: I256::try_from(6987956816277586i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -266580,
+        TickInfo {
+            liquidity_gross: U128::from(59281355715900u128),
+            liquidity_net: I256::try_from(59281355715900i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -266400,
+        TickInfo {
+            liquidity_gross: U128::from(2399522880507038u128),
+            liquidity_net: I256::try_from(2399522880507038i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -266340,
+        TickInfo {
+            liquidity_gross: U128::from(112493218521047u128),
+            liquidity_net: I256::try_from(112493218521047i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -266220,
+        TickInfo {
+            liquidity_gross: U128::from(656032139661335u128),
+            liquidity_net: I256::try_from(656032139661335i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -266040,
+        TickInfo {
+            liquidity_gross: U128::from(100838336754559490u128),
+            liquidity_net: I256::try_from(100838336754559490i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -265980,
+        TickInfo {
+            liquidity_gross: U128::from(12413139839524009u128),
+            liquidity_net: I256::try_from(12413139839524009i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -265680,
+        TickInfo {
+            liquidity_gross: U128::from(415010191696619u128),
+            liquidity_net: I256::try_from(415010191696619i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -265500,
+        TickInfo {
+            liquidity_gross: U128::from(2055598704323972u128),
+            liquidity_net: I256::try_from(2055598704323972i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -265320,
+        TickInfo {
+            liquidity_gross: U128::from(109663003636428798u128),
+            liquidity_net: I256::try_from(109663003636428798i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -265020,
+        TickInfo {
+            liquidity_gross: U128::from(750443156766402504u128),
+            liquidity_net: I256::try_from(750443156766402504i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -264720,
+        TickInfo {
+            liquidity_gross: U128::from(12635854150371872u128),
+            liquidity_net: I256::try_from(12635854150371872i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -264600,
+        TickInfo {
+            liquidity_gross: U128::from(93518518087984u128),
+            liquidity_net: I256::try_from(93518518087984i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -264420,
+        TickInfo {
+            liquidity_gross: U128::from(37166238477338101u128),
+            liquidity_net: I256::try_from(37166238477338101i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -264300,
+        TickInfo {
+            liquidity_gross: U128::from(19985792372304u128),
+            liquidity_net: I256::try_from(19985792372304i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -263760,
+        TickInfo {
+            liquidity_gross: U128::from(4696819509253034u128),
+            liquidity_net: I256::try_from(4696819509253034i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -263520,
+        TickInfo {
+            liquidity_gross: U128::from(42054372060004u128),
+            liquidity_net: I256::try_from(-42054372060004i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -263220,
+        TickInfo {
+            liquidity_gross: U128::from(125863968906478272u128),
+            liquidity_net: I256::try_from(125863968906478272i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -262980,
+        TickInfo {
+            liquidity_gross: U128::from(7703414190147941u128),
+            liquidity_net: I256::try_from(7703414190147941i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -262500,
+        TickInfo {
+            liquidity_gross: U128::from(46089222798377746u128),
+            liquidity_net: I256::try_from(46089222798377746i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -262440,
+        TickInfo {
+            liquidity_gross: U128::from(874654509432810317u128),
+            liquidity_net: I256::try_from(828080803628147815i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -262320,
+        TickInfo {
+            liquidity_gross: U128::from(6398617370111093u128),
+            liquidity_net: I256::try_from(6398617370111093i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -262260,
+        TickInfo {
+            liquidity_gross: U128::from(146855620115534377u128),
+            liquidity_net: I256::try_from(146855620115534377i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -262200,
+        TickInfo {
+            liquidity_gross: U128::from(21561187657487821u128),
+            liquidity_net: I256::try_from(-21561187657487821i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -262080,
+        TickInfo {
+            liquidity_gross: U128::from(7552465476547216u128),
+            liquidity_net: I256::try_from(-7552465476547216i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -261960,
+        TickInfo {
+            liquidity_gross: U128::from(858809643407810700u128),
+            liquidity_net: I256::try_from(-858809643407810700i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -261720,
+        TickInfo {
+            liquidity_gross: U128::from(1323244005757474309u128),
+            liquidity_net: I256::try_from(1321938849239849041i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -261600,
+        TickInfo {
+            liquidity_gross: U128::from(929926413866351u128),
+            liquidity_net: I256::try_from(-929926413866351i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -261420,
+        TickInfo {
+            liquidity_gross: U128::from(884671098135251u128),
+            liquidity_net: I256::try_from(-884671098135251i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -261360,
+        TickInfo {
+            liquidity_gross: U128::from(8452163823214659u128),
+            liquidity_net: I256::try_from(8368647602859347i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -261300,
+        TickInfo {
+            liquidity_gross: U128::from(60440551344662902u128),
+            liquidity_net: I256::try_from(-60440551344662902i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -261240,
+        TickInfo {
+            liquidity_gross: U128::from(4890074599754121u128),
+            liquidity_net: I256::try_from(-4890074599754121i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -261060,
+        TickInfo {
+            liquidity_gross: U128::from(107299173773702665u128),
+            liquidity_net: I256::try_from(-107299173773702665i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -261000,
+        TickInfo {
+            liquidity_gross: U128::from(6987956816277586u128),
+            liquidity_net: I256::try_from(-6987956816277586i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -260880,
+        TickInfo {
+            liquidity_gross: U128::from(55353246829305823u128),
+            liquidity_net: I256::try_from(55353246829305823i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -260820,
+        TickInfo {
+            liquidity_gross: U128::from(1319428066177662831u128),
+            liquidity_net: I256::try_from(-1319428066177662831i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -260640,
+        TickInfo {
+            liquidity_gross: U128::from(17123234183330268u128),
+            liquidity_net: I256::try_from(-17013374488476260i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -260520,
+        TickInfo {
+            liquidity_gross: U128::from(139491426758065142u128),
+            liquidity_net: I256::try_from(-139340037267354454i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -260460,
+        TickInfo {
+            liquidity_gross: U128::from(14773839555594581u128),
+            liquidity_net: I256::try_from(14773839555594581i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -260400,
+        TickInfo {
+            liquidity_gross: U128::from(1519577093352529u128),
+            liquidity_net: I256::try_from(689556709959291i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -260340,
+        TickInfo {
+            liquidity_gross: U128::from(621060394843147u128),
+            liquidity_net: I256::try_from(-621060394843147i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -260280,
+        TickInfo {
+            liquidity_gross: U128::from(37166238477338101u128),
+            liquidity_net: I256::try_from(-37166238477338101i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -260220,
+        TickInfo {
+            liquidity_gross: U128::from(38108430607252998u128),
+            liquidity_net: I256::try_from(9795261403725302i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -260100,
+        TickInfo {
+            liquidity_gross: U128::from(2569758449300718u128),
+            liquidity_net: I256::try_from(-2569758449300718i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -259980,
+        TickInfo {
+            liquidity_gross: U128::from(1066607604323169u128),
+            liquidity_net: I256::try_from(1066607604323169i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -259740,
+        TickInfo {
+            liquidity_gross: U128::from(2904288456195335u128),
+            liquidity_net: I256::try_from(1592224176872665i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -259620,
+        TickInfo {
+            liquidity_gross: U128::from(84566505322153u128),
+            liquidity_net: I256::try_from(-33996206109647i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -259560,
+        TickInfo {
+            liquidity_gross: U128::from(852655011244344u128),
+            liquidity_net: I256::try_from(852655011244344i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -259440,
+        TickInfo {
+            liquidity_gross: U128::from(75510704875294845u128),
+            liquidity_net: I256::try_from(-35195788783316801i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -259320,
+        TickInfo {
+            liquidity_gross: U128::from(1442416500734322u128),
+            liquidity_net: I256::try_from(-1442416500734322i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -259080,
+        TickInfo {
+            liquidity_gross: U128::from(4682848742389730u128),
+            liquidity_net: I256::try_from(359625559470110i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -258840,
+        TickInfo {
+            liquidity_gross: U128::from(54929847427004u128),
+            liquidity_net: I256::try_from(-54929847427004i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -258720,
+        TickInfo {
+            liquidity_gross: U128::from(334649707142645u128),
+            liquidity_net: I256::try_from(334649707142645i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -258600,
+        TickInfo {
+            liquidity_gross: U128::from(335734850520887u128),
+            liquidity_net: I256::try_from(335734850520887i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -258540,
+        TickInfo {
+            liquidity_gross: U128::from(589492701888314u128),
+            liquidity_net: I256::try_from(589492701888314i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -258420,
+        TickInfo {
+            liquidity_gross: U128::from(718737240575391944u128),
+            liquidity_net: I256::try_from(-718737240575391944i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -258360,
+        TickInfo {
+            liquidity_gross: U128::from(1634294381180807u128),
+            liquidity_net: I256::try_from(-1634294381180807i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -258300,
+        TickInfo {
+            liquidity_gross: U128::from(743879648539850u128),
+            liquidity_net: I256::try_from(592490157829162i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -258240,
+        TickInfo {
+            liquidity_gross: U128::from(368946244160946u128),
+            liquidity_net: I256::try_from(-368946244160946i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -258000,
+        TickInfo {
+            liquidity_gross: U128::from(12470632768580422u128),
+            liquidity_net: I256::try_from(12470632768580422i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -257820,
+        TickInfo {
+            liquidity_gross: U128::from(1066607604323169u128),
+            liquidity_net: I256::try_from(-1066607604323169i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -257760,
+        TickInfo {
+            liquidity_gross: U128::from(14773839555594581u128),
+            liquidity_net: I256::try_from(-14773839555594581i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -257640,
+        TickInfo {
+            liquidity_gross: U128::from(15209391792496367u128),
+            liquidity_net: I256::try_from(-15209391792496367i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -257580,
+        TickInfo {
+            liquidity_gross: U128::from(8926653874846152u128),
+            liquidity_net: I256::try_from(-8741370488654588i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -257280,
+        TickInfo {
+            liquidity_gross: U128::from(86731011987690u128),
+            liquidity_net: I256::try_from(86731011987690i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -256860,
+        TickInfo {
+            liquidity_gross: U128::from(2055598704323972u128),
+            liquidity_net: I256::try_from(-2055598704323972i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -256680,
+        TickInfo {
+            liquidity_gross: U128::from(6398617370111093u128),
+            liquidity_net: I256::try_from(-6398617370111093i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -256500,
+        TickInfo {
+            liquidity_gross: U128::from(32727480377239u128),
+            liquidity_net: I256::try_from(32727480377239i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -256380,
+        TickInfo {
+            liquidity_gross: U128::from(2248256316534000u128),
+            liquidity_net: I256::try_from(-2248256316534000i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -256140,
+        TickInfo {
+            liquidity_gross: U128::from(924142409030959u128),
+            liquidity_net: I256::try_from(-924142409030959i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -255420,
+        TickInfo {
+            liquidity_gross: U128::from(32727480377239u128),
+            liquidity_net: I256::try_from(-32727480377239i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -255360,
+        TickInfo {
+            liquidity_gross: U128::from(74866333480083563u128),
+            liquidity_net: I256::try_from(74866333480083563i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -255240,
+        TickInfo {
+            liquidity_gross: U128::from(3099314693730195u128),
+            liquidity_net: I256::try_from(3099314693730195i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -254820,
+        TickInfo {
+            liquidity_gross: U128::from(335734850520887u128),
+            liquidity_net: I256::try_from(-335734850520887i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -254400,
+        TickInfo {
+            liquidity_gross: U128::from(4392735532859774u128),
+            liquidity_net: I256::try_from(-4392735532859774i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -254340,
+        TickInfo {
+            liquidity_gross: U128::from(15271212930213513u128),
+            liquidity_net: I256::try_from(-15271212930213513i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -254220,
+        TickInfo {
+            liquidity_gross: U128::from(115838223435902u128),
+            liquidity_net: I256::try_from(-115838223435902i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -253920,
+        TickInfo {
+            liquidity_gross: U128::from(25285149606253u128),
+            liquidity_net: I256::try_from(-25285149606253i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -253560,
+        TickInfo {
+            liquidity_gross: U128::from(97711652918074811u128),
+            liquidity_net: I256::try_from(97711652918074811i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -253440,
+        TickInfo {
+            liquidity_gross: U128::from(46089222798377746u128),
+            liquidity_net: I256::try_from(-46089222798377746i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -253380,
+        TickInfo {
+            liquidity_gross: U128::from(668184903184506u128),
+            liquidity_net: I256::try_from(-668184903184506i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -253260,
+        TickInfo {
+            liquidity_gross: U128::from(21506090929337481u128),
+            liquidity_net: I256::try_from(-21506090929337481i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -252780,
+        TickInfo {
+            liquidity_gross: U128::from(10435192179932373u128),
+            liquidity_net: I256::try_from(4108469537934685i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -252480,
+        TickInfo {
+            liquidity_gross: U128::from(112493218521047u128),
+            liquidity_net: I256::try_from(-112493218521047i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -252360,
+        TickInfo {
+            liquidity_gross: U128::from(7271830858933529u128),
+            liquidity_net: I256::try_from(-7271830858933529i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -252120,
+        TickInfo {
+            liquidity_gross: U128::from(3099314693730195u128),
+            liquidity_net: I256::try_from(-3099314693730195i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -252060,
+        TickInfo {
+            liquidity_gross: U128::from(257713336954829u128),
+            liquidity_net: I256::try_from(-257713336954829i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -251640,
+        TickInfo {
+            liquidity_gross: U128::from(1181683742724883u128),
+            liquidity_net: I256::try_from(-1181683742724883i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -251520,
+        TickInfo {
+            liquidity_gross: U128::from(74866333480083563u128),
+            liquidity_net: I256::try_from(-74866333480083563i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -251460,
+        TickInfo {
+            liquidity_gross: U128::from(60648748642817u128),
+            liquidity_net: I256::try_from(-60648748642817i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -251400,
+        TickInfo {
+            liquidity_gross: U128::from(7767552156261528u128),
+            liquidity_net: I256::try_from(-7767552156261528i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -251100,
+        TickInfo {
+            liquidity_gross: U128::from(465541842701550u128),
+            liquidity_net: I256::try_from(-465541842701550i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -250860,
+        TickInfo {
+            liquidity_gross: U128::from(97711652918074811u128),
+            liquidity_net: I256::try_from(-97711652918074811i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -250800,
+        TickInfo {
+            liquidity_gross: U128::from(86731011987690u128),
+            liquidity_net: I256::try_from(-86731011987690i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -250680,
+        TickInfo {
+            liquidity_gross: U128::from(18414293164728178u128),
+            liquidity_net: I256::try_from(-18414293164728178i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -249960,
+        TickInfo {
+            liquidity_gross: U128::from(1264071333426786u128),
+            liquidity_net: I256::try_from(-1264071333426786i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -249240,
+        TickInfo {
+            liquidity_gross: U128::from(23606278249583048u128),
+            liquidity_net: I256::try_from(-23606278249583048i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -248820,
+        TickInfo {
+            liquidity_gross: U128::from(1072538255797962u128),
+            liquidity_net: I256::try_from(-1072538255797962i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -247440,
+        TickInfo {
+            liquidity_gross: U128::from(736591368984762u128),
+            liquidity_net: I256::try_from(-736591368984762i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -247380,
+        TickInfo {
+            liquidity_gross: U128::from(2399522880507038u128),
+            liquidity_net: I256::try_from(-2399522880507038i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -243000,
+        TickInfo {
+            liquidity_gross: U128::from(639025058954360u128),
+            liquidity_net: I256::try_from(-639025058954360i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -242280,
+        TickInfo {
+            liquidity_gross: U128::from(125863968906478272u128),
+            liquidity_net: I256::try_from(-125863968906478272i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -239580,
+        TickInfo {
+            liquidity_gross: U128::from(813322091222952u128),
+            liquidity_net: I256::try_from(-813322091222952i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -239460,
+        TickInfo {
+            liquidity_gross: U128::from(18843474118215995u128),
+            liquidity_net: I256::try_from(-18843474118215995i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -235380,
+        TickInfo {
+            liquidity_gross: U128::from(65598520532469184u128),
+            liquidity_net: I256::try_from(-65598520532469184i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -234540,
+        TickInfo {
+            liquidity_gross: U128::from(92641693095782u128),
+            liquidity_net: I256::try_from(-92641693095782i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -230220,
+        TickInfo {
+            liquidity_gross: U128::from(7734991288379668u128),
+            liquidity_net: I256::try_from(-7734991288379668i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -225180,
+        TickInfo {
+            liquidity_gross: U128::from(746254119994175u128),
+            liquidity_net: I256::try_from(-746254119994175i128).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        887220,
+        TickInfo {
+            liquidity_gross: U128::from(3095796326960008u128),
+            liquidity_net: I256::try_from(-3095796326960008i128).unwrap(),
+            block: 0,
+        },
+    );
+    let params = RegisterV4PoolParams {
+        pool_manager: alloy::primitives::Address::ZERO,
+        pool_id: [0u8; 32],
+        pool_key: V4PoolKey {
+            currency0: alloy::primitives::Address::ZERO,
+            currency1: alloy::primitives::Address::ZERO,
+            fee: 3_000,
+            tick_spacing: 60,
+            hooks: alloy::primitives::Address::ZERO,
+        },
+        hook_flags: 0,
+        protocol_fee: 2_048_500,
+        sqrt_price_x96: "159369389255773083394993".parse().unwrap(),
+        liquidity: 1_432_650_976_603_835_442u128,
+        tick: -262_346,
+        tick_data,
+        update_block: 25_670_030,
+        coverage: PoolTickCoverage::Tracked,
+        fetcher: None,
+    };
+    let (_identity, state) = V4PoolState::from_params(params, 8);
+    state
+}
+
+#[test]
+fn v4_uni_9a5c1d2f_oracle_matches_recorded_actual_not_solver_overprediction() {
+    let state = build_uni_9a5c1d2f_v4_state();
+    let zero_for_one = false;
+    let input = U256::from(3_135u64);
+    let amount_specified = I256::ZERO
+        .checked_sub(I256::try_from(input).unwrap())
+        .unwrap();
+    let limit = unbounded_limit(zero_for_one);
+    let outcome = v4_simulate_swap(&state, 3_000, 60, zero_for_one, amount_specified, limit)
+        .expect("real UNI state simulates");
+    let sim_out = v4_exact_in_output(&outcome, zero_for_one);
+
+    // Tier-3 oracle truth at the recorded input == recorded on-chain actual.
+    assert_eq!(
+        sim_out,
+        U256::from(772_076_574_181_336u128),
+        "v4_simulate_swap @ recorded input 3135 must equal the recorded on-chain actual",
+    );
+
+    // Crossing-exactness proof: the reconstructed solver crossing at the
+    // DELIVERED input (3135) equals the oracle. The live solver's predicted
+    // 772833263957077 corresponds to a ~3-unit-LARGER input (~3138), i.e. an
+    // inter-hop forward-amount over-statement, NOT a crossing-math error.
+    let seq = state
+        .build_int_v4_sequence(60, 3_000, zero_for_one, 10)
+        .expect("build int v4 sequence");
+    let solver_out =
+        solver_crossing_output(input, &seq).expect("solver crossing output at delivered input");
+    assert_eq!(
+        solver_out, sim_out,
+        "reconstructed solver crossing at the delivered input must equal v4_simulate_swap \
+         (the V4 crossing math is exact; the live over-prediction is a ~3-unit forward-amount gap)"
+    );
+    println!(
+        "v4-uni oracle+probe: oracle/solver@3135 = {sim_out} == recorded actual; \
+         live predicted 772833263957077 (@~input 3138) -> forward-amount gap"
     );
 }
