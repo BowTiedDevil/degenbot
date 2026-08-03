@@ -375,28 +375,24 @@ fn build_fee1_tiny_state(
     state
 }
 
-/// RED regression pin (ergo UO3JM4, mechanism localized) — #[ignore]d because it
-/// is a NOT-YET-FIXED reproduction, not a passing guard.
+/// GREEN regression guard (ergo UO3JM4/W2UWZO) — the solver int-solve crossing
+/// path must be byte-exact to `v4_simulate_swap` (== the on-chain PoolManager)
+/// on the real fee-1 pool, in BOTH swap directions.
 ///
 /// SOURCE OF THE ROUNDING ERROR (found via the revm-powered V4 parity harness,
 /// grounded by the tier-3 `v4_simulate_swap` == on-chain PoolManager oracle):
-/// the int-solve crossing path over-predicts output on **zero-for-one** CL hops
-/// by a few wei because its `build_int_v4_sequence` → `compute_crossing` /
-/// `int_simulate_v3_swap` range-collapse evaluates each tick range as a SINGLE
-/// floored step (`word_boundary_prices` empty), MISSING the zero-amount
-/// current-tick interior flooring the on-chain PoolManager (and
-/// `v4_simulate_swap`) apply at the current tick's word boundary.
-///
-/// Verified on the real fee-1 pool (zfo=true, input 4728): on-chain = 4724,
-/// single-step range-collapse = 4727 (+3), two-step floored
-/// (current→tick-0→tick−2) = 4724 (= on-chain). The bug fires at **zfo=true
-/// only**; zfo=false (the live path-10338 V4 hop) is byte-exact, so the live
-/// fee-1 `+1` is the SAME zfo=true collapsing bug firing upstream on the V3-30
-/// hop0 (zfo=true) — which over-predicts USDT output by 1, feeding one extra
-/// unit into the exact zfo=false V4 hop. Turn this GREEN by flooring at every
-/// interior tick-range / current-tick word boundary the PoolManager walks.
+/// the int-solve crossing path over-predicted output on **zero-for-one** CL
+/// hops by a few wei because its `build_int_v4_sequence` → `compute_crossing` /
+/// `int_simulate_v3_swap` range-collapse evaluated each tick range as a SINGLE
+/// floored step, MISSING the zero-amount current-tick flooring the on-chain
+/// PoolManager (and `v4_simulate_swap`) apply at the current tick's word
+/// boundary — but ONLY when the current tick sits exactly on a word boundary
+/// (the fee-1 pool's tick 0). The fix (tick_bitmap.rs::compute_tick_ranges)
+/// re-inserts sqrt(current_tick) as the first interior boundary of range 0 for
+/// zfo=true, so the walk floors there like the on-chain. Verified on the real
+/// fee-1 pool (zfo=true, input 4728): on-chain = 4724, single-step collapse
+/// (pre-fix) = 4727.
 #[test]
-#[ignore = "RED pin: solver int-solve zfo=true range-collapse skips current-tick interior flooring (ergo UO3JM4/W2UWZO follow-up)"]
 fn v4_fee1_solver_path_matches_v4_simulate_swap() {
     // Reproduction scalars (paths 10234/10338): sq & liq of the fee-1 V4 hop.
     let liq = 94_294_142u128;

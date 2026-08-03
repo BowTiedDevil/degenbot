@@ -497,6 +497,26 @@ pub fn compute_tick_ranges<S: std::hash::BuildHasher>(
     if ranges.is_empty() {
         return None;
     }
+    // On-chain step-0 current-tick drain: when the current tick
+    // sits EXACTLY on a word boundary, the PoolManager (and `v3_simulate_swap` /
+    // `v4_simulate_swap` via `gen_ticks`) walk a floored step THROUGH
+    // sqrt(current_tick) first (stepSqrtPriceStartTick = current tick for
+    // zfo=true), then continue downward. The range-collapse makes current_tick
+    // range 0's UPPER edge, so that per-step floor was skipped and the int-solve
+    // crossing path over-predicted output by a few wei (the fee-1 `+3` class /
+    // ergo UO3JM4/W2UWZO). Re-insert sqrt(current_tick) as the first interior
+    // boundary of range 0 (swap order) so `int_simulate_v3_swap` /
+    // `compute_crossing` floor there too, matching the on-chain. Only applies
+    // to zfo=true (the zfo=true step-0 drain; ofz uses `gt` exclusive and never
+    // re-crosses the current tick) and only when it is a word boundary (the
+    // only case where gen_ticks floors there).
+    if zero_for_one && current_tick % (256 * tick_spacing) == 0 {
+        if let Some(r0) = ranges.get_mut(0) {
+            if !r0.interior_boundaries.contains(&current_tick) {
+                r0.interior_boundaries.insert(0, current_tick);
+            }
+        }
+    }
 
     // Range 0 always contains the current price: we start the walk from
     // the current tick and it becomes one boundary of the first range.
