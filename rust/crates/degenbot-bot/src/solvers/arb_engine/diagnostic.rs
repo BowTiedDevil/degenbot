@@ -631,6 +631,7 @@ mod tests {
                 tick: 0,
                 tick_data: v4_tick_data,
                 update_block: 0,
+                tick_data_block: None,
                 coverage: PoolTickCoverage::Tracked,
                 fetcher: None,
             })

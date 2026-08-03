@@ -288,6 +288,7 @@ mod tests {
             tick: 0,
             tick_data: HashMap::new(),
             update_block: 0,
+            tick_data_block: None,
             coverage: PoolTickCoverage::Tracked,
             fetcher: None,
             deployer: Address::ZERO,
@@ -336,6 +337,7 @@ mod tests {
                 tick: 0,
                 tick_data: HashMap::new(),
                 update_block: 0,
+                tick_data_block: None,
                 coverage: PoolTickCoverage::Tracked,
                 fetcher: None,
             })
@@ -392,6 +394,7 @@ mod tests {
             tick: 0,
             tick_data: HashMap::new(),
             update_block: 0,
+            tick_data_block: None,
             coverage: PoolTickCoverage::Tracked,
             fetcher: None,
             deployer: Address::ZERO,

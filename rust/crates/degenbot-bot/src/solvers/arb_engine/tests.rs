@@ -71,6 +71,7 @@ mod tests {
             tick: 0,
             tick_data,
             update_block: 0,
+            tick_data_block: None,
             coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
@@ -186,6 +187,7 @@ mod tests {
             tick: 0,
             tick_data,
             update_block: 0,
+            tick_data_block: None,
             coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
@@ -227,6 +229,7 @@ mod tests {
             tick: 0,
             tick_data: HashMap::new(),
             update_block: 0,
+            tick_data_block: None,
             coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
@@ -966,6 +969,7 @@ mod tests {
             tick: 0,
             tick_data: tick_data_a,
             update_block: 0,
+            tick_data_block: None,
             coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
@@ -1009,6 +1013,7 @@ mod tests {
             tick: -60,
             tick_data: tick_data_b,
             update_block: 0,
+            tick_data_block: None,
             coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
@@ -1078,6 +1083,7 @@ mod tests {
             tick: 0,
             tick_data,
             update_block: 0,
+            tick_data_block: None,
             coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
@@ -1141,6 +1147,7 @@ mod tests {
             tick: 0,
             tick_data,
             update_block: 0,
+            tick_data_block: None,
             coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
@@ -1254,6 +1261,7 @@ mod tests {
             tick: 0,
             tick_data: std::collections::HashMap::new(),
             update_block: 0,
+            tick_data_block: None,
             coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
@@ -1286,6 +1294,7 @@ mod tests {
                 tick: -886_983,
                 tick_data: std::collections::HashMap::new(),
                 update_block: 0,
+                tick_data_block: None,
                 coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
                 fetcher: None,
             })
@@ -1391,6 +1400,7 @@ mod tests {
             tick: 0,
             tick_data,
             update_block: 0,
+            tick_data_block: None,
             coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
@@ -1415,6 +1425,7 @@ mod tests {
                 tick: 0,
                 tick_data: HashMap::new(),
                 update_block: 0,
+                tick_data_block: None,
                 coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
                 fetcher: None,
             })
@@ -1517,6 +1528,7 @@ mod tests {
             tick: 0,
             tick_data: make_tick_data(),
             update_block: 0,
+            tick_data_block: None,
             coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
@@ -1535,6 +1547,7 @@ mod tests {
             tick: 0,
             tick_data: make_tick_data(),
             update_block: 0,
+            tick_data_block: None,
             coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
@@ -1553,6 +1566,7 @@ mod tests {
             tick: 0,
             tick_data: make_tick_data(),
             update_block: 0,
+            tick_data_block: None,
             coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
@@ -1647,6 +1661,7 @@ mod tests {
             tick: 0,
             tick_data,
             update_block: 0,
+            tick_data_block: None,
             coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
@@ -1859,6 +1874,7 @@ mod tests {
             tick: 0,
             tick_data,
             update_block: 0,
+            tick_data_block: None,
             coverage: PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
@@ -2118,6 +2134,7 @@ mod tests {
             tick: 0,
             tick_data: HashMap::new(),
             update_block: 0,
+            tick_data_block: None,
             coverage: PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
@@ -3203,6 +3220,7 @@ mod tests {
                 liquidity: 1_000_000,
                 tick_data: HashMap::new(),
                 update_block: 0,
+                tick_data_block: None,
                 ..Default::default()
             })
             .expect("test setup: V3 registration");
@@ -3569,6 +3587,7 @@ mod tests {
                 liquidity: 1_000_000,
                 tick_data: HashMap::new(),
                 update_block: 0,
+                tick_data_block: None,
                 ..Default::default()
             })
             .expect("test setup: V3 registration");
@@ -3894,6 +3913,7 @@ mod tests {
                 liquidity: 1_000_000,
                 tick_data: HashMap::new(),
                 update_block: 0,
+                tick_data_block: None,
                 ..Default::default()
             })
             .expect("test setup: V3 registration");
@@ -4120,6 +4140,7 @@ mod tests {
                 liquidity: 1_000_000,
                 tick_data: HashMap::new(),
                 update_block: 0,
+                tick_data_block: None,
                 ..Default::default()
             })
             .expect("test setup: V3 registration");

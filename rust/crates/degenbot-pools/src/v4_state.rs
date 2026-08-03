@@ -163,6 +163,12 @@ pub struct RegisterV4PoolParams {
     pub tick: i32,
     pub tick_data: HashMap<i32, TickInfo>,
     pub update_block: u64,
+    /// The **liquidity** clock seed (two-stamp OB7UNY) — the block the
+    /// supplied `tick_data` map is exact at. `None` (the default) falls back
+    /// to [`Self::update_block`]. A fresh-read builder sets `update_block` to
+    /// a HEAD slot0 read while `tick_data_block` stays at the DB liquidity
+    /// snapshot block (V4 twin of `RegisterV3PoolParams::tick_data_block`).
+    pub tick_data_block: Option<u64>,
     pub coverage: PoolTickCoverage,
     /// Sparse-tick backfill fetcher (stored on `V4PoolState` at registration;
     /// `None` for `Tracked` pools or when no Python fetcher was supplied).
@@ -451,8 +457,10 @@ impl V4PoolState {
             liquidity: params.liquidity,
             tick: params.tick,
             update_block: params.update_block,
-            // Both clocks start at the seed block (two-stamp OB7UNY).
-            tick_data_block: params.update_block,
+            // Two-stamp OB7UNY (V4 twin): price clock at `update_block`;
+            // liquidity clock at `tick_data_block` when split, else the same
+            // seed. The replay guard always keys on the PRICE seed block.
+            tick_data_block: params.tick_data_block.unwrap_or(params.update_block),
             initial_state_block: params.update_block,
             state_nonce: 0,
             // ADR-close of the rolling-start direct-apply gap (DFQYM5, V4 twin

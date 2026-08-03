@@ -717,6 +717,7 @@ mod tests {
                 tick: 201_020,
                 tick_data,
                 update_block: 0,
+                tick_data_block: None,
                 coverage: PoolTickCoverage::Tracked,
                 fetcher: None,
                 ..Default::default()

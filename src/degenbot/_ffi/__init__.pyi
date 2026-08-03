@@ -877,6 +877,7 @@ class PyBot:
         coverage: str = "sparse",
         tick_data_fetcher: Callable[[int, int], dict[int, tuple[int, int, int]] | None]
         | None = None,
+        tick_data_block: int | None = None,
     ) -> int: ...
     def update_v3_pool(
         self,
@@ -904,6 +905,7 @@ class PyBot:
         tick_data_fetcher: Callable[[int, int], dict[int, tuple[int, int, int]] | None]
         | None = None,
         protocol_fee: int = 0,
+        tick_data_block: int | None = None,
     ) -> int: ...
 
     # ADR-005 / Option 2: seed the Rust-owned V4 StateView registry (the

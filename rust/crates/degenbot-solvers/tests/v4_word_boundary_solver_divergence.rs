@@ -111,6 +111,7 @@ fn build_sparse_v4_state(base_liquidity: u128, ticks: &[(i32, i128)]) -> V4PoolS
         tick: 0,
         tick_data,
         update_block: 0,
+        tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
     };

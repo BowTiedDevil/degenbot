@@ -48,6 +48,7 @@ fn make_v4_pool(liquidity: u128) -> PoolEntry {
         tick: 0,
         tick_data,
         update_block: 100,
+        tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
     };

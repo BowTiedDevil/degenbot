@@ -184,6 +184,7 @@ fn v3_iia_fixture_reproduces_plus_thirteen_divergence() {
         tick,
         tick_data: HashMap::new(),
         update_block: block,
+        tick_data_block: None,
         coverage: PoolTickCoverage::Sparse,
         fetcher: Some(Arc::clone(&fetcher)),
         deployer: Address::ZERO,

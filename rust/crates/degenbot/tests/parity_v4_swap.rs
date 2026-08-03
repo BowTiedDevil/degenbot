@@ -161,6 +161,7 @@ fn standalone_rust_consumer_v4_swap_matches_recorded_constant() {
         tick: fx.fixture.tick,
         tick_data,
         update_block: fx.fixture.update_block,
+        tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
     };

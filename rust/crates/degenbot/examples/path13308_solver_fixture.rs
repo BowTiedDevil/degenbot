@@ -187,6 +187,7 @@ fn main() {
             tick: pv.tick.unwrap(),
             tick_data: tick_map(&pv.tick_data),
             update_block: pv.liquidity_update_block.as_ref().copied().unwrap(),
+            tick_data_block: None,
             coverage: PoolTickCoverage::Tracked,
             fetcher: None,
         })

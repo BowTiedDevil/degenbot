@@ -131,6 +131,7 @@ fn register_v3(core: &mut BotState, p: &PoolData) -> Result<u64, String> {
         tick: p.tick.unwrap(),
         tick_data: tick_map(&p.tick_data),
         update_block: p.liquidity_update_block.as_ref().copied().unwrap(),
+        tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         deployer: Address::ZERO,
         init_hash: B256::ZERO,
@@ -167,6 +168,7 @@ fn build_v4_state(p: &PoolData) -> V4PoolState {
         tick: p.tick.unwrap(),
         tick_data: tick_map(&p.tick_data),
         update_block: p.liquidity_update_block.as_ref().copied().unwrap(),
+        tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
     };
@@ -345,6 +347,7 @@ fn main() {
                 .as_ref()
                 .copied()
                 .unwrap(),
+            tick_data_block: None,
             coverage: PoolTickCoverage::Tracked,
             fetcher: None,
         })

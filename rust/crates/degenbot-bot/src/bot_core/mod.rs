@@ -2257,6 +2257,7 @@ impl BotState {
                     tick: override_tick,
                     tick_data: override_tick_data,
                     update_block: state.update_block,
+                    tick_data_block: None,
                     coverage: PoolTickCoverage::Sparse,
                     fetcher: None,
                 };
@@ -2305,6 +2306,7 @@ impl BotState {
                     tick: override_tick,
                     tick_data: override_tick_data,
                     update_block: state.update_block,
+                    tick_data_block: None,
                     coverage: PoolTickCoverage::Sparse,
                     fetcher: None,
                 };
@@ -4031,6 +4033,66 @@ mod tests {
     }
 
     #[test]
+    fn v3_split_clock_seed_prices_at_head_ticks_at_db_block() {
+        // OB7UNY two-stamp / the fresh-read builder: seed the PRICE clock at
+        // HEAD (`update_block` — a cheap slot0 read) while the LIQUIDITY
+        // clock stays at the DB liquidity snapshot block (`tick_data_block`).
+        // The historical-replay guard must key on the PRICE seed block
+        // (`initial_state_block == update_block`): the head-seeded slot0
+        // `liquidity` scalar already reflects every in-range event up to head,
+        // so a backfilled in-range replay below head must not adjust it.
+        use crate::bot_core::{RegisterV3PoolParams, TickInfo};
+        use crate::solvers::arb_engine::PoolTickCoverage;
+        let mut core = BotState::new();
+        let pool_addr = Address::from([0xccu8; 20]);
+        let head = 1_000u64;
+        let db_block = 950u64;
+        let mut tick_data = HashMap::new();
+        tick_data.insert(
+            60,
+            TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(100),
+                liquidity_net: I256::try_from(100i128).unwrap(),
+                block: 0,
+            },
+        );
+        let pool_id = core
+            .register_v3_pool(&RegisterV3PoolParams {
+                address: pool_addr,
+                token0: Address::ZERO,
+                token1: Address::from([1u8; 20]),
+                fee: 3000,
+                tick_spacing: 60,
+                factory: Address::ZERO,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 1_000_000,
+                tick: 0,
+                tick_data,
+                update_block: head,
+                tick_data_block: Some(db_block),
+                coverage: PoolTickCoverage::Sparse,
+                fetcher: None,
+                ..Default::default()
+            })
+            .expect("test setup: V3 split-clock registration");
+        let s = core.get_v3_pool(pool_id).expect("registered");
+        assert_eq!(
+            s.update_block, head,
+            "price clock stamped at HEAD (fresh slot0 read)"
+        );
+        assert_eq!(
+            s.tick_data_block, db_block,
+            "liquidity clock anchored at the DB snapshot block"
+        );
+        assert_eq!(
+            s.initial_state_block, head,
+            "replay guard keys on the PRICE seed block (head-seeded scalar)"
+        );
+        assert_eq!(core.pool_update_block(pool_id), head);
+        assert_eq!(core.pool_tick_data_block(pool_id), db_block);
+    }
+
+    #[test]
     fn register_v2_pool_and_calculate_tokens_out() {
         let mut core = BotState::new();
         let pool_id = core
@@ -4126,6 +4188,7 @@ mod tests {
                 tick: 0,
                 tick_data: HashMap::new(),
                 update_block: 0,
+                tick_data_block: None,
                 coverage: PoolTickCoverage::Sparse,
                 fetcher: None,
             })
@@ -4404,6 +4467,7 @@ mod tests {
             tick: 0,
             tick_data: HashMap::new(),
             update_block,
+            tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
             ..Default::default()
@@ -4531,6 +4595,7 @@ mod tests {
             tick: 0,
             tick_data,
             update_block,
+            tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
             ..Default::default()
@@ -4730,6 +4795,7 @@ mod tests {
                 tick: 0,
                 tick_data,
                 update_block: 0,
+                tick_data_block: None,
                 coverage: PoolTickCoverage::Sparse,
                 fetcher: None,
             })
@@ -4835,6 +4901,7 @@ mod tests {
             tick: 0,
             tick_data,
             update_block,
+            tick_data_block: None,
             coverage: PoolTickCoverage::Tracked,
             fetcher: None,
         })
@@ -4899,6 +4966,7 @@ mod tests {
                 tick: 0,
                 tick_data,
                 update_block: 0,
+                tick_data_block: None,
                 coverage: PoolTickCoverage::Sparse,
                 fetcher: None,
             })
@@ -4932,6 +5000,7 @@ mod tests {
                 tick: 0,
                 tick_data,
                 update_block: 0,
+                tick_data_block: None,
                 coverage: PoolTickCoverage::Tracked,
                 fetcher: None,
                 ..Default::default()
@@ -4998,6 +5067,7 @@ mod tests {
                 tick: 0,
                 tick_data,
                 update_block: 0,
+                tick_data_block: None,
                 coverage: PoolTickCoverage::Tracked,
                 fetcher: None,
                 ..Default::default()
@@ -5669,6 +5739,7 @@ mod tests {
                 tick: 0,
                 tick_data: HashMap::new(),
                 update_block: 0,
+                tick_data_block: None,
                 coverage: PoolTickCoverage::Sparse,
                 fetcher: None,
             })
@@ -5705,6 +5776,7 @@ mod tests {
                 tick: 0,
                 tick_data: HashMap::new(),
                 update_block: 0,
+                tick_data_block: None,
                 coverage: PoolTickCoverage::Sparse,
                 fetcher: None,
             })
@@ -5744,6 +5816,7 @@ mod tests {
             tick: 0,
             tick_data: HashMap::new(),
             update_block: 0,
+            tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
         };
@@ -5800,6 +5873,7 @@ mod tests {
             tick: 0,
             tick_data: HashMap::new(),
             update_block: 0,
+            tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
         }
@@ -5990,6 +6064,7 @@ mod tests {
             tick: 0,
             tick_data: HashMap::new(),
             update_block: 0,
+            tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
         };
@@ -6090,6 +6165,7 @@ mod tests {
             tick: 0,
             tick_data,
             update_block: 0,
+            tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
         };
@@ -6176,6 +6252,7 @@ mod tests {
             tick: 0,
             tick_data: HashMap::new(),
             update_block: 0,
+            tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
         };
@@ -6284,6 +6361,7 @@ mod tests {
             tick: 0,
             tick_data,
             update_block: 0,
+            tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
         };
@@ -6365,6 +6443,7 @@ mod tests {
                 tick: 0,
                 tick_data: HashMap::new(),
                 update_block: 0,
+                tick_data_block: None,
                 coverage: PoolTickCoverage::Sparse,
                 fetcher: None,
                 ..Default::default()
@@ -6516,6 +6595,7 @@ mod tests {
             tick: 0,
             tick_data: std::collections::HashMap::new(),
             update_block: 0,
+            tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
             ..Default::default()
@@ -6653,6 +6733,7 @@ mod tests {
                 tick: 0,
                 tick_data: HashMap::new(),
                 update_block: 0,
+                tick_data_block: None,
                 coverage: PoolTickCoverage::Sparse,
                 fetcher: None,
                 ..Default::default()
@@ -6715,6 +6796,7 @@ mod tests {
             tick: 0,
             tick_data: seed,
             update_block: 0,
+            tick_data_block: None,
             coverage: PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
@@ -6804,6 +6886,7 @@ mod tests {
             tick: 0,
             tick_data: seed,
             update_block: 0,
+            tick_data_block: None,
             coverage: PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
@@ -6869,6 +6952,7 @@ mod tests {
             tick: 0,
             tick_data: HashMap::new(),
             update_block: 0,
+            tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
             ..Default::default()
@@ -6945,6 +7029,7 @@ mod tests {
             tick: 0,
             tick_data: seed,
             update_block: snapshot_block,
+            tick_data_block: None,
             coverage: PoolTickCoverage::Tracked,
             fetcher: None,
             ..Default::default()
@@ -7034,6 +7119,7 @@ mod tests {
             tick: 0,
             tick_data: seed,
             update_block: 0,
+            tick_data_block: None,
             coverage: PoolTickCoverage::Tracked,
             fetcher: None,
         })
@@ -7137,6 +7223,7 @@ mod tests {
             tick: 0,
             tick_data: seed,
             update_block: 0,
+            tick_data_block: None,
             coverage: PoolTickCoverage::Tracked,
             fetcher: None,
         })
@@ -7218,6 +7305,7 @@ mod tests {
             tick: 0,
             tick_data: HashMap::new(),
             update_block: 0,
+            tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
         })
@@ -7257,6 +7345,7 @@ mod tests {
                 tick: 0,
                 tick_data: HashMap::new(),
                 update_block: 0,
+                tick_data_block: None,
                 coverage: PoolTickCoverage::Sparse,
                 fetcher: None,
             })
@@ -7287,6 +7376,7 @@ mod tests {
                 tick: 0,
                 tick_data: HashMap::new(),
                 update_block: 0,
+                tick_data_block: None,
                 coverage: PoolTickCoverage::Sparse,
                 fetcher: None,
             })
@@ -7339,6 +7429,7 @@ mod tests {
                 tick: 0,
                 tick_data: HashMap::new(), // fully sparse — word 0 unknown
                 update_block: 0,
+                tick_data_block: None,
                 coverage: PoolTickCoverage::Sparse,
                 fetcher: Some(std::sync::Arc::new(FakeFetcher)),
                 ..Default::default()
@@ -7429,6 +7520,7 @@ mod tests {
                 tick: 0,
                 tick_data: HashMap::new(),
                 update_block: 0,
+                tick_data_block: None,
                 coverage: PoolTickCoverage::Sparse,
                 fetcher: Some(std::sync::Arc::new(FailingFetcher)),
                 ..Default::default()
@@ -7489,6 +7581,7 @@ mod tests {
                 tick: 0,
                 tick_data: HashMap::new(),
                 update_block: 0,
+                tick_data_block: None,
                 coverage: PoolTickCoverage::Sparse,
                 fetcher: Some(counter.clone() as Arc<dyn TickWordFetcher>),
                 ..Default::default()
@@ -7605,6 +7698,7 @@ mod tests {
                 tick: 0,
                 tick_data: HashMap::new(),
                 update_block: 0,
+                tick_data_block: None,
                 coverage: PoolTickCoverage::Tracked,
                 fetcher: None,
                 ..Default::default()

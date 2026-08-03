@@ -3260,6 +3260,7 @@ mod tests {
             tick: -74028,
             tick_data,
             update_block: 25_641_093,
+            tick_data_block: None,
             coverage: PoolTickCoverage::Tracked,
             fetcher: None,
             deployer: Address::ZERO,

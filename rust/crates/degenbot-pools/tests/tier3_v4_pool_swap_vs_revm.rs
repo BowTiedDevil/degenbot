@@ -226,6 +226,7 @@ fn dense_v4_state(
         tick: current_tick,
         tick_data,
         update_block: 0,
+        tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
     };
@@ -573,6 +574,7 @@ fn v4_pool_fee1_valid_single_position_matches_sim() {
         tick: 0,
         tick_data,
         update_block: 0,
+        tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
     };

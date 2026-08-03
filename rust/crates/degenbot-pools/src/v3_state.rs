@@ -165,6 +165,14 @@ pub struct RegisterV3PoolParams {
     pub tick: i32,
     pub tick_data: HashMap<i32, TickInfo>,
     pub update_block: u64,
+    /// The **liquidity** clock seed (two-stamp OB7UNY) — the block the
+    /// supplied `tick_data` map is exact at. `None` (the default) falls back
+    /// to [`Self::update_block`], keeping a single-clock seed for existing
+    /// callers. A fresh-read builder sets `update_block` to a HEAD slot0 read
+    /// while `tick_data_block` stays at the DB liquidity snapshot block, so
+    /// the price clock can be freshly stamped without pretending the tick
+    /// map reaches head.
+    pub tick_data_block: Option<u64>,
     /// Whether tick data came from the snapshot (`Tracked`) or has no
     /// snapshot coverage (`Sparse`). The buffer is always applied — the
     /// snapshot is always stale data from the DB.
@@ -526,10 +534,13 @@ impl V3PoolState {
             liquidity: params.liquidity,
             tick: params.tick,
             update_block: params.update_block,
-            // Both clocks start at the seed block: the tick map and the slot0
-            // head are seeded from the same snapshot (two-stamp OB7UNY). A
-            // later phase (builder fresh-read stamp) may split them.
-            tick_data_block: params.update_block,
+            // Two-stamp OB7UNY: the price clock seeds at `update_block`; the
+            // liquidity clock seeds at `tick_data_block` when the caller
+            // split them (fresh-read builder), else falls back to the same
+            // seed block. The historical-replay guard always keys on the
+            // PRICE seed block (`update_block` — the block the SLOT0 scalar,
+            // including active `liquidity`, reflects).
+            tick_data_block: params.tick_data_block.unwrap_or(params.update_block),
             initial_state_block: params.update_block,
             state_nonce: 0,
             // ADR-close of the rolling-start direct-apply gap (DFQYM5): a

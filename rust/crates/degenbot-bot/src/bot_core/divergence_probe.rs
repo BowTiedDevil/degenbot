@@ -443,6 +443,7 @@ mod tests {
             tick: -5010,
             tick_data: std::collections::HashMap::new(),
             update_block: 18_012_345,
+            tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
             ..Default::default()
@@ -486,6 +487,7 @@ mod tests {
             tick: 0,
             tick_data: std::collections::HashMap::new(),
             update_block: 17_999_999,
+            tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
         }

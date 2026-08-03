@@ -101,6 +101,7 @@ fn onchain_v4_state_at_block_25635461(protocol_fee: u32) -> V4PoolState {
         tick,
         tick_data,
         update_block: 0,
+        tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
     };

@@ -123,6 +123,7 @@ fn build_multi_tick_v4_state(
         tick: 0,
         tick_data,
         update_block: 0,
+        tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
     };
@@ -368,6 +369,7 @@ fn build_fee1_tiny_state(
         tick: 0,
         tick_data,
         update_block: 0,
+        tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
     };
@@ -1548,6 +1550,7 @@ fn build_uni_9a5c1d2f_v4_state() -> V4PoolState {
         tick: -262_346,
         tick_data,
         update_block: 25_670_030,
+        tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
     };
@@ -1637,6 +1640,7 @@ fn build_fee1_76f75965_v4_state() -> V4PoolState {
         tick: 0,
         tick_data,
         update_block: 0,
+        tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
     };

@@ -1090,7 +1090,7 @@ impl PyBot {
     /// (symmetric with ``PyLiquidityPool.tick_data_snapshot``).
     /// `coverage` is ``"tracked"`` (complete DB snapshot) or ``"sparse"``
     /// (RPC-fetched active word only / no snapshot).
-    #[pyo3(signature = (address, token0, token1, fee, tick_spacing, factory, sqrt_price_x96, liquidity, tick, tick_data=None, update_block=0, coverage="sparse", tick_data_fetcher=None))]
+    #[pyo3(signature = (address, token0, token1, fee, tick_spacing, factory, sqrt_price_x96, liquidity, tick, tick_data=None, update_block=0, coverage="sparse", tick_data_fetcher=None, tick_data_block=None))]
     fn register_v3_pool(
         &self,
         py: Python<'_>,
@@ -1107,6 +1107,7 @@ impl PyBot {
         update_block: u64,
         coverage: &str,
         tick_data_fetcher: Option<Bound<'_, PyAny>>,
+        tick_data_block: Option<u64>,
     ) -> PyResult<u64> {
         let addr = parse_address(address)?;
         let t0 = parse_address(token0)?;
@@ -1181,6 +1182,7 @@ impl PyBot {
             tick,
             tick_data: rust_tick_data,
             update_block,
+            tick_data_block,
             coverage: cov,
             fetcher: tick_data_fetcher
                 .filter(|f| !f.is_none())
@@ -1226,7 +1228,7 @@ impl PyBot {
     ///     `ValueError`: If `addresses/pool_id` are malformed or already
     ///         registered.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_flags, sqrt_price_x96, liquidity, tick, block, tick_data=None, coverage="sparse", tick_data_fetcher=None, protocol_fee=0))]
+    #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_flags, sqrt_price_x96, liquidity, tick, block, tick_data=None, coverage="sparse", tick_data_fetcher=None, protocol_fee=0, tick_data_block=None))]
     fn register_v4_pool(
         &self,
         py: Python<'_>,
@@ -1245,6 +1247,7 @@ impl PyBot {
         coverage: &str,
         tick_data_fetcher: Option<Bound<'_, PyAny>>,
         protocol_fee: u32,
+        tick_data_block: Option<u64>,
     ) -> PyResult<u64> {
         let pm = pool_manager.parse::<Address>().map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_manager address: {e}"))
@@ -1313,6 +1316,7 @@ impl PyBot {
             tick,
             tick_data: rust_tick_data,
             update_block: block,
+            tick_data_block,
             coverage: cov,
             fetcher: tick_data_fetcher
                 .filter(|f| !f.is_none())

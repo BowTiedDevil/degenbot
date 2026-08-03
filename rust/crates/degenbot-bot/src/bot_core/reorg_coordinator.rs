@@ -455,6 +455,7 @@ mod tests {
                 tick: 0,
                 tick_data: HashMap::new(),
                 update_block,
+                tick_data_block: None,
                 coverage: PoolTickCoverage::Sparse,
                 fetcher: None,
                 ..Default::default()
@@ -669,6 +670,7 @@ mod tests {
                 tick: 0,
                 tick_data: HashMap::new(),
                 update_block,
+                tick_data_block: None,
                 coverage: PoolTickCoverage::Sparse,
                 fetcher: None,
             })
