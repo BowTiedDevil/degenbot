@@ -13,8 +13,8 @@ investigating and the exact reproduction data for building tests.
 | `SOLVER-STATE] ABORT` / `verified desync` | **0** | fix held over the full run |
 | `panicked` / `Traceback` | **0** | no crashes |
 | `[sim-revert-swap] ... matched=false` | 90 | 1-wei rounding edges + a few real ones (below) |
-| `[sim-fail]` (all) | 121 | mostly benign filtering; 6 are genuine (below) |
-| `ERC20/Uni:: transfer amount exceeds balance` | **6** | the genuine UO3JM4 V4-hop over-prediction |
+| `[sim-fail]` (all) | 121 | mostly benign filtering; 6 are the V4-hop overdrafts (below) |
+| `ERC20/Uni:: transfer amount exceeds balance` | **6** | V4-hop overdrafts — see the oracle-verified reframe below |
 
 The two big concurrent soundness fixes (in-range active-liquidity adjust +
 the historical-replay guard, ADR-021 fail-fast tripwire) did **not** recur —
@@ -55,6 +55,30 @@ Notes for building fixtures:
   `hop_outputs`. Together they are the full input to `v4_simulate_swap`
   (the tier-3-proven on-chain oracle) — the assertion target is
   `solver V4-hop == v4_simulate_swap == recorded actual`, current state RED.
+
+### Oracle verification of the recorded recurrences (2026-08-03 session)
+
+I reconstructed both the fee-1 pool (block 25672332, `0x76f75965…`) and the
+0.55% pool (block 25672140, `0x2a6d5b75…`) from the DB tick_data + on-chain
+scalars at the solve block and ran `v4_simulate_swap` at each recorded V4-hop
+input. Result — **the tier-3 on-chain oracle matches the solver's PREDICTED
+output byte-exactly, not the recorded `actual_out`**:
+
+| block | pool | V4 input | v4_simulate_swap (=solver predicted) | recorded actual_out |
+|---|---|---|---|---|
+| 25672332 | `0x76f75965…` | 9652 / 3184 | 9649 / 3182 (== solver) | 9640 / 3179 |
+| 25672140 | `0x2a6d5b75…` | 185 | 631737964053287 (== solver) | 628304616211100 |
+
+So `predicted == v4_simulate_swap` in every case: the solver's V4-hop crossing
+math is **byte-exact against the frozen on-chain state**. The recorded
+`actual_out` is consistently *lower* (by a few wei on fee-1, by 0.55% on the
+big pool). This **reframes UO3JM4**: the logged `matched=false` overdrafts are
+NOT a solver-crossing over-prediction on a fixed state. The output the live
+sim observed is less than both the solver and the frozen-state oracle — a
+solve-vs-sim **state / fee-at-sim-time** effect (protocol fee 2,048,500 on
+the big pool; pool-state drift between solve and sim), not V4 crossing math.
+Any fix / tier-3 slice for these particular recurrences must target that
+state-consistency seam rather than the crossing calculation.
 
 ### Solver-side solve states (from `[solver-st]`, for pool reconstruction)
 

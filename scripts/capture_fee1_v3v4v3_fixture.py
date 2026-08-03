@@ -33,7 +33,26 @@ import sqlite3
 import subprocess
 
 RPC = "http://host.containers.internal:8545"
-TARGET = 0  # FILL: solve block from the live [sim-revert-swap] log
+
+
+def _env(name, default):
+    """Env-var override so one script captures any recurrence (see README)."""
+    v = os.environ.get(name)
+    if v is None or v == "":
+        return default
+    return v
+
+
+def _env_int(name, default):
+    return int(_env(name, default))
+
+
+# Defaults capture the original fee-1 path (paths 10234/10338, block 25600000).
+# Override any of these via FIX_* env vars to capture a fresh recurrence, e.g.:
+#   FIX_TARGET=25672332 FIX_V3_0_POOLID=609252 FIX_V3_2_POOLID=616795 \
+#   FIX_V4_PID=0x76f7596508... FIX_V4_INPUT=3184 FIX_V4_PREDICTED=3182 \
+#   FIX_V4_ACTUAL=3179 FIX_V3_0=0xc7bBeC68... python3 scripts/capture_fee1_v3v4v3_fixture.py
+TARGET = _env_int("FIX_TARGET", 0)  # FILL: solve block from the live [sim-revert-swap] log
 DB = os.path.expanduser("~/.config/degenbot/degenbot.db")
 SV = "0x7fFE42C4a5DEeA5b0feC41C94C136Cf115597227"  # V4 StateView
 
@@ -41,16 +60,19 @@ SV = "0x7fFE42C4a5DEeA5b0feC41C94C136Cf115597227"  # V4 StateView
 #   hop0 V3 = Uniswap USDT/WETH 0.30% (solver fee "30")
 #   hop1 V4 = USDC/USDT pool_id 0x76f75965... (lp_fee=50/1e6, protocol_fee=53261, t.s.=1)
 #   hop2 V3 = PancakeSwap USDC/WETH 0.25% (solver fee "25")
-V3_0 = "0x4e68ccd3e89f51c3074ca5072bbac773960dfa36"  # hop0 V3 (Uniswap WETH/USDT 3000)
-V3_2 = "0x19ac5f80ec17497d0e585b953100e6d18c330040"  # hop2 V3 (Pancake USDC/WETH 2500)
+V3_0 = _env("FIX_V3_0", "0x4e68ccd3e89f51c3074ca5072bbac773960dfa36")  # hop0 V3 (Uniswap WETH/USDT 3000 default)
+V3_2 = _env("FIX_V3_2", "0x19ac5f80ec17497d0e585b953100e6d18c330040")  # hop2 V3 (Pancake USDC/WETH 2500)
 V4_MGR = "0x000000000004444c5dc75cb358380d2e3de08a90"  # canonical PoolManager
-V4_PID = "0x76f75965083b5bfcc0b96f9c5e77e9e00f80b377def5e7625866013fa3059080"
+V4_PID = _env("FIX_V4_PID", "0x76f75965083b5bfcc0b96f9c5e77e9e00f80b377def5e7625866013fa3059080")
+V3_0_POOLID = _env_int("FIX_V3_0_POOLID", 0)  # DB pools.id for hop0 V3 (resolve via address)
+V3_2_POOLID = _env_int("FIX_V3_2_POOLID", 1)  # DB pools.id for hop2 V3
 
 # historical overdraw reproduction from the prior live session (paths 10234/10338)
 RECORDED_V4_HOP_INDEX = 1
-RECORDED_V4_INPUT = None  # FILL when re-observed: exact-in USDT fed to the V4 pool
-RECORDED_V4_PREDICTED = 9586  # solver hop_outputs[1]
-RECORDED_V4_ACTUAL = 9585  # on-chain actual_out
+_in = _env("FIX_V4_INPUT", None)
+RECORDED_V4_INPUT = _env_int("FIX_V4_INPUT", None) if _in is not None else None  # exact-in USDT fed to V4
+RECORDED_V4_PREDICTED = _env_int("FIX_V4_PREDICTED", 9586)  # solver hop_outputs[1]
+RECORDED_V4_ACTUAL = _env_int("FIX_V4_ACTUAL", 9585)  # on-chain actual_out
 
 # selectors
 SLOT0 = "0x3850c7bd"
@@ -139,8 +161,8 @@ def main():
         raise SystemExit("FILL the identity + recorded V4 hop at the top of this script first.")
     cur = sqlite3.connect(DB)
     # FILL pool DB ids for v3_0 / v3_2 (query pools by address) before use.
-    v3a = load_v3_liquidity_pool(cur, 0, V3_0)  # FILL id
-    v3c = load_v3_liquidity_pool(cur, 1, V3_2)  # FILL id
+    v3a = load_v3_liquidity_pool(cur, V3_0_POOLID, V3_0)
+    v3c = load_v3_liquidity_pool(cur, V3_2_POOLID, V3_2)
     v4 = load_v4_pool(cur)
     cur.close()
 

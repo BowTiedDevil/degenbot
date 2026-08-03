@@ -40,7 +40,6 @@ const FIXTURE_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../../tests/fixtures/fee1_v3v4v3_block25600000.json"
 );
-
 #[derive(serde::Deserialize)]
 struct Fixture {
     target_block: u64,
@@ -186,8 +185,11 @@ fn v4_exact_in_output(outcome: &V3SwapOutcome, zero_for_one: bool) -> U256 {
 }
 
 fn main() {
-    let text = std::fs::read_to_string(FIXTURE_PATH)
-        .unwrap_or_else(|e| panic!("read fixture {FIXTURE_PATH}: {e}"));
+    // `FIXTURE_PATH` env override: run any captured recurrence block in the
+    // same harness, e.g. FIXTURE_PATH=.../fee1_v3v4v3_block25672332.json.
+    let fixture_path = std::env::var("FIXTURE_PATH").unwrap_or_else(|_| FIXTURE_PATH.to_string());
+    let text = std::fs::read_to_string(&fixture_path)
+        .unwrap_or_else(|e| panic!("read fixture {fixture_path}: {e}"));
     let fx: Fixture = serde_json::from_str(&text).expect("parse fixture");
     let fee = fx.pools.v4.fee_currency0.unwrap();
     let spacing = fx.pools.v4.tick_spacing.unwrap();
@@ -202,6 +204,48 @@ fn main() {
     let v4_state = build_v4_state(&fx.pools.v4);
     let recorded_actual: U256 = fx.v4_hop.onchain_actual.parse().unwrap();
     let recorded_predicted: U256 = fx.v4_hop.predicted_output.parse().unwrap();
+
+    // 1b) The recorded-input oracle check (independent of the global Möbius
+    //     solve, so it runs even when the reconstructed full path is unprofitable
+    //     or the solver's own allocation lands on a different input). At the
+    //     LIVE recorded V4 hop input (the prior hop's output, `fx.v4_hop.input`)
+    //     the on-chain oracle (v4_simulate_swap) is the tier-3-proven byte-exact
+    //     truth. If `recorded_predicted != oracle`, the solver's V4-hop crossing
+    //     over-predicted on-chain — the UO3JM4 RED. If `oracle == recorded_actual`
+    //     the oracle reproduces what the live sim observed.
+    let rec_input_abs: U256 = fx.v4_hop.input.parse().unwrap();
+    let rec_sim = match v4_simulate_swap(
+        &v4_state,
+        fee,
+        spacing,
+        zfo,
+        I256::try_from(rec_input_abs)
+            .expect("recorded input fits i256")
+            .checked_neg()
+            .expect("negate recorded input (V4 exact-in is negative)"),
+        U256::MAX,
+    ) {
+        Ok(s) => s,
+        Err(SimulateSwapError::NotComputable) => {
+            println!("recorded-input v4_simulate_swap: NotComputable");
+            std::process::exit(2);
+        }
+        Err(SimulateSwapError::MissingTickWord(w)) => {
+            println!("recorded-input v4_simulate_swap: MissingTickWord({w})");
+            std::process::exit(2);
+        }
+    };
+    let rec_sim_out = v4_exact_in_output(&rec_sim, zfo);
+    let solver_over_predicted = rec_sim_out != recorded_predicted;
+    println!("--- recorded-input oracle check (per-V4-pool) ---");
+    println!(
+        "recorded-input oracle: v4_simulate_swap @ recorded V4 input {rec_input_abs} = {rec_sim_out}"
+    );
+    println!(
+        "  == recorded on-chain actual ({recorded_actual})?  {}",
+        rec_sim_out == recorded_actual
+    );
+    println!("  != recorded solver predicted ({recorded_predicted})? {solver_over_predicted}");
 
     // 2) The production Möbius solver path over the reconstructed three pools.
     let engine = ArbitrageEngine::new();
