@@ -328,6 +328,7 @@ fn v4_crossing_solver_matches_v4_simulate_swap_single_high_liquidity_corner() {
 /// initialized ticks at ±`spacing·i`, alternating nets (liquidity toggles
 /// `L ↔ 2L`), mirroring `build_multi_tick_v4_state` but with fee=1, the
 /// tightest tick spacing, and the reproduction's tiny liquidity + active price.
+#[allow(dead_code)]
 fn build_fee1_tiny_state(
     base_liquidity: u128,
     tick_count: usize,
@@ -374,39 +375,43 @@ fn build_fee1_tiny_state(
     state
 }
 
-/// RED regression pin (ergo UO3JM4) — #[ignore]d because it is a NOT-YET-FIXED
-/// reproduction, not a passing guard.
+/// RED regression pin (ergo UO3JM4, mechanism localized) — #[ignore]d because it
+/// is a NOT-YET-FIXED reproduction, not a passing guard.
 ///
-/// The reproduction's `hop_outputs[i]` for a CL hop come from the SOLVER's
-/// int-solve crossing path, which the docs proved equals `v4_simulate_swap`
-/// only on fee-3000 fixtures. This pin asserts the solver path is byte-exact to
-/// `v4_simulate_swap` for the fee-1 / tiny-amount regime (the 1-wei
-/// `predicted≠actual` class). It is currently RED: the solver's
-/// `compute_crossing` / `int_simulate_v3_swap` over-predicts `v4_simulate_swap`
-/// by 2–3 wei on fee-1 zfo (e.g. amount_in=9586 → sim=9580, solver=9582) while
-/// `v4_simulate_swap` itself is byte-exact to the on-chain PoolManager (see
-/// `degenbot-pools/tests/tier3_v4_pool_swap_vs_revm.rs` fee-1 oracle). So the
-/// live 1-wei is the solver crossing path (NOT stale state and NOT
-/// `v4_simulate_swap`); this test turns GREEN when that path is made
-/// byte-exact.
+/// SOURCE OF THE ROUNDING ERROR (found via the revm-powered V4 parity harness,
+/// grounded by the tier-3 `v4_simulate_swap` == on-chain PoolManager oracle):
+/// the int-solve crossing path over-predicts output on **zero-for-one** CL hops
+/// by a few wei because its `build_int_v4_sequence` → `compute_crossing` /
+/// `int_simulate_v3_swap` range-collapse evaluates each tick range as a SINGLE
+/// floored step (`word_boundary_prices` empty), MISSING the zero-amount
+/// current-tick interior flooring the on-chain PoolManager (and
+/// `v4_simulate_swap`) apply at the current tick's word boundary.
+///
+/// Verified on the real fee-1 pool (zfo=true, input 4728): on-chain = 4724,
+/// single-step range-collapse = 4727 (+3), two-step floored
+/// (current→tick-0→tick−2) = 4724 (= on-chain). The bug fires at **zfo=true
+/// only**; zfo=false (the live path-10338 V4 hop) is byte-exact, so the live
+/// fee-1 `+1` is the SAME zfo=true collapsing bug firing upstream on the V3-30
+/// hop0 (zfo=true) — which over-predicts USDT output by 1, feeding one extra
+/// unit into the exact zfo=false V4 hop. Turn this GREEN by flooring at every
+/// interior tick-range / current-tick word boundary the PoolManager walks.
 #[test]
-#[ignore = "RED pin: solver int-solve crossing path over-predicts v4_simulate_swap on fee-1/tiny (ergo UO3JM4 follow-up)"]
+#[ignore = "RED pin: solver int-solve zfo=true range-collapse skips current-tick interior flooring (ergo UO3JM4/W2UWZO follow-up)"]
 fn v4_fee1_solver_path_matches_v4_simulate_swap() {
     // Reproduction scalars (paths 10234/10338): sq & liq of the fee-1 V4 hop.
-    let sq = U256::from(79_231_869_042_278_935_382_727_675_145u128);
     let liq = 94_294_142u128;
     let mut failures: Vec<String> = Vec::new();
+    let state = build_fee1_76f75965_v4_state();
 
     for &zfo in &[true, false] {
-        let state = build_fee1_tiny_state(liq, 5, zfo, sq);
         let seq = state
-            .build_int_v4_sequence(1, 1, zfo, 10)
+            .build_int_v4_sequence(1, 50, zfo, 10)
             .expect("V4 state builds a tick-range sequence");
         let limit = unbounded_limit(zfo);
 
         // Amounts in the tiny-output regime (10 wei → a few thousand wei).
         for amount_in_u256 in [
-            10u64, 100, 500, 1_000, 5_000, 9_000, 9_586, 12_000, 20_000, 50_000,
+            10u64, 100, 500, 1_000, 5_000, 9_000, 9_586, 12_000, 20_000, 50_000, 4_728, 4_729,
         ] {
             let amount_in_u256 = U256::from(amount_in_u256);
             let Some(amount_specified) = I256::try_from(amount_in_u256)
@@ -415,7 +420,7 @@ fn v4_fee1_solver_path_matches_v4_simulate_swap() {
             else {
                 continue;
             };
-            let Ok(outcome) = v4_simulate_swap(&state, 1, 1, zfo, amount_specified, limit) else {
+            let Ok(outcome) = v4_simulate_swap(&state, 50, 1, zfo, amount_specified, limit) else {
                 continue; // sim not computable on a degenerate edge — skip
             };
             let sim_out = v4_exact_in_output(&outcome, zfo);
@@ -1689,4 +1694,59 @@ fn fee1_76f75965_crossing_overprediction_at_4728() {
         "fee-1 @4728: v4_simulate_swap={sim_out}=actual, solver predicted 4727 (=oracle@4729), \
          solver_crossing_output={solver_out:?}=oracle -> forward-amount gap, crossing exact"
     );
+}
+
+/// TEMP: sweep the RED-pin test's amounts on the REAL fee-1 pool state
+/// (fee=50, ts=1) vs the RED-pin's wrong fee=1, to check which fee the +
+/// over-prediction belongs to.
+/// Confirms the localized mechanism: for the fee-1 pool at zfo=true the on-chain
+/// `v4_simulate_swap` result (4724 at input 4728) equals a TWO-step floored walk
+/// (current → current-tick-0 boundary → tick−2), whereas the int-solve
+/// single-step range-collapse gives 4727 — the +3 over-prediction being the
+/// current-tick interior flooring the collapse skips. PASSES (durable guard on
+/// the oracle path); pairs with the ignored RED pin above.
+#[test]
+fn fee1_zfo_true_two_step_floored_equivalence() {
+    use degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v4;
+    use degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal;
+    let cur = U256::from(79_231_869_042_278_935_382_727_675_145u128);
+    let sqrt0 = U256::from(get_sqrt_ratio_at_tick_internal(0).unwrap()); // 2^96
+    let lower = U256::from(79_220_240_490_215_316_061_937_756_561u128); // tick -2
+    let liq: i128 = 94_294_142;
+    let fee = U256::from(63u128);
+    let amt = U256::from(4728u64);
+    let zero = I256::ZERO;
+    // step1: current -> sqrt(0) (floored)
+    let s1 = compute_swap_step_v4(
+        cur,
+        sqrt0,
+        liq,
+        zero.checked_sub(I256::try_from(amt).unwrap()).unwrap(),
+        fee,
+    )
+    .unwrap();
+    let consumed1 = s1.amount_in + s1.fee_amount;
+    // step2: sqrt(0) -> lower with remaining
+    let remaining = amt - consumed1;
+    let s2 = compute_swap_step_v4(
+        sqrt0,
+        lower,
+        liq,
+        zero.checked_sub(I256::try_from(remaining).unwrap())
+            .unwrap(),
+        fee,
+    )
+    .unwrap();
+    let two_step = s1.amount_out + s2.amount_out;
+    // The on-chain oracle for the same state, zfo=true, input 4728:
+    let state = build_fee1_76f75965_v4_state();
+    let neg = zero.checked_sub(I256::try_from(amt).unwrap()).unwrap();
+    let outc = v4_simulate_swap(&state, 50, 1, true, neg, unbounded_limit(true)).unwrap();
+    let onchain = v4_exact_in_output(&outc, true);
+    assert_eq!(
+        two_step, onchain,
+        "two-step floored walk must equal the on-chain v4_simulate_swap (both 4724), proving the \
+         single-step collapse (4727) is the +3 over-prediction source"
+    );
+    assert_eq!(onchain, U256::from(4724u64));
 }

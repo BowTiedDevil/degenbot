@@ -86,7 +86,7 @@ robust, committed facts:
    lower values). The live predicted maps to the oracle at ~3 units MORE input
    — a solve-vs-sim divergence that single-block reconstruction cannot pin.
 
-**Decisive live evidence: the fee-1 over-prediction is a 1-unit FORWARD-AMOUNT gap, not crossing math.**
+**Root cause — discovered via the revm-powered V4 parity harness.**
 The new `[sim-revert-swap]` instrumentation captured a genuine fee-1 overdraft
 live (path 10338, pool `0x76f75965`, block ~25675755) and the on-chain
 pre-state reproduces it. Probing the oracle at the derived inputs settles it
@@ -97,16 +97,10 @@ unambiguously:
 | 4728 | **4726** = the recorded actual
 | 4729 | **4727** = the solver's predicted
 
-So the V4 crossing math is **EXACT** (the solver-crossing mirror == oracle at
-every input; the new parity test asserts solver==oracle at 4728). The solver's
-predicted output (4727) simply corresponds to input **4729**, one unit MORE than
-the 4728 actually delivered to the pool — so `V4_TAKE(predicted)` overdrafts.
-This is a **1-unit inter-hop forward-amount gap**, the SAME mechanism as every
-other recurrence (big pool 185→184, fee-1 9652→9643). It is **NOT** crossing
-math and **NOT** protocol fee. This re-confirms the earlier
-"crossing exonerated / forward-amount gap" conclusion; see
-`tests/fixtures/fee1_v3v4v3_block25675755.json` (reconstruction + probe) and the
-`fee1_76f75965_*` parity test.
+The int-solve CL crossing path (`build_int_v4_sequence` → `compute_crossing` /
+`int_simulate_v3_swap`) evaluates each tick range as a **single floored step**, missing the zero-amount **current-tick interior flooring** the on-chain PoolManager (and `v4_simulate_swap`) apply at the current tick's word boundary — so it over-predicts output by a few wei on **zero-for-one** CL hops. Byte-exact proof on the real fee-1 pool (zfo=true, input 4728): on-chain = **4724**, single-step collapse = **4727** (+3), two-step floored (current→tick-0→tick−2) = **4724** (= on-chain). Pinned by the RED test `v4_fee1_solver_path_matches_v4_simulate_swap` (all divergences at zfo=true: `4728→ sim 4724, solver 4727`) and the passing guard `fee1_zfo_true_two_step_floored_equivalence`.
+
+The bug fires at **zfo=true only**. The live path-10338 V4 hop is **zfo=false and byte-exact**: its `+1` (`predicted=4727` vs `actual=4726` at delivered input 4728, which maps to `v4@4729`) is a forward-amount gap, NOT the V4 crossing. The live `+1` is therefore consistent with this SAME zfo=true collapsing bug firing **upstream on the V3-30 hop0 (zfo=true)** — over-predicting USDT output by 1 and feeding one extra unit into the exact zfo=false V4 hop (`V4_TAKE` overdraft). The V4 crossing itself is exonerated for the actual path direction; exact-pool confirmation of the V3-30 `+1` is the remaining step. Earlier "crossing exonerated / forward-amount only" wording covered the zfo=false case; the precise cross-cutting source is the zfo=true single-step range-collapse flooring gap. See `tests/fixtures/fee1_v3v4v3_block25675755.json` and the `fee1_76f75965_*` parity tests.
 
 ### Solver-side solve states (from `[solver-st]`, for pool reconstruction)
 
