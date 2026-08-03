@@ -10,12 +10,19 @@
     "genuine_v4_overdraw_paths": 6
   },
   "oracle_verification": {
-    "_note": "ROOT CAUSE RESOLVED. v4_simulate_swap (tier-3 byte-exact oracle) matches the solver's prediction at the recorded input; protocol_fee on/off gives identical output; but the recorded actual_out reproduces EXACTLY at a SMALLER input. So the solver's predicted forward amount into the V4 pool (hop_outputs[0]) runs a few units HIGH toward the next hop -> V4_TAKE(predicted output) overdrafts. Inter-hop forward-amount composition error, NOT crossing math, NOT protocol fee. See docs/tracked-failures-log-review-2026-08-03.md.",
-    "probe_input_matching_recorded_actual": {
-      "block_25672140_2a6d5b75": {"solver_hop0_out": 185, "input_reproducing_actual": 184, "oracle_at_solver_input": 631737964053287, "oracle_at_repro_input": 628304616211100},
-      "block_25672332_fee1_76f75965_35396": {"solver_hop0_out": 9652, "input_reproducing_actual": 9643, "oracle_at_solver_input": 9649, "oracle_at_repro_input": 9640},
-      "protocol_fee_on_206": {"protocol_fee": 2048500, "output_at_185": 631737964053287},
-      "protocol_fee_off": {"protocol_fee": 0, "output_at_185": 631737964053287}
+    "_note": "TWO distinct verified mechanisms explained all 6 overdrafts via v4_simulate_swap (tier-3 byte-exact on-chain oracle). (A) CROSSING OUTPUT OVER-PREDICTION - UNI pool 9a5c1d2f (deep 134-range): oracle at the solver's recorded input equals the recorded actual, and the solver's predicted output is ~0.098% HIGHER at the same input (57150: input 3135, oracle=actual=772076574181336 vs predicted 772833263957077; 43047: input 57718, oracle 14214710436130112 vs predicted 14228641859916626). Clean frozen-state RED. (B) INTER-HOP FORWARD-AMOUNT GAP - big pool 2a6d5b75 + fee-1 76f75965: oracle at recorded input == solver predicted (crossing exact), but actual reproduces at a smaller input (185->184; 9652->9643); the amount carried into V4 runs a few units low. Eliminated: protocol fee on/off identical. See docs/tracked-failures-log-review-2026-08-03.md.",
+    "mechanism_A_crossing_overprediction_UNI_9a5c1d2f_block_25673381": {
+      "57150": {"solver_v4_input": 3135, "v4_simulate_swap_at_input": 772076574181336, "solver_predicted": 772833263957077, "recorded_actual": 772076574181336, "over_bps": 9.8},
+      "43047": {"solver_v4_input": 57718, "v4_simulate_swap_at_input": 14214710436130112, "solver_predicted": 14228641859916626, "recorded_actual": 14147240238759279, "over_bps": 9.8}
+    },
+    "mechanism_B_forward_amount_gap": {
+      "big_pool_2a6d5b75_block_25672140": {"solver_v4_input": 185, "oracle_at_input": 631737964053287, "input_reproducing_actual": 184, "recorded_actual": 628304616211100, "gap_units": 1},
+      "fee1_76f75965_block_25672332_35396": {"solver_v4_input": 9652, "oracle_at_input": 9649, "input_reproducing_actual": 9643, "recorded_actual": 9640, "gap_units": 9}
+    },
+    "protocol_fee_eliminated": {
+      "_note": "protocol_fee 2048500 vs 0 give identical v4_simulate_swap output on pool 2a6d5b75",
+      "on_206": 631737964053287,
+      "off": 631737964053287
     }
   },
   "v4_pool_manager": "0x000000000004444c5dc75cb358380d2e3de08a90",

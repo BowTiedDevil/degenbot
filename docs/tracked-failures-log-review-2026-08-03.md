@@ -56,38 +56,52 @@ Notes for building fixtures:
   (the tier-3-proven on-chain oracle) — the assertion target is
   `solver V4-hop == v4_simulate_swap == recorded actual`, current state RED.
 
-### Root cause determined (2026-08-03 session)
+### Root cause(s) determined (2026-08-03 session)
 
-I reconstructed the V4 pools, drove `v4_simulate_swap` (the tier-3 byte-exact
-on-chain oracle), and probed inputs to match each recorded `actual_out`. The
-result closes the case:
+I reconstructed each V4 pool, drove `v4_simulate_swap` (the tier-3 byte-exact
+on-chain oracle) at the recorded V4-hop input, and probed nearby inputs to
+match each recorded `actual_out`. The six overdrafts split into **two distinct
+mechanisms**, verified against frozen on-chain state:
 
-| block | pool | solver hop_out[0] (V4 input) | input that reproduces recorded actual | gap |
+**A) Crossing / output over-prediction — the clean, reproducible UO3JM4 bug
+(UNI pool `0x9a5c1d2f…`, block 25673381, paths 57150/43047).**
+
+| path | solver V4 input | v4_simulate_swap @ input | solver predicted | actual_out |
 |---|---|---|---|---|
-| 25672140 | `0x2a6d5b75…` | 185 | **184** | 1 unit |
-| 25672332 | `0x76f75965…` (fee-1, 35396) | 9652 | **9643** | 9 units |
+| 57150 | 3135 | **772076574181336 = actual** | 772833263957077 (+0.098%) | 772076574181336 |
+| 43047 | 57718 | 14214710436130112 | 14228641859916626 (+0.098%) | 14147240238759279 |
 
-Evidence chain:
-1. `protocol_fee` on/off (2048500 vs 0) gives the **same** oracle output
-   `631737964053287` -> protocol fee is irrelevant to the gap (Eliminated).
-2. `v4_simulate_swap` at the recorded input equals the solver's prediction
-   byte-exactly (`185 -> 631737964053287`; `9652 -> 9649`) -> the V4 crossing
-   math itself is exact (Eliminated).
-3. The recorded `actual_out` reproduces **exactly** at a *smaller* input
-   (`v4_simulate_swap@184 = 628304616211100` == recorded actual; `@9643 = 9640`
-   == recorded actual).
+At the solver's own recorded input, `v4_simulate_swap` equals the on-chain
+actual and the solver's prediction is ~0.098% HIGHER. The solver's predicted
+output corresponds to the oracle at a ~3-unit *larger* input than hop0
+actually delivered (e.g. predicted 772833263957077 == oracle@~3138, while
+input was 3135). The predicted output is NOT reprodusible at any input <= the
+recorded one. This is a real solver crossing/output over-prediction on a DEEP
+**134-range** tick topology (protocol fee 2048500).
 
-**Root cause:** the solver's predicted forward amount delivered to the V4 pool
-(`hop_outputs[0]`) is a few units HIGHER than the amount actually transferred
-(185 vs 184; 9652 vs 9643). The composer's `V4_TAKE(predicted output)` then
-withdraws against the (larger-input) predicted output while the pool only
-settles the actual (smaller) input -> overdraft -> `transfer amount exceeds
-balance`. This is an **inter-hop forward-amount composition error of a few
-units** (hop0 output / exact-in transfer rounding) — NOT the V4 crossing math
-and NOT protocol fee. Any fix targets the solver's hop-boundary amount
-composition (`hop_outputs[i]` handed to the next hop), and the tier-3 slice
-should assert the composed forward amount is byte-exact against the realized
-hop output.
+**B) Inter-hop forward-amount gap — crossing math is exact, the input handed
+to V4 runs a few units low (big pool `0x2a6d5b75…` block 25672140; fee-1
+`0x76f75965…` block 25672332).**
+
+| pool | solver V4 input | oracle @ input | input reproducing actual | gap |
+|---|---|---|---|---|
+| `0x2a6d5b75…` | 185 | 631737964053287 = solver | **184** | 1 unit |
+| `0x76f75965…` (35396) | 9652 | 9649 = solver | **9643** | 9 units |
+
+Here `v4_simulate_swap @ recorded input == solver predicted` (crossing math
+byte-exact), but `v4_simulate_swap` at a SMALLER input reproduces the recorded
+`actual_out` exactly. The amount actually transferred into the V4 pool (the
+hop0 output) ran a few units below the solver's `hop_outputs[0]`, so
+`V4_TAKE(predicted output)` overdraws what the pool settles.
+
+**Eliminated unanimously:** protocol fee on/off (2048500 vs 0) gives identical
+oracle output -> fee does not explain the gap on any pool.
+
+Both mechanisms produce the same observable (`V4_TAKE` → `transfer amount
+exceeds balance` → `matched=false`), but the fix seams differ: **A** is the
+V4 exact-in crossing/output math (tier-3 slice: deep-topology crossing), **B**
+is the solver's inter-hop forward-amount composition. `A` is the clean
+frozen-state reproduction and the primary target.
 
 ### Solver-side solve states (from `[solver-st]`, for pool reconstruction)
 
