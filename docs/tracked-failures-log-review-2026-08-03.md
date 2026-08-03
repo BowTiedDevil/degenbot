@@ -104,7 +104,23 @@ The bug fires at **zfo=true only**, and only when the current tick sits exactly 
 
 **Fix (committed):** `tick_bitmap.rs::compute_tick_ranges` now re-inserts sqrt(current_tick) as the first interior boundary of range 0 for zfo=true when current_tick is a word boundary, so the int-solve path (`compute_crossing`/`int_simulate_v3_swap`) floors at the current tick exactly like the on-chain PoolManager. This makes the solver byte-exact to `v4_simulate_swap` on the fee-1 pool in BOTH directions — the former RED pin `v4_fee1_solver_path_matches_v4_simulate_swap` is now GREEN, plus the mechanism guard `fee1_zfo_true_two_step_floored_equivalence`. Fix is shared V3/V4 (same `compute_tick_ranges` + `int_simulate_v3_swap`) and validated against the full pools/solvers/bot/tier-3 suites (no regressions).
 
-**Remaining / NOT resolved by this fix:** the live path-10338 `+1` sits upstream on the V3-30 hop0 (zfo=true) whose current_tick is **-201001 — NOT a word boundary** (verified via `cast slot0`), so this word-boundary fix does not apply there. The V3-30 hop0 `+1` (solver 4729 vs on-chain 4728) is a distinct, still-unpinned rounding source (possibly the same zfo=true partial-step class at a non-word-boundary tick, or an inter-hop amount composition effect), pending reconstruction of the real V3-30 pool (0x4e68ccd3) at block 25675755. See `tests/fixtures/fee1_v3v4v3_block25675755.json` and the `fee1_76f75965_*` parity tests.
+**Closure (reconstructed real V3-30 pool):** the live path-10338 `+1` is a
+STALE-STATE artifact, not a crossing-math bug. The fixture `v3_0` was rebuilt
+from the stale 424-tick proxy (`0xc7bBeC68…`, spacing 1) to the real V3-30 pool
+`0x4e68ccd3` (561 ticks, spacing 60, `sqrt=3423133541652388997239203`,
+`tick=-201001`, `liq=1.237e19` at block 25675755). The `v3v30_hop0_probe`
+example reconstructs it and races the solver int-solve crossing path against
+`v3_simulate_swap` (the on-chain oracle) over a dense sweep INCLUDING the
+recorded input `2540883010212`, in BOTH directions — fully byte-exact (0
+divergence). At the recorded input the solver gives **4728 == `v3_simulate_swap`
+== the on-chain actual**, so the logged `hop_outputs[0]=4729` is not
+reproducible from correct state. The `+1` was a solve-time stale-tick_data /
+state-consistency artifact (the solver built hop-0 from a slightly stale V3-30
+snapshot), NOT a rounding defect in `compute_crossing`/`int_simulate_v3_swap`
+(which, post word-boundary fix, is byte-exact on the real state in both
+directions). See `fee1_v3v4v3_block25675755.json` + the `v3v30_hop0_probe`
+example; the `fee1_76f75965_*` parity tests + V3/V4 word-boundary guards cover
+the genuinely-fixed rounding class.
 
 ### Solver-side solve states (from `[solver-st]`, for pool reconstruction)
 
