@@ -16,7 +16,9 @@ use alloy::primitives::{Address, I256, U160, U256};
 
 use crate::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use crate::liquidity_event::LiquidityEvent;
-use crate::state_history::{JournalError, ReorgJournal, ReorgPoolState, V3BlockDelta};
+use crate::state_history::{
+    JournalError, ReorgJournal, ReorgPoolState, ScalarPriors, V3BlockDelta,
+};
 use crate::tick_bitmap::{compute_tick_ranges, gen_ticks, V3TickRangeForSolver};
 use crate::tick_fetch::TickWordFetcher;
 use crate::v3_state::{PoolTickCoverage, RegistrationLifecycle, SimulateSwapError, V3SwapOutcome};
@@ -444,6 +446,29 @@ impl V4PoolState {
     // (ADR-017 slice 1) — the body was the byte-identical twin of
     // `V3PoolState::merge_tick_word`; the trait dedups the two. See
     // `impl ConcentratedLiquidityPoolMut for V4PoolState` in `registry.rs`.
+
+    /// Registration/seed genesis anchor — the V4 twin of
+    /// [`V3PoolState::seed_genesis`] (shares the same `V3BlockDelta` journal
+    /// type). Pushes a `before == after` delta at `block` advancing NO clock,
+    /// so the reorg journal is non-empty from registration (mid-window reorg
+    /// restores to the seeded state instead of a graceful `NoStatePriorToBlock`
+    /// shutdown). Split-seed replacement for the builder's old `apply_swap`
+    /// genesis, which would backward-panic `update_block` and falsely advance
+    /// `tick_data_block` when registration seeds price at HEAD past the DB map
+    /// block.
+    pub fn seed_genesis(&mut self, block: u64) {
+        self.journal.push_delta(V3BlockDelta {
+            block,
+            scalar_priors: Some(ScalarPriors {
+                sqrt_price_x96_before: self.sqrt_price_x96,
+                liquidity_before: self.liquidity,
+                tick_before: self.tick,
+            }),
+            update_block_before: Some(self.update_block),
+            tick_data_block_before: Some(self.tick_data_block),
+            tick_priors: Vec::new(),
+        });
+    }
 
     /// Construct from registration params with a journal of the given depth.
     #[must_use]

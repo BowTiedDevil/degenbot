@@ -118,6 +118,12 @@ class V4PoolBuilder(V4BuilderBase):
         state_block = (
             request.state_block if request.state_block is not None else io.get_block_number()
         )
+        # The FRESH PRICE read block (two-stamp OB7UNY): the cheap slot0/price
+        # read stamps `update_block` at the live head, while the liquidity
+        # clock + assembled tick map anchor at `state_block` (the DB snapshot
+        # block). When a caller pins `request.state_block`, price = that same
+        # block (no split).
+        head_block = state_block
 
         # Try DB first — route the construction-time read through the Rust
         # `PyBotIo` seam (QVMWQC). The V4 lookup is two-step: resolve the pool
@@ -158,16 +164,18 @@ class V4PoolBuilder(V4BuilderBase):
                             state_view_address=manager_row.state_view,
                         )
 
-        # Seed-anchor policy (V4 twin of the V3 H1 fix, task BS6KFF): when the
-        # pool is built from a DB row whose liquidity snapshot is pinned to a
-        # specific block, anchor the WHOLE seed (scalars, assembled tick map,
-        # `update_block`, post-registration `apply_swap`) at that snapshot
-        # block rather than the live WS head, so the post-drain verify compares
-        # against on-chain at the block the seed actually reflects. Only
-        # auto-applied when the caller did not pin an explicit `state_block`.
-        # Conservative: an old snapshot defers the pool's paths via the
-        # freshness gate until the pump backfill catches up — never a false
-        # positive.
+        # Seed-anchor policy (V4 twin of the V3 split, two-stamp OB7UNY; the
+        # 0x5653 staged-clock fix): `state_block` is the block the DB liquidity
+        # snapshot's assembled tick map is exact at and becomes
+        # `tick_data_block`. The SLOT0/price is fetched FRESH at `head_block`
+        # and stamps `update_block` — a cheap slot0 read refreshes the price
+        # clock past the snapshot block without draining event logs. The
+        # post-drain verify compares the seeded tick data against on-chain at
+        # `tick_data_block` (the block it actually reflects) while the solver
+        # gets a fresh price for ADR-021. Only the tick anchor is auto-applied
+        # when the caller did not pin an explicit `state_block`. Conservative:
+        # an old snapshot defers the pool's paths via the freshness gate until
+        # the pump backfill catches up — never a false positive.
         state_block = resolve_seed_block(
             request_state_block=request.state_block,
             db_liquidity_update_block=db_liquidity_update_block,
@@ -227,13 +235,15 @@ class V4PoolBuilder(V4BuilderBase):
             io=io,
         )
 
-        # Fetch slot0 + liquidity via state view contract
+        # Fetch slot0 + liquidity FRESH at the price seed block (`head_block`)
+        # — the cheap slot0 read that stamps `update_block` at head while the
+        # tick map stays anchored at `state_block` (two-stamp OB7UNY).
         # ADR-005 slice 14o: delegate both RPCs to Rust (PyBotIo is the only
         # executor; the Python parity-gate fallback is retired).
         try:
             assert state_view_address is not None
             sqrt_price_x96, tick_raw, protocol_fee_raw, lp_fee, liquidity_val = (
-                io.fetch_v4_slot0_liquidity(state_view_address, pool_id_bytes, block=state_block)
+                io.fetch_v4_slot0_liquidity(state_view_address, pool_id_bytes, block=head_block)
             )
         except Exception as exc:
             raise LiquidityPoolError(message="Could not decode contract data") from exc
@@ -330,7 +340,8 @@ class V4PoolBuilder(V4BuilderBase):
             sqrt_price_x96=slot0_data.sqrt_price_x96,
             liquidity=int(liquidity_val),
             tick=slot0_data.tick,
-            block=state_block,
+            block=int(head_block) if head_block is not None else 0,
+            tick_data_block=int(state_block) if state_block is not None else 0,
             tick_data=register_rows,
             coverage=coverage,
             tick_data_fetcher=self._make_tick_data_fetcher(

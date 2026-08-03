@@ -108,6 +108,12 @@ class V3PoolBuilder(V3BuilderBase):
         state_block = (
             request.state_block if request.state_block is not None else io.get_block_number()
         )
+        # The FRESH PRICE read block (two-stamp OB7UNY): the cheap slot0/price
+        # read stamps `update_block` at the live head, while the liquidity
+        # clock + assembled tick map anchor at `state_block` (the DB snapshot
+        # block). When a caller pins `request.state_block`, price = that same
+        # block (no split).
+        head_block = state_block
 
         # Try DB first — route the construction-time read through the Rust
         # `PyBotIo` seam (QVMWQC). `fetch_pool_row` returns the scalar + FK-id
@@ -154,15 +160,17 @@ class V3PoolBuilder(V3BuilderBase):
                         else None,
                     )
 
-        # Seed-anchor policy: when the pool is built from a DB row whose
-        # liquidity snapshot is pinned to a specific block, anchor the WHOLE
-        # seed (scalars, assembled tick map, `update_block`, post-registration
-        # `apply_swap`) at that snapshot block rather than the live WS head.
-        # This keeps the seed internally consistent so the post-drain verify
-        # compares the seeded data against on-chain at the block it actually
-        # reflects. Conservatively: if the snapshot is old, the AV42C7
-        # freshness gate defers the pool's paths until the pump backfill
-        # catches it up — it never false-positives.
+        # Seed-anchor policy (two-stamp OB7UNY): `state_block` is the block the
+        # DB liquidity snapshot's assembled tick map is exact at, and becomes
+        # `tick_data_block`. The SLOT0/price is fetched FRESH at `head_block`
+        # and stamps `update_block` — a cheap slot0 read refreshes the price
+        # clock past the snapshot block without draining event logs. This is
+        # the H1 fix preserved: the post-drain verify compares the seeded tick
+        # data against on-chain at `tick_data_block` (the block it actually
+        # reflects), while the solver gets a fresh price for ADR-021. Row-valid
+        # prior (line above): if the snapshot is old, the AV42C7 freshness gate
+        # defers the pool's paths until the pump backfill catches it up — it
+        # never false-positives.
         state_block = resolve_seed_block(
             request_state_block=request.state_block,
             db_liquidity_update_block=db_liquidity_update_block,
@@ -205,13 +213,15 @@ class V3PoolBuilder(V3BuilderBase):
             io=io,
         )
 
-        # Fetch slot0 + liquidity
+        # Fetch slot0 + liquidity FRESH at the price seed block (`head_block`)
+        # — the cheap slot0 read that stamps `update_block` at head while the
+        # tick map stays anchored at `state_block` (two-stamp OB7UNY).
         # ADR-005 slice 14f: same delegation seam as the immutable-data block.
         # PyBotIo is the only executor; the Python parity-gate fallback is retired.
         try:
             sqrt_price_x96, tick, liquidity = io.fetch_v3_slot0_liquidity(
                 pool_address,
-                block=state_block,
+                block=head_block,
             )
         except Exception as exc:
             raise LiquidityPoolError(message="Could not decode contract data") from exc
@@ -238,6 +248,7 @@ class V3PoolBuilder(V3BuilderBase):
         # provider) leaves the Chain arm off → `(tick_data=None,
         # coverage="sparse")` registration (the defensive fallback).
         state_block_int = int(state_block) if state_block is not None else 0
+        head_block_int = int(head_block) if head_block is not None else 0
         rust_rows: dict[int, tuple[int, int, int]] = {}
         coverage = "sparse"
 
@@ -273,23 +284,25 @@ class V3PoolBuilder(V3BuilderBase):
         # tick_data then called ``update_tick_data`` to seed — a pump
         # Mint/Burn landing between register and seed was applied then
         # CLOBBERED by the seed overwrite (lost update → verify failure).
-        # ``apply_swap`` still anchors the reorg genesis delta at state_block
-        # (mirrors the V2 builder writing reserves with update_block).
+        # ``seed_genesis`` anchors the reorg genesis delta at state_block
+        # without advancing either clock (two-stamp OB7UNY) — mirrors the V2
+        # builder writing reserves with update_block.
         # [diag] seed-provenance probe (kept per JSFO5L; the seed-side half of
-        # the `[verify-dbg]` pin). Logs the registration seed anchor: after the
-        # H1 fix `state_block` is the DB liquidity snapshot block (not head),
-        # so `update_block` should equal `data_block` — a divergence means the
-        # seed is inconsistent with the block its tick data reflects, which is
-        # how the step-2 `verify_v3_post_drain_snapshot` false-positive was
-        # born (data@DB_block vs on-chain@head). Gate: pre-existing
+        # the `[verify-dbg]` pin). Logs the registration seed anchor: price at
+        # `head_block` (fresh slot0) and tick map at `state_block` (the DB
+        # liquidity snapshot block). A `tick_data_block` diverging from
+        # `data_block` means the seed is inconsistent with the block its tick
+        # data reflects — how the step-2
+        # `verify_v3_post_drain_snapshot` false-positive was born
+        # (data@DB_block vs on-chain@head). Gate: pre-existing
         # `DEGENBOT_TRACE_REGISTER_SEED`.
         if os.environ.get("DEGENBOT_TRACE_REGISTER_SEED"):
             max_tick_block = max([blk for _g, _n, blk in rust_rows.values()] + [state_block_int])
             logger.info(
                 "[diag] register-v3-seed-provenance "
-                f"pool_addr={pool_address} update_block={state_block_int} "
-                f"data_block={max_tick_block} tick_count={len(rust_rows)} "
-                f"coverage={coverage}"
+                f"pool_addr={pool_address} update_block={head_block_int} "
+                f"tick_data_block={state_block_int} data_block={max_tick_block} "
+                f"tick_count={len(rust_rows)} coverage={coverage}"
             )
         pool_id = self._py_bot.register_v3_pool(
             address=pool_address,
@@ -302,19 +315,21 @@ class V3PoolBuilder(V3BuilderBase):
             liquidity=int(liquidity),
             tick=int(tick),
             tick_data=rust_rows or None,
-            update_block=state_block_int,
+            update_block=head_block_int,
+            tick_data_block=state_block_int,
             coverage=coverage,
             tick_data_fetcher=self._make_tick_data_fetcher(pool_address, chain_id, io=io),
         )
         py_pool_handle = self._py_bot.get_pool(pool_id)
         assert py_pool_handle is not None, "register_v3_pool returned a pool_id with no handle"
         if state_block is not None and state_block_int > 0:
-            py_pool_handle.apply_swap(
-                sqrt_price_x96=int(sqrt_price_x96),
-                liquidity=int(liquidity),
-                tick=int(tick),
-                block_number=state_block_int,
-            )
+            # Split-seed genesis: the reorg anchor (non-empty journal) is
+            # established WITHOUT advancing the tick clock — the old
+            # `apply_swap` genesis would have falsely claimed the tick map
+            # reaches the price seed block (and would backward-panic
+            # `update_block` when price is seeded at head past the DB map
+            # block).
+            py_pool_handle.seed_genesis(block_number=state_block_int)
         # ADR-006: tick_data was seeded inline in ``register_v3_pool`` above —
         # no separate ``update_tick_data`` Rust call (that would overwrite the
         # tick_data map and clobber pump events applied after registration).

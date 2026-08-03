@@ -3177,6 +3177,27 @@ impl BotState {
         }
     }
 
+    /// Registration/seed genesis anchor for a registered V3/V4 pool
+    /// (two-stamp OB7UNY): pushes a `before == after` journal delta at `block`
+    /// so the reorg journal is non-empty from registration, WITHOUT advancing
+    /// either clock. The split-seed replacement for the builder's old
+    /// `apply_swap` genesis, which would backward-panic `update_block` (price
+    /// seeded at HEAD past the DB map block) and falsely advance
+    /// `tick_data_block`. V2/unregistered → `None`.
+    pub fn seed_genesis_by_pool_id(&mut self, pool_id: u64, block: u64) -> Option<u64> {
+        match self.pools.get_mut(&pool_id) {
+            Some(PoolEntry::V3(_, state)) => {
+                state.seed_genesis(block);
+                Some(pool_id)
+            }
+            Some(PoolEntry::V4(_, state)) => {
+                state.seed_genesis(block);
+                Some(pool_id)
+            }
+            _ => None,
+        }
+    }
+
     /// Family-dispatching liquidity update (RAJ3PP). The single entry point
     /// `PyLiquidityPool.apply_liquidity_update` calls — routes V3 to
     /// `apply_v3_liquidity_update_by_pool_id` and V4 to
@@ -4090,6 +4111,67 @@ mod tests {
         );
         assert_eq!(core.pool_update_block(pool_id), head);
         assert_eq!(core.pool_tick_data_block(pool_id), db_block);
+    }
+
+    #[test]
+    fn seed_genesis_anchors_journal_without_advancing_clocks() {
+        // The split-seed builder (price at HEAD, tick map at the DB block)
+        // replaces its old `apply_swap` genesis with `seed_genesis`: a
+        // `before == after` journal delta that makes the journal non-empty
+        // (so a mid-window reorg restores instead of a graceful
+        // `NoStatePriorToBlock` shutdown) WITHOUT advancing either clock
+        // (two-stamp OB7UNY).
+        use crate::bot_core::{RegisterV3PoolParams, TickInfo};
+        use crate::solvers::arb_engine::PoolTickCoverage;
+        let mut core = BotState::new();
+        let pool_addr = Address::from([0xe1u8; 20]);
+        let head = 1_000u64;
+        let db_block = 950u64;
+        let mut tick_data = HashMap::new();
+        tick_data.insert(
+            60,
+            TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(100),
+                liquidity_net: I256::try_from(100i128).unwrap(),
+                block: 0,
+            },
+        );
+        let pool_id = core
+            .register_v3_pool(&RegisterV3PoolParams {
+                address: pool_addr,
+                token0: Address::ZERO,
+                token1: Address::from([1u8; 20]),
+                fee: 3000,
+                tick_spacing: 60,
+                factory: Address::ZERO,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 1_000_000,
+                tick: 0,
+                tick_data,
+                update_block: head,
+                tick_data_block: Some(db_block),
+                coverage: PoolTickCoverage::Sparse,
+                fetcher: None,
+                ..Default::default()
+            })
+            .expect("test setup: V3 split-clock registration");
+        // Empty journal → not restorable (would be a graceful too-deep shutdown).
+        assert!(!core.has_state_prior_to(pool_id, 100));
+        // Seed genesis at the DB floor anchor.
+        assert_eq!(
+            core.seed_genesis_by_pool_id(pool_id, db_block),
+            Some(pool_id)
+        );
+        assert!(core.has_state_prior_to(pool_id, 100), "non-empty journal");
+        // The anchor advances NO clock.
+        assert_eq!(core.pool_update_block(pool_id), head);
+        assert_eq!(core.pool_tick_data_block(pool_id), db_block);
+        // Restore below the anchor pops the before==after delta → seeded state.
+        let restored = core.restore_pool_before_block(pool_id, 100);
+        assert!(restored.unwrap().is_ok());
+        assert_eq!(core.pool_update_block(pool_id), head);
+        assert_eq!(core.pool_tick_data_block(pool_id), db_block);
+        assert_eq!(core.seed_genesis_by_pool_id(999_999, 1), None);
     }
 
     #[test]

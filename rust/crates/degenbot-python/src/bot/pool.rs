@@ -1725,6 +1725,19 @@ impl PyLiquidityPool {
         Ok(())
     }
 
+    /// Registration/seed genesis anchor (two-stamp OB7UNY): push a
+    /// `before == after` reorg-journal delta at `block_number` WITHOUT
+    /// advancing either clock, so a split-seed (price at HEAD, tick map at the
+    /// DB block) pool keeps a non-empty journal for mid-window reorg restore.
+    /// Returns `True` on a registered V3/V4 pool, `False` otherwise.
+    #[pyo3(signature = (block_number))]
+    fn seed_genesis(&self, block_number: u64) -> bool {
+        self.core
+            .write()
+            .seed_genesis_by_pool_id(self.pool_id, block_number)
+            .is_some()
+    }
+
     /// Apply a V3 Mint/Burn event (liquidity update) via the handle.
     ///
     /// Initializes (or removes) tick entries at `tick_lower`/`tick_upper`,

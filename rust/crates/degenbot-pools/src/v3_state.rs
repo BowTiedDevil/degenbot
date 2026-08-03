@@ -16,7 +16,9 @@ use std::sync::Arc;
 use alloy::primitives::{Address, B256, I256, U160, U256};
 
 use crate::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-use crate::state_history::{JournalError, ReorgJournal, ReorgPoolState, V3BlockDelta};
+use crate::state_history::{
+    JournalError, ReorgJournal, ReorgPoolState, ScalarPriors, V3BlockDelta,
+};
 use crate::tick_bitmap::{compute_tick_ranges, gen_ticks, V3TickRangeForSolver};
 use crate::tick_fetch::TickWordFetcher;
 use crate::TickInfo;
@@ -518,6 +520,36 @@ impl V3PoolState {
     // (ADR-017 slice 1) — the body was the byte-identical twin of
     // `V4PoolState::merge_tick_word`; the trait dedups the two. See
     // `impl ConcentratedLiquidityPoolMut for V3PoolState` in `registry.rs`.
+
+    /// Registration/seed genesis anchor (two-stamp OB7UNY fresh-read builder).
+    ///
+    /// Pushes a `before == after` journal delta at `block` so the reorg
+    /// journal is non-empty from registration — keeping `has_state_prior_to`
+    /// true so a mid-window reorg restores to the seeded state instead of the
+    /// graceful `NoStatePriorToBlock` pump shutdown that an empty journal
+    /// would trigger. The delta records the CURRENT scalars + both clocks as
+    /// its “before” priors, so a restore pops to the exact seeded state.
+    ///
+    /// It deliberately advances NO clock: it is the split-seed replacement
+    /// for the builder's old `apply_swap`-genesis, which (a) would
+    /// backward-panic the PRICE clock when registration seeds `update_block`
+    /// at HEAD past the DB map block, and (b) would advance `tick_data_block`
+    /// and falsely claim the tick map reaches head. Because `before == after`
+    /// it is safe; call once at registration time, mirroring the V2/Curve
+    /// genesis-anchor pattern.
+    pub fn seed_genesis(&mut self, block: u64) {
+        self.journal.push_delta(V3BlockDelta {
+            block,
+            scalar_priors: Some(ScalarPriors {
+                sqrt_price_x96_before: self.sqrt_price_x96,
+                liquidity_before: self.liquidity,
+                tick_before: self.tick,
+            }),
+            update_block_before: Some(self.update_block),
+            tick_data_block_before: Some(self.tick_data_block),
+            tick_priors: Vec::new(),
+        });
+    }
 
     /// Construct from registration params with a journal of the given depth.
     #[must_use]

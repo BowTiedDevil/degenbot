@@ -429,6 +429,7 @@ class PyLiquidityPool:
         tick: int,
         block_number: int,
     ) -> bool: ...
+    def seed_genesis(self, block_number: int) -> bool: ...
     def apply_liquidity_update(
         self,
         tick_lower: int,
