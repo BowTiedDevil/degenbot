@@ -247,6 +247,51 @@ fn main() {
     );
     println!("  != recorded solver predicted ({recorded_predicted})? {solver_over_predicted}");
 
+    // 1c) Root-cause probe (self-checking): the recorded actual reproduces at
+    //     a slightly SMALLER V4 input than the solver's hop_outputs[0]. Find
+    //     that input (bounded linear probe below rec_input_abs; fee-1 / tiny
+    //     states are ~1:1 in units) and report the inter-hop forward-amount
+    //     gap. This demonstrates the UO3JM4 overdraft mechanism: the solver
+    //     over-states the amount carried into the V4 pool by a few units, so
+    //     V4_TAKE(predicted output) withdraws more than the pool settles.
+    let mut gap: u64 = 0;
+    for d in 1..=128u64 {
+        let cand_i =
+            i128::try_from(rec_input_abs).expect("recorded input fits i128") - i128::from(d);
+        if cand_i <= 0 {
+            break;
+        }
+        let cand = U256::from(u128::try_from(cand_i).expect("cand_i positive"));
+        if let Ok(s) = v4_simulate_swap(
+            &v4_state,
+            fee,
+            spacing,
+            zfo,
+            I256::try_from(cand)
+                .expect("probe input fits i256")
+                .checked_neg()
+                .expect("negate probe input"),
+            U256::MAX,
+        ) {
+            if v4_exact_in_output(&s, zfo) == recorded_actual {
+                gap = d;
+                break;
+            }
+        }
+    }
+    if gap > 0 {
+        println!(
+            "root cause: recorded actual reproduces at V4 input {} (= {} down from solver's {}): the solver over-states the forward amount by {gap} unit(s) -> V4_TAKE(predicted) overdrafts.",
+            rec_input_abs.saturating_sub(U256::from(gap)),
+            gap,
+            rec_input_abs
+        );
+    } else {
+        println!(
+            "root-cause probe: recorded actual ({recorded_actual}) not reproduced within 128 lower inputs — gap is not a small forward-amount error."
+        );
+    }
+
     // 2) The production Möbius solver path over the reconstructed three pools.
     let engine = ArbitrageEngine::new();
     let pid0 = register_v3(&mut engine.core.write(), &fx.pools.v3_0);

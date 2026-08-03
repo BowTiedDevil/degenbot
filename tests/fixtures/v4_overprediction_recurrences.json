@@ -10,9 +10,13 @@
     "genuine_v4_overdraw_paths": 6
   },
   "oracle_verification": {
-    "_note": "For every reconstructed recurrence, v4_simulate_swap (the tier-3 byte-exact on-chain oracle) at the recorded V4-hop input equals the SOLVER'S PREDICTED output, NOT the recorded actual_out. solver == oracle on frozen state; recorded actual_out is lower -> the logged matched=false overdrafts are a solve-vs-sim state/fee effect, reframing UO3JM4 away from a V4-crossing-math over-prediction. See docs/tracked-failures-log-review-2026-08-03.md.",
-    "block_25672332_fee1_76f75965": {"input": 9652, "v4_simulate_swap": 9649, "solver_predicted": 9649, "recorded_actual": 9640},
-    "block_25672140_2a6d5b75": {"input": 185, "v4_simulate_swap": 631737964053287, "solver_predicted": 631737964053287, "recorded_actual": 628304616211100}
+    "_note": "ROOT CAUSE RESOLVED. v4_simulate_swap (tier-3 byte-exact oracle) matches the solver's prediction at the recorded input; protocol_fee on/off gives identical output; but the recorded actual_out reproduces EXACTLY at a SMALLER input. So the solver's predicted forward amount into the V4 pool (hop_outputs[0]) runs a few units HIGH toward the next hop -> V4_TAKE(predicted output) overdrafts. Inter-hop forward-amount composition error, NOT crossing math, NOT protocol fee. See docs/tracked-failures-log-review-2026-08-03.md.",
+    "probe_input_matching_recorded_actual": {
+      "block_25672140_2a6d5b75": {"solver_hop0_out": 185, "input_reproducing_actual": 184, "oracle_at_solver_input": 631737964053287, "oracle_at_repro_input": 628304616211100},
+      "block_25672332_fee1_76f75965_35396": {"solver_hop0_out": 9652, "input_reproducing_actual": 9643, "oracle_at_solver_input": 9649, "oracle_at_repro_input": 9640},
+      "protocol_fee_on_206": {"protocol_fee": 2048500, "output_at_185": 631737964053287},
+      "protocol_fee_off": {"protocol_fee": 0, "output_at_185": 631737964053287}
+    }
   },
   "v4_pool_manager": "0x000000000004444c5dc75cb358380d2e3de08a90",
   "recurrences": [
