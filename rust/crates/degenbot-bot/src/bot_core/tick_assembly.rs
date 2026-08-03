@@ -99,31 +99,26 @@ pub enum TickMapAssemblyError {
 pub type TickMapAssemblyResult =
     Result<Option<(HashMap<i32, TickInfo>, PoolTickCoverage)>, TickMapAssemblyError>;
 
-/// Assemble a V3 pool's tick map with `Store → Db → Chain` precedence.
+/// Assemble a V3 pool's tick map with `Db → Chain` precedence.
 ///
-/// 1. **Store arm** (probe): if the closure returns
-///    [`PoolTickCoverage::Tracked`], the store hit is returned verbatim and
-///    the Db + Chain arms are skipped (the store entry has been consumed by
-///    `take`).
-/// 2. **Db arm**: only on a store miss. `db.fetch_liquidity_map(address)`
-///    is queried; a non-empty map (both `tick_bitmap` AND `tick_data`
-///    populated — mirrors Python's `if not init_maps or not liq_positions`
-///    heuristic) converts to `TickInfo` with `Tracked` coverage; an empty map
-///    OR a pool-not-found (`Ok(None)`) falls through to the Chain arm; a
-///    `Err(DbError)` is **propagated** (Decision 8 (A)).
-/// 3. **Chain arm**: only on Store + Db miss AND `chain = Some`. Calls
+/// 1. **Db arm**: `db.fetch_liquidity_map(address)` is queried; a non-empty
+///    map (both `tick_bitmap` AND `tick_data` populated — mirrors Python's
+///    `if not init_maps or not liq_positions` heuristic) converts to `TickInfo`
+///    with `Tracked` coverage; an empty map OR a pool-not-found (`Ok(None)`)
+///    falls through to the Chain arm; an `Err(DbError)` is **propagated**
+///    (Decision 8 (A)).
+/// 2. **Chain arm**: only on a Db miss AND `chain = Some`. Calls
 ///    [`TickBootstrapRpc::bootstrap_v3_tick_word`] for the word containing
 ///    `tick`; a hit returns `(ticks, Sparse)` (only one word seeded — the
 ///    live-pump miss-detection backfills neighbours); `None` (all-zero bitmap)
 ///    → helper returns `Ok(None)`; `Err(BootstrapTickError)` is **propagated**
 ///    as [`TickMapAssemblyError::Chain`] (Decision 8 (A) — same loud-failure
 ///    posture as the Db arm).
-/// 4. `chain = None` (no RPC bootstrap wired): Store + Db only; miss if both
-///    miss. `db = None` (cold-start, no Db handle): Store + Chain only.
+/// 3. `chain = None` (no RPC bootstrap wired): Db only — a Db miss returns
+///    `Ok(None)`. `db = None` (cold-start, no Db handle): Chain only.
 ///
-/// Returns `Ok(Some((ticks, coverage)))` on a hit (Store=`Tracked`, Db=
-/// `Tracked`, Chain=`Sparse`), `Ok(None)` on a miss, `Err(_)` on a Db or Chain
-/// read failure.
+/// Returns `Ok(Some((ticks, coverage)))` on a hit (Db=`Tracked`, Chain=
+/// `Sparse`), `Ok(None)` on a miss, `Err(_)` on a Db or Chain read failure.
 ///
 /// # Errors
 ///
@@ -159,10 +154,9 @@ pub fn assemble_v3_tick_map(
     Ok(chain_hit.map(|bt_word| (bt_word.ticks, PoolTickCoverage::Sparse)))
 }
 
-/// Assemble a V4 pool's tick map with `Store → Db → Chain` precedence.
+/// Assemble a V4 pool's tick map with `Db → Chain` precedence.
 ///
-/// V4 twin of [`assemble_v3_tick_map`]: the store is keyed by
-/// `(Address, V4PoolId)`, the Db arm calls
+/// V4 twin of [`assemble_v3_tick_map`]: the Db arm calls
 /// `db.fetch_liquidity_map_v4(pool_manager, pool_id_hash)`, and the Chain arm
 /// calls [`TickBootstrapRpc::bootstrap_v4_tick_word`] with `(state_view,
 /// pool_id)` — `state_view` is the V4 `StateView` contract address (the contract

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, cast
 from hexbytes import HexBytes
 
 from degenbot.builders.request import BuildManagedPoolRequest
+from degenbot.builders.seed_block_resolver import resolve_seed_block
 from degenbot.builders.tick_data_fetcher import (
     FetchedTickData,
     TickDataTypes,
@@ -125,6 +126,7 @@ class V4PoolBuilder(V4BuilderBase):
         # token fetches. Falls back to skipping when no `io` /
         # `database_path` is configured (mirrors `contextlib.suppress`).
         db_values = None
+        db_liquidity_update_block: int | None = None
         # Route the DB read through the Rust `PyBotIo` seam (QVMWQC). The
         # `contextlib.suppress` makes a missing/empty DB a skip, not an error.
         with contextlib.suppress(Exception):
@@ -139,6 +141,14 @@ class V4PoolBuilder(V4BuilderBase):
                     currency0_row = io.fetch_token_by_id(token_id=v4_row.currency0_id)
                     currency1_row = io.fetch_token_by_id(token_id=v4_row.currency1_id)
                     if currency0_row is not None and currency1_row is not None:
+                        # The block at which the DB's liquidity snapshot is
+                        # exact. If the pool's tick/liquidity data is seeded
+                        # from the DB, the seed must be anchored to THIS block,
+                        # not the live head — the V4 twin of the V3 H1 fix
+                        # (without it, post-drain verify reads on-chain at head
+                        # against stale DB tick data and false-positives on
+                        # every tick that moved in the gap).
+                        db_liquidity_update_block = v4_row.liquidity_update_block
                         db_values = V4DbValues(
                             currency0_address=get_checksum_address(currency0_row.address),
                             currency1_address=get_checksum_address(currency1_row.address),
@@ -147,6 +157,22 @@ class V4PoolBuilder(V4BuilderBase):
                             fee=v4_row.fee_token0,
                             state_view_address=manager_row.state_view,
                         )
+
+        # Seed-anchor policy (V4 twin of the V3 H1 fix, task BS6KFF): when the
+        # pool is built from a DB row whose liquidity snapshot is pinned to a
+        # specific block, anchor the WHOLE seed (scalars, assembled tick map,
+        # `update_block`, post-registration `apply_swap`) at that snapshot
+        # block rather than the live WS head, so the post-drain verify compares
+        # against on-chain at the block the seed actually reflects. Only
+        # auto-applied when the caller did not pin an explicit `state_block`.
+        # Conservative: an old snapshot defers the pool's paths via the
+        # freshness gate until the pump backfill catches up — never a false
+        # positive.
+        state_block = resolve_seed_block(
+            request_state_block=request.state_block,
+            db_liquidity_update_block=db_liquidity_update_block,
+            head_block=state_block,
+        )
 
         # Get immutable values
         if db_values is not None:

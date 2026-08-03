@@ -57,24 +57,28 @@ export DEGENBOT_DRAIN_DBG="${DEGENBOT_DRAIN_DBG:-}"
 # historical means the seed source is stale. Default off.
 export DEGENBOT_TRACE_REGISTER_SEED="${DEGENBOT_TRACE_REGISTER_SEED:-}"
 
-# Production mode (trade-through): do NOT exit on a sim-fail. The UO3JM4
-# capture-and-stop campaign is resolved (in-range liquidity adjust + the
-# historical-replay guard landed and the solver-state desync did not recur).
-# Keeping DEGENBOT_SIM_EXIT_ON_FAIL=1 makes the bot stop on the FIRST
-# thin-margin / no-profit revert — a routine arb-filtering outcome (all
-# executor frames `ok`, `revert=0x`, `reverted=0`) — so it cannot sustain
-# operation. Gnu-sedge's own doc in `_render_sim_failures` prescribes
-# `=0` for a run that must keep trading through thin-margin reverts.
+# Structural verify diagnostics (`[verify-dbg] V3/V4 pin`, pump block
+# complete, set_live tail): emit the pinned (update_block, tick_data.len(),
+# pump_count_at_or_below, last_complete_block) at registration-drain time so a
+# step-2 post-drain verify mismatch can be correlated to the drain that
+# produced the pin (H1: seed update_block=head outruns the DB-seeded tick_data
+# block with pump_count_at_or_below==0). Pure logging; zero behavior change.
+export DEGENBOT_VERIFY_DBG=1
+
+# Fail-fast default (DEGENBOT_SIM_EXIT_ON_FAIL=1): stop LOUDLY on the first
+# sim failure so a real failure is caught immediately with a [sim-fixture]
+# dump instead of being silently traded-through. With =1 the bot stops on the
+# FIRST thin-margin / no-profit revert — a routine arb-filtering outcome (all
+# executor frames `ok`, `revert=0x`, `reverted=0`) — so it does not sustain
+# long operation; for a sustained trade-through soak run it with
+# `DEGENBOT_SIM_EXIT_ON_FAIL=0 ./run_bot.sh`.
 #
-# The REAL failure-fast signals remain armed and are what this monitoring
-# loop watches:
-#   * DEGENBOT_ASSERT_SOLVER_STATE=1 — stop the pump on a genuine solver
-#     state desync (the UO3JM4 / ADR-021 tripwire).
-#   * DEGENBOT_SIM_LOG_REVERTED_SWAPS=1 — a genuine V4 fee-1 over-prediction
-#     still logs `[sim-revert-swap] ... matched=false` (actual<predicted)
-#     for the watchdog to catch and dump, without crashing the pump.
-# Set `=1` only for a short fixture-capture run.
-export DEGENBOT_SIM_EXIT_ON_FAIL=0
+# Known crash classes in the ignore-bucket set (default `CurrencyNotSettled`)
+# are logged with per-block `[sim-revert-swap]` samples and continued past
+# rather than trapped, so a single run still gathers per-block data for the
+# tracked class. The solver-state tripwire (DEGENBOT_ASSERT_SOLVER_STATE=1)
+# stays armed independently and stops the pump on a genuine desync.
+export DEGENBOT_SIM_EXIT_ON_FAIL="${DEGENBOT_SIM_EXIT_ON_FAIL:-1}"
 
 # The actual bot invocation (uv rebuilds the Rust extension if any rust
 # source / Cargo.toml is newer than the installed build).

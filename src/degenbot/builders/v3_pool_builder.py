@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import contextlib
+import os
 from typing import TYPE_CHECKING, cast
 
+from degenbot.builders.seed_block_resolver import resolve_seed_block
 from degenbot.builders.tick_data_fetcher import (
     FetchedTickData,
     TickDataTypes,
@@ -114,6 +116,7 @@ class V3PoolBuilder(V3BuilderBase):
         # prior SQLAlchemy lazy-load. Falls back to skipping when no `io` /
         # `database_path` is configured (mirrors `contextlib.suppress`).
         db_values = None
+        db_liquidity_update_block: int | None = None
         # Route the DB read through the Rust `PyBotIo` seam (QVMWQC). The
         # `contextlib.suppress` makes a missing/empty DB a skip, not an error.
         with contextlib.suppress(Exception):
@@ -129,6 +132,17 @@ class V3PoolBuilder(V3BuilderBase):
                     and token0_row is not None
                     and token1_row is not None
                 ):
+                    # The block at which the DB's liquidity snapshot is exact. If
+                    # the pool's tick/liquidity data is seeded from the DB (it is
+                    # a DB-hit `coverage=tracked` below), `update_block` must be
+                    # anchored to THIS block, not the live head — otherwise the
+                    # registration seeds head while the tick data reflects
+                    # `liquidity_update_block`, and step-2
+                    # `verify_v3_post_drain_snapshot` reads on-chain at head and
+                    # false-positives on every tick that moved in the
+                    # `(liquidity_update_block, head]` window (H1 confirmed in
+                    # run 2026-08-03: pool 0x5653 tick 63970 Mint @ 25676145).
+                    db_liquidity_update_block = kind_row.liquidity_update_block
                     db_values = V3DbValues(
                         factory=get_checksum_address(exchange_row.factory),
                         token0_address=get_checksum_address(token0_row.address),
@@ -139,6 +153,21 @@ class V3PoolBuilder(V3BuilderBase):
                         if exchange_row.deployer is not None
                         else None,
                     )
+
+        # Seed-anchor policy: when the pool is built from a DB row whose
+        # liquidity snapshot is pinned to a specific block, anchor the WHOLE
+        # seed (scalars, assembled tick map, `update_block`, post-registration
+        # `apply_swap`) at that snapshot block rather than the live WS head.
+        # This keeps the seed internally consistent so the post-drain verify
+        # compares the seeded data against on-chain at the block it actually
+        # reflects. Conservatively: if the snapshot is old, the AV42C7
+        # freshness gate defers the pool's paths until the pump backfill
+        # catches it up — it never false-positives.
+        state_block = resolve_seed_block(
+            request_state_block=request.state_block,
+            db_liquidity_update_block=db_liquidity_update_block,
+            head_block=state_block,
+        )
 
         # Get immutable values
         if db_values is not None:
@@ -188,13 +217,13 @@ class V3PoolBuilder(V3BuilderBase):
             raise LiquidityPoolError(message="Could not decode contract data") from exc
 
         # Fetch initial tick bitmap and tick data via the Rust `assemble_*`
-        # helper (epic 5NT2OC: `Store → Db → Chain` precedence). One call —
-        # the helper probes the SnapshotStore, then the Db, then (on a miss)
-        # the Chain arm (`AlloyTickBootstrapRpc` — pure-Rust sparse-RPC word
-        # read). The returned `tick_rows` is already in `register_v3_pool`'s
-        # `tick_data` arg shape (`{tick: (liquidity_gross, liquidity_net,
-        # block)}`); `coverage` is `"tracked"` on a Store/Db hit, `"sparse"`
-        # on a Chain hit.
+        # helper (epic 5NT2OC: `Db → Chain` precedence; the former `Store` arm
+        # was retired by epic XEANMB). One call: the helper reads the Db, then
+        # (on a miss) the Chain arm (`AlloyTickBootstrapRpc` — pure-Rust
+        # sparse-RPC word read). The returned `tick_rows` is already in
+        # `register_v3_pool`'s `tick_data` arg shape (`{tick:
+        # (liquidity_gross, liquidity_net, block)}`); `coverage` is `"tracked"`
+        # on a Db hit, `"sparse"` on a Chain hit.
         #
         # QVMWQC: the tick-snapshot read stays routed through the Rust seam.
         # Db + Chain errors propagate as `RuntimeError` from the Rust helper
@@ -246,6 +275,22 @@ class V3PoolBuilder(V3BuilderBase):
         # CLOBBERED by the seed overwrite (lost update → verify failure).
         # ``apply_swap`` still anchors the reorg genesis delta at state_block
         # (mirrors the V2 builder writing reserves with update_block).
+        # [diag] seed-provenance probe (kept per JSFO5L; the seed-side half of
+        # the `[verify-dbg]` pin). Logs the registration seed anchor: after the
+        # H1 fix `state_block` is the DB liquidity snapshot block (not head),
+        # so `update_block` should equal `data_block` — a divergence means the
+        # seed is inconsistent with the block its tick data reflects, which is
+        # how the step-2 `verify_v3_post_drain_snapshot` false-positive was
+        # born (data@DB_block vs on-chain@head). Gate: pre-existing
+        # `DEGENBOT_TRACE_REGISTER_SEED`.
+        if os.environ.get("DEGENBOT_TRACE_REGISTER_SEED"):
+            max_tick_block = max([blk for _g, _n, blk in rust_rows.values()] + [state_block_int])
+            logger.info(
+                "[diag] register-v3-seed-provenance "
+                f"pool_addr={pool_address} update_block={state_block_int} "
+                f"data_block={max_tick_block} tick_count={len(rust_rows)} "
+                f"coverage={coverage}"
+            )
         pool_id = self._py_bot.register_v3_pool(
             address=pool_address,
             token0=token0_address,
@@ -362,3 +407,7 @@ class V3PoolBuilder(V3BuilderBase):
         )
         pool.external_update(update)
         return True
+
+    # (The `[diag] register-v3-seed-provenance` probe lives inline in `build()`
+    # under the pre-existing `DEGENBOT_TRACE_REGISTER_SEED` gate — the seed-side
+    # half of the `[verify-dbg]` pin, kept per task JSFO5L.)
