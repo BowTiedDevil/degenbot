@@ -86,15 +86,20 @@ robust, committed facts:
    lower values). The live predicted maps to the oracle at ~3 units MORE input
    — a solve-vs-sim divergence that single-block reconstruction cannot pin.
 
-**Honest conclusion.** The crossing math is exonerated; the six overdrafts are a
-a few-unit divergence between the solver's solve-time state/amount and the
-on-chain state the sim (and `v4_simulate_swap`) sees — the W2UWZO "stale active
-state vs crossing residual" direction, favoring stale state/amount consistency
-over a crossing-math bug. It is NOT reproducible from a single reconstructed
-block because the exact solve-time V4 state + composed input are not in the
-log. To make the next recurrence fully reproducible, the `[sim-revert-swap]`
-diagnostic must record the exact pool scalars + the exact composed input at sim
-time (per-pool oracle + parity test then pin whichever seam the fix touches).
+**Decisive live evidence (supersedes the "crossing exonerated" note above).**
+The new `[sim-revert-swap]` instrumentation captured a genuine fee-1 overdraft
+live (path 10338, pool `0x76f75965`, block ~25675755) and it reproduces
+byte-exact: `v4_simulate_swap` @ the on-chain state, input 4728 = **4726** = the
+recorded actual, while the solver predicted **4727** — 1 wei HIGHER at the SAME
+input. So the fee-1 **crossing math DOES over-predict by 1 wei** at certain
+inputs (the W2UWZO `+1` divergence), and it is **input-dependent** — present at
+4728, absent at the inputs probed earlier — which is exactly why the earlier
+single-input reconstructions exonerated it. See
+`tests/fixtures/fee1_v3v4v3_block25675755.json`. The earlier run's
+"crossing-math exonerated" wording is therefore too strong: the honest picture
+is a **1-wei, input-dependent crossing over-prediction** on the fee-1 pool
+(verified byte-exact against the on-chain oracle), NOT an input gap and NOT
+protocol fee. Protocol fee is still irrelevant (2048500 vs 0 identical).
 
 ### Solver-side solve states (from `[solver-st]`, for pool reconstruction)
 
