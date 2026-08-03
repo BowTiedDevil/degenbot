@@ -629,24 +629,32 @@ impl BlockPump {
                     })
                     .collect();
                 let SolverStateMismatch { message } = mismatch;
-                // Fail-SAFE & CLEANLY (AV42C7): the gate's detection is correct
-                // (a >MAX_CL_STALENESS_BLOCKS-stale CL pool re-checked at the
-                // solve block genuinely means the solver is solving on stale
-                // state), but the previous `panic!` here UNWOUND the pump tokio
-                // task while the process kept running — wedging the bot into a
-                // no-progress busy loop (2026-08-02 observation). Setting
-                // `shutdown` instead lets `run_with_stream` exit cleanly at the
-                // loop top (same fail-safe: never trade on desynced state, no
-                // wedge). Env-gated off by default.
-                self.shutdown.store(true, Ordering::Relaxed);
+                // Fail HARD & LOUDLY (UO3JM4/DFQYM5): a verified solver-state
+                // desync means the solver solved on stale/corrupt pool state —
+                // never trade on it and never linger half-alive. The original
+                // `panic!` (2026-08-02) UNWOUND only the pump tokio task while
+                // the process kept running → no-progress busy loop; the later
+                // `shutdown.store(true)` fallback returned silently → the
+                // process idled on discovery/probe threads unnoticed. Both are
+                // silent-ish failures. Match the WS-INVARIANT precedent
+                // (`std::process::abort` guarantees termination): print the
+                // grep-able literal to stderr (unbuffered), then abort so the
+                // whole process dies on the spot — no task unwind, no wedge,
+                // no teardown hang.
+                let fatal = format!(
+                    "[SOLVER-STATE] ABORT: solver used desynced pool state at solve block {block} \
+                     (path_idx={path_idx}, hops: {}) {message}. Do NOT reuse desynced state or \
+                     silence this (UO3JM4).",
+                    hops_diag.join(", "),
+                );
                 tracing::error!(
                     path_idx,
                     block,
-                    hops = %hops_diag.join(", ").as_str(),
-                    %message,
-                    "DEGENBOT_ASSERT_SOLVER_STATE: solve used desynced pool state; cleanly stopping the pump"
+                    %fatal,
+                    "DEGENBOT_ASSERT_SOLVER_STATE: verified desync — ABORT"
                 );
-                return;
+                eprintln!("{fatal}");
+                std::process::abort();
             }
         }
     }
@@ -3268,19 +3276,65 @@ mod tests {
         }
     }
 
-    /// AV42C7 fix — the solver-state gate must FAIL CLEANLY (set `shutdown`
-    /// and return) instead of `panic!`-ing, which previously unwound the pump
-    /// tokio task and wedged the bot into a no-progress busy loop. Drive the
-    /// gate directly against a registered V2 pool whose on-chain `getReserves`
-    /// (mocked) MISMATCHES the solver's stored reserves → the verifier returns a
-    /// `SolverStateMismatch` → the gate must set `shutdown`, not panic.
+    /// UO3JM4 — the solver-state gate must FAIL HARD & LOUDLY on a verified
+    /// desync: `abort()` the whole process, not `shutdown`+return silently
+    /// (the AV42C7 fallback left the bot idling on discovery/probe threads)
+    /// and not `panic!` (2026-08-02: unwound only the pump tokio task →
+    /// no-progress busy loop). `abort()` can't unwind or linger, so the bot
+    /// dies on the spot. `abort()` can't be tested in-process (it SIGABRTs
+    /// the test binary), so this parent test spawns itself as a subprocess
+    /// driving the gate through the desync and asserts the child died by
+    /// SIGABRT AND printed the loud grep-able `[SOLVER-STATE] ABORT` marker.
+    #[test]
+    fn solver_state_desync_aborts_process() {
+        let exe = std::env::current_exe().expect("current test exe");
+        let out = std::process::Command::new(exe)
+            .arg("solver_state_desync_aborts_self")
+            // --nocapture: the child is a test-harness run whose stderr is
+            // captured by default; without it the eprintln! marker never
+            // reaches the pipe the parent reads.
+            .arg("--nocapture")
+            .env("DEGENBOT_SELF_ABORT_TEST", "1")
+            .output()
+            .expect("spawn desync subprocess");
+        let status = out.status;
+        assert!(
+            !status.success(),
+            "a verified solver-state desync must kill the process, got {status:?}"
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("[SOLVER-STATE] ABORT"),
+            "desync must print the loud grep-able marker to stderr; got: {stderr}"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            assert_eq!(
+                status.signal(),
+                Some(6), // SIGABRT
+                "expected the child killed by SIGABRT, got {status:?}"
+            );
+        }
+    }
+
+    /// UO3JM4 child half: no-op unless spawned by
+    /// `solver_state_desync_aborts_process` (env `DEGENBOT_SELF_ABORT_TEST`).
+    /// Drives the gate against a registered V2 pool whose on-chain
+    /// `getReserves` (mocked) MISMATCHES the solver's stored reserves → the
+    /// verifier returns `SolverStateMismatch` → the gate must `abort()`
+    /// before this function can return.
     #[tokio::test]
-    async fn av42c7_gate_sets_shutdown_cleanly_instead_of_panicking() {
+    async fn solver_state_desync_aborts_self() {
         use degenbot_solvers::mixed::HopType;
         use degenbot_solvers::mixed::MixedPoolRef;
 
+        if std::env::var_os("DEGENBOT_SELF_ABORT_TEST").is_none() {
+            return; // no-op unless driven as the abort subprocess
+        }
+
         let pool_addr = Address::from([0x44u8; 20]);
-        let (pump, sink, asserter, shutdown) = pump_for_test_sink_and_asserter(Some(100));
+        let (pump, sink, asserter, _shutdown) = pump_for_test_sink_and_asserter(Some(100));
         let bot = pump.bot_arc_for_test();
         let pool_id = {
             let state = bot.state_arc();
@@ -3309,7 +3363,7 @@ mod tests {
         }]]);
 
         // Mock getReserves -> (777, 888, 0): MISMATCHES solver (1000, 2000),
-        // so verify_solver_hop_states returns Err and the gate must shut down.
+        // so verify_solver_hop_states returns Err and the gate must abort.
         let word = |v: U256| {
             let mut w = [0u8; 32];
             w[..].copy_from_slice(&v.to_be_bytes::<32>());
@@ -3322,15 +3376,8 @@ mod tests {
         let hex_resp = format!("0x{}", alloy::primitives::hex::encode(&resp));
         asserter.push_success(&hex_resp);
 
-        // The gate must RETURN (not panic) and set shutdown.
-        let before = shutdown.load(Ordering::Relaxed);
-        assert!(!before, "shutdown starts false");
         pump.verify_solver_state_against_chain(200).await;
-
-        assert!(
-            shutdown.load(Ordering::Relaxed),
-            "AV42C7 gate must set shutdown (clean stop) on a desync, not panic/wedge"
-        );
+        unreachable!("the solver-state gate MUST abort the process on a verified desync (UO3JM4)");
     }
 
     // -----------------------------------------------------------------
