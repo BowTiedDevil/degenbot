@@ -598,7 +598,16 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
         liquidity_delta: i128,
         block_number: u64,
     ) {
-        let in_range = tick_lower <= self.tick && self.tick < tick_upper;
+        // Historical-replay guard (UO3JM4 / Python `_initial_state_block`):
+        // only a genuinely in-range event STRICTLY AFTER the seed block adjusts
+        // the active-liquidity scalar. The seed's `liquidity` already reflects
+        // every on-chain event <= initial_state_block, so replaying one (e.g. a
+        // backfilled Burn applied after registration against head) would
+        // double-count it. Such a replay still mutates the tick map, but the
+        // scalar write-back + journal stay tick-only (scalar_priors: None).
+        let in_range = tick_lower <= self.tick
+            && self.tick < tick_upper
+            && block_number > self.initial_state_block;
 
         let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(2);
         for &tick_idx in &[tick_lower, tick_upper] {
@@ -728,7 +737,9 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
         liquidity_delta: i128,
         block_number: u64,
     ) {
-        let in_range = tick_lower <= self.tick && self.tick < tick_upper;
+        let in_range = tick_lower <= self.tick
+            && self.tick < tick_upper
+            && block_number > self.initial_state_block;
 
         let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(2);
         for &tick_idx in &[tick_lower, tick_upper] {

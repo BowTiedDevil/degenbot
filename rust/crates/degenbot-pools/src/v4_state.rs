@@ -283,6 +283,12 @@ pub struct V4PoolState {
     pub liquidity: u128,
     pub tick: i32,
     pub update_block: u64,
+    /// The frozen registration/seed block — the `update_block` at
+    /// construction. Historical-replay guard (UO3JM4, twin of
+    /// [`V3PoolState::initial_state_block`]): an in-range liquidity event
+    /// replayed at `block_number <= initial_state_block` must NOT adjust the
+    /// active-liquidity scalar (the seed already reflects it). Frozen.
+    pub initial_state_block: u64,
     /// Per-mutation nonce — see [`V3PoolState::state_nonce`] (V4 twin).
     pub state_nonce: u64,
     /// The per-pool registration lifecycle (6N7XVR — V4 twin of
@@ -348,6 +354,7 @@ impl Clone for V4PoolState {
             liquidity: self.liquidity,
             tick: self.tick,
             update_block: self.update_block,
+            initial_state_block: self.initial_state_block,
             state_nonce: self.state_nonce,
             registration_lifecycle: self.registration_lifecycle,
             protocol_fee: self.protocol_fee,
@@ -400,6 +407,7 @@ impl V4PoolState {
             liquidity: params.liquidity,
             tick: params.tick,
             update_block: params.update_block,
+            initial_state_block: params.update_block,
             state_nonce: 0,
             // ADR-close of the rolling-start direct-apply gap (DFQYM5, V4 twin
             // of the V3 `from_params` change): `Tracked` pools start
@@ -962,6 +970,7 @@ mod apply_inherent_tests {
             liquidity: liq,
             tick: 0,
             update_block: 0,
+            initial_state_block: 0,
             state_nonce: 0,
             registration_lifecycle: RegistrationLifecycle::default(),
             protocol_fee: 0,
@@ -1163,6 +1172,46 @@ mod apply_inherent_tests {
             state.liquidity,
             pre_liq - 250_000,
             "in-range burn removes active liquidity"
+        );
+    }
+
+    #[test]
+    fn apply_liquidity_update_replay_at_or_before_seed_block_does_not_adjust_scalar() {
+        // UO3JM4 historical-replay guard (V4 twin of the V3 test): a pool
+        // seeded against head already reflects every on-chain in-range
+        // Mint/Burn <= its seed block in its `liquidity` scalar. Replaying one
+        // after seed must NOT re-adjust it (double-count).
+        let liq = 1_000_000u128;
+        let mut state = state_with_position(liq); // tick 0 ∈ [-60, 60)
+        state.initial_state_block = 100; // seed against head at block 100
+        let pre_liq = state.liquidity;
+
+        state.apply_liquidity_update(-60, 60, -250_000i128, 50); // replay at 50 <= 100
+
+        assert_eq!(
+            state.liquidity, pre_liq,
+            "replay at or before the seed block must NOT re-adjust the active liquidity (already in the seed)"
+        );
+        assert_eq!(
+            state.update_block, 50,
+            "tick mutation still advances update_block"
+        );
+    }
+
+    #[test]
+    fn apply_liquidity_update_post_seed_in_range_adjusts_scalar() {
+        // Post-seed (block > seed block) in-range events DO adjust the scalar.
+        let liq = 1_000_000u128;
+        let mut state = state_with_position(liq);
+        state.initial_state_block = 100;
+        let pre_liq = state.liquidity;
+
+        state.apply_liquidity_update(-60, 60, -250_000i128, 150);
+
+        assert_eq!(
+            state.liquidity,
+            pre_liq - 250_000,
+            "post-seed (block > initial_state_block) in-range burn adjusts the active liquidity"
         );
     }
 

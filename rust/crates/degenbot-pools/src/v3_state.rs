@@ -279,6 +279,21 @@ pub struct V3PoolState {
     pub tick: i32,
     pub update_block: u64,
 
+    /// The frozen block at which this pool's state was seeded/synchronized
+    /// from on-chain (the registration/seed block, equal to the `update_block`
+    /// supplied at construction — Python twin of
+    /// `PyLiquidityPool._initial_state_block`).
+    ///
+    /// Historical replay guard: the seed's `liquidity` scalar ALREADY
+    /// reflects every in-range Mint/Burn at or before this block, so a
+    /// liquidity event replayed at `block_number <= initial_state_block`
+    /// (e.g. a backfilled Burn applied after the pool was registered against
+    /// head) must NOT adjust the active-liquidity scalar — it would double-
+    /// count a removal/addition the seed already contains (UO3JM4 solver
+    /// desync: a pre-seed in-range Burn subtracted its net twice). Frozen —
+    /// never advanced by `apply_swap`/`apply_liquidity_update`/`update_block`.
+    pub initial_state_block: u64,
+
     /// The per-pool registration lifecycle (6N7XVR): `Quarantined` during
     /// `register_v3_pool`'s drain+pin+verify (live events deferred to the pump
     /// buffer so the pin's `update_block` cannot outrun `last_complete_block`),
@@ -378,6 +393,7 @@ impl Clone for V3PoolState {
             liquidity: self.liquidity,
             tick: self.tick,
             update_block: self.update_block,
+            initial_state_block: self.initial_state_block,
             state_nonce: self.state_nonce,
             registration_lifecycle: self.registration_lifecycle,
             tick_data: self.tick_data.clone(),
@@ -452,6 +468,7 @@ impl V3PoolState {
             liquidity: params.liquidity,
             tick: params.tick,
             update_block: params.update_block,
+            initial_state_block: params.update_block,
             state_nonce: 0,
             // ADR-close of the rolling-start direct-apply gap (DFQYM5): a
             // freshly-registered `Tracked` pool starts `Quarantined` so NO live
@@ -1069,6 +1086,7 @@ mod apply_inherent_tests {
             liquidity: liq,
             tick: 0,
             update_block: 0,
+            initial_state_block: 0,
             state_nonce: 0,
             registration_lifecycle: RegistrationLifecycle::default(),
             tick_data,
@@ -1253,6 +1271,54 @@ mod apply_inherent_tests {
             state.liquidity,
             pre_liq - 250_000,
             "in-range burn removes active liquidity"
+        );
+    }
+
+    #[test]
+    fn apply_liquidity_update_replay_at_or_before_seed_block_does_not_adjust_scalar() {
+        // UO3JM4 (historical-replay guard, Python `_initial_state_block` twin):
+        // a pool seeded against head already reflects in its `liquidity` scalar
+        // every on-chain in-range Mint/Burn at or before the seed block.
+        // Replaying one such event after seed (e.g. a backfilled Burn applied
+        // after registration) must NOT adjust the active-liquidity scalar — it
+        // would subtract a removal the seed already contains, leaving the
+        // solver exactly one in-range position-net BELOW on-chain with
+        // identical sqrt/tick (the observed mainnet desync).
+        let liq = 1_000_000u128;
+        let mut state = state_with_position(liq); // tick 0 ∈ [-60, 60)
+                                                  // Seed against head at block 100: scalar already reflects events <= 100.
+        state.initial_state_block = 100;
+        let pre_liq = state.liquidity;
+
+        // Historical replay of the in-range Burn at block 50 (<= seed 100).
+        state.apply_liquidity_update(-60, 60, -250_000i128, 50);
+
+        assert_eq!(
+            state.liquidity, pre_liq,
+            "replay at or before the seed block must NOT re-adjust the active liquidity (already in the seed)"
+        );
+        assert_eq!(
+            state.update_block, 50,
+            "the tick mutation still advances update_block (tick map is replayed)"
+        );
+    }
+
+    #[test]
+    fn apply_liquidity_update_post_seed_in_range_adjusts_scalar() {
+        // A genuinely post-seed in-range event (block > seed block) DOES adjust
+        // the active-liquidity scalar — the historical guard must not swallow
+        // real forward liquidity events.
+        let liq = 1_000_000u128;
+        let mut state = state_with_position(liq);
+        state.initial_state_block = 100;
+        let pre_liq = state.liquidity;
+
+        state.apply_liquidity_update(-60, 60, -250_000i128, 150);
+
+        assert_eq!(
+            state.liquidity,
+            pre_liq - 250_000,
+            "post-seed (block > initial_state_block) in-range burn adjusts the active liquidity"
         );
     }
 
@@ -1503,6 +1569,7 @@ mod apply_inherent_tests {
             liquidity: 5_407_362_545_736_161_987,
             tick: -74028,
             update_block: 0,
+            initial_state_block: 0,
             state_nonce: 0,
             registration_lifecycle: RegistrationLifecycle::default(),
             tick_data,
