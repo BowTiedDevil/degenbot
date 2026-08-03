@@ -1058,6 +1058,12 @@ impl BotState {
             return;
         };
 
+        // A Swap rewrites the slot0 head AND crosses ticks: it advances BOTH
+        // clocks, so record both pre-event clock values for reorg restore, then
+        // advance both monotonic (two-stamp pool state, OB7UNY). A backward
+        // stamp outside a reorg panics via the advance helpers.
+        let update_block_before = state.update_block;
+        let tick_data_block_before = state.tick_data_block;
         // Stash "before" values in the reorg journal before updating
         state.journal.push_delta(V3BlockDelta {
             block: block_number,
@@ -1066,13 +1072,16 @@ impl BotState {
                 liquidity_before: state.liquidity,
                 tick_before: state.tick,
             }),
+            update_block_before: Some(update_block_before),
+            tick_data_block_before: Some(tick_data_block_before),
             tick_priors,
         });
 
         state.sqrt_price_x96 = sqrt_price_x96;
         state.liquidity = liquidity;
         state.tick = tick;
-        state.update_block = block_number;
+        state.advance_update_block(block_number);
+        state.advance_tick_data_block(block_number);
         state.invalidate_tick_range_cache();
     }
 
@@ -1342,7 +1351,15 @@ impl BotState {
                         liquidity_delta,
                         block_number,
                     );
-                    state.update_block = block_number;
+                    // OB7UNY two-stamp: the backfill replay mutates the TICK
+                    // MAP only (the seed already holds the slot0 head, and this
+                    // path never adjusts the scalar), so advance ONLY the
+                    // liquidity clock. Backfill drains in ascending block order
+                    // (monotonic by construction; a slip is a no-op, not a
+                    // panic — the sanctioned replay carve-out).
+                    if block_number > state.tick_data_block {
+                        state.tick_data_block = block_number;
+                    }
                     state.invalidate_tick_range_cache();
                     return;
                 }
@@ -1688,8 +1705,12 @@ impl BotState {
                 let watch = trace_watch_tick()
                     .and_then(|t| state.tick_data.get(&t))
                     .map(|info| (info.liquidity_gross, info.liquidity_net));
-                state.post_drain_snapshot = Some((state.tick_data.clone(), state.update_block));
-                Some((state.update_block, state.tick_data.len(), watch))
+                // OB7UNY two-stamp: the pin pairs the TICK MAP with its own
+                // LIQUIDITY clock (`tick_data_block`), not the price clock —
+                // step-2 verify compares `tick_data` against on-chain@the
+                // pinned block, so the pinned block must be the liquidity clock.
+                state.post_drain_snapshot = Some((state.tick_data.clone(), state.tick_data_block));
+                Some((state.tick_data_block, state.tick_data.len(), watch))
             } else {
                 None
             }
@@ -1801,7 +1822,13 @@ impl BotState {
         state.liquidity = liquidity;
         state.tick = tick;
         state.tick_data = tick_data;
+        // OB7UNY two-stamp: a wholesale full-state sync replaces BOTH clocks
+        // with the same source block (the sync provides scalars AND tick_data
+        // from one snapshot). A full replacement is a sanctioned reset (not an
+        // incremental backward stamp), so it sets both directly — reorg is not
+        // the only permitted rewind here.
         state.update_block = update_block;
+        state.tick_data_block = update_block;
         state.invalidate_tick_range_cache();
     }
 
@@ -3193,7 +3220,11 @@ impl BotState {
                             delta_i128,
                             block_number,
                         );
-                        state.update_block = block_number;
+                        // OB7UNY two-stamp (V4 twin): backfill replay advances
+                        // only the liquidity clock; monotonic by construction.
+                        if block_number > state.tick_data_block {
+                            state.tick_data_block = block_number;
+                        }
                         state.invalidate_tick_range_cache();
                         return;
                     }
@@ -3703,8 +3734,10 @@ impl BotState {
                 return;
             };
             if state.coverage == PoolTickCoverage::Tracked {
-                state.post_drain_snapshot = Some((state.tick_data.clone(), state.update_block));
-                Some(state.update_block)
+                // OB7UNY two-stamp (V4 twin): pin pairs tick_data with the
+                // LIQUIDITY clock, not the price clock.
+                state.post_drain_snapshot = Some((state.tick_data.clone(), state.tick_data_block));
+                Some(state.tick_data_block)
             } else {
                 None
             }
@@ -3792,7 +3825,10 @@ impl BotState {
         state.liquidity = update.liquidity;
         state.tick = update.tick;
         state.tick_data = update.tick_data;
+        // OB7UNY two-stamp (V4 twin of `sync_v3_pool_state`): wholesale sync
+        // replaces both clocks with the same source block (sanctioned reset).
         state.update_block = update.update_block;
+        state.tick_data_block = update.update_block;
         state.invalidate_tick_range_cache();
     }
 
@@ -4469,9 +4505,16 @@ mod tests {
 
         {
             let s = core.get_v3_pool(pool_id).expect("registered");
+            // OB7UNY two-stamp: a Mint mutates the TICK MAP (liquidity clock
+            // advances) but, being out of range, leaves the slot0 head
+            // untouched (price clock stays at registration block 0).
             assert_eq!(
-                s.update_block, block_b,
-                "update_block must advance to the buffered event's block (pre-fix: stays at registration block 0)"
+                s.tick_data_block, block_b,
+                "the liquidity clock advances to the buffered event's block"
+            );
+            assert_eq!(
+                s.update_block, 0,
+                "the price clock is untouched (out-of-range mint)"
             );
             assert_eq!(
                 s.journal.len(),
@@ -4537,9 +4580,15 @@ mod tests {
 
         {
             let s = core.get_v3_pool(pool_id).expect("registered");
+            // OB7UNY two-stamp: tick-map-only mint → liquidity clock advances,
+            // price clock untouched.
             assert_eq!(
-                s.update_block, block_b,
-                "update_block advances to pump-buffer event block"
+                s.tick_data_block, block_b,
+                "the liquidity clock advances to pump-buffer event block"
+            );
+            assert_eq!(
+                s.update_block, 0,
+                "the price clock is untouched (out-of-range mint)"
             );
             assert_eq!(
                 s.journal.len(),
@@ -4629,9 +4678,15 @@ mod tests {
 
         {
             let s = core.get_v4_pool(pool_id).expect("registered");
+            // OB7UNY two-stamp: tick-map-only ModifyLiquidity → liquidity clock
+            // advances, price clock untouched.
             assert_eq!(
-                s.update_block, block_b,
-                "V4 update_block advances to buffered event block"
+                s.tick_data_block, block_b,
+                "V4 liquidity clock advances to buffered event block"
+            );
+            assert_eq!(
+                s.update_block, 0,
+                "V4 price clock untouched (out-of-range mint)"
             );
             assert_eq!(
                 s.journal.len(),
@@ -5183,7 +5238,13 @@ mod tests {
             "Live pool never buffers"
         );
         let s = core.get_v4_pool(pool_id).unwrap();
-        assert_eq!(s.update_block, 11, "applied directly");
+        // OB7UNY two-stamp: tick-map-only ModifyLiquidity → liquidity clock
+        // advances; the price clock stays at the seed block 10.
+        assert_eq!(s.tick_data_block, 11, "applied directly (liquidity clock)");
+        assert_eq!(
+            s.update_block, 10,
+            "price clock untouched (out-of-range mint)"
+        );
         assert_eq!(
             s.tick_data.get(&60).unwrap().liquidity_gross,
             U128::from(50)
@@ -5263,7 +5324,16 @@ mod tests {
         // set_live flushes the retained tail (block-11 Burn).
         core.set_v4_pool_live(pool_manager, pool_id_bytes);
         let s = core.get_v4_pool(pool_id).unwrap();
-        assert_eq!(s.update_block, 11, "flush advanced to the retained tail");
+        // OB7UNY two-stamp: the retained-tail Burn (block 11) is tick-map-only,
+        // so it advances the LIQUIDITY clock; the price clock stays at 10.
+        assert_eq!(
+            s.tick_data_block, 11,
+            "flush advanced the retained tail (liquidity clock)"
+        );
+        assert_eq!(
+            s.update_block, 10,
+            "price clock untouched by the out-of-range Burn"
+        );
         assert_eq!(
             s.tick_data.get(&60).unwrap().liquidity_gross,
             U128::from(135),
@@ -5975,7 +6045,10 @@ mod tests {
             "dispatcher must report an applied V4 liquidity update"
         );
         let s_a = core_a.get_v4_pool(id_a).expect("registered A");
-        assert_eq!(s_a.update_block, block_b);
+        // OB7UNY two-stamp: out-of-range mint → liquidity clock advances, price
+        // clock untouched.
+        assert_eq!(s_a.tick_data_block, block_b);
+        assert_eq!(s_a.update_block, 0);
         assert_eq!(s_a.journal.len(), 1);
         assert_eq!(
             s_a.tick_data.get(&60).expect("t60").liquidity_gross,

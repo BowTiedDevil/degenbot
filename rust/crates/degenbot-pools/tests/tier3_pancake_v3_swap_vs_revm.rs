@@ -237,6 +237,7 @@ fn dense_state(liq: u128, spacing: i32, k_positions: i32, current_tick: i32) -> 
         liquidity: (k_positions as u128) * liq,
         tick: current_tick,
         update_block: 0,
+        tick_data_block: 0,
         initial_state_block: 0,
         tick_data,
         snapshot_seed: None,

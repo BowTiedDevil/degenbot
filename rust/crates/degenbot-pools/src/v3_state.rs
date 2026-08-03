@@ -277,7 +277,21 @@ pub struct V3PoolState {
     pub sqrt_price_x96: U256,
     pub liquidity: u128,
     pub tick: i32,
+    /// The **price** clock — the block the SLOT0 scalars
+    /// (`sqrt_price_x96`/`liquidity`/`tick`) reflect. Advanced only by an
+    /// apply that changes the scalars: a Swap, an in-range post-seed liquidity
+    /// event, a fresh slot0 read, or registration. NEVER advanced by a tick-
+    /// map-only change (`replace_tick_data`/`merge_tick_word`/backfill replay).
+    /// Monotonic non-decreasing — a backward stamp outside a reorg panics
+    /// (two-stamp pool state, OB7UNY).
     pub update_block: u64,
+    /// The **liquidity** clock — the block the `tick_data` map reflects.
+    /// Advanced by any event that mutates the tick map: a Swap (crossings),
+    /// a liquidity event, `replace_tick_data`, or registration. Monotonic
+    /// non-decreasing — a backward stamp outside a reorg panics. Distinct
+    /// from [`Self::update_block`]: a pool can have a fresh price but a
+    /// liquidity map that lags the chain (the two-stamp distinction).
+    pub tick_data_block: u64,
 
     /// The frozen block at which this pool's state was seeded/synchronized
     /// from on-chain (the registration/seed block, equal to the `update_block`
@@ -393,6 +407,7 @@ impl Clone for V3PoolState {
             liquidity: self.liquidity,
             tick: self.tick,
             update_block: self.update_block,
+            tick_data_block: self.tick_data_block,
             initial_state_block: self.initial_state_block,
             state_nonce: self.state_nonce,
             registration_lifecycle: self.registration_lifecycle,
@@ -448,6 +463,49 @@ impl V3PoolState {
             .collect();
     }
 
+    /// Monotonic advance of the **price** clock (`update_block`).
+    ///
+    /// Sets it to `block` when `block > cur`; an equal `block` is an
+    /// idempotent no-op. A `block < cur` is a BACKWARD STAMP — an invariant
+    /// violation outside a reorg — and panics loudly with a stable, grep-able
+    /// literal (ADR-021 fail-fast discipline; two-stamp OB7UNY). The only
+    /// sanctioned rewind is `ReorgPoolState::restore_before_block`, which sets
+    /// both clocks directly from the journal priors and must NOT call this.
+    ///
+    /// # Panics
+    ///
+    /// Panics with `PoolState monotonicity violated: update_block attempted
+    /// {block} < current {cur} outside a reorg — ABORT` when `block < cur`.
+    pub fn advance_update_block(&mut self, block: u64) {
+        assert!(
+            block >= self.update_block,
+            "PoolState monotonicity violated: update_block attempted {block} < current {} outside a reorg — ABORT",
+            self.update_block
+        );
+        if block > self.update_block {
+            self.update_block = block;
+        }
+    }
+
+    /// Monotonic advance of the **liquidity** clock (`tick_data_block`).
+    ///
+    /// Same contract as [`Self::advance_update_block`] for the tick-map clock.
+    ///
+    /// # Panics
+    ///
+    /// Panics with `PoolState monotonicity violated: tick_data_block attempted
+    /// {block} < current {cur} outside a reorg — ABORT` when `block < cur`.
+    pub fn advance_tick_data_block(&mut self, block: u64) {
+        assert!(
+            block >= self.tick_data_block,
+            "PoolState monotonicity violated: tick_data_block attempted {block} < current {} outside a reorg — ABORT",
+            self.tick_data_block
+        );
+        if block > self.tick_data_block {
+            self.tick_data_block = block;
+        }
+    }
+
     // `merge_tick_word` lives on the `ConcentratedLiquidityPoolMut` trait
     // (ADR-017 slice 1) — the body was the byte-identical twin of
     // `V4PoolState::merge_tick_word`; the trait dedups the two. See
@@ -468,6 +526,10 @@ impl V3PoolState {
             liquidity: params.liquidity,
             tick: params.tick,
             update_block: params.update_block,
+            // Both clocks start at the seed block: the tick map and the slot0
+            // head are seeded from the same snapshot (two-stamp OB7UNY). A
+            // later phase (builder fresh-read stamp) may split them.
+            tick_data_block: params.update_block,
             initial_state_block: params.update_block,
             state_nonce: 0,
             // ADR-close of the rolling-start direct-apply gap (DFQYM5): a
@@ -705,7 +767,16 @@ impl ReorgPoolState for V3PoolState {
             self.liquidity = p.liquidity_before;
             self.tick = p.tick_before;
         }
-        self.update_block = result.block;
+        // Reorg is the sole sanctioned rewind of both clocks: restore each to
+        // its exact pre-target value from the rolled-back range's priors
+        // (two-stamp OB7UNY). A `None` prior means the rolled-back events did
+        // not advance that clock — its current value is already correct.
+        if let Some(b) = result.update_block_before {
+            self.update_block = b;
+        }
+        if let Some(b) = result.tick_data_block_before {
+            self.tick_data_block = b;
+        }
         self.state_nonce = self.state_nonce.wrapping_add(1);
         self.invalidate_tick_range_cache();
 
@@ -1086,6 +1157,7 @@ mod apply_inherent_tests {
             liquidity: liq,
             tick: 0,
             update_block: 0,
+            tick_data_block: 0,
             initial_state_block: 0,
             state_nonce: 0,
             registration_lifecycle: RegistrationLifecycle::default(),
@@ -1147,6 +1219,60 @@ mod apply_inherent_tests {
     }
 
     #[test]
+    fn apply_swap_advances_both_clocks() {
+        // OB7UNY: a Swap rewrites the slot0 head AND crosses ticks, so it
+        // advances BOTH the price clock and the liquidity clock.
+        let mut state = state_with_position(1_000_000u128);
+        assert_eq!(state.update_block, 0);
+        assert_eq!(state.tick_data_block, 0);
+        state.apply_swap(U256::from(2u128) << 96, 1_000_001, 1, 7, &[]);
+        assert_eq!(state.update_block, 7, "price clock advanced by the swap");
+        assert_eq!(
+            state.tick_data_block, 7,
+            "liquidity clock advanced by the swap"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "monotonicity violated: update_block")]
+    fn apply_swap_backward_block_panics() {
+        // OB7UNY monotonicity: applying a Swap at a block BELOW the current
+        // price clock is a backward stamp → must fail loudly, never silently
+        // regress the clock.
+        let mut state = state_with_position(1_000_000u128);
+        state.update_block = 10;
+        state.apply_swap(U256::from(2u128) << 96, 1_000_001, 1, 5, &[]);
+    }
+
+    #[test]
+    fn out_of_range_liquidity_advances_only_liquidity_clock() {
+        // OB7UNY: an out-of-range Mint/Burn mutates the tick map (liquidity
+        // clock advances) but leaves the slot0 head byte-identical (price clock
+        // does NOT move).
+        let mut state = state_with_position(1_000_000u128);
+        state.tick = 500; // out of [-60, 60)
+        let price_clock = state.update_block;
+        state.apply_liquidity_update(-60, 60, 123_456i128, 9);
+        assert_eq!(state.tick_data_block, 9, "liquidity clock advances");
+        assert_eq!(
+            state.update_block, price_clock,
+            "out-of-range event leaves the price clock untouched"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "monotonicity violated: tick_data_block")]
+    fn replace_tick_data_backward_block_panics() {
+        // OB7UNY monotonicity on the liquidity clock: replacing the tick map
+        // with data from a block BELOW the current liquidity clock is a
+        // backward stamp → panic loudly.
+        let mut state = state_with_position(1_000_000u128);
+        state.tick_data_block = 10;
+        let empty: std::collections::HashMap<i32, TickInfo> = std::collections::HashMap::new();
+        state.replace_tick_data(empty, 5, 60);
+    }
+
+    #[test]
     fn apply_liquidity_update_out_of_range_is_tick_only_journals_no_scalars() {
         // What: an OUT-OF-RANGE Mint/Burn (the applied [lower, upper) region
         // does NOT straddle the current tick) must (1) apply the delta to BOTH
@@ -1202,8 +1328,10 @@ mod apply_inherent_tests {
         // The mutating helper advances the tick's `block` field too.
         assert_eq!(after_lower.block, 9);
         assert_eq!(after_upper.block, 9);
-        // (2) update_block advanced.
-        assert_eq!(state.update_block, 9);
+        // (2) OB7UNY: out-of-range → only the LIQUIDITY clock advances; the
+        // price clock does NOT move (slot0 head byte-identical).
+        assert_eq!(state.tick_data_block, 9);
+        assert_eq!(state.update_block, 0);
         // (5) slot0 scalars UNCHANGED (out-of-range → no active adjust).
         assert_eq!(state.sqrt_price_x96, sp_before);
         assert_eq!(state.liquidity, liq_before);
@@ -1297,9 +1425,16 @@ mod apply_inherent_tests {
             state.liquidity, pre_liq,
             "replay at or before the seed block must NOT re-adjust the active liquidity (already in the seed)"
         );
+        // Two-stamp OB7UNY: the replay mutates the TICK MAP (liquidity clock
+        // advances to 50) but does NOT advance the PRICE clock (update_block
+        // stays 0 — the replay leaves the slot0 head byte-identical).
         assert_eq!(
-            state.update_block, 50,
-            "the tick mutation still advances update_block (tick map is replayed)"
+            state.tick_data_block, 50,
+            "the tick mutation advances the liquidity clock (tick map is replayed)"
+        );
+        assert_eq!(
+            state.update_block, 0,
+            "an at-or-before-seed replay must NOT advance the price clock (slot0 head untouched)"
         );
     }
 
@@ -1356,8 +1491,10 @@ mod apply_inherent_tests {
         );
         assert!(!state.tick_data.contains_key(&-60));
         assert!(!state.tick_data.contains_key(&60));
-        // (2) update_block advanced to 5.
-        assert_eq!(state.update_block, 5);
+        // (2) OB7UNY: the tick-map replace advances only the LIQUIDITY clock;
+        // the price clock is untouched (scalars aren't changed).
+        assert_eq!(state.tick_data_block, 5);
+        assert_eq!(state.update_block, 0);
         // (3) known_bitmap_words seeded from the new keys (word of tick 120
         // at spacing 60 = 120.div_euclid(60) >> 8 = 2 >> 8 = 0).
         assert!(state
@@ -1375,16 +1512,24 @@ mod apply_inherent_tests {
 
     #[test]
     fn replace_tick_data_does_not_rewind_block() {
-        // update_block must NOT rewind when the supplied block is older
-        // (monotonic — mirrors the sync_v3_pool_state contract).
+        // OB7UNY: replace_tick_data advances only the LIQUIDITY clock
+        // (`tick_data_block`) — scalars untouched, so the PRICE clock
+        // (`update_block`) never moves here. Advancing the liquidity clock to a
+        // NEWER block is fine; a lower block is a monotonicity panic (guarded
+        // elsewhere).
         let liq = 1_000_000u128;
         let mut state = state_with_position(liq);
         state.update_block = 10;
+        assert_eq!(state.tick_data_block, 0);
         let empty: std::collections::HashMap<i32, TickInfo> = std::collections::HashMap::new();
         state.replace_tick_data(empty, 3, 60);
         assert_eq!(
             state.update_block, 10,
-            "update_block must not rewind to an older block"
+            "the price clock is untouched by a tick-map replace"
+        );
+        assert_eq!(
+            state.tick_data_block, 3,
+            "the liquidity clock advances to the replace block"
         );
     }
 
@@ -1398,10 +1543,10 @@ mod apply_inherent_tests {
     #[test]
     fn restore_before_block_writes_landed_at_scalars_and_restore_point_block() {
         // apply_swap captures scalar priors; restore_before_block pops the
-        // delta and writes the pre-swap scalars back. `update_block` is set
-        // to `result.block` (the oldest popped delta's block = the restore
-        // point) — absorbing the existing `BotState::v3_restore_before_block`
-        // behavior verbatim.
+        // delta and writes the pre-swap scalars back. Two-stamp OB7UNY:
+        // restore rewinds BOTH clocks to their exact pre-swap values (the
+        // delta's `update_block_before`/`tick_data_block_before`), NOT to the
+        // restore-point block.
         let liq = 1_000_000u128;
         let mut state = state_with_position(liq);
         let pre_sqrt = state.sqrt_price_x96;
@@ -1411,6 +1556,7 @@ mod apply_inherent_tests {
         let new_sqrt = U256::from(2u128) << 96;
         state.apply_swap(new_sqrt, liq + 1, 1, 7, &[]);
         assert_eq!(state.update_block, 7);
+        assert_eq!(state.tick_data_block, 7);
 
         let result: Result<(), JournalError> = state.restore_before_block(7);
         assert!(result.is_ok());
@@ -1418,9 +1564,10 @@ mod apply_inherent_tests {
         assert_eq!(state.liquidity, pre_liq);
         assert_eq!(state.tick, pre_tick);
         assert_eq!(
-            state.update_block, 7,
-            "update_block set to the restore-point block (result.block)"
+            state.update_block, 0,
+            "the price clock rewinds to its exact pre-swap value (both clocks start at 0)"
         );
+        assert_eq!(state.tick_data_block, 0, "the liquidity clock rewinds to 0");
         assert_eq!(state.journal_len(), 0, "swap delta popped");
     }
 
@@ -1476,6 +1623,8 @@ mod apply_inherent_tests {
         state.journal.push_delta(V3BlockDelta {
             block: 0,
             scalar_priors: None,
+            update_block_before: None,
+            tick_data_block_before: None,
             tick_priors: Vec::new(),
         });
         let new_sqrt = U256::from(2u128) << 96;
@@ -1569,6 +1718,7 @@ mod apply_inherent_tests {
             liquidity: 5_407_362_545_736_161_987,
             tick: -74028,
             update_block: 0,
+            tick_data_block: 0,
             initial_state_block: 0,
             state_nonce: 0,
             registration_lifecycle: RegistrationLifecycle::default(),

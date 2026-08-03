@@ -227,6 +227,17 @@ pub struct V3BlockDelta {
     /// this block's update; `None` for tick-only events (the slot0 head wasn't
     /// touched). See `docs/adr/ADR-004-cl-tickmap-typed-boundary.md`.
     pub scalar_priors: Option<ScalarPriors>,
+    /// The `update_block` (**price** clock) value *before* this delta's event,
+    /// so a reorg restore rewinds the price clock to its exact pre-target
+    /// value. `Some` when this delta advanced the price clock (a Swap, or an
+    /// in-range post-seed liquidity event); `None` when it did not (a tick-,
+    /// only event that left the slot0 head untouched). Oldest-wins on
+    /// same-block coalesce (two-stamp pool state, OB7UNY).
+    pub update_block_before: Option<u64>,
+    /// The `tick_data_block` (**liquidity** clock) value *before* this delta's
+    /// event. Same semantics as [`Self::update_block_before`] for the tick-map
+    /// clock (two-stamp pool state, OB7UNY).
+    pub tick_data_block_before: Option<u64>,
     /// Per-tick priors for ticks modified during this block.
     /// Each entry is `(tick_index, TickBefore)` storing the `liquidity_gross`
     /// and `liquidity_net` values **before** the modification.
@@ -260,6 +271,15 @@ impl BlockDelta for V3BlockDelta {
         // scalar_priors: earliest Some wins (previous if it has Some).
         if previous.scalar_priors.is_some() {
             self.scalar_priors = previous.scalar_priors;
+        }
+
+        // Clock priors: earliest Some wins (previous is older → its before-
+        // value is the pre-block clock state; two-stamp OB7UNY).
+        if previous.update_block_before.is_some() {
+            self.update_block_before = previous.update_block_before;
+        }
+        if previous.tick_data_block_before.is_some() {
+            self.tick_data_block_before = previous.tick_data_block_before;
         }
 
         // tick_priors: oldest-wins dedupe. Index self by tick, then overwrite
@@ -308,6 +328,14 @@ pub struct V3RestoreResult {
     /// *newest* popped delta that had `Some` scalars — that delta's "before"
     /// values are the scalar state just before the target block. See ADR-004.
     pub scalar_priors: Option<ScalarPriors>,
+    /// The `update_block` (**price** clock) value before the target block;
+    /// `None` when no popped delta advanced the price clock (the current
+    /// `update_block` is already correct — the rolled-back range was tick-only
+    /// for the price). Oldest-wins across popped deltas (two-stamp OB7UNY).
+    pub update_block_before: Option<u64>,
+    /// The `tick_data_block` (**liquidity** clock) value before the target
+    /// block; same semantics as [`Self::update_block_before`].
+    pub tick_data_block_before: Option<u64>,
     /// Per-tick priors accumulated across all popped deltas (oldest wins on
     /// duplicate tick indices — the earliest modification's pre-state is the
     /// pre-target state for that tick).
@@ -632,6 +660,8 @@ impl ReorgJournal<V3BlockDelta> {
         if newest_block < block {
             return V3RestoreResult {
                 scalar_priors: None,
+                update_block_before: None,
+                tick_data_block_before: None,
                 tick_priors: Vec::new(),
                 block: newest_block,
             };
@@ -654,11 +684,22 @@ impl ReorgJournal<V3BlockDelta> {
         let mut accumulated_priors: std::collections::HashMap<i32, TickBefore> =
             std::collections::HashMap::new();
         let mut scalar_priors: Option<ScalarPriors> = None;
+        // Clock priors: oldest-with-`Some` wins (same pop-newest→oldest rule
+        // as `scalar_priors`) — the last popped delta that advanced the clock
+        // records the pre-target clock value (two-stamp OB7UNY).
+        let mut update_block_before: Option<u64> = None;
+        let mut tick_data_block_before: Option<u64> = None;
         let mut oldest_popped_block: Option<u64> = None;
         while !self.deltas.is_empty() && self.deltas[self.deltas.len() - 1].block() >= block {
             let popped = self.deltas.pop_back().expect("checked non-empty above");
             for (tick_idx, tick_before) in &popped.tick_priors {
                 accumulated_priors.insert(*tick_idx, tick_before.clone());
+            }
+            if let Some(b) = popped.update_block_before {
+                update_block_before = Some(b);
+            }
+            if let Some(b) = popped.tick_data_block_before {
+                tick_data_block_before = Some(b);
             }
             // scalar_priors: oldest-with-`Some` wins. We pop newest → oldest,
             // so the LAST popped-with-`Some` is the OLDEST scalar-changing
@@ -703,6 +744,8 @@ impl ReorgJournal<V3BlockDelta> {
 
         V3RestoreResult {
             scalar_priors,
+            update_block_before,
+            tick_data_block_before,
             tick_priors,
             block: oldest_block,
         }
@@ -1134,6 +1177,8 @@ mod v3_delta_priors_tests {
         V3BlockDelta {
             block,
             scalar_priors,
+            update_block_before: None,
+            tick_data_block_before: None,
             tick_priors: vec![],
         }
     }
@@ -1294,6 +1339,8 @@ mod v3_delta_priors_tests {
         V3BlockDelta {
             block,
             scalar_priors: Some(scalars),
+            update_block_before: None,
+            tick_data_block_before: None,
             tick_priors: vec![(tick_idx, newly_initialized_tick())],
         }
     }
@@ -1491,6 +1538,8 @@ mod v3_delta_priors_tests {
         let first = V3BlockDelta {
             block: 9,
             scalar_priors: Some(scalars()),
+            update_block_before: None,
+            tick_data_block_before: None,
             tick_priors: vec![(
                 60,
                 TickBefore {
@@ -1508,6 +1557,8 @@ mod v3_delta_priors_tests {
                 liquidity_before: 2,
                 tick_before: 2,
             }),
+            update_block_before: None,
+            tick_data_block_before: None,
             tick_priors: vec![
                 (
                     60,
@@ -1546,6 +1597,84 @@ mod v3_delta_priors_tests {
             "tick 120 (only in second delta) carried through"
         );
     }
+}
+
+/// OB7UNY (two-stamp): a Swap-style delta records both clock before-
+/// values; restoring before it returns them so the caller rewinds the
+/// price AND liquidity clocks to their exact pre-target values.
+#[test]
+fn restore_returns_clock_priors_for_scalar_delta() {
+    let mut j = ReorgJournal::<V3BlockDelta>::new(8);
+    j.push_delta(V3BlockDelta {
+        block: 7,
+        scalar_priors: None,
+        update_block_before: Some(5),
+        tick_data_block_before: Some(6),
+        tick_priors: vec![],
+    });
+    let result = j.restore_before_block(7);
+    assert_eq!(result.update_block_before, Some(5));
+    assert_eq!(result.tick_data_block_before, Some(6));
+}
+
+/// OB7UNY: same-block coalesce keeps the EARLIEST clock priors (previous
+/// wins), mirroring the scalar-prior oldest-wins rule.
+#[test]
+fn push_delta_same_block_coalesces_clock_priors_oldest_wins() {
+    let mut j = ReorgJournal::<V3BlockDelta>::new(8);
+    // Earliest: clock priors 3/4; later same block: clock priors 5/6.
+    j.push_delta(V3BlockDelta {
+        block: 9,
+        scalar_priors: None,
+        update_block_before: Some(3),
+        tick_data_block_before: Some(4),
+        tick_priors: vec![],
+    });
+    j.push_delta(V3BlockDelta {
+        block: 9,
+        scalar_priors: None,
+        update_block_before: Some(5),
+        tick_data_block_before: Some(6),
+        tick_priors: vec![],
+    });
+    assert_eq!(j.len(), 1, "same-block deltas coalesce");
+    assert_eq!(
+        j.deltas[0].update_block_before,
+        Some(3),
+        "earliest price prior wins"
+    );
+    assert_eq!(
+        j.deltas[0].tick_data_block_before,
+        Some(4),
+        "earliest liq prior wins"
+    );
+}
+
+/// OB7UNY: restore across a tick-only delta (no clock prior) keeps the
+/// older scalar delta's clock priors — the pre-target clock state.
+#[test]
+fn restore_keeps_oldest_clock_prior_when_newest_delta_is_tick_only() {
+    let mut j = ReorgJournal::<V3BlockDelta>::new(8);
+    j.push_delta(V3BlockDelta {
+        block: 5,
+        scalar_priors: None,
+        update_block_before: Some(4),
+        tick_data_block_before: Some(4),
+        tick_priors: vec![],
+    });
+    j.push_delta(V3BlockDelta {
+        block: 6,
+        scalar_priors: None,
+        update_block_before: None, // tick-only: price clock untouched
+        tick_data_block_before: Some(5),
+        tick_priors: vec![],
+    });
+    // Restore before 6 pops block 6 (and only 6), returning its priors:
+    // price None (not advanced by 6) → caller leaves price clock as-is;
+    // liquidity Some(5) → caller rewinds liquidity clock to 5.
+    let result = j.restore_before_block(6);
+    assert_eq!(result.update_block_before, None);
+    assert_eq!(result.tick_data_block_before, Some(5));
 }
 
 // ---------------------------------------------------------------------------

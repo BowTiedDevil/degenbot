@@ -574,11 +574,12 @@ mod tests {
                 0,
                 "the block-7 delta was popped — journal now empty"
             );
-            // V3 has no genesis anchor, so the restore point is the popped
-            // delta's block (7), not the registration block (5). The scalars
-            // are the registration state; update_block is a staleness hint,
-            // not a correctness input for the solver.
-            assert_eq!(s.update_block, 7);
+            // OB7UNY two-stamp exact-restore: update_block rewinds to its
+            // exact pre-swap value (5 = the registration block the swap's
+            // delta recorded as `update_block_before`), NOT the popped delta's
+            // block (7). The scalars are the registration state.
+            assert_eq!(s.update_block, 5);
+            assert_eq!(s.tick_data_block, 5);
         }
     }
 

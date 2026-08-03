@@ -352,7 +352,11 @@ pub trait ConcentratedLiquidityPool {
     fn sqrt_price_x96(&self) -> U256;
     fn liquidity(&self) -> u128;
     fn tick(&self) -> i32;
+    /// The **price** clock — block the slot0 scalars reflect (two-stamp OB7UNY).
     fn update_block(&self) -> u64;
+    /// The **liquidity** clock — block the `tick_data` map reflects (two-stamp
+    /// OB7UNY). A pool can have a fresh price but a liquidity map that lags.
+    fn tick_data_block(&self) -> u64;
     fn tick_data(&self) -> &HashMap<i32, TickInfo>;
 }
 
@@ -368,6 +372,9 @@ impl ConcentratedLiquidityPool for V3PoolState {
     }
     fn update_block(&self) -> u64 {
         self.update_block
+    }
+    fn tick_data_block(&self) -> u64 {
+        self.tick_data_block
     }
     fn tick_data(&self) -> &HashMap<i32, TickInfo> {
         &self.tick_data
@@ -387,6 +394,9 @@ impl ConcentratedLiquidityPool for V4PoolState {
     fn update_block(&self) -> u64 {
         self.update_block
     }
+    fn tick_data_block(&self) -> u64 {
+        self.tick_data_block
+    }
     fn tick_data(&self) -> &HashMap<i32, TickInfo> {
         &self.tick_data
     }
@@ -401,10 +411,14 @@ impl ConcentratedLiquidityPool for V4PoolState {
 /// `V4PoolIdentity.pool_key.tick_spacing` before dispatching, so the trait
 /// stays identity-agnostic and the two state-struct impls are byte-identical.
 pub trait ConcentratedLiquidityPoolMut: ConcentratedLiquidityPool {
-    /// Wholesale-replace the `tick_data` map, advance `update_block` if newer
-    /// (monotonic — no rewind), re-seed `known_bitmap_words` from the new
-    /// keys' word positions, and invalidate the cached tick ranges. Scalars
-    /// (`sqrt_price_x96`/`liquidity`/`tick`) are untouched.
+    /// Wholesale-replace the `tick_data` map, advance the **liquidity** clock
+    /// (`tick_data_block`) if newer (monotonic — a backward stamp panics),
+    /// re-seed `known_bitmap_words` from the new keys' word positions, and
+    /// invalidate the cached tick ranges. Scalars (`sqrt_price_x96`/
+    /// `liquidity`/`tick`) ARE untouched and the **price** clock (`update_block`)
+    /// is NOT advanced — a tick-map replace never claims the price is fresh
+    /// (two-stamp OB7UNY). `tick_data_block` is the block the new tick map is
+    /// from.
     ///
     /// No journal delta — a wholesale replace has undefined rollback
     /// semantics; the pump is the authority for event-derived ticks (mirrors
@@ -415,7 +429,7 @@ pub trait ConcentratedLiquidityPoolMut: ConcentratedLiquidityPool {
     fn replace_tick_data(
         &mut self,
         tick_data: HashMap<i32, TickInfo>,
-        update_block: u64,
+        tick_data_block: u64,
         tick_spacing: i32,
     ) -> bool;
 
@@ -529,13 +543,11 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
     fn replace_tick_data(
         &mut self,
         tick_data: HashMap<i32, TickInfo>,
-        update_block: u64,
+        tick_data_block: u64,
         tick_spacing: i32,
     ) -> bool {
         self.tick_data = tick_data;
-        if update_block > self.update_block {
-            self.update_block = update_block;
-        }
+        self.advance_tick_data_block(tick_data_block);
         self.seed_known_bitmap_words(tick_spacing);
         self.invalidate_tick_range_cache();
         true
@@ -571,6 +583,11 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
             self.tick_data.insert(tick_index, new_info.clone());
         }
 
+        // A Swap rewrites the slot0 head AND crosses ticks: it advances BOTH
+        // clocks, and records both pre-event clock values for reorg restore
+        // (two-stamp OB7UNY).
+        let update_block_before = self.update_block;
+        let tick_data_block_before = self.tick_data_block;
         self.journal.push_delta(V3BlockDelta {
             block: block_number,
             scalar_priors: Some(ScalarPriors {
@@ -578,14 +595,29 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
                 liquidity_before: self.liquidity,
                 tick_before: self.tick,
             }),
+            update_block_before: Some(update_block_before),
+            tick_data_block_before: Some(tick_data_block_before),
             tick_priors: journaled_priors,
         });
 
         self.sqrt_price_x96 = sqrt_price_x96;
         self.liquidity = liquidity;
         self.tick = tick;
-        if block_number > self.update_block {
-            self.update_block = block_number;
+        // A Swap arrives LIVE (block > seed) in the steady state or as a
+        // backfill replay (block <= seed). Live applies are STRICT monotonic
+        // (a backward stamp outside a reorg panics); backfill replays drain
+        // older events and are a sanctioned monotonic no-op on clocks they
+        // already cover (AV42C7 — never rewind a head-fresh pool below seed).
+        if block_number > self.initial_state_block {
+            self.advance_update_block(block_number);
+            self.advance_tick_data_block(block_number);
+        } else {
+            if block_number > self.update_block {
+                self.update_block = block_number;
+            }
+            if block_number > self.tick_data_block {
+                self.tick_data_block = block_number;
+            }
         }
         self.state_nonce = self.state_nonce.wrapping_add(1);
         self.invalidate_tick_range_cache();
@@ -629,6 +661,12 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
             block_number,
         );
 
+        // A liquidity event ALWAYS mutates the tick map (advance the liquidity
+        // clock); it advances the PRICE clock only when in-range post-seed (the
+        // scalar adjust). An out-of-range or historical-replay event leaves the
+        // slot0 head byte-identical, so the price clock must NOT move (two-stamp
+        // OB7UNY). The price-clock prior is `None` in that case so a reorg
+        // restore leaves `update_block` untouched.
         self.journal.push_delta(V3BlockDelta {
             block: block_number,
             scalar_priors: if in_range {
@@ -640,6 +678,12 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
             } else {
                 None
             },
+            update_block_before: if in_range {
+                Some(self.update_block)
+            } else {
+                None
+            },
+            tick_data_block_before: Some(self.tick_data_block),
             tick_priors: journaled_priors,
         });
 
@@ -654,8 +698,18 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
             .expect("in-range branch implies the range straddles the current tick");
         }
 
-        if block_number > self.update_block {
-            self.update_block = block_number;
+        if block_number > self.initial_state_block {
+            self.advance_tick_data_block(block_number);
+            if in_range {
+                self.advance_update_block(block_number);
+            }
+        } else {
+            // Backfill replay (block <= seed): sanctioned monotonic no-op —
+            // mutate the tick map but never rewind the liquidity clock it
+            // already covers (AV42C7).
+            if block_number > self.tick_data_block {
+                self.tick_data_block = block_number;
+            }
         }
         self.state_nonce = self.state_nonce.wrapping_add(1);
         self.invalidate_tick_range_cache();
@@ -666,13 +720,11 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
     fn replace_tick_data(
         &mut self,
         tick_data: HashMap<i32, TickInfo>,
-        update_block: u64,
+        tick_data_block: u64,
         tick_spacing: i32,
     ) -> bool {
         self.tick_data = tick_data;
-        if update_block > self.update_block {
-            self.update_block = update_block;
-        }
+        self.advance_tick_data_block(tick_data_block);
         self.state_nonce = self.state_nonce.wrapping_add(1);
         self.seed_known_bitmap_words(tick_spacing);
         self.invalidate_tick_range_cache();
@@ -710,6 +762,11 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
             self.tick_data.insert(tick_index, new_info.clone());
         }
 
+        // A Swap rewrites the slot0 head AND crosses ticks: it advances BOTH
+        // clocks, and records both pre-event clock values for reorg restore
+        // (two-stamp OB7UNY).
+        let update_block_before = self.update_block;
+        let tick_data_block_before = self.tick_data_block;
         self.journal.push_delta(V3BlockDelta {
             block: block_number,
             scalar_priors: Some(ScalarPriors {
@@ -717,14 +774,29 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
                 liquidity_before: self.liquidity,
                 tick_before: self.tick,
             }),
+            update_block_before: Some(update_block_before),
+            tick_data_block_before: Some(tick_data_block_before),
             tick_priors: journaled_priors,
         });
 
         self.sqrt_price_x96 = sqrt_price_x96;
         self.liquidity = liquidity;
         self.tick = tick;
-        if block_number > self.update_block {
-            self.update_block = block_number;
+        // A Swap arrives LIVE (block > seed) in the steady state or as a
+        // backfill replay (block <= seed). Live applies are STRICT monotonic
+        // (a backward stamp outside a reorg panics); backfill replays drain
+        // older events and are a sanctioned monotonic no-op on clocks they
+        // already cover (AV42C7 — never rewind a head-fresh pool below seed).
+        if block_number > self.initial_state_block {
+            self.advance_update_block(block_number);
+            self.advance_tick_data_block(block_number);
+        } else {
+            if block_number > self.update_block {
+                self.update_block = block_number;
+            }
+            if block_number > self.tick_data_block {
+                self.tick_data_block = block_number;
+            }
         }
         self.state_nonce = self.state_nonce.wrapping_add(1);
         self.invalidate_tick_range_cache();
@@ -761,6 +833,7 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
             block_number,
         );
 
+        // See the V3 `apply_liquidity_update` — same two-stamp discipline.
         self.journal.push_delta(V3BlockDelta {
             block: block_number,
             scalar_priors: if in_range {
@@ -772,6 +845,12 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
             } else {
                 None
             },
+            update_block_before: if in_range {
+                Some(self.update_block)
+            } else {
+                None
+            },
+            tick_data_block_before: Some(self.tick_data_block),
             tick_priors: journaled_priors,
         });
 
@@ -786,8 +865,18 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
             .expect("in-range branch implies the range straddles the current tick");
         }
 
-        if block_number > self.update_block {
-            self.update_block = block_number;
+        if block_number > self.initial_state_block {
+            self.advance_tick_data_block(block_number);
+            if in_range {
+                self.advance_update_block(block_number);
+            }
+        } else {
+            // Backfill replay (block <= seed): sanctioned monotonic no-op —
+            // mutate the tick map but never rewind the liquidity clock it
+            // already covers (AV42C7).
+            if block_number > self.tick_data_block {
+                self.tick_data_block = block_number;
+            }
         }
         self.state_nonce = self.state_nonce.wrapping_add(1);
         self.invalidate_tick_range_cache();

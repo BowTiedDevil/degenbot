@@ -70,6 +70,7 @@ mod tests {
                 liquidity: liq,
                 tick: 0,
                 update_block: 0,
+                tick_data_block: 0,
                 initial_state_block: 0,
                 tick_data,
                 coverage: PoolTickCoverage::Tracked,
