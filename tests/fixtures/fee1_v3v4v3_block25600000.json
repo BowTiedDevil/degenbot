@@ -1,0 +1,69 @@
+{
+  "_doc": "STAND-IN fixture for the fee-1 V4 overdraw (ergo UO3JM4). The V4 pool carries the REPRODUCTION scalars (paths 10234/10338): sq=79231869042278935382727675145, liq=94294142, fee=1, zfo=false. The V3 neighbors and the V4 tick topology are placeholders. REPLACE this file with the output of scripts/capture_fee1_v3v4v3_fixture.py (run against the live path identity + block) for a faithful on-chain reproduction; then fee1_v3v4v3_solver_fixture.rs asserts solver V4-hop == v4_simulate_swap == on-chain actual.",
+  "target_block": 25600000,
+  "v4_hop": {
+    "hop_index": 1,
+    "zero_for_one": false,
+    "input": "9586",
+    "predicted_output": "9587",
+    "onchain_actual": "9586"
+  },
+  "pools": {
+    "v3_0": {
+      "family": "uniswap_v3",
+      "address": "0x60594a405d53811d3bc4766596efd80fd545a270",
+      "token0": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+      "token1": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "tick_spacing": 10,
+      "fee_token0": 30,
+      "fee_token1": 30,
+      "fee_denominator": 1000000,
+      "liquidity_update_block": 0,
+      "sqrt_price_x96": "1828452401381250048945819760",
+      "tick": -75382,
+      "liquidity": "13801775473645881022537",
+      "tick_data": {}
+    },
+    "v4": {
+      "family": "uniswap_v4",
+      "pool_manager": "0x000000000004444c5dc75cb358380d2e3de08a90",
+      "pool_id": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "currency0": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "currency1": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+      "fee_currency0": 1,
+      "fee_currency1": 1,
+      "fee_denominator": 1000000,
+      "tick_spacing": 1,
+      "liquidity_update_block": 0,
+      "sqrt_price_x96": "79231869042278935382727675145",
+      "tick": 0,
+      "liquidity": "94294142",
+      "protocol_fee": 0,
+      "lp_fee": 1,
+      "tick_data": {
+        "-100": { "liquidity_net": "94294142", "liquidity_gross": "94294142" },
+        "100": { "liquidity_net": "-94294142", "liquidity_gross": "94294142" }
+      }
+    },
+    "v3_2": {
+      "family": "uniswap_v3",
+      "address": "0x1ac1a8feaaea1900c4166deeed0c11cc10669d36",
+      "token0": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "token1": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "tick_spacing": 10,
+      "fee_token0": 25,
+      "fee_token1": 25,
+      "fee_denominator": 1000000,
+      "liquidity_update_block": 0,
+      "sqrt_price_x96": "1823344731046584579368717650",
+      "tick": -75111,
+      "liquidity": "12000000000000000000000",
+      "tick_data": {}
+    }
+  },
+  "path": [
+    { "hop": 0, "pool": "v3_0", "zero_for_one": true },
+    { "hop": 1, "pool": "v4", "zero_for_one": false },
+    { "hop": 2, "pool": "v3_2", "zero_for_one": true }
+  ]
+}
