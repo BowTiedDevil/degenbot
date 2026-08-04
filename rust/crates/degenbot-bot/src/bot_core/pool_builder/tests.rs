@@ -477,3 +477,56 @@ async fn build_v2_assembles_register_params_from_onchain() {
     assert_eq!(identity.address, pool);
     assert_eq!(state.reserve0, U112::from(123_456_789u64));
 }
+
+#[tokio::test]
+async fn build_v3_assembles_sparse_register_params_from_onchain() {
+    use crate::bot_core::PoolTickCoverage;
+    // Fake factory NOT in the JSON → CREATE2 verify is skipped (ad-hoc path).
+    let factory: Address =
+        alloy::primitives::address!("0x1111111111111111111111111111111111111111");
+    let tok0: Address = alloy::primitives::address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+    let tok1: Address = alloy::primitives::address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+    let pool: Address = alloy::primitives::address!("0x2222222222222222222222222222222222222222");
+
+    let mut f = FakeRpc::new();
+    f.set(choreography::selector(b"factory()"), addr_word(factory));
+    f.set(choreography::selector(b"token0()"), addr_word(tok0));
+    f.set(choreography::selector(b"token1()"), addr_word(tok1));
+    f.set(
+        choreography::selector(b"fee()"),
+        enc(DynSolValue::Uint(U256::from(3000u32), 24)),
+    );
+    f.set(
+        choreography::selector(b"tickSpacing()"),
+        enc(DynSolValue::Int(I256::try_from(60i32).unwrap(), 24)),
+    );
+    f.set(
+        abi::encode_slot0()[..4].try_into().unwrap(),
+        slot0_ret(U256::from(1u128 << 96), 0),
+    );
+    f.set(
+        abi::encode_liquidity()[..4].try_into().unwrap(),
+        enc(DynSolValue::Uint(U256::from(1_000_000_000u64), 128)),
+    );
+    // tick=0, spacing=60 → word 0; zero bitmap → sparse, no per-tick reads.
+    f.set(
+        abi::encode_tick_bitmap(0)[..4].try_into().unwrap(),
+        enc(DynSolValue::Uint(U256::ZERO, 256)),
+    );
+    let io = io_with(f);
+
+    let params = builder::build_v3(1, pool, &io, Some(9_000_000))
+        .await
+        .unwrap();
+    assert_eq!(params.address, pool);
+    assert_eq!(params.token0, tok0);
+    assert_eq!(params.token1, tok1);
+    assert_eq!(params.fee, 3000);
+    assert_eq!(params.tick_spacing, 60);
+    assert_eq!(params.factory, factory);
+    assert_eq!(params.tick, 0);
+    assert_eq!(params.update_block, 9_000_000);
+    assert_eq!(params.tick_data_block, Some(9_000_000));
+    assert_eq!(params.coverage, PoolTickCoverage::Sparse);
+    assert!(params.tick_data.is_empty());
+}

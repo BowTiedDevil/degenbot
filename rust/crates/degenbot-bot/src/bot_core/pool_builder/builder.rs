@@ -13,15 +13,19 @@
 //! `cargo add degenbot` consumer reaches [`build_v2`] via the `degenbot`
 //! umbrella (Tier-0 slice in `examples/standalone_consumer.rs`).
 
+use std::collections::HashMap;
+
 use alloy::primitives::{Address, B256};
 use degenbot_core::errors::ProviderError;
 use degenbot_pools::spec_bounds;
 use degenbot_pools::v2_state::RegisterV2PoolParams;
+use degenbot_pools::v3_state::RegisterV3PoolParams;
 use degenbot_uniswap::deployments;
 use degenbot_uniswap::dex_identity::{self, DexIdentity, DexVariant};
 
 use super::choreography::{self};
 use crate::bot_core::construction_io::ConstructionIo;
+use crate::bot_core::{PoolTickCoverage, TickInfo};
 
 /// The on-chain family a `probe` resolves to (V4 is a separate
 /// `(PoolManager, pool_id)` path, not a single-address probe).
@@ -255,5 +259,110 @@ pub async fn build_v2(
         variant: id.variant,
         stable_swap,
         fee_denominator,
+    })
+}
+
+/// Chain-arm single-word tick bootstrap over [`ConstructionIo`] — the V3
+/// portion of `assemble_v3_tick_map`'s Chain arm, inlined over the generic RPC
+/// primitive so a bare `ConstructionIo` (no `TickBootstrapRpc`/db) can seed a
+/// Sparse pool. Mirrors `AlloyTickBootstrapRpc::bootstrap_v3_tick_word` and
+/// the Python Branch 3 loop verbatim: compute the word, read `tickBitmap`, on a
+/// non-zero bitmap enumerate the 256 set bits and read each tick's
+/// `ticks(int24)` liquidity.
+///
+/// Coverage is always [`PoolTickCoverage::Sparse`] (only the single current
+/// word is seeded), so the pool is **live immediately** (decision D4) and the
+/// live-pump miss-detection backfills neighbour words during swap simulation.
+async fn bootstrap_v3_tick_map(
+    io: &ConstructionIo,
+    address: Address,
+    tick: i32,
+    tick_spacing: i32,
+    block: u64,
+) -> Result<(HashMap<i32, TickInfo>, PoolTickCoverage), ProviderError> {
+    let (word, _) = degenbot_cl_math::cl_lib::liquidity_mapping::get_tick_word_and_bit_position(
+        tick,
+        tick_spacing,
+    );
+    let word_i16 = i16::try_from(word).expect("V3 tick word fits in int16");
+    let bitmap = choreography::fetch_tick_bitmap(io, address, word_i16, Some(block)).await?;
+
+    let mut ticks = HashMap::new();
+    for i in 0..=255u8 {
+        if bitmap.bit(i.into()) {
+            let active_tick = ((word << 8) + i32::from(i)) * tick_spacing;
+            let (liquidity_gross, liquidity_net) =
+                choreography::fetch_tick_data(io, address, active_tick, Some(block)).await?;
+            ticks.insert(
+                active_tick,
+                TickInfo {
+                    liquidity_gross,
+                    liquidity_net,
+                    block,
+                },
+            );
+        }
+    }
+
+    Ok((ticks, PoolTickCoverage::Sparse))
+}
+
+/// Assemble `build_v3` params for a concentrated-liquidity (V3-style) pool.
+///
+/// Reads immutable data (`factory()`/`token0()`/`token1()`/`fee()`/
+/// `tickSpacing()`), `slot0()` + `liquidity()`, seeds a Sparse tick map via the
+/// Chain-arm bootstrap, verifies the CREATE2 address, and resolves deployment
+/// deployer/`init_hash` — producing a [`RegisterV3PoolParams`] ready for
+/// `BotState::register_v3_pool` with no Python round-trip.
+///
+/// # Errors
+///
+/// Returns [`PoolBuilderError::Create2`] on a CREATE2 mismatch (when the
+/// factory ships in the JSON) or an RPC/decode error.
+pub async fn build_v3(
+    chain_id: u64,
+    address: Address,
+    io: &ConstructionIo,
+    block: Option<u64>,
+) -> Result<RegisterV3PoolParams, PoolBuilderError> {
+    let imm = choreography::fetch_v3_immutable_data(io, address, block).await?;
+    let (sqrt_price_x96, tick_i, liquidity) =
+        choreography::fetch_v3_slot0_liquidity(io, address, block).await?;
+    let tick = i32::try_from(tick_i).unwrap_or(0);
+    let update_block = block.unwrap_or(0);
+
+    let (tick_data, coverage) =
+        bootstrap_v3_tick_map(io, address, tick, imm.tick_spacing, update_block).await?;
+
+    deployments::verify_v3_pool_address(
+        chain_id,
+        imm.factory,
+        address,
+        imm.token0,
+        imm.token1,
+        imm.fee,
+    )
+    .map_err(|_| PoolBuilderError::Create2)?;
+
+    let deployer = deployments::resolve_deployer(chain_id, imm.factory);
+    let init_hash: B256 = deployments::resolve_v3_init_hash(chain_id, imm.factory);
+
+    Ok(RegisterV3PoolParams {
+        address,
+        token0: imm.token0,
+        token1: imm.token1,
+        fee: imm.fee,
+        tick_spacing: imm.tick_spacing,
+        factory: imm.factory,
+        sqrt_price_x96,
+        liquidity: liquidity.to::<u128>(),
+        tick,
+        tick_data,
+        update_block,
+        tick_data_block: Some(update_block),
+        coverage,
+        fetcher: None,
+        deployer,
+        init_hash,
     })
 }
