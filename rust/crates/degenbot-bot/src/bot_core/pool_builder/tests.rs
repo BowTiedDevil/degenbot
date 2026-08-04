@@ -530,3 +530,58 @@ async fn build_v3_assembles_sparse_register_params_from_onchain() {
     assert_eq!(params.coverage, PoolTickCoverage::Sparse);
     assert!(params.tick_data.is_empty());
 }
+
+#[tokio::test]
+async fn build_v4_assembles_sparse_register_params_from_onchain() {
+    use crate::bot_core::PoolTickCoverage;
+    let pm: Address = alloy::primitives::address!("0x3333333333333333333333333333333333333333");
+    let pid: [u8; 32] = [0xcd; 32];
+
+    let mut f = FakeRpc::new();
+    f.set(
+        abi::encode_get_slot0(&pid)[..4].try_into().unwrap(),
+        enc(DynSolValue::Tuple(vec![
+            DynSolValue::Uint(U256::from(1u128 << 96), 160),
+            DynSolValue::Int(I256::try_from(5i32).unwrap(), 24),
+            DynSolValue::Uint(U256::from(300u32), 24), // protocol_fee
+            DynSolValue::Uint(U256::from(50u32), 24),  // lp_fee
+        ])),
+    );
+    f.set(
+        abi::encode_get_liquidity(&pid)[..4].try_into().unwrap(),
+        enc(DynSolValue::Uint(U256::from(2_000_000_000u64), 128)),
+    );
+    // tick=5, spacing=1 -> word 0; zero bitmap -> sparse, no per-tick reads.
+    f.set(
+        abi::encode_v4_tick_bitmap(&pid, 0)[..4].try_into().unwrap(),
+        enc(DynSolValue::Uint(U256::ZERO, 256)),
+    );
+    let io = io_with(f);
+
+    let params = builder::build_v4(
+        builder::V4PoolBuildIdentity {
+            pool_manager: pm,
+            pool_id: pid,
+            currency0: TO,
+            currency1: SV,
+            fee: 500,
+            tick_spacing: 1,
+            hook_flags: 0,
+        },
+        &io,
+        Some(11_000_000),
+    )
+    .await
+    .unwrap();
+    assert_eq!(params.pool_manager, pm);
+    assert_eq!(params.pool_id, pid);
+    assert_eq!(params.pool_key.currency0, TO);
+    assert_eq!(params.pool_key.currency1, SV);
+    assert_eq!(params.pool_key.fee, 500);
+    assert_eq!(params.pool_key.tick_spacing, 1);
+    assert_eq!(params.protocol_fee, 300);
+    assert_eq!(params.hook_flags, 0);
+    assert_eq!(params.tick, 5);
+    assert_eq!(params.coverage, PoolTickCoverage::Sparse);
+    assert!(params.tick_data.is_empty());
+}

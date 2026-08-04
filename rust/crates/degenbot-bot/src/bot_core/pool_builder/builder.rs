@@ -20,6 +20,7 @@ use degenbot_core::errors::ProviderError;
 use degenbot_pools::spec_bounds;
 use degenbot_pools::v2_state::RegisterV2PoolParams;
 use degenbot_pools::v3_state::RegisterV3PoolParams;
+use degenbot_pools::v4_state::{RegisterV4PoolParams, V4PoolKey};
 use degenbot_uniswap::deployments;
 use degenbot_uniswap::dex_identity::{self, DexIdentity, DexVariant};
 
@@ -364,5 +365,136 @@ pub async fn build_v3(
         fetcher: None,
         deployer,
         init_hash,
+    })
+}
+
+/// Chain-arm single-word tick bootstrap over [`ConstructionIo`] for a V4 pool
+/// identified by (`pool_manager`, `pool_id`) — the V4 twin of
+/// [`bootstrap_v3_tick_map`]. Reads the bitmap via `getTickBitmap(bytes32,
+/// int16)` and each set tick's liquidity via `getTickLiquidity(bytes32,
+/// int24)` on the `pool_manager` (which exposes the same state-view getters);
+/// coverage is always [`PoolTickCoverage::Sparse`] so the pool is live
+/// immediately (D4).
+async fn bootstrap_v4_tick_map(
+    io: &ConstructionIo,
+    pool_manager: Address,
+    pool_id: [u8; 32],
+    tick: i32,
+    tick_spacing: i32,
+    block: u64,
+) -> Result<(HashMap<i32, TickInfo>, PoolTickCoverage), ProviderError> {
+    let (word, _) = degenbot_cl_math::cl_lib::liquidity_mapping::get_tick_word_and_bit_position(
+        tick,
+        tick_spacing,
+    );
+    let word_i16 = i16::try_from(word).expect("V4 tick word fits in int16");
+    let bitmap =
+        choreography::fetch_v4_tick_bitmap(io, pool_manager, pool_id, word_i16, Some(block))
+            .await?;
+
+    let mut ticks = HashMap::new();
+    for i in 0..=255u8 {
+        if bitmap.bit(i.into()) {
+            let active_tick = ((word << 8) + i32::from(i)) * tick_spacing;
+            let (liquidity_gross, liquidity_net) = choreography::fetch_v4_tick_data(
+                io,
+                pool_manager,
+                pool_id,
+                active_tick,
+                Some(block),
+            )
+            .await?;
+            ticks.insert(
+                active_tick,
+                TickInfo {
+                    liquidity_gross,
+                    liquidity_net,
+                    block,
+                },
+            );
+        }
+    }
+
+    Ok((ticks, PoolTickCoverage::Sparse))
+}
+
+/// Caller-supplied V4 pool identity (mirrors the `register_v4_pool` argument
+/// set — the core never reads these on-chain; hook filtering is already applied
+/// via `hook_flags`). Bundled so `build_v4` stays under `clippy::too_many_arguments`
+/// (same convention as `RegisterV4PoolParams`).
+#[derive(Debug, Clone, Copy)]
+pub struct V4PoolBuildIdentity {
+    /// The V4 `PoolManager` contract (also the state-view read target).
+    pub pool_manager: Address,
+    /// The pool's 32-byte key hash.
+    pub pool_id: [u8; 32],
+    /// `pool_key.currency0`.
+    pub currency0: Address,
+    /// `pool_key.currency1`.
+    pub currency1: Address,
+    /// `pool_key.fee` (`0x100000` = dynamic-fee flag, rejected at admission).
+    pub fee: u32,
+    /// `pool_key.tick_spacing`.
+    pub tick_spacing: i32,
+    /// Pre-decoded hook-flags bitmask (`& 0xCC != 0` rejected at admission).
+    pub hook_flags: u16,
+}
+
+/// Assemble `build_v4` params for a V4 pool identified by
+/// [`V4PoolBuildIdentity`].
+///
+/// V4 pool identity is **caller-supplied** — the core never reads
+/// `getToken0`/`getHooks`/`getHookFlags` on-chain (mirroring the existing
+/// `register_v4_pool`, which takes `currency0`/`currency1`/`fee`/`tick_spacing`/
+/// `hook_flags` as arguments; hook filtering is already applied via
+/// `hook_flags`). This reads only the live scalars (`getSlot0` +
+/// `getLiquidity` on the `pool_manager`) and seeds a Sparse tick map via the
+/// Chain-arm bootstrap — reusing the existing StateView-backed choreography
+/// with no new ABI.
+///
+/// # Errors
+///
+/// Returns a [`ProviderError`] on an RPC/decode failure.
+pub async fn build_v4(
+    id: V4PoolBuildIdentity,
+    io: &ConstructionIo,
+    block: Option<u64>,
+) -> Result<RegisterV4PoolParams, PoolBuilderError> {
+    let (sqrt_price_x96, tick_i, protocol_fee_u, _lp_fee_u, liquidity_u) =
+        choreography::fetch_v4_slot0_liquidity(io, id.pool_manager, id.pool_id, block).await?;
+    let protocol_fee = protocol_fee_u.to::<u32>();
+    let tick = i32::try_from(tick_i).unwrap_or(0);
+    let update_block = block.unwrap_or(0);
+
+    let (tick_data, coverage) = bootstrap_v4_tick_map(
+        io,
+        id.pool_manager,
+        id.pool_id,
+        tick,
+        id.tick_spacing,
+        update_block,
+    )
+    .await?;
+
+    Ok(RegisterV4PoolParams {
+        pool_manager: id.pool_manager,
+        pool_id: id.pool_id,
+        pool_key: V4PoolKey {
+            currency0: id.currency0,
+            currency1: id.currency1,
+            fee: id.fee,
+            tick_spacing: id.tick_spacing,
+            hooks: Address::ZERO,
+        },
+        hook_flags: id.hook_flags,
+        protocol_fee,
+        sqrt_price_x96,
+        liquidity: liquidity_u.to::<u128>(),
+        tick,
+        tick_data,
+        update_block,
+        tick_data_block: Some(update_block),
+        coverage,
+        fetcher: None,
     })
 }
