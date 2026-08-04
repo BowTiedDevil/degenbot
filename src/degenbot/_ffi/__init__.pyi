@@ -847,7 +847,13 @@ class PyBot:
         fee_denominator: int | None = None,
     ) -> int: ...
     def build_v2_pool(self, address: str, block: int | None = None) -> int: ...
-    def build_v3_pool(self, address: str, block: int | None = None, db: bool = True) -> int: ...
+    def build_v3_pool(
+        self,
+        address: str,
+        block: int | None = None,
+        db: bool = True,
+        tick_data_fetcher: Callable | None = None,
+    ) -> int: ...
     def update_v2_pool(
         self,
         address: str,

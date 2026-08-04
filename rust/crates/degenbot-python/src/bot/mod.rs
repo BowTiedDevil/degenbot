@@ -731,13 +731,14 @@ impl PyBot {
     /// # Errors
     ///
     /// As [`Self::build_v2_pool`].
-    #[pyo3(signature = (address, block=None, db=true))]
+    #[pyo3(signature = (address, block=None, db=true, tick_data_fetcher=None))]
     fn build_v3_pool(
         &self,
         py: Python<'_>,
         address: &str,
         block: Option<u64>,
         db: bool,
+        tick_data_fetcher: Option<Bound<'_, PyAny>>,
     ) -> PyResult<u64> {
         use degenbot_bot::bot_core::pool_builder::builder;
         use degenbot_core::runtime::get_runtime;
@@ -753,11 +754,20 @@ impl PyBot {
         let db_ref: Option<&dyn degenbot_db::snapshot::TickMapDb> = db_arc
             .as_deref()
             .map(|d| d as &dyn degenbot_db::snapshot::TickMapDb);
-        let params = py
+        let mut params = py
             .detach(|| {
                 get_runtime().block_on(builder::build_v3(chain_id, addr, db_ref, &io, block))
             })
             .map_err(map_builder_err)?;
+        // ADR-005 sparse-map parity: `build_v3` registers a single tick word
+        // (Sparse). The core builder leaves the backfill fetcher `None`; the
+        // Python driver injects a `PyTickWordFetcher` wrapping the legacy
+        // web3-sync `tick_data_fetcher` here (GIL held) so swap-time
+        // boundary-detection can pull neighbouring words without re-entering
+        // the asyncio runtime (a Rust `block_on` fetcher would deadlock).
+        if let Some(fetcher) = tick_data_fetcher.filter(|f| !f.is_none()) {
+            params.fetcher = Some(crate::bot::pool::make_tick_fetcher(fetcher.unbind()));
+        }
         self.bot
             .state_arc()
             .write()
