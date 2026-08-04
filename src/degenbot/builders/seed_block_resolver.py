@@ -1,9 +1,10 @@
 """Resolve the block a pooled seed snapshot is anchored at (V3 + V4).
 
-Shared by `V3PoolBuilder` and `V4PoolBuilder` (task BS6KFF): when either
-builder seeds a concentrated-liquidity pool's tick/liquidity data from the
-database, the seed's `update_block` (and every consumer anchored to it —
-slot0/liquidity fetch, `assemble_v3/v4_tick_map`, and the post-registration
+Consumed by the delegating `_build_v4_managed` shell (and the retired V3/V4
+builders, task BS6KFF): when a concentrated-liquidity pool's tick/liquidity
+data is seeded from the database, the seed's `update_block` (and every
+consumer anchored to it — slot0/liquidity fetch, `assemble_v3/v4_tick_map`,
+and the post-registration
 `apply_swap`) must reflect the block that DB snapshot is exact at, i.e. the
 pool row's `liquidity_update_block`. Using the live WS head instead makes the
 post-drain `verify_v3/v4_post_drain_snapshot` read on-chain at head against

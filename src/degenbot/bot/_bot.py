@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self, cast
 
@@ -23,6 +25,7 @@ from degenbot.builders.context import BuilderContext
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.builders.request import BuildManagedPoolRequest, BuildPoolRequest, BuildRequest
+from degenbot.builders.seed_block_resolver import resolve_seed_block
 from degenbot.builders.tick_data_fetcher import (
     FetchedTickData,
     TickDataTypes,
@@ -34,14 +37,14 @@ from degenbot.builders.type_resolution import (
 from degenbot.builders.type_resolution import (
     resolve_pool_type as _resolve_pool_type_impl,
 )
-from degenbot.builders.v4_pool_builder import V4PoolBuilder
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DegenbotConfig, _init_config
+from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.database.operations import get_alembic_config, get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.base import DegenbotValueError
-from degenbot.exceptions.pool import TrackerAlreadyInitialized
+from degenbot.exceptions.pool import LiquidityPoolError, TrackerAlreadyInitialized
 from degenbot.logging import logger
 from degenbot.provider import (
     AlloyProvider,
@@ -57,7 +60,7 @@ from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import UniswapV3PoolExternalUpdate
-from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+from degenbot.uniswap.v4_liquidity_pool import ProtocolFee, UniswapV4Pool
 from degenbot.uniswap.v4_types import UniswapV4PoolExternalUpdate
 from degenbot.version import __version__
 
@@ -73,6 +76,24 @@ if TYPE_CHECKING:
     from degenbot.types.rpc_types import BlockIdentifier
 
 from degenbot.types.aliases import ChainId  # ruff:ignore[typing-only-first-party-import]
+
+
+@dataclass(frozen=True)
+class V4DbValues:
+    """Immutable V4 identity resolved from a DB row (T4 / 4GQWZ4).
+
+    Relocated verbatim from the retired `v4_builder_base.py` so the
+    delegating `_build_v4_managed` shell can hydrate the caller-supplied V4
+    identity from the DB two-step lookup when the pool is present in the
+    database.
+    """
+
+    currency0_address: str
+    currency1_address: str
+    hook_address: str
+    tick_spacing: int
+    fee: int
+    state_view_address: str | None
 
 
 def _update_pool(
@@ -303,7 +324,6 @@ class Bot:
             managed_pools=self.managed_pools,
         )
         self._aerodrome_v2_builder = AerodromeV2Builder(ctx)
-        self._v4_builder = V4PoolBuilder(ctx)
         self._curve_builder = CurvePoolBuilder(ctx)
         self._balancer_builder = BalancerBuilder(ctx)
 
@@ -313,7 +333,6 @@ class Bot:
 
         # Async adapter for subscriptions (single chain; created on demand)
         self._async_adapter: AsyncAlloyProvider | None = None
-        self.register_builder(UniswapV4Pool, self._v4_builder)
         self.register_builder(CurveStableswapPool, self._curve_builder)
         self.register_builder(AerodromeV2Pool, self._aerodrome_v2_builder)
         self.register_builder(BalancerV2Pool, self._balancer_builder)
@@ -648,6 +667,48 @@ class Bot:
             ),
         )
 
+    def _make_v4_tick_data_fetcher(
+        self,
+        pool_id: HexBytes,
+        pool_manager_address: str,
+        state_view_address: str,
+        chain_id: ChainId,
+    ) -> Callable[[int, int], FetchedTickData | None]:
+        """Create the V4 tick-data backfill fetcher for a managed pool.
+
+        T4 / 4GQWZ4: the legacy web3-sync fetcher factory formerly on the
+        retired `V4PoolBuilder`, relocated into this delegating shell. The
+        returned fetcher lazily pulls neighbouring tick words during swap
+        boundary-crossing via the state-view (`getTickBitmap` /
+        `getTickLiquidity`), attached to the Rust-registered pool as a
+        `PyTickWordFetcher` (ADR-005 sparse-map parity).
+
+        Returns:
+            A callable pulling ``{tick: (liquidity_gross, liquidity_net,
+            block)}`` for an out-of-range bitmap word, or ``None`` when the
+            pool/bitmap is unavailable.
+
+        """
+        pool_manager_address_ = get_checksum_address(pool_manager_address)
+        return make_tick_data_fetcher(
+            pool_lookup=lambda _: cast(
+                "UniswapV4Pool | None",
+                self.managed_pools.get(
+                    chain_id=chain_id,
+                    pool_manager_address=pool_manager_address_,
+                    pool_id=pool_id,
+                ),
+            ),
+            io=self._io,
+            types=TickDataTypes(
+                bitmap_at_word=BitmapAtWord,
+                liquidity_at_tick=LiquidityAtTick,
+                tick_struct_types=("uint128", "int128"),
+            ),
+            state_view_address=state_view_address,
+            pool_id=bytes(pool_id),
+        )
+
     @staticmethod
     def _dispatch_build(
         *,
@@ -804,13 +865,213 @@ class Bot:
             tick_data=tick_data,
         )
 
-        return self._dispatch_build(  # ty: ignore[invalid-return-type]
-            builder=self._v4_builder,
-            address=address,
+        return self._build_v4_managed(
+            address,
             chain_id=chain_id,
             io=io,
             request=request,
         )
+
+    def _build_v4_managed(
+        self,
+        address: str,
+        *,
+        chain_id: ChainId,
+        io: PyBotIo,
+        request: BuildManagedPoolRequest,
+    ) -> UniswapV4Pool:
+        """Build a V4 managed pool via the Rust `PoolBuilder` (T4 / 4GQWZ4).
+
+        The thin delegating shell formerly `V4PoolBuilder.build()`: resolves
+        the caller-supplied V4 identity (DB two-step, else caller kwargs),
+        fetches the slot0 scalars for the Python-side companion overrides
+        (`protocol_fee`/`lp_fee`/`state_view`/`_sparse_liquidity_map`, which
+        the Rust handle does not expose), then delegates the actual build
+        (live scalars + Db→Chain tick assembly + admission + registration)
+        to `PyBot.build_v4_pool`.
+
+        Returns:
+            A `UniswapV4Pool` companion wrapping the Rust-registered pool.
+
+        Raises:
+            DegenbotValueError: If identity fields are missing for a pool not
+                in the database.
+            LiquidityPoolError: If the slot0/RPC read fails to decode.
+
+        """
+        pool_id_bytes = HexBytes(request.pool_id)
+        pool_manager_address = get_checksum_address(address)
+
+        state_block = (
+            request.state_block if request.state_block is not None else io.get_block_number()
+        )
+        # The FRESH PRICE read block (two-stamp OB7UNY): the cheap slot0/price
+        # read stamps `update_block` at the live head, while the liquidity
+        # clock + assembled tick map anchor at `state_block`. When a caller
+        # pins `request.state_block`, price = that same block (no split).
+        head_block = state_block
+
+        # Try DB first — two-step V4 lookup (manager → v4 row → per-FK tokens),
+        # routed through the Rust `PyBotIo` seam (QVMWQC). A missing/empty DB
+        # is a skip, not an error.
+        db_values = None
+        db_liquidity_update_block: int | None = None
+        with contextlib.suppress(Exception):
+            manager_row = io.fetch_pool_manager(chain_id=chain_id, address=pool_manager_address)
+            if manager_row is not None:
+                v4_row = io.fetch_v4_pool_by_pool_hash(pool_hash_hex=pool_id_bytes.to_0x_hex())
+                if (
+                    v4_row is not None
+                    and v4_row.currency0_id is not None
+                    and v4_row.currency1_id is not None
+                ):
+                    currency0_row = io.fetch_token_by_id(token_id=v4_row.currency0_id)
+                    currency1_row = io.fetch_token_by_id(token_id=v4_row.currency1_id)
+                    if currency0_row is not None and currency1_row is not None:
+                        db_liquidity_update_block = v4_row.liquidity_update_block
+                        db_values = V4DbValues(
+                            currency0_address=get_checksum_address(currency0_row.address),
+                            currency1_address=get_checksum_address(currency1_row.address),
+                            hook_address=get_checksum_address(v4_row.hooks),
+                            tick_spacing=v4_row.tick_spacing,
+                            fee=v4_row.fee_token0,
+                            state_view_address=manager_row.state_view,
+                        )
+
+        # Seed-anchor policy (V4 twin of the V3 split, two-stamp OB7UNY):
+        # `state_block` is the block the DB liquidity snapshot's assembled tick
+        # map is exact at and becomes `tick_data_block`; the slot0/price is
+        # fetched FRESH at `head_block`, stamping `update_block`.
+        state_block = resolve_seed_block(
+            request_state_block=request.state_block,
+            db_liquidity_update_block=db_liquidity_update_block,
+            head_block=state_block,
+        )
+
+        # Get immutable values
+        if db_values is not None:
+            currency0_address = db_values.currency0_address
+            currency1_address = db_values.currency1_address
+            hook_address = db_values.hook_address
+            tick_spacing_for_pool = db_values.tick_spacing
+            fee_for_pool = db_values.fee
+            state_view_address = db_values.state_view_address
+        else:
+            if request.state_view_address is None:
+                raise DegenbotValueError(
+                    message="A state view contract address must be provided for a pool not in the database.",  # ruff:ignore[line-too-long]
+                )
+            if request.fee is None:
+                raise DegenbotValueError(
+                    message="A fee must be provided for a pool not in the database.",
+                )
+            if request.tick_spacing is None:
+                raise DegenbotValueError(
+                    message="A tick spacing must be provided for a pool not in the database.",
+                )
+            if request.tokens is None:
+                raise DegenbotValueError(
+                    message="Token addresses must be provided for a pool not in the database.",
+                )
+            state_view_address = get_checksum_address(request.state_view_address)
+            currency0_address, currency1_address = sorted(
+                [get_checksum_address(t) for t in request.tokens],
+                key=lambda t: t.lower(),
+            )
+            hook_address = (
+                get_checksum_address(request.hook_address)
+                if request.hook_address is not None
+                else _ZERO_ADDRESS
+            )
+            fee_for_pool = request.fee
+            tick_spacing_for_pool = request.tick_spacing
+
+        # Build tokens
+        token0 = self._erc20_builder.build(
+            currency0_address,
+            chain_id=chain_id,
+            silent=request.silent,
+            io=io,
+        )
+        token1 = self._erc20_builder.build(
+            currency1_address,
+            chain_id=chain_id,
+            silent=request.silent,
+            io=io,
+        )
+
+        # Fetch slot0 + liquidity FRESH at the price seed block (`head_block`)
+        # — kept for the Python-side companion overrides (`protocol_fee` /
+        # `lp_fee`), which the Rust handle does not expose.
+        try:
+            assert state_view_address is not None
+            _sqrt_price_x96, _tick_raw, protocol_fee_raw, lp_fee, _liquidity_val = (
+                io.fetch_v4_slot0_liquidity(state_view_address, pool_id_bytes, block=head_block)
+            )
+        except Exception as exc:
+            raise LiquidityPoolError(message="Could not decode contract data") from exc
+        protocol_fee_zero_to_one = int(protocol_fee_raw) & 0xFFF
+        protocol_fee_one_to_zero = int(protocol_fee_raw) >> 12
+
+        # Delegate the build to the Rust PoolBuilder: core `build_v4` fetches
+        # slot0/liquidity FRESH + assembles the tick map (Db → Chain
+        # precedence) + registers into BotState atomically. Identity is
+        # caller-supplied; the StateView mapping is registered Rust-side
+        # (idempotent) inside the adapter. Returns `(pool_id, coverage)` —
+        # coverage drives the companion's `_sparse_liquidity_map`.
+        assert state_view_address is not None
+        hook_flags = int(hook_address, 16) if hook_address else 0
+        pool_handle_pool_id, coverage = self._py_bot.build_v4_pool(
+            pool_manager=pool_manager_address,
+            pool_id_hex=pool_id_bytes.to_0x_hex(),
+            currency0=token0.address,
+            currency1=token1.address,
+            fee=fee_for_pool,
+            tick_spacing=tick_spacing_for_pool,
+            hook_flags=hook_flags,
+            state_view_address=state_view_address,
+            block=int(head_block) if head_block is not None else None,
+            db=True,
+            tick_data_fetcher=self._make_v4_tick_data_fetcher(
+                pool_id_bytes,
+                pool_manager_address,
+                state_view_address,
+                chain_id,
+            ),
+        )
+        tick_map_is_tracked = coverage == "tracked"
+        py_pool_handle = self._py_bot.get_pool(pool_handle_pool_id)
+        assert py_pool_handle is not None, "build_v4_pool returned a pool_id with no handle"
+        pool = UniswapV4Pool._from_py_pool(py_pool_handle)  # ruff:ignore[private-member-access]
+        # Builder-supplied values the seam defaults; override from RPC.
+        pool._state_view_address = (  # ruff:ignore[private-member-access]
+            get_checksum_address(state_view_address) if state_view_address else _ZERO_ADDRESS
+        )
+        pool.protocol_fee = ProtocolFee(
+            zero_for_one=protocol_fee_zero_to_one,
+            one_for_zero=protocol_fee_one_to_zero,
+        )
+        pool.lp_fee = int(lp_fee)
+        pool._sparse_liquidity_map = not tick_map_is_tracked  # ruff:ignore[private-member-access]
+
+        # Register pool in managed pool registry
+        self.managed_pools.add(
+            pool=pool,
+            chain_id=chain_id,
+            pool_manager_address=pool.address,
+            pool_id=pool.pool_id,
+        )
+
+        if not request.silent:
+            logger.info(pool.name)
+            logger.info(f"• ID: {pool.pool_id.to_0x_hex()}")
+            logger.info(f"• Token 0: {token0}")
+            logger.info(f"• Token 1: {token1}")
+            logger.info(f"• Liquidity: {pool.liquidity}")
+            logger.info(f"• SqrtPrice: {pool.sqrt_price_x96}")
+            logger.info(f"• Tick: {pool.tick}")
+
+        return pool
 
     def get_token_balance(
         self,
