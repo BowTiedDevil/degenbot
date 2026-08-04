@@ -8,7 +8,7 @@ from degenbot.bot import PyBot
 from degenbot.builders.context import BuilderContext
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
+from degenbot.registry import PoolRegistry, TokenRegistry
 
 
 def _make_ctx(**overrides) -> BuilderContext:
@@ -25,7 +25,6 @@ def _make_ctx(**overrides) -> BuilderContext:
         "erc20_builder": fake_erc20,
         "py_bot": PyBot(),
         "default_chain_id": 1,
-        "managed_pools": None,
     }
     defaults.update(overrides)
     return BuilderContext(**defaults)
@@ -42,12 +41,6 @@ class TestBuilderContextConstruction:
         assert ctx.erc20_builder is not None
         assert isinstance(ctx.py_bot, PyBot)
         assert ctx.default_chain_id == 1
-        assert ctx.managed_pools is None
-
-    def test_managed_pools_optional(self) -> None:
-        fake_managed = object.__new__(ManagedPoolRegistry)
-        ctx = _make_ctx(managed_pools=fake_managed)
-        assert ctx.managed_pools is not None
 
     def test_frozen(self) -> None:
         ctx = _make_ctx()
@@ -62,7 +55,7 @@ class TestBuilderContextConstruction:
 
     def test_field_count(self) -> None:
         fields = dataclasses.fields(BuilderContext)
-        assert len(fields) == 7
+        assert len(fields) == 6
         field_names = {f.name for f in fields}
         assert field_names == {
             "db",
@@ -71,12 +64,7 @@ class TestBuilderContextConstruction:
             "erc20_builder",
             "py_bot",
             "default_chain_id",
-            "managed_pools",
         }
-
-    def test_managed_pools_default_is_none(self) -> None:
-        ctx = _make_ctx()
-        assert ctx.managed_pools is None
 
     def test_default_chain_id_default_is_none(self) -> None:
         """default_chain_id can be None if not yet configured."""

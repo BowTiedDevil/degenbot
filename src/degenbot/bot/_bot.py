@@ -321,7 +321,6 @@ class Bot:
             erc20_builder=self._erc20_builder,
             py_bot=self._py_bot,
             default_chain_id=self._chain_id,
-            managed_pools=self.managed_pools,
         )
         self._aerodrome_v2_builder = AerodromeV2Builder(ctx)
         self._curve_builder = CurvePoolBuilder(ctx)
