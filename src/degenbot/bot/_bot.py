@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Self, cast
 
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
@@ -483,6 +483,27 @@ class Bot:
 
         # Look up the concrete pool class from the registry
         pool_class = pool_class_for_descriptor(pool_type, chain_id=chain_id)
+
+        # V2 family delegates to the Rust `PoolBuilder` (T4 / 4GQWZ4 full
+        # delegation): the core builder owns ALL the io choreography (immutables,
+        # reserves, DEX resolve incl. Camelot, CREATE2 verify) and registers
+        # directly into `BotState`. The Python side then registers the two
+        # Erc20Tokens in the same `Bot` (ADR-006 — `_from_py_pool` resolves them
+        # off the handle) and wraps the structural handle with the companion
+        # pool class.
+        #
+        # V3 is NOT yet delegated (4GQWZ4 follow-up): the Rust `build_v3`
+        # populates only the single current tick word, whereas the legacy V3
+        # builder attaches a `tick_data_fetcher` that populates the full tick
+        # map — sufficient for swap boundary-detection / state-seed tests. Until
+        # the Rust builder gains full-tick-data population, V3 stays on the
+        # legacy builder to preserve behavior.
+        #
+        # Curve/Aerodrome/Balancer keep their builders (non-goal, retired under
+        # SSSXG6).
+        if issubclass(pool_class, UniswapV2Pool):
+            return self._build_delegated(pool_class, address, chain_id, request)
+
         builder = self._builders.get(pool_class)
         if builder is None:
             # Fallback: walk MRO of pool_class looking for a registered builder
@@ -518,6 +539,61 @@ class Bot:
 
         """
         return builder.build(address, chain_id=chain_id, io=io, request=request)
+
+    def _build_delegated(
+        self,
+        pool_class: type[AbstractLiquidityPool],
+        address: str,
+        chain_id: ChainId,
+        request: BuildPoolRequest,
+    ) -> AbstractLiquidityPool:
+        """Build a V2 pool via the Rust `PoolBuilder` (T4 / 4GQWZ4).
+
+        Thin delegating shell over `PyBot.build_v2_pool`: the core builder runs
+        the full io choreography + registers into `BotState` and returns the
+        pool id. This shell then registers the pool's two Erc20Tokens in the
+        same `Bot` (ADR-006 — the companion's ``_from_py_pool`` resolves
+        ``get_token0/get_token1`` off the handle and requires them registered)
+        and wraps the structural handle with ``pool_class``.
+
+        Returns:
+            A ``pool_class`` companion wrapping the Rust-built V2 pool.
+
+        Raises:
+            DegenbotValueError: If the Rust builder registered the pool but
+                the resulting handle cannot be recovered.
+
+        """
+        # Resolve the snapshot block like the legacy builder did: when no
+        # explicit `state_block` is given, use the current chain head — the Rust
+        # `PoolBuilder` fetches at this block (a `None` would otherwise degrade
+        # to `block=0`).
+        block: int | None = (
+            request.state_block if request.state_block is not None else self._io.get_block_number()
+        )
+        pool_id = self._py_bot.build_v2_pool(address, block=block)
+        py_pool = self._py_bot.get_pool(pool_id)
+        if py_pool is None:  # pragma: no cover
+            msg = f"build_pool: register returned pool_id {pool_id} with no handle"
+            raise DegenbotValueError(message=msg)
+
+        # Register the pool's tokens in the same `Bot` (ADR-006).
+        self._erc20_builder.build(
+            py_pool.token0_address,
+            chain_id=chain_id,
+            silent=request.silent,
+            io=self._io,
+        )
+        self._erc20_builder.build(
+            py_pool.token1_address,
+            chain_id=chain_id,
+            silent=request.silent,
+            io=self._io,
+        )
+
+        pool = cast("type[UniswapV2Pool]", pool_class)._from_py_pool(py_pool)  # ruff:ignore[private-member-access]
+        self.pools.add(pool_address=pool.address, chain_id=chain_id, pool=pool)
+        return pool
 
     def build_managed_pool(
         self,

@@ -15,7 +15,7 @@
 
 use std::collections::HashMap;
 
-use alloy::primitives::{Address, B256};
+use alloy::primitives::{Address, B256, U256};
 use degenbot_core::errors::ProviderError;
 use degenbot_db::error::DbError;
 use degenbot_db::snapshot::TickMapDb;
@@ -347,7 +347,17 @@ async fn bootstrap_v3_tick_map(
         tick_spacing,
     );
     let word_i16 = i16::try_from(word).expect("V3 tick word fits in int16");
-    let bitmap = choreography::fetch_tick_bitmap(io, address, word_i16, Some(block)).await?;
+    // Best-effort single-word probe for a Sparse pool: an unreadable word
+    // (decode error on a provider that can't serve `tickBitmap`) degrades to
+    // an empty word → empty ticks → Sparse, preserving the legacy builder's
+    // graceful fallback (`tick_data=None, coverage=sparse`). Only the
+    // mis-shaped-response decode error is tolerated; genuine transport/network
+    // failures still propagate.
+    let bitmap = match choreography::fetch_tick_bitmap(io, address, word_i16, Some(block)).await {
+        Ok(b) => b,
+        Err(degenbot_core::errors::ProviderError::DecodingError { .. }) => U256::ZERO,
+        Err(e) => return Err(e),
+    };
 
     let mut ticks = HashMap::new();
     for i in 0..=255u8 {
@@ -450,9 +460,16 @@ async fn bootstrap_v4_tick_map(
         tick_spacing,
     );
     let word_i16 = i16::try_from(word).expect("V4 tick word fits in int16");
+    // Same best-effort single-word probe + graceful decode-error degradation as
+    // the V3 arm (`bootstrap_v3_tick_map`): an unreadable word → empty/Sparse.
     let bitmap =
-        choreography::fetch_v4_tick_bitmap(io, pool_manager, pool_id, word_i16, Some(block))
-            .await?;
+        match choreography::fetch_v4_tick_bitmap(io, pool_manager, pool_id, word_i16, Some(block))
+            .await
+        {
+            Ok(b) => b,
+            Err(degenbot_core::errors::ProviderError::DecodingError { .. }) => U256::ZERO,
+            Err(e) => return Err(e),
+        };
 
     let mut ticks = HashMap::new();
     for i in 0..=255u8 {
