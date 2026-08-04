@@ -27,6 +27,7 @@ pub mod drain_sink;
 pub mod engine;
 pub mod liquidity_verifier;
 pub mod log_dispatcher;
+pub mod pool_builder;
 pub mod reorg_coordinator;
 pub mod snapshot_verify;
 pub mod solve_coordinator;
@@ -464,6 +465,26 @@ impl BotState {
     #[must_use]
     pub fn pool_update_block(&self, pool_id: u64) -> u64 {
         self.pools.get(&pool_id).map_or(0, PoolEntry::update_block)
+    }
+
+    /// The pool-state **price clock head**: the maximum `update_block` across
+    /// every registered pool (V2/V3/V4), `0` when none are registered.
+    ///
+    /// This is the block the live pool state actually reflects. During a
+    /// backfill/drain desync the pools are advanced ahead of the pump's
+    /// header clock, so `pool_state_head()` can exceed the drain `block_number`
+    /// — the correct solve/verify/sim anchor is this head, NOT the lagging
+    /// clock. Because a pool is unchanged from its `update_block` onward, a
+    /// single head anchor reproduces each path's solver state exactly
+    /// (unchanged pools have byte-identical EVM state at `update_block` and
+    /// head), so one shared sim cache serves every path.
+    #[must_use]
+    pub fn pool_state_head(&self) -> u64 {
+        self.pools
+            .values()
+            .map(PoolEntry::update_block)
+            .max()
+            .unwrap_or(0)
     }
 
     /// The pool's **liquidity** clock (`tick_data_block`, two-stamp OB7UNY) —
@@ -4004,6 +4025,49 @@ mod tests {
             core.pool_update_block(pool_id),
             7,
             "forward Sync advances the pool's update_block to the event block"
+        );
+    }
+
+    #[test]
+    fn pool_state_head_is_max_update_block_across_all_pools() {
+        // The solve/verify/sim anchor. During a backfill/drain desync the
+        // pools are advanced ahead of the pump's header clock, so
+        // `pool_state_head()` (max `update_block` across every pool) can
+        // exceed the drain `block_number` — that head is the block the live
+        // state reflects, and the correct anchor. Unchanged pools have
+        // byte-identical EVM state from `update_block` to head, so one head
+        // anchor reproduces each path's solver state (B2 collapse).
+        let mut core = BotState::new();
+        assert_eq!(core.pool_state_head(), 0, "empty state head is 0");
+
+        // Register + advance two pools at different blocks; the head is the max.
+        let a = core
+            .register_v2_pool(&make_params(U112::from(1000), U112::from(2000)))
+            .expect("setup: pool A");
+        core.apply_v2_sync(make_pool_addr(), U112::from(900), U112::from(2222), 5)
+            .expect("forward Sync at block 5 applies");
+        // Pool B on a distinct address (shared tokens): its update_block 12
+        // overtakes pool A's 5, so the head tracks B.
+        let b_addr = Address::from([0x12u8; 20]);
+        let b = core
+            .register_v2_pool(&RegisterV2PoolParams {
+                address: b_addr,
+                ..make_params(U112::from(3000), U112::from(4000))
+            })
+            .expect("setup: pool B");
+        let _ = b;
+        core.apply_v2_sync(b_addr, U112::from(3300), U112::from(4400), 12)
+            .expect("forward Sync at block 12 applies");
+        assert_eq!(core.pool_update_block(a), 5);
+        assert_eq!(core.pool_state_head(), 12, "head = max update_block");
+
+        // De-registering the leading pool (B, at 12) drops the head back to A's 5.
+        let _ = a;
+        core.unregister_pool(b_addr, None);
+        assert_eq!(
+            core.pool_state_head(),
+            5,
+            "head falls back to the next-highest update_block"
         );
     }
 
