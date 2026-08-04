@@ -302,10 +302,12 @@ async fn assemble_db_or_chain_v3(
 
 /// V4 twin of [`assemble_db_or_chain_v3`]: `TickMapDb.fetch_liquidity_map_v4`
 /// hit → [`PoolTickCoverage::Tracked`]; miss → Chain-arm → Sparse.
+#[allow(clippy::too_many_arguments)]
 async fn assemble_db_or_chain_v4(
     db: Option<&dyn TickMapDb>,
     io: &ConstructionIo,
     pool_manager: Address,
+    state_view: Address,
     pool_id: [u8; 32],
     tick: i32,
     tick_spacing: i32,
@@ -320,7 +322,7 @@ async fn assemble_db_or_chain_v4(
     }
     // DB miss / empty → Chain arm (Sparse).
     let (ticks, _) =
-        bootstrap_v4_tick_map(io, pool_manager, pool_id, tick, tick_spacing, block).await?;
+        bootstrap_v4_tick_map(io, state_view, pool_id, tick, tick_spacing, block).await?;
     Ok((ticks, PoolTickCoverage::Sparse))
 }
 
@@ -449,7 +451,7 @@ pub async fn build_v3(
 /// immediately (D4).
 async fn bootstrap_v4_tick_map(
     io: &ConstructionIo,
-    pool_manager: Address,
+    state_view: Address,
     pool_id: [u8; 32],
     tick: i32,
     tick_spacing: i32,
@@ -463,7 +465,7 @@ async fn bootstrap_v4_tick_map(
     // Same best-effort single-word probe + graceful decode-error degradation as
     // the V3 arm (`bootstrap_v3_tick_map`): an unreadable word → empty/Sparse.
     let bitmap =
-        match choreography::fetch_v4_tick_bitmap(io, pool_manager, pool_id, word_i16, Some(block))
+        match choreography::fetch_v4_tick_bitmap(io, state_view, pool_id, word_i16, Some(block))
             .await
         {
             Ok(b) => b,
@@ -475,14 +477,9 @@ async fn bootstrap_v4_tick_map(
     for i in 0..=255u8 {
         if bitmap.bit(i.into()) {
             let active_tick = ((word << 8) + i32::from(i)) * tick_spacing;
-            let (liquidity_gross, liquidity_net) = choreography::fetch_v4_tick_data(
-                io,
-                pool_manager,
-                pool_id,
-                active_tick,
-                Some(block),
-            )
-            .await?;
+            let (liquidity_gross, liquidity_net) =
+                choreography::fetch_v4_tick_data(io, state_view, pool_id, active_tick, Some(block))
+                    .await?;
             ticks.insert(
                 active_tick,
                 TickInfo {
@@ -503,8 +500,14 @@ async fn bootstrap_v4_tick_map(
 /// (same convention as `RegisterV4PoolParams`).
 #[derive(Debug, Clone, Copy)]
 pub struct V4PoolBuildIdentity {
-    /// The V4 `PoolManager` contract (also the state-view read target).
+    /// The V4 `PoolManager` contract (DB key for the chain-arm tick-map read).
     pub pool_manager: Address,
+    /// The `StateView` contract that exposes `getSlot0(bytes32)` /
+    /// `getLiquidity(bytes32)` / `getTickBitmap` / `getTickLiquidity` for
+    /// `pool_manager`'s pools (the live-scalar read target — distinct from
+    /// `pool_manager`; `PoolManager` itself does NOT expose the state-view
+    /// getters).
+    pub state_view: Address,
     /// The pool's 32-byte key hash.
     pub pool_id: [u8; 32],
     /// `pool_key.currency0`.
@@ -541,7 +544,7 @@ pub async fn build_v4(
     block: Option<u64>,
 ) -> Result<RegisterV4PoolParams, PoolBuilderError> {
     let (sqrt_price_x96, tick_i, protocol_fee_u, _lp_fee_u, liquidity_u) =
-        choreography::fetch_v4_slot0_liquidity(io, id.pool_manager, id.pool_id, block).await?;
+        choreography::fetch_v4_slot0_liquidity(io, id.state_view, id.pool_id, block).await?;
     let protocol_fee = protocol_fee_u.to::<u32>();
     let tick = i32::try_from(tick_i).unwrap_or(0);
     let update_block = block.unwrap_or(0);
@@ -550,6 +553,7 @@ pub async fn build_v4(
         db,
         io,
         id.pool_manager,
+        id.state_view,
         id.pool_id,
         tick,
         id.tick_spacing,

@@ -775,6 +775,112 @@ impl PyBot {
             .map_err(map_register_v3_err)
     }
 
+    /// Build a V4 pool via the Rust `PoolBuilder` (T4 / 4GQWZ4), registered
+    /// into `BotState` via `register_v4_pool`.
+    ///
+    /// V4 identity is **caller-supplied** (mirrors `register_v4_pool`: the
+    /// core never reads `getToken0`/`getHooks` on-chain). The builder fetches
+    /// only the LIVE scalars (`getSlot0` + `getLiquidity` on `state_view`)
+    /// and assembles/seeds a Sparse tick map via the Chain arm — reusing the
+    /// StateView-backed choreography with no new ABI.
+    ///
+    /// The caller must register the V4 `state_view` mapping for
+    /// `pool_manager` (done here, idempotent) before this returns, so the
+    /// solver-state accuracy gate can verify V4 hops on-chain.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::register_v4_pool`] (builder RPC/decode errors map via
+    /// [`map_builder_err`]; admission/filtering errors via
+    /// [`map_register_v4_err`]).
+    #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_flags, state_view_address, block=None, db=true, tick_data_fetcher=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn build_v4_pool(
+        &self,
+        py: Python<'_>,
+        pool_manager: &str,
+        pool_id_hex: &str,
+        currency0: &str,
+        currency1: &str,
+        fee: u32,
+        tick_spacing: i32,
+        hook_flags: u16,
+        state_view_address: &str,
+        block: Option<u64>,
+        db: bool,
+        tick_data_fetcher: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<(u64, String)> {
+        use degenbot_bot::bot_core::pool_builder::builder;
+        use degenbot_core::runtime::get_runtime;
+        let pm = parse_address(pool_manager).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "build_v4_pool: malformed pool_manager {pool_manager:?}: {e}"
+            ))
+        })?;
+        let pool_id = hex_string_to_pool_id(pool_id_hex)?;
+        let state_view = parse_address(state_view_address).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "build_v4_pool: malformed state_view_address {state_view_address:?}: {e}"
+            ))
+        })?;
+        // Register the Rust-owned V4 StateView registry first (ADR-005 /
+        // Option 2) — the solver-state gate reads it to verify V4 hops.
+        {
+            let state = self.bot.state_arc();
+            py.detach(move || state.write().register_v4_state_view(pm, state_view));
+        }
+        let io = self.bot.construction_io_arc().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "build_v4_pool: no ConstructionIo attached (requires an alloy provider)",
+            )
+        })?;
+        let db_arc: Option<std::sync::Arc<degenbot_db::snapshot_db::SnapshotDb>> =
+            if db { self.db_handle() } else { None };
+        let db_ref: Option<&dyn degenbot_db::snapshot::TickMapDb> = db_arc
+            .as_deref()
+            .map(|d| d as &dyn degenbot_db::snapshot::TickMapDb);
+        let id = builder::V4PoolBuildIdentity {
+            pool_manager: pm,
+            state_view,
+            pool_id,
+            currency0: parse_address(currency0).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "build_v4_pool: malformed currency0 {currency0:?}: {e}"
+                ))
+            })?,
+            currency1: parse_address(currency1).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "build_v4_pool: malformed currency1 {currency1:?}: {e}"
+                ))
+            })?,
+            fee,
+            tick_spacing,
+            hook_flags,
+        };
+        let mut params = py
+            .detach(|| get_runtime().block_on(builder::build_v4(id, db_ref, &io, block)))
+            .map_err(map_builder_err)?;
+        // Sparse-map parity (V4 twin of `build_v3_pool`): `build_v4` leaves the
+        // backfill fetcher `None`; inject the Python web3-sync fetcher here.
+        if let Some(fetcher) = tick_data_fetcher.filter(|f| !f.is_none()) {
+            params.fetcher = Some(crate::bot::pool::make_tick_fetcher(fetcher.unbind()));
+        }
+        let coverage = match params.coverage {
+            degenbot_bot::bot_core::PoolTickCoverage::Tracked => "tracked",
+            degenbot_bot::bot_core::PoolTickCoverage::Sparse => "sparse",
+        };
+        let pool_id = self
+            .bot
+            .state_arc()
+            .write()
+            .register_v4_pool(&params)
+            .map_err(map_register_v4_err)?;
+        // Return `(pool_id, coverage)` so the Python driver can set the
+        // companion's `_sparse_liquidity_map` (the legacy builder derived it
+        // from the assembled tick-map coverage, which the core owns here).
+        Ok((pool_id, coverage.to_string()))
+    }
+
     /// Prototype test-only V2 registration that bypasses CREATE2 verification.
     /// Wire to a new method on Python so tests can build a synthetic V2 pool.
     #[allow(dead_code)]

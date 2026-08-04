@@ -854,6 +854,20 @@ class PyBot:
         db: bool = True,
         tick_data_fetcher: Callable | None = None,
     ) -> int: ...
+    def build_v4_pool(
+        self,
+        pool_manager: str,
+        pool_id_hex: str,
+        currency0: str,
+        currency1: str,
+        fee: int,
+        tick_spacing: int,
+        hook_flags: int,
+        state_view_address: str,
+        block: int | None = None,
+        db: bool = True,
+        tick_data_fetcher: Callable | None = None,
+    ) -> tuple[int, str]: ...
     def update_v2_pool(
         self,
         address: str,

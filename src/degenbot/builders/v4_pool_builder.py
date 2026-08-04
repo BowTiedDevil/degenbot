@@ -242,7 +242,7 @@ class V4PoolBuilder(V4BuilderBase):
         # executor; the Python parity-gate fallback is retired).
         try:
             assert state_view_address is not None
-            sqrt_price_x96, tick_raw, protocol_fee_raw, lp_fee, liquidity_val = (
+            sqrt_price_x96, tick_raw, protocol_fee_raw, lp_fee, _liquidity_val = (
                 io.fetch_v4_slot0_liquidity(state_view_address, pool_id_bytes, block=head_block)
             )
         except Exception as exc:
@@ -284,52 +284,19 @@ class V4PoolBuilder(V4BuilderBase):
         # `AlloyTickBootstrapRpc` through; `io=None` (cold-start, no `Bot`-bound
         # provider) leaves the Chain arm off → `(tick_data=None,
         # coverage="sparse")` registration (the defensive fallback).
-        register_rows: dict[int, tuple[int, int, int]] | None = None
-        coverage = "sparse"
-        tick_map_is_tracked = False
 
-        assembled = self._py_bot.assemble_v4_tick_map(
-            pool_manager_address,
-            pool_id_bytes,
-            state_view_address,
-            tick=int(slot0_data.tick),
-            tick_spacing=tick_spacing_for_pool,
-            block=int(state_block),
-            io=io,
-        )
-        if assembled is not None:
-            rows, coverage = assembled
-            tick_map_is_tracked = coverage == "tracked"
-            register_rows = rows
-        # Cold-start fallback: when `io=None` the Chain arm is off →
-        # register_rows stays None + coverage stays "sparse" (matches the
-        # pre-cutover path).
-
-        # If tick data was populated, pass both. Otherwise pass None (sparse mode).
+        # Delegate the build to the Rust PoolBuilder (T4 / 4GQWZ4): core
+        # `build_v4` fetches slot0/liquidity FRESH + assembles the tick map
+        # (Db → Chain precedence) + registers into BotState atomically. V4
+        # identity is caller-supplied (mirrors `register_v4_pool`); the
+        # StateView mapping is registered Rust-side (idempotent) inside the
+        # adapter. Returns `(pool_id, coverage)` — coverage drives the
+        # companion's `_sparse_liquidity_map`. The `slot0_data` decoded above
+        # is kept for the Python-side companion overrides (`protocol_fee` /
+        # `lp_fee`, which the Rust handle does not expose).
         assert state_view_address is not None
-        # Seed the Rust-owned V4 StateView registry (ADR-005 / Option 2): the
-        # solver-state accuracy gate verifies V4 hops via the StateView's
-        # getSlot0/getLiquidity, and Rust must own the pool_manager→state_view
-        # mapping. Idempotent on the Rust side (one insert per manager).
-        self._py_bot.register_v4_state_view(pool_manager_address, state_view_address)
-        # Register the V4 pool in Rust (BotState) and wrap the returned
-        # PyLiquidityPool handle in the companion. Mirrors the V3 builder cut-
-        # over (ADR-005 slice 9a/9c): the companion owns NO mutable state;
-        # Rust is the source of truth. Hook + dynamic-fee admission is enforced
-        # in BotState::register_v4_pool (surface exceptions propagate).
         hook_flags = int(hook_address, 16) if hook_address else 0
-        # ADR-006 rolling-start race closure: seed tick_data INLINE in
-        # ``register_v4_pool`` (one BotState write lock) so the pool is never
-        # visible to the live pump (resumed before ``build_paths``) in an
-        # unseeded state — mirrors the V3 builder + the async V4 builder.
-        # Previously the builder registered empty then called
-        # ``update_tick_data`` (a `state.tick_data = …` REPLACE that clobbered
-        # any live ModifyLiquidity in the register→seed window → V4 desync).
-        # ``coverage`` is the completeness contract: ``tracked`` ONLY when the
-        # tick map is complete (full snapshot) — a windowed single-word seed
-        # stays ``sparse`` so the Rust miss-detection backfills neighbouring
-        # words on demand.
-        pool_handle_pool_id = self._py_bot.register_v4_pool(
+        pool_handle_pool_id, coverage = self._py_bot.build_v4_pool(
             pool_manager=pool_manager_address,
             pool_id_hex=pool_id_bytes.to_0x_hex(),
             currency0=token0.address,
@@ -337,13 +304,9 @@ class V4PoolBuilder(V4BuilderBase):
             fee=fee_for_pool,
             tick_spacing=tick_spacing_for_pool,
             hook_flags=hook_flags,
-            sqrt_price_x96=slot0_data.sqrt_price_x96,
-            liquidity=int(liquidity_val),
-            tick=slot0_data.tick,
-            block=int(head_block) if head_block is not None else 0,
-            tick_data_block=int(state_block) if state_block is not None else 0,
-            tick_data=register_rows,
-            coverage=coverage,
+            state_view_address=state_view_address,
+            block=int(head_block) if head_block is not None else None,
+            db=True,
             tick_data_fetcher=self._make_tick_data_fetcher(
                 pool_id_bytes,
                 pool_manager_address,
@@ -351,10 +314,10 @@ class V4PoolBuilder(V4BuilderBase):
                 chain_id,
                 io=io,
             ),
-            protocol_fee=int(protocol_fee_raw),
         )
+        tick_map_is_tracked = coverage == "tracked"
         py_pool_handle = self._py_bot.get_pool(pool_handle_pool_id)
-        assert py_pool_handle is not None, "register_v4_pool returned a pool_id with no handle"
+        assert py_pool_handle is not None, "build_v4_pool returned a pool_id with no handle"
         # No separate ``update_tick_data`` — the inline seed is complete (tick
         # map + known bitmap words, atomically with registration). A separate
         # REPLACE would clobber live pump events in the now-closed window.

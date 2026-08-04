@@ -561,6 +561,7 @@ async fn build_v4_assembles_sparse_register_params_from_onchain() {
     let params = builder::build_v4(
         builder::V4PoolBuildIdentity {
             pool_manager: pm,
+            state_view: pm,
             pool_id: pid,
             currency0: TO,
             currency1: SV,
