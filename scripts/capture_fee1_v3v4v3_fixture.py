@@ -67,6 +67,14 @@ V4_PID = _env("FIX_V4_PID", "0x76f75965083b5bfcc0b96f9c5e77e9e00f80b377def5e7625
 V3_0_POOLID = _env_int("FIX_V3_0_POOLID", 0)  # DB pools.id for hop0 V3 (resolve via address)
 V3_2_POOLID = _env_int("FIX_V3_2_POOLID", 1)  # DB pools.id for hop2 V3
 
+# Per-hop swap direction (zero_for_one) for the reconstructed path. The defaults
+# match the original fee-1 repro (hop0 true, hop1 false, hop2 true); override via
+# FIX_HOP{0,1,2}_ZFO to capture a recurrence with different directions (e.g. the
+# path-9354 recurrence hops 0=false/1=false/2=true).
+HOP0_ZFO = True if _env("FIX_HOP0_ZFO", "1") == "1" else False
+HOP1_ZFO = True if _env("FIX_HOP1_ZFO", "0") == "1" else False
+HOP2_ZFO = True if _env("FIX_HOP2_ZFO", "1") == "1" else False
+
 # historical overdraw reproduction from the prior live session (paths 10234/10338)
 RECORDED_V4_HOP_INDEX = 1
 _in = _env("FIX_V4_INPUT", None)
@@ -188,9 +196,9 @@ def main():
         },
         "pools": {"v3_0": v3a, "v4": v4, "v3_2": v3c},
         "path": [
-            {"hop": 0, "pool": "v3_0", "zero_for_one": True},
-            {"hop": 1, "pool": "v4", "zero_for_one": False},
-            {"hop": 2, "pool": "v3_2", "zero_for_one": True},
+            {"hop": 0, "pool": "v3_0", "zero_for_one": HOP0_ZFO},
+            {"hop": 1, "pool": "v4", "zero_for_one": HOP1_ZFO},
+            {"hop": 2, "pool": "v3_2", "zero_for_one": HOP2_ZFO},
         ],
     }
     out = f"/workspaces/degenbot/tests/fixtures/fee1_v3v4v3_block{TARGET}.json"
