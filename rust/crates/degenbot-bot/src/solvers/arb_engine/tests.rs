@@ -1111,6 +1111,128 @@ mod tests {
     }
 
     #[test]
+    fn future_state_path_is_reanchored_to_pool_state_head() {
+        let mut engine = ArbitrageEngine::new();
+
+        // B2 (per-path re-anchor): a path whose price-clock `update_block` is
+        // AHEAD of the drain block is LIVE head state (the pools were advanced
+        // by backfill), NOT poison to be skipped. The correct action is to
+        // re-anchor the solve block at the pool-state head so solve/verify/sim
+        // all match the state the solver used. Skipping would DROP a
+        // capturable live opportunity.
+
+        // Profitable V2→V2 control — proves the dispatch pipeline builds a
+        // result at the solve block when NO hop's price clock is ahead.
+        let v2_a = engine.register_v2_pool(
+            Address::from([0x11u8; 20]),
+            usdc(1_500_000),
+            weth(800),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let v2_b = engine.register_v2_pool(
+            Address::from([0x12u8; 20]),
+            weth(1_000),
+            usdc(2_000_000),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let fresh_path = engine
+            .register_and_solve_path(vec![
+                PoolHop {
+                    pool_id: v2_a,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v2_b,
+                    zero_for_one: true,
+                },
+            ])
+            .unwrap();
+
+        // V3 pool whose price clock (`update_block`) is 100 — 50 blocks AHEAD
+        // of the solve block 50 below (the two-stamp backfill/dispatch race).
+        let mut tick_data = HashMap::new();
+        tick_data.insert(
+            60,
+            crate::bot_core::TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(300),
+                liquidity_net: alloy::primitives::I256::try_from(150i128)
+                    .unwrap_or(alloy::primitives::I256::ZERO),
+                block: 0,
+            },
+        );
+        tick_data.insert(
+            -60,
+            crate::bot_core::TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(200),
+                liquidity_net: alloy::primitives::I256::try_from(-100i128)
+                    .unwrap_or(alloy::primitives::I256::ZERO),
+                block: 0,
+            },
+        );
+        let v3_future = engine.register_v3_pool(&RegisterV3PoolParams {
+            address: Address::from([0x22u8; 20]),
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
+            liquidity: 10_000_000_000_000,
+            tick: 0,
+            tick_data,
+            update_block: 100, // 50 blocks AHEAD of the solve block 50
+            tick_data_block: None,
+            coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
+            fetcher: None,
+            ..Default::default()
+        });
+        let future_path = engine
+            .register_and_solve_path(vec![
+                PoolHop {
+                    pool_id: v2_a,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v3_future,
+                    zero_for_one: false,
+                },
+            ])
+            .unwrap();
+
+        // Rebuild + solve at drain block 50, but the V3 pool's price clock is
+        // at 100 (head). The solve block must re-anchor to head = 100, and the
+        // path is solved (never skipped): a future-vs-drain-clock block is live
+        // state, not a poison to drop.
+        engine.rebuild_and_solve_affected(
+            &HashSet::from([v2_a, v2_b]),
+            &HashSet::from([v3_future]),
+            &HashSet::new(),
+            50,
+            &BlockMetadata::default(),
+        );
+        let (results, block) = engine.latest_results();
+        assert_eq!(
+            block, 100,
+            "solve block re-anchors to the pool-state head (max update_block 100), \
+             not the lagging drain block 50"
+        );
+        assert!(
+            results.contains_key(&fresh_path),
+            "fresh V2→V2 path must still be solved"
+        );
+        // B2: the V2→V3 path whose pools sit at head MUST be attempted (not
+        // skipped) — it is a live, potentially capturable opportunity. Whether
+        // it lands in `results` depends only on profitability, which the
+        // re-anchored solve computes correctly at head.
+        assert!(
+            engine.path_resolved.contains_key(&future_path),
+            "future-state path must remain resolved for solving (never dropped)"
+        );
+    }
+
+    #[test]
     fn mixed_v3_to_v2_path_resolves() {
         let mut engine = ArbitrageEngine::new();
 

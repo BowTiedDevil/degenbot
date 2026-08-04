@@ -2005,6 +2005,7 @@ name = "degenbot"
 version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
+ "async-trait",
  "degenbot-aave",
  "degenbot-abi",
  "degenbot-backrun-strategy",

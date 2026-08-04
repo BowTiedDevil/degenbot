@@ -102,6 +102,7 @@ fn balancer_stable_path() -> ResolvedMixedPath {
         ],
         valid: true,
         state_nonces: vec![],
+        max_update_block: 0, // no CL hops in this fixture; default write-stamp
     }
 }
 
@@ -174,6 +175,7 @@ fn curve_stable_path() -> ResolvedMixedPath {
         ],
         valid: true,
         state_nonces: vec![],
+        max_update_block: 0, // no CL hops in this fixture; default write-stamp
     }
 }
 

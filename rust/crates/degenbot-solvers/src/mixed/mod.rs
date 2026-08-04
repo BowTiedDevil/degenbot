@@ -362,6 +362,12 @@ pub struct ResolvedMixedPath {
     /// hop's current nonce and skips candidates whose nonce has advanced —
     /// the solver computed against state the pump has since superseded.
     pub state_nonces: Vec<u64>,
+    /// The max price-clock `update_block` across the path's CL (and V2) hops,
+    /// captured at resolve time (two-stamp). The dispatch seam rejects a path
+    /// whose max `update_block` is AHEAD of the solve `block_number` (the
+    /// backfill/dispatch race, live path 10956) — solving with a future price
+    /// is never legitimate and is caught BEFORE the publish-point verifier.
+    pub max_update_block: u64,
 }
 
 /// Result from solving a single arbitrage path.

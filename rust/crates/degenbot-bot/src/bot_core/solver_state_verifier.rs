@@ -229,6 +229,19 @@ fn is_cl_pool_stale(update_block: u64, block: u64) -> bool {
     update_block > 0 && block.saturating_sub(update_block) > MAX_CL_STALENESS_BLOCKS
 }
 
+/// Whether a CL hop's stored price-clock `update_block` is AHEAD of the solve
+/// `block` — the two-stamp PRICE clock running past the block being solved (the
+/// backfill/dispatch race, live path 10956: solved 25677777 with a 25677789
+/// price). The `>=` in `skip_in_progress_hop` groups this with the legitimate
+/// mid-block `update_block == block` case and silently SKIPS it, so the
+/// verification never sees a future-priced pool. Ahead is NEVER legitimate and
+/// must be rejected loudly. Mirror of `is_cl_pool_stale` (which only handles
+/// the behind case).
+#[must_use]
+fn is_future_price(update_block: u64, block: u64) -> bool {
+    update_block > block
+}
+
 /// Whether a hop at `update_block` must be SKIPPED when verifying at solve
 /// `block`: skip hops touched IN the in-progress block (`update_block >= block`)
 /// — their scalar reflects a mid-block capture (an early swap of the block,
@@ -280,6 +293,26 @@ pub async fn verify_solver_hop_states(
         // desync (a missed log / reorg / storage mutation). `block` (the
         // solve block) remains for message context / staleness reporting.
         let anchor = solver_anchor_block(hop.update_block, block);
+        // FUTURE-PRICE guard (belts + suspenders): `block` is the RE-ANCHORED
+        // solve block (`max(drain_block, pool_state_head)`), so no hop's
+        // `update_block` can exceed it (head is the max). This fires only in a
+        // genuinely impossible case now — NOT the backfill/dispatch race.
+        // Originally the solve block was the lagging drain clock and a hop at
+        // head (path 10956: solved 25677777 with a 25677789 price) was LIVE
+        // state, not a future price; aborting on it killed a capturable
+        // opportunity (B2 — the block_pump re-anchors it at head first).
+        if is_future_price(hop.update_block, block) {
+            return Err(mismatch(
+                i,
+                &format!(
+                    "CL hop FUTURE at solve block {block} (solver update_block={}, ahead by {} blocks): \
+                     the price clock runs past the block being solved — solving with a future price is \
+                     never legitimate",
+                    hop.update_block,
+                    hop.update_block.saturating_sub(block),
+                ),
+            ));
+        }
         // A hop whose `update_block >= block` was touched IN the solve block
         // (`block` is the pump's in-progress header block) is honest-by-
         // construction and unverifiable via historical slot0 — skip it. Only
@@ -467,6 +500,19 @@ mod tests {
         assert!(is_cl_pool_stale(100, 104));
         // The observed failure: a pool ~100 blocks behind IS stale.
         assert!(is_cl_pool_stale(25_664_550, 25_664_704));
+    }
+
+    #[test]
+    fn future_price_is_detected() {
+        // The observed failure: solved 25677777 with a 25677789 price clock.
+        assert!(is_future_price(25_677_789, 25_677_777));
+        // Strictly ahead (even +1) is never legitimate.
+        assert!(is_future_price(101, 100));
+        // Equal to the solve block is a mid-block capture, NOT future.
+        assert!(!is_future_price(100, 100));
+        // Behind (normal latency) is NOT future.
+        assert!(!is_future_price(99, 100));
+        assert!(!is_future_price(0, 100));
     }
 
     #[test]

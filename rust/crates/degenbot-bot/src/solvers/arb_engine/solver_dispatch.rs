@@ -56,9 +56,19 @@ impl ArbitrageEngine {
         affected_path_ids.extend(&self.pending_new_paths);
         self.pending_new_paths.clear();
 
+        // Solve-block anchor: the batch's `solve_block` (= `results_block`)
+        // is the block the pool state actually reflects — the pool-state
+        // head, NOT the (possibly-lagging) drain `block_number`. During a
+        // backfill/drain desync the pools are advanced ahead of the pump's
+        // header clock, so `max(block_number, pool_state_head)` re-anchors at
+        // head. Unchanged pools have identical EVM state from their
+        // `update_block` to head, so a single head anchor reproduces every
+        // path's solver state exactly (B2 collapse — no per-path anchoring,
+        // no dropped opportunities).
+        let solve_block = block_number.max(self.core.read().pool_state_head());
         // If no paths are affected, just update the block number
         if affected_path_ids.is_empty() {
-            self.results_block = block_number;
+            self.results_block = solve_block;
             return;
         }
 
@@ -131,6 +141,11 @@ impl ArbitrageEngine {
                 if !resolved.valid {
                     return None;
                 }
+                // No future-price skip here: a path whose `max_update_block`
+                // is AHEAD of the drain `block_number` is LIVE head state (the
+                // pools advanced by backfill), not poison — solving it is valid
+                // and it is correctly re-anchored at `solve_block` above
+                // (B2). Skipping it would DROP a capturable live opportunity.
                 Some((pid, resolved.clone()))
             })
             .collect();
@@ -162,7 +177,7 @@ impl ArbitrageEngine {
             self.results.insert(pid, solve_result);
         }
 
-        self.results_block = block_number;
+        self.results_block = solve_block;
         // Note: no compute_diff_and_send here — the pump controls when
         // batches are dispatched (debounce timer or block boundary).
     }
@@ -233,6 +248,10 @@ impl ArbitrageEngine {
         resolved.state_nonces.reserve(pool_refs.len());
 
         for pool_ref in pool_refs {
+            // Capture the max price-clock `update_block` across all hops.
+            resolved.max_update_block = resolved
+                .max_update_block
+                .max(core.pool_update_block(pool_ref.pool_key));
             match pool_ref.hop_type {
                 HopType::V2 => {
                     // Read V2 state from BotState and build the orientation-specific

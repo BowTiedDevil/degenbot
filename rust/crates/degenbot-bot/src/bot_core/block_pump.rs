@@ -592,14 +592,23 @@ impl BlockPump {
         }
         // Extract per-path scalar states under a short read guard, then drop
         // the guard BEFORE awaiting the RPC reads.
+        // Re-anchor the solve block at the pool-state head (B2): during a
+        // backfill/drain desync the pools sit AHEAD of the lagging `block`, and
+        // a hop at head (`update_block > block`) is LIVE state, not a future
+        // price — aborting on it kills a capturable opportunity. `is_future_price`
+        // must therefore be tested against max(block, pool_state_head), never the
+        // raw lagging clock.
         let mut path_hop_states = Vec::with_capacity(path_refs.len());
+        let anchor;
         {
             let state_arc = self.bot.state_arc();
             let core = state_arc.read();
             for pools in &path_refs {
                 path_hop_states.push(extract_solver_hop_states(&core, pools));
             }
+            anchor = block.max(core.pool_state_head());
         }
+        let block = anchor;
         for (path_idx, hop_states) in path_hop_states.iter().enumerate() {
             if let Err(mismatch) = verify_solver_hop_states(&self.provider, hop_states, block).await
             {

@@ -41,16 +41,70 @@ use std::sync::{Arc, Mutex};
 
 use alloy::primitives::U256;
 use degenbot_bot::bot_core::BotState;
-use degenbot_executor::composers::{EncodeOptions, PathInfo};
+use degenbot_executor::composers::{EncodeOptions, HopInfo, PathInfo};
 use degenbot_simulation::BlockSimHandle;
 use degenbot_submission::PathSuppression;
 use parking_lot::RwLock;
+use revm::database_interface::DatabaseRef;
 
 use crate::{
     diverging_pool_keys, fot_suspected_token, hop_input_token, hop_output_token, hop_pool_key,
     is_solver_calc_failure, simulate_path_on_evm, FailBuckets, FeeOnTransferRegistry,
     PoolDivergence, SimFailure, SimResult, SimulateContext, SimulatePath,
 };
+
+// ─────────────────────────────────────────────────────────────────────────
+// Diagnostics
+// ─────────────────────────────────────────────────────────────────────────
+
+/// `DEGENBOT_V2_CALC_TRACE` env-gated diagnostic: immediately before each
+/// candidate path's sim, read every V2 hop's reserves slot (slot 8) from the
+/// SHARED per-block `CacheDB` and log the decoded `reserve0`/`reserve1` plus
+/// the hop's token orientation. `_v2_get_amount_out` (`V2_SWAP_CALC`, cmd
+/// 0x21) reads exactly this word via `getReserves()`, so the logged values are
+/// the ground truth for what the sim's V2 output is computed from. This closes
+/// the observability gap for the path-11354 V3-V2-V3 1-wei under-delivery: a
+/// slot8 that no on-chain block holds (synthetic / cached-intra-block /
+/// polluted) surfaces here even though every DB layer below the `CacheDB`
+/// forwards on-chain state. No-op unless `DEGENBOT_V2_CALC_TRACE` is set.
+#[allow(clippy::too_many_lines)]
+fn v2_calc_trace(handle: &mut BlockSimHandle<'_>, sim_path: &SimulatePath) {
+    if std::env::var_os("DEGENBOT_V2_CALC_TRACE").is_none() {
+        return;
+    }
+    for hop in &sim_path.path_info.hops {
+        if let HopInfo::V2(v2) = hop {
+            let cache_db = &mut handle.evm_mut().ctx.journaled_state.database;
+            let word = match cache_db.storage_ref(v2.pool_address, U256::from(8u64)) {
+                Ok(w) => w,
+                Err(e) => {
+                    tracing::warn!(
+                        path_id = sim_path.path_id,
+                        pair = ?v2.pool_address,
+                        %e,
+                        "[v2-calc-trace] slot8 read failed"
+                    );
+                    break;
+                }
+            };
+            let mask112 = (U256::from(1_u128) << U256::from(112)) - U256::from(1_u128);
+            let reserve0 = (word & mask112).to::<u128>(); // low 112 = token0 reserve
+            let reserve1 = ((word >> U256::from(112)) & mask112).to::<u128>(); // next 112
+            tracing::warn!(
+                path_id = sim_path.path_id,
+                pair = ?v2.pool_address,
+                token0 = ?v2.token0_address,
+                token1 = ?v2.token1_address,
+                zfo = v2.zfo,
+                fee = v2.fee,
+                reserve0 = reserve0,
+                reserve1 = reserve1,
+                "[v2-calc-trace] pair reserves slot8 before path execute"
+            );
+            break;
+        }
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 // Constants (ports the Python oracle's module-level literals)
@@ -527,10 +581,24 @@ pub fn dispatch_profitable_results(
             // + the override params projected from this strategy's
             // `SimulateContext` (ADR-019 D7, decision R — the engine stays
             // generic over strategy config; it never names `SimulateContext`).
+            // The shared-EVM sim anchor: the pool-state head, NOT the lagging
+            // Python block clock. Each candidate's `solve_block` was re-anchored
+            // by the engine to `max(drain_block, pool_state_head)`, so the
+            // batch max is the block the pools actually reflect. Simulating at
+            // the lagging clock fetched PRE-update state (state-ahead-of-clock
+            // desync) and mismatched the solver's head math — the IIA. Because
+            // an unchanged pool has byte-identical EVM state from its
+            // `update_block` to head, ONE head-anchored shared EVM reproduces
+            // every candidate's solver state exactly (no per-block caches).
+            let sim_block = candidates
+                .iter()
+                .map(|c| c.solve_block)
+                .max()
+                .unwrap_or(ctx.current_block);
             match BlockSimHandle::build(
                 ctx.provider,
                 ctx.base_fee_next,
-                ctx.current_block,
+                sim_block,
                 ctx.block_timestamp,
                 &ctx.override_params(),
                 &guard,
@@ -541,6 +609,17 @@ pub fn dispatch_profitable_results(
                     .map(|c| {
                         let pid = c.path_id;
                         let sim_path = c.to_simulate_path();
+                        // `DEGENBOT_V2_CALC_TRACE` — env-gated diagnostic that
+                        // reads every V2 hop's reserves slot (slot 8) straight
+                        // from the SHARED per-block CacheDB immediately before
+                        // this candidate's `simulate_path_on_evm` run. This is
+                        // exactly what the executor's Vyper `_v2_get_amount_out`
+                        // (`V2_SWAP_CALC`, cmd 0x21) SLOADs via `getReserves()`,
+                        // so the logged reserve word is the ground truth for
+                        // what the sim's V2 output is computed from — it reveals
+                        // any cached/polluted slot8 that no on-chain read can
+                        // reproduce (path-11354 V3-V2-V3 1-wei under-delivery).
+                        v2_calc_trace(&mut handle, &sim_path);
                         let mut buckets = FailBuckets::new();
                         let result =
                             simulate_path_on_evm(handle.evm_mut(), ctx, &sim_path, &mut buckets)
