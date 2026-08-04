@@ -28,8 +28,8 @@ use std::sync::Arc;
 use alloy::primitives::Address;
 
 use crate::bot::engine::{
-    hex_string_to_pool_id, map_register_v2_err, map_register_v3_err, map_register_v4_err,
-    SpecViolationError,
+    hex_string_to_pool_id, map_builder_err, map_register_v2_err, map_register_v3_err,
+    map_register_v4_err, SpecViolationError,
 };
 
 /// Narrow a Python-supplied `U256` reserve to `U112` (the on-chain `uint112`
@@ -684,6 +684,85 @@ impl PyBot {
                 fee_denominator,
             })
             .map_err(map_register_v2_err)
+    }
+
+    /// Build + register a V2 pool through the Rust `PoolBuilder` (T4 / 4GQWZ4
+    /// delegation adapter). Runs the core async builder — ALL the io
+    /// choreography in Rust: immutable data, reserves, DEX-resolution incl.
+    /// the Camelot branch, CREATE2 verify, deployer/init-hash, narrow reserves
+    /// — on the attached `ConstructionIo`, registers into `BotState`, and
+    /// returns the auto-assigned pool id for the Python caller to wrap.
+    ///
+    /// The `PoolBuilder` is alloy-only (Q6-narrow `ConstructionIo`): this
+    /// requires an attached construction-I/O (D-B single `AlloyProvider`).
+    ///
+    /// # Errors
+    ///
+    /// `RuntimeError` if no `ConstructionIo` is attached, on a builder RPC /
+    /// CREATE2 / spec / DB failure, or on a registration (already-registered /
+    /// spec) failure.
+    #[pyo3(signature = (address, block=None))]
+    fn build_v2_pool(&self, py: Python<'_>, address: &str, block: Option<u64>) -> PyResult<u64> {
+        use degenbot_bot::bot_core::pool_builder::builder;
+        use degenbot_core::runtime::get_runtime;
+        let addr = parse_address(address)?;
+        let io = self.bot.construction_io_arc().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "build_v2_pool: no ConstructionIo attached (requires an alloy provider)",
+            )
+        })?;
+        let chain_id = self.bot.chain_id();
+        let params = py
+            .detach(|| get_runtime().block_on(builder::build_v2(chain_id, addr, &io, block)))
+            .map_err(map_builder_err)?;
+        self.bot
+            .state_arc()
+            .write()
+            .register_v2_pool(&params)
+            .map_err(map_register_v2_err)
+    }
+
+    /// Build + register a V3 pool through the Rust `PoolBuilder` (T4 / 4GQWZ4
+    /// delegation adapter) — the V3 twin of [`Self::build_v2_pool`]. The tick
+    /// map is assembled DB-first (a `TickMapDb` hit → `Tracked`, feeding the
+    /// IKGQ6F quarantine→verify lifecycle; `db=false` forces the Chain-arm
+    /// Sparse path). `block` defaults to the current chain head.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::build_v2_pool`].
+    #[pyo3(signature = (address, block=None, db=true))]
+    fn build_v3_pool(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        block: Option<u64>,
+        db: bool,
+    ) -> PyResult<u64> {
+        use degenbot_bot::bot_core::pool_builder::builder;
+        use degenbot_core::runtime::get_runtime;
+        let addr = parse_address(address)?;
+        let io = self.bot.construction_io_arc().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "build_v3_pool: no ConstructionIo attached (requires an alloy provider)",
+            )
+        })?;
+        let chain_id = self.bot.chain_id();
+        let db_arc: Option<std::sync::Arc<degenbot_db::snapshot_db::SnapshotDb>> =
+            if db { self.db_handle() } else { None };
+        let db_ref: Option<&dyn degenbot_db::snapshot::TickMapDb> = db_arc
+            .as_deref()
+            .map(|d| d as &dyn degenbot_db::snapshot::TickMapDb);
+        let params = py
+            .detach(|| {
+                get_runtime().block_on(builder::build_v3(chain_id, addr, db_ref, &io, block))
+            })
+            .map_err(map_builder_err)?;
+        self.bot
+            .state_arc()
+            .write()
+            .register_v3_pool(&params)
+            .map_err(map_register_v3_err)
     }
 
     /// Prototype test-only V2 registration that bypasses CREATE2 verification.

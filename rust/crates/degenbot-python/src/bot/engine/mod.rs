@@ -23,7 +23,9 @@ mod snapshot;
 mod solve;
 mod verify;
 
-pub(crate) use register::{map_register_v2_err, map_register_v3_err, map_register_v4_err};
+pub(crate) use register::{
+    map_builder_err, map_register_v2_err, map_register_v3_err, map_register_v4_err,
+};
 
 pub use errors::*;
 pub use result_channel::BlockStream;

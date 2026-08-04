@@ -344,3 +344,34 @@ pub(crate) fn map_register_v4_err(err: degenbot_bot::bot_core::RegisterV4PoolErr
         }
     }
 }
+
+/// Map a Rust `PoolBuilder` error (the T4 / 4GQWZ4 delegation adapter's
+/// builder stage) to a Python `RuntimeError` carrying the RPC/CREATE2/spec/DB
+/// failure cause. Registration-stage errors are mapped by the `map_register_v*`
+/// fns above, so this covers only the pre-registration build stage.
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn map_builder_err(
+    err: degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError,
+) -> pyo3::PyErr {
+    match err {
+        degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError::Rpc(e) => {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("pool build RPC error: {e}"))
+        }
+        degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError::UnknownVariant {
+            factory,
+        } => pyo3::exceptions::PyRuntimeError::new_err(format!(
+            "pool build unknown factory {factory} — no built-in DEX variant preset"
+        )),
+        degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError::Spec => {
+            pyo3::exceptions::PyRuntimeError::new_err("pool build out-of-spec V2 reserve")
+        }
+        degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError::Create2 => {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "pool build CREATE2 address verification failed",
+            )
+        }
+        degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError::Db(e) => {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("pool build DB read failed: {e}"))
+        }
+    }
+}
