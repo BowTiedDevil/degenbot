@@ -14,6 +14,7 @@
 //! - (future, task `3FVZF4`) — the `PoolBuilder` orchestration that composes
 //!   these primitives into core structural pool identity+state.
 
+pub mod builder;
 pub mod choreography;
 
 #[cfg(test)]

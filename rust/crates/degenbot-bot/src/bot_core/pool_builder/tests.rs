@@ -11,12 +11,12 @@
 use std::collections::HashMap;
 
 use alloy::dyn_abi::DynSolValue;
-use alloy::primitives::{Address, Bytes, I256, U256};
+use alloy::primitives::{aliases::U112, Address, Bytes, I256, U256};
 use async_trait::async_trait;
 use degenbot_core::errors::ProviderError;
 use degenbot_rpc::abi;
 
-use super::choreography;
+use super::{builder, choreography};
 use crate::bot_core::construction_io::{ConstructionIo, NoDb, RpcConstruction};
 
 const TO: Address = alloy::primitives::address!("0x1111111111111111111111111111111111111111");
@@ -341,4 +341,139 @@ async fn fetch_v4_tick_data_decodes() {
         .unwrap();
     assert_eq!(gross.to_string(), "7");
     assert_eq!(net, I256::try_from(3i128).unwrap());
+}
+
+// ── PoolBuilder: probe → variant-resolution → build_v2 (task 3FVZF4) ──
+
+#[tokio::test]
+async fn probe_pool_type_dispatches() {
+    // No responses → every probe reverts → Curve.
+    assert_eq!(
+        builder::probe_pool_type(&io_with(FakeRpc::new()), TO, None).await,
+        builder::PoolFamily::Curve
+    );
+
+    // slot0() present → V3.
+    let mut f = FakeRpc::new();
+    f.set(
+        abi::encode_slot0()[..4].try_into().unwrap(),
+        slot0_ret(U256::from(1u128 << 96), 0),
+    );
+    assert_eq!(
+        builder::probe_pool_type(&io_with(f), TO, None).await,
+        builder::PoolFamily::V3
+    );
+
+    // getReserves() present, no slot0 → V2.
+    let mut f = FakeRpc::new();
+    f.set(
+        abi::encode_get_reserves()[..4].try_into().unwrap(),
+        enc(DynSolValue::Tuple(vec![
+            DynSolValue::Uint(U256::ZERO, 112),
+            DynSolValue::Uint(U256::ZERO, 112),
+            DynSolValue::Uint(U256::ZERO, 32),
+        ])),
+    );
+    assert_eq!(
+        builder::probe_pool_type(&io_with(f), TO, None).await,
+        builder::PoolFamily::V2
+    );
+
+    // getPoolId() present, no getNormalizedWeights → BalancerStable.
+    let mut f = FakeRpc::new();
+    f.set(choreography::selector(b"getPoolId()"), addr_word(TO));
+    assert_eq!(
+        builder::probe_pool_type(&io_with(f), TO, None).await,
+        builder::PoolFamily::BalancerStable
+    );
+
+    // getPoolId() + getNormalizedWeights() → BalancerWeighted.
+    let mut f = FakeRpc::new();
+    f.set(choreography::selector(b"getPoolId()"), addr_word(TO));
+    f.set(
+        choreography::selector(b"getNormalizedWeights()"),
+        enc(DynSolValue::FixedArray(vec![DynSolValue::Uint(
+            U256::from(50),
+            18,
+        )])),
+    );
+    assert_eq!(
+        builder::probe_pool_type(&io_with(f), TO, None).await,
+        builder::PoolFamily::BalancerWeighted
+    );
+}
+
+#[tokio::test]
+async fn resolve_v2_dex_matches_uniswap_factory_without_read() {
+    use degenbot_uniswap::dex_identity::{self, DexVariant};
+    let uniswap = dex_identity::UNISWAP_V2;
+    let io = io_with(FakeRpc::new()); // empty → any read would revert
+    let id = builder::resolve_v2_dex(&io, TO, uniswap.factory, None)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(id.variant, DexVariant::UniswapV2);
+    assert_eq!(id.fee_token0, (997, 1000));
+}
+
+#[tokio::test]
+async fn resolve_v2_dex_reads_stable_flag_for_camelot_factory() {
+    use degenbot_uniswap::dex_identity::{self, DexVariant};
+    // Camelot volatile+stable share a factory; the pool's `stableSwap()` read
+    // disambiguates. Give the read `true` → CamelotV2Stable.
+    let factory = dex_identity::CAMELOT_V2_STABLE.factory;
+    let mut f = FakeRpc::new();
+    f.set(
+        choreography::selector(b"stableSwap()"),
+        enc(DynSolValue::Bool(true)),
+    );
+    let io = io_with(f);
+    let id = builder::resolve_v2_dex(&io, TO, factory, None)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(id.variant, DexVariant::CamelotV2Stable);
+}
+
+#[tokio::test]
+async fn build_v2_assembles_register_params_from_onchain() {
+    use degenbot_uniswap::create2::compute_v2_address;
+    use degenbot_uniswap::dex_identity::{DexVariant, UNISWAP_V2};
+
+    let tok0: Address = alloy::primitives::address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+    let tok1: Address = alloy::primitives::address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+    let pool = compute_v2_address(UNISWAP_V2.factory, tok0, tok1, UNISWAP_V2.init_hash);
+
+    let mut f = FakeRpc::new();
+    f.set(
+        choreography::selector(b"factory()"),
+        addr_word(UNISWAP_V2.factory),
+    );
+    f.set(choreography::selector(b"token0()"), addr_word(tok0));
+    f.set(choreography::selector(b"token1()"), addr_word(tok1));
+    f.set(
+        abi::encode_get_reserves()[..4].try_into().unwrap(),
+        enc(DynSolValue::Tuple(vec![
+            DynSolValue::Uint(U256::from(123_456_789u64), 112),
+            DynSolValue::Uint(U256::from(987_654_321u64), 112),
+            DynSolValue::Uint(U256::ZERO, 32),
+        ])),
+    );
+    let io = io_with(f);
+
+    let params = builder::build_v2(1, pool, &io, Some(18_000_000))
+        .await
+        .unwrap();
+    assert_eq!(params.address, pool);
+    assert_eq!(params.factory, UNISWAP_V2.factory);
+    assert_eq!(params.token0, tok0);
+    assert_eq!(params.token1, tok1);
+    assert_eq!(params.variant, DexVariant::UniswapV2);
+    assert_eq!(params.fee_token0, (997, 1000));
+    assert_eq!(params.update_block, 18_000_000);
+    assert!(!params.stable_swap);
+    // Proxy preserves the resulting identity/state build.
+    let (identity, state) = degenbot_pools::v2_state::V2PoolState::from_params(&params, 8);
+    assert_eq!(identity.address, pool);
+    assert_eq!(state.reserve0, U112::from(123_456_789u64));
 }
