@@ -274,6 +274,11 @@ class V3PoolBuilder(V3BuilderBase):
         if pool_class is None:
             msg = f"No V3 pool class registered for chain {chain_id}, factory {factory}"
             raise ValueError(msg)
+        # The registry types the class as the structural
+        # ConcentratedLiquidityPool protocol, but the concrete class carries
+        # the `_from_py_pool` construction seam (returns a concrete instance
+        # via `Self`).
+        pool_class = cast("type[UniswapV3Pool]", pool_class)
 
         # Register the pool in the shared Rust Bot and wrap the handle with
         # the Python companion (ADR-005 slice 8b). ADR-006 rolling-start race
@@ -339,11 +344,11 @@ class V3PoolBuilder(V3BuilderBase):
         # ADR-005 sealed seam: the companion reads ALL identity off the handle
         # via `_from_py_pool` (no identity kwargs). The tick fetcher was stored
         # Rust-side at registration above (task MLJT4V).
-        pool = pool_class._from_py_pool(py_pool_handle)  # noqa: SLF001
+        pool = pool_class._from_py_pool(py_pool_handle)  # ruff:ignore[private-member-access]
         # Sparse-liquidity-map flag: the companion infers from tick_data_snapshot,
         # but the builder knows the true coverage from the DB snapshot. Override
         # if the builder has more info.
-        pool._sparse_liquidity_map = not (coverage == "tracked" and bool(rust_rows))  # noqa: SLF001
+        pool._sparse_liquidity_map = not (coverage == "tracked" and bool(rust_rows))  # ruff:ignore[private-member-access]
         # Deployer / init-hash: read off the Rust handle (Fork A, P62DKO).
         # The builder resolved the JSON-sourced deployer (effective deployer,
         # covering PancakeSwap V3's separate deployer) + init_hash at

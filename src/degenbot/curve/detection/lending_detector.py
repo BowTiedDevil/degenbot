@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 def detect_lending_tokens(
     io: PyBotIo,
-    pool_address: ChecksumAddress,  # noqa: ARG001
+    pool_address: ChecksumAddress,  # ruff:ignore[unused-function-argument]
     token_addresses: tuple[ChecksumAddress, ...],
     tokens: tuple[Erc20Token, ...],
     *,
@@ -49,7 +49,7 @@ def detect_lending_tokens(
         checksummed_addr = get_checksum_address(token_addr)
 
         # Check if token is a cToken using isCToken()
-        try:  # noqa:PLW0717
+        try:  # ruff:ignore[too-many-statements-in-try-clause]
             is_ctoken_result = io.call_raw(
                 {
                     "to": checksummed_addr,
@@ -64,7 +64,7 @@ def detect_lending_tokens(
             if is_c:
                 is_lending = True
                 # cToken: get underlying token decimals via underlying() method
-                try:  # noqa:PLW0717
+                try:  # ruff:ignore[too-many-statements-in-try-clause]
                     underlying_result = io.call_raw(
                         {
                             "to": checksummed_addr,

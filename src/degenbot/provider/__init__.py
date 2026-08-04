@@ -404,7 +404,7 @@ class AlloyProvider:
         """Close connection pool and release resources."""
         self._provider.close()
 
-    def is_connected(self) -> bool:  # noqa: PLR6301
+    def is_connected(self) -> bool:  # ruff:ignore[no-self-use]
         """Check if the provider is connected.
 
         For AlloyProvider, we assume connection is valid if the provider was created.
@@ -453,7 +453,7 @@ class AlloyProvider:
         self,
         method: str,
         params: list[Any],
-    ) -> Any:  # noqa: ANN401
+    ) -> Any:  # ruff:ignore[any-type]
         """Make a raw JSON-RPC request.
 
         This allows calling arbitrary RPC methods that don't have typed wrappers,
@@ -602,7 +602,7 @@ class AlloyProvider:
 
     # ----- Subscription stubs (sync provider — always raises) -----
 
-    def _raise_subscription_not_supported(self) -> None:  # noqa: PLR6301
+    def _raise_subscription_not_supported(self) -> None:  # ruff:ignore[no-self-use]
         """Raise for any sync subscription call.
 
         Raises:
@@ -629,8 +629,8 @@ class AlloyProvider:
 
     def subscribe_logs(
         self,
-        addresses: list[str] | None = None,  # noqa: ARG002
-        topics: list[list[str]] | None = None,  # noqa: ARG002
+        addresses: list[str] | None = None,  # ruff:ignore[unused-method-argument]
+        topics: list[list[str]] | None = None,  # ruff:ignore[unused-method-argument]
     ) -> None:
         """Not available on sync providers — use AsyncAlloyProvider."""
         self._raise_subscription_not_supported()
@@ -920,7 +920,7 @@ class AsyncAlloyProvider:
         """
         return await self._provider.get_transaction_count(address, block)
 
-    async def make_request(self, method: str, params: list[Any]) -> Any:  # noqa: ANN401
+    async def make_request(self, method: str, params: list[Any]) -> Any:  # ruff:ignore[any-type]
         """Make a raw JSON-RPC request.
 
         Returns:
@@ -929,7 +929,7 @@ class AsyncAlloyProvider:
         """
         return await self._provider.make_request(method, params)
 
-    def is_connected(self) -> bool:  # noqa: PLR6301
+    def is_connected(self) -> bool:  # ruff:ignore[no-self-use]
         """Check if the provider is connected.
 
         Returns:

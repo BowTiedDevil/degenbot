@@ -111,7 +111,7 @@ class MonolithicJsonFileSnapshot:
 
     def get_liquidity_map(
         self,
-        pool_manager: ChecksumAddress,  # noqa: ARG002
+        pool_manager: ChecksumAddress,  # ruff:ignore[unused-method-argument]
         pool_id: bytes | str,
     ) -> LiquidityMap | None:
         """Return liquidity map.

@@ -94,7 +94,7 @@ def _pool_identity(pool: ArbPathPool) -> str:
     return get_checksum_address(pool.address)
 
 
-def _hop_token_pair(pool: ArbPathPool, zfo: bool) -> tuple[str, str]:  # noqa: FBT001
+def _hop_token_pair(pool: ArbPathPool, zfo: bool) -> tuple[str, str]:  # ruff:ignore[boolean-type-hint-positional-argument]
     """Return the ``(token_in, token_out)`` addresses a hop swaps between.
 
     ``zfo=True`` → token0→token1; ``zfo=False`` → token1→token0. All pools

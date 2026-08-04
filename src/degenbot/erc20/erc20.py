@@ -65,7 +65,7 @@ class Erc20Token(AbstractErc20Token):
     _cached_total_supply: BoundedCache[BlockNumber, int]
     _price_oracle: ChainlinkPriceContract | None
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+    def __init__(self, *args: Any, **kwargs: Any) -> None:  # ruff:ignore[unused-method-argument]
         """Direct construction is forbidden.
 
         ``Erc20Token`` is a Python companion over a Rust-owned

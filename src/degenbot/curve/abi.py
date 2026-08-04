@@ -1,4 +1,4 @@
-# ruff: noqa: E501
+# ruff:file-ignore[line-too-long]
 """Curve contract ABI definitions and decoders."""
 
 from typing import Any

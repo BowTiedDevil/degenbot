@@ -86,7 +86,7 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
     pow_version: PowVersion
     _subscribers: WeakSet[Subscriber]
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+    def __init__(self, *args: Any, **kwargs: Any) -> None:  # ruff:ignore[unused-method-argument]
         """Direct construction is forbidden.
 
         ``BalancerV2Pool`` is a Python companion over a Rust-owned
@@ -149,7 +149,7 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
             )
             raise DegenbotValueError(message=msg)
         self._tokens = tuple(
-            Erc20Token._from_py_token(t)  # noqa: SLF001
+            Erc20Token._from_py_token(t)  # ruff:ignore[private-member-access]
             for t in py_tokens
         )
         self.scaling_factors = tuple(_compute_scaling_factor(t) for t in self._tokens)

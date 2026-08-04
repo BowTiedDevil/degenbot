@@ -20,7 +20,7 @@ file are gone.
 from __future__ import annotations
 
 import signal
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal
 
 import click
 import tqdm
@@ -118,12 +118,12 @@ def pool() -> None:
     show_envvar=True,
 )
 @click.pass_obj
-def pool_update(  # noqa: PLR0917
+def pool_update(  # ruff:ignore[too-many-positional-arguments]
     bot: Bot,
     chunk_size: int,
     to_block: str,
-    verify_chunk: bool,  # noqa: FBT001
-    verify_all: bool,  # noqa: FBT001
+    verify_chunk: bool,  # ruff:ignore[boolean-type-hint-positional-argument]
+    verify_all: bool,  # ruff:ignore[boolean-type-hint-positional-argument]
     verify_all_interval: int,
 ) -> None:
     """Update liquidity pool information for activated exchanges.
@@ -283,7 +283,7 @@ def _resolve_to_block(to_block: str, *, chain_id: int, bot: Bot) -> int | None:
     # takes `Option<u64>`, not a tag string).
     provider = get_provider_from_config(chain_id=chain_id, config=bot.config)
     resolved = get_number_for_block_identifier(
-        identifier=cast("_BlockTag", block_tag),
+        identifier=block_tag,
         provider=provider,
     )
     return int(resolved) + block_offset
@@ -336,7 +336,7 @@ def _resolve_to_block(to_block: str, *, chain_id: int, bot: Bot) -> int | None:
     ),
 )
 @click.pass_obj
-def pool_verify(  # noqa: PLR0917
+def pool_verify(  # ruff:ignore[too-many-positional-arguments]
     bot: Bot,
     rpc_url: str,
     chain_id: int,

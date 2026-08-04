@@ -34,7 +34,7 @@ def _wrap_evmrevert(fn: Callable[..., Any]) -> Callable[..., Any]:
     """
 
     @functools.wraps(fn)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+    def wrapper(*args: Any, **kwargs: Any) -> Any:  # ruff:ignore[any-type]
         try:
             return fn(*args, **kwargs)
         except ValueError as e:

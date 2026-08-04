@@ -70,7 +70,7 @@ def database_reset(bot: Bot, *, force: bool) -> None:
 
     """
     if force or click.confirm(
-        f"The existing database at {bot.config.database.path} will be removed and a new, empty database will be created and initialized using the schema included in {__package__} version {__version__}. Do you want to proceed?",  # noqa: E501
+        f"The existing database at {bot.config.database.path} will be removed and a new, empty database will be created and initialized using the schema included in {__package__} version {__version__}. Do you want to proceed?",  # ruff:ignore[line-too-long]
         default=False,
     ):
         bot.config.database.path.unlink(missing_ok=True)
@@ -102,7 +102,7 @@ def database_upgrade(bot: Bot, *, force: bool) -> None:
     ).get_current_head()
 
     if force or click.confirm(
-        f"The database at {bot.config.database.path} will be upgraded from version {current_version} to {latest_version}. Do you want to proceed?",  # noqa:E501
+        f"The database at {bot.config.database.path} will be upgraded from version {current_version} to {latest_version}. Do you want to proceed?",  # ruff:ignore[line-too-long]
         default=False,
     ):
         upgrade_existing_sqlite_database(database_path=bot.config.database.path)

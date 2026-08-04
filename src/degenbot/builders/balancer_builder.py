@@ -96,7 +96,7 @@ class BalancerBuilder(BalancerBuilderBase):
             raise BrokenPool
 
         # 2. Fetch pool ID from chain
-        pool_id = BalancerBuilderBase._fetch_pool_id(  # noqa: SLF001
+        pool_id = BalancerBuilderBase._fetch_pool_id(  # ruff:ignore[private-member-access]
             io,
             pool_address,
             state_block,
@@ -106,14 +106,14 @@ class BalancerBuilder(BalancerBuilderBase):
         pool_id_decoded = self.decode_pool_id(pool_id)
 
         # 4. Fetch tokens and balances from Vault
-        token_addresses, balances = BalancerBuilderBase._fetch_vault_tokens(  # noqa: SLF001
+        token_addresses, balances = BalancerBuilderBase._fetch_vault_tokens(  # ruff:ignore[private-member-access]
             io,
             pool_id,
             state_block,
         )
 
         # 5. Fetch fee
-        fee = BalancerBuilderBase._fetch_swap_fee(  # noqa: SLF001
+        fee = BalancerBuilderBase._fetch_swap_fee(  # ruff:ignore[private-member-access]
             io,
             pool_address,
             state_block,
@@ -131,7 +131,7 @@ class BalancerBuilder(BalancerBuilderBase):
         )
 
         # 7. Detect pool type and build
-        pool_type = BalancerBuilderBase._detect_pool_type(  # noqa: SLF001
+        pool_type = BalancerBuilderBase._detect_pool_type(  # ruff:ignore[private-member-access]
             io,
             pool_address,
             state_block,
@@ -163,7 +163,7 @@ class BalancerBuilder(BalancerBuilderBase):
         ]
 
         # Fetch weights
-        weights = BalancerBuilderBase._fetch_weights(  # noqa: SLF001
+        weights = BalancerBuilderBase._fetch_weights(  # ruff:ignore[private-member-access]
             io,
             ctx.address,
             ctx.state_block,
@@ -195,7 +195,7 @@ class BalancerBuilder(BalancerBuilderBase):
             "register_balancer_weighted_pool returned a pool_id with no handle"
         )
 
-        pool = BalancerV2Pool._from_py_pool(py_pool)  # noqa: SLF001
+        pool = BalancerV2Pool._from_py_pool(py_pool)  # ruff:ignore[private-member-access]
 
         self._pools.add(pool, chain_id=ctx.chain_id, pool_address=pool.address)
         return pool
@@ -218,7 +218,7 @@ class BalancerBuilder(BalancerBuilderBase):
         ]
 
         # Fetch amp
-        amp = BalancerBuilderBase._fetch_amp(  # noqa: SLF001
+        amp = BalancerBuilderBase._fetch_amp(  # ruff:ignore[private-member-access]
             io,
             ctx.address,
             ctx.state_block,
@@ -232,7 +232,7 @@ class BalancerBuilder(BalancerBuilderBase):
         )
 
         # Fetch rate providers and compute scaling factors
-        rate_provider_addresses = BalancerBuilderBase._fetch_rate_providers(  # noqa: SLF001
+        rate_provider_addresses = BalancerBuilderBase._fetch_rate_providers(  # ruff:ignore[private-member-access]
             io,
             ctx.address,
             ctx.state_block,
@@ -240,7 +240,7 @@ class BalancerBuilder(BalancerBuilderBase):
         base_sf = tuple(_compute_scaling_factor(t) for t in tokens)
 
         if rate_provider_addresses:
-            rates = BalancerBuilderBase._fetch_rates(  # noqa: SLF001
+            rates = BalancerBuilderBase._fetch_rates(  # ruff:ignore[private-member-access]
                 io,
                 rate_provider_addresses,
                 ctx.state_block,
@@ -285,7 +285,7 @@ class BalancerBuilder(BalancerBuilderBase):
             "register_balancer_stable_pool returned a pool_id with no handle"
         )
 
-        pool = BalancerV2StablePool._from_py_pool(py_pool)  # noqa: SLF001
+        pool = BalancerV2StablePool._from_py_pool(py_pool)  # ruff:ignore[private-member-access]
 
         self._pools.add(pool, chain_id=ctx.chain_id, pool_address=pool.address)
         return pool
@@ -309,7 +309,7 @@ class BalancerBuilder(BalancerBuilderBase):
         assert io is not None
 
         if isinstance(pool, BalancerV2Pool):
-            _, new_balances = BalancerBuilderBase._fetch_vault_tokens(  # noqa: SLF001
+            _, new_balances = BalancerBuilderBase._fetch_vault_tokens(  # ruff:ignore[private-member-access]
                 io,
                 pool.pool_id,
                 block_number,
@@ -326,7 +326,7 @@ class BalancerBuilder(BalancerBuilderBase):
             return True
 
         if isinstance(pool, BalancerV2StablePool):
-            _, new_balances = BalancerBuilderBase._fetch_vault_tokens(  # noqa: SLF001
+            _, new_balances = BalancerBuilderBase._fetch_vault_tokens(  # ruff:ignore[private-member-access]
                 io,
                 pool.pool_id,
                 block_number,

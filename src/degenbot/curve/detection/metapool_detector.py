@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 
 # 3Crv LP token — used as fallback base pool detection
-_THREE_CRV_LP_TOKEN_ADDRESS = "0x6c3F90f043a72FA612Cbac8115ee7e52bDE6E490"  # noqa: S105
+_THREE_CRV_LP_TOKEN_ADDRESS = "0x6c3F90f043a72FA612Cbac8115ee7e52bDE6E490"  # ruff:ignore[hardcoded-password-string]
 _THREE_CRV_POOL_ADDRESS = get_checksum_address("0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7")
 
 
@@ -47,7 +47,7 @@ def detect_metapool(
 
     """
     for registry_address in registry_addresses:
-        try:  # noqa:PLW0717
+        try:  # ruff:ignore[too-many-statements-in-try-clause]
             is_meta_result = io.call_raw(
                 {
                     "to": registry_address,
@@ -161,7 +161,7 @@ def _resolve_base_pool_address(
     # Last resort: if the pool's second token is the 3Crv LP token,
     # use the tripool as the base pool
     if (
-        len(token_addresses) >= 2  # noqa: PLR2004
+        len(token_addresses) >= 2  # ruff:ignore[magic-value-comparison]
         and token_addresses[1].lower() == _THREE_CRV_LP_TOKEN_ADDRESS.lower()
     ):
         return _THREE_CRV_POOL_ADDRESS

@@ -64,11 +64,11 @@ def release_python_state(bot: _BotLike) -> None:
     registries. Idempotent and safe to call before :func:`close`.
     """
     # 1. Drop tracker caches and snapshots (prevent them pinning pool objects)
-    for tracker in bot._trackers.values():  # noqa: SLF001
+    for tracker in bot._trackers.values():  # ruff:ignore[private-member-access]
         if hasattr(tracker, "_tracked_pools"):
-            tracker._tracked_pools.clear()  # noqa: SLF001
+            tracker._tracked_pools.clear()  # ruff:ignore[private-member-access]
         if hasattr(tracker, "_untracked_pools"):
-            tracker._untracked_pools.clear()  # noqa: SLF001
+            tracker._untracked_pools.clear()  # ruff:ignore[private-member-access]
         unload_snapshot = getattr(tracker, "unload_snapshot", None)
         if callable(unload_snapshot):
             unload_snapshot()
@@ -78,7 +78,7 @@ def release_python_state(bot: _BotLike) -> None:
     # keeps writing V3 Mint/Burn/Swap through the shared core, so we must NOT
     # unregister (propagate_to_rust=False). Unregistering is end-of-life only
     # (`close`), where the whole Rust state is torn down alongside the bot.
-    bot.pools._reset(propagate_to_rust=False)  # type: ignore[attr-defined]  # noqa: SLF001
+    bot.pools._reset(propagate_to_rust=False)  # type: ignore[attr-defined]  # ruff:ignore[private-member-access]
     bot.tokens.reset()  # type: ignore[attr-defined]
 
 
@@ -91,7 +91,7 @@ def close(bot: _BotLike) -> None:
     """
     if getattr(bot, "_closed", False):
         return
-    bot._closed = True  # type: ignore[attr-defined]  # noqa: SLF001
+    bot._closed = True  # type: ignore[attr-defined]  # ruff:ignore[private-member-access]
 
     # 1. Drop tracker caches/snapshots + pool/token registries (idempotent)
     release_python_state(bot)
@@ -109,12 +109,12 @@ def close(bot: _BotLike) -> None:
         dispose()  # type: ignore[call-arg]
 
     # 4. Close the provider connection if it exposes close()
-    if hasattr(bot._provider, "close"):  # noqa: SLF001
-        bot._provider.close()  # type: ignore[attr-defined]  # noqa: SLF001
+    if hasattr(bot._provider, "close"):  # ruff:ignore[private-member-access]
+        bot._provider.close()  # type: ignore[attr-defined]  # ruff:ignore[private-member-access]
 
     # 5. Drop our own references (engine keeps its own PyBot ref)
-    bot._py_bot = None  # type: ignore[attr-defined]  # noqa: SLF001
-    bot._provider = None  # type: ignore[attr-defined]  # noqa: SLF001
+    bot._py_bot = None  # type: ignore[attr-defined]  # ruff:ignore[private-member-access]
+    bot._provider = None  # type: ignore[attr-defined]  # ruff:ignore[private-member-access]
 
     # 6. Drop the I/O seam (`PyBotIo`) and the on-demand async adapter. Both
     #    hold a strong reference to the shared provider's `Arc<dyn Provider>`;
@@ -124,8 +124,8 @@ def close(bot: _BotLike) -> None:
     #    `Reconnection attempt N/10 …` for up to 10 backoff attempts. Dropping
     #    them here lets the provider's pubsub shut down cleanly
     #    ("request channel closed") before any consumer of the endpoint dies.
-    bot._io = None  # noqa: SLF001
-    bot._async_adapter = None  # noqa: SLF001
+    bot._io = None  # ruff:ignore[private-member-access]
+    bot._async_adapter = None  # ruff:ignore[private-member-access]
 
     # 7. Drop the registries + builders + ctx that each hold a strong ref to
     #    `_py_bot` (PoolRegistry → PyBot, Tokens/Trackers, BuilderContext →
@@ -137,12 +137,12 @@ def close(bot: _BotLike) -> None:
     bot.pools = None
     bot.tokens = None
     bot.managed_pools = None
-    bot._trackers = None  # noqa: SLF001
-    bot._erc20_builder = None  # noqa: SLF001
-    bot._v2_builder = None  # noqa: SLF001
-    bot._aerodrome_v2_builder = None  # noqa: SLF001
-    bot._v3_builder = None  # noqa: SLF001
-    bot._v4_builder = None  # noqa: SLF001
-    bot._curve_builder = None  # noqa: SLF001
-    bot._balancer_builder = None  # noqa: SLF001
-    bot._builders = None  # noqa: SLF001
+    bot._trackers = None  # ruff:ignore[private-member-access]
+    bot._erc20_builder = None  # ruff:ignore[private-member-access]
+    bot._v2_builder = None  # ruff:ignore[private-member-access]
+    bot._aerodrome_v2_builder = None  # ruff:ignore[private-member-access]
+    bot._v3_builder = None  # ruff:ignore[private-member-access]
+    bot._v4_builder = None  # ruff:ignore[private-member-access]
+    bot._curve_builder = None  # ruff:ignore[private-member-access]
+    bot._balancer_builder = None  # ruff:ignore[private-member-access]
+    bot._builders = None  # ruff:ignore[private-member-access]

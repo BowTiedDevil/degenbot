@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from degenbot.builders.v2_builder_base import V2BuilderBase
 from degenbot.checksum_cache import get_checksum_address
@@ -107,6 +107,10 @@ class V2PoolBuilder(V2BuilderBase):
         if pool_class is None:
             msg = f"No V2 pool class registered for chain {chain_id}, factory {common.factory}"
             raise ValueError(msg)
+        # The registry types the class as the structural ConstantProductPool
+        # protocol, but the concrete class carries the `_from_py_pool`
+        # construction seam (returns a concrete instance via `Self`).
+        pool_class = cast("type[UniswapV2Pool]", pool_class)
 
         # Resolve the canonical DexIdentity preset (ADR-005 slice 7 step 3) —
         # carries the variant tag, reserves ABI shape, + default fees. Passed
@@ -168,7 +172,7 @@ class V2PoolBuilder(V2BuilderBase):
         py_pool = self._py_bot.get_pool(pool_id)
         assert py_pool is not None, "register_v2_pool returned a pool_id with no handle"
 
-        pool = pool_class._from_py_pool(py_pool)  # noqa: SLF001
+        pool = pool_class._from_py_pool(py_pool)  # ruff:ignore[private-member-access]
 
         # Register pool
         self._register_pool(pool, chain_id=chain_id)
@@ -234,7 +238,7 @@ class V2PoolBuilder(V2BuilderBase):
         assert io is not None, "io must be provided for update()"
         block_number_ = block_number if block_number is not None else io.get_block_number()
         block_number_ = int(block_number_) if not isinstance(block_number_, int) else block_number_
-        reserves0, reserves1 = V2BuilderBase._fetch_reserves(  # noqa: SLF001
+        reserves0, reserves1 = V2BuilderBase._fetch_reserves(  # ruff:ignore[private-member-access]
             pool.address,
             io,
             block_identifier=block_number_,

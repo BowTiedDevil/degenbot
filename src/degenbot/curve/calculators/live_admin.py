@@ -71,7 +71,7 @@ class LiveAdminDynamicDyCalculator:
         dx: int,
         *,
         inputs: DyCalculationInputs,
-        override_state: CurveStableswapPoolState | None = None,  # noqa: ARG002
+        override_state: CurveStableswapPoolState | None = None,  # ruff:ignore[unused-method-argument]
     ) -> int:
         """Calculate.
 

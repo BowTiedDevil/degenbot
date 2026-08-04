@@ -437,7 +437,7 @@ def aave_update(
 
     cancelled = False
     signal.signal(signal.SIGINT, _on_sigint)
-    try:  # noqa: PLR1702 — market loop nests under try/with/for/with/for/try/with
+    try:  # ruff:ignore[too-many-nested-blocks] — market loop nests under try/with/for/with/for/try/with
         with logging_redirect_tqdm(loggers=[logger]):
             # Active chains (READ — orchestration only; the Rust core owns the
             # per-market write transaction).
@@ -743,14 +743,14 @@ def position_show(bot: Bot, address: str, market: str, chain_id: int) -> None:
     default=False,
     help="Skip fetching prices from oracle (faster, but HF values are relative).",
 )
-def position_risk(  # noqa: PLR0917
+def position_risk(  # ruff:ignore[too-many-positional-arguments]
     bot: Bot,
     market: str,
     chain_id: int,
     threshold: float,
     limit: int | None,
-    show_positions: bool,  # noqa: FBT001
-    skip_prices: bool,  # noqa: FBT001
+    show_positions: bool,  # ruff:ignore[boolean-type-hint-positional-argument]
+    skip_prices: bool,  # ruff:ignore[boolean-type-hint-positional-argument]
 ) -> None:
     """Analyze positions for liquidation risk.
 

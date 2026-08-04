@@ -45,7 +45,9 @@ from degenbot.provider import (
     AsyncAlloyProvider,
 )
 from degenbot.provider.factory import get_provider_from_config
-from degenbot.provider.subscription import Subscription  # noqa: TC001
+from degenbot.provider.subscription import (
+    Subscription,  # ruff:ignore[typing-only-first-party-import]
+)
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -63,7 +65,7 @@ if TYPE_CHECKING:
     from degenbot.types.abstract.pool_tracker import AbstractPoolTracker
     from degenbot.types.rpc_types import BlockIdentifier
 
-from degenbot.types.aliases import ChainId  # noqa: TC001
+from degenbot.types.aliases import ChainId  # ruff:ignore[typing-only-first-party-import]
 
 
 class Bot:
@@ -270,7 +272,7 @@ class Bot:
                 current_version = MigrationContext.configure(
                     connection=self.db.connection(),
                 ).get_current_revision()
-        except Exception:  # noqa: BLE001
+        except Exception:  # ruff:ignore[blind-except]
             return
 
         latest_version = ScriptDirectory.from_config(

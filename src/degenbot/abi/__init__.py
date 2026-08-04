@@ -103,7 +103,7 @@ def decode(types: Sequence[str], data: BytesLike) -> tuple[Any, ...]:
     return tuple(result)
 
 
-def decode_single(abi_type: str, data: BytesLike) -> Any:  # noqa: ANN401 - return depends on abi_type
+def decode_single(abi_type: str, data: BytesLike) -> Any:  # ruff:ignore[any-type] - return depends on abi_type
     """Decode a single ABI value.
 
     Args:

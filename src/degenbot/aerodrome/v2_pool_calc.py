@@ -112,12 +112,12 @@ class AerodromeV2PoolCalc:
             )
         else:  # pragma: no cover
             raise DegenbotValueError(
-                message=f"Could not identify token_out: {token_out}! This pool holds: {self._token0} {self._token1}",  # noqa:E501
+                message=f"Could not identify token_out: {token_out}! This pool holds: {self._token0} {self._token1}",  # ruff:ignore[line-too-long]
             )
 
         if token_out_quantity > reserves_out - 1:
             raise LiquidityPoolError(
-                message=f"Requested amount out ({token_out_quantity}) >= pool reserves ({reserves_out})",  # noqa:E501
+                message=f"Requested amount out ({token_out_quantity}) >= pool reserves ({reserves_out})",  # ruff:ignore[line-too-long]
             )
 
         # Canonical (token0, token1) reserves + decimals needed by the
@@ -319,11 +319,11 @@ class AerodromeV2PoolCalc:
         reserves_out: int,
         fee: Fraction,
         # Stable-only context (ignored by the volatile path).
-        reserves_0: int,  # noqa: ARG004
-        reserves_1: int,  # noqa: ARG004
-        decimals_0: int,  # noqa: ARG004
-        decimals_1: int,  # noqa: ARG004
-        token_in: Literal[0, 1],  # noqa: ARG004
+        reserves_0: int,  # ruff:ignore[unused-static-method-argument]
+        reserves_1: int,  # ruff:ignore[unused-static-method-argument]
+        decimals_0: int,  # ruff:ignore[unused-static-method-argument]
+        decimals_1: int,  # ruff:ignore[unused-static-method-argument]
+        token_in: Literal[0, 1],  # ruff:ignore[unused-static-method-argument]
     ) -> int:
         """Volatile (constant-product) exact-out calculation.
 
@@ -342,8 +342,8 @@ class AerodromeV2PoolCalc:
     def _calc_tokens_in_stable(
         *,
         token_out_quantity: int,
-        reserves_in: int,  # noqa: ARG004
-        reserves_out: int,  # noqa: ARG004
+        reserves_in: int,  # ruff:ignore[unused-static-method-argument]
+        reserves_out: int,  # ruff:ignore[unused-static-method-argument]
         fee: Fraction,
         reserves_0: int,
         reserves_1: int,

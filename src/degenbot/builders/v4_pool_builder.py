@@ -193,7 +193,7 @@ class V4PoolBuilder(V4BuilderBase):
         else:
             if request.state_view_address is None:
                 raise DegenbotValueError(
-                    message="A state view contract address must be provided for a pool not in the database.",  # noqa: E501
+                    message="A state view contract address must be provided for a pool not in the database.",  # ruff:ignore[line-too-long]
                 )
             if request.fee is None:
                 raise DegenbotValueError(
@@ -358,9 +358,9 @@ class V4PoolBuilder(V4BuilderBase):
         # No separate ``update_tick_data`` — the inline seed is complete (tick
         # map + known bitmap words, atomically with registration). A separate
         # REPLACE would clobber live pump events in the now-closed window.
-        pool = UniswapV4Pool._from_py_pool(py_pool_handle)  # noqa: SLF001
+        pool = UniswapV4Pool._from_py_pool(py_pool_handle)  # ruff:ignore[private-member-access]
         # Builder-supplied values the seam defaults; override from RPC.
-        pool._state_view_address = (  # noqa: SLF001
+        pool._state_view_address = (  # ruff:ignore[private-member-access]
             get_checksum_address(state_view_address) if state_view_address else _ZERO_ADDRESS
         )
         pool.protocol_fee = ProtocolFee(
@@ -368,7 +368,7 @@ class V4PoolBuilder(V4BuilderBase):
             one_for_zero=slot0_data.protocol_fee_one_to_zero,
         )
         pool.lp_fee = slot0_data.lp_fee
-        pool._sparse_liquidity_map = not tick_map_is_tracked  # noqa: SLF001
+        pool._sparse_liquidity_map = not tick_map_is_tracked  # ruff:ignore[private-member-access]
 
         # Register pool in managed pool registry
         self._managed_pools.add(
@@ -417,7 +417,7 @@ class V4PoolBuilder(V4BuilderBase):
         # executor; the Python parity-gate fallback is retired).
         sqrt_price_x96, tick_raw, protocol_fee_raw, lp_fee, liquidity_val = (
             io.fetch_v4_slot0_liquidity(
-                pool._state_view_address,  # noqa: SLF001
+                pool._state_view_address,  # ruff:ignore[private-member-access]
                 pool.pool_id,
                 block=block_number_,
             )

@@ -20,10 +20,10 @@ class IntMappedToString(TypeDecorator[int]):
     cache_ok = True
     impl = String(78)
 
-    def process_bind_param(  # ruff: ignore[PLR6301] # required to be a method per SQLAlchemy
+    def process_bind_param(  # ruff: ignore[no-self-use] # required to be a method per SQLAlchemy
         self,
         value: int | None,
-        dialect: Dialect,  # ruff: ignore[ARG002]
+        dialect: Dialect,  # ruff: ignore[unused-method-argument]
     ) -> str | None:
         """Perform the Python type -> DB type conversion.
 
@@ -33,10 +33,10 @@ class IntMappedToString(TypeDecorator[int]):
         """
         return None if value is None else str(value)
 
-    def process_result_value(  # ruff: ignore[PLR6301] # required to be a method per SQLAlchemy
+    def process_result_value(  # ruff: ignore[no-self-use] # required to be a method per SQLAlchemy
         self,
         value: str | None,
-        dialect: Dialect,  # ruff: ignore[ARG002]
+        dialect: Dialect,  # ruff: ignore[unused-method-argument]
     ) -> int | None:
         """Perform the DB type -> Python type conversion.
 

@@ -38,7 +38,7 @@ def _prime_v3_snapshot(snapshot: UniswapV3LiquiditySnapshot) -> None:
     before iterating to ensure all entries are present.
     """
     for pool_address in snapshot.pools:
-        _ = snapshot._liquidity_snapshot[pool_address]  # noqa: SLF001
+        _ = snapshot._liquidity_snapshot[pool_address]  # ruff:ignore[private-member-access]
 
 
 def _prime_v4_snapshot(
@@ -52,7 +52,7 @@ def _prime_v4_snapshot(
     accessed). The caller must provide the set of (pool_manager, pool_id) pairs.
     """
     for pool_manager, pool_id in managed_pools:
-        _ = snapshot._liquidity_snapshot[pool_manager, pool_id]  # noqa: SLF001
+        _ = snapshot._liquidity_snapshot[pool_manager, pool_id]  # ruff:ignore[private-member-access]
 
 
 def _normalize_v4_pool_id(pool_id: str | bytes) -> str:
@@ -85,13 +85,13 @@ def _v3_snapshot_to_py_dict(
         A dict mapping pool addresses to tick data dicts.
 
     """
-    if isinstance(snapshot._source, V3DatabaseSnapshot):  # noqa: SLF001
+    if isinstance(snapshot._source, V3DatabaseSnapshot):  # ruff:ignore[private-member-access]
         # Batch raw SQL path — already returns {addr: {tick: (lg, ln)}}
-        return {str(k): v for k, v in snapshot._source.get_all_liquidity_maps().items()}  # noqa: SLF001
+        return {str(k): v for k, v in snapshot._source.get_all_liquidity_maps().items()}  # ruff:ignore[private-member-access]
 
     # Fallback: prime the lazy dict and convert from Pydantic models
     _prime_v3_snapshot(snapshot)
-    liquidity_snapshot = snapshot._liquidity_snapshot  # noqa: SLF001
+    liquidity_snapshot = snapshot._liquidity_snapshot  # ruff:ignore[private-member-access]
 
     result: dict[str, dict[int, tuple[int, int]]] = {}
     for pool_address, pool_mapping in liquidity_snapshot.items():
@@ -125,9 +125,9 @@ def _v4_snapshot_to_py_dict(
         A dict mapping pool manager addresses to pool ID dicts.
 
     """
-    if isinstance(snapshot._source, V4DatabaseSnapshot):  # noqa: SLF001
+    if isinstance(snapshot._source, V4DatabaseSnapshot):  # ruff:ignore[private-member-access]
         # Batch raw SQL path — returns {(pm_addr, pool_id_hex): {tick: (lg, ln)}}
-        all_maps = snapshot._source.get_all_liquidity_maps()  # noqa: SLF001
+        all_maps = snapshot._source.get_all_liquidity_maps()  # ruff:ignore[private-member-access]
         result: dict[str, dict[str, dict[int, tuple[int, int]]]] = {}
         for (pm_addr, pool_id_hex), tick_data in all_maps.items():
             if pm_addr not in result:
@@ -137,7 +137,7 @@ def _v4_snapshot_to_py_dict(
 
     # Fallback: prime the lazy dict and convert from Pydantic models
     _prime_v4_snapshot(snapshot, managed_pools if managed_pools is not None else snapshot.pools)
-    liquidity_snapshot = snapshot._liquidity_snapshot  # noqa: SLF001
+    liquidity_snapshot = snapshot._liquidity_snapshot  # ruff:ignore[private-member-access]
 
     result: dict[str, dict[str, dict[int, tuple[int, int]]]] = {}
     for (pm_addr, pool_id), pool_mapping in liquidity_snapshot.items():

@@ -156,7 +156,7 @@ def _fetch_v3(
     # executor; the Python parity-gate fallback is retired).
     try:
         bitmap_value = io.fetch_tick_bitmap(pool_ref.address, word_position, block=block_number)
-    except Exception:  # noqa: BLE001
+    except Exception:  # ruff:ignore[blind-except]
         return False
 
     if bitmap_value != 0:
@@ -173,7 +173,7 @@ def _fetch_v3(
                     active_tick,
                     block=block_number,
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:  # ruff:ignore[blind-except]
                 logger.debug(
                     "Failed to fetch tick data for tick %d",
                     active_tick,
@@ -215,7 +215,7 @@ def _fetch_v4(
             word_position,
             block=block_number,
         )
-    except Exception:  # noqa: BLE001
+    except Exception:  # ruff:ignore[blind-except]
         return False
 
     if bitmap_value != 0:
@@ -233,7 +233,7 @@ def _fetch_v4(
                     active_tick,
                     block=block_number,
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:  # ruff:ignore[blind-except]
                 logger.debug(
                     "Failed to fetch V4 tick data for tick %d",
                     active_tick,

@@ -94,7 +94,7 @@ class _StaticRateProvider:
     def __init__(self, rates: tuple[int, ...]) -> None:
         self._rates = rates
 
-    def get_rates(self, block_identifier: int | str | None = None) -> tuple[int, ...]:  # noqa: ARG002
+    def get_rates(self, block_identifier: int | str | None = None) -> tuple[int, ...]:  # ruff:ignore[unused-method-argument]
         return self._rates
 
 
@@ -180,7 +180,7 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
     _rate_provider_is_static: bool
     _subscribers: WeakSet[Subscriber]
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+    def __init__(self, *args: Any, **kwargs: Any) -> None:  # ruff:ignore[unused-method-argument]
         """Direct construction is forbidden.
 
         ``BalancerV2StablePool`` is a Python companion over a Rust-owned
@@ -253,7 +253,7 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
             )
             raise DegenbotValueError(message=msg)
         self._tokens = tuple(
-            Erc20Token._from_py_token(t)  # noqa: SLF001
+            Erc20Token._from_py_token(t)  # ruff:ignore[private-member-access]
             for t in py_tokens
         )
 

@@ -194,7 +194,7 @@ def _descriptor_from_probing_result(
 def fetch_factory_from_chain(
     address: ChecksumAddress,
     *,
-    chain_id: ChainId,  # noqa: ARG001 — kept for API consistency with resolve_pool_type
+    chain_id: ChainId,  # ruff:ignore[unused-function-argument] — kept for API consistency with resolve_pool_type
     io: PyBotIo,
 ) -> ChecksumAddress | None:
     """Fetch the factory address from the pool contract's factory() method.

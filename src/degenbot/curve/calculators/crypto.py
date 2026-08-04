@@ -30,14 +30,14 @@ class CryptoDyCalculator:
 
     swap_style: SwapStyle = SwapStyle.CRYPTO
 
-    def calculate(  # noqa: PLR6301
+    def calculate(  # ruff:ignore[no-self-use]
         self,
         i: int,
         j: int,
         dx: int,
         *,
         inputs: DyCalculationInputs,
-        override_state: CurveStableswapPoolState | None = None,  # noqa: ARG002
+        override_state: CurveStableswapPoolState | None = None,  # ruff:ignore[unused-method-argument]
     ) -> int:
         """Calculate.
 

@@ -64,7 +64,7 @@ class AerodromeV2Pool(
     name: str
     _subscribers: WeakSet[Subscriber]
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+    def __init__(self, *args: Any, **kwargs: Any) -> None:  # ruff:ignore[unused-method-argument]
         """Direct construction is forbidden.
 
         ``AerodromeV2Pool`` is a Python companion over a Rust-owned
@@ -127,8 +127,8 @@ class AerodromeV2Pool(
                 "(ADR-006): get_token0/get_token1 returned None"
             )
             raise DegenbotValueError(message=msg)
-        self._token0 = Erc20Token._from_py_token(py_token0)  # noqa: SLF001
-        self._token1 = Erc20Token._from_py_token(py_token1)  # noqa: SLF001
+        self._token0 = Erc20Token._from_py_token(py_token0)  # ruff:ignore[private-member-access]
+        self._token1 = Erc20Token._from_py_token(py_token1)  # ruff:ignore[private-member-access]
 
         self._stable = py_pool.aerodrome_stable
         fee_numer, fee_denom = py_pool.aerodrome_fee
@@ -137,7 +137,7 @@ class AerodromeV2Pool(
         # Wire calculation strategy at construction.
         self._wire_stable_calculations(stable=self._stable)
 
-        self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, {100 * self._fee.numerator / self._fee.denominator:.2f}%)"  # noqa: E501
+        self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, {100 * self._fee.numerator / self._fee.denominator:.2f}%)"  # ruff:ignore[line-too-long]
 
         self._initial_state_block = py_pool.update_block
         self._subscribers = WeakSet()
@@ -150,7 +150,7 @@ class AerodromeV2Pool(
             A string representation of the object.
 
         """
-        return f"{self.__class__.__name__}(address={self.address}, token0={self._token0}, token1={self._token1}, stable={self._stable})"  # noqa:E501
+        return f"{self.__class__.__name__}(address={self.address}, token0={self._token0}, token1={self._token1}, stable={self._stable})"  # ruff:ignore[line-too-long]
 
     @property
     def reserves_token0(self) -> int:
@@ -216,7 +216,7 @@ class AerodromeV2Pool(
         """
         if update.block_number < self.update_block:
             raise ExternalUpdateError(
-                message=f"Rejected update for block {update.block_number} in the past, current update block is {self.update_block}",  # noqa:E501
+                message=f"Rejected update for block {update.block_number} in the past, current update block is {self.update_block}",  # ruff:ignore[line-too-long]
             )
 
         self._py_pool.apply_aerodrome_sync(

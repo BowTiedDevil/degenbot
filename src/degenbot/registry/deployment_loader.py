@@ -111,7 +111,7 @@ def _pool_type_map() -> dict[str, type[AbstractLiquidityPool]]:
         A mapping of pool type string to its Python pool class.
 
     """
-    global _POOL_TYPE_MAP  # noqa: PLW0603
+    global _POOL_TYPE_MAP  # ruff:ignore[global-statement]
     if _POOL_TYPE_MAP is None:
         from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
         from degenbot.balancer.pools import BalancerV2Pool
@@ -210,7 +210,7 @@ def _read_json(path: Path) -> list[DeploymentRecord]:
     deployments = data.get("deployments") if isinstance(data, dict) else None
     if not isinstance(deployments, list):
         msg = f"deployments JSON at {path} must have a top-level 'deployments' list"
-        raise ValueError(msg)  # noqa: TRY004 — structural error, not a type error
+        raise ValueError(msg)  # ruff:ignore[type-check-without-type-error] — structural error, not a type error
     return [_parse_record(entry) for entry in deployments]
 
 

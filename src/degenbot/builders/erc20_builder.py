@@ -94,7 +94,7 @@ class Erc20Builder:
                 18,
                 chain_id,
             )
-            token: Erc20Token = EtherPlaceholder._from_py_token(py_token)  # noqa: SLF001
+            token: Erc20Token = EtherPlaceholder._from_py_token(py_token)  # ruff:ignore[private-member-access]
             self._tokens.add(token_address=token.address, chain_id=chain_id, token=token)
             if not silent:
                 logger.info(f"• {token.symbol} ({token.name})")
@@ -200,7 +200,7 @@ class Erc20Builder:
                     )
 
         py_token = self._py_bot.register_token(address, name, symbol, decimals, chain_id)
-        token = Erc20Token._from_py_token(py_token)  # noqa: SLF001
+        token = Erc20Token._from_py_token(py_token)  # ruff:ignore[private-member-access]
 
         # Register (no self-registration)
         self._tokens.add(token_address=token.address, chain_id=chain_id, token=token)
@@ -210,7 +210,7 @@ class Erc20Builder:
 
         return token
 
-    def get_token_balance(  # noqa: PLR6301
+    def get_token_balance(  # ruff:ignore[no-self-use]
         self,
         token: Erc20Token,
         address: str,
@@ -241,7 +241,7 @@ class Erc20Builder:
         token.set_cached_balance(address, block_number, balance)
         return balance
 
-    def get_token_approval(  # noqa: PLR6301
+    def get_token_approval(  # ruff:ignore[no-self-use]
         self,
         token: Erc20Token,
         owner: str,
@@ -273,7 +273,7 @@ class Erc20Builder:
         token.set_cached_approval(block_number, owner, spender, approval)
         return approval
 
-    def get_token_total_supply(  # noqa: PLR6301
+    def get_token_total_supply(  # ruff:ignore[no-self-use]
         self,
         token: Erc20Token,
         block_identifier: BlockIdentifier | None = None,
@@ -301,9 +301,9 @@ class Erc20Builder:
         token.set_cached_total_supply(block_number, total_supply)
         return total_supply
 
-    def get_ether_balance(  # noqa: PLR6301
+    def get_ether_balance(  # ruff:ignore[no-self-use]
         self,
-        chain_id: ChainId,  # noqa: ARG002
+        chain_id: ChainId,  # ruff:ignore[unused-method-argument]
         address: str,
         block_identifier: BlockIdentifier | None = None,
         *,

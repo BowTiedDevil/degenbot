@@ -305,7 +305,7 @@ class AbstractUniswapV3PoolTracker[Pool: UniswapV3Pool](AbstractPoolTracker[Pool
         """The snapshot, if loaded."""
         return self._snapshot
 
-    def backfill_snapshot(self, current_block: int) -> None:  # noqa: ARG002
+    def backfill_snapshot(self, current_block: int) -> None:  # ruff:ignore[unused-method-argument]
         """Apply pending snapshot updates to all tracked V3 pools and return engine updates.
 
         Call this after `fetch_new_events` / `fetch_new_events_async` has populated

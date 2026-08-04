@@ -44,4 +44,9 @@ def cli(ctx: click.Context) -> None:
     ctx.obj = Bot.from_config_file()
 
 
-from . import aave, database, exchange, pool  # noqa: F401, E402
+from . import (  # ruff:ignore[unused-import, module-import-not-at-top-of-file]
+    aave,
+    database,
+    exchange,
+    pool,
+)

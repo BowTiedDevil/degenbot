@@ -143,7 +143,7 @@ class UniswapV3Pool(
         "bool",
     )
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+    def __init__(self, *args: Any, **kwargs: Any) -> None:  # ruff:ignore[unused-method-argument]
         """Direct construction is forbidden.
 
         ``UniswapV3Pool`` is a Python companion over a Rust-owned
@@ -223,8 +223,8 @@ class UniswapV3Pool(
                 "(ADR-006): get_token0/get_token1 returned None"
             )
             raise DegenbotValueError(message=msg)
-        self._token0 = Erc20Token._from_py_token(py_token0)  # noqa: SLF001
-        self._token1 = Erc20Token._from_py_token(py_token1)  # noqa: SLF001
+        self._token0 = Erc20Token._from_py_token(py_token0)  # ruff:ignore[private-member-access]
+        self._token1 = Erc20Token._from_py_token(py_token1)  # ruff:ignore[private-member-access]
 
         # Deployer / init-hash: read off the Rust handle (Fork A, P62DKO).
         # The builder resolved the JSON-sourced deployer (effective deployer,
@@ -263,7 +263,7 @@ class UniswapV3Pool(
             The string representation of the pool.
 
         """
-        return f"{self.__class__.__name__}(address={self.address}, token0={self._token0}, token1={self._token1}, fee={100 * self._fee / self.FEE_DENOMINATOR:.2f}%, tick spacing={self._tick_spacing})"  # noqa:E501
+        return f"{self.__class__.__name__}(address={self.address}, token0={self._token0}, token1={self._token1}, fee={100 * self._fee / self.FEE_DENOMINATOR:.2f}%, tick spacing={self._tick_spacing})"  # ruff:ignore[line-too-long]
 
     def __str__(self) -> str:
         """Return the canonical string representation.
@@ -360,7 +360,7 @@ class UniswapV3Pool(
         # replaces the derived entry (so snapshot bitmaps are preserved
         # verbatim and checked-empty words appear as present-but-zero).
         for word, bitmap_at_word in self._bitmap_override.items():
-            result[word] = bitmap_at_word  # noqa: PERF403
+            result[word] = bitmap_at_word  # ruff:ignore[manual-dict-comprehension]
         return result
 
     @property
@@ -396,10 +396,10 @@ class UniswapV3Pool(
         """
         return self._py_pool.update_block
 
-    def swap_is_viable(  # noqa: PLR6301
+    def swap_is_viable(  # ruff:ignore[no-self-use]
         self,
         state: PoolState,
-        vector: UniswapPoolSwapVector,  # noqa: ARG002
+        vector: UniswapPoolSwapVector,  # ruff:ignore[unused-method-argument]
     ) -> bool:
         """Swap is viable.
 
@@ -447,7 +447,7 @@ class UniswapV3Pool(
                 normalized[int(tick)] = (
                     int(info[0]),
                     int(info[1]),
-                    int(info[2]) if len(info) > 2 else block,  # noqa: PLR2004
+                    int(info[2]) if len(info) > 2 else block,  # ruff:ignore[magic-value-comparison]
                 )
         self._py_pool.update_tick_data(tick_bitmap, normalized, block)
         # Record every word the caller passed (verbatim bitmap override) so
@@ -850,7 +850,7 @@ class UniswapV3Pool(
         self,
         token_in: ChecksumAddress,
         amount_in: int,
-        token_out: ChecksumAddress,  # noqa: ARG002
+        token_out: ChecksumAddress,  # ruff:ignore[unused-method-argument]
         state_override: AbstractPoolState | None = None,
     ) -> SimulationResult:
         """Simulate swap.
@@ -891,7 +891,7 @@ class UniswapV3Pool(
 
     def simulate_swap_for_output(
         self,
-        token_in: ChecksumAddress,  # noqa: ARG002
+        token_in: ChecksumAddress,  # ruff:ignore[unused-method-argument]
         token_out: ChecksumAddress,
         amount_out: int,
         state_override: UniswapV3PoolState | None = None,

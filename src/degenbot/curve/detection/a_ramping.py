@@ -34,7 +34,7 @@ def detect_a_ramping(
         The computed value.
 
     """
-    try:  # noqa:PLW0717
+    try:  # ruff:ignore[too-many-statements-in-try-clause]
         initial_a_result = io.call_raw(
             {
                 "to": pool_address,

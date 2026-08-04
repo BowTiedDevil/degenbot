@@ -250,7 +250,7 @@ class CurveStableswapPool(
     MAX_COINS: int = 8
     # BASE_CACHE_EXPIRES moved to PerBlockCache
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+    def __init__(self, *args: Any, **kwargs: Any) -> None:  # ruff:ignore[unused-method-argument]
         """Direct construction is forbidden.
 
         A ``CurveStableswapPool`` is a companion over a Rust-owned
@@ -319,7 +319,7 @@ class CurveStableswapPool(
             )
             raise DegenbotValueError(message=msg)
         self._tokens = tuple(
-            Erc20Token._from_py_token(t)  # noqa: SLF001
+            Erc20Token._from_py_token(t)  # ruff:ignore[private-member-access]
             for t in py_tokens
         )
 
@@ -370,13 +370,13 @@ class CurveStableswapPool(
         # Underlying + LP tokens — recovered as companion handles.
         underlying = py_pool.get_curve_tokens_underlying()
         self._tokens_underlying = (
-            tuple(Erc20Token._from_py_token(t) for t in underlying)  # noqa: SLF001
+            tuple(Erc20Token._from_py_token(t) for t in underlying)  # ruff:ignore[private-member-access]
             if underlying is not None
             else None
         )
         lp = py_pool.get_curve_lp_token()
         self._lp_token = (
-            Erc20Token._from_py_token(lp) if lp is not None else self._tokens[0]  # noqa: SLF001
+            Erc20Token._from_py_token(lp) if lp is not None else self._tokens[0]  # ruff:ignore[private-member-access]
         )
 
         ul = tuple(py_pool.curve_use_lending)
@@ -435,7 +435,7 @@ class CurveStableswapPool(
 
         """
         token_string = "-".join([token.symbol for token in self._tokens])
-        return f"{self.__class__.__name__}(address={self.address}, tokens={token_string}, fee={100 * self.fee / self.FEE_DENOMINATOR:.2f}%, A={self.a_coefficient})"  # noqa:E501
+        return f"{self.__class__.__name__}(address={self.address}, tokens={token_string}, fee={100 * self.fee / self.FEE_DENOMINATOR:.2f}%, A={self.a_coefficient})"  # ruff:ignore[line-too-long]
 
     @property
     def balances(self) -> tuple[int, ...]:
@@ -1187,7 +1187,7 @@ class CurveStableswapPool(
                 assert self.base_pool is not None
                 assert self.tokens_underlying is not None
 
-            # TODO:  # noqa: FIX002 see if any of these checks are unnecessary (partial zero balance OK?)
+            # TODO:  # ruff:ignore[line-contains-todo] see if any of these checks are unnecessary (partial zero balance OK?)
             if any(balance == 0 for balance in self.base_pool.balances):
                 raise NoLiquidity(message="One or more of the base pool tokens has a zero balance.")
             if any(balance == 0 for balance in self.balances):
@@ -1331,7 +1331,7 @@ class _LazyBasePool:
 
     def _pool(self) -> CurveStableswapPool:
         if self._built is None:
-            self._built = CurveStableswapPool._from_py_pool(self._handle)  # noqa: SLF001
+            self._built = CurveStableswapPool._from_py_pool(self._handle)  # ruff:ignore[private-member-access]
         return self._built
 
     @property

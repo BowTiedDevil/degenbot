@@ -72,7 +72,7 @@ class DegenbotConfig(BaseSettings):
 
     @field_validator("rpc", mode="after")
     def validate_paths(
-        cls,  # noqa: N805
+        cls,  # ruff:ignore[invalid-first-argument-name-for-method]
         rpc_dict: dict[ChainId, HttpUrl | WebsocketUrl | Path],
     ) -> dict[ChainId, HttpUrl | WebsocketUrl | Path]:
         """Validate the endpoints.

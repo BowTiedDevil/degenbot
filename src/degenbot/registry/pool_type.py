@@ -8,7 +8,7 @@ is carried by the registration call.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.types.pool_type import PoolFamily, PoolTypeDescriptor, derive_kind
@@ -309,9 +309,12 @@ class PoolTypeRegistry:
         """
         entry = self._entries.get((chain_id, factory_address))
         if entry is not None:
-            # Type narrowing: entry.pool_class satisfies ConstantProductPool
-            # because _derive_family validated the structural shape at registration
-            return entry.pool_class
+            # Entry's pool class satisfies ConstantProductPool structurally
+            # (_derive_family validated the shape at registration), but the
+            # registry stores it as `type[AbstractLiquidityPool]` because the
+            # `family` override can be supplied independently of the class
+            # shape. Cast to the narrowed protocol the caller expects.
+            return cast("type[ConstantProductPool]", entry.pool_class)
         return self._default_v2_class
 
     def get_v3_class(
@@ -327,9 +330,12 @@ class PoolTypeRegistry:
         """
         entry = self._entries.get((chain_id, factory_address))
         if entry is not None:
-            # Type narrowing: entry.pool_class satisfies ConcentratedLiquidityPool
-            # because _derive_family validated the structural shape at registration
-            return entry.pool_class
+            # Entry's pool class satisfies ConcentratedLiquidityPool structurally
+            # (_derive_family validated the shape at registration), but the
+            # registry stores it as `type[AbstractLiquidityPool]` because the
+            # `family` override can be supplied independently of the class
+            # shape. Cast to the narrowed protocol the caller expects.
+            return cast("type[ConcentratedLiquidityPool]", entry.pool_class)
         return self._default_v3_class
 
     def get_descriptor(self, chain_id: ChainId, factory_address: str) -> PoolTypeDescriptor | None:

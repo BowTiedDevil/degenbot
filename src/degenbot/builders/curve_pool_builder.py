@@ -183,7 +183,7 @@ class CurvePoolBuilder:
             precision_multipliers=precision_multipliers_list,
             rate_multipliers=rate_multipliers,
         )
-        pool = CurveStableswapPool._from_py_pool(  # noqa: SLF001
+        pool = CurveStableswapPool._from_py_pool(  # ruff:ignore[private-member-access]
             self._register_handle(
                 address=pool_address,
                 tokens=tokens,

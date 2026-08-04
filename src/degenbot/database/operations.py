@@ -224,7 +224,7 @@ def get_scoped_sqlite_session(database_path: pathlib.Path) -> scoped_session[Ses
     )
 
     @event.listens_for(engine, "connect")
-    def _set_sqlite_pragmas(dbapi_connection, _connection_record) -> None:  # noqa: ANN001
+    def _set_sqlite_pragmas(dbapi_connection, _connection_record) -> None:  # ruff:ignore[missing-type-function-argument]
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL;")
         cursor.execute("PRAGMA busy_timeout=5000;")

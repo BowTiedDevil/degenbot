@@ -199,7 +199,7 @@ class UniswapV4Pool(
     _tick_data_fetcher: Any
     _subscribers: WeakSet[Subscriber]
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+    def __init__(self, *args: Any, **kwargs: Any) -> None:  # ruff:ignore[unused-method-argument]
         """Direct construction is forbidden.
 
         ``UniswapV4Pool`` is a Python companion over a Rust-owned
@@ -280,8 +280,8 @@ class UniswapV4Pool(
                 "(ADR-006): get_token0/get_token1 returned None"
             )
             raise DegenbotValueError(message=msg)
-        self._token0 = Erc20Token._from_py_token(py_token0)  # noqa: SLF001
-        self._token1 = Erc20Token._from_py_token(py_token1)  # noqa: SLF001
+        self._token0 = Erc20Token._from_py_token(py_token0)  # ruff:ignore[private-member-access]
+        self._token1 = Erc20Token._from_py_token(py_token1)  # ruff:ignore[private-member-access]
 
         self._pool_key = UniswapV4PoolKey(
             currency0=self._token0.address,
@@ -306,10 +306,10 @@ class UniswapV4Pool(
                 ),
             )
         ), (
-            f"Supplied pool ID {self.pool_id.to_0x_hex()} does not match calculated ID {calculated_id.to_0x_hex()}, {self.pool_key=}"  # noqa:E501
+            f"Supplied pool ID {self.pool_id.to_0x_hex()} does not match calculated ID {calculated_id.to_0x_hex()}, {self.pool_key=}"  # ruff:ignore[line-too-long]
         )
 
-        self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, id={self.pool_id.to_0x_hex()})"  # noqa:E501
+        self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, id={self.pool_id.to_0x_hex()})"  # ruff:ignore[line-too-long]
 
         # Protocol fee / LP fee / initial state block — builder-supplied values
         # the seam defaults; the builder overrides after _from_py_pool.
@@ -351,7 +351,7 @@ class UniswapV4Pool(
             The string representation of the pool.
 
         """
-        return f"{self.__class__.__name__}(id={self.pool_id.to_0x_hex()}, token0={self._token0}, token1={self._token1}, fee={self.fee}, tick spacing={self.tick_spacing})"  # noqa:E501
+        return f"{self.__class__.__name__}(id={self.pool_id.to_0x_hex()}, token0={self._token0}, token1={self._token1}, fee={self.fee}, tick spacing={self.tick_spacing})"  # ruff:ignore[line-too-long]
 
     def __str__(self) -> str:
         """Return the canonical string representation.
@@ -699,7 +699,7 @@ class UniswapV4Pool(
             for word, row in raw.items()
         }
         for word, bitmap_at_word in self._bitmap_override.items():
-            result[word] = bitmap_at_word  # noqa: PERF403
+            result[word] = bitmap_at_word  # ruff:ignore[manual-dict-comprehension]
         return result
 
     @property
@@ -762,10 +762,10 @@ class UniswapV4Pool(
         """
         return self._initial_state_block
 
-    def swap_is_viable(  # noqa: PLR6301
+    def swap_is_viable(  # ruff:ignore[no-self-use]
         self,
         state: UniswapV4PoolState,
-        vector: UniswapPoolSwapVector,  # noqa: ARG002
+        vector: UniswapPoolSwapVector,  # ruff:ignore[unused-method-argument]
     ) -> bool:
         """Swap is viable.
 
@@ -808,7 +808,7 @@ class UniswapV4Pool(
                 normalized[int(tick)] = (
                     int(info[0]),
                     int(info[1]),
-                    int(info[2]) if len(info) > 2 else block,  # noqa: PLR2004
+                    int(info[2]) if len(info) > 2 else block,  # ruff:ignore[magic-value-comparison]
                 )
         self._py_pool.update_tick_data(tick_bitmap, normalized, block)
         for word, bitmap_at_word in tick_bitmap.items():
@@ -968,7 +968,7 @@ class UniswapV4Pool(
         self,
         token_in: ChecksumAddress,
         amount_in: int,
-        token_out: ChecksumAddress,  # noqa: ARG002
+        token_out: ChecksumAddress,  # ruff:ignore[unused-method-argument]
         state_override: AbstractPoolState | None = None,
     ) -> SimulationResult:
         """Simulate swap.

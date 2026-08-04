@@ -1,4 +1,4 @@
-# ruff: noqa: E501
+# ruff:file-ignore[line-too-long]
 """Uniswap contract ABI definitions and decoders."""
 
 import pydantic_core

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.aerodrome.types import AerodromeV2PoolExternalUpdate
@@ -88,6 +88,10 @@ class AerodromeV2Builder(V2BuilderBase):
         if pool_class is None:
             msg = f"No V2 pool class registered for chain {chain_id}, factory {common.factory}"
             raise ValueError(msg)
+        # The registry types the class as the structural ConstantProductPool
+        # protocol, but the concrete class carries the `_from_py_pool`
+        # construction seam (returns a concrete instance via `Self`).
+        pool_class = cast("type[AerodromeV2Pool]", pool_class)
 
         # Register in the shared Rust BotState. The handle is self-describing:
         # _from_py_pool reads address/tokens/factory/fee/stable/variant off it.
@@ -108,8 +112,8 @@ class AerodromeV2Builder(V2BuilderBase):
         py_pool = self._py_bot.get_pool(pool_id)
         assert py_pool is not None, "register_aerodrome_pool returned a pool_id with no handle"
 
-        pool = pool_class._from_py_pool(py_pool)  # noqa: SLF001
-        pool.deployer_address = common.deployer
+        pool = pool_class._from_py_pool(py_pool)  # ruff:ignore[private-member-access]
+        pool.deployer_address = get_checksum_address(common.deployer)
         assert isinstance(pool, AerodromeV2Pool)
 
         self._register_pool(pool, chain_id=chain_id)
@@ -146,7 +150,7 @@ class AerodromeV2Builder(V2BuilderBase):
         assert io is not None, "io must be provided for update()"
         block_number_ = block_number if block_number is not None else io.get_block_number()
         block_number_ = int(block_number_) if not isinstance(block_number_, int) else block_number_
-        reserves0, reserves1 = V2BuilderBase._fetch_reserves(  # noqa: SLF001
+        reserves0, reserves1 = V2BuilderBase._fetch_reserves(  # ruff:ignore[private-member-access]
             pool.address,
             io,
             block_identifier=block_number_,

@@ -119,7 +119,7 @@ class DatabaseSessionManager:
         for manager in live:
             manager.dispose()
 
-    def __getattr__(self, name: str) -> Any:  # noqa: ANN401
+    def __getattr__(self, name: str) -> Any:  # ruff:ignore[any-type]
         """Proxy attribute access to the underlying scoped session.
 
         Note: ``_engine`` is set in ``__init__`` and must NOT fall through here,

@@ -88,7 +88,7 @@ class UniswapV2PoolCalc:
             zero_for_one = False
         else:  # pragma: no cover
             raise DegenbotValueError(
-                message=f"Could not identify token_out: {token_out}! This pool holds: {self._token0} {self._token1}",  # noqa:E501
+                message=f"Could not identify token_out: {token_out}! This pool holds: {self._token0} {self._token1}",  # ruff:ignore[line-too-long]
             )
 
         if override_state is None:
@@ -121,7 +121,7 @@ class UniswapV2PoolCalc:
 
         if token_out_quantity > reserves_out - 1:
             raise LiquidityPoolError(
-                message=f"Requested amount out ({token_out_quantity}) >= pool reserves ({reserves_out})",  # noqa:E501
+                message=f"Requested amount out ({token_out_quantity}) >= pool reserves ({reserves_out})",  # ruff:ignore[line-too-long]
             )
 
         return constant_product_calc_exact_out(
@@ -157,7 +157,7 @@ class UniswapV2PoolCalc:
             zero_for_one = False
         else:  # pragma: no cover
             raise DegenbotValueError(
-                message=f"Could not identify token_in: {token_in}! Pool holds: {self._token0} {self._token1}",  # noqa:E501
+                message=f"Could not identify token_in: {token_in}! Pool holds: {self._token0} {self._token1}",  # ruff:ignore[line-too-long]
             )
 
         if override_state is None:

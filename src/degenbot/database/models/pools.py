@@ -63,7 +63,7 @@ class LiquidityPoolTable(Base):
     """LiquidityPoolTable class."""
 
     __tablename__ = "pools"
-    __mapper_args__ = {  # noqa: RUF012
+    __mapper_args__ = {  # ruff:ignore[mutable-class-default]
         "polymorphic_on": "kind",
         "polymorphic_identity": "base",
     }
@@ -120,7 +120,7 @@ class AerodromeV2PoolTable(UniswapV2PoolTableBase):
     """AerodromeV2PoolTable class."""
 
     __tablename__ = "aerodrome_v2_pools"
-    __mapper_args__ = {  # noqa: RUF012
+    __mapper_args__ = {  # ruff:ignore[mutable-class-default]
         "polymorphic_identity": "aerodrome_v2",
     }
 
@@ -132,7 +132,7 @@ class CamelotV2PoolTable(UniswapV2PoolTableBase):
     """CamelotV2PoolTable class."""
 
     __tablename__ = "camelot_v2_pools"
-    __mapper_args__ = {  # noqa: RUF012
+    __mapper_args__ = {  # ruff:ignore[mutable-class-default]
         "polymorphic_identity": "camelot_v2",
     }
 
@@ -143,7 +143,7 @@ class PancakeswapV2PoolTable(UniswapV2PoolTableBase):
     """PancakeswapV2PoolTable class."""
 
     __tablename__ = "pancakeswap_v2_pools"
-    __mapper_args__ = {  # noqa: RUF012
+    __mapper_args__ = {  # ruff:ignore[mutable-class-default]
         "polymorphic_identity": "pancakeswap_v2",
     }
 
@@ -154,7 +154,7 @@ class SushiswapV2PoolTable(UniswapV2PoolTableBase):
     """SushiswapV2PoolTable class."""
 
     __tablename__ = "sushiswap_v2_pools"
-    __mapper_args__ = {  # noqa: RUF012
+    __mapper_args__ = {  # ruff:ignore[mutable-class-default]
         "polymorphic_identity": "sushiswap_v2",
     }
 
@@ -165,7 +165,7 @@ class SwapbasedV2PoolTable(UniswapV2PoolTableBase):
     """SwapbasedV2PoolTable class."""
 
     __tablename__ = "swapbased_v2_pools"
-    __mapper_args__ = {  # noqa: RUF012
+    __mapper_args__ = {  # ruff:ignore[mutable-class-default]
         "polymorphic_identity": "swapbased_v2",
     }
 
@@ -176,7 +176,7 @@ class UniswapV2PoolTable(UniswapV2PoolTableBase):
     """UniswapV2PoolTable class."""
 
     __tablename__ = "uniswap_v2_pools"
-    __mapper_args__ = {  # noqa: RUF012
+    __mapper_args__ = {  # ruff:ignore[mutable-class-default]
         "polymorphic_identity": "uniswap_v2",
     }
 
@@ -229,7 +229,7 @@ class AerodromeV3PoolTable(UniswapV3PoolTableBase):
     """AerodromeV3PoolTable class."""
 
     __tablename__ = "aerodrome_v3_pools"
-    __mapper_args__ = {  # noqa: RUF012
+    __mapper_args__ = {  # ruff:ignore[mutable-class-default]
         "polymorphic_identity": "aerodrome_v3",
     }
 
@@ -240,7 +240,7 @@ class UniswapV3PoolTable(UniswapV3PoolTableBase):
     """UniswapV3PoolTable class."""
 
     __tablename__ = "uniswap_v3_pools"
-    __mapper_args__ = {  # noqa: RUF012
+    __mapper_args__ = {  # ruff:ignore[mutable-class-default]
         "polymorphic_identity": "uniswap_v3",
     }
 
@@ -251,7 +251,7 @@ class PancakeswapV3PoolTable(UniswapV3PoolTableBase):
     """PancakeswapV3PoolTable class."""
 
     __tablename__ = "pancakeswap_v3_pools"
-    __mapper_args__ = {  # noqa: RUF012
+    __mapper_args__ = {  # ruff:ignore[mutable-class-default]
         "polymorphic_identity": "pancakeswap_v3",
     }
 
@@ -262,7 +262,7 @@ class SushiswapV3PoolTable(UniswapV3PoolTableBase):
     """SushiswapV3PoolTable class."""
 
     __tablename__ = "sushiswap_v3_pools"
-    __mapper_args__ = {  # noqa: RUF012
+    __mapper_args__ = {  # ruff:ignore[mutable-class-default]
         "polymorphic_identity": "sushiswap_v3",
     }
 
@@ -339,7 +339,7 @@ class ManagedLiquidityPoolTable(Base):
     """ManagedLiquidityPoolTable class."""
 
     __tablename__ = "managed_pools"
-    __mapper_args__ = {  # noqa: RUF012
+    __mapper_args__ = {  # ruff:ignore[mutable-class-default]
         "polymorphic_on": "kind",
         "polymorphic_identity": "base",
     }
@@ -434,7 +434,7 @@ class UniswapV4PoolTable(UniswapV4PoolTableBase):
     """UniswapV4PoolTable class."""
 
     __tablename__ = "uniswap_v4_pools"
-    __mapper_args__ = {  # noqa: RUF012
+    __mapper_args__ = {  # ruff:ignore[mutable-class-default]
         "polymorphic_on": "kind",
         "polymorphic_identity": "uniswap_v4",
     }

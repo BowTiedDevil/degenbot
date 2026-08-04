@@ -83,7 +83,7 @@ class Subscription:
         """
         return self
 
-    async def __anext__(self) -> Any:  # noqa: ANN401
+    async def __anext__(self) -> Any:  # ruff:ignore[any-type]
         """Return the next event from the subscription.
 
         Re-raises `RuntimeError` from the Rust layer as

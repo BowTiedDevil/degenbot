@@ -37,8 +37,10 @@ from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.infrastructure import AnvilError
 from degenbot.logging import logger
 from degenbot.provider import AlloyProvider
-from degenbot.types.aliases import BlockNumber  # noqa: TC001
-from degenbot.validation.evm_values import ValidatedUint256  # noqa: TC001
+from degenbot.types.aliases import BlockNumber  # ruff:ignore[typing-only-first-party-import]
+from degenbot.validation.evm_values import (
+    ValidatedUint256,  # ruff:ignore[typing-only-first-party-import]
+)
 
 if TYPE_CHECKING:
     import pathlib

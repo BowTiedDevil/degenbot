@@ -55,7 +55,7 @@ class EngineRegistry:
     the pool_manager address at registration time.
     """
 
-    def __init__(  # noqa: D107
+    def __init__(  # ruff:ignore[undocumented-public-init]
         self,
         bot: Bot | None = None,
         *,
@@ -75,7 +75,7 @@ class EngineRegistry:
             msg = "EngineRegistry requires either `engine` (test path) or `bot` (production)."
             raise ValueError(msg)
         else:
-            self.engine = ArbitrageEngine(py_bot=bot._py_bot)  # noqa: SLF001
+            self.engine = ArbitrageEngine(py_bot=bot._py_bot)  # ruff:ignore[private-member-access]
         self._v2_keys: dict[str, int] = {}  # address → pool_id (shared BotState)
         self._v3_keys: dict[str, int] = {}
         # V4 pools keyed by pool_id hex — for event routing from PoolManager logs
@@ -379,7 +379,7 @@ class EngineRegistry:
                 state_view_address=self._verify_state_view,
             )
 
-    def register_v2_pool(self, pool: UniswapV2Pool) -> int:  # noqa: D102
+    def register_v2_pool(self, pool: UniswapV2Pool) -> int:  # ruff:ignore[undocumented-public-method]
         if pool.address in self._v2_keys:
             return self._v2_keys[pool.address]
         # ADR-006 slice 9: with the engine sharing the bot's BotState, the V2
@@ -388,14 +388,14 @@ class EngineRegistry:
         # handle). Re-registering via `engine.register_v2_pool` would panic on
         # the duplicate address. Cache the shared pool_id for path-building;
         # orient via zero_for_one at register_path time (no `fwd_key + 1` shim).
-        key = pool._py_pool.pool_id  # noqa: SLF001
+        key = pool._py_pool.pool_id  # ruff:ignore[private-member-access]
         # Note: _fee_token0/_fee_token1 asymmetry warning retained for
         # diagnostics — the engine reads fees from the shared BotState now, so
         # no engine.register_v2_pool call carries a fee here.
-        if pool._fee_token0 != pool._fee_token1:  # noqa: SLF001
+        if pool._fee_token0 != pool._fee_token1:  # ruff:ignore[private-member-access]
             bot_logger.warning(
                 f"Asymmetric V2 fees detected for {pool.address} "
-                f"(fee_token0={pool._fee_token0}, fee_token1={pool._fee_token1}).",  # noqa: SLF001
+                f"(fee_token0={pool._fee_token0}, fee_token1={pool._fee_token1}).",  # ruff:ignore[private-member-access]
             )
         self._v2_keys[pool.address] = key
         return key
@@ -416,7 +416,7 @@ class EngineRegistry:
         """
         if pool.address in self._v2_keys:
             return self._v2_keys[pool.address]
-        key = pool._py_pool.pool_id  # noqa: SLF001
+        key = pool._py_pool.pool_id  # ruff:ignore[private-member-access]
         self._v2_keys[pool.address] = key
         return key
 
@@ -448,7 +448,7 @@ class EngineRegistry:
         # the V2 path: read the shared-core pool_id from the PyLiquidityPool
         # handle and cache it so subsequent paths short-circuit. (V2's
         # `register_v2_pool` documents the same shared-state invariant.)
-        key = pool._py_pool.pool_id  # noqa: SLF001
+        key = pool._py_pool.pool_id  # ruff:ignore[private-member-access]
 
         # 6N7XVR: quarantine the pool BEFORE the first RPC await so the live
         # pump DEFERS this pool's events to the pump buffer during the
@@ -550,7 +550,7 @@ class EngineRegistry:
         # DynamicFeePoolRejectedError) is enforced at `bot.build_managed_pool`
         # time — i.e. BEFORE this method is ever called — so it surfaces from
         # the builder, not here.
-        key = pool._py_pool.pool_id  # noqa: SLF001
+        key = pool._py_pool.pool_id  # ruff:ignore[private-member-access]
 
         # 6N7XVR: quarantine before the first RPC await (see register_v3_pool
         # for the full rationale). Defers the pool's live Swap/ModifyLiquidity

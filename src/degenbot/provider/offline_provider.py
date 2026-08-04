@@ -395,12 +395,12 @@ class OfflineProvider:
             raise ValueError(msg)
         return block_data["timestamp"]
 
-    def make_request(self, method: str, params: list[Any]) -> Any:  # noqa: ANN401
+    def make_request(self, method: str, params: list[Any]) -> Any:  # ruff:ignore[any-type]
         """Raw JSON-RPC request — not supported by OfflineProvider."""
         msg = f"OfflineProvider does not support make_request (method={method!r})"
         raise NotImplementedError(msg)
 
-    def close(self) -> None:  # noqa: PLR6301
+    def close(self) -> None:  # ruff:ignore[no-self-use]
         """Close the provider — no resources to release."""
         return
 

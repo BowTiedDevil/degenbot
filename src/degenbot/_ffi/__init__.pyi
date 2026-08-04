@@ -233,7 +233,7 @@ def compute_aerodrome_v3_pool_address(
 # See `abi.pyi` for the function signatures (decode/decode_single/encode/
 # encode_single). ValueError on invalid data; NotImplementedError for
 # unsupported types (e.g. fixed-point).
-from . import abi as abi  # noqa: E402
+from . import abi as abi  # ruff:ignore[module-import-not-at-top-of-file]
 
 class AsyncContract:
     """Async wrapper for contract interactions."""
@@ -995,7 +995,7 @@ class PyBot:
         tokens_underlying: list[str] | None = None,
         metapool_rate_style: int = 1,
         metapool_underlying_style: int = 1,
-        data_provider: Any = None,  # noqa: ANN401 — pyo3 accepts PyAny
+        data_provider: Any = None,  # ruff:ignore[any-type] — pyo3 accepts PyAny
     ) -> int: ...
     def register_balancer_weighted_pool(
         self,
@@ -1023,7 +1023,7 @@ class PyBot:
         invariant_version: int,
         balances: list[int],
         update_block: int,
-        rate_provider: Any = None,  # noqa: ANN401 — pyo3 accepts PyAny
+        rate_provider: Any = None,  # ruff:ignore[any-type] — pyo3 accepts PyAny
     ) -> int: ...
     def register_aerodrome_pool(
         self,

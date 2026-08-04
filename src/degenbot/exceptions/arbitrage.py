@@ -8,7 +8,7 @@ from typing import Any
 # Sourcing them from the package keeps ``from degenbot.exceptions.arbitrage
 # import HookedPoolRejectedError`` working without this leaf reaching into
 # ``_ffi`` (ADR-013: the Pydantic barrier — ``_ffi`` only in ``__init__.py``).
-from degenbot.exceptions import (  # noqa: F401
+from degenbot.exceptions import (  # ruff:ignore[unused-import]
     DynamicFeePoolRejectedError,
     HighFeePoolRejectedError,
     HookedPoolRejectedError,

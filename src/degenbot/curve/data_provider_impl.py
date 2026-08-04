@@ -7,7 +7,7 @@ become private helpers, collapsing ~15 near-identical closure patterns
 into shared infrastructure.
 """
 
-# ruff: noqa: ANN401
+# ruff:file-ignore[any-type]
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
@@ -211,7 +211,7 @@ class CurveDataProviderImpl:
                 )
                 (admin_balance,) = decode(types=["uint256"], data=balance)
                 balances.append(admin_balance)
-            except Exception:  # noqa: BLE001
+            except Exception:  # ruff:ignore[blind-except]
                 break
         return tuple(balances)
 
