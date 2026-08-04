@@ -50,8 +50,11 @@ from degenbot.provider.subscription import (
 )
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from degenbot.uniswap.v3_types import UniswapV3PoolExternalUpdate
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+from degenbot.uniswap.v4_types import UniswapV4PoolExternalUpdate
 from degenbot.version import __version__
 
 if TYPE_CHECKING:
@@ -66,6 +69,94 @@ if TYPE_CHECKING:
     from degenbot.types.rpc_types import BlockIdentifier
 
 from degenbot.types.aliases import ChainId  # ruff:ignore[typing-only-first-party-import]
+
+
+def _update_pool(
+    pool: AbstractLiquidityPool,
+    *,
+    block_number: BlockIdentifier | None,
+    io: PyBotIo,
+) -> bool:
+    """Fetch the current chain state and push an update to a V2/V3/V4 pool.
+
+    T4 / 4GQWZ4 (builder-deletion blocker): the per-family refresh that
+    previously lived on the `V2PoolBuilder` / `V3PoolBuilder` /
+    `V4PoolBuilder` `update()` methods now lives in this single dispatcher in
+    the `Bot` delegating shell — all I/O flows through the `PyBotIo` Rust seam
+    (`fetch_v2_reserves` / `fetch_v3_slot0_liquidity` /
+    `fetch_v4_slot0_liquidity`), matching the archival behavior. The builders'
+    `update()` therefore become orphaned and can be retired with the builders.
+
+    Returns:
+        ``True`` if the state changed (an ``external_update`` was applied),
+        ``False`` if the on-chain state matches the pool's current state.
+
+    Raises:
+        TypeError: If ``pool`` is not a V2/V3/V4 pool (callers dispatch only
+            those families here; Aerodrome/Curve/Balancer keep the builder's
+            `update()` until SSSXG6).
+
+    """
+    if not isinstance(pool, (UniswapV2Pool, UniswapV3Pool, UniswapV4Pool)):
+        msg = f"_update_pool cannot update {type(pool).__name__}"
+        raise TypeError(msg)
+    block_number_ = block_number if block_number is not None else io.get_block_number()
+    block_number_ = int(block_number_) if not isinstance(block_number_, int) else block_number_
+
+    if isinstance(pool, UniswapV2Pool):
+        reserves0, reserves1 = io.fetch_v2_reserves(pool.address, block=block_number_)
+        if pool.reserves_token0 == reserves0 and pool.reserves_token1 == reserves1:
+            return False
+        pool.external_update(
+            UniswapV2PoolExternalUpdate(
+                block_number=block_number_,
+                reserves_token0=reserves0,
+                reserves_token1=reserves1,
+            )
+        )
+        return True
+
+    if isinstance(pool, UniswapV4Pool):
+        sqrt_price_x96, tick_raw, _protocol_fee_raw, _lp_fee, liquidity = (
+            io.fetch_v4_slot0_liquidity(
+                pool._state_view_address,  # ruff:ignore[private-member-access]
+                pool.pool_id,
+                block=block_number_,
+            )
+        )
+        tick = int(tick_raw)
+        if (
+            pool.sqrt_price_x96 == int(sqrt_price_x96)
+            and pool.liquidity == liquidity
+            and pool.tick == tick
+        ):
+            return False
+        pool.external_update(
+            UniswapV4PoolExternalUpdate(
+                block_number=block_number_,
+                sqrt_price_x96=int(sqrt_price_x96),
+                tick=tick,
+                liquidity=liquidity,
+            )
+        )
+        return True
+
+    # V3 (last family).
+    sqrt_price_x96, tick, liquidity = io.fetch_v3_slot0_liquidity(
+        pool.address,
+        block=block_number_,
+    )
+    if pool.sqrt_price_x96 == sqrt_price_x96 and pool.liquidity == liquidity and pool.tick == tick:
+        return False
+    pool.external_update(
+        UniswapV3PoolExternalUpdate(
+            block_number=block_number_,
+            sqrt_price_x96=sqrt_price_x96,
+            tick=tick,
+            liquidity=liquidity,
+        )
+    )
+    return True
 
 
 class Bot:
@@ -831,13 +922,22 @@ class Bot:
             The computed boolean value.
 
         """
-        builder = self._builder_for_pool(pool)
         resolved_block_number = (
             int(block_number)
             if block_number is not None and not isinstance(block_number, int)
             else block_number
         )
         io = self._io
+        # T4 / 4GQWZ4: V2/V3/V4 refresh lives in the delegating shell
+        # (`_update_pool`), no longer on the retired builders; Aerodrome /
+        # Curve / Balancer keep their builders' `update()` until SSSXG6.
+        if isinstance(pool, (UniswapV2Pool, UniswapV3Pool, UniswapV4Pool)):
+            return _update_pool(
+                pool,
+                block_number=resolved_block_number,
+                io=io,
+            )
+        builder = self._builder_for_pool(pool)
         return builder.update(pool, block_number=resolved_block_number, io=io)
 
     def _builder_for_pool(
