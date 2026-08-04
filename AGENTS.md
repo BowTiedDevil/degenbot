@@ -1,10 +1,5 @@
 # AGENTS.md
 
-## Grep
-- Prefer `rg` over `grep`.
-- `rg` recurses by default. Do not specify `-r` to recurse! It is a REPLACEMENT switch that will rewrite output in a way that will confuse you.
-- If you use `grep`, specify the `-I` option to ignore deep searches of build artifacts and other binaries.
-
 ## Architectural Vision
 
 **Long-term goal: a set of first-class standalone Rust crates that together form a complete, functional MEV bot — no Python required.**
