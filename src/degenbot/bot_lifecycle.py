@@ -46,9 +46,7 @@ class _BotLike(Protocol):
     _io: Any
     _async_adapter: Any
     _erc20_builder: Any
-    _v2_builder: Any
     _aerodrome_v2_builder: Any
-    _v3_builder: Any
     _v4_builder: Any
     _curve_builder: Any
     _balancer_builder: Any
@@ -139,9 +137,7 @@ def close(bot: _BotLike) -> None:
     bot.managed_pools = None
     bot._trackers = None  # ruff:ignore[private-member-access]
     bot._erc20_builder = None  # ruff:ignore[private-member-access]
-    bot._v2_builder = None  # ruff:ignore[private-member-access]
     bot._aerodrome_v2_builder = None  # ruff:ignore[private-member-access]
-    bot._v3_builder = None  # ruff:ignore[private-member-access]
     bot._v4_builder = None  # ruff:ignore[private-member-access]
     bot._curve_builder = None  # ruff:ignore[private-member-access]
     bot._balancer_builder = None  # ruff:ignore[private-member-access]

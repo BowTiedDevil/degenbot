@@ -41,19 +41,3 @@ def test_resolve_seed_block_falls_back_to_head_without_db_block() -> None:
     """No DB liquidity block (chain-fetched sparse pool) keeps head as the anchor."""
     assert resolve_seed_block(None, None, 25_676_145) == 25_676_145
     assert resolve_seed_block(None, 0, 25_676_145) == 25_676_145
-
-
-def test_v3_and_v4_builders_share_resolve_seed_block() -> None:
-    """Both pool builders must consume the same single anchor definition.
-
-    A V4 pool routed through the DB path gets the same treatment as V3.
-    """
-    from degenbot.builders.v3_pool_builder import (
-        resolve_seed_block as v3_resolve_seed_block,
-    )
-    from degenbot.builders.v4_pool_builder import (
-        resolve_seed_block as v4_resolve_seed_block,
-    )
-
-    assert v3_resolve_seed_block is resolve_seed_block
-    assert v4_resolve_seed_block is resolve_seed_block

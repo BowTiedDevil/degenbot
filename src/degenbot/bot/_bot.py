@@ -23,14 +23,17 @@ from degenbot.builders.context import BuilderContext
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.builders.request import BuildManagedPoolRequest, BuildPoolRequest, BuildRequest
+from degenbot.builders.tick_data_fetcher import (
+    FetchedTickData,
+    TickDataTypes,
+    make_tick_data_fetcher,
+)
 from degenbot.builders.type_resolution import (
     pool_class_for_descriptor,
 )
 from degenbot.builders.type_resolution import (
     resolve_pool_type as _resolve_pool_type_impl,
 )
-from degenbot.builders.v2_pool_builder import V2PoolBuilder
-from degenbot.builders.v3_pool_builder import V3PoolBuilder
 from degenbot.builders.v4_pool_builder import V4PoolBuilder
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DegenbotConfig, _init_config
@@ -49,6 +52,7 @@ from degenbot.provider.subscription import (
     Subscription,  # ruff:ignore[typing-only-first-party-import]
 )
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -58,7 +62,7 @@ from degenbot.uniswap.v4_types import UniswapV4PoolExternalUpdate
 from degenbot.version import __version__
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from eth_typing import ChecksumAddress
 
@@ -298,9 +302,7 @@ class Bot:
             default_chain_id=self._chain_id,
             managed_pools=self.managed_pools,
         )
-        self._v2_builder = V2PoolBuilder(ctx)
         self._aerodrome_v2_builder = AerodromeV2Builder(ctx)
-        self._v3_builder = V3PoolBuilder(ctx)
         self._v4_builder = V4PoolBuilder(ctx)
         self._curve_builder = CurvePoolBuilder(ctx)
         self._balancer_builder = BalancerBuilder(ctx)
@@ -311,8 +313,6 @@ class Bot:
 
         # Async adapter for subscriptions (single chain; created on demand)
         self._async_adapter: AsyncAlloyProvider | None = None
-        self.register_builder(UniswapV2Pool, self._v2_builder)
-        self.register_builder(UniswapV3Pool, self._v3_builder)
         self.register_builder(UniswapV4Pool, self._v4_builder)
         self.register_builder(CurveStableswapPool, self._curve_builder)
         self.register_builder(AerodromeV2Pool, self._aerodrome_v2_builder)
@@ -612,6 +612,42 @@ class Bot:
             request=request,
         )
 
+    def _make_v3_tick_data_fetcher(
+        self,
+        pool_address: str,
+        chain_id: ChainId,
+    ) -> Callable[[int, int], FetchedTickData | None]:
+        """Create the V3 tick-data backfill fetcher for a pool address.
+
+        T4 / 4GQWZ4: the legacy web3-sync fetcher factory formerly on the
+        retired `V3PoolBuilder`, relocated into this delegating shell. The
+        returned fetcher lazily pulls neighbouring tick words during swap
+        boundary-crossing (ADR-005 sparse-map parity), attached to the
+        Rust-registered pool as a `PyTickWordFetcher` so a Rust `block_on`
+        helper would not re-enter the shared runtime during swap simulation.
+
+        Returns:
+            A callable pulling ``{tick: (liquidity_gross, liquidity_net,
+            block)}`` for an out-of-range bitmap word, or ``None`` when the
+            pool/bitmap is unavailable.
+
+        """
+        return make_tick_data_fetcher(
+            pool_lookup=lambda _block: cast(
+                "UniswapV3Pool | None",
+                self.pools.get(
+                    chain_id=chain_id,
+                    pool_address=get_checksum_address(pool_address),
+                ),
+            ),
+            io=self._io,
+            types=TickDataTypes(
+                bitmap_at_word=BitmapAtWord,
+                liquidity_at_tick=LiquidityAtTick,
+                tick_struct_types=UniswapV3Pool.TICK_STRUCT_TYPES,
+            ),
+        )
+
     @staticmethod
     def _dispatch_build(
         *,
@@ -668,11 +704,9 @@ class Bot:
             request.state_block if request.state_block is not None else self._io.get_block_number()
         )
         if issubclass(pool_class, UniswapV3Pool):
-            # Reuse the V3 builder's leaf fetcher-factory (relocated here when
-            # the V3 builder is retired under 4GQWZ4).
-            fetcher = self._v3_builder._make_tick_data_fetcher(  # ruff:ignore[private-member-access]
-                address, chain_id, io=self._io
-            )
+            # The legacy web3-sync fetcher factory, relocated off the retired
+            # V3 builder (4GQWZ4 deletion).
+            fetcher = self._make_v3_tick_data_fetcher(address, chain_id)
             pool_id = self._py_bot.build_v3_pool(
                 address, block=block, db=True, tick_data_fetcher=fetcher
             )
