@@ -30,7 +30,7 @@ crate-type = ["rlib", "cdylib"]
 # ADR-005 deferral — binding layer lifted out of the workspace root.)
 
 [dependencies]
-alloy = { version = "^2.2", features = ["full", "transport-throttle"] }
+alloy = { version = "^2.3", features = ["full", "transport-throttle"] }
 # Path dependency enables the `pyo3` feature so `From<Error> for PyErr`
 # conversions from core are available at this binding layer.
 degenbot-rpc = { path = "../degenbot-rpc", optional = true }

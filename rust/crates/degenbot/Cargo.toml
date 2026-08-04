@@ -54,7 +54,7 @@ degenbot-uniswap = { path = "../degenbot-uniswap" }
 degenbot-v2-math = { path = "../degenbot-v2-math" }
 
 [dev-dependencies]
-alloy = { version = "^2.2", features = ["full"] }
+alloy = { version = "^2.3", features = ["full"] }
 revm = { version = "^42.0", default-features = false }
 tokio = { version = "^1.53", features = ["rt-multi-thread", "macros"] }
 serde = { version = "^1.0", features = ["derive"] }

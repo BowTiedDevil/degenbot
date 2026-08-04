@@ -54,7 +54,7 @@ degenbot-core = { path = "../degenbot-core" }
 # InspectEvm<...>>` carries (the strategy drives the borrowed `&mut E`
 # the engine exposes via `BlockSimHandle::evm_mut`).
 revm = { version = "^42.0", default-features = true, features = ["alloydb", "asyncdb"] }
-alloy = { version = "^2.2" }
+alloy = { version = "^2.3" }
 parking_lot = "^0.12"
 thiserror = { version = "^2.0" }
 tracing = { version = "^0.1" }

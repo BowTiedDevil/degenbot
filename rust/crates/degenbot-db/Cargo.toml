@@ -25,7 +25,7 @@ suspicious = "warn"
 # SQLite lookups. Verified pyo3-free under default features by 
 # `just check-no-pyo3-in-cores`.
 [dependencies]
-alloy = { version = "^2.2" }
+alloy = { version = "^2.3" }
 # CL liquidity-mapping math — `apply_liquidity_mapping_update` drives the V3/V4
 # DB-aware liquidity updater's per-event tick/bitmap mutation (task QJSCA5).
 # Pyo3-free core; verified by `just check-no-pyo3-in-cores`.

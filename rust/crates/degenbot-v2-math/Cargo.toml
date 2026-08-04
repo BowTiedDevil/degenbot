@@ -20,7 +20,7 @@ style = "warn"
 suspicious = "warn"
 
 [dependencies]
-alloy = { version = "^2.2" }
+alloy = { version = "^2.3" }
 
 [dev-dependencies]
 criterion = { version = "^0.8", default-features = false, features = ["cargo_bench_support"] }

@@ -32,7 +32,7 @@ revm = { version = "^42.0", default-features = true, features = ["alloydb", "asy
 # The alloy umbrella (single source, matches degenbot-rpc's convention). The
 # umbrella's `DynProvider`/`Provider`/`Ethereum` are the same types revm's
 # `AlloyDB<N, P>` consumes. `full` brings the RPC types + provider-http.
-alloy = { version = "^2.2", features = ["full"] }
+alloy = { version = "^2.3", features = ["full"] }
 degenbot-core = { path = "../degenbot-core" }
 # `WarmupSlots` + `compute_simulation_warmup_slots` + `mapping_slot` + the
 # `encode_cmd_stream`/`PathInfo`/`HopInfo`/`EncodeOptions` types the sim
@@ -75,7 +75,7 @@ serde_json = { version = "^1.0" }
 # — the manifest hashes the git-tracked harness sources, so a harness edit
 # without a rebuild fails the default suite. sha2 is already in the lock (via
 # alloy/revm); this is a dev-only linkage.
-sha2 = "0.10"
+sha2 = "0.11"
 # `examples/rpc_cache_fanout.rs` uses `#[tokio::main(flavor = "multi_thread")]`
 # — `WrapDatabaseAsync<AlloyDB>` blocks on the ambient tokio runtime, which
 # requires a multi-thread runtime (`CurrentThread` returns `None`).

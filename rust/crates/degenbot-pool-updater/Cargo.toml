@@ -20,7 +20,7 @@ style = "warn"
 suspicious = "warn"
 
 [dependencies]
-alloy = { version = "^2.2" }
+alloy = { version = "^2.3" }
 degenbot-db = { path = "../degenbot-db" }
 degenbot-decoders = { path = "../degenbot-decoders" }
 degenbot-core = { path = "../degenbot-core" }
@@ -36,6 +36,6 @@ rusqlite = { version = "^0.40" }
 default = []
 
 [dev-dependencies]
-alloy = { version = "^2.2" }
+alloy = { version = "^2.3" }
 degenbot-rpc = { path = "../degenbot-rpc" }
 tempfile = { version = "^3.27" }

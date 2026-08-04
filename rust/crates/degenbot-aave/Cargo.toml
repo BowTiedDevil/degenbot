@@ -20,7 +20,7 @@ style = "warn"
 suspicious = "warn"
 
 [dependencies]
-alloy = { version = "^2.2" }
+alloy = { version = "^2.3" }
 degenbot-core = { path = "../degenbot-core" }
 degenbot-db = { path = "../degenbot-db" }
 degenbot-decoders = { path = "../degenbot-decoders" }

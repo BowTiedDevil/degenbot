@@ -20,7 +20,7 @@ style = "warn"
 suspicious = "warn"
 
 [dependencies]
-alloy = { version = "^2.2", features = ["full", "signer-local", "network"] }
+alloy = { version = "^2.3", features = ["full", "signer-local", "network"] }
 degenbot-core = { path = "../degenbot-core" }
 # `AlloyProvider` (the typed `eth_sendRawTransaction`/`eth_feeHistory`/
 # `eth_createAccessList` surfaces the N6 submit orchestration consumes —
