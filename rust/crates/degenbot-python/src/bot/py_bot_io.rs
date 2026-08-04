@@ -967,12 +967,29 @@ impl PyBotIo {
     /// contract (a pool whose `factory()` reverts yields `None`, not an error).
     #[pyo3(signature = (address))]
     fn fetch_factory_address(&self, py: Python<'_>, address: &str) -> Option<String> {
-        // Delegate the encode→call→decode→checksum to the shared no-arg
-        // address-returning helper, then swallow any error into `None` here
-        // to preserve the `None`-on-failure contract this method promises in
-        // 14b (mirrors the Python `except (Web3Exception, DecodingError): return None`).
-        self.fetch_address_returning_method(py, b"factory()", address, None)
-            .ok()
+        // Delegate the encode->call->decode->checksum to the core choreography
+        // (14b), then swallow any error into `None` to preserve the
+        // `None`-on-failure contract this method promises (mirrors the Python
+        // `except (Web3Exception, DecodingError): return None`).
+        let Ok(io) = self.required_construction_io() else {
+            return None;
+        };
+        let Ok(addr) = parse_address_for_call(address) else {
+            return None;
+        };
+        let addr = alloy::primitives::Address::from(addr);
+        let r = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::choreography::fetch_factory_address(
+                    &io, addr, None,
+                )
+                .await
+            })
+        });
+        match r {
+            Ok(a) => Some(a.to_checksum(None)),
+            Err(_) => None,
+        }
     }
 
     /// Fetch ERC-20 token name / symbol / decimals via batched RPC calls,
@@ -992,87 +1009,26 @@ impl PyBotIo {
     /// the caller's fallback kicks in identically.)
     #[pyo3(signature = (address))]
     fn fetch_erc20_metadata(&self, py: Python<'_>, address: &str) -> Option<(String, String, u64)> {
-        use alloy::dyn_abi::{DynSolType, DynSolValue};
-
-        // Encode the three selectors at compile time.
-        let name_selector = selector(b"name()");
-        let symbol_selector = selector(b"symbol()");
-        let decimals_selector = selector(b"decimals()");
-
-        let address_obj = pyo3::types::PyString::new(py, address);
-
-        // Fire the three calls; any error -> None.
-        let Ok(name_result) = self.call_kw(
-            py,
-            "call",
-            &[
-                ("to", Some(address_obj.as_any())),
-                (
-                    "data",
-                    Some(pyo3::types::PyBytes::new(py, &name_selector).as_any()),
-                ),
-                ("block", None),
-            ],
-        ) else {
+        // Delegate the 3-call encode->call->decode to the core choreography
+        // (14c). The core returns `Ok(None)` on revert/decode failure (the
+        // caller-side fallback contract); we surface `None` to Python.
+        let Ok(io) = self.required_construction_io() else {
             return None;
         };
-        let Ok(symbol_result) = self.call_kw(
-            py,
-            "call",
-            &[
-                ("to", Some(address_obj.as_any())),
-                (
-                    "data",
-                    Some(pyo3::types::PyBytes::new(py, &symbol_selector).as_any()),
-                ),
-                ("block", None),
-            ],
-        ) else {
+        let Ok(addr) = parse_address_for_call(address) else {
             return None;
         };
-        let Ok(decimals_result) = self.call_kw(
-            py,
-            "call",
-            &[
-                ("to", Some(address_obj.as_any())),
-                (
-                    "data",
-                    Some(pyo3::types::PyBytes::new(py, &decimals_selector).as_any()),
-                ),
-                ("block", None),
-            ],
-        ) else {
-            return None;
-        };
-
-        // Extract &[u8] from each HexBytes/bytes result.
-        let name_bytes: &[u8] = match name_result.bind(py).extract::<&[u8]>() {
-            Ok(b) => b,
-            Err(_) => return None,
-        };
-        let symbol_bytes: &[u8] = match symbol_result.bind(py).extract::<&[u8]>() {
-            Ok(b) => b,
-            Err(_) => return None,
-        };
-        let decimals_bytes: &[u8] = match decimals_result.bind(py).extract::<&[u8]>() {
-            Ok(b) => b,
-            Err(_) => return None,
-        };
-
-        // Decode dynamic `string`, `string`, and `uint256`. Any decode error -> None
-        // (mirror the Python `except DecodingError`).
-        let Ok(DynSolValue::String(name)) = DynSolType::String.abi_decode(name_bytes) else {
-            return None;
-        };
-        let Ok(DynSolValue::String(symbol)) = DynSolType::String.abi_decode(symbol_bytes) else {
-            return None;
-        };
-        let decimals = match DynSolType::Uint(256).abi_decode(decimals_bytes) {
-            Ok(DynSolValue::Uint(n, _)) => n.to::<u64>(),
-            _ => return None,
-        };
-
-        Some((name, symbol, decimals))
+        let addr = alloy::primitives::Address::from(addr);
+        let r = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::choreography::fetch_erc20_metadata(&io, addr)
+                    .await
+            })
+        });
+        match r {
+            Ok(Some((name, symbol, decimals))) => Some((name, symbol, decimals)),
+            _ => None,
+        }
     }
 
     /// Fetch a V2-style pool's immutable data — `factory()`, `token0()`, `token1()` —
@@ -1095,10 +1051,29 @@ impl PyBotIo {
         pool_address: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<(String, String, String)> {
-        let factory = self.fetch_address_returning_method(py, b"factory()", pool_address, block)?;
-        let token0 = self.fetch_address_returning_method(py, b"token0()", pool_address, block)?;
-        let token1 = self.fetch_address_returning_method(py, b"token1()", pool_address, block)?;
-        Ok((factory, token0, token1))
+        let io = self.required_construction_io()?;
+        let addr = alloy::primitives::Address::from(parse_address_for_call(pool_address)?);
+        let block_num = extract_block_u64(block)?;
+        let r = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::choreography::fetch_v2_immutable_data(
+                    &io, addr, block_num,
+                )
+                .await
+            })
+        });
+        let d = match r {
+            Ok(v) => Ok(v),
+            Err(ProviderError::ExecutionReverted { message, .. }) => {
+                Err(revert_to_pyerr(py, pool_address, &message))
+            }
+            Err(e) => Err(e.into()),
+        }?;
+        Ok((
+            d.factory.to_checksum(None),
+            d.token0.to_checksum(None),
+            d.token1.to_checksum(None),
+        ))
     }
 
     /// Fetch a V2-style pool's reserves via `getReserves()`, performing the
@@ -1117,12 +1092,24 @@ impl PyBotIo {
         pool_address: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
-        // Calldata + return decode sourced from the `sol!`-generated ABI in
-        // `degenbot_rpc::abi` (B2) — no hand-rolled selector/`DynSolType` here.
-        let calldata = degenbot_rpc::abi::encode_get_reserves();
-        let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
-        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        let (r0, r1) = degenbot_rpc::abi::decode_get_reserves(bytes)?;
+        let io = self.required_construction_io()?;
+        let addr = alloy::primitives::Address::from(parse_address_for_call(pool_address)?);
+        let block_num = extract_block_u64(block)?;
+        let r = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::choreography::fetch_v2_reserves(
+                    &io, addr, block_num,
+                )
+                .await
+            })
+        });
+        let (r0, r1) = match r {
+            Ok(v) => Ok(v),
+            Err(ProviderError::ExecutionReverted { message, .. }) => {
+                Err(revert_to_pyerr(py, pool_address, &message))
+            }
+            Err(e) => Err(e.into()),
+        }?;
         Ok((
             crate::conversion::alloy::u256_to_py(py, &r0)?.unbind(),
             crate::conversion::alloy::u256_to_py(py, &r1)?.unbind(),
@@ -1150,25 +1137,36 @@ impl PyBotIo {
         pool_address: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<V2ImmutableData> {
-        use alloy::dyn_abi::DynSolType;
-
-        let factory = self.fetch_address_returning_method(py, b"factory()", pool_address, block)?;
-        let token0 = self.fetch_address_returning_method(py, b"token0()", pool_address, block)?;
-        let token1 = self.fetch_address_returning_method(py, b"token1()", pool_address, block)?;
-
-        // fee() -> uint24, no args.
-        let fee =
-            self.fetch_no_arg_uint(py, b"fee()", pool_address, block, &DynSolType::Uint(24))?;
-        // tickSpacing() -> int24, no args.
-        let tick_spacing = self.fetch_no_arg_int(
-            py,
-            b"tickSpacing()",
-            pool_address,
-            block,
-            &DynSolType::Int(24),
-        )?;
-
-        Ok((factory, token0, token1, fee, tick_spacing))
+        let io = self.required_construction_io()?;
+        let addr = alloy::primitives::Address::from(parse_address_for_call(pool_address)?);
+        let block_num = extract_block_u64(block)?;
+        let r = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::choreography::fetch_v3_immutable_data(
+                    &io, addr, block_num,
+                )
+                .await
+            })
+        });
+        let d = match r {
+            Ok(v) => Ok(v),
+            Err(ProviderError::ExecutionReverted { message, .. }) => {
+                Err(revert_to_pyerr(py, pool_address, &message))
+            }
+            Err(e) => Err(e.into()),
+        }?;
+        Ok((
+            d.factory.to_checksum(None),
+            d.token0.to_checksum(None),
+            d.token1.to_checksum(None),
+            crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(d.fee))?
+                .unbind(),
+            // int24 tick spacing is small; build the Python int directly (avoids
+            // the `I256: From<i32>` bound, which alloy does not provide).
+            pyo3::types::PyInt::new(py, i64::from(d.tick_spacing))
+                .into_any()
+                .unbind(),
+        ))
     }
 
     /// Fetch a V3-style pool's `slot0()` + `liquidity()` state — the 2-call
@@ -1192,31 +1190,28 @@ impl PyBotIo {
         pool_address: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<(Py<PyAny>, Py<PyAny>, Py<PyAny>)> {
-        // Calldata + return decode from `degenbot_rpc::abi` (B2).
-        let slot0_obj = self.forward_call_to_provider(
-            py,
-            pool_address,
-            &degenbot_rpc::abi::encode_slot0(),
-            block,
-        )?;
-        let slot0_bytes: &[u8] = slot0_obj.bind(py).extract::<&[u8]>()?;
-        let (sqrt_price_x96, tick_i256) = degenbot_rpc::abi::decode_slot0(slot0_bytes)?;
-
-        let liq_obj = self.forward_call_to_provider(
-            py,
-            pool_address,
-            &degenbot_rpc::abi::encode_liquidity(),
-            block,
-        )?;
-        let liq_bytes: &[u8] = liq_obj.bind(py).extract::<&[u8]>()?;
-        let liquidity = degenbot_rpc::abi::decode_liquidity(liq_bytes)?;
-
+        let io = self.required_construction_io()?;
+        let addr = alloy::primitives::Address::from(parse_address_for_call(pool_address)?);
+        let block_num = extract_block_u64(block)?;
+        let r = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::choreography::fetch_v3_slot0_liquidity(
+                    &io, addr, block_num,
+                )
+                .await
+            })
+        });
+        let (sqrt, tick, liq) = match r {
+            Ok(v) => Ok(v),
+            Err(ProviderError::ExecutionReverted { message, .. }) => {
+                Err(revert_to_pyerr(py, pool_address, &message))
+            }
+            Err(e) => Err(e.into()),
+        }?;
         Ok((
-            crate::conversion::alloy::u256_to_py(py, &sqrt_price_x96)?.unbind(),
-            // int24 sign-extended: convert through i256_to_py (handles
-            // negatives; no precision loss since int24 fits in i32).
-            crate::conversion::alloy::i256_to_py(py, &tick_i256)?.unbind(),
-            crate::conversion::alloy::u256_to_py(py, &liquidity)?.unbind(),
+            crate::conversion::alloy::u256_to_py(py, &sqrt)?.unbind(),
+            crate::conversion::alloy::i256_to_py(py, &tick)?.unbind(),
+            crate::conversion::alloy::u256_to_py(py, &liq)?.unbind(),
         ))
     }
 
@@ -1243,36 +1238,37 @@ impl PyBotIo {
         pool_id: &[u8],
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Slot0LiquidityState> {
-        // Calldata + return decode from `degenbot_rpc::abi` (B2).
+        let io = self.required_construction_io()?;
+        let state_view =
+            alloy::primitives::Address::from(parse_address_for_call(state_view_address)?);
         let pool_id_arr: [u8; 32] = pool_id
             .try_into()
             .map_err(|_| pyo3::exceptions::PyValueError::new_err("pool_id must be 32 bytes"))?;
-
-        let slot0_obj = self.forward_call_to_provider(
-            py,
-            state_view_address,
-            &degenbot_rpc::abi::encode_get_slot0(&pool_id_arr),
-            block,
-        )?;
-        let slot0_bytes: &[u8] = slot0_obj.bind(py).extract::<&[u8]>()?;
-        let (sqrt_price_x96, tick_i256, protocol_fee, lp_fee) =
-            degenbot_rpc::abi::decode_get_slot0(slot0_bytes)?;
-
-        let liq_obj = self.forward_call_to_provider(
-            py,
-            state_view_address,
-            &degenbot_rpc::abi::encode_get_liquidity(&pool_id_arr),
-            block,
-        )?;
-        let liq_bytes: &[u8] = liq_obj.bind(py).extract::<&[u8]>()?;
-        let liquidity = degenbot_rpc::abi::decode_liquidity(liq_bytes)?;
-
+        let block_num = extract_block_u64(block)?;
+        let r = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::choreography::fetch_v4_slot0_liquidity(
+                    &io,
+                    state_view,
+                    pool_id_arr,
+                    block_num,
+                )
+                .await
+            })
+        });
+        let (sqrt, tick, protocol_fee, lp_fee, liq) = match r {
+            Ok(v) => Ok(v),
+            Err(ProviderError::ExecutionReverted { message, .. }) => {
+                Err(revert_to_pyerr(py, state_view_address, &message))
+            }
+            Err(e) => Err(e.into()),
+        }?;
         Ok((
-            crate::conversion::alloy::u256_to_py(py, &sqrt_price_x96)?.unbind(),
-            crate::conversion::alloy::i256_to_py(py, &tick_i256)?.unbind(),
+            crate::conversion::alloy::u256_to_py(py, &sqrt)?.unbind(),
+            crate::conversion::alloy::i256_to_py(py, &tick)?.unbind(),
             crate::conversion::alloy::u256_to_py(py, &protocol_fee)?.unbind(),
             crate::conversion::alloy::u256_to_py(py, &lp_fee)?.unbind(),
-            crate::conversion::alloy::u256_to_py(py, &liquidity)?.unbind(),
+            crate::conversion::alloy::u256_to_py(py, &liq)?.unbind(),
         ))
     }
 
@@ -1704,11 +1700,24 @@ impl PyBotIo {
         let word_i16 = i16::try_from(word_position).map_err(|_| {
             pyo3::exceptions::PyValueError::new_err("word_position out of int16 range")
         })?;
-        let calldata = degenbot_rpc::abi::encode_tick_bitmap(word_i16);
-
-        let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
-        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        let bitmap = degenbot_rpc::abi::decode_tick_bitmap(bytes)?;
+        let io = self.required_construction_io()?;
+        let addr = alloy::primitives::Address::from(parse_address_for_call(pool_address)?);
+        let block_num = extract_block_u64(block)?;
+        let r = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::choreography::fetch_tick_bitmap(
+                    &io, addr, word_i16, block_num,
+                )
+                .await
+            })
+        });
+        let bitmap = match r {
+            Ok(v) => Ok(v),
+            Err(ProviderError::ExecutionReverted { message, .. }) => {
+                Err(revert_to_pyerr(py, pool_address, &message))
+            }
+            Err(e) => Err(e.into()),
+        }?;
         crate::conversion::alloy::u256_to_py(py, &bitmap).map(pyo3::Bound::unbind)
     }
 
@@ -1731,12 +1740,24 @@ impl PyBotIo {
     ) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
         let tick_i32 = i32::try_from(tick)
             .map_err(|_| pyo3::exceptions::PyValueError::new_err("tick out of int24 range"))?;
-        let calldata = degenbot_rpc::abi::encode_tick_data(tick_i32);
-
-        let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
-        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        let (gross, net) = degenbot_rpc::abi::decode_tick_data(bytes)?;
-
+        let io = self.required_construction_io()?;
+        let addr = alloy::primitives::Address::from(parse_address_for_call(pool_address)?);
+        let block_num = extract_block_u64(block)?;
+        let r = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::choreography::fetch_tick_data(
+                    &io, addr, tick_i32, block_num,
+                )
+                .await
+            })
+        });
+        let (gross, net) = match r {
+            Ok(v) => Ok(v),
+            Err(ProviderError::ExecutionReverted { message, .. }) => {
+                Err(revert_to_pyerr(py, pool_address, &message))
+            }
+            Err(e) => Err(e.into()),
+        }?;
         Ok((
             crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(gross))?
                 .unbind(),
@@ -1766,11 +1787,29 @@ impl PyBotIo {
         let pool_id_arr: [u8; 32] = pool_id
             .try_into()
             .map_err(|_| pyo3::exceptions::PyValueError::new_err("pool_id must be 32 bytes"))?;
-        let calldata = degenbot_rpc::abi::encode_v4_tick_bitmap(&pool_id_arr, word_i16);
-
-        let result_obj = self.forward_call_to_provider(py, state_view_address, &calldata, block)?;
-        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        let bitmap = degenbot_rpc::abi::decode_v4_tick_bitmap(bytes)?;
+        let io = self.required_construction_io()?;
+        let state_view =
+            alloy::primitives::Address::from(parse_address_for_call(state_view_address)?);
+        let block_num = extract_block_u64(block)?;
+        let r = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::choreography::fetch_v4_tick_bitmap(
+                    &io,
+                    state_view,
+                    pool_id_arr,
+                    word_i16,
+                    block_num,
+                )
+                .await
+            })
+        });
+        let bitmap = match r {
+            Ok(v) => Ok(v),
+            Err(ProviderError::ExecutionReverted { message, .. }) => {
+                Err(revert_to_pyerr(py, state_view_address, &message))
+            }
+            Err(e) => Err(e.into()),
+        }?;
         crate::conversion::alloy::u256_to_py(py, &bitmap).map(pyo3::Bound::unbind)
     }
 
@@ -1796,12 +1835,29 @@ impl PyBotIo {
         let pool_id_arr: [u8; 32] = pool_id
             .try_into()
             .map_err(|_| pyo3::exceptions::PyValueError::new_err("pool_id must be 32 bytes"))?;
-        let calldata = degenbot_rpc::abi::encode_v4_tick_data(&pool_id_arr, tick_i32);
-
-        let result_obj = self.forward_call_to_provider(py, state_view_address, &calldata, block)?;
-        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        let (gross, net) = degenbot_rpc::abi::decode_v4_tick_data(bytes)?;
-
+        let io = self.required_construction_io()?;
+        let state_view =
+            alloy::primitives::Address::from(parse_address_for_call(state_view_address)?);
+        let block_num = extract_block_u64(block)?;
+        let r = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::choreography::fetch_v4_tick_data(
+                    &io,
+                    state_view,
+                    pool_id_arr,
+                    tick_i32,
+                    block_num,
+                )
+                .await
+            })
+        });
+        let (gross, net) = match r {
+            Ok(v) => Ok(v),
+            Err(ProviderError::ExecutionReverted { message, .. }) => {
+                Err(revert_to_pyerr(py, state_view_address, &message))
+            }
+            Err(e) => Err(e.into()),
+        }?;
         Ok((
             crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(gross))?
                 .unbind(),
@@ -2152,6 +2208,29 @@ impl PyBotIo {
         self.construction_io.lock().clone()
     }
 
+    /// Resolve a [`ConstructionIo`] for the choreography adapters: the attached
+    /// handle when present, else a transient `(NoDb, AlloyRpcConstruction)`
+    /// built over the held alloy provider (bare test fixtures that construct
+    /// `PyBotIo(provider=…)` directly). Non-alloy Python providers (the legacy
+    /// fallback the builder-choreography port retires) error here.
+    fn required_construction_io(
+        &self,
+    ) -> PyResult<std::sync::Arc<degenbot_bot::bot_core::construction_io::ConstructionIo>> {
+        use degenbot_bot::bot_core::construction_io::{AlloyRpcConstruction, ConstructionIo, NoDb};
+        if let Some(io) = self.construction_io() {
+            return Ok(io);
+        }
+        match &self.alloy {
+            Some(alloy) => Ok(std::sync::Arc::new(ConstructionIo::new(
+                std::sync::Arc::new(NoDb),
+                std::sync::Arc::new(AlloyRpcConstruction::new((**alloy).clone())),
+            ))),
+            None => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "choreography requires a core ConstructionIo (alloy provider)",
+            )),
+        }
+    }
+
     /// Call `method_name` on the held provider with the given keyword arguments.
     ///
     /// Single delegation seam for the kw-only forward shape (`call`,
@@ -2212,52 +2291,6 @@ impl PyBotIo {
             ));
         };
         crate::conversion::alloy::u256_to_py(py, &n).map(pyo3::Bound::unbind)
-    }
-
-    /// Shared skeleton for no-arg, signed-int-returning pool read methods
-    /// (`tickSpacing()` returns `int24`): build selector, call, decode the full
-    /// ABI word as the given `DynSolType` (typically `Int(bits)`), convert to a
-    /// Python `int` via `i256_to_py` (negative values preserved through the
-    /// sign-extended decode). Errors propagate.
-    fn fetch_no_arg_int(
-        &self,
-        py: Python<'_>,
-        signature: &[u8],
-        pool_address: &str,
-        block: Option<&Bound<'_, PyAny>>,
-        ty: &alloy::dyn_abi::DynSolType,
-    ) -> PyResult<Py<PyAny>> {
-        use alloy::dyn_abi::DynSolValue;
-
-        let calldata = selector(signature);
-        let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
-        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        let Ok(DynSolValue::Int(n, _)) = ty.abi_decode(bytes) else {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "invalid int decode for no-arg read",
-            ));
-        };
-        crate::conversion::alloy::i256_to_py(py, &n).map(pyo3::Bound::unbind)
-    }
-
-    fn fetch_address_returning_method(
-        &self,
-        py: Python<'_>,
-        signature: &[u8],
-        pool_address: &str,
-        block: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<String> {
-        let calldata = selector(signature);
-        let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
-        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        if bytes.len() < 32 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "address-returning call returned <32 bytes",
-            ));
-        }
-        let addr_bytes = &bytes[12..32];
-        degenbot_core::address_utils::to_checksum_address_bytes(addr_bytes)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("invalid address: {e}")))
     }
 
     fn forward_call_to_provider(

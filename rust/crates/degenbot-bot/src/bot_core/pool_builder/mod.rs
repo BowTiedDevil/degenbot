@@ -15,3 +15,6 @@
 //!   these primitives into core structural pool identity+state.
 
 pub mod choreography;
+
+#[cfg(test)]
+mod tests;

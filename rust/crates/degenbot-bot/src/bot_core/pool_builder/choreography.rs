@@ -156,6 +156,22 @@ pub async fn fetch_v3_immutable_data(
     })
 }
 
+/// Fetch a pool's `factory()` address (ADR-005 slice 14b).
+///
+/// Mirrors `type_resolution.py::fetch_factory_from_chain` — encode `factory()`,
+/// `eth_call`, decode the right-aligned 20-byte `address`, EIP-55 checksum.
+///
+/// # Errors
+///
+/// Returns a [`ProviderError`] on an `eth_call` failure or a short result.
+pub async fn fetch_factory_address(
+    io: &ConstructionIo,
+    address: Address,
+    block: Option<u64>,
+) -> Result<Address, ProviderError> {
+    fetch_address_returning(io, b"factory()", address, block).await
+}
+
 /// Fetch a V2-style pool's immutable data — `factory()`, `token0()`,
 /// `token1()`. Mirrors `v2_builder_base.py::_fetch_v2_common_data`'s fallback
 /// (ADR-005 slice 14e).
