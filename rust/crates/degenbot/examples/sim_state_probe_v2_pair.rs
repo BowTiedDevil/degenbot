@@ -35,18 +35,21 @@
 //!   `DEGENBOT_PROBE_PHANTOM_RESERVE` is set to a non-on-chain value).
 //! - **2** — DIVERGENCE: the sim (without injection) read a reserve `≠ …464`
 //!   — the phantom was caught in the act, un-injected.
-//!
+//! - **4** — MID-BLOCK-SWAP-DETECTED: the solve block emitted a V2 `Sync`/`Swap`
+//!   event for the pair, so an on-chain intra-block reserve change (invisible to
+//!   end-of-block storage reads) could legitimately explain `…114`. The harness
+//!   refuses to trust the phantom-reserve diagnosis under that condition.
 //! # Run
 //! ```text
 //! cargo run -p degenbot --example sim_state_probe_v2_pair           # faithful → exit 0
 //! DEGENBOT_PROBE_PHANTOM_RESERVE=1286682034390401 cargo run -p degenbot --example sim_state_probe_v2_pair  # → exit 1
 //! ```
-#![allow(clippy::doc_markdown)]
+#![allow(clippy::doc_markdown, clippy::too_many_lines)]
 
 use alloy::primitives::{Address, Bytes, U256};
 use degenbot::bot_core::BotState;
 use degenbot::degenbot_executor::WarmupSlots;
-use degenbot::degenbot_rpc::provider::AlloyProvider;
+use degenbot::degenbot_rpc::provider::{AlloyProvider, LogFilter};
 use degenbot::degenbot_simulation::sim::evm::{
     BlockSimHandle, SimulationOverrideParams, WarmCodeCacheInner,
 };
@@ -74,6 +77,12 @@ const LOGGED_ACTUAL_OUT: u128 = 15_166_900_278_114;
 /// The exact phantom `reserve0` that reproduces the logged `…114`.
 #[expect(dead_code)]
 const PHANTOM_RESERVE0: u128 = 1_286_682_034_390_401;
+
+/// `keccak256("Sync(uint112,uint112)")` — V2 pair reserve-sync event.
+const SYNC_TOPIC: &str = "0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1";
+/// `keccak256("Swap(address,uint256,uint256,uint256,uint256,address)")` —
+/// V2 pair swap event.
+const SWAP_TOPIC: &str = "0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822";
 
 /// The executor `_v2_get_amount_out`: `floor(amt*fm*reserve_out/(reserve_in*10000+amt*fm))`.
 #[allow(clippy::cast_possible_truncation)]
@@ -114,6 +123,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         weth_address: Address::repeat_byte(0xc0),
         pool_manager_address: Address::repeat_byte(0xc1),
     };
+    // ===== V2 Sync-event audit =====
+    // End-of-block storage reads cannot see intra-block state: if the target (or
+    // any) tx in the solve block swapped this pair, a `Sync`/`Swap` event fires
+    // and the post-target mid-block reserve could legitimately differ from the
+    // end-of-block `…464` — which would make `…114` an on-chain artifact rather
+    // than a sim-side stale read. Assert here, via eth_getLogs, that the pair
+    // emitted NO `Sync`/`Swap` in the solve block, closing that blind spot
+    // before trusting the phantom-reserve diagnosis.
+    let audit_filter = LogFilter::new(
+        SOLVE_BLOCK,
+        SOLVE_BLOCK,
+        Some(vec![PAIR.to_string()]),
+        Some(vec![vec![SYNC_TOPIC.to_string(), SWAP_TOPIC.to_string()]]),
+    )?;
+    let solve_events = provider.get_logs(&audit_filter).await?;
+    if !solve_events.is_empty() {
+        println!(
+            "[audit] CRITICAL: pair {PAIR} emitted {} Sync/Swap event(s) in solve block {SOLVE_BLOCK}:",
+            solve_events.len()
+        );
+        for ev in &solve_events {
+            println!(
+                "[audit]   tx={} idx={} topic0={}",
+                ev.transaction_hash
+                    .map_or_else(|| "?".to_string(), |h| h.to_string()),
+                ev.log_index
+                    .map_or_else(|| "?".to_string(), |i| i.to_string()),
+                ev.topics()
+                    .first()
+                    .map_or_else(|| "?".to_string(), ToString::to_string),
+            );
+        }
+        println!(
+            "[audit] An on-chain intra-block reserve change could legitimately explain \
+             the logged '…114' — refusing to trust the phantom-reserve diagnosis."
+        );
+        std::process::exit(4);
+    }
+    println!(
+        "[audit] OK: pair {PAIR} emitted 0 Sync/Swap events in solve block {SOLVE_BLOCK} \
+         — no mid-block swap touched this pool; intra-block reserve is identical \
+         to the end-of-block read."
+    );
+
     let mut handle = BlockSimHandle::build(
         &provider,
         0, // base_fee_next — irrelevant to a storage read
