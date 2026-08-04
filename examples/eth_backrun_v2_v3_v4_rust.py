@@ -36,7 +36,7 @@ import pathlib
 import signal
 import sys
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any, Self, cast
 
@@ -148,6 +148,18 @@ MAX_PRIORITY_FEE_PERCENTILE = 50  # Use Nth percentile from feeHistory as ceilin
 # the graph and prunes to V2 at depth 0, V3 at depth 1, V4 at depth 2.
 # When None, all V2/V3/V4 table types are loaded (no pruning).
 PATH_PERMUTATION_FILTER: set[str] | None = None  # e.g. {"V3-V4-V3"}
+
+# ── Registration backpressure (bounded queue + concurrent workers) ──
+# `build_paths` runs path discovery as a producer feeding a bounded
+# `asyncio.Queue` (REG_QUEUE_BOUND) drained by REG_WORKERS concurrent
+# registration workers (see `run_registration_pipeline`). The `await put` in
+# the producer is the backpressure: discovery can never register more than
+# REG_QUEUE_BOUND paths ahead of activation, and a flood of new registrations
+# cannot stall the progress of pools already enqueued for verify/activate (FIFO
+# pull + bounded concurrency). The slow RPC verify is lock-free on the Rust
+# side, so workers overlap it and contend only on short commit points.
+REG_QUEUE_BOUND = int(os.environ.get("DEGENBOT_REG_QUEUE_BOUND", "64"))
+REG_WORKERS = int(os.environ.get("DEGENBOT_REG_WORKERS", "4"))
 
 # ── Intermediate token whitelist ────────────────────────────────
 # Only build paths where intermediate hops use these tokens.
@@ -988,6 +1000,101 @@ async def _shim_run_recurring_verify_until_done(
 run_recurring_verify_until_done = _shim_run_recurring_verify_until_done
 
 
+_REG_PIPELINE_SENTINEL = object()
+
+
+async def run_registration_pipeline(
+    *,
+    producer: AsyncIterable[object],
+    consume: Callable[[object], Awaitable[None]],
+    queue_size: int,
+    worker_count: int,
+) -> None:
+    """Run a bounded producer/consumer pipeline with backpressure.
+
+    `build_paths` registers discovered paths through this helper. The producer
+    (path discovery) yields items (paths) into a bounded `asyncio.Queue`; the
+    `await queue.put()` in the producer is the backpressure — discovery blocks
+    the instant the queue is full, so it can never run more than `queue_size`
+    paths ahead of activation, and a flood of new registrations is held at the
+    queue boundary instead of stalling pools already enqueued for
+    verification/activation. `worker_count` concurrent workers drain the queue
+    FIFO (preserving registration order) and call `consume(item)` each, so the
+    slow, lock-free RPC-verify latency overlaps across workers while they
+    contend only on the short engine commit points.
+
+    When the producer exhausts, `consume` has processed every item and the call
+    returns. Any exception escaping `consume` aborts the whole pipeline: the
+    sibling workers and producer are cancelled and the exception is re-raised
+    (preserving the fatal-verification "shut down loudly" contract under
+    concurrency). `consume` is expected to swallow per-path errors itself (the
+    previous `continue` semantics); only uncaught exceptions propagate. A
+    producer (discovery) error also drains + propagates.
+
+    Note on cancellation safety: the stop markers are published with
+    `except Exception`/`else`, NOT a `finally` — a `finally` that `await`s a
+    blocking `queue.put` would itself run to completion even when the task is
+    cancelled (asyncio's cancel-in-finally gotcha), wedging an abort that has
+    a full queue and no live workers. Cancellation (a `BaseException`) is not
+    caught here, so a cancelled producer ends promptly and the abort path
+    cannot deadlock.
+    """
+    if queue_size < 1:
+        msg = f"run_registration_pipeline: queue_size must be >= 1, got {queue_size}"
+        raise ValueError(msg)
+    if worker_count < 1:
+        msg = f"run_registration_pipeline: worker_count must be >= 1, got {worker_count}"
+        raise ValueError(msg)
+
+    queue: asyncio.Queue[object] = asyncio.Queue(maxsize=queue_size)
+
+    async def _produce() -> None:
+        try:
+            async for item in producer:
+                await queue.put(item)  # backpressure: blocks discovery when full
+        except Exception:
+            # Discovery failed: still emit the stop markers so workers drain,
+            # then re-raise (surfaced by `await producer_task` below).
+            for _ in range(worker_count):
+                await queue.put(_REG_PIPELINE_SENTINEL)
+            raise
+        else:
+            # Normal exhaustion: one stop marker per worker, at the end (FIFO
+            # guarantees all real items are dequeued before any marker).
+            for _ in range(worker_count):
+                await queue.put(_REG_PIPELINE_SENTINEL)
+
+    async def _work() -> None:
+        while True:
+            item = await queue.get()
+            if item is _REG_PIPELINE_SENTINEL:
+                queue.task_done()
+                return
+            try:
+                await consume(item)
+            finally:
+                queue.task_done()
+
+    producer_task = asyncio.create_task(_produce())
+    worker_tasks = [asyncio.create_task(_work()) for _ in range(worker_count)]
+    worker_results = await asyncio.gather(*worker_tasks, return_exceptions=True)
+
+    # Fatal: any uncaught `consume` exception (e.g. verification mismatch)
+    # cancels the whole pipeline and re-raises rather than leaving sibling
+    # workers draining a poisoned queue. Cancellation interrupts the producer
+    # even mid-put (no blocking `finally`), so this cannot deadlock.
+    for result in worker_results:
+        if isinstance(result, BaseException):
+            for task in [producer_task, *worker_tasks]:
+                task.cancel()
+            await asyncio.gather(*[producer_task, *worker_tasks], return_exceptions=True)
+            raise result
+
+    # Normal completion: all workers drained (each consumed one stop marker
+    # after the real items). Surface any producer/discovery error.
+    await producer_task
+
+
 async def build_paths(
     *,
     bot: Bot,
@@ -1069,22 +1176,37 @@ async def build_paths(
             f"{PATH_PERMUTATION_FILTER} → depths={pool_type_per_depth}",
         )
     bot_logger.info(f"[build_paths] Pool types: {[t.__name__ for t in pool_types]}")
-    async for path_steps in find_paths_async(  # noqa:PLR1702
-        chain_id=bot.chain_id,
-        start_tokens=[
-            WETH_ADDRESS,
-            NATIVE_CURRENCY_ADDRESS,  # V4 allows Ether-paired pools
-        ],
-        end_tokens=[
-            WETH_ADDRESS,
-            NATIVE_CURRENCY_ADDRESS,  # V4 allows Ether-paired pools
-        ],
-        max_depth=3,
-        pool_types=pool_types,
-        db=bot.db,
-        pool_type_per_depth=pool_type_per_depth,
-        allowed_intermediate_tokens=ALLOWED_INTERMEDIATE_TOKENS,
-    ):
+
+    async def _consume_step(path_steps: object) -> None:
+        """Process a single discovered path: build its pools, register them
+        with the Rust engine (verification → set_live), and register the path.
+
+        This is the per-path body that previously ran inline in the
+        `async for path_steps in find_paths_async(...)` discovery loop. It is
+        extracted so `run_registration_pipeline` can run several of these
+        concurrently on a bounded queue: discovery (the producer) can never run
+        more than `REG_QUEUE_BOUND` paths ahead of activation, and a flood of
+        new registrations cannot stall the progress of pools already enqueued
+        for verify/activate (FIFO + bounded concurrency). The slow RPC verify
+        is lock-free on the Rust side, so workers overlap it and contend only
+        on the short engine commit points.
+        """
+        # Each worker rebinds the shared build_paths counters; declare them so
+        # the assignments land in the enclosing (build_paths) scope instead of
+        # raising UnboundLocalError / shadowing locals. The set and bot_logger
+        # are mutated, not rebound, so they need no `nonlocal`.
+        nonlocal \
+            path_count, \
+            skip_count, \
+            engine_reject_count, \
+            other_exc_count, \
+            v4_pool_count, \
+            v4_hook_rejected, \
+            v4_dynamic_fee_rejected, \
+            direction_fail_count, \
+            dup_count, \
+            register_fail_count
+
         await asyncio.sleep(0)
 
         # Determine pool types for each step
@@ -1111,7 +1233,7 @@ async def build_paths(
         # admission refusals distinctly from generic build skips. Tracked with
         # this flag so the `if skip:` guard below skips skip_count for them.
         v4_admission_rejected = False
-        for step, pt in zip(steps, pool_type_strs, strict=True):
+        for step, pt in zip(steps, pool_type_strs, strict=True):  # noqa: PLR1702
             if pt == "V2":
                 try:
                     pool = bot.build_pool(
@@ -1195,7 +1317,7 @@ async def build_paths(
             # also count them as generic skips (avoids double-counting).
             if not v4_admission_rejected:
                 skip_count += 1
-            continue
+            return
 
         # Register with Rust engine
         try:
@@ -1248,14 +1370,14 @@ async def build_paths(
             bot_logger.info(
                 f"[build_paths] Engine registration failed ({type(exc).__name__}): {exc}",
             )
-            continue
+            return
         except Exception as exc:
             engine_reject_count += 1
             other_exc_count += 1
             bot_logger.info(
                 f"[build_paths] Engine registration failed ({type(exc).__name__}): {exc}",
             )
-            continue
+            return
 
         # Verification is handled inside the engine at registration time
         # (see set_verify_on_register). No separate Python-side verification
@@ -1267,7 +1389,7 @@ async def build_paths(
         zfo_list = resolve_directions(pools, weth.address)
         if zfo_list is None:
             direction_fail_count += 1
-            continue
+            return
 
         # Skip duplicate paths (same pools, same directions)
         # For V4 pools, use pool_id instead of address
@@ -1280,7 +1402,7 @@ async def build_paths(
         path_sig = tuple(v for pair in zip(pool_sigs, zfo_list, strict=True) for v in pair)
         if path_sig in registered_path_sigs:
             dup_count += 1
-            continue
+            return
         registered_path_sigs.add(path_sig)
 
         try:
@@ -1289,7 +1411,7 @@ async def build_paths(
             register_fail_count += 1
             if register_fail_count <= 5:
                 bot_logger.warning(f"Path registration failed: {type(exc).__name__}: {exc}")
-            continue
+            return
 
         path_count += 1
         if path_count % 1000 == 0:
@@ -1298,6 +1420,41 @@ async def build_paths(
                 f"{skip_count} skipped, {token_filter_count} token-filtered, "
                 f"{engine_reject_count} engine-rejected, {dup_count} duplicates",
             )
+
+    # Backpressure producer/consumer: discovery (find_paths_async) feeds a
+    # bounded queue drained by REG_WORKERS concurrent `_consume_step` workers.
+    # `await put` in the producer blocks discovery when the queue is full, so a
+    # flood of new registrations cannot outrun activation by more than
+    # REG_QUEUE_BOUND paths — pools already enqueued always progress (FIFO, and
+    # the lock-free RPC-verify latency overlaps across the workers). A fatal
+    # verification error (VerificationMismatchError / VerificationRpcError)
+    # raised by any worker aborts the whole pipeline and re-raises
+    # (crash-loudly preserved).
+    bot_logger.info(
+        f"[build_paths] Starting registration pipeline: {REG_WORKERS} workers, "
+        f"queue bound {REG_QUEUE_BOUND}"
+    )
+    await run_registration_pipeline(
+        producer=find_paths_async(
+            chain_id=bot.chain_id,
+            start_tokens=[
+                WETH_ADDRESS,
+                NATIVE_CURRENCY_ADDRESS,  # V4 allows Ether-paired pools
+            ],
+            end_tokens=[
+                WETH_ADDRESS,
+                NATIVE_CURRENCY_ADDRESS,  # V4 allows Ether-paired pools
+            ],
+            max_depth=3,
+            pool_types=pool_types,
+            db=bot.db,
+            pool_type_per_depth=pool_type_per_depth,
+            allowed_intermediate_tokens=ALLOWED_INTERMEDIATE_TOKENS,
+        ),
+        consume=_consume_step,
+        queue_size=REG_QUEUE_BOUND,
+        worker_count=REG_WORKERS,
+    )
 
     bot_logger.info(
         f"[build_paths] Path discovery complete: {path_count} paths in "

@@ -27,6 +27,10 @@ export DEGENBOT_DEBUG_V4_SOLVE=1
 # depth/target/selector/outcome) so a depth-8 empty-calldata PoolManager Halt
 # can be attributed against the executor Vyper source (2LTKVO / W2UWZO).
 export DEGENBOT_DUMP_CALL_TRACE=1
+# Log each V2 hop's reserves slot8 as read from the shared per-block CacheDB
+# right before that path's sim — the ground truth for what the executor's
+# Vyper `_v2_get_amount_out` (V2_SWAP_CALC) SLOADs (path-11354 1-wei probe).
+export DEGENBOT_V2_CALC_TRACE=1
 
 # Option-A solver-state accuracy gate (AV42C7): run at the PUBLISH point —
 # when a quiesce-gated (block-final/coalesced) result is about to be sent to
@@ -79,6 +83,12 @@ export DEGENBOT_VERIFY_DBG=1
 # tracked class. The solver-state tripwire (DEGENBOT_ASSERT_SOLVER_STATE=1)
 # stays armed independently and stops the pump on a genuine desync.
 export DEGENBOT_SIM_EXIT_ON_FAIL="${DEGENBOT_SIM_EXIT_ON_FAIL:-1}"
+
+# Trap on EVERY bucket: empty the ignore-bucket allowlist so the FIRST sim
+# failure of any class (including the known CurrencyNotSettled/IIA solver-
+# math class) dumps a [sim-fixture] and sys.exit(3). No bucket is traded
+# through. Set to a comma-sep bucket list to re-enable ignore-behavior.
+export DEGENBOT_SIM_EXIT_IGNORE_BUCKETS=""
 
 # The actual bot invocation (uv rebuilds the Rust extension if any rust
 # source / Cargo.toml is newer than the installed build).
