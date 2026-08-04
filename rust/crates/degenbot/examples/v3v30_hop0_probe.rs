@@ -30,11 +30,11 @@ use degenbot_solvers::mobius_v3_int::{int_simulate_v3_swap, IntV3TickRangeSequen
 
 const FIXTURE_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../../tests/fixtures/fee1_v3v4v3_block25675755.json"
+    "/../../../tests/fixtures/path10956_v3v3v2_block25677777.json"
 );
-const RECORDED_INPUT: u128 = 2_540_883_010_212; // WETH in (from [sim-diag] optimal_input/path-10338 hop0 input)
-const RECORDED_HOP0_OUTPUT: u128 = 4729; // solver hop_outputs[0]
-const RECORDED_ONCHAIN_OUTPUT: u128 = 4728; // actual USDT delivered by V3-30
+const RECORDED_INPUT: u128 = 1_372_336_865_300; // WETH in (from [sim-diag] optimal_input, path-10956 hop0)
+const RECORDED_HOP0_OUTPUT: u128 = 2545; // solver hop_outputs[0] (micro-USDT)
+const RECORDED_ONCHAIN_OUTPUT: u128 = 2544; // actual USDT delivered by V3-30 (micro-USDT)
 
 #[derive(serde::Deserialize)]
 struct Fixture {
@@ -208,6 +208,33 @@ fn main() {
     println!(
         "\nrecorded hop0: solver={RECORDED_HOP0_OUTPUT} onchain={RECORDED_ONCHAIN_OUTPUT} (input {RECORDED_INPUT})"
     );
+    // ── Isolate whether the +1 is a STATE-feeding defect vs the math ──
+    // The solver's solve-time sqrt (solver-st 25677777) differs from on-chain
+    // at solve_block by ~0.0074%. Feed BOTH states into the SAME oracle
+    // (v3_simulate_swap) at the recorded input; if solver-sqrt → 2545 while
+    // onchain-sqrt → 2544, the +1 is a state discrepancy, not crossing math.
+    let solver_sqrt_hex = "3417004359752964937056898";
+    let onchain_sqrt_hex: &str = p.sqrt_price_x96.as_ref().unwrap();
+    // Rebuild the pool state with the solver's solve-time sqrt by string-replacing
+    // the on-chain sqrt in the raw fixture JSON before re-parsing.
+    let state_solver = {
+        let raw2 = raw.replace(onchain_sqrt_hex, solver_sqrt_hex);
+        let f2: Fixture = serde_json::from_str(&raw2).expect("reparse solver-sqrt fixture");
+        build_v3_state(&f2.pools.v3_0)
+    };
+    let amount = I256::try_from(RECORDED_INPUT).expect("amt");
+    let oc_outcome =
+        v3_simulate_swap(&state, fee, ts, true, amount, unbounded_limit(true)).expect("oc sim");
+    let sv_outcome = v3_simulate_swap(&state_solver, fee, ts, true, amount, unbounded_limit(true))
+        .expect("sv sim");
+    let oc_out = v3_exact_in_output(&oc_outcome, true);
+    let sv_out = v3_exact_in_output(&sv_outcome, true);
+    println!("ISOLATE input={RECORDED_INPUT}:");
+    println!("  onchain-sqrt  oracle v3_simulate_swap = {oc_out}   (recorded on-chain actual={RECORDED_ONCHAIN_OUTPUT})");
+    println!("  solver-sqrt   oracle v3_simulate_swap = {sv_out}   (recorded solver predicted={RECORDED_HOP0_OUTPUT})");
+    let state_explains =
+        sv_out == U256::from(RECORDED_HOP0_OUTPUT) && oc_out == U256::from(RECORDED_ONCHAIN_OUTPUT);
+    println!("STATE-DISCREPANCY EXPLAINS +1: {state_explains}");
     println!(
         "VERDICT: {} divergence(s) — {}",
         divergences,
