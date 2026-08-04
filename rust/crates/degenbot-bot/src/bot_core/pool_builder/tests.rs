@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 
 use alloy::dyn_abi::DynSolValue;
-use alloy::primitives::{aliases::U112, Address, Bytes, I256, U256};
+use alloy::primitives::{aliases::U112, aliases::U128, Address, Bytes, I256, U256};
 use async_trait::async_trait;
 use degenbot_core::errors::ProviderError;
 use degenbot_rpc::abi;
@@ -515,7 +515,7 @@ async fn build_v3_assembles_sparse_register_params_from_onchain() {
     );
     let io = io_with(f);
 
-    let params = builder::build_v3(1, pool, &io, Some(9_000_000))
+    let params = builder::build_v3(1, pool, None, &io, Some(9_000_000))
         .await
         .unwrap();
     assert_eq!(params.address, pool);
@@ -568,6 +568,7 @@ async fn build_v4_assembles_sparse_register_params_from_onchain() {
             tick_spacing: 1,
             hook_flags: 0,
         },
+        None,
         &io,
         Some(11_000_000),
     )
@@ -584,4 +585,97 @@ async fn build_v4_assembles_sparse_register_params_from_onchain() {
     assert_eq!(params.tick, 5);
     assert_eq!(params.coverage, PoolTickCoverage::Sparse);
     assert!(params.tick_data.is_empty());
+}
+
+/// A `TickMapDb` fake returning a canned `LiquidityMap` (V3 + V4 both query it).
+struct FakeTickMapDb(degenbot_db::snapshot::LiquidityMap);
+
+impl degenbot_db::snapshot::TickMapDb for FakeTickMapDb {
+    fn fetch_liquidity_map(
+        &self,
+        _address: Address,
+    ) -> Result<Option<degenbot_db::snapshot::LiquidityMap>, degenbot_db::error::DbError> {
+        Ok(Some(self.0.clone()))
+    }
+    fn fetch_liquidity_map_v4(
+        &self,
+        _pool_manager: Address,
+        _pool_id_hash: alloy::primitives::B256,
+    ) -> Result<Option<degenbot_db::snapshot::LiquidityMap>, degenbot_db::error::DbError> {
+        Ok(Some(self.0.clone()))
+    }
+    fn fetch_newest_update_block(
+        &self,
+        _chain: i64,
+        _family: degenbot_db::read::ExchangeFamily,
+    ) -> Result<Option<i64>, degenbot_db::error::DbError> {
+        Ok(None)
+    }
+}
+
+/// A DB hit gives a TRACKED pool (the cross-task capture in 4GQWZ4): the builder
+/// favors the `TickMapDb` full tick map (Tracked → feeds the verify lifecycle)
+/// over the chain-arm single-word bootstrap, and must NOT consult the chain
+/// (no `tick_bitmap` response is seeded, so a chain probe would error).
+#[tokio::test]
+async fn build_v3_db_hit_yields_tracked_without_chain() {
+    use crate::bot_core::PoolTickCoverage;
+    use degenbot_db::snapshot::{BitmapAtWord, LiquidityAtTick, LiquidityMap};
+    use std::collections::HashMap;
+
+    let factory: Address =
+        alloy::primitives::address!("0x1111111111111111111111111111111111111111");
+    let tok0: Address = alloy::primitives::address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+    let tok1: Address = alloy::primitives::address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+    let pool: Address = alloy::primitives::address!("0x2222222222222222222222222222222222222222");
+
+    let mut f = FakeRpc::new();
+    f.set(choreography::selector(b"factory()"), addr_word(factory));
+    f.set(choreography::selector(b"token0()"), addr_word(tok0));
+    f.set(choreography::selector(b"token1()"), addr_word(tok1));
+    f.set(
+        choreography::selector(b"fee()"),
+        enc(DynSolValue::Uint(U256::from(3000u32), 24)),
+    );
+    f.set(
+        choreography::selector(b"tickSpacing()"),
+        enc(DynSolValue::Int(I256::try_from(60i32).unwrap(), 24)),
+    );
+    f.set(
+        abi::encode_slot0()[..4].try_into().unwrap(),
+        slot0_ret(U256::from(1u128 << 96), 0),
+    );
+    f.set(
+        abi::encode_liquidity()[..4].try_into().unwrap(),
+        enc(DynSolValue::Uint(U256::from(1_000_000_000u64), 128)),
+    );
+    // NOTE: no tick_bitmap response — if the chain arm were reached it would error.
+    let io = io_with(f);
+
+    let db = FakeTickMapDb(LiquidityMap {
+        tick_bitmap: HashMap::from([(
+            0i64,
+            BitmapAtWord {
+                bitmap: U256::from(1u128 << 60),
+            },
+        )]),
+        tick_data: HashMap::from([(
+            60,
+            LiquidityAtTick {
+                liquidity_gross: U256::from(100u64),
+                liquidity_net: I256::try_from(100i128).unwrap(),
+            },
+        )]),
+    });
+
+    let params = builder::build_v3(1, pool, Some(&db), &io, Some(9_000_000))
+        .await
+        .unwrap();
+    assert_eq!(params.coverage, PoolTickCoverage::Tracked);
+    assert_eq!(params.tick_data.len(), 1);
+    assert_eq!(params.tick_data[&60].liquidity_gross, U128::from(100u64));
+    assert_eq!(
+        params.tick_data[&60].liquidity_net,
+        I256::try_from(100i128).unwrap()
+    );
 }

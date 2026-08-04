@@ -236,7 +236,7 @@ fn fetch_v4_tick_map_from_db(
 /// pinned to `0` (the Db snapshot is state at block `S`; per-tick block is
 /// diagnostic only — the solver math doesn't read it — matching
 /// `convert_tick_map` in `bot_core::mod.rs`).
-fn liquidity_map_to_tick_info(
+pub(crate) fn liquidity_map_to_tick_info(
     map: LiquidityMap,
 ) -> Option<(HashMap<i32, TickInfo>, PoolTickCoverage)> {
     if map.tick_bitmap.is_empty() || map.tick_data.is_empty() {

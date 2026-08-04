@@ -17,6 +17,8 @@ use std::collections::HashMap;
 
 use alloy::primitives::{Address, B256};
 use degenbot_core::errors::ProviderError;
+use degenbot_db::error::DbError;
+use degenbot_db::snapshot::TickMapDb;
 use degenbot_pools::spec_bounds;
 use degenbot_pools::v2_state::RegisterV2PoolParams;
 use degenbot_pools::v3_state::RegisterV3PoolParams;
@@ -50,6 +52,8 @@ pub enum PoolBuilderError {
     Spec,
     #[error("CREATE2 address verification failed")]
     Create2,
+    #[error("DB read failed: {0}")]
+    Db(#[from] DbError),
 }
 
 /// Probe a pool contract to identify its family via the canonical read-call
@@ -263,6 +267,63 @@ pub async fn build_v2(
     })
 }
 
+/// Assemble a V3 pool's tick map with **DB-first** coverage (the cross-task
+/// capture in task `4GQWZ4`): a `TickMapDb` hit (both `tick_bitmap` AND
+/// `tick_data` populated) yields [`PoolTickCoverage::Tracked`]; a DB miss or
+/// empty map falls back to the Chain-arm single-word bootstrap →
+/// [`PoolTickCoverage::Sparse`]. Mirrors `tick_assembly::assemble_v3_tick_map`'s
+/// `Db → Chain` precedence but is written async-native (the builder runs on the
+/// async registration runtime, so it cannot `block_on` the sync assemble
+/// helper — the nested-block_on deadlock class).
+///
+/// # Errors
+///
+/// Returns [`PoolBuilderError::Db`] on a DB read failure or
+/// [`PoolBuilderError::Rpc`] on a Chain-arm failure.
+async fn assemble_db_or_chain_v3(
+    db: Option<&dyn TickMapDb>,
+    io: &ConstructionIo,
+    address: Address,
+    tick: i32,
+    tick_spacing: i32,
+    block: u64,
+) -> Result<(HashMap<i32, TickInfo>, PoolTickCoverage), PoolBuilderError> {
+    if let Some(db) = db {
+        if let Some(map) = db.fetch_liquidity_map(address)? {
+            if let Some(hit) = crate::bot_core::tick_assembly::liquidity_map_to_tick_info(map) {
+                return Ok(hit); // (ticks, Tracked)
+            }
+        }
+    }
+    // DB miss / empty → Chain arm (Sparse).
+    let (ticks, _) = bootstrap_v3_tick_map(io, address, tick, tick_spacing, block).await?;
+    Ok((ticks, PoolTickCoverage::Sparse))
+}
+
+/// V4 twin of [`assemble_db_or_chain_v3`]: `TickMapDb.fetch_liquidity_map_v4`
+/// hit → [`PoolTickCoverage::Tracked`]; miss → Chain-arm → Sparse.
+async fn assemble_db_or_chain_v4(
+    db: Option<&dyn TickMapDb>,
+    io: &ConstructionIo,
+    pool_manager: Address,
+    pool_id: [u8; 32],
+    tick: i32,
+    tick_spacing: i32,
+    block: u64,
+) -> Result<(HashMap<i32, TickInfo>, PoolTickCoverage), PoolBuilderError> {
+    if let Some(db) = db {
+        if let Some(map) = db.fetch_liquidity_map_v4(pool_manager, B256::from(pool_id))? {
+            if let Some(hit) = crate::bot_core::tick_assembly::liquidity_map_to_tick_info(map) {
+                return Ok(hit); // (ticks, Tracked)
+            }
+        }
+    }
+    // DB miss / empty → Chain arm (Sparse).
+    let (ticks, _) =
+        bootstrap_v4_tick_map(io, pool_manager, pool_id, tick, tick_spacing, block).await?;
+    Ok((ticks, PoolTickCoverage::Sparse))
+}
+
 /// Chain-arm single-word tick bootstrap over [`ConstructionIo`] — the V3
 /// portion of `assemble_v3_tick_map`'s Chain arm, inlined over the generic RPC
 /// primitive so a bare `ConstructionIo` (no `TickBootstrapRpc`/db) can seed a
@@ -323,6 +384,7 @@ async fn bootstrap_v3_tick_map(
 pub async fn build_v3(
     chain_id: u64,
     address: Address,
+    db: Option<&dyn TickMapDb>,
     io: &ConstructionIo,
     block: Option<u64>,
 ) -> Result<RegisterV3PoolParams, PoolBuilderError> {
@@ -333,7 +395,7 @@ pub async fn build_v3(
     let update_block = block.unwrap_or(0);
 
     let (tick_data, coverage) =
-        bootstrap_v3_tick_map(io, address, tick, imm.tick_spacing, update_block).await?;
+        assemble_db_or_chain_v3(db, io, address, tick, imm.tick_spacing, update_block).await?;
 
     deployments::verify_v3_pool_address(
         chain_id,
@@ -457,6 +519,7 @@ pub struct V4PoolBuildIdentity {
 /// Returns a [`ProviderError`] on an RPC/decode failure.
 pub async fn build_v4(
     id: V4PoolBuildIdentity,
+    db: Option<&dyn TickMapDb>,
     io: &ConstructionIo,
     block: Option<u64>,
 ) -> Result<RegisterV4PoolParams, PoolBuilderError> {
@@ -466,7 +529,8 @@ pub async fn build_v4(
     let tick = i32::try_from(tick_i).unwrap_or(0);
     let update_block = block.unwrap_or(0);
 
-    let (tick_data, coverage) = bootstrap_v4_tick_map(
+    let (tick_data, coverage) = assemble_db_or_chain_v4(
+        db,
         io,
         id.pool_manager,
         id.pool_id,
