@@ -2030,6 +2030,7 @@ dependencies = [
  "degenbot-submission",
  "degenbot-uniswap",
  "degenbot-v2-math",
+ "parking_lot",
  "revm",
  "serde",
  "serde_json",

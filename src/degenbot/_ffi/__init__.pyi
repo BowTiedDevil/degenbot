@@ -962,6 +962,17 @@ class PyBot:
         rpc_url: str,
         state_view_address: str,
     ) -> Coroutine[Any, Any, None]: ...
+    def run_v3_registration_lifecycle(
+        self,
+        address: str,
+        snapshot_block: int | None,
+    ) -> Coroutine[Any, Any, None]: ...
+    def run_v4_registration_lifecycle(
+        self,
+        pool_manager_address: str,
+        pool_id_hex: str,
+        snapshot_block: int | None,
+    ) -> Coroutine[Any, Any, None]: ...
     def register_curve_pool(
         self,
         address: str,
@@ -1224,6 +1235,17 @@ class ArbitrageEngine:
         pool_id_hex: str,
         rpc_url: str,
         state_view_address: str,
+    ) -> Coroutine[Any, Any, None]: ...
+    def run_v3_registration_lifecycle(
+        self,
+        address: str,
+        snapshot_block: int | None,
+    ) -> Coroutine[Any, Any, None]: ...
+    def run_v4_registration_lifecycle(
+        self,
+        pool_manager_address: str,
+        pool_id_hex: str,
+        snapshot_block: int | None,
     ) -> Coroutine[Any, Any, None]: ...
     def verify_v4_pool(
         self,

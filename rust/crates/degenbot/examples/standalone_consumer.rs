@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use alloy::network::Ethereum;
-use alloy::primitives::{address, aliases::U112, Address, Bytes, U256};
+use alloy::primitives::{address, aliases::U112, Address, Bytes, I256, U128, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::ClientBuilder;
 use alloy::transports::mock::{Asserter, MockTransport};
@@ -352,6 +352,76 @@ fn main() {
     //    Python consumers hold against the shared fixture JSON. No RPC
     //    (mock transport with an empty queue).
     in_process_sim_standalone_slice();
+    registration_lifecycle_standalone_slice();
+}
+
+/// (IKGQ6F / ADR-022 D1) Standalone-Rust consumer drives the core-owned
+/// registration verify-lifecycle (`degenbot::run_cl_v3_lifecycle`) with no
+/// Python in the build graph and no provider: a Tracked V3 pool registers
+/// Quarantined, then the generic lifecycle runs its two verify closures
+/// (trivial passing stubs here), drains + pins, and lands the pool `Live`.
+/// This is the D4/D-C choreography the Python registry now delegates to.
+fn registration_lifecycle_standalone_slice() {
+    use std::collections::HashMap;
+
+    use degenbot::bot_core::{PoolTickCoverage, RegistrationLifecycle, TickInfo};
+    use degenbot::{run_cl_v3_lifecycle, RegisterV3PoolParams};
+    use parking_lot::RwLock;
+
+    let core = RwLock::new(BotState::new());
+    let addr = address!("000000000000000000000000000000000000000D");
+    let mut tick_data = HashMap::new();
+    tick_data.insert(
+        60,
+        TickInfo {
+            liquidity_gross: U128::from(100),
+            liquidity_net: I256::try_from(100i128).unwrap(),
+            block: 0,
+        },
+    );
+    let pid = core
+        .write()
+        .register_v3_pool(&RegisterV3PoolParams {
+            address: addr,
+            token0: address!("000000000000000000000000000000000000000A"),
+            token1: address!("000000000000000000000000000000000000000B"),
+            fee: 3000,
+            tick_spacing: 60,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data,
+            coverage: PoolTickCoverage::Tracked,
+            ..Default::default()
+        })
+        .expect("standalone: Tracked V3 registration");
+    assert_eq!(
+        core.read().get_v3_pool(pid).unwrap().registration_lifecycle,
+        RegistrationLifecycle::Quarantined,
+        "Tracked registers Quarantined (DFQYM5)"
+    );
+
+    // Drive the D4 lifecycle: quarantine → seed-verify @42 → drain+pin →
+    // post-drain-verify (@ the pin's own block) → Live. Trivial passing
+    // closures stand in for the provider-backed verify (the generic fn needs
+    // no provider). Sparse would be an immediate no-op.
+    degenbot::runtime::get_runtime()
+        .block_on(run_cl_v3_lifecycle::<_, _, _, _, ()>(
+            &core,
+            addr,
+            Some(42),
+            |_seed, _block| async move { Ok(()) },
+            |_td, _block| async move { Ok(()) },
+        ))
+        .expect("standalone: lifecycle must pass");
+    assert_eq!(
+        core.read().get_v3_pool(pid).unwrap().registration_lifecycle,
+        RegistrationLifecycle::Live,
+        "Tracked lands Live only after verification"
+    );
+    println!(
+        "standalone degenbot consumer OK: registration lifecycle — tracked V3 Quarantined → verified → Live"
+    );
 }
 
 /// (62YWCF) Standalone-Rust consumer reaches the in-process revm EVM sim.

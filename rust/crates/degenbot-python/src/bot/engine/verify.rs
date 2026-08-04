@@ -162,6 +162,45 @@ impl PyArbitrageEngine {
         )
     }
 
+    /// Run a single V3 pool's registration verify-lifecycle end-to-end
+    /// (IKGQ6F / ADR-022 D1) — the core-owned
+    /// `quarantine → seed-verify → drain+pin → post-drain-verify → set_live`
+    /// choreography, delegating to the shared `PumpState`. **Sparse** →
+    /// immediate no-op (`Live`, no RPC); **Tracked** → verified with the
+    /// mismatch tripwire before `Live`. Uses the bot's single verify provider
+    /// (D-B).
+    #[allow(clippy::needless_pass_by_value)]
+    #[pyo3(signature = (address, snapshot_block))]
+    fn run_v3_registration_lifecycle<'py>(
+        &self,
+        py: Python<'py>,
+        address: String,
+        snapshot_block: Option<u64>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        self.pump
+            .run_v3_registration_lifecycle(py, address, snapshot_block)
+    }
+
+    /// V4 twin of `run_v3_registration_lifecycle`, keyed by
+    /// (`pool_manager_address`, `pool_id_hex`). A tracked V4 pool with no
+    /// `verify_state_view` configured fails fast (`PyValueError`, D-C).
+    #[allow(clippy::needless_pass_by_value)]
+    #[pyo3(signature = (pool_manager_address, pool_id_hex, snapshot_block))]
+    fn run_v4_registration_lifecycle<'py>(
+        &self,
+        py: Python<'py>,
+        pool_manager_address: String,
+        pool_id_hex: String,
+        snapshot_block: Option<u64>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        self.pump.run_v4_registration_lifecycle(
+            py,
+            pool_manager_address,
+            pool_id_hex,
+            snapshot_block,
+        )
+    }
+
     /// Verify a single V3 pool's liquidity map against on-chain state.
     ///
     /// Takes a pool address and verifies the `tick_data` at the given block.

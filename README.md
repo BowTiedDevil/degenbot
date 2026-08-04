@@ -1082,10 +1082,12 @@ registry = EngineRegistry(bot=bot)
 ```
 
 <!-- invisible-code-block: python
-# pools must be handed to the engine before path-building (the pump loop
-# does this in `build_paths`; verify is a no-op without `start()`). V3
-# registration is async because the live-RPC verify ritual is awaited even
-# when skipped.
+# pools must be handed to the engine before path-building (in production the
+# verify-lifecycle provider is configured by `start()`; here we set it so the
+# core-owned registration lifecycle (ADR-022 D1) has a verify access). A V3
+# pool not registered in the shared BotState is a no-op (no RPC); registration
+# is async because the core lifecycle aspirates the verify choreography.
+registry.engine.set_verify_rpc_url('http://127.0.0.1:8545')
 registry.register_v2_pool(v2_pool)
 asyncio.run(registry.register_v3_pool(v3_pool))
 -->

@@ -760,6 +760,113 @@ impl PumpState {
             Ok(())
         })
     }
+
+    /// Run a single V3 pool's registration verify-lifecycle end-to-end — the
+    /// core-owned `quarantine → seed-verify → drain+pin → post-drain-verify →
+    /// set_live` choreography (ADR-022 D1) that the Python driver previously
+    /// performed as separate `set_*_quarantined` + `verify_*_snapshot_seed` +
+    /// `apply_buffer` + `verify_*_post_drain` + `set_*_live` round-trips.
+    ///
+    /// **Sparse** → immediate no-op (`Live`, no RPC). **Tracked** → verified
+    /// with the mismatch tripwire before `Live` (never released unverified).
+    /// Uses the bot's single verify provider (D-B — one provider per
+    /// bot/chain); a missing provider fails fast (D-C no-config posture).
+    ///
+    /// # Errors
+    ///
+    /// `VerificationMismatchError` (fatal tripwire) / `VerificationRpcError`
+    /// (transient) from the underlying verify, or `VerificationRpcError` when
+    /// no verify provider was configured.
+    #[allow(clippy::needless_pass_by_value)]
+    pub(crate) fn run_v3_registration_lifecycle<'py>(
+        &self,
+        py: Python<'py>,
+        address: String,
+        snapshot_block: Option<u64>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let pool_addr: alloy::primitives::Address = address.parse().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid V3 address: {e}"))
+        })?;
+        // Clone the single provider + the core handle under short locks; the
+        // lifecycle re-acquires core.write() per step (no guard across await).
+        // The provider is `Option`: it is resolved lazily inside the core, so
+        // a missing provider only fails fast (D-C) for a TRACKED pool that
+        // actually reaches a verify step — Sparse / unregistered no-op paths
+        // (and the sparse buffer drain) never need one.
+        let core = {
+            let engine = self.engine.lock();
+            Arc::clone(&engine.core)
+        };
+        let provider = self.verify_provider.lock().clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            use degenbot_bot::bot_core::registration_lifecycle::RegistrationLifecycleError;
+            degenbot_bot::bot_core::run_v3_registration_lifecycle(
+                &core,
+                provider.as_ref(),
+                pool_addr,
+                snapshot_block,
+            )
+            .await
+            .map_err(|err| match err {
+                RegistrationLifecycleError::Verify(v) => map_liquidity_verify_error(v),
+                RegistrationLifecycleError::MissingProvider => {
+                    crate::bot::engine::VerificationRpcError::new_err(err.to_string())
+                }
+                RegistrationLifecycleError::MissingStateView => {
+                    pyo3::exceptions::PyValueError::new_err(err.to_string())
+                }
+            })
+        })
+    }
+
+    /// V4 twin of [`run_v3_registration_lifecycle`] — runs the core-owned V4
+    /// registration verify-lifecycle, keyed by (`pool_manager`, `pool_id`),
+    /// using the stored `verify_state_view` contract address. A **tracked** V4
+    /// pool with no `state_view` surfaced as `PyValueError` (D-C no-config
+    /// fail-fast); Sparse pools never require `state_view`.
+    #[allow(clippy::needless_pass_by_value)]
+    pub(crate) fn run_v4_registration_lifecycle<'py>(
+        &self,
+        py: Python<'py>,
+        pool_manager_address: String,
+        pool_id_hex: String,
+        snapshot_block: Option<u64>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let pool_manager: alloy::primitives::Address =
+            pool_manager_address.parse().map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_manager: {e}"))
+            })?;
+        let pool_id = crate::bot::engine::hex_string_to_pool_id(&pool_id_hex).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_id: {e}"))
+        })?;
+        let state_view = *self.verify_state_view.lock();
+        let core = {
+            let engine = self.engine.lock();
+            Arc::clone(&engine.core)
+        };
+        let provider = self.verify_provider.lock().clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            use degenbot_bot::bot_core::registration_lifecycle::RegistrationLifecycleError;
+            degenbot_bot::bot_core::run_v4_registration_lifecycle(
+                &core,
+                provider.as_ref(),
+                pool_manager,
+                pool_id,
+                state_view,
+                snapshot_block,
+            )
+            .await
+            .map_err(|err| match err {
+                RegistrationLifecycleError::Verify(v) => map_liquidity_verify_error(v),
+                RegistrationLifecycleError::MissingProvider => {
+                    crate::bot::engine::VerificationRpcError::new_err(err.to_string())
+                }
+                RegistrationLifecycleError::MissingStateView => {
+                    pyo3::exceptions::PyValueError::new_err(err.to_string())
+                }
+            })
+        })
+    }
 }
 
 /// Map a `LiquidityVerifyError` (from `liquidity_verifier::verify_v3/v4_pools`)

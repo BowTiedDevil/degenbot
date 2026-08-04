@@ -135,6 +135,10 @@ pub use degenbot_bot::bot_core::pool_builder::builder::{
     build_v2, build_v3, build_v4, probe_pool_type, PoolBuilderError, PoolFamily,
     V4PoolBuildIdentity,
 };
+pub use degenbot_bot::bot_core::registration_lifecycle::{
+    run_cl_v3_lifecycle, run_cl_v4_lifecycle, run_v3_registration_lifecycle,
+    run_v4_registration_lifecycle, RegistrationLifecycleError,
+};
 pub use degenbot_bot::bot_core::{
     BotState, PoolEntry, RegisterV2PoolParams, RegisterV3PoolParams, RegisterV4PoolParams,
     V2PoolState, V4PoolKey,

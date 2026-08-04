@@ -20,6 +20,68 @@ deepening decisions crystallize.
 - **PyO3 wrapper** — `rust/crates/degenbot-python/src/<domain>/**`. `#[pyclass]`/`#[pyfunction]` only — arg extract → GIL release → core call → result wrap. No business logic.
 - **Python companion** — `src/degenbot/**`. User-facing API, docstrings, I/O orchestration, immutable config dual-tracking, `Fraction`-based display.
 
+### Pool registration lifecycle (D4 / IKGQ6F)
+
+Canonical terms for the CL (V3/V4) pool registration verify-lifecycle — the
+per-pool `Quarantined → drain+verify → Live` sequence owned by the Rust core.
+
+- **Registration lifecycle** — the per-pool `Quarantined`/`Live` state a
+  registered CL pool is in; for a Sparse pool it is always `Live`, for a
+  Tracked pool it is `Quarantined` until its verification passes.
+- **Quarantined** — a registered CL pool whose live `Swap`/`Mint`/`Burn`
+  events are deferred to the pump buffer (during drain+pin+verify) instead of
+  applied directly, so the pin's `update_block` cannot outrun
+  `last_complete_block`. Only ever applied to `Tracked` pools.
+- **Live** — the steady-state direct-apply contract; the **only solvable
+  state**. A pool is not solvable while `Quarantined`.
+- **Tracked** (`PoolTickCoverage`) — the pool's snapshot provided complete tick
+  data; solver results are trustworthy. Registers `Quarantined`; must pass the
+  two-step verify + tripwire before `Live`.
+- **Sparse** (`PoolTickCoverage`) — no complete tick data exists; solver
+  results may be inaccurate. Registers `Live` immediately, is never
+  quarantined, and is **never verified** (no RPC) — DFQYM5.
+- **Snapshot seed** — the registration-time (pinned) `tick_data` for a Tracked
+  pool; verified exactly once against on-chain@snapshot-block (step-1), then
+  consumed so memory is bounded. Comparing engine-current instead of the seed
+  would false-mismatch every active pool under a rolling start (CBCH6H).
+- **Verify-lifecycle** (the choreography) — the per-pool
+  `set_quarantined → verify seed (RPC) → drain+pin → verify post-drain (RPC) →
+  set_live` sequence plus its block-resolution + config-gating policy. Owned by
+  the Rust core (IKGQ6F); the Python driver only supplies `(coverage, idents,
+  verify config)`.
+- **State tripwire** (this task's D-A) — the verification `MismatchError`
+  raised as the terminal gate so `Live` is unreachable on unverified state;
+  never auto-repair. NOT ADR-021's solve-time scalar tripwire
+  (`solver_state_verifier`), which is out of registration scope.
+- **Orphan sweep** — `release_all_v3_v4_quarantined` as cleanup for pools
+  built but whose path never registered; never a productivity dependency.
+
+**Resolved need-doc: no-config policy (IKGQ6F D-C, 2026-08) = tracked is always
+verified.** There is NO "verify disabled" mode for tracked pools: with D-B the
+verify provider is always present (the bot's one `AlloyProvider`), so "no verify
+config" reduces to a missing V4 `state_view` contract ADDRESS (the `eth_call`
+target for V4 verification; V3 per-pool verify reads `pool.ticks()` directly).
+Core `registration_lifecycle` always requires verify for tracked (sparse skips) and
+raises a typed error if a V4 tracked pool needs `state_view` and it's absent —
+enforced in core (standalone Rust consumers get the same guarantee), with Python
+`start()` surfacing it early as a loud failure. No vacuous-pass, no silent
+permanent quarantine. Sparse is unaffected.
+
+**Resolved need-doc: verify provider (IKGQ6F D-B, 2026-08) = one provider per
+bot.** All operations on a chain share the bot's single `AlloyProvider` (cheap
+`Arc::clone`); the core lifecycle receives a clone **passed-in** from the outer
+owner — never stored on `BotState` (ADR-001 I/O-free pools keep the provider
+off core state). No second RPC side, no separate verify-provider trait; the
+separate `verify_rpc_url`/`verify_provider` plumbing is retired. The
+`StateView` contract address stays as a chain-scoped value.
+
+**Resolved need-doc: lifecycle home (IKGQ6F, 2026-08) = sibling
+`bot_core/registration_lifecycle.rs`.** Registration/verify is a state-hygiene
+concern (ADR-003), separate from construction: `pool_builder` only takes
+`&ConstructionIo` and never touches core state, while the lifecycle mutates
+core AND does RPC — so it needs the engine/core handle + a passed-in
+`&AlloyProvider`. Lives alongside `liquidity_verifier.rs`/`snapshot_verify.rs`.
+
 ### Pool structural families
 
 The seven `PoolEntry` variants fall into **three structural families**, grouped by state-field shape and delta shape — not by DEX. The family names are load-bearing vocabulary in architecture reviews and the `BotState` deepening.

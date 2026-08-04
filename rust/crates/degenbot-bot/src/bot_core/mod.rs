@@ -28,6 +28,7 @@ pub mod engine;
 pub mod liquidity_verifier;
 pub mod log_dispatcher;
 pub mod pool_builder;
+pub mod registration_lifecycle;
 pub mod reorg_coordinator;
 pub mod snapshot_verify;
 pub mod solve_coordinator;
@@ -54,6 +55,10 @@ pub use balancer_weighted_state::{
 };
 pub use curve_state::{CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams};
 pub use divergence_probe::{TrackedSlotKind, TrackedSlotProbe};
+pub use registration_lifecycle::{
+    run_cl_v3_lifecycle, run_cl_v4_lifecycle, run_v3_registration_lifecycle,
+    run_v4_registration_lifecycle, RegistrationLifecycleError,
+};
 pub use v3_state::{
     v3_simulate_swap, BufferedV3LiquidityUpdate, BufferedV3PoolEvent, BufferedV3SwapEvent,
     PoolTickCoverage, RegisterV3PoolError, RegisterV3PoolParams, RegistrationLifecycle,
@@ -3405,6 +3410,36 @@ impl BotState {
     /// pool has no pin / step-2 verify to protect, so quarantining it would
     /// only defer events with nothing to gain — it stays `Live`/direct-apply;
     /// DFQYM5 coverage-aware carve-out).
+    /// Coverage flag for a registered V3 pool (`Tracked` = complete tick data,
+    /// `Sparse` = none). Returns `None` for unregistered / non-V3 pools. The
+    /// registration-lifecycle module reads this up-front to branch the
+    /// verify-lifecycle (Sparse stays `Live`, no RPC — DFQYM5).
+    #[must_use]
+    pub fn v3_pool_coverage(&self, address: Address) -> Option<PoolTickCoverage> {
+        let &pool_id = self.pool_addresses.get(&address)?;
+        match self.pools.get(&pool_id)? {
+            PoolEntry::V3(_, state) => Some(state.coverage),
+            _ => None,
+        }
+    }
+
+    /// Coverage flag for a registered V4 pool (`Tracked` / `Sparse`). Returns
+    /// `None` for unregistered / non-V4 pools. V4 twin of
+    /// [`v3_pool_coverage`] — read up-front by the registration-lifecycle to
+    /// keep Sparse pools out of the verify deferral (DFQYM5).
+    #[must_use]
+    pub fn v4_pool_coverage(
+        &self,
+        pool_manager: Address,
+        pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
+    ) -> Option<PoolTickCoverage> {
+        let pid = self.v4_pool_id_by_key(pool_manager, pool_id)?;
+        match self.pools.get(&pid)? {
+            PoolEntry::V4(_, state) => Some(state.coverage),
+            _ => None,
+        }
+    }
+
     pub fn set_v3_pool_quarantined(&mut self, address: Address) {
         if let Some(&id) = self.pool_addresses.get(&address) {
             if let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&id) {
