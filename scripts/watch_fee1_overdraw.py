@@ -99,7 +99,7 @@ def main() -> int:
                     continue  # not an over-prediction
                 if int(predicted) < args.min_predicted:
                     continue
-                _record(args, root, tail, pid, hop, int(actual), int(predicted), line)
+                _record(args, root, audit, tail, pid, hop, int(actual), int(predicted), line)
         elif size < offset:
             print("[watch] log rotated/truncated — resetting offset", flush=True)
             offset = size
@@ -107,7 +107,7 @@ def main() -> int:
         time.sleep(args.poll)
 
 
-def _record(args, root, tail, pid, hop, actual, predicted, event_line):
+def _record(args, root, audit, tail, pid, hop, actual, predicted, event_line):
     ts = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     solve_block = "unknown"
     for line in reversed(tail):
