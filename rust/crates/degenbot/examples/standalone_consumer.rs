@@ -38,6 +38,74 @@ use revm::database::CacheDB;
 use revm::database_interface::EmptyDB;
 use revm::state::AccountInfo;
 
+// PoolBuilder (T2, 3FVZF4): the construction-I/O traits + build fns reached
+// via the umbrella (no pyo3). `FailingConstruction` is a module-level RPC
+// stub (never actually called — the standalone example is no-network) used
+// to prove the `ConstructionIo` seam + probe/dispatch compile and run.
+use degenbot::bot_core::construction_io::{ConstructionIo, NoDb, RpcConstruction};
+use degenbot::bot_core::pool_builder::builder::{
+    build_v2, probe_pool_type, PoolBuilderError, PoolFamily,
+};
+use degenbot::degenbot_rpc::provider::EthBlock;
+use degenbot::errors::ProviderError;
+
+/// A construction RPC that always fails (no RPC wired in the standalone
+/// no-network example) — proves the trait-object seam compiles + runs
+/// without a backend, and that `probe_pool_type` degrades to `Curve`.
+struct FailingConstruction;
+#[async_trait::async_trait]
+impl RpcConstruction for FailingConstruction {
+    async fn get_block_number(&self) -> Result<u64, ProviderError> {
+        Err(ProviderError::RpcError {
+            code: -32000,
+            message: "no rpc".into(),
+        })
+    }
+    async fn get_block(&self, _block_number: u64) -> Result<Option<EthBlock>, ProviderError> {
+        Err(ProviderError::RpcError {
+            code: -32000,
+            message: "no rpc".into(),
+        })
+    }
+    async fn get_block_timestamp(&self, _block_number: u64) -> Result<Option<u64>, ProviderError> {
+        Err(ProviderError::RpcError {
+            code: -32000,
+            message: "no rpc".into(),
+        })
+    }
+    async fn get_code(
+        &self,
+        _address: Address,
+        _block: Option<u64>,
+    ) -> Result<Bytes, ProviderError> {
+        Err(ProviderError::RpcError {
+            code: -32000,
+            message: "no rpc".into(),
+        })
+    }
+    async fn get_balance(
+        &self,
+        _address: Address,
+        _block: Option<u64>,
+    ) -> Result<U256, ProviderError> {
+        Err(ProviderError::RpcError {
+            code: -32000,
+            message: "no rpc".into(),
+        })
+    }
+    async fn call(
+        &self,
+        _to: Address,
+        _data: Bytes,
+        _block: Option<u64>,
+    ) -> Result<Bytes, ProviderError> {
+        Err(ProviderError::RpcError {
+            code: -32000,
+            message: "no rpc".into(),
+        })
+    }
+}
+
 fn fixture_db_path() -> PathBuf {
     if let Ok(p) = std::env::var("DEGENBOT_FIXTURE_DB") {
         return PathBuf::from(p);
@@ -413,5 +481,32 @@ fn in_process_sim_standalone_slice() {
     println!(
         "standalone degenbot consumer OK: in-process revm sim — gross_profit=1ETH gas_used={} priority_fee={} net_profit={} wei",
         sim.gas_used, sim.priority_fee, sim.net_profit
+    );
+
+    // 7. Reach the PoolBuilder (T2, 3FVZF4): a `cargo add degenbot` consumer
+    //    reaches the probe-dispatched build fns over a `ConstructionIo` with no
+    //    pyo3 in the graph. Drive `probe_pool_type` against an always-failing
+    //    RPC stub — every probe reverts, so it resolves `Curve` — and call
+    //    `build_v2`, which must surface a typed `PoolBuilderError` (RPC) rather
+    //    than panic. This pins the umbrella path + the error/identity types;
+    //    the full on-chain read path is unit-tested in degenbot-bot's FakeRpc
+    //    suite.
+    let io = Arc::new(ConstructionIo::new(
+        Arc::new(NoDb),
+        Arc::new(FailingConstruction),
+    ));
+    let family = degenbot::runtime::get_runtime().block_on(probe_pool_type(&io, POOL_B, None));
+    assert_eq!(
+        family,
+        PoolFamily::Curve,
+        "no responses → every probe reverts → Curve"
+    );
+    let err = degenbot::runtime::get_runtime().block_on(build_v2(1, POOL_B, &io, None));
+    assert!(
+        matches!(err, Err(PoolBuilderError::Rpc(_))),
+        "build_v2 over a failing RPC must yield a typed Rpc error, got {err:?}"
+    );
+    println!(
+        "standalone degenbot consumer OK: PoolBuilder probe+dispatch reachable (family={family:?})"
     );
 }

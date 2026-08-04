@@ -131,6 +131,10 @@ pub use degenbot_pool_updater;
 // `polars` umbrella re-exports `DataFrame`/`Series` at the crate root).
 // ---------------------------------------------------------------------------
 
+pub use degenbot_bot::bot_core::pool_builder::builder::{
+    build_v2, build_v3, build_v4, probe_pool_type, PoolBuilderError, PoolFamily,
+    V4PoolBuildIdentity,
+};
 pub use degenbot_bot::bot_core::{
     BotState, PoolEntry, RegisterV2PoolParams, RegisterV3PoolParams, RegisterV4PoolParams,
     V2PoolState, V4PoolKey,
