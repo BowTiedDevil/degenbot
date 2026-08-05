@@ -40,6 +40,7 @@ const FIXTURE_PATH: &str = concat!(
 struct Probe {
     name: String,
     inputs: ProbeInputs,
+    #[serde(rename = "probe")]
     args: ProbeArgs,
     expected: ProbeExpected,
 }
