@@ -1379,3 +1379,47 @@ async fn build_curve_pool_rejects_fewer_than_two_coins() {
         Err(builder::PoolBuilderError::Spec)
     ));
 }
+
+/// The three ERC-20 token reads (`balanceOf`/`allowance`/`totalSupply`) decode
+/// a `uint256` return losslessly through the core choreography (SUB-TASK: ERC-20
+/// token-balance family, LWKLMP). Selector-keyed [`FakeRpc`] responses.
+#[tokio::test]
+async fn fetch_token_balance_supply_allowance_decode_uint256() {
+    // balanceOf(address) returns 1234... (a 64-bit value).
+    let mut f = FakeRpc::new();
+    f.set(
+        choreography::selector(b"balanceOf(address)"),
+        U256::from(1_000_000_000u64).to_be_bytes::<32>().to_vec(),
+    );
+    let io = io_with(f);
+    let bal = choreography::fetch_token_balance(&io, TO, SV, None)
+        .await
+        .expect("balanceOf decodes");
+    assert_eq!(bal, U256::from(1_000_000_000u64));
+
+    // totalSupply() returns a large value (must survive lossless: > u64 to
+    // prove the u256 path).
+    let total: U256 = (U256::from(1u64) << 100) | U256::from(0xDEAD_BEEFu64);
+    let mut f2 = FakeRpc::new();
+    f2.set(
+        choreography::selector(b"totalSupply()"),
+        total.to_be_bytes::<32>().to_vec(),
+    );
+    let io2 = io_with(f2);
+    let sup = choreography::fetch_token_total_supply(&io2, TO, None)
+        .await
+        .expect("totalSupply decodes");
+    assert_eq!(sup, total);
+
+    // allowance(owner,spender) returns 4321.
+    let mut f3 = FakeRpc::new();
+    f3.set(
+        choreography::selector(b"allowance(address,address)"),
+        U256::from(4_321u64).to_be_bytes::<32>().to_vec(),
+    );
+    let io3 = io_with(f3);
+    let allowance = choreography::fetch_token_allowance(&io3, TO, SV, TO, None)
+        .await
+        .expect("allowance decodes");
+    assert_eq!(allowance, U256::from(4_321u64));
+}

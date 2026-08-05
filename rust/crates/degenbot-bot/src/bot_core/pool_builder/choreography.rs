@@ -400,6 +400,65 @@ pub async fn fetch_erc20_metadata(
     Ok(Some((name, symbol, decimals)))
 }
 
+/// Fetch an ERC-20 token balance via `balanceOf(address)` (ADR-005 slice 14d).
+///
+/// Mirrors `Erc20Builder.get_token_balance`'s I/O path — encode
+/// `balanceOf(address)`, `eth_call`, decode the `uint256` return. Cross-cutting
+/// (used by many builders' input-token accounting).
+///
+/// # Errors
+///
+/// Returns a [`ProviderError`] on an `eth_call` or decode failure.
+pub async fn fetch_token_balance(
+    io: &ConstructionIo,
+    token: Address,
+    owner: Address,
+    block: Option<u64>,
+) -> Result<U256, ProviderError> {
+    let calldata = abi::encode_balance_of(&owner);
+    let bytes = eth_call(io, token, calldata, block).await?;
+    abi::decode_balance_of(&bytes)
+}
+
+/// Fetch an ERC-20 token allowance via `allowance(address,address)` (ADR-005
+/// slice 14d).
+///
+/// Mirrors `Erc20Builder.get_token_approval`'s I/O path — two-address-arg call,
+/// decoded `uint256` return.
+///
+/// # Errors
+///
+/// Returns a [`ProviderError`] on an `eth_call` or decode failure.
+pub async fn fetch_token_allowance(
+    io: &ConstructionIo,
+    token: Address,
+    owner: Address,
+    spender: Address,
+    block: Option<u64>,
+) -> Result<U256, ProviderError> {
+    let calldata = abi::encode_allowance(&owner, &spender);
+    let bytes = eth_call(io, token, calldata, block).await?;
+    abi::decode_allowance(&bytes)
+}
+
+/// Fetch an ERC-20 token's total supply via `totalSupply()` (ADR-005 slice 14d).
+///
+/// Mirrors `Erc20Builder.get_token_total_supply`'s I/O path — no-arg call,
+/// decoded `uint256` return.
+///
+/// # Errors
+///
+/// Returns a [`ProviderError`] on an `eth_call` or decode failure.
+pub async fn fetch_token_total_supply(
+    io: &ConstructionIo,
+    token: Address,
+    block: Option<u64>,
+) -> Result<U256, ProviderError> {
+    let calldata = abi::encode_total_supply();
+    let bytes = eth_call(io, token, calldata, block).await?;
+    abi::decode_total_supply(&bytes)
+}
+
 // ---------------------------------------------------------------------------
 // Balancer V2 reads (the SSSXG6 buyer primitive layer)
 // ---------------------------------------------------------------------------
