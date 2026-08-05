@@ -27,6 +27,7 @@ from eth_utils import keccak
 
 from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot.bot import PyBot
+from degenbot.builders.curve_pool_builder import CurvePoolBuilder
 
 # 20-byte (40 hex) addresses matching the Rust plain-pool test.
 POOL = "0x" + "a1" + "00" * 19
@@ -194,6 +195,112 @@ def _plain_cassette_json() -> str:
     })
 
 
+def _str_word(value: str) -> str:
+    """A 32-byte ABI dynamic-``string`` return word (length head + data)."""
+    raw = value.encode()
+    data_len = ((len(raw) + 31) // 32) * 32
+    return f"{len(raw):064x}" + raw.ljust(data_len, b"\x00").hex()
+
+
+def _plain_full_cassette_json() -> str:
+    """Full plain-pool cassette: every read, incl. token metadata + optional probes.
+
+    Unlike the minimal `_plain_cassette_json` (empty registries, optional
+    probes reverted), the full cassette records EVERY read the real
+    `CurvePoolBuilder.build` issues (including ERC20 name/symbol and the
+    ramping/crypto/lending/lp/metapool probes against the real registry
+    addresses). The Python builder cannot tolerate an offline revert via
+    `PyBotIo.call_raw` (it raises a non-catchable `RuntimeError`), so every
+    optional probe must return an explicit "not present" value. The same
+    cassette drives both the Rust `build_curve_pool` and the Python builder,
+    so the two paths can be compared on identical recorded data.
+    """
+    import json
+
+    from degenbot.builders.curve_pool_builder import _REGISTRY_ADDRESSES
+
+    calls = {
+        **{
+            _call_key(POOL, "coins(uint256)", i): _word_address(coin)
+            for i, coin in ((0, COIN0), (1, COIN1), (2, ZERO))
+        },
+        _call_key(POOL, "balances(uint256)", 0): _word_uint(1_000_000),
+        _call_key(POOL, "balances(uint256)", 1): _word_uint(2_000_000),
+        _call_key(POOL, "A()"): _word_uint(2000),
+        _call_key(POOL, "fee()"): _word_uint(1_000_000),
+        _call_key(POOL, "admin_fee()"): _word_uint(500_000_000),
+        # ERC20 metadata for the two coins (Erc20Builder.fetch_erc20_metadata).
+        _call_key(COIN0, "decimals()"): _word_uint(6),
+        _call_key(COIN0, "name()"): _str_word("Coin Zero"),
+        _call_key(COIN0, "symbol()"): _str_word("CZ0"),
+        _call_key(COIN1, "decimals()"): _word_uint(6),
+        _call_key(COIN1, "name()"): _str_word("Coin One"),
+        _call_key(COIN1, "symbol()"): _str_word("CO1"),
+        # Optional A-ramping probes → all zero (not ramping).
+        _call_key(POOL, "initial_A()"): _word_uint(0),
+        _call_key(POOL, "initial_A_time()"): _word_uint(0),
+        _call_key(POOL, "future_A()"): _word_uint(0),
+        _call_key(POOL, "future_A_time()"): _word_uint(0),
+        # Crypto probes → fee_gamma 0 (not crypto) + separate offpeg_fee.
+        _call_key(POOL, "fee_gamma()"): _word_uint(0),
+        _call_key(POOL, "offpeg_fee_multiplier()"): _word_uint(0),
+        # Lending probes → not a cToken/yToken.
+        _call_key(COIN0, "isCToken()"): _word_uint(0),
+        _call_key(COIN0, "token()"): _word_address(ZERO),
+        _call_key(COIN1, "isCToken()"): _word_uint(0),
+        _call_key(COIN1, "token()"): _word_address(ZERO),
+    }
+    # Registry probes: no LP token, not a metapool (per real registry address).
+    for registry in _REGISTRY_ADDRESSES:
+        calls[_call_key_word_arg(registry, "get_lp_token(address)", POOL)] = _word_address(ZERO)
+        calls[_call_key_word_arg(registry, "is_meta(address)", POOL)] = _word_uint(0)
+    code = {COIN0.lower(): "60806040", COIN1.lower(): "60806040"}
+    return json.dumps({
+        "chain_id": 1,
+        "block_number": _BLOCK,
+        "timestamp": _TIMESTAMP,
+        "calls": calls,
+        "code": code,
+    })
+
+
+def _make_curve_builder(
+    provider: RustAlloyProvider,
+) -> tuple[CurvePoolBuilder, PyBot]:
+    """A real `CurvePoolBuilder` wired over an offline provider + the shared PyBot.
+
+    Mirrors `Bot.__init__` wiring (Erc20Builder → BuilderContext →
+    CurvePoolBuilder) so `build` runs the full production I/O choreography:
+    detection, ERC20 token building, `register_curve_pool`, `_from_py_pool`.
+    Returns the builder and the shared `PyBot`.
+    """
+    from degenbot.builders.context import BuilderContext
+    from degenbot.builders.erc20_builder import Erc20Builder
+    from degenbot.database.session_manager import DatabaseSessionManager
+    from degenbot.registry import PoolRegistry, TokenRegistry
+
+    py_bot = PyBot(chain_id=1)
+    py_bot.attach_construction_io(provider, None)
+    fake_db = object.__new__(DatabaseSessionManager)
+    tokens = TokenRegistry()
+    pools = PoolRegistry(py_bot=py_bot)
+    erc20 = Erc20Builder(
+        default_chain_id=1,
+        db=fake_db,
+        tokens=tokens,
+        py_bot=py_bot,
+    )
+    ctx = BuilderContext(
+        db=fake_db,
+        pools=pools,
+        tokens=tokens,
+        erc20_builder=erc20,
+        py_bot=py_bot,
+        default_chain_id=1,
+    )
+    return CurvePoolBuilder(ctx), py_bot
+
+
 def test_build_curve_pool_plain_over_offline_cassette() -> None:
     """Rust ``build_curve_pool`` over a recorded cassette pins the plain-pool params.
 
@@ -281,3 +388,48 @@ def test_build_curve_pool_lending_ctoken_over_offline_cassette() -> None:
     assert handle.curve_precision_multipliers == [10**12, 10**0]
     assert handle.curve_rate_multipliers == [10**30, 10**18]
     assert handle.curve_use_lending == [True, False]
+
+
+def test_curve_pool_builder_build_matches_rust_path_over_cassette() -> None:
+    """Dual-driver: real `CurvePoolBuilder.build` equals the Rust path (plain).
+
+    Drives the CURRENT Python `CurvePoolBuilder.build` (detection + ERC20 token
+    building + `register_curve_pool` + `_from_py_pool`) over the full plain
+    cassette, and independently drives the Rust `build_curve_pool` over the
+    SAME cassette. Asserts the resulting pool identity state is identical on
+    both sides — the parity gate that lets `build` be retargeted to the Rust
+    path without a silent behavior change.
+    """
+    from degenbot.bot import PyBotIo
+    from degenbot.builders.curve_pool_builder import _REGISTRY_ADDRESSES
+    from degenbot.builders.request import BuildPoolRequest
+
+    # Path A — Rust `build_curve_pool` + handle.
+    provider_a = RustAlloyProvider.offline_from_json_string(_plain_full_cassette_json())
+    bot_a = PyBot(chain_id=1)
+    bot_a.attach_construction_io(provider_a, None)
+    handle_a = bot_a.get_pool(bot_a.build_curve_pool(POOL, list(_REGISTRY_ADDRESSES), _BLOCK))
+    assert handle_a is not None
+
+    # Path B — current Python `CurvePoolBuilder.build` over the same cassette.
+    provider_b = RustAlloyProvider.offline_from_json_string(_plain_full_cassette_json())
+    builder, bot_b = _make_curve_builder(provider_b)
+    pybot_io = PyBotIo(provider=provider_b)
+    pybot_io.attach_construction_io(bot_b)
+    pool = builder.build(
+        POOL,
+        chain_id=1,
+        io=pybot_io,
+        request=BuildPoolRequest(state_block=_BLOCK, silent=True),
+    )
+
+    # Identity state must be identical across the two consumers of the Rust
+    # core: the Rust handle (Path A) and the Python companion (Path B).
+    assert pool.a_coefficient == handle_a.curve_a_coefficient == 2000
+    assert pool.fee == handle_a.curve_fee == 1_000_000
+    assert pool.admin_fee == handle_a.curve_admin_fee == 500_000_000
+    assert tuple(pool.balances) == tuple(handle_a.balances) == (1_000_000, 2_000_000)
+    assert tuple(pool.rate_multipliers) == tuple(handle_a.curve_rate_multipliers)
+    assert tuple(pool.precision_multipliers) == tuple(handle_a.curve_precision_multipliers)
+    assert pool.rate_multipliers[0] == 10**30
+    assert len(pool.tokens) == 2
