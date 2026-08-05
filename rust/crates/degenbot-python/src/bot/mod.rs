@@ -1908,6 +1908,48 @@ impl PyBot {
             }))
     }
 
+    /// Build + register a Curve `StableSwap` pool through the Rust `PoolBuilder`
+    /// (WKKMJM delegation adapter) — the Curve twin of [`Self::build_v2_pool`].
+    /// The core `builder::build_curve_pool` runs the full detection
+    /// choreography (coins + balances, `A`/`fee`/`admin_fee`, A-ramping,
+    /// lending, crypto params, `lp_token`, metapool base + underlying coins,
+    /// ERC20 decimals) and constructs a Rust `RpcCurveDataProvider` (V5F3DZ) —
+    /// so the pool is registered with a **Rust-native** on-chain data
+    /// provider, not a Python `CurveDataProviderImpl`. Returns the `pool_id`
+    /// (`get_pool(id)` after this). `registry_addresses` is the list of
+    /// Curve registry/factory contract addresses consulted for the `lp_token`
+    /// / metapool lookups.
+    ///
+    /// `block` defaults to the current chain head.
+    ///
+    /// Raises:
+    ///     `RuntimeError`: No `ConstructionIo` attached (requires an alloy
+    ///         provider), or a builder RPC/decode failure.
+    #[pyo3(signature = (address, registry_addresses, block=None))]
+    fn build_curve_pool(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        registry_addresses: &Bound<'_, PyList>,
+        block: Option<u64>,
+    ) -> PyResult<u64> {
+        use degenbot_bot::bot_core::pool_builder::builder;
+        use degenbot_core::runtime::get_runtime;
+        let addr = parse_address(address)?;
+        let registry = parse_address_list(registry_addresses)?;
+        let io = self.bot.construction_io_arc().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "build_curve_pool: no ConstructionIo attached (requires an alloy provider)",
+            )
+        })?;
+        let params = py
+            .detach(|| {
+                get_runtime().block_on(builder::build_curve_pool(addr, &registry, &io, block))
+            })
+            .map_err(map_builder_err)?;
+        Ok(self.bot.state_arc().write().register_curve_pool(&params))
+    }
+
     /// Register a Balancer V2 weighted pool (ADR-005 slice 12a state port).
     ///
     /// Stores immutable pool config (`pool_id`, vault, tokens, weights,

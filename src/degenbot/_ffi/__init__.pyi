@@ -878,6 +878,9 @@ class PyBot:
         block: int | None = None,
         invariant_version: int | None = None,
     ) -> int: ...
+    def build_curve_pool(
+        self, address: str, registry_addresses: list[str], block: int | None = None
+    ) -> int: ...
     def build_v3_pool(
         self,
         address: str,
