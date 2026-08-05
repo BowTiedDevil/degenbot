@@ -56,6 +56,15 @@ type Slot0LiquidityState = (Py<PyAny>, Py<PyAny>, Py<PyAny>, Py<PyAny>, Py<PyAny
 /// Aerodrome stable/fee state tuple: `(stable, fee, token0, token1)`.
 type StableFeeTuple = (bool, Py<PyAny>, Py<PyAny>, Py<PyAny>);
 
+/// Lowercase `0x`-prefixed hex for an address (matches the builder's
+/// lowercase-address convention for Balancer tokens/rate-providers).
+fn address_lower_hex(a: alloy::primitives::Address) -> String {
+    let mut hex = String::with_capacity(42);
+    hex.push_str("0x");
+    let _ = write!(hex, "{a:x}");
+    hex
+}
+
 /// The Rust I/O façade for pool builders (ADR-005 slice 14a).
 ///
 /// Construct with an existing `ProviderAdapter` (the `Bot.provider`):
@@ -1895,15 +1904,25 @@ impl PyBotIo {
         address: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        let calldata = selector(b"getPoolId()");
-        let result_obj = self.forward_call_to_provider(py, address, &calldata, block)?;
-        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        if bytes.len() < 32 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "getPoolId result < 32 bytes",
-            ));
-        }
-        Ok(PyBytes::new(py, &bytes[0..32]).into())
+        let io = self.required_construction_io()?;
+        let addr = alloy::primitives::Address::from(parse_address_for_call(address)?);
+        let block_num = extract_block_u64(block)?;
+        let r = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::choreography::fetch_balancer_pool_id(
+                    &io, addr, block_num,
+                )
+                .await
+            })
+        });
+        let id = match r {
+            Ok(v) => Ok(v),
+            Err(ProviderError::ExecutionReverted { message, .. }) => {
+                Err(revert_to_pyerr(py, address, &message))
+            }
+            Err(e) => Err(e.into()),
+        }?;
+        Ok(PyBytes::new(py, &id).into())
     }
 
     /// Fetch a Balancer pool's swap fee via `getSwapFeePercentage()`
@@ -1919,17 +1938,24 @@ impl PyBotIo {
         address: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        use alloy::primitives::U256;
-
-        let calldata = selector(b"getSwapFeePercentage()");
-        let result_obj = self.forward_call_to_provider(py, address, &calldata, block)?;
-        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        if bytes.len() < 32 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "getSwapFeePercentage result < 32 bytes",
-            ));
-        }
-        let val = U256::from_be_slice(&bytes[0..32]);
+        let io = self.required_construction_io()?;
+        let addr = alloy::primitives::Address::from(parse_address_for_call(address)?);
+        let block_num = extract_block_u64(block)?;
+        let r = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::choreography::fetch_balancer_swap_fee(
+                    &io, addr, block_num,
+                )
+                .await
+            })
+        });
+        let val = match r {
+            Ok(v) => Ok(v),
+            Err(ProviderError::ExecutionReverted { message, .. }) => {
+                Err(revert_to_pyerr(py, address, &message))
+            }
+            Err(e) => Err(e.into()),
+        }?;
         crate::conversion::alloy::u256_to_py(py, &val).map(pyo3::Bound::unbind)
     }
 
@@ -1947,17 +1973,24 @@ impl PyBotIo {
         address: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        use alloy::primitives::U256;
-
-        let calldata = selector(b"getAmplificationParameter()");
-        let result_obj = self.forward_call_to_provider(py, address, &calldata, block)?;
-        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        if bytes.len() < 32 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "getAmplificationParameter result < 32 bytes",
-            ));
-        }
-        let val = U256::from_be_slice(&bytes[0..32]);
+        let io = self.required_construction_io()?;
+        let addr = alloy::primitives::Address::from(parse_address_for_call(address)?);
+        let block_num = extract_block_u64(block)?;
+        let r = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::choreography::fetch_balancer_amp(
+                    &io, addr, block_num,
+                )
+                .await
+            })
+        });
+        let val = match r {
+            Ok(v) => Ok(v),
+            Err(ProviderError::ExecutionReverted { message, .. }) => {
+                Err(revert_to_pyerr(py, address, &message))
+            }
+            Err(e) => Err(e.into()),
+        }?;
         crate::conversion::alloy::u256_to_py(py, &val).map(pyo3::Bound::unbind)
     }
 
@@ -1976,16 +2009,27 @@ impl PyBotIo {
         address: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        use alloy::primitives::U256;
-
-        let calldata = selector(b"getNormalizedWeights()");
-        let result_obj = self.forward_call_to_provider(py, address, &calldata, block)?;
-        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        let elements = decode_dynamic_array_words(bytes)?;
+        let io = self.required_construction_io()?;
+        let addr = alloy::primitives::Address::from(parse_address_for_call(address)?);
+        let block_num = extract_block_u64(block)?;
+        let r = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::choreography::fetch_balancer_weights(
+                    &io, addr, block_num,
+                )
+                .await
+            })
+        });
+        let weights = match r {
+            Ok(v) => Ok(v),
+            Err(ProviderError::ExecutionReverted { message, .. }) => {
+                Err(revert_to_pyerr(py, address, &message))
+            }
+            Err(e) => Err(e.into()),
+        }?;
         let list = PyList::empty(py);
-        for word in elements {
-            let val = U256::from_be_slice(word);
-            list.append(crate::conversion::alloy::u256_to_py(py, &val)?.unbind())?;
+        for w in weights {
+            list.append(crate::conversion::alloy::u256_to_py(py, &w)?.unbind())?;
         }
         Ok(list.into())
     }
@@ -2006,20 +2050,30 @@ impl PyBotIo {
         address: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        let calldata = selector(b"getRateProviders()");
-        let result_obj = self.forward_call_to_provider(py, address, &calldata, block)?;
-        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        let elements = decode_dynamic_array_words(bytes)?;
-        let list = PyList::empty(py);
-        for word in elements {
-            // Each address is the last 20 bytes of its 32-byte word.
-            let addr = &word[12..32];
-            let mut hex = String::with_capacity(42);
-            hex.push_str("0x");
-            for b in addr {
-                let _ = write!(hex, "{b:02x}");
+        let io = self.required_construction_io()?;
+        let addr = alloy::primitives::Address::from(parse_address_for_call(address)?);
+        let block_num = extract_block_u64(block)?;
+        let r = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::choreography::fetch_balancer_rate_providers(
+                    &io, addr, block_num,
+                )
+                .await
+            })
+        });
+        let providers = match r {
+            Ok(v) => Ok(v),
+            Err(ProviderError::ExecutionReverted { message, .. }) => {
+                // Callers mirror the Python `except (RpcError, AbiDecodeError):
+                // return []` clause (WeightedPool2Tokens / MetaStable pools that
+                // don't expose getRateProviders revert).
+                Err(revert_to_pyerr(py, address, &message))
             }
-            list.append(hex)?;
+            Err(e) => Err(e.into()),
+        }?;
+        let list = PyList::empty(py);
+        for p in providers {
+            list.append(address_lower_hex(p))?;
         }
         Ok(list.into())
     }
@@ -2045,73 +2099,35 @@ impl PyBotIo {
         pool_id: &[u8],
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
-        use alloy::primitives::U256;
-
-        let sel = selector(b"getPoolTokens(bytes32)");
-        let mut calldata = Vec::with_capacity(36);
-        calldata.extend_from_slice(&sel);
-        calldata.extend_from_slice(pool_id);
-
-        let result_obj = self.forward_call_to_provider(py, vault_address, &calldata, block)?;
-        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-
-        // Tuple (address[], uint256[], uint256). Head is 3 words (96 bytes):
-        // word 0 = offset to address[] data
-        // word 1 = offset to uint256[] data
-        // word 2 = static uint256 value (last block number — ignored)
-        if bytes.len() < 96 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "getPoolTokens result < 96 bytes",
-            ));
-        }
-        let addr_offset = read_u256_as_usize(&bytes[0..32])
-            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("address[] offset overflow"))?;
-        let uints_offset = read_u256_as_usize(&bytes[32..64])
-            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("uint256[] offset overflow"))?;
-
-        // Length at addr_offset; N addresses follow.
-        let n_tokens = read_u256_as_usize(
-            bytes
-                .get(addr_offset..addr_offset + 32)
-                .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("address[] length OOB"))?,
-        )
-        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("address[] length overflow"))?;
-        let n_balances = read_u256_as_usize(
-            bytes
-                .get(uints_offset..uints_offset + 32)
-                .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("uint256[] length OOB"))?,
-        )
-        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("uint256[] length overflow"))?;
-
-        let tokens_list = PyList::empty(py);
-        let tokens_data_start = addr_offset + 32;
-        for i in 0..n_tokens {
-            let start = tokens_data_start + i * 32;
-            let end = start + 32;
-            let word = bytes
-                .get(start..end)
-                .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("token address OOB"))?;
-            let addr = &word[12..32];
-            let mut hex = String::with_capacity(42);
-            hex.push_str("0x");
-            for b in addr {
-                let _ = write!(hex, "{b:02x}");
+        let io = self.required_construction_io()?;
+        let vault = alloy::primitives::Address::from(parse_address_for_call(vault_address)?);
+        let pool_id: [u8; 32] = pool_id
+            .try_into()
+            .map_err(|_| pyo3::exceptions::PyValueError::new_err("pool_id must be 32 bytes"))?;
+        let block_num = extract_block_u64(block)?;
+        let r = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::choreography::fetch_balancer_vault_tokens(
+                    &io, vault, &pool_id, block_num,
+                )
+                .await
+            })
+        });
+        let (tokens, balances) = match r {
+            Ok(v) => Ok(v),
+            Err(ProviderError::ExecutionReverted { message, .. }) => {
+                Err(revert_to_pyerr(py, vault_address, &message))
             }
-            tokens_list.append(hex)?;
+            Err(e) => Err(e.into()),
+        }?;
+        let tokens_list = PyList::empty(py);
+        for t in tokens {
+            tokens_list.append(address_lower_hex(t))?;
         }
-
         let balances_list = PyList::empty(py);
-        let balances_data_start = uints_offset + 32;
-        for i in 0..n_balances {
-            let start = balances_data_start + i * 32;
-            let end = start + 32;
-            let word = bytes
-                .get(start..end)
-                .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("balance OOB"))?;
-            let val = U256::from_be_slice(word);
-            balances_list.append(crate::conversion::alloy::u256_to_py(py, &val)?.unbind())?;
+        for b in balances {
+            balances_list.append(crate::conversion::alloy::u256_to_py(py, &b)?.unbind())?;
         }
-
         Ok((
             tokens_list.into_any().unbind(),
             balances_list.into_any().unbind(),
@@ -2134,17 +2150,24 @@ impl PyBotIo {
         provider_address: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        use alloy::primitives::U256;
-
-        let calldata = selector(b"getRate()");
-        let result_obj = self.forward_call_to_provider(py, provider_address, &calldata, block)?;
-        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        if bytes.len() < 32 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "getRate result < 32 bytes",
-            ));
-        }
-        let val = U256::from_be_slice(&bytes[0..32]);
+        let io = self.required_construction_io()?;
+        let provider = alloy::primitives::Address::from(parse_address_for_call(provider_address)?);
+        let block_num = extract_block_u64(block)?;
+        let r = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::choreography::fetch_balancer_rate(
+                    &io, provider, block_num,
+                )
+                .await
+            })
+        });
+        let val = match r {
+            Ok(v) => Ok(v),
+            Err(ProviderError::ExecutionReverted { message, .. }) => {
+                Err(revert_to_pyerr(py, provider_address, &message))
+            }
+            Err(e) => Err(e.into()),
+        }?;
         crate::conversion::alloy::u256_to_py(py, &val).map(pyo3::Bound::unbind)
     }
 
@@ -2170,28 +2193,39 @@ impl PyBotIo {
         address: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<String> {
-        // Probe 1: getNormalizedWeights() → WEIGHTED.
-        let weights_calldata = selector(b"getNormalizedWeights()");
-        if self
-            .forward_call_to_provider(py, address, &weights_calldata, block)
-            .is_ok()
-        {
-            return Ok("weighted".to_string());
-        }
-        // Probe 2: getAmplificationParameter() → STABLE.
-        let amp_calldata = selector(b"getAmplificationParameter()");
-        if self
-            .forward_call_to_provider(py, address, &amp_calldata, block)
-            .is_ok()
-        {
-            return Ok("stable".to_string());
-        }
-        // Neither method responded — Linear pools not yet supported.
-        Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "Cannot determine Balancer pool type for {address}. \
-             Neither getNormalizedWeights() nor getAmplificationParameter() responded. \
-             Linear pools are not yet supported."
-        )))
+        use degenbot_bot::bot_core::pool_builder::choreography::BalancerFamily;
+
+        let io = self.required_construction_io()?;
+        let addr = alloy::primitives::Address::from(parse_address_for_call(address)?);
+        let block_num = extract_block_u64(block)?;
+        let r = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::choreography::probe_balancer_type(
+                    &io, addr, block_num,
+                )
+                .await
+            })
+        });
+        let family = match r {
+            Ok(v) => Ok(v),
+            // Neither probe responded → surface as ValueError so the Python
+            // caller (`balancer_builder_base._detect_pool_type`) can re-wrap as
+            // DegenbotValueError (linear pools unsupported). The core returns
+            // DecodingError, whose default PyErr mapping is RuntimeError.
+            Err(ProviderError::DecodingError { .. }) => {
+                Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "Cannot determine Balancer pool type for {address}."
+                )))
+            }
+            Err(ProviderError::ExecutionReverted { message, .. }) => {
+                Err(revert_to_pyerr(py, address, &message))
+            }
+            Err(e) => Err(e.into()),
+        }?;
+        Ok(match family {
+            BalancerFamily::Weighted => "weighted".to_string(),
+            BalancerFamily::Stable => "stable".to_string(),
+        })
     }
 
     fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
@@ -2428,60 +2462,4 @@ fn selector(signature: &[u8]) -> [u8; 4] {
     let mut s = [0u8; 4];
     s.copy_from_slice(&hash[..4]);
     s
-}
-
-/// Decode an ABI-encoded top-level dynamic array into an iterator of 32-byte
-/// element words.
-///
-/// Layout: `offset (32) + length (32) + N × 32` where `offset` is the byte
-/// offset from the start of the encoding to where the array data begins.
-/// For a single top-level dynamic value, this is always `0x20` (32).
-///
-/// Returns the N 32-byte element slices (without the length word).
-///
-/// Read a 32-byte big-endian word as a `usize` if it fits.
-fn read_u256_as_usize(word: &[u8]) -> Option<usize> {
-    use alloy::primitives::U256;
-    let val = U256::from_be_slice(&word[..32]);
-    if val > U256::from(usize::MAX) {
-        return None;
-    }
-    let mut buf = [0u8; 8];
-    let bytes = val.to_be_bytes::<32>();
-    buf.copy_from_slice(&bytes[24..32]);
-    Some(usize::from_be_bytes(buf))
-}
-
-fn decode_dynamic_array_words(bytes: &[u8]) -> PyResult<Vec<&[u8]>> {
-    use std::cmp::min;
-    if bytes.len() < 64 {
-        return Err(pyo3::exceptions::PyValueError::new_err(
-            "dynamic array result < 64 bytes",
-        ));
-    }
-    // Word 0: offset (we read it but assume standard layout).
-    let offset = read_u256_as_usize(&bytes[0..32]).unwrap_or(32);
-    let length_offset = min(offset, bytes.len().saturating_sub(32));
-    let n = read_u256_as_usize(&bytes[length_offset..length_offset + 32])
-        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("array length overflow"))?;
-    let data_start = length_offset + 32;
-    if data_start.checked_mul(0).is_none() || data_start > bytes.len() {
-        return Err(pyo3::exceptions::PyValueError::new_err(
-            "array data out of bounds",
-        ));
-    }
-    let available = bytes.len() - data_start;
-    let needed = n
-        .checked_mul(32)
-        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("array size overflow"))?;
-    if available < needed {
-        return Err(pyo3::exceptions::PyValueError::new_err(
-            "array data shorter than length",
-        ));
-    }
-    let mut out = Vec::with_capacity(n);
-    for i in 0..n {
-        out.push(&bytes[data_start + i * 32..data_start + (i + 1) * 32]);
-    }
-    Ok(out)
 }

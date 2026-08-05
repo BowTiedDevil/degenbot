@@ -349,51 +349,66 @@ class _V4TickDataProvider:
         raise ValueError(msg)
 
 
-class _BalancerProvider:
-    """Provider returning canned Balancer responses based on selector."""
+class _BalancerOfflineProbeProvider:
+    """An `OfflineProvider` cassette answering the two Balancer sub-type probes.
 
-    def __init__(self, **responses: bytes) -> None:
-        # responses keyed by the 4-byte selector
-        self._responses = {function_selector(sig): data for sig, data in responses.items()}
-        self.calls: list[bytes] = []
+    `WEIGHTS_SEL` (`getNormalizedWeights()`) and `AMP_SEL`
+    (`getAmplificationParameter()`) map to either an ABI-encoded result hex or
+    `None` (revert), mirroring the real builder flow against the Rust
+    transport (no Python double, O3).
+    """
 
-    def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
-        self.calls.append(data)
-        sel = data[:4]
-        if sel in self._responses:
-            return HexBytes(self._responses[sel])
-        msg = f"unexpected selector {sel.hex()}"
-        raise RuntimeError(msg)
+    WEIGHTS_SEL = "0xf89f27ed"  # getNormalizedWeights()
+    AMP_SEL = "0x6daccffa"  # getAmplificationParameter()
+
+    @classmethod
+    def build(cls, pool_addr: str, weights_success, amp_success) -> RustAlloyProvider:
+        import json as _json
+
+        calls = {f"0x{pool_addr}:{cls.WEIGHTS_SEL}": weights_success}
+        calls[f"0x{pool_addr}:{cls.AMP_SEL}"] = amp_success
+        return RustAlloyProvider.offline_from_json_string(_json.dumps({
+            "chain_id": 1,
+            "block_number": 100,
+            "timestamp": 1_700_000_000,
+            "calls": calls,
+            "code": {},
+        }))
 
 
 def test_pybot_io_probe_balancer_pool_type_returns_weighted():
     """When getNormalizedWeights() succeeds, probe returns 'weighted'."""
+    pool_addr = "aa" * 20
     weights = [5 * 10**17, 5 * 10**17]
-    io = PyBotIo(
-        provider=_BalancerProvider(**{
-            "getNormalizedWeights()": eth_abi.abi.encode(types=["uint256[]"], args=[weights])
-        })
+    encoded = eth_abi.abi.encode(types=["uint256[]"], args=[weights]).hex()
+    provider = _BalancerOfflineProbeProvider.build(
+        pool_addr, weights_success=encoded, amp_success=None
     )
-
-    assert io.probe_balancer_pool_type("0x" + "aa" * 20) == "weighted"
+    assert PyBotIo(provider=provider).probe_balancer_pool_type("0x" + pool_addr) == "weighted"
 
 
 def test_pybot_io_probe_balancer_pool_type_returns_stable():
     """When getNormalizedWeights() reverts but getAmplificationParameter()
     succeeds, probe returns 'stable'."""
+    pool_addr = "aa" * 20
     amp_payload = eth_abi.abi.encode(
         types=["uint256", "bool", "uint256"], args=[2_000, False, 1000]
+    ).hex()
+    provider = _BalancerOfflineProbeProvider.build(
+        pool_addr, weights_success=None, amp_success=amp_payload
     )
-    io = PyBotIo(provider=_BalancerProvider(**{"getAmplificationParameter()": amp_payload}))
-
-    assert io.probe_balancer_pool_type("0x" + "aa" * 20) == "stable"
+    assert PyBotIo(provider=provider).probe_balancer_pool_type("0x" + pool_addr) == "stable"
 
 
 def test_pybot_io_probe_balancer_pool_type_raises_when_neither_works():
     """When both probes revert, raise ValueError (surfaces as Python error)."""
-    io = PyBotIo(provider=_BalancerProvider())  # no responses
+    pool_addr = "aa" * 20
+    provider = _BalancerOfflineProbeProvider.build(
+        pool_addr, weights_success=None, amp_success=None
+    )
     with pytest.raises(ValueError):
-        io.probe_balancer_pool_type("0x" + "aa" * 20)
+        PyBotIo(provider=provider).probe_balancer_pool_type("0x" + pool_addr)
+
 
 
 # === V4 slot0 + liquidity RPCs (slice 14o) ===
