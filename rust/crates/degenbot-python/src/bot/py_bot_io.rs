@@ -149,18 +149,10 @@ impl PyErc20TokenRow {
 pub struct PyBotIo {
     /// Native Rust `AlloyProvider` extracted from the held Python provider
     /// when it is `PyAlloyProvider`-backed (live alloy or the O2 `OfflineProvider`
-    /// shell). When `Some`, the `fetch_*` choreography methods + the `PoolIO`
-    /// surface run entirely in Rust via this arc (no GIL round-trip) —
-    /// `forward_call_to_provider` becomes a native `eth_call`, and
-    /// `get_block_timestamp` derives from `get_block(n).header.timestamp`.
-    /// `None` for non-alloy Python providers (legacy test doubles), which fall
-    /// back to the Python delegation path — retired by O3.
-    ///
-    /// After the construction-I/O cutover (architecture review 2025-07-18 /
-    /// candidate 1), the 7 generic RPC methods + 12 DB methods delegate through
-    /// [`construction_io`][Self::construction_io] instead; `alloy` survives only
-    /// for the 27 choreography wrappers' `forward_call_to_provider` fast path
-    /// (temporary — deleted with the builder-choreography port).
+    /// shell). The `fetch_*` choreography methods run entirely in Rust via a
+    /// core [`ConstructionIo`](crate::bot::py_bot_io::PyBotIo) handle (no GIL
+    /// round-trip); `get_block_timestamp` derives from `get_block(n).header.timestamp`.
+    /// `None` only for non-alloy Python providers (retired by O3).
     alloy: Option<Arc<AlloyProvider>>,
     provider: Py<PyAny>,
     db: Option<Py<PyAny>>,
@@ -1332,11 +1324,9 @@ impl PyBotIo {
     /// Fetch Curve pool params via 3 no-arg `uint256`-returning calls (ADR-005
     /// slice 14r).
     ///
-    /// Mirrors `curve_pool_builder.py::_fetch_pool_params`. The Python original
-    /// uses `io.call_raw({"to": ..., "data": ...}, block=...)`; the result is
-    /// identical to a `.call(to=..., data=..., block=...)` because `SyncPoolIO`
-    /// routes both forms to the same underlying provider. So we reuse the `call`
-    /// kw-form via `forward_call_to_provider`.
+    /// Mirrors `curve_pool_builder.py::_fetch_pool_params` — three required
+    /// no-arg `uint256` reads (`A()`, `fee()`, `admin_fee()`) delegated to the
+    /// core `curve_choreography`.
     ///
     /// Returns `(A, fee, admin_fee)`. Each is a `uint256`. Errors propagate.
     #[pyo3(signature = (pool_address, block=None))]
