@@ -246,52 +246,61 @@ class _StringFieldProvider:
         return HexBytes(self._response)
 
 
-class _ProbeProvider:
-    """Provider that succeeds for some selectors, reverts for others."""
+def _probe_offline_provider(succeed: set[str]) -> RustAlloyProvider:
+    """An `OfflineProvider` cassette answering only the given selector hexes.
 
-    def __init__(self, *, succeed: set[bytes]) -> None:
-        self._succeed = succeed
+    Calls not recorded surface as `RpcError` (non-revert), which the probe's
+    fire-and-forget dispatch treats as "reverted" → tries the next probe. No
+    Python double (O3).
+    """
+    import json
 
-    def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
-        if data[:4] in self._succeed:
-            return HexBytes(b"\x00" * 32)  # dummy non-empty response
-        msg = "execution reverted"
-        raise RuntimeError(msg)
+    pool_addr = "aa" * 20
+    calls = {f"0x{pool_addr}:0x{sel}": "00" * 32 for sel in succeed}
+    return RustAlloyProvider.offline_from_json_string(json.dumps({
+        "chain_id": 1,
+        "block_number": 100,
+        "timestamp": 1_700_000_000,
+        "calls": calls,
+        "code": {},
+    }))
 
 
-def _sel(sig: str) -> bytes:
-    return function_selector(sig)
+_SLOT0 = function_selector("slot0()").hex()
+_GET_RESERVES = function_selector("getReserves()").hex()
+_GET_POOL_ID = function_selector("getPoolId()").hex()
+_GET_NORMALIZED_WEIGHTS = function_selector("getNormalizedWeights()").hex()
 
 
 def test_pybot_io_probe_pool_type_returns_slot0_for_v3():
     """When slot0() succeeds, probe returns 'slot0'."""
-    io = PyBotIo(provider=_ProbeProvider(succeed={_sel("slot0()")}))
+    io = PyBotIo(provider=_probe_offline_provider({_SLOT0}))
     assert io.probe_pool_type("0x" + "aa" * 20) == "slot0"
 
 
 def test_pybot_io_probe_pool_type_returns_getreserves_for_v2():
     """When slot0() reverts but getReserves() succeeds, probe returns 'getReserves'."""
-    io = PyBotIo(provider=_ProbeProvider(succeed={_sel("getReserves()")}))
+    io = PyBotIo(provider=_probe_offline_provider({_GET_RESERVES}))
     assert io.probe_pool_type("0x" + "aa" * 20) == "getReserves"
 
 
 def test_pybot_io_probe_pool_type_returns_balancer_weighted():
     """When getPoolId() + getNormalizedWeights() succeed, probe returns 'balancer_weighted'."""
     io = PyBotIo(
-        provider=_ProbeProvider(succeed={_sel("getPoolId()"), _sel("getNormalizedWeights()")})
+        provider=_probe_offline_provider({_GET_POOL_ID, _GET_NORMALIZED_WEIGHTS})
     )
     assert io.probe_pool_type("0x" + "aa" * 20) == "balancer_weighted"
 
 
 def test_pybot_io_probe_pool_type_returns_balancer_stable():
     """When getPoolId() succeeds but getNormalizedWeights() reverts, probe returns 'balancer_stable'."""
-    io = PyBotIo(provider=_ProbeProvider(succeed={_sel("getPoolId()")}))
+    io = PyBotIo(provider=_probe_offline_provider({_GET_POOL_ID}))
     assert io.probe_pool_type("0x" + "aa" * 20) == "balancer_stable"
 
 
 def test_pybot_io_probe_pool_type_returns_stableswap_fallback():
     """When all probes revert, probe returns 'stableswap' (Curve fallback)."""
-    io = PyBotIo(provider=_ProbeProvider(succeed=set()))
+    io = PyBotIo(provider=_probe_offline_provider(set()))
     assert io.probe_pool_type("0x" + "aa" * 20) == "stableswap"
 
 

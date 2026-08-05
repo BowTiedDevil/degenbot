@@ -1676,30 +1676,32 @@ impl PyBotIo {
         address: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> String {
-        // Helper: try a no-arg call, return true if it succeeded.
-        let try_call = |sig: &[u8]| -> bool {
-            let calldata = selector(sig);
-            self.forward_call_to_provider(py, address, &calldata, block)
-                .is_ok()
-        };
+        use degenbot_bot::bot_core::pool_builder::builder::PoolFamily;
 
-        // Probe 1: slot0() → V3.
-        if try_call(b"slot0()") {
-            return "slot0".to_string();
+        // Non-`PyResult` signature (mirrors the Python `-> str` contract), so
+        // the construction-IO / address / block conversions `expect`: for the
+        // alloy-backed Offline/RPC providers the builder dispatches through,
+        // all three succeed.
+        let io = self
+            .required_construction_io()
+            .expect("probe_pool_type requires the alloy-backed construction IO");
+        let addr = alloy::primitives::Address::from(
+            parse_address_for_call(address).expect("probe_pool_type address parse"),
+        );
+        let block_num = extract_block_u64(block).expect("probe_pool_type block parse");
+        let family = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::builder::probe_pool_type(&io, addr, block_num)
+                    .await
+            })
+        });
+        match family {
+            PoolFamily::V3 => "slot0".to_string(),
+            PoolFamily::V2 => "getReserves".to_string(),
+            PoolFamily::BalancerWeighted => "balancer_weighted".to_string(),
+            PoolFamily::BalancerStable => "balancer_stable".to_string(),
+            PoolFamily::Curve => "stableswap".to_string(),
         }
-        // Probe 2: getReserves() → V2.
-        if try_call(b"getReserves()") {
-            return "getReserves".to_string();
-        }
-        // Probe 3: getPoolId() → Balancer (weighted or stable).
-        if try_call(b"getPoolId()") {
-            if try_call(b"getNormalizedWeights()") {
-                return "balancer_weighted".to_string();
-            }
-            return "balancer_stable".to_string();
-        }
-        // Fallback: Curve stableswap.
-        "stableswap".to_string()
     }
 
     /// Fetch a V3 pool's tick bitmap word via `tickBitmap(int16)`, performing
