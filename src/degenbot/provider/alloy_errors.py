@@ -8,7 +8,7 @@ string. An alloy ``eth_call`` revert is therefore surfaced as a bare
 ``RuntimeError``.
 
 That asymmetry is a real bug: probing code throughout the codebase
-(:mod:`degenbot.builders.type_resolution`, :mod:`degenbot.curve.detection`,
+(:mod:`degenbot.builders.type_resolution`,
 :mod:`degenbot.aave.analysis`) catches the provider-layer revert type to mean
 "this method is not implemented by the contract." Under the alloy backend a
 reverted probe (e.g. ``factory()`` on a Curve pool, which has no such method)

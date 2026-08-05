@@ -6,8 +6,8 @@ codebase previously imported: ``Web3Exception`` (the broad RPC base),
 ``TransactionNotFound`` (a transaction hash the provider could not find).
 
 Owning them here lets probe sites throughout the codebase
-(:mod:`degenbot.builders.type_resolution`, :mod:`degenbot.builders.erc20_builder`,
-:mod:`degenbot.curve.detection`) catch a single degenbot-owned type regardless
+(:mod:`degenbot.builders.type_resolution`, :mod:`degenbot.builders.erc20_builder`)
+catch a single degenbot-owned type regardless
 of which provider backend (Alloy or the transitional web3 backend) raised the
 failure. The adapter seam
 (:mod:`degenbot.provider.sync_adapter`, :mod:`degenbot.provider.async_adapter`,
