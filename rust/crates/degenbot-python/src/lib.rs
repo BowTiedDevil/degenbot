@@ -41,6 +41,8 @@ pub mod cancel;
 pub mod cl_math;
 pub mod conversion;
 #[cfg(feature = "curve-math")]
+pub mod curve_dy;
+#[cfg(feature = "curve-math")]
 pub mod curve_math;
 #[cfg(feature = "db")]
 pub mod db;

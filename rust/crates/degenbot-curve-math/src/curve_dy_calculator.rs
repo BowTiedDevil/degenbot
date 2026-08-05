@@ -736,6 +736,9 @@ fn calculate_metapool_underlying_dy(
         Some(bi) => match base_j {
             // i is a base coin, j is the meta coin → deposit into the base pool.
             None => {
+                if bi >= base_n {
+                    return Err(CurveSwapError::IndexOutOfBounds);
+                }
                 let mut base_inputs = vec![U256::ZERO; base_n];
                 base_inputs[bi] = dx;
                 let token_amt = base.calc_token_amount(&base_inputs, inputs.block_number)?;

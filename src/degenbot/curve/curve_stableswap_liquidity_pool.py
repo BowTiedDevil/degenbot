@@ -13,6 +13,15 @@ from weakref import WeakSet
 from eth_typing import ChecksumAddress
 
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.curve.dy import (
+    DyCalculationInputs as RustDyCalculationInputs,
+)
+from degenbot.curve.dy import (
+    calculate_dy as rust_calculate_dy,
+)
+from degenbot.curve.dy import (
+    calculate_dy_underlying as rust_calculate_dy_underlying,
+)
 from degenbot.curve.math import (
     stableswap_get_d as curve_stableswap_get_d,
 )
@@ -898,29 +907,13 @@ class CurveStableswapPool(
         """
         block_number = self._resolve_block_number(block_identifier)
 
+        # Resolve the calculation snapshot (I/O stays in the companion) and
+        # delegate the pure dy math to the Rust `degenbot-curve-math` core.
         if self.base_pool is not None:
-            # Metapool path — resolve metapool-specific inputs
             inputs = self._resolve_metapool_inputs_via_io(block_number, override_state)
-            assert self._strategies.metapool_dy_calculator is not None
-            return self._strategies.metapool_dy_calculator.calculate(
-                i,
-                j,
-                dx,
-                inputs=inputs,
-                override_state=override_state,
-            )
-
-        # Non-metapool path — resolve standard/crypto/live-admin inputs
-        inputs = self._resolve_calculation_inputs_via_io(block_number, override_state)
-
-        assert self._strategies.dy_calculator is not None
-        return self._strategies.dy_calculator.calculate(
-            i,
-            j,
-            dx,
-            inputs=inputs,
-            override_state=override_state,
-        )
+        else:
+            inputs = self._resolve_calculation_inputs_via_io(block_number, override_state)
+        return self._calculate_dy_via_rust(i, j, dx, inputs)
 
     def _resolve_metapool_inputs_via_io(
         self,
@@ -963,15 +956,76 @@ class CurveStableswapPool(
     ) -> int:
         block_number = self._resolve_block_number(block_identifier)
         inputs = self._resolve_metapool_inputs_via_io(block_number, override_state)
+        return self._calculate_dy_via_rust(i, j, dx, inputs, use_underlying=True)
 
-        assert self._strategies.metapool_underlying_dy_calculator is not None
-        return self._strategies.metapool_underlying_dy_calculator.calculate(
-            i,
-            j,
-            dx,
-            inputs=inputs,
-            override_state=override_state,
+    def _calculate_dy_via_rust(
+        self,
+        i: int,
+        j: int,
+        dx: int,
+        inputs: DyCalculationInputs,
+        *,
+        use_underlying: bool = False,
+    ) -> int:
+        """Delegate the pure dy calculation to the Rust `degenbot-curve-math` core.
+
+        The I/O orchestration (amp resolution, lending-rate fetch, xp
+        construction) happens in ``_resolve_calculation_inputs_via_io``; this
+        converts the resolved snapshot into the Rust builder and calls
+        ``calculate_dy`` / ``calculate_dy_underlying`` (the `degenbot._ffi`
+        seam, task `CNEP47`).
+
+        Returns:
+            The computed integer value.
+
+        Raises:
+            EVMRevertError: See function documentation.
+
+        """
+        r = RustDyCalculationInputs()
+        r.precision = inputs.PRECISION
+        r.fee_denominator = inputs.FEE_DENOMINATOR
+        r.fee = inputs.fee
+        r.n_coins = inputs.n_coins
+        r.balances = list(inputs.balances)
+        r.rate_multipliers = list(inputs.rate_multipliers)
+        r.precision_multipliers = list(inputs.precision_multipliers)
+        r.offpeg_fee_multiplier = inputs.offpeg_fee_multiplier
+        r.fee_gamma = inputs.fee_gamma
+        r.mid_fee = inputs.mid_fee
+        r.out_fee = inputs.out_fee
+        r.address = str(inputs.address)
+        r.resolved_rates = list(inputs.resolved_rates)
+        r.xp = list(inputs.xp)
+        r.block_number = inputs.block_number
+        r.block_timestamp = inputs.block_timestamp
+        r.amp = inputs.amp
+        r.d_variant = int(inputs.d_variant.value)
+        r.y_variant = int(inputs.y_variant.value)
+        r.a_precision = inputs.a_precision
+        r.swap_style = int(self._strategies.swap_style.value)
+        r.metapool = self.base_pool is not None
+        r.metapool_rate_style = int(self._strategies.metapool_rate_style.value)
+        r.metapool_underlying_style = int(self._strategies.metapool_underlying_style.value)
+        r.d = inputs.d
+        r.gamma = inputs.gamma
+        r.price_scale = list(inputs.price_scale) if inputs.price_scale is not None else None
+        r.effective_balances = (
+            list(inputs.effective_balances) if inputs.effective_balances is not None else None
         )
+        r.virtual_price = inputs.virtual_price
+        r.scaled_redemption_price = inputs.scaled_redemption_price
+
+        try:
+            if use_underlying:
+                if self.base_pool is None:
+                    raise EVMRevertError(
+                        error=f"{self.address}: cannot get underlying dy without a base pool"
+                    )
+                return rust_calculate_dy_underlying(i, j, dx, r, self.base_pool)
+            return rust_calculate_dy(i, j, dx, r)
+        except (ValueError, TypeError) as e:
+            raise EVMRevertError(error=str(e)) from e
 
     def _get_d(self, _xp: Sequence[int], _amp: int) -> int:
         """Solve for the Curve stableswap invariant D.

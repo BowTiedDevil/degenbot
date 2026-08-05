@@ -132,6 +132,10 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "curve-math")]
     crate::curve_math::lib::add_curve_math_module(m)?;
 
+    // Curve get_dy calculator seam (feature = "curve-math")
+    #[cfg(feature = "curve-math")]
+    crate::curve_dy::lib::add_curve_dy_module(m)?;
+
     // Solidly / Aerodrome / Camelot stable-math library functions
     // (feature = "solidly-math")
     #[cfg(feature = "solidly-math")]
