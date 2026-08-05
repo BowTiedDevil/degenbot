@@ -140,8 +140,8 @@ pub use degenbot_bot::bot_core::registration_lifecycle::{
     run_v4_registration_lifecycle, RegistrationLifecycleError,
 };
 pub use degenbot_bot::bot_core::{
-    BotState, PoolEntry, RegisterAerodromeV2PoolParams, RegisterV2PoolParams, RegisterV3PoolParams,
-    RegisterV4PoolParams, V2PoolState, V4PoolKey,
+    BotState, PoolEntry, RegisterAerodromeV2PoolParams, RegisterCurvePoolParams,
+    RegisterV2PoolParams, RegisterV3PoolParams, RegisterV4PoolParams, V2PoolState, V4PoolKey,
 };
 pub use degenbot_uniswap::dex_identity::{
     preset_for_variant, DexIdentity, DexVariant, ReservesAbi, UNISWAP_V2,

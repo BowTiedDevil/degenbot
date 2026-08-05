@@ -43,6 +43,7 @@ pub use ::degenbot_pools::aerodrome_v2_state::{
     AerodromeV2PoolIdentity, AerodromeV2PoolState, RegisterAerodromeV2PoolParams,
 };
 pub use ::degenbot_pools::curve_data_provider::{CurveDataProvider, CurveDataProviderError};
+pub use ::degenbot_pools::curve_dy_io::{resolve_dy_inputs, CurveInputsError};
 pub use ::degenbot_pools::rate_provider::{
     BalancerRateProvider, RateProviderError, StaticRateProvider,
 };
@@ -55,6 +56,7 @@ pub use balancer_weighted_state::{
     BalancerWeightedPoolIdentity, BalancerWeightedPoolState, RegisterBalancerWeightedPoolParams,
 };
 pub use curve_state::{CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams};
+use degenbot_curve_math::calculate_dy;
 pub use divergence_probe::{TrackedSlotKind, TrackedSlotProbe};
 pub use registration_lifecycle::{
     run_cl_v3_lifecycle, run_cl_v4_lifecycle, run_v3_registration_lifecycle,
@@ -770,6 +772,45 @@ impl BotState {
             .get(&pool_id)
             .and_then(PoolEntry::curve)
             .map(|(identity, _)| identity)
+    }
+
+    /// Rust-owned Curve stableswap `get_dy(i, j, dx)` (task `45QBUG`, epic
+    /// `TV72EG`). The counterpart of the companion's `get_dy` — resolves the
+    /// dy-calculation snapshot from the pool's identity + balances + stored
+    /// provider via [`degenbot_pools::resolve_dy_inputs`], then runs the pure
+    /// [`degenbot_curve_math::calculate_dy`]. No Python provider / cache /
+    /// calculator is on the path.
+    ///
+    /// `i`/`j` are coin indices, `dx` the input amount. `override_balances`
+    /// swaps the balance source (the companion `override_state.balances`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CurveInputsError::UnknownPool`] for a non-Curve / unknown
+    /// `pool_id`; otherwise the orchestration or swap-math errors propagate.
+    pub fn curve_get_dy(
+        &self,
+        pool_id: u64,
+        i: usize,
+        j: usize,
+        dx: U256,
+        block_number: u64,
+        override_balances: Option<&[U256]>,
+    ) -> Result<U256, CurveInputsError> {
+        let (identity, state) = self
+            .pools
+            .get(&pool_id)
+            .and_then(PoolEntry::curve)
+            .ok_or(CurveInputsError::UnknownPool(pool_id))?;
+        let provider = state.data_provider.as_deref();
+        let inputs = resolve_dy_inputs(
+            identity,
+            &state.balances,
+            provider,
+            block_number,
+            override_balances,
+        )?;
+        calculate_dy(i, j, dx, &inputs).map_err(CurveInputsError::Swap)
     }
 
     // --- ADR-005 slice 12a: Balancer V2 weighted state port -------------
@@ -4327,6 +4368,66 @@ mod tests {
             .expect("test setup: V2 registration");
         assert_eq!(core.pool_family(pool_id), "v2");
         assert_eq!(core.pool_family(999_999), "");
+    }
+
+    #[test]
+    fn curve_get_dy_runs_the_rust_owned_swap_path() {
+        // Task `45QBUG`: the Rust-owned `get_dy` entry replays the shared
+        // `standard_plain` fixture and reproduces the recorded dy — proving
+        // the whole swap path (orchestration + calc) runs with no Python
+        // provider / cache / calculator.
+        use crate::bot_core::RegisterCurvePoolParams;
+
+        const E18: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
+        const E21: U256 = U256::from_limbs([11_627_460_059_052_638_208, 162, 0, 0]); // 3e21
+        const TWO_E21: U256 = U256::from_limbs([4_808_176_044_395_724_800, 325, 0, 0]); // 6e21
+
+        let mut core = BotState::new();
+        let pool_id = core.register_curve_pool(&RegisterCurvePoolParams {
+            address: Address::from([0xccu8; 20]),
+            tokens: vec![Address::ZERO, Address::from([0x01u8; 20])],
+            a_coefficient: 100,
+            a_precision: 100,
+            fee: 500_000,
+            admin_fee: 0,
+            rate_multipliers: vec![E18, E18],
+            balances: vec![E21, TWO_E21],
+            update_block: 0,
+            swap_style: 1,         // STANDARD
+            lending_rate_style: 1, // NONE
+            d_variant: 1,
+            y_variant: 1,
+            yd_variant: 1,
+            base_pool: None,
+            initial_a_coefficient: None,
+            future_a_coefficient: None,
+            initial_a_coefficient_time: None,
+            future_a_coefficient_time: None,
+            create_timestamp: None,
+            fee_gamma: None,
+            mid_fee: None,
+            offpeg_fee_multiplier: None,
+            out_fee: None,
+            gamma: None,
+            lp_token: None,
+            use_lending: Vec::new(),
+            precision_multipliers: vec![E18, E18],
+            tokens_underlying: None,
+            metapool_rate_style: 1,
+            metapool_underlying_style: 1,
+            data_provider: None,
+        });
+
+        let dy = core
+            .curve_get_dy(pool_id, 0, 1, E18, 0, None)
+            .expect("standard curve get_dy");
+        assert_eq!(dy, U256::from(1_008_296_947_143_911_861u64));
+
+        // Unknown pool id -> UnknownPool error.
+        assert!(matches!(
+            core.curve_get_dy(999_999, 0, 1, E18, 0, None),
+            Err(CurveInputsError::UnknownPool(999_999))
+        ));
     }
 
     #[test]

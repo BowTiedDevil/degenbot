@@ -24,6 +24,7 @@
 #![allow(clippy::panic_in_result_fn, clippy::doc_markdown)]
 
 use alloy::primitives::U256;
+use degenbot::{BotState, RegisterCurvePoolParams};
 use degenbot_curve_math::curve_dy_calculator::{calculate_dy, DyCalculationInputs};
 use degenbot_curve_math::{DVariant, YVariant};
 
@@ -161,4 +162,67 @@ fn standalone_rust_consumer_curve_dy_matches_recorded_constant() {
             probe.name
         );
     }
+}
+
+/// Tier-2 gateway for the **Rust-owned orchestrated** `curve_get_dy` entry
+/// (task `45QBUG`). This is the ADR-005 claim at the orchestration layer: a
+/// `cargo add degenbot` consumer registering a Curve pool into a `BotState`
+/// and calling `BotState::curve_get_dy` (identity + balances + optional
+/// provider → `resolve_dy_inputs` → `calculate_dy`) MUST reproduce the same
+/// recorded `dy` as the Python consumer driving `PyBot.curve_get_dy` with the
+/// same registration. Both sides read the shared `standard_plain` fixture for
+/// the expected constant.
+#[test]
+fn standalone_rust_consumer_curve_get_dy_equals_recorded_constant() {
+    use alloy::primitives::Address;
+
+    let fx = load_shared_curve_fixture();
+    let plain = fx
+        .probes
+        .iter()
+        .find(|p| p.name == "standard_plain")
+        .expect("standard_plain probe");
+
+    let mut state = BotState::new();
+    let pool_id = state.register_curve_pool(&RegisterCurvePoolParams {
+        address: Address::with_last_byte(0xcc),
+        tokens: vec![Address::ZERO, Address::with_last_byte(0x01)],
+        a_coefficient: 100,
+        a_precision: 100,
+        fee: 500_000,
+        admin_fee: 0,
+        rate_multipliers: u256_vec(&plain.inputs.rate_multipliers),
+        balances: u256_vec(&plain.inputs.balances),
+        update_block: 0,
+        swap_style: 1,         // STANDARD
+        lending_rate_style: 1, // NONE
+        d_variant: 1,
+        y_variant: 1,
+        yd_variant: 1,
+        base_pool: None,
+        initial_a_coefficient: None,
+        future_a_coefficient: None,
+        initial_a_coefficient_time: None,
+        future_a_coefficient_time: None,
+        create_timestamp: None,
+        fee_gamma: None,
+        mid_fee: None,
+        offpeg_fee_multiplier: None,
+        out_fee: None,
+        gamma: None,
+        lp_token: None,
+        use_lending: Vec::new(),
+        precision_multipliers: u256_vec(&plain.inputs.precision_multipliers),
+        tokens_underlying: None,
+        metapool_rate_style: 1,
+        metapool_underlying_style: 1,
+        data_provider: None,
+    });
+
+    let dx = u256(&plain.args.dx);
+    let expected = u256(&plain.expected.dy);
+    let dy = state
+        .curve_get_dy(pool_id, plain.args.i, plain.args.j, dx, 0, None)
+        .unwrap_or_else(|e| panic!("BotState::curve_get_dy failed: {e:?}"));
+    assert_eq!(dy, expected, "Rust-consumer curve_get_dy mismatch");
 }

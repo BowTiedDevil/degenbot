@@ -1118,6 +1118,57 @@ impl PyBot {
         Ok(bound.unbind())
     }
 
+    /// Calculate the raw stableswap `get_dy` for a Curve pool (Rust-owned;
+    /// task `45QBUG`, epic `TV72EG`). Backs the companion `CurveStableswapPool
+    /// .get_dy` so no Python provider / cache / calculator is on the path.
+    ///
+    /// Args:
+    ///     `pool_id`: The pool ID returned by `register_curve_pool`.
+    ///     `i`/`j`: Coin indices.
+    ///     `dx`: Input amount (Python int).
+    ///     `block_number`: Block to resolve against.
+    ///     `override_balances`: Optional `list[int]` to use as the balance
+    ///         source instead of the pool's current balances.
+    ///
+    /// Returns:
+    ///     The raw `dy` output amount as a Python int.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (pool_id, i, j, dx, block_number, override_balances=None))]
+    fn curve_get_dy(
+        &self,
+        py: Python<'_>,
+        pool_id: u64,
+        i: usize,
+        j: usize,
+        dx: &Bound<'_, PyAny>,
+        block_number: u64,
+        override_balances: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let amount = crate::conversion::alloy::extract_python_u256(dx)?;
+        let overrides = match override_balances {
+            Some(list) => {
+                let cast = list.cast::<PyList>().map_err(|_| {
+                    pyo3::exceptions::PyTypeError::new_err("override_balances must be a list[int]")
+                })?;
+                Some(extract_u256_list(cast)?)
+            }
+            None => None,
+        };
+        let result = {
+            let state = self.bot.state_arc();
+            let core = state.read();
+            core.curve_get_dy(pool_id, i, j, amount, block_number, overrides.as_deref())
+        };
+        let out = match result {
+            Ok(v) => v,
+            Err(e) => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!("{e:?}")));
+            }
+        };
+        let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
+        Ok(bound.unbind())
+    }
+
     /// Calculate the required input token amount for a given output amount.
     ///
     /// Args:

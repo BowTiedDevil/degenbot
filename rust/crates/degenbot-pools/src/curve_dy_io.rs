@@ -42,6 +42,8 @@ pub enum CurveInputsError {
     Swap(degenbot_curve_math::CurveSwapError),
     /// A length mismatch in zipped rate/balance/coin arrays.
     LengthMismatch(&'static str),
+    /// The requested pool isn't a registered Curve pool.
+    UnknownPool(u64),
 }
 
 /// Compute `xp = rate * balance // PRECISION` (strict-zip, matches the

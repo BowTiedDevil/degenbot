@@ -68,3 +68,48 @@ def test_python_consumer_curve_dy_matches_recorded_constant() -> None:
         )
         expected = int(probe["expected"]["dy"])
         assert dy == expected, f"Python consumer dy mismatch for probe `{probe['name']}`"
+
+
+def test_python_consumer_curve_get_dy_matches_recorded_constant() -> None:
+    """The Python consumer drives the Rust-owned `PyBot.curve_get_dy`.
+
+    The orchestration-layer complement of the pure-calc parity test above: the
+    Python consumer registers the shared `standard_plain` pool into a `PyBot`
+    and calls `PyBot.curve_get_dy` (identity + balances + provider →
+    `resolve_dy_inputs` → `calculate_dy`), which must reproduce the same
+    recorded dy as the Rust `BotState::curve_get_dy` dual-driver test. Both
+    sides read the `standard_plain` expected constant from the shared fixture.
+    """
+    from degenbot.bot import PyBot
+
+    plain = next(p for p in _FIXTURE["probes"] if p["name"] == "standard_plain")
+    inputs = plain["inputs"]
+
+    py_bot = PyBot()
+    pool_id = py_bot.register_curve_pool(
+        address="0x" + "cc" * 20,
+        tokens=["0x" + "00" * 20, "0x" + "01" * 20],
+        a_coefficient=100,
+        a_precision=100,
+        fee=500_000,
+        admin_fee=0,
+        rate_multipliers=[int(v) for v in inputs["rate_multipliers"]],
+        balances=[int(v) for v in inputs["balances"]],
+        update_block=0,
+        swap_style=1,  # STANDARD
+        lending_rate_style=1,  # NONE
+        d_variant=1,
+        y_variant=1,
+        yd_variant=1,
+        precision_multipliers=[int(v) for v in inputs["precision_multipliers"]],
+    )
+
+    dy = py_bot.curve_get_dy(
+        pool_id,
+        plain["probe"]["i"],
+        plain["probe"]["j"],
+        int(plain["probe"]["dx"]),
+        block_number=0,
+    )
+    expected = int(plain["expected"]["dy"])
+    assert dy == expected, f"Python consumer curve_get_dy mismatch: {dy} != {expected}"
