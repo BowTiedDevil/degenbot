@@ -10,8 +10,9 @@
 //!
 //! Decision D-C scopes the first move to the **V2/V3/V4 + ERC-20 + tick**
 //! choreography — exactly what the MEV `PoolBuilder` (task `3FVZF4`) needs.
-//! Curve / Balancer wrappers stay on the temporary `PyBotIo` path and are
-//! absorbed with the builder-follow-up (task `SSSXG6`).
+//! Curve / Aerodrome wrappers (and the camelot/balancer re-points) were
+//! absorbed as follow-ups (tasks `SSSXG6`, `LWKLMP`); the Curve + Aerodrome
+//! wrappers are the last families still on the temporary `PyBotIo` inline path.
 //!
 //! Every encode/decode comes from [`degenbot_rpc::abi`], shared with
 //! `AlloyTickBootstrapRpc` (the standalone-`cargo add degenbot` consumer), so
