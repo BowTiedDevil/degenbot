@@ -71,6 +71,45 @@ pub enum DexVariant {
     AerodromeV2Stable,
 }
 
+/// A resolved DEX name (`Uniswap` vs `SushiSwap` vs `PancakeSwap` …) for a
+/// pool, independent of its protocol family sub-variant.
+///
+/// This is the deployment-level discriminator the structural
+/// [`crate::Pool`] `Identity` surfaces alongside the family sub-variant. It is
+/// resolved per-`(chain, factory)` from `deployments.json` by
+/// [`crate::deployments::resolve_dex_name`] (single source, Rust-owned), or
+/// derived from the V2 `DexVariant` where no deployment row exists. It is
+/// deliberately a small closed set so the identity stays `Copy`/`Eq`; `None`
+/// means "unknown deployment → generic variant", never an error.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum DexName {
+    Uniswap,
+    SushiSwap,
+    PancakeSwap,
+    Camelot,
+    Aerodrome,
+    SwapBased,
+    Balancer,
+}
+
+impl DexName {
+    /// Canonical kebab-case string (e.g. `"sushiswap"`) for display / the
+    /// Python FFI surface.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Uniswap => "uniswap",
+            Self::SushiSwap => "sushiswap",
+            Self::PancakeSwap => "pancakeswap",
+            Self::Camelot => "camelot",
+            Self::Aerodrome => "aerodrome",
+            Self::SwapBased => "swapbased",
+            Self::Balancer => "balancer",
+        }
+    }
+}
+
 impl DexVariant {
     /// Canonical kebab-case string form (the Python-seam lookup key).
     #[must_use]

@@ -1259,7 +1259,11 @@ impl PyBot {
     /// Prototype structural pool handle (V2 slice).
     fn py_pool(&self, pool_id: u64) -> Option<crate::bot::pool::PyPool> {
         if self.bot.state_arc().read().has_pool(pool_id) {
-            Some(crate::bot::pool::PyPool::new(self.bot.state_arc(), pool_id))
+            Some(crate::bot::pool::PyPool::new(
+                self.bot.state_arc(),
+                pool_id,
+                self.bot.chain_id(),
+            ))
         } else {
             None
         }

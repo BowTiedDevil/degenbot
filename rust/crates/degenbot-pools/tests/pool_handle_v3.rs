@@ -7,7 +7,7 @@ use degenbot_pools::TickInfo;
 use degenbot_pools::{ConcentratedLiquidityVariant, Identity, Pool, Structure};
 use std::collections::HashMap;
 
-fn make_v3_pool(liquidity: u128) -> PoolEntry {
+fn make_v3_pool(factory: Address, liquidity: u128) -> PoolEntry {
     let liq_u128 = U128::from(liquidity);
     let liquidity_net = I256::try_from(i128::try_from(liquidity).unwrap()).unwrap();
     let mut tick_data = HashMap::new();
@@ -34,7 +34,7 @@ fn make_v3_pool(liquidity: u128) -> PoolEntry {
         token1: Address::from([0xBBu8; 20]),
         fee: 3000,
         tick_spacing: 60,
-        factory: Address::from([0x22u8; 20]),
+        factory,
         sqrt_price_x96: U256::from(1u128) << 96,
         liquidity,
         tick: 0,
@@ -43,7 +43,7 @@ fn make_v3_pool(liquidity: u128) -> PoolEntry {
         tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
-        deployer: Address::from([0x22u8; 20]),
+        deployer: factory,
         init_hash: B256::default(),
     };
     let (identity, state) = V3PoolState::from_params(params, 8);
@@ -52,14 +52,15 @@ fn make_v3_pool(liquidity: u128) -> PoolEntry {
 
 #[test]
 fn v3_pool_handle_exposes_structure_identity_cl_view_and_swap() {
-    let entry = make_v3_pool(1_000_000u128);
+    let entry = make_v3_pool(Address::from([0x22u8; 20]), 1_000_000u128);
 
-    let pool = Pool::new(&entry);
+    let pool = Pool::new(&entry, 1);
     assert_eq!(pool.structure(), Structure::ConcentratedLiquidity);
     assert!(matches!(
         pool.identity(),
         Identity::ConcentratedLiquidity {
             variant: ConcentratedLiquidityVariant::UniswapV3,
+            ..
         }
     ));
 
@@ -76,4 +77,43 @@ fn v3_pool_handle_exposes_structure_identity_cl_view_and_swap() {
         .calculate_tokens_out(true, U256::from(1_000))
         .expect("computable");
     assert!(out > U256::ZERO);
+}
+
+/// DEX-name resolution: a V3 pool whose `(chain_id, factory)` matches a known
+/// deployment resolves the DEX name on `Identity::dex` (QHGN2E). Uses the
+/// Uniswap V3 mainnet factory (chain 1) → `Uniswap`.
+#[test]
+fn v3_resolves_uniswap_dex_name_from_known_deployment() {
+    // Uniswap V3 mainnet factory.
+    let uni_factory =
+        Address::parse_checksummed("0x1F98431c8aD98523631AE4a59f267346ea31F984", None).unwrap();
+    let entry = make_v3_pool(uni_factory, 1_000_000u128);
+
+    let pool = Pool::new(&entry, 1);
+    let identity = pool.identity();
+    assert_eq!(
+        identity,
+        Identity::ConcentratedLiquidity {
+            variant: ConcentratedLiquidityVariant::UniswapV3,
+            dex: Some(degenbot_uniswap::dex_identity::DexName::Uniswap),
+        }
+    );
+}
+
+/// Unknown V3 deployment degrades gracefully: `dex: None`, never an error.
+#[test]
+fn v3_unknown_deployment_resolves_none_dex() {
+    let unknown =
+        Address::parse_checksummed("0x1111111111111111111111111111111111111111", None).unwrap();
+    let entry = make_v3_pool(unknown, 1_000_000u128);
+
+    let pool = Pool::new(&entry, 1);
+    let identity = pool.identity();
+    assert_eq!(
+        identity,
+        Identity::ConcentratedLiquidity {
+            variant: ConcentratedLiquidityVariant::UniswapV3,
+            dex: None,
+        }
+    );
 }

@@ -46,6 +46,7 @@ use alloy::primitives::{Address, B256};
 use degenbot_core::address_utils;
 
 use crate::create2;
+use crate::dex_identity::DexName;
 
 /// The canonical Uniswap V3 mainnet CREATE2 init code hash — the fallback
 /// for non-`JSON` V3 pools (the documented default the retired Python `ClassVar`
@@ -135,6 +136,12 @@ struct RawRecord {
     deployer: Option<String>,
     #[serde(default)]
     init_hash: Option<String>,
+    /// The DEX name label (`"Uniswap V2"`, `"SushiSwap V3"`, …).
+    /// Consumed *only* for DEX-name resolution — `pool_type` collapses all
+    /// V2 variants to `"uniswap-v2"` and `dex_variant` is mostly absent, so
+    /// `name` is the single complete per-row DEX discriminator.
+    #[serde(default)]
+    name: Option<String>,
     /// The EIP-1167 master implementation contract Aerodrome factories
     /// clone (V2 `stable`/volatile + V3 Slipstream). Absent for V2/V3
     /// rows that use the standard init-hash CREATE2 path. Aerodrome-only
@@ -177,6 +184,38 @@ pub struct DeploymentRecord {
     /// implementation_address)` with no Python (ADR-005 standalone
     /// constraint). (Fork A follow-on, S5SJXF/D7VKQX.)
     pub implementation_address: Option<Address>,
+    /// The resolved DEX name for this deployment (derived from the JSON
+    /// `name` label). `None` if the label names no known DEX.
+    pub dex: Option<DexName>,
+}
+
+/// Map a `deployments.json` `name` label to a [`DexName`].
+///
+/// `pool_type` collapses every V2-family row to `"uniswap-v2"` and
+/// `dex_variant` is absent for most rows, so the human `name` label
+/// (`"SushiSwap V2"`, `"PancakeSwap V3"`, `"Aerodrome V2"`, …) is the only
+/// complete per-row DEX discriminator — matched here by a lowercase prefix.
+/// Returns `None` for a label that names no known DEX.
+#[must_use]
+pub fn dex_name_from_label(label: &str) -> Option<DexName> {
+    let lower = label.to_ascii_lowercase();
+    if lower.starts_with("uniswap") {
+        Some(DexName::Uniswap)
+    } else if lower.starts_with("sush") {
+        Some(DexName::SushiSwap)
+    } else if lower.starts_with("pancakeswap") || lower.starts_with("pancake") {
+        Some(DexName::PancakeSwap)
+    } else if lower.starts_with("camelot") {
+        Some(DexName::Camelot)
+    } else if lower.starts_with("aerodrome") {
+        Some(DexName::Aerodrome)
+    } else if lower.starts_with("swapbased") {
+        Some(DexName::SwapBased)
+    } else if lower.starts_with("balancer") {
+        Some(DexName::Balancer)
+    } else {
+        None
+    }
 }
 
 impl DeploymentRecord {
@@ -225,6 +264,11 @@ fn table() -> &'static Table {
                 .as_deref()
                 .filter(|s| !s.is_empty())
                 .and_then(|s| Address::from_str(s).ok());
+            let dex = raw
+                .name
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .and_then(dex_name_from_label);
             let chain_id = raw.chain_id;
             map.insert(
                 (chain_id, factory),
@@ -234,6 +278,7 @@ fn table() -> &'static Table {
                     deployer,
                     init_hash,
                     implementation_address,
+                    dex,
                 },
             );
         }
@@ -276,6 +321,18 @@ pub fn implementation_address(chain_id: u64, factory: Address) -> Option<Address
 #[must_use]
 pub fn lookup(chain_id: u64, factory: Address) -> Option<&'static DeploymentRecord> {
     table().get(&(chain_id, factory))
+}
+
+/// Resolve the DEX name for a `(chain_id, factory)` pool deployment.
+///
+/// Returns the deployment's derived [`DexName`] when the `(chain, factory)` is
+/// in the shipped `deployments.json` and its `name` label names a known DEX;
+/// otherwise `None` (unknown deployment → the caller degrades to a generic
+/// variant, never an error). This is the Rust-owned, single-source lookup the
+/// structural `Pool` handle uses to surface a DEX name on `Identity`.
+#[must_use]
+pub fn resolve_dex_name(chain_id: u64, factory: Address) -> Option<DexName> {
+    lookup(chain_id, factory).and_then(|rec| rec.dex)
 }
 
 /// A CREATE2 address mismatch reported by [`verify_v2_pool_address`] /

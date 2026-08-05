@@ -23,6 +23,8 @@ use crate::v2_state::{V2PoolIdentity, V2PoolState};
 use crate::v3_state::{V3PoolIdentity, V3PoolState};
 use crate::v4_state::{V4PoolIdentity, V4PoolState};
 use alloy::primitives::{Address, U256};
+use degenbot_uniswap::deployments::resolve_dex_name;
+use degenbot_uniswap::dex_identity::DexName;
 
 /// Structural family of a pool.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -32,18 +34,25 @@ pub enum Structure {
     BalanceVector,
 }
 
-/// Identity value object — structural prototype only.
-/// Long-term this resolves exchange+variant via deployments lookup.
+/// Identity value object — structural projection over a registered pool.
+///
+/// Surfaces the protocol family sub-variant AND the resolved DEX name
+/// (`Uniswap` vs `SushiSwap` …). `dex: None` means the `(chain_id, factory)`
+/// deployment is unknown — the caller degrades to the generic family variant,
+/// never an error (QHGN2E).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Identity {
     ReservePair {
         variant: ReservePairVariant,
+        dex: Option<DexName>,
     },
     ConcentratedLiquidity {
         variant: ConcentratedLiquidityVariant,
+        dex: Option<DexName>,
     },
     BalanceVector {
         variant: BalanceVectorVariant,
+        dex: Option<DexName>,
     },
 }
 
@@ -79,14 +88,25 @@ pub enum BalanceVectorVariant {
 }
 
 /// Shared pool handle presenting a structural interface over `BotState`.
+///
+/// Carries the chain id so [`Pool::identity`] can resolve the DEX name for a
+/// `(chain_id, factory)` deployment via the Rust deployments lookup.
 pub struct Pool<'a> {
     entry: &'a PoolEntry,
+    chain_id: u64,
 }
 
 impl<'a> Pool<'a> {
     #[must_use]
-    pub fn new(entry: &'a PoolEntry) -> Self {
-        Self { entry }
+    pub fn new(entry: &'a PoolEntry, chain_id: u64) -> Self {
+        Self { entry, chain_id }
+    }
+
+    /// The chain id this pool's (`chain, factory`) deployment belongs to —
+    /// required to resolve the DEX name via `deployments.json`.
+    #[must_use]
+    pub const fn chain_id(&self) -> u64 {
+        self.chain_id
     }
 
     #[must_use]
@@ -103,26 +123,37 @@ impl<'a> Pool<'a> {
     #[must_use]
     pub fn identity(&self) -> Identity {
         match self.entry {
-            PoolEntry::V2(..) => Identity::ReservePair {
+            PoolEntry::V2(id, _) => Identity::ReservePair {
                 variant: ReservePairVariant::UniswapV2,
+                dex: resolve_dex_name(self.chain_id, id.factory),
             },
             PoolEntry::AerodromeV2(id, _) => Identity::ReservePair {
                 variant: ReservePairVariant::AerodromeV2 { stable: id.stable },
+                dex: resolve_dex_name(self.chain_id, id.factory),
             },
-            PoolEntry::V3(..) => Identity::ConcentratedLiquidity {
+            PoolEntry::V3(id, _) => Identity::ConcentratedLiquidity {
                 variant: ConcentratedLiquidityVariant::UniswapV3,
+                dex: resolve_dex_name(self.chain_id, id.factory),
             },
             PoolEntry::V4(..) => Identity::ConcentratedLiquidity {
                 variant: ConcentratedLiquidityVariant::UniswapV4,
+                // V4 is the Uniswap singleton; no `(chain, factory)` deployment
+                // row exists, so it degrades to the generic variant for now.
+                dex: None,
             },
             PoolEntry::Curve(..) => Identity::BalanceVector {
                 variant: BalanceVectorVariant::Curve,
+                dex: None,
             },
             PoolEntry::BalancerWeighted(..) => Identity::BalanceVector {
                 variant: BalanceVectorVariant::BalancerWeighted,
+                // Balancer/Curve balance-vector pools don't carry a `factory`
+                // on the identity; DEX-name resolution is scoped to V2/V3/V4.
+                dex: None,
             },
             PoolEntry::BalancerStable(..) => Identity::BalanceVector {
                 variant: BalanceVectorVariant::BalancerStable,
+                dex: None,
             },
         }
     }

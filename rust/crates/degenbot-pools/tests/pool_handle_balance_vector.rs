@@ -119,12 +119,13 @@ fn make_balancer_stable_pool() -> PoolEntry {
 #[test]
 fn curve_pool_handle_exposes_balance_vector_structure() {
     let entry = make_curve_pool();
-    let pool = Pool::new(&entry);
+    let pool = Pool::new(&entry, 1);
     assert_eq!(pool.structure(), Structure::BalanceVector);
     assert!(matches!(
         pool.identity(),
         Identity::BalanceVector {
             variant: BalanceVectorVariant::Curve,
+            ..
         }
     ));
 
@@ -138,12 +139,13 @@ fn curve_pool_handle_exposes_balance_vector_structure() {
 #[test]
 fn balancer_weighted_pool_handle_exposes_balance_vector_structure() {
     let entry = make_balancer_weighted_pool();
-    let pool = Pool::new(&entry);
+    let pool = Pool::new(&entry, 1);
     assert_eq!(pool.structure(), Structure::BalanceVector);
     assert!(matches!(
         pool.identity(),
         Identity::BalanceVector {
             variant: BalanceVectorVariant::BalancerWeighted,
+            ..
         }
     ));
 
@@ -160,7 +162,7 @@ fn balancer_weighted_pool_swap_matches_closed_form() {
     // With B_in = B_out = 1_000_000 and amount_in = 1_000 the exact integer
     // output is floor(1_000_000_000 / 1_001_000) = 999.
     let entry = make_balancer_weighted_pool();
-    let pool = Pool::new(&entry);
+    let pool = Pool::new(&entry, 1);
     let out = pool
         .calculate_tokens_out(true, U256::from(1_000u64))
         .expect("computable");
@@ -170,12 +172,13 @@ fn balancer_weighted_pool_swap_matches_closed_form() {
 #[test]
 fn balancer_stable_pool_handle_exposes_balance_vector_structure() {
     let entry = make_balancer_stable_pool();
-    let pool = Pool::new(&entry);
+    let pool = Pool::new(&entry, 1);
     assert_eq!(pool.structure(), Structure::BalanceVector);
     assert!(matches!(
         pool.identity(),
         Identity::BalanceVector {
             variant: BalanceVectorVariant::BalancerStable,
+            ..
         }
     ));
 
@@ -193,7 +196,7 @@ fn balancer_stable_pool_swap_matches_companion_oracle() {
     // Symmetry (equal pools → equal reverse swaps) + monotonicity are the
     // weaker-oracle sanity checks (ADR-005 Tier 2 non-closed-form shape).
     let entry = make_balancer_stable_pool();
-    let pool = Pool::new(&entry);
+    let pool = Pool::new(&entry, 1);
     let out = pool
         .calculate_tokens_out(true, U256::from(1_000u64))
         .expect("computable");
@@ -262,7 +265,7 @@ fn make_standard_curve_pool() -> PoolEntry {
 #[test]
 fn curve_standard_swap_matches_recorded_constant() {
     let entry = make_standard_curve_pool();
-    let pool = Pool::new(&entry);
+    let pool = Pool::new(&entry, 1);
     let out = pool
         .calculate_tokens_out(true, U256::from(1_000_000_000_000_000_000u64))
         .expect("computable");
@@ -281,7 +284,7 @@ fn curve_standard_swap_matches_recorded_constant() {
 #[test]
 fn curve_standard_swap_is_monotonic() {
     let entry = make_standard_curve_pool();
-    let pool = Pool::new(&entry);
+    let pool = Pool::new(&entry, 1);
     let small = pool
         .calculate_tokens_out(true, U256::from(1_000_000_000_000_000_000u64))
         .expect("computable");

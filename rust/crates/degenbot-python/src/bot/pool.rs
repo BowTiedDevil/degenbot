@@ -3174,11 +3174,20 @@ fn extract_tick_data(
 pub struct PyPool {
     core: Arc<parking_lot::RwLock<BotState>>,
     pool_id: u64,
+    chain_id: u64,
 }
 
 impl PyPool {
-    pub(crate) const fn new(core: Arc<parking_lot::RwLock<BotState>>, pool_id: u64) -> Self {
-        Self { core, pool_id }
+    pub(crate) const fn new(
+        core: Arc<parking_lot::RwLock<BotState>>,
+        pool_id: u64,
+        chain_id: u64,
+    ) -> Self {
+        Self {
+            core,
+            pool_id,
+            chain_id,
+        }
     }
 
     fn with_pool<T>(&self, f: impl FnOnce(degenbot_pools::Pool<'_>) -> T) -> T {
@@ -3186,7 +3195,7 @@ impl PyPool {
         let entry = core
             .pool_entry(self.pool_id)
             .expect("PyPool references a registered pool");
-        f(degenbot_pools::Pool::new(entry))
+        f(degenbot_pools::Pool::new(entry, self.chain_id))
     }
 }
 
@@ -3211,7 +3220,7 @@ impl PyPool {
     /// * balance-vector: ``("balance_vector", "curve" | "balancer_weighted" | "balancer_stable")``
     fn identity(&self) -> (String, Option<String>) {
         self.with_pool(|pool| match pool.identity() {
-            degenbot_pools::Identity::ReservePair { variant } => (
+            degenbot_pools::Identity::ReservePair { variant, .. } => (
                 "reserve_pair".to_string(),
                 Some(match variant {
                     degenbot_pools::ReservePairVariant::UniswapV2 => "uniswap_v2".to_string(),
@@ -3223,7 +3232,7 @@ impl PyPool {
                     }
                 }),
             ),
-            degenbot_pools::Identity::ConcentratedLiquidity { variant } => (
+            degenbot_pools::Identity::ConcentratedLiquidity { variant, .. } => (
                 "concentrated_liquidity".to_string(),
                 Some(match variant {
                     degenbot_pools::ConcentratedLiquidityVariant::UniswapV3 => {
@@ -3234,7 +3243,7 @@ impl PyPool {
                     }
                 }),
             ),
-            degenbot_pools::Identity::BalanceVector { variant } => (
+            degenbot_pools::Identity::BalanceVector { variant, .. } => (
                 "balance_vector".to_string(),
                 Some(match variant {
                     degenbot_pools::BalanceVectorVariant::Curve => "curve".to_string(),
@@ -3246,6 +3255,20 @@ impl PyPool {
                     }
                 }),
             ),
+        })
+    }
+
+    /// Resolved DEX name for a known deployment, e.g. ``"uniswap"`` / ``"sushiswap"``
+    /// (from `deployments.json`). ``None`` when the `(chain_id, factory)`
+    /// deployment is unknown (the caller degrades to a generic variant).
+    #[getter]
+    fn dex_name(&self) -> Option<String> {
+        self.with_pool(|pool| match pool.identity() {
+            degenbot_pools::Identity::ReservePair { dex, .. }
+            | degenbot_pools::Identity::ConcentratedLiquidity { dex, .. }
+            | degenbot_pools::Identity::BalanceVector { dex, .. } => {
+                dex.map(|d| d.as_str().to_string())
+            }
         })
     }
 

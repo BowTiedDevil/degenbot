@@ -29,12 +29,13 @@ fn make_aerodrome_v2_pool(reserve0: u128, reserve1: u128, stable: bool) -> PoolE
 fn aerodrome_pool_handle_exposes_structure_identity_and_reserve_pair() {
     let entry = make_aerodrome_v2_pool(1_000_000_000, 2_000_000_000, false);
 
-    let pool = Pool::new(&entry);
+    let pool = Pool::new(&entry, 1);
     assert_eq!(pool.structure(), Structure::ReservePair);
     assert!(matches!(
         pool.identity(),
         Identity::ReservePair {
             variant: ReservePairVariant::AerodromeV2 { stable: false },
+            ..
         }
     ));
 
@@ -66,7 +67,7 @@ fn aerodrome_stable_swap_matches_recorded_constant() {
         1_000_000_000_000_000_000u128,
         true,
     );
-    let pool = Pool::new(&entry);
+    let pool = Pool::new(&entry, 1);
     let out = pool
         .calculate_tokens_out(true, U256::from(1_000_000_000_000_000_000u64))
         .expect("computable");
@@ -89,7 +90,7 @@ fn aerodrome_stable_swap_is_monotonic() {
         1_000_000_000_000_000_000u128,
         true,
     );
-    let pool = Pool::new(&entry);
+    let pool = Pool::new(&entry, 1);
     let small = pool
         .calculate_tokens_out(true, U256::from(1_000_000_000_000_000_000u64))
         .expect("computable");

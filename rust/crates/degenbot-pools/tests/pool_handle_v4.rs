@@ -60,12 +60,13 @@ fn make_v4_pool(liquidity: u128) -> PoolEntry {
 fn v4_pool_handle_exposes_structure_identity_cl_view_and_swap() {
     let entry = make_v4_pool(1_000_000u128);
 
-    let pool = Pool::new(&entry);
+    let pool = Pool::new(&entry, 1);
     assert_eq!(pool.structure(), Structure::ConcentratedLiquidity);
     assert!(matches!(
         pool.identity(),
         Identity::ConcentratedLiquidity {
             variant: ConcentratedLiquidityVariant::UniswapV4,
+            ..
         }
     ));
 

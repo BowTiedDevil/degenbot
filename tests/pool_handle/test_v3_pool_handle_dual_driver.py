@@ -55,3 +55,54 @@ def test_calculate_tokens_out(v3_pool) -> None:
 
     assert out is not None
     assert out > 0
+
+
+def test_dex_name_resolved_from_known_uniswap_deployment() -> None:
+    # Uniswap V3 mainnet factory (chain 1) → "uniswap".
+    bot = PyBot(1)
+    tick_data = {
+        -60: (1_000_000, 1_000_000, 0),
+        60: (1_000_000, -1_000_000, 0),
+    }
+    pool_id = bot.register_v3_pool(
+        address="0xeb9e45330b5cf3209a2bfdce8b6eb6f52247290c",
+        token0="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        token1="0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        fee=3000,
+        tick_spacing=60,
+        factory="0x1F98431c8aD98523631AE4a59f267346ea31F984",
+        sqrt_price_x96=1 << 96,
+        liquidity=1_000_000,
+        tick=0,
+        tick_data=tick_data,
+        update_block=100,
+        coverage="tracked",
+    )
+    handle = bot.py_pool(pool_id)
+    assert handle is not None
+    assert handle.dex_name == "uniswap"
+
+
+def test_dex_name_unknown_deployment_is_none() -> None:
+    bot = PyBot(1)
+    tick_data = {
+        -60: (1_000_000, 1_000_000, 0),
+        60: (1_000_000, -1_000_000, 0),
+    }
+    pool_id = bot.register_v3_pool(
+        address="0x4444444444444444444444444444444444444444",
+        token0="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        token1="0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        fee=3000,
+        tick_spacing=60,
+        factory="0x1111111111111111111111111111111111111111",
+        sqrt_price_x96=1 << 96,
+        liquidity=1_000_000,
+        tick=0,
+        tick_data=tick_data,
+        update_block=100,
+        coverage="tracked",
+    )
+    handle = bot.py_pool(pool_id)
+    assert handle is not None
+    assert handle.dex_name is None
