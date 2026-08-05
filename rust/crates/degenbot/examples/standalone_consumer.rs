@@ -44,8 +44,8 @@ use revm::state::AccountInfo;
 // to prove the `ConstructionIo` seam + probe/dispatch compile and run.
 use degenbot::bot_core::construction_io::{ConstructionIo, NoDb, RpcConstruction};
 use degenbot::bot_core::pool_builder::builder::{
-    build_aerodrome_v2, build_v2, build_v3, build_v4, probe_pool_type, PoolBuilderError,
-    PoolFamily, V4PoolBuildIdentity,
+    build_aerodrome_v2, build_balancer_stable, build_balancer_weighted, build_v2, build_v3,
+    build_v4, probe_pool_type, PoolBuilderError, PoolFamily, V4PoolBuildIdentity,
 };
 use degenbot::degenbot_rpc::provider::EthBlock;
 use degenbot::errors::ProviderError;
@@ -442,6 +442,9 @@ fn in_process_sim_standalone_slice() {
     const MULTICALL3: Address = address!("c411372f0b8ae58585e33b78aea9e0596da9a6f1");
     const TOKEN1: Address = address!("1111111111111111111111111111111111111111");
     const POOL_B: Address = address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    // Balancer V2 singleton Vault (mainnet). Only used as a read target on the
+    // failing stub, so the exact value is immaterial to the Rpc-error assertion.
+    const VAULT: Address = address!("ba12222222228d8ba445958a75a0704d566bf2c8");
     const POOL_C: Address = address!("cccccccccccccccccccccccccccccccccccccccc");
     const GIFT: Address = address!("dddddddddddddddddddddddddddddddddddddddd");
     const ONE_ETH: U256 = U256::from_limbs([1_000_000_000_000_000_000u64, 0, 0, 0]);
@@ -610,6 +613,22 @@ fn in_process_sim_standalone_slice() {
     assert!(
         matches!(err, Err(PoolBuilderError::Rpc(_))),
         "build_aerodrome_v2 over a failing RPC must yield a typed Rpc error, got {err:?}"
+    );
+    // Balancer V2 (SSSXG6): build_balancer_weighted + build_balancer_stable hit
+    // the same `FailingConstruction` stub — the vault read reverts, so each must
+    // surface the typed Rpc error, pinning the umbrella path for the two
+    // Balancer families (weighted + stable).
+    let err = degenbot::runtime::get_runtime()
+        .block_on(build_balancer_weighted(VAULT, POOL_B, &io, None));
+    assert!(
+        matches!(err, Err(PoolBuilderError::Rpc(_))),
+        "build_balancer_weighted over a failing RPC must yield a typed Rpc error, got {err:?}"
+    );
+    let err = degenbot::runtime::get_runtime()
+        .block_on(build_balancer_stable(VAULT, POOL_B, &io, None, None));
+    assert!(
+        matches!(err, Err(PoolBuilderError::Rpc(_))),
+        "build_balancer_stable over a failing RPC must yield a typed Rpc error, got {err:?}"
     );
     println!(
         "standalone degenbot consumer OK: PoolBuilder probe+dispatch reachable (family={family:?})"

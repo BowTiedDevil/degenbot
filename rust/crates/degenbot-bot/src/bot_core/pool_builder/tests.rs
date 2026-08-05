@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 
 use alloy::dyn_abi::DynSolValue;
-use alloy::primitives::{aliases::U112, aliases::U128, Address, Bytes, I256, U256};
+use alloy::primitives::{aliases::U112, aliases::U128, Address, Bytes, FixedBytes, I256, U256};
 use async_trait::async_trait;
 use degenbot_core::errors::ProviderError;
 use degenbot_rpc::abi;
@@ -679,4 +679,213 @@ async fn build_v3_db_hit_yields_tracked_without_chain() {
         params.tick_data[&60].liquidity_net,
         I256::try_from(100i128).unwrap()
     );
+}
+
+// --- SSSXG6: Balancer choreography + builder decode tests -------------------
+
+fn pool_id_ret(pool_id: &[u8; 32]) -> Vec<u8> {
+    enc(DynSolValue::FixedBytes(FixedBytes::from(*pool_id), 32))
+}
+
+fn pool_tokens_ret(tokens: &[Address], balances: &[U256]) -> Vec<u8> {
+    // getPoolTokens returns (address[], uint256[], uint256). Manual ABI encode:
+    // head = 3 words (offset to address[], offset to uint256[], lastChangeBlock),
+    // tail = the two dynamic arrays. Deterministic — bypasses the DynSolValue
+    // tuple inference so the decode is exercised against a fixed layout.
+    let n = tokens.len() as u64;
+    let addr_offset = 96u64; // 3-word head
+    let uint_offset = 96 + 32 + n * 32; // after the address[] tail
+    let mut out = Vec::new();
+    out.extend_from_slice(&U256::from(addr_offset).to_be_bytes::<32>());
+    out.extend_from_slice(&U256::from(uint_offset).to_be_bytes::<32>());
+    out.extend_from_slice(&U256::ZERO.to_be_bytes::<32>()); // lastChangeBlock
+    out.extend_from_slice(&U256::from(n).to_be_bytes::<32>());
+    for a in tokens {
+        let mut w = vec![0u8; 12];
+        w.extend_from_slice(a.as_slice());
+        out.extend_from_slice(&w);
+    }
+    out.extend_from_slice(&U256::from(n).to_be_bytes::<32>());
+    for b in balances {
+        out.extend_from_slice(&b.to_be_bytes::<32>());
+    }
+    out
+}
+
+fn u256_array_ret(vals: &[u64]) -> Vec<u8> {
+    enc(DynSolValue::Array(
+        vals.iter()
+            .map(|v| DynSolValue::Uint(U256::from(*v), 256))
+            .collect::<Vec<_>>(),
+    ))
+}
+
+const VAULT: Address = alloy::primitives::address!("0xba12222222228d8ba445958a75a0704d566bf2c8");
+const T0: Address = alloy::primitives::address!("0x6b175474e89094c44da98b954eedeac495271d0f"); // DAI
+const T1: Address = alloy::primitives::address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"); // USDC
+
+#[tokio::test]
+async fn fetch_balancer_weights_decodes_uint256_array() {
+    let mut f = FakeRpc::new();
+    f.set(
+        abi::encode_get_weights()[..4].try_into().unwrap(),
+        u256_array_ret(&[500_000_000_000_000_000u64, 500_000_000_000_000_000u64]),
+    );
+    let io = io_with(f);
+    let w = choreography::fetch_balancer_weights(&io, TO, None)
+        .await
+        .unwrap();
+    assert_eq!(w.len(), 2);
+    assert_eq!(w[0], U256::from(500_000_000_000_000_000u64));
+    assert_eq!(w[1], U256::from(500_000_000_000_000_000u64));
+}
+
+#[tokio::test]
+async fn probe_balancer_type_weights_first_then_stable() {
+    // No responses → both probes revert → error.
+    let io = io_with(FakeRpc::new());
+    assert!(choreography::probe_balancer_type(&io, TO, None)
+        .await
+        .is_err());
+
+    // getNormalizedWeights responds → Weighted.
+    let mut f = FakeRpc::new();
+    f.set(
+        abi::encode_get_weights()[..4].try_into().unwrap(),
+        u256_array_ret(&[500_000_000_000_000_000u64]),
+    );
+    let io = io_with(f);
+    assert_eq!(
+        choreography::probe_balancer_type(&io, TO, None)
+            .await
+            .unwrap(),
+        choreography::BalancerFamily::Weighted
+    );
+
+    // Only getAmplificationParameter → Stable.
+    let mut f = FakeRpc::new();
+    f.set(
+        abi::encode_get_amp()[..4].try_into().unwrap(),
+        enc(DynSolValue::Tuple(vec![
+            DynSolValue::Uint(U256::from(100u64), 256),
+            DynSolValue::Bool(false),
+            DynSolValue::Uint(U256::from(100u64), 256),
+        ])),
+    );
+    let io = io_with(f);
+    assert_eq!(
+        choreography::probe_balancer_type(&io, TO, None)
+            .await
+            .unwrap(),
+        choreography::BalancerFamily::Stable
+    );
+}
+
+#[tokio::test]
+async fn build_balancer_weighted_assembles_params() {
+    let mut f = FakeRpc::new();
+    let pool_id = [0xcd; 32];
+    f.set(
+        abi::encode_get_pool_id()[..4].try_into().unwrap(),
+        pool_id_ret(&pool_id),
+    );
+    f.set(
+        abi::encode_get_pool_tokens(&pool_id)[..4]
+            .try_into()
+            .unwrap(),
+        pool_tokens_ret(&[T0, T1], &[U256::from(1_000u64), U256::from(2_000u64)]),
+    );
+    f.set(
+        abi::encode_get_swap_fee()[..4].try_into().unwrap(),
+        enc(DynSolValue::Uint(U256::from(5_000_000_000_000_000u64), 256)),
+    );
+    f.set(
+        abi::encode_get_weights()[..4].try_into().unwrap(),
+        u256_array_ret(&[500_000_000_000_000_000u64, 500_000_000_000_000_000u64]),
+    );
+    // Token decimals: both 18 → scaling factor ONE (1e18) each. (The FakeRpc
+    // keys responses by 4-byte selector only, so per-address decimals can't be
+    // distinguished here — variance is covered by a dedicated scaling test.)
+    f.set(
+        choreography::selector(b"decimals()"),
+        enc(DynSolValue::Uint(U256::from(18), 256)),
+    );
+    // get_code returns empty → PowVersion V1 (1).
+    let io = io_with(f);
+    let p = builder::build_balancer_weighted(VAULT, TO, &io, None)
+        .await
+        .unwrap();
+    assert_eq!(p.pool_id, pool_id);
+    assert_eq!(p.tokens, vec![T0, T1]);
+    assert_eq!(p.vault, VAULT);
+    assert_eq!(p.balances, vec![U256::from(1_000u64), U256::from(2_000u64)]);
+    assert_eq!(p.pow_version, 1);
+    assert_eq!(p.swap_fee, 5_000_000_000_000_000u128);
+    assert_eq!(p.weights, vec![U256::from(500_000_000_000_000_000u64); 2]);
+    let one = U256::from(1_000_000_000_000_000_000u128);
+    assert_eq!(p.scaling_factors, vec![one, one]);
+}
+
+#[tokio::test]
+async fn build_balancer_stable_assembles_params_with_rate_providers() {
+    let mut f = FakeRpc::new();
+    let pool_id = [0xef; 32];
+    f.set(
+        abi::encode_get_pool_id()[..4].try_into().unwrap(),
+        pool_id_ret(&pool_id),
+    );
+    f.set(
+        abi::encode_get_pool_tokens(&pool_id)[..4]
+            .try_into()
+            .unwrap(),
+        pool_tokens_ret(&[T0, T1], &[U256::from(100u64), U256::from(200u64)]),
+    );
+    f.set(
+        abi::encode_get_swap_fee()[..4].try_into().unwrap(),
+        enc(DynSolValue::Uint(U256::from(5_000_000_000_000_000u64), 256)),
+    );
+    f.set(
+        abi::encode_get_amp()[..4].try_into().unwrap(),
+        enc(DynSolValue::Tuple(vec![
+            DynSolValue::Uint(U256::from(100u64), 256),
+            DynSolValue::Bool(false),
+            DynSolValue::Uint(U256::from(100u64), 256),
+        ])),
+    );
+    // Both tokens 18 decimals; one rate provider returning 1.02e18.
+    f.set(
+        choreography::selector(b"decimals()"),
+        enc(DynSolValue::Uint(U256::from(18), 256)),
+    );
+    f.set(
+        choreography::selector(b"getRateProviders()"),
+        enc(DynSolValue::Array(vec![
+            DynSolValue::Address(alloy::primitives::address!(
+                "0x1111111111111111111111111111111111111111"
+            )),
+            DynSolValue::Address(Address::ZERO),
+        ])),
+    );
+    f.set(
+        abi::encode_get_rate()[..4].try_into().unwrap(),
+        enc(DynSolValue::Uint(
+            U256::from(1_020_000_000_000_000_000u64),
+            256,
+        )),
+    );
+    let io = io_with(f);
+    // specialization from pool_id[20..22] = 0xef,ef → not 1 → INVARIANT_V1 (1).
+    let p = builder::build_balancer_stable(VAULT, TO, &io, None, None)
+        .await
+        .unwrap();
+    assert_eq!(p.invariant_version, 1);
+    assert_eq!(p.bpt_idx, None);
+    let one = U256::from(1_000_000_000_000_000_000u128);
+    // First token rate-multiplied: ONE*10^0 * 1.02e18 / 1e18 = 1.02e18.
+    assert_eq!(
+        p.scaling_factors[0],
+        one * U256::from(102u128) / U256::from(100u128)
+    );
+    // Second token zero-sentinel provider → unscaled ONE.
+    assert_eq!(p.scaling_factors[1], one);
 }
