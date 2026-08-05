@@ -1346,24 +1346,34 @@ impl PyBotIo {
         pool_address: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<(Py<PyAny>, Py<PyAny>, Py<PyAny>)> {
-        use alloy::primitives::U256;
-
-        let fetch_no_arg_uint = |sig: &[u8]| -> PyResult<Py<PyAny>> {
-            let calldata = selector(sig);
-            let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
-            let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-            if bytes.len() < 32 {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "{sig:?} result < 32 bytes"
-                )));
+        let io = self.required_construction_io()?;
+        let pool = alloy::primitives::Address::from(parse_address_for_call(pool_address)?);
+        let block_num = extract_block_u64(block)?;
+        let r = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::curve_choreography::fetch_curve_pool_params(
+                    &io, pool, block_num,
+                )
+                .await
+            })
+        });
+        let p = match r {
+            Ok(v) => Ok(v),
+            Err(ProviderError::ExecutionReverted { message, .. }) => {
+                Err(revert_to_pyerr(py, pool_address, &message))
             }
-            let val = U256::from_be_slice(&bytes[0..32]);
-            crate::conversion::alloy::u256_to_py(py, &val).map(pyo3::Bound::unbind)
-        };
-
-        let a = fetch_no_arg_uint(b"A()")?;
-        let fee = fetch_no_arg_uint(b"fee()")?;
-        let admin_fee = fetch_no_arg_uint(b"admin_fee()")?;
+            Err(e) => Err(e.into()),
+        }?;
+        let a = crate::conversion::alloy::u256_to_py(
+            py,
+            &alloy::primitives::U256::from(p.a_coefficient),
+        )?
+        .unbind();
+        let fee = crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(p.fee))?
+            .unbind();
+        let admin_fee =
+            crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(p.admin_fee))?
+                .unbind();
         Ok((a, fee, admin_fee))
     }
 
@@ -1384,27 +1394,27 @@ impl PyBotIo {
         count: usize,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        use alloy::primitives::U256;
-
-        let sel = selector(b"balances(uint256)");
-        let list = PyList::empty(py);
-        for idx in 0..count {
-            // ABI-encode the index as a uint256 (32-byte big-endian word).
-            let mut calldata = Vec::with_capacity(36);
-            calldata.extend_from_slice(&sel);
-            let mut arg = [0u8; 32];
-            arg[24..].copy_from_slice(&(idx as u64).to_be_bytes());
-            calldata.extend_from_slice(&arg);
-
-            let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
-            let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-            if bytes.len() < 32 {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "balances({idx}) result < 32 bytes"
-                )));
+        let io = self.required_construction_io()?;
+        let pool = alloy::primitives::Address::from(parse_address_for_call(pool_address)?);
+        let block_num = extract_block_u64(block)?;
+        let r = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::curve_choreography::fetch_curve_balances(
+                    &io, pool, count, block_num,
+                )
+                .await
+            })
+        });
+        let balances = match r {
+            Ok(v) => Ok(v),
+            Err(ProviderError::ExecutionReverted { message, .. }) => {
+                Err(revert_to_pyerr(py, pool_address, &message))
             }
-            let val = U256::from_be_slice(&bytes[0..32]);
-            list.append(crate::conversion::alloy::u256_to_py(py, &val)?.unbind())?;
+            Err(e) => Err(e.into()),
+        }?;
+        let list = PyList::empty(py);
+        for b in balances {
+            list.append(crate::conversion::alloy::u256_to_py(py, &b)?.unbind())?;
         }
         Ok(list.into())
     }
@@ -1548,41 +1558,29 @@ impl PyBotIo {
         factory_address: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<(bool, Py<PyAny>)> {
-        use alloy::dyn_abi::{DynSolType, DynSolValue};
-
-        // Call 1: stable() on the pool — no-arg, decode as bool.
-        let stable_calldata = selector(b"stable()");
-        let stable_result =
-            self.forward_call_to_provider(py, pool_address, &stable_calldata, block)?;
-        let stable_bytes: &[u8] = stable_result.bind(py).extract::<&[u8]>()?;
-        let Ok(DynSolValue::Bool(stable)) = DynSolType::Bool.abi_decode(stable_bytes) else {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "invalid stable decode",
-            ));
-        };
-
-        // Call 2: getFee(address,bool) on the factory — ABI-encode pool address
-        // (right-padded 32-byte word 0) + stable bool (32-byte word 1).
-        let pool_addr = parse_address_for_call(pool_address)?;
-        let get_fee_sel = selector(b"getFee(address,bool)");
-        let mut calldata = Vec::with_capacity(4 + 64);
-        calldata.extend_from_slice(&get_fee_sel);
-        calldata.extend_from_slice(&[0u8; 12]);
-        calldata.extend_from_slice(pool_addr.as_slice());
-        calldata.extend_from_slice(&[0u8; 31]);
-        calldata.push(u8::from(stable));
-
-        let fee_result = self.forward_call_to_provider(py, factory_address, &calldata, block)?;
-        let fee_bytes: &[u8] = fee_result.bind(py).extract::<&[u8]>()?;
-        let Ok(DynSolValue::Uint(fee, _)) = DynSolType::Uint(256).abi_decode(fee_bytes) else {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "invalid fee decode",
-            ));
-        };
-
+        let io = self.required_construction_io()?;
+        let pool = alloy::primitives::Address::from(parse_address_for_call(pool_address)?);
+        let factory = alloy::primitives::Address::from(parse_address_for_call(factory_address)?);
+        let block_num = extract_block_u64(block)?;
+        let r = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::choreography::fetch_aerodrome_stable_and_fee(
+                    &io, pool, factory, block_num,
+                )
+                .await
+            })
+        });
+        let d = match r {
+            Ok(v) => Ok(v),
+            Err(ProviderError::ExecutionReverted { message, .. }) => {
+                Err(revert_to_pyerr(py, pool_address, &message))
+            }
+            Err(e) => Err(e.into()),
+        }?;
         Ok((
-            stable,
-            crate::conversion::alloy::u256_to_py(py, &fee)?.unbind(),
+            d.stable,
+            crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(d.fee_bps))?
+                .unbind(),
         ))
     }
 

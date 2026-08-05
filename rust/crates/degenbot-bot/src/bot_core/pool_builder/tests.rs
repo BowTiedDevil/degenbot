@@ -1027,6 +1027,25 @@ async fn fetch_curve_pool_params_decodes_a_fee_admin_fee() {
 }
 
 #[tokio::test]
+async fn fetch_curve_balances_loops_count_indices() {
+    let mut f = FakeRpc::new();
+    for (i, expected) in [(0u8, 111u64), (1, 222), (2, 333)] {
+        f.set_full(
+            abi::encode_curve_balances_uint(i),
+            enc(DynSolValue::Uint(U256::from(expected), 256)),
+        );
+    }
+    let io = io_with(f);
+    let b = curve_choreography::fetch_curve_balances(&io, TO, 3, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        b,
+        vec![U256::from(111u64), U256::from(222u64), U256::from(333u64)]
+    );
+}
+
+#[tokio::test]
 async fn fetch_curve_pool_params_propagates_missing_read() {
     // fee() not configured → whole fetch errors (required, not optional).
     let mut f = FakeRpc::new();

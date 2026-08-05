@@ -309,6 +309,32 @@ async fn req_no_arg_uint(
     abi::decode_uint256(&bytes)
 }
 
+/// Fetch a Curve pool's token balances via `balances(uint256)` indexed
+/// `0..count` (mirrors `CurvePoolBuilder.update`'s snapshot loop).
+///
+/// Uses the `uint256` argument prototype (modern pools), matching the Python
+/// builder's primitive. Returns one `U256` per index.
+///
+/// # Errors
+///
+/// Returns a [`ProviderError`] on an `eth_call` or decode failure.
+pub async fn fetch_curve_balances(
+    io: &ConstructionIo,
+    pool: Address,
+    count: usize,
+    block: Option<u64>,
+) -> Result<Vec<U256>, ProviderError> {
+    let mut out = Vec::with_capacity(count);
+    for i in 0..count {
+        let index = u8::try_from(i).map_err(|_| ProviderError::EncodingError {
+            message: format!("balances index {i} exceeds u8"),
+        })?;
+        let bytes = eth_call(io, pool, abi::encode_curve_balances_uint(index), block).await?;
+        out.push(abi::decode_curve_balances(&bytes)?);
+    }
+    Ok(out)
+}
+
 /// Detect A-coefficient ramping params. If ANY of the four optional reads
 /// reverts, the pool is treated as non-ramping (mirrors `detect_a_ramping`).
 pub async fn detect_curve_a_ramping(
