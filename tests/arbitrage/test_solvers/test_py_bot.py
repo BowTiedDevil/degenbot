@@ -908,7 +908,6 @@ class TestV3PoolState:
         core.v3_discard_before_block(pool_id, 20)
         assert core.v3_journal_len(pool_id) == 2  # blocks 20 and 30 remain
 
-    @pytest.mark.xfail(reason="choreography port (Z5CNPB/T1): restore_before_block mock-provider path needs recording onto an alloy OfflineProvider; see follow-up 6ZGF4V", strict=False)
     def test_v3_restore_before_block(self):
         """restore_before_block rolls back V3 state."""
         core, pool_id = self._make_core_with_v3_pool()
@@ -918,14 +917,16 @@ class TestV3PoolState:
         core.update_v3_pool(self.POOL_ADDR, self.SQRT_PRICE_X96 + 2000, 3000000, 20, 20)
         # After block 20: current=(SQ+2000, 3000000, 20)
 
-        # Restore before block 20: pops block-20 delta, returns before-values
+        # Restore before block 20: pops block-20 delta, returns the before-values
+        # (the reverted state's update_block = 10 — the restored state is the
+        # block-10 snapshot, per ADR-016 "post-restore fields are the before-values").
         result = core.v3_restore_before_block(pool_id, 20)
         assert result is not None
         spx, liq, tick, block = result
         assert spx == self.SQRT_PRICE_X96 + 1000
         assert liq == 2000000
         assert tick == 10
-        assert block == 20
+        assert block == 10
 
     def test_v3_restore_syncs_current_state(self):
         """Restoring also updates the pool's current scalar state."""

@@ -4,14 +4,12 @@ import pathlib
 from unittest.mock import MagicMock
 
 import eth_abi.abi
-import pytest
 
 from degenbot.bot import Bot, PyBot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
-from degenbot.crypto import function_selector
 from degenbot.erc20.erc20 import Erc20Token
-from degenbot.provider.call_helpers import encode_function_calldata
+from degenbot.provider import OfflineProvider
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.trackers import UniswapV3PoolTracker
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -60,6 +58,64 @@ USDC_WETH_V3_POOL = "0x8ad599c3a0ff1de082011efddc58f1908eb6e6d8"
 UNISWAP_V3_FACTORY = "0x1F98431c8aD98523631AE4a59f267346ea31F984"
 V3_FEE = 3000  # 0.3%
 V3_TICK_SPACING = 60
+
+
+def _v3_offline_provider(
+    *,
+    weth_addr: str,
+    usdc_addr: str,
+    factory_addr: str,
+    pool_addr: str,
+    sqrt_price: int,
+    tick: int,
+    liquidity: int,
+    block: int = 18_000_000,
+) -> OfflineProvider:
+    """A one-block `OfflineProvider` serving the V3 build RPC responses.
+
+    T4/6ZGF4V: the Rust `PoolBuilder` choreography is alloy-only, so the build
+    must be served from recorded offline data (no Python mock double). The
+    recorded calls key on the alloy transport's exact-calldata format
+    (`{addr}:0x{data}`): `factory()`/`token0()`/`token1()`/`fee()`/`tickSpacing()`/
+    `slot0()`/`liquidity()` plus a `tickBitmap(int16)` read at the single
+    sparse seed word (empty → no `ticks()` calls).
+
+    The seed word is computed with the core's `get_tick_word_and_bit_position`
+    (tick ÷ spacing, then word = `compressed >> 8`, bit = `% 256` non-negative)
+    so the recorded `tickBitmap` calldata exactly matches the builder's
+    request at the current tick.
+    """
+    factory_enc = eth_abi.abi.encode(types=["address"], args=[factory_addr]).hex()
+    token0_enc = eth_abi.abi.encode(types=["address"], args=[weth_addr]).hex()
+    token1_enc = eth_abi.abi.encode(types=["address"], args=[usdc_addr]).hex()
+    fee_enc = eth_abi.abi.encode(types=["uint24"], args=[V3_FEE]).hex()
+    spacing_enc = eth_abi.abi.encode(types=["int24"], args=[V3_TICK_SPACING]).hex()
+    slot0_enc = eth_abi.abi.encode(
+        types=["uint160", "int24", "uint16", "uint16", "uint16", "uint8", "bool"],
+        args=[sqrt_price, tick, 0, 0, 0, 0, False],
+    ).hex()
+    liquidity_enc = eth_abi.abi.encode(types=["uint128"], args=[liquidity]).hex()
+    to = pool_addr.lower()
+    # Sparse seed word for the current tick (tick ÷ spacing, word = >> 8).
+    compressed = tick // V3_TICK_SPACING
+    word = compressed >> 8
+    tick_bitmap_arg = word.to_bytes(32, "big", signed=True).hex()
+    calls = {
+        f"{to}:0xc45a0155": factory_enc,  # factory()
+        f"{to}:0x0dfe1681": token0_enc,  # token0()
+        f"{to}:0xd21220a7": token1_enc,  # token1()
+        f"{to}:0xddca3f43": fee_enc,  # fee()
+        f"{to}:0xd0c93a7c": spacing_enc,  # tickSpacing()
+        f"{to}:0x3850c7bd": slot0_enc,  # slot0()
+        f"{to}:0x1a686502": liquidity_enc,  # liquidity()
+        f"{to}:0x5339c296{tick_bitmap_arg}": eth_abi.abi.encode(
+            types=["uint256"], args=[0]
+        ).hex(),  # tickBitmap(current_word) → empty
+    }
+    return OfflineProvider(
+        chain_id=1,
+        blocks={str(block): {"timestamp": 1_700_000_000, "calls": calls, "code": {}}},
+    )
 
 
 class TestV3PoolIOFreeConstructor:
@@ -170,19 +226,29 @@ class TestV3PoolIOFreeConstructor:
 class TestBotBuildV3Pool:
     """Bot.build_pool() constructs I/O-free V3 pools from on-chain data."""
 
-    @pytest.mark.xfail(reason="choreography port (Z5CNPB/T1): this mock-provider build needs recording onto an alloy OfflineProvider; see follow-up 6ZGF4V", strict=False)
     def test_build_pool_with_mock_provider(self, tmp_path: pathlib.Path) -> None:
         """build_pool fetches immutable + mutable values and constructs an I/O-free pool."""
         weth_addr = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
         usdc_addr = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
         factory_addr = "0x1F98431c8aD98523631AE4a59f267346ea31F984"
 
+        sqrt_price = 2198666895605149686863
+        tick = -76020
+        liquidity = 1234567890
+
         config = _make_test_config(tmp_path)
-        provider = MagicMock()
-        provider.chain_id = 1
-        provider.is_connected.return_value = True
-        provider.get_block_number.return_value = 18_000_000
-        bot = Bot(config, provider=provider)
+        bot = Bot(
+            config,
+            provider=_v3_offline_provider(
+                weth_addr=weth_addr,
+                usdc_addr=usdc_addr,
+                factory_addr=factory_addr,
+                pool_addr=USDC_WETH_V3_POOL,
+                sqrt_price=sqrt_price,
+                tick=tick,
+                liquidity=liquidity,
+            ),
+        )
 
         # Pre-register tokens (ADR-006: tokens must be in the same PyBot as the
         # pool — _from_py_pool recovers them via py_pool.get_token0/get_token1).
@@ -193,51 +259,6 @@ class TestBotBuildV3Pool:
                 bot._py_bot.register_token(tok.address, tok.name, tok.symbol, tok.decimals, 1)
         bot.tokens.add(token_address=weth_addr, chain_id=1, token=weth)
         bot.tokens.add(token_address=usdc_addr, chain_id=1, token=usdc)
-
-        # Mock RPC responses
-        factory_calldata = encode_function_calldata("factory()", None)
-        token0_calldata = encode_function_calldata("token0()", None)
-        token1_calldata = encode_function_calldata("token1()", None)
-        fee_calldata = encode_function_calldata("fee()", None)
-        tick_spacing_calldata = encode_function_calldata("tickSpacing()", None)
-        slot0_calldata = encode_function_calldata("slot0()", None)
-        liquidity_calldata = encode_function_calldata("liquidity()", None)
-
-        sqrt_price = 2198666895605149686863
-        tick = -76020
-        liquidity = 1234567890
-
-        slot0_encoded = eth_abi.abi.encode(
-            types=["uint160", "int24", "uint16", "uint16", "uint16", "uint8", "bool"],
-            args=[sqrt_price, tick, 0, 0, 0, 0, False],
-        )
-        liquidity_encoded = eth_abi.abi.encode(types=["uint128"], args=[liquidity])
-
-        immutable_responses = {
-            factory_calldata: eth_abi.abi.encode(types=["address"], args=[factory_addr]),
-            token0_calldata: eth_abi.abi.encode(types=["address"], args=[weth_addr]),
-            token1_calldata: eth_abi.abi.encode(types=["address"], args=[usdc_addr]),
-            fee_calldata: eth_abi.abi.encode(types=["uint24"], args=[V3_FEE]),
-            tick_spacing_calldata: eth_abi.abi.encode(types=["int24"], args=[V3_TICK_SPACING]),
-        }
-
-        # tickBitmap(int16) selector = first 4 bytes of keccak256("tickBitmap(int16)")
-        tick_bitmap_selector = function_selector("tickBitmap(int16)")
-
-        def mock_call(to, data, block=None):
-            if data in immutable_responses:
-                return immutable_responses[data]
-            if data == slot0_calldata:
-                return slot0_encoded
-            if data == liquidity_calldata:
-                return liquidity_encoded
-            # tickBitmap returns 0 (no initialized ticks)
-            if data[:4] == tick_bitmap_selector:
-                return eth_abi.abi.encode(types=["uint256"], args=[0])
-            msg = f"Unexpected call with data={data!r}"
-            raise ValueError(msg)
-
-        provider.call = MagicMock(side_effect=mock_call)
 
         pool = bot.build_pool(
             USDC_WETH_V3_POOL,
