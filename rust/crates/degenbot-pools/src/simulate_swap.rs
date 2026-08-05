@@ -8,10 +8,13 @@
 //! trait to fill the word, then retries).
 #![allow(clippy::doc_markdown)]
 //!
-//! Curve / Balancer / AerodromeV2 return `Ok(U256::ZERO)` — their invariant
-//! math is not yet ported to the Rust core (the Python companions keep doing
-//! their own math via `swap_fn`); this mirrors the prior "not-yet-Rust-side"
-//! sentinel.
+//! The **not-yet-Rust-side** sentinel (`Ok(U256::ZERO)`) survives only for the
+//! families whose invariant math the Rust core does not yet own: Aerodrome V2
+//! **stable** mode (needs per-token decimals) and non-`STANDARD` Curve swap
+//! styles (crypto, live-admin, metapool `get_dy` base-pool dispatch). V2,
+//! V3/V4 CL, Balancer weighted+stable, Aerodrome V2 volatile, and Curve
+//! standard stableswap are all ported here — the Python companions for those
+//! delegate to this core rather than doing their own math.
 //!
 //! **Relocated** (the value core) from
 //! `degenbot-bot/src/bot_core/mod.rs::BotState::calculate_tokens_out_miss_aware`;
@@ -40,7 +43,8 @@ const CURVE_FEE_DENOMINATOR: u64 = 10_000_000_000;
 /// [`SimulateSwapError::MissingTickWord(word)`] / [`NotComputable`](SimulateSwapError::NotComputable).
 ///
 /// `Ok(U256::ZERO)` covers the non-fetchable zeros (zero amount, V2 with zero
-/// reserves, Curve/Balancer/AerodromeV2 sentinels). The V3/V4 arms surface a
+/// reserves, and the remaining not-yet-Rust-side sentinels: Aerodrome V2 stable
+/// mode and non-standard Curve swap styles). The V3/V4 arms surface a
 /// sparse-map miss as [`SimulateSwapError::MissingTickWord`] (the caller —
 /// [`BotState::calculate_tokens_out_with_fetch`] in `degenbot-bot` — fetches +
 /// retries); arithmetic overflow / non-positive amount yields
