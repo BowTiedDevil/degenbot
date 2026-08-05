@@ -19,7 +19,6 @@ from degenbot.bot_lifecycle import close as _close_handles
 from degenbot.bot_lifecycle import (
     release_python_state as _release_python_state,
 )
-from degenbot.builders.aerodrome_v2_builder import AerodromeV2Builder
 from degenbot.builders.balancer_builder import BalancerBuilder
 from degenbot.builders.context import BuilderContext
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
@@ -322,7 +321,6 @@ class Bot:
             py_bot=self._py_bot,
             default_chain_id=self._chain_id,
         )
-        self._aerodrome_v2_builder = AerodromeV2Builder(ctx)
         self._curve_builder = CurvePoolBuilder(ctx)
         self._balancer_builder = BalancerBuilder(ctx)
 
@@ -333,7 +331,6 @@ class Bot:
         # Async adapter for subscriptions (single chain; created on demand)
         self._async_adapter: AsyncAlloyProvider | None = None
         self.register_builder(CurveStableswapPool, self._curve_builder)
-        self.register_builder(AerodromeV2Pool, self._aerodrome_v2_builder)
         self.register_builder(BalancerV2Pool, self._balancer_builder)
         self.register_builder(BalancerV2StablePool, self._balancer_builder)
         # All V2-family DEXes (Uniswap/Sushi/Pancake/Swapbased/Camelot) now

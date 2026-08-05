@@ -289,7 +289,7 @@ class EngineRegistry:
         """Register an Aerodrome V2 pool's shared-core key.
 
         Mirrors :meth:`register_v2_pool` — the pool is already registered in
-        the shared ``BotState`` by ``aerodrome_v2_builder``'s call to
+        the shared ``BotState`` by the delegated ``build_aerodrome_v2`` path's call to
         ``py_bot.register_aerodrome_pool``. Cache the ``pool_id`` (the
         engine derives the Solidly hop family from the ``BotState`` identity at
         ``register_path`` time, so no engine-side pre-registration carries a

@@ -25,7 +25,6 @@ import pytest
 
 from degenbot.bot import PyBot
 from degenbot.bot._bot import _update_pool
-from degenbot.builders.aerodrome_v2_builder import AerodromeV2Builder
 from degenbot.builders.balancer_builder import BalancerBuilder
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
 from tests.helpers.erc20_factory import make_erc20
@@ -78,7 +77,6 @@ class TestUpdateIsStaticMethod:
     @pytest.mark.parametrize(
         "builder_class",
         [
-            AerodromeV2Builder,
             CurvePoolBuilder,
             BalancerBuilder,
         ],
