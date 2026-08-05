@@ -107,7 +107,7 @@ impl PyArbitrageEngine {
     /// (engine-then-core ordering per ADR-003) + clones the `core` arc —
     /// one Arc clone, no state copy.
     pub(crate) fn bot_state_arc(&self) -> Arc<parking_lot::RwLock<BotState>> {
-        self.engine.lock().core.clone()
+        self.engine.lock().core().clone()
     }
 
     /// The cross-block warm bytecode cache arc (`HDEG7H` Option A) — the
@@ -171,7 +171,7 @@ impl PyArbitrageEngine {
     /// loaded).
     #[getter]
     fn snapshot_seed_block(&self) -> Option<u64> {
-        self.engine.lock().core.read().snapshot_seed_block()
+        self.engine.lock().core().read().snapshot_seed_block()
     }
 
     /// Set the snapshot seed block `S` on the shared `BotState` for the
@@ -191,7 +191,7 @@ impl PyArbitrageEngine {
     fn set_snapshot_seed_block(&self, block: Option<u64>) {
         self.engine
             .lock()
-            .core
+            .core()
             .write()
             .set_snapshot_seed_block(block);
     }

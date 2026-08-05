@@ -144,9 +144,9 @@ fn main() {
         .ok()
         .map(|s| s.parse().unwrap());
     println!("v3_2 override sqrt={v3_2_sqrt:?} tick={v3_2_tick:?}");
-    let pid0 = register_v3(&mut engine.core.write(), &fx.pools.v3_0, None, None);
+    let pid0 = register_v3(&mut engine.core().write(), &fx.pools.v3_0, None, None);
     let pid2 = register_v3(
-        &mut engine.core.write(),
+        &mut engine.core().write(),
         &fx.pools.v3_2,
         v3_2_sqrt,
         v3_2_tick,
@@ -174,7 +174,7 @@ fn main() {
         .map(|s| s.parse().unwrap());
     println!("v4 protocol_fee: {v4_fee_override:?}");
     let v4id = engine
-        .core
+        .core()
         .write()
         .register_v4_pool(&RegisterV4PoolParams {
             pool_manager: parse_addr(pv.pool_manager.as_ref().unwrap()),

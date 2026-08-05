@@ -352,7 +352,7 @@ impl PumpState {
         })?;
         let (v3_pools, v4_pools) = {
             let engine = self.engine.lock();
-            let core = engine.core.read();
+            let core = engine.core().read();
             let v3 = core.v3_pools_snapshot();
             let v4 = core.v4_pools_snapshot();
             (v3, v4)
@@ -406,7 +406,7 @@ impl PumpState {
     ) -> PyResult<Bound<'py, PyAny>> {
         let v3_pools = {
             let engine = self.engine.lock();
-            let v3 = engine.core.read().v3_pools_snapshot();
+            let v3 = engine.core().read().v3_pools_snapshot();
             v3
         };
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
@@ -453,7 +453,7 @@ impl PumpState {
         })?;
         let v4_pools = {
             let engine = self.engine.lock();
-            let v4 = engine.core.read().v4_pools_snapshot();
+            let v4 = engine.core().read().v4_pools_snapshot();
             v4
         };
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
@@ -511,7 +511,7 @@ impl PumpState {
         // pool state). Snapshot the blob out so the async RPC runs lock-free.
         let seed = {
             let engine = self.engine.lock();
-            let mut core = engine.core.write();
+            let mut core = engine.core().write();
             core.take_v3_snapshot_seed(pool_addr)
         };
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
@@ -575,7 +575,7 @@ impl PumpState {
         })?;
         let seed = {
             let engine = self.engine.lock();
-            let mut core = engine.core.write();
+            let mut core = engine.core().write();
             core.take_v4_snapshot_seed(pool_manager, &pool_id)
         };
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
@@ -654,7 +654,7 @@ impl PumpState {
         // pool state). Snapshot the blob out so the async RPC runs lock-free.
         let post_drain = {
             let engine = self.engine.lock();
-            let mut core = engine.core.write();
+            let mut core = engine.core().write();
             core.take_v3_post_drain_snapshot(pool_addr)
         };
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
@@ -724,7 +724,7 @@ impl PumpState {
         })?;
         let post_drain = {
             let engine = self.engine.lock();
-            let mut core = engine.core.write();
+            let mut core = engine.core().write();
             core.take_v4_post_drain_snapshot(pool_manager, &pool_id)
         };
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
@@ -795,7 +795,7 @@ impl PumpState {
         // (and the sparse buffer drain) never need one.
         let core = {
             let engine = self.engine.lock();
-            Arc::clone(&engine.core)
+            Arc::clone(engine.core())
         };
         let provider = self.verify_provider.lock().clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
@@ -842,7 +842,7 @@ impl PumpState {
         let state_view = *self.verify_state_view.lock();
         let core = {
             let engine = self.engine.lock();
-            Arc::clone(&engine.core)
+            Arc::clone(engine.core())
         };
         let provider = self.verify_provider.lock().clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {

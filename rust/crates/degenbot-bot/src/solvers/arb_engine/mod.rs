@@ -322,9 +322,15 @@ pub struct ArbitrageEngine {
     /// `Arc<RwLock<BotState>>` (ADR-006 D1+D2): read methods take a read guard,
     /// mutations a write guard. Lock ordering when nested is
     /// engine-then-core; no code path ever nests in the opposite direction.
-    pub core: Arc<parking_lot::RwLock<BotState>>,
+    pub(crate) core: Arc<parking_lot::RwLock<BotState>>,
     /// Registered path pool refs (immutable after registration).
-    pub path_pools: HashMap<u64, MixedPath>,
+    ///
+    /// `pub(crate)`: the field is an invariant (it must stay consistent with
+    /// the `pool_to_paths` reverse index, which only the engine's internal
+    /// register/deregister paths maintain). Downstream crates reach it only via
+    /// the immutable [`ArbitrageEngine::path_pools`] accessor — no mutable
+    /// access, so the reverse index can never be desynced externally.
+    pub(crate) path_pools: HashMap<u64, MixedPath>,
     /// Resolved path states (mutated on each solve).
     path_resolved: HashMap<u64, ResolvedMixedPath>,
     /// Reverse index: (`hop_type`, `pool_key`) maps to list of `path_ids` that use this pool.
@@ -448,6 +454,31 @@ impl ArbitrageEngine {
             block_tx: None,
             phase: std::sync::atomic::AtomicU8::new(EnginePhase::Created as u8),
         }
+    }
+}
+
+impl ArbitrageEngine {
+    /// Immutable access to the shared `BotState` `Arc` (ADR-003 / ADR-006
+    /// D1+D2).
+    ///
+    /// The shared `Arc<RwLock<BotState>>` cannot be reassigned through this
+    /// accessor: callers may `read()`/`write()` *through* it, but its identity
+    /// stays pinned to the same `Arc` the `EngineHandle`/`EngineSubscriber`/pump
+    /// reference (an invariant no downstream crate can break by swapping the
+    /// field).
+    #[must_use]
+    pub fn core(&self) -> &Arc<parking_lot::RwLock<BotState>> {
+        &self.core
+    }
+
+    /// Immutable read of the registered path→pool map.
+    ///
+    /// Read-only: `path_pools` must stay consistent with the `pool_to_paths`
+    /// reverse index, which only the engine's internal register/deregister
+    /// paths maintain — so no mutable accessor is exposed.
+    #[must_use]
+    pub fn path_pools(&self) -> &HashMap<u64, MixedPath> {
+        &self.path_pools
     }
 }
 

@@ -242,11 +242,11 @@ fn main() {
     // 2) The production Möbius solver over the reconstructed three pools.
     let engine = ArbitrageEngine::new();
     let pid0 =
-        register_v3(&mut engine.core.write(), &fx.pools.v3_0).unwrap_or_else(|e| panic!("{e}"));
+        register_v3(&mut engine.core().write(), &fx.pools.v3_0).unwrap_or_else(|e| panic!("{e}"));
     let pid2 =
-        register_v3(&mut engine.core.write(), &fx.pools.v3_2).unwrap_or_else(|e| panic!("{e}"));
+        register_v3(&mut engine.core().write(), &fx.pools.v3_2).unwrap_or_else(|e| panic!("{e}"));
     let pid1 =
-        register_v2(&mut engine.core.write(), &fx.pools.v2_1).unwrap_or_else(|e| panic!("{e}"));
+        register_v2(&mut engine.core().write(), &fx.pools.v2_1).unwrap_or_else(|e| panic!("{e}"));
 
     let mut by_idx = HashMap::new();
     for h in &fx.path {

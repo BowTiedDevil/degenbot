@@ -103,7 +103,7 @@ impl PyArbitrageEngine {
         // no Python objects.
         py.detach(move || {
             let engine = engine.lock();
-            let mut core = engine.core.write();
+            let mut core = engine.core().write();
             core.apply_backfill_buffer_v3(&addr);
             core.apply_pump_buffer_v3(&addr);
             core.pin_v3_post_drain_snapshot(addr);
@@ -132,7 +132,7 @@ impl PyArbitrageEngine {
         // OUTSIDE.
         py.detach(move || {
             let engine = engine.lock();
-            let mut core = engine.core.write();
+            let mut core = engine.core().write();
             core.apply_backfill_buffer_v4(pm, pool_id);
             core.apply_pump_buffer_v4(pm, pool_id);
             core.pin_v4_post_drain_snapshot(pm, &pool_id);
@@ -155,7 +155,7 @@ impl PyArbitrageEngine {
         })?;
         let engine = Arc::clone(&self.engine);
         py.detach(move || {
-            engine.lock().core.write().set_v3_pool_quarantined(addr);
+            engine.lock().core().write().set_v3_pool_quarantined(addr);
         });
         Ok(())
     }
@@ -178,7 +178,7 @@ impl PyArbitrageEngine {
         py.detach(move || {
             engine
                 .lock()
-                .core
+                .core()
                 .write()
                 .set_v4_pool_quarantined(pm, pool_id);
         });
@@ -196,7 +196,7 @@ impl PyArbitrageEngine {
         })?;
         let engine = Arc::clone(&self.engine);
         py.detach(move || {
-            engine.lock().core.write().set_v3_pool_live(addr);
+            engine.lock().core().write().set_v3_pool_live(addr);
         });
         Ok(())
     }
@@ -216,7 +216,7 @@ impl PyArbitrageEngine {
         let pool_id = crate::bot::engine::hex_string_to_pool_id(pool_id_hex)?;
         let engine = Arc::clone(&self.engine);
         py.detach(move || {
-            engine.lock().core.write().set_v4_pool_live(pm, pool_id);
+            engine.lock().core().write().set_v4_pool_live(pm, pool_id);
         });
         Ok(())
     }
@@ -230,7 +230,7 @@ impl PyArbitrageEngine {
     fn release_all_v3_v4_quarantined(&self, py: Python<'_>) -> PyResult<()> {
         let engine = Arc::clone(&self.engine);
         py.detach(move || {
-            engine.lock().core.write().release_all_v3_v4_quarantined();
+            engine.lock().core().write().release_all_v3_v4_quarantined();
         });
         Ok(())
     }
@@ -255,7 +255,7 @@ impl PyArbitrageEngine {
         })?;
         self.engine
             .lock()
-            .core
+            .core()
             .write()
             .buffer_backfill_v3_liquidity_update(
                 addr,
@@ -273,7 +273,7 @@ impl PyArbitrageEngine {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
         })?;
         let engine = self.engine.lock();
-        let count = engine.core.read().buffered_v3_event_count(&addr);
+        let count = engine.core().read().buffered_v3_event_count(&addr);
         Ok(count)
     }
 
@@ -290,7 +290,7 @@ impl PyArbitrageEngine {
         })?;
         let tick_data = {
             let engine = self.engine.lock();
-            let core = engine.core.read();
+            let core = engine.core().read();
             let Some(key) = core.pool_id_by_address(&addr) else {
                 return Ok(None);
             };
@@ -382,7 +382,7 @@ impl PyArbitrageEngine {
         block_number: u64,
     ) -> PyResult<()> {
         let engine = self.engine.lock();
-        let mut core = engine.core.write();
+        let mut core = engine.core().write();
         for item in v3_sync_updates.iter() {
             let tuple = item.cast::<pyo3::types::PyTuple>()?;
             if tuple.len() != 5 {
@@ -483,7 +483,7 @@ impl PyArbitrageEngine {
                 rust_tick_data.insert(tick_idx, make_tick_info(liquidity_gross, liquidity_net));
             }
 
-            engine.core.write().sync_v4_pool_state(
+            engine.core().write().sync_v4_pool_state(
                 pool_manager,
                 pool_id,
                 V4StateSync {

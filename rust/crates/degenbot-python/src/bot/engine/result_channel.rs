@@ -33,7 +33,7 @@ impl PyArbitrageEngine {
         // Phase 1: Collect pool refs from the path
         let pool_refs: Vec<MixedPoolRef> = {
             let engine = self.engine.lock();
-            let Some(path) = engine.path_pools.get(&path_id) else {
+            let Some(path) = engine.path_pools().get(&path_id) else {
                 return Ok(None);
             };
             path.pools.clone()
@@ -45,7 +45,7 @@ impl PyArbitrageEngine {
         // ADR-003: V2 state lives in BotState. One core-lock window covers all
         // V2 lookups in this loop (engine-then-core ordering; V3/V4 state still
         // reads the per-family engines, which are disjoint fields).
-        let core = engine.core.read();
+        let core = engine.core().read();
 
         for pool_ref in &pool_refs {
             match pool_ref.hop_type {
@@ -268,7 +268,7 @@ impl PyArbitrageEngine {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid address: {e}"))
         })?;
         let engine = self.engine.lock();
-        let core = engine.core.read();
+        let core = engine.core().read();
         let Some(pool_id) = core.pool_id_by_address(&addr) else {
             return Ok(None);
         };

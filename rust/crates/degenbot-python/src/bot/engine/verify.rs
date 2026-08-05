@@ -225,7 +225,7 @@ impl PyArbitrageEngine {
 
         let v3_pools = {
             let engine = self.engine.lock();
-            let core = engine.core.read();
+            let core = engine.core().read();
             let Some(key) = core.pool_id_by_address(&pool_addr) else {
                 return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
                     "V3 pool {address} not registered in engine"
@@ -291,7 +291,7 @@ impl PyArbitrageEngine {
         let pool_id = hex_string_to_pool_id(&pool_id_hex)?;
 
         let engine = self.engine.lock();
-        let core = engine.core.read();
+        let core = engine.core().read();
         // ADR-003: single V4 entry per `(pool_manager, pool_id)` — no dual
         // forward/reverse keys. v4_pool_id_by_key returns Option<u64>.
         let v4_key = core.v4_pool_id_by_key(Address::ZERO, &pool_id).or_else(|| {

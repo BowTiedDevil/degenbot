@@ -300,14 +300,14 @@ fn main() {
     //    register as Tracked — in that case the per-V4-pool oracle + root-cause
     //    verdict above (step 1b/1c) is authoritative and we exit cleanly.
     let engine = ArbitrageEngine::new();
-    let pid0 = match register_v3(&mut engine.core.write(), &fx.pools.v3_0) {
+    let pid0 = match register_v3(&mut engine.core().write(), &fx.pools.v3_0) {
         Ok(p) => p,
         Err(e) => {
             println!("note: v3_0 registration skipped ({e}); per-V4-pool oracle verdict above is authoritative.");
             std::process::exit(0);
         }
     };
-    let pid2 = match register_v3(&mut engine.core.write(), &fx.pools.v3_2) {
+    let pid2 = match register_v3(&mut engine.core().write(), &fx.pools.v3_2) {
         Ok(p) => p,
         Err(e) => {
             println!("note: v3_2 registration skipped ({e}); per-V4-pool oracle verdict above is authoritative.");
@@ -315,7 +315,7 @@ fn main() {
         }
     };
     let v4id = engine
-        .core
+        .core()
         .write()
         .register_v4_pool(&degenbot::RegisterV4PoolParams {
             pool_manager: parse_addr(fx.pools.v4.pool_manager.as_ref().unwrap()),
