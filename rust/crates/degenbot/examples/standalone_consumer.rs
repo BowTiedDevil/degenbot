@@ -25,7 +25,9 @@ use degenbot::degenbot_backrun_strategy::{
     simulate_in_process_with_db, FailBuckets, SimulateContext, SimulatePath,
 };
 use degenbot::degenbot_balancer_math::{mul_down, ONE};
-use degenbot::degenbot_curve_math::{stableswap_get_d, DVariant};
+use degenbot::degenbot_curve_math::{
+    calculate_dy, stableswap_get_d, DVariant, DyCalculationInputs, YVariant,
+};
 use degenbot::degenbot_db::snapshot_db::SnapshotDb;
 use degenbot::degenbot_executor::composers::{EncodeOptions, HopInfo, PathInfo, V2HopInfo};
 use degenbot::degenbot_executor::compute_simulation_warmup_slots;
@@ -178,6 +180,7 @@ fn fixture_snapshot_seed_block() -> Option<u64> {
     seed_block
 }
 
+#[allow(clippy::too_many_lines)]
 fn main() {
     // 2b reaches ArbitrageEngine for the standalone lifecycle slice.
     use degenbot::solvers::arb_engine::{ArbitrageEngine, EnginePhase};
@@ -325,7 +328,65 @@ fn main() {
     let expected_f = a * b / ONE;
     assert_eq!(got_f, expected_f, "solidly calc_f direct port");
 
-    println!("standalone degenbot consumer OK: curve D={d} balancer fp.mul_down(identity) solidly calc_d={got_d}");
+    // Curve `get_dy` calc layer (T6, YY64IT): a standalone consumer builds a
+    //    `DyCalculationInputs` snapshot and runs a full swap through the pure
+    //    `calculate_dy` — the counterpart of the Python companion's delegation
+    //    (T7). Matches the `standard_plain` canonical fixture (recorded dy).
+    let dx_inputs = DyCalculationInputs {
+        precision: U256::from(1_000_000_000_000_000_000_u64),
+        fee_denominator: U256::from(10_000_000_000_u64),
+        fee: U256::from(500_000_u64),
+        n_coins: 2,
+        balances: vec![
+            U256::from(3_000_000_000_000_000_000_000_u128),
+            U256::from(6_000_000_000_000_000_000_000_u128),
+        ],
+        rate_multipliers: vec![
+            U256::from(1_000_000_000_000_000_000_u64),
+            U256::from(1_000_000_000_000_000_000_u64),
+        ],
+        precision_multipliers: vec![U256::from(1_u8), U256::from(1_u8)],
+        offpeg_fee_multiplier: U256::ZERO,
+        fee_gamma: U256::ZERO,
+        mid_fee: U256::ZERO,
+        out_fee: U256::ZERO,
+        address: Address::ZERO,
+        resolved_rates: vec![
+            U256::from(1_000_000_000_000_000_000_u64),
+            U256::from(1_000_000_000_000_000_000_u64),
+        ],
+        xp: vec![
+            U256::from(3_000_000_000_000_000_000_000_u128),
+            U256::from(6_000_000_000_000_000_000_000_u128),
+        ],
+        block_number: 0,
+        block_timestamp: 0,
+        amp: U256::from(10_000_u64),
+        d_variant: DVariant::Standard,
+        y_variant: YVariant::Standard,
+        a_precision: U256::from(100_u64),
+        swap_style: 1,
+        metapool: false,
+        metapool_rate_style: 1,
+        metapool_underlying_style: 1,
+        d: None,
+        gamma: None,
+        price_scale: None,
+        live_balances: None,
+        admin_balances: None,
+        effective_balances: None,
+        virtual_price: None,
+        scaled_redemption_price: None,
+    };
+    let dy = calculate_dy(0, 1, U256::from(1_000_000_000_000_000_000_u64), &dx_inputs)
+        .expect("calculate_dy converged");
+    assert_eq!(
+        dy,
+        U256::from(1_008_296_947_143_911_861_u64),
+        "curve get_dy direct port"
+    );
+
+    println!("standalone degenbot consumer OK: curve D={d} dy={dy} balancer fp.mul_down(identity) solidly calc_d={got_d}");
 
     // 7. (JLLE57) Standalone-Rust consumer: full DB-snapshot → auto-backfill → resume flow.
     //    See `fixture_snapshot_seed_block` for the end-state contract of

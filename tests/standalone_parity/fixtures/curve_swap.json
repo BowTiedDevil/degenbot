@@ -1,0 +1,105 @@
+{
+  "_comment": "Tier-2 dual-driver Curve get_dy parity (epic TV72EG, task SGJR2W). Shared fixture loaded by BOTH rust/crates/degenbot/tests/parity_curve_swap.rs and tests/standalone_parity/test_curve_swap_dual_driver.py — a drift in any expected output fails BOTH sides mechanically (HRT356 single-source-of-truth shape). Big integers are decimal strings. Each probe carries the full DyCalculationInputs snapshot the pure calculate_dy consumes.",
+  "probes": [
+    {
+      "name": "standard_plain",
+      "inputs": {
+        "precision": "1000000000000000000",
+        "fee_denominator": "10000000000",
+        "fee": "500000",
+        "n_coins": 2,
+        "balances": ["3000000000000000000000", "6000000000000000000000"],
+        "rate_multipliers": ["1000000000000000000", "1000000000000000000"],
+        "precision_multipliers": ["1", "1"],
+        "resolved_rates": ["1000000000000000000", "1000000000000000000"],
+        "xp": ["3000000000000000000000", "6000000000000000000000"],
+        "amp": "10000",
+        "a_precision": "100",
+        "d_variant": 1,
+        "y_variant": 1,
+        "swap_style": 1,
+        "metapool": false,
+        "metapool_rate_style": 1,
+        "metapool_underlying_style": 1,
+        "virtual_price": null
+      },
+      "probe": { "i": 0, "j": 1, "dx": "1000000000000000000" },
+      "expected": { "dy": "1008296947143911861" }
+    },
+    {
+      "name": "raw_balance",
+      "inputs": {
+        "precision": "1000000000000000000",
+        "fee_denominator": "10000000000",
+        "fee": "5000000000",
+        "n_coins": 2,
+        "balances": ["3000000000000000000000", "6000000000000000000000"],
+        "rate_multipliers": ["1000000000000000000", "1000000000000000000"],
+        "precision_multipliers": ["1", "1"],
+        "resolved_rates": ["1000000000000000000", "1500000000000000000"],
+        "xp": ["3000000000000000000000", "9000000000000000000000"],
+        "amp": "10000",
+        "a_precision": "100",
+        "d_variant": 1,
+        "y_variant": 1,
+        "swap_style": 3,
+        "metapool": false,
+        "metapool_rate_style": 1,
+        "metapool_underlying_style": 1,
+        "virtual_price": null
+      },
+      "probe": { "i": 0, "j": 1, "dx": "1000000000000000000" },
+      "expected": { "dy": "504173682256068734" }
+    },
+    {
+      "name": "live_admin",
+      "inputs": {
+        "precision": "1000000000000000000",
+        "fee_denominator": "10000000000",
+        "fee": "5000000000",
+        "n_coins": 2,
+        "balances": ["3000000000000000000000", "6000000000000000000000"],
+        "rate_multipliers": ["1000000000000000000", "1000000000000000000"],
+        "precision_multipliers": ["1", "1"],
+        "resolved_rates": ["1000000000000000000", "1500000000000000000"],
+        "xp": ["3000000000000000000000", "9000000000000000000000"],
+        "amp": "10000",
+        "a_precision": "100",
+        "d_variant": 1,
+        "y_variant": 1,
+        "swap_style": 5,
+        "metapool": false,
+        "metapool_rate_style": 1,
+        "metapool_underlying_style": 1,
+        "virtual_price": null
+      },
+      "probe": { "i": 0, "j": 1, "dx": "1000000000000000000" },
+      "expected": { "dy": "508764220433698893" }
+    },
+    {
+      "name": "metapool_standard",
+      "inputs": {
+        "precision": "1000000000000000000",
+        "fee_denominator": "10000000000",
+        "fee": "500000",
+        "n_coins": 2,
+        "balances": ["1000000000000000000000", "2000000000000000000000"],
+        "rate_multipliers": ["1000000000000000000", "1000000000000000000"],
+        "precision_multipliers": ["1000000000000", "1"],
+        "resolved_rates": ["1000000000000000000", "1000000000000000000"],
+        "xp": ["1000000000000000000000", "2000000000000000000000"],
+        "amp": "10000",
+        "a_precision": "100",
+        "d_variant": 1,
+        "y_variant": 1,
+        "swap_style": 1,
+        "metapool": true,
+        "metapool_rate_style": 1,
+        "metapool_underlying_style": 1,
+        "virtual_price": "1050000000000000000"
+      },
+      "probe": { "i": 0, "j": 1, "dx": "1000000000000000000" },
+      "expected": { "dy": "961074000134304340" }
+    }
+  ]
+}
