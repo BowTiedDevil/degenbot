@@ -433,3 +433,139 @@ def test_curve_pool_builder_build_matches_rust_path_over_cassette() -> None:
     assert tuple(pool.precision_multipliers) == tuple(handle_a.curve_precision_multipliers)
     assert pool.rate_multipliers[0] == 10**30
     assert len(pool.tokens) == 2
+
+
+def _metapool_build_cassette_json() -> str:
+    """Recorded reads for a metapool + its tripool base (builder recursion).
+
+    Both pools live in one cassette (keyed by ``(to, calldata)``): the metapool
+    M (coin → 3Crv LP, is_meta true on the real registry, underlying coins,
+    base pool → TRIPOOL) and the base tripool (3 coins). Because the retargeted
+    builder routes ALL detection through Rust `build_curve_pool` (whose
+    `call_opt` probes tolerate unrecorded reads), only the real pool reads +
+    the positive metapool probes + ERC20 metadata need recording — the optional
+    ramping/crypto/lending/lp probes are left unrecorded (revert → None).
+    """
+    import json
+
+    from degenbot.builders.curve_pool_builder import _REGISTRY_ADDRESSES
+
+    registry = _REGISTRY_ADDRESSES[0]
+    calls = {
+        # --- Metapool M ---
+        _call_key(META, "coins(uint256)", 0): _word_address(META_COIN0),
+        _call_key(META, "coins(uint256)", 1): _word_address(THREE_CRV_LP),
+        _call_key(META, "coins(uint256)", 2): _word_address(ZERO),
+        _call_key(META, "balances(uint256)", 0): _word_uint(500_000_000_000_000),
+        _call_key(META, "balances(uint256)", 1): _word_uint(1_000_000_000_000_000_000),
+        _call_key(META, "A()"): _word_uint(500),
+        _call_key(META, "fee()"): _word_uint(1_000_000),
+        _call_key(META, "admin_fee()"): _word_uint(500_000_000),
+        _call_key(META, "base_pool()"): _word_address(TRIPOOL),
+        _call_key(META_COIN0, "decimals()"): _word_uint(6),
+        _call_key(META_COIN0, "name()"): _str_word("Meta Coin"),
+        _call_key(META_COIN0, "symbol()"): _str_word("MCO"),
+        _call_key(THREE_CRV_LP, "decimals()"): _word_uint(18),
+        _call_key(THREE_CRV_LP, "name()"): _str_word("Curve Dai USD Coin USD Tether"),
+        _call_key(THREE_CRV_LP, "symbol()"): _str_word("3Crv"),
+        # Real registry: metapool positive + underlying + no dedicated LP token.
+        _call_key_word_arg(registry, "is_meta(address)", META): _word_uint(1),
+        _call_key_word_arg(registry, "get_underlying_coins(address)", META): _word_addresses([
+            META_COIN0,
+            DAI,
+            USDC,
+            USDT,
+        ]),
+        _call_key_word_arg(registry, "get_lp_token(address)", META): _word_address(ZERO),
+        # --- Base tripool (recursively built via the same builder) ---
+        _call_key(TRIPOOL, "coins(uint256)", 0): _word_address(DAI),
+        _call_key(TRIPOOL, "coins(uint256)", 1): _word_address(USDC),
+        _call_key(TRIPOOL, "coins(uint256)", 2): _word_address(USDT),
+        _call_key(TRIPOOL, "balances(uint256)", 0): _word_uint(1_000_000_000_000_000_000_000),
+        _call_key(TRIPOOL, "balances(uint256)", 1): _word_uint(2_000_000_000_000),
+        _call_key(TRIPOOL, "balances(uint256)", 2): _word_uint(3_000_000_000_000),
+        _call_key(TRIPOOL, "A()"): _word_uint(3000),
+        _call_key(TRIPOOL, "fee()"): _word_uint(1_000_000),
+        _call_key(TRIPOOL, "admin_fee()"): _word_uint(500_000_000),
+        _call_key(DAI, "decimals()"): _word_uint(18),
+        _call_key(DAI, "name()"): _str_word("Dai Stablecoin"),
+        _call_key(DAI, "symbol()"): _str_word("DAI"),
+        _call_key(USDC, "decimals()"): _word_uint(6),
+        _call_key(USDC, "name()"): _str_word("USD Coin"),
+        _call_key(USDC, "symbol()"): _str_word("USDC"),
+        _call_key(USDT, "decimals()"): _word_uint(6),
+        _call_key(USDT, "name()"): _str_word("Tether USD"),
+        _call_key(USDT, "symbol()"): _str_word("USDT"),
+    }
+    code = {
+        META_COIN0.lower(): "60806040",
+        THREE_CRV_LP.lower(): "60806040",
+        DAI.lower(): "60806040",
+        USDC.lower(): "60806040",
+        USDT.lower(): "60806040",
+    }
+    return json.dumps({
+        "chain_id": 1,
+        "block_number": _BLOCK,
+        "timestamp": _TIMESTAMP,
+        "calls": calls,
+        "code": code,
+    })
+
+
+def test_curve_pool_builder_build_metapool_recurses_base_over_cassette() -> None:
+    """Retargeted `CurvePoolBuilder.build` recurses into the base pool (metapool).
+
+    Drives the builder on a metapool whose second coin is the 3Crv LP. The
+    Rust `build_curve_pool` detects the metapool + underlying coins, then the
+    builder's `_resolve_metapool_base` recursively builds the tripool base pool
+    in the SAME `PyBot`, so the metapool handle's `curve_base_pool()` go-between
+    resolves. Asserts the metapool companion's base pool + underlying coins are
+    recovered, and its identity params equal the direct Rust path.
+    """
+    from degenbot.bot import PyBotIo
+    from degenbot.builders.curve_pool_builder import _REGISTRY_ADDRESSES
+    from degenbot.builders.request import BuildPoolRequest
+
+    # Path A — direct Rust build_curve_pool (oracle for M's identity params).
+    provider_a = RustAlloyProvider.offline_from_json_string(_metapool_build_cassette_json())
+    bot_a = PyBot(chain_id=1)
+    bot_a.attach_construction_io(provider_a, None)
+    handle_a = bot_a.get_pool(bot_a.build_curve_pool(META, list(_REGISTRY_ADDRESSES), _BLOCK))
+    assert handle_a is not None
+    assert handle_a.curve_base_pool_address() == TRIPOOL
+
+    # Path B — the retargeted builder, over the same cassette.
+    provider_b = RustAlloyProvider.offline_from_json_string(_metapool_build_cassette_json())
+    builder, bot_b = _make_curve_builder(provider_b)
+    pybot_io = PyBotIo(provider=provider_b)
+    pybot_io.attach_construction_io(bot_b)
+    pool = builder.build(
+        META,
+        chain_id=1,
+        io=pybot_io,
+        request=BuildPoolRequest(state_block=_BLOCK, silent=True),
+    )
+
+    # The base pool was recursively built + registered in the same PyBot, so
+    # the metapool companion's base_pool go-between resolves (a lazy proxy over
+    # the tripool handle; `.tokens` delegates to the resolved companion).
+    assert pool.base_pool is not None
+    assert [t.address.lower() for t in pool.base_pool.tokens] == [
+        DAI.lower(),
+        USDC.lower(),
+        USDT.lower(),
+    ]
+    # Underlying coins recovered (META_COIN0 + the tripool's 3 coins).
+    assert pool.tokens_underlying is not None
+    assert [t.address.lower() for t in pool.tokens_underlying] == [
+        META_COIN0.lower(),
+        DAI.lower(),
+        USDC.lower(),
+        USDT.lower(),
+    ]
+    # Identity params equal the direct Rust path.
+    assert pool.a_coefficient == handle_a.curve_a_coefficient == 500
+    assert pool.fee == handle_a.curve_fee == 1_000_000
+    assert pool.admin_fee == handle_a.curve_admin_fee == 500_000_000
+    assert tuple(pool.balances) == tuple(handle_a.balances)

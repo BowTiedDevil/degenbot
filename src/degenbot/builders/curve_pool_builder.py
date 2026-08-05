@@ -6,31 +6,17 @@ from typing import TYPE_CHECKING
 
 from degenbot.builders.request import BuildPoolRequest, BuildRequest
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.curve._pool_strategies import resolve_pool_strategies
 from degenbot.curve.curve_stableswap_liquidity_pool import (
     CurveStableswapPool,
-    _compute_rate_and_precision_multipliers,
+    CurveStableswapPoolExternalUpdate,
 )
-from degenbot.curve.data_provider_impl import CurveDataProviderImpl
 from degenbot.curve.deployments import CURVE_V1_FACTORY_ADDRESS, CURVE_V1_REGISTRY_ADDRESS
-from degenbot.curve.detection.a_ramping import detect_a_ramping
-from degenbot.curve.detection.coin_discovery import discover_coins
-from degenbot.curve.detection.crypto_detector import detect_crypto_params
-from degenbot.curve.detection.lending_detector import detect_lending_tokens
-from degenbot.curve.detection.lp_token import find_lp_token
-from degenbot.curve.detection.metapool_detector import detect_metapool
-from degenbot.curve.types import CurveDataProvider, CurveStableswapPoolExternalUpdate
 from degenbot.exceptions.pool import BrokenPool
 from degenbot.logging import logger
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     from degenbot.bot import PyBotIo
     from degenbot.builders.context import BuilderContext
-    from degenbot.curve.detection.types import MetapoolDetectionResult
-    from degenbot.curve.strategies import PoolStrategies
-    from degenbot.erc20 import Erc20Token
     from degenbot.types import PyLiquidityPool
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
@@ -43,8 +29,10 @@ _REGISTRY_ADDRESSES = (CURVE_V1_REGISTRY_ADDRESS, CURVE_V1_FACTORY_ADDRESS)
 class CurvePoolBuilder:
     """Builds and updates Curve StableSwap pools.
 
-    Owns the full I/O choreography: DB lookup → RPC fetch → decode →
-    construct pool → register.
+    Thin delegating shell (ADR-005): drives the Rust core's
+    ``build_curve_pool`` (detection choreography + native ``RpcCurveDataProvider``),
+    builds the ERC20 companion tokens, then wraps the registered handle via the
+    single-arg ``_from_py_pool`` seam. No Python-side Curve detection remains.
     """
 
     def __init__(self, ctx: BuilderContext) -> None:
@@ -64,13 +52,19 @@ class CurvePoolBuilder:
         io: PyBotIo,
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
-        """Fetch pool data from RPC and construct an I/O-free CurveStableswapPool.
+        """Construct an I/O-free CurveStableswapPool via the Rust core.
+
+        Delegates the full detection + registration to ``PyBot.build_curve_pool``
+        (which attaches a native ``RpcCurveDataProvider`` and stores the complete
+        identity in Rust state), builds the ERC20 token/LP companions so the
+        handle's registration-gated getters resolve, then wraps the handle via
+        ``_from_py_pool``.
 
         Returns:
             The computed value.
 
         Raises:
-            BrokenPool: If the operation fails.
+            BrokenPool: If the pool has fewer than 2 coins.
 
         """
         pool_address = get_checksum_address(address)
@@ -80,137 +74,57 @@ class CurvePoolBuilder:
             request.state_block if request.state_block is not None else io.get_block_number()
         )
 
-        # 1. Discover coins and balances
-        coins = discover_coins(io, pool_address, block_identifier=state_block)
-
-        # 2. Fetch A, fee, admin_fee
-        a_coefficient, fee, admin_fee = _fetch_pool_params(
-            io,
+        # Core registration: the Rust builder runs the full detection
+        # choreography (coin discovery, A/fee/admin_fee, per-coin decimals,
+        # ramping/crypto/lending/lp/metapool probes) and attaches a native
+        # `RpcCurveDataProvider`. The complete identity is stored in Rust state,
+        # so the single-arg `_from_py_pool(handle)` reads everything back off
+        # the handle.
+        pool_id = self._py_bot.build_curve_pool(
             pool_address,
-            block_identifier=state_block,
-        )
-
-        # 3. Detect A ramping
-        a_ramping = detect_a_ramping(io, pool_address, block_identifier=state_block)
-
-        # 4. Get block timestamp
-        create_timestamp = io.get_block_timestamp(block=state_block)
-
-        # 5. Build tokens
-        tokens = tuple(
-            self._erc20_builder.build(addr, chain_id=chain_id, silent=request.silent, io=io)
-            for addr in coins.token_addresses
-        )
-
-        # 6. Detect lending tokens
-        lending = detect_lending_tokens(
-            io,
-            pool_address,
-            coins.token_addresses,
-            tokens,
-            block_identifier=state_block,
-        )
-
-        # 7. Detect crypto pool parameters
-        crypto = detect_crypto_params(io, pool_address, block_identifier=state_block)
-
-        # 8. Find LP token
-        lp_token_address = find_lp_token(
-            io,
-            pool_address,
-            registry_addresses=_REGISTRY_ADDRESSES,
-            block_identifier=state_block,
-        )
-
-        # 9. Detect metapool
-        metapool = detect_metapool(
-            io,
-            pool_address,
-            coins.token_addresses,
-            registry_addresses=_REGISTRY_ADDRESSES,
-            block_identifier=state_block,
-        )
-
-        # 10. Build base pool and underlying tokens (if metapool)
-        base_pool, tokens_underlying = self._resolve_metapool(
-            metapool,
-            chain_id,
+            list(_REGISTRY_ADDRESSES),
             state_block,
+        )
+        handle = self._py_bot.get_pool(pool_id)
+        assert handle is not None, "build_curve_pool returned a pool_id with no handle"
+
+        # Metapool: build + register the base pool first so the metapool
+        # handle's `curve_base_pool()` resolves for `_from_py_pool`.
+        self._resolve_metapool_base(
+            handle,
+            chain_id=chain_id,
+            state_block=state_block,
             request=request,
             io=io,
         )
 
-        # 11. Build LP token
-        lp_token = (
+        # ERC20 companions for the pool coins, sourced from the handle's raw
+        # token addresses (the registration-gated `get_curve_tokens` returns
+        # None until these are built). Skip broken pools (< 2 coins).
+        token_addresses = handle.curve_token_addresses()
+        assert token_addresses is not None
+        min_tokens = 2
+        if len(token_addresses) < min_tokens:
+            raise BrokenPool
+        for addr in token_addresses:
+            self._erc20_builder.build(addr, chain_id=chain_id, silent=request.silent, io=io)
+
+        # Metapool underlying + dedicated LP token companions — built purely
+        # for registration (Rust already knows their addresses), so
+        # `get_curve_tokens_underlying()` / `get_curve_lp_token()` resolve in
+        # `_from_py_pool`.
+        for addr in handle.curve_token_addresses_underlying() or ():
+            self._erc20_builder.build(addr, chain_id=chain_id, silent=request.silent, io=io)
+        lp_address = handle.curve_lp_token_address()
+        if lp_address is not None:
             self._erc20_builder.build(
-                lp_token_address,
+                lp_address,
                 chain_id=chain_id,
                 silent=request.silent,
                 io=io,
             )
-            if lp_token_address is not None
-            else None
-        )
 
-        # 12. Skip broken pools
-        min_tokens = 2
-        if len(tokens) < min_tokens:
-            raise BrokenPool
-
-        # 13. Resolve strategies from pool address
-        strategies = resolve_pool_strategies(pool_address)
-
-        # 14. Create data provider and construct pool
-        use_lending_list = (
-            list(lending.use_lending) if lending.use_lending else [False] * len(tokens)
-        )
-        precision_multipliers_list = (
-            list(lending.precision_multipliers)
-            if lending.precision_multipliers
-            else [1] * len(tokens)
-        )
-        rate_multipliers = tuple(
-            pm * 10**18 for pm in (lending.precision_multipliers or [1] * len(tokens))
-        )
-        data_provider = CurveDataProviderImpl(
-            io=io,
-            pool_address=pool_address,
-            base_pool_address=metapool.base_pool_address if metapool.is_meta else None,
-            n_coins=len(tokens),
-            lending_rate_style=strategies.lending_rate_style,
-            token_addresses=[t.address for t in tokens],
-            use_lending=use_lending_list,
-            precision_multipliers=precision_multipliers_list,
-            rate_multipliers=rate_multipliers,
-        )
-        pool = CurveStableswapPool._from_py_pool(  # ruff:ignore[private-member-access]
-            self._register_handle(
-                address=pool_address,
-                tokens=tokens,
-                a_coefficient=a_coefficient,
-                fee=fee,
-                admin_fee=admin_fee,
-                balances=coins.balances,
-                state_block=state_block,
-                precision_multipliers=lending.precision_multipliers,
-                strategies=strategies,
-                base_pool=base_pool,
-                initial_a_coefficient=a_ramping.initial_a,
-                future_a_coefficient=a_ramping.future_a,
-                initial_a_coefficient_time=a_ramping.initial_a_time,
-                future_a_coefficient_time=a_ramping.future_a_time,
-                create_timestamp=create_timestamp,
-                lp_token=lp_token,
-                tokens_underlying=tokens_underlying,
-                use_lending=lending.use_lending,
-                fee_gamma=crypto.fee_gamma,
-                mid_fee=crypto.mid_fee,
-                out_fee=crypto.out_fee,
-                gamma=crypto.gamma,
-                offpeg_fee_multiplier=crypto.offpeg_fee_multiplier,
-                data_provider=data_provider,
-            )
-        )
+        pool = CurveStableswapPool._from_py_pool(handle)  # ruff:ignore[private-member-access]
 
         # Register pool
         self._pools.add(pool, chain_id=chain_id, pool_address=pool.address)
@@ -224,116 +138,27 @@ class CurvePoolBuilder:
 
         return pool
 
-    def _register_handle(
+    def _resolve_metapool_base(
         self,
+        handle: PyLiquidityPool,
         *,
-        address: str,
-        tokens: tuple[Erc20Token, ...],
-        a_coefficient: int,
-        fee: int,
-        admin_fee: int,
-        balances: tuple[int, ...],
-        state_block: int,
-        precision_multipliers: Sequence[int] | None,
-        strategies: PoolStrategies,
-        base_pool: CurveStableswapPool | None,
-        initial_a_coefficient: int | None,
-        future_a_coefficient: int | None,
-        initial_a_coefficient_time: int | None,
-        future_a_coefficient_time: int | None,
-        create_timestamp: int | None,
-        lp_token: Erc20Token | None,
-        tokens_underlying: tuple[Erc20Token, ...] | None,
-        use_lending: Sequence[bool] | None,
-        fee_gamma: int | None,
-        mid_fee: int | None,
-        out_fee: int | None,
-        gamma: int | None,
-        offpeg_fee_multiplier: int | None,
-        data_provider: CurveDataProvider | None,
-    ) -> PyLiquidityPool:
-        """Register the Curve pool in the Rust core + return its handle.
-
-        ADR-005 slice 11b: the production-path twin of ``make_curve_pool``.
-        Derives ``rate_multipliers`` via the shared helper (single source of
-        truth with the companion) + maps the ``PoolStrategies`` enums to the
-        ``u8`` discriminants Rust stores, then calls
-        ``PyBot.register_curve_pool`` + ``get_pool``. Every identity field is
-        stored in Rust so the single-arg ``_from_py_pool`` seam can read it
-        back off the handle.
-
-        Returns:
-            The ``PyLiquidityPool`` handle for the registered pool.
-
-        """
-        rate_multipliers, precision_mults = _compute_rate_and_precision_multipliers(
-            tokens,
-            precision_multipliers,
-            CurveStableswapPool.PRECISION_DECIMALS,
-        )
-        pool_id = self._py_bot.register_curve_pool(
-            address=address,
-            tokens=[t.address for t in tokens],
-            a_coefficient=a_coefficient,
-            a_precision=100,
-            fee=fee,
-            admin_fee=admin_fee,
-            rate_multipliers=list(rate_multipliers),
-            balances=list(balances),
-            update_block=state_block,
-            swap_style=strategies.swap_style.value,
-            lending_rate_style=strategies.lending_rate_style.value,
-            d_variant=strategies.d_variant.value,
-            y_variant=strategies.y_variant.value,
-            yd_variant=strategies.yd_variant.value,
-            base_pool=(base_pool.address if base_pool is not None else None),
-            initial_a_coefficient=initial_a_coefficient,
-            future_a_coefficient=future_a_coefficient,
-            initial_a_coefficient_time=initial_a_coefficient_time,
-            future_a_coefficient_time=future_a_coefficient_time,
-            create_timestamp=create_timestamp,
-            fee_gamma=fee_gamma,
-            mid_fee=mid_fee,
-            offpeg_fee_multiplier=offpeg_fee_multiplier,
-            out_fee=out_fee,
-            gamma=gamma,
-            lp_token=(lp_token.address if lp_token is not None else None),
-            use_lending=list(use_lending) if use_lending is not None else None,
-            precision_multipliers=(list(precision_mults) if precision_mults else None),
-            tokens_underlying=(
-                [t.address for t in tokens_underlying] if tokens_underlying is not None else None
-            ),
-            metapool_rate_style=strategies.metapool_rate_style.value,
-            metapool_underlying_style=strategies.metapool_underlying_style.value,
-            data_provider=data_provider,
-        )
-        handle = self._py_bot.get_pool(pool_id)
-        assert handle is not None, "register_curve_pool returned a pool_id with no handle"
-        return handle
-
-    def _resolve_metapool(
-        self,
-        metapool: MetapoolDetectionResult,
         chain_id: ChainId,
         state_block: int,
-        *,
         request: BuildRequest,
         io: PyBotIo,
-    ) -> tuple[CurveStableswapPool | None, tuple[Erc20Token, ...] | None]:
-        """Build base pool and underlying tokens for a metapool.
+    ) -> None:
+        """Build + register a metapool's base pool (recursion over the Rust path).
 
-        Returns:
-            The computed value.
-
+        The metapool handle already stores the base-pool address (Rust
+        detection). Building the base pool recursively registers it in the same
+        ``PyBot``, so the metapool handle's ``curve_base_pool()`` go-between
+        resolves during ``_from_py_pool``.
         """
-        if not metapool.is_meta:
-            return None, None
-
-        if metapool.base_pool_address is None:
-            return None, None
-
-        base_pool = self.build(
-            metapool.base_pool_address,
+        base_address = handle.curve_base_pool_address()
+        if base_address is None:
+            return
+        self.build(
+            base_address,
             chain_id=chain_id,
             io=io,
             request=BuildPoolRequest(
@@ -342,17 +167,6 @@ class CurvePoolBuilder:
                 state_cache_depth=request.state_cache_depth,
             ),
         )
-        assert isinstance(base_pool, CurveStableswapPool)
-
-        if metapool.tokens_underlying is None:
-            return base_pool, None
-
-        tokens_underlying = tuple(
-            self._erc20_builder.build(addr, chain_id=chain_id, silent=request.silent, io=io)
-            for addr in metapool.tokens_underlying
-        )
-
-        return base_pool, tokens_underlying
 
     @staticmethod
     def update(
@@ -399,21 +213,3 @@ class CurvePoolBuilder:
         )
         pool.external_update(update)
         return True
-
-
-def _fetch_pool_params(
-    io: PyBotIo,
-    pool_address: str,
-    *,
-    block_identifier: int,
-) -> tuple[int, int, int]:
-    """Fetch A, fee, and admin_fee from a Curve pool contract.
-
-    Returns:
-        The computed value.
-
-    """
-    # ADR-005 slice 14r: delegate all 3 RPCs to Rust (PyBotIo is the only
-    # executor; the Python parity-gate fallback is retired).
-    a, fee, admin_fee = io.fetch_curve_pool_params(pool_address, block=block_identifier)
-    return int(a), int(fee), int(admin_fee)

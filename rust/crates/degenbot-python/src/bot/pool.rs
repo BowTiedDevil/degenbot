@@ -2384,6 +2384,46 @@ impl PyLiquidityPool {
         Some(PyErc20Token::new(Arc::clone(&self.core), lp))
     }
 
+    /// The Curve pool's raw ERC-20 coin addresses in canonical order. Unlike
+    /// `get_curve_tokens`, this does NOT require the tokens to be registered
+    /// first — it is the builder/companion-orchestration seam that lets a
+    /// caller construct ERC20 companions *before* `_from_py_pool`. `None` for
+    /// a non-Curve pool.
+    fn curve_token_addresses(&self) -> Option<Vec<String>> {
+        let core = self.core.read();
+        let identity = core.get_curve_identity(self.pool_id)?;
+        let mut out = Vec::with_capacity(identity.tokens.len());
+        for address in &identity.tokens {
+            out.push(address_utils::address_to_checksum_string(address));
+        }
+        Some(out)
+    }
+
+    /// The Curve pool's raw *underlying* coin addresses (metapool coins beneath
+    /// the base-pool intermediaries). `None` for a plain pool or a non-Curve
+    /// handle. Not registration-gated (twin of `curve_token_addresses`).
+    fn curve_token_addresses_underlying(&self) -> Option<Vec<String>> {
+        let core = self.core.read();
+        let identity = core.get_curve_identity(self.pool_id)?;
+        let underlying = identity.tokens_underlying.as_ref()?;
+        let mut out = Vec::with_capacity(underlying.len());
+        for address in underlying {
+            out.push(address_utils::address_to_checksum_string(address));
+        }
+        Some(out)
+    }
+
+    /// The Curve pool's raw dedicated LP-token address, or `None` if the pool
+    /// token is itself the LP (or the handle is not a Curve pool). Not
+    /// registration-gated (twin of `curve_token_addresses`).
+    fn curve_lp_token_address(&self) -> Option<String> {
+        let core = self.core.read();
+        let identity = core.get_curve_identity(self.pool_id)?;
+        identity
+            .lp_token
+            .map(|address| address_utils::address_to_checksum_string(&address))
+    }
+
     /// **The go-between (BQM2OA).** A `PyLiquidityPool` handle over this
     /// metapool's *base pool*, sharing the same `BotState` core. Resolves the
     /// stored `base_pool` address through the existing `pool_id_by_address`
