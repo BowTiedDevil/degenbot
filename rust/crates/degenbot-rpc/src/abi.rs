@@ -85,6 +85,21 @@ alloy::sol! {
         function getTickBitmap(bytes32 poolId, int16 wordPosition) external view returns (uint256 word);
         function getTickLiquidity(bytes32 poolId, int24 tick) external view returns (uint128 gross, int128 net);
     }
+
+    /// Balancer V2 pool interface (the read methods the builder issues).
+    interface IBalancerPool {
+        function getPoolId() external view returns (bytes32);
+        function getSwapFeePercentage() external view returns (uint256);
+        function getAmplificationParameter() external view returns (uint256 value, bool isUpdating, uint256 precision);
+        function getNormalizedWeights() external view returns (uint256[] memory);
+        function getRateProviders() external view returns (address[] memory);
+        function getRate() external view returns (uint256);
+    }
+
+    /// Balancer V2 singleton Vault interface (pool-token reads).
+    interface IBalancerVault {
+        function getPoolTokens(bytes32 poolId) external view returns (address[] memory tokens, uint256[] memory balances, uint256 lastChangeBlock);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -112,6 +127,154 @@ pub fn decode_get_reserves(bytes: &[u8]) -> ProviderResult<(U256, U256)> {
         }
     })?;
     Ok((U256::from(r.reserve0), U256::from(r.reserve1)))
+}
+
+// ---------------------------------------------------------------------------
+// Balancer V2 reads (pool + Vault) — the SSSXG6 buyer primitive layer
+// ---------------------------------------------------------------------------
+
+/// Encode the `getPoolId()` calldata (4-byte selector only).
+#[must_use]
+pub fn encode_get_pool_id() -> Vec<u8> {
+    IBalancerPool::getPoolIdCall {}.abi_encode()
+}
+
+/// Decode `getPoolId()` return data into the 32-byte pool identifier.
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] if the return data is shorter than
+/// 32 bytes (the `bytes32` occupies one static word).
+pub fn decode_get_pool_id(bytes: &[u8]) -> ProviderResult<[u8; 32]> {
+    if bytes.len() < 32 {
+        return Err(ProviderError::DecodingError {
+            message: format!(
+                "getPoolId decode: expected >= 32 bytes, got {}",
+                bytes.len()
+            ),
+        });
+    }
+    let mut pool_id = [0u8; 32];
+    pool_id.copy_from_slice(&bytes[0..32]);
+    Ok(pool_id)
+}
+
+/// Encode the Vault `getPoolTokens(bytes32)` calldata.
+#[must_use]
+pub fn encode_get_pool_tokens(pool_id: &[u8; 32]) -> Vec<u8> {
+    IBalancerVault::getPoolTokensCall {
+        poolId: (*pool_id).into(),
+    }
+    .abi_encode()
+}
+
+/// Decode Vault `getPoolTokens(bytes32)` return data into `(tokens, balances)`
+/// — the third field (`lastChangeBlock`) is dropped, mirroring
+/// `balancer_builder_base.py::decode_vault_tokens`.
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] if the tuple does not decode.
+pub fn decode_get_pool_tokens(bytes: &[u8]) -> ProviderResult<(Vec<Address>, Vec<U256>)> {
+    let r = IBalancerVault::getPoolTokensCall::abi_decode_returns(bytes).map_err(|e| {
+        ProviderError::DecodingError {
+            message: format!("getPoolTokens decode: {e}"),
+        }
+    })?;
+    Ok((r.tokens, r.balances))
+}
+
+/// Encode the `getSwapFeePercentage()` calldata (4-byte selector only).
+#[must_use]
+pub fn encode_get_swap_fee() -> Vec<u8> {
+    IBalancerPool::getSwapFeePercentageCall {}.abi_encode()
+}
+
+/// Decode `getSwapFeePercentage()` return data (`uint256`).
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] if the bytes do not decode as a
+/// `uint256`.
+pub fn decode_get_swap_fee(bytes: &[u8]) -> ProviderResult<U256> {
+    decode_uint256(bytes)
+}
+
+/// Encode the `getAmplificationParameter()` calldata (4-byte selector only).
+#[must_use]
+pub fn encode_get_amp() -> Vec<u8> {
+    IBalancerPool::getAmplificationParameterCall {}.abi_encode()
+}
+
+/// Decode `getAmplificationParameter()` return data into the first word — the
+/// `uint256 value` (the `bool isUpdating` and `uint256 precision` tail fields
+/// are dropped, mirroring `balancer_builder_base.py::_fetch_amp`).
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] if the tuple does not decode.
+pub fn decode_get_amp(bytes: &[u8]) -> ProviderResult<U256> {
+    let r =
+        IBalancerPool::getAmplificationParameterCall::abi_decode_returns(bytes).map_err(|e| {
+            ProviderError::DecodingError {
+                message: format!("getAmplificationParameter decode: {e}"),
+            }
+        })?;
+    Ok(r.value)
+}
+
+/// Encode the `getNormalizedWeights()` calldata (4-byte selector only).
+#[must_use]
+pub fn encode_get_weights() -> Vec<u8> {
+    IBalancerPool::getNormalizedWeightsCall {}.abi_encode()
+}
+
+/// Decode `getNormalizedWeights()` return data into a `uint256[]`.
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] if the array does not decode.
+pub fn decode_get_weights(bytes: &[u8]) -> ProviderResult<Vec<U256>> {
+    IBalancerPool::getNormalizedWeightsCall::abi_decode_returns(bytes).map_err(|e| {
+        ProviderError::DecodingError {
+            message: format!("getNormalizedWeights decode: {e}"),
+        }
+    })
+}
+
+/// Encode the `getRateProviders()` calldata (4-byte selector only).
+#[must_use]
+pub fn encode_get_rate_providers() -> Vec<u8> {
+    IBalancerPool::getRateProvidersCall {}.abi_encode()
+}
+
+/// Decode `getRateProviders()` return data into an `address[]`.
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] if the array does not decode.
+pub fn decode_get_rate_providers(bytes: &[u8]) -> ProviderResult<Vec<Address>> {
+    IBalancerPool::getRateProvidersCall::abi_decode_returns(bytes).map_err(|e| {
+        ProviderError::DecodingError {
+            message: format!("getRateProviders decode: {e}"),
+        }
+    })
+}
+
+/// Encode the `getRate()` calldata (4-byte selector only).
+#[must_use]
+pub fn encode_get_rate() -> Vec<u8> {
+    IBalancerPool::getRateCall {}.abi_encode()
+}
+
+/// Decode `getRate()` return data (`uint256`).
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] if the bytes do not decode as a
+/// `uint256`.
+pub fn decode_get_rate(bytes: &[u8]) -> ProviderResult<U256> {
+    decode_uint256(bytes)
 }
 
 /// Fetch a V2-style pair's `getReserves()` and return `(reserve0, reserve1)`.

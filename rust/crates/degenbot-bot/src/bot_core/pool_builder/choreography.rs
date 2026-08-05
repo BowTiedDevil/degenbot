@@ -399,3 +399,157 @@ pub async fn fetch_erc20_metadata(
     };
     Ok(Some((name, symbol, decimals)))
 }
+
+// ---------------------------------------------------------------------------
+// Balancer V2 reads (the SSSXG6 buyer primitive layer)
+// ---------------------------------------------------------------------------
+
+/// The Balancer pool sub-type resolved by [`probe_balancer_type`] — mirrored
+/// from `balancer_builder_base.py::_BalancerPoolType`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BalancerFamily {
+    /// Has `getNormalizedWeights()` — a weighted pool.
+    Weighted,
+    /// Has `getAmplificationParameter()` (no weights) — a stable pool.
+    Stable,
+}
+
+/// Fetch a Balancer pool's 32-byte `getPoolId()` identifier.
+///
+/// # Errors
+///
+/// Returns a [`ProviderError`] on an `eth_call` or decode failure.
+pub async fn fetch_balancer_pool_id(
+    io: &ConstructionIo,
+    address: Address,
+    block: Option<u64>,
+) -> Result<[u8; 32], ProviderError> {
+    let bytes = eth_call(io, address, abi::encode_get_pool_id(), block).await?;
+    abi::decode_get_pool_id(&bytes)
+}
+
+/// Fetch a Balancer pool's tokens + balances from the singleton Vault via
+/// `getPoolTokens(poolId)`.
+///
+/// Returns `(tokens, balances)` — the third Vault field (`lastChangeBlock`) is
+/// dropped, matching the Python caller.
+///
+/// # Errors
+///
+/// Returns a [`ProviderError`] on an `eth_call` or decode failure.
+pub async fn fetch_balancer_vault_tokens(
+    io: &ConstructionIo,
+    vault: Address,
+    pool_id: &[u8; 32],
+    block: Option<u64>,
+) -> Result<(Vec<Address>, Vec<U256>), ProviderError> {
+    let bytes = eth_call(io, vault, abi::encode_get_pool_tokens(pool_id), block).await?;
+    abi::decode_get_pool_tokens(&bytes)
+}
+
+/// Fetch a Balancer pool's `getSwapFeePercentage()` as a `uint256`.
+///
+/// # Errors
+///
+/// Returns a [`ProviderError`] on an `eth_call` or decode failure.
+pub async fn fetch_balancer_swap_fee(
+    io: &ConstructionIo,
+    address: Address,
+    block: Option<u64>,
+) -> Result<U256, ProviderError> {
+    let bytes = eth_call(io, address, abi::encode_get_swap_fee(), block).await?;
+    abi::decode_get_swap_fee(&bytes)
+}
+
+/// Fetch a Balancer pool's amplification parameter — the first `uint256 value`
+/// word of the `getAmplificationParameter()` tuple.
+///
+/// # Errors
+///
+/// Returns a [`ProviderError`] on an `eth_call` or decode failure.
+pub async fn fetch_balancer_amp(
+    io: &ConstructionIo,
+    address: Address,
+    block: Option<u64>,
+) -> Result<U256, ProviderError> {
+    let bytes = eth_call(io, address, abi::encode_get_amp(), block).await?;
+    abi::decode_get_amp(&bytes)
+}
+
+/// Fetch a Balancer weighted pool's `getNormalizedWeights()` array.
+///
+/// # Errors
+///
+/// Returns a [`ProviderError`] on an `eth_call` or decode failure.
+pub async fn fetch_balancer_weights(
+    io: &ConstructionIo,
+    address: Address,
+    block: Option<u64>,
+) -> Result<Vec<U256>, ProviderError> {
+    let bytes = eth_call(io, address, abi::encode_get_weights(), block).await?;
+    abi::decode_get_weights(&bytes)
+}
+
+/// Fetch a Balancer pool's `getRateProviders()` address array.
+///
+/// # Errors
+///
+/// Returns a [`ProviderError`] on an `eth_call` or decode failure. Callers
+/// mirror the Python `except (RpcError, AbiDecodeError): return []` — pools
+/// that don't expose `getRateProviders` (`WeightedPool2Tokens` / `MetaStable`)
+/// revert; the caller converts to an empty list.
+pub async fn fetch_balancer_rate_providers(
+    io: &ConstructionIo,
+    address: Address,
+    block: Option<u64>,
+) -> Result<Vec<Address>, ProviderError> {
+    let bytes = eth_call(io, address, abi::encode_get_rate_providers(), block).await?;
+    abi::decode_get_rate_providers(&bytes)
+}
+
+/// Fetch a single Balancer rate provider's `getRate()` as a `uint256`.
+///
+/// # Errors
+///
+/// Returns a [`ProviderError`] on an `eth_call` or decode failure.
+pub async fn fetch_balancer_rate(
+    io: &ConstructionIo,
+    provider: Address,
+    block: Option<u64>,
+) -> Result<U256, ProviderError> {
+    let bytes = eth_call(io, provider, abi::encode_get_rate(), block).await?;
+    abi::decode_get_rate(&bytes)
+}
+
+/// Probe a Balancer pool's sub-type: `getNormalizedWeights()` succeeds →
+/// [`BalancerFamily::Weighted`]; else `getAmplificationParameter()` succeeds →
+/// [`BalancerFamily::Stable`]; else an error (mirrors
+/// `balancer_builder_base.py::_detect_pool_type` — Linear pools unsupported).
+///
+/// # Errors
+///
+/// Returns a [`ProviderError`] when neither probe responds.
+pub async fn probe_balancer_type(
+    io: &ConstructionIo,
+    address: Address,
+    block: Option<u64>,
+) -> Result<BalancerFamily, ProviderError> {
+    if eth_call(io, address, abi::encode_get_weights(), block)
+        .await
+        .is_ok()
+    {
+        return Ok(BalancerFamily::Weighted);
+    }
+    if eth_call(io, address, abi::encode_get_amp(), block)
+        .await
+        .is_ok()
+    {
+        return Ok(BalancerFamily::Stable);
+    }
+    Err(ProviderError::DecodingError {
+        message: format!(
+            "Cannot determine Balancer pool type for {address}: neither \
+             getNormalizedWeights() nor getAmplificationParameter() responded"
+        ),
+    })
+}

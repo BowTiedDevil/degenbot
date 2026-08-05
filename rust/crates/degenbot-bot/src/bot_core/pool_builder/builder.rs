@@ -20,6 +20,8 @@ use degenbot_core::errors::ProviderError;
 use degenbot_db::error::DbError;
 use degenbot_db::snapshot::TickMapDb;
 use degenbot_pools::aerodrome_v2_state::RegisterAerodromeV2PoolParams;
+use degenbot_pools::balancer_stable_state::RegisterBalancerStablePoolParams;
+use degenbot_pools::balancer_weighted_state::RegisterBalancerWeightedPoolParams;
 use degenbot_pools::spec_bounds;
 use degenbot_pools::v2_state::RegisterV2PoolParams;
 use degenbot_pools::v3_state::RegisterV3PoolParams;
@@ -51,6 +53,8 @@ pub enum PoolBuilderError {
     UnknownVariant { factory: Address },
     #[error("out-of-spec V2 reserve")]
     Spec,
+    #[error("decode failure: {message}")]
+    Decoding { message: String },
     #[error("CREATE2 address verification failed")]
     Create2,
     #[error("DB read failed: {0}")]
@@ -326,6 +330,242 @@ pub async fn build_aerodrome_v2(
         reserve0,
         reserve1,
         update_block: block.unwrap_or(0),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Balancer V2 constructors (the SSSXG6 builder-follow-up: weighted + stable)
+// ---------------------------------------------------------------------------
+
+/// Balancer V2 pool-ID decoding (mirrors
+/// `balancer_builder_base.py::decode_pool_id`). The 32-byte identifier packs
+/// the pool contract address (bytes 0..20), `specialization` (uint16, 20..22)
+/// and `nonce` (bytes 22..32).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DecodedBalancerPoolId {
+    /// The pool contract address (low 20 bytes of the identifier).
+    pub pool_address: Address,
+    /// Vault specialization (`0` General, `1` `MinimalSwapInfo`, `2` `TwoToken`).
+    pub specialization: u16,
+    /// Registration nonce.
+    pub nonce: u64,
+}
+
+/// Decode a 32-byte Balancer V2 pool identifier.
+#[must_use]
+pub fn decode_balancer_pool_id(raw: &[u8; 32]) -> DecodedBalancerPoolId {
+    DecodedBalancerPoolId {
+        pool_address: Address::from_slice(&raw[0..20]),
+        specialization: u16::from_be_bytes([raw[20], raw[21]]),
+        nonce: u64::from_be_bytes([
+            raw[22], raw[23], raw[24], raw[25], raw[26], raw[27], raw[28], raw[29],
+        ]),
+    }
+}
+
+/// The `2e18` constant (`0x1BC16D674EC80000`) that only appears in the
+/// deployed bytecode of **V2** `WeightedPool` contracts (the `y == TWO`
+/// fast-path in `powDown`/`powUp`). Absent from V1 `WeightedPool2Tokens` —
+/// mirroring `detect_pow_version` in `balancer/pools.py`.
+const POW_V2_TWO: [u8; 8] = [0x1B, 0xC1, 0x6D, 0x67, 0x4E, 0xC8, 0x00, 0x00];
+
+/// Detect which `FixedPoint` library version a pool contract uses from its
+/// deployed bytecode: V2 (`2`) if the `2e18` constant is present, else V1
+/// (`1`). Returns the opaque `u8` discriminator `PowVersion` Rust stores.
+#[must_use]
+pub fn detect_pow_version(bytecode: &[u8]) -> u8 {
+    if bytecode.windows(8).any(|w| w == POW_V2_TWO) {
+        2
+    } else {
+        1
+    }
+}
+
+/// Compute a single token's Balancer scaling factor `ONE * 10^(18 - decimals)`
+/// (mirrors `scaling_helpers.py::_compute_scaling_factor`; `ONE = 1e18`).
+///
+/// # Errors
+///
+/// Returns [`PoolBuilderError::Spec`] if the token's decimals cannot be read.
+#[allow(clippy::cast_possible_truncation)]
+async fn compute_scaling_factor(
+    io: &ConstructionIo,
+    token: Address,
+    block: Option<u64>,
+) -> Result<U256, PoolBuilderError> {
+    let decimals = decimals_of(io, token, block).await?;
+    if decimals > 18 {
+        return Err(PoolBuilderError::Decoding {
+            message: format!("token {token} has {decimals} decimals (> 18, unsupported)"),
+        });
+    }
+    let one = U256::from(1_000_000_000_000_000_000u128); // 1e18
+    let pow = U256::from(10u64.pow(18 - decimals as u32));
+    Ok(one * pow)
+}
+
+/// Read an ERC-20 token's `decimals()` (`uint8`, right-aligned in its ABI
+/// word) via the choreography primitive.
+///
+/// # Errors
+///
+/// Returns [`PoolBuilderError::Rpc`] on an `eth_call`/decode failure.
+async fn decimals_of(
+    io: &ConstructionIo,
+    token: Address,
+    block: Option<u64>,
+) -> Result<u64, PoolBuilderError> {
+    use degenbot_rpc::abi;
+    let bytes = choreography::eth_call(
+        io,
+        token,
+        choreography::selector(b"decimals()").to_vec(),
+        block,
+    )
+    .await
+    .map_err(PoolBuilderError::Rpc)?;
+    let dec = abi::decode_uint256(&bytes).map_err(PoolBuilderError::Rpc)?;
+    Ok(dec.to::<u64>())
+}
+
+/// Assemble `build_balancer_weighted` params for a Balancer V2 weighted pool
+/// (the ADR-005 slice 12b builder twin, SSSXG6): reads the 32-byte `poolId`,
+/// the Vault `getPoolTokens`, `getSwapFeePercentage`, `getNormalizedWeights`,
+/// detects the `PowVersion` from the deployed bytecode, and computes the token
+/// scaling factors from on-chain `decimals()` — producing a
+/// [`RegisterBalancerWeightedPoolParams`] ready for
+/// `BotState::register_balancer_weighted_pool` with no Python round-trip.
+///
+/// Mirrors `balancer_builder.py::_build_weighted` step-for-step (the token
+/// ERC-20 companion objects are built Python-side off the handle, as with
+/// `build_v2`).
+///
+/// # Errors
+///
+/// Returns [`PoolBuilderError::Rpc`] on an RPC/decode failure or
+/// [`PoolBuilderError::Spec`] on an out-of-range scaling factor.
+pub async fn build_balancer_weighted(
+    vault: Address,
+    address: Address,
+    io: &ConstructionIo,
+    block: Option<u64>,
+) -> Result<RegisterBalancerWeightedPoolParams, PoolBuilderError> {
+    let pool_id = choreography::fetch_balancer_pool_id(io, address, block).await?;
+    let (tokens, balances) =
+        choreography::fetch_balancer_vault_tokens(io, vault, &pool_id, block).await?;
+    let fee = choreography::fetch_balancer_swap_fee(io, address, block).await?;
+    let weights = choreography::fetch_balancer_weights(io, address, block).await?;
+
+    let bytecode = io.get_code(address, block).await?;
+    let pow_version = detect_pow_version(&bytecode);
+
+    let mut scaling_factors = Vec::with_capacity(tokens.len());
+    for token in &tokens {
+        scaling_factors.push(compute_scaling_factor(io, *token, block).await?);
+    }
+
+    Ok(RegisterBalancerWeightedPoolParams {
+        address,
+        vault,
+        pool_id,
+        tokens,
+        weights,
+        scaling_factors,
+        swap_fee: fee.to::<u128>(),
+        pow_version,
+        balances,
+        update_block: block.unwrap_or(0),
+    })
+}
+
+/// Assemble `build_balancer_stable` params for a Balancer V2 stable pool (the
+/// ADR-005 slice 12d builder twin, SSSXG6): reads the `poolId`, Vault
+/// `getPoolTokens`, `getSwapFeePercentage`, `getAmplificationParameter`; detects
+/// the BPT index (token whose address matches the pool — `None` for
+/// `MetaStablePools`); reads `getRateProviders` + per-provider `getRate()`
+/// (empty when the pool doesn't expose them); computes rate-multiplied scaling
+/// factors; and resolves the `invariant_version` from the Vault specialization
+/// (`MetaStable` `specialization=1` → V2, else V1) with an optional override.
+/// Returns a [`RegisterBalancerStablePoolParams`] for
+/// `BotState::register_balancer_stable_pool`.
+///
+/// Mirrors `balancer_builder.py::_build_stable` step-for-step.
+///
+/// # Errors
+///
+/// Returns [`PoolBuilderError::Rpc`] on an RPC/decode failure or
+/// [`PoolBuilderError::Spec`] on an out-of-range scaling factor.
+pub async fn build_balancer_stable(
+    vault: Address,
+    address: Address,
+    io: &ConstructionIo,
+    block: Option<u64>,
+    invariant_version_override: Option<u8>,
+) -> Result<RegisterBalancerStablePoolParams, PoolBuilderError> {
+    let pool_id = choreography::fetch_balancer_pool_id(io, address, block).await?;
+    let (tokens, balances) =
+        choreography::fetch_balancer_vault_tokens(io, vault, &pool_id, block).await?;
+    let fee = choreography::fetch_balancer_swap_fee(io, address, block).await?;
+    let amp = choreography::fetch_balancer_amp(io, address, block).await?;
+
+    let decoded = decode_balancer_pool_id(&pool_id);
+    let bpt_idx = tokens.iter().position(|t| *t == address);
+    let invariant_version = invariant_version_override.unwrap_or({
+        // MetaStablePools use specialization=1 → INVARIANT_V2 (roundUp `P_D`);
+        // else INVARIANT_V1 (always-roundDown `D_P`). Mirrors
+        // `resolve_invariant_version`.
+        if decoded.specialization == 1 {
+            2
+        } else {
+            1
+        }
+    });
+    let mut base_sf = Vec::with_capacity(tokens.len());
+    for token in &tokens {
+        base_sf.push(compute_scaling_factor(io, *token, block).await?);
+    }
+
+    // getRateProviders reverts for WeightedPool2Tokens / MetaStablePools —
+    // degrade to an empty list (mirrors the Python `except -> []`).
+    let providers = match choreography::fetch_balancer_rate_providers(io, address, block).await {
+        Ok(p) => p,
+        Err(
+            degenbot_core::errors::ProviderError::DecodingError { .. }
+            | degenbot_core::errors::ProviderError::ExecutionReverted { .. },
+        ) => Vec::new(),
+        Err(e) => return Err(PoolBuilderError::Rpc(e)),
+    };
+
+    let one = U256::from(1_000_000_000_000_000_000u128); // 1e18
+    let scaling_factors = if providers.is_empty() {
+        base_sf
+    } else {
+        let mut scaled = Vec::with_capacity(tokens.len());
+        for (bsf, provider) in base_sf.iter().zip(&providers) {
+            let rate = if *provider == Address::ZERO {
+                // Zero-address sentinel → rate of `ONE`.
+                one
+            } else {
+                choreography::fetch_balancer_rate(io, *provider, block).await?
+            };
+            scaled.push(bsf.saturating_mul(rate) / one);
+        }
+        scaled
+    };
+
+    Ok(RegisterBalancerStablePoolParams {
+        address,
+        vault,
+        pool_id,
+        tokens,
+        amp: amp.to::<u128>(),
+        scaling_factors,
+        swap_fee: fee.to::<u128>(),
+        bpt_idx,
+        invariant_version,
+        balances,
+        update_block: block.unwrap_or(0),
+        rate_provider: None,
     })
 }
 

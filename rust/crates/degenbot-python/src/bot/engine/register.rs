@@ -373,5 +373,10 @@ pub(crate) fn map_builder_err(
         degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError::Db(e) => {
             pyo3::exceptions::PyRuntimeError::new_err(format!("pool build DB read failed: {e}"))
         }
+        degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError::Decoding { message } => {
+            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "pool build decode failure: {message}"
+            ))
+        }
     }
 }

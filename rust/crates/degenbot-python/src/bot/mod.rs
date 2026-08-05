@@ -755,6 +755,88 @@ impl PyBot {
             .register_aerodrome_pool(&params))
     }
 
+    /// Build + register a Balancer V2 **weighted** pool through the Rust
+    /// `PoolBuilder` (SSSXG6 delegation adapter). The core
+    /// `builder::build_balancer_weighted` runs the full `getPoolId` + Vault
+    /// `getPoolTokens` + `getSwapFeePercentage` + `getNormalizedWeights` +
+    /// bytecode `PowVersion` detect + `decimals()` scaling-factor choreography
+    /// and returns a [`RegisterBalancerWeightedPoolParams`]; this adapter
+    /// registers it into [`PoolEntry::BalancerWeighted`]. Returns the `pool_id`.
+    fn build_balancer_weighted_pool(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        vault: &str,
+        block: Option<u64>,
+    ) -> PyResult<u64> {
+        use degenbot_bot::bot_core::pool_builder::builder;
+        use degenbot_core::runtime::get_runtime;
+        let addr = parse_address(address)?;
+        let vault_addr = parse_address(vault)?;
+        let io = self.bot.construction_io_arc().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "build_balancer_weighted_pool: no ConstructionIo attached (requires an alloy provider)",
+            )
+        })?;
+        let params = py
+            .detach(|| {
+                get_runtime().block_on(builder::build_balancer_weighted(
+                    vault_addr, addr, &io, block,
+                ))
+            })
+            .map_err(map_builder_err)?;
+        Ok(self
+            .bot
+            .state_arc()
+            .write()
+            .register_balancer_weighted_pool(&params))
+    }
+
+    /// Build + register a Balancer V2 **stable** pool through the Rust
+    /// `PoolBuilder` (SSSXG6 delegation adapter). The core
+    /// `builder::build_balancer_stable` runs the `getPoolId` + Vault
+    /// `getPoolTokens` + `getSwapFeePercentage` + `getAmplificationParameter`
+    /// + BPT-detect + rate-provider/rate + scaling-factor + `invariant_version`
+    /// resolution choreography and returns a [`RegisterBalancerStablePoolParams`];
+    /// this adapter registers it into [`PoolEntry::BalancerStable`].
+    /// `invariant_version` overrides the Vault-specialization heuristic.
+    /// Returns the `pool_id`.
+    #[pyo3(signature = (address, vault, block=None, invariant_version=None))]
+    fn build_balancer_stable_pool(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        vault: &str,
+        block: Option<u64>,
+        invariant_version: Option<u8>,
+    ) -> PyResult<u64> {
+        use degenbot_bot::bot_core::pool_builder::builder;
+        use degenbot_core::runtime::get_runtime;
+        let addr = parse_address(address)?;
+        let vault_addr = parse_address(vault)?;
+        let io = self.bot.construction_io_arc().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "build_balancer_stable_pool: no ConstructionIo attached (requires an alloy provider)",
+            )
+        })?;
+        let params = py
+            .detach(|| {
+                get_runtime().block_on(builder::build_balancer_stable(
+                    vault_addr,
+                    addr,
+                    &io,
+                    block,
+                    invariant_version,
+                ))
+            })
+            .map_err(map_builder_err)?;
+        Ok(self
+            .bot
+            .state_arc()
+            .write()
+            .register_balancer_stable_pool(&params))
+    }
+
     /// Build + register a V3 pool through the Rust `PoolBuilder` (T4 / 4GQWZ4
     /// delegation adapter) — the V3 twin of [`Self::build_v2_pool`]. The tick
     /// map is assembled DB-first (a `TickMapDb` hit → `Tracked`, feeding the
