@@ -108,9 +108,18 @@ alloy::sol! {
     interface ICurvePool {
         function coins(uint256 i) external view returns (address);
         function balances(uint256 i) external view returns (uint256);
+        function admin_balances(uint256 i) external view returns (uint256);
+        function price_scale(uint256 k) external view returns (uint256);
         function A() external view returns (uint256);
         function fee() external view returns (uint256);
         function admin_fee() external view returns (uint256);
+        function D() external view returns (uint256);
+        function get_virtual_price() external view returns (uint256);
+        function base_virtual_price() external view returns (uint256);
+        function base_cache_updated() external view returns (uint256);
+        function oracle_method() external view returns (uint256);
+        function redemption_price_snap() external view returns (address);
+        function snappedRedemptionPrice() external view returns (uint256);
         function initial_A() external view returns (uint256);
         function initial_A_time() external view returns (uint256);
         function future_A() external view returns (uint256);
@@ -900,6 +909,32 @@ pub fn decode_curve_balances(bytes: &[u8]) -> ProviderResult<U256> {
     let r = ICurvePool::balancesCall::abi_decode_returns(bytes).map_err(|e| {
         ProviderError::DecodingError {
             message: format!("balances decode: {e}"),
+        }
+    })?;
+    Ok(r)
+}
+
+/// Encode `admin_balances(uint256)` calldata for coin index `i`.
+#[must_use]
+pub fn encode_curve_admin_balances(i: u8) -> Vec<u8> {
+    ICurvePool::admin_balancesCall { i: U256::from(i) }.abi_encode()
+}
+
+/// Encode `price_scale(uint256)` calldata for price-scale index `k`.
+#[must_use]
+pub fn encode_curve_price_scale(k: u8) -> Vec<u8> {
+    ICurvePool::price_scaleCall { k: U256::from(k) }.abi_encode()
+}
+
+/// Decode `redemption_price_snap()` return data (single `address`).
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] on decode failure.
+pub fn decode_curve_redemption_price_snap(bytes: &[u8]) -> ProviderResult<Address> {
+    let r = ICurvePool::redemption_price_snapCall::abi_decode_returns(bytes).map_err(|e| {
+        ProviderError::DecodingError {
+            message: format!("redemption_price_snap decode: {e}"),
         }
     })?;
     Ok(r)

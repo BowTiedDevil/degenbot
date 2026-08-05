@@ -21,6 +21,7 @@ pub mod block_clock;
 pub mod block_pump;
 pub mod bot;
 pub mod construction_io;
+pub mod curve_data_provider_impl;
 pub mod curve_state;
 pub mod divergence_probe;
 pub mod drain_sink;
