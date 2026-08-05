@@ -271,9 +271,17 @@ pub fn resolve_ramping_a(p: ARampingParams, timestamp: u64) -> Result<U256, Curv
 
 /// Apply the `YVariant0` A_PRECISION divisor to a raw amp (mirrors the
 /// `y_variant == VARIANT_0` branch in `_resolve_calculation_inputs_via_io`).
+///
+/// NOTE: only `VARIANT_0` divides by `a_precision` here — the Python companion
+/// resolves `amp = raw_a // A_PRECISION` iff `y_variant == VARIANT_0`. This is
+/// distinct from [`YVariant::omits_a_precision`], which ALSO omits for
+/// `VARIANT_1` but is used *inside* `stableswap_get_y`'s c/b formulas (a
+/// different, correct dual-use). Reusing `omits_a_precision()` here caused a
+/// real VARIANT_1 pool (Curve 3pool) to under-amplify by `A_PRECISION` and
+/// misprice every swap; surfaced by the on-chain parity oracle test.
 #[must_use]
 pub fn resolve_amp(raw_a: U256, a_precision: U256, y_variant: crate::stableswap::YVariant) -> U256 {
-    if y_variant.omits_a_precision() {
+    if y_variant == crate::stableswap::YVariant::Variant0 {
         raw_a / a_precision
     } else {
         raw_a

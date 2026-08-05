@@ -44,6 +44,20 @@ pub enum CurveInputsError {
     LengthMismatch(&'static str),
     /// The requested pool isn't a registered Curve pool.
     UnknownPool(u64),
+    /// `get_dy_underlying` on a pool with no base pool (a plain pool).
+    NotMetapool,
+}
+
+impl From<degenbot_curve_math::CurveSwapError> for CurveInputsError {
+    fn from(e: degenbot_curve_math::CurveSwapError) -> Self {
+        Self::Swap(e)
+    }
+}
+
+impl From<degenbot_curve_math::CurveMathError> for CurveInputsError {
+    fn from(e: degenbot_curve_math::CurveMathError) -> Self {
+        Self::Swap(degenbot_curve_math::CurveSwapError::from(e))
+    }
 }
 
 /// Compute `xp = rate * balance // PRECISION` (strict-zip, matches the

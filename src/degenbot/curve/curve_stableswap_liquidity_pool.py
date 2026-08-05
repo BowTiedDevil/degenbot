@@ -5,7 +5,6 @@ plain pools, metapools, lending pools, and crypto pools.
 """
 
 import contextlib
-import dataclasses
 from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Any, Self
 from weakref import WeakSet
@@ -13,15 +12,6 @@ from weakref import WeakSet
 from eth_typing import ChecksumAddress
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.curve.dy import (
-    DyCalculationInputs as RustDyCalculationInputs,
-)
-from degenbot.curve.dy import (
-    calculate_dy as rust_calculate_dy,
-)
-from degenbot.curve.dy import (
-    calculate_dy_underlying as rust_calculate_dy_underlying,
-)
 from degenbot.curve.math import (
     stableswap_get_d as curve_stableswap_get_d,
 )
@@ -47,7 +37,6 @@ from degenbot.curve.types import (
     CurveStableswapPoolState,
     CurveStableSwapPoolStateUpdated,
     DVariant,
-    DyCalculationInputs,
     LendingRateStyle,
     MetapoolRateStyle,
     MetapoolUnderlyingStyle,
@@ -741,148 +730,6 @@ class CurveStableswapPool(
 
         return dy, dy_0 - dy, total_supply
 
-    def _resolve_calculation_inputs_via_io(
-        self,
-        block_number: int,
-        override_state: CurveStableswapPoolState | None = None,
-    ) -> DyCalculationInputs:
-        """Pre-resolve all data needed by DyCalculator implementations.
-
-        All I/O, cache lookups, and rate resolution happen here.
-        The calculator receives a frozen snapshot — no pool access needed.
-
-        Returns:
-            The computed value.
-
-        Raises:
-            MissingCurveData: See function documentation.
-
-        """
-        pool_balances = override_state.balances if override_state is not None else self.balances
-
-        # Resolve block timestamp
-        block_timestamp = self._cache.get_cached_block_timestamp(block_number)
-
-        # Resolve amp with y_variant-aware A_PRECISION handling.
-        # stableswap_get_y expects amp to be already divided by A_PRECISION
-        # for VARIANT_0, and undivided for other variants.
-        raw_amp = self._a(timestamp=block_timestamp)
-        amp = (
-            raw_amp // self.A_PRECISION
-            if self._strategies.y_variant == YVariant.VARIANT_0
-            else raw_amp
-        )
-
-        # Resolve rates (lending-rate I/O)
-        if self._strategies.lending_rate_style == LendingRateStyle.NONE:
-            resolved_rates = self.rate_multipliers
-        else:
-            if self._data_provider is None:
-                raise MissingCurveData(
-                    self.address,
-                    "lending_rate",
-                    "Data provider is required for pools with"
-                    " lending tokens. Provide one via Bot.build_pool().",
-                )
-            resolved_rates = self._data_provider.lending_rates(block_number)
-
-        # Compute XP
-        xp = tuple(
-            rate * balance // self.PRECISION
-            for rate, balance in zip(resolved_rates, pool_balances, strict=True)
-        )
-
-        inputs = DyCalculationInputs(
-            PRECISION=self.PRECISION,
-            FEE_DENOMINATOR=self.FEE_DENOMINATOR,
-            fee=self.fee,
-            n_coins=len(self.tokens),
-            balances=pool_balances,
-            rate_multipliers=self.rate_multipliers,
-            precision_multipliers=self.precision_multipliers,
-            offpeg_fee_multiplier=self.offpeg_fee_multiplier,
-            fee_gamma=self.fee_gamma,
-            mid_fee=self.mid_fee,
-            out_fee=self.out_fee,
-            address=self.address,
-            resolved_rates=resolved_rates,
-            xp=xp,
-            block_number=block_number,
-            block_timestamp=block_timestamp,
-            amp=amp,
-            d_variant=self._strategies.d_variant,
-            y_variant=self._strategies.y_variant,
-            yd_variant=self._strategies.yd_variant,
-            a_precision=self.A_PRECISION,
-        )
-
-        swap_style = self._strategies.swap_style
-
-        # ── Crypto-specific I/O ──
-        if swap_style == SwapStyle.CRYPTO:
-            d_val = self._cache.get_cached_contract_d(block_number)
-            gamma_val = self._cache.get_cached_gamma(block_number)
-            price_scale_val = self._cache.get_cached_price_scale(block_number)
-
-            return dataclasses.replace(
-                inputs,
-                d=d_val,
-                gamma=gamma_val,
-                price_scale=price_scale_val,
-            )
-
-        # ── Live-admin-specific I/O ──
-        if swap_style in {
-            SwapStyle.LIVE_ADMIN,
-            SwapStyle.LIVE_ADMIN_DYNAMIC,
-            SwapStyle.LIVE_ADMIN_DYNAMIC_PRECISION,
-            SwapStyle.LIVE_ADMIN_ORACLE,
-        }:
-            if self._data_provider is None:
-                raise MissingCurveData(
-                    self.address,
-                    "data_provider",
-                    "Live-admin pool requires a data_provider"
-                    " for token balances and admin balances.",
-                )
-            live_balances = tuple(
-                self._data_provider.token_balance(token.address, self.address, block_number)
-                for token in self._tokens
-            )
-            admin_balances = self._cache.get_cached_admin_balances(block_number)
-            effective_balances = tuple(
-                lb - ab for lb, ab in zip(live_balances, admin_balances, strict=True)
-            )
-
-            # For LIVE_ADMIN_ORACLE, re-resolve rates using effective balances
-            if swap_style == SwapStyle.LIVE_ADMIN_ORACLE:
-                oracle_rates = self._resolve_rates(
-                    rates=self.rate_multipliers,
-                    block_number=block_number,
-                )
-                oracle_xp = tuple(
-                    rate * balance // self.PRECISION
-                    for rate, balance in zip(oracle_rates, effective_balances, strict=True)
-                )
-            else:
-                oracle_rates = resolved_rates
-                oracle_xp = tuple(
-                    rate * balance // self.PRECISION
-                    for rate, balance in zip(resolved_rates, effective_balances, strict=True)
-                )
-
-            return dataclasses.replace(
-                inputs,
-                live_balances=live_balances,
-                admin_balances=admin_balances,
-                effective_balances=effective_balances,
-                balances=effective_balances,
-                resolved_rates=oracle_rates,
-                xp=oracle_xp,
-            )
-
-        return inputs
-
     def get_dy(
         self,
         i: int,
@@ -901,50 +748,24 @@ class CurveStableswapPool(
 
         Reference: https://github.com/curveresearch/notes/blob/main/stableswap.pdf
 
+        Delegates to the Rust-owned `PyLiquidityPool.curve_get_dy` (task
+        `V5X2YP`): the I/O orchestration (amp/rates/xp + provider fetches) and
+        the pure dy math both run in the Rust core, so this is a single handle
+        call with no Python provider / cache / calculator on the swap path.
+
         Returns:
             The computed integer value.
 
+        Raises:
+            EVMRevertError: See function documentation.
+
         """
         block_number = self._resolve_block_number(block_identifier)
-
-        # Resolve the calculation snapshot (I/O stays in the companion) and
-        # delegate the pure dy math to the Rust `degenbot-curve-math` core.
-        if self.base_pool is not None:
-            inputs = self._resolve_metapool_inputs_via_io(block_number, override_state)
-        else:
-            inputs = self._resolve_calculation_inputs_via_io(block_number, override_state)
-        return self._calculate_dy_via_rust(i, j, dx, inputs)
-
-    def _resolve_metapool_inputs_via_io(
-        self,
-        block_number: int,
-        override_state: CurveStableswapPoolState | None = None,
-    ) -> DyCalculationInputs:
-        """Pre-resolve data needed by metapool DyCalculator implementations.
-
-        Extends the base inputs with metapool-specific I/O (virtual price,
-        redemption price, base pool reference).
-
-        Returns:
-            The computed value.
-
-        """
-        inputs = self._resolve_calculation_inputs_via_io(block_number, override_state)
-
-        # Resolve virtual price
-        virtual_price = self._cache.get_cached_virtual_price(block_number)
-
-        # Resolve scaled redemption price (may not be available for all metapools)
-        scaled_redemption_price: int | None = None
-        with contextlib.suppress(MissingCurveData):
-            scaled_redemption_price = self._cache.get_cached_scaled_redemption_price(block_number)
-
-        return dataclasses.replace(
-            inputs,
-            virtual_price=virtual_price,
-            scaled_redemption_price=scaled_redemption_price,
-            base_pool=self.base_pool,
-        )
+        override_balances = list(override_state.balances) if override_state is not None else None
+        try:
+            return self._py_pool.curve_get_dy(i, j, dx, block_number, override_balances)
+        except ValueError as e:
+            raise EVMRevertError(error=str(e)) from e
 
     def _get_dy_underlying(
         self,
@@ -954,26 +775,13 @@ class CurveStableswapPool(
         block_identifier: BlockIdentifier | None = None,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        block_number = self._resolve_block_number(block_identifier)
-        inputs = self._resolve_metapool_inputs_via_io(block_number, override_state)
-        return self._calculate_dy_via_rust(i, j, dx, inputs, use_underlying=True)
+        """Metapool underlying `dy` — Rust-owned base-pool delegation.
 
-    def _calculate_dy_via_rust(
-        self,
-        i: int,
-        j: int,
-        dx: int,
-        inputs: DyCalculationInputs,
-        *,
-        use_underlying: bool = False,
-    ) -> int:
-        """Delegate the pure dy calculation to the Rust `degenbot-curve-math` core.
-
-        The I/O orchestration (amp resolution, lending-rate fetch, xp
-        construction) happens in ``_resolve_calculation_inputs_via_io``; this
-        converts the resolved snapshot into the Rust builder and calls
-        ``calculate_dy`` / ``calculate_dy_underlying`` (the `degenbot._ffi`
-        seam, task `CNEP47`).
+        Delegates to `PyLiquidityPool.curve_get_dy_underlying` (task
+        `V5X2YP`): the metapool snapshot + the base-pool `calc_token_amount` /
+        `get_dy` / `calc_withdraw_one_coin` ops run through the Rust
+        `BotCurveBasePoolPort`, retiring the Python `_LazyBasePool` go-between
+        for the swap path.
 
         Returns:
             The computed integer value.
@@ -982,49 +790,11 @@ class CurveStableswapPool(
             EVMRevertError: See function documentation.
 
         """
-        r = RustDyCalculationInputs()
-        r.precision = inputs.PRECISION
-        r.fee_denominator = inputs.FEE_DENOMINATOR
-        r.fee = inputs.fee
-        r.n_coins = inputs.n_coins
-        r.balances = list(inputs.balances)
-        r.rate_multipliers = list(inputs.rate_multipliers)
-        r.precision_multipliers = list(inputs.precision_multipliers)
-        r.offpeg_fee_multiplier = inputs.offpeg_fee_multiplier
-        r.fee_gamma = inputs.fee_gamma
-        r.mid_fee = inputs.mid_fee
-        r.out_fee = inputs.out_fee
-        r.address = str(inputs.address)
-        r.resolved_rates = list(inputs.resolved_rates)
-        r.xp = list(inputs.xp)
-        r.block_number = inputs.block_number
-        r.block_timestamp = inputs.block_timestamp
-        r.amp = inputs.amp
-        r.d_variant = int(inputs.d_variant.value)
-        r.y_variant = int(inputs.y_variant.value)
-        r.a_precision = inputs.a_precision
-        r.swap_style = int(self._strategies.swap_style.value)
-        r.metapool = self.base_pool is not None
-        r.metapool_rate_style = int(self._strategies.metapool_rate_style.value)
-        r.metapool_underlying_style = int(self._strategies.metapool_underlying_style.value)
-        r.d = inputs.d
-        r.gamma = inputs.gamma
-        r.price_scale = list(inputs.price_scale) if inputs.price_scale is not None else None
-        r.effective_balances = (
-            list(inputs.effective_balances) if inputs.effective_balances is not None else None
-        )
-        r.virtual_price = inputs.virtual_price
-        r.scaled_redemption_price = inputs.scaled_redemption_price
-
+        block_number = self._resolve_block_number(block_identifier)
+        override_balances = list(override_state.balances) if override_state is not None else None
         try:
-            if use_underlying:
-                if self.base_pool is None:
-                    raise EVMRevertError(
-                        error=f"{self.address}: cannot get underlying dy without a base pool"
-                    )
-                return rust_calculate_dy_underlying(i, j, dx, r, self.base_pool)
-            return rust_calculate_dy(i, j, dx, r)
-        except (ValueError, TypeError) as e:
+            return self._py_pool.curve_get_dy_underlying(i, j, dx, block_number, override_balances)
+        except ValueError as e:
             raise EVMRevertError(error=str(e)) from e
 
     def _get_d(self, _xp: Sequence[int], _amp: int) -> int:

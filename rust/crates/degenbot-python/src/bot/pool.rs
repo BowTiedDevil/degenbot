@@ -2400,6 +2400,103 @@ impl PyLiquidityPool {
         Some(PyLiquidityPool::new(Arc::clone(&self.core), base_id))
     }
 
+    /// Rust-owned Curve stableswap `curve_get_dy(i, j, dx, block_number,
+    /// override_balances)` on this handle's pool — the single-call shape the
+    /// companion `CurveStableswapPool.get_dy` delegates to (task `V5X2YP`).
+    /// Mirrors `PyBot.curve_get_dy` but bound to the handle's `pool_id`, so a
+    /// swap runs start-to-finish with no Python provider / cache / calculator.
+    #[pyo3(signature = (i, j, dx, block_number, override_balances=None))]
+    fn curve_get_dy(
+        &self,
+        py: Python<'_>,
+        i: usize,
+        j: usize,
+        dx: &Bound<'_, PyAny>,
+        block_number: u64,
+        override_balances: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let amount = crate::conversion::alloy::extract_python_u256(dx)?;
+        let overrides = match override_balances {
+            Some(list) => {
+                let cast = list.cast::<pyo3::types::PyList>().map_err(|_| {
+                    pyo3::exceptions::PyTypeError::new_err("override_balances must be a list[int]")
+                })?;
+                Some(crate::bot::extract_u256_list(cast)?)
+            }
+            None => None,
+        };
+        let result = {
+            let core = self.core.read();
+            core.curve_get_dy(
+                self.pool_id,
+                i,
+                j,
+                amount,
+                block_number,
+                overrides.as_deref(),
+            )
+        };
+        let out = match result {
+            Ok(v) => v,
+            Err(e) => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "Curve get_dy failure: {e:?}"
+                )));
+            }
+        };
+        let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
+        Ok(bound.unbind())
+    }
+
+    /// Rust-owned Curve metapool `curve_get_dy_underlying(i, j, dx,
+    /// block_number, override_balances)` on this handle's pool — the
+    /// single-call shape the companion `CurveStableswapPool
+    /// ._get_dy_underlying` delegates to. Base-pool ops go through the Rust
+    /// port (`BotCurveBasePoolPort`), so the Python `_LazyBasePool` go-between
+    /// is retired for the swap path.
+    #[pyo3(signature = (i, j, dx, block_number, override_balances=None))]
+    fn curve_get_dy_underlying(
+        &self,
+        py: Python<'_>,
+        i: usize,
+        j: usize,
+        dx: &Bound<'_, PyAny>,
+        block_number: u64,
+        override_balances: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let amount = crate::conversion::alloy::extract_python_u256(dx)?;
+        let overrides = match override_balances {
+            Some(list) => {
+                let cast = list.cast::<pyo3::types::PyList>().map_err(|_| {
+                    pyo3::exceptions::PyTypeError::new_err("override_balances must be a list[int]")
+                })?;
+                Some(crate::bot::extract_u256_list(cast)?)
+            }
+            None => None,
+        };
+        let result = {
+            let core = self.core.read();
+            core.curve_get_dy_underlying(
+                self.pool_id,
+                i,
+                j,
+                amount,
+                block_number,
+                overrides.as_deref(),
+            )
+        };
+        let out = match result {
+            Ok(v) => v,
+            Err(e) => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "Curve get_dy_underlying failure: {e:?}"
+                )));
+            }
+        };
+        let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
+        Ok(bound.unbind())
+    }
+
     // --- Curve data-provider read-throughs (so the companion's PerBlockCache
     //     reads through the stored trait object via a handle adapter,
     //     mirroring the Balancer `_HandleRateProviderAdapter`). Each returns

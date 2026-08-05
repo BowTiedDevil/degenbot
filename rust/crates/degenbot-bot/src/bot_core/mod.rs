@@ -56,7 +56,10 @@ pub use balancer_weighted_state::{
     BalancerWeightedPoolIdentity, BalancerWeightedPoolState, RegisterBalancerWeightedPoolParams,
 };
 pub use curve_state::{CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams};
-use degenbot_curve_math::calculate_dy;
+use degenbot_curve_math::{
+    calculate_dy, calculate_dy_underlying, resolve_ramping_a, stableswap_get_d, stableswap_get_y_d,
+    ARampingParams, CurveBasePoolPort, CurveSwapError, DVariant, YDVariant,
+};
 pub use divergence_probe::{TrackedSlotKind, TrackedSlotProbe};
 pub use registration_lifecycle::{
     run_cl_v3_lifecycle, run_cl_v4_lifecycle, run_v3_registration_lifecycle,
@@ -212,6 +215,141 @@ pub(crate) fn trace_watch_tick() -> Option<i32> {
     std::env::var("DEGENBOT_TRACE_TICK")
         .ok()
         .and_then(|v| v.trim().parse::<i32>().ok())
+}
+
+/// The Curve swap-fee denominator (1e10).
+const CURVE_FEE_DENOMINATOR: U256 = U256::from_limbs([10_000_000_000, 0, 0, 0]);
+/// The Curve `PRECISION` (18 decimals).
+const CURVE_PRECISION: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
+
+/// Compute the base pool's `xp = rate * balance // PRECISION` from its
+/// immutable `rate_multipliers` + a balance vector (twin of the companion
+/// `_xp`).
+fn curve_base_xp(
+    identity: &degenbot_pools::curve_state::CurvePoolIdentity,
+    balances: &[U256],
+) -> Result<Vec<U256>, CurveInputsError> {
+    if identity.rate_multipliers.len() != balances.len() {
+        return Err(CurveInputsError::LengthMismatch("rates/balances"));
+    }
+    Ok(identity
+        .rate_multipliers
+        .iter()
+        .zip(balances)
+        .map(|(r, b)| *r * *b / CURVE_PRECISION)
+        .collect())
+}
+
+/// Build the `ARampingParams` the `resolve_ramping_a` twin reads, from a
+/// pool's immutable A-ramping identity fields.
+fn curve_ramping_params(
+    identity: &degenbot_pools::curve_state::CurvePoolIdentity,
+) -> ARampingParams {
+    ARampingParams {
+        a_coefficient: identity.a_coefficient,
+        initial_a_coefficient: identity.initial_a_coefficient,
+        future_a_coefficient: identity.future_a_coefficient,
+        initial_a_coefficient_time: identity.initial_a_coefficient_time,
+        future_a_coefficient_time: identity.future_a_coefficient_time,
+        create_timestamp: identity.create_timestamp,
+        a_precision: u32::try_from(identity.a_precision).unwrap_or(0),
+    }
+}
+
+/// Resolve the block timestamp for A-ramping. Only a pool that actually ramps
+/// (has end-time set) needs a provider block-timestamp fetch; plain pools
+/// return `0` and `resolve_ramping_a` ignores it.
+fn curve_block_timestamp(
+    identity: &degenbot_pools::curve_state::CurvePoolIdentity,
+    provider: Option<&dyn degenbot_pools::curve_data_provider::CurveDataProvider>,
+    block_number: u64,
+) -> Result<u64, CurveInputsError> {
+    if identity.future_a_coefficient_time.is_none() {
+        return Ok(0);
+    }
+    let p = provider.ok_or(CurveInputsError::NoProvider("block_timestamp"))?;
+    p.block_timestamp(block_number)
+        .map_err(CurveInputsError::Provider)
+}
+
+/// Fetch a pool's LP-token total supply via its stored provider (`lp_token`
+/// falling back to the pool token when the LP IS the pool token).
+fn curve_total_supply(
+    identity: &degenbot_pools::curve_state::CurvePoolIdentity,
+    provider: Option<&dyn degenbot_pools::curve_data_provider::CurveDataProvider>,
+    block_number: u64,
+) -> Result<U256, CurveInputsError> {
+    let p = provider.ok_or(CurveInputsError::NoProvider("token_total_supply"))?;
+    let lp = identity.lp_token.unwrap_or(identity.tokens[0]);
+    p.token_total_supply(lp, block_number)
+        .map_err(CurveInputsError::Provider)
+}
+
+/// The base-pool delegation port for metapool `get_dy_underlying` (task
+/// `V5X2YP`). Implements [`CurveBasePoolPort`] by delegating each op to a
+/// registered base `CurvePool` in the same `BotState` — the Rust twin of the
+/// Python `_LazyBasePool`/`CurveStableswapPool` base-pool delegate. All
+/// methods are immutable reads on `&BotState`, so the port borrows the state
+/// freely without a re-entrant lock.
+/// Convert an orchestration [`CurveInputsError`] into a [`CurveSwapError`]
+/// for the `CurveBasePoolPort` contract (which can only carry `CurveSwapError`).
+fn curve_error_into_swap(e: CurveInputsError) -> CurveSwapError {
+    match e {
+        CurveInputsError::Swap(x) => x,
+        CurveInputsError::UnknownPool(_) => CurveSwapError::MissingValue("unknown base pool"),
+        CurveInputsError::NotMetapool => CurveSwapError::NotMetapool,
+        CurveInputsError::LengthMismatch(_) => {
+            CurveSwapError::MissingValue("base-pool length mismatch")
+        }
+        CurveInputsError::NoProvider(_) => {
+            CurveSwapError::MissingValue("base-pool provider missing")
+        }
+        CurveInputsError::Provider(_) => {
+            CurveSwapError::MissingValue("base-pool provider fetch failed")
+        }
+    }
+}
+
+pub(crate) struct BotCurveBasePoolPort<'a> {
+    state: &'a BotState,
+    base_id: u64,
+}
+
+impl CurveBasePoolPort for BotCurveBasePoolPort<'_> {
+    fn token_count(&self) -> usize {
+        self.state
+            .get_curve_identity(self.base_id)
+            .map_or(0, degenbot_pools::curve_state::CurvePoolIdentity::n_coins)
+    }
+
+    fn fee(&self) -> U256 {
+        self.state
+            .get_curve_identity(self.base_id)
+            .map_or(U256::ZERO, |id| U256::from(id.fee))
+    }
+
+    fn calc_token_amount(&self, amounts: &[U256], block: u64) -> Result<U256, CurveSwapError> {
+        self.state
+            .curve_calc_token_amount(self.base_id, amounts, true, block)
+            .map_err(curve_error_into_swap)
+    }
+
+    fn get_dy(&self, i: usize, j: usize, dx: U256, block: u64) -> Result<U256, CurveSwapError> {
+        self.state
+            .curve_get_dy(self.base_id, i, j, dx, block, None)
+            .map_err(curve_error_into_swap)
+    }
+
+    fn calc_withdraw_one_coin(
+        &self,
+        token_amount: U256,
+        i: usize,
+        block: u64,
+    ) -> Result<U256, CurveSwapError> {
+        self.state
+            .curve_calc_withdraw_one_coin(self.base_id, token_amount, i, block)
+            .map_err(curve_error_into_swap)
+    }
 }
 
 fn drain_dbg_log_buf(
@@ -811,6 +949,175 @@ impl BotState {
             override_balances,
         )?;
         calculate_dy(i, j, dx, &inputs).map_err(CurveInputsError::Swap)
+    }
+
+    /// Rust-owned Curve metapool `get_dy_underlying(i, j, dx)` (task
+    /// `V5X2YP`, epic `TV72EG`). Resolves the metapool snapshot via
+    /// [`degenbot_pools::resolve_dy_inputs`], then delegates the base-pool ops
+    /// (`calc_token_amount` / `get_dy` / `calc_withdraw_one_coin`) through a
+    /// [`BotCurveBasePoolPort`] over the registered base `CurvePoolState` in
+    /// this same `BotState` — the Rust twin of the Python `_LazyBasePool`
+    /// delegate (retires that go-between for the swap path).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CurveInputsError::UnknownPool`] if the pool or its base pool
+    /// isn't a registered Curve pool, [`CurveInputsError::NotMetapool`] for a
+    /// plain pool, otherwise the orchestration / swap-math error.
+    pub fn curve_get_dy_underlying(
+        &self,
+        pool_id: u64,
+        i: usize,
+        j: usize,
+        dx: U256,
+        block_number: u64,
+        override_balances: Option<&[U256]>,
+    ) -> Result<U256, CurveInputsError> {
+        let (identity, state) = self
+            .pools
+            .get(&pool_id)
+            .and_then(PoolEntry::curve)
+            .ok_or(CurveInputsError::UnknownPool(pool_id))?;
+        let base_addr = identity.base_pool.ok_or(CurveInputsError::NotMetapool)?;
+        let base_id = self
+            .pool_id_by_address(&base_addr)
+            .ok_or(CurveInputsError::UnknownPool(u64::MAX))?;
+        let provider = state.data_provider.as_deref();
+        let inputs = resolve_dy_inputs(
+            identity,
+            &state.balances,
+            provider,
+            block_number,
+            override_balances,
+        )?;
+        let port = BotCurveBasePoolPort {
+            state: self,
+            base_id,
+        };
+        calculate_dy_underlying(i, j, dx, &inputs, &port).map_err(CurveInputsError::Swap)
+    }
+
+    /// Rust twin of the companion `calc_token_amount(amounts, deposit)` on a
+    /// Curve pool (task `V5X2YP`). Base-pool delegation op for metapool
+    /// `get_dy_underlying`; also a standalone calc entry. Computes `D` before
+    /// and after the balance change and scales by the LP total supply
+    /// (fetched via the stored provider).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CurveInputsError::UnknownPool`] / [`CurveInputsError::Swap`] /
+    /// [`CurveInputsError::LengthMismatch`] / [`CurveInputsError::NoProvider`]
+    /// (`"token_total_supply"`).
+    pub fn curve_calc_token_amount(
+        &self,
+        pool_id: u64,
+        amounts: &[U256],
+        deposit: bool,
+        block_number: u64,
+    ) -> Result<U256, CurveInputsError> {
+        let (identity, state) = self
+            .pools
+            .get(&pool_id)
+            .and_then(PoolEntry::curve)
+            .ok_or(CurveInputsError::UnknownPool(pool_id))?;
+        let n = identity.n_coins();
+        if amounts.len() != n {
+            return Err(CurveInputsError::LengthMismatch("amounts/coins"));
+        }
+        let provider = state.data_provider.as_deref();
+        let timestamp = curve_block_timestamp(identity, provider, block_number)?;
+        let amp = resolve_ramping_a(curve_ramping_params(identity), timestamp)?;
+        let a_precision = U256::from(identity.a_precision);
+        let d_variant =
+            DVariant::try_from_u8(identity.d_variant).ok_or(CurveSwapError::UnknownStyle(99))?;
+        let n_u = U256::from(n);
+
+        let d_0 = stableswap_get_d(
+            &curve_base_xp(identity, &state.balances)?,
+            amp,
+            n_u,
+            a_precision,
+            d_variant,
+        )?;
+
+        let mut pool_balances = state.balances.clone();
+        for (b, a) in pool_balances.iter_mut().zip(amounts) {
+            *b = if deposit { *b + *a } else { *b - *a };
+        }
+        let d_1 = stableswap_get_d(
+            &curve_base_xp(identity, &pool_balances)?,
+            amp,
+            n_u,
+            a_precision,
+            d_variant,
+        )?;
+
+        let token_amount = curve_total_supply(identity, provider, block_number)?;
+        let diff = if deposit { d_1 - d_0 } else { d_0 - d_1 };
+        Ok(diff * token_amount / d_0)
+    }
+
+    /// Rust twin of the companion `calc_withdraw_one_coin(token_amount, i)`
+    /// (task `V5X2YP`). Base-pool delegation op for metapool
+    /// `get_dy_underlying`; also a standalone calc entry. Returns the single
+    /// coin-`i` output `dy` (the port only needs `dy`; the companion's extra
+    /// tuple fields `dy_0 - dy` / `total_supply` aren't consumed).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CurveInputsError::UnknownPool`] / [`CurveInputsError::Swap`] /
+    /// [`CurveInputsError::NoProvider`] (`"token_total_supply"`).
+    pub fn curve_calc_withdraw_one_coin(
+        &self,
+        pool_id: u64,
+        token_amount: U256,
+        i: usize,
+        block_number: u64,
+    ) -> Result<U256, CurveInputsError> {
+        let (identity, state) = self
+            .pools
+            .get(&pool_id)
+            .and_then(PoolEntry::curve)
+            .ok_or(CurveInputsError::UnknownPool(pool_id))?;
+        let n = identity.n_coins();
+        if i >= n {
+            return Err(CurveInputsError::Swap(CurveSwapError::IndexOutOfBounds));
+        }
+        let provider = state.data_provider.as_deref();
+        let timestamp = curve_block_timestamp(identity, provider, block_number)?;
+        let amp = resolve_ramping_a(curve_ramping_params(identity), timestamp)?;
+        let a_precision = U256::from(identity.a_precision);
+        let d_variant =
+            DVariant::try_from_u8(identity.d_variant).ok_or(CurveSwapError::UnknownStyle(99))?;
+        let yd_variant =
+            YDVariant::try_from_u8(identity.yd_variant).ok_or(CurveSwapError::UnknownStyle(99))?;
+        let n_u = U256::from(n);
+        let precisions = &identity.precision_multipliers;
+
+        let xp = curve_base_xp(identity, &state.balances)?;
+        let d_0 = stableswap_get_d(&xp, amp, n_u, a_precision, d_variant)?;
+        let total_supply = curve_total_supply(identity, provider, block_number)?;
+        let d_1 = d_0 - token_amount * d_0 / total_supply;
+        let new_y = stableswap_get_y_d(amp, i, &xp, d_1, n_u, a_precision, yd_variant)?;
+        let raw_dy_0 = (xp[i] - new_y) / precisions[i];
+
+        let n_u64 = n as u64;
+        let mut xp_reduced = xp.clone();
+        let fee = identity.fee * n_u64 / (4 * (n_u64 - 1));
+        let fee_u = U256::from(fee);
+        for (j, x) in xp_reduced.iter_mut().enumerate() {
+            let dx_expected = if j == i {
+                xp[j] * d_1 / d_0 - new_y
+            } else {
+                xp[j] - xp[j] * d_1 / d_0
+            };
+            *x -= fee_u * dx_expected / CURVE_FEE_DENOMINATOR;
+        }
+
+        let dy = xp_reduced[i]
+            - stableswap_get_y_d(amp, i, &xp_reduced, d_1, n_u, a_precision, yd_variant)?;
+        let _ = raw_dy_0; // kept only to mirror the companion's tuple shape; not returned
+        Ok((dy - U256::from(1u8)) / precisions[i])
     }
 
     // --- ADR-005 slice 12a: Balancer V2 weighted state port -------------

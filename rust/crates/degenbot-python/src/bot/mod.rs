@@ -2454,7 +2454,9 @@ fn parse_address_list(list: &Bound<'_, PyList>) -> PyResult<Vec<Address>> {
 }
 
 /// Extract a Python list of ints (or int-like) into `Vec<U256>`.
-fn extract_u256_list(list: &Bound<'_, PyList>) -> PyResult<Vec<alloy::primitives::U256>> {
+pub(crate) fn extract_u256_list(
+    list: &Bound<'_, PyList>,
+) -> PyResult<Vec<alloy::primitives::U256>> {
     list.iter()
         .map(|item| crate::conversion::alloy::extract_python_u256(&item))
         .collect()

@@ -384,6 +384,13 @@ fn ramping_a_fixed_without_endpoints() {
 
 #[test]
 fn amp_resolves_variant0_divisor() {
+    // The A_PRECISION amp divisor applies ONLY to `VARIANT_0` (mirrors the
+    // companion `_resolve_calculation_inputs_via_io`: `amp = raw_a //
+    // A_PRECISION if y_variant == VARIANT_0 else raw_a`). `VARIANT_1` does
+    // NOT divide — this is distinct from `omits_a_precision()` (used inside
+    // stableswap_get_y's c/b formulas, where Variant1 also omits). A real
+    // VARIANT_1 pool (Curve 3pool) exposed the bug: under-amplifying by
+    // A_PRECISION mispriced every swap vs the on-chain oracle.
     assert_eq!(
         resolve_amp(U256::from(20_000u64), A_PREC, YVariant::Standard),
         U256::from(20_000u64)
@@ -392,9 +399,10 @@ fn amp_resolves_variant0_divisor() {
         resolve_amp(U256::from(20_000u64), A_PREC, YVariant::Variant0),
         U256::from(200u64)
     );
+    // VARIANT_1 keeps the full raw amp (no A_PRECISION divisor).
     assert_eq!(
         resolve_amp(U256::from(20_000u64), A_PREC, YVariant::Variant1),
-        U256::from(200u64)
+        U256::from(20_000u64)
     );
 }
 
