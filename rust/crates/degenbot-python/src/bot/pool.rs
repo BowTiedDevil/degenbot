@@ -2497,6 +2497,66 @@ impl PyLiquidityPool {
         Ok(bound.unbind())
     }
 
+    /// Rust-owned Curve `curve_calc_token_amount(amounts, deposit,
+    /// block_number)` on this handle's pool — the single-call shape the
+    /// companion `CurveStableswapPool.calc_token_amount` delegates to (task
+    /// `WKKMJM`). No Python provider / cache / calculator on the path.
+    fn curve_calc_token_amount(
+        &self,
+        py: Python<'_>,
+        amounts: &Bound<'_, PyAny>,
+        deposit: bool,
+        block_number: u64,
+    ) -> PyResult<Py<PyAny>> {
+        let cast = amounts
+            .cast::<pyo3::types::PyList>()
+            .map_err(|_| pyo3::exceptions::PyTypeError::new_err("amounts must be a list[int]"))?;
+        let amounts = crate::bot::extract_u256_list(cast)?;
+        let result = {
+            let core = self.core.read();
+            core.curve_calc_token_amount(self.pool_id, &amounts, deposit, block_number)
+        };
+        let out = match result {
+            Ok(v) => v,
+            Err(e) => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "Curve calc_token_amount failure: {e:?}"
+                )));
+            }
+        };
+        let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
+        Ok(bound.unbind())
+    }
+
+    /// Rust-owned Curve `curve_calc_withdraw_one_coin(token_amount, i,
+    /// block_number)` on this handle's pool — the single-call shape the
+    /// companion `CurveStableswapPool.calc_withdraw_one_coin` delegates to
+    /// (task `WKKMJM`). Returns only the coin-`i` `dy` (the companion's
+    /// extra tuple fields aren't consumed anywhere).
+    fn curve_calc_withdraw_one_coin(
+        &self,
+        py: Python<'_>,
+        token_amount: &Bound<'_, PyAny>,
+        i: usize,
+        block_number: u64,
+    ) -> PyResult<Py<PyAny>> {
+        let token_amount = crate::conversion::alloy::extract_python_u256(token_amount)?;
+        let result = {
+            let core = self.core.read();
+            core.curve_calc_withdraw_one_coin(self.pool_id, token_amount, i, block_number)
+        };
+        let out = match result {
+            Ok(v) => v,
+            Err(e) => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "Curve calc_withdraw_one_coin failure: {e:?}"
+                )));
+            }
+        };
+        let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
+        Ok(bound.unbind())
+    }
+
     // --- Curve data-provider read-throughs (so the companion's PerBlockCache
     //     reads through the stored trait object via a handle adapter,
     //     mirroring the Balancer `_HandleRateProviderAdapter`). Each returns

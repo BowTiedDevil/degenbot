@@ -652,7 +652,6 @@ class CurveStableswapPool(
         amounts: Sequence[int],
         deposit: bool,
         block_identifier: BlockIdentifier | None = None,
-        override_state: CurveStableswapPoolState | None = None,
     ) -> int:
         """Simplified method to calculate addition or reduction in token supply at.
 
@@ -664,35 +663,11 @@ class CurveStableswapPool(
             The computed integer value.
 
         """
-        n_coins = len(self._tokens)
-
-        pool_balances = (
-            list(override_state.balances) if override_state is not None else list(self.balances)
-        )
-
         block_number = self._resolve_block_number(block_identifier)
-
-        block_timestamp = self._cache.get_cached_block_timestamp(block_number)
-        xp = self._xp(rates=self.rate_multipliers, balances=pool_balances)
-        amp = self._a(timestamp=block_timestamp)
-        d_0 = self._get_d(_xp=xp, _amp=amp)
-
-        for i in range(n_coins):
-            if deposit:
-                pool_balances[i] += amounts[i]
-            else:
-                pool_balances[i] -= amounts[i]
-
-        xp = self._xp(rates=self.rate_multipliers, balances=pool_balances)
-        d_1 = self._get_d(xp, amp)
-        token_amount: int = self._fetch_token_total_supply(
-            self.lp_token,
-            block_identifier=block_number,
-        )
-
-        diff = d_1 - d_0 if deposit else d_0 - d_1
-
-        return diff * token_amount // d_0
+        # Rust-owned (task `WKKMJM`): D computation + LP-total-supply I/O + the
+        # deposit/reduction scaling all run in the Rust core on this pool's
+        # current balances.
+        return self._py_pool.curve_calc_token_amount(list(amounts), deposit, block_number)
 
     def calc_withdraw_one_coin(
         self,
@@ -707,28 +682,12 @@ class CurveStableswapPool(
 
         """
         block_number = self._resolve_block_number(block_identifier)
-
-        block_timestamp = self._cache.get_cached_block_timestamp(block_number)
-        n_coins = len(self._tokens)
-        amp = self._a(timestamp=block_timestamp)
-        total_supply = self._fetch_token_total_supply(self.lp_token, block_identifier=block_number)
-        precisions = self.precision_multipliers
-        xp = self._xp(rates=self.rate_multipliers, balances=self.balances)
-        d_0 = self._get_d(xp, amp)
-        d_1 = d_0 - _token_amount * d_0 // total_supply
-        new_y = self._get_y_d(amp, i, xp, d_1)
-        dy_0 = (xp[i] - new_y) // precisions[i]
-
-        xp_reduced = list(xp)
-        fee = self.fee * n_coins // (4 * (n_coins - 1))
-        for j in range(n_coins):
-            dx_expected = xp[j] * d_1 // d_0 - new_y if j == i else xp[j] - xp[j] * d_1 // d_0
-            xp_reduced[j] -= fee * dx_expected // self.FEE_DENOMINATOR
-
-        dy = xp_reduced[i] - self._get_y_d(amp, i, xp_reduced, d_1)
-        dy = (dy - 1) // precisions[i]
-
-        return dy, dy_0 - dy, total_supply
+        # Rust-owned (task `WKKMJM`): D + get_y_d + the LP-total-supply I/O all
+        # run in the Rust core. The companion's extra tuple fields (`dy_0 - dy`,
+        # `total_supply`) are not consumed by any caller, so only `dy` is
+        # returned.
+        dy = self._py_pool.curve_calc_withdraw_one_coin(_token_amount, i, block_number)
+        return (dy,)
 
     def get_dy(
         self,
