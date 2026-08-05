@@ -33,7 +33,7 @@
 //! [PoolIO]: degenbot/builders/pool_io.py
 
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList, PyString, PyTuple};
+use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 use std::fmt::Write as _;
 use std::sync::Arc;
 
@@ -1598,13 +1598,29 @@ impl PyBotIo {
         signature: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        self.fetch_no_arg_uint(
-            py,
-            signature.as_bytes(),
-            address,
-            block,
-            &alloy::dyn_abi::DynSolType::Uint(256),
-        )
+        let io = self.required_construction_io()?;
+        let addr = alloy::primitives::Address::from(parse_address_for_call(address)?);
+        let sig = signature.as_bytes().to_vec();
+        let block_num = extract_block_u64(block)?;
+        let r = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::choreography::fetch_erc20_uint_field(
+                    &io, addr, &sig, block_num,
+                )
+                .await
+            })
+        });
+        let n = match r {
+            Ok(v) => Ok(v),
+            Err(ProviderError::ExecutionReverted { message, .. }) => {
+                Err(revert_to_pyerr(py, address, &message))
+            }
+            Err(ProviderError::DecodingError { .. }) => Err(
+                pyo3::exceptions::PyValueError::new_err("could not decode ERC-20 uint field"),
+            ),
+            Err(e) => Err(e.into()),
+        }?;
+        crate::conversion::alloy::u256_to_py(py, &n).map(pyo3::Bound::unbind)
     }
 
     /// Fetch an ERC-20 string field (`name()` / `symbol()` / `NAME()` etc.) --
@@ -1628,27 +1644,30 @@ impl PyBotIo {
         signature: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<String> {
-        use alloy::dyn_abi::{DynSolType, DynSolValue};
-
-        let calldata = selector(signature.as_bytes());
-        let result_obj = self.forward_call_to_provider(py, address, &calldata, block)?;
-        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-
-        // Try string decode first.
-        if let Ok(DynSolValue::String(s)) = DynSolType::String.abi_decode(bytes) {
-            return Ok(s);
+        let io = self.required_construction_io()?;
+        let addr = alloy::primitives::Address::from(parse_address_for_call(address)?);
+        let sig = signature.as_bytes().to_vec();
+        let block_num = extract_block_u64(block)?;
+        let r = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::choreography::fetch_erc20_string_field(
+                    &io, addr, &sig, block_num,
+                )
+                .await
+            })
+        });
+        match r {
+            Ok(s) => Ok(s),
+            Err(ProviderError::ExecutionReverted { message, .. }) => {
+                Err(revert_to_pyerr(py, address, &message))
+            }
+            Err(ProviderError::DecodingError { .. }) => {
+                Err(pyo3::exceptions::PyValueError::new_err(
+                    "could not decode ERC-20 string field as string or bytes32",
+                ))
+            }
+            Err(e) => Err(e.into()),
         }
-
-        // Fallback: bytes32 decode (some tokens use bytes32 for name/symbol).
-        if let Ok(DynSolValue::FixedBytes(fb, _)) = DynSolType::FixedBytes(32).abi_decode(bytes) {
-            return Ok(String::from_utf8_lossy(fb.as_slice())
-                .trim_matches('\0')
-                .to_string());
-        }
-
-        Err(pyo3::exceptions::PyValueError::new_err(
-            "could not decode ERC-20 string field as string or bytes32",
-        ))
     }
 
     /// Probe a pool's type by trying method calls in order (ADR-005 slice 14i).
@@ -2303,93 +2322,6 @@ impl PyBotIo {
         }
         Ok(method.call((), Some(&kw_dict))?.unbind())
     }
-
-    /// Build a `call(to=token, data=calldata, block=None)` forward to the held
-    /// provider -- the common skeleton the choreography methods (`fetch_factory_address`,
-    /// `fetch_erc20_metadata`, `fetch_token_*`) share. Returns the raw result
-    /// `Py<PyAny>` without extraction so callers can decide what to decode.
-    ///
-    /// Single seam: changing the call-forward strategy (e.g. native-alloy swap
-    /// in a later slice) is localized to this helper.
-    /// Shared skeleton for no-arg, address-returning pool read methods
-    /// (`factory()`, `token0()`, `token1()`): build selector, call, decode
-    /// right-aligned 20-byte address, checksum. Errors propagate
-    /// (unlike `fetch_factory_address` which swallows them — different contract:
-    /// the immutable-data choreography in `_fetch_v2_common_data` wants the
-    /// underlying exception so the Python caller wraps it in
-    /// `LiquidityPoolError`).
-    /// Shared skeleton for no-arg, unsigned-int-returning pool read methods
-    /// (`fee()` returns `uint24`, `liquidity()` returns `uint128`): build
-    /// selector, call, decode the full ABI word as `DynSolType` `ty` (typically
-    /// `Uint(bits)`), convert to a Python `int` via `u256_to_py` (large values
-    /// preserved). Errors propagate.
-    fn fetch_no_arg_uint(
-        &self,
-        py: Python<'_>,
-        signature: &[u8],
-        pool_address: &str,
-        block: Option<&Bound<'_, PyAny>>,
-        ty: &alloy::dyn_abi::DynSolType,
-    ) -> PyResult<Py<PyAny>> {
-        use alloy::dyn_abi::DynSolValue;
-
-        let calldata = selector(signature);
-        let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
-        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        let Ok(DynSolValue::Uint(n, _)) = ty.abi_decode(bytes) else {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "invalid uint decode for no-arg read",
-            ));
-        };
-        crate::conversion::alloy::u256_to_py(py, &n).map(pyo3::Bound::unbind)
-    }
-
-    fn forward_call_to_provider(
-        &self,
-        py: Python<'_>,
-        token: &str,
-        calldata: &[u8],
-        block: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        // Native fast path: a real Rust `AlloyProvider` answers the `eth_call`
-        // directly (no GIL round-trip). Reverts map to `ContractLogicError`
-        // (matching `PyAlloyProvider::call`'s revert handling).
-        if let Some(alloy) = &self.alloy {
-            if let Ok(block_num) = extract_block_u64(block) {
-                let addr = alloy::primitives::Address::from(parse_address_for_call(token)?);
-                let data = alloy::primitives::Bytes::from(calldata.to_vec());
-                let alloy = Arc::clone(alloy);
-                let result = py.detach(|| {
-                    get_runtime().block_on(async { alloy.eth_call(&addr, data, block_num).await })
-                });
-                return match result {
-                    Ok(bytes) => crate::conversion::cache::create_hexbytes(py, bytes.as_ref())
-                        .map(pyo3::Bound::into_any)
-                        .map(pyo3::Bound::unbind),
-                    Err(ProviderError::ExecutionReverted { message, .. }) => {
-                        Err(revert_to_pyerr(py, token, &message))
-                    }
-                    Err(e) => Err(e.into()),
-                };
-            }
-            // Non-integer block tag — fall back to the Python provider, which
-            // accepts the tag directly.
-        }
-        // Fallback: forward `call(to=token, data=calldata, block=…)` to the
-        // held Python provider (legacy doubles). Single seam: the call-forward
-        // strategy is localized to this helper.
-        let address_obj = PyString::new(py, token);
-        let data_obj = PyBytes::new(py, calldata);
-        self.call_kw(
-            py,
-            "call",
-            &[
-                ("to", Some(address_obj.as_any())),
-                ("data", Some(data_obj.as_any())),
-                ("block", block),
-            ],
-        )
-    }
 }
 
 /// Extract a native Rust `AlloyProvider` from the held Python provider when
@@ -2448,18 +2380,4 @@ fn build_block_kw<'py>(
         }
         None => Ok(None),
     }
-}
-
-/// Compute a 4-byte Solidity function selector (`keccak256(signature)[..4]`).
-///
-/// Same construction as `alloy_sol_types::sol!` would emit at compile time.
-/// Used by `fetch_factory_address` and `fetch_erc20_metadata` to build the
-/// 4-byte calldata prefixes that router-style pool/token read methods (e.g.
-/// `factory()`, `name()`, `symbol()`, `decimals()`) expect.
-fn selector(signature: &[u8]) -> [u8; 4] {
-    use alloy::primitives::keccak256;
-    let hash = keccak256(signature);
-    let mut s = [0u8; 4];
-    s.copy_from_slice(&hash[..4]);
-    s
 }

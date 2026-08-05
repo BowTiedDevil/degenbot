@@ -524,6 +524,59 @@ pub async fn fetch_token_total_supply(
     abi::decode_total_supply(&bytes)
 }
 
+/// Fetch an ERC-20 uint field via a dynamic no-arg signature (e.g.
+/// `decimals()` / `DECIMALS()`) (ADR-005 slice 14h).
+///
+/// Mirrors `Erc20Builder._fetch_decimals`: the caller passes the full function
+/// signature, which is hashed to a selector, called, and decoded as `uint256`.
+///
+/// # Errors
+///
+/// Returns a [`ProviderError`] on an `eth_call` failure or when the return is
+/// not a `uint256`.
+pub async fn fetch_erc20_uint_field(
+    io: &ConstructionIo,
+    token: Address,
+    signature: &[u8],
+    block: Option<u64>,
+) -> Result<U256, ProviderError> {
+    let bytes = eth_call(io, token, selector(signature).to_vec(), block).await?;
+    abi::decode_uint256(&bytes)
+}
+
+/// Fetch an ERC-20 string field via a dynamic no-arg signature (e.g.
+/// `name()` / `symbol()` / `NAME()`) (ADR-005 slice 14h).
+///
+/// Mirrors `Erc20Builder._fetch_name`/`_fetch_symbol`: tries a `string` decode,
+/// then falls back to a UTF-8 `bytes32` decode (tokens that store the field in
+/// a `bytes32` slot), trimming trailing `\0`.
+///
+/// # Errors
+///
+/// Returns a [`ProviderError`] on an `eth_call` failure or when the return
+/// decodes as neither `string` nor `bytes32`.
+pub async fn fetch_erc20_string_field(
+    io: &ConstructionIo,
+    token: Address,
+    signature: &[u8],
+    block: Option<u64>,
+) -> Result<String, ProviderError> {
+    let bytes = eth_call(io, token, selector(signature).to_vec(), block).await?;
+    // Try string decode first.
+    if let Ok(DynSolValue::String(s)) = DynSolType::String.abi_decode(&bytes) {
+        return Ok(s);
+    }
+    // Fallback: bytes32 decode (some tokens use bytes32 for name/symbol).
+    if let Ok(DynSolValue::FixedBytes(fb, _)) = DynSolType::FixedBytes(32).abi_decode(&bytes) {
+        return Ok(String::from_utf8_lossy(fb.as_slice())
+            .trim_matches('\0')
+            .to_string());
+    }
+    Err(ProviderError::DecodingError {
+        message: "could not decode ERC-20 string field as string or bytes32".to_owned(),
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Balancer V2 reads (the SSSXG6 buyer primitive layer)
 // ---------------------------------------------------------------------------

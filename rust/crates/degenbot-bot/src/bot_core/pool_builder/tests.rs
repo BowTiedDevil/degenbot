@@ -1471,3 +1471,44 @@ async fn fetch_token_balance_supply_allowance_decode_uint256() {
         .expect("allowance decodes");
     assert_eq!(allowance, U256::from(4_321u64));
 }
+
+#[tokio::test]
+async fn fetch_erc20_uint_and_string_field() {
+    // decimals() dynamic-signature uint read.
+    let mut f = FakeRpc::new();
+    f.set(
+        choreography::selector(b"decimals()"),
+        enc(DynSolValue::Uint(U256::from(18u64), 256)),
+    );
+    let io = io_with(f);
+    let d = choreography::fetch_erc20_uint_field(&io, TO, b"decimals()", None)
+        .await
+        .unwrap();
+    assert_eq!(d, U256::from(18u64));
+
+    // name() as a dynamic string.
+    let mut f2 = FakeRpc::new();
+    f2.set(
+        choreography::selector(b"name()"),
+        enc(DynSolValue::String("Wrapped Ether".to_owned())),
+    );
+    let io2 = io_with(f2);
+    let n = choreography::fetch_erc20_string_field(&io2, TO, b"name()", None)
+        .await
+        .unwrap();
+    assert_eq!(n, "Wrapped Ether");
+
+    // bytes32 fallback for a token that stores symbol in a bytes32 slot.
+    let mut weth = [0u8; 32];
+    weth[..4].copy_from_slice(b"WETH");
+    let mut f3 = FakeRpc::new();
+    f3.set(
+        choreography::selector(b"symbol()"),
+        enc(DynSolValue::FixedBytes(FixedBytes::from(weth), 32)),
+    );
+    let io3 = io_with(f3);
+    let s = choreography::fetch_erc20_string_field(&io3, TO, b"symbol()", None)
+        .await
+        .unwrap();
+    assert_eq!(s, "WETH");
+}

@@ -118,31 +118,33 @@ class TestBotBuildErc20Token:
     def test_build_token_from_chain(self, tmp_path: pathlib.Path) -> None:
         config = _make_test_config(tmp_path)
         create_new_sqlite_database(config.database.path)
-        # Mock the provider to return token metadata
-        provider = MagicMock()
-        provider.chain_id = 1
-        bot = Bot(config, provider=provider)
-        provider.is_connected.return_value = True
-        provider.get_code.return_value = b"\x01"  # contract exists
-
-        # Mock batched RPC call to return name, symbol, decimals
-        def mock_call(to, data, block=None):
-            if data[:4] == b"\x06\xfd\xde\x03":  # name()
-                return eth_abi_encode(["string"], ["Wrapped Ether"])
-            if data[:4] == b"\x95\xd8\x9b\x41":  # symbol()
-                return eth_abi_encode(["string"], ["WETH"])
-            if data[:4] == b"\x31\x3c\xe5\x67":  # decimals()
-                return eth_abi_encode(["uint256"], [18])
-            return b""
-
-        def eth_abi_encode(types, args):
-            return eth_abi.abi.encode(types=types, args=args)
-
-        provider.call.side_effect = mock_call
-
-        token = bot.build_erc20token(
-            "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        # Drive the build through an alloy-backed OfflineProvider (the non-alloy
+        # MagicMock fallback is retired with the seam; ADR-005). Record
+        # name/symbol/decimals + a code marker for the token address.
+        token_address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+        offline = OfflineProvider(
+            chain_id=1,
+            blocks={
+                "100": {
+                    "timestamp": 1700000000,
+                    "calls": {
+                        f"{token_address.lower()}:0x06fdde03": (  # name()
+                            eth_abi.abi.encode(["string"], ["Wrapped Ether"]).hex()
+                        ),
+                        f"{token_address.lower()}:0x95d89b41": (  # symbol()
+                            eth_abi.abi.encode(["string"], ["WETH"]).hex()
+                        ),
+                        f"{token_address.lower()}:0x313ce567": (  # decimals()
+                            eth_abi.abi.encode(["uint256"], [18]).hex()
+                        ),
+                    },
+                    "code": {token_address.lower(): "01"},
+                }
+            },
         )
+        bot = Bot(config, provider=offline)
+
+        token = bot.build_erc20token(token_address)
         assert isinstance(token, Erc20Token)
         assert token.chain_id == 1
         # Token should be registered in bot's registry
