@@ -44,7 +44,8 @@ use revm::state::AccountInfo;
 // to prove the `ConstructionIo` seam + probe/dispatch compile and run.
 use degenbot::bot_core::construction_io::{ConstructionIo, NoDb, RpcConstruction};
 use degenbot::bot_core::pool_builder::builder::{
-    build_v2, probe_pool_type, PoolBuilderError, PoolFamily,
+    build_v2, build_v3, build_v4, probe_pool_type, PoolBuilderError, PoolFamily,
+    V4PoolBuildIdentity,
 };
 use degenbot::degenbot_rpc::provider::EthBlock;
 use degenbot::errors::ProviderError;
@@ -575,6 +576,32 @@ fn in_process_sim_standalone_slice() {
     assert!(
         matches!(err, Err(PoolBuilderError::Rpc(_))),
         "build_v2 over a failing RPC must yield a typed Rpc error, got {err:?}"
+    );
+    // V3: same failing stub — `build_v3` (the T4 Tracked/Sparse DB-arm + Chain
+    // sparse path) must surface a typed Rpc error too, pinning the umbrella
+    // path for the V3 family.
+    let err = degenbot::runtime::get_runtime().block_on(build_v3(1, POOL_B, None, &io, None));
+    assert!(
+        matches!(err, Err(PoolBuilderError::Rpc(_))),
+        "build_v3 over a failing RPC must yield a typed Rpc error, got {err:?}"
+    );
+    // V4: build_v4 takes a caller-supplied `V4PoolBuildIdentity` — the failing
+    // stub never reads it, so any addresses suffice to prove the V4 family is
+    // reachable and degrades to the same typed Rpc error.
+    let v4_id = V4PoolBuildIdentity {
+        pool_manager: POOL_B,
+        state_view: POOL_B,
+        pool_id: [0xAA; 32],
+        currency0: TOKEN1,
+        currency1: POOL_C,
+        fee: 0x10_0000,
+        tick_spacing: 1,
+        hook_flags: 0,
+    };
+    let err = degenbot::runtime::get_runtime().block_on(build_v4(v4_id, None, &io, None));
+    assert!(
+        matches!(err, Err(PoolBuilderError::Rpc(_))),
+        "build_v4 over a failing RPC must yield a typed Rpc error, got {err:?}"
     );
     println!(
         "standalone degenbot consumer OK: PoolBuilder probe+dispatch reachable (family={family:?})"

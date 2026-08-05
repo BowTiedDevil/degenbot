@@ -1,0 +1,22 @@
+{
+  "_doc": "Shared canonical V3 pool for the ADR-005 Tier-2 pool-builder dual-driver parity tests (task A2QRWO). Loaded by BOTH rust/crates/degenbot/tests/parity_pool_builder.rs (Rust consumer, BotState directly) AND tests/standalone_parity/test_pool_builder_dual_driver.py (Python consumer, PyBot). A 1:1-price V3 pool (sqrt_price_x96 = 2^96, tick 0), liquidity 1e12, fee 3000 (0.3%), tick_spacing 60, tick 0 seeded + Tracked coverage. This is the deterministic identity+state TUPLE a PoolBuilder.build_v3 emits after its on-chain/DB I/O — the parity asserts BOTH consumers register the SAME canonical fixture and report IDENTICAL pool id + identity (token0/token1/fee/tick_spacing) + state (sqrt_price_x96/liquidity/tick) + coverage. A deliberately-wrong edit to THIS file fails BOTH sides mechanically (the shared-fixture contract).",
+  "fixture": {
+    "token0": "0x000000000000000000000000000000000000000a",
+    "token1": "0x000000000000000000000000000000000000000b",
+    "pool": "0x000000000000000000000000000000000000000c",
+    "factory": "0x000000000000000000000000000000000000000f",
+    "fee": 3000,
+    "tick_spacing": 60,
+    "sqrt_price_x96": "79228162514264337593543950336",
+    "_sqrt_price_x96_note": "2^96, the Q96.32 repr of 1.0 (a 1:1 price).",
+    "liquidity": "1000000000000",
+    "tick": 0,
+    "tick_0_net_liquidity": "0",
+    "coverage": "tracked",
+    "update_block": 0
+  },
+  "expected": {
+    "pool_id": 1,
+    "_pool_id_note": "First pool registered in a fresh BotState/PyBot gets deterministic id 1 — both consumers MUST agree, proving the registration identity is identical across the FFI seam."
+  }
+}
