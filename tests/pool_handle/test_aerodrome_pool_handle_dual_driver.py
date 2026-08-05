@@ -19,6 +19,8 @@ def aerodrome_pool():
         stable=False,
         fee_numer=3,
         fee_denom=10_000,
+        token0_decimals=18,
+        token1_decimals=18,
         reserve0=1_000_000_000,
         reserve1=2_000_000_000,
         update_block=100,
@@ -50,3 +52,52 @@ def test_calculate_tokens_out(aerodrome_pool) -> None:
 
     assert out is not None
     assert out > 0
+
+
+@pytest.fixture
+def aerodrome_stable_pool():
+    """Aerodrome V2 **stable**-mode pool (Solidly invariant) fixture.
+
+    Mirrors the Rust `pool_handle_aerodrome.rs` `aerodrome_stable_swap_*`
+    fixtures: equal 1e18 reserves, both 18 decimals, fee (3, 10000) = 0.03%.
+    """
+    bot = PyBot(1)
+    pool_id = bot.register_aerodrome_pool(
+        address="0x3333333333333333333333333333333333333333",
+        token0="0xcccccccccccccccccccccccccccccccccccccccc",
+        token1="0xdddddddddddddddddddddddddddddddddddddddd",
+        factory="0x4444444444444444444444444444444444444444",
+        variant="aerodrome-v2-stable",
+        stable=True,
+        fee_numer=3,
+        fee_denom=10_000,
+        token0_decimals=18,
+        token1_decimals=18,
+        reserve0=1_000_000_000_000_000_000,
+        reserve1=1_000_000_000_000_000_000,
+        update_block=100,
+    )
+    return bot.py_pool(pool_id)
+
+
+def test_aerodrome_stable_swap_matches_recorded_constant(aerodrome_stable_pool) -> None:
+    # Solidly stable invariant (x^3y + y^3x >= k) via calc_exact_in_stable_solidly,
+    # swap 1e18 token0→token1. The recorded constant 753627265063405946 is
+    # cross-checked against the independent Rust `simulate_swap` stable arm (same
+    # leaf, independent marshalling) — the dual-driver pair
+    # test_aerodrome_stable_swap_is_monotonic lives in pool_handle_aerodrome.rs.
+    out = aerodrome_stable_pool.calculate_tokens_out(True, 1_000_000_000_000_000_000)
+    assert out is not None
+    assert out == 753_627_265_063_405_946
+
+    # Symmetry: equal balances + equal decimals ⇒ identical output both ways.
+    out_rev = aerodrome_stable_pool.calculate_tokens_out(False, 1_000_000_000_000_000_000)
+    assert out_rev == out, "symmetric direction on equal balances"
+
+
+def test_aerodrome_stable_swap_is_monotonic(aerodrome_stable_pool) -> None:
+    small = aerodrome_stable_pool.calculate_tokens_out(True, 1_000_000_000_000_000_000)
+    large = aerodrome_stable_pool.calculate_tokens_out(True, 2_000_000_000_000_000_000)
+    assert small is not None and large is not None
+    assert large > small, "output must increase with input"
+    assert large < 2_000_000_000_000_000_000, "output bounded below input (fee + slippage)"

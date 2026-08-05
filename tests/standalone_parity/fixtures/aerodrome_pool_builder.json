@@ -10,6 +10,9 @@
     "fee_numer": 200,
     "fee_denom": 10000,
     "_fee_note": "getFee() returns the unidirectional fee in basis points; 200/10000 = 0.02%.",
+    "token0_decimals": 18,
+    "token1_decimals": 9,
+    "_decimals_note": "Solidly stable invariant needs the 10**decimals scale factors (18 / 9, matching the 1e18 / 2e9 reserve magnitudes).",
     "reserve0": "1000000000000000000",
     "reserve1": "2000000000",
     "update_block": 0

@@ -59,6 +59,8 @@ def make_aerodrome_v2_pool(
         stable=stable,
         fee_numer=fee.numerator,
         fee_denom=fee.denominator,
+        token0_decimals=token0.decimals,
+        token1_decimals=token1.decimals,
         reserve0=reserves_token0,
         reserve1=reserves_token1,
         update_block=state_block,

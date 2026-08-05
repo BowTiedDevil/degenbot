@@ -51,6 +51,8 @@ struct AerodromeFixtureInputs {
     stable: bool,
     fee_numer: u64,
     fee_denom: u64,
+    token0_decimals: u8,
+    token1_decimals: u8,
     /// Decimal-string big integers (JSON has no u112/u256).
     reserve0: String,
     reserve1: String,
@@ -97,6 +99,8 @@ fn standalone_rust_consumer_aerodrome_builder_identity_state_matches_fixture() {
         variant,
         stable: fx.fixture.stable,
         fee: (fx.fixture.fee_numer, fx.fixture.fee_denom),
+        token0_decimals: fx.fixture.token0_decimals,
+        token1_decimals: fx.fixture.token1_decimals,
         reserve0,
         reserve1,
         update_block: fx.fixture.update_block,
@@ -124,6 +128,14 @@ fn standalone_rust_consumer_aerodrome_builder_identity_state_matches_fixture() {
         aero_id.fee,
         (fx.fixture.fee_numer, fx.fixture.fee_denom),
         "fee diverged"
+    );
+    assert_eq!(
+        aero_id.token0_decimals, fx.fixture.token0_decimals,
+        "token0_decimals diverged"
+    );
+    assert_eq!(
+        aero_id.token1_decimals, fx.fixture.token1_decimals,
+        "token1_decimals diverged"
     );
     assert_eq!(aero_state.reserve0, reserve0, "reserve0 diverged");
     assert_eq!(aero_state.reserve1, reserve1, "reserve1 diverged");

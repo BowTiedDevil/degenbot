@@ -15,6 +15,8 @@ fn make_aerodrome_v2_pool(reserve0: u128, reserve1: u128, stable: bool) -> PoolE
         variant: DexVariant::AerodromeV2Volatile,
         stable,
         fee: (3, 10_000),
+        token0_decimals: 18,
+        token1_decimals: 18,
         reserve0: U112::from(reserve0),
         reserve1: U112::from(reserve1),
         update_block: 100,
@@ -49,4 +51,54 @@ fn aerodrome_pool_handle_exposes_structure_identity_and_reserve_pair() {
         .calculate_tokens_out(true, U256::from(1_000_000))
         .expect("computable");
     assert!(out > U256::ZERO);
+}
+
+/// Aerodrome V2 **stable**-mode Solidly invariant swap output for the
+/// equal-balances fixture (token0=token1=1e18, both 18 decimals, fee
+/// `(3, 10000)` = 0.03%, swap 1e18 token0→token1) via `calc_exact_in_stable_solidly`.
+/// Pin against the independent Python `AerodromeV2Pool` companion (same
+/// solidly leaf, independent marshalling) — a non-circular cross-check
+/// (ADR-005 Tier-2 recorded-constant shape).
+#[test]
+fn aerodrome_stable_swap_matches_recorded_constant() {
+    let entry = make_aerodrome_v2_pool(
+        1_000_000_000_000_000_000u128,
+        1_000_000_000_000_000_000u128,
+        true,
+    );
+    let pool = Pool::new(&entry);
+    let out = pool
+        .calculate_tokens_out(true, U256::from(1_000_000_000_000_000_000u64))
+        .expect("computable");
+    assert_eq!(out, U256::from(753_627_265_063_405_946u64));
+
+    // Symmetry: equal balances + equal decimals ⇒ both directions yield the
+    // same output.
+    let out_rev = pool
+        .calculate_tokens_out(false, U256::from(1_000_000_000_000_000_000u64))
+        .expect("computable");
+    assert_eq!(out_rev, out, "symmetric direction on equal balances");
+}
+
+/// Aerodrome V2 stable-mode monotonicity: a larger input yields a strictly
+/// larger output, bounded below the input (fee + slippage).
+#[test]
+fn aerodrome_stable_swap_is_monotonic() {
+    let entry = make_aerodrome_v2_pool(
+        1_000_000_000_000_000_000u128,
+        1_000_000_000_000_000_000u128,
+        true,
+    );
+    let pool = Pool::new(&entry);
+    let small = pool
+        .calculate_tokens_out(true, U256::from(1_000_000_000_000_000_000u64))
+        .expect("computable");
+    let large = pool
+        .calculate_tokens_out(true, U256::from(2_000_000_000_000_000_000u64))
+        .expect("computable");
+    assert!(large > small, "output must increase with input");
+    assert!(
+        large < U256::from(2_000_000_000_000_000_000u64),
+        "output must be bounded below the input (fee + slippage)"
+    );
 }

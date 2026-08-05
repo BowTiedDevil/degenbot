@@ -326,6 +326,22 @@ pub async fn build_aerodrome_v2(
     let reserve1 =
         spec_bounds::narrow_v2_reserve(r1, "reserve1").map_err(|_| PoolBuilderError::Spec)?;
 
+    // The Solidly stable invariant needs the `10**decimals` scale factors;
+    // fetch the ERC-20 decimal counts for both tokens (unused by volatile
+    // pools but always carried on the identity).
+    let decimals0 = decimals_of(io, imm.token0, block)
+        .await?
+        .try_into()
+        .map_err(|_| PoolBuilderError::Decoding {
+            message: "token0 decimals overflow u8 while building Aerodrome V2 pool".into(),
+        })?;
+    let decimals1 = decimals_of(io, imm.token1, block)
+        .await?
+        .try_into()
+        .map_err(|_| PoolBuilderError::Decoding {
+            message: "token1 decimals overflow u8 while building Aerodrome V2 pool".into(),
+        })?;
+
     Ok(RegisterAerodromeV2PoolParams {
         address,
         token0: imm.token0,
@@ -334,6 +350,8 @@ pub async fn build_aerodrome_v2(
         variant: id.variant,
         stable: common.stable,
         fee: (common.fee_bps, 10_000),
+        token0_decimals: decimals0,
+        token1_decimals: decimals1,
         reserve0,
         reserve1,
         update_block: block.unwrap_or(0),

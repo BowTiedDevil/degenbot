@@ -53,6 +53,13 @@ pub struct AerodromeV2PoolIdentity {
     /// Unidirectional fee: `(fee_numer, fee_denom)`. The same fraction applies
     /// to both swap directions.
     pub fee: (u64, u64),
+    /// ERC-20 decimal count for token0. Converted to the `10**decimals` scale
+    /// factor at calc time by the Solidly stable invariant; the volatile path
+    /// ignores it, but both are carried so a standalone Rust consumer can
+    /// populate the stable calc without a token registry.
+    pub token0_decimals: u8,
+    /// ERC-20 decimal count for token1. See [`Self::token0_decimals`].
+    pub token1_decimals: u8,
 }
 
 /// Mutable runtime state for an Aerodrome V2 pool.
@@ -91,6 +98,10 @@ pub struct RegisterAerodromeV2PoolParams {
     pub stable: bool,
     /// Unidirectional fee: `(fee_numer, fee_denom)`.
     pub fee: (u64, u64),
+    /// ERC-20 decimal counts for token0 / token1 (the `10**decimals` scale
+    /// factors the Solidly stable invariant needs).
+    pub token0_decimals: u8,
+    pub token1_decimals: u8,
     /// Reserves typed `U112` to mirror the on-chain `uint112` storage width
     /// (Solidly / Aerodrome pair contracts).
     pub reserve0: U112,
@@ -120,6 +131,8 @@ impl AerodromeV2PoolState {
             variant: params.variant,
             stable: params.stable,
             fee: params.fee,
+            token0_decimals: params.token0_decimals,
+            token1_decimals: params.token1_decimals,
         };
         let mut journal = ReorgJournal::<V2BlockDelta>::new(journal_depth);
         journal.push_delta(V2BlockDelta {

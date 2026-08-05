@@ -1338,6 +1338,24 @@ impl PyLiquidityPool {
             .unwrap_or_default()
     }
 
+    /// Aerodrome V2 token0 ERC-20 decimal count. `0` for non-Aerodrome pools.
+    #[getter]
+    fn aerodrome_token0_decimals(&self) -> u8 {
+        let core = self.core.read();
+        core.get_aerodrome_identity(self.pool_id)
+            .map(|d| d.token0_decimals)
+            .unwrap_or_default()
+    }
+
+    /// Aerodrome V2 token1 ERC-20 decimal count. `0` for non-Aerodrome pools.
+    #[getter]
+    fn aerodrome_token1_decimals(&self) -> u8 {
+        let core = self.core.read();
+        core.get_aerodrome_identity(self.pool_id)
+            .map(|d| d.token1_decimals)
+            .unwrap_or_default()
+    }
+
     /// Aerodrome V2 reserve of token0. Read via the
     /// `AerodromeV2PoolState` entry (one read guard). 0 if not an Aerodrome
     /// pool.

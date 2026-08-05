@@ -366,6 +366,10 @@ class PyLiquidityPool:
     @property
     def aerodrome_fee(self) -> tuple[int, int]: ...
     @property
+    def aerodrome_token0_decimals(self) -> int: ...
+    @property
+    def aerodrome_token1_decimals(self) -> int: ...
+    @property
     def aerodrome_reserve0(self) -> int: ...
     @property
     def aerodrome_reserve1(self) -> int: ...
@@ -1109,6 +1113,8 @@ class PyBot:
         stable: bool,
         fee_numer: int,
         fee_denom: int,
+        token0_decimals: int,
+        token1_decimals: int,
         reserve0: int,
         reserve1: int,
         update_block: int,

@@ -9,12 +9,11 @@
 #![allow(clippy::doc_markdown)]
 //!
 //! The **not-yet-Rust-side** sentinel (`Ok(U256::ZERO)`) survives only for the
-//! families whose invariant math the Rust core does not yet own: Aerodrome V2
-//! **stable** mode (needs per-token decimals) and non-`STANDARD` Curve swap
-//! styles (crypto, live-admin, metapool `get_dy` base-pool dispatch). V2,
-//! V3/V4 CL, Balancer weighted+stable, Aerodrome V2 volatile, and Curve
-//! standard stableswap are all ported here — the Python companions for those
-//! delegate to this core rather than doing their own math.
+//! families whose invariant math the Rust core does not yet own: non-`STANDARD`
+//! Curve swap styles (crypto, live-admin, metapool `get_dy` base-pool dispatch).
+//! V2, V3/V4 CL, Balancer weighted+stable, Aerodrome V2 volatile **and** stable,
+//! and Curve standard stableswap are all ported here — the Python companions
+//! for those delegate to this core rather than doing their own math.
 //!
 //! **Relocated** (the value core) from
 //! `degenbot-bot/src/bot_core/mod.rs::BotState::calculate_tokens_out_miss_aware`;
@@ -43,8 +42,8 @@ const CURVE_FEE_DENOMINATOR: u64 = 10_000_000_000;
 /// [`SimulateSwapError::MissingTickWord(word)`] / [`NotComputable`](SimulateSwapError::NotComputable).
 ///
 /// `Ok(U256::ZERO)` covers the non-fetchable zeros (zero amount, V2 with zero
-/// reserves, and the remaining not-yet-Rust-side sentinels: Aerodrome V2 stable
-/// mode and non-standard Curve swap styles). The V3/V4 arms surface a
+/// reserves, and the remaining not-yet-Rust-side sentinel: non-standard Curve
+/// swap styles). The V3/V4 arms surface a
 /// sparse-map miss as [`SimulateSwapError::MissingTickWord`] (the caller —
 /// [`BotState::calculate_tokens_out_with_fetch`] in `degenbot-bot` — fetches +
 /// retries); arithmetic overflow / non-positive amount yields
@@ -155,12 +154,9 @@ pub fn simulate_swap(
                 )
                 .map_err(|_| SimulateSwapError::NotComputable);
             }
-            // Stable mode: the Solidly stable invariant (`x^3y+y^3x >= k`)
-            // needs per-token decimals, which the Aerodrome state-port
-            // slice does not yet carry. The Python companion keeps doing its
-            // own math via `swap_fn` until the decimals-ports slice lands,
-            // so this Rust core path returns the not-yet-Rust-side sentinel.
-            Ok(U256::ZERO)
+            // Stable mode: Solidly stable invariant (`x^3y + y^3x >= k`)
+            // via `calc_exact_in_stable_solidly` (decimals carried on identity).
+            simulate_aerodrome_stable_swap(id, state, zero_for_one, amount_in)
         }
         PoolEntry::BalancerWeighted(id, state) => {
             simulate_balancer_weighted_swap(id, state, zero_for_one, amount_in)
@@ -419,6 +415,37 @@ fn simulate_curve_stableswap_swap(
         .ok_or(SimulateSwapError::NotComputable)?
         / id.rate_multipliers[coin_out];
     Ok(out)
+}
+
+/// Aerodrome V2 **stable**-mode exact-input swap (Solidly invariant
+/// `x^3*y + y^3*x >= k`) via `calc_exact_in_stable_solidly`.
+///
+/// The identity carries token0/token1 decimal counts as `u8`; they are
+/// converted to the `10**decimals` scale factors the Solidly math expects
+/// (mirrors the Python `AerodromeV2Pool` companion, which uses
+/// `10**token.decimals`).
+fn simulate_aerodrome_stable_swap(
+    id: &crate::aerodrome_v2_state::AerodromeV2PoolIdentity,
+    state: &crate::aerodrome_v2_state::AerodromeV2PoolState,
+    zero_for_one: bool,
+    amount_in: U256,
+) -> Result<U256, SimulateSwapError> {
+    if amount_in.is_zero() {
+        return Ok(U256::ZERO);
+    }
+    let token_in: u8 = u8::from(!zero_for_one);
+    let (fee_numer, fee_denom) = id.fee;
+    degenbot_solidly_math::calc_exact_in_stable_solidly(
+        amount_in,
+        token_in,
+        state.reserve0.to::<U256>(),
+        state.reserve1.to::<U256>(),
+        U256::from(10u64).pow(U256::from(id.token0_decimals)),
+        U256::from(10u64).pow(U256::from(id.token1_decimals)),
+        U256::from(fee_numer),
+        U256::from(fee_denom),
+    )
+    .map_err(|_| SimulateSwapError::NotComputable)
 }
 
 #[cfg(test)]

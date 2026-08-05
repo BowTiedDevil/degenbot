@@ -2805,6 +2805,8 @@ mod tests {
         let aero_id = core
             .write()
             .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+                token0_decimals: 6,
+                token1_decimals: 18,
                 address: Address::from([0xaeu8; 20]),
                 token0: Address::from([0x01u8; 20]),
                 token1: Address::from([0x02u8; 20]),
@@ -2822,6 +2824,8 @@ mod tests {
         let aero_id2 = core
             .write()
             .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+                token0_decimals: 6,
+                token1_decimals: 18,
                 address: Address::from([0xb1u8; 20]),
                 token0: Address::from([0x01u8; 20]),
                 token1: Address::from([0x02u8; 20]),
@@ -2994,6 +2998,8 @@ mod tests {
         let aero_id = core
             .write()
             .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+                token0_decimals: 18,
+                token1_decimals: 18,
                 address: Address::from([0xaeu8; 20]),
                 token0: Address::from([0x01u8; 20]),
                 token1: Address::from([0x02u8; 20]),
@@ -3008,6 +3014,8 @@ mod tests {
         let aero_id2 = core
             .write()
             .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+                token0_decimals: 18,
+                token1_decimals: 18,
                 address: Address::from([0xb1u8; 20]),
                 token0: Address::from([0x01u8; 20]),
                 token1: Address::from([0x02u8; 20]),
@@ -3075,6 +3083,8 @@ mod tests {
         let aero_a = core
             .write()
             .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+                token0_decimals: 18,
+                token1_decimals: 18,
                 address: Address::from([0xa1u8; 20]),
                 token0: Address::from([0x01u8; 20]),
                 token1: Address::from([0x02u8; 20]),
@@ -3089,6 +3099,8 @@ mod tests {
         let aero_b = core
             .write()
             .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+                token0_decimals: 18,
+                token1_decimals: 18,
                 address: Address::from([0xa2u8; 20]),
                 token0: Address::from([0x01u8; 20]),
                 token1: Address::from([0x02u8; 20]),
@@ -3198,6 +3210,8 @@ mod tests {
         let aero_id = core
             .write()
             .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+                token0_decimals: 18,
+                token1_decimals: 18,
                 address: Address::from([0xb1u8; 20]),
                 token0: Address::from([0x01u8; 20]),
                 token1: Address::from([0x02u8; 20]),
@@ -3314,6 +3328,8 @@ mod tests {
         let aero = core
             .write()
             .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+                token0_decimals: 18,
+                token1_decimals: 18,
                 address: Address::from([0xa1u8; 20]),
                 token0: Address::from([0x01u8; 20]),
                 token1: Address::from([0x02u8; 20]),

@@ -2101,7 +2101,7 @@ impl PyBot {
     ///     `ValueError`: If an address is malformed, the pool is already
     ///         registered, or `variant` is not a recognized Aerodrome variant.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (address, token0, token1, factory, variant, stable, fee_numer, fee_denom, reserve0, reserve1, update_block=0))]
+    #[pyo3(signature = (address, token0, token1, factory, variant, stable, fee_numer, fee_denom, token0_decimals, token1_decimals, reserve0, reserve1, update_block=0))]
     fn register_aerodrome_pool(
         &self,
         address: &str,
@@ -2112,6 +2112,8 @@ impl PyBot {
         stable: bool,
         fee_numer: u64,
         fee_denom: u64,
+        token0_decimals: u8,
+        token1_decimals: u8,
         reserve0: &Bound<'_, PyAny>,
         reserve1: &Bound<'_, PyAny>,
         update_block: u64,
@@ -2158,6 +2160,8 @@ impl PyBot {
                 variant: variant_enum,
                 stable,
                 fee: (fee_numer, fee_denom),
+                token0_decimals,
+                token1_decimals,
                 reserve0: r0,
                 reserve1: r1,
                 update_block,

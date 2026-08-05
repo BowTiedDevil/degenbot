@@ -39,6 +39,8 @@ _VARIANT = _F["variant"]
 _STABLE = _F["stable"]
 _FEE_NUMER = _F["fee_numer"]
 _FEE_DENOM = _F["fee_denom"]
+_TOKEN0_DECIMALS = _F["token0_decimals"]
+_TOKEN1_DECIMALS = _F["token1_decimals"]
 _RESERVE0 = int(_F["reserve0"])
 _RESERVE1 = int(_F["reserve1"])
 _UPDATE_BLOCK = _F["update_block"]
@@ -60,10 +62,10 @@ def test_python_consumer_aerodrome_builder_identity_state_matches_fixture() -> N
     # `get_token0/get_token1` to resolve (names/symbols/decimals are not part
     # of the parity assertion — only the addresses are).
     py_bot.register_token(
-        address=_TOKEN0, name="Token0", symbol="TK0", decimals=18, chain_id=1
+        address=_TOKEN0, name="Token0", symbol="TK0", decimals=_TOKEN0_DECIMALS, chain_id=1
     )
     py_bot.register_token(
-        address=_TOKEN1, name="Token1", symbol="TK1", decimals=18, chain_id=1
+        address=_TOKEN1, name="Token1", symbol="TK1", decimals=_TOKEN1_DECIMALS, chain_id=1
     )
     pool_id = py_bot.register_aerodrome_pool(
         address=_POOL,
@@ -74,6 +76,8 @@ def test_python_consumer_aerodrome_builder_identity_state_matches_fixture() -> N
         stable=_STABLE,
         fee_numer=_FEE_NUMER,
         fee_denom=_FEE_DENOM,
+        token0_decimals=_TOKEN0_DECIMALS,
+        token1_decimals=_TOKEN1_DECIMALS,
         reserve0=_RESERVE0,
         reserve1=_RESERVE1,
         update_block=_UPDATE_BLOCK,
@@ -93,6 +97,8 @@ def test_python_consumer_aerodrome_builder_identity_state_matches_fixture() -> N
     assert handle.variant == _VARIANT
     assert handle.aerodrome_stable is _STABLE
     assert handle.aerodrome_fee == (_FEE_NUMER, _FEE_DENOM)
+    assert handle.aerodrome_token0_decimals == _TOKEN0_DECIMALS
+    assert handle.aerodrome_token1_decimals == _TOKEN1_DECIMALS
 
     # State.
     assert handle.aerodrome_reserve0 == _RESERVE0
