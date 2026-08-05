@@ -1,0 +1,21 @@
+{
+  "_doc": "Shared canonical Aerodrome V2 pool for the ADR-005 Tier-2 pool-builder dual-driver parity tests (task SSSXG6). Loaded by BOTH rust/crates/degenbot/tests/parity_aerodrome_builder.rs (Rust consumer, BotState directly) AND tests/standalone_parity/test_aerodrome_builder_dual_driver.py (Python consumer, PyBot). A volatile/stable-shared-factory STABLE Aerodrome V2 pool: unidirectional fee (200/10000 = 0.02%), reserves 1e18 / 2e9, at update_block 0. This is the deterministic identity+state TUPLE a PoolBuilder.build_aerodrome_v2 emits after its on-chain I/O (stable()+getFee()+reserves) + CREATE2 verify; the parity asserts BOTH consumers register the SAME canonical fixture and report IDENTICAL pool id + identity (token0/token1/factory/variant/stable/fee) + state (reserve0/reserve1/update_block). A deliberately-wrong edit to THIS file fails BOTH sides mechanically (the shared-fixture contract, HRT356).",
+  "fixture": {
+    "token0": "0x000000000000000000000000000000000000000a",
+    "token1": "0x000000000000000000000000000000000000000b",
+    "pool": "0x000000000000000000000000000000000000000c",
+    "factory": "0x000000000000000000000000000000000000000f",
+    "variant": "aerodrome-v2-stable",
+    "stable": true,
+    "fee_numer": 200,
+    "fee_denom": 10000,
+    "_fee_note": "getFee() returns the unidirectional fee in basis points; 200/10000 = 0.02%.",
+    "reserve0": "1000000000000000000",
+    "reserve1": "2000000000",
+    "update_block": 0
+  },
+  "expected": {
+    "pool_id": 1,
+    "_pool_id_note": "First pool registered in a fresh BotState/PyBot gets deterministic id 1 — both consumers MUST agree, proving the registration identity is identical across the FFI seam."
+  }
+}
