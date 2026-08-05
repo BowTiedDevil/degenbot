@@ -7,11 +7,13 @@
 //! - [`Structure::ConcentratedLiquidity`] — tick-based CL pools (Uniswap V3, Uniswap V4)
 //! - [`Structure::BalanceVector`] — N-token balance pools (Curve, Balancer weighted/stable)
 //!
-//! The handle is intentionally value- and protocol-agnostic: it does not know
-//! about DEX names, chain IDs, or whether a V2 pool is Uniswap vs. Sushiswap
-//! (long-term that resolution belongs in `degenbot-uniswap::deployments`).
-//! It *does* distinguish the protocol family (V3 vs. V4, Curve vs. Balancer)
-//! because those families have materially different state shapes.
+//! The handle distinguishes the protocol family (V3 vs. V4, Curve vs. Balancer)
+//! because those families have materially different state shapes. It ALSO
+//! resolves the DEX name (`Uniswap` vs `SushiSwap` …) on [`Identity::dex`] for a
+//! known `(chain_id, factory)` deployment via `degenbot-uniswap::deployments`
+//! (QHGN2E) — Rust-owned, single-source — carrying the chain id on the handle.
+//! An unknown deployment degrades to a generic variant (`dex: None`), never an
+//! error.
 
 use crate::aerodrome_v2_state::{AerodromeV2PoolIdentity, AerodromeV2PoolState};
 use crate::balancer_stable_state::{BalancerStablePoolIdentity, BalancerStablePoolState};
