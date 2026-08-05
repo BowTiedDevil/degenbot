@@ -46,8 +46,8 @@ use revm::state::AccountInfo;
 // to prove the `ConstructionIo` seam + probe/dispatch compile and run.
 use degenbot::bot_core::construction_io::{ConstructionIo, NoDb, RpcConstruction};
 use degenbot::bot_core::pool_builder::builder::{
-    build_aerodrome_v2, build_balancer_stable, build_balancer_weighted, build_v2, build_v3,
-    build_v4, probe_pool_type, PoolBuilderError, PoolFamily, V4PoolBuildIdentity,
+    build_aerodrome_v2, build_balancer_stable, build_balancer_weighted, build_curve_pool, build_v2,
+    build_v3, build_v4, probe_pool_type, PoolBuilderError, PoolFamily, V4PoolBuildIdentity,
 };
 use degenbot::degenbot_rpc::provider::EthBlock;
 use degenbot::errors::ProviderError;
@@ -690,6 +690,16 @@ fn in_process_sim_standalone_slice() {
     assert!(
         matches!(err, Err(PoolBuilderError::Rpc(_))),
         "build_balancer_stable over a failing RPC must yield a typed Rpc error, got {err:?}"
+    );
+    // Curve (SSSXG6): build_curve_pool reads the same `FailingConstruction`
+    // stub. Coin discovery tolerates the reverting probe (empty coin set), so
+    // the fatal `fetch_curve_pool_params` A() read reverts next — the umbrella
+    // path + `RegisterCurvePoolParams` for the Curve family are proven by the
+    // typed `PoolBuilderError::Rpc`.
+    let err = degenbot::runtime::get_runtime().block_on(build_curve_pool(POOL_B, &[], &io, None));
+    assert!(
+        matches!(err, Err(PoolBuilderError::Rpc(_))),
+        "build_curve_pool over a failing RPC must yield a typed Rpc error, got {err:?}"
     );
     println!(
         "standalone degenbot consumer OK: PoolBuilder probe+dispatch reachable (family={family:?})"
