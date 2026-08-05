@@ -722,6 +722,39 @@ impl PyBot {
             .map_err(map_register_v2_err)
     }
 
+    /// Build + register an Aerodrome V2 pool through the Rust `PoolBuilder`
+    /// (SSSXG6 / SSD2XI delegation adapter) — the Aerodrome twin of
+    /// [`Self::build_v2_pool`]. The core `builder::build_aerodrome_v2` runs the
+    /// full `stable()`+`getFee()` + reserves + CREATE2 choreography and returns
+    /// a [`RegisterAerodromeV2PoolParams`]; this adapter registers it into
+    /// [`PoolEntry::AerodromeV2`]. Returns the `pool_id`.
+    fn build_aerodrome_v2_pool(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        block: Option<u64>,
+    ) -> PyResult<u64> {
+        use degenbot_bot::bot_core::pool_builder::builder;
+        use degenbot_core::runtime::get_runtime;
+        let addr = parse_address(address)?;
+        let io = self.bot.construction_io_arc().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "build_aerodrome_v2_pool: no ConstructionIo attached (requires an alloy provider)",
+            )
+        })?;
+        let chain_id = self.bot.chain_id();
+        let params = py
+            .detach(|| {
+                get_runtime().block_on(builder::build_aerodrome_v2(chain_id, addr, &io, block))
+            })
+            .map_err(map_builder_err)?;
+        Ok(self
+            .bot
+            .state_arc()
+            .write()
+            .register_aerodrome_pool(&params))
+    }
+
     /// Build + register a V3 pool through the Rust `PoolBuilder` (T4 / 4GQWZ4
     /// delegation adapter) — the V3 twin of [`Self::build_v2_pool`]. The tick
     /// map is assembled DB-first (a `TickMapDb` hit → `Tracked`, feeding the

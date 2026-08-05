@@ -208,6 +208,44 @@ pub async fn fetch_v2_reserves(
     abi::decode_get_reserves(&bytes)
 }
 
+/// Aerodrome V2 common data read from the pool + factory (the ADR-005 slice
+/// 14g choreography): the `stable()` flag (called on the pool — disambiguates
+/// the shared volatile/stable factory) and the `getFee(address,bool)`
+/// unidirectional fee (called on the factory).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AerodromeV2Common {
+    pub stable: bool,
+    /// Unidirectional fee in basis points (Aerodrome fee denominator `10_000`).
+    pub fee_bps: u64,
+}
+
+/// Fetch an Aerodrome V2 pool's `stable()` flag + `getFee()` fee.
+///
+/// # Errors
+///
+/// Returns a [`ProviderError`] on an `eth_call` or decode failure.
+pub async fn fetch_aerodrome_stable_and_fee(
+    io: &ConstructionIo,
+    address: Address,
+    factory: Address,
+    block: Option<u64>,
+) -> Result<AerodromeV2Common, ProviderError> {
+    // Call 1: stable() on the pool — no-arg bool.
+    let stable_bytes = eth_call(io, address, selector(b"stable()").to_vec(), block).await?;
+    let Ok(DynSolValue::Bool(stable)) = DynSolType::Bool.abi_decode(&stable_bytes) else {
+        return Err(ProviderError::DecodingError {
+            message: "Aerodrome V2 stable() decode".to_owned(),
+        });
+    };
+    // Call 2: getFee(address,bool) on the factory.
+    let fee_bytes = eth_call(io, factory, abi::encode_get_fee(&address, stable), block).await?;
+    let fee = abi::decode_uint256(&fee_bytes)?.to::<u64>();
+    Ok(AerodromeV2Common {
+        stable,
+        fee_bps: fee,
+    })
+}
+
 /// Fetch a V3 pool's `slot0()` + `liquidity()` (ADR-005 slice 14f).
 ///
 /// Returns `(sqrt_price_x96, tick, liquidity)` — tick is `int24` sign-extended

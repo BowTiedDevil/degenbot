@@ -19,6 +19,7 @@ use alloy::primitives::{Address, B256, U256};
 use degenbot_core::errors::ProviderError;
 use degenbot_db::error::DbError;
 use degenbot_db::snapshot::TickMapDb;
+use degenbot_pools::aerodrome_v2_state::RegisterAerodromeV2PoolParams;
 use degenbot_pools::spec_bounds;
 use degenbot_pools::v2_state::RegisterV2PoolParams;
 use degenbot_pools::v3_state::RegisterV3PoolParams;
@@ -264,6 +265,67 @@ pub async fn build_v2(
         variant: id.variant,
         stable_swap,
         fee_denominator,
+    })
+}
+
+/// Build an Aerodrome V2 (constant-product, unidirectional-fee) pool (the
+/// ADR-005 slice 14g follow-up / SSD2XI): a bare `(chain_id, address)` becomes
+/// a [`RegisterAerodromeV2PoolParams`] ready for `BotState::register_aerodrome_pool`.
+///
+/// The Aerodrome volatile/stable pair shares one factory, so the two reads the
+/// `getReserves` probe can't reach are: `stable()` on the pool (picks the
+/// variant) and `getFee(address,bool)` on the factory (the unidirectional fee;
+/// `10_000` = 100%). CREATE2 identity is verified against the JSON-sourced
+/// EIP-1167 deployer + implementation (S5SJXF/WLJD2Y — the JC6OFG parity gap).
+///
+/// # Errors
+///
+/// Returns [`PoolBuilderError::Rpc`] on an RPC/decode failure,
+/// [`PoolBuilderError::Spec`] on an out-of-u112 bounds reserve, or
+/// [`PoolBuilderError::Create2`] on an EIP-1167 address mismatch.
+pub async fn build_aerodrome_v2(
+    chain_id: u64,
+    address: Address,
+    io: &ConstructionIo,
+    block: Option<u64>,
+) -> Result<RegisterAerodromeV2PoolParams, PoolBuilderError> {
+    let imm = choreography::fetch_v2_immutable_data(io, address, block).await?;
+    let (r0, r1) = choreography::fetch_v2_reserves(io, address, block).await?;
+    let common =
+        choreography::fetch_aerodrome_stable_and_fee(io, address, imm.factory, block).await?;
+
+    let id = if common.stable {
+        dex_identity::AERODROME_V2_STABLE
+    } else {
+        dex_identity::AERODROME_V2_VOLATILE
+    };
+
+    deployments::verify_aerodrome_v2_pool_address(
+        chain_id,
+        imm.factory,
+        address,
+        imm.token0,
+        imm.token1,
+        common.stable,
+    )
+    .map_err(|_| PoolBuilderError::Create2)?;
+
+    let reserve0 =
+        spec_bounds::narrow_v2_reserve(r0, "reserve0").map_err(|_| PoolBuilderError::Spec)?;
+    let reserve1 =
+        spec_bounds::narrow_v2_reserve(r1, "reserve1").map_err(|_| PoolBuilderError::Spec)?;
+
+    Ok(RegisterAerodromeV2PoolParams {
+        address,
+        token0: imm.token0,
+        token1: imm.token1,
+        factory: imm.factory,
+        variant: id.variant,
+        stable: common.stable,
+        fee: (common.fee_bps, 10_000),
+        reserve0,
+        reserve1,
+        update_block: block.unwrap_or(0),
     })
 }
 

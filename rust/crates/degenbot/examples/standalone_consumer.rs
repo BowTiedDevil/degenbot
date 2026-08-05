@@ -44,8 +44,8 @@ use revm::state::AccountInfo;
 // to prove the `ConstructionIo` seam + probe/dispatch compile and run.
 use degenbot::bot_core::construction_io::{ConstructionIo, NoDb, RpcConstruction};
 use degenbot::bot_core::pool_builder::builder::{
-    build_v2, build_v3, build_v4, probe_pool_type, PoolBuilderError, PoolFamily,
-    V4PoolBuildIdentity,
+    build_aerodrome_v2, build_v2, build_v3, build_v4, probe_pool_type, PoolBuilderError,
+    PoolFamily, V4PoolBuildIdentity,
 };
 use degenbot::degenbot_rpc::provider::EthBlock;
 use degenbot::errors::ProviderError;
@@ -602,6 +602,14 @@ fn in_process_sim_standalone_slice() {
     assert!(
         matches!(err, Err(PoolBuilderError::Rpc(_))),
         "build_v4 over a failing RPC must yield a typed Rpc error, got {err:?}"
+    );
+    // Aerodrome V2: build_aerodrome_v2 (the SSSXG6 follow-up) reads the same
+    // failing `FailingConstruction` stub — must surface the typed Rpc error too,
+    // pinning the umbrella path (re-export + error type) for the Aerodrome family.
+    let err = degenbot::runtime::get_runtime().block_on(build_aerodrome_v2(1, POOL_B, &io, None));
+    assert!(
+        matches!(err, Err(PoolBuilderError::Rpc(_))),
+        "build_aerodrome_v2 over a failing RPC must yield a typed Rpc error, got {err:?}"
     );
     println!(
         "standalone degenbot consumer OK: PoolBuilder probe+dispatch reachable (family={family:?})"

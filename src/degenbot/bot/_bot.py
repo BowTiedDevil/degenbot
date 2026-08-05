@@ -607,8 +607,9 @@ class Bot:
         # the retired builder's attached fetcher.
         #
         # Curve/Aerodrome/Balancer keep their builders (non-goal, retired under
-        # SSSXG6).
-        if issubclass(pool_class, (UniswapV2Pool, UniswapV3Pool)):
+        # SSSXG6) — except Aerodrome V2, which delegates through the Rust
+        # `build_aerodrome_v2` (its own PoolEntry family).
+        if issubclass(pool_class, (UniswapV2Pool, UniswapV3Pool, AerodromeV2Pool)):
             return self._build_delegated(pool_class, address, chain_id, request)
 
         builder = self._builders.get(pool_class)
@@ -770,6 +771,11 @@ class Bot:
             pool_id = self._py_bot.build_v3_pool(
                 address, block=block, db=True, tick_data_fetcher=fetcher
             )
+        elif issubclass(pool_class, AerodromeV2Pool):
+            # SSSXG6: Aerodrome V2 (shared volatile/stable factory) is a
+            # distinct structural family from V2 — the Rust `build_aerodrome_v2`
+            # reads `stable()`+`getFee()` and registers into PoolEntry::AerodromeV2.
+            pool_id = self._py_bot.build_aerodrome_v2_pool(address, block=block)
         else:
             pool_id = self._py_bot.build_v2_pool(address, block=block)
         py_pool = self._py_bot.get_pool(pool_id)
