@@ -1449,11 +1449,25 @@ impl PyBotIo {
         owner: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
+        let io = self.required_construction_io()?;
+        let token_addr = alloy::primitives::Address::from(parse_address_for_call(token)?);
         let owner_addr = alloy::primitives::Address::from(parse_address_for_call(owner)?);
-        let calldata = degenbot_rpc::abi::encode_balance_of(&owner_addr);
-        let result_obj = self.forward_call_to_provider(py, token, &calldata, block)?;
-        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        let n = degenbot_rpc::abi::decode_balance_of(bytes)?;
+        let block_num = extract_block_u64(block)?;
+        let r = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::choreography::fetch_token_balance(
+                    &io, token_addr, owner_addr, block_num,
+                )
+                .await
+            })
+        });
+        let n = match r {
+            Ok(v) => v,
+            Err(ProviderError::ExecutionReverted { message, .. }) => {
+                return Err(revert_to_pyerr(py, token, &message));
+            }
+            Err(e) => return Err(e.into()),
+        };
         crate::conversion::alloy::u256_to_py(py, &n).map(pyo3::Bound::unbind)
     }
 
@@ -1472,12 +1486,30 @@ impl PyBotIo {
         spender: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
+        let io = self.required_construction_io()?;
+        let token_addr = alloy::primitives::Address::from(parse_address_for_call(token)?);
         let owner_addr = alloy::primitives::Address::from(parse_address_for_call(owner)?);
         let spender_addr = alloy::primitives::Address::from(parse_address_for_call(spender)?);
-        let calldata = degenbot_rpc::abi::encode_allowance(&owner_addr, &spender_addr);
-        let result_obj = self.forward_call_to_provider(py, token, &calldata, block)?;
-        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        let n = degenbot_rpc::abi::decode_allowance(bytes)?;
+        let block_num = extract_block_u64(block)?;
+        let r = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::choreography::fetch_token_allowance(
+                    &io,
+                    token_addr,
+                    owner_addr,
+                    spender_addr,
+                    block_num,
+                )
+                .await
+            })
+        });
+        let n = match r {
+            Ok(v) => v,
+            Err(ProviderError::ExecutionReverted { message, .. }) => {
+                return Err(revert_to_pyerr(py, token, &message));
+            }
+            Err(e) => return Err(e.into()),
+        };
         crate::conversion::alloy::u256_to_py(py, &n).map(pyo3::Bound::unbind)
     }
 
@@ -1493,10 +1525,24 @@ impl PyBotIo {
         token: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        let calldata = degenbot_rpc::abi::encode_total_supply();
-        let result_obj = self.forward_call_to_provider(py, token, &calldata, block)?;
-        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        let n = degenbot_rpc::abi::decode_total_supply(bytes)?;
+        let io = self.required_construction_io()?;
+        let token_addr = alloy::primitives::Address::from(parse_address_for_call(token)?);
+        let block_num = extract_block_u64(block)?;
+        let r = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::choreography::fetch_token_total_supply(
+                    &io, token_addr, block_num,
+                )
+                .await
+            })
+        });
+        let n = match r {
+            Ok(v) => v,
+            Err(ProviderError::ExecutionReverted { message, .. }) => {
+                return Err(revert_to_pyerr(py, token, &message));
+            }
+            Err(e) => return Err(e.into()),
+        };
         crate::conversion::alloy::u256_to_py(py, &n).map(pyo3::Bound::unbind)
     }
 

@@ -9,6 +9,7 @@ from degenbot.bot import Bot, PyBot
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.database.operations import create_new_sqlite_database
 from degenbot.erc20 import Erc20Token
+from degenbot.provider import OfflineProvider
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.erc20_factory import make_erc20, make_ether_placeholder
 
@@ -195,7 +196,7 @@ class TestBotTokenIOMethods:
         provider.call.assert_not_called()
 
     def test_get_token_balance_cache_miss(self, tmp_path: pathlib.Path) -> None:
-        """Balance fetched from chain on cache miss, then cached."""
+        """Balance fetched from chain (offline cassette) on cache miss, then cached."""
         token = make_erc20(
             _PY_BOT,
             "0xDe30239bB7673E3021A8cF8c6B7Df7Af60e9C0d6",
@@ -205,26 +206,44 @@ class TestBotTokenIOMethods:
             decimals=18,
         )
         holder = "0x" + "11" * 20
+        expected_balance = 5 * 10**18
 
         config = DegenbotConfig(
             database=DatabaseSettings(path=tmp_path / "test-bot-io2"),
             rpc={1: ETHEREUM_ARCHIVE_NODE_HTTP_URI},
             default_chain_id=1,
         )
-        provider = MagicMock()
-        provider.chain_id = 1
-        bot = Bot(config, provider=provider)
-        provider.is_connected.return_value = True
-        provider.get_block_number.return_value = 200
 
-        # Mock provider.call to return a balance
-        encoded_balance = eth_abi.abi.encode(types=["uint256"], args=[5 * 10**18])
-        provider.call.return_value = encoded_balance
+        # Drive the core advance through an alloy-backed OfflineProvider (the
+        # non-alloy MagicMock fallback is retired with the seam; ADR-005).
+        # Record one block (200) returning the balanceOf for the holder.
+        balance_of_calldata = (
+            bytes.fromhex("70a08231")
+            + eth_abi.abi.encode(types=["address"], args=[holder])
+        ).hex()
+        encoded_balance = eth_abi.abi.encode(
+            types=["uint256"], args=[expected_balance]
+        )
+        offline = OfflineProvider(
+            chain_id=1,
+            blocks={
+                "200": {
+                    "timestamp": 1776986723,
+                    "calls": {
+                        f"{token.address.lower()}:0x{balance_of_calldata}": (
+                            encoded_balance.hex()
+                        ),
+                    },
+                    "code": {},
+                }
+            },
+        )
+        bot = Bot(config, provider=offline)
 
         balance = bot.get_token_balance(token, holder)
-        assert balance == 5 * 10**18
-        # Now cached
-        assert token.get_cached_balance(holder, block_number=200) == 5 * 10**18
+        assert balance == expected_balance
+        # Now cached at resolved block 200
+        assert token.get_cached_balance(holder, block_number=200) == expected_balance
 
     def test_get_token_approval_cache_hit(self, tmp_path: pathlib.Path) -> None:
         token = make_erc20(
