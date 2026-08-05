@@ -14,6 +14,7 @@
 //! umbrella (Tier-0 slice in `examples/standalone_consumer.rs`).
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use alloy::primitives::{Address, B256, U256};
 use degenbot_core::errors::ProviderError;
@@ -22,15 +23,21 @@ use degenbot_db::snapshot::TickMapDb;
 use degenbot_pools::aerodrome_v2_state::RegisterAerodromeV2PoolParams;
 use degenbot_pools::balancer_stable_state::RegisterBalancerStablePoolParams;
 use degenbot_pools::balancer_weighted_state::RegisterBalancerWeightedPoolParams;
+use degenbot_pools::curve_data_provider::CurveDataProvider;
+use degenbot_pools::curve_state::RegisterCurvePoolParams;
+use degenbot_pools::curve_strategies::resolve_curve_strategy_discriminants;
 use degenbot_pools::spec_bounds;
 use degenbot_pools::v2_state::RegisterV2PoolParams;
 use degenbot_pools::v3_state::RegisterV3PoolParams;
 use degenbot_pools::v4_state::{RegisterV4PoolParams, V4PoolKey};
+use degenbot_rpc::abi;
 use degenbot_uniswap::deployments;
 use degenbot_uniswap::dex_identity::{self, DexIdentity, DexVariant};
 
 use super::choreography::{self};
+use super::curve_choreography;
 use crate::bot_core::construction_io::ConstructionIo;
+use crate::bot_core::curve_data_provider_impl::RpcCurveDataProvider;
 use crate::bot_core::{PoolTickCoverage, TickInfo};
 
 /// The on-chain family a `probe` resolves to (V4 is a separate
@@ -681,6 +688,164 @@ async fn bootstrap_v3_tick_map(
     }
 
     Ok((ticks, PoolTickCoverage::Sparse))
+}
+
+/// Assemble `build_curve_pool` params for a Curve `StableSwap` pool (the task
+/// `4TPB35`, epic `TV72EG`, assembly twin of `CurvePoolBuilder.build`):
+/// discovers coins/balances, fetches `A`/`fee`/`admin_fee`, detects A-ramping,
+/// lending, crypto, `lp_token` + metapool (base pool + underlying coins),
+/// resolves the strategy discriminants (T3), computes rate/precision
+/// multipliers, and constructs the [`RpcCurveDataProvider`] (T4) — producing a
+/// [`RegisterCurvePoolParams`] ready for `BotState::register_curve_pool` with
+/// no Python round-trip.
+///
+/// ERC-20 / LP-token companion objects are built Python-side off the handle by
+/// the driver (as with `build_v2`/`build_balancer_*`).
+///
+/// # Errors
+///
+/// Returns [`PoolBuilderError::Rpc`] on an RPC/decode failure or
+/// [`PoolBuilderError::Spec`] when the pool exposes fewer than 2 coins
+/// (mirrors the `BrokenPool` minimum-tokens guard).
+#[allow(clippy::too_many_lines)] // data-dense assembly (mirrors the Python builder)
+pub async fn build_curve_pool(
+    address: Address,
+    registry_addresses: &[Address],
+    io: &ConstructionIo,
+    block: Option<u64>,
+) -> Result<RegisterCurvePoolParams, PoolBuilderError> {
+    let coins = curve_choreography::discover_curve_coins(io, address, block).await;
+    let params = curve_choreography::fetch_curve_pool_params(io, address, block).await?;
+    let ramping = curve_choreography::detect_curve_a_ramping(io, address, block).await;
+    let crypto = curve_choreography::detect_curve_crypto_params(io, address, block).await;
+    let lp_token =
+        curve_choreography::find_curve_lp_token(io, address, registry_addresses, block).await;
+    let metapool = curve_choreography::detect_curve_metapool(
+        io,
+        address,
+        &coins.token_addresses,
+        registry_addresses,
+        block,
+    )
+    .await;
+
+    // Minimum-tokens guard (mirrors `BrokenPool`).
+    if coins.token_addresses.len() < 2 {
+        return Err(PoolBuilderError::Spec);
+    }
+
+    // Per-coin ERC20 decimals — needed for the rate/precision multipliers and
+    // the lending detection (the driver owns the companions, so we fetch here).
+    let mut token_decimals = Vec::with_capacity(coins.token_addresses.len());
+    for token in &coins.token_addresses {
+        token_decimals.push(fetch_erc20_decimals(io, *token, block).await?);
+    }
+    let lending = curve_choreography::detect_curve_lending_tokens(
+        io,
+        &coins.token_addresses,
+        &token_decimals,
+        block,
+    )
+    .await;
+
+    let strategies = resolve_curve_strategy_discriminants(address);
+
+    let block_num = block.unwrap_or(0);
+    let create_timestamp = io
+        .get_block_timestamp(block_num)
+        .await?
+        // `None` only when the RPC double can't resolve the block.
+        .unwrap_or(0);
+
+    let one_e18 = U256::from(10u64).pow(U256::from(18u64));
+    // Mirror `_compute_rate_and_precision_multipliers`: lending overrides →
+    // `pm * 10**PRECISION_DECIMALS`; else from token decimals.
+    let (rate_multipliers, precision_multipliers) = match &lending.precision_multipliers {
+        Some(pms) => (pms.iter().map(|pm| *pm * one_e18).collect(), pms.clone()),
+        None => (
+            token_decimals
+                .iter()
+                .map(|d| U256::from(10u64).pow(U256::from(36u32 - u32::from(*d))))
+                .collect(),
+            token_decimals
+                .iter()
+                .map(|d| U256::from(10u64).pow(U256::from(18u32 - u32::from(*d))))
+                .collect(),
+        ),
+    };
+
+    // The provider's own rate/precision config (from the lending overrides, or
+    // `[1]*n` / `[1e18]*n` defaults) — consumed by the oracle/yToken/cToken
+    // styles.
+    let default_pms = vec![U256::from(1u64); coins.token_addresses.len()];
+    let provider_pms = lending
+        .precision_multipliers
+        .clone()
+        .unwrap_or_else(|| default_pms.clone());
+    let provider_rate_multipliers: Vec<U256> =
+        provider_pms.iter().map(|pm| *pm * one_e18).collect();
+    let provider = RpcCurveDataProvider::new(
+        io.rpc.clone(),
+        address,
+        metapool.base_pool_address,
+        coins.token_addresses.len(),
+        strategies.lending_rate_style,
+        coins.token_addresses.clone(),
+        lending.use_lending.clone(),
+        provider_pms,
+        provider_rate_multipliers,
+    );
+
+    Ok(RegisterCurvePoolParams {
+        address,
+        tokens: coins.token_addresses.clone(),
+        a_coefficient: params.a_coefficient,
+        a_precision: 100,
+        fee: params.fee,
+        admin_fee: params.admin_fee,
+        rate_multipliers,
+        balances: coins.balances,
+        update_block: block_num,
+        swap_style: strategies.swap_style,
+        lending_rate_style: strategies.lending_rate_style,
+        d_variant: strategies.d_variant,
+        y_variant: strategies.y_variant,
+        yd_variant: strategies.yd_variant,
+        base_pool: metapool.base_pool_address,
+        initial_a_coefficient: ramping.initial_a,
+        future_a_coefficient: ramping.future_a,
+        initial_a_coefficient_time: ramping.initial_a_time,
+        future_a_coefficient_time: ramping.future_a_time,
+        create_timestamp: Some(create_timestamp),
+        fee_gamma: crypto.fee_gamma,
+        mid_fee: crypto.mid_fee,
+        offpeg_fee_multiplier: crypto.offpeg_fee_multiplier,
+        out_fee: crypto.out_fee,
+        gamma: crypto.gamma,
+        lp_token,
+        use_lending: lending.use_lending,
+        precision_multipliers,
+        tokens_underlying: metapool.tokens_underlying,
+        metapool_rate_style: strategies.metapool_rate_style,
+        metapool_underlying_style: strategies.metapool_underlying_style,
+        data_provider: Some(Arc::new(provider) as Arc<dyn CurveDataProvider>),
+    })
+}
+
+/// Fetch a Curve pool coin's ERC20 `decimals()` as a `u8`.
+///
+/// # Errors
+///
+/// Returns [`PoolBuilderError::Rpc`] on an RPC/decode failure.
+async fn fetch_erc20_decimals(
+    io: &ConstructionIo,
+    token: Address,
+    block: Option<u64>,
+) -> Result<u8, PoolBuilderError> {
+    let calldata = choreography::selector(b"decimals()");
+    let bytes = io.call(token, calldata.into(), block).await?;
+    let dec = abi::decode_uint256(&bytes)?;
+    Ok(dec.to::<u8>())
 }
 
 /// Assemble `build_v3` params for a concentrated-liquidity (V3-style) pool.

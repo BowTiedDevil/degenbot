@@ -1268,3 +1268,114 @@ async fn detect_curve_metapool_3crv_base_fallback() {
     assert!(r.is_meta);
     assert_eq!(r.base_pool_address, Some(tripool));
 }
+
+// ---------------------------------------------------------------------------
+// Curve build assembly (task 4TPB35 / epic TV72EG)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn build_curve_pool_assembles_plain_pool_params() {
+    let mut f = FakeRpc::new();
+    let coin0: Address = alloy::primitives::address!("0xaac0000000000000000000000000000000000001");
+    let coin1: Address = alloy::primitives::address!("0xaac0000000000000000000000000000000000002");
+
+    // Coins (uint256 prototype) + balances.
+    f.set_full(abi::encode_curve_coins_uint(0), addr_word(coin0));
+    f.set_full(abi::encode_curve_coins_uint(1), addr_word(coin1));
+    // coin index 2 reverts (no response) → discovery stops at 2 coins.
+    f.set_full(
+        abi::encode_curve_balances_uint(0),
+        enc(DynSolValue::Uint(U256::from(1_000_000u64), 256)),
+    );
+    f.set_full(
+        abi::encode_curve_balances_uint(1),
+        enc(DynSolValue::Uint(U256::from(2_000_000u64), 256)),
+    );
+
+    // Pool params.
+    f.set(
+        choreography::selector(b"A()"),
+        enc(DynSolValue::Uint(U256::from(2000u64), 256)),
+    );
+    f.set(
+        choreography::selector(b"fee()"),
+        enc(DynSolValue::Uint(U256::from(1_000_000u64), 256)),
+    );
+    f.set(
+        choreography::selector(b"admin_fee()"),
+        enc(DynSolValue::Uint(U256::from(500_000_000u64), 256)),
+    );
+
+    // Both coins have 6 decimals → rate_multiplier 10^(36-6)=10^30.
+    f.set(
+        choreography::selector(b"decimals()"),
+        enc(DynSolValue::Uint(U256::from(6u64), 256)),
+    );
+
+    let io = io_with(f);
+    let p = builder::build_curve_pool(TO, &[REGISTRY], &io, Some(123))
+        .await
+        .unwrap();
+
+    assert_eq!(p.tokens, vec![coin0, coin1]);
+    assert_eq!(p.a_coefficient, 2000);
+    assert_eq!(p.a_precision, 100);
+    assert_eq!(p.fee, 1_000_000);
+    assert_eq!(p.admin_fee, 500_000_000);
+    assert_eq!(
+        p.balances,
+        vec![U256::from(1_000_000u64), U256::from(2_000_000u64)]
+    );
+    assert_eq!(p.update_block, 123);
+
+    // Rate/precision multipliers from 6-decimal coins (no lending overrides).
+    let r30 = U256::from(10u64).pow(U256::from(30u64));
+    let r12 = U256::from(10u64).pow(U256::from(12u64));
+    assert_eq!(p.rate_multipliers, vec![r30, r30]);
+    assert_eq!(p.precision_multipliers, vec![r12, r12]);
+
+    // Strategy defaults (plain, unmapped address).
+    assert_eq!(p.swap_style, 1); // STANDARD
+    assert_eq!(p.lending_rate_style, 1); // NONE
+    assert_eq!(p.d_variant, 1);
+
+    // Plain pool: no base/underlying, no lp, no ramping, no crypto.
+    assert_eq!(p.base_pool, None);
+    assert_eq!(p.tokens_underlying, None);
+    assert_eq!(p.lp_token, None);
+    assert_eq!(p.fee_gamma, None);
+    assert!(p.create_timestamp.is_some());
+
+    // The Rust data provider is attached.
+    assert!(p.data_provider.is_some());
+
+    // use_lending all false for a plain pool.
+    assert_eq!(p.use_lending, vec![false, false]);
+}
+
+#[tokio::test]
+async fn build_curve_pool_rejects_fewer_than_two_coins() {
+    // Only one coin discovered → Spec error (BrokenPool guard).
+    let mut f = FakeRpc::new();
+    let coin0: Address = alloy::primitives::address!("0xaac0000000000000000000000000000000000003");
+    f.set_full(abi::encode_curve_coins_uint(0), addr_word(coin0));
+    f.set_full(abi::encode_curve_coins_uint(1), addr_word(Address::ZERO));
+    // Params must succeed (they're fetched before the min-tokens guard).
+    f.set(
+        choreography::selector(b"A()"),
+        enc(DynSolValue::Uint(U256::from(100u64), 256)),
+    );
+    f.set(
+        choreography::selector(b"fee()"),
+        enc(DynSolValue::Uint(U256::from(100u64), 256)),
+    );
+    f.set(
+        choreography::selector(b"admin_fee()"),
+        enc(DynSolValue::Uint(U256::from(0u64), 256)),
+    );
+    let io = io_with(f);
+    assert!(matches!(
+        builder::build_curve_pool(TO, &[REGISTRY], &io, Some(1)).await,
+        Err(builder::PoolBuilderError::Spec)
+    ));
+}
