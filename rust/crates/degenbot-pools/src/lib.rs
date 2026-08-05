@@ -73,6 +73,7 @@ pub mod aerodrome_v2_state;
 pub mod balancer_stable_state;
 pub mod balancer_weighted_state;
 pub mod curve_data_provider;
+pub mod curve_dy_io;
 pub mod curve_state;
 pub mod curve_strategies;
 // Domain-math prose (sqrtPriceX96, Solidity, …) moved verbatim from
