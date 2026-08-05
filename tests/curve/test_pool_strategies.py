@@ -3,14 +3,6 @@
 import pytest
 
 from degenbot.curve._pool_strategies import resolve_pool_strategies
-from degenbot.curve.calculators.crypto import CryptoDyCalculator
-from degenbot.curve.calculators.live_admin import LiveAdminDynamicDyCalculator
-from degenbot.curve.calculators.standard import (
-    BalanceSource,
-    ConversionStyle,
-    RateSource,
-    StandardDyCalculator,
-)
 from degenbot.curve.strategies import PoolStrategies
 from degenbot.curve.types import (
     DVariant,
@@ -27,12 +19,10 @@ class TestResolvePoolStrategies:
     """Test resolve_pool_strategies() for known pool addresses."""
 
     def test_default_for_unknown_address(self):
-
         strategies = resolve_pool_strategies("0x0000000000000000000000000000000000000001")
-        # Unknown address gets defaults with StandardDyCalculator
+        # Unknown address gets defaults
         assert strategies.swap_style == SwapStyle.STANDARD
         assert strategies.lending_rate_style == LendingRateStyle.NONE
-        assert isinstance(strategies.dy_calculator, StandardDyCalculator)
 
     def test_tripool(self):
         # 3pool uses RATE_ADJUSTED
@@ -53,7 +43,6 @@ class TestResolvePoolStrategies:
         assert strategies.lending_rate_style == LendingRateStyle.YTOKEN
 
     def test_y_pool_ytoken_v1(self):
-        # 0x06364f10 uses RATE_ADJUSTED (with -1)
         strategies = resolve_pool_strategies("0x06364f10B501e868329afBc005b3492902d6C763")
         assert strategies.swap_style == SwapStyle.RATE_ADJUSTED
         assert strategies.lending_rate_style == LendingRateStyle.YTOKEN
@@ -158,68 +147,3 @@ class TestPoolStrategiesDataclass:
         s1 = PoolStrategies(swap_style=SwapStyle.CRYPTO)
         s2 = PoolStrategies(swap_style=SwapStyle.STANDARD)
         assert s1 != s2
-
-    def test_calculators_always_set(self):
-        """PoolStrategies auto-constructs calculators from enum values."""
-        s = PoolStrategies()
-        assert s.dy_calculator is not None
-        assert s.metapool_dy_calculator is not None
-        assert s.metapool_underlying_dy_calculator is not None
-
-    def test_calculators_match_swap_style(self):
-        """Calculator parameterization matches the swap_style enum value."""
-        default = PoolStrategies().dy_calculator
-        assert isinstance(default, StandardDyCalculator)
-        assert default.swap_style == SwapStyle.STANDARD
-        assert default.balance_source == BalanceSource.RATE_ADJUSTED_XP
-        assert default.rate_source == RateSource.RESOLVED_RATES
-        assert default.subtract_one is True
-        assert default.conversion_style == ConversionStyle.FEE_THEN_RATE
-
-        crypto = PoolStrategies(swap_style=SwapStyle.CRYPTO).dy_calculator
-        assert isinstance(crypto, CryptoDyCalculator)
-
-        rate_adj = PoolStrategies(swap_style=SwapStyle.RATE_ADJUSTED).dy_calculator
-        assert isinstance(rate_adj, StandardDyCalculator)
-        assert rate_adj.swap_style == SwapStyle.RATE_ADJUSTED
-        assert rate_adj.conversion_style == ConversionStyle.RATE_THEN_FEE
-
-        raw_bal = PoolStrategies(swap_style=SwapStyle.RAW_BALANCE).dy_calculator
-        assert raw_bal.balance_source == BalanceSource.RAW_BALANCES
-        assert raw_bal.conversion_style == ConversionStyle.FEE_ONLY
-
-        no_one = PoolStrategies(swap_style=SwapStyle.NO_ONE_FEE_RATE).dy_calculator
-        assert no_one.subtract_one is False
-        assert no_one.conversion_style == ConversionStyle.FEE_THEN_RATE
-
-        cytoken = PoolStrategies(swap_style=SwapStyle.CYTOKEN).dy_calculator
-        assert cytoken.swap_style == SwapStyle.CYTOKEN
-        assert cytoken.balance_source == BalanceSource.RATE_ADJUSTED_XP
-        assert cytoken.subtract_one is True
-        assert cytoken.conversion_style == ConversionStyle.FEE_THEN_RATE
-
-        live_admin = PoolStrategies(swap_style=SwapStyle.LIVE_ADMIN).dy_calculator
-        assert isinstance(live_admin, StandardDyCalculator)
-        assert live_admin.swap_style == SwapStyle.LIVE_ADMIN
-        assert live_admin.rate_source == RateSource.RATE_MULTIPLIERS
-
-        live_oracle = PoolStrategies(swap_style=SwapStyle.LIVE_ADMIN_ORACLE).dy_calculator
-        assert isinstance(live_oracle, StandardDyCalculator)
-        assert live_oracle.swap_style == SwapStyle.LIVE_ADMIN_ORACLE
-        assert live_oracle.rate_source == RateSource.RESOLVED_RATES
-
-        live_dyn = PoolStrategies(swap_style=SwapStyle.LIVE_ADMIN_DYNAMIC).dy_calculator
-        assert isinstance(live_dyn, LiveAdminDynamicDyCalculator)
-        assert live_dyn.swap_style == SwapStyle.LIVE_ADMIN_DYNAMIC
-
-        live_dyn_prec = PoolStrategies(
-            swap_style=SwapStyle.LIVE_ADMIN_DYNAMIC_PRECISION
-        ).dy_calculator
-        assert isinstance(live_dyn_prec, LiveAdminDynamicDyCalculator)
-        assert live_dyn_prec.swap_style == SwapStyle.LIVE_ADMIN_DYNAMIC_PRECISION
-
-    def test_explicit_calculator_overrides_auto(self):
-        """Explicit calculator arg is preserved, not overwritten by __post_init__."""
-        explicit = StandardDyCalculator(swap_style=SwapStyle.STANDARD)
-        s = PoolStrategies(swap_style=SwapStyle.CRYPTO, dy_calculator=explicit)
-        assert s.dy_calculator is explicit

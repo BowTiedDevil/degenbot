@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>degenbot — Architecture Review: Deepening Opportunities</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .mermaid { background: transparent; }
+  .card { transition: box-shadow .2s; }
+  .card:hover { box-shadow: 0 10px 30px rgba(0,0,0,.12); }
+  .diagram-box { }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+  <div class="max-w-6xl mx-auto px-6 py-10">
+
+    <!-- HEADER -->
+    <div class="mb-10">
+      <p class="text-sm font-medium text-cyan-700 tracking-wide uppercase">improve-codebase-architecture · review</p>
+      <h1 class="text-4xl font-black text-slate-900 mt-1">Deepening opportunities in the degenbot pump &amp; state-accuracy core</h1>
+      <p class="mt-3 text-slate-600 max-w-3xl leading-relaxed">
+        Exploratory scan focused on the recent hot spots: the <strong>pump lifecycle</strong> and the
+        <strong>solver-state accuracy tripwire</strong> — the areas the live-debug session
+        (<code>docs/exploration-live-debug-session.md</code>, 2026-08-02) and the last ~40 commits keep
+        returning to. The codebase is already heavily and deliberately architected (ADR-001…020;
+        <code>CONTEXT.md</code> carries a rolling review log); this report only surfaces what is
+        <em>still open</em>, and marks where a candidate refines rather than re-litigates a recorded decision.
+      </p>
+      <div class="mt-4 flex flex-wrap gap-2 text-xs">
+        <span class="bg-slate-200 rounded-full px-3 py-1">blk: BlockPump</span>
+        <span class="bg-slate-200 rounded-full px-3 py-1">st: solver-state</span>
+        <span class="bg-slate-200 rounded-full px-3 py-1">locality · seam · depth · leverage</span>
+      </div>
+    </div>
+
+    <!-- ==================== CANDIDATE 1 ==================== -->
+    <div class="card bg-white rounded-2xl border border-slate-200 p-7 mb-8">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <span class="inline-block bg-amber-100 text-amber-800 text-xs font-bold rounded-full px-3 py-1 uppercase">Candidate 1</span>
+          <h2 class="text-2xl font-bold text-slate-900 mt-2">Deepen the pump's <em>recovery</em> concern out of the delivery loop</h2>
+        </div>
+        <span class="shrink-0 bg-amber-500 text-white text-xs font-bold rounded-full px-3 py-1.5 uppercase">Strong</span>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-4 mt-5 text-sm">
+        <div class="bg-slate-50 rounded-xl p-4">
+          <p class="font-bold text-cyan-800 uppercase text-xs tracking-wide mb-1">Files</p>
+          <ul class="space-y-0.5 font-mono text-xs text-slate-700">
+            <li>bot_core/<b>block_pump.rs</b> (~4k loc + ~2.3k test)</li>
+            <li>bot_core/<b>block_clock.rs</b> · <b>solve_coordinator.rs</b></li>
+          </ul>
+        </div>
+        <div class="bg-slate-50 rounded-xl p-4">
+          <p class="font-bold text-cyan-800 uppercase text-xs tracking-wide mb-1">Vocabulary</p>
+          <p class="text-slate-700">
+            The <strong>BlockPump</strong> module (the ADR-008 block state machine + its resilience layer)
+            has an interface barely smaller than its implementation — a <strong>shallow</strong> module whose
+            recovery knowledge has <strong>no locality</strong>: it is smeared across one giant async loop.
+          </p>
+        </div>
+      </div>
+
+      <h3 class="font-bold text-slate-900 mt-6">Problem — recovery is a pile of inline heuristics, not a seam</h3>
+      <p class="text-slate-700 leading-relaxed mt-1">
+        Every live-session failure class so far produced a <em>new inline patch</em> in the same loop:
+        the FSM <code>recovery_anchor</code> reset (BQ7ZBC), the header-staleness watchdog, the logs-silence
+        watchdog, the <code>PanicLateForward</code> unreliable-WS branch, the AV42C7 solver-state gate, the
+        auto-backfill resets (J3FMDO/DFQYM5). The 2026-08-02 session saw <em>two distinct</em> classes —
+        WS <em>disconnect</em> (FSM recovery) vs WS <em>slow-but-connected</em> (state lags 4–37 blocks) —
+        and the response was a fresh patch each time (a clean-shutdown flag replacing a wedging <code>panic!</code>).
+        The <strong>deletion test</strong> answers "would extracting recovery concentrate complexity or just move
+        it?" — the loop currently holds delivery <em>and</em> recovery decisions tangled together, so deleting the
+        recovery branches <em>would concentrate</em> the remaining loop; the complexity wants a discrete home.
+      </p>
+
+      <h3 class="font-bold text-slate-900 mt-6">Solution — delivery keeps "what happened"; a policy owns "what to do"</h3>
+      <p class="text-slate-700 leading-relaxed mt-1">
+        Split the loop's <strong>delivery FSM</strong> (observe header/log → catalog anomalies) from a narrow
+        <strong>delivery-recovery seam</strong>: a <code>DeliveryPolicy</code> adapter that, given a typed
+        anomaly (<code>HeaderStall</code>, <code>LogSilence</code>, <code>LateForward</code>), returns a
+        decision (<code>RecoverByBackfill</code> / <code>CleanStop</code>) against a small action
+        interface (re-fetch dropped <em>logs</em>, stop). This is <b>delivery-only</b> — it reconciles
+        dropped WS <em>logs</em>, never the scalar state a hop solves on (that repair is out of scope,
+        per the tripwire posture in Candidate 2). Delivery stays in <code>block_pump.rs</code>; all
+        recovery policy concentrates in one module with one test surface.
+      </p>
+
+      <h3 class="font-bold text-slate-900 mt-6">Benefits</h3>
+      <ul class="text-slate-700 leading-relaxed mt-1 list-disc pl-5 space-y-1">
+        <li><strong>Locality</strong> — every recovery heuristic (watchdogs, anchors, gate reaction) concentrates in one place instead of threading through a 4k-line loop; the wedging/backlog classes become unit tests of the policy, not giant integration cases.</li>
+        <li><strong>Leverage</strong> — a new failure class (e.g. slow-connected lag) is a new policy arm, not a new inline branch; policy is swappable per-deployment without touching delivery.</li>
+        <li><strong>Testability</strong> — drive the policy seam with a fake sink/provider in milliseconds; no tokio stream choreography required to reason about recovery.</li>
+      </ul>
+
+      <div class="grid md:grid-cols-2 gap-4 mt-6">
+        <div class="diagram-box border border-slate-200 rounded-xl p-4">
+          <p class="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Before — loop owns delivery + recovery</p>
+          <pre class="mermaid">
+flowchart TD
+  A[WS stream] --> L[block_pump loop]
+  L --> W1[header staleness watchdog]
+  L --> W2[logs silence watchdog]
+  L --> W3[recovery_anchor reset]
+  L --> W4[PanicLateForward branch]
+  L --> W5[AV42C7 solver-state gate]
+  W1 --> D1[backfill?]
+  W2 --> D2[stop?]
+  W4 --> D3[shutdown]
+  W5 --> D4[clean-stop / wedge]
+          </pre>
+        </div>
+        <div class="diagram-box border border-cyan-200 rounded-xl p-4">
+          <p class="text-xs font-bold text-cyan-700 uppercase tracking-wide mb-2">After — a recovery seam (depth)</p>
+          <pre class="mermaid">
+flowchart TD
+  A[WS stream] --> L[delivery FSM: observe]
+  L --> CAT{catalog anomaly}
+  CAT --> P[DeliveryPolicy]
+  P --> R1[RecoverByBackfill]
+  P --> R2[CleanStop]
+  R1 --> RA[delivery-action interface]
+  R2 --> RA
+  RA --> B[re-fetch logs / stop adapters]
+          </pre>
+        </div>
+      </div>
+
+      <div class="mt-6 bg-sky-50 border-l-4 border-sky-400 rounded-r-lg p-4 text-sm">
+        <p class="font-bold text-sky-900">ADR alignment — refines, does not re-litigate.</p>
+        <p class="text-sky-800">
+          ADR-008 already designs one recovery ("Edge B backfill" on WS drop) and the state machine's
+          monotonicity rules. This candidate adds the <em>delivery-resilience policy</em> <b>above</b> that
+          state machine — it does not touch the tombstone/monotonicity rules, does not re-sync scalar
+          pool state (that is the tripwire's domain — see Candidate 2), and stays limited to Edge-B
+          log backfill + clean stop.
+        </p>
+      </div>
+    </div>
+
+    <!-- ==================== CANDIDATE 2 ==================== -->
+    <div class="card bg-white rounded-2xl border border-slate-200 p-7 mb-8">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <span class="inline-block bg-emerald-100 text-emerald-800 text-xs font-bold rounded-full px-3 py-1 uppercase">Candidate 2</span>
+          <h2 class="text-2xl font-bold text-slate-900 mt-2">Extract the state-accuracy <em>tripwire</em> into one discriminating module</h2>
+        </div>
+        <span class="shrink-0 bg-emerald-500 text-white text-xs font-bold rounded-full px-3 py-1.5 uppercase">Strong</span>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-4 mt-5 text-sm">
+        <div class="bg-slate-50 rounded-xl p-4">
+          <p class="font-bold text-cyan-800 uppercase text-xs tracking-wide mb-1">Files</p>
+          <ul class="space-y-0.5 font-mono text-xs text-slate-700">
+            <li>bot_core/<b>solver_state_verifier.rs</b></li>
+            <li>bot_core/<b>liquidity_verifier.rs</b></li>
+            <li>sim-revert diagnostics (revm inspectors)</li>
+            <li>degenbot-rpc::<b>abi</b> (the shared probe home)</li>
+          </ul>
+        </div>
+        <div class="bg-slate-50 rounded-xl p-4">
+          <p class="font-bold text-cyan-800 uppercase text-xs tracking-wide mb-1">Vocabulary</p>
+          <p class="text-slate-700">
+            The accuracy check is a <strong>tripwire</strong> — it must fail <em>fast, loud, and
+            discriminately</em>. Today the detection is real but smeared across three verifiers with no
+            shared <strong>seam</strong>, so the failure class is decoded by hand each time.
+            <b>No auto-repair, ever.</b>
+          </p>
+        </div>
+      </div>
+
+      <h3 class="font-bold text-slate-900 mt-6">Problem — a correct tripwire that is fragmented and undiscriminating</h3>
+      <p class="text-slate-700 leading-relaxed mt-1">
+        The AV42C7 gate already fails fast and loud — that is the right shape. What is missing is
+        <em>fidelity</em>: the divergence is surfaced as a scalar mismatch with no classification, so
+        root-causing the 2026-08-02 class (is this a missed log, an unhandled reorg, a storage-mutated
+        pool, or plain WS-delivery lag?) is answered by manual archaeology — the write-up literally leaves
+        “<em>discriminator is open</em>.” The tripwire's only job is to make the <em>bug</em> cheap to
+        solve, and today it does not name the class. Three verifiers copy the same on-chain-diff shape
+        into three stop/panic reactions; two adapters doing the same probe on different triggers is the
+        classic signal that a real <strong>seam</strong> is hiding here.
+      </p>
+
+      <div class="mt-4 bg-slate-100 border-l-4 border-slate-400 rounded-r-lg p-4 text-sm">
+        <p class="font-bold text-slate-800">Scope guardrail — this is a detector, not a healer.</p>
+        <p class="text-slate-700">
+          Divergence is a <b>defect to be solved</b>, never an input to smooth over. The tripwire must
+          not re-sync pools, apply missed swaps, or treat staleness as recoverable input. It detects,
+          classifies, and stops <b>loudly</b> — so the underlying state-tracking/decoding bug gets
+          root-caused. Any hidden “heal-on-detection” would mask exactly the bugs this module exists
+          to surface.
+        </p>
+      </div>
+
+      <h3 class="font-bold text-slate-900 mt-6">Solution — one tripwire module, typed verdict, loud stop</h3>
+      <p class="text-slate-700 leading-relaxed mt-1">
+        Extract a single state-accuracy <strong>tripwire</strong>: probe the canonical on-chain scalar
+        state through the shared <code>degenbot-rpc::abi</code> home → produce a <strong>typed
+        verdict</strong> that discriminates the failure class (<code>MissedLog</code> /
+        <code>UnhandledReorg</code> / <code>StorageMutated</code> / <code>DeliveryLag{blocks}</code>) →
+        fail fast and loud (stop-only) with the class plus a root-causing breadcrumb. The three verifiers
+        converge on <em>one</em> verdict type and one probe shape; the loop keeps only the trip and the
+        exit, none of the classification noise.
+      </p>
+
+      <h3 class="font-bold text-slate-900 mt-6">Benefits</h3>
+      <ul class="text-slate-700 leading-relaxed mt-1 list-disc pl-5 space-y-1">
+        <li><strong>Locality of diagnosis</strong> — all accuracy probing + classification concentrates in one module; the three verifiers converge on one verdict, and the chain-probe home (<code>degenbot-rpc::abi</code>) is the single backend (ADR-003 cross-consumer infrastructure).</li>
+        <li><strong>Leverage</strong> — a divergence trips into a <em>named class</em> instantly instead of a scalar diff to decode by hand — closing the exact “discriminator is open” gap from the live write-up.</li>
+        <li><strong>Testability</strong> — verdict classification is a pure function of before/after state, unit-testable without chain access; trip speed and loudness are directly assertable.</li>
+      </ul>
+
+      <div class="grid md:grid-cols-2 gap-4 mt-6">
+        <div class="diagram-box border border-slate-200 rounded-xl p-4">
+          <p class="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Before — three verifiers, scalar diff, no class</p>
+          <pre class="mermaid">
+flowchart LR
+  A[solver-state verifier] --> D1[scalar mismatch]
+  B[liquidity verifier] --> D2[mismatch error]
+  C[sim-revert diagnostic] --> D3[reject path]
+  D1 --> S[stop / panic]
+  D2 --> S
+  D3 --> S
+  S --> H[hand-decode the class]
+          </pre>
+        </div>
+        <div class="diagram-box border border-cyan-200 rounded-xl p-4">
+          <p class="text-xs font-bold text-cyan-700 uppercase tracking-wide mb-2">After — one tripwire, typed verdict, loud stop</p>
+          <pre class="mermaid">
+flowchart LR
+  V[solver-state / liquidity / sim-diagnostic] --> T[one state-accuracy tripwire]
+  T --> C{classify}
+  C --> |MissedLog| L[loud stop + breadcrumb]
+  C --> |UnhandledReorg| L
+  C --> |StorageMutated| L
+  C --> |DeliveryLag n| L
+  L --> B[bug to root-cause]
+          </pre>
+        </div>
+      </div>
+
+      <div class="mt-6 bg-sky-50 border-l-4 border-sky-400 rounded-r-lg p-4 text-sm">
+        <p class="font-bold text-sky-900">ADR alignment — extends AV42C7; no auto-repair, no conflict.</p>
+        <p class="text-sky-800">
+          The AV42C7 gate is already a fail-fast stop-only check; this candidate <em>deepens the same
+          intent</em> (discriminate + rename the defect) and realises ADR-003's “onchain probe as
+          cross-consumer infrastructure.” It aligns with the fail-fast / accuracy-oracle posture of
+          ADR-020 — and explicitly declines the repair path, so it never re-establishes the smoothing
+          this review ruled out.
+        </p>
+      </div>
+    </div>
+
+    <!-- ==================== CANDIDATE 3 ==================== -->
+    <div class="card bg-white rounded-2xl border border-slate-200 p-7 mb-8">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <span class="inline-block bg-violet-100 text-violet-800 text-xs font-bold rounded-full px-3 py-1 uppercase">Candidate 3</span>
+          <h2 class="text-2xl font-bold text-slate-900 mt-2">The composer's interface can't express "take what's actually there"</h2>
+        </div>
+        <span class="shrink-0 bg-violet-500 text-white text-xs font-bold rounded-full px-3 py-1.5 uppercase">Worth exploring</span>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-4 mt-5 text-sm">
+        <div class="bg-slate-50 rounded-xl p-4">
+          <p class="font-bold text-cyan-800 uppercase text-xs tracking-wide mb-1">Files</p>
+          <ul class="space-y-0.5 font-mono text-xs text-slate-700">
+            <li>executor/<b>composers.rs</b> (<code>three_hop_v3_v4_v3</code>)</li>
+            <li>solvers V4 <code>simulate_swap</code> / Tier-3 oracle</li>
+          </ul>
+        </div>
+        <div class="bg-slate-50 rounded-xl p-4">
+          <p class="font-bold text-cyan-800 uppercase text-xs tracking-wide mb-1">Vocabulary</p>
+          <p class="text-slate-700">
+            The <strong>composer module</strong> couples <em>solver-math exactness</em> to <em>executor
+            safeness</em>: its interface assumes predicted == actual, and a 1-wei divergence reverts the
+            whole path.
+          </p>
+        </div>
+      </div>
+
+      <h3 class="font-bold text-slate-900 mt-6">Problem — a silent coupling with an implicit invariant</h3>
+      <p class="text-slate-700 leading-relaxed mt-1">
+        The 2026-08-02 session found V4's on-chain swap returns <strong>1 wei less</strong> than
+        <code>v4_simulate_swap</code> on a fee-1 pool, and the composer's
+        <code>enc_v4_take_compact(…, predicted)</code> then "takes" 9586 USDC where only 9585 exists →
+        <code>ERC20: transfer exceeds balance</code> → whole path reverts. The module's interface
+        cannot express a <code>min(predicted, available)</code> take; that surfaced only as a
+        live "fix direction" note, not a first-class option at the seam. This is correctness-adjacent,
+        so it is a weaker <em>deepening</em> — included because it is a genuine, currently-open interface
+        gap (implicit invariant: the interface is not as expressive as the executor's real constraint).
+      </p>
+
+      <h3 class="font-bold text-slate-900 mt-6">Solution</h3>
+      <p class="text-slate-700 leading-relaxed mt-1">
+        Two honest routes: (a) a Tier-3 make-<code>v4_simulate_swap</code>-byte-exact effort so
+        predicted == actual and the existing interface becomes sound (the deep fix — ADR-020 territory);
+        or (b) let the composer express a floored take (<code>min(predicted, available)</code>) and
+        re-size the path to preserve v3c's IIA — a defensiveness floor at the seam, at the cost of the
+        IIA tradeoff the live note flags. Recommend <em>mostly (a)</em>, with (b) as the load-bearing
+        floor.
+      </p>
+
+      <h3 class="font-bold text-slate-900 mt-6">Benefits</h3>
+      <ul class="text-slate-700 leading-relaxed mt-1 list-disc pl-5 space-y-1">
+        <li><strong>Leverage</strong> — the executor stops mis-routing/taking on sub-wei divergence; fewer wasted reverts on tiny/fee-1 pools.</li>
+        <li><strong>Locality</strong> — the "predicted vs actual" decision moves to the seam instead of a buried did-you-know note.</li>
+        <li><strong>Testability</strong> — a Tier-3 oracle slice already gates byte-exactness; a seam-level floor is directly testable in <code>composers`</code> parity tests.</li>
+      </ul>
+
+      <div class="mt-6 bg-amber-50 border-l-4 border-amber-400 rounded-r-lg p-4 text-sm">
+        <p class="font-bold text-amber-900">ADR alignment — aligns with ADR-020 (Tier-3 accuracy oracle).</p>
+        <p class="text-amber-800">
+          The byte-exactness route is exactly the ADR-020 Tier-3 probe (Rust math + solver === on-chain
+          Swap event). No contradiction — this is an open <code>2LTKVO</code>-family item, not a settled
+          decision.
+        </p>
+      </div>
+    </div>
+
+    <!-- ==================== TOP RECOMMENDATION ==================== -->
+    <div class="bg-slate-900 text-slate-100 rounded-2xl p-8">
+      <h2 class="text-2xl font-bold text-white">Top recommendation</h2>
+      <p class="mt-3 leading-relaxed text-slate-300">
+        <strong class="text-cyan-300">Start with Candidate 2 — it is the smallest, highest-leverage move, and
+        the one whose design intent is settled.</strong>
+        Under the tripwire posture, extracting the state-accuracy module makes the codebase's most
+        recurring live failure class cheap to root-cause instead of decode-by-hand, and it converges three
+        verifiers onto one discriminator. It is stop-only, so it never reintroduces the auto-repair this
+        review ruled out.
+      </p>
+      <p class="mt-3 leading-relaxed text-slate-300">
+        <strong class="text-cyan-300">Candidate 1 stands apart, afterward, as a pure <em>delivery</em>-recovery seam.</strong>
+        It reconciles dropped WS <em>logs</em> (Edge-B backfill) and addresses the wedging/backlog classes
+        — it never re-syncs scalar pool state, so it does not conflict with the tripwire posture. The two
+        strong candidates are <em>independent</em>, not one seam: #2 makes a divergence a bug you can solve,
+        #1 makes the pump's delivery recover.
+      </p>
+      <p class="mt-4 leading-relaxed text-slate-400 text-sm">
+        Candidate 3 is genuine but is mostly a Tier-3 correctness effort already tracked (2LTKVO/ADR-020);
+        treat it as the load-bearing floor, not the first move. Both strong candidates refine recorded
+        decisions (ADR-008 Edge-B / AV42C7) rather than re-litigating them.
+      </p>
+    </div>
+
+    <p class="text-xs text-slate-400 mt-8">Review generated by <code>/improve-codebase-architecture</code>. Report is self-contained in the OS temp dir; nothing was written to the repo.</p>
+  </div>
+
+  <script>
+    mermaid.initialize({ startOnLoad: true, theme: 'base', themeVariables: { fontFamily: 'ui-sans-serif, system-ui, inherit' } });
+  </script>
+</body>
+</html>

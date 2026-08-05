@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>degenbot — Architecture Review: CL-accuracy deepening opportunities</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+    </script>
+    <style>
+      .seam { stroke-dasharray: 4 4; }
+      .leak { stroke: #dc2626; stroke-width: 2px; }
+      .deep { background: linear-gradient(135deg, #0f172a, #1e293b); }
+      .card { transition: box-shadow .2s; }
+      .card:hover { box-shadow: 0 10px 30px rgba(0,0,0,.10); }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans">
+    <main class="max-w-5xl mx-auto px-6 py-12 space-y-12">
+
+      <!-- ============ HEADER ============ -->
+      <header>
+        <p class="text-sm font-semibold text-cyan-700 tracking-wider uppercase">improve-codebase-architecture · review — 2026-08-04</p>
+        <h1 class="text-4xl font-black mt-2">CL-accuracy deepening opportunities</h1>
+        <p class="mt-3 text-slate-600 max-w-3xl leading-relaxed">
+          Focused on the post-review hot spot — the <strong>UO3JM4 CL-accuracy wave</strong>:
+          the two-stamp CL state (price vs liquidity clock), the solver-state tripwire, and the
+          fee-1 / V4-hop over-prediction diagnosis. This review only surfaces what is still open;
+          where a candidate refines a recorded decision (ADR-015 seam, ADR-020 Tier-3, ADR-021 tripwire)
+          it says so rather than re-litigating.
+        </p>
+        <div class="mt-4 flex flex-wrap gap-2 text-xs">
+          <span class="bg-slate-200 rounded-full px-3 py-1">seam: ADR-015 solve intake</span>
+          <span class="bg-slate-200 rounded-full px-3 py-1">deep: solver-state accuracy</span>
+          <span class="bg-slate-200 rounded-full px-3 py-1">locality · depth · leverage</span>
+        </div>
+        <div class="mt-4 flex flex-wrap gap-2 text-xs text-slate-500">
+          <span class="bg-white rounded-full px-3 py-1 border border-slate-200"><b class="text-slate-700">Legend</b> — solid box: module · dashed line: seam · red arrow: leakage · dark filled box: deep module</span>
+        </div>
+      </header>
+
+      <!-- ============ CANDIDATE 1 ============ -->
+      <article class="card bg-white rounded-2xl border border-slate-200 p-7 space-y-4">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h2 class="text-2xl font-bold">The solve seam is blind to the liquidity clock</h2>
+          </div>
+          <div class="shrink-0 flex flex-col items-end gap-2">
+            <span class="bg-emerald-500 text-white text-xs font-bold rounded-full px-3 py-1.5 uppercase">Strong</span>
+            <span class="bg-slate-100 text-slate-600 text-xs rounded-full px-3 py-1">in-process</span>
+          </div>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-4 text-sm">
+          <div class="bg-slate-50 rounded-xl p-4">
+            <p class="font-bold text-cyan-800 uppercase text-xs tracking-wide mb-1">Files</p>
+            <ul class="space-y-0.5 font-mono text-xs text-slate-700">
+              <li>pools/v3_state.rs · v4_state.rs <i>(build_int_v*_sequence)</i></li>
+              <li>solvers/mixed/mod.rs <i>(ResolvedMixedPath :: max_update_block)</i></li>
+              <li>solvers/mixed/solve.rs</li>
+              <li>bot/solver_state_verifier.rs <i>(ADR-021 anchor diff)</i></li>
+            </ul>
+          </div>
+          <div class="bg-slate-50 rounded-xl p-4">
+            <p class="font-bold text-cyan-800 uppercase text-xs tracking-wide mb-1">Vocabulary</p>
+            <p class="text-slate-700">
+              The <strong>solve seam</strong> (ADR-015 intake) stamps only the <b>price</b> clock
+              (<code>max_update_block</code>). The <b>liquidity</b> clock —
+              <code>tick_data_block</code>, the clock the solver's own int-V3 sequence is built
+              from — never crosses the seam.
+            </p>
+          </div>
+        </div>
+
+        <h3 class="font-bold text-slate-900">Problem — the solver consumes a tick map whose freshness it cannot see</h3>
+        <p class="text-slate-700 leading-relaxed text-sm">
+          The two-stamp design (OB7UNY) lets a CL pool carry a <b>fresh price</b> but a
+          <b>stale liquidity map</b> — by construction: a fresh-read builder seeds
+          <code>update_block</code> at the HEAD slot0 read while <code>tick_data_block</code> stays
+          at the DB snapshot block (v4_state.rs:167–173). The solver builds
+          <code>IntV3TickRangeSequence</code> from that tick map, but the intake only carries the
+          price-clock nonce, so the solve seam cannot express "the map I solved on is stale."
+          The <code>0x5653</code> staged-clock class is documented as <em>"the scalar-only ADR-021
+          anchor diff cannot see."</em> Deletion test: drop the two-stamp and the staleness
+          knowledge re-concentrates across every CL consumer — it wants a home at the seam.
+        </p>
+
+        <div class="grid md:grid-cols-2 gap-4 mt-2">
+          <div class="rounded-lg border border-slate-200 bg-white p-4">
+            <p class="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Before — stale map slips past price-clock guards</p>
+            <pre class="mermaid">
+flowchart LR
+  P[CL pool state] -->|price clock only| G1[ADR-021 anchor diff]
+  P -->|price clock only| G2[max_update_block guard]
+  P -->|"tick_data (unclocked)"| H[build_int_v*_sequence]
+  G1 --> S[solve on maybe-stale map]
+  G2 --> S
+  classDef leak2 stroke:#dc2626,stroke-width:2px;
+  class H,S leak2
+            </pre>
+          </div>
+          <div class="rounded-lg border border-cyan-200 bg-white p-4">
+            <p class="text-xs font-bold text-cyan-700 uppercase tracking-wide mb-2">After — liquidity clock crosses the seam; one stance</p>
+            <pre class="mermaid">
+flowchart LR
+  P[CL pool state] -->|price clock| I[ResolvedMixedPath]
+  P -->|liquidity clock| I
+  I --> D{map fresher than price?}
+  D -->|no / within tolerance| SOL[solve]
+  D -->|stale map| REF[refuse / refresh before solve]
+  classDef deep fill:#0f172a,color:#fff;
+  class I deep
+            </pre>
+          </div>
+        </div>
+
+        <h3 class="font-bold text-slate-900">Solution</h3>
+        <p class="text-slate-700 leading-relaxed text-sm">
+          Add a per-hop liquidity clock (<code>tick_data_block</code>) to the ADR-015 intake next to
+          <code>max_update_block</code>, and give the dispatch seam a single stance on
+          price-fresh-but-map-stale: either refuse to solve a path whose map lags its price, or
+          refresh the map before solving. One discriminator, one stop or one repair — never a silent
+          mixed-clock solve.
+        </p>
+
+        <ul class="text-slate-700 leading-relaxed text-sm list-disc pl-5 space-y-1">
+          <li><strong>Locality</strong> — the <code>0x5653</code> class stops being a hand-decoded log artifact; it is a typed verdict at the seam.</li>
+          <li><strong>Leverage</strong> — the ADR-021 anchor diff, the future-price guard, and the stale-map guard all read clocks from one intake.</li>
+          <li><strong>Testability</strong> — a seeded fresh-price/stale-map pool is a pure unit case at the dispatch seam; no chain access.</li>
+        </ul>
+
+        <div class="bg-amber-50 border-l-4 border-amber-400 rounded-r-lg p-4 text-sm">
+          <p class="font-bold text-amber-900">ADR alignment — extends ADR-015 + ADR-021; contradicts none.</p>
+          <p class="text-amber-800">
+            ADR-015 fixes the seam's composition; this adds the missing clock to its intake. ADR-021
+            is fail-fast stop-only — a <em>refresh</em> stance would need new posture (offer it only
+            as an explicit option, defaulting to refuse). No settled decision is re-opened.
+          </p>
+        </div>
+      </article>
+
+      <!-- ============ CANDIDATE 2 ============ -->
+      <article class="card bg-white rounded-2xl border border-slate-200 p-7 space-y-4">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h2 class="text-2xl font-bold">State-accuracy events have no typed home — reproduction is string-coupled</h2>
+          </div>
+          <div class="shrink-0 flex flex-col items-end gap-2">
+            <span class="bg-emerald-500 text-white text-xs font-bold rounded-full px-3 py-1.5 uppercase">Strong</span>
+            <span class="bg-slate-100 text-slate-600 text-xs rounded-full px-3 py-1">in-process · local-substitutable</span>
+          </div>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-4 text-sm">
+          <div class="bg-slate-50 rounded-xl p-4">
+            <p class="font-bold text-cyan-800 uppercase text-xs tracking-wide mb-1">Files</p>
+            <ul class="space-y-0.5 font-mono text-xs text-slate-700">
+              <li>21 Rust emit sites (<code>sim-revert-swap</code> / <code>solver-st</code> / <code>sim-diag</code> / <code>sim-fail</code>)</li>
+              <li>7 Python regex parsers (watch_fee1_overdraw.py, dump_pool_state.py, …)</li>
+              <li>bespoke per-recurrence: capture_*.py + *_fixture.rs + 8 JSON fixtures</li>
+            </ul>
+          </div>
+          <div class="bg-slate-50 rounded-xl p-4">
+            <p class="font-bold text-cyan-800 uppercase text-xs tracking-wide mb-1">Vocabulary</p>
+            <p class="text-slate-700">
+              The engine's state-accuracy <strong>event</strong> is a log string, not a value. The
+              seam between "engine observes an over-prediction" and "tooling replays it" has no
+              <strong>adapter</strong> — Python regex-parses the very literals 21 Rust files emit.
+            </p>
+          </div>
+        </div>
+
+        <h3 class="font-bold text-slate-900">Problem — every recurrence buys a new script, not a reusable pull</h3>
+        <p class="text-slate-700 leading-relaxed text-sm">
+          An over-prediction is observed by emitting <code>[sim-revert-swap] … predicted=… actual=…</code>,
+          then a Python watcher regex-parses that exact string out of <code>logs/bot_run.log</code>, then a
+          bespoke <code>capture_*.py</code> rebuilds the block, then a hand-wired <code>*_solver_fixture.rs</code>
+          + JSON fixture replay it. The event's shape lives in a string literal; the toolchain's contract is
+          the literal spelling. Three recurrences have produced three capture scripts, three fixtures and
+          three harness examples. This is a <strong>shallow</strong> seam — the "event → reproduction pull"
+          knowledge is not concentrated, so each recurrence re-derives it across two languages.
+        </p>
+
+        <div class="grid md:grid-cols-2 gap-4 mt-2">
+          <div class="rounded-lg border border-slate-200 bg-white p-4">
+            <p class="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Before — log string is the contract</p>
+            <pre class="mermaid">
+flowchart LR
+  E[engine] -->|println fmt string| L[bot_run.log]
+  L -->|regex parse| W[watch_fee1_overdraw.py]
+  L -->|regex parse| D[dump_pool_state.py]
+  W --> C1[capture_fee1 script]
+  C1 --> F1[fee1 fixture + harness]
+  D --> C2[capture_path11354 script]
+  C2 --> F2[11354 fixture + harness]
+  classDef le2 stroke:#dc2626,stroke-width:2px;
+  class L,W,D le2
+            </pre>
+          </div>
+          <div class="rounded-lg border border-cyan-200 bg-white p-4">
+            <p class="text-xs font-bold text-cyan-700 uppercase tracking-wide mb-2">After — one probe-event module, one replay pull</p>
+            <pre class="mermaid">
+flowchart LR
+  E[engine] -->|typed event| P[probe-event module]
+  P --> R[recurrence-replay seam]
+  R -->|fixture + harness| H[one solver-fixture runner]
+  R -->|live watch adapter| W[watch tool]
+  classDef dp2 fill:#0f172a,color:#fff;
+  class P dp2
+            </pre>
+          </div>
+        </div>
+
+        <h3 class="font-bold text-slate-900">Solution</h3>
+        <p class="text-slate-700 leading-relaxed text-sm">
+          Emit state-accuracy events as a typed payload behind one probe module (one emitter, one writer —
+          the log line becomes a rendering of the value, not the value), and give reproduction a single
+          seam: one fixture builder + one solver-fixture runner parameterised by the event, with the
+          Python watch tool as a thin adapter over the typed output. A new recurrence stops meaning "write
+          a new script and harness."
+        </p>
+
+        <ul class="text-slate-700 leading-relaxed text-sm list-disc pl-5 space-y-1">
+          <li><strong>Locality</strong> — event shape lives once; 7 regex parsers and 21 emit sites collapse behind one module.</li>
+          <li><strong>Leverage</strong> — the reproduction pull is reused for every future recurrence instead of re-derived.</li>
+          <li><strong>Testability</strong> — a typed event is assertable directly; no log-mine to prove the probe saw it.</li>
+        </ul>
+      </article>
+
+      <!-- ============ CANDIDATE 3 ============ -->
+      <article class="card bg-white rounded-2xl border border-slate-200 p-7 space-y-4">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h2 class="text-2xl font-bold">The pure solve result carries a String diagnostic channel</h2>
+          </div>
+          <div class="shrink-0 flex flex-col items-end gap-2">
+            <span class="bg-amber-500 text-white text-xs font-bold rounded-full px-3 py-1.5 uppercase">Worth exploring</span>
+            <span class="bg-slate-100 text-slate-600 text-xs rounded-full px-3 py-1">in-process</span>
+          </div>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-4 text-sm">
+          <div class="bg-slate-50 rounded-xl p-4">
+            <p class="font-bold text-cyan-800 uppercase text-xs tracking-wide mb-1">Files</p>
+            <ul class="space-y-0.5 font-mono text-xs text-slate-700">
+              <li>solvers/mixed/mod.rs <i>(SolvePathResult :: solver_pool_states: Vec&lt;String&gt;)</i></li>
+              <li>solvers/mixed/solve.rs</li>
+              <li>bot/solvers/arb_engine/solver_dispatch.rs <i>(.join(";"))</i></li>
+            </ul>
+          </div>
+          <div class="bg-slate-50 rounded-xl p-4">
+            <p class="font-bold text-cyan-800 uppercase text-xs tracking-wide mb-1">Vocabulary</p>
+            <p class="text-slate-700">
+              A <strong>shallow</strong> widening: <code>SolvePathResult</code> — the pure-solve
+              result type — grew a <code>Vec&lt;String&gt;</code> payload whose only consumer
+              joins it back into a <code>[sim-diag]</code> log line.
+            </p>
+          </div>
+        </div>
+
+        <h3 class="font-bold text-slate-900">Problem — pre-formatted strings cross the pure-solve seam</h3>
+        <p class="text-slate-700 leading-relaxed text-sm">
+          <code>SolvePathResult.solver_pool_states</code> holds hop-family-specific display strings
+          (<code>"V3:sq=…,liq=…,fee=…,zfo=…"</code>) populated by <code>solve_path</code> and re-joined
+          by <code>solver_dispatch.rs</code> into a <code>[sim-diag]</code> line. The pure solve layer
+          (ADR-015's "value-only solver math") now formats diagnostic strings — a concern it shouldn't
+          own, and a widening of its interface just to feed the log toolchain. The interface is as wide
+          as the implementation it hides.
+        </p>
+
+        <div class="grid md:grid-cols-2 gap-4 mt-2">
+          <div class="rounded-lg border border-slate-200 bg-white p-4">
+            <p class="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Before — strings in the value</p>
+            <pre class="mermaid">
+flowchart LR
+  SOL[solve_path] -->|"hop_outputs, consumed_inputs, + Vec&lt;String&gt;"| R[SolvePathResult]
+  R -->|join(';')| LOG[[sim-diag log]]
+  classDef l3 stroke:#dc2626,stroke-width:2px;
+  class R,LOG l3
+            </pre>
+          </div>
+          <div class="rounded-lg border border-cyan-200 bg-white p-4">
+            <p class="text-xs font-bold text-cyan-700 uppercase tracking-wide mb-2">After — typed per-hop state in the value</p>
+            <pre class="mermaid">
+flowchart LR
+  SOL[solve_path] -->|"hop_outputs, consumed_inputs, per-hop scalar state"| R2[SolvePathResult]
+  R2 --> FMT[render at the seam]
+  FMT --> LOG2[[sim-diag log]]
+  classDef dp3 fill:#0f172a,color:#fff;
+  class R2 dp3
+            </pre>
+          </div>
+        </div>
+
+        <h3 class="font-bold text-slate-900">Solution</h3>
+        <p class="text-slate-700 leading-relaxed text-sm">
+          Return the per-hop scalar state the solver already holds as typed values in the result, and
+          move the <code>"V3:sq=…"</code> formatting to the rendering seam (the same probe-event module
+          as Candidate 2). The pure solve result stops owning display.
+        </p>
+
+        <ul class="text-slate-700 leading-relaxed text-sm list-disc pl-5 space-y-1">
+          <li><strong>Locality</strong> — display formatting concentrates at the render seam, not inside solver math.</li>
+          <li><strong>Leverage</strong> — typed per-hop state is a reusable input to the Candidate-2 event, not a dead string.</li>
+          <li><strong>Testability</strong> — the result is comparable as data; no string-equality asserts.</li>
+        </ul>
+
+        <div class="bg-amber-50 border-l-4 border-amber-400 rounded-r-lg p-4 text-sm">
+          <p class="font-bold text-amber-900">ADR alignment — compatible; the fix folds into Candidate 2's probe-event module.</p>
+          <p class="text-amber-800">
+            No conflict with ADR-015 (the seam composition is untouched; only the result's payload
+            shape changes). Best taken together with Candidate 2 so one render seam owns both.
+          </p>
+        </div>
+      </article>
+
+      <!-- ============ TOP RECOMMENDATION ============ -->
+      <section id="top-recommendation" class="deep rounded-2xl p-8 text-slate-100">
+        <h2 class="text-2xl font-bold text-white">Top recommendation</h2>
+        <p class="mt-3 leading-relaxed text-slate-300">
+          <strong class="text-cyan-300">Start with Candidate 1 — the solve seam's liquidity-clock gap.</strong>
+          It is the one with a documented, currently-firing failure class (<code>0x5653</code>,
+          staged price-fresh / map-stale) that the price-clock-only tripwire provably cannot see, and
+          the fix is a focused addition to a settled seam (ADR-015) with a clean unit-test seam at the
+          dispatch guard — no new script, no new tooling.
+        </p>
+        <p class="mt-3 leading-relaxed text-slate-300">
+          <strong class="text-cyan-300">Candidate 2 follows as the reproducibility deepening.</strong>
+          Once the state-accuracy <em>event</em> has a typed home, the 7 Python regex parsers and the
+          bespoke per-recurrence capture/fixture/harness machinery collapse behind one seam. Candidate 3
+          is a small slice of the same render seam — take it together with 2 rather than alone.
+        </p>
+        <p class="mt-4 leading-relaxed text-sm text-slate-400">
+          Candidates 1 and 2 are independent. 1 makes the <em>solve</em> refuse a stale map; 2 makes the
+          <em>diagnosis</em> reproducible. Neither re-opens a settled ADR-015 / ADR-020 / ADR-021 decision.
+        </p>
+      </section>
+
+    </main>
+  </body>
+</html>

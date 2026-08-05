@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Architecture review — degenbot (state-accuracy core, 2026-08-03)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+    </script>
+    <style>
+      .seam { stroke-dasharray: 4 4; }
+      .leak { stroke: #dc2626; stroke-width: 2px; }
+      .deep { background: linear-gradient(135deg, #0f172a, #1e293b); }
+      .tag { letter-spacing: .05em; }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans">
+    <main class="max-w-5xl mx-auto px-6 py-12 space-y-12">
+
+      <header class="space-y-3">
+        <p class="text-xs uppercase tracking-widest text-slate-500">improve-codebase-architecture · review</p>
+        <h1 class="font-serif text-3xl font-semibold">Deepening opportunities in the degenbot state-accuracy core</h1>
+        <p class="text-sm text-slate-600 max-w-3xl">
+          Exploratory scan of the live hot spots: the <strong>engine-vs-chain verification/probing layer</strong>,
+          the <strong>pump delivery loop</strong>, and the new <strong>two-stamp liquidity-clock state model</strong>
+          (OB7UNY) just landed in the last week. The codebase is already deliberately and heavily architected
+          (ADR-001…021, and CONTEXT.md carries a rolling review log) — this report surfaces only what is still
+          <em>open</em>, and marks where a candidate refines rather than re-litigates a recorded decision.
+        </p>
+        <div class="flex gap-6 text-xs tag uppercase text-slate-500 pt-2">
+          <span><span class="inline-block w-3 h-3 bg-slate-800 align-middle mr-1"></span>module</span>
+          <span><span class="inline-block w-6 border-t-2 border-dashed border-slate-400 align-middle mr-1"></span>seam</span>
+          <span><span class="inline-block w-3 h-1 bg-red-600 align-middle mr-1"></span>leakage</span>
+          <span><span class="inline-block w-3 h-4 bg-slate-800 align-middle mr-1"></span>deep module</span>
+        </div>
+      </header>
+
+      <section id="candidates" class="space-y-12">
+
+        <!-- ============ CANDIDATE 1 ============ -->
+        <article class="space-y-4">
+          <div class="flex items-center gap-3 flex-wrap">
+            <h2 class="font-serif text-2xl font-semibold">Collapse the state-accuracy tripwire into one discriminating module</h2>
+          </div>
+          <div class="flex gap-2 items-center">
+            <span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-xs tag uppercase">Strong</span>
+            <span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs tag uppercase">in-process</span>
+          </div>
+
+          <p class="text-sm font-mono text-slate-600">bot_core/solver_state_verifier.rs · bot_core/liquidity_verifier.rs · bot_core/divergence_probe.rs · bot_core/snapshot_verify.rs · sim-revert revm inspectors · fee-1 <span class="bg-slate-100 px-1">matched=false</span> vocabulary</p>
+
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-400 mb-2">before — probes, each with its own verdict, class decoded by hand</p>
+              <pre class="mermaid">
+flowchart LR
+  A[solver_state_verifier] --> D1[scalar mismatch type]
+  B[liquidity_verifier] --> D2[Err variant]
+  C[divergence_probe] --> D3[engine-vs-RPC gap]
+  F[snapshot_verify] --> D4[VerifyError]
+  D1 --> S[stop / panic]
+  D2 --> S
+  D3 --> S
+  D4 --> S
+  S --> H[hand-decode the class]
+  classDef leak stroke:#dc2626,stroke-width:2px;
+  class D1,D2,D3,D4 leak
+              </pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-400 mb-2">after — one tripwire, typed verdict, loud stop</p>
+              <pre class="mermaid">
+flowchart LR
+  P[probes & verifiers] --> T[state-accuracy tripwire]
+  T --> C{classify}
+  C -->|MissedLog| L[loud stop + breadcrumb]
+  C -->|UnhandledReorg| L
+  C -->|StorageMutated| L
+  C -->|DeliveryLag n| L
+  L --> B[bug to root-cause]
+  classDef deep fill:#0f172a,color:#fff,stroke:#0f172a;
+  class T deep
+              </pre>
+            </div>
+          </div>
+
+          <div class="space-y-2 text-sm">
+            <p><strong class="tag uppercase text-xs text-slate-500">Problem</strong> — Four probe/verify modules each diff engine state against on-chain truth at a different seam, each with its own mismatch type and its own stop/panic reaction; the failure class is still decoded by hand — the live <span class="font-mono">[sim-revert-swap] matched=false</span> line from the fee-1 sessions only says <em>predicted &gt; actual</em>, not <em>why</em>.</p>
+            <p><strong class="tag uppercase text-xs text-slate-500">Solution</strong> — Extract one tripwire seam producing a typed verdict; the probes converge behind it, and the loop keeps only the trip and the exit, none of the classification noise.</p>
+            <p><strong class="tag uppercase text-xs text-slate-500">Wins</strong></p>
+            <ul class="list-disc ml-5 space-y-1">
+              <li>Root-causing lives in one place (locality)</li>
+              <li>One verdict type across all probes</li>
+              <li>Class is named the moment it trips</li>
+              <li>Classification is a pure function — unit-testable</li>
+            </ul>
+          </div>
+          <div class="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-900">
+            Refines ADR-021, does not re-litigate it — ADR-021 settles the <em>posture</em> (detect, classify, stop loudly, never heal) and explicitly names "a single discriminating tripwire module" as the intended shape with "the extracting is the work." This candidate does that extraction; it never touches the forbidden auto-repair path.
+          </div>
+        </article>
+
+        <!-- ============ CANDIDATE 2 ============ -->
+        <article class="space-y-4">
+          <div class="flex items-center gap-3 flex-wrap">
+            <h2 class="font-serif text-2xl font-semibold">Deepen the pump's recovery concern out of the delivery loop</h2>
+          </div>
+          <div class="flex gap-2 items-center">
+            <span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-xs tag uppercase">Strong</span>
+            <span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs tag uppercase">local-substitutable</span>
+          </div>
+
+          <p class="text-sm font-mono text-slate-600">bot_core/block_pump.rs (≈4.2k loc) · bot_core/block_clock.rs · bot_core/solve_coordinator.rs</p>
+
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-400 mb-2">before — the loop owns delivery AND recovery</p>
+              <pre class="mermaid">
+flowchart TD
+  W[WS stream] --> L[block_pump loop]
+  L --> W1[header-staleness watchdog]
+  L --> W2[logs-silence watchdog]
+  L --> W3[FSM recovery_anchor]
+  L --> W4[late-forward branch]
+  L --> W5[solver-state gate reaction]
+  W1 --> D1[backfill?]
+  W2 --> D2[stop?]
+  W4 --> D3[clean-shutdown flag]
+  classDef leak stroke:#dc2626,stroke-width:2px;
+  class W1,W2,W3,W4,W5 leak
+              </pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-400 mb-2">after — a delivery-recovery seam</p>
+              <pre class="mermaid">
+flowchart TD
+  W[WS stream] --> L[delivery FSM: observe]
+  L --> CAT[catalog anomaly]
+  CAT --> P[DeliveryPolicy]
+  P --> R1[RecoverByBackfill]
+  P --> R2[CleanStop]
+  R1 --> RA[delivery-action interface]
+  R2 --> RA
+  RA --> B[re-fetch logs / stop adapters]
+  classDef deep fill:#0f172a,color:#fff,stroke:#0f172a;
+  class P deep
+              </pre>
+            </div>
+          </div>
+
+          <div class="space-y-2 text-sm">
+            <p><strong class="tag uppercase text-xs text-slate-500">Problem</strong> — The delivery FSM and the recovery heuristics (watchdogs, anchor reset, late-forward, backfill resets) are tangled in one giant async loop; every live-session failure class so far produced a fresh inline patch in the same loop, so the recovery knowledge has no locality.</p>
+            <p><strong class="tag uppercase text-xs text-slate-500">Solution</strong> — Split delivery ("what happened") from a narrow recovery seam: a DeliveryPolicy adapter that, given a typed anomaly (HeaderStall / LogSilence / LateForward), returns a decision against a small action interface.</p>
+            <p><strong class="tag uppercase text-xs text-slate-500">Wins</strong></p>
+            <ul class="list-disc ml-5 space-y-1">
+              <li>Recovery policy concentrates in one module</li>
+              <li>New failure class = one new policy arm</li>
+              <li>Policy driven by a fake sink in milliseconds</li>
+              <li>Wedging/backlog classes become unit tests</li>
+            </ul>
+          </div>
+          <div class="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-900">
+            Was surfaced in the prior review (2026-08-02) as the top delivery recommendation and is still open — the loop is now larger, not smaller. Refines ADR-008 (Edge-B backfill) and explicitly reconciles <em>dropped WS logs</em> only; it never re-syncs scalar pool state, so it does not conflict with the Candidate 1 tripwire posture.
+          </div>
+        </article>
+
+        <!-- ============ CANDIDATE 3 ============ -->
+        <article class="space-y-4">
+          <div class="flex items-center gap-3 flex-wrap">
+            <h2 class="font-serif text-2xl font-semibold">Give the two-stamp clock-attribution rule one home</h2>
+          </div>
+          <div class="flex gap-2 items-center">
+            <span class="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-xs tag uppercase">Worth exploring</span>
+            <span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs tag uppercase">in-process</span>
+          </div>
+
+          <p class="text-sm font-mono text-slate-600">pools/registry.rs (CL mutator impls) · pools/v3_state.rs · pools/v4_state.rs (advance twins + reorg restore)</p>
+
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-400 mb-2">before — the rule is re-encoded in both adapters</p>
+              <pre class="mermaid">
+flowchart LR
+  E[event / backfill] --> M{which clock moves?}
+  M --> V3[V3PoolState mutators<br/>hand-advance both clocks]
+  M --> V4[V4PoolState mutators<br/>hand-advance both clocks]
+  V3 --> A[advance_update_block]
+  V3 --> B[advance_tick_data_block]
+  V4 --> A2[advance_update_block]
+  V4 --> B2[advance_tick_data_block]
+  classDef leak stroke:#dc2626,stroke-width:2px;
+  class V3,V4 leak
+              </pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-400 mb-2">after — one attribution rule, both adapters call it</p>
+              <pre class="mermaid">
+flowchart LR
+  E[event / backfill] --> M[clock-attribution rule<br/>advance(swap|liquidity|replace, in_range, post_seed)]
+  M --> V3[V3PoolState]
+  M --> V4[V4PoolState]
+  classDef deep fill:#0f172a,color:#fff,stroke:#0f172a;
+  class M deep
+              </pre>
+            </div>
+          </div>
+
+          <div class="space-y-2 text-sm">
+            <p><strong class="tag uppercase text-xs text-slate-500">Problem</strong> — The sharpest invariant of the new two-stamp state model — "apply_swap advances both clocks; apply_liquidity_update advances liquidity always and the price only for an in-range post-seed event; replace_tick_data advances liquidity only; backfill replay is the sanctioned exception" — is re-encoded inside both the V3 and V4 mutator adapters, with no single site owning the decision.</p>
+            <p><strong class="tag uppercase text-xs text-slate-500">Solution</strong> — Center the attribution decision in one small pure helper behind the existing ConcentratedLiquidityPoolMut seam; the adapters call it instead of re-writing it.</p>
+            <p><strong class="tag uppercase text-xs text-slate-500">Wins</strong></p>
+            <ul class="list-disc ml-5 space-y-1">
+              <li>The rule is tested exactly once</li>
+              <li>V3 and V4 adapters cannot drift apart</li>
+              <li>Deleting an advance call can't silently break it</li>
+              <li>Attribution is table-driven and unit-testable</li>
+            </ul>
+          </div>
+          <div class="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-900">
+            Refines ADR-014/ADR-017 CL trait discipline, does not re-litigate it — the CL family trait with V3+V4 adapters stands; this only stops the adapter bodies from re-encoding the same subtle rule twice. Marked Worth exploring because the two-stamp design (OB7UNY) is freshly landed and still settling.
+          </div>
+        </article>
+
+      </section>
+
+      <!-- ============ TOP RECOMMENDATION ============ -->
+      <section id="top-recommendation" class="rounded-xl deep text-white p-6 space-y-2">
+        <p class="text-xs uppercase tracking-widest text-slate-300">Top recommendation</p>
+        <h2 class="font-serif text-2xl font-semibold"><a href="#candidates" class="underline decoration-slate-400">Start with Candidate 1 — the state-accuracy tripwire</a></h2>
+        <p class="text-sm text-slate-200 max-w-3xl">
+          It is the smallest, highest-leverage open move, and its design intent is already settled: ADR-021 fixed the posture
+          (fail-fast, stop-only, never auto-repair), so extracting the discriminating module is pure win with no decision to
+          re-open. It also targets the single most-recurring live failure class — the fee-1 / desync sessions whose
+          <span class="font-mono">matched=false</span> event still forces hand-archaeology to name the defect. Candidate 2
+          stands apart as a pure delivery-recovery seam (it reconciles dropped WS logs, never scalar state, so it cannot
+          collide with the tripwire); Candidate 3 is the newest but smallest, and is better revisited once the two-stamp model
+          has settled.
+        </p>
+      </section>
+
+      <footer class="text-xs text-slate-400">
+        Report generated by /improve-codebase-architecture. Self-contained in the OS temp dir; nothing was written to the repo.
+      </footer>
+
+    </main>
+  </body>
+</html>
