@@ -8,10 +8,10 @@
 //! `block_on` these functions; no `pyo3` in this module (the no-pyo3-in-cores
 //! invariant, enforced by `just check-no-pyo3-in-cores`).
 //!
-//! Decision D-C scopes this first move to the **V2/V3/V4 + ERC-20 + tick**
+//! Decision D-C scopes the first move to the **V2/V3/V4 + ERC-20 + tick**
 //! choreography — exactly what the MEV `PoolBuilder` (task `3FVZF4`) needs.
-//! Curve / Balancer / Camelot wrappers stay on the temporary `PyBotIo` path and
-//! are absorbed with the builder-follow-up (task `SSSXG6`).
+//! Curve / Balancer wrappers stay on the temporary `PyBotIo` path and are
+//! absorbed with the builder-follow-up (task `SSSXG6`).
 //!
 //! Every encode/decode comes from [`degenbot_rpc::abi`], shared with
 //! `AlloyTickBootstrapRpc` (the standalone-`cargo add degenbot` consumer), so
