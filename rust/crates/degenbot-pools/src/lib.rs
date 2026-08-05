@@ -74,6 +74,7 @@ pub mod balancer_stable_state;
 pub mod balancer_weighted_state;
 pub mod curve_data_provider;
 pub mod curve_state;
+pub mod curve_strategies;
 // Domain-math prose (sqrtPriceX96, Solidity, …) moved verbatim from
 // `degenbot-bot/src/solvers/mobius_v3_int.rs`; mirrors the `#[allow]` on that
 // module in `degenbot-bot/src/solvers/mod.rs`.
