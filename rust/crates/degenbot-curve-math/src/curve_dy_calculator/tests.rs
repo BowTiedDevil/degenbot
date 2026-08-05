@@ -49,6 +49,7 @@ fn inputs() -> DyCalculationInputs {
         y_variant: YVariant::Standard,
         a_precision: A_PREC,
         swap_style: 1,
+        metapool: false,
         metapool_rate_style: 1,
         metapool_underlying_style: 1,
         d: None,
@@ -85,7 +86,7 @@ fn standard_style_matches_oracle() {
     let mut i = swap_fixture();
     i.swap_style = 1; // STANDARD
     assert_eq!(
-        calculate_dy(0, 1, ONE, &i, None).unwrap(),
+        calculate_dy(0, 1, ONE, &i).unwrap(),
         U256::from(339_176_146_955_799_262u64)
     );
 }
@@ -97,7 +98,7 @@ fn rate_adjusted_equals_standard_fee_ordering() {
     let mut i = swap_fixture();
     i.swap_style = 2; // RATE_ADJUSTED (RATE_THEN_FEE)
     assert_eq!(
-        calculate_dy(0, 1, ONE, &i, None).unwrap(),
+        calculate_dy(0, 1, ONE, &i).unwrap(),
         U256::from(339_176_146_955_799_262u64)
     );
 }
@@ -108,7 +109,7 @@ fn raw_balance_style_differs_from_rate_adjusted() {
     let mut i = swap_fixture();
     i.swap_style = 3; // RAW_BALANCE
     assert_eq!(
-        calculate_dy(0, 1, ONE, &i, None).unwrap(),
+        calculate_dy(0, 1, ONE, &i).unwrap(),
         U256::from(504_173_682_256_068_734u64)
     );
 }
@@ -118,7 +119,7 @@ fn live_admin_uses_rate_multipliers_source() {
     let mut i = swap_fixture();
     i.swap_style = 5; // LIVE_ADMIN (rate_source = RATE_MULTIPLIERS)
     assert_eq!(
-        calculate_dy(0, 1, ONE, &i, None).unwrap(),
+        calculate_dy(0, 1, ONE, &i).unwrap(),
         U256::from(508_764_220_433_698_893u64)
     );
 }
@@ -128,10 +129,10 @@ fn no_one_fee_rate_skips_subtract_one() {
     // Plain fixture (rate = 1e18) so the -1 survives; NO_ONE adds it back.
     let mut i = inputs();
     i.swap_style = 1; // STANDARD
-    let standard = calculate_dy(0, 1, ONE, &i, None).unwrap();
+    let standard = calculate_dy(0, 1, ONE, &i).unwrap();
     i.swap_style = 9; // NO_ONE_FEE_RATE
     assert_eq!(
-        calculate_dy(0, 1, ONE, &i, None).unwrap(),
+        calculate_dy(0, 1, ONE, &i).unwrap(),
         standard + U256::from(1u8)
     );
 }
@@ -141,7 +142,7 @@ fn cytoken_equals_standard() {
     let mut i = swap_fixture();
     i.swap_style = 10; // CYTOKEN — identical arithmetic to STANDARD
     assert_eq!(
-        calculate_dy(0, 1, ONE, &i, None).unwrap(),
+        calculate_dy(0, 1, ONE, &i).unwrap(),
         U256::from(339_176_146_955_799_262u64)
     );
 }
@@ -156,7 +157,7 @@ fn live_dynamic_none_offpeg_fee() {
     i.swap_style = 6; // LIVE_ADMIN_DYNAMIC (precision_mode NONE)
     i.effective_balances = Some(vec![U256::from(2_999u64) * ONE, U256::from(5_998u64) * ONE]);
     assert_eq!(
-        calculate_dy(0, 1, ONE, &i, None).unwrap(),
+        calculate_dy(0, 1, ONE, &i).unwrap(),
         U256::from(1_008_290_824_882_167_556u64)
     );
 }
@@ -172,7 +173,7 @@ fn live_dynamic_precision_multipliers() {
         U256::from(10u64).pow(U256::from(12u64)),
     ];
     assert_eq!(
-        calculate_dy(0, 1, U256::from(1_000_000u64), &i, None).unwrap(),
+        calculate_dy(0, 1, U256::from(1_000_000u64), &i).unwrap(),
         U256::from(1_004_955u64)
     );
 }
@@ -209,7 +210,7 @@ fn crypto_fixture() -> DyCalculationInputs {
 fn crypto_dy_into_second_coin() {
     let i = crypto_fixture();
     assert_eq!(
-        calculate_dy(0, 1, U256::from(1_000_000u64), &i, None).unwrap(),
+        calculate_dy(0, 1, U256::from(1_000_000u64), &i).unwrap(),
         U256::from(99_699_997_096_060u64)
     );
 }
@@ -218,7 +219,7 @@ fn crypto_dy_into_second_coin() {
 fn crypto_dy_into_third_coin() {
     let i = crypto_fixture();
     assert_eq!(
-        calculate_dy(0, 2, U256::from(1_000_000u64), &i, None).unwrap(),
+        calculate_dy(0, 2, U256::from(1_000_000u64), &i).unwrap(),
         "996999970960597536436000".parse::<U256>().unwrap()
     );
 }
@@ -227,7 +228,7 @@ fn crypto_dy_into_third_coin() {
 fn crypto_rejects_zero_dx() {
     let i = crypto_fixture();
     assert_eq!(
-        calculate_dy(0, 1, U256::ZERO, &i, None).unwrap_err(),
+        calculate_dy(0, 1, U256::ZERO, &i).unwrap_err(),
         CurveSwapError::ZeroInput
     );
 }
@@ -248,9 +249,10 @@ fn metapool_fixture() -> DyCalculationInputs {
 #[test]
 fn metapool_standard_rate_style() {
     let mut i = metapool_fixture();
+    i.metapool = true;
     i.metapool_rate_style = 1; // STANDARD
     assert_eq!(
-        calculate_dy(0, 1, ONE, &i, Some(&StubBasePool)).unwrap(),
+        calculate_dy(0, 1, ONE, &i).unwrap(),
         U256::from(961_074_000_134_304_340u64)
     );
 }
@@ -260,9 +262,10 @@ fn metapool_precision_vp_rate_style() {
     // PRECISION_VP uses (PRECISION, virtual_price); rate_multipliers[0] is 1e18
     // here so it coincides with STANDARD.
     let mut i = metapool_fixture();
+    i.metapool = true;
     i.metapool_rate_style = 2; // PRECISION_VP
     assert_eq!(
-        calculate_dy(0, 1, ONE, &i, Some(&StubBasePool)).unwrap(),
+        calculate_dy(0, 1, ONE, &i).unwrap(),
         U256::from(961_074_000_134_304_340u64)
     );
 }
@@ -270,9 +273,10 @@ fn metapool_precision_vp_rate_style() {
 #[test]
 fn metapool_redemption_vp_rate_style() {
     let mut i = metapool_fixture();
+    i.metapool = true;
     i.metapool_rate_style = 3; // REDEMPTION_VP
     assert_eq!(
-        calculate_dy(0, 1, ONE, &i, Some(&StubBasePool)).unwrap(),
+        calculate_dy(0, 1, ONE, &i).unwrap(),
         U256::from(970_515_793_492_844_491u64)
     );
 }
@@ -399,7 +403,7 @@ fn unknown_style_is_rejected() {
     let mut i = inputs();
     i.swap_style = 99;
     assert_eq!(
-        calculate_dy(0, 1, ONE, &i, None).unwrap_err(),
+        calculate_dy(0, 1, ONE, &i).unwrap_err(),
         CurveSwapError::UnknownStyle(99)
     );
 }
@@ -408,7 +412,7 @@ fn unknown_style_is_rejected() {
 fn i_equals_j_rejected() {
     let i = inputs();
     assert_eq!(
-        calculate_dy(0, 0, ONE, &i, None).unwrap_err(),
+        calculate_dy(0, 0, ONE, &i).unwrap_err(),
         CurveSwapError::IndexOutOfBounds
     );
 }

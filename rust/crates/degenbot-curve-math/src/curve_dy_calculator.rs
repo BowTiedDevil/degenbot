@@ -113,6 +113,11 @@ pub struct DyCalculationInputs {
     pub y_variant: crate::stableswap::YVariant,
     pub a_precision: U256,
     pub swap_style: u8,
+    /// Whether this pool is a metapool (has a base pool). When `true`,
+    /// `calculate_dy` dispatches the `MetapoolDyCalculator` fast-path by
+    /// `metapool_rate_style`; `calculate_dy_underlying` delegates base-pool
+    /// ops through the `CurveBasePoolPort`.
+    pub metapool: bool,
     pub metapool_rate_style: u8,
     pub metapool_underlying_style: u8,
     // crypto I/O
@@ -812,17 +817,17 @@ fn calculate_metapool_underlying_dy(
 /// Calculate the output `dy` swapping `dx` of coin `i` → coin `j` (the Rust
 /// twin of `CurveStableswapPool.get_dy`).
 ///
-/// When `base` is present (a metapool) the `MetapoolDyCalculator` path is
-/// used, dispatching on `inputs.metapool_rate_style`; otherwise the
-/// `SwapStyle` calculator path is used.
+/// When `inputs.metapool` is set the `MetapoolDyCalculator` fast-path is
+/// dispatched on `inputs.metapool_rate_style`; otherwise the `SwapStyle`
+/// calculator path is used. Pure — no I/O; `calculate_dy_underlying` (which
+/// needs base-pool delegation) is separate.
 pub fn calculate_dy(
     i: usize,
     j: usize,
     dx: U256,
     inputs: &DyCalculationInputs,
-    base: Option<&dyn CurveBasePoolPort>,
 ) -> Result<U256, CurveSwapError> {
-    if let Some(_base) = base {
+    if inputs.metapool {
         return calculate_metapool_dy(i, j, dx, inputs, inputs.metapool_rate_style);
     }
     let style = SwapStyle::try_from_u8(inputs.swap_style)
