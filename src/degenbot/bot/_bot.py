@@ -12,6 +12,7 @@ from alembic.script import ScriptDirectory
 from hexbytes import HexBytes
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
+from degenbot.balancer.deployments import BALANCER_V2_VAULT_ADDRESS, BROKEN_BALANCER_V2_POOLS
 from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.balancer.stable_pools import BalancerV2StablePool
 from degenbot.bot import PyBot, PyBotIo
@@ -43,7 +44,7 @@ from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.database.operations import get_alembic_config, get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.base import DegenbotValueError
-from degenbot.exceptions.pool import LiquidityPoolError, TrackerAlreadyInitialized
+from degenbot.exceptions.pool import BrokenPool, LiquidityPoolError, TrackerAlreadyInitialized
 from degenbot.logging import logger
 from degenbot.provider import (
     AlloyProvider,
@@ -604,9 +605,12 @@ class Bot:
         # the retired builder's attached fetcher.
         #
         # Curve/Aerodrome/Balancer keep their builders (non-goal, retired under
-        # SSSXG6) — except Aerodrome V2, which delegates through the Rust
-        # `build_aerodrome_v2` (its own PoolEntry family).
-        if issubclass(pool_class, (UniswapV2Pool, UniswapV3Pool, AerodromeV2Pool)):
+        # SSSXG6) — except Aerodrome V2 and both Balancer families, which
+        # delegate through the Rust PoolBuilder (their own PoolEntry families).
+        if issubclass(
+            pool_class,
+            (UniswapV2Pool, UniswapV3Pool, AerodromeV2Pool, BalancerV2Pool, BalancerV2StablePool),
+        ):
             return self._build_delegated(pool_class, address, chain_id, request)
 
         builder = self._builders.get(pool_class)
@@ -730,7 +734,7 @@ class Bot:
         chain_id: ChainId,
         request: BuildPoolRequest,
     ) -> AbstractLiquidityPool:
-        """Build a V2/V3 pool via the Rust `PoolBuilder` (T4 / 4GQWZ4).
+        """Build a V2/V3/Balancer/Aerodrome pool via the Rust PoolBuilder.
 
         Thin delegating shell over `PyBot.build_v2_pool`/`build_v3_pool`: the
         core builder runs the full io choreography + registers into `BotState`
@@ -752,6 +756,7 @@ class Bot:
         Raises:
             DegenbotValueError: If the Rust builder registered the pool but
                 the resulting handle cannot be recovered.
+            BrokenPool: If `pool_class` is a known-broken Balancer pool.
 
         """
         # Resolve the snapshot block like the legacy builders did: when no
@@ -773,6 +778,24 @@ class Bot:
             # distinct structural family from V2 — the Rust `build_aerodrome_v2`
             # reads `stable()`+`getFee()` and registers into PoolEntry::AerodromeV2.
             pool_id = self._py_bot.build_aerodrome_v2_pool(address, block=block)
+        elif issubclass(pool_class, BalancerV2Pool):
+            # SSSXG6: Balancer weighted — reads getPoolId + Vault getPoolTokens
+            # + getSwapFeePercentage + getNormalizedWeights + bytecode PowVersion
+            # + decimals() scaling factors; registers into PoolEntry::BalancerWeighted.
+            pool_id = self._py_bot.build_balancer_weighted_pool(
+                address, vault=BALANCER_V2_VAULT_ADDRESS, block=block
+            )
+        elif issubclass(pool_class, BalancerV2StablePool):
+            # SSSXG6: Balancer stable — reads getPoolId + Vault getPoolTokens +
+            # getSwapFeePercentage + getAmplificationParameter + BPT-detect +
+            # rate-provider/rate + scaling factors + invariant_version;
+            # registers into PoolEntry::BalancerStable.
+            pool_id = self._py_bot.build_balancer_stable_pool(
+                address,
+                vault=BALANCER_V2_VAULT_ADDRESS,
+                block=block,
+                invariant_version=request.invariant_version,
+            )
         else:
             pool_id = self._py_bot.build_v2_pool(address, block=block)
         py_pool = self._py_bot.get_pool(pool_id)
@@ -788,21 +811,44 @@ class Bot:
         if issubclass(pool_class, UniswapV3Pool) and block is not None and block > 0:
             py_pool.seed_genesis(block_number=block)
 
-        # Register the pool's tokens in the same `Bot` (ADR-006).
-        self._erc20_builder.build(
-            py_pool.token0_address,
-            chain_id=chain_id,
-            silent=request.silent,
-            io=self._io,
-        )
-        self._erc20_builder.build(
-            py_pool.token1_address,
-            chain_id=chain_id,
-            silent=request.silent,
-            io=self._io,
-        )
+        # Register the pool's tokens in the same `Bot` (ADR-006): V2/V3/
+        # Aerodrome expose exactly two (`token0_address`/`token1_address`);
+        # Balancer exposes N via the family-specific token-address getter.
+        if issubclass(pool_class, (BalancerV2Pool, BalancerV2StablePool)):
+            # SSSXG6: preserve the broken-pool guard from the retired
+            # `BalancerBuilder.build` (BrokenPool) so known-bad pools fail fast.
+            if address in BROKEN_BALANCER_V2_POOLS:
+                raise BrokenPool
+            token_addresses = (
+                py_pool.balancer_token_addresses
+                if issubclass(pool_class, BalancerV2Pool)
+                else py_pool.balancer_stable_token_addresses
+            )
+            for token_address in token_addresses:
+                self._erc20_builder.build(
+                    token_address,
+                    chain_id=chain_id,
+                    silent=request.silent,
+                    io=self._io,
+                )
+        else:
+            self._erc20_builder.build(
+                py_pool.token0_address,
+                chain_id=chain_id,
+                silent=request.silent,
+                io=self._io,
+            )
+            self._erc20_builder.build(
+                py_pool.token1_address,
+                chain_id=chain_id,
+                silent=request.silent,
+                io=self._io,
+            )
 
-        pool = cast("type[UniswapV2Pool]", pool_class)._from_py_pool(py_pool)  # ruff:ignore[private-member-access]
+        # `_from_py_pool` is a concrete-class classmethod (not on the base); cast
+        # to `type[Any]` so the call is type-checkable + the union of the five
+        # delegated families stays branch-free here.
+        pool = cast("type[Any]", pool_class)._from_py_pool(py_pool)  # ruff:ignore[private-member-access]
         self.pools.add(pool_address=pool.address, chain_id=chain_id, pool=pool)
         return pool
 

@@ -848,6 +848,16 @@ class PyBot:
     ) -> int: ...
     def build_v2_pool(self, address: str, block: int | None = None) -> int: ...
     def build_aerodrome_v2_pool(self, address: str, block: int | None = None) -> int: ...
+    def build_balancer_weighted_pool(
+        self, address: str, vault: str, block: int | None = None
+    ) -> int: ...
+    def build_balancer_stable_pool(
+        self,
+        address: str,
+        vault: str,
+        block: int | None = None,
+        invariant_version: int | None = None,
+    ) -> int: ...
     def build_v3_pool(
         self,
         address: str,
