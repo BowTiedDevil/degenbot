@@ -449,6 +449,35 @@ async fn resolve_v2_dex_reads_stable_flag_for_camelot_factory() {
 }
 
 #[tokio::test]
+async fn fetch_camelot_state_decodes_all_four_probes() {
+    let mut f = FakeRpc::new();
+    f.set(
+        choreography::selector(b"stableSwap()"),
+        enc(DynSolValue::Bool(true)),
+    );
+    f.set(
+        choreography::selector(b"FEE_DENOMINATOR()"),
+        enc(DynSolValue::Uint(U256::from(10_000u64), 256)),
+    );
+    f.set(
+        choreography::selector(b"token0FeePercent()"),
+        enc(DynSolValue::Uint(U256::from(20u64), 16)),
+    );
+    f.set(
+        choreography::selector(b"token1FeePercent()"),
+        enc(DynSolValue::Uint(U256::from(200u64), 16)),
+    );
+    let io = io_with(f);
+    let s = choreography::fetch_camelot_state(&io, TO, None)
+        .await
+        .unwrap();
+    assert!(s.stable);
+    assert_eq!(s.fee_denominator, U256::from(10_000u64));
+    assert_eq!(s.token0_fee_percent, 20);
+    assert_eq!(s.token1_fee_percent, 200);
+}
+
+#[tokio::test]
 async fn build_v2_assembles_register_params_from_onchain() {
     use degenbot_uniswap::create2::compute_v2_address;
     use degenbot_uniswap::dex_identity::{DexVariant, UNISWAP_V2};

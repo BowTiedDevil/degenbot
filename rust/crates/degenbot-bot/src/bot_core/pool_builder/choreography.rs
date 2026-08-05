@@ -208,6 +208,70 @@ pub async fn fetch_v2_reserves(
     abi::decode_get_reserves(&bytes)
 }
 
+/// Camelot V2 pool fee configuration read from the pool (mirrors
+/// `v2_pool_builder.py::_fetch_camelot_state`). The four probes are independent
+/// (no data dependencies), run sequentially in the Python original's order:
+/// `stableSwap()` → `bool`, `FEE_DENOMINATOR()` → `uint256`, and
+/// `token0FeePercent()` / `token1FeePercent()` → `uint16` each. Fee percentages
+/// decodes as right-aligned 32-byte words (≤ `u16::MAX`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CamelotState {
+    pub stable: bool,
+    /// `FEE_DENOMINATOR()` return (a `uint256`).
+    pub fee_denominator: U256,
+    /// `token0FeePercent()` return.
+    pub token0_fee_percent: u64,
+    /// `token1FeePercent()` return.
+    pub token1_fee_percent: u64,
+}
+
+/// Decode a Solidity `bool` from the low byte of the first 32-byte word.
+fn decode_bool_word(bytes: &[u8]) -> Result<bool, ProviderError> {
+    let Ok(DynSolValue::Bool(b)) = DynSolType::Bool.abi_decode(bytes) else {
+        return Err(ProviderError::DecodingError {
+            message: "invalid bool decode".to_owned(),
+        });
+    };
+    Ok(b)
+}
+
+/// Decode a `uint256` (or narrower, right-aligned word 0) from the call result.
+fn decode_uint_word(bytes: &[u8]) -> Result<U256, ProviderError> {
+    if bytes.len() < 32 {
+        return Err(ProviderError::DecodingError {
+            message: "uint result < 32 bytes".to_owned(),
+        });
+    }
+    Ok(U256::from_be_slice(&bytes[0..32]))
+}
+
+/// Fetch a Camelot V2 pool's `stableSwap()` flag and fee configuration
+/// (ADR-005 LWKLMP slice).
+///
+/// # Errors
+///
+/// Returns a [`ProviderError`] on an `eth_call` or decode failure.
+pub async fn fetch_camelot_state(
+    io: &ConstructionIo,
+    address: Address,
+    block: Option<u64>,
+) -> Result<CamelotState, ProviderError> {
+    let stable_bytes = eth_call(io, address, selector(b"stableSwap()").to_vec(), block).await?;
+    let stable = decode_bool_word(&stable_bytes)?;
+    let denom_bytes = eth_call(io, address, selector(b"FEE_DENOMINATOR()").to_vec(), block).await?;
+    let fee_denominator = decode_uint_word(&denom_bytes)?;
+    let fee0_bytes = eth_call(io, address, selector(b"token0FeePercent()").to_vec(), block).await?;
+    let token0_fee_percent = decode_uint_word(&fee0_bytes)?.to::<u64>();
+    let fee1_bytes = eth_call(io, address, selector(b"token1FeePercent()").to_vec(), block).await?;
+    let token1_fee_percent = decode_uint_word(&fee1_bytes)?.to::<u64>();
+    Ok(CamelotState {
+        stable,
+        fee_denominator,
+        token0_fee_percent,
+        token1_fee_percent,
+    })
+}
+
 /// Aerodrome V2 common data read from the pool + factory (the ADR-005 slice
 /// 14g choreography): the `stable()` flag (called on the pool — disambiguates
 /// the shared volatile/stable factory) and the `getFee(address,bool)`

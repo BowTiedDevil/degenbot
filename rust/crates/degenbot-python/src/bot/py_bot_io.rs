@@ -1294,59 +1294,30 @@ impl PyBotIo {
         pool_address: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<StableFeeTuple> {
-        use alloy::dyn_abi::{DynSolType, DynSolValue};
-        use alloy::primitives::U256;
-
-        // stableSwap() → bool
-        let stable_calldata = selector(b"stableSwap()");
-        let stable_obj =
-            self.forward_call_to_provider(py, pool_address, &stable_calldata, block)?;
-        let stable_bytes: &[u8] = stable_obj.bind(py).extract::<&[u8]>()?;
-        let Ok(DynSolValue::Bool(stable)) = DynSolType::Bool.abi_decode(stable_bytes) else {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "invalid stableSwap() decode",
-            ));
-        };
-
-        // FEE_DENOMINATOR() → uint256
-        let denom_calldata = selector(b"FEE_DENOMINATOR()");
-        let denom_obj = self.forward_call_to_provider(py, pool_address, &denom_calldata, block)?;
-        let denom_bytes: &[u8] = denom_obj.bind(py).extract::<&[u8]>()?;
-        if denom_bytes.len() < 32 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "FEE_DENOMINATOR result < 32 bytes",
-            ));
-        }
-        let denom = U256::from_be_slice(&denom_bytes[0..32]);
-
-        // token0FeePercent() → uint16
-        let fee0_calldata = selector(b"token0FeePercent()");
-        let fee0_obj = self.forward_call_to_provider(py, pool_address, &fee0_calldata, block)?;
-        let fee0_bytes: &[u8] = fee0_obj.bind(py).extract::<&[u8]>()?;
-        if fee0_bytes.len() < 32 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "token0FeePercent result < 32 bytes",
-            ));
-        }
-        let fee0 = U256::from_be_slice(&fee0_bytes[0..32]);
-
-        // token1FeePercent() → uint16
-        let fee1_calldata = selector(b"token1FeePercent()");
-        let fee1_obj = self.forward_call_to_provider(py, pool_address, &fee1_calldata, block)?;
-        let fee1_bytes: &[u8] = fee1_obj.bind(py).extract::<&[u8]>()?;
-        if fee1_bytes.len() < 32 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "token1FeePercent result < 32 bytes",
-            ));
-        }
-        let fee1 = U256::from_be_slice(&fee1_bytes[0..32]);
-
-        Ok((
-            stable,
-            crate::conversion::alloy::u256_to_py(py, &denom)?.unbind(),
-            crate::conversion::alloy::u256_to_py(py, &fee0)?.unbind(),
-            crate::conversion::alloy::u256_to_py(py, &fee1)?.unbind(),
-        ))
+        let io = self.required_construction_io()?;
+        let address = alloy::primitives::Address::from(parse_address_for_call(pool_address)?);
+        let block_num = extract_block_u64(block)?;
+        let r = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::choreography::fetch_camelot_state(
+                    &io, address, block_num,
+                )
+                .await
+            })
+        });
+        let state = r?;
+        let denom = crate::conversion::alloy::u256_to_py(py, &state.fee_denominator)?.unbind();
+        let fee0 = crate::conversion::alloy::u256_to_py(
+            py,
+            &alloy::primitives::U256::from(state.token0_fee_percent),
+        )?
+        .unbind();
+        let fee1 = crate::conversion::alloy::u256_to_py(
+            py,
+            &alloy::primitives::U256::from(state.token1_fee_percent),
+        )?
+        .unbind();
+        Ok((state.stable, denom, fee0, fee1))
     }
 
     /// Fetch Curve pool params via 3 no-arg `uint256`-returning calls (ADR-005
