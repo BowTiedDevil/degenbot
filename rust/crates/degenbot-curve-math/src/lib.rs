@@ -39,8 +39,13 @@
 //!
 //! All functions are pure: numeric inputs → numeric outputs.
 
+pub mod curve_dy_calculator;
 pub mod stableswap;
 
+pub use curve_dy_calculator::{
+    calculate_dy, calculate_dy_underlying, resolve_amp, resolve_ramping_a, ARampingParams,
+    CurveBasePoolPort, CurveSwapError, DyCalculationInputs, SwapStyle,
+};
 pub use stableswap::{
     calc_d, calc_d_variant_alpha, calc_dp, calc_dp_variant_alpha, calc_dp_variant_beta,
     calc_dp_variant_gamma, stableswap_get_d, stableswap_get_y, stableswap_get_y_d,

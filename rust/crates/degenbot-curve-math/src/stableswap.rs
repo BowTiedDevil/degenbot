@@ -131,7 +131,7 @@ impl YVariant {
     /// Whether this variant omits the A_PRECISION divisor (matches the
     /// Python `y_variant in {VARIANT_0, VARIANT_1}` check).
     #[must_use]
-    fn omits_a_precision(self) -> bool {
+    pub fn omits_a_precision(self) -> bool {
         matches!(self, Self::Variant0 | Self::Variant1)
     }
 }
