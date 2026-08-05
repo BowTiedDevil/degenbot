@@ -16,7 +16,7 @@ use async_trait::async_trait;
 use degenbot_core::errors::ProviderError;
 use degenbot_rpc::abi;
 
-use super::{builder, choreography};
+use super::{builder, choreography, curve_choreography};
 use crate::bot_core::construction_io::{ConstructionIo, NoDb, RpcConstruction};
 
 const TO: Address = alloy::primitives::address!("0x1111111111111111111111111111111111111111");
@@ -52,16 +52,24 @@ fn str_ret(s: &str) -> Vec<u8> {
 
 struct FakeRpc {
     responses: HashMap<[u8; 4], Vec<u8>>,
+    // Parameterized calls (e.g. `coins(uint256)` keyed by index) need the full
+    // calldata, not just the selector; checked first, falls back to the
+    // selector-keyed map.
+    responses_full: HashMap<Vec<u8>, Vec<u8>>,
 }
 
 impl FakeRpc {
     fn new() -> Self {
         Self {
             responses: HashMap::new(),
+            responses_full: HashMap::new(),
         }
     }
     fn set(&mut self, sel: [u8; 4], bytes: Vec<u8>) {
         self.responses.insert(sel, bytes);
+    }
+    fn set_full(&mut self, data: Vec<u8>, bytes: Vec<u8>) {
+        self.responses_full.insert(data, bytes);
     }
 }
 
@@ -91,6 +99,11 @@ impl RpcConstruction for FakeRpc {
         data: Bytes,
         _block: Option<u64>,
     ) -> Result<Bytes, ProviderError> {
+        // Full-calldata match wins (parameterized calls); otherwise fall back
+        // to the 4-byte selector.
+        if let Some(b) = self.responses_full.get(data.as_ref()) {
+            return Ok(b.clone().into());
+        }
         match self.responses.get(&data[..4]) {
             Some(b) => Ok(b.clone().into()),
             None => Err(ProviderError::ExecutionReverted {
@@ -888,4 +901,370 @@ async fn build_balancer_stable_assembles_params_with_rate_providers() {
     );
     // Second token zero-sentinel provider → unscaled ONE.
     assert_eq!(p.scaling_factors[1], one);
+}
+
+// ---------------------------------------------------------------------------
+// Curve detection choreography (task 4EBHRC / epic TV72EG)
+// ---------------------------------------------------------------------------
+
+/// ABI-encode a fixed `address[8]` return value.
+fn addr8(v: [Address; 8]) -> Vec<u8> {
+    enc(DynSolValue::FixedArray(
+        v.iter().map(|a| DynSolValue::Address(*a)).collect(),
+    ))
+}
+
+const REGISTRY: Address = alloy::primitives::address!("0x9999999999999999999999999999999999999999");
+const REGISTRY2: Address =
+    alloy::primitives::address!("0x8888888888888888888888888888888888888888");
+
+#[tokio::test]
+async fn discover_curve_coins_uint256_prototype_stops_at_zero() {
+    let mut f = FakeRpc::new();
+    let coin0: Address = alloy::primitives::address!("0xaaa0000000000000000000000000000000000001");
+    // Coin 0 populated; coin 1 is the zero address → discovery stops after 1.
+    f.set_full(abi::encode_curve_coins_uint(0), addr_word(coin0));
+    f.set_full(abi::encode_curve_coins_uint(1), addr_word(Address::ZERO));
+    f.set_full(
+        abi::encode_curve_balances_uint(0),
+        enc(DynSolValue::Uint(U256::from(1_000_000u64), 256)),
+    );
+    let io = io_with(f);
+    let r = curve_choreography::discover_curve_coins(&io, TO, None).await;
+    assert_eq!(r.token_addresses, vec![coin0]);
+    assert_eq!(r.balances, vec![U256::from(1_000_000u64)]);
+    assert_eq!(
+        r.coin_prototype,
+        Some(curve_choreography::CurvePrototype::Uint256)
+    );
+    assert_eq!(
+        r.balance_prototype,
+        Some(curve_choreography::CurvePrototype::Uint256)
+    );
+}
+
+#[tokio::test]
+async fn discover_curve_coins_falls_back_to_int128_prototype() {
+    let mut f = FakeRpc::new();
+    let coin0: Address = alloy::primitives::address!("0xbbb0000000000000000000000000000000000001");
+    // No uint256 responses → that path reverts; int128 prototype is used.
+    f.set_full(abi::encode_curve_coins_int128(0), addr_word(coin0));
+    f.set_full(
+        abi::encode_curve_balances_int128(0),
+        enc(DynSolValue::Uint(U256::from(42u64), 256)),
+    );
+    let io = io_with(f);
+    let r = curve_choreography::discover_curve_coins(&io, TO, None).await;
+    assert_eq!(r.token_addresses, vec![coin0]);
+    assert_eq!(r.balances, vec![U256::from(42u64)]);
+    assert_eq!(
+        r.coin_prototype,
+        Some(curve_choreography::CurvePrototype::Int128)
+    );
+}
+
+#[tokio::test]
+async fn discover_curve_coins_empty_when_no_prototype_works() {
+    // No coin responses at all → both prototypes revert → empty result.
+    let io = io_with(FakeRpc::new());
+    let r = curve_choreography::discover_curve_coins(&io, TO, None).await;
+    assert!(r.token_addresses.is_empty());
+    assert!(r.balances.is_empty());
+    assert_eq!(r.coin_prototype, None);
+}
+
+#[tokio::test]
+async fn fetch_curve_pool_params_decodes_a_fee_admin_fee() {
+    let mut f = FakeRpc::new();
+    f.set(
+        choreography::selector(b"A()"),
+        enc(DynSolValue::Uint(U256::from(1000u64), 256)),
+    );
+    f.set(
+        choreography::selector(b"fee()"),
+        enc(DynSolValue::Uint(U256::from(1_000_000u64), 256)),
+    );
+    f.set(
+        choreography::selector(b"admin_fee()"),
+        enc(DynSolValue::Uint(U256::from(500_000_000u64), 256)),
+    );
+    let io = io_with(f);
+    let p = curve_choreography::fetch_curve_pool_params(&io, TO, None)
+        .await
+        .unwrap();
+    assert_eq!(p.a_coefficient, 1000);
+    assert_eq!(p.fee, 1_000_000);
+    assert_eq!(p.admin_fee, 500_000_000);
+}
+
+#[tokio::test]
+async fn fetch_curve_pool_params_propagates_missing_read() {
+    // fee() not configured → whole fetch errors (required, not optional).
+    let mut f = FakeRpc::new();
+    f.set(
+        choreography::selector(b"A()"),
+        enc(DynSolValue::Uint(U256::from(1000u64), 256)),
+    );
+    let io = io_with(f);
+    assert!(curve_choreography::fetch_curve_pool_params(&io, TO, None)
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn detect_curve_a_ramping_all_four_values() {
+    let mut f = FakeRpc::new();
+    f.set(
+        choreography::selector(b"initial_A()"),
+        enc(DynSolValue::Uint(U256::from(1_000u64), 256)),
+    );
+    f.set(
+        choreography::selector(b"initial_A_time()"),
+        enc(DynSolValue::Uint(U256::from(100u64), 256)),
+    );
+    f.set(
+        choreography::selector(b"future_A()"),
+        enc(DynSolValue::Uint(U256::from(5_000u64), 256)),
+    );
+    f.set(
+        choreography::selector(b"future_A_time()"),
+        enc(DynSolValue::Uint(U256::from(200u64), 256)),
+    );
+    let io = io_with(f);
+    let r = curve_choreography::detect_curve_a_ramping(&io, TO, None).await;
+    assert!(r.has_ramping);
+    assert_eq!(r.initial_a, Some(1_000));
+    assert_eq!(r.initial_a_time, Some(100));
+    assert_eq!(r.future_a, Some(5_000));
+    assert_eq!(r.future_a_time, Some(200));
+}
+
+#[tokio::test]
+async fn detect_curve_a_ramping_none_when_any_reverts() {
+    // initial_A missing → whole detection treated as non-ramping.
+    let mut f = FakeRpc::new();
+    f.set(
+        choreography::selector(b"future_A()"),
+        enc(DynSolValue::Uint(U256::from(5_000u64), 256)),
+    );
+    let io = io_with(f);
+    let r = curve_choreography::detect_curve_a_ramping(&io, TO, None).await;
+    assert!(!r.has_ramping);
+    assert_eq!(r.initial_a, None);
+}
+
+#[tokio::test]
+async fn detect_curve_crypto_params_populated_when_fee_gamma_positive() {
+    let mut f = FakeRpc::new();
+    f.set(
+        choreography::selector(b"fee_gamma()"),
+        enc(DynSolValue::Uint(
+            U256::from(500_000_000_000_000_000u64),
+            256,
+        )),
+    );
+    f.set(
+        choreography::selector(b"mid_fee()"),
+        enc(DynSolValue::Uint(U256::from(3_000_000u64), 256)),
+    );
+    f.set(
+        choreography::selector(b"out_fee()"),
+        enc(DynSolValue::Uint(U256::from(30_000_000u64), 256)),
+    );
+    f.set(
+        choreography::selector(b"gamma()"),
+        enc(DynSolValue::Uint(U256::from(145_000_000_000_000u64), 256)),
+    );
+    f.set(
+        choreography::selector(b"offpeg_fee_multiplier()"),
+        enc(DynSolValue::Uint(U256::from(200_000_000u64), 256)),
+    );
+    let io = io_with(f);
+    let r = curve_choreography::detect_curve_crypto_params(&io, TO, None).await;
+    assert!(r.is_crypto);
+    assert_eq!(r.fee_gamma, Some(500_000_000_000_000_000));
+    assert_eq!(r.mid_fee, Some(3_000_000));
+    assert_eq!(r.out_fee, Some(30_000_000));
+    assert_eq!(r.gamma, Some(145_000_000_000_000));
+    assert_eq!(r.offpeg_fee_multiplier, Some(200_000_000));
+}
+
+#[tokio::test]
+async fn detect_curve_crypto_params_not_crypto_when_fee_gamma_reverts() {
+    // fee_gamma reverts → not crypto; offpeg still fetched.
+    let mut f = FakeRpc::new();
+    f.set(
+        choreography::selector(b"offpeg_fee_multiplier()"),
+        enc(DynSolValue::Uint(U256::from(500_000_000u64), 256)),
+    );
+    let io = io_with(f);
+    let r = curve_choreography::detect_curve_crypto_params(&io, TO, None).await;
+    assert!(!r.is_crypto);
+    assert_eq!(r.fee_gamma, None);
+    assert_eq!(r.offpeg_fee_multiplier, Some(500_000_000));
+}
+
+#[tokio::test]
+async fn detect_curve_lending_ctoken_override_precision() {
+    let mut f = FakeRpc::new();
+    let ctoken: Address = alloy::primitives::address!("0xccc0000000000000000000000000000000000001");
+    let underlying: Address =
+        alloy::primitives::address!("0xddd0000000000000000000000000000000000001");
+    // cToken probe on the token address.
+    f.set(
+        abi::encode_lending_is_ctoken()[..4].try_into().unwrap(),
+        enc(DynSolValue::Bool(true)),
+    );
+    f.set(
+        abi::encode_lending_underlying()[..4].try_into().unwrap(),
+        addr_word(underlying),
+    );
+    f.set(
+        choreography::selector(b"decimals()"),
+        enc(DynSolValue::Uint(U256::from(8u64), 256)),
+    );
+    let io = io_with(f);
+    // token_decimals = [18] (passed by driver for the wrapped token).
+    let r = curve_choreography::detect_curve_lending_tokens(&io, &[ctoken], &[18], None).await;
+    assert_eq!(r.use_lending, vec![true]);
+    // Underlying decimals = 8 → precision multiplier 10^(18-8) = 10^10.
+    let pm = r.precision_multipliers.unwrap();
+    assert_eq!(pm, vec![U256::from(10u64).pow(U256::from(10u64))]);
+}
+
+#[tokio::test]
+async fn detect_curve_lending_ytoken_no_override() {
+    let mut f = FakeRpc::new();
+    let ytoken: Address = alloy::primitives::address!("0xeee0000000000000000000000000000000000001");
+    let underlying: Address =
+        alloy::primitives::address!("0xddd0000000000000000000000000000000000002");
+    // isCToken reverts (no response) → falls through to token() probe.
+    f.set(
+        abi::encode_lending_token()[..4].try_into().unwrap(),
+        addr_word(underlying),
+    );
+    let io = io_with(f);
+    let r = curve_choreography::detect_curve_lending_tokens(&io, &[ytoken], &[18], None).await;
+    assert_eq!(r.use_lending, vec![true]);
+    // yToken: no override → default precision from token decimals (18) = 10^0.
+    let pm = r.precision_multipliers.unwrap();
+    assert_eq!(pm, vec![U256::from(1u64)]);
+}
+
+#[tokio::test]
+async fn detect_curve_lending_no_lending_tokens() {
+    // isCToken reverts and token() reverts → not lending, no multipliers.
+    let coin: Address = alloy::primitives::address!("0xaaa0000000000000000000000000000000000002");
+    let io = io_with(FakeRpc::new());
+    let r = curve_choreography::detect_curve_lending_tokens(&io, &[coin], &[18], None).await;
+    assert_eq!(r.use_lending, vec![false]);
+    assert_eq!(r.precision_multipliers, None);
+}
+
+#[tokio::test]
+async fn find_curve_lp_token_returns_none_when_all_zero_or_revert() {
+    let mut f = FakeRpc::new();
+    // The fake resolves by full calldata (`get_lp_token(pool)` — identical for
+    // every registry target) → zero on every registry → None.
+    f.set_full(
+        abi::encode_curve_get_lp_token(&TO),
+        addr_word(Address::ZERO),
+    );
+    let io = io_with(f);
+    assert_eq!(
+        curve_choreography::find_curve_lp_token(&io, TO, &[REGISTRY, REGISTRY2], None).await,
+        None
+    );
+}
+
+#[tokio::test]
+async fn find_curve_lp_token_returns_first_nonzero() {
+    let mut f = FakeRpc::new();
+    let lp: Address = alloy::primitives::address!("0xfff0000000000000000000000000000000000002");
+    // First registry returns the LP (non-zero) → Some, no second probe needed.
+    f.set_full(abi::encode_curve_get_lp_token(&TO), addr_word(lp));
+    let io = io_with(f);
+    assert_eq!(
+        curve_choreography::find_curve_lp_token(&io, TO, &[REGISTRY], None).await,
+        Some(lp)
+    );
+}
+
+#[tokio::test]
+async fn detect_curve_metapool_resolves_base_and_underlying() {
+    let mut f = FakeRpc::new();
+    let base: Address = alloy::primitives::address!("0x0bb0000000000000000000000000000000000001");
+    let u1: Address = alloy::primitives::address!("0x0111000000000000000000000000000000000001");
+    let u2: Address = alloy::primitives::address!("0x0111000000000000000000000000000000000002");
+    f.set_full(abi::encode_curve_is_meta(&TO), enc(DynSolValue::Bool(true)));
+    f.set_full(
+        abi::encode_curve_get_underlying_coins(&TO),
+        addr8([
+            u1,
+            u2,
+            Address::ZERO,
+            Address::ZERO,
+            Address::ZERO,
+            Address::ZERO,
+            Address::ZERO,
+            Address::ZERO,
+        ]),
+    );
+    // base_pool() on the pool contract.
+    f.set(choreography::selector(b"base_pool()"), addr_word(base));
+    let io = io_with(f);
+    let r = curve_choreography::detect_curve_metapool(&io, TO, &[u1, u2], &[REGISTRY], None).await;
+    assert!(r.is_meta);
+    assert_eq!(r.base_pool_address, Some(base));
+    assert_eq!(r.tokens_underlying, Some(vec![u1, u2]));
+}
+
+#[tokio::test]
+async fn detect_curve_metapool_not_meta() {
+    let mut f = FakeRpc::new();
+    f.set_full(
+        abi::encode_curve_is_meta(&TO),
+        enc(DynSolValue::Bool(false)),
+    );
+    let io = io_with(f);
+    let r = curve_choreography::detect_curve_metapool(&io, TO, &[], &[REGISTRY], None).await;
+    assert!(!r.is_meta);
+    assert_eq!(r.base_pool_address, None);
+}
+
+#[tokio::test]
+async fn detect_curve_metapool_3crv_base_fallback() {
+    let mut f = FakeRpc::new();
+    let coin0: Address = alloy::primitives::address!("0xaaa0000000000000000000000000000000000001");
+    // base_pool() reverts (no response), get_base_pool reverts (no response),
+    // second coin == 3Crv LP → tripool fallback.
+    f.set_full(abi::encode_curve_is_meta(&TO), enc(DynSolValue::Bool(true)));
+    f.set_full(
+        abi::encode_curve_get_underlying_coins(&TO),
+        addr8([
+            coin0,
+            Address::ZERO,
+            Address::ZERO,
+            Address::ZERO,
+            Address::ZERO,
+            Address::ZERO,
+            Address::ZERO,
+            Address::ZERO,
+        ]),
+    );
+    let three_crv_lp: Address =
+        alloy::primitives::address!("0x6c3F90f043a72FA612Cbac8115ee7e52bDE6E490");
+    let tripool: Address =
+        alloy::primitives::address!("0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7");
+    let io = io_with(f);
+    let r = curve_choreography::detect_curve_metapool(
+        &io,
+        TO,
+        &[coin0, three_crv_lp],
+        &[REGISTRY],
+        None,
+    )
+    .await;
+    assert!(r.is_meta);
+    assert_eq!(r.base_pool_address, Some(tripool));
 }

@@ -100,6 +100,51 @@ alloy::sol! {
     interface IBalancerVault {
         function getPoolTokens(bytes32 poolId) external view returns (address[] memory tokens, uint256[] memory balances, uint256 lastChangeBlock);
     }
+
+    /// Curve `StableSwap` pool read interface (all pool-state detection reads).
+    /// The `uint256`-prototype coin/balance getters; the `int128` prototype is
+    /// declared separately in `ICurveStableswapPoolInt128` so alloy's `sol!`
+    /// does not need to disambiguate overloads.
+    interface ICurvePool {
+        function coins(uint256 i) external view returns (address);
+        function balances(uint256 i) external view returns (uint256);
+        function A() external view returns (uint256);
+        function fee() external view returns (uint256);
+        function admin_fee() external view returns (uint256);
+        function initial_A() external view returns (uint256);
+        function initial_A_time() external view returns (uint256);
+        function future_A() external view returns (uint256);
+        function future_A_time() external view returns (uint256);
+        function fee_gamma() external view returns (uint256);
+        function mid_fee() external view returns (uint256);
+        function out_fee() external view returns (uint256);
+        function gamma() external view returns (uint256);
+        function offpeg_fee_multiplier() external view returns (uint256);
+        function base_pool() external view returns (address);
+    }
+
+    /// Curve `StableSwap` coin/balance reads under the `int128` prototype
+    /// (older pools). Kept as a separate interface so the overloaded
+    /// `coins`/`balances` names land in distinct `SolCall` types.
+    interface ICurvePoolInt128 {
+        function coins(int128 i) external view returns (address);
+        function balances(int128 i) external view returns (uint256);
+    }
+
+    /// Curve registry / factory read interface (LP token, metapool, coins).
+    interface ICurveRegistry {
+        function get_lp_token(address pool) external view returns (address);
+        function is_meta(address pool) external view returns (bool);
+        function get_underlying_coins(address pool) external view returns (address[8] memory);
+        function get_base_pool(address pool) external view returns (address);
+    }
+
+    /// Lending-token detection reads (cToken / yToken probes).
+    interface ILendingToken {
+        function isCToken() external view returns (bool);
+        function underlying() external view returns (address);
+        function token() external view returns (address);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -806,6 +851,198 @@ pub async fn fetch_token_total_supply(
     let calldata = Bytes::from(encode_total_supply());
     let bytes = provider.eth_call(token, calldata, block).await?;
     decode_total_supply(&bytes)
+}
+
+/// Encode `coins(uint256)` calldata for coin index `i` (uint256 prototype).
+#[must_use]
+pub fn encode_curve_coins_uint(i: u8) -> Vec<u8> {
+    ICurvePool::coinsCall { i: U256::from(i) }.abi_encode()
+}
+
+/// Encode `coins(int128)` calldata for coin index `i` (int128 prototype).
+#[must_use]
+pub fn encode_curve_coins_int128(i: u8) -> Vec<u8> {
+    ICurvePoolInt128::coinsCall { i: i128::from(i) }.abi_encode()
+}
+
+/// Decode `coins(...)` return data (single `address`).
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] on decode failure.
+pub fn decode_curve_coins(bytes: &[u8]) -> ProviderResult<Address> {
+    let r = ICurvePool::coinsCall::abi_decode_returns(bytes).map_err(|e| {
+        ProviderError::DecodingError {
+            message: format!("coins decode: {e}"),
+        }
+    })?;
+    Ok(r)
+}
+
+/// Encode `balances(uint256)` calldata for coin index `i` (uint256 prototype).
+#[must_use]
+pub fn encode_curve_balances_uint(i: u8) -> Vec<u8> {
+    ICurvePool::balancesCall { i: U256::from(i) }.abi_encode()
+}
+
+/// Encode `balances(int128)` calldata for coin index `i` (int128 prototype).
+#[must_use]
+pub fn encode_curve_balances_int128(i: u8) -> Vec<u8> {
+    ICurvePoolInt128::balancesCall { i: i128::from(i) }.abi_encode()
+}
+
+/// Decode `balances(...)` return data (single `uint256`).
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] on decode failure.
+pub fn decode_curve_balances(bytes: &[u8]) -> ProviderResult<U256> {
+    let r = ICurvePool::balancesCall::abi_decode_returns(bytes).map_err(|e| {
+        ProviderError::DecodingError {
+            message: format!("balances decode: {e}"),
+        }
+    })?;
+    Ok(r)
+}
+
+/// Encode registry/`factory` `get_lp_token(address)` calldata for `pool`.
+#[must_use]
+pub fn encode_curve_get_lp_token(pool: &Address) -> Vec<u8> {
+    ICurveRegistry::get_lp_tokenCall { pool: *pool }.abi_encode()
+}
+
+/// Decode `get_lp_token(address)` return data (single `address`).
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] on decode failure.
+pub fn decode_curve_get_lp_token(bytes: &[u8]) -> ProviderResult<Address> {
+    let r = ICurveRegistry::get_lp_tokenCall::abi_decode_returns(bytes).map_err(|e| {
+        ProviderError::DecodingError {
+            message: format!("get_lp_token decode: {e}"),
+        }
+    })?;
+    Ok(r)
+}
+
+/// Encode registry/`factory` `is_meta(address)` calldata for `pool`.
+#[must_use]
+pub fn encode_curve_is_meta(pool: &Address) -> Vec<u8> {
+    ICurveRegistry::is_metaCall { pool: *pool }.abi_encode()
+}
+
+/// Decode `is_meta(address)` return data (single `bool`).
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] on decode failure.
+pub fn decode_curve_is_meta(bytes: &[u8]) -> ProviderResult<bool> {
+    let r = ICurveRegistry::is_metaCall::abi_decode_returns(bytes).map_err(|e| {
+        ProviderError::DecodingError {
+            message: format!("is_meta decode: {e}"),
+        }
+    })?;
+    Ok(r)
+}
+
+/// Encode registry `get_underlying_coins(address)` calldata for `pool`.
+#[must_use]
+pub fn encode_curve_get_underlying_coins(pool: &Address) -> Vec<u8> {
+    ICurveRegistry::get_underlying_coinsCall { pool: *pool }.abi_encode()
+}
+
+/// Decode `get_underlying_coins(address)` return data (fixed `address[8]`).
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] on decode failure.
+pub fn decode_curve_get_underlying_coins(bytes: &[u8]) -> ProviderResult<[Address; 8]> {
+    let r = ICurveRegistry::get_underlying_coinsCall::abi_decode_returns(bytes).map_err(|e| {
+        ProviderError::DecodingError {
+            message: format!("get_underlying_coins decode: {e}"),
+        }
+    })?;
+    Ok(r)
+}
+
+/// Encode registry/`factory` `get_base_pool(address)` calldata for `pool`.
+#[must_use]
+pub fn encode_curve_get_base_pool(pool: &Address) -> Vec<u8> {
+    ICurveRegistry::get_base_poolCall { pool: *pool }.abi_encode()
+}
+
+/// Decode `get_base_pool(address)` return data (single `address`).
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] on decode failure.
+pub fn decode_curve_get_base_pool(bytes: &[u8]) -> ProviderResult<Address> {
+    let r = ICurveRegistry::get_base_poolCall::abi_decode_returns(bytes).map_err(|e| {
+        ProviderError::DecodingError {
+            message: format!("get_base_pool decode: {e}"),
+        }
+    })?;
+    Ok(r)
+}
+
+/// Encode the lending-token `isCToken()` calldata (4-byte selector only).
+#[must_use]
+pub fn encode_lending_is_ctoken() -> Vec<u8> {
+    ILendingToken::isCTokenCall {}.abi_encode()
+}
+
+/// Decode `isCToken()` return data (single `bool`).
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] on decode failure.
+pub fn decode_lending_is_ctoken(bytes: &[u8]) -> ProviderResult<bool> {
+    let r = ILendingToken::isCTokenCall::abi_decode_returns(bytes).map_err(|e| {
+        ProviderError::DecodingError {
+            message: format!("isCToken decode: {e}"),
+        }
+    })?;
+    Ok(r)
+}
+
+/// Encode the lending-token `underlying()` calldata (4-byte selector only).
+#[must_use]
+pub fn encode_lending_underlying() -> Vec<u8> {
+    ILendingToken::underlyingCall {}.abi_encode()
+}
+
+/// Decode `underlying()` return data (single `address`).
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] on decode failure.
+pub fn decode_lending_underlying(bytes: &[u8]) -> ProviderResult<Address> {
+    let r = ILendingToken::underlyingCall::abi_decode_returns(bytes).map_err(|e| {
+        ProviderError::DecodingError {
+            message: format!("underlying decode: {e}"),
+        }
+    })?;
+    Ok(r)
+}
+
+/// Encode the lending-token `token()` calldata (4-byte selector only).
+#[must_use]
+pub fn encode_lending_token() -> Vec<u8> {
+    ILendingToken::tokenCall {}.abi_encode()
+}
+
+/// Decode `token()` return data (single `address`).
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] on decode failure.
+pub fn decode_lending_token(bytes: &[u8]) -> ProviderResult<Address> {
+    let r = ILendingToken::tokenCall::abi_decode_returns(bytes).map_err(|e| {
+        ProviderError::DecodingError {
+            message: format!("token decode: {e}"),
+        }
+    })?;
+    Ok(r)
 }
 
 /// Widen a signed 24-bit `tick` value (already extracted as `i32`) into
