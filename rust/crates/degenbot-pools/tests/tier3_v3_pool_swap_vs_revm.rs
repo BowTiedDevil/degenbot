@@ -740,34 +740,66 @@ fn v3_pool_arbitrary_liquidity_matches_sim_proptest() {
                     1_000u128..1_000_000u128,
                     (1u32..24u32).prop_map(|e| 10u128.pow(e)),
                 ];
-                // One position: bounds relative to `cur` in ticks, on the
-                // spacing grid. Offsets reach ±4 words so some boundaries sit
-                // in far-apart bitmap words (empty-region crossings).
-                let pos =
-                    ((-4 * words..-1i32), (1i32..4 * words), liq).prop_map(move |(lo, hi, l)| {
-                        ArbV3Position {
+
+                // --- Arm 1: a contiguous band anchored covering `cur` ---
+                // Every position straddles `cur`, so the union is ONE contiguous
+                // occupied band; the walk crosses its many boundaries and exits
+                // into zero-liquidity space toward the price limit.
+                let band_positions = {
+                    let pos = ((-4 * words..-1i32), (1i32..4 * words), liq.clone()).prop_map(
+                        move |(lo, hi, l)| ArbV3Position {
                             lower: cur + lo,
                             upper: cur + hi,
                             liquidity: l,
-                        }
-                    });
-                // Anchor ALWAYS covers `cur` so seed active liquidity > 0 (a
-                // 0-liquidity start is the documented OOG trap, not a target).
-                let anchor = ArbV3Position {
-                    lower: cur - 2 * spacing,
-                    upper: cur + 2 * spacing,
-                    liquidity: 1_000_000_000u128,
-                };
-                prop::collection::vec(pos, 0usize..=3usize).prop_flat_map(move |mut extras| {
-                    extras.insert(0, anchor.clone());
-                    let positions = extras;
-                    let rest = (
-                        prop_oneof![Just(500u32), Just(3000u32)],
-                        0i32..2,
-                        1u32..=300,
-                        1i32..=12,
+                        },
                     );
-                    rest.prop_map(move |(fee, zfo, frac, limit_words)| {
+                    // Anchor ALWAYS covers `cur` so arm-1 seed liquidity > 0.
+                    let anchor = ArbV3Position {
+                        lower: cur - 2 * spacing,
+                        upper: cur + 2 * spacing,
+                        liquidity: 1_000_000_000u128,
+                    };
+                    prop::collection::vec(pos, 0usize..=3usize).prop_flat_map(move |mut v| {
+                        v.insert(0, anchor.clone());
+                        Just(v)
+                    })
+                };
+
+                // --- Arm 2: price starts in an EMPTY region ---
+                // Positions sit entirely above OR entirely below `cur` (a sign
+                // picks the side and `min`/`max` keep lower < upper), so NO
+                // position covers the current tick and the seed liquidity is 0.
+                // This is the real mainnet pattern (liquidity withdrawn, no swap
+                // yet): a swap must walk the empty region back into the remaining
+                // liquidity — and, when it goes the other way, run empty to the
+                // price limit.
+                let empty_positions = {
+                    let band = (
+                        prop_oneof![Just(1i32), Just(-1i32)], // side of `cur`
+                        (1i32..(4 * words)),                  // gap to the near edge
+                        (2 * spacing..6 * spacing),           // band width
+                        liq.clone(),
+                    )
+                        .prop_map(move |(side, gap, width, l)| {
+                            let near = cur + side * gap;
+                            let far = near + side * width;
+                            ArbV3Position {
+                                lower: near.min(far),
+                                upper: near.max(far),
+                                liquidity: l,
+                            }
+                        });
+                    prop::collection::vec(band, 1usize..=2usize)
+                };
+
+                let rest = (
+                    prop_oneof![Just(500u32), Just(3000u32)],
+                    0i32..2,
+                    1u32..=300,
+                    1i32..=12,
+                );
+                prop_oneof![band_positions, empty_positions].prop_flat_map(move |positions| {
+                    rest.clone().prop_map(move |(fee, zfo, frac, limit_words)| {
                         (spacing, cur, positions.clone(), fee, zfo, frac, limit_words)
                     })
                 })
@@ -781,8 +813,16 @@ fn v3_pool_arbitrary_liquidity_matches_sim_proptest() {
         let active = state.liquidity;
         // Couple amount to the active liquidity so `computeSwapStep` actually
         // moves price (the OOG-trap guard) while still spanning tiny → deep
-        // pushes (deep pushes reach far boundaries / the bitmap end).
-        let amount = U256::from(active) / U256::from(100u64) * U256::from(frac);
+        // pushes (deep pushes reach far boundaries / the bitmap end). When the
+        // price STARTS in an empty region (`active == 0`), size the amount from
+        // the largest position liquidity instead, so the empty-region walk is
+        // still exercised.
+        let nominal = positions.iter().map(|p| p.liquidity).max().unwrap_or(0);
+        let amount = if active > 0 {
+            U256::from(active) / U256::from(100u64) * U256::from(frac)
+        } else {
+            U256::from(nominal) / U256::from(100u64) * U256::from(frac)
+        };
         if amount.is_zero() || amount > U256::from(i128::MAX) {
             return Ok(());
         }
@@ -972,6 +1012,106 @@ fn v3_pool_arbitrary_topology_edge_corpus() {
             res.post_liq, sim.liquidity,
             "case {k} post liquidity byte-exact"
         );
+    }
+}
+
+/// A real mainnet pattern (the user-raised case): the current price sits in an
+/// EMPTY region — liquidity withdrawn, no swap yet — with the remaining
+/// liquidity on one side (or both), and a swap must walk the empty region back
+/// into that liquidity. Starts with seed `liquidity == 0` and asserts the Rust
+/// walk matches the on-chain pool byte-exact. Covers liquidity only above,
+/// only below, and on both sides, at several amounts.
+#[test]
+fn v3_pool_start_in_empty_region_crosses_to_liquidity() {
+    let fee = 3000u32;
+    let tick_spacing = 60i32;
+    let cur = 30_000i32;
+    let liq = 1_000_000_000_000_000_000_000u128; // 1e21
+
+    let cases: Vec<(Vec<ArbV3Position>, bool)> = vec![
+        // Liquidity only ABOVE; price sits in the empty region below, crossing up.
+        (
+            vec![ArbV3Position {
+                lower: cur + 100 * tick_spacing,
+                upper: cur + 500 * tick_spacing,
+                liquidity: liq,
+            }],
+            false,
+        ),
+        // Liquidity only BELOW; price sits in the empty region above, crossing down.
+        (
+            vec![ArbV3Position {
+                lower: cur - 500 * tick_spacing,
+                upper: cur - 100 * tick_spacing,
+                liquidity: liq,
+            }],
+            true,
+        ),
+        // Two separated bands, price in the empty middle, crossing up into the
+        // top band (also spanning the interior gap between the bands).
+        (
+            vec![
+                ArbV3Position {
+                    lower: cur + 100 * tick_spacing,
+                    upper: cur + 500 * tick_spacing,
+                    liquidity: liq,
+                },
+                ArbV3Position {
+                    lower: cur - 500 * tick_spacing,
+                    upper: cur - 100 * tick_spacing,
+                    liquidity: liq,
+                },
+            ],
+            false,
+        ),
+    ];
+
+    for (positions, zfo) in cases {
+        let state = build_arbitrary_v3_state(cur, tick_spacing, &positions);
+        // The price must genuinely start in an empty region (zero active liq).
+        assert_eq!(state.liquidity, 0, "price must start in an empty region");
+        for frac in [1u64, 10u64, 100u64] {
+            let amount_in = I256::try_from(U256::from(liq) / U256::from(frac)).unwrap();
+            let dir = if zfo { -1i32 } else { 1i32 };
+            let limit_tick = (cur + dir * 6 * tick_spacing * 256).clamp(-887_272, 887_272);
+            let sqrt_price_limit: u128 = get_sqrt_ratio_at_tick_internal(limit_tick)
+                .unwrap()
+                .to::<u128>();
+            // Strict: the swap MUST be Accepted on-chain (byte-exact); a Revert
+            // or the OOG gas-trap Halt here is a fixture failure, not a skip.
+            let res = match run_onchain_swap(
+                &FORK,
+                uniswap_seeder,
+                &state,
+                fee,
+                tick_spacing,
+                zfo,
+                amount_in,
+                sqrt_price_limit,
+            ) {
+                ProbeOutcome::Accepted(r) => r,
+                ProbeOutcome::Reverted { reason } => panic!(
+                    "empty-region-start swap reverted: {}",
+                    decode_error_string(reason.as_ref())
+                        .unwrap_or_else(|| format!("0x{}", hex::encode(reason.as_ref())))
+                ),
+                ProbeOutcome::Halted(m) => panic!("empty-region-start swap halted: {m}"),
+            };
+            let sim = v3_simulate_swap(
+                &state,
+                fee,
+                tick_spacing,
+                zfo,
+                amount_in,
+                U256::from(sqrt_price_limit),
+            )
+            .expect("engine must accept an on-chain-accepted empty-region start");
+            assert_eq!(res.amount0, sim.amount0, "amount0 byte-exact");
+            assert_eq!(res.amount1, sim.amount1, "amount1 byte-exact");
+            assert_eq!(res.post_sqrt, sim.sqrt_price_x96, "post sqrtPriceX96");
+            assert_eq!(res.post_tick, sim.tick, "post tick byte-exact");
+            assert_eq!(res.post_liq, sim.liquidity, "post liquidity byte-exact");
+        }
     }
 }
 
