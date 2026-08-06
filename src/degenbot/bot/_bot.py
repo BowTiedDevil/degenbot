@@ -1093,24 +1093,50 @@ class Bot:
         # coverage drives the companion's `_sparse_liquidity_map`.
         assert state_view_address is not None
         hook_flags = int(hook_address, 16) if hook_address else 0
-        pool_handle_pool_id, coverage = self._py_bot.build_v4_pool(
-            pool_manager=pool_manager_address,
-            pool_id_hex=pool_id_bytes.to_0x_hex(),
-            currency0=token0.address,
-            currency1=token1.address,
-            fee=fee_for_pool,
-            tick_spacing=tick_spacing_for_pool,
-            hook_flags=hook_flags,
-            state_view_address=state_view_address,
-            block=int(head_block) if head_block is not None else None,
-            db=True,
-            tick_data_fetcher=self._make_v4_tick_data_fetcher(
-                pool_id_bytes,
-                pool_manager_address,
-                state_view_address,
-                chain_id,
-            ),
+        pool_handle_pool_id, coverage, b_cur0, b_cur1, b_pm, b_fee, b_ts, b_hf, b_pool_id_hex = (
+            self._py_bot.build_v4_pool(
+                pool_manager=pool_manager_address,
+                pool_id_hex=pool_id_bytes.to_0x_hex(),
+                currency0=token0.address,
+                currency1=token1.address,
+                fee=fee_for_pool,
+                tick_spacing=tick_spacing_for_pool,
+                hook_flags=hook_flags,
+                state_view_address=state_view_address,
+                block=int(head_block) if head_block is not None else None,
+                db=True,
+                tick_data_fetcher=self._make_v4_tick_data_fetcher(
+                    pool_id_bytes,
+                    pool_manager_address,
+                    state_view_address,
+                    chain_id,
+                ),
+            )
         )
+        # TF7RZB-S2 return-surface parity: the normalized identity echoed back
+        # through the seam must round-trip the caller-resolved values losslessly
+        # (the V4 builder finalizes currency0/1, manager, pool_id, fee,
+        # tick_spacing, hook_flags). A divergence is a real seam bug and must
+        # fail loudly, not silently re-derive.
+        b_expected_fee = int(fee_for_pool)
+        b_expected_pool_id_hex = pool_id_bytes.to_0x_hex().lower()
+        b_identity_ok = all([
+            b_cur0.lower() == token0.address.lower(),
+            b_cur1.lower() == token1.address.lower(),
+            b_pm.lower() == pool_manager_address.lower(),
+            int(b_fee) == b_expected_fee,
+            int(b_ts) == int(tick_spacing_for_pool),
+            int(b_hf) == hook_flags,
+            b_pool_id_hex.lower() == b_expected_pool_id_hex,
+        ])
+        if not b_identity_ok:
+            raise DegenbotValueError(
+                message=(
+                    "V4 builder identity `build_v4_pool` diverged from the "
+                    "caller-resolved identity (currency0/1, pool_manager, fee, "
+                    "tick_spacing, hook_flags, pool_id)."
+                )
+            )
         tick_map_is_tracked = coverage == "tracked"
         py_pool_handle = self._py_bot.get_pool(pool_handle_pool_id)
         assert py_pool_handle is not None, "build_v4_pool returned a pool_id with no handle"

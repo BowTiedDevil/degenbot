@@ -912,7 +912,17 @@ class PyBot:
         block: int | None = None,
         db: bool = True,
         tick_data_fetcher: Callable | None = None,
-    ) -> tuple[int, str]: ...
+    ) -> tuple[
+        int,
+        str,
+        str,
+        str,
+        str,
+        int,
+        int,
+        int,
+        str,
+    ]: ...
     def update_v2_pool(
         self,
         address: str,

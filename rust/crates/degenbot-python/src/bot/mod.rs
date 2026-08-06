@@ -943,6 +943,7 @@ impl PyBot {
     /// [`map_register_v4_err`]).
     #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_flags, state_view_address, block=None, db=true, tick_data_fetcher=None))]
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::type_complexity)]
     fn build_v4_pool(
         &self,
         py: Python<'_>,
@@ -957,7 +958,7 @@ impl PyBot {
         block: Option<u64>,
         db: bool,
         tick_data_fetcher: Option<Bound<'_, PyAny>>,
-    ) -> PyResult<(u64, String)> {
+    ) -> PyResult<(u64, String, String, String, String, u32, i32, u16, String)> {
         use degenbot_bot::bot_core::pool_builder::builder;
         use degenbot_core::runtime::get_runtime;
         let pm = parse_address(pool_manager).map_err(|e| {
@@ -1005,6 +1006,21 @@ impl PyBot {
             tick_spacing,
             hook_flags,
         };
+        // TF7RZB-S2 (builder return surface): capture the normalized identity
+        // tuple before `id` is moved into `build_v4`. V4 identity is
+        // caller-supplied (the core never reads getToken0/getHooks), so this
+        // is the driver-owned surface echoed back — the parity assert in
+        // `_build_v4_managed` verifies the caller-resolved values round-trip
+        // through the seam losslessly.
+        let identity_ret = (
+            id.currency0.to_checksum(None),
+            id.currency1.to_checksum(None),
+            id.pool_manager.to_checksum(None),
+            id.fee,
+            id.tick_spacing,
+            id.hook_flags,
+            format!("0x{}", alloy::hex::encode(id.pool_id)),
+        );
         let mut params = py
             .detach(|| get_runtime().block_on(builder::build_v4(id, db_ref, &io, block)))
             .map_err(map_builder_err)?;
@@ -1023,10 +1039,20 @@ impl PyBot {
             .write()
             .register_v4_pool(&params)
             .map_err(map_register_v4_err)?;
-        // Return `(pool_id, coverage)` so the Python driver can set the
-        // companion's `_sparse_liquidity_map` (the legacy builder derived it
-        // from the assembled tick-map coverage, which the core owns here).
-        Ok((pool_id, coverage.to_string()))
+        // Return `(pool_id, coverage, identity...)` so the Python driver can
+        // set the companion's `_sparse_liquidity_map` (from coverage) and the
+        // normalized identity in one return surface (TF7RZB-S2).
+        Ok((
+            pool_id,
+            coverage.to_string(),
+            identity_ret.0,
+            identity_ret.1,
+            identity_ret.2,
+            identity_ret.3,
+            identity_ret.4,
+            identity_ret.5,
+            identity_ret.6,
+        ))
     }
 
     /// Prototype test-only V2 registration that bypasses CREATE2 verification.

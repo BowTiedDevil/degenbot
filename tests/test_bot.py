@@ -211,9 +211,7 @@ class TestBuildDelegatedIdentityReturnSurface:
         # Stub the Rust-owned surface: build_v2_pool returns the tuple return
         # surface (core identity), get_pool returns a handle whose tokens DIFFER
         # -> the parity guard must raise.
-        handle = SimpleNamespace(
-            token0_address="0x" + "a" * 40, token1_address="0x" + "b" * 40
-        )
+        handle = SimpleNamespace(token0_address="0x" + "a" * 40, token1_address="0x" + "b" * 40)
         fake_py = SimpleNamespace(
             build_v2_pool=lambda address, block=None: (
                 7,
@@ -230,3 +228,82 @@ class TestBuildDelegatedIdentityReturnSurface:
         request = BuildPoolRequest()
         with pytest.raises(DegenbotValueError):
             bot._build_delegated(UniswapV2Pool, "0x" + "e" * 40, 1, request)
+
+
+class TestBuildManagedPoolIdentityReturnSurface:
+    """TF7RZB-S2: build_v4_pool returns the normalized identity tuple
+    `(pool_id, coverage, currency0, currency1, pool_manager, fee,
+    tick_spacing, hook_flags, pool_id_hex)`; _build_v4_managed verifies it
+    round-trips the caller-resolved identity losslessly."""
+
+    def test_build_v4_parity_mismatch_raises(self, tmp_path) -> None:
+        """A V4 builder identity that diverges from the caller-resolved
+        identity raises — the return-surface parity guard."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        import pytest
+
+        from degenbot.bot import Bot
+        from degenbot.config import DatabaseSettings, DegenbotConfig
+        from degenbot.exceptions.base import DegenbotValueError
+        from degenbot.provider import AlloyProvider
+        from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
+
+        config = DegenbotConfig(
+            database=DatabaseSettings(path=str(tmp_path / "t.db")),
+            rpc={1: ETHEREUM_ARCHIVE_NODE_HTTP_URI},
+            default_chain_id=1,
+        )
+        provider = MagicMock(spec=AlloyProvider)
+        provider.chain_id = 1
+        bot = Bot(config, provider=provider)
+
+        pm = "0x" + "aa" * 20
+        pool_id_hex = "0x" + "11" * 32
+        tokens = ["0x" + "cc" * 20, "0x" + "dd" * 20]  # cc<dd -> cc is currency0
+
+        # Stub the io seam: no DB row (suppressed), kwargs identity path.
+        bot._io = SimpleNamespace(  # type: ignore[assignment]
+            fetch_pool_manager=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no db")),
+            get_block_number=lambda: 100,
+            fetch_v4_slot0_liquidity=lambda *a, **k: (
+                1 << 96,
+                0,
+                0,
+                5000,
+                0,
+            ),
+        )
+        addr_cycle = iter(["0x" + "cc" * 20, "0x" + "dd" * 20])
+        bot._erc20_builder.build = lambda *a, **k: SimpleNamespace(  # type: ignore[assignment]
+            address=next(addr_cycle)
+        )
+        bot._make_v4_tick_data_fetcher = lambda *a, **k: None  # type: ignore[assignment]
+
+        # Stub the Rust surface: build_v4_pool returns a currency0 that DIFFERS
+        # from the caller-resolved token0 -> parity guard must raise.
+        bot._py_bot = SimpleNamespace(  # type: ignore[assignment]
+            build_v4_pool=lambda **k: (
+                7,
+                "sparse",
+                "0x" + "ee" * 20,  # currency0 mismatch
+                "0x" + "dd" * 20,
+                pm,
+                5000,
+                1,
+                0,
+                pool_id_hex,
+            )
+        )
+
+        with pytest.raises(DegenbotValueError):
+            bot.build_managed_pool(
+                pm,
+                pool_id_hex,
+                state_block=100,
+                state_view_address="0x" + "bb" * 20,
+                tokens=tokens,
+                fee=5000,
+                tick_spacing=1,
+            )
