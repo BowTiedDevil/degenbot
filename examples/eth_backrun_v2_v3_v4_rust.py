@@ -17,10 +17,7 @@ Startup sequence (owned by :class:`~degenbot.runner.BotRunner`):
 
 The old driver code that lived here (``BackrunSession``→``BotRunner``,
 ``build_paths``, ``consume_result_batches``, the dispatch/render helpers, and
-the shared constants) has moved to ``degenbot.runner``. The re-export block at
-the bottom is a TEMPORARY shim so the existing test suite can keep importing
-these names from this module; it is removed once the tests are rerouted to the
-package (epic 5TSYKN).
+the shared constants) has moved to ``degenbot.runner`` (epic 5TSYKN).
 """
 
 import argparse
@@ -33,9 +30,8 @@ import dotenv
 from degenbot._ffi.diagnostics import mark_progress, start_gil_probe
 from degenbot.logging import logger as bot_logger
 from degenbot.runner import BotRunner
-from degenbot.runner.config import BackrunConfig
-from degenbot.runner.driver_constants import PATH_PERMUTATION_FILTER
 from degenbot.runner import driver_constants as _driver_constants
+from degenbot.runner.config import BackrunConfig
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -182,38 +178,3 @@ if __name__ == "__main__":
     start = time.perf_counter()
     asyncio.run(main())
     bot_logger.info(f"Completed in {time.perf_counter() - start:.2f}s")
-
-
-# ──────────────────────────────────────────────────────────────────
-# TEMPORARY re-export shim (epic 5TSYKN — removed by the test-reroute task).
-# Tests historically imported the driver from this example module. Now that
-# the driver lives in degenbot.runner, these names are forwarded so the suite
-# (un-rerouted) keeps resolving to the SAME package objects. Do NOT add new
-# logic here; logic belongs in degenbot.runner.
-# ──────────────────────────────────────────────────────────────────
-from degenbot.arbitrage.engine_registry import EngineRegistry  # noqa: E402,F401
-from degenbot.dispatch import Dispatcher  # noqa: E402,F401
-from degenbot.runner import (  # noqa: E402
-    BackrunSession,
-    PathRegistrationPipeline,
-    ConstructionContext,
-    build_paths,
-    consume_result_batches,
-    resolve_directions,
-    run_registration_pipeline,
-)
-from degenbot.runner.dispatch import (  # noqa: E402,F401
-    _dispatch_profitable,
-    _render_sim_failures,
-)
-from degenbot.runner.consume import _tee_block_stream  # noqa: E402,F401
-from degenbot.runner.driver_constants import (  # noqa: E402,F401
-    ETH_MAINNET_ALLOWED_TOKENS,
-    PANCAKESWAP_V3_MAINNET_FACTORY,
-    REG_QUEUE_BOUND,
-    REG_WORKERS,
-    SUSHISWAP_V3_MAINNET_FACTORY,
-    UNISWAP_V3_MAINNET_FACTORY,
-    UNISWAP_V4_POOL_MANAGER_ADDRESS,
-    WETH_ADDRESS,
-)

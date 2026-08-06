@@ -28,7 +28,6 @@ encode path confirms the call traverses Rust.
 from __future__ import annotations
 
 import ast
-import sys
 from pathlib import Path
 
 import pytest
@@ -41,40 +40,23 @@ EXAMPLES_DIR = REPO / "examples"
 
 
 class TestPythonEncoderRetired:
-    """The retired Python encoder symbols must NOT exist in Python land."""
+    """The retired Python encoder module is gone entirely."""
 
-    def test_no_python_encode_cmd_stream(self) -> None:
-        """`eth_backrun_helpers` no longer exports `encode_cmd_stream`."""
-        sys.path.insert(0, str(EXAMPLES_DIR))
-        import eth_backrun_helpers as ebh
+    def test_helpers_module_deleted(self) -> None:
+        """`examples/eth_backrun_helpers.py` is deleted (epic 5TSYKN).
 
-        assert not hasattr(ebh, "encode_cmd_stream"), (
-            "eth_backrun_helpers.encode_cmd_stream must be deleted (§4.3)"
-        )
-
-    def test_no_python_v4_input_is_native(self) -> None:
-        sys.path.insert(0, str(EXAMPLES_DIR))
-        import eth_backrun_helpers as ebh
-
-        assert not hasattr(ebh, "v4_input_is_native"), (
-            "eth_backrun_helpers.v4_input_is_native must be deleted (§4.3)"
-        )
-        assert not hasattr(ebh, "v4_output_is_native"), (
-            "eth_backrun_helpers.v4_output_is_native must be deleted (§4.3)"
+        The config/display helpers it held moved into ``degenbot.runner.config``;
+        the command-stream encoders were retired in the §4.3 cutover (their
+        byte-exact parity lives in the Rust golden-file tests).
+        """
+        assert not (EXAMPLES_DIR / "eth_backrun_helpers.py").exists(), (
+            "examples/eth_backrun_helpers.py must be deleted (5TSYKN)"
         )
 
     def test_cmd_stream_module_deleted(self) -> None:
         """`examples/cmd_stream.py` is deleted entirely."""
         assert not (EXAMPLES_DIR / "cmd_stream.py").exists(), (
             "examples/cmd_stream.py must be deleted (§4.3)"
-        )
-
-    def test_no_python_warmup_slots(self) -> None:
-        sys.path.insert(0, str(EXAMPLES_DIR))
-        import eth_backrun_helpers as ebh
-
-        assert not hasattr(ebh, "compute_simulation_warmup_slots"), (
-            "compute_simulation_warmup_slots must be sourced from degenbot_rs (§4.3)"
         )
 
 
@@ -139,15 +121,16 @@ class TestExampleRoutesThroughRust:
         return (EXAMPLES_DIR / "eth_backrun_v2_v3_v4_rust.py").read_text()
 
     def test_imports_dispatch_from_companion(self) -> None:
-        """The example imports the dispatch seam from the companion, not FFI.
+        """The driver imports the dispatch seam from the companion, not FFI.
 
         A5 originally wired the example to import ``degenbot._ffi`` directly.
-        The three-layer cutover (ADR-005) moves the driver to import the
-        stable companion re-exports from ``degenbot.dispatch`` instead —
-        the example must NOT import ``degenbot._ffi`` (the PyO3 wrapper is an
-        implementation detail of the companion, not a driver surface).
+        The three-layer cutover (ADR-005) moves the driver into
+        ``degenbot.runner``, which imports the stable companion re-exports from
+        ``degenbot.dispatch`` — the driver's dispatch module must NOT import
+        ``degenbot._ffi`` (the PyO3 wrapper is an implementation detail of the
+        companion, not a driver surface).
         """
-        src = self._example_source()
+        src = (REPO / "src" / "degenbot" / "runner" / "dispatch.py").read_text()
         tree = ast.parse(src)
         imports_ffi = False
         imports_companion_dispatch = False
@@ -160,10 +143,10 @@ class TestExampleRoutesThroughRust:
                 if node.module == "degenbot.dispatch":
                     imports_companion_dispatch = True
         assert imports_companion_dispatch, (
-            "example must import dispatch symbols from degenbot.dispatch (the companion seam)"
+            "driver must import dispatch symbols from degenbot.dispatch (the companion seam)"
         )
         assert not imports_ffi, (
-            "example must NOT import degenbot._ffi directly (use degenbot.dispatch / degenbot.exceptions)"
+            "driver must NOT import degenbot._ffi directly (use degenbot.dispatch / degenbot.exceptions)"
         )
 
     def test_does_not_import_python_encoder(self) -> None:
