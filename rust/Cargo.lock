@@ -2300,6 +2300,7 @@ dependencies = [
  "degenbot-executor",
  "degenbot-pools",
  "degenbot-rpc",
+ "degenbot-uniswap",
  "parking_lot",
  "revm",
  "serde",

@@ -88,3 +88,6 @@ degenbot-rpc = { path = "../degenbot-rpc", features = ["test-utils"] }
 # `compute_simulation_warmup_slots` + the `PathInfo`/`HopInfo`/`V2HopInfo`/
 # `EncodeOptions` types the smoke test's `SimulatePath` fixture constructs.
 degenbot-executor = { path = "../degenbot-executor" }
+# `DexVariant` for the `BotStateDb` tripwire tests (register a tracked V2 pool
+# so `pool_id_by_address` resolves) — dev-only, no production linkage.
+degenbot-uniswap = { path = "../degenbot-uniswap" }

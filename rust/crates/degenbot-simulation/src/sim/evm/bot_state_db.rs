@@ -54,7 +54,7 @@
 use alloy::primitives::Address;
 use degenbot_bot::bot_core::BotState;
 use revm::database_interface::DatabaseRef;
-use revm::primitives::{StorageKey, StorageValue, B256};
+use revm::primitives::{StorageKey, StorageValue, B256, KECCAK_EMPTY};
 use revm::state::AccountInfo;
 
 /// A thin `DatabaseRef` wrapper that forwards every read to the `fallback`.
@@ -96,14 +96,42 @@ where
 {
     type Error = ExtDb::Error;
 
-    /// Forward to the fallback. The engine does not serve account info from
-    /// typed state; cold-loaded once, cached by the outer `CacheDB`.
+    /// Forward to the fallback, with a LOUD invalidity tripwire for tracked
+    /// pools (ADR-021: detect/classify/stop loudly, never auto-repair).
     ///
     /// # Errors
     ///
     /// Returns the fallback's error if the RPC `basic` fetch fails.
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        self.fallback.basic_ref(address)
+        let info = self.fallback.basic_ref(address)?;
+        // A tracked pool address MUST resolve to a contract with code. If the
+        // RPC fallback reports it as non-existent (`None`) or code-less
+        // (``KECCAK_EMPTY``), every later per-block sim would execute the pool
+        // as an EOA → zero reserves → the mysterious empty-revert family
+        // (path-205: `0xb01C29F3` BNB/WETH read `reserve0=0` in sim while
+        // healthy on-chain). A registered pool can never legitimately be
+        // code-less, so this is an impossibility — fail loudly HERE. Because
+        // this is the value-origin point (the warm cache only caches what this
+        // returns), the poisoned `None`/empty can never reach the warm cache
+        // to be served on a later block's hit.
+        if self.bot_state.pool_id_by_address(&address).is_some() {
+            let invalid = match &info {
+                None => true,
+                Some(acc) => acc.code_hash == KECCAK_EMPTY,
+            };
+            if invalid {
+                let state = if info.is_none() {
+                    "non-existent (None)"
+                } else {
+                    "code-less (KECCAK_EMPTY)"
+                };
+                panic!(
+                    "Sim DB invariant: tracked pool {address} resolved as {state} by the \
+                     RPC fallback — refusing to simulate a code-less pool"
+                );
+            }
+        }
+        Ok(info)
     }
 
     /// Serve tracked-pool storage from the engine's typed state, falling
@@ -164,5 +192,139 @@ where
     /// `AlloyDB` (the live-network axis).
     fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
         self.fallback.block_hash_ref(number)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::too_many_lines)]
+
+    use super::*;
+    use alloy::primitives::aliases::U112;
+    use alloy::primitives::{Address, U256};
+    use degenbot_bot::bot_core::{BotState, RegisterV2PoolParams};
+    use degenbot_uniswap::dex_identity::DexVariant;
+    use revm::bytecode::Bytecode;
+    use revm::primitives::B256;
+    use std::cell::Cell;
+
+    /// The tracked-pool address (matches the bot-core test fixture shape).
+    const POOL: Address = Address::new([0xaa; 20]);
+    /// A NON-pool address — an EOA / warmup-victim basic read must stay exempt.
+    const EOA: Address = Address::new([0xee; 20]);
+
+    /// A `BotState` with one tracked V2 pool at [`POOL`], so
+    /// `pool_id_by_address(POOL)` resolves (and `EOA` does not).
+    fn bot_state_with_pool() -> BotState {
+        let mut core = BotState::new();
+        core.register_v2_pool(&RegisterV2PoolParams {
+            address: POOL,
+            token0: Address::from([0xbb; 20]),
+            token1: Address::from([0xcc; 20]),
+            reserve0: U112::from(1000),
+            reserve1: U112::from(2000),
+            fee_token0: (997, 1000),
+            fee_token1: (997, 1000),
+            factory: Address::from([0xdd; 20]),
+            update_block: 0,
+            variant: DexVariant::UniswapV2,
+            stable_swap: false,
+            fee_denominator: None,
+            ..Default::default()
+        })
+        .expect("test setup: V2 registration");
+        core
+    }
+
+    /// A minimal `DatabaseRef` fallback whose `basic_ref` returns the test's
+    /// scripted result and counts calls.
+    struct ScriptedDb {
+        result: Option<AccountInfo>,
+        calls: Cell<u64>,
+    }
+    impl DatabaseRef for ScriptedDb {
+        type Error = core::convert::Infallible;
+        fn basic_ref(&self, _address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+            self.calls.set(self.calls.get() + 1);
+            Ok(self.result.clone())
+        }
+        fn code_by_hash_ref(&self, _code_hash: B256) -> Result<Bytecode, Self::Error> {
+            Ok(Bytecode::new_legacy(alloy::primitives::Bytes::new()))
+        }
+        fn storage_ref(
+            &self,
+            _address: Address,
+            _index: StorageKey,
+        ) -> Result<StorageValue, Self::Error> {
+            Ok(StorageValue::ZERO)
+        }
+        fn block_hash_ref(&self, _number: u64) -> Result<B256, Self::Error> {
+            Ok(B256::ZERO)
+        }
+    }
+
+    fn code_info() -> AccountInfo {
+        let code = Bytecode::new_legacy(alloy::primitives::Bytes::from_static(&[0x60, 0x00]));
+        AccountInfo::new(U256::from(1), 0, code.hash_slow(), code)
+    }
+    fn codeless_info() -> AccountInfo {
+        AccountInfo::new(U256::from(1), 0, KECCAK_EMPTY, Bytecode::default())
+    }
+
+    // ── Green 1: a tracked pool resolving to `None` (non-existent) PANICS ──
+
+    #[test]
+    #[should_panic(expected = "Sim DB invariant")]
+    fn tracked_pool_resolving_none_panics() {
+        let core = bot_state_with_pool();
+        let db = ScriptedDb {
+            result: None,
+            calls: Cell::new(0),
+        };
+        let bsd = BotStateDb::new(&core, db);
+        let _ = bsd.basic_ref(POOL).unwrap();
+    }
+
+    // ── Green 2: a tracked pool resolving to CODE-LESS PANICS ──
+
+    #[test]
+    #[should_panic(expected = "Sim DB invariant")]
+    fn tracked_pool_resolving_codeless_panics() {
+        let core = bot_state_with_pool();
+        let db = ScriptedDb {
+            result: Some(codeless_info()),
+            calls: Cell::new(0),
+        };
+        let bsd = BotStateDb::new(&core, db);
+        let _ = bsd.basic_ref(POOL).unwrap();
+    }
+
+    // ── Green 3: a tracked pool resolving WITH code passes through ──
+
+    #[test]
+    fn tracked_pool_with_code_passes_through() {
+        let core = bot_state_with_pool();
+        let db = ScriptedDb {
+            result: Some(code_info()),
+            calls: Cell::new(0),
+        };
+        let bsd = BotStateDb::new(&core, db);
+        let got = bsd.basic_ref(POOL).unwrap();
+        assert!(got.is_some(), "tracked pool with code is forwarded");
+        assert_ne!(got.unwrap().code_hash, KECCAK_EMPTY);
+    }
+
+    // ── Green 4: NON-pool addresses (EOA/warmup) are EXEMPT from the tripwire ──
+
+    #[test]
+    fn non_pool_none_is_exempt() {
+        let core = bot_state_with_pool();
+        let db = ScriptedDb {
+            result: None,
+            calls: Cell::new(0),
+        };
+        let bsd = BotStateDb::new(&core, db);
+        // EOA is not a pool: `None` is a legitimate EOA read, forwarded no-panic.
+        assert!(bsd.basic_ref(EOA).unwrap().is_none());
     }
 }
