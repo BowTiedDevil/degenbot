@@ -22,8 +22,7 @@ from typing import TYPE_CHECKING
 import pytest
 from eth_typing import ChainId
 
-import examples.eth_backrun_v2_v3_v4_rust as runner
-from degenbot.arbitrage.engine_registry import ArbitrageEngine
+from degenbot.arbitrage.engine_registry import ArbitrageEngine, EngineRegistry
 from degenbot.bot import PyBot
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.database.models import Erc20TokenTable, UniswapV2PoolTable
@@ -31,6 +30,7 @@ from degenbot.database.models.base import Base, ExchangeTable
 from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.pathfinding import find_paths_async
+from degenbot.runner.build_paths import resolve_directions
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
 
@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 CHAIN = ChainId.ETH
 
 WETH_ADDR = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
-TOKEN_A_ADDR = "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"  # noqa: S105
+TOKEN_A_ADDR = "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"  # ruff:ignore[hardcoded-password-string]
 
 # Two V2 pools pairing WETH<->A at different prices -> a profitable 2-hop
 # cycle WETH->A->WETH exists. Reserves hand-crafted (mirroring the proven
@@ -200,7 +200,7 @@ async def test_synthetic_v2_round_trip_registers_and_eager_solves(db) -> None:
     # The engine adopts the shared core (ADR-006 D1). The synthetic test's job
     # is registration/solve, not the bot= production path (covered by VQURUB's
     # FakeBot test) — use the engine seam directly with a bare shared PyBot.
-    registry = runner.EngineRegistry(
+    registry = EngineRegistry(
         bot=None,
         engine=ArbitrageEngine(py_bot=shared_py_bot),
     )
@@ -215,7 +215,7 @@ async def test_synthetic_v2_round_trip_registers_and_eager_solves(db) -> None:
     path_ids: list[int] = []
     for cycle in cycles:
         pools = [pools_by_address[step.address] for step in cycle]
-        zfo_list = runner.resolve_directions(pools, WETH_ADDR)
+        zfo_list = resolve_directions(pools, WETH_ADDR)
         assert zfo_list is not None, "cycle does not close on WETH"
         path_ids.append(registry.register_path(list(zip(pools, zfo_list, strict=True))))
 

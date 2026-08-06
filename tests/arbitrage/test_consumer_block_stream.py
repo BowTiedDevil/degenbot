@@ -18,8 +18,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-import examples.eth_backrun_v2_v3_v4_rust as runner
-from examples.eth_backrun_v2_v3_v4_rust import Dispatcher
+from degenbot.dispatch import Dispatcher
+from degenbot.runner import consume_result_batches
 
 
 class _Eth:
@@ -168,7 +168,7 @@ async def _run(
     orig = _runner_consume._dispatch_profitable
     _runner_consume._dispatch_profitable = _fake_dispatch  # type: ignore[assignment]
     try:
-        await runner.consume_result_batches(
+        await consume_result_batches(
             engine_registry=object(),  # type: ignore[arg-type] — not read (streams injected)
             async_w3=w3,  # type: ignore[arg-type]
             # sim_ctx is typed `SimulateContext | None` since the A5 cutover; a
@@ -263,7 +263,7 @@ class TestTeeBlockStream:
     """
 
     async def test_both_branches_receive_every_block(self) -> None:
-        from examples.eth_backrun_v2_v3_v4_rust import _tee_block_stream
+        from degenbot.runner.consume import _tee_block_stream
 
         blocks = [_block(101), _block(102), _block(103)]
         branch_a, branch_b, _driver = _tee_block_stream(_Blocks(blocks))
@@ -285,7 +285,7 @@ class TestTeeBlockStream:
         # one branch must still see every block even after the other branch has
         # finished draining. The source is consumed once by the tee driver and
         # each block is copied to both queues (not a round-robin split).
-        from examples.eth_backrun_v2_v3_v4_rust import _tee_block_stream
+        from degenbot.runner.consume import _tee_block_stream
 
         blocks = [_block(201), _block(202), _block(203)]
         branch_a, branch_b, _driver = _tee_block_stream(_Blocks(blocks))

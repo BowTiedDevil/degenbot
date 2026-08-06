@@ -21,8 +21,8 @@ from dataclasses import dataclass
 
 import pytest
 
-from examples.eth_backrun_helpers import BackrunConfig
-from examples.eth_backrun_v2_v3_v4_rust import BackrunSession
+from degenbot.runner import BotRunner as BackrunSession
+from degenbot.runner.config import BackrunConfig
 
 
 @pytest.fixture(autouse=True)
@@ -409,7 +409,7 @@ class TestBackrunSessionContextManager:
         async def hanging_consumer(**kwargs):
             await asyncio.Event().wait()
 
-        async def raising_path_builder(**kwargs):  # noqa: RUF029
+        async def raising_path_builder(**kwargs):  # ruff:ignore[unused-async]
             boom = "build_paths failed"
             raise RuntimeError(boom)
 
@@ -799,12 +799,12 @@ class TestConstructionContext:
     task owns them out of run()'s main-loop trim."""
 
     def test_for_bot_builds_trackers_weth_db_once(self) -> None:
-        from examples.eth_backrun_v2_v3_v4_rust import (
+        from degenbot.runner.build_paths import ConstructionContext
+        from degenbot.runner.driver_constants import (
             PANCAKESWAP_V3_MAINNET_FACTORY,
             SUSHISWAP_V3_MAINNET_FACTORY,
             UNISWAP_V3_MAINNET_FACTORY,
             WETH_ADDRESS,
-            ConstructionContext,
         )
 
         class _BuildBot:
@@ -1183,128 +1183,14 @@ class TestSubCBgRegistrationConcurrency:
 
 
 class Test6VZN7HOngoingDiscovery:
-    """6VZN7H: the unbounded (D3) discovery producer + its run()-level wiring.
+    """6VZN7H: the run()-level wiring when discovery never "completes".
 
-    Production discovery no longer terminates when the initial DB-subgraph DFS
-    exhausts — ``_discovery_producer_forever`` re-sweeps the subgraph forever
-    (cancellable), feeding the bounded registration pipeline so it never runs
-    more than the queue bound ahead of activation, and the Sub-B state-trim is
-    reconciled to shutdown-time when discovery runs forever (there is no
-    "registration completion" to hang it on)."""
-
-    async def test_discovery_producer_forever_yields_across_sweeps(self) -> None:
-        """A finite first sweep is followed by re-invoked snaps: the producer
-        yields forever from later sweeps, not just the initial DFS."""
-        from examples.eth_backrun_v2_v3_v4_rust import _discovery_producer_forever
-
-        calls = 0
-
-        def discovery_factory():
-            nonlocal calls
-            calls += 1
-
-            async def sweep():
-                for i in range(3):
-                    await asyncio.sleep(0)
-                    yield (calls, i)
-
-            return sweep()
-
-        producer = _discovery_producer_forever(discovery_factory, interval=0.001)
-        it = aiter(producer)
-        got = [await anext(it) for _ in range(8)]
-        await producer.aclose()
-
-        # 8 pulls span 3 sweeps: sweep1 (3), sweep2 (3), sweep3 (2) — the factory
-        # is re-invoked each time the prior sweep exhausts (unbounded discovery).
-        assert calls == 3
-        assert got == [
-            (1, 0),
-            (1, 1),
-            (1, 2),
-            (2, 0),
-            (2, 1),
-            (2, 2),
-            (3, 0),
-            (3, 1),
-        ]
-
-    async def test_discovery_producer_forever_cancellable_on_shutdown(self) -> None:
-        """Cancelling the producer terminates it promptly (no leaked in-flight
-        sweep) even while it is mid-sweep waiting on a blocking source."""
-        from examples.eth_backrun_v2_v3_v4_rust import _discovery_producer_forever
-
-        calls = 0
-
-        def discovery_factory():
-            nonlocal calls
-            calls += 1
-
-            async def sweep():
-                while True:
-                    await asyncio.sleep(10**9)
-                    yield 1  # pragma: no cover
-
-            return sweep()
-
-        producer = _discovery_producer_forever(discovery_factory, interval=10**9)
-        it = aiter(producer)
-        pending = asyncio.ensure_future(anext(it))
-        await asyncio.sleep(0)  # let it start waiting inside the first sweep
-        pending.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await pending
-        await producer.aclose()
-        assert calls == 1  # cancelled inside sweep 1, not after a re-sweep
-
-    async def test_forever_producer_feeds_pipeline_with_backpressure(self) -> None:
-        """The forever producer drives ``run_registration_pipeline`` across many
-        sweeps under the bounded-queue backpressure, and the whole pipeline
-        remains cancellable (no deadlock / no stale producer)."""
-        import contextlib as _ctx
-
-        from examples.eth_backrun_v2_v3_v4_rust import (
-            _discovery_producer_forever,
-            run_registration_pipeline,
-        )
-
-        calls = 0
-
-        def discovery_factory():
-            nonlocal calls
-            calls += 1
-
-            async def sweep():
-                for i in range(100):
-                    await asyncio.sleep(0)
-                    yield calls * 1000 + i
-
-            return sweep()
-
-        consumed: list[int] = []
-
-        async def consume(item: int) -> None:
-            await asyncio.sleep(0)  # slow-ish worker
-            consumed.append(item)
-
-        producer = _discovery_producer_forever(discovery_factory, interval=0.001)
-        pipeline_task = asyncio.ensure_future(
-            run_registration_pipeline(
-                producer=producer,
-                consume=consume,
-                queue_size=8,
-                worker_count=2,
-            ),
-        )
-        await asyncio.sleep(0.25)
-        pipeline_task.cancel()
-        with _ctx.suppress(asyncio.CancelledError, Exception):
-            await pipeline_task
-
-        # Discovery re-swept many times and registration consumed items across
-        # all of them — never stopped at the first exhaustive sweep.
-        assert calls > 1
-        assert len(consumed) > 0
+    The unbounded production discovery producer (``_discovery_producer_forever``
+    re-sweeping the subgraph) was stripped back to a single discovery pass, so
+    the producer-level tests are gone. What remains is the run()-level
+    guarantee: with a never-returning injected path builder there is no
+    "registration completion", so the Sub-B state-trim runs when run() cancels
+    the background task at shutdown — still exactly once and not mid-climb."""
 
     async def test_forever_discovery_trims_state_on_shutdown(self) -> None:
         """With forever (never-returning) discovery there is no "registration
@@ -1385,7 +1271,7 @@ class TestPathRegistrationPipeline:
     @staticmethod
     def _make_pipeline(fail_on_register: Exception | None = None):
         from degenbot.database.models.pools import UniswapV2PoolTableBase
-        from examples.eth_backrun_v2_v3_v4_rust import (
+        from degenbot.runner.build_paths import (
             ConstructionContext,
             PathRegistrationPipeline,
         )
@@ -1490,11 +1376,8 @@ class TestPathRegistrationPipeline:
         WITHOUT aborting the pipeline (a raw ``object()`` would make `_consume`
         do `list(object())` → TypeError, masking the real composition).
         """
-        from examples.eth_backrun_v2_v3_v4_rust import (
-            REG_QUEUE_BOUND,
-            REG_WORKERS,
-            run_registration_pipeline,
-        )
+        from degenbot.runner.build_paths import run_registration_pipeline
+        from degenbot.runner.driver_constants import REG_QUEUE_BOUND, REG_WORKERS
 
         pipeline, reg, t_base = self._make_pipeline()
         prior_skips = pipeline.skip_count

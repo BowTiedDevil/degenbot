@@ -22,7 +22,7 @@ from typing import Any
 
 import pytest
 
-from examples.eth_backrun_v2_v3_v4_rust import _render_sim_failures
+from degenbot.runner.dispatch import _render_sim_failures
 
 # ── Fixtures ─────────────────────────────────────────────────────────────
 

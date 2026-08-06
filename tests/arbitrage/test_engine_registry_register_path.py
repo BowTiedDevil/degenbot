@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-import examples.eth_backrun_v2_v3_v4_rust as runner
+from degenbot.arbitrage.engine_registry import EngineRegistry
 from degenbot.arbitrage.engine_registry import ArbitrageEngine
 from degenbot.bot import PyBot
 from tests.types.test_concrete_pool_construction import (
@@ -44,7 +44,7 @@ def test_register_path_dispatches_keys_and_directions() -> None:
     Python PathInfo is built/stored — the returned path_id is the handle the
     candidate resolves composers::PathInfo from."""
     fake = FakeArbitrageEngine()
-    registry = runner.EngineRegistry(bot=None, engine=fake)
+    registry = EngineRegistry(bot=None, engine=fake)
 
     v2 = _make_uniswap_v2_pool()
     v3 = _make_uniswap_v3_pool()
@@ -64,7 +64,7 @@ def test_register_path_dispatches_keys_and_directions() -> None:
 def test_register_path_v4_keyed_by_pool_id_hex() -> None:
     """V4 pools resolve their engine key from _v4_keys[pool_id_hex]."""
     fake = FakeArbitrageEngine()
-    registry = runner.EngineRegistry(bot=None, engine=fake)
+    registry = EngineRegistry(bot=None, engine=fake)
 
     v4 = _make_uniswap_v4_pool()
     pool_id_hex = v4.pool_id.to_0x_hex()
@@ -92,7 +92,7 @@ class _FakeBot:
 def test_bot_none_without_engine_raises() -> None:
     """Production path requires a bot when no engine is supplied."""
     with pytest.raises(ValueError, match=r"engine.*bot|bot.*engine"):
-        runner.EngineRegistry(bot=None)
+        EngineRegistry(bot=None)
 
 
 def test_bot_supplies_py_bot_to_real_engine() -> None:
@@ -104,7 +104,7 @@ def test_bot_supplies_py_bot_to_real_engine() -> None:
     be visible to the engine's ``v2_pool_count``.
     """
     bot = _FakeBot()
-    registry = runner.EngineRegistry(bot=bot)
+    registry = EngineRegistry(bot=bot)
 
     assert isinstance(registry.engine, ArbitrageEngine)
     bot._py_bot.register_v2_pool(
@@ -138,7 +138,7 @@ def test_register_path_dispatches_aerodrome_key() -> None:
     from tests.types.test_concrete_pool_construction import _make_usdc, _make_weth
 
     fake = FakeArbitrageEngine()
-    registry = runner.EngineRegistry(bot=None, engine=fake)
+    registry = EngineRegistry(bot=None, engine=fake)
 
     usdc = _make_usdc()
     weth = _make_weth()

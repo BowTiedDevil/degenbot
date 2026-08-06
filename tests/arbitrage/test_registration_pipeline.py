@@ -25,7 +25,7 @@ import asyncio
 
 import pytest
 
-from examples.eth_backrun_v2_v3_v4_rust import run_registration_pipeline
+from degenbot.runner.build_paths import run_registration_pipeline
 
 
 async def _n_items(n: int) -> list[int]:
@@ -119,7 +119,7 @@ async def test_completes_and_drains_when_producer_exhausts() -> None:
 
 async def test_empty_producer_completes() -> None:
     async def producer():
-        if False:  # noqa: SIM223
+        if False:
             yield None
 
     async def consume(item: object) -> None:
@@ -284,8 +284,7 @@ def test_consume_offloads_pool_build_off_the_event_loop_thread() -> None:
     from types import SimpleNamespace
 
     from degenbot.database.models.pools import UniswapV2PoolTableBase
-
-    from examples.eth_backrun_v2_v3_v4_rust import PathRegistrationPipeline
+    from degenbot.runner.build_paths import PathRegistrationPipeline
 
     loop_thread: list[int] = []
     build_thread: list[int] = []

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-import examples.eth_backrun_v2_v3_v4_rust as runner
+from degenbot.arbitrage.engine_registry import EngineRegistry
 from degenbot.arbitrage.policy import (
     NoOpPathPredicate,
     PathCompositionPredicate,
@@ -56,9 +56,9 @@ class FakeArbitrageEngine:
 
 def _registry_with_fake_engine(
     predicate=None,
-) -> tuple[runner.EngineRegistry, FakeArbitrageEngine]:
+) -> tuple[EngineRegistry, FakeArbitrageEngine]:
     fake = FakeArbitrageEngine()
-    registry = runner.EngineRegistry(bot=None, engine=fake, path_predicate=predicate)
+    registry = EngineRegistry(bot=None, engine=fake, path_predicate=predicate)
     return registry, fake
 
 
