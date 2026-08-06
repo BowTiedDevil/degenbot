@@ -598,18 +598,16 @@ impl BotState {
 
     /// The `update_block` of the pool at `pool_id` — the block its reserves /
     /// `sqrt_price` / `tick` / liquidity were last mutated by a forward `Sync` /
-    /// `Swap` / Mint-Burn event. `0` for an unregistered pool (the staleness
-    /// gate treats 0 as never-advanced, not stale — see below).
+    /// `Swap` / Mint-Burn event. `0` for an unregistered pool (never advanced).
     ///
-    /// Used by the per-path staleness gate (ergo TQ43TU Direction A): a hop
-    /// whose `update_block` trails the solve block by more than a bounded
-    /// window (see `MAX_SOLVE_STALENESS` in `solver_dispatch`) is a frozen
-    /// snapshot (missed swap events / a stale DB seed anchor) and its path is
-    /// deferred from the live solve — solving it would otherwise produce a
-    /// desynced result the ADR-021 verifier `abort()`s the whole bot on. A
-    /// 1-2 block lag (the pool simply had no event that block) is normal and
-    /// must not defer. `update_block == 0` (never advanced) is never assumed
-    /// stale: the ADR-021 verifier diffs it at the solve block instead.
+    /// `update_block` is a last-activity clock, NOT a staleness signal: a pool
+    /// that last mutated N blocks ago is quiet (its stored state is byte-
+    /// identical to on-chain), not stale. The former TQ43TU solve-time staleness
+    /// gate (ergo YXHHKR, resolved QNFYR5) mis-used it to defer quiet paths and
+    /// was REMOVED. The verifier (`verify_solver_state_against_chain`) diffs each
+    /// hop against the chain at its OWN `update_block` anchor and fatal-aborts on
+    /// a real desync; a never-updated pool (`update_block == 0`) is diffed at the
+    /// solve block instead.
     #[must_use]
     pub fn pool_update_block(&self, pool_id: u64) -> u64 {
         self.pools.get(&pool_id).map_or(0, PoolEntry::update_block)

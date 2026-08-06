@@ -5,35 +5,22 @@ use rayon::prelude::*;
 
 use super::{ArbitrageEngine, BlockMetadata, HashMap, HashSet};
 
-/// Maximum acceptable lag (in blocks) of any hop's price-clock `update_block`
-/// behind the solve block before the ENTIRE path is deferred from the live
-/// solve (ergo TQ43TU Direction A). A hop 1-2 blocks behind is normal pump
-/// latency (the pool simply had no event that block); only a hop genuinely far
-/// behind is deferred — a frozen snapshot whose on-chain price moved past it
-/// (missed swap events / a non-canonical Swap topic0, or a stale DB seed-block
-/// anchor like the 166k-block-behind SushiSwap-V3 pool that aborted the live
-/// bot at block 25676544).
-///
-/// Never-updated pools (`update_block == 0` — unregistered or never advanced
-/// by a forward event) are NOT assumed stale: the ADR-021 verifier diffs them
-/// at the solve block instead. Skipping them also keeps freshly-registered
-/// test pools (which seed at `update_block: 0`) from being spuriously deferred.
-///
-/// This is a bounded-window alternative to the AV42C7 zero-tolerance
-/// per-path `update_block`-mix deferral that was REVERTED for over-deferring
-/// every legitimate single-pool-update arb. The window is the difference
-/// between "this pool had no event this block" (normal) and "this pool is
-/// 166k blocks behind" (genuinely stale).
-const MAX_SOLVE_STALENESS: u64 = 10;
-
-/// Whether a hop's price-clock `update_block` is stale enough to defer its
-/// path: non-zero and behind the solve block by more than
-/// [`MAX_SOLVE_STALENESS`]. Mirrors the verifier's `is_cl_pool_stale`
-/// (`update_block == 0` is never assumed stale).
-#[must_use]
-fn hop_is_too_stale(update_block: u64, solve_block: u64) -> bool {
-    update_block > 0 && solve_block.saturating_sub(update_block) > MAX_SOLVE_STALENESS
-}
+// There is deliberately NO solve-time "staleness" pre-gate here (ergo YXHHKR,
+// resolved QNFYR5). The former TQ43TU `hop_is_too_stale` gate deferred a whole
+// path on any co-hop whose price-clock `update_block` trailed > 10 blocks — but
+// `update_block` is a last-activity clock, so a pool that swapped once and then
+// went quiet (state byte-identical to on-chain) was falsely deferred: QNFYR5's
+// instrumented live run showed 3,550 such defers (V2/V3/V4, gap 11-16, 0 genuine)
+// with a healthy engine solve→sim path underneath. A static age check cannot
+// distinguish "quiet but current" from "genuinely moved but only moderately
+// behind" (AV42C7 — the zero-tolerance retread was already REVERTED for the same
+// over-deferral). The accurate discriminator requires a fresh on-chain read, which
+// the ADR-021 verifier (`verify_solver_state_against_chain`) already performs at
+// the publish point, diffing each hop at its OWN `update_block` anchor and
+// `std::process::abort`ing on the first real desync before simulation. That
+// tripwire — not an age heuristic — is the sole chain/solver-mismatch guard; on a
+// genuine stale/desync pool it fails HARD and LOUDLY, which is the preferred
+// behavior (develop on loud failures).
 
 /// Whether a hop's price clock runs AHEAD of the solve block (U6RNHH T1).
 /// Mirror of the verifier's `is_future_price`; after the B2 re-anchor
@@ -131,23 +118,13 @@ impl ArbitrageEngine {
         // from "this pool is genuinely far behind" (missed swap events), so
         // its false-positive rate is catastrophic.
         //
-        // TQ43TU Direction A therefore uses a BOUNDED staleness window
-        // (MAX_SOLVE_STALENESS), not a 0-tolerance mix: a hop 1-2 blocks
-        // behind is tolerated (no event that block), and only a hop far
-        // behind defers the path. This catches the live abort (`0x6a11`
-        // SushiSwap-V3, ~166k blocks behind its solve block — a stale seed
-        // anchor) without re-introducing the AV42C7 over-deferral. The block-
-        // boundary FSM (ergo 3M5PO5 / ZU7RAF) remains the long-term solve-time
-        // fix; this gate is the fail-fast tripwire that keeps a stale path
-        // from reaching the ADR-021 verifier's `abort()`.
-        //
-        // TQ43TU Direction A staleness gate. Collect the paths whose price
-        // clock runs far behind the solve block (a frozen snapshot — e.g. the
-        // 166k-block-stale seed-anchored pool). Such a path is deferred (not
-        // aborted): solving it would produce a desynced result the ADR-021
-        // verifier would `abort()` the whole bot on. A 1-2 block lag (no event
-        // this block) is normal and must NOT defer — avoiding the AV42C7
-        // over-deferral regression.
+        // YXHHKR (resolved QNFYR5): NO solve-time staleness gate here. The former
+        // TQ43TU bounded-window gate deferred a whole path on any co-hop trailing
+        // >10 blocks, but `update_block` is a last-activity clock, so a quiet-but-
+        // current pool was falsely deferred (QNFYR5 proved 3,550 of them live).
+        // `deferred_paths` is now reserved for the genuinely illegitimate future-
+        // price case below; genuine chain/solver divergence is left to the ADR-021
+        // verifier, which fatal-aborts loudly (the preferred failure, esp. in dev).
         let mut deferred_paths: HashSet<u64> = HashSet::new();
         {
             let core = self.core.read();
@@ -176,17 +153,6 @@ impl ArbitrageEngine {
                         "[future-price] path_id={path_id} rejected at solve block {solve_block}: \
                          a hop price clock runs AHEAD of the solve block (update_block > \
                          solve_block) — never legitimate"
-                    );
-                    continue;
-                }
-                let stale = path.pools.iter().any(|pool_ref| {
-                    hop_is_too_stale(core.pool_update_block(pool_ref.pool_key), solve_block)
-                });
-                if stale {
-                    deferred_paths.insert(path_id);
-                    tracing::warn!(
-                        "[solve-stale] path_id={path_id} deferred at solve block {solve_block}: \
-                         a hop price clock trails it by > {MAX_SOLVE_STALENESS} blocks"
                     );
                     continue;
                 }
@@ -744,26 +710,7 @@ impl Default for ArbitrageEngine {
 
 #[cfg(test)]
 mod staleness_gate_tests {
-    use super::{hop_is_future, hop_is_too_stale};
-
-    #[test]
-    fn behind_within_window_is_not_stale() {
-        // 1-2 block lag (normal pump latency / no event that block) is NOT stale.
-        assert!(!hop_is_too_stale(100, 101));
-        assert!(!hop_is_too_stale(100, 102));
-        // Exactly at the window edge (MAX_SOLVE_STALENESS = 10) is NOT stale.
-        assert!(!hop_is_too_stale(100, 110));
-    }
-
-    #[test]
-    fn behind_past_window_is_stale() {
-        // One past the edge IS stale.
-        assert!(hop_is_too_stale(100, 111));
-        // The observed live abort: a 166879-block-behind pool IS stale.
-        assert!(hop_is_too_stale(25_509_665, 25_676_544));
-        // Never-advanced (0) is never assumed stale.
-        assert!(!hop_is_too_stale(0, 100));
-    }
+    use super::hop_is_future;
 
     #[test]
     fn ahead_is_future_never_legitimate() {

@@ -294,6 +294,76 @@ mod tests {
     }
 
     #[test]
+    fn quiet_pool_that_swapped_11_blocks_ago_is_still_solved() {
+        // QNFYR5 / YXHHKR RED. A pool that swapped once (update_block = 100) then
+        // went quiet has stored reserves byte-identical to on-chain (V2 semantics:
+        // unchanged until the next Sync). Solving it at block 111 is therefore
+        // legitimate — it is "quiet-but-current", NOT stale. The TQ43TU
+        // `hop_is_too_stale` pre-gate defers the whole path on any co-hop trailing
+        // > MAX_SOLVE_STALENESS(10) blocks, which is the quiet-pool false positive
+        // QNFYR5 proved live (3,550 defers, gap 11-16, 0 genuine). RED: this test
+        // FAILS while the gate exists (path dropped from results). The gate is
+        // deleted with the fix; the ADR-021 verifier is the sole chain/solver-
+        // mismatch guard.
+        let mut engine = ArbitrageEngine::new();
+
+        let v2_addr_a = Address::from([0x21u8; 20]);
+        let v2_fwd_a = engine.register_v2_pool(
+            v2_addr_a,
+            usdc(1_500_000),
+            weth(800),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let v2_addr_b = Address::from([0x22u8; 20]);
+        let v2_fwd_b = engine.register_v2_pool(
+            v2_addr_b,
+            weth(1000),
+            usdc(2_000_000),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+
+        let path_id = engine
+            .register_and_solve_path(vec![
+                PoolHop {
+                    pool_id: v2_fwd_a,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v2_fwd_b,
+                    zero_for_one: true,
+                },
+            ])
+            .unwrap();
+
+        // Pool A swaps at block 100 (advancing update_block to 100), then goes quiet.
+        engine.process_updates(
+            &[(v2_addr_a, usdc(1_400_000), weth(750))],
+            &[],
+            100,
+            &BlockMetadata::default(),
+        );
+
+        // Re-solve at block 111: pool A trails by 11 blocks — quiet, not stale.
+        engine.rebuild_and_solve_affected(
+            &HashSet::from([v2_fwd_a]),
+            &HashSet::new(),
+            &HashSet::new(),
+            111,
+            &BlockMetadata::default(),
+        );
+
+        let (results, _block) = engine.latest_results();
+        let solve_result = results.get(&path_id).expect(
+            "quiet-but-current path (hop 11 blocks quiet) must be solved, not deferred \
+             (QNFYR5/YXHHKR)",
+        );
+        assert!(!solve_result.optimal_input.is_zero());
+        assert!(!solve_result.profit.is_zero());
+    }
+
+    #[test]
     fn register_path_after_start_succeeds() {
         let mut engine = ArbitrageEngine::new();
         let v2_addr = Address::from([0x11u8; 20]);
@@ -1357,13 +1427,16 @@ mod tests {
         let _ = results_after;
     }
 
-    /// TQ43TU Direction A staleness gate: a path whose price clock runs far
-    /// behind the solve block is DEFERRED (excluded from the live solve), NOT
-    /// solved — it would otherwise produce a desynced result the ADR-021
-    /// verifier `abort()`s the whole bot on. A within-window 1-2 block lag
-    /// (no event that block) must NOT defer.
+    /// YXHHKR (resolves QNFYR5) — supersedes the removed TQ43TU gate test. A
+    /// path whose price clock runs far behind the solve block is a QUIET pool
+    /// (stored state byte-identical to on-chain), so it is SOLVED, not deferred.
+    /// The old gate deferred it because `update_block` age looks like staleness —
+    /// the quiet-pool false positive QNFYR5 proved live. Genuine chain/solver
+    /// divergence is caught by the ADR-021 verifier
+    /// (`verify_solver_state_against_chain`), which fatal-aborts loudly, NOT by
+    /// a solve-time defer.
     #[test]
-    fn stale_price_clock_path_is_deferred_not_aborted() {
+    fn quiet_pool_frozen_far_behind_is_solved_not_deferred() {
         let mut engine = ArbitrageEngine::new();
 
         // Profitable V2→V2 pair (from pure_v2_path_finds_profitable_arb).
@@ -1418,8 +1491,7 @@ mod tests {
 
         // Now FREEZE both clocks far behind the solve block (the stale seed-anchor
         // / missed-event class, e.g. the 166k-block-behind live SushiSwap-V3 pool)
-        // and rebuild at 500 again. The path must be DEFERRED (excluded), NOT
-        // aborted and NOT solved.
+        // and rebuild at 500 again. Quiet-but-current → MUST be solved, not deferred.
         {
             let mut core = engine.core.write();
             let _ = core.apply_sync_by_pool_id(v2_a, usdc(1_500_000), weth(800), 10);
@@ -1435,17 +1507,18 @@ mod tests {
         let (stale_results, block) = engine.latest_results();
         assert_eq!(block, 500, "solve block anchors at max(drain, head) = 500");
         assert!(
-            !stale_results.contains_key(&path_id),
-            "a path with a far-behind price clock must be deferred, not solved"
+            stale_results.contains_key(&path_id),
+            "a quiet pool frozen far behind the solve block is current, not stale — \
+             must be solved, not deferred (YXHHKR)"
         );
     }
 
-    /// TQ43TU Direction A: the staleness-window boundary (staleness ==
-    /// `MAX_SOLVE_STALENESS` is tolerated, one past defers) and never-updated
-    /// pools (`update_block == 0`, verified at the solve block by ADR-021) are
-    /// never deferred.
+    /// YXHHKR (resolves QNFYR5): with the TQ43TU window gate removed, no
+    /// `update_block` age defers a path. Never-updated pools and pools far past
+    /// the old 10-block window are all SOLVED — they are quiet-but-current, not
+    /// stale. Genuine divergence is the ADR-021 verifier's job (fatal abort).
     #[test]
-    fn staleness_window_boundary_and_zero_are_not_deferred() {
+    fn no_update_block_age_defers_a_quiet_path() {
         let mut engine = ArbitrageEngine::new();
 
         let v2_a = engine.register_v2_pool(
@@ -1490,8 +1563,7 @@ mod tests {
             "update_block == 0 pools must never be assumed stale"
         );
 
-        // Exactly at the window edge (staleness == MAX_SOLVE_STALENESS = 10) is
-        // tolerated — NOT deferred.
+        // Exactly at the old 10-block window edge is tolerated — still solved.
         {
             let mut core = engine.core.write();
             let _ = core.apply_sync_by_pool_id(v2_a, usdc(1_500_000), weth(800), 490);
@@ -1510,7 +1582,7 @@ mod tests {
             "staleness exactly at the window must not defer"
         );
 
-        // One block past the edge (staleness 11) IS deferred.
+        // 11 blocks past the old window edge — still solved (quiet, not stale).
         {
             let mut core = engine.core.write();
             let _ = core.apply_sync_by_pool_id(v2_a, usdc(1_500_000), weth(800), 489);
@@ -1525,8 +1597,9 @@ mod tests {
         );
         let (r2, _) = engine.latest_results();
         assert!(
-            !r2.contains_key(&path_id),
-            "staleness past the window must defer the path"
+            r2.contains_key(&path_id),
+            "a pool 11 blocks past the old window is quiet-but-current — solved, not \
+             deferred (YXHHKR)"
         );
     }
 
