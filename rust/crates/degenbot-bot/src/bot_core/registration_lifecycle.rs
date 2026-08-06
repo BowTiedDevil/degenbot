@@ -681,6 +681,75 @@ mod tests {
         );
     }
 
+    /// WSLCD2: the terminal `release_all_v3_v4_quarantined` is an ORPHAN sweep
+    /// only — it must NOT be the productivity gate. A tracked pool released to
+    /// `Live` by the per-path lifecycle stays `Live` (and solvable) regardless
+    /// of whether the terminal batch ever runs; the batch only touches pools
+    /// still `Quarantined` (orphaned: built but whose path never completed
+    /// registration). This pins that per-path release does not duplicate or
+    /// depend on the batch release policy.
+    #[tokio::test]
+    async fn per_path_released_pool_is_untouched_by_orphan_sweep() {
+        let core = new_core();
+        // A tracked V3 pool released per-path via the lifecycle.
+        let tracked_addr = Address::from([0x60u8; 20]);
+        let tracked_pid = {
+            let mut c = core.write();
+            reg_v3(&mut c, tracked_addr, PoolTickCoverage::Tracked)
+        };
+        // A sparse V3 pool (already Live, never quarantined).
+        let sparse_addr = Address::from([0x61u8; 20]);
+        let sparse_pid = {
+            let mut c = core.write();
+            reg_v3(&mut c, sparse_addr, PoolTickCoverage::Sparse)
+        };
+        // A genuinely orphaned tracked V4 (never released by any per-path
+        // lifecycle) — the only pool the terminal sweep should flush.
+        let orphan_vm = Address::from([0x62u8; 20]);
+        let orphan_pid = [0xcu8; 32];
+        {
+            let mut c = core.write();
+            reg_v4(&mut c, orphan_vm, orphan_pid, PoolTickCoverage::Tracked);
+        }
+
+        // Run the per-path lifecycle on the tracked V3 -> Live.
+        run_cl_v3_lifecycle::<_, _, _, _, ()>(
+            &core,
+            tracked_addr,
+            Some(42),
+            |_, _| async move { Ok(()) },
+            |_, _| async move { Ok(()) },
+        )
+        .await
+        .expect("tracked per-path lifecycle must release to Live");
+
+        // Confirm the productive pools are Live BEFORE any batch runs.
+        {
+            let c = core.read();
+            assert_eq!(lifecycle_v3(&c, tracked_pid), RegistrationLifecycle::Live);
+            assert_eq!(lifecycle_v3(&c, sparse_pid), RegistrationLifecycle::Live);
+        }
+
+        // The terminal orphan sweep runs (as it would after a single-pass
+        // discovery completes). It must NOT re-touch the per-path Live pools
+        // and must flush only the orphaned quarantined V4.
+        {
+            let mut c = core.write();
+            c.release_all_v3_v4_quarantined();
+        }
+
+        let c = core.read();
+        // The per-path gate held: both productive pools are still Live (the
+        // batch did not duplicate release nor silently quarantine them).
+        assert_eq!(lifecycle_v3(&c, tracked_pid), RegistrationLifecycle::Live);
+        assert_eq!(lifecycle_v3(&c, sparse_pid), RegistrationLifecycle::Live);
+        // The orphan was swept by the batch (the only legitimate use).
+        assert_eq!(
+            lifecycle_v4(&c, c.v4_pool_id_by_key(orphan_vm, &orphan_pid).unwrap()),
+            RegistrationLifecycle::Live
+        );
+    }
+
     /// Regression for the lock-scope contract: while a tracked pool's verify
     /// is `.await`-ing (its RPC stand-in), a concurrent writer on `BotState`
     /// must NOT deadlock — i.e. the lifecycle holds no core guard across the
