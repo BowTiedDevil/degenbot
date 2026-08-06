@@ -293,14 +293,17 @@ pub async fn verify_solver_hop_states(
         // desync (a missed log / reorg / storage mutation). `block` (the
         // solve block) remains for message context / staleness reporting.
         let anchor = solver_anchor_block(hop.update_block, block);
-        // FUTURE-PRICE guard (belts + suspenders): `block` is the RE-ANCHORED
-        // solve block (`max(drain_block, pool_state_head)`), so no hop's
-        // `update_block` can exceed it (head is the max). This fires only in a
-        // genuinely impossible case now — NOT the backfill/dispatch race.
+        // FUTURE-PRICE guard (belts + suspenders): `block` is the PUMP-promoted
+        // solve block (`active_block = max(current_block, pool_state_head)`),
+        // so no hop's `update_block` can exceed it (head is the max). This
+        // fires only in a genuinely impossible case now — NOT the
+        // backfill/dispatch race. Promoted at the pump (BO5FBS) instead of the
+        // verifier re-anchoring at head, but the guard stays to catch a
+        // mid-solve state advance or a bypassing caller.
         // Originally the solve block was the lagging drain clock and a hop at
         // head (path 10956: solved 25677777 with a 25677789 price) was LIVE
         // state, not a future price; aborting on it killed a capturable
-        // opportunity (B2 — the block_pump re-anchors it at head first).
+        // opportunity (B2 — the block_pump promotes at head first).
         if is_future_price(hop.update_block, block) {
             return Err(mismatch(
                 i,

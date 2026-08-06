@@ -581,15 +581,16 @@ pub fn dispatch_profitable_results(
             // + the override params projected from this strategy's
             // `SimulateContext` (ADR-019 D7, decision R — the engine stays
             // generic over strategy config; it never names `SimulateContext`).
-            // The shared-EVM sim anchor: the pool-state head, NOT the lagging
-            // Python block clock. Each candidate's `solve_block` was re-anchored
-            // by the engine to `max(drain_block, pool_state_head)`, so the
-            // batch max is the block the pools actually reflect. Simulating at
-            // the lagging clock fetched PRE-update state (state-ahead-of-clock
-            // desync) and mismatched the solver's head math — the IIA. Because
-            // an unchanged pool has byte-identical EVM state from its
-            // `update_block` to head, ONE head-anchored shared EVM reproduces
-            // every candidate's solver state exactly (no per-block caches).
+            // The shared-EVM sim anchor: since BO5FBS the pump pre-promotes
+            // `active_block = max(drain_block, pool_state_head)` and threads it
+            // as each candidate's `solve_block`, so every candidate in the
+            // batch carries the SAME promoted block (the pool-state head). This
+            // `max` over `solve_block` is therefore a defensive no-op that
+            // returns that shared promoted block — kept as an invariant
+            // assertion, not a re-anchor. Simulating at the lagging Python
+            // clock fetched PRE-update state (state-ahead-of-clock desync) and
+            // mismatched the solver's head math — the MQIZ5M IIA; one
+            // head-anchored shared EVM reproduces every candidate exactly.
             let sim_block = candidates
                 .iter()
                 .map(|c| c.solve_block)

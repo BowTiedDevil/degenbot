@@ -3907,6 +3907,70 @@ mod tests {
             sent.len()
         );
     }
+    /// BO5FBS publish-gate interaction: the newHead-driven eager solve is
+    /// distinct from the publish gate. With the promotion live, `on_drain`
+    /// fires eagerly at the promoted block (`pool_state_head` 500) on the
+    /// `LogsArriving` path, but NO publish (`on_send`) occurs until a forward
+    /// log quiesces the block (ADR-008 D2). A header with no log must never
+    /// leak a publish — newHead is a promote/liveness signal, never a
+    /// completeness signal.
+    #[tokio::test]
+    async fn newhead_promoted_solve_does_not_publish_until_quiesced() {
+        use alloy::primitives::{aliases::U112, Address as A};
+        use stream::StreamExt;
+        let bot = Arc::new(Bot::new(1));
+        {
+            let arc = bot.state_arc();
+            let mut core = arc.write();
+            core.register_v2_pool(&RegisterV2PoolParams {
+                address: A::from([0xccu8; 20]),
+                token0: A::from([0xa0u8; 20]),
+                token1: A::from([0xa1u8; 20]),
+                reserve0: U112::from(1_000),
+                reserve1: U112::from(2_000),
+                fee_token0: (997, 1000),
+                fee_token1: (997, 1000),
+                factory: A::from([0xf0u8; 20]),
+                update_block: 500,
+                variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+                stable_swap: false,
+                fee_denominator: None,
+                ..Default::default()
+            })
+            .expect("test setup: V2 registration");
+        }
+        let (mut pump, sink, _shutdown) = pump_for_test_with_bot(bot, Some(100));
+        sink.set_dirty(true);
+
+        // newHead(101) only — no log for 101, so the block is LogsArriving
+        // (open), not quiesced.
+        let events: Vec<WsEvent> = vec![WsEvent::BlockHeader {
+            number: 101,
+            timestamp: 101_000,
+            base_fee_per_gas: Some(1_000_000_001),
+            gas_used: 10_000_001,
+            gas_limit: 30_000_001,
+        }];
+        let combined = stream::iter(events).boxed();
+        pump.run_test_loop(combined, 100).await;
+
+        let drained = sink.drained_blocks();
+        assert!(
+            !drained.is_empty(),
+            "dirty sink fires the eager newHead-driven solve"
+        );
+        assert!(
+            drained.iter().all(|&b| b == 500),
+            "eager solve anchors to the promoted active_block (500)"
+        );
+        let sent = sink.sent.lock().unwrap().clone();
+        assert!(
+            sent.is_empty(),
+            "no publish during LogsArriving: a header alone must never leak \
+             an on_send (quiesce gate), got {sent:?}"
+        );
+    }
+
     /// FD7NFG: `backfill_from_snapshot` no-op when no snapshot loaded (cold
     /// start — `snapshot_seed_block = None`). Default fresh `Bot` has S=None.
     #[tokio::test]
