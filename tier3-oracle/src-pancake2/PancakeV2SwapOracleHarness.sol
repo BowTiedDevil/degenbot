@@ -1,6 +1,18 @@
 pragma solidity =0.5.16;
 
-import {PancakePair} from "pancake2-core/contracts/PancakePair.sol";
+/// Minimal ABI surface of the DEPLOYED PancakeSwap V2 `PancakePair` that the
+/// harness drives. Deliberately NOT `import {PancakePair}` from a vendored
+/// source: the pair's logic must come ONLY from the PINNED on-chain creation
+/// bytecode (deployed via a raw EVM `create`), never from a locally-compiled
+/// copy — a local recompile can't reproduce the deployment's embedded metadata
+/// hash, and the old init-code-hash check (`0x57224589…`) was exactly where a
+/// source build drifted. The ABI here (initialize/sync/swap) matches the
+/// on-chain contract and is read verbatim by the Rust driver.
+interface IMinimalPancakePair {
+    function initialize(address _token0, address _token1) external;
+    function sync() external;
+    function swap(uint256 amount0Out, uint256 amount1Out, address to, bytes calldata data) external;
+}
 
 
 /// Minimal ERC-20 for the PancakeSwap V2 oracle — only the entry points
@@ -47,38 +59,52 @@ contract MockERC20V2 {
 }
 
 
-/// PancakeSwap V2 pair on-chain accuracy oracle harness. Deploys the REAL
-/// `PancakePair` — the canonical `pancakeswap/pancake-swap-core` contract
-/// (vendored under `lib/pancake2-src/`, solc 0.5.16), a Uniswap V2 fork that
-/// hardcodes a **0.2%** swap fee (`balance0Adjusted = balance0.mul(1000)
-/// .sub(amount0In.mul(2))` → retained `(998, 1000)`, vs Uniswap's 0.3%
-/// `(997, 1000)`) and stores reserves as the 3-tuple `(uint112, uint112,
-/// uint32 blockTimestampLast)` (the `PancakeswapStyle` ABI the engine's
-/// `DexVariant::PancakeswapV2` reads) — plus two `MockERC20V2` tokens. Exposes
-/// a `setup` (mint reserves + `sync` so the slot-8 reserves 3-tuple equals the
-/// live `balanceOf` — the K-check consistency a TEST oracle sets by
-/// construction, per ADR-020 D4) and a `doSwap` (transfer input in + `pair.swap`
-/// with the TEST-computed output).
+/// PancakeSwap V2 pair on-chain accuracy oracle harness. Deploys the REAL,
+/// PINNED Ethereum-mainnet `PancakePair` — the canonical
+/// `pancakeswap/pancake-swap-core` fork (the live mainnet pair
+/// `0x2E8135bE71230c6B1B4045696d41C09Db0414226`, Sourcify `exact_match`
+/// bytecode committed under `artifacts/PancakeV2Pair/`), which hardcodes a
+/// **0.25%** swap fee (`balance0Adjusted = balance0.mul(10000)
+/// .sub(amount0In.mul(25))` → retained `(9975, 10000)`) and stores reserves as
+/// the 3-tuple `(uint112, uint112, uint32 blockTimestampLast)` (the
+/// `PancakeswapStyle` ABI the engine's `DexVariant::PancakeswapV2` reads) —
+/// plus two `MockERC20V2` tokens.
+///
+/// The pair is created from the PINNED on-chain creation bytecode passed as
+/// the constructor argument (`pairInitCode`) via a raw EVM `create`, so the
+/// deployed contract is byte-for-byte the live deployment (not a local
+/// compile) and `factory() == address(this)` (this harness) exactly as a real
+/// factory deploy. It is then `initialize(token0, token1)` as the factory
+/// does. Exposes a `setup` (mint reserves + `sync` so the slot-8 reserves
+/// 3-tuple equals the live `balanceOf` — the K-check consistency a TEST oracle
+/// sets by construction, per ADR-020 D4) and a `doSwap` (transfer input in +
+/// `pair.swap` with the TEST-computed output).
 ///
 /// The harness carries NO swap math: `doSwap` takes `amountOut` as a PARAMETER
 /// (computed by the Rust engine) and routes it to `pair.swap`. If `amountOut`
-/// exceeds the on-chain K-invariant boundary `pair.swap` reverts ('Pancake: K')
-/// — so "swap succeeds with engine's amountOut" + "swap reverts with amountOut
-/// + 1" together prove the engine's value is BYTE-EXACT the on-chain maximal
-/// output at the fork's hardcoded 0.2% fee.
+/// exceeds the on-chain K-invariant boundary `pair.swap` reverts
+/// ('Pancake: K') — so "swap succeeds with engine's amountOut" + "swap reverts
+/// with amountOut + 1" together prove the engine's value is BYTE-EXACT the
+/// on-chain maximal output at the fork's hardcoded 0.25% fee.
 contract PancakeV2SwapOracleHarness {
-    PancakePair public pair;
+    IMinimalPancakePair public pair;
     MockERC20V2 public token0;
     MockERC20V2 public token1;
 
-    constructor() public {
+    constructor(bytes memory pairInitCode) public {
         MockERC20V2 t0 = new MockERC20V2("T0", "T0", 18);
         MockERC20V2 t1 = new MockERC20V2("T1", "T1", 18);
         token0 = t0;
         token1 = t1;
-        PancakePair p = new PancakePair(); // factory := msg.sender (this harness)
-        p.initialize(address(t0), address(t1));
-        pair = p;
+        address p;
+        // Raw create of the PINNED on-chain creation code: the created
+        // contract's `factory()` == this harness (as a real factory deploy).
+        assembly {
+            p := create(0, add(pairInitCode, 0x20), mload(pairInitCode))
+        }
+        require(p != address(0), "pair create failed");
+        IMinimalPancakePair(p).initialize(address(t0), address(t1));
+        pair = IMinimalPancakePair(p);
     }
 
     /// Mint `r0`/`r1` of token0/token1 to the pair then `sync` so the pair's
@@ -95,7 +121,7 @@ contract PancakeV2SwapOracleHarness {
     /// Transfer `amountIn` of the input token to the pair, then call
     /// `pair.swap` with the test-computed `amountOut` routed to the correct
     /// side. Reverts (K-invariant, 'Pancake: K') if `amountOut` exceeds the
-    /// on-chain boundary at the fork's hardcoded 0.2% fee. `to` receives the
+    /// on-chain boundary at the fork's hardcoded 0.25% fee. `to` receives the
     /// output tokens. Direct typed calls so a `pair.swap` revert propagates its
     /// real reason to the test caller.
     function doSwap(uint256 amountIn, bool zeroForOne, uint256 amountOut, address to) external {

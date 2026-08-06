@@ -6,7 +6,12 @@
 //! in-process revm `CacheDB`, seeded via `setup` (mint reserves + `sync` so
 //! slot-8 reserves equal the live `balanceOf`, per ADR-020 D4), then
 //! `pair.swap` is driven with the engine's `amountOut` passed as a PARAMETER
-//! (the harness carries no swap math — see the harness `.sol`).
+//! (the harness carries no swap math — see the harness `.sol`). The fork's
+//! pair is either compiled into the harness (`pair_init_artifact: None`, the
+//! canonical-source Uniswap V2 build) or deployed from PINNED on-chain
+//! creation bytecode passed as the harness's `(bytes)` constructor arg
+//! (`pair_init_artifact: Some(…)`, the Sourcify-verified PancakeSwap V2 pair —
+//! see `tier3_pancake_v2_swap_vs_revm.rs`).
 //!
 //! Each case assembles **three independent proofs** of byte-exactness (in
 //! increasing strength) via [`assert_byte_exact`](self::assert_byte_exact):
@@ -68,6 +73,14 @@ pub struct V2Fork {
     pub fee_denom: u64,
     /// The exact Solidity require-reason of the pair's K-invariant check.
     pub k_error: &'static str,
+    /// Optional pinned on-chain pair creation-bytecode artifact (path under
+    /// `tier3-oracle/artifacts/`). When `Some`, the harness deploys the pair
+    /// from these Sourcify-verified on-chain bytes (raw `create`) instead of a
+    /// locally-compiled `new Pair()`; the harness's creation bytecode is then
+    /// passed this init code as its `(bytes)` constructor arg. `None` = the
+    /// harness embeds its own compiled pair (Uniswap V2's canonical source is
+    /// a reproducible build).
+    pub pair_init_artifact: Option<&'static str>,
 }
 
 /// The `Swap` event the pair emitted, hand-decoded from its ABI data.
@@ -122,6 +135,39 @@ fn load_creation_bytecode(file: &str, contract: &str) -> Vec<u8> {
         .as_str()
         .expect("artifact has bytecode.object (creation)");
     hex::decode(hex_str.trim_start_matches("0x")).expect("hex creation bytecode")
+}
+
+/// Load a PINNED on-chain pair creation-bytecode artifact (a path relative to
+/// `tier3-oracle/artifacts/`, e.g. `PancakeV2Pair/PancakeV2Pair.json`). The
+/// artifact carries Sourcify `exact_match` provenance (see the committed JSON);
+/// its `bytecode.object` is the deployable init code passed to the harness's
+/// `(bytes pairInitCode)` constructor.
+fn load_pair_creation_code(artifact: &str) -> Vec<u8> {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../tier3-oracle/artifacts")
+        .join(artifact);
+    let raw = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("missing pinned pair artifact {}: {e}", path.display()));
+    let v: serde_json::Value = serde_json::from_str(&raw).expect("valid pinned pair JSON");
+    let hex_str = v["bytecode"]["object"]
+        .as_str()
+        .expect("pinned pair artifact has bytecode.object (creation)");
+    hex::decode(hex_str.trim_start_matches("0x")).expect("hex pinned pair creation bytecode")
+}
+
+/// ABI-encode a Solidity `bytes` value as a single function argument
+/// `(offset=0x20, length, data… padded to 32)`. Used to forward the pinned pair
+/// init code to the harness's `(bytes pairInitCode)` constructor.
+fn abi_encode_bytes(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(64 + data.len().next_multiple_of(32));
+    out.extend_from_slice(&U256::from(0x20u64).to_be_bytes::<32>()); // offset
+    out.extend_from_slice(&U256::from(data.len()).to_be_bytes::<32>()); // length
+    out.extend_from_slice(data);
+    let rem = data.len() % 32;
+    if rem != 0 {
+        out.extend(std::iter::repeat_n(0u8, 32 - rem));
+    }
+    out
 }
 
 /// The engine's V2 `getAmountOut` at the fork's fee via `IntHopState::swap`.
@@ -194,8 +240,14 @@ pub fn probe(
         .build_mainnet();
     evm.ctx.cfg.disable_nonce_check = true;
 
-    // 1. Deploy the harness (mock tokens + the real pair fork).
-    let init_code = load_creation_bytecode(fork.harness_sol, fork.harness_contract);
+    // 1. Deploy the harness (mock tokens + the real pair fork). If the fork
+    // pins its pair (Sourcify on-chain bytecode), forward that creation code as
+    // the harness's `(bytes)` constructor arg so the harness raw-creates it.
+    let mut init_code = load_creation_bytecode(fork.harness_sol, fork.harness_contract);
+    if let Some(pair_artifact) = fork.pair_init_artifact {
+        let pair_code = load_pair_creation_code(pair_artifact);
+        init_code.extend_from_slice(&abi_encode_bytes(&pair_code));
+    }
     let deploy_res = evm
         .transact(
             TxEnv::builder()

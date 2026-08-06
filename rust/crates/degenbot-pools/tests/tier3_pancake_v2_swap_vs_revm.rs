@@ -1,11 +1,21 @@
 //! Tier-3 PancakeSwap V2 pair on-chain accuracy oracle (the fork-fee sub-slice
 //! of the V2 family — the case `tier3_v2_pair_swap_vs_revm.rs`'s header calls
 //! "a follow-on sub-slice … deferred as gilding"). Deploys the REAL
-//! Ethereum-mainnet `PancakePair` — the deployed PancakeSwap V2 fork of
-//! `UniswapV2Pair` (solc 0.5.16, verified source vendored under
-//! `lib/pancake2-src/` from the Etherscan-verified deployment) via the
-//! `PancakeV2SwapOracleHarness` — as real bytecode and proves the engine's real
-//! `PANCAKESWAP_V2` preset byte-exact against it.
+//! Ethereum-mainnet `PancakePair` from its PINNED on-chain creation bytecode
+//! (the live mainnet pair `0x2E8135bE…`, Sourcify `exact_match`, committed
+//! under `artifacts/PancakeV2Pair/PancakeV2Pair.json`) via the
+//! `PancakeV2SwapOracleHarness` — as real bytecode — and proves the engine's
+//! real `PANCAKESWAP_V2` preset byte-exact against it.
+//!
+//! ## Why the pair is PINNED (not compiled)
+//!
+//! A local recompile of the pancake swap core source can't reproduce the
+//! deployment's embedded 32-byte metadata hash, so the pair's init-code hash
+//! (degenbot's `0x57224589…`) only reconciles against the ACTUAL on-chain
+//! creation bytecode. Sourcify verifies that bytecode `exact_match`
+//! (creation + runtime) against the live mainnet pair, so the harness
+//! raw-`create`s the pinned bytes and the oracle exercises the genuine
+//! deployed contract — no vendored Etherscan source, no local compile.
 //!
 //! The oracle logic (deploy → setup → swap probe, the `Swap`-event + post-state
 //! assertions, the K-revert-reason assertion, and the proptest strategies) lives
@@ -16,7 +26,7 @@
 //!
 //! ## The fork fee — 0.25%, matching the engine preset
 //!
-//! The DEPLOYED `PancakePair` (Etherscan-verified Ethereum-mainnet pair
+//! The DEPLOYED `PancakePair` (Sourcify-verified Ethereum-mainnet pair
 //! 0x2E8135bE71230c6B1B4045696d41C09Db0414226) hardcodes its swap fee in the
 //! K-check (`balance0Adjusted = balance0.mul(10000).sub(amount0In.mul(25))`),
 //! giving a **0.25%** fee → retained fraction `(9975, 10_000)`, and its
@@ -27,19 +37,19 @@
 //! engine's real preset against the real deployed bytecode, byte-exact — via
 //! the same hardcode-the-bytecode-fee pattern the Uniswap V2 oracle uses
 //! (`997`). (The stale `pancake-swap-core` GitHub `master` mirrors a 0.2%
-//! `mul(2)/1000` build that was never deployed; the vendored source here is the
-//! verified one, which is why the oracle is wired at `9975/10000` and passes.)
-//! The Pancake fork also stores reserves as the 3-tuple `(uint112, uint112,
-//! uint32 blockTimestampLast)` — the `PancakeswapStyle` ABI the engine's
-//! `DexVariant::PancakeswapV2` reads — and its K-error string is `Pancake: K`.
+//! `mul(2)/1000` build that was never deployed; the PINNED on-chain bytecode
+//! here is the 0.25% one, which is why the oracle is wired at `9975/10000` and
+//! passes.) The Pancake fork also stores reserves as the 3-tuple `(uint112,
+//! uint112, uint32 blockTimestampLast)` — the `PancakeswapStyle` ABI the
+//! engine's `DexVariant::PancakeswapV2` reads — and its K-error string is
+//! `Pancake: K`.
 //!
 //! ## Harness bytecode (committed)
 //!
-//! Runs in the default `cargo test --workspace` suite. The canonical
-//! PancakeSwap pair bytecode is loaded from the committed
-//! `tier3-oracle/artifacts/` tree (no solc/forge needed to RUN). Artifact
-//! integrity is enforced two ways: `tier3_harness_artifacts.rs` hashes the
-//! tracked sources (toolchain-free), and
+//! Runs in the default `cargo test --workspace` suite. The harness + the
+//! PINNED pair bytecode are loaded from the committed `tier3-oracle/artifacts/`
+//! tree (no solc/forge needed to RUN). Artifact integrity is enforced two ways:
+//! `tier3_harness_artifacts.rs` hashes the tracked sources (toolchain-free), and
 //! `tier3-oracle/verify-tier3-artifacts.sh` recompiles every harness and
 //! byte-compares it to the committed artifact. After a harness-source edit,
 //! regenerate + publish via
@@ -64,6 +74,10 @@ const FORK: V2Fork = V2Fork {
     gamma_numer: 9975,
     fee_denom: 10000,
     k_error: "Pancake: K",
+    // The pair is deployed from the PINNED on-chain creation bytecode
+    // (Sourcify `exact_match`, artifacts/PancakeV2Pair/) via the harness's raw
+    // `create` — not a local compile.
+    pair_init_artifact: Some("PancakeV2Pair/PancakeV2Pair.json"),
 };
 
 /// Pinned byte-exact oracle at the Pancake fork fee: the engine's `swap`

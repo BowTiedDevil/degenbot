@@ -43,6 +43,9 @@ const FORK: V2Fork = V2Fork {
     gamma_numer: 997,
     fee_denom: 1000,
     k_error: "UniswapV2: K",
+    // Uniswap V2's canonical source is a reproducible build, so the harness
+    // compiles its own pair (`new UniswapV2Pair()`) — no pinned bytecode.
+    pair_init_artifact: None,
 };
 
 /// Pinned byte-exact oracle: the engine's `swap` output is the on-chain

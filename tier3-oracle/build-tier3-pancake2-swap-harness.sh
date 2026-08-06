@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 # Build the Tier-3 PancakeSwap V2 pair swap oracle harness. Compiles
-# `src-pancake2/PancakeV2SwapOracleHarness.sol` (which imports the REAL
-# `PancakePair` — the canonical `pancakeswap/pancake-swap-core` contract,
-# vendored under `lib/pancake2-src/`) directly with solc 0.5.16 — both the
-# PancakePair fork and the mock tokens are `pragma =0.5.16` (same as
-# v2-core). The standard-json output is reshaped into foundry's
+# `src-pancake2/PancakeV2SwapOracleHarness.sol` with solc 0.5.16 (the mock
+# tokens + harness shell are `pragma =0.5.16`). The harness does NOT compile a
+# PancakePair: it deploys the PINNED on-chain creation bytecode (committed
+# under `artifacts/PancakeV2Pair/PancakeV2Pair.json`, Sourcify-verified
+# `exact_match` against the live mainnet pair) via a raw EVM `create` passed as
+# a constructor arg — so no vendored source, remapping, or lib fetch is needed.
+# The standard-json output is reshaped into foundry's
 # `out/<File>.sol/<Contract>.json` shape so the Rust loader reads it uniformly
 # with the other harnesses.
-#
-# Remapping: `pancake2-core/=lib/pancake2-src/` (the pair + its interfaces +
-# the PancakeERC20 base, preserved from the canonical repo).
 #
 # Artifact: out/PancakeV2SwapOracleHarness.sol/PancakeV2SwapOracleHarness.json
 set -euo pipefail
@@ -18,10 +17,6 @@ TD="$(cd "$(dirname "$0")" && pwd)"   # absolute tier3-oracle/
 cd "${TD}"
 OUT_DIR="${OUT_DIR:-${TD}/out}"
 PUBLISH="${PUBLISH:-1}"
-
-# Ensure the canonical PancakeSwap V2 reference source is present (idempotent;
-# no-op if already cloned).
-"${TD}/bootstrap-libs.sh"
 
 SOLC_VER="0.5.16"
 SOLC_LONG="0.5.16+commit.9c3226ce"
@@ -44,7 +39,7 @@ cat > "${STD_JSON}" <<'JSON'
   "settings": {
     "optimizer": { "enabled": true, "runs": 200 },
     "outputSelection": { "*": { "*": ["abi", "evm.bytecode.object", "evm.deployedBytecode.object"] } },
-    "remappings": ["pancake2-core/=lib/pancake2-src/"]
+    "remappings": []
   }
 }
 JSON
@@ -81,5 +76,6 @@ rm -f "${RAW}"
 if [ "${PUBLISH}" != "0" ]; then
   "${TD}/publish-artifacts.sh"
 fi
-echo "Tier-3 PancakeSwap V2 pair swap oracle harness built:"
+echo "Tier-3 PancakeSwap V2 pair swap oracle harness built (pins on-chain pair bytecode):"
 echo "  PancakeV2 (solc 0.5.16): ${TD}/out/PancakeV2SwapOracleHarness.sol/PancakeV2SwapOracleHarness.json"
+echo "  pinned pair: ${TD}/artifacts/PancakeV2Pair/PancakeV2Pair.json"
