@@ -68,6 +68,7 @@ pub struct V3Fork {
 
 /// The state walk one on-chain swap produced, plus the swap-tx logs for the
 /// test's own decoder-level event-variant assertions.
+#[derive(Debug)]
 pub struct OnChainSwapResult {
     pub amount0: U256,
     pub amount1: U256,
@@ -84,6 +85,7 @@ pub struct OnChainSwapResult {
 
 /// Outcome of a single pristine on-chain swap (deploy → setup → seed → swap →
 /// read-back).
+#[derive(Debug)]
 pub enum ProbeOutcome {
     /// `pool.swap` succeeded; the results are byte-exact against the sealed
     /// state walk.
@@ -467,6 +469,111 @@ pub fn dense_state(liq: u128, spacing: i32, k_positions: i32, current_tick: i32)
 /// a range spans uninitialized word boundaries. Two overlapping wide positions
 /// around `current_tick` (mid-word, away from a word edge) provide real
 /// liquidity the swap sinks into while its boundaries sit in far-apart words.
+/// One randomized position in an arbitrary-liquidity-distribution topology.
+/// `lower`/`upper` are initialized-tick bounds on the `tick_spacing` grid; the
+/// position contributes `liquidity` while price is in `[lower, upper)`.
+#[derive(Debug, Clone)]
+pub struct ArbV3Position {
+    pub lower: i32,
+    pub upper: i32,
+    pub liquidity: u128,
+}
+
+/// Build a `V3PoolState` from an **arbitrary** liquidity distribution: any set
+/// of initialized-tick boundaries (clustered, isolated, spanning empty bitmap
+/// words) expressed as overlapping/adjacent positions. This is the general
+/// builder behind [`dense_state`]/[`sparse_state`] — the concrete topologies
+/// are just specific `positions` vectors. The active `liquidity` is derived as
+/// the sum of position liquidity covering `current_tick`, and `tick_data` is
+/// folded from each position's `lower` (+liq gross/net) / `upper` (+gross,
+/// −net) boundaries, so the seeded storage is always internally consistent.
+///
+/// **On-chain consistency:** a V3 position's boundaries must lie on the
+/// `tick_spacing` grid — the on-chain `tickBitmap` compresses ticks via
+/// `tick / tickSpacing` (floored), so an off-grid boundary in the submitted
+/// `positions` would floor to a different on-chain tick and the pool would
+/// walk past it without updating liquidity (a state that cannot exist
+/// on-chain). This builder therefore snaps every boundary to a grid multiple
+/// (`lower` floored, `upper` ceiled) and drops any position that collapses to
+/// zero width after snapping. `current_tick` itself may be off-grid (real
+/// pools end swaps at an arbitrary tick) — only boundaries must be on-grid.
+///
+/// The swap-oracle proptest fuzzes topology through this builder: initialized
+/// ticks crossing the current tick, empty regions between far-apart words, and
+/// one-sided ranges that force a swap to run to a price limit / bitmap end.
+pub fn build_arbitrary_v3_state(
+    current_tick: i32,
+    tick_spacing: i32,
+    positions: &[ArbV3Position],
+) -> V3PoolState {
+    let sp = U256::from(get_sqrt_ratio_at_tick_internal(current_tick).unwrap());
+    // Snap a boundary to the spacing grid: `lower` floors (toward −inf),
+    // `upper` ceils, so a snapped position still contains its original span
+    // and `lower < upper` is preserved wherever the source span was ≥ spacing.
+    let snap_floor = |x: i32| x.div_euclid(tick_spacing) * tick_spacing;
+    let snap_ceil = |x: i32| {
+        let bumped = x + (tick_spacing - 1);
+        bumped.div_euclid(tick_spacing) * tick_spacing
+    };
+    let mut tick_data = HashMap::new();
+    let mut active: u128 = 0;
+    for p in positions {
+        let lower = snap_floor(p.lower);
+        let upper = snap_ceil(p.upper);
+        if lower >= upper {
+            // Too thin to survive snapping — drop (contributes no real range).
+            continue;
+        }
+        if lower <= current_tick && current_tick < upper {
+            active = active.saturating_add(p.liquidity);
+        }
+        let lo = tick_data.entry(lower).or_insert_with(|| TickInfo {
+            liquidity_gross: U128::ZERO,
+            liquidity_net: I256::ZERO,
+            block: 0,
+        });
+        lo.liquidity_gross =
+            U128::from(lo.liquidity_gross.to::<u128>().saturating_add(p.liquidity));
+        lo.liquidity_net = I256::try_from(
+            i128::try_from(lo.liquidity_net)
+                .unwrap()
+                .saturating_add(i128::try_from(p.liquidity).unwrap()),
+        )
+        .unwrap();
+        let hi = tick_data.entry(upper).or_insert_with(|| TickInfo {
+            liquidity_gross: U128::ZERO,
+            liquidity_net: I256::ZERO,
+            block: 0,
+        });
+        hi.liquidity_gross =
+            U128::from(hi.liquidity_gross.to::<u128>().saturating_add(p.liquidity));
+        hi.liquidity_net = I256::try_from(
+            i128::try_from(hi.liquidity_net)
+                .unwrap()
+                .saturating_sub(i128::try_from(p.liquidity).unwrap()),
+        )
+        .unwrap();
+    }
+    V3PoolState {
+        sqrt_price_x96: sp,
+        liquidity: active,
+        tick: current_tick,
+        update_block: 0,
+        tick_data_block: 0,
+        initial_state_block: 0,
+        tick_data,
+        snapshot_seed: None,
+        post_drain_snapshot: None,
+        coverage: PoolTickCoverage::Tracked,
+        known_bitmap_words: HashSet::new(),
+        fetcher: None,
+        journal: ReorgJournal::<V3BlockDelta>::new(8),
+        state_nonce: 0,
+        registration_lifecycle: RegistrationLifecycle::default(),
+        cached_tick_ranges: parking_lot::Mutex::new(TickRangeCache::default()),
+    }
+}
+
 pub fn sparse_state(liq: u128, spacing: i32, current_tick: i32) -> V3PoolState {
     let sp = U256::from(get_sqrt_ratio_at_tick_internal(current_tick).unwrap());
     // Word boundary = 256 compressed ticks. Place the two positions' bounds far

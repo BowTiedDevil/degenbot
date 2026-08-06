@@ -56,7 +56,8 @@ use degenbot_pools::v3_storage_slots::{
 use degenbot_pools::TickInfo;
 
 use tier3_v3_common::{
-    decode_error_string, run_onchain_swap, OnChainSwapResult, ProbeOutcome, V3Fork,
+    build_arbitrary_v3_state, decode_error_string, run_onchain_swap, ArbV3Position,
+    OnChainSwapResult, ProbeOutcome, V3Fork,
 };
 
 /// The canonical Uniswap V3 fork descriptor (Uniswap harness is under
@@ -715,6 +716,263 @@ fn v3_pool_dense_swap_matches_sim_proptest() {
             }
         }
     });
+}
+
+/// H4 — topology fuzz: the byte-exact oracle driven over an **arbitrary**
+/// liquidity distribution (the user-requested capability). Unlike the dense /
+/// sparse canned shapes, this generator randomizes the whole `tick_data`
+/// layout through [`build_arbitrary_v3_state`] so the walk must handle
+/// initialized ticks crossing the current tick, empty bitmap-word regions
+/// between far-apart boundaries, and one-sided ranges that run to a price
+/// limit / the bitmap end. The H1 verdict protocol (Accepted↔Ok byte-exact,
+/// Revert↔NotComputable, verbless Halt = the OOG gas trap = skip) is kept.
+#[allow(clippy::items_after_statements)] // `fn strategy` is local to the test
+#[allow(clippy::too_many_lines)]
+#[test]
+fn v3_pool_arbitrary_liquidity_matches_sim_proptest() {
+    fn strategy() -> impl Strategy<Value = (i32, i32, Vec<ArbV3Position>, u32, i32, u32, i32)> {
+        // (spacing, current_tick, positions, fee, zfo, frac, limit_words)
+        prop_oneof![Just(10i32), Just(60i32)].prop_flat_map(|spacing| {
+            let words = 256 * spacing; // one tick-bitmap word in ticks
+            (-60_000i32..60_000i32).prop_flat_map(move |cur| {
+                // Random position liquidity magnitude: wei-scale to ~1e23.
+                let liq = prop_oneof![
+                    1_000u128..1_000_000u128,
+                    (1u32..24u32).prop_map(|e| 10u128.pow(e)),
+                ];
+                // One position: bounds relative to `cur` in ticks, on the
+                // spacing grid. Offsets reach ±4 words so some boundaries sit
+                // in far-apart bitmap words (empty-region crossings).
+                let pos =
+                    ((-4 * words..-1i32), (1i32..4 * words), liq).prop_map(move |(lo, hi, l)| {
+                        ArbV3Position {
+                            lower: cur + lo,
+                            upper: cur + hi,
+                            liquidity: l,
+                        }
+                    });
+                // Anchor ALWAYS covers `cur` so seed active liquidity > 0 (a
+                // 0-liquidity start is the documented OOG trap, not a target).
+                let anchor = ArbV3Position {
+                    lower: cur - 2 * spacing,
+                    upper: cur + 2 * spacing,
+                    liquidity: 1_000_000_000u128,
+                };
+                prop::collection::vec(pos, 0usize..=3usize).prop_flat_map(move |mut extras| {
+                    extras.insert(0, anchor.clone());
+                    let positions = extras;
+                    let rest = (
+                        prop_oneof![Just(500u32), Just(3000u32)],
+                        0i32..2,
+                        1u32..=300,
+                        1i32..=12,
+                    );
+                    rest.prop_map(move |(fee, zfo, frac, limit_words)| {
+                        (spacing, cur, positions.clone(), fee, zfo, frac, limit_words)
+                    })
+                })
+            })
+        })
+    }
+
+    proptest!(|(case in strategy())| {
+        let (spacing, cur, positions, fee, zfo, frac, limit_words) = case;
+        let state = build_arbitrary_v3_state(cur, spacing, &positions);
+        let active = state.liquidity;
+        // Couple amount to the active liquidity so `computeSwapStep` actually
+        // moves price (the OOG-trap guard) while still spanning tiny → deep
+        // pushes (deep pushes reach far boundaries / the bitmap end).
+        let amount = U256::from(active) / U256::from(100u64) * U256::from(frac);
+        if amount.is_zero() || amount > U256::from(i128::MAX) {
+            return Ok(());
+        }
+        let amount_in = I256::try_from(amount).unwrap();
+        let zero_for_one = zfo == 0;
+        let dir = if zero_for_one { -1i32 } else { 1i32 };
+        // Push the price limit `limit_words` words in the swap direction,
+        // clamped to the bitmap ends — exercises running out of liquidity to
+        // the far limit as well as stopping mid-band.
+        let limit_tick = (cur + dir * limit_words * spacing * 256).clamp(-887_272, 887_272);
+        let sqrt_price_limit: u128 =
+            get_sqrt_ratio_at_tick_internal(limit_tick).unwrap().to::<u128>();
+
+        let sim = v3_simulate_swap(
+            &state,
+            fee,
+            spacing,
+            zero_for_one,
+            amount_in,
+            U256::from(sqrt_price_limit),
+        );
+        match run_onchain_swap(
+            &FORK,
+            uniswap_seeder,
+            &state,
+            fee,
+            spacing,
+            zero_for_one,
+            amount_in,
+            sqrt_price_limit,
+        ) {
+            ProbeOutcome::Accepted(res) => {
+                let sim = sim
+                    .unwrap_or_else(|e| panic!("on-chain ACCEPTED but engine rejected: {e:?}"));
+                prop_assert_eq!(res.amount0, sim.amount0, "amount0");
+                prop_assert_eq!(res.amount1, sim.amount1, "amount1");
+                prop_assert_eq!(res.post_sqrt, sim.sqrt_price_x96, "post sqrtPriceX96");
+                prop_assert_eq!(res.post_tick, sim.tick, "post tick");
+                prop_assert_eq!(res.post_liq, sim.liquidity, "post liquidity");
+            }
+            ProbeOutcome::Reverted { reason } => {
+                let reason_str = decode_error_string(reason.as_ref())
+                    .unwrap_or_else(|| format!("0x{}", hex::encode(reason.as_ref())));
+                match sim {
+                    Err(SimulateSwapError::NotComputable) => {}
+                    Ok(s) => prop_assert!(
+                        false,
+                        "on-chain REVERTED ({reason_str}) but engine produced {s:?}"
+                    ),
+                    Err(SimulateSwapError::MissingTickWord(w)) => prop_assert!(
+                        false,
+                        "on-chain REVERTED ({reason_str}) but engine misses word {w}"
+                    ),
+                }
+            }
+            ProbeOutcome::Halted(_) => {
+                // Verbless halt (OOG fixture trap) — no verdict to compare.
+            }
+        }
+    });
+}
+
+/// H3 — pinned deterministic edge corpus over the arbitrary-topology builder:
+/// explicit topologies that cross initialized ticks, span empty words, and run
+/// to a bitmap end, each driven through the full byte-exact oracle. These are
+/// the concrete shapes the proptest randomizes, pinned so a regression can't
+/// hide behind a changed seed.
+#[test]
+#[allow(clippy::too_many_lines)]
+fn v3_pool_arbitrary_topology_edge_corpus() {
+    let fee = 3000u32;
+    let tick_spacing = 60i32;
+    let cur = 30_000i32;
+    let liq = 1_000_000_000_000_000_000_000u128; // 1e21
+
+    // Each topology is a `Vec<ArbV3Position>` + a swap direction.
+    let cases: Vec<(Vec<ArbV3Position>, bool)> = vec![
+        // (1) Crossing: overlapping dense bands around the current tick — the
+        //     upward walk crosses several distinct initialized boundaries.
+        (
+            vec![
+                ArbV3Position {
+                    lower: cur - 4 * tick_spacing,
+                    upper: cur + 4 * tick_spacing,
+                    liquidity: liq,
+                },
+                ArbV3Position {
+                    lower: cur - 2 * tick_spacing,
+                    upper: cur + 6 * tick_spacing,
+                    liquidity: liq,
+                },
+                ArbV3Position {
+                    lower: cur,
+                    upper: cur + 8 * tick_spacing,
+                    liquidity: liq,
+                },
+            ],
+            false, // zfo=false: upward, crosses 4+ boundaries
+        ),
+        // (2) Empty-word crossing downward: a dense band far below (2 words),
+        //     so the downward walk crosses empty bitmap words to reach it.
+        (
+            vec![
+                ArbV3Position {
+                    lower: cur - 2 * tick_spacing,
+                    upper: cur + 2 * tick_spacing,
+                    liquidity: liq,
+                },
+                ArbV3Position {
+                    lower: cur - 2 * 256 * tick_spacing,
+                    upper: cur - 2 * 256 * tick_spacing + 4 * tick_spacing,
+                    liquidity: liq,
+                },
+            ],
+            true, // zfo=true: downward, ~2 empty words then the far band
+        ),
+        // (3) Run to the bitmap end: the current tick sits inside a range whose
+        //     UPWARD exit leaves all liquidity behind, so the upward swap
+        //     crosses out of it and runs (empty) to the far price limit.
+        (
+            vec![
+                ArbV3Position {
+                    lower: cur - 10 * tick_spacing,
+                    upper: cur + 2 * tick_spacing,
+                    liquidity: liq,
+                },
+                ArbV3Position {
+                    lower: cur - 2 * 256 * tick_spacing,
+                    upper: cur + 2 * tick_spacing,
+                    liquidity: liq,
+                },
+            ],
+            false, // zfo=false: upward, out of the range then empty to the limit
+        ),
+    ];
+
+    for (k, (positions, zfo)) in cases.into_iter().enumerate() {
+        let state = build_arbitrary_v3_state(cur, tick_spacing, &positions);
+        let active = state.liquidity;
+        // A push deep enough to cross / reach the far region or the limit.
+        let amount = U256::from(active) * U256::from(8u64);
+        if amount > U256::from(i128::MAX) {
+            continue;
+        }
+        let amount_in = I256::try_from(amount).unwrap();
+        let dir = if zfo { -1i32 } else { 1i32 };
+        let limit_tick = (cur + dir * 6 * tick_spacing * 256).clamp(-887_272, 887_272);
+        let sqrt_price_limit: u128 = get_sqrt_ratio_at_tick_internal(limit_tick)
+            .unwrap()
+            .to::<u128>();
+
+        let sim = v3_simulate_swap(
+            &state,
+            fee,
+            tick_spacing,
+            zfo,
+            amount_in,
+            U256::from(sqrt_price_limit),
+        );
+        let res = match run_onchain_swap(
+            &FORK,
+            uniswap_seeder,
+            &state,
+            fee,
+            tick_spacing,
+            zfo,
+            amount_in,
+            sqrt_price_limit,
+        ) {
+            ProbeOutcome::Accepted(r) => r,
+            ProbeOutcome::Reverted { reason } => panic!(
+                "case {k} reverted: {}",
+                decode_error_string(reason.as_ref())
+                    .unwrap_or_else(|| format!("0x{}", hex::encode(reason.as_ref())))
+            ),
+            ProbeOutcome::Halted(m) => panic!("case {k} halted: {m}"),
+        };
+        let sim = sim.expect("engine must accept a pinned on-chain-accepted topology");
+        assert_eq!(res.amount0, sim.amount0, "case {k} amount0 byte-exact");
+        assert_eq!(res.amount1, sim.amount1, "case {k} amount1 byte-exact");
+        assert_eq!(
+            res.post_sqrt, sim.sqrt_price_x96,
+            "case {k} post sqrtPriceX96"
+        );
+        assert_eq!(res.post_tick, sim.tick, "case {k} post tick byte-exact");
+        assert_eq!(
+            res.post_liq, sim.liquidity,
+            "case {k} post liquidity byte-exact"
+        );
+    }
 }
 
 /// Solver-side output for an exact-in amount, mirroring the `degenbot-solvers`

@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc c7884c6c6c23f018db1516c76ca8c25e756b11f1c18691b44b52f9e2de6baa23 # shrinks to case = (10, 381, [ArbV3Position { lower: 361, upper: 401, liquidity: 1000000000 }, ArbV3Position { lower: -3873, upper: 8216, liquidity: 100000000000000 }, ArbV3Position { lower: -566, upper: 527, liquidity: 10000000000000000000 }], 500, 0, 3, 6)
