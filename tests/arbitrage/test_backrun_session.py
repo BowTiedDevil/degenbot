@@ -1180,3 +1180,158 @@ class TestSubCBgRegistrationConcurrency:
         # still-climbing registration.
         assert session._registration_task is not None
         assert session._registration_task.cancelled()
+
+
+class Test6VZN7HOngoingDiscovery:
+    """6VZN7H: the unbounded (D3) discovery producer + its run()-level wiring.
+
+    Production discovery no longer terminates when the initial DB-subgraph DFS
+    exhausts — ``_discovery_producer_forever`` re-sweeps the subgraph forever
+    (cancellable), feeding the bounded registration pipeline so it never runs
+    more than the queue bound ahead of activation, and the Sub-B state-trim is
+    reconciled to shutdown-time when discovery runs forever (there is no
+    "registration completion" to hang it on)."""
+
+    async def test_discovery_producer_forever_yields_across_sweeps(self) -> None:
+        """A finite first sweep is followed by re-invoked snaps: the producer
+        yields forever from later sweeps, not just the initial DFS."""
+        from examples.eth_backrun_v2_v3_v4_rust import _discovery_producer_forever
+
+        calls = 0
+
+        def discovery_factory():
+            nonlocal calls
+            calls += 1
+
+            async def sweep():
+                for i in range(3):
+                    await asyncio.sleep(0)
+                    yield (calls, i)
+
+            return sweep()
+
+        producer = _discovery_producer_forever(discovery_factory, interval=0.001)
+        it = aiter(producer)
+        got = [await anext(it) for _ in range(8)]
+        await producer.aclose()
+
+        # 8 pulls span 3 sweeps: sweep1 (3), sweep2 (3), sweep3 (2) — the factory
+        # is re-invoked each time the prior sweep exhausts (unbounded discovery).
+        assert calls == 3
+        assert got == [
+            (1, 0), (1, 1), (1, 2),
+            (2, 0), (2, 1), (2, 2),
+            (3, 0), (3, 1),
+        ]
+
+    async def test_discovery_producer_forever_cancellable_on_shutdown(self) -> None:
+        """Cancelling the producer terminates it promptly (no leaked in-flight
+        sweep) even while it is mid-sweep waiting on a blocking source."""
+        from examples.eth_backrun_v2_v3_v4_rust import _discovery_producer_forever
+
+        calls = 0
+
+        def discovery_factory():
+            nonlocal calls
+            calls += 1
+
+            async def sweep():
+                while True:
+                    await asyncio.sleep(10**9)
+                    yield 1  # pragma: no cover
+
+            return sweep()
+
+        producer = _discovery_producer_forever(discovery_factory, interval=10**9)
+        it = aiter(producer)
+        pending = asyncio.ensure_future(anext(it))
+        await asyncio.sleep(0)  # let it start waiting inside the first sweep
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+        await producer.aclose()
+        assert calls == 1  # cancelled inside sweep 1, not after a re-sweep
+
+    async def test_forever_producer_feeds_pipeline_with_backpressure(self) -> None:
+        """The forever producer drives ``run_registration_pipeline`` across many
+        sweeps under the bounded-queue backpressure, and the whole pipeline
+        remains cancellable (no deadlock / no stale producer)."""
+        import contextlib as _ctx
+
+        from examples.eth_backrun_v2_v3_v4_rust import (
+            _discovery_producer_forever,
+            run_registration_pipeline,
+        )
+
+        calls = 0
+
+        def discovery_factory():
+            nonlocal calls
+            calls += 1
+
+            async def sweep():
+                for i in range(100):
+                    await asyncio.sleep(0)
+                    yield calls * 1000 + i
+
+            return sweep()
+
+        consumed: list[int] = []
+
+        async def consume(item: int) -> None:
+            await asyncio.sleep(0)  # slow-ish worker
+            consumed.append(item)
+
+        producer = _discovery_producer_forever(discovery_factory, interval=0.001)
+        pipeline_task = asyncio.ensure_future(
+            run_registration_pipeline(
+                producer=producer,
+                consume=consume,
+                queue_size=8,
+                worker_count=2,
+            ),
+        )
+        await asyncio.sleep(0.25)
+        pipeline_task.cancel()
+        with _ctx.suppress(asyncio.CancelledError, Exception):
+            await pipeline_task
+
+        # Discovery re-swept many times and registration consumed items across
+        # all of them — never stopped at the first exhaustive sweep.
+        assert calls > 1
+        assert len(consumed) > 0
+
+    async def test_forever_discovery_trims_state_on_shutdown(self) -> None:
+        """With forever (never-returning) discovery there is no "registration
+        completion", so the Sub-B state-trim runs when run() cancels the
+        background task at shutdown instead — still exactly once and not
+        mid-climb."""
+        engine_registry = _FakeEngineRegistry()
+        bot = _FakeBot()
+
+        async def forever_path_builder(**_kwargs):
+            await asyncio.Event().wait()  # never completes on its own
+
+        async def consumer(**_kwargs):
+            for _ in range(3):
+                await asyncio.sleep(0)
+
+        session = BackrunSession(
+            _cfg(),
+            bot=bot,
+            engine_registry=engine_registry,
+            async_w3=_FakeAsyncW3(),
+            snapshots=(None, None, None, None),
+            path_builder=forever_path_builder,
+            consumer=consumer,
+            background_registration=True,
+        )
+        await session.start()
+        await session.run()
+
+        # Main loop ended (finite consumer) → run()'s finally cancelled the
+        # forever registration → trim ran on cancellation (shutdown-time).
+        assert bot.released is True
+        reg = session._registration_task
+        assert reg is not None
+        assert reg.cancelled()

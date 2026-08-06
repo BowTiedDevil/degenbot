@@ -162,6 +162,23 @@ PATH_PERMUTATION_FILTER: set[str] | None = None  # e.g. {"V3-V4-V3"}
 REG_QUEUE_BOUND = int(os.environ.get("DEGENBOT_REG_QUEUE_BOUND", "64"))
 REG_WORKERS = int(os.environ.get("DEGENBOT_REG_WORKERS", "4"))
 
+# ── Ongoing (unbounded) discovery (6VZN7H / D3) ────────────────────
+# By default discovery does NOT stop when the initial DB-subgraph DFS exhausts.
+# `build_paths` re-sweeps the subgraph every DISCOVERY_REDISCOVER_INTERVAL
+# seconds (via `_discovery_producer_forever`), so newly deployed / newly added
+# pools are registered on an ongoing basis — D3 makes unbounded discovery the
+# default ongoing source (re-discovery never terminates on its own; it runs
+# until the bot shuts down). Each yielded path flows through the bounded
+# registration queue (REG_QUEUE_BOUND), so discovery can never run more than
+# that many paths ahead of activation (backpressure) and never accumulates
+# unbounded in-flight work. Re-sweeps re-traverse the subgraph; pools already
+# registered are deduped by `registered_path_sigs` (cheap set check, no rebuild).
+# Set DEGENBOT_ONGOING_DISCOVERY=0 for the legacy single-pass behavior.
+ONGOING_DISCOVERY = os.environ.get("DEGENBOT_ONGOING_DISCOVERY", "1") != "0"
+DISCOVERY_REDISCOVER_INTERVAL = float(
+    os.environ.get("DEGENBOT_DISCOVERY_REDISCOVER_INTERVAL", "420"),
+)
+
 # ── Intermediate token whitelist ────────────────────────────────
 # Only build paths where intermediate hops use these tokens.
 # Set to None to allow all tokens (default). When set, pools that
@@ -962,15 +979,25 @@ class BackrunSession:
         "spawn on the pump tokio runtime" + CPU-level parallelism is the
         Sub-A2-grade Rust port.
         """
-        await path_builder(
-            bot=self.bot,
-            engine_registry=self.engine_registry,
-            v3_snapshot=self.v3_snapshot,
-            v4_snapshot=self.v4_snapshot,
-            retry_policy=retry_policy,
-            context=registration_context,
-        )
-        self._trim_python_state()
+        try:
+            await path_builder(
+                bot=self.bot,
+                engine_registry=self.engine_registry,
+                v3_snapshot=self.v3_snapshot,
+                v4_snapshot=self.v4_snapshot,
+                retry_policy=retry_policy,
+                context=registration_context,
+            )
+            self._trim_python_state()
+        except asyncio.CancelledError:
+            # 6VZN7H/D3: production discovery is FOREVER (run_registration_pipeline
+            # never returns), so there is no "registration completion" — the state
+            # trim becomes a shutdown-time operation, not a completion-time one. It
+            # still must not run mid-climb, and at shutdown registration is already
+            # being torn down (cancelled by run()'s finally), so this is the safe
+            # point to release the held snapshot read-tx + Python registries.
+            self._trim_python_state()
+            raise
 
     def _trim_python_state(self) -> None:
         """Trim redundant Python state once registration is done.
@@ -1328,6 +1355,39 @@ async def run_registration_pipeline(
     await producer_task
 
 
+async def _discovery_producer_forever(
+    discovery_factory: Callable[[], AsyncIterable[object]],
+    interval: float,
+) -> AsyncIterator[object]:
+    """Yield discovery items forever (6VZN7H / D3 — unbounded discovery is the
+    default ongoing source).
+
+    Runs ``discovery_factory()`` (a fresh discovery sweep, e.g. a
+    ``find_paths_async`` DFS over the DB subgraph) to completion, then waits
+    ``interval`` seconds and re-runs it — so newly deployed / newly added pools
+    are picked up on subsequent sweeps rather than discovery going idle once
+    the initial subgraph is exhausted.
+
+    Cancellable: the returned async generator never terminates on its own but
+    an ``asyncio.CancelledError`` propagates on the next ``async for`` /
+    ``await asyncio.sleep(interval)`` boundary, so the caller's pipeline can
+    abort it cleanly on shutdown without leaking the in-flight sweep. Each
+    yielded item flows through the caller's bounded registration queue
+    (REG_QUEUE_BOUND), so discovery can never run more than that many paths
+    ahead of activation (backpressure) and never accumulates unbounded
+    in-flight work — memory stays bounded regardless of how long it runs.
+
+    Args:
+        discovery_factory: callable returning a FRESH async iterator for each
+            sweep (re-calling must re-discover; do not cache one iterator).
+        interval: seconds to wait between sweeps (the re-discovery cadence).
+    """
+    while True:
+        async for item in discovery_factory():
+            yield item
+        await asyncio.sleep(interval)
+
+
 async def build_paths(
     *,
     bot: Bot,
@@ -1667,8 +1727,12 @@ async def build_paths(
         f"[build_paths] Starting registration pipeline: {REG_WORKERS} workers, "
         f"queue bound {REG_QUEUE_BOUND}"
     )
-    await run_registration_pipeline(
-        producer=find_paths_async(
+
+    def _discovery_sweep() -> AsyncIterator[object]:
+        # A FRESH discovery sweep over the DB subgraph (V2/V3/V4 DFS). Re-called
+        # on each ongoing-discovery cycle so newly-deployed / newly-added pools
+        # are picked up; `_consume_step` dedups already-registered paths.
+        return find_paths_async(
             chain_id=constr_chain_id,
             start_tokens=[
                 WETH_ADDRESS,
@@ -1683,7 +1747,27 @@ async def build_paths(
             db=constr_db,
             pool_type_per_depth=pool_type_per_depth,
             allowed_intermediate_tokens=ALLOWED_INTERMEDIATE_TOKENS,
-        ),
+        )
+
+    if ONGOING_DISCOVERY:
+        # D3 — unbounded discovery: re-sweep the subgraph forever (cancellable),
+        # so registration never goes idle once the initial DFS exhausts. The
+        # bounded queue keeps discovery from running more than REG_QUEUE_BOUND
+        # paths ahead of activation.
+        discovery_producer: AsyncIterable[object] = _discovery_producer_forever(
+            _discovery_sweep,
+            interval=max(DISCOVERY_REDISCOVER_INTERVAL, 1.0),
+        )
+        bot_logger.info(
+            f"[build_paths] Ongoing discovery enabled — re-sweeping every "
+            f"{max(DISCOVERY_REDISCOVER_INTERVAL, 1.0):.0f}s after the initial pass"
+        )
+    else:
+        # Legacy single-pass behavior (one DFS to completion, then registration
+        # done).
+        discovery_producer = _discovery_sweep()
+    await run_registration_pipeline(
+        producer=discovery_producer,
         consume=_consume_step,
         queue_size=REG_QUEUE_BOUND,
         worker_count=REG_WORKERS,
