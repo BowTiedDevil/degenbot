@@ -500,7 +500,7 @@ mod tests {
 
         // Delivered untouched — Python has not received anything.
         assert!(
-            engine.delivered.is_empty(),
+            engine.delivery.delivered.is_empty(),
             "solve_all_paths must not advance `delivered` without a channel"
         );
     }
@@ -578,7 +578,7 @@ mod tests {
             .expect("solve should populate a profitable result");
         assert!(!solve_result.profit.is_zero());
         assert!(
-            engine.delivered.is_empty(),
+            engine.delivery.delivered.is_empty(),
             "solve must not advance `delivered` (Python has received nothing)"
         );
 
@@ -661,12 +661,12 @@ mod tests {
 
         // `delivered` now equals the above-threshold subset of `results`.
         assert_eq!(
-            engine.delivered.len(),
+            engine.delivery.delivered.len(),
             1,
             "delivered should contain exactly the one above-threshold path"
         );
         assert!(
-            engine.delivered.contains_key(&path_id),
+            engine.delivery.delivered.contains_key(&path_id),
             "delivered should include the just-sent profitable path"
         );
     }
@@ -712,7 +712,7 @@ mod tests {
             "a result with profit > u64::MAX must appear in fresh when the cap is unbounded"
         );
         assert!(
-            engine.delivered.contains_key(&path_id),
+            engine.delivery.delivered.contains_key(&path_id),
             "a result with profit > u64::MAX must be delivered"
         );
     }
@@ -791,7 +791,7 @@ mod tests {
             "a result with profit == min_profit must be excluded under the strict (`>`) min bound"
         );
         assert!(
-            !engine.delivered.contains_key(&path_id),
+            !engine.delivery.delivered.contains_key(&path_id),
             "a result with profit == min_profit must not be delivered"
         );
     }
@@ -2068,7 +2068,7 @@ mod tests {
             "arbitrage should appear after the mispricing Sync"
         );
         assert!(
-            engine.delivered.contains_key(&path_id),
+            engine.delivery.delivered.contains_key(&path_id),
             "profitable result should be delivered"
         );
 
@@ -2112,7 +2112,7 @@ mod tests {
             "path should be unprofitable after reorg rollback"
         );
         assert!(
-            !engine.delivered.contains_key(&path_id),
+            !engine.delivery.delivered.contains_key(&path_id),
             "previously-delivered result should expire out of `delivered`"
         );
 

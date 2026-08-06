@@ -33,7 +33,7 @@
 //! |--------|---------|
 //! | [`event_routing`] | Log event routing, block processing, backfill |
 //! | [`solver_dispatch`] | Path resolution, solver dispatch, rebuild logic |
-//! | [`result_channel`] | Result batch channel, diff computation, de-registration |
+//! | [`delivery_policy`] | Delivery policy: diff computation, result/block channels (BI7UZV) |
 //! | [`lifecycle`] | Path registration, buffer management, engine accessors |
 //! | [`py_binding`] | PyO3 wrapper (`PyArbitrageEngine`) |
 //! | [`tests`] | Unit tests |
@@ -44,11 +44,13 @@ use std::sync::Arc;
 use ::degenbot_solvers::mixed::{HopType, MixedPath, ResolvedMixedPath, SolvePathResult};
 #[cfg(test)]
 use alloy::primitives::aliases::U112;
-use alloy::primitives::{Address, U256};
+use alloy::primitives::Address;
 
+use self::delivery_policy::DeliveryPolicy;
 use crate::bot_core::BotState;
 
 // Sub-modules — each contains `impl ArbitrageEngine` or `impl PyArbitrageEngine` blocks.
+mod delivery_policy;
 #[allow(clippy::module_inception)]
 mod diagnostic;
 pub mod engine_handle;
@@ -56,7 +58,6 @@ pub mod engine_subscriber;
 mod event_routing;
 mod lifecycle;
 pub mod path_info;
-mod result_channel;
 pub mod snapshot_verify;
 mod solver_dispatch;
 #[cfg(test)]
@@ -361,23 +362,12 @@ pub struct ArbitrageEngine {
     pending_new_paths: HashSet<u64>,
     /// Auto-incrementing path ID
     next_path_id: u64,
-    /// The above-threshold results that have been **actually delivered to
-    /// Python** via the result channel. Used to compute incremental diffs.
-    ///
-    /// # Invariant
-    ///
-    /// `delivered` is advanced **only** by `compute_diff_and_send`, and only
-    /// after building a `ResultBatch` for the current above-threshold subset
-    /// of `results`. It must stay **empty before the first pump-driven send**
-    /// (e.g. during cold-start / `solve_all_paths`), since Python has not yet
-    /// received anything. Advancing it without a live channel would poison
-    /// `fresh`/`expired` computation for the next real send — see
-    /// `solve_all_paths` (solve-only)
-    /// [`deregister_path`] removes entries as paths are de-registered.
-    delivered: HashMap<u64, SolvePathResult>,
-    /// Path IDs that have been de-registered since the last batch.
-    /// Drained into the next batch's `removed` field.
-    deregistered: Vec<u64>,
+    /// Delivery policy — the optional publish sink that consumes the solve
+    /// output (`latest_results`) and pushes diffs over the result/block
+    /// channels (ergo BI7UZV). Owns `delivered`/`deregistered`, the profit
+    /// thresholds, and `result_tx`/`block_tx`; decoupled from solve state so a
+    /// standalone consumer gets raw results without it.
+    pub(crate) delivery: DeliveryPolicy,
     /// Accumulated dirty V2 pool keys from `apply_log` calls since the last
     /// `finalize_block`. Used by the pump for eager log processing.
     dirty_v2: HashSet<u64>,
@@ -387,20 +377,6 @@ pub struct ArbitrageEngine {
     /// Accumulated dirty V4 pool keys from `apply_log` calls since the last
     /// `finalize_block`. Used by the pump for eager log processing.
     dirty_v4: HashSet<u64>,
-    /// Minimum profit (in wei) for a result to appear in the batch channel.
-    /// Paths below this threshold are excluded from `delivered` and batches.
-    min_profit: U256,
-    /// Maximum profit (in wei) for a result to appear in the batch channel.
-    /// Paths above this are likely solver defects or scam tokens.
-    max_profit: U256,
-    /// Sender for the result batch channel. Created in `PyArbitrageEngine::new()`.
-    result_tx: Option<tokio::sync::mpsc::UnboundedSender<ResultBatch>>,
-    /// Sender for the block-notification channel (epic 6W35AI). The pump
-    /// forwards every accepted `WsEvent::BlockHeader` here via
-    /// `DrainSink::notify_block`, so Python can drive its block clock from
-    /// `newHeads` (not from `ResultBatch::solve_block`). Plumbed parallel to
-    /// `result_tx`; `compute_diff_and_send` never touches it.
-    block_tx: Option<tokio::sync::mpsc::UnboundedSender<BlockNotification>>,
     /// Engine lifecycle phase (ZU7RAF — core-OWNED). Enforces ordering
     /// `Created → Subscribed → SnapshotLoaded → Backfilled → Resumed`.
     /// Previously the `AtomicU8` lived on the pyo3 `PumpState` wrapper;
@@ -443,15 +419,10 @@ impl ArbitrageEngine {
             has_logs_this_block: false,
             pending_new_paths: HashSet::new(),
             next_path_id: 1, // path IDs start at 1
-            delivered: HashMap::new(),
-            deregistered: Vec::new(),
+            delivery: DeliveryPolicy::default(),
             dirty_v2: HashSet::new(),
             dirty_v3: HashSet::new(),
             dirty_v4: HashSet::new(),
-            min_profit: U256::ZERO,
-            max_profit: U256::MAX,
-            result_tx: None,
-            block_tx: None,
             phase: std::sync::atomic::AtomicU8::new(EnginePhase::Created as u8),
         }
     }

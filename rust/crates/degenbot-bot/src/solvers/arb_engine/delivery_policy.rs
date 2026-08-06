@@ -1,0 +1,384 @@
+//! Delivery policy — deciding what is worth publishing and pushing it over
+//! an async channel, decoupled from the engine's solve output (ergo BI7UZV).
+//!
+//! The engine's solve produces a canonical, channel-independent result map
+//! ([`ArbitrageEngine::latest_results`]). This module is the **optional
+//! delivery sink** that consumes that solve output: it filters by the profit
+//! window, tracks what Python has already seen (`delivered`), and batches the
+//! incremental diff over a `tokio` channel. The pub-sub transport, profit
+//! thresholds, and diff bookkeeping live here — NOT fused into the solver.
+//!
+//! # tokio stays a hard dependency of `degenbot-bot`
+//!
+//! The task asked whether `tokio` could become optional so a pure-solver build
+//! avoids it. It cannot: `degenbot-bot`'s pump (`block_pump.rs`, 60+ uses),
+//! block clock, liquidity verifier, and registration lifecycle are all
+//! `tokio`-based production functionality. Making `tokio` optional here would
+//! be crate-wide surgery, not a delivery-channel isolation. This struct keeps
+//! every `tokio` use local to the delivery surface, so when the solver is
+//! eventually pulled into its own crate (ADR-018 trigger: a second engine
+//! family), `DeliveryPolicy` and its channels can travel intact.
+
+use std::collections::HashMap;
+
+use alloy::primitives::U256;
+use tokio::sync::mpsc;
+
+use super::{ArbitrageEngine, BlockMetadata, BlockNotification, ResultBatch};
+use ::degenbot_solvers::mixed::SolvePathResult;
+
+/// The delivery policy: filters the engine's solve output by the profit
+/// window, tracks what Python has already received, and pushes an incremental
+/// diff over the result and block channels.
+///
+/// It is the **only** owner of the diff bookkeeping (`delivered`/`deregistered`)
+/// and the profit thresholds. It does not solve anything — it consumes the
+/// engine's [`ArbitrageEngine::latest_results`] output via
+/// [`DeliveryPolicy::diff_and_send`].
+///
+/// The fields are `pub(crate)` so the in-crate unit tests (`arb_engine/tests.rs`)
+/// can assert on `delivered` directly; no external crate can reach them, and the
+/// engine exposes only the delegating methods below.
+pub(crate) struct DeliveryPolicy {
+    /// The above-threshold results that have been **actually delivered to
+    /// Python** via the result channel. Used to compute incremental diffs.
+    ///
+    /// # Invariant
+    ///
+    /// `delivered` is advanced **only** by [`DeliveryPolicy::diff_and_send`],
+    /// and only after building a `ResultBatch` for the current above-threshold
+    /// subset of the engine's `results`. It must stay **empty before the first
+    /// pump-driven send** (e.g. during cold-start / `solve_all_paths`), since
+    /// Python has not yet received anything. Advancing it without a live
+    /// channel would poison `fresh`/`expired` computation for the next real
+    /// send.
+    pub(crate) delivered: HashMap<u64, SolvePathResult>,
+    /// Path IDs that have been de-registered since the last batch.
+    /// Drained into the next batch's `removed` field.
+    pub(crate) deregistered: Vec<u64>,
+    /// Minimum profit (in wei) for a result to appear in the batch channel.
+    /// Paths below this threshold are excluded from `delivered` and batches.
+    pub(crate) min_profit: U256,
+    /// Maximum profit (in wei) for a result to appear in the batch channel.
+    /// Paths above this are likely solver defects or scam tokens.
+    pub(crate) max_profit: U256,
+    /// Sender for the result batch channel. Created in `PyArbitrageEngine::new()`.
+    pub(crate) result_tx: Option<mpsc::UnboundedSender<ResultBatch>>,
+    /// Sender for the block-notification channel (epic 6W35AI). The pump
+    /// forwards every accepted `WsEvent::BlockHeader` here via
+    /// `DrainSink::notify_block`, so Python can drive its block clock from
+    /// `newHeads` (not from `ResultBatch::solve_block`). Plumbed parallel to
+    /// `result_tx`; `diff_and_send` never touches it.
+    pub(crate) block_tx: Option<mpsc::UnboundedSender<BlockNotification>>,
+}
+
+impl Default for DeliveryPolicy {
+    fn default() -> Self {
+        Self {
+            delivered: HashMap::new(),
+            deregistered: Vec::new(),
+            min_profit: U256::ZERO,
+            max_profit: U256::MAX,
+            result_tx: None,
+            block_tx: None,
+        }
+    }
+}
+
+impl DeliveryPolicy {
+    /// Set the sender for the result batch channel.
+    pub fn set_result_channel(&mut self, tx: mpsc::UnboundedSender<ResultBatch>) {
+        self.result_tx = Some(tx);
+    }
+
+    /// Set the sender for the block-notification channel (epic 6W35AI).
+    /// Independent of `result_tx`.
+    pub fn set_block_channel(&mut self, tx: mpsc::UnboundedSender<BlockNotification>) {
+        self.block_tx = Some(tx);
+    }
+
+    /// Forward a `newHeads` block tick onto the block-notification channel
+    /// (epic 6W35AI). A no-op when no block channel is attached (no-pyo3
+    /// tests / standalone).
+    pub fn notify_block(&self, block: u64, metadata: &BlockMetadata) {
+        if let Some(ref tx) = self.block_tx {
+            let _ = tx.send(BlockNotification::from_metadata(block, metadata));
+        }
+    }
+
+    /// Set the profit thresholds for the result batch channel.
+    ///
+    /// Only paths with `profit > min_profit` and `profit <= max_profit`
+    /// appear in batch `fresh` / `updated` entries. Paths outside
+    /// this range are excluded from `delivered` and batches.
+    ///
+    /// The max bound is inclusive so that `max_profit = U256::MAX` (the
+    /// default) opens the cap fully — profits can exceed `u64::MAX` for
+    /// 18-decimal tokens with large reserves, and the V4 `int128` overflow
+    /// guard allows up to `2^127-1`. The min bound remains strict (`>`).
+    pub const fn set_profit_thresholds(&mut self, min_profit: U256, max_profit: U256) {
+        self.min_profit = min_profit;
+        self.max_profit = max_profit;
+    }
+
+    /// Record a path de-registration in the delivery bookkeeping: drop it from
+    /// `delivered` and (only when it actually existed) queue it for the next
+    /// batch's `removed` field.
+    ///
+    /// This is the delivery-policy half of `ArbitrageEngine::deregister_path`.
+    pub fn on_path_deregistered(&mut self, path_id: u64, existed: bool) {
+        self.delivered.remove(&path_id);
+        if existed {
+            self.deregistered.push(path_id);
+        }
+    }
+
+    /// Compute the incremental diff between the engine's solve output
+    /// (`results` / `results_block`) and what Python has already received
+    /// (`delivered`), advance `delivered` to the above-threshold subset, and
+    /// — if a result channel is attached — send the batch.
+    ///
+    /// The solve output is passed in, not read from the policy; the policy is
+    /// a pure consumer of the solve (`ArbitrageEngine::latest_results` is the
+    /// canonical, channel-independent surface).
+    ///
+    /// If the channel is full, the batch is dropped — the next one will carry
+    /// a correct cumulative diff.
+    pub fn diff_and_send(
+        &mut self,
+        results: &HashMap<u64, SolvePathResult>,
+        results_block: u64,
+        metadata: &BlockMetadata,
+    ) {
+        // Fresh: above-threshold in results, not in delivered
+        let fresh: Vec<(u64, SolvePathResult)> = results
+            .iter()
+            .filter(|(_, r)| r.profit > self.min_profit && r.profit <= self.max_profit)
+            .filter(|(id, _)| !self.delivered.contains_key(id))
+            .map(|(&id, r)| (id, r.clone()))
+            .collect();
+
+        // Updated: above-threshold in both, values differ
+        let updated: Vec<(u64, SolvePathResult)> = results
+            .iter()
+            .filter(|(_, r)| r.profit > self.min_profit && r.profit <= self.max_profit)
+            .filter(|(id, new)| matches!(self.delivered.get(id), Some(old) if old != *new))
+            .map(|(&id, r)| (id, r.clone()))
+            .collect();
+
+        // Expired: in delivered but not above-threshold in results
+        let expired: Vec<u64> = self
+            .delivered
+            .keys()
+            .filter(|id| {
+                !results
+                    .get(id)
+                    .is_some_and(|r| r.profit > self.min_profit && r.profit <= self.max_profit)
+            })
+            .copied()
+            .collect();
+
+        // Removed: de-registered since last batch
+        let removed: Vec<u64> = self.deregistered.drain(..).collect();
+
+        // Advance `delivered` to the above-threshold subset of current
+        // `results` (ADR-003: this is what makes reorg `expired` diffs real —
+        // a path that was profitable but rolled back must leave `delivered`).
+        //   1. retain only paths still above-threshold in current results
+        //      (drops expired entries — `removed` is handled separately via
+        //      `deregistered`);
+        //   2. insert/overwrite current values so `updated` paths stop
+        //      re-firing every batch once their new value is delivered.
+        self.delivered.retain(|id, _| {
+            results
+                .get(id)
+                .is_some_and(|r| r.profit > self.min_profit && r.profit <= self.max_profit)
+        });
+        for (&id, r) in results {
+            if r.profit > self.min_profit && r.profit <= self.max_profit {
+                self.delivered.insert(id, r.clone());
+            }
+        }
+
+        // Send if channel is available and there's anything to report
+        if let Some(ref tx) = self.result_tx {
+            // Always send a batch even if empty — Python needs the block
+            // metadata and solve_block to drive its main loop.
+            let batch = ResultBatch {
+                solve_block: results_block,
+                timestamp: metadata.timestamp,
+                base_fee_per_gas: metadata.base_fee_per_gas,
+                gas_used: metadata.gas_used,
+                gas_limit: metadata.gas_limit,
+                fresh,
+                updated,
+                expired,
+                removed,
+            };
+            let _ = tx.send(batch);
+        }
+    }
+}
+
+impl ArbitrageEngine {
+    /// Set the sender for the result batch channel. Delegates to the
+    /// [`DeliveryPolicy`]. The solve itself is channel-free — this only
+    /// attaches the optional delivery sink.
+    pub fn set_result_channel(&mut self, tx: mpsc::UnboundedSender<ResultBatch>) {
+        self.delivery.set_result_channel(tx);
+    }
+
+    /// Set the sender for the block-notification channel (epic 6W35AI).
+    /// Delegates to the [`DeliveryPolicy`]; independent of `result_tx`.
+    pub fn set_block_channel(&mut self, tx: mpsc::UnboundedSender<BlockNotification>) {
+        self.delivery.set_block_channel(tx);
+    }
+
+    /// Forward a `newHeads` block tick onto the block-notification channel
+    /// (epic 6W35AI). Delegates to the [`DeliveryPolicy`]; a no-op when no
+    /// block channel is attached.
+    pub fn notify_block(&self, block: u64, metadata: &BlockMetadata) {
+        self.delivery.notify_block(block, metadata);
+    }
+
+    /// Set the profit thresholds for the result batch channel. Delegates to
+    /// the [`DeliveryPolicy`].
+    pub const fn set_profit_thresholds(&mut self, min_profit: U256, max_profit: U256) {
+        self.delivery.set_profit_thresholds(min_profit, max_profit);
+    }
+
+    /// Compute the incremental diff and send a batch to Python. Delegates to
+    /// the [`DeliveryPolicy`], which consumes the solve output
+    /// (`latest_results`) as its input.
+    pub fn compute_diff_and_send(&mut self, metadata: &BlockMetadata) {
+        let results_block = self.results_block;
+        self.delivery
+            .diff_and_send(&self.results, results_block, metadata);
+    }
+
+    /// De-register a path from the engine.
+    ///
+    /// Removes the path from the solve state (`path_pools`, `pool_to_paths`
+    /// reverse index, `path_resolved`, `results`, `pending_new_paths`) and
+    /// hands the delivery bookkeeping (`delivered` / `deregistered`) to the
+    /// [`DeliveryPolicy`]. The path's pools are **not** removed from the
+    /// sub-engines — other paths may still reference them.
+    ///
+    /// The de-registered path ID is recorded and included in the next
+    /// batch's `removed` field.
+    ///
+    /// Returns `true` if the path existed and was removed.
+    pub fn deregister_path(&mut self, path_id: u64) -> bool {
+        // Remove from path_pools and get the pool refs to clean up reverse index
+        let removed = self.path_pools.remove(&path_id);
+        let existed = removed.is_some();
+        if let Some(path) = removed {
+            // Remove from pool_to_paths reverse index
+            for pool_ref in &path.pools {
+                if let Some(path_ids) = self
+                    .pool_to_paths
+                    .get_mut(&(pool_ref.hop_type, pool_ref.pool_key))
+                {
+                    path_ids.retain(|id| *id != path_id);
+                }
+            }
+        }
+
+        // Remove from path_resolved
+        self.path_resolved.remove(&path_id);
+
+        // Remove from results
+        self.results.remove(&path_id);
+
+        // Remove from pending_new_paths
+        self.pending_new_paths.remove(&path_id);
+
+        // Record for the next batch (delivery-policy half)
+        self.delivery.on_path_deregistered(path_id, existed);
+
+        existed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::primitives::U256;
+
+    /// Build a minimal `SolvePathResult` with the given profit (other fields
+    /// are irrelevant to the delivery-policy diff logic).
+    fn solve_result(profit: u64) -> SolvePathResult {
+        SolvePathResult {
+            optimal_input: U256::from(1000),
+            profit: U256::from(profit),
+            hop_outputs: Vec::new(),
+            consumed_inputs: Vec::new(),
+            state_nonces: Vec::new(),
+            solver_pool_states: Vec::new(),
+        }
+    }
+
+    /// BI7UZV core claim: the delivery policy is a **pure consumer** of the
+    /// solve output — feed it a hand-built results map (no `ArbitrageEngine`
+    /// involved) and it computes the true incremental diff against what Python
+    /// has already seen, then advances `delivered`.
+    #[test]
+    fn diff_and_send_consumes_solve_output_independent_of_engine() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut policy = DeliveryPolicy::default();
+        policy.set_result_channel(tx);
+
+        let mut results: HashMap<u64, SolvePathResult> = HashMap::new();
+        results.insert(1, solve_result(500));
+        results.insert(2, solve_result(0)); // below threshold (min=0 is strict `>`)
+        results.insert(3, solve_result(900));
+
+        // Pretend Python already saw path 3 at an older value.
+        policy.delivered.insert(3, solve_result(700));
+
+        policy.diff_and_send(&results, 42, &BlockMetadata::default());
+
+        let batch = rx.try_recv().expect("diff_and_send with a channel sends");
+        assert_eq!(batch.solve_block, 42);
+        // 1 is fresh (never delivered); 3 changed → updated (not fresh).
+        assert!(batch.fresh.iter().any(|(id, _)| *id == 1));
+        assert!(batch.updated.iter().any(|(id, _)| *id == 3));
+        assert!(
+            !batch.fresh.iter().any(|(id, _)| *id == 2),
+            "below-threshold profit must be excluded from fresh"
+        );
+        // Delivered advances to the above-threshold subset only.
+        assert!(policy.delivered.contains_key(&1));
+        assert!(policy.delivered.contains_key(&3));
+        assert!(
+            !policy.delivered.contains_key(&2),
+            "below-threshold path must not be delivered"
+        );
+    }
+
+    /// Standalone contract: with NO `result_tx` attached, `diff_and_send`
+    /// must not panic and must still advance `delivered` — exactly the
+    /// engine-without-channel path a standalone Rust consumer exercises.
+    #[test]
+    fn diff_and_send_without_channel_advances_delivered_without_sending() {
+        let mut policy = DeliveryPolicy::default();
+        let mut results: HashMap<u64, SolvePathResult> = HashMap::new();
+        results.insert(1, solve_result(500));
+        policy.diff_and_send(&results, 7, &BlockMetadata::default());
+        assert!(policy.delivered.contains_key(&1));
+    }
+
+    /// De-registration bookkeeping: drop from `delivered` and queue `removed`
+    /// only for paths that actually existed.
+    #[test]
+    fn on_path_deregistered_removes_from_delivered_and_queues_removed() {
+        let mut policy = DeliveryPolicy::default();
+        policy.delivered.insert(1, solve_result(500));
+        policy.on_path_deregistered(1, true);
+        assert!(!policy.delivered.contains_key(&1));
+        assert_eq!(policy.deregistered, vec![1]);
+        // A path that never existed must NOT be queued for `removed`.
+        policy.on_path_deregistered(99, false);
+        assert_eq!(policy.deregistered, vec![1]);
+    }
+}
