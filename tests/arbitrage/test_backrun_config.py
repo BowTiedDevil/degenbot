@@ -22,7 +22,7 @@ import pytest
 
 from degenbot import config as config_module
 from degenbot.config import RpcNotConfiguredError
-from examples.eth_backrun_helpers import BackrunConfig
+from degenbot.runner.config import BackrunConfig
 
 _HTTP_ENV = "DEGENBOT_RPC_HTTP_CHAINID_1"
 _WS_ENV = "DEGENBOT_RPC_WS_CHAINID_1"

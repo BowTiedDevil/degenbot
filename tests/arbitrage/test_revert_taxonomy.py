@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import eth_abi.abi as eth_abi
 
-from examples.eth_backrun_helpers import (
+from degenbot.runner.config import (
     _EXECUTOR_REVERT_SELECTORS,
     _V4_REVERT_SELECTORS,
     classify_revert,

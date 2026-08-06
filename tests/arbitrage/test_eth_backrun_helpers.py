@@ -14,7 +14,7 @@ classifier infra).
 
 import json
 
-from examples.eth_backrun_helpers import (
+from degenbot.runner.config import (
     filter_thin_margin_results,
     format_sim_diag_line,
 )

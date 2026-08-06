@@ -43,7 +43,8 @@ from pathlib import Path
 from typing import Any, Self, cast
 
 import dotenv
-from eth_backrun_helpers import (
+
+from degenbot.runner.config import (
     BackrunConfig,
     format_failure_breakdown,
     format_sim_diag_line,

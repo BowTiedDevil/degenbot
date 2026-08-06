@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 
 from degenbot.arbitrage.verification_retry import VerificationRetryPolicy
-from examples.eth_backrun_helpers import BackrunConfig
+from degenbot.runner.config import BackrunConfig
 
 
 @pytest.fixture(autouse=True)
