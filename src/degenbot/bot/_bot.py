@@ -40,7 +40,7 @@ from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.database.operations import get_alembic_config, get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.base import DegenbotValueError
-from degenbot.exceptions.pool import BrokenPool, LiquidityPoolError, TrackerAlreadyInitialized
+from degenbot.exceptions.pool import BrokenPool, TrackerAlreadyInitialized
 from degenbot.logging import logger
 from degenbot.provider import (
     AlloyProvider,
@@ -953,7 +953,6 @@ class Bot:
         Raises:
             DegenbotValueError: If identity fields are missing for a pool not
                 in the database.
-            LiquidityPoolError: If the slot0/RPC read fails to decode.
 
         """
         pool_id_bytes = HexBytes(request.pool_id)
@@ -1021,42 +1020,43 @@ class Bot:
             io=io,
         )
 
-        # Fetch slot0 + liquidity FRESH at the price seed block (`head_block`)
-        # — kept for the Python-side companion overrides (`protocol_fee` /
-        # `lp_fee`), which the Rust handle does not expose.
-        try:
-            _sqrt_price_x96, _tick_raw, protocol_fee_raw, lp_fee, _liquidity_val = (
-                io.fetch_v4_slot0_liquidity(state_view_address, pool_id_bytes, block=head_block)
-            )
-        except Exception as exc:
-            raise LiquidityPoolError(message="Could not decode contract data") from exc
-        protocol_fee_zero_to_one = int(protocol_fee_raw) & 0xFFF
-        protocol_fee_one_to_zero = int(protocol_fee_raw) >> 12
-
         # Delegate the build to the Rust PoolBuilder: core `build_v4` fetches
         # slot0/liquidity FRESH + assembles the tick map (Db → Chain
         # precedence) + registers into BotState atomically, using the
         # CORE-resolved identity above. Returns `(pool_id, coverage,
-        # identity...)` — coverage drives the companion's `_sparse_liquidity_map`.
-        pool_handle_pool_id, coverage, b_cur0, b_cur1, b_pm, b_fee, b_ts, b_hf, b_pool_id_hex = (
-            self._py_bot.build_v4_pool(
-                pool_manager=pool_manager_address,
-                pool_id_hex=pool_id_bytes.to_0x_hex(),
-                currency0=currency0_address,
-                currency1=currency1_address,
-                fee=fee_for_pool,
-                tick_spacing=tick_spacing_for_pool,
-                hook_flags=hook_flags,
-                state_view_address=state_view_address,
-                block=int(head_block) if head_block is not None else None,
-                db=True,
-                tick_data_fetcher=self._make_v4_tick_data_fetcher(
-                    pool_id_bytes,
-                    pool_manager_address,
-                    state_view_address,
-                    chain_id,
-                ),
-            )
+        # identity..., protocol_fee, lp_fee)` — coverage drives the companion's
+        # `_sparse_liquidity_map`, and the fee overrides (protocol_fee / lp_fee)
+        # ride back from the SAME head-stamped slot0 read, so the companion no
+        # longer issues a second fetch_v4_slot0_liquidity per pool (CDJEPJ-1).
+        (
+            pool_handle_pool_id,
+            coverage,
+            b_cur0,
+            b_cur1,
+            b_pm,
+            b_fee,
+            b_ts,
+            b_hf,
+            b_pool_id_hex,
+            b_protocol_fee,
+            b_lp_fee,
+        ) = self._py_bot.build_v4_pool(
+            pool_manager=pool_manager_address,
+            pool_id_hex=pool_id_bytes.to_0x_hex(),
+            currency0=currency0_address,
+            currency1=currency1_address,
+            fee=fee_for_pool,
+            tick_spacing=tick_spacing_for_pool,
+            hook_flags=hook_flags,
+            state_view_address=state_view_address,
+            block=int(head_block) if head_block is not None else None,
+            db=True,
+            tick_data_fetcher=self._make_v4_tick_data_fetcher(
+                pool_id_bytes,
+                pool_manager_address,
+                state_view_address,
+                chain_id,
+            ),
         )
         # TF7RZB-S2/S3 return-surface parity: the identity the builder echoes
         # back must match what the core resolver produced (a divergence is a
@@ -1087,10 +1087,10 @@ class Bot:
             get_checksum_address(state_view_address)
         )
         pool.protocol_fee = ProtocolFee(
-            zero_for_one=protocol_fee_zero_to_one,
-            one_for_zero=protocol_fee_one_to_zero,
+            zero_for_one=b_protocol_fee & 0xFFF,
+            one_for_zero=b_protocol_fee >> 12,
         )
-        pool.lp_fee = int(lp_fee)
+        pool.lp_fee = int(b_lp_fee)
         pool._sparse_liquidity_map = not tick_map_is_tracked  # ruff:ignore[private-member-access]
 
         # Register pool in managed pool registry

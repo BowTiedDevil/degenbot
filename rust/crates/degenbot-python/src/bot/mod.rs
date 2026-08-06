@@ -1028,7 +1028,19 @@ impl PyBot {
         block: Option<u64>,
         db: bool,
         tick_data_fetcher: Option<Bound<'_, PyAny>>,
-    ) -> PyResult<(u64, String, String, String, String, u32, i32, u16, String)> {
+    ) -> PyResult<(
+        u64,
+        String,
+        String,
+        String,
+        String,
+        u32,
+        i32,
+        u16,
+        String,
+        u32,
+        u32,
+    )> {
         use degenbot_bot::bot_core::pool_builder::builder;
         use degenbot_core::runtime::get_runtime;
         let pm = parse_address(pool_manager).map_err(|e| {
@@ -1087,9 +1099,14 @@ impl PyBot {
             id.hook_flags,
             format!("0x{}", alloy::hex::encode(id.pool_id)),
         );
-        let mut params = py
+        let result = py
             .detach(|| get_runtime().block_on(builder::build_v4(id, db_ref, &io, block)))
             .map_err(map_builder_err)?;
+        let mut params = result.params;
+        // CDJEPJ-1: lp_fee + protocol_fee come from the SAME head-stamped slot0
+        // read inside build_v4 (no second fetch_v4_slot0_liquidity each pool).
+        let lp_fee = result.lp_fee;
+        let protocol_fee = params.protocol_fee;
         // Sparse-map parity (V4 twin of `build_v3_pool`): `build_v4` leaves the
         // backfill fetcher `None`; inject the Python web3-sync fetcher here.
         if let Some(fetcher) = tick_data_fetcher.filter(|f| !f.is_none()) {
@@ -1105,9 +1122,11 @@ impl PyBot {
             .write()
             .register_v4_pool(&params)
             .map_err(map_register_v4_err)?;
-        // Return `(pool_id, coverage, identity...)` so the Python driver can
-        // set the companion's `_sparse_liquidity_map` (from coverage) and the
-        // normalized identity in one return surface (TF7RZB-S2).
+        // Return `(pool_id, coverage, identity..., protocol_fee, lp_fee)` so the
+        // Python driver can set the companion's `_sparse_liquidity_map` (from
+        // coverage), the normalized identity, and the fee overrides
+        // (protocol_fee/lp_fee from the builder's own slot0 read) in one return
+        // surface (TF7RZB-S2 / CDJEPJ-1).
         Ok((
             pool_id,
             coverage.to_string(),
@@ -1118,6 +1137,8 @@ impl PyBot {
             identity_ret.4,
             identity_ret.5,
             identity_ret.6,
+            protocol_fee,
+            lp_fee,
         ))
     }
 

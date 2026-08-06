@@ -934,6 +934,8 @@ class PyBot:
         int,
         int,
         str,
+        int,
+        int,
     ]: ...
     def update_v2_pool(
         self,

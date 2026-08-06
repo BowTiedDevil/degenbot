@@ -600,7 +600,7 @@ async fn build_v4_assembles_sparse_register_params_from_onchain() {
     );
     let io = io_with(f);
 
-    let params = builder::build_v4(
+    let result = builder::build_v4(
         builder::V4PoolBuildIdentity {
             pool_manager: pm,
             state_view: pm,
@@ -617,6 +617,7 @@ async fn build_v4_assembles_sparse_register_params_from_onchain() {
     )
     .await
     .unwrap();
+    let params = &result.params;
     assert_eq!(params.pool_manager, pm);
     assert_eq!(params.pool_id, pid);
     assert_eq!(params.pool_key.currency0, TO);
@@ -628,6 +629,9 @@ async fn build_v4_assembles_sparse_register_params_from_onchain() {
     assert_eq!(params.tick, 5);
     assert_eq!(params.coverage, PoolTickCoverage::Sparse);
     assert!(params.tick_data.is_empty());
+    // CDJEPJ-1: lp_fee is no longer discarded - returned from the SAME
+    // head-stamped slot0 read as protocol_fee (mock slot0 has lp_fee=50).
+    assert_eq!(result.lp_fee, 50);
 }
 
 /// A `TickMapDb` fake returning a canned `LiquidityMap` (V3 + V4 both query it).

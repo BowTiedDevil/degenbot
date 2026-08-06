@@ -1009,6 +1009,24 @@ pub struct V4PoolBuildIdentity {
     pub hook_flags: u16,
 }
 
+/// The complete result of a V4 pool build: the registration params plus the
+/// LP-fee pip decoded from the same head-stamped slot0 read.
+///
+/// CDJEPJ-1: ``lp_fee`` is exposed here (rather than bloat
+/// [`RegisterV4PoolParams`] with a field the engine/solver does not consume)
+/// so the Python companion can set its ``lp_fee`` override from the builder's
+/// own slot0 read instead of issuing a second, redundant ``fetch_v4_slot0_liquidity``
+/// round-trip. ``protocol_fee`` already rides inside
+/// [`RegisterV4PoolParams::protocol_fee`] (the raw 24-bit word; the companion
+/// splits it into zero-for-one / one-for-zero). Same head stamp, no second read.
+#[derive(Debug)]
+pub struct V4BuildResult {
+    /// Registration params (incl. ``protocol_fee``) fed to the shared `BotState`.
+    pub params: RegisterV4PoolParams,
+    /// The LP-fee pip (``lp_fee``/1e6) decoded from the head-stamped slot0 word.
+    pub lp_fee: u32,
+}
+
 /// Assemble `build_v4` params for a V4 pool identified by
 /// [`V4PoolBuildIdentity`].
 ///
@@ -1029,10 +1047,11 @@ pub async fn build_v4(
     db: Option<&dyn TickMapDb>,
     io: &ConstructionIo,
     block: Option<u64>,
-) -> Result<RegisterV4PoolParams, PoolBuilderError> {
-    let (sqrt_price_x96, tick_i, protocol_fee_u, _lp_fee_u, liquidity_u) =
+) -> Result<V4BuildResult, PoolBuilderError> {
+    let (sqrt_price_x96, tick_i, protocol_fee_u, lp_fee_u, liquidity_u) =
         choreography::fetch_v4_slot0_liquidity(io, id.state_view, id.pool_id, block).await?;
     let protocol_fee = protocol_fee_u.to::<u32>();
+    let lp_fee = lp_fee_u.to::<u32>();
     let tick = i32::try_from(tick_i).unwrap_or(0);
     let update_block = block.unwrap_or(0);
 
@@ -1048,26 +1067,29 @@ pub async fn build_v4(
     )
     .await?;
 
-    Ok(RegisterV4PoolParams {
-        pool_manager: id.pool_manager,
-        pool_id: id.pool_id,
-        pool_key: V4PoolKey {
-            currency0: id.currency0,
-            currency1: id.currency1,
-            fee: id.fee,
-            tick_spacing: id.tick_spacing,
-            hooks: Address::ZERO,
+    Ok(V4BuildResult {
+        params: RegisterV4PoolParams {
+            pool_manager: id.pool_manager,
+            pool_id: id.pool_id,
+            pool_key: V4PoolKey {
+                currency0: id.currency0,
+                currency1: id.currency1,
+                fee: id.fee,
+                tick_spacing: id.tick_spacing,
+                hooks: Address::ZERO,
+            },
+            hook_flags: id.hook_flags,
+            protocol_fee,
+            sqrt_price_x96,
+            liquidity: liquidity_u.to::<u128>(),
+            tick,
+            tick_data,
+            update_block,
+            tick_data_block: Some(update_block),
+            coverage,
+            fetcher: None,
         },
-        hook_flags: id.hook_flags,
-        protocol_fee,
-        sqrt_price_x96,
-        liquidity: liquidity_u.to::<u128>(),
-        tick,
-        tick_data,
-        update_block,
-        tick_data_block: Some(update_block),
-        coverage,
-        fetcher: None,
+        lp_fee,
     })
 }
 
