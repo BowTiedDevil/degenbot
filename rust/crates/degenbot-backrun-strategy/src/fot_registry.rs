@@ -41,7 +41,9 @@ use std::collections::{HashMap, HashSet};
 use alloy::primitives::{Address, U256};
 use degenbot_executor::composers::HopInfo;
 
-use crate::pool_divergence::{captured_swap_output, is_solver_calc_failure};
+use crate::pool_divergence::{
+    captured_swap_output, hop_pool_key, is_solver_calc_failure, PoolDivergenceKey,
+};
 use crate::simulator::SimFailure;
 
 /// The set of `reverting_frame.label` values that indicate a fee-on-transfer
@@ -78,17 +80,26 @@ use crate::simulator::SimFailure;
 const FOT_REVERT_LABELS: &[&str] = &["IIA", "CurrencyNotSettled", "UniswapV2: K"];
 
 /// Attribute a `SimFailure` to the input token of the failing hop AND the
-/// reverting pool's address, if the failure's `reverting_frame.label` is a
-/// FoT signature (`IIA` for V3, `CurrencyNotSettled` for V4,
-/// `UniswapV2: K` for V2 — confirmed by spike `5MP3HQ`'s mainnet experiment
-/// with RFI). Returns `None` for non-FoT-classifiable failures, missing
-/// `reverting_frame`, or when the reverting pool's address cannot be matched
-/// to a hop in `hops`.
+/// failing pool's chain-identity key, if the failure's
+/// `reverting_frame.label` is a FoT signature (`IIA` for V3,
+/// `CurrencyNotSettled` for V4, `UniswapV2: K` for V2 — confirmed by spike
+/// `5MP3HQ`'s mainnet experiment with RFI). Returns `None` for
+/// non-FoT-classifiable failures, missing `reverting_frame`, or when the
+/// reverting pool cannot be matched to a hop in `hops` (or its V4 `poolId`
+/// hex is malformed).
 ///
-/// Returns `(token, reverting_pool)` so the [`FeeOnTransferRegistry`] can
-/// track the DISTINCT failing pool addresses per token — the disambiguation
-/// between FoT (fails across ≥ K distinct pools, 0 successes) and stale-state
-/// (fails at 1 pool only, token succeeds elsewhere).
+/// Returns `(token, pool_key)` so the [`FeeOnTransferRegistry`] can track the
+/// DISTINCT failing pool identities per token — the disambiguation between
+/// FoT (fails across ≥ K distinct pools, 0 successes) and stale-state (fails
+/// at 1 pool only, token succeeds elsewhere). The pool identity is the hop's
+/// [`PoolDivergenceKey`] via [`hop_pool_key`], NOT the reverting frame's raw
+/// `target` — ergo `DLSKD7`'s V4 gap: every V4 pool shares one PoolManager
+/// address, so keying on `frame.target` collapsed every V4 pool to a single
+/// `failing_pools` entry and the K=2 threshold could never fire (a V4 FoT
+/// token was structurally un-confirmable). Keying by hop mirrors
+/// [`diverging_pool_keys`](crate::diverging_pool_keys): V2/V3 by pool address
+/// (identical to `frame.target`), V4 by the `poolId` bytes32 from
+/// `V4HopInfo.pool_id_hex`.
 ///
 /// `hops` is the path's `HopInfo` list (the dispatch path's
 /// `path_info_by_id[pid].hops`). The failing hop is the one whose pool
@@ -101,27 +112,37 @@ const FOT_REVERT_LABELS: &[&str] = &["IIA", "CurrencyNotSettled", "UniswapV2: K"
 /// V4 caveat: the reverting frame's `target` is the PoolManager address
 /// (shared by every V4 pool), so the lookup matches the FIRST V4 hop with
 /// that PoolManager address — which may be the wrong pool when the path has
-/// multiple V4 hops through the same PoolManager. The spike surfaces whether
-/// this is a real ambiguity on mainnet (most paths have at most one V4 hop);
-/// the production version may need the V4 `poolId` carried on the reverting
-/// frame (currently only the target address is).
+/// multiple V4 hops through the same PoolManager (see [`hop_for_target`]).
+/// This is a documented limitation, not a regression: most paths have at most
+/// one V4 hop, and the token identity (what FoT confirmation actually gates
+/// on) is unaffected. Resolving the exact failing V4 `poolId` when several
+/// share a PoolManager would require threading the `poolId` onto the
+/// reverting frame (currently only the target address is carried) — a larger
+/// inspector change deferred out of this spike, with the single-hop case
+/// already correct.
 #[must_use]
 pub fn fot_suspected_token_from_reverting_frame(
     failure: &SimFailure,
     hops: &[HopInfo],
-) -> Option<(Address, Address)> {
+) -> Option<(Address, PoolDivergenceKey)> {
     let frame = failure.reverting_frame.as_ref()?;
     if !FOT_REVERT_LABELS.contains(&frame.label.as_str()) {
         return None;
     }
-    hop_input_token_for_target(hops, frame.target).map(|token| (token, frame.target))
+    // The failing pool's identity is the hop's POOL KEY (`hop_pool_key`) —
+    // not `frame.target` (the shared PoolManager for V4) — so a V4 token's
+    // distinct failing pools are distinct `poolId`s and the K=2 threshold can
+    // actually fire. A malformed V4 `pool_id_hex` → `hop_pool_key` → `None` →
+    // skip (never flag a pool we can't identify — same as divergence).
+    let hop = hop_for_target(hops, frame.target)?;
+    hop_pool_key(hop).map(|pool_key| (hop_input_token(hop), pool_key))
 }
 
 /// The V2 non-reverting FoT case — the swap committed, K-invariant held (no
 /// revert), but the captured swap output is SHORTER than the solver's
 /// `hop_outputs[i]` because the fee ate some of the input. Reuses the existing
 /// `is_solver_calc_failure` mismatch path + attributes via the mismatching
-/// hop's input token. Returns `None` when the failure is not
+/// hop's input token + POOL KEY. Returns `None` when the failure is not
 /// `SolverCalc`-class or the mismatching hop isn't found.
 ///
 /// **DEAD CODE for the FoT case** (spike `5MP3HQ` finding F4): V2 FoT
@@ -131,13 +152,16 @@ pub fn fot_suspected_token_from_reverting_frame(
 /// forced-mismatch scenario but is structurally unreachable for the FoT
 /// case; the `PoolDivergence` feature owns the captured-swap-mismatch path.
 /// Mirrors `diverging_pool_keys` — zips captured_swaps ↔ hop_outputs ↔ hops
-/// (the triple-length guard), returns the input token of the first mismatch
-/// + the captured swap's emitter as the reverting pool.
+/// (the triple-length guard), returns the input token + POOL KEY of the
+/// first mismatch. The pool key is the hop's [`PoolDivergenceKey`] (via
+/// [`hop_pool_key`]), NOT `swap.emitter` — the shared PoolManager for V4, so
+/// keying on the emitter would re-create the `DLSKD7` V4-collapse gap here
+/// too.
 #[must_use]
 pub fn fot_suspected_token_from_swap_mismatch(
     failure: &SimFailure,
     hops: &[HopInfo],
-) -> Option<(Address, Address)> {
+) -> Option<(Address, PoolDivergenceKey)> {
     if !is_solver_calc_failure(failure) {
         return None;
     }
@@ -155,7 +179,11 @@ pub fn fot_suspected_token_from_swap_mismatch(
             if captured_swap_output(swap) == U256::from(*expected) {
                 None
             } else {
-                Some((hop_input_token(hop), swap.emitter))
+                // Use the hop's POOL KEY (not `swap.emitter`) so the failing-
+                // pool identity is the V4 `poolId`, consistent with the
+                // reverting-frame path; a malformed V4 `pool_id_hex` → None →
+                // skip.
+                hop_pool_key(hop).map(|pool_key| (hop_input_token(hop), pool_key))
             }
         })
 }
@@ -163,10 +191,14 @@ pub fn fot_suspected_token_from_swap_mismatch(
 /// Convenience wrapper — the V3/V4 reverting case OR the V2 swap-mismatch
 /// case, whichever fires first (the V2 case requires `captured_swaps`
 /// populated, which the V3/V4 root-frame revert empty-captures, so the two
-/// are mutually exclusive in practice). Returns `(token, reverting_pool)`
-/// so the [`FeeOnTransferRegistry`] can track distinct failing pools.
+/// are mutually exclusive in practice). Returns `(token, pool_key)` so the
+/// [`FeeOnTransferRegistry`] can track distinct failing pools (V2/V3 by
+/// address, V4 by `poolId` — see [`fot_suspected_token_from_reverting_frame`]).
 #[must_use]
-pub fn fot_suspected_token(failure: &SimFailure, hops: &[HopInfo]) -> Option<(Address, Address)> {
+pub fn fot_suspected_token(
+    failure: &SimFailure,
+    hops: &[HopInfo],
+) -> Option<(Address, PoolDivergenceKey)> {
     fot_suspected_token_from_reverting_frame(failure, hops)
         .or_else(|| fot_suspected_token_from_swap_mismatch(failure, hops))
 }
@@ -235,17 +267,19 @@ pub fn hop_output_token(hop: &HopInfo) -> Address {
     }
 }
 
-/// The input token of the hop whose pool address matches `target`. V2/V3
+/// The first hop whose pool matches the reverting frame's `target`. V2/V3
 /// pools match on `pool_address`; V4 matches on `pool_manager_address` (the
-/// PoolManager; the spike notes the multi-V4-hop ambiguity). Returns `None`
-/// when no hop matches — the reverting pool isn't on this path (a dispatch
-/// bookkeeping bug, or the frame's target was an inner callback contract).
-fn hop_input_token_for_target(hops: &[HopInfo], target: Address) -> Option<Address> {
-    hops.iter().find_map(|hop| match hop {
-        HopInfo::V2(v2) if v2.pool_address == target => Some(hop_input_token(hop)),
-        HopInfo::V3(v3) if v3.pool_address == target => Some(hop_input_token(hop)),
-        HopInfo::V4(v4) if v4.pool_manager_address == target => Some(hop_input_token(hop)),
-        _ => None,
+/// shared PoolManager — the multi-V4-hop ambiguity: when several V4 hops go
+/// through the same PoolManager, this returns the FIRST, which may be the
+/// wrong pool; the token identity is unaffected, so FoT confirmation still
+/// keys correctly on the token). Returns `None` when no hop matches — the
+/// reverting pool isn't on this path (a dispatch bookkeeping bug, or the
+/// frame's target was an inner callback contract).
+fn hop_for_target(hops: &[HopInfo], target: Address) -> Option<&HopInfo> {
+    hops.iter().find(|hop| match hop {
+        HopInfo::V2(v2) => v2.pool_address == target,
+        HopInfo::V3(v3) => v3.pool_address == target,
+        HopInfo::V4(v4) => v4.pool_manager_address == target,
     })
 }
 
@@ -272,7 +306,7 @@ pub const FOT_DECAY_BLOCKS: u64 = 100;
 pub const FOT_SUSPICION_THRESHOLD_POOLS: usize = 2;
 
 /// The per-token record tracked by [`FeeOnTransferRegistry`]. Carries the
-/// distinct reverting pool addresses + whether any path involving the token
+/// distinct failing pool identities + whether any path involving the token
 /// has ever succeeded (within the decay window) + the last-flagged block.
 ///
 /// The disambiguation between FoT and stale-state:
@@ -282,9 +316,12 @@ pub const FOT_SUSPICION_THRESHOLD_POOLS: usize = 2;
 ///   token succeeds through other pools).
 #[derive(Debug, Clone, Default)]
 pub struct FotTokenRecord {
-    /// The distinct V2/V3/V4 pool addresses that reverted involving this
-    /// token as the input.
-    pub failing_pools: HashSet<Address>,
+    /// The distinct failing pool identities that reverted involving this
+    /// token as the input — keyed by [`PoolDivergenceKey`] (V2/V3 pool
+    /// address, V4 `poolId` bytes32) so a V4 token's distinct failing pools
+    /// are distinct `poolId`s, NOT one shared PoolManager address (the
+    /// ergo `DLSKD7` fix — without it the V4 K=2 threshold could never fire).
+    pub failing_pools: HashSet<PoolDivergenceKey>,
     /// Sticky within the decay window — once `true`, `is_fot` returns
     /// `false` until the record decays.
     pub has_any_success: bool,
@@ -347,12 +384,20 @@ impl FeeOnTransferRegistry {
         self.verified_non_fot = verified;
     }
 
-    /// Record that `token` flagged a FoT suspicion at `pool_address` at
-    /// `current_block`. Adds the pool to the token's failing-pool set +
-    /// updates `last_flagged_block`.
-    pub fn record_suspicion(&mut self, token: Address, pool_address: Address, current_block: u64) {
+    /// Record that `token` flagged a FoT suspicion at the pool identified by
+    /// `pool_key` at `current_block`. Adds the pool identity to the token's
+    /// failing-pool set + updates `last_flagged_block`. The key is the hop's
+    /// [`PoolDivergenceKey`] (V2/V3 address, V4 `poolId`) — seeing the V4
+    /// `poolId` rather than the shared PoolManager is what lets the K=2
+    /// distinct-pool threshold fire for a V4 FoT token (ergo `DLSKD7`).
+    pub fn record_suspicion(
+        &mut self,
+        token: Address,
+        pool_key: PoolDivergenceKey,
+        current_block: u64,
+    ) {
         let record = self.records.entry(token).or_default();
-        record.failing_pools.insert(pool_address);
+        record.failing_pools.insert(pool_key);
         record.last_flagged_block = current_block;
     }
 
@@ -452,13 +497,20 @@ mod tests {
     use super::*;
     use crate::simulator::RevertingFrame;
     use crate::CapturedSwap;
-    use alloy::primitives::{address, Bytes};
+    use crate::PoolDivergenceKey;
+    use alloy::primitives::{address, Bytes, B256};
 
     const V2_POOL: Address = address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
     const V3_POOL: Address = address!("cccccccccccccccccccccccccccccccccccccccc");
     const V4_PM: Address = address!("dddddddddddddddddddddddddddddddddddddddd");
     const TOKEN_IN: Address = address!("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
     const TOKEN_OUT: Address = address!("ffffffffffffffffffffffffffffffffffffffff");
+    // Two DISTINCT V4 poolIds through the SAME PoolManager (V4_PM) — the
+    // ergo `DLSKD7` acceptance: a V4 token failing across 2 distinct
+    // poolIds must reach FoT confirmation (keyed by poolId, not the
+    // shared PoolManager address, so the K=2 threshold can fire).
+    const V4_POOL_ID_A: &str = "0xabcd000000000000000000000000000000000000000000000000000000000001";
+    const V4_POOL_ID_B: &str = "0xabcd000000000000000000000000000000000000000000000000000000000002";
 
     // zfo = true → input token = token0 / currency0
     fn v2_hop_zfo(pool: Address) -> HopInfo {
@@ -489,11 +541,10 @@ mod tests {
             zfo: true,
         })
     }
-    fn v4_hop(pm: Address) -> HopInfo {
+    fn v4_hop(pm: Address, pool_id_hex: &str) -> HopInfo {
         HopInfo::V4(degenbot_executor::composers::V4HopInfo {
             pool_manager_address: pm,
-            pool_id_hex: "0xabcd000000000000000000000000000000000000000000000000000000000001"
-                .to_string(),
+            pool_id_hex: pool_id_hex.to_string(),
             currency0_address: TOKEN_IN,
             currency1_address: TOKEN_OUT,
             fee: 3000,
@@ -501,6 +552,22 @@ mod tests {
             hook_address: Address::ZERO,
             zfo: true,
         })
+    }
+
+    // Pool-identity helpers — wrap a hop address / V4 poolId hex into a
+    // `PoolDivergenceKey`, the failing-pool identity the FoT registry keys on.
+    fn v2_key(a: Address) -> PoolDivergenceKey {
+        PoolDivergenceKey::V2(a)
+    }
+    fn v3_key(a: Address) -> PoolDivergenceKey {
+        PoolDivergenceKey::V3(a)
+    }
+    fn v4_key(hex: &str) -> PoolDivergenceKey {
+        let stripped = hex.strip_prefix("0x").unwrap_or(hex);
+        let bytes = alloy::hex::decode(stripped).expect("valid 0x hex");
+        PoolDivergenceKey::V4(B256::from(
+            <[u8; 32]>::try_from(bytes.as_slice()).expect("32 bytes"),
+        ))
     }
 
     fn frame(label: &str, target: Address) -> RevertingFrame {
@@ -545,14 +612,38 @@ mod tests {
     fn v3_iia_revert_attributes_to_input_token_zfo_true() {
         let hops = vec![v3_hop(V3_POOL)];
         let f = failure_no_captures("IIA", V3_POOL);
-        assert_eq!(fot_suspected_token(&f, &hops), Some((TOKEN_IN, V3_POOL)));
+        assert_eq!(
+            fot_suspected_token(&f, &hops),
+            Some((TOKEN_IN, v3_key(V3_POOL)))
+        );
     }
 
     #[test]
     fn v4_currency_not_settled_attributes_to_input_token() {
-        let hops = vec![v4_hop(V4_PM)];
+        let hops = vec![v4_hop(V4_PM, V4_POOL_ID_A)];
         let f = failure_no_captures("CurrencyNotSettled", V4_PM);
-        assert_eq!(fot_suspected_token(&f, &hops), Some((TOKEN_IN, V4_PM)));
+        // The reverting frame's target is the shared PoolManager (V4_PM), but
+        // the failing-pool identity is the hop's V4 `poolId` (`V4_POOL_ID_A`) —
+        // the ergo `DLSKD7` fix that lets a V4 token reach K=2 confirmation.
+        assert_eq!(
+            fot_suspected_token(&f, &hops),
+            Some((TOKEN_IN, v4_key(V4_POOL_ID_A)))
+        );
+    }
+
+    #[test]
+    fn v4_two_hops_same_poolmanager_attributes_to_first() {
+        // Two DISTINCT V4 hops through the SAME PoolManager. The reverting
+        // frame carries only the PoolManager target, so the attribution
+        // resolves to the FIRST matching V4 hop (documented limitation — the
+        // poolId isn't on the reverting frame). The token identity (what FoT
+        // confirmation actually gates on) is correct either way.
+        let hops = vec![v4_hop(V4_PM, V4_POOL_ID_A), v4_hop(V4_PM, V4_POOL_ID_B)];
+        let f = failure_no_captures("CurrencyNotSettled", V4_PM);
+        assert_eq!(
+            fot_suspected_token(&f, &hops),
+            Some((TOKEN_IN, v4_key(V4_POOL_ID_A)))
+        );
     }
 
     #[test]
@@ -560,7 +651,10 @@ mod tests {
         // zfo = false → input token is token1 (= TOKEN_IN, the FoT token here).
         let hops = vec![v2_hop_one_for_zero(V2_POOL)];
         let f = failure_no_captures("IIA", V2_POOL);
-        assert_eq!(fot_suspected_token(&f, &hops), Some((TOKEN_IN, V2_POOL)));
+        assert_eq!(
+            fot_suspected_token(&f, &hops),
+            Some((TOKEN_IN, v2_key(V2_POOL)))
+        );
     }
 
     #[test]
@@ -578,7 +672,10 @@ mod tests {
         // the hop with that pool_address → returns its input token.
         let hops = vec![v2_hop_zfo(V2_POOL)];
         let f = failure_no_captures("UniswapV2: K", V2_POOL);
-        assert_eq!(fot_suspected_token(&f, &hops), Some((TOKEN_IN, V2_POOL)));
+        assert_eq!(
+            fot_suspected_token(&f, &hops),
+            Some((TOKEN_IN, v2_key(V2_POOL)))
+        );
     }
 
     #[test]
@@ -611,7 +708,7 @@ mod tests {
         let second_pool = address!("3333333333333333333333333333333333333333");
         assert_eq!(
             fot_suspected_token(&f, &hops),
-            Some((TOKEN_IN, second_pool))
+            Some((TOKEN_IN, v3_key(second_pool)))
         );
     }
 
@@ -666,7 +763,10 @@ mod tests {
             vec![swap_output_short(degenbot_simulation::SwapFamily::V2, 2950)],
             vec![3000],
         );
-        assert_eq!(fot_suspected_token(&f, &hops), Some((TOKEN_IN, V2_POOL)));
+        assert_eq!(
+            fot_suspected_token(&f, &hops),
+            Some((TOKEN_IN, v2_key(V2_POOL)))
+        );
     }
 
     #[test]
@@ -712,7 +812,10 @@ mod tests {
         // The wrapper should attribute via the reverting-frame path.
         let hops = vec![v3_hop(V3_POOL)];
         let f = failure_no_captures("IIA", V3_POOL);
-        assert_eq!(fot_suspected_token(&f, &hops), Some((TOKEN_IN, V3_POOL)));
+        assert_eq!(
+            fot_suspected_token(&f, &hops),
+            Some((TOKEN_IN, v3_key(V3_POOL)))
+        );
     }
 
     #[test]
@@ -722,7 +825,10 @@ mod tests {
             vec![swap_output_short(degenbot_simulation::SwapFamily::V2, 2950)],
             vec![3000],
         );
-        assert_eq!(fot_suspected_token(&f, &hops), Some((TOKEN_IN, V2_POOL)));
+        assert_eq!(
+            fot_suspected_token(&f, &hops),
+            Some((TOKEN_IN, v2_key(V2_POOL)))
+        );
     }
 
     // =====================================================================
@@ -737,7 +843,7 @@ mod tests {
         // K=2 distinct pools required — a single failing pool (stale state)
         // does NOT flag the token as FoT.
         let mut reg = FeeOnTransferRegistry::new();
-        reg.record_suspicion(TOKEN_IN, V2_POOL, 100);
+        reg.record_suspicion(TOKEN_IN, v2_key(V2_POOL), 100);
         assert!(!reg.is_fot(TOKEN_IN, 100));
     }
 
@@ -745,8 +851,8 @@ mod tests {
     fn registry_k_distinct_pools_flag_token() {
         // 2 distinct failing pools + 0 successes → flagged.
         let mut reg = FeeOnTransferRegistry::new();
-        reg.record_suspicion(TOKEN_IN, V2_POOL, 100);
-        reg.record_suspicion(TOKEN_IN, SECOND_POOL, 100);
+        reg.record_suspicion(TOKEN_IN, v2_key(V2_POOL), 100);
+        reg.record_suspicion(TOKEN_IN, v2_key(SECOND_POOL), 100);
         assert!(reg.is_fot(TOKEN_IN, 100));
     }
 
@@ -755,9 +861,76 @@ mod tests {
         // 2 suspicions at the SAME pool → failing_pools.len() == 1 → not
         // flagged (the disambiguation: stale state fails at 1 pool).
         let mut reg = FeeOnTransferRegistry::new();
-        reg.record_suspicion(TOKEN_IN, V2_POOL, 100);
-        reg.record_suspicion(TOKEN_IN, V2_POOL, 101);
+        reg.record_suspicion(TOKEN_IN, v2_key(V2_POOL), 100);
+        reg.record_suspicion(TOKEN_IN, v2_key(V2_POOL), 101);
         assert!(!reg.is_fot(TOKEN_IN, 101));
+    }
+
+    // =====================================================================
+    // V4 keying (ergo DLSKD7) — the acceptance: a V4 token CAN be confirmed
+    // =====================================================================
+
+    #[test]
+    fn registry_v4_distinct_pool_ids_flag_token() {
+        // The spike's core acceptance — a synthetic V4 FoT token reaches
+        // confirmation when it fails across TWO DISTINCT V4 poolIds (through
+        // the SAME PoolManager). Pre-fix each V4 pool keyed under the shared
+        // PoolManager address, collapsing `failing_pools` to {PoolManager}
+        // so the K=2 threshold could never fire.
+        let mut reg = FeeOnTransferRegistry::new();
+        reg.record_suspicion(TOKEN_IN, v4_key(V4_POOL_ID_A), 100);
+        reg.record_suspicion(TOKEN_IN, v4_key(V4_POOL_ID_B), 100);
+        assert!(reg.is_fot(TOKEN_IN, 100));
+    }
+
+    #[test]
+    fn registry_v4_single_pool_id_does_not_flag() {
+        // Stale-state protection preserved for V4: a token failing at ONE V4
+        // poolId only (a single stale V4 pool) stays UNflagged.
+        let mut reg = FeeOnTransferRegistry::new();
+        reg.record_suspicion(TOKEN_IN, v4_key(V4_POOL_ID_A), 100);
+        reg.record_suspicion(TOKEN_IN, v4_key(V4_POOL_ID_A), 101);
+        assert!(!reg.is_fot(TOKEN_IN, 101));
+    }
+
+    #[test]
+    fn registry_v4_mixed_with_v2_reaches_confirmation() {
+        // A V4 token failing at ONE V4 poolId + ONE V2 pool = 2 distinct
+        // identities → confirmed (the cross-family disambiguation).
+        let mut reg = FeeOnTransferRegistry::new();
+        reg.record_suspicion(TOKEN_IN, v4_key(V4_POOL_ID_A), 100);
+        reg.record_suspicion(TOKEN_IN, v2_key(V2_POOL), 100);
+        assert!(reg.is_fot(TOKEN_IN, 100));
+    }
+
+    #[test]
+    fn v4_currency_not_settled_two_distinct_pool_ids_confirm() {
+        // End-to-end attribution → registry: two CurrencyNotSettled failures
+        // on two DISTINCT V4 poolIds (both through V4_PM) confirm the token.
+        let mut reg = FeeOnTransferRegistry::new();
+        for pool_id in [V4_POOL_ID_A, V4_POOL_ID_B] {
+            let hops = vec![v4_hop(V4_PM, pool_id)];
+            let f = failure_no_captures("CurrencyNotSettled", V4_PM);
+            if let Some((token, pool_key)) = fot_suspected_token(&f, &hops) {
+                reg.record_suspicion(token, pool_key, 100);
+            }
+        }
+        assert!(reg.is_fot(TOKEN_IN, 100));
+    }
+
+    #[test]
+    fn v4_currency_not_settled_single_pool_id_stays_unconfirmed() {
+        // Stale-state protection end-to-end: one V4 poolId (even across two
+        // different suspicious blocks) never confirms the token.
+        let mut reg = FeeOnTransferRegistry::new();
+        for block in [100, 105] {
+            let hops = vec![v4_hop(V4_PM, V4_POOL_ID_A)];
+            let f = failure_no_captures("CurrencyNotSettled", V4_PM);
+            if let Some((token, pool_key)) = fot_suspected_token(&f, &hops) {
+                reg.record_suspicion(token, pool_key, block);
+            }
+        }
+        assert!(!reg.is_fot(TOKEN_IN, 105));
     }
 
     #[test]
@@ -766,8 +939,8 @@ mod tests {
         // 0-success disambiguator keeps it unflagged (a token that ever
         // succeeds is not FoT).
         let mut reg = FeeOnTransferRegistry::new();
-        reg.record_suspicion(TOKEN_IN, V2_POOL, 100);
-        reg.record_suspicion(TOKEN_IN, SECOND_POOL, 100);
+        reg.record_suspicion(TOKEN_IN, v2_key(V2_POOL), 100);
+        reg.record_suspicion(TOKEN_IN, v2_key(SECOND_POOL), 100);
         assert!(reg.is_fot(TOKEN_IN, 100));
         reg.record_success(TOKEN_IN, 101);
         assert!(!reg.is_fot(TOKEN_IN, 101));
@@ -777,8 +950,8 @@ mod tests {
     fn registry_decays_after_clean_window() {
         // A flagged token clears after FOT_DECAY_BLOCKS of clean history.
         let mut reg = FeeOnTransferRegistry::new();
-        reg.record_suspicion(TOKEN_IN, V2_POOL, 100);
-        reg.record_suspicion(TOKEN_IN, SECOND_POOL, 100);
+        reg.record_suspicion(TOKEN_IN, v2_key(V2_POOL), 100);
+        reg.record_suspicion(TOKEN_IN, v2_key(SECOND_POOL), 100);
         assert!(reg.is_fot(TOKEN_IN, 100));
         assert!(!reg.is_fot(TOKEN_IN, 100 + FOT_DECAY_BLOCKS));
     }
@@ -787,10 +960,10 @@ mod tests {
     fn registry_refresh_suspicion_extends_window() {
         // A fresh suspicion pushes the decay window forward.
         let mut reg = FeeOnTransferRegistry::new();
-        reg.record_suspicion(TOKEN_IN, V2_POOL, 100);
-        reg.record_suspicion(TOKEN_IN, SECOND_POOL, 100);
+        reg.record_suspicion(TOKEN_IN, v2_key(V2_POOL), 100);
+        reg.record_suspicion(TOKEN_IN, v2_key(SECOND_POOL), 100);
         // A second suspicion at block 150 → the decay window starts at 150.
-        reg.record_suspicion(TOKEN_IN, THIRD_POOL, 150);
+        reg.record_suspicion(TOKEN_IN, v2_key(THIRD_POOL), 150);
         assert!(reg.is_fot(TOKEN_IN, 150));
         // Still flagged at 150 + 99 (within 100 blocks of 150).
         assert!(reg.is_fot(TOKEN_IN, 249));
@@ -802,10 +975,10 @@ mod tests {
     fn registry_fot_tokens_returns_only_confirmed() {
         let mut reg = FeeOnTransferRegistry::new();
         // TOKEN_IN: 2 distinct pools, 0 successes → confirmed FoT.
-        reg.record_suspicion(TOKEN_IN, V2_POOL, 100);
-        reg.record_suspicion(TOKEN_IN, SECOND_POOL, 100);
+        reg.record_suspicion(TOKEN_IN, v2_key(V2_POOL), 100);
+        reg.record_suspicion(TOKEN_IN, v2_key(SECOND_POOL), 100);
         // TOKEN_OUT: 1 pool → not confirmed.
-        reg.record_suspicion(TOKEN_OUT, V2_POOL, 100);
+        reg.record_suspicion(TOKEN_OUT, v2_key(V2_POOL), 100);
         let confirmed = reg.fot_tokens(100);
         assert_eq!(confirmed.len(), 1);
         assert_eq!(confirmed[0].0, TOKEN_IN);
@@ -834,8 +1007,8 @@ mod tests {
     // =====================================================================
 
     fn reg_flagged_at_two_pools(reg: &mut FeeOnTransferRegistry, token: Address) {
-        reg.record_suspicion(token, V2_POOL, 100);
-        reg.record_suspicion(token, SECOND_POOL, 100);
+        reg.record_suspicion(token, v2_key(V2_POOL), 100);
+        reg.record_suspicion(token, v2_key(SECOND_POOL), 100);
     }
 
     #[test]
@@ -865,7 +1038,7 @@ mod tests {
         // confirmed, so the guard passes and no panic fires.
         let mut reg = FeeOnTransferRegistry::new();
         reg.set_verified_non_fot([TOKEN_IN].into_iter().collect());
-        reg.record_suspicion(TOKEN_IN, V2_POOL, 100);
+        reg.record_suspicion(TOKEN_IN, v2_key(V2_POOL), 100);
         assert!(!reg.is_fot(TOKEN_IN, 100));
         assert!(reg.fot_tokens(100).is_empty());
     }
@@ -914,6 +1087,6 @@ mod tests {
         assert_eq!(hop_output_token(&v2_hop_one_for_zero(V2_POOL)), TOKEN_OUT);
         assert_eq!(hop_input_token(&v2_hop_one_for_zero(V2_POOL)), TOKEN_IN);
         assert_eq!(hop_output_token(&v3_hop(V3_POOL)), TOKEN_OUT);
-        assert_eq!(hop_output_token(&v4_hop(V4_PM)), TOKEN_OUT);
+        assert_eq!(hop_output_token(&v4_hop(V4_PM, V4_POOL_ID_A)), TOKEN_OUT);
     }
 }

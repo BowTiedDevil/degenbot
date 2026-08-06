@@ -738,17 +738,19 @@ pub fn dispatch_profitable_results(
 
     // 7.5. FoT feedback — record suspicions for FoT-suspected failures (ergo
     //      `3O535Q`). The `fot_suspected_token` leaf returns `(token,
-    //      reverting_pool)` for failures whose `reverting_frame.label` is in
+    //      pool_key)` for failures whose `reverting_frame.label` is in
     //      `FOT_REVERT_LABELS` (`IIA`, `CurrencyNotSettled`, `UniswapV2: K`).
-    //      The registry tracks the distinct failing pool addresses per token
-    //      + the 0-success flag; the skip (step 2.5) drops paths whose any
-    //      hop's input token is FoT-confirmed. Same standalone-arc discipline.
+    //      The pool_key is the hop's `PoolDivergenceKey` (V2/V3 address, V4
+    //      `poolId` — see ergo `DLSKD7`); the registry tracks the distinct
+    //      failing pool identities per token + the 0-success flag; the skip
+    //      (step 2.5) drops paths whose any hop's input token is FoT-confirmed.
+    //      Same standalone-arc discipline.
     {
         let mut fr = fot_registry.lock().expect("fot_registry mutex poisoned");
         for f in &outcome.failures {
             if let Some(path_info) = path_info_by_id.get(&f.path_id) {
-                if let Some((token, pool)) = fot_suspected_token(f, &path_info.hops) {
-                    fr.record_suspicion(token, pool, current_block);
+                if let Some((token, pool_key)) = fot_suspected_token(f, &path_info.hops) {
+                    fr.record_suspicion(token, pool_key, current_block);
                 }
             }
         }
