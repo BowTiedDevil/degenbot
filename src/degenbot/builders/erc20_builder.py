@@ -95,7 +95,9 @@ class Erc20Builder:
                 chain_id,
             )
             token: Erc20Token = EtherPlaceholder._from_py_token(py_token)  # ruff:ignore[private-member-access]
-            self._tokens.add(token_address=token.address, chain_id=chain_id, token=token)
+            token = self._tokens.get_or_add(
+                token_address=token.address, chain_id=chain_id, token=token
+            )
             if not silent:
                 logger.info(f"• {token.symbol} ({token.name})")
             return token
@@ -202,8 +204,10 @@ class Erc20Builder:
         py_token = self._py_bot.register_token(address, name, symbol, decimals, chain_id)
         token = Erc20Token._from_py_token(py_token)  # ruff:ignore[private-member-access]
 
-        # Register (no self-registration)
-        self._tokens.add(token_address=token.address, chain_id=chain_id, token=token)
+        # Register idempotently (35NMBX Guard 1): a concurrent worker may have
+        # built + registered this same token first; use the canonical instance
+        # so a path sharing it is not lossily skipped.
+        token = self._tokens.get_or_add(token_address=token.address, chain_id=chain_id, token=token)
 
         if not silent:
             logger.info(f"• {token.symbol} ({token.name})")

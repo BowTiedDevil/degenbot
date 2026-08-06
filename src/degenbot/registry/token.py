@@ -38,6 +38,24 @@ class TokenRegistry(AddressRegistry["Erc20Token"]):
         """Register a token."""
         self._add(item=token, chain_id=chain_id, address=token_address)
 
+    def get_or_add(
+        self,
+        token_address: str,
+        chain_id: ChainId,
+        token: "Erc20Token",
+    ) -> "Erc20Token":
+        """Idempotently register a token, returning the stored instance.
+
+        If a concurrent registration worker already built this token, return the
+        canonical stored instance instead of raising (35NMBX Guard 1) — a
+        distinct path sharing this token is not lossily skipped.
+
+        Returns:
+            The stored token instance (the existing canonical one on a duplicate).
+
+        """
+        return self._get_or_add(item=token, chain_id=chain_id, address=token_address)
+
     def remove(
         self,
         token_address: str,

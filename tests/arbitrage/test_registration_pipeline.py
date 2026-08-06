@@ -267,3 +267,64 @@ async def test_non_fatal_exceptions_do_not_abort() -> None:
         worker_count=3,
     )
     assert len(handled) == 10
+
+
+def test_consume_offloads_pool_build_off_the_event_loop_thread() -> None:
+    """The blocking pool build must run on a WORKER thread, not the asyncio
+    loop thread (35NMBX). `_consume` must route `constr_bot.build_pool` (and
+    the V3/V4 tracker/build variants) through the bounded pool-build executor,
+    so the loop stays free to run the consumer/dispatch while registration
+    crawls.
+
+    RED phase: before offload, `build_pool` runs synchronously on the loop
+    thread -> build_thread == loop_thread -> assertion fails. GREEN: the build
+    lands on a worker thread.
+    """
+    import threading
+    from types import SimpleNamespace
+
+    from degenbot.database.models.pools import UniswapV2PoolTableBase
+
+    from examples.eth_backrun_v2_v3_v4_rust import PathRegistrationPipeline
+
+    loop_thread: list[int] = []
+    build_thread: list[int] = []
+
+    class FakeBot:
+        def build_pool(self, address: str, *, silent: bool = False, **kwargs: object):
+            build_thread.append(threading.get_ident())
+            return SimpleNamespace(address=address)
+
+    class FakeRegistry:
+        def register_v2_pool(self, pool: object) -> int:
+            return 1
+
+        def register_path(self, path: object) -> None:
+            return None
+
+    ctx = SimpleNamespace(
+        bot=FakeBot(),
+        uniswap_v3_tracker=None,
+        sushiswap_v3_tracker=None,
+        pancakeswap_v3_tracker=None,
+        db=None,
+        chain_id=1,
+        weth=SimpleNamespace(address="0x" + "0" * 40),
+    )
+    pipe = PathRegistrationPipeline(
+        context=ctx,  # type: ignore[arg-type]
+        engine_registry=FakeRegistry(),  # type: ignore[arg-type]
+    )
+
+    step = SimpleNamespace(type=UniswapV2PoolTableBase, address="0x" + "1" * 40)
+
+    async def run() -> None:
+        loop_thread.append(threading.get_ident())
+        await pipe._consume([step], directions=[True])
+
+    asyncio.run(run())
+
+    assert len(build_thread) == 1, "the build should have run exactly once"
+    assert build_thread[0] != loop_thread[0], (
+        "pool build ran on the asyncio loop thread; offload did not happen"
+    )

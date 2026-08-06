@@ -851,8 +851,15 @@ class Bot:
         # to `type[Any]` so the call is type-checkable + the union of the five
         # delegated families stays branch-free here.
         pool = cast("type[Any]", pool_class)._from_py_pool(py_pool)  # ruff:ignore[private-member-access]
-        self.pools.add(pool_address=pool.address, chain_id=chain_id, pool=pool)
-        return pool
+        # Idempotent register (35NMBX Guard 1): a concurrent registration worker
+        # may have built this same shared pool first; use the canonical instance
+        # so THIS path still registers instead of being lossily skipped. (pool_id
+        # is None on this delegated path, so get_or_add returns an
+        # AbstractLiquidityPool, not a managed V4 pool.)
+        return cast(
+            "AbstractLiquidityPool",
+            self.pools.get_or_add(pool_address=pool.address, chain_id=chain_id, pool=pool),
+        )
 
     def build_managed_pool(
         self,
@@ -1087,11 +1094,14 @@ class Bot:
         pool._sparse_liquidity_map = not tick_map_is_tracked  # ruff:ignore[private-member-access]
 
         # Register pool in managed pool registry
-        self.managed_pools.add(
-            pool=pool,
-            chain_id=chain_id,
-            pool_manager_address=pool.address,
-            pool_id=pool.pool_id,
+        pool = cast(
+            "UniswapV4Pool",
+            self.managed_pools.get_or_add(
+                pool=pool,
+                chain_id=chain_id,
+                pool_manager_address=pool.address,
+                pool_id=pool.pool_id,
+            ),
         )
 
         if not request.silent:

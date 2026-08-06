@@ -37,6 +37,7 @@ import signal
 import sys
 import time
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Self, cast
@@ -1458,6 +1459,14 @@ class PathRegistrationPipeline:
         self.engine_registry = engine_registry
         self.retry_policy_obj = retry_policy or VerificationRetryPolicy()
 
+        # Bounded thread pool for the blocking pool-build RPC (35NMBX). The
+        # build calls (`build_pool`/`build_managed_pool` + the V3 tracker
+        # `get_pool`) block on Rust RPC via `py.detach(block_on)`; offloading
+        # them here keeps the event loop free so the consumer/dispatch runs
+        # DURING the crawl. Bounded to REG_WORKERS (Guard 2) so build
+        # concurrency never exceeds the registration worker count.
+        self._build_pool_executor: ThreadPoolExecutor | None = None
+
         # Configured discovery inputs (set by the driver before discovery runs).
         self.pool_types: list[type] = []
         self.pool_type_per_depth: dict | None = None
@@ -1477,6 +1486,33 @@ class PathRegistrationPipeline:
         self.v4_dynamic_fee_rejected = 0
         self.other_exc_count = 0
         self.registered_path_sigs: set[tuple[str | bool, ...]] = set()
+
+    def _bounded_build_executor(self) -> ThreadPoolExecutor:
+        """Lazily create the bounded pool-build thread pool (35NMBX Guard 2).
+
+        Sized to ``REG_WORKERS`` so build concurrency equals the registration
+        worker count rather than undersizing/oversubscribing the asyncio
+        default executor. Created once and kept for the session, because
+        builds fire from ``_consume``, ``enqueue_path`` and
+        ``trigger_discovery`` across the whole crawl.
+        """
+        if self._build_pool_executor is None:
+            self._build_pool_executor = ThreadPoolExecutor(max_workers=REG_WORKERS)
+        return self._build_pool_executor
+
+    async def _run_build_offloaded(self, fn: Callable[[], object]) -> object:
+        """Run a blocking pool-build callable on the bounded worker pool.
+
+        The Rust build entry (``build_pool`` / ``build_managed_pool`` / the V3
+        tracker ``get_pool``) blocks on RPC via ``py.detach(block_on)``.
+        Offloading it to the bounded executor (35NMBX) keeps the event loop
+        free so the consumer/dispatch runs DURING the registration crawl.
+        Exceptions from the worker thread (incl. ``HookedPoolRejectedError`` /
+        ``DynamicFeePoolRejectedError``) propagate to the awaiting coroutine,
+        so the existing typed admission-refusal classification is preserved.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(self._bounded_build_executor(), fn)
 
     async def run_registration(self, *, producer: AsyncIterable[object]) -> None:
         """Run the bounded producer/consumer pipeline against ``producer`` (the
@@ -1616,9 +1652,8 @@ class PathRegistrationPipeline:
         for step, pt in zip(steps, pool_type_strs, strict=True):  # noqa: PLR1702
             if pt == "V2":
                 try:
-                    pool = self.constr_bot.build_pool(
-                        step.address,
-                        silent=True,
+                    pool = await self._run_build_offloaded(
+                        lambda: self.constr_bot.build_pool(step.address, silent=True)
                     )
                 except Exception as exc:
                     bot_logger.debug(f"Skip V2 {step.address}: {exc}")
@@ -1627,26 +1662,30 @@ class PathRegistrationPipeline:
             elif pt == "V3":
                 try:
                     try:
-                        pool = self.uniswap_v3_tracker.get_pool(
-                            pool_address=step.address,
-                            silent=True,
+                        pool = await self._run_build_offloaded(
+                            lambda: self.uniswap_v3_tracker.get_pool(
+                                pool_address=step.address, silent=True
+                            )
                         )
                     except Exception:
                         try:
-                            pool = self.sushiswap_v3_tracker.get_pool(
-                                pool_address=step.address,
-                                silent=True,
+                            pool = await self._run_build_offloaded(
+                                lambda: self.sushiswap_v3_tracker.get_pool(
+                                    pool_address=step.address, silent=True
+                                )
                             )
                         except Exception:
                             try:
-                                pool = self.pancakeswap_v3_tracker.get_pool(
-                                    pool_address=step.address,
-                                    silent=True,
+                                pool = await self._run_build_offloaded(
+                                    lambda: self.pancakeswap_v3_tracker.get_pool(
+                                        pool_address=step.address, silent=True
+                                    )
                                 )
                             except Exception:
-                                pool = self.constr_bot.build_pool(
-                                    step.address,
-                                    silent=True,
+                                pool = await self._run_build_offloaded(
+                                    lambda: self.constr_bot.build_pool(
+                                        step.address, silent=True
+                                    )
                                 )
                 except Exception as exc:
                     bot_logger.debug(f"Skip V3 {step.address}: {exc}")
@@ -1659,10 +1698,12 @@ class PathRegistrationPipeline:
                     skip = True
                     break
                 try:
-                    pool = self.constr_bot.build_managed_pool(
-                        address=UNISWAP_V4_POOL_MANAGER_ADDRESS,
-                        pool_id=step.hash,
-                        silent=True,
+                    pool = await self._run_build_offloaded(
+                        lambda: self.constr_bot.build_managed_pool(
+                            address=UNISWAP_V4_POOL_MANAGER_ADDRESS,
+                            pool_id=step.hash,
+                            silent=True,
+                        )
                     )
                 except HookedPoolRejectedError:
                     # Amount-modifying hook — admission refusal (correctness

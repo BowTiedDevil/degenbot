@@ -75,3 +75,17 @@ bounded `ThreadPoolExecutor(max_workers=REG_WORKERS)`. Confirm with a
 concurrent-same-pool unit test (RED before guard, GREEN after) the way the
 existing `solver_state_change_set_scopes_to_resolved_paths_and_clears` gates
 scoping.
+
+## Implemented in 35NMBX (refinement of Guard 1)
+T1 landed Guard 1 as an **idempotent `get_or_add` registry primitive** rather
+than flipping `on_duplicate="ignore"` on the bot's registries: the public `add`
+API is documented (and pinned by `tests/registry/test_registry.py::
+test_adding_pool`/`test_adding_token`) to RAISE on a duplicate, so changing the
+bot's registries to ignore would have broken that contract. Instead the build
+path (`_bot.py` `_build_delegated`/`_build_v4_managed`, `Erc20Builder`) calls
+`get_or_add` (idempotent: returns the canonical stored pool/token on a
+concurrent duplicate), while public `add` still raises. The executor is bounded
+to `REG_WORKERS` (Guard 2). Verified by the offload test
+(`test_consume_offloads_pool_build_off_the_event_loop_thread`) + the
+`get_or_add` registry + concurrency tests (`tests/registry/
+test_registry_duplicate_tolerance.py`); `ruff format/check`+`ty` on `src/` pass.

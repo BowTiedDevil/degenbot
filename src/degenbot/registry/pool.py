@@ -61,6 +61,30 @@ class ManagedPoolRegistry(MultiKeyAddressRegistry["ConcentratedLiquidityPool"]):
             pool_id=pool_id,
         )
 
+    def get_or_add(
+        self,
+        pool: ConcentratedLiquidityPool,
+        chain_id: ChainId,
+        pool_manager_address: ChecksumAddress,
+        pool_id: PoolId,
+    ) -> ConcentratedLiquidityPool:
+        """Idempotently register a V4 pool, returning the stored instance.
+
+        If a concurrent registration worker already built this pool, return the
+        canonical stored instance instead of raising (35NMBX Guard 1) — a
+        distinct path sharing this pool is not lossily skipped.
+
+        Returns:
+            The stored pool instance (the existing canonical one on a duplicate).
+
+        """
+        return self._get_or_add(
+            item=pool,
+            chain_id=chain_id,
+            pool_manager_address=pool_manager_address,
+            pool_id=pool_id,
+        )
+
     def remove(
         self,
         chain_id: ChainId,
@@ -165,6 +189,40 @@ class PoolRegistry(AddressRegistry["AbstractLiquidityPool"]):
             )
         else:
             self._add(item=pool, chain_id=chain_id, address=pool_address)
+
+    def get_or_add(
+        self,
+        pool: AbstractLiquidityPool,
+        chain_id: ChainId,
+        pool_address: ChecksumAddress,
+        pool_id: PoolId | None = None,
+    ) -> AbstractLiquidityPool | ConcentratedLiquidityPool:
+        """Idempotently register a pool, returning the stored instance.
+
+        Used by the concurrent registration build path (35NMBX Guard 1): if
+        another worker already built this pool, return the canonical stored
+        instance instead of raising, so a distinct path sharing the pool is not
+        lossily skipped. Mirrors :meth:`add`'s managed/V4 dispatch.
+
+        Returns:
+            The stored pool instance (the existing canonical one on a duplicate).
+
+        Raises:
+            TypeError: If ``pool_id`` is provided but pool does not satisfy
+                ConcentratedLiquidityPool.
+
+        """
+        if isinstance(pool_id, bytes):
+            if not isinstance(pool, ConcentratedLiquidityPool):
+                msg = "pool must satisfy ConcentratedLiquidityPool when pool_id is provided"
+                raise TypeError(msg)
+            return self._managed_pool_registry.get_or_add(
+                pool=pool,
+                chain_id=chain_id,
+                pool_manager_address=pool_address,
+                pool_id=pool_id,
+            )
+        return self._get_or_add(item=pool, chain_id=chain_id, address=pool_address)
 
     @overload
     def remove(

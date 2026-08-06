@@ -166,6 +166,32 @@ class AbstractAddressRegistry[T](AbstractRegistry, ABC):
 
         self._storage()[key] = item
 
+    def _get_or_add(
+        self,
+        item: T,
+        chain_id: int,
+        **address_args: str | bytes,
+    ) -> T:
+        """Idempotently register an item, returning the stored instance.
+
+        Unlike ``_add`` (which raises on a duplicate per ``on_duplicate``),
+        this is the concurrent-build primitive (35NMBX Guard 1): if another
+        worker already registered the same pool/token, return the canonical
+        stored item instead of raising, so a distinct path sharing the pool is
+        not lossily skipped. Backing-dict access is GIL-serialized, so
+        concurrent registration worker threads read/write it lock-free.
+
+        Returns:
+            The stored instance (the existing canonical one on a duplicate).
+
+        """
+        key = self._build_key(chain_id, **address_args)
+        existing = self._storage().get(key)
+        if existing is not None:
+            return existing
+        self._storage()[key] = item
+        return self._storage().get(key) or item
+
     def _remove(
         self,
         chain_id: int,
