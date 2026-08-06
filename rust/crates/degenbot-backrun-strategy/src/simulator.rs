@@ -33,7 +33,7 @@
 
 use std::collections::BTreeMap;
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{Address, I256, U256};
 use alloy::rpc::types::AccessList;
 use degenbot_core::errors::{ProviderError, ProviderResult};
 use degenbot_executor::composers::{
@@ -1533,6 +1533,15 @@ struct RevertedSwapMatch {
     /// magnitude) — the `amountSpecified` that produced `actual_out`.
     actual_in: Option<U256>,
     actual_out: Option<U256>,
+    /// The FULL signed captured-swap deltas (from the pool's perspective): for
+    /// V3, `amount0` is the positive input side and `amount1` the negative
+    /// output side (or vice-versa by zfo). The V3 `actual_in`/`actual_out`
+    /// collapse BOTH to the negative-side magnitude (both are
+    /// `negative_side_magnitude`), so the input amount is otherwise
+    /// unrecoverable from the log — logging these removes the ambiguity for
+    /// reconstruction (the solve-vs-sim state gap).
+    captured_amount0: I256,
+    captured_amount1: I256,
     predicted: Option<u128>,
     matched: bool,
 }
@@ -1586,6 +1595,8 @@ fn match_reverted_swaps_to_hops(
             sim_liquidity: swap.liquidity,
             actual_in: negative_side_magnitude(swap.amount0, swap.amount1),
             actual_out: actual,
+            captured_amount0: swap.amount0,
+            captured_amount1: swap.amount1,
             predicted,
             matched: is_match,
         });
@@ -1644,6 +1655,8 @@ fn log_reverted_swaps_vs_hop_outputs(
             pool_id = %m.pool_id.as_deref().unwrap_or("unmatched"),
             actual_in = %m.actual_in.map_or_else(|| "none".into(), |v| v.to_string()),
             actual_out = %m.actual_out.map_or_else(|| "none".into(), |v| v.to_string()),
+            captured_amount0 = %m.captured_amount0,
+            captured_amount1 = %m.captured_amount1,
             predicted = %m.predicted.map_or_else(|| "none".into(), |v| v.to_string()),
             sim_sqrt_price_x96 = %m.sim_sqrt_price_x96,
             sim_tick = m.sim_tick,
