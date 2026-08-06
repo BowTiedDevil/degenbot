@@ -49,10 +49,13 @@ start() {
     # setsid: new session + no controlling terminal, so the launching shell
     # can exit without the pump dying (SIGHUP) and the tool shell's return
     # isn't entangled with the bot's life. exec is NOT used so `$!` is the
-    # (setsid'd) uv pid we record.
+    # (setsid'd) uv pid we record. Output is captured by direct fd redirection
+    # (never a tee pipeline), so the log is authoritative and survives the
+    # launching shell going away.
     setsid "${BOT_CMD[@]}" >>"$LOG" 2>&1 < /dev/null &
     echo $! > "$PIDFILE"
-    echo "[runner] started bot pid $(cat "$PIDFILE") $(date -Is)"
+    # Runner diagnostics go to the log too, so the whole launch is in one place.
+    echo "[runner] started bot pid $(cat "$PIDFILE") $(date -Is)" | tee -a "$LOG" >&2
 }
 
 stop() {
@@ -76,14 +79,42 @@ status() {
     fi
 }
 
+foreground() {
+    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+        echo "[runner] bot already running (pid $(cat "$PIDFILE")) — stop it first" >&2
+        return 1
+    fi
+    # Fresh truncation, same as `start`, so the log always reflects this run
+    # (the append-only `tee -a` behaviour is gone for determinism).
+    : > "$LOG"
+    : > "$PIDFILE"
+    echo "[runner] starting bot $(date -Is)" | tee -a "$LOG" >&2
+    # Bot output goes to the log by direct fd redirection — authoritative and
+    # immune to a closing console (no `tee` pipeline to SIGPIPE and drop the
+    # tail). The console is only a live mirror fed by `tail -f`.
+    "${BOT_CMD[@]}" >>"$LOG" 2>&1 < /dev/null &
+    BOTPID=$!
+    echo "$BOTPID" > "$PIDFILE"
+    tail -f -n +1 "$LOG" &
+    TAILPID=$!
+    # Forward Ctrl-C / TERM to the bot so it stops cleanly (the pump then gets
+    # its exit path rather than being killed out from under the lock).
+    trap 'kill -TERM "$BOTPID" 2>/dev/null' INT TERM
+    wait "$BOTPID"
+    BOTRC=$?
+    kill "$TAILPID" 2>/dev/null
+    wait "$TAILPID" 2>/dev/null
+    rm -f "$PIDFILE"
+    trap - INT TERM
+    echo "[runner] bot exited rc=$BOTRC $(date -Is)" | tee -a "$LOG" >&2
+    return "$BOTRC"
+}
+
 case "${1:-foreground}" in
     start) start ;;
     stop) stop ;;
     status) status ;;
-    foreground)
-        echo "[runner] starting bot $(date -Is)"
-        "${BOT_CMD[@]}" 2>&1 | tee -a "$LOG"
-        ;;
+    foreground) foreground ;;
     *)
         echo "usage: $0 {start|stop|status|foreground}" >&2
         exit 1
