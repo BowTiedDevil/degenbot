@@ -8,10 +8,22 @@ single Rust state owner; ADR-006: ``Bot`` is the per-chain orchestrator, this
 package is its deployment cockpit).
 
 Public surface (re-exported here):
+- :class:`BotRunner` — the runtime driver facade (the ``start/build_paths/
+  consume/dispatch`` seams). ``BackrunSession`` is a backward-compatible alias
+  for the historical name (tests re-pointed away from it in epic 5TSYKN).
 - :class:`BackrunConfig` + config/display helpers (:mod:`degenbot.runner.config`)
-- :class:`BotRunner` — the runtime driver facade (added in task DKUOBL).
+- Discovery + registration (:mod:`degenbot.runner.build_paths`)
+- The permanent main loop (:mod:`degenbot.runner.consume`)
 """
 
+from degenbot.runner.bot_runner import BotRunner
+from degenbot.runner.build_paths import (
+    ConstructionContext,
+    PathRegistrationPipeline,
+    build_paths,
+    resolve_directions,
+    run_registration_pipeline,
+)
 from degenbot.runner.config import (
     BPS_DENOM,
     BackrunConfig,
@@ -21,13 +33,25 @@ from degenbot.runner.config import (
     format_failure_breakdown,
     format_sim_diag_line,
 )
+from degenbot.runner.consume import consume_result_batches
+
+# Backward-compatible alias for the historical driver name.
+BackrunSession = BotRunner
 
 __all__ = [
     "BPS_DENOM",
     "BackrunConfig",
+    "BackrunSession",
+    "BotRunner",
+    "ConstructionContext",
     "EngineResult",
+    "PathRegistrationPipeline",
+    "build_paths",
     "classify_revert",
+    "consume_result_batches",
     "filter_thin_margin_results",
     "format_failure_breakdown",
     "format_sim_diag_line",
+    "resolve_directions",
+    "run_registration_pipeline",
 ]

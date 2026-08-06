@@ -194,6 +194,26 @@ allow-star-arg-any = true
 "src/degenbot/uniswap/deployments.py" = [
     "PLC0415",  # lazy import avoids circular dependency (deployment_loader → pool classes → this module)
 ]
+"src/degenbot/runner/**" = [
+    # These rules were carried forward from the ``examples/*`` accommodation the
+    # backrun driver was developed under (epic 5TSYKN relocates it un-rewritten).
+    # The driver is moved with no behavior change, so it inherits the same style
+    # exceptions; each can be re-enabled + cleaned incrementally.
+    "ANN401",   # driver callables take `Any` (injected builders/consumers, hop dicts)
+    "ARG",      # signatures keep meaningful-but-unused slots (e.g. v4_snapshot symmetry)
+    "B023",     # registration _consume's lambdas capture the loop-bound `step`
+    "BLE001",   # registration sim-loops catch broad Exception to log + continue per-path
+    "D",        # docstring strictness (imperative / blank-line-after-summary)
+    "DOC",      # pydoclint Return:/Raises: sections
+    "FBT001",   # boolean flag args (dry_run / live toggles)
+    "PLC0415",  # lazy imports where needed
+    "PLC2701",  # imports the private ``degenbot._ffi`` seam (mark_progress)
+    "PLR0917",  # public dispatch/consume signatures carry many positional args
+    "PLR2004",  # driver constants (revert layout, block/fee thresholds) read cleaner inline
+    "PLW0603",  # module-top tunables / bytecode cache reassignment (intentional)
+    "PLW0717",  # guarded verify try-blocks contain many statements by design
+    "TC",       # typing-only imports stay plain (cleaned by TC003 where trivial)
+]
 "examples/*" = [
     "ANN401",   # the FFI/live-bot callables take `Any` (e.g. injected builders/consumers)
     "ARG",      # example function signatures keep meaningful-but-unused slots (logging, fakes)

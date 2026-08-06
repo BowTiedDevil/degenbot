@@ -154,23 +154,19 @@ async def _run(
 ) -> tuple[Dispatcher, _FakeW3, list[int]]:
     dispatcher = dispatcher or Dispatcher.for_block(0)
     w3 = _FakeW3()
-    # Monkeypatch _dispatch_profitable so a non-empty batch records the
-    # `current_block` it was dispatched with, proving it keys off the block
-    # stream (not solve_block). The A5 cutover rewired the hot loop from
-    # the module-level ``dispatch_profitable_results`` to
-    # ``_dispatch_profitable`` (which drives ``dispatch_profitable_py`` →
-    # ``dispatch_and_submit_py``). ``sim_ctx=None`` is safe: empty batches
-    # return before dispatch; non-empty batches hit the monkeypatch (the real
-    # ``_dispatch_profitable`` — which would pass ``sim_ctx`` to the Rust
-    # ``dispatch_profitable_py`` leaf — never runs).
+    # Monkeypatch the consumer's binding of ``_dispatch_profitable`` so a
+    # non-empty batch records the ``current_block`` it was dispatched with,
+    # proving it keys off the block stream (not solve_block).
     dispatched: list[int] = []
 
     async def _fake_dispatch(**kwargs):
         dispatched.append(kwargs["current_block"])
         return
 
-    orig = runner._dispatch_profitable
-    runner._dispatch_profitable = _fake_dispatch  # type: ignore[assignment]
+    from degenbot.runner import consume as _runner_consume
+
+    orig = _runner_consume._dispatch_profitable
+    _runner_consume._dispatch_profitable = _fake_dispatch  # type: ignore[assignment]
     try:
         await runner.consume_result_batches(
             engine_registry=object(),  # type: ignore[arg-type] — not read (streams injected)
@@ -192,7 +188,7 @@ async def _run(
             result_iter=_Results(batches),
         )
     finally:
-        runner._dispatch_profitable = orig  # type: ignore[assignment]
+        _runner_consume._dispatch_profitable = orig  # type: ignore[assignment]
     return dispatcher, w3, dispatched
 
 

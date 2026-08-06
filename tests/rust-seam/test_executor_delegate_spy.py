@@ -223,24 +223,25 @@ class TestExampleRoutesThroughRust:
         )
 
     def test_sim_dispatch_routes_through_rust_seam(self) -> None:
-        """The example routes the sim+submit flow through the Rust seam (A5).
+        """The driver routes the sim+submit flow through the Rust seam (A5).
 
         A5 superseded the per-symbol ``_ffi.<symbol>`` routing that this
         class previously enforced: the five encoder/warmup symbols moved INTO
         the Rust core (``degenbot_simulation`` / ``degenbot_executor``), called
         internally by ``dispatch_profitable`` + ``SimulateContext``
-        construction. The example's dispatch path is now
+        construction. The dispatch path (moved from the example into
+        ``degenbot.runner.dispatch`` by epic 5TSYKN) is
         ``dispatch_profitable`` (simulate) → ``dispatch_and_submit``
         (submit), both Rust-bound pyfunctions imported via the companion
         package ``degenbot.dispatch`` (stable re-exports of the FFI symbols —
-        the example does not import ``degenbot_rs`` directly).
+        the driver does not import ``degenbot_rs`` directly).
         """
-        src = self._example_source()
+        src = (REPO / "src" / "degenbot" / "runner" / "dispatch.py").read_text()
         assert "dispatch_profitable(" in src, (
-            "example must route simulation through dispatch_profitable (A5)"
+            "driver must route simulation through dispatch_profitable (A5)"
         )
         assert "dispatch_and_submit(" in src, (
-            "example must route submission through dispatch_and_submit (A5)"
+            "driver must route submission through dispatch_and_submit (A5)"
         )
 
 
