@@ -1470,3 +1470,88 @@ class TestPathRegistrationPipeline:
         # propagates so the caller can abort loudly (crash-loudly preserved).
         with pytest.raises(VerificationMismatchError, match="boom"):
             await pipeline.enqueue_path([step], directions=[True])
+
+
+class TestSessionOperatorSurface:
+    """NWTUM3: the programmatic add-a-path-at-any-time surface exposed on the
+    session (`BackrunSession.enqueue_path` / `trigger_discovery`), which routes
+    into the long-lived `PathRegistrationPipeline`. These inject a fake pipeline
+    (consistent with the suite's fake-injection pattern); the pipeline-level
+    `_consume` registration/isolation behaviour is covered by
+    `TestPathRegistrationPipeline`."""
+
+    async def test_programmatic_surface_raises_without_live_pipeline(self) -> None:
+        """With an injected (fake) run there is no live pipeline — the operator
+        surface must raise loudly, never fail silently or touch a None."""
+        engine_registry = _FakeEngineRegistry()
+        session = BackrunSession(
+            _cfg(),
+            bot=_FakeBot(),
+            engine_registry=engine_registry,
+            async_w3=_FakeAsyncW3(),
+            snapshots=(None, None, None, None),
+            path_builder=lambda **_kw: _noop_coro(),
+            consumer=lambda **_kw: _noop_coro(),
+        )
+        await session.start()
+        await session.run()
+        assert session._pipeline is None
+        with pytest.raises(RuntimeError, match="no live registration pipeline"):
+            await session.enqueue_path([])
+        with pytest.raises(RuntimeError, match="no live registration pipeline"):
+            await session.trigger_discovery()
+
+    async def test_mid_run_add_path_does_not_stall_dispatch(self) -> None:
+        """Adding a path mid-run via the session Programmatic surface does not
+        stall or abort the pump: the consumer keeps dispatching prior work while
+        the operator add is routed to the live pipeline."""
+        engine_registry = _FakeEngineRegistry()
+        dispatch_work: list[int] = []
+        added: list[tuple[object, object]] = []
+
+        class _FakePipeline:
+            def __init__(self) -> None:
+                self.enqueue_calls = 0
+                self.trigger_calls = 0
+
+            async def enqueue_path(self, path_steps, directions=None):
+                self.enqueue_calls += 1
+                added.append((path_steps, directions))
+
+            async def trigger_discovery(self, bound=None):
+                self.trigger_calls += 1
+                return int(bound or 0)
+
+        fake_pipeline = _FakePipeline()
+
+        async def consumer(**_kwargs):
+            for n in range(20):
+                dispatch_work.append(n)
+                if n == 7:
+                    # Operator adds a path + triggers discovery mid-run while
+                    # the hot loop keeps solving previously-added hops.
+                    await session.enqueue_path(
+                        ["hop-a", "hop-b"], directions=[True, False]
+                    )
+                    await session.trigger_discovery(bound=3)
+                await asyncio.sleep(0)
+
+        session = BackrunSession(
+            _cfg(),
+            bot=_FakeBot(),
+            engine_registry=engine_registry,
+            async_w3=_FakeAsyncW3(),
+            snapshots=(None, None, None, None),
+            path_builder=lambda **_kw: _noop_coro(),
+            consumer=consumer,
+        )
+        # A live (fake) pipeline is reachable on the running session.
+        session._pipeline = fake_pipeline
+        await session.start()
+        await session.run()
+
+        # Full dispatch progress despite the mid-run add — no stall, no abort.
+        assert dispatch_work == list(range(20))
+        assert fake_pipeline.enqueue_calls == 1
+        assert fake_pipeline.trigger_calls == 1
+        assert added == [(["hop-a", "hop-b"], [True, False])]

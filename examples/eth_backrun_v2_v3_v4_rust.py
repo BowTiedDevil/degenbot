@@ -663,6 +663,10 @@ class BackrunSession:
         # Sub-A seam: registration-owned construction context (built in run()
         # for the real build_paths; None for injected builders and until run()).
         self._registration_context: ConstructionContext | None = None
+        # (Sub-B/6VZN7H) + the trim. Owned by run() for the real build_paths;
+        # None until run() with real build_paths (injected fakes have no
+        # construction surface).
+        self._pipeline: Any = None
         # Sub-B seam: the background registration task (production + explicit
         # ``background_registration=True``), awaited for fail-fast in step 5.
         self._registration_task: asyncio.Task | None = None
@@ -859,11 +863,24 @@ class BackrunSession:
         # builders (tests) skip context construction (fakes lack the builder
         # surface) and receive `context=None`.
         registration_context = None
+        pipeline = None
         if self._path_builder is None:
             self._registration_context = ConstructionContext.for_bot(
                 self.bot, self.v3_snapshot
             )
             registration_context = self._registration_context
+            # NWTUM3: own the long-lived PathRegistrationPipeline on the session
+            # so the operator add-a-path surface (enqueue_path /
+            # trigger_discovery) stays reachable for the session's lifetime —
+            # including after build_paths returns and the main-loop trim drops
+            # the Python bot (the pipeline's retained ConstructionContext keeps
+            # constructing through the Rust PoolBuilder).
+            self._pipeline = PathRegistrationPipeline(
+                context=registration_context,
+                engine_registry=self.engine_registry,
+                retry_policy=cfg.verification_retry_policy,
+            )
+            pipeline = self._pipeline
 
         # Sub-B seam: decouple discovery from the main loop. PRODUCTION (real
         # `build_paths`): spawn the registration pipeline + its post-completion
@@ -883,6 +900,7 @@ class BackrunSession:
                     path_builder=path_builder,
                     registration_context=registration_context,
                     retry_policy=cfg.verification_retry_policy,
+                    pipeline=pipeline,
                 ),
                 name="registration-background",
             )
@@ -894,6 +912,7 @@ class BackrunSession:
                 v4_snapshot=self.v4_snapshot,
                 retry_policy=cfg.verification_retry_policy,
                 context=registration_context,
+                pipeline=pipeline,
             )
             self._trim_python_state()
 
@@ -954,12 +973,50 @@ class BackrunSession:
                 await tee_driver
 
     # ── Sub-B: background registration + trim + fail-fast channel ──
+    async def enqueue_path(
+        self,
+        path_steps: object,
+        directions: list[bool] | None = None,
+    ) -> None:
+        """Add ONE specific path at any time (NWTUM3 / D1c operator surface).
+
+        Delegates to the session's live :class:`PathRegistrationPipeline`
+        (created in :meth:`run`); ``path_steps`` + optional ``directions`` are
+        the same shapes as :meth:`PathRegistrationPipeline.enqueue_path`. The
+        path is built via the retained ``ConstructionContext`` (Rust
+        ``PoolBuilder``), registered + verified, released to ``Live`` per D4,
+        and registered — without disturbing the pump's update/solve/dispatch.
+
+        Raises:
+            RuntimeError: if no live pipeline exists (injected fake builders
+                have no construction surface, or ``run()`` has not run).
+        """
+        if self._pipeline is None:
+            msg = "no live registration pipeline; add-path unavailable (injected/fake run)"
+            raise RuntimeError(msg)
+        await self._pipeline.enqueue_path(path_steps, directions=directions)
+
+    async def trigger_discovery(self, *, bound: int | None = None) -> int:
+        """Trigger a bounded one-shot discovery sweep (NWTUM3 / D1c on-demand
+        trigger), delegating to the session's live pipeline. Returns the number
+        of paths processed.
+
+        Raises:
+            RuntimeError: if no live pipeline exists (injected fake builders,
+                or ``run()`` has not run).
+        """
+        if self._pipeline is None:
+            msg = "no live registration pipeline; on-demand discovery unavailable"
+            raise RuntimeError(msg)
+        return await self._pipeline.trigger_discovery(bound=bound)
+
     async def _run_registration_background(
         self,
         *,
         path_builder: Callable[..., Awaitable[None]],
         registration_context: ConstructionContext | None,
         retry_policy: VerificationRetryPolicy | None,
+        pipeline: Any = None,
     ) -> None:
         """Run ``build_paths`` + the post-completion trim as the background task.
 
@@ -987,6 +1044,7 @@ class BackrunSession:
                 v4_snapshot=self.v4_snapshot,
                 retry_policy=retry_policy,
                 context=registration_context,
+                pipeline=pipeline,
             )
             self._trim_python_state()
         except asyncio.CancelledError:
@@ -1790,6 +1848,7 @@ async def build_paths(
     v4_snapshot: UniswapV4LiquiditySnapshot | None = None,
     retry_policy: VerificationRetryPolicy | None = None,
     context: ConstructionContext | None = None,
+    pipeline: PathRegistrationPipeline | None = None,
 ) -> None:
     """Discover V2/V3/V4 arb paths, build Python pools, register with Rust engine.
 
@@ -1836,7 +1895,10 @@ async def build_paths(
     # Reuse a caller-supplied context (out of run()'s trim) or build one here.
     constr_ctx = context if context is not None else ConstructionContext.for_bot(bot, v3_snapshot)
 
-    pipeline = PathRegistrationPipeline(
+    # NWTUM3: reuse a caller-supplied long-lived pipeline (the session owns it)
+    # so the operator add-path surface stays reachable after this function
+    # returns; otherwise build one here as a fallback.
+    pipeline = pipeline or PathRegistrationPipeline(
         context=constr_ctx,
         engine_registry=engine_registry,
         retry_policy=retry_policy,
