@@ -788,3 +788,86 @@ class TestBackrunSessionSigintHandler:
             "the SIGINT handler must call engine.stop() so the pump dies "
             "immediately, even while the main thread is blocked in find_paths"
         )
+
+
+class TestConstructionContext:
+    """Sub-A seam: `ConstructionContext` bundles the registration-owned
+    construction resources (Rust-build Bot entry + the three V3 trackers + a
+    retained DB read handle + chain_id + WETH) so a background registration
+    task owns them out of run()'s main-loop trim."""
+
+    def test_for_bot_builds_trackers_weth_db_once(self) -> None:
+        from examples.eth_backrun_v2_v3_v4_rust import (
+            PANCAKESWAP_V3_MAINNET_FACTORY,
+            SUSHISWAP_V3_MAINNET_FACTORY,
+            UNISWAP_V3_MAINNET_FACTORY,
+            WETH_ADDRESS,
+            ConstructionContext,
+        )
+
+        class _BuildBot:
+            def __init__(self) -> None:
+                self.chain_id = 1
+                self.db = object()
+                self.factory_addresses: list[str] = []
+                self.weth_addresses: list[str] = []
+
+            def add_tracker(self, _tracker_cls, *, factory_address, snapshot):
+                self.factory_addresses.append(factory_address)
+                return f"tracker:{factory_address}"
+
+            def build_erc20token(self, address: str):
+                self.weth_addresses.append(address)
+                return f"weth:{address}"
+
+        bot = _BuildBot()
+        ctx = ConstructionContext.for_bot(bot, v3_snapshot=None)
+
+        # All three V3 factories dispatched to the tracker builder.
+        assert sorted(bot.factory_addresses) == sorted(
+            [
+                UNISWAP_V3_MAINNET_FACTORY,
+                SUSHISWAP_V3_MAINNET_FACTORY,
+                PANCAKESWAP_V3_MAINNET_FACTORY,
+            ]
+        )
+        # Trackers + WETH + DB + chain_id all bundled into the single context.
+        assert ctx.chain_id == 1
+        assert ctx.db is bot.db
+        assert ctx.weth == f"weth:{WETH_ADDRESS}"
+        # One construction pass: exactly one WETH token requested.
+        assert bot.weth_addresses == [WETH_ADDRESS]
+
+    def test_run_passes_context_only_for_real_build_paths(self) -> None:
+        """With an injected (fake) path_builder, run() must NOT build a
+        context (fakes lack the builder surface) and passes context=None."""
+        engine_registry = _FakeEngineRegistry()
+        seen: dict = {}
+
+        async def recording_path_builder(**kwargs):
+            await asyncio.sleep(0)
+            seen["kwargs"] = dict(kwargs)
+
+        session = BackrunSession(
+            _cfg(),
+            bot=_FakeBot(),
+            engine_registry=engine_registry,
+            async_w3=_FakeAsyncW3(),
+            snapshots=(None, None, None, None),
+            path_builder=recording_path_builder,
+            consumer=lambda **_kw: _noop_coro(),
+        )
+        asyncio.run(_drive_run(session))
+
+        # Injected builder => run() must NOT construct a context, and must pass
+        # context=None to the injected builder.
+        assert session._registration_context is None
+        assert "context" in seen["kwargs"]
+        assert seen["kwargs"]["context"] is None
+        # The builder still receives the other construction kwargs.
+        assert seen["kwargs"]["engine_registry"] is engine_registry
+
+
+async def _drive_run(session: BackrunSession) -> None:
+    await session.start()
+    await session.run()

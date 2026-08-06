@@ -37,6 +37,7 @@ import signal
 import sys
 import time
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Self, cast
 
@@ -508,6 +509,70 @@ def resolve_directions(
     return zfo_list
 
 
+@dataclass
+class ConstructionContext:
+    """Registration-owned construction resources, kept out of run()'s trim.
+
+    Bundles everything ``build_paths``/``_consume_step`` need to construct and
+    register pools, so the registration task owns them as a single self-
+    contained context for its lifetime. ``BackrunSession.run()`` trims
+    *main-loop* state (``release_python_state()`` + ``self.bot = None``); the
+    context is a *separate* identity that a background registration task holds
+    and that the trim never severs — the decoupling seam for Sub-B (background
+    tokio registration on the pump runtime).
+
+    ``release_python_state()`` is benign to a running context: it clears
+    tracker/pool/token caches but does NOT sever ``_py_bot``/``_io`` (only
+    ``close()`` does), and the engine retains its own ``PyBot`` ref — so a
+    context kept alive past the trim keeps building pools through the Rust
+    ``PoolBuilder`` unchanged.
+
+    The three V3 trackers + the WETH token are built once here (at
+    :meth:`for_bot`), not re-derived per pool.
+    """
+
+    bot: Bot
+    chain_id: int
+    db: Any
+    uniswap_v3_tracker: UniswapV3PoolTracker
+    sushiswap_v3_tracker: UniswapV3PoolTracker
+    pancakeswap_v3_tracker: UniswapV3PoolTracker
+    weth: Any  # Erc20Token (WETH)
+
+    @classmethod
+    def for_bot(
+        cls,
+        bot: Bot,
+        v3_snapshot: UniswapV3LiquiditySnapshot | None,
+    ) -> "ConstructionContext":
+        """Build the construction context for a bot, creating the trackers + WETH once."""
+        uniswap_v3_tracker = bot.add_tracker(
+            UniswapV3PoolTracker,
+            factory_address=UNISWAP_V3_MAINNET_FACTORY,
+            snapshot=v3_snapshot,
+        )
+        sushiswap_v3_tracker = bot.add_tracker(
+            UniswapV3PoolTracker,
+            factory_address=SUSHISWAP_V3_MAINNET_FACTORY,
+            snapshot=v3_snapshot,
+        )
+        pancakeswap_v3_tracker = bot.add_tracker(
+            UniswapV3PoolTracker,
+            factory_address=PANCAKESWAP_V3_MAINNET_FACTORY,
+            snapshot=v3_snapshot,
+        )
+        weth = bot.build_erc20token(WETH_ADDRESS)
+        return cls(
+            bot=bot,
+            chain_id=bot.chain_id,
+            db=bot.db,
+            uniswap_v3_tracker=uniswap_v3_tracker,
+            sushiswap_v3_tracker=sushiswap_v3_tracker,
+            pancakeswap_v3_tracker=pancakeswap_v3_tracker,
+            weth=weth,
+        )
+
+
 class BackrunSession:
     """Orchestrator that collapses the backrun startup ritual behind one facade.
 
@@ -561,6 +626,9 @@ class BackrunSession:
         self._injected_snapshots = snapshots
         self._path_builder = path_builder
         self._consumer = consumer
+        # Sub-A seam: registration-owned construction context (built in run()
+        # for the real build_paths; None for injected builders and until run()).
+        self._registration_context: ConstructionContext | None = None
         # Resolved in start():
         self.bot: Bot | None = None
         self.engine_registry: EngineRegistry | None = None
@@ -747,12 +815,25 @@ class BackrunSession:
 
         # 3. Build paths with the pump live (rolling start).
         path_builder = self._path_builder or build_paths
+        # Sub-A seam: for the real `build_paths`, build the construction
+        # context ONCE here so the registration task owns it — a separate
+        # identity from run()'s main-loop state that the trim below
+        # (`release_python_state()` + `self.bot = None`) never severs. Injected
+        # builders (tests) skip context construction (fakes lack the builder
+        # surface) and receive `context=None`.
+        registration_context = None
+        if self._path_builder is None:
+            self._registration_context = ConstructionContext.for_bot(
+                self.bot, self.v3_snapshot
+            )
+            registration_context = self._registration_context
         await path_builder(
             bot=self.bot,
             engine_registry=self.engine_registry,
             v3_snapshot=self.v3_snapshot,
             v4_snapshot=self.v4_snapshot,
             retry_policy=cfg.verification_retry_policy,
+            context=registration_context,
         )
 
         # 3b. Release the held snapshot read transaction (epic XEANMB).
@@ -1102,6 +1183,7 @@ async def build_paths(
     v3_snapshot: UniswapV3LiquiditySnapshot | None = None,
     v4_snapshot: UniswapV4LiquiditySnapshot | None = None,
     retry_policy: VerificationRetryPolicy | None = None,
+    context: ConstructionContext | None = None,
 ) -> None:
     """Discover V2/V3/V4 arb paths, build Python pools, register with Rust engine.
 
@@ -1134,22 +1216,21 @@ async def build_paths(
     # V3 snapshot provides tick data for Python pool builds via trackers.
     # Event backfill is handled by the Rust engine.
     # Trackers use it for tick data at build time.
-    uniswap_v3_tracker = bot.add_tracker(
-        UniswapV3PoolTracker,
-        factory_address=UNISWAP_V3_MAINNET_FACTORY,
-        snapshot=v3_snapshot,
-    )
-    sushiswap_v3_tracker = bot.add_tracker(
-        UniswapV3PoolTracker,
-        factory_address=SUSHISWAP_V3_MAINNET_FACTORY,
-        snapshot=v3_snapshot,
-    )
-    pancakeswap_v3_tracker = bot.add_tracker(
-        UniswapV3PoolTracker,
-        factory_address=PANCAKESWAP_V3_MAINNET_FACTORY,
-        snapshot=v3_snapshot,
-    )
-    weth = bot.build_erc20token(WETH_ADDRESS)
+    # Sub-A seam: registration owns a self-contained ConstructionContext
+    # (bot build entry + the three V3 trackers + a retained DB read handle +
+    # chain_id + WETH). When `run()` hands one in, reuse it (so the context
+    # outlives run()'s main-loop trim); otherwise build it here once. `v4_snapshot`
+    # is unused by `build_paths` today — retained in the signature for the
+    # caller's symmetry (snapshots supplied together) and future V4 tick seeding.
+    # Reuse a caller-supplied context (out of run()'s trim) or build one here.
+    constr_ctx = context if context is not None else ConstructionContext.for_bot(bot, v3_snapshot)
+    uniswap_v3_tracker = constr_ctx.uniswap_v3_tracker
+    sushiswap_v3_tracker = constr_ctx.sushiswap_v3_tracker
+    pancakeswap_v3_tracker = constr_ctx.pancakeswap_v3_tracker
+    weth = constr_ctx.weth
+    constr_bot = constr_ctx.bot
+    constr_db = constr_ctx.db
+    constr_chain_id = constr_ctx.chain_id
     bot_logger.info("[build_paths] V3 trackers added, WETH built — starting path discovery")
 
     path_count = 0
@@ -1236,7 +1317,7 @@ async def build_paths(
         for step, pt in zip(steps, pool_type_strs, strict=True):  # noqa: PLR1702
             if pt == "V2":
                 try:
-                    pool = bot.build_pool(
+                    pool = constr_bot.build_pool(
                         step.address,
                         silent=True,
                     )
@@ -1264,7 +1345,7 @@ async def build_paths(
                                     silent=True,
                                 )
                             except Exception:
-                                pool = bot.build_pool(
+                                pool = constr_bot.build_pool(
                                     step.address,
                                     silent=True,
                                 )
@@ -1279,7 +1360,7 @@ async def build_paths(
                     skip = True
                     break
                 try:
-                    pool = bot.build_managed_pool(
+                    pool = constr_bot.build_managed_pool(
                         address=UNISWAP_V4_POOL_MANAGER_ADDRESS,
                         pool_id=step.hash,
                         silent=True,
@@ -1436,7 +1517,7 @@ async def build_paths(
     )
     await run_registration_pipeline(
         producer=find_paths_async(
-            chain_id=bot.chain_id,
+            chain_id=constr_chain_id,
             start_tokens=[
                 WETH_ADDRESS,
                 NATIVE_CURRENCY_ADDRESS,  # V4 allows Ether-paired pools
@@ -1447,7 +1528,7 @@ async def build_paths(
             ],
             max_depth=3,
             pool_types=pool_types,
-            db=bot.db,
+            db=constr_db,
             pool_type_per_depth=pool_type_per_depth,
             allowed_intermediate_tokens=ALLOWED_INTERMEDIATE_TOKENS,
         ),
