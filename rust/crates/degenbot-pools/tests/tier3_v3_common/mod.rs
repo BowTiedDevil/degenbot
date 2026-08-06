@@ -23,6 +23,11 @@
 //! documented OOG trap, not a math verdict) is a legitimate skip.
 
 #![allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
+//! The module is compiled INTO each consuming test binary (V3, Pancake-V3, …),
+//! so an item may legitimately be dead in one consumer but live in another;
+//! dead-code warnings are therefore suppressed here rather than re-allowed at
+//! every call site.
+#![allow(dead_code)]
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
