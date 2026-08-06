@@ -854,10 +854,26 @@ impl BlockPump {
             // when result batches are dispatched to Python.
             {
                 if self.sink.has_dirty_paths() {
-                    self.sink.on_drain(current_block, &current_metadata);
+                    // Pump-owned ACTIVE BLOCK promotion (QMSTSV/BO5FBS):
+                    // `current_block` is newHead+log driven (the promote
+                    // signal — a push WS cannot prove the last event for a
+                    // block arrived, so the new head IS the promote signal),
+                    // but on a header stall ordered backfill advances the
+                    // state clock past it. The solve anchor must never be
+                    // below the state it solves against (MQIZ5M +1-wei / IIA
+                    // class), so promote active_block = max(current_block,
+                    // pool_state_head()) ONCE here — the single pump-owned
+                    // transition that on_drain/solve/verify/sim all derive
+                    // from. `pool_state_head` is the state clock
+                    // (max update_block); newHead drives `current_block`;
+                    // the max catches the pump up on a stall. This also makes
+                    // the solver's internal re-anchor a defensive no-op.
+                    let active_block =
+                        current_block.max(self.bot.state_arc().read().pool_state_head());
+                    self.sink.on_drain(active_block, &current_metadata);
                     // LEZJAS: engine owns `last_solved_block` now — mark this
                     // block solved so the next `finalize_block` guard no-ops.
-                    self.sink.set_last_solved_block(current_block);
+                    self.sink.set_last_solved_block(active_block);
                 }
             }
 
@@ -1927,6 +1943,11 @@ mod tests {
         /// Configurable path-pool refs for the Option-A AV42C7 gate tests
         /// (default empty — the gate early-returns). Set via `set_path_refs`.
         path_refs: Mutex<Vec<Vec<degenbot_solvers::mixed::MixedPoolRef>>>,
+        /// Test knob for the active-block promotion RED test (BO5FBS):
+        /// when `true`, `has_dirty_paths()` reports dirty so the top-of-loop
+        /// `on_drain` path fires. Default `false` keeps every existing test's
+        /// no-drain behavior unchanged.
+        dirty: AtomicBool,
     }
 
     impl FakeDrainSink {
@@ -1939,7 +1960,22 @@ mod tests {
                 solved: Mutex::new(Vec::new()),
                 last_processed: AtomicU64::new(last_processed.unwrap_or(0)),
                 path_refs: Mutex::new(Vec::new()),
+                dirty: AtomicBool::new(false),
             }
+        }
+
+        /// Set the test dirty flag (see `dirty` field doc).
+        fn set_dirty(&self, dirty: bool) {
+            self.dirty.store(dirty, Ordering::Relaxed);
+        }
+
+        fn drained_blocks(&self) -> Vec<u64> {
+            self.drained
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(b, _)| *b)
+                .collect()
         }
 
         /// Configure the path-pool refs the AV42C7 gate verifies (test-only).
@@ -1954,7 +1990,7 @@ mod tests {
             self.path_refs.lock().unwrap().clone()
         }
         fn has_dirty_paths(&self) -> bool {
-            false
+            self.dirty.load(Ordering::Relaxed)
         }
         fn on_drain(&self, block: u64, metadata: &BlockMetadata) {
             // Faithful to `SolveCoordinator::on_drain`: record + advance the
@@ -2333,6 +2369,74 @@ mod tests {
         assert_ne!(
             *metadata, meta_102,
             "block 101's batch must NOT carry 102's metadata"
+        );
+    }
+
+    /// BO5FBS active-block promotion (QMSTSV, confirmed): the pump sets the
+    /// solve anchor = max(newHead-driven `current_block`, `pool_state_head`).
+    /// On a header stall, ordered backfill advances the state clock above
+    /// `current_block`; the solve anchor must never be below the state it
+    /// solves against (MQIZ5M +1-wei / IIA class). Here a V2 pool is
+    /// registered at `update_block` 500 while the pump advances headers only to
+    /// 103 — every `on_drain` must receive the promoted 500, not the lagging
+    /// header. RED before the pump-owned promotion, GREEN after.
+    #[tokio::test]
+    async fn on_drain_receives_promoted_active_block_not_stalled_header() {
+        use alloy::primitives::{aliases::U112, Address as A};
+        use stream::StreamExt;
+        let bot = Arc::new(Bot::new(1));
+        {
+            let arc = bot.state_arc();
+            let mut core = arc.write();
+            core.register_v2_pool(&RegisterV2PoolParams {
+                address: A::from([0xabu8; 20]),
+                token0: A::from([0xa0u8; 20]),
+                token1: A::from([0xa1u8; 20]),
+                reserve0: U112::from(1_000),
+                reserve1: U112::from(2_000),
+                fee_token0: (997, 1000),
+                fee_token1: (997, 1000),
+                factory: A::from([0xf0u8; 20]),
+                update_block: 500,
+                variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+                stable_swap: false,
+                fee_denominator: None,
+                ..Default::default()
+            })
+            .expect("test setup: V2 registration");
+        }
+        assert_eq!(
+            bot.state_arc().read().pool_state_head(),
+            500,
+            "state clock is ahead of the header clock (the stall)"
+        );
+        let (mut pump, sink, _shutdown) = pump_for_test_with_bot(bot, Some(100));
+        sink.set_dirty(true);
+
+        let events: Vec<WsEvent> = (101..=103)
+            .map(|number| WsEvent::BlockHeader {
+                number,
+                timestamp: number * 1_000,
+                base_fee_per_gas: Some(1_000_000_001),
+                gas_used: 10_000_001,
+                gas_limit: 30_000_001,
+            })
+            .collect();
+        let combined = stream::iter(events).boxed();
+        pump.run_test_loop(combined, 100).await;
+
+        let drained = sink.drained_blocks();
+        assert!(
+            !drained.is_empty(),
+            "dirty sink must fire on_drain each top-of-loop iteration"
+        );
+        assert!(
+            drained.iter().all(|&b| b == 500),
+            "every on_drain must receive the promoted active_block (pool_state_head 500), got {drained:?}"
+        );
+        assert!(
+            drained.iter().all(|&b| b >= 103),
+            "no on_drain may lag below the state clock: {drained:?}"
         );
     }
 

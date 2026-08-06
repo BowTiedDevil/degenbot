@@ -99,13 +99,13 @@ impl ArbitrageEngine {
 
         // Solve-block anchor: the batch's `solve_block` (= `results_block`)
         // is the block the pool state actually reflects — the pool-state
-        // head, NOT the (possibly-lagging) drain `block_number`. During a
-        // backfill/drain desync the pools are advanced ahead of the pump's
-        // header clock, so `max(block_number, pool_state_head)` re-anchors at
-        // head. Unchanged pools have identical EVM state from their
-        // `update_block` to head, so a single head anchor reproduces every
-        // path's solver state exactly (B2 collapse — no per-path anchoring,
-        // no dropped opportunities).
+        // head, NOT the (possibly-lagging) drain `block_number`. Since
+        // BO5FBS the pump pre-promotes `active_block = max(current_block,
+        // pool_state_head())` before calling `on_drain`, so `block_number`
+        // here is already >= `pool_state_head` and this `max` is a defensive
+        // no-op that preserves the pre-promotion invariant if any caller
+        // bypasses the pump (e.g. tests driving `solve_dirty` directly). Keep
+        // it — it is now the guard, not the re-anchor.
         let solve_block = block_number.max(self.core.read().pool_state_head());
         // If no paths are affected, just update the block number
         if affected_path_ids.is_empty() {
