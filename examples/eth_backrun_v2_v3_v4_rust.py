@@ -31,69 +31,13 @@ from degenbot._ffi.diagnostics import mark_progress, start_gil_probe
 from degenbot.logging import logger as bot_logger
 from degenbot.runner import BotRunner
 from degenbot.runner import driver_constants as _driver_constants
+from degenbot.runner.cli import build_backrun_arg_parser
 from degenbot.runner.config import BackrunConfig
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
-    """Build the backrun example's argument parser.
-
-    Extracted so the CLI surface (especially the ``--node-http`` / ``--node-ws``
-    cascade overrides) is testable without running the full async session.
-
-    Returns:
-        The configured ``ArgumentParser`` (caller invokes ``parse_args``).
-    """
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--live",
-        action="store_true",
-        help="Enable live mode (submits real transactions)",
-    )
-    parser.add_argument(
-        "--permutation",
-        type=str,
-        default=None,
-        help=(
-            "Pool version permutation filter (e.g. V2-V3-V4). "
-            "Only paths matching this 3-hop ordering will be built and simulated. "
-            "Overrides PATH_PERMUTATION_FILTER in the driver."
-        ),
-    )
-    parser.add_argument(
-        "--node-http",
-        type=str,
-        default=None,
-        help=(
-            "HTTP RPC endpoint for the backrun chain (Ethereum mainnet). "
-            "Highest-priority source in the RPC URI cascade: "
-            "--node-http > DEGENBOT_RPC_HTTP_CHAINID_1 > NODE_HOST_HTTP "
-            "> config.toml rpc[1] > error."
-        ),
-    )
-    parser.add_argument(
-        "--node-ws",
-        type=str,
-        default=None,
-        help=(
-            "WebSocket RPC endpoint for the backrun chain (Ethereum mainnet). "
-            "Highest-priority source in the RPC URI cascade: "
-            "--node-ws > DEGENBOT_RPC_WS_CHAINID_1 > NODE_HOST_WEBSOCKET "
-            "> config.toml ws[1] > error."
-        ),
-    )
-    parser.add_argument(
-        "--operator-socket",
-        type=str,
-        default=None,
-        help=(
-            "Optional Unix domain socket path for the operator command channel "
-            "(NWTUM3). When set, the bot hosts an OperatorServer here so the "
-            "`degenbot path add` / `degenbot path discover` CLI can add a path "
-            "or trigger bounded on-demand discovery on the LIVE pump without "
-            "restarting it."
-        ),
-    )
-    return parser
+    """Backward-compatible alias for :func:`build_backrun_arg_parser`."""
+    return build_backrun_arg_parser()
 
 
 async def main() -> None:
