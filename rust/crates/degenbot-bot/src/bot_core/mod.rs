@@ -598,16 +598,18 @@ impl BotState {
 
     /// The `update_block` of the pool at `pool_id` — the block its reserves /
     /// `sqrt_price` / `tick` / liquidity were last mutated by a forward `Sync` /
-    /// `Swap` / Mint-Burn event. `0` for an unregistered pool (the freshness
-    /// gate treats 0 as stale: a missing pool defers its path until registered).
+    /// `Swap` / Mint-Burn event. `0` for an unregistered pool (the staleness
+    /// gate treats 0 as never-advanced, not stale — see below).
     ///
-    /// Used by the per-path state-freshness gate (ergo AV42C7): before solving
-    /// a path at `solve_block`, every hop's `update_block` must be `>=
-    /// solve_block`, else the path is deferred — its backrun would otherwise
-    /// land at a block where one pool still holds the prior block's state, and
-    /// the solver's prediction diverges from on-chain reality by the mid-block
-    /// move (the constant, amount-independent +1 V3 / V4 drift class that turned
-    /// the V3-V3-V3 IIA reverts on the USDC/WETH anchor).
+    /// Used by the per-path staleness gate (ergo TQ43TU Direction A): a hop
+    /// whose `update_block` trails the solve block by more than a bounded
+    /// window (see `MAX_SOLVE_STALENESS` in `solver_dispatch`) is a frozen
+    /// snapshot (missed swap events / a stale DB seed anchor) and its path is
+    /// deferred from the live solve — solving it would otherwise produce a
+    /// desynced result the ADR-021 verifier `abort()`s the whole bot on. A
+    /// 1-2 block lag (the pool simply had no event that block) is normal and
+    /// must not defer. `update_block == 0` (never advanced) is never assumed
+    /// stale: the ADR-021 verifier diffs it at the solve block instead.
     #[must_use]
     pub fn pool_update_block(&self, pool_id: u64) -> u64 {
         self.pools.get(&pool_id).map_or(0, PoolEntry::update_block)
