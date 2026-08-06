@@ -575,26 +575,38 @@ impl BlockPump {
             .await
     }
 
-    /// Option-A solver-state accuracy gate (AV42C7): diff every registered
-    /// path's per-hop solver pool state against the chain at `block` (the
-    /// solve block) and PANIC on the first mismatch or read failure.
-    ///
-    /// The scalar state is extracted under a short core read-guard and the
-    /// guard dropped before the async on-chain reads begin (a `parking_lot`
-    /// guard is not `Send` and must not be held across an `.await`). Env-gated
-    /// by `DEGENBOT_ASSERT_SOLVER_STATE=1` at the call site; off the hot loop
-    /// by default.
-    ///
-    /// NOTE (AV42C7): the on-chain diff is performed at each hop's OWN
-    /// `update_block` anchor (see `verify_solver_hop_states`), not at `block`
-    /// — a solver holding 1-2 blocks of normal latency must not fail; only a
-    /// state that diverges from the chain even at its own anchor is a true
-    /// desync. `block` appears in the message for staleness context. On a
-    /// genuine desync the gate sets `shutdown` (a CLEAN stop, not a
-    /// wedging `panic!` — see the fail-safe block below).
+    /// Dedicated solver-state verifier task (ADR-021 relocation). Loops over
+    /// solve-block notifications from the pump via a LATEST-WINS `watch` channel:
+    /// only the most recently published block is ever verified — a superseded
+    /// block is dropped, never queued, so the verifier can neither pile up an
+    /// unbounded backlog of full-path snapshots nor stall the pump's
+    /// `run_with_stream` on the `O(registered_paths × hops × RPC)` cost (the
+    /// confirmed freeze). On a desync it `abort()`s the whole process (unchanged
+    /// ADR-021 semantics) — the abort kills the bot before any on-chain
+    /// submission, regardless of where the pump is in its advance.
+    async fn solver_state_verify_loop(
+        mut rx: tokio::sync::watch::Receiver<Option<u64>>,
+        bot: Arc<Bot>,
+        sink: Arc<dyn DrainSink>,
+        provider: Arc<AlloyProvider>,
+    ) {
+        while rx.changed().await.is_ok() {
+            let Some(block) = *rx.borrow_and_update() else {
+                continue;
+            };
+            tracing::debug!(block, "solver-state verifier: verifying published block");
+            Self::verify_solver_state_against_chain(&bot, &sink, &provider, block).await;
+        }
+    }
+
     #[allow(clippy::missing_panics_doc)]
-    async fn verify_solver_state_against_chain(&self, block: u64) {
-        let path_refs = self.sink.solver_path_pool_refs();
+    async fn verify_solver_state_against_chain(
+        bot: &Arc<Bot>,
+        sink: &Arc<dyn DrainSink>,
+        provider: &Arc<AlloyProvider>,
+        block: u64,
+    ) {
+        let path_refs = sink.solver_path_pool_refs();
         if path_refs.is_empty() {
             return;
         }
@@ -609,7 +621,7 @@ impl BlockPump {
         let mut path_hop_states = Vec::with_capacity(path_refs.len());
         let anchor;
         {
-            let state_arc = self.bot.state_arc();
+            let state_arc = bot.state_arc();
             let core = state_arc.read();
             for pools in &path_refs {
                 path_hop_states.push(extract_solver_hop_states(&core, pools));
@@ -618,8 +630,7 @@ impl BlockPump {
         }
         let block = anchor;
         for (path_idx, hop_states) in path_hop_states.iter().enumerate() {
-            if let Err(mismatch) = verify_solver_hop_states(&self.provider, hop_states, block).await
-            {
+            if let Err(mismatch) = verify_solver_hop_states(provider, hop_states, block).await {
                 // Diagnose the cause class before panicking: log every hop's
                 // solver-stored update_block and its staleness vs. the solve
                 // block. `stale == 0` on the failing hop is the sub-tick
@@ -836,6 +847,29 @@ impl BlockPump {
         // per path per solve on the hot loop (only at the publish point).
         let solver_state_verify_enabled = self.solver_state_verify;
 
+        // ADR-021 relocation (pump-freeze fix): the solver-state verify is NOT
+        // awaited inline on `run_with_stream`. It runs on a dedicated verifier
+        // task fed by a LATEST-WINS `watch`; the pump hands every published
+        // block to it with a non-blocking send and returns to polling the WS
+        // stream immediately, so the O(registered × hops × RPC) verify can
+        // never stall pump advancement (the confirmed freeze: `last_complete`
+        // froze while the inline gate ground through the whole registered set).
+        // The verifier abort()s the whole process on desync (unchanged ADR-021
+        // fail-stop); only the most recent published block is ever verified.
+        let verify_tx: Option<tokio::sync::watch::Sender<Option<u64>>> =
+            if solver_state_verify_enabled {
+                let (tx, rx) = tokio::sync::watch::channel(None);
+                tokio::spawn(Self::solver_state_verify_loop(
+                    rx,
+                    Arc::clone(&self.bot),
+                    Arc::clone(&self.sink),
+                    Arc::clone(&self.provider),
+                ));
+                Some(tx)
+            } else {
+                None
+            };
+
         // JIABO3 Option A — header-staleness watchdog. A `tokio::time::interval`
         // selected against `combined.next()` (below) whose internal `Sleep`
         // elapses independently of stream activity. This catches a silent
@@ -963,23 +997,33 @@ impl BlockPump {
                             if clock.consume_quiesced(open) {
                                 self.sink.on_send(&current_metadata);
                                 // Option-A solver-state accuracy gate (AV42C7),
-                                // run at the PUBLISH point: the result being
-                                // sent here is the coalesced, quiesce-gated
+                                // triggered at the PUBLISH point but RUN on a
+                                // dedicated verifier task (ADR-021 relocation —
+                                // the pump-freeze fix). The result being sent
+                                // here is the coalesced, quiesce-gated
                                 // (block-final) solve — the one Python will
-                                // actually simulate. Verifying here, not after
+                                // actually simulate. Publishing here, not after
                                 // every transient `on_drain`, means a mid-block
                                 // stale solve that the eager design discards
                                 // (re-solved when the block completes) never
                                 // trips the hard panic, while a desync on a
                                 // result that SURVIVES to publication still
-                                // panics before Python simulates it. Each hop is
+                                // aborts the whole process. Each hop is
                                 // diffed against the chain at its own anchor
                                 // block (`verify_solver_hop_states`); hops
                                 // touched in the in-progress block are skipped
                                 // (mid-block captures are unverifiable via
-                                // historical slot0).
-                                if solver_state_verify_enabled {
-                                    self.verify_solver_state_against_chain(current_block).await;
+                                // historical slot0). Because the verify runs
+                                // off the pump task, the pump never waits on
+                                // it — advancement is decoupled from
+                                // assertion; the latest-wins handoff ensures
+                                // only the most recent published block is
+                                // ever verified.
+                                if let Some(ref tx) = verify_tx {
+                                    // Non-blocking latest-wins handoff — the
+                                    // pump never awaits the verifier, so block
+                                    // advancement is decoupled from assertion.
+                                    let _ = tx.send(Some(current_block));
                                 }
                             }
                         }
@@ -3521,7 +3565,8 @@ mod tests {
         let hex_resp = format!("0x{}", alloy::primitives::hex::encode(&resp));
         asserter.push_success(&hex_resp);
 
-        pump.verify_solver_state_against_chain(200).await;
+        BlockPump::verify_solver_state_against_chain(&pump.bot, &pump.sink, &pump.provider, 200)
+            .await;
         unreachable!("the solver-state gate MUST abort the process on a verified desync (UO3JM4)");
     }
 
