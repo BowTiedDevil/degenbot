@@ -308,7 +308,7 @@ test-all: test-rust test-python
 
 # Lint Markdown files
 lint-markdown:
-    npx --yes markdownlint-cli2 --fix "**/*.md" "!node_modules/**" "!.opencode/node_modules/**" "!.venv/**"
+    npx --yes markdownlint-cli2 --fix "**/*.md" "!node_modules/**" "!.opencode/node_modules/**" "!.venv/**" "!tier3-oracle/lib/**"
 
 # Lint Python files
 lint-python:
