@@ -2100,6 +2100,9 @@ impl BotState {
     /// stays `None` (no complete `tick_data` → step-2 is a no-op). Idempotent
     /// if called twice (the second pin overwrites; only step-2 consumes it).
     pub fn pin_v3_post_drain_snapshot(&mut self, address: Address) {
+        // Hoist the tombstone-confirmed cutoff (`pump_complete_cutoff` takes
+        // `&self`) out of the inner scope, where `&mut state` is alive.
+        let cutoff = self.pump_complete_cutoff();
         // Capture the pin scalars + an optional watch-tick snapshot in an
         // inner scope so the `&mut state` borrow of `self.pools` ends before
         // the diagnostic reads `self.v3_buffer` (a second `&self` borrow).
@@ -2114,12 +2117,32 @@ impl BotState {
                 let watch = trace_watch_tick()
                     .and_then(|t| state.tick_data.get(&t))
                     .map(|info| (info.liquidity_gross, info.liquidity_net));
+                let liquidity_clock = state.tick_data_block;
                 // OB7UNY two-stamp: the pin pairs the TICK MAP with its own
                 // LIQUIDITY clock (`tick_data_block`), not the price clock —
                 // step-2 verify compares `tick_data` against on-chain@the
                 // pinned block, so the pinned block must be the liquidity clock.
-                state.post_drain_snapshot = Some((state.tick_data.clone(), state.tick_data_block));
-                Some((state.tick_data_block, state.tick_data.len(), watch))
+                //
+                // DFQYM5 fabricated-mismatch clamp: the verify block is the
+                // block the tick map is CONFIRMED-complete at. If the pump has
+                // any UNDRAINED event at/below the pool's liquidity clock
+                // (`pump_count_at_or_below > 0` — an in-progress block the
+                // drain held back at the cutoff), the map may be incomplete AT
+                // that clock block, and verifying there would compare an
+                // incomplete map against the full on-chain block -> false
+                // mismatch. Clamp down to the tombstone-complete cutoff. The
+                // `pump_count == 0` case is the BENIGN seed carrying the live
+                // WS head past the cutoff (mod.rs:580) — keep the clock block.
+                let undrained = self
+                    .v3_buffer
+                    .pump_count_at_or_below(&address, liquidity_clock);
+                let pinned_block = if undrained > 0 && cutoff > 0 {
+                    liquidity_clock.min(cutoff)
+                } else {
+                    liquidity_clock
+                };
+                state.post_drain_snapshot = Some((state.tick_data.clone(), pinned_block));
+                Some((pinned_block, state.tick_data.len(), watch))
             } else {
                 None
             }
@@ -4186,6 +4209,9 @@ impl BotState {
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) {
         let key = (pool_manager, *pool_id);
+        // Hoist the tombstone-confirmed cutoff (`pump_complete_cutoff` takes
+        // `&self`) out of the inner scope, where `&mut state` is alive.
+        let cutoff = self.pump_complete_cutoff();
         // Capture the pin scalar in an inner scope so the `&mut state` borrow
         // of `self.pools` ends before the diagnostic reads `self.v4_buffer`
         // (a second `&self` borrow) — Rust forbids both alive at once.
@@ -4199,8 +4225,21 @@ impl BotState {
             if state.coverage == PoolTickCoverage::Tracked {
                 // OB7UNY two-stamp (V4 twin): pin pairs tick_data with the
                 // LIQUIDITY clock, not the price clock.
-                state.post_drain_snapshot = Some((state.tick_data.clone(), state.tick_data_block));
-                Some(state.tick_data_block)
+                let liquidity_clock = state.tick_data_block;
+                // DFQYM5 fabricated-mismatch clamp (V4 twin): verify only at
+                // the block the map is confirmed-complete at. `> 0` undrained
+                // pump events at/below the clock + a nonzero cutoff -> clamp
+                // down to the cutoff; the `pump_count == 0` benign-seed case
+                // (mod.rs:580) and the no-tombstone (`cutoff == 0`) guard keep
+                // the clock block.
+                let undrained = self.v4_buffer.pump_count_at_or_below(&key, liquidity_clock);
+                let pinned_block = if undrained > 0 && cutoff > 0 {
+                    liquidity_clock.min(cutoff)
+                } else {
+                    liquidity_clock
+                };
+                state.post_drain_snapshot = Some((state.tick_data.clone(), pinned_block));
+                Some(pinned_block)
             } else {
                 None
             }
@@ -8367,5 +8406,106 @@ mod tests {
         // set_live under an empty retained tail is a no-op flush (the probe
         // would log drained_retained_tail=0).
         core.set_v3_pool_live(pool_addr);
+    }
+
+    // ── pin clamp regression (DFQYM5 fabricated-mismatch fix) ──────────────
+    //
+    // The pin stores (tick_map, liquidity_clock) and step-2 verify compares
+    // the map against on-chain @ that block. If the pump has any UNDRAINED
+    // event at/below the pool's liquidity clock (an in-progress block the
+    // drain held back at the tombstone cutoff), the map is NOT complete AT
+    // that clock block — verifying there would compare an incomplete map
+    // against the full on-chain block and fabricate a mismatch. The pin must
+    // clamp the verify block down to `pump_complete_cutoff`. Both branches are
+    // asserted below: the clamp (undrained > 0) and the benign preserve
+    // (undrained == 0, mod.rs:580 seed).
+    #[test]
+    fn pin_clamps_verify_block_to_complete_cutoff_when_pump_undrained() {
+        use crate::bot_core::RegisterV3PoolParams;
+        use crate::solvers::arb_engine::PoolTickCoverage;
+        let mut core = BotState::new();
+        let pool_addr = Address::from([0xf8u8; 20]);
+        core.register_v3_pool(&RegisterV3PoolParams {
+            address: pool_addr,
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 500,
+            tick_spacing: 10,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data: HashMap::new(),
+            // DB-seeded seed: the liquidity clock is exact at block 100.
+            update_block: 100,
+            tick_data_block: Some(100),
+            coverage: PoolTickCoverage::Tracked,
+            fetcher: None,
+            ..Default::default()
+        })
+        .expect("test setup: V3 registration");
+        // Quarantine so live Mint/Burn route to the pump buffer.
+        core.set_v3_pool_quarantined(pool_addr);
+        // Pump-buffer an UNDRAINED Mint at block 100, but only tombstone the
+        // pump through block 99 → the drain (apply_pump_buffer_v3) holds the
+        // block-100 event back, so the map is NOT complete at its 100 clock.
+        core.apply_v3_liquidity_update(pool_addr, -10, 10, 500_i128, 100);
+        core.advance_pump_complete_cutoff(99);
+        assert_eq!(core.pump_complete_cutoff(), 99);
+        assert_eq!(core.v3_buffer.pump_count_at_or_below(&pool_addr, 100), 1);
+        core.apply_pump_buffer_v3(&pool_addr);
+        core.pin_v3_post_drain_snapshot(pool_addr);
+        let (_ticks, pinned_block) = core
+            .take_v3_post_drain_snapshot(pool_addr)
+            .expect("pin captured for a Tracked pool");
+        assert_eq!(
+            pinned_block, 99,
+            "fabricated mismatch: pin must clamp the verify block down to the \
+             complete cutoff (99), not the seed liquidity clock (100), when the \
+             pump has undrained events at/below the clock"
+        );
+    }
+
+    #[test]
+    fn pin_preserves_clock_block_when_no_undrained_events() {
+        use crate::bot_core::RegisterV3PoolParams;
+        use crate::solvers::arb_engine::PoolTickCoverage;
+        let mut core = BotState::new();
+        let pool_addr = Address::from([0xf9u8; 20]);
+        core.register_v3_pool(&RegisterV3PoolParams {
+            address: pool_addr,
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 500,
+            tick_spacing: 10,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data: HashMap::new(),
+            update_block: 100,
+            tick_data_block: Some(100),
+            coverage: PoolTickCoverage::Tracked,
+            fetcher: None,
+            ..Default::default()
+        })
+        .expect("test setup: V3 registration");
+        core.set_v3_pool_quarantined(pool_addr);
+        // Cutoff is BEHIND the seed clock (99 < 100) and the pump has NO event
+        // for this pool at/below the clock → pump_count == 0. This is the
+        // mod.rs:580 BENIGN seed case: the DB seed carries the live WS head
+        // past the cutoff, so no event could be missing — the clock block is
+        // preserved (NOT clamped), and verifying at 100 is correct.
+        core.advance_pump_complete_cutoff(99);
+        assert_eq!(core.v3_buffer.pump_count_at_or_below(&pool_addr, 100), 0);
+        core.apply_pump_buffer_v3(&pool_addr);
+        core.pin_v3_post_drain_snapshot(pool_addr);
+        let (_ticks, pinned_block) = core
+            .take_v3_post_drain_snapshot(pool_addr)
+            .expect("pin captured for a Tracked pool");
+        assert_eq!(
+            pinned_block, 100,
+            "benign seed (pump_count==0) must keep the clock block, not clamp"
+        );
     }
 }
