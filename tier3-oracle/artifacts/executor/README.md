@@ -14,6 +14,9 @@ reproduces the V3->V4->V3 executor sim-Halt against real bytecode (tasks
   custom error`). The ONLY per-PC source attribution vyper provides.
 - `cmd_executor.immutables.json` — `code_layout` (the immutable values and their
   offsets), needed to deploy.
+- `ExecutorV3Harness.sol/ExecutorV3Harness.json` — deployment artifact
+  (solc 0.7.6) for the shared-token topology harness that deploys two real
+  `UniswapV3Pool`s routing through a single shared WETH.
 - `manifest.json` — artifact -> tracked-source sha256 + `vyper_version`.
 
 ## Deploy contract (immutables are deploy-time constructor args)

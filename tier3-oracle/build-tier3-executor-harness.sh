@@ -39,6 +39,55 @@ mkdir -p "${OUT}"
   uv run vyper -f combined_json "${TD}/${SRC_DIR}/${VY}" > /tmp/tier3_executor_combined.json
 )
 
+# ── V3 topology harness (solc 0.7.6) ─────────────────────────────────────
+# Deploys two real UniswapV3Pools with caller-supplied (shared) tokens. v3-core
+# pragmas are <0.8.0 and need 0.7.x wrapping semantics, so — like the tier-3a
+# V3 harness — compile directly with the cached solc 0.7.6 binary.
+SOLC_VER="0.7.6"
+SOLC_LONG="0.7.6+commit.7338295f"
+SVM_DIR="${HOME}/.local/share/svm/${SOLC_VER}"
+SOLC_BIN="${SVM_DIR}/solc-${SOLC_VER}"
+if [ ! -x "${SOLC_BIN}" ]; then
+    echo "fetching solc ${SOLC_VER} (not in svm cache)…"
+    mkdir -p "${SVM_DIR}"
+    curl -fsSL -o "${SOLC_BIN}" \
+        "https://binaries.soliditylang.org/linux-amd64/solc-linux-amd64-v${SOLC_LONG}"
+    chmod +x "${SOLC_BIN}"
+fi
+V3_SOL="ExecutorV3Harness.sol"
+STD_JSON="$(mktemp)"
+cat > "${STD_JSON}" <<JSON
+{
+  "language": "Solidity",
+  "sources": { "src-executor/${V3_SOL}": { "urls": ["src-executor/${V3_SOL}"] } },
+  "settings": {
+    "outputSelection": { "*": { "*": ["abi", "evm.bytecode.object", "evm.deployedBytecode.object"] } },
+    "remappings": ["v3-core/=lib/v3-core/"]
+  }
+}
+JSON
+RAW="$(mktemp)"
+"${SOLC_BIN}" --base-path . --allow-paths . --standard-json < "${STD_JSON}" > "${RAW}"
+rm -f "${STD_JSON}"
+mkdir -p "${OUT}/${V3_SOL}"
+V3JSON="${OUT}/${V3_SOL}/${V3_SOL%.sol}.json"
+python3 - "${RAW}" "${V3JSON}" <<'PYV3'
+import json, sys
+raw = json.load(open(sys.argv[1]))
+errs = [e for e in raw.get("errors", []) if e.get("severity") == "error"]
+if errs:
+    raise SystemExit("\n".join(e["formattedMessage"] for e in errs))
+inner = raw["contracts"]["src-executor/ExecutorV3Harness.sol"]["ExecutorV3Harness"]
+shaped = {
+    "abi": inner["abi"],
+    "bytecode": {"object": inner["evm"]["bytecode"]["object"]},
+    "deployedBytecode": {"object": inner["evm"]["deployedBytecode"]["object"]},
+}
+json.dump(shaped, open(sys.argv[2], "w"))
+print(f"wrote {sys.argv[2]}")
+PYV3
+rm -f "${RAW}"
+
 python3 - "$OUT" "${SRC_DIR}" "/tmp/tier3_executor_combined.json" "$VY" <<'PY'
 import json, hashlib, os, sys
 out, src_dir, combined_path, vy_name = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
@@ -66,16 +115,20 @@ open(f"{out}/cmd_executor.immutables.json", "w").write(json.dumps(c["layout"]["c
 
 # manifest: artifacts -> tracked-source sha256, plus toolchain pin. Every
 # artifact maps to the sha256 of the SAME git-tracked source (cmd_executor.vy),
-# mirroring write-harness-manifest.sh.
+# mirroring write-harness-manifest.sh. The V3 topology harness (solc 0.7.6)
+# maps to its own tracked .sol source.
 def sha(p):
     return hashlib.sha256(open(p, "rb").read()).hexdigest()
 src_hash = sha(f"{src_dir}/{vy_name}")
+v3sol = "src-executor/ExecutorV3Harness.sol"
+v3_hash = sha(v3sol)
 art = {
     "executor/cmd_executor.creation.hex":    {"source": f"{src_dir}/{vy_name}", "sha256": src_hash},
     "executor/cmd_executor.runtime.hex":     {"source": f"{src_dir}/{vy_name}", "sha256": src_hash},
     "executor/cmd_executor.abi.json":        {"source": f"{src_dir}/{vy_name}", "sha256": src_hash},
     "executor/cmd_executor.error_map.json":  {"source": f"{src_dir}/{vy_name}", "sha256": src_hash},
     "executor/cmd_executor.immutables.json": {"source": f"{src_dir}/{vy_name}", "sha256": src_hash},
+    "executor/ExecutorV3Harness.sol/ExecutorV3Harness.json": {"source": v3sol, "sha256": v3_hash},
 }
 with open(f"{out}/manifest.json", "w") as fh:
     json.dump({"vyper_version": d.get("version"), "artifacts": art}, fh, indent=2, sort_keys=True)

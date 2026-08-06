@@ -120,6 +120,17 @@ fn committed_executor_artifacts_match_tracked_source() {
                 "{} contains non-hex chars",
                 artifact_path.display()
             );
+        } else if artifact.contains(".sol/") {
+            // Foundry-shaped Solidity harness JSON: the committed bytecode.object
+            // must be present and valid EVM creation code.
+            let v: Value = serde_json::from_str(&raw)
+                .unwrap_or_else(|e| panic!("{} is invalid json: {e}", artifact_path.display()));
+            let obj = v["bytecode"]["object"].as_str();
+            assert!(
+                obj.is_some(),
+                "{} has no bytecode.object (foundry shape)",
+                artifact_path.display()
+            );
         }
     }
 }

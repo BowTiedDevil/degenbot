@@ -1,5 +1,9 @@
 {
   "artifacts": {
+    "executor/ExecutorV3Harness.sol/ExecutorV3Harness.json": {
+      "sha256": "b64bca5faa2fc9f01694ad542f9a322116328da40ea115300c11227109457075",
+      "source": "src-executor/ExecutorV3Harness.sol"
+    },
     "executor/cmd_executor.abi.json": {
       "sha256": "6b79116fff6c97140e2cd207b18be56ad9b476ed079dfef4d35b92b0d32f15b8",
       "source": "src-executor/cmd_executor.vy"
