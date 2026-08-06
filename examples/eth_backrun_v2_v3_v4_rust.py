@@ -102,11 +102,15 @@ MULTICALL3_ADDRESS = "0xcA11bde05977b3631167028862bE2a173976CA11"
 
 # Verified standard ERC-20 intermediates for Ethereum mainnet.
 # Every token here is confirmed to have NO transfer fees and NO rebase.
+# stETH (Lido) is EXCLUDED: it is a rebasing token, so its pools' stored
+# `getReserves()` can drift from the actual `balanceOf`, breaking V2
+# K-invariant accounting and making failures non-attributable. Debug the
+# "honest" ERC-20 subset first; rebase/FoT detection lands in the
+# inspection module later.
 ETH_MAINNET_ALLOWED_TOKENS: set[str] = {
     "0x163f8C2467924be0ae7B5347228CABF260318753",  # WLD
     "0x6c3ea9036406852006290770BEdFcAbA0e23A0e8",  # PyUSD
     "0xB8c77482e45F1F44dE1745F52C74426C631bDD52",  # BNB
-    "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84",  # LIDO stETH
     "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",  # WETH
     "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",  # USDC
     "0xdAC17F958D2ee523a2206206994597C13D831ec7",  # USDT
