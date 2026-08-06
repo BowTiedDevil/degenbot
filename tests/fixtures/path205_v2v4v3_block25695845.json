@@ -1,0 +1,47 @@
+{
+ "_doc": "Exact path-205 (V2-V4-V3 family) hop0 V2 BNB/WETH on-chain state at solve_block 25695845. The live sim read reserve0=0 reserve1=0 for this pool at the same block.",
+ "target_block": 25695845,
+ "recorded_solve": {
+  "optimal_input": "5085843084476",
+  "hop_outputs": [
+   "15190397493966",
+   "9757",
+   "5123961542619"
+  ],
+  "v2_hop_index": 0,
+  "v2_input": "5085843084476",
+  "v2_predicted": "15190397493966",
+  "sim_read_reserve0": "0",
+  "sim_read_reserve1": "0"
+ },
+ "pools": {
+  "v2_0": {
+   "family": "pancakeswap_v2",
+   "address": "0xb01C29F391f2abC76E7dBDb62E5fbE62bA9AC4Ed",
+   "token0": "0xB8c77482e45F1F44dE1745F52C74426C631bDD52",
+   "token1": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+   "reserve0": "1886669965567926",
+   "reserve1": "625016974983751",
+   "block_number": 1785378191,
+   "fee_gamma": 9975,
+   "fee_denom": 10000
+  }
+ },
+ "path": [
+  {
+   "hop": 0,
+   "pool": "v2_0",
+   "family": "v2"
+  },
+  {
+   "hop": 1,
+   "pool": "v4",
+   "family": "v4"
+  },
+  {
+   "hop": 2,
+   "pool": "v3",
+   "family": "v3"
+  }
+ ]
+}
