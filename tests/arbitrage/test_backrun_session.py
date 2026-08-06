@@ -16,6 +16,7 @@ example running (the example IS the integration test).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from dataclasses import dataclass
 
 import pytest
@@ -1470,6 +1471,80 @@ class TestPathRegistrationPipeline:
         # propagates so the caller can abort loudly (crash-loudly preserved).
         with pytest.raises(VerificationMismatchError, match="boom"):
             await pipeline.enqueue_path([step], directions=[True])
+
+    async def test_forever_discovery_plus_mid_run_add_compose_without_stall(self) -> None:
+        """U6TKNU terminal composition: the unbounded forever discovery producer
+        and a mid-run operator path-add flow through the SAME live pipeline's
+        `_consume` concurrently — the add registers while forever discovery
+        keeps climbing, and neither stalls the other (cooperative scheduling
+        over the shared body, no deadlock). This is the epic's end-to-end core:
+        solve/registration work for newly-added paths proceeds alongside
+        ongoing discovery that never reaches a terminal state.
+
+        A 1-hop V2 path with explicit `directions=[True]` is used so the add
+        fully registers through the real `_consume` offline (no live RPC
+        token-direction resolution needed). Forever discovery yields deliberately
+        opaque path shapes (a step whose type is not a pool table class) that
+        `_consume` skips (counted as `skip_count`), exercising the pipeline body
+        + backpressure forever without live construction — and, crucially,
+        WITHOUT aborting the pipeline (a raw ``object()`` would make `_consume`
+        do `list(object())` → TypeError, masking the real composition).
+        """
+        from examples.eth_backrun_v2_v3_v4_rust import (
+            REG_QUEUE_BOUND,
+            REG_WORKERS,
+            run_registration_pipeline,
+        )
+
+        pipeline, reg, t_base = self._make_pipeline()
+        prior_skips = pipeline.skip_count
+
+        async def forever_producer():
+            i = 0
+            while True:
+                # Opaque path shape `_consume` skips (step type = `object`, not
+                # a V2/V3/V4 pool table class) — exercises the pipeline body +
+                # backpressure forever, and safe (no list(object()) TypeError).
+                i += 1
+                await asyncio.sleep(0)
+                yield [self._Step(type=object, address="0x" + f"{i:x}" * 40)]
+
+        # Run the unbounded discovery producer through the pipeline's bounded
+        # producer/consumer as a background task (never returns).
+        reg_task = asyncio.create_task(
+            run_registration_pipeline(
+                producer=forever_producer(),
+                consume=pipeline._consume,
+                queue_size=REG_QUEUE_BOUND,
+                worker_count=REG_WORKERS,
+            )
+        )
+        try:
+            # Let forever discovery climb a few cooperative steps.
+            for _ in range(5):
+                await asyncio.sleep(0)
+
+            # MID-RUN add: a concrete 1-hop V2 path through the SAME `_consume`,
+            # while forever discovery is still climbing in the background task.
+            step = self._Step(t_base, "0x" + "d" * 40)
+            await pipeline.enqueue_path([step], directions=[True])
+
+            # The add registered (not stalled by ongoing discovery).
+            assert reg.register_path_calls == 1
+            assert pipeline.path_count == 1
+            # Forever discovery kept climbing concurrently (no stall/deadlock) —
+            # it drove real `_consume` skips beyond the pre-add baseline.
+            assert pipeline.skip_count > prior_skips, (
+                "forever discovery must have progressed through _consume"
+            )
+            # The background pipeline task is still alive (never returned) —
+            # proof endless discovery does not reach a terminal state while the
+            # mid-run add proceeds.
+            assert reg_task.done() is False
+        finally:
+            reg_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await reg_task
 
 
 class TestSessionOperatorSurface:
