@@ -187,6 +187,49 @@ async def test_fatal_error_cancels_siblings_and_reraises() -> None:
         )
 
 
+async def test_fatal_error_aborts_with_unbounded_producer() -> None:
+    """A fatal `consume` error must abort FAST even when discovery is unbounded
+    (6VZN7H forever producer).
+
+    Regression for the crash-loudly swallow: the old
+    `gather(worker_tasks, return_exceptions=True)` inspected results only after
+    ALL workers finished, but with a never-ending producer the surviving
+    workers drain the queue forever — so the fatal exception sat trapped in the
+    gathered results and the bot kept trading instead of failing loudly. The
+    pipeline must now re-raise the first worker exception immediately.
+    """
+    fatal_hit: asyncio.Event = asyncio.Event()
+
+    async def producer():
+        # Never terminates — simulates the unbounded discovery re-sweep.
+        i = 0
+        while True:
+            yield i
+            i += 1
+            await asyncio.sleep(0)
+
+    async def consume(item: int) -> None:
+        if item == 0:
+            fatal_hit.set()
+            fatal = _FatalError("verification mismatch (unbounded producer)")
+            raise fatal
+        # Keep sibling workers busy so the old gather never returned.
+        await asyncio.sleep(0.01)
+
+    with pytest.raises(_FatalError):
+        # wait_for turns a regression (hang) into a fast failure.
+        await asyncio.wait_for(
+            run_registration_pipeline(
+                producer=producer(),
+                consume=consume,
+                queue_size=8,
+                worker_count=4,
+            ),
+            timeout=5.0,
+        )
+    assert fatal_hit.is_set()
+
+
 async def test_non_fatal_exceptions_do_not_abort() -> None:
     """consume may swallow per-item errors (current `continue` semantics); only
     uncaught exceptions abort."""

@@ -1395,18 +1395,28 @@ async def run_registration_pipeline(
 
     producer_task = asyncio.create_task(_produce())
     worker_tasks = [asyncio.create_task(_work()) for _ in range(worker_count)]
-    worker_results = await asyncio.gather(*worker_tasks, return_exceptions=True)
 
-    # Fatal: any uncaught `consume` exception (e.g. verification mismatch)
-    # cancels the whole pipeline and re-raises rather than leaving sibling
-    # workers draining a poisoned queue. Cancellation interrupts the producer
-    # even mid-put (no blocking `finally`), so this cannot deadlock.
-    for result in worker_results:
-        if isinstance(result, BaseException):
-            for task in [producer_task, *worker_tasks]:
-                task.cancel()
+    # Fatal-abort: wait for a worker to RAISE (or all to finish) instead of
+    # `gather`ing every worker to completion. `gather(return_exceptions=True)`
+    # only inspects results after ALL workers finish — but with the unbounded
+    # forever producer (6VZN7H) the surviving workers keep draining the queue
+    # indefinitely, so a fatal `consume` exception (e.g. verification mismatch)
+    # would sit trapped in the gathered results forever and the bot would keep
+    # trading instead of failing loudly. Wait on FIRST_EXCEPTION and re-raise
+    # the first worker exception immediately: cancel the producer + remaining
+    # workers and propagate, so the failure is FAST and LOUD. Cancellation
+    # interrupts the producer even mid-put (no blocking `finally`), so this
+    # cannot deadlock.
+    done, _pending = await asyncio.wait(worker_tasks, return_when=asyncio.FIRST_EXCEPTION)
+    for task in done:
+        if task.cancelled():
+            continue
+        exc = task.exception()
+        if exc is not None:
+            for t in [producer_task, *worker_tasks]:
+                t.cancel()
             await asyncio.gather(*[producer_task, *worker_tasks], return_exceptions=True)
-            raise result
+            raise exc
 
     # Normal completion: all workers drained (each consumed one stop marker
     # after the real items). Surface any producer/discovery error.
