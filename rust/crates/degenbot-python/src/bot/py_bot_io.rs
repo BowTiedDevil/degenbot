@@ -1032,6 +1032,42 @@ impl PyBotIo {
         }
     }
 
+    /// Fetch ERC-20 `name()` / `symbol()` / `decimals()` for MANY tokens in ONE
+    /// Multicall3 `aggregate3` `eth_call` (CDJEPJ-2), falling back to the
+    /// per-token `fetch_erc20_metadata` path if the multicall itself errors.
+    ///
+    /// Returns one `Option<(name, symbol, decimals)>` per input address, in
+    /// order. A token whose sub-call reverted / failed to decode is `None`,
+    /// matching the single-token batched-fetch caller-side fallback contract
+    /// (the Python builder then retries that token via its alternate-prototype
+    /// fallback). Collapses the two separate per-token `fetch_erc20_metadata`
+    /// round-trips a two-token pool build used to fire into ONE multicall.
+    #[pyo3(signature = (addresses))]
+    fn fetch_erc20_metadata_batch(
+        &self,
+        py: Python<'_>,
+        addresses: Vec<String>,
+    ) -> Vec<Option<(String, String, u64)>> {
+        let Ok(io) = self.required_construction_io() else {
+            return Vec::new();
+        };
+        let mut addrs = Vec::with_capacity(addresses.len());
+        for a in addresses {
+            let Ok(addr) = parse_address_for_call(&a) else {
+                return Vec::new();
+            };
+            addrs.push(alloy::primitives::Address::from(addr));
+        }
+        py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::choreography::fetch_erc20_metadata_batch(
+                    &io, &addrs,
+                )
+                .await
+            })
+        })
+    }
+
     /// Fetch a V2-style pool's immutable data — `factory()`, `token0()`, `token1()` —
     /// performing the 3-call encode -> call -> decode choreography in Rust
     /// (ADR-005 slice 14e).

@@ -19,6 +19,9 @@ from degenbot.exceptions.base import DegenbotValueError
 from degenbot.logging import logger
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from degenbot._ffi import Erc20TokenRow
     from degenbot.bot import PyBot, PyBotIo
     from degenbot.database.session_manager import DatabaseSessionManager
     from degenbot.registry import TokenRegistry
@@ -213,6 +216,140 @@ class Erc20Builder:
             logger.info(f"• {token.symbol} ({token.name})")
 
         return token
+
+    def _register_from_metadata(
+        self,
+        address: str,
+        name: str,
+        symbol: str,
+        decimals: int,
+        *,
+        chain_id: ChainId,
+        silent: bool,
+    ) -> Erc20Token:
+        """Register a token in the Rust BotState + Python registry from metadata.
+
+        Returns:
+            The canonical token instance (35NMBX Guard 1 ``get_or_add`` path).
+
+        """
+        py_token = self._py_bot.register_token(address, name, symbol, decimals, chain_id)
+        token = Erc20Token._from_py_token(py_token)  # ruff:ignore[private-member-access]
+        token = self._tokens.get_or_add(token_address=token.address, chain_id=chain_id, token=token)
+        if not silent:
+            logger.info(f"• {token.symbol} ({token.name})")
+        return token
+
+    def build_many(
+        self,
+        addresses: Sequence[str],
+        *,
+        chain_id: ChainId | None = None,
+        silent: bool = False,
+        io: PyBotIo | None = None,
+    ) -> list[Erc20Token]:
+        """Build MANY tokens, batching metadata reads into ONE Multicall3 read.
+
+        CDJEPJ-2: preserves :meth:`build`'s per-token semantics — registry fast
+        path, Ether placeholder, DB lookup, alternate-prototype fallback — but
+        when 2+ tokens need a network metadata fetch it issues ONE
+        ``io.fetch_erc20_metadata_batch([...])`` instead of N separate
+        ``fetch_erc20_metadata`` round-trips. A token whose batched metadata
+        came back ``None`` falls back to per-token :meth:`build` (so the
+        contract-deployed check + alternate-prototype fallback still apply).
+
+        Returns:
+            One :class:`Erc20Token` per input address, in order.
+
+        """
+        chain_id = chain_id or self._default_chain_id
+        assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
+
+        resolved: list[Erc20Token | None] = []
+        # (result_index, address, token_from_db) still needing a network fetch.
+        network_needed: list[tuple[int, str, Erc20TokenRow | None]] = []
+
+        for raw_address in addresses:
+            address = get_checksum_address(raw_address)
+            if (existing := self._tokens.get(token_address=address, chain_id=chain_id)) is not None:
+                # ADR-006: ensure the token is registered in the shared PyBot.
+                if self._py_bot.get_token(address) is None:
+                    self._py_bot.register_token(
+                        address,
+                        existing.name,
+                        existing.symbol,
+                        existing.decimals,
+                        chain_id,
+                    )
+                resolved.append(existing)
+                continue
+            if address in EtherPlaceholder.addresses:
+                resolved.append(
+                    self._register_from_metadata(
+                        address,
+                        "Ether Placeholder",
+                        "ETH",
+                        18,
+                        chain_id=chain_id,
+                        silent=silent,
+                    )
+                )
+                continue
+            token_from_db = None
+            if io is not None:
+                with contextlib.suppress(Exception):
+                    token_from_db = io.fetch_erc20_token(chain_id=chain_id, address=address)
+            if (
+                token_from_db is not None
+                and token_from_db.name is not None
+                and token_from_db.symbol is not None
+                and token_from_db.decimals is not None
+            ):
+                resolved.append(
+                    self._register_from_metadata(
+                        address,
+                        str(token_from_db.name),
+                        str(token_from_db.symbol),
+                        int(token_from_db.decimals),
+                        chain_id=chain_id,
+                        silent=silent,
+                    )
+                )
+                continue
+            network_needed.append((len(resolved), address, token_from_db))
+            resolved.append(None)
+
+        if network_needed:
+            assert io is not None, "io required to fetch network token metadata"
+            metas = io.fetch_erc20_metadata_batch([addr for _, addr, _ in network_needed])
+            for (idx, address, token_from_db), meta in zip(network_needed, metas, strict=True):
+                if meta is None:
+                    # Fall back to the full per-token build (which performs the
+                    # contract-deployed check + alternate-prototype fallback).
+                    resolved[idx] = self.build(address, chain_id=chain_id, silent=silent, io=io)
+                else:
+                    name, symbol, decimals = meta
+                    # Write back to DB if the record exists but was missing data.
+                    if (
+                        token_from_db is not None
+                        and token_from_db.name is None
+                        and token_from_db.symbol is None
+                        and token_from_db.decimals is None
+                        and io is not None
+                    ):
+                        with contextlib.suppress(Exception):
+                            io.update_erc20_token_metadata(
+                                chain_id=chain_id,
+                                address=address,
+                                name=name,
+                                symbol=symbol,
+                                decimals=decimals,
+                            )
+                    resolved[idx] = self._register_from_metadata(
+                        address, name, symbol, int(decimals), chain_id=chain_id, silent=silent
+                    )
+
+        return [t for t in resolved if t is not None]
 
     def get_token_balance(  # ruff:ignore[no-self-use]
         self,

@@ -1006,15 +1006,12 @@ class Bot:
             ) from exc
         state_view_address = get_checksum_address(state_view_hex)
 
-        # Build tokens — from the CORE-resolved currency addresses.
-        token0 = self._erc20_builder.build(
-            currency0_address,
-            chain_id=chain_id,
-            silent=request.silent,
-            io=io,
-        )
-        token1 = self._erc20_builder.build(
-            currency1_address,
+        # Build both tokens — from the CORE-resolved currency addresses — in
+        # ONE batched metadata read (CDJEPJ-2): build_many collapses the two
+        # per-token fetch_erc20_metadata round-trips into a single Multicall3
+        # aggregate3 eth_call for the network-missing metadata.
+        token0, token1 = self._erc20_builder.build_many(
+            [currency0_address, currency1_address],
             chain_id=chain_id,
             silent=request.silent,
             io=io,

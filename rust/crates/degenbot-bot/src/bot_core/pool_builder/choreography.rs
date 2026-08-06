@@ -22,9 +22,10 @@
 //! `keccak256(signature)`.
 
 use alloy::dyn_abi::{DynSolType, DynSolValue};
-use alloy::primitives::{keccak256, Address, I256, U128, U256};
+use alloy::primitives::{keccak256, Address, Bytes, I256, U128, U256};
 use degenbot_core::errors::ProviderError;
 use degenbot_rpc::abi;
+use degenbot_rpc::multicall3::{self, MulticallResult, MULTICALL3_ADDRESS};
 
 use crate::bot_core::construction_io::ConstructionIo;
 
@@ -463,6 +464,94 @@ pub async fn fetch_erc20_metadata(
         _ => return Ok(None),
     };
     Ok(Some((name, symbol, decimals)))
+}
+
+/// Decode a Multicall3 sub-call's return data as a Solidity `string`
+/// (for `name()` / `symbol()`). A reverted sub-call or non-string return is
+/// `None` (the caller's per-field alternate-prototype fallback contract).
+fn decode_metadata_string(res: &MulticallResult) -> Option<String> {
+    if !res.success {
+        return None;
+    }
+    match DynSolType::String.abi_decode(&res.return_data) {
+        Ok(DynSolValue::String(s)) => Some(s),
+        _ => None,
+    }
+}
+
+/// Decode a Multicall3 sub-call's return data as a `uint8`/`uint256`
+/// (for `decimals()`); `None` on revert or decode failure.
+fn decode_metadata_decimals(res: &MulticallResult) -> Option<u64> {
+    if !res.success {
+        return None;
+    }
+    match DynSolType::Uint(256).abi_decode(&res.return_data) {
+        Ok(DynSolValue::Uint(n, _)) => Some(n.to::<u64>()),
+        _ => None,
+    }
+}
+
+/// Fetch ERC-20 `name()` / `symbol()` / `decimals()` for MANY tokens in ONE
+/// Multicall3 `aggregate3` `eth_call` (CDJEPJ-2), falling back to per-token
+/// [`fetch_erc20_metadata`] if the multicall itself errors.
+///
+/// Returns one `Option<(name, symbol, decimals)>` per input address, in order.
+/// A token whose sub-call reverted or failed to decode is `None`, matching the
+/// single-token path's caller-side fallback contract (the Python builder then
+/// retries that token via its alternate-prototype fallback). Reuses
+/// `degenbot_rpc::multicall3` encode/decode (pure + fixture-tested) with a
+/// single `io.rpc.call` to [`MULTICALL3_ADDRESS`]. Reads are head-stamped
+/// (`block = None` = latest), consistent with [`fetch_erc20_metadata`].
+///
+/// # Errors
+///
+/// Never returns a hard error: a provider/decode failure degrades to the
+/// per-token path (preserving exact pre-batch behavior).
+pub async fn fetch_erc20_metadata_batch(
+    io: &ConstructionIo,
+    addresses: &[Address],
+) -> Vec<Option<(String, String, u64)>> {
+    if addresses.is_empty() {
+        return Vec::new();
+    }
+    // 3 sub-calls per token: name(), symbol(), decimals().
+    let mut calls: Vec<(Address, Bytes)> = Vec::with_capacity(addresses.len() * 3);
+    for addr in addresses {
+        calls.push((*addr, selector(b"name()").to_vec().into()));
+        calls.push((*addr, selector(b"symbol()").to_vec().into()));
+        calls.push((*addr, selector(b"decimals()").to_vec().into()));
+    }
+    let batch = async {
+        let calldata = multicall3::encode_aggregate3(&calls)?;
+        let data = io.rpc.call(MULTICALL3_ADDRESS, calldata, None).await?;
+        multicall3::decode_aggregate3_results(&data, calls.len())
+    }
+    .await;
+    let Ok(results) = batch else {
+        // Fallback: Multicall3 not deployed / unreachable / malformed return.
+        // Degrade to the per-token path (preserves exact pre-batch behavior).
+        let mut out = Vec::with_capacity(addresses.len());
+        for addr in addresses {
+            out.push(fetch_erc20_metadata(io, *addr).await.ok().flatten());
+        }
+        return out;
+    };
+    let mut out = Vec::with_capacity(addresses.len());
+    for chunk in results.chunks(3) {
+        if chunk.len() < 3 {
+            out.push(None);
+            continue;
+        }
+        let name = decode_metadata_string(&chunk[0]);
+        let symbol = decode_metadata_string(&chunk[1]);
+        let decimals = decode_metadata_decimals(&chunk[2]);
+        if let (Some(n), Some(s), Some(d)) = (name, symbol, decimals) {
+            out.push(Some((n, s, d)));
+        } else {
+            out.push(None);
+        }
+    }
+    out
 }
 
 /// Fetch an ERC-20 token balance via `balanceOf(address)` (ADR-005 slice 14d).
