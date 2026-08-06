@@ -7,10 +7,6 @@
     "sha256": "826b8f3e10ccab1ff7ef72b3260d5424716fe238aac6d5c074a0d1d6156a2e8a",
     "source": "src-curve/CurveSwapOracleHarness.sol"
   },
-  "Echo.sol/Echo.json": {
-    "sha256": "245f590d0cef30581016c0e2b6b878bff831e9b08dd196bb27ad23c867075272",
-    "source": "src/Echo.sol"
-  },
   "PancakeV2SwapOracleHarness.sol/PancakeV2SwapOracleHarness.json": {
     "sha256": "33a17f7a854703cd3d2b363cf9f7a79431a24fa844c346ebbf3f6f7cf32e4b0a",
     "source": "src-pancake2/PancakeV2SwapOracleHarness.sol"
@@ -25,7 +21,7 @@
   },
   "SwapMathV4Harness.sol/SwapMathV4Harness.json": {
     "sha256": "493215b030c6afa9e56601e8f76a68d9c8f9721b613e81c576b81a50bd84b5fe",
-    "source": "src/SwapMathV4Harness.sol"
+    "source": "src-v4/SwapMathV4Harness.sol"
   },
   "V2SwapOracleHarness.sol/V2SwapOracleHarness.json": {
     "sha256": "3a23262e2c90d0c520fca826018576e17f41cd859275d8ccbd6276c635b37b0c",
@@ -37,6 +33,6 @@
   },
   "V4SwapOracleHarness.sol/V4SwapOracleHarness.json": {
     "sha256": "a5c362fe2ae2aff407449a533172031627b2d39fb097c6f1c981cb012b0748d3",
-    "source": "src/V4SwapOracleHarness.sol"
+    "source": "src-v4/V4SwapOracleHarness.sol"
   }
 }

@@ -18,12 +18,11 @@ import json, hashlib
 MAP = {
     "V2SwapOracleHarness.sol/V2SwapOracleHarness.json": "src-v2/V2SwapOracleHarness.sol",
     "V3SwapOracleHarness.sol/V3SwapOracleHarness.json": "src-v3/V3SwapOracleHarness.sol",
-    "V4SwapOracleHarness.sol/V4SwapOracleHarness.json": "src/V4SwapOracleHarness.sol",
+    "V4SwapOracleHarness.sol/V4SwapOracleHarness.json": "src-v4/V4SwapOracleHarness.sol",
     "SwapMathV3Harness.sol/SwapMathV3Harness.json": "src-v3/SwapMathV3Harness.sol",
-    "SwapMathV4Harness.sol/SwapMathV4Harness.json": "src/SwapMathV4Harness.sol",
+    "SwapMathV4Harness.sol/SwapMathV4Harness.json": "src-v4/SwapMathV4Harness.sol",
     "CurveSwapOracleHarness.sol/CurveSwapOracleHarness.json": "src-curve/CurveSwapOracleHarness.sol",
     "BalancerSwapOracleHarness.sol/BalancerSwapOracleHarness.json": "src-balancer/BalancerSwapOracleHarness.sol",
-    "Echo.sol/Echo.json": "src/Echo.sol",
     "PancakeV3SwapOracleHarness.sol/PancakeV3SwapOracleHarness.json": "src-pancake-v3/PancakeV3SwapOracleHarness.sol",
     "PancakeV2SwapOracleHarness.sol/PancakeV2SwapOracleHarness.json": "src-pancake2/PancakeV2SwapOracleHarness.sol",
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the Tier-3b V4 `PoolManager.swap` end-to-end oracle harness (ergo
-# task 2LTKVO, epic UP5NH6). Compiles `src/V4SwapOracleHarness.sol` (which
+# task 2LTKVO, epic UP5NH6). Compiles `src-v4/V4SwapOracleHarness.sol` (which
 # imports the real v4-core `PoolManager` as canonical bytecode) with solc
 # 0.8.26 via standard-json, mirroring the direct-solc approach the V3/V2
 # oracle harnesses use (foundry cannot resolve the sibling v3-core's solc
@@ -41,7 +41,7 @@ STD_JSON="$(mktemp)"
 cat > "${STD_JSON}" <<JSON
 {
   "language": "Solidity",
-  "sources": { "src/V4SwapOracleHarness.sol": { "urls": ["src/V4SwapOracleHarness.sol"] } },
+  "sources": { "src-v4/V4SwapOracleHarness.sol": { "urls": ["src-v4/V4SwapOracleHarness.sol"] } },
   "settings": {
     "optimizer": { "enabled": true, "runs": 800 },
     "outputSelection": { "*": { "*": ["abi", "evm.bytecode.object", "evm.deployedBytecode.object"] } },

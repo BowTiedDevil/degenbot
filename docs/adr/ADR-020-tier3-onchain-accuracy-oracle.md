@@ -8,8 +8,8 @@ reachability, behavioral dual-driver parity) are unchanged. Full mechanical
 enforcement of a Tier-3 oracle for *every* CL-math capability the solver
 reaches is **deferred** (see Deferred) until the pattern is proven across the
 pool families. The seed corpus (V3 deploy+seed `just test-tier3-swap`, V3/V4
-`computeSwapStep` `just test-tier3-step`, the foundry→revm smoke
-`just test-tier3-smoke`) ships with the acceptance as `#[ignore]d` examples
+`computeSwapStep` `just test-tier3-step`) ships with the acceptance as
+`#[ignore]d` examples
 reachable only through explicit `just test-tier3-*` recipes — they build
 canonical-reference bytecode, so they are not in the default
 `cargo test`/`just test-rust` path.
@@ -136,7 +136,7 @@ Two fixture shapes, in that order:
   `just verify-tier3-artifacts` (the authoritative compile-vs-use check, in the
   CI `tier3-oracle` job) recompiles every harness with the real solc/forge
   toolchain and asserts the committed bytecode equals a fresh build. `just
-  test-tier3-{smoke,step,swap,v2,v4,curve,balancer}` rebuild + republish the
+  test-tier3-{step,swap,v2,v4,curve,balancer}` rebuild + republish the
   artifacts and re-run the families; `just rebuild-tier3-artifacts` republishes
   without running. The pre-push hook runs the oracle tests (committed bytecode);
   the toolchain compile check runs only in CI.
@@ -203,5 +203,5 @@ Two fixture shapes, in that order:
   — the V3/V4 storage-slot layout reference the encoders mirror.
 - AGENTS.md "Dual-Path Coverage Tests" — the Tier 0/1/2 definitions this ADR
   extends with Tier 3; the mechanical-enforcement update is task `BQ43DK`.
-- `just test-tier3-smoke` / `just test-tier3-step` / `just test-tier3-swap` —
+- `just test-tier3-step` / `just test-tier3-swap` —
   the seed recipes (`tier3-oracle/`).

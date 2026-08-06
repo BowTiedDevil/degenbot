@@ -60,8 +60,7 @@ check_one build-tier3-v2-swap-harness.sh        V2SwapOracleHarness.sol/V2SwapOr
 check_one build-tier3-v3-swap-harness.sh        V3SwapOracleHarness.sol/V3SwapOracleHarness.json
 check_one build-tier3-v4-swap-harness.sh        V4SwapOracleHarness.sol/V4SwapOracleHarness.json
 check_one build-tier3-harnesses.sh              SwapMathV3Harness.sol/SwapMathV3Harness.json \
-                                                SwapMathV4Harness.sol/SwapMathV4Harness.json \
-                                                Echo.sol/Echo.json
+                                                SwapMathV4Harness.sol/SwapMathV4Harness.json
 check_one build-tier3-curve-swap-harness.sh     CurveSwapOracleHarness.sol/CurveSwapOracleHarness.json
 check_one build-tier3-balancer-swap-harness.sh  BalancerSwapOracleHarness.sol/BalancerSwapOracleHarness.json
 check_one build-tier3-pancake-v3-swap-harness.sh PancakeV3SwapOracleHarness.sol/PancakeV3SwapOracleHarness.json

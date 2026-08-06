@@ -129,18 +129,6 @@ record-golden *args:
 verify-deployments *args:
     DEGENBOT_VERIFY_DEPLOYMENTS=${DEGENBOT_VERIFY_DEPLOYMENTS:-1} uv run pytest -m online_rpc -q --no-header -p no:randomly {{ args }} tests/registry/test_deployment_onchain_verification.py
 
-# Tier-3 on-chain accuracy oracle — smoke (ergo task 767HYN, epic UP5NH6).
-# Rebuild + publish the Echo wire-probe harness, then run the revm smoke test
-# (`tier3_forge_revm_smoke.rs`). Proves the forge→bytecode→revm→assert loop.
-test-tier3-smoke:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    tier3-oracle/bootstrap-libs.sh
-    (cd tier3-oracle && forge build)
-    python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
-    export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    cargo test --manifest-path rust/Cargo.toml -p degenbot-simulation --test tier3_forge_revm_smoke
-
 # Tier-3a byte-exact oracle: SwapMath.computeSwapStep (V3 + V4) vs real
 # canonical core libraries run as EVM bytecode in revm (ergo task OZRQS6,
 # epic UP5NH6). Builds BOTH harnesses (V3 via direct solc 0.7.6 — v3-core
@@ -261,7 +249,7 @@ test-tier3-pancake2:
 # publish the artifacts (after a harness-source edit) and re-run each family.
 # Recompiling dozens of revm harnesses makes this slow — run explicitly, or in
 # the CI `tier3-oracle` job.
-test-tier3: test-tier3-smoke test-tier3-step test-tier3-swap test-tier3-v2 test-tier3-v4 test-tier3-curve test-tier3-balancer test-tier3-pancake test-tier3-pancake2
+test-tier3: test-tier3-step test-tier3-swap test-tier3-v2 test-tier3-v4 test-tier3-curve test-tier3-balancer test-tier3-pancake test-tier3-pancake2
 
 # Validate the committed tier-3 harness bytecode: recompile EVERY harness with
 # the real solc/forge toolchain (into a throwaway dir, PUBLISH=0 — committed

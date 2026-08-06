@@ -2,8 +2,8 @@
 # Build the Tier-3a SwapMath oracle harnesses (ergo task OZRQS6, epic UP5NH6).
 #
 # Two harnesses, two solc versions (v3-core pragmas `<0.8.0`, v4-core `^0.8.0`):
-# - V4 harness (`src/SwapMathV4Harness.sol`) + the spike's `Echo` compile under
-#   solc 0.8.26 via `forge build` (foundry auto-resolves 0.8.26).
+# - V4 harness (`src-v4/SwapMathV4Harness.sol`) compiles under solc 0.8.26
+#   via `forge build` (foundry auto-resolves 0.8.26).
 # - V3 harness (`src-v3/SwapMathV3Harness.sol`) imports v3-core's SwapMath
 #   which CANNOT compile under solc 0.8 (v3-core's `FullMath.sol` pragmas
 #   `>=0.4.0 <0.8.0`, and v3-core's arithmetic relies on 0.7's wrapping
@@ -81,7 +81,7 @@ print(f"wrote {sys.argv[2]}")
 PY
 rm -f "${RAW}"
 
-# ── 2. V4 harness + Echo: forge 0.8.26 ─────────────────────────────────────
+# ── 2. V4 harness: forge 0.8.26 ─────────────────────────────────────────────
 (cd "${TD}" && forge build --out "${OUT_DIR}")
 
 
