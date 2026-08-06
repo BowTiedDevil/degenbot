@@ -1,7 +1,14 @@
 # BotRunner Extraction — architecture record for epic 5TSYKN
 
-**Status:** spike (`IJDU4F`) findings. Feeds the implementation tasks of epic **5TSYKN** —
-promote the backrun runtime driver out of `examples/` into a first-class companion module.
+**Status:** **IMPLEMENTED** (epic **5TSYKN**, 9/9 tasks done). This record started as the
+spike (`IJDU4F`) findings; the implementation landed the driver in `src/degenbot/runner/`
+and thinned the example to `argv → BotRunner`. See [§4 Final layout](#4-module-layout-final)
+for what shipped and [§10 Deviations](#10-deviations-from-the-proposal) for where the
+outcome differs from the original proposal. The design rationale below is preserved as the
+spike record.
+
+Epic 5TSYKN promotes the backrun runtime driver out of `examples/` into a first-class
+companion module.
 
 ## 1. Friction confirmed
 
@@ -96,26 +103,34 @@ class BotRunner:
 | Result/block-loop plumbing | `consume_result_batches`, `_tee_block_stream`, `_reprime`, `_apply_block_if_ready`, `_apply_result_if_ready` | — |
 | Sim/submit | `BotRunner.dispatch` (ex-`_dispatch_profitable`), `_render_sim_summary`, `_render_profit_logs`, `_render_sim_failures`, `_render_fot_tokens`, `_dump_failure_fixture` | — |
 | Config + pure helpers | `BackrunConfig`, `classify_revert`, `format_failure_breakdown`, `filter_thin_margin_results`, `format_sim_diag_line` (moved from `eth_backrun_helpers.py`) | — |
-| Pure pool direction | `resolve_directions` (moved into `arbitrage/` — it is pool math, consumer-agnostic) | — |
-| Module constants | factory/pool-manager/WETH/executor constants, `REG_*`, `PATH_PERMUTATION_FILTER`, `MIN_*` | — |
-| CLI + entrypoint | — | `_build_arg_parser`, `main()`, `if __name__ == "__main__"`, SIGINT wrapper, `dotenv` read |
+| Pure pool direction | `resolve_directions` (moved to `runner/build_paths.py` — see §10 deviation) | — |
+| Module constants | factory/pool-manager/WETH/executor constants, `REG_*`, `PATH_PERMUTATION_FILTER`, `MIN_*` (→ `runner/driver_constants.py`) | — |
+| CLI + entrypoint | `build_backrun_arg_parser` (→ `runner/cli.py` — see §10 deviation) | `main()`, `if __name__ == "__main__"`, SIGINT wrapper, `dotenv` read |
 
-`_build_arg_parser` stays example-side (CLI policy), but it is already tested by
-`test_eth_backrun_main_args.py` — the test must be rerouted to import from the example's
-thin entrypoint (which re-exports it or the test moves with the parser). See §6.
+`_build_arg_parser` was to stay example-side (CLI policy) per this spike, but the final
+gate (zero `from examples.eth_backrun` imports in `tests/`/`src/`) forced it into the
+package as `runner/cli.py::build_backrun_arg_parser` (see §10). It is tested by
+`test_eth_backrun_main_args.py`, which now imports from the package.
 
-## 4. Module layout
+## 4. Module layout (final)
 
 ```
 src/degenbot/runner/
-  __init__.py            # re-export BotRunner (public surface)
+  __init__.py            # re-export BotRunner (public surface) + BackrunSession alias
   bot_runner.py          # BotRunner (ex-BackrunSession) — start/build_paths/consume/dispatch
   build_paths.py         # build_paths + PathRegistrationPipeline + ConstructionContext
-                         #   + run_registration_pipeline + resolve_directions(+ repo constants)
+                         #   + run_registration_pipeline + resolve_directions
   consume.py             # consume_result_batches + _tee_block_stream + _reprime
                          #   + _apply_block_if_ready + _apply_result_if_ready
   dispatch.py            # _dispatch_profitable (→BotRunner.dispatch) + the _render_* helpers
   config.py              # BackrunConfig + from_env + classify_revert/format_*/filter_* helpers
+  driver_constants.py    # factory/pool-manager/WETH/executor constants, REG_*, MIN_*
+                         #   + PATH_PERMUTATION_FILTER
+  cli.py                 # build_backrun_arg_parser (argparse CLI surface)
+
+# ADR-013 stable home for the GIL-probe stuck-watchdog (moved out of the runner leaf):
+src/degenbot/diagnostics/
+  __init__.py            # re-exports mark_progress / start_gil_probe from degenbot._ffi
 ```
 
 The already-package-owned collaborators stay put: `arbitrage/recurring_verify.py`
@@ -189,19 +204,43 @@ engine. Recorded here so the epic does not invent an ADR for what is a doc-level
    them from `examples/eth_backrun_v2_v3_v4_rust.py` (thin to `argv → BotRunner`) and delete
    `examples/eth_backrun_helpers.py` once `BackrunConfig`/helpers move.
 
-## 9. Implementation tasks (to register under epic 5TSYKN)
+## 9. Implementation tasks (epic 5TSYKN — all done)
 
 1. `IJDU4F` (this spike) — **done** (this doc).
-2. Move `BackrunConfig` + helpers → `runner/config.py`; re-point the 4 config/helper test files.
-3. Move `BotRunner` (ex-`BackrunSession`) → `runner/bot_runner.py`; split `run()` into
-   `start/build_paths/consume/dispatch`; preserve injectable seams.
-4. Move `build_paths` + `PathRegistrationPipeline` + `ConstructionContext` +
-   `run_registration_pipeline` (+ `resolve_directions` → `arbitrage/`) → `runner/build_paths.py`.
-5. Move `consume_result_batches` + tee/reprime/apply plumbing → `runner/consume.py`.
-6. Move `_dispatch_profitable` (→ `BotRunner.dispatch`) + render helpers → `runner/dispatch.py`.
-7. Reroute all `tests/arbitrage/*` imports to the package; reconcile the dangling
-   `_discovery_producer_forever` reference (finding 1).
-8. Thin `examples/eth_backrun_v2_v3_v4_rust.py` to `argv → BotRunner`; delete
-   `examples/eth_backrun_helpers.py`.
-9. Validation gate (runs last, depends on 3–8): `just test-python` + `just lint-rust` +
-   `just test-rust` green; `rg "from examples\.eth_backrun" tests/ src/` returns nothing.
+2. `RVSYWB` — **done**: `BackrunConfig` + helpers → `runner/config.py`; re-pointed the 4 config/helper test files.
+3. `DKUOBL` — **done**: `BotRunner` (ex-`BackrunSession`) → `runner/bot_runner.py`; split `run()` into
+   `start/build_paths/consume/dispatch`; injectable seams preserved.
+4. `JKYVST` — **done**: `build_paths` + `PathRegistrationPipeline` + `ConstructionContext` +
+   `run_registration_pipeline` + `resolve_directions` → `runner/build_paths.py`.
+5. `CXWQDI` — **done**: `consume_result_batches` + tee/reprime/apply plumbing → `runner/consume.py`.
+6. `DZTFSJ` — **done**: `_dispatch_profitable` (→ `BotRunner.dispatch`) + render helpers → `runner/dispatch.py`.
+7. `OBAYPI` — **done**: rerouted all `tests/arbitrage/*` imports to the package; reconciled the dangling
+   `_discovery_producer_forever` (deleted the 3 stale producer tests, kept the run()-level trim test).
+8. `XYID3W` — **done**: thinned `examples/eth_backrun_v2_v3_v4_rust.py` to `argv → BotRunner`;
+   deleted `examples/eth_backrun_helpers.py`; moved the arg-parser to `runner/cli.py`.
+9. `ASJKB3` — **done**: validation gate — `just test-python` (2502 passed / 0 failed) +
+   `just lint-rust` + `just test-rust` green; `rg "from examples\.eth_backrun" tests/ src/` returns nothing.
+
+## 10. Deviations from the proposal
+
+1. **`resolve_directions` landed in `runner/build_paths.py`, not `arbitrage/`.** The proposal
+   slated it for `arbitrage/` (pool math), but it shipped colocated with its only caller
+   (`build_paths`) in the runner package. It remains discoverable as `resolve_directions`.
+2. **The arg-parser moved into the package as `runner/cli.py::build_backrun_arg_parser`.**
+   The spike said CLI policy stays example-side, but ASJKB3's gate required **zero**
+   `from examples.eth_backrun` imports in `tests/`/`src/`, and
+   `test_eth_backrun_main_args.py` could not keep reaching into the example. The example
+   keeps a thin `_build_arg_parser` alias for `main()`.
+3. **A third module was added: `runner/driver_constants.py`.** The driver's ~15 shared
+   module constants (factories, pool-manager/WETH addresses, `REG_*`, `MIN_*`, fee
+   presets, `PATH_PERMUTATION_FILTER`) were consolidated into one dedicated module so
+   `bot_runner`/`build_paths`/`consume`/`dispatch` import them from a single home.
+4. **A new ADR-013 home was added: `degenbot/diagnostics/`.** `consume.py` reached
+   `degenbot._ffi` directly for the GIL-probe stuck-watchdog (`mark_progress` /
+   `start_gil_probe`), which tripped `test_ffi_boundary.py` (ADR-013: only `__init__.py`
+   may reach `_ffi`). A stable `degenbot.diagnostics` home now re-exports them.
+5. **Two pre-existing, unrelated failures were closed to reach the green gate.** They were
+   artifacts of the in-flight `CDJEPJ-1/2` (ERC-20 metadata batching) + `TF7RZB` (builder
+   identity) work — `erc20_builder`'s leaf `_ffi` import (fixed via a `degenbot.database`
+   TYPE_CHECKING re-export) and `test_bot`'s stale `_io`/`build_v4_pool` fakes (extended
+   to the `fetch_erc20_metadata_batch` seam + 11-field return surface).
