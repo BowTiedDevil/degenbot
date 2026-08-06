@@ -4339,9 +4339,10 @@ impl BotState {
 
     /// Register a token.
     ///
-    /// # Panics
-    ///
-    /// Panics if the token address is already registered.
+    /// Idempotent (35NMBX Guard 1 / concurrent registration workers): if the
+    /// token address is already registered, the existing entry is canonical and
+    /// this is a no-op (no panic). A sibling registration worker may insert the
+    /// same token concurrently; racing inserts must not take the process down.
     pub fn register_token(
         &mut self,
         address: Address,
@@ -4350,21 +4351,13 @@ impl BotState {
         decimals: u8,
         chain_id: u64,
     ) {
-        assert!(
-            !self.tokens.contains_key(&address),
-            "token already registered: {address}"
-        );
-
-        self.tokens.insert(
+        self.tokens.entry(address).or_insert_with(|| TokenEntry {
             address,
-            TokenEntry {
-                address,
-                name,
-                symbol,
-                decimals,
-                chain_id,
-            },
-        );
+            name,
+            symbol,
+            decimals,
+            chain_id,
+        });
     }
 }
 
