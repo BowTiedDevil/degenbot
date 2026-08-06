@@ -1357,6 +1357,179 @@ mod tests {
         let _ = results_after;
     }
 
+    /// TQ43TU Direction A staleness gate: a path whose price clock runs far
+    /// behind the solve block is DEFERRED (excluded from the live solve), NOT
+    /// solved — it would otherwise produce a desynced result the ADR-021
+    /// verifier `abort()`s the whole bot on. A within-window 1-2 block lag
+    /// (no event that block) must NOT defer.
+    #[test]
+    fn stale_price_clock_path_is_deferred_not_aborted() {
+        let mut engine = ArbitrageEngine::new();
+
+        // Profitable V2→V2 pair (from pure_v2_path_finds_profitable_arb).
+        let v2_addr_a = Address::from([0x11u8; 20]);
+        let v2_a = engine.register_v2_pool(
+            v2_addr_a,
+            usdc(1_500_000),
+            weth(800),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let v2_addr_b = Address::from([0x12u8; 20]);
+        let v2_b = engine.register_v2_pool(
+            v2_addr_b,
+            weth(800),
+            usdc(1_600_000),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let path_id = engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: v2_a,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v2_b,
+                    zero_for_one: true,
+                },
+            ])
+            .unwrap();
+
+        // Prove the path IS profitable when fresh: advance both clocks to a block
+        // within the window of the solve block, rebuild, and confirm a result.
+        {
+            let mut core = engine.core.write();
+            let _ = core.apply_sync_by_pool_id(v2_a, usdc(1_500_000), weth(800), 498);
+            let _ = core.apply_sync_by_pool_id(v2_b, weth(800), usdc(1_600_000), 498);
+        }
+        engine.rebuild_and_solve_affected(
+            &HashSet::from([v2_a, v2_b]),
+            &HashSet::new(),
+            &HashSet::new(),
+            500,
+            &BlockMetadata::default(),
+        );
+        let (fresh, _) = engine.latest_results();
+        assert!(
+            fresh.contains_key(&path_id),
+            "a within-window (2-block) lag must NOT defer a profitable path"
+        );
+
+        // Now FREEZE both clocks far behind the solve block (the stale seed-anchor
+        // / missed-event class, e.g. the 166k-block-behind live SushiSwap-V3 pool)
+        // and rebuild at 500 again. The path must be DEFERRED (excluded), NOT
+        // aborted and NOT solved.
+        {
+            let mut core = engine.core.write();
+            let _ = core.apply_sync_by_pool_id(v2_a, usdc(1_500_000), weth(800), 10);
+            let _ = core.apply_sync_by_pool_id(v2_b, weth(800), usdc(1_600_000), 10);
+        }
+        engine.rebuild_and_solve_affected(
+            &HashSet::from([v2_a, v2_b]),
+            &HashSet::new(),
+            &HashSet::new(),
+            500,
+            &BlockMetadata::default(),
+        );
+        let (stale_results, block) = engine.latest_results();
+        assert_eq!(block, 500, "solve block anchors at max(drain, head) = 500");
+        assert!(
+            !stale_results.contains_key(&path_id),
+            "a path with a far-behind price clock must be deferred, not solved"
+        );
+    }
+
+    /// TQ43TU Direction A: the staleness-window boundary (staleness ==
+    /// `MAX_SOLVE_STALENESS` is tolerated, one past defers) and never-updated
+    /// pools (`update_block == 0`, verified at the solve block by ADR-021) are
+    /// never deferred.
+    #[test]
+    fn staleness_window_boundary_and_zero_are_not_deferred() {
+        let mut engine = ArbitrageEngine::new();
+
+        let v2_a = engine.register_v2_pool(
+            Address::from([0x13u8; 20]),
+            usdc(1_500_000),
+            weth(800),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let v2_b = engine.register_v2_pool(
+            Address::from([0x14u8; 20]),
+            weth(800),
+            usdc(1_600_000),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let path_id = engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: v2_a,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v2_b,
+                    zero_for_one: true,
+                },
+            ])
+            .unwrap();
+
+        // Never-advanced pools (`update_block == 0`) at a far solve block are
+        // NOT deferred — the ADR-021 verifier diffs them at the solve block.
+        engine.rebuild_and_solve_affected(
+            &HashSet::from([v2_a, v2_b]),
+            &HashSet::new(),
+            &HashSet::new(),
+            500,
+            &BlockMetadata::default(),
+        );
+        let (r0, _) = engine.latest_results();
+        assert!(
+            r0.contains_key(&path_id),
+            "update_block == 0 pools must never be assumed stale"
+        );
+
+        // Exactly at the window edge (staleness == MAX_SOLVE_STALENESS = 10) is
+        // tolerated — NOT deferred.
+        {
+            let mut core = engine.core.write();
+            let _ = core.apply_sync_by_pool_id(v2_a, usdc(1_500_000), weth(800), 490);
+            let _ = core.apply_sync_by_pool_id(v2_b, weth(800), usdc(1_600_000), 490);
+        }
+        engine.rebuild_and_solve_affected(
+            &HashSet::from([v2_a, v2_b]),
+            &HashSet::new(),
+            &HashSet::new(),
+            500,
+            &BlockMetadata::default(),
+        );
+        let (r1, _) = engine.latest_results();
+        assert!(
+            r1.contains_key(&path_id),
+            "staleness exactly at the window must not defer"
+        );
+
+        // One block past the edge (staleness 11) IS deferred.
+        {
+            let mut core = engine.core.write();
+            let _ = core.apply_sync_by_pool_id(v2_a, usdc(1_500_000), weth(800), 489);
+            let _ = core.apply_sync_by_pool_id(v2_b, weth(800), usdc(1_600_000), 489);
+        }
+        engine.rebuild_and_solve_affected(
+            &HashSet::from([v2_a, v2_b]),
+            &HashSet::new(),
+            &HashSet::new(),
+            500,
+            &BlockMetadata::default(),
+        );
+        let (r2, _) = engine.latest_results();
+        assert!(
+            !r2.contains_key(&path_id),
+            "staleness past the window must defer the path"
+        );
+    }
+
     /// V4 int128 guard: paths where V4 hop amounts exceed `int128_max` are rejected.
     ///
     /// V4's `toBalanceDelta()` calls `toInt128()` on swap amounts. If either component

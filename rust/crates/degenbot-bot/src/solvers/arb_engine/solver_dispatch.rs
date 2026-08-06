@@ -4,6 +4,36 @@ use alloy::primitives::U256;
 use rayon::prelude::*;
 
 use super::{ArbitrageEngine, BlockMetadata, HashMap, HashSet};
+
+/// Maximum acceptable lag (in blocks) of any hop's price-clock `update_block`
+/// behind the solve block before the ENTIRE path is deferred from the live
+/// solve (ergo TQ43TU Direction A). A hop 1-2 blocks behind is normal pump
+/// latency (the pool simply had no event that block); only a hop genuinely far
+/// behind is deferred — a frozen snapshot whose on-chain price moved past it
+/// (missed swap events / a non-canonical Swap topic0, or a stale DB seed-block
+/// anchor like the 166k-block-behind SushiSwap-V3 pool that aborted the live
+/// bot at block 25676544).
+///
+/// Never-updated pools (`update_block == 0` — unregistered or never advanced
+/// by a forward event) are NOT assumed stale: the ADR-021 verifier diffs them
+/// at the solve block instead. Skipping them also keeps freshly-registered
+/// test pools (which seed at `update_block: 0`) from being spuriously deferred.
+///
+/// This is a bounded-window alternative to the AV42C7 zero-tolerance
+/// per-path `update_block`-mix deferral that was REVERTED for over-deferring
+/// every legitimate single-pool-update arb. The window is the difference
+/// between "this pool had no event this block" (normal) and "this pool is
+/// 166k blocks behind" (genuinely stale).
+const MAX_SOLVE_STALENESS: u64 = 10;
+
+/// Whether a hop's price-clock `update_block` is stale enough to defer its
+/// path: non-zero and behind the solve block by more than
+/// [`MAX_SOLVE_STALENESS`]. Mirrors the verifier's `is_cl_pool_stale`
+/// (`update_block == 0` is never assumed stale).
+#[must_use]
+fn hop_is_too_stale(update_block: u64, solve_block: u64) -> bool {
+    update_block > 0 && solve_block.saturating_sub(update_block) > MAX_SOLVE_STALENESS
+}
 use ::degenbot_solvers::mixed::{
     BalancerStableHopState, BalancerWeightedHopState, CurveStableswapHopState, HopType,
     MixedPoolRef, ResolvedHop, ResolvedMixedPath, SolidlyHopState, SolvePathResult,
@@ -82,24 +112,49 @@ impl ArbitrageEngine {
         // those into BotState too. The guard drops before `solve_path` runs,
         // which is pure `&self`.
         //
-        // AV42C7 note: a per-path `update_block`-mix freshness gate was
-        // attempted here and REVERTED — it defers every legitimate
+        // AV42C7 lesson: a per-path `update_block`-MIX freshness gate was
+        // attempted here and REVERTED — it deferred every legitimate
         // single-pool-update arb (Sync pool A, solve with a stable reference
-        // pool B at an older `update_block`). The real mid-block staleness
-        // signal (a pool whose block-N log is in a later WS batch) cannot be
-        // distinguished from "this pool had no block-N event" using
-        // `update_block` alone, so the gate's false-positive rate is
-        // catastrophic. The correct fix is the block-boundary FSM (ergo
-        // 3M5PO5 / ZU7RAF) that re-solves at block completion, NOT an
-        // `update_block`-based mid-block deferral. The `pool_update_block` /
-        // `PoolEntry::update_block` accessors stay for that FSM work.
-        let deferred_paths: Vec<u64> = Vec::new(); // (no-op; FSM will repopulate)
+        // pool B at an older `update_block`). A zero-tolerance `update_block`
+        // check cannot distinguish "this pool had no block-N event" (normal)
+        // from "this pool is genuinely far behind" (missed swap events), so
+        // its false-positive rate is catastrophic.
+        //
+        // TQ43TU Direction A therefore uses a BOUNDED staleness window
+        // (MAX_SOLVE_STALENESS), not a 0-tolerance mix: a hop 1-2 blocks
+        // behind is tolerated (no event that block), and only a hop far
+        // behind defers the path. This catches the live abort (`0x6a11`
+        // SushiSwap-V3, ~166k blocks behind its solve block — a stale seed
+        // anchor) without re-introducing the AV42C7 over-deferral. The block-
+        // boundary FSM (ergo 3M5PO5 / ZU7RAF) remains the long-term solve-time
+        // fix; this gate is the fail-fast tripwire that keeps a stale path
+        // from reaching the ADR-021 verifier's `abort()`.
+        //
+        // TQ43TU Direction A staleness gate. Collect the paths whose price
+        // clock runs far behind the solve block (a frozen snapshot — e.g. the
+        // 166k-block-stale seed-anchored pool). Such a path is deferred (not
+        // aborted): solving it would produce a desynced result the ADR-021
+        // verifier would `abort()` the whole bot on. A 1-2 block lag (no event
+        // this block) is normal and must NOT defer — avoiding the AV42C7
+        // over-deferral regression.
+        let mut deferred_paths: HashSet<u64> = HashSet::new();
         {
             let core = self.core.read();
             for &path_id in &affected_path_ids {
                 let Some(path) = self.path_pools.get(&path_id) else {
                     continue;
                 };
+                let stale = path.pools.iter().any(|pool_ref| {
+                    hop_is_too_stale(core.pool_update_block(pool_ref.pool_key), solve_block)
+                });
+                if stale {
+                    deferred_paths.insert(path_id);
+                    tracing::warn!(
+                        "[solve-stale] path_id={path_id} deferred at solve block {solve_block}: \
+                         a hop price clock trails it by > {MAX_SOLVE_STALENESS} blocks"
+                    );
+                    continue;
+                }
                 let mut resolved = ResolvedMixedPath::default();
                 Self::resolve_path(&core, &path.pools, &mut resolved);
                 self.path_resolved.insert(path_id, resolved);
@@ -107,13 +162,18 @@ impl ArbitrageEngine {
         }
 
         // Remove old results for affected paths (they'll be re-solved below).
+        // A deferred path's result is dropped too: it is excluded from this
+        // live solve (its pool is stale, so its prior result is stale as well).
         for &path_id in &affected_path_ids {
             self.results.remove(&path_id);
         }
 
-        // No mid-block deferral (see note above); solve the full affected set.
-        let solve_path_ids: HashSet<u64> = affected_path_ids.iter().copied().collect();
-        let _ = &deferred_paths; // retained for the FSM repoint
+        // Solve only the non-deferred affected set.
+        let solve_path_ids: HashSet<u64> = affected_path_ids
+            .iter()
+            .filter(|p| !deferred_paths.contains(p))
+            .copied()
+            .collect();
 
         // Solve affected paths and insert new results.
         //
