@@ -67,6 +67,65 @@ check_one build-tier3-balancer-swap-harness.sh  BalancerSwapOracleHarness.sol/Ba
 check_one build-tier3-pancake-swap-harness.sh PancakeV3SwapOracleHarness.sol/PancakeV3SwapOracleHarness.json
 check_one build-tier3-pancake2-swap-harness.sh PancakeV2SwapOracleHarness.sol/PancakeV2SwapOracleHarness.json
 
+# The PINNED PancakeSwap V2 pair (artifacts/PancakeV2Pair/): recompile the
+# committed source at the pinned settings and assert the creation code is
+# byte-identical to the pinned artifact. The toolchain-free Rust test
+# (tier3_pancake_v2_initcode.rs) then keccaks that committed creation code and
+# asserts it equals the canonical INIT_CODE_PAIR_HASH 0x57224589… — so this
+# byte-compare + that keccak together close the source→init-code-hash loop.
+check_pancake2_initcode() {
+    local solc="${HOME}/.local/share/svm/0.5.16/solc-0.5.16"
+    if [ ! -x "${solc}" ]; then
+        echo "  ✗ PancakeV2 init code: solc 0.5.16 not present (run the pancake2 harness build first)"
+        fail=1
+        return
+    fi
+    local src="artifacts/PancakeV2Pair/sources/contracts/PancakeFactory.sol"
+    local pinned="artifacts/PancakeV2Pair/PancakeV2Pair.json"
+    # Standard-json at the Sourcify-pinned settings: evmVersion istanbul,
+    # optimizer runs 99999 (the exact settings whose metadata match a CLI
+    # recompile cannot reproduce — see the Rust test doc).
+    local stdin_json; stdin_json="$(mktemp)"
+    cat > "${stdin_json}" <<JSON
+{
+  "language": "Solidity",
+  "sources": { "contracts/PancakeFactory.sol": { "urls": ["${src}"] } },
+  "settings": {
+    "evmVersion": "istanbul",
+    "libraries": {},
+    "optimizer": { "enabled": true, "runs": 99999 },
+    "remappings": [],
+    "outputSelection": { "*": { "*": ["evm.bytecode.object"] } }
+  }
+}
+JSON
+    local out; out="$(mktemp)"
+    ( cd "${TD}" && "${solc}" --allow-paths . --standard-json < "${stdin_json}" ) > "${out}" 2>/dev/null
+    rm -f "${stdin_json}"
+    local recompiled committed a b
+    recompiled=$(python3 -c 'import json,sys;r=json.load(open(sys.argv[1]));print(r["contracts"]["contracts/PancakeFactory.sol"]["PancakePair"]["evm"]["bytecode"]["object"])' "${out}" 2>/dev/null || echo "") || true
+    committed=$(python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(d["bytecode"]["object"])' "${pinned}")
+    rm -f "${out}"
+    if [ -z "${recompiled}" ]; then
+        echo "  ✗ PancakeV2 init code: recompile failed (solc 0.5.16 standard-json)"
+        fail=1
+        return
+    fi
+    # Normalize the 0x prefix + case: solc's evm.bytecode.object has no 0x;
+    # the committed artifact preserves Sourcify's 0x… form.
+    local a b
+    a=$(python3 -c "import sys;s=sys.argv[1].lower();print(s[2:] if s.startswith('0x') else s)" "${recompiled}")
+    b=$(python3 -c "import sys;s=sys.argv[1].lower();print(s[2:] if s.startswith('0x') else s)" "${committed}")
+    if [ "${a}" != "${b}" ]; then
+        echo "  ✗ PancakeV2 pair creation code ≠ fresh compile at pinned settings"
+        echo "    Re-run build-tier3-pancake2-swap-harness.sh / refresh artifacts/PancakeV2Pair/ then commit."
+        fail=1
+    else
+        echo "  ✓ PancakeV2 pair creation code matches a fresh compile at pinned settings (keccak → 0x57224589… asserted in Rust)"
+    fi
+}
+check_pancake2_initcode
+
 if [ "${fail}" != "0" ]; then
     echo
     echo "ERROR: one or more committed tier-3 harness artifacts do not match a fresh compile."

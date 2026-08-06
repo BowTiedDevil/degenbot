@@ -25,5 +25,9 @@
       },
       "evmVersion": "istanbul"
     }
+  },
+  "source": {
+    "path": "sources/contracts/PancakeFactory.sol",
+    "note": "Canonical verified PancakeSwap V2 flat source (lives in this Sourcify fields=all response's `sources`). Reproduces the creation code byte-exactly via solc 0.5.16 standard-json at these compilerSettings; keccak256(creation) == provenance.initCodeHash. Machine-checked by tier3_pancake_v2_initcode.rs and verify-tier3-artifacts.sh."
   }
 }
