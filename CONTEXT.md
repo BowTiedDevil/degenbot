@@ -155,13 +155,16 @@ directly
   in-memory test fake.
 
 `PyBotIo`'s 12 DB + 7 generic RPC methods now delegate through the trait
-objects (slice A); `PyBotIo` retires fully once the 27 choreography wrappers
-move core-side (the builder-choreography port). Builders receive
-`&ConstructionIo` (sourced from `Bot`), not a parallel I/O object. The 27
-choreographed encode→call→decode wrappers (the `fetch_v2_reserves` /
-`fetch_v3_slot0_*` / `fetch_balancer_*` family) stay on `PyBotIo` for this
-slice, composing over the trait's `call` / DB primitives; they move core-side
-in a follow-up (the builder-choreography port). Held-tx sharing between
+objects (slice A), and the 27 choreographed encode→call→decode wrappers
+(`fetch_v2_reserves` / `fetch_v3_slot0_*` / `fetch_balancer_*` family) have
+moved core-side (the builder-choreography port, F2R2OC / 3FVZF4) into
+`bot_core/pool_builder/`; every `PyBotIo` `fetch_*`/`probe_*` now just
+`block_on`s the core choreography over `&ConstructionIo`. The Python pool
+builders receive `io: PyBotIo` (the `#[pyclass]`), not `&ConstructionIo`
+(the core handle is reached via `PyBot.build_*_pool`). `PyBotIo` does NOT
+retire fully here — see ADR-023/D0: it is trimmed to a strict translator and
+the residual surface is documented `stays-python`; full retirement is owned
+by follow-up epic `VK3YDM` (Rust ERC-20 + Curve port). Held-tx sharing between
 `DbConstruction`'s connection and `tick_assembly`'s `SnapshotDb` held-tx
 is a separate, later slice.
 

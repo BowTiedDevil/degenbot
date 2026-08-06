@@ -11,8 +11,14 @@
 //! This module:
 //! - [`choreography`] — the moved encode→call→decode primitives (V2/V3/V4 +
 //!   ERC-20 + tick), per decision D-C.
-//! - (future, task `3FVZF4`) — the `PoolBuilder` orchestration that composes
-//!   these primitives into core structural pool identity+state.
+//! - [`builder`] — the `PoolBuilder` orchestration (task `3FVZF4`) that composes
+//!   these primitives into core structural pool identity+state (`build_v2/v3/v4`,
+//!   `build_curve_pool`, `build_balancer_*`).
+//! - [`curve_choreography`] — the Curve-specific primitives.
+//!
+//! Note: `build_curve_pool` / `build_balancer_*` are not yet re-exported from
+//! the `degenbot` umbrella nor exposed on `PyBot` (see ADR-023/D4 + epic
+//! `VK3YDM`); `build_v2`/`build_v3`/`build_v4` are the standalone-reachable set.
 
 pub mod builder;
 pub mod choreography;
