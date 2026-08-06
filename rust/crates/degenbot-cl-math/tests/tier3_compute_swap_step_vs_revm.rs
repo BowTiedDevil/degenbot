@@ -169,20 +169,53 @@ fn db_with_contract(addr: Address, code: Bytecode) -> CacheDB<EmptyDB> {
     db
 }
 
-// ── proptest strategies (mirror swap_math.rs proptests, smaller ranges to
-//    keep the on-chain path overflow-free + tractable). ──────────────────
+// ── proptest strategies (H4: widened to the numerical extremes — MIN/MAX
+//    sqrtPrice, 1-wei + near-max amounts, tiny + near-max liquidity, fee 0
+//    and cap — while keeping each draw within the int128/u128-writable domain
+//    the on-chain harness can be fed). ──────────────────────────────────
 
+/// Sqrt-price strategy reaching the step oracle's domain edges: a wide
+/// 64-bit mid-range, the V3 `MIN_SQRT_RATIO` (`sqrt(1.0001^-887272)`), the
+/// uint160 MAX pole, and a ~2^96..2^159 large band (so both MIN/MAX and a
+/// large crossing target appear in the same body of draws).
 fn arb_sqrt_price() -> impl Strategy<Value = U256> {
-    (1u64..u64::MAX).prop_map(U256::from)
+    prop_oneof![
+        (1u64..u64::MAX).prop_map(U256::from),
+        Just(U256::from(4_295_128_739u64)), // sqrt(1.0001^-887272)
+        Just((U256::from(1u64) << 160) - U256::from(1u64)), // MAX uint160
+        (0u64..=(u64::MAX >> 1)).prop_map(|hi| U256::from(hi) << 96), // ~2^96..2^159
+        (0u32..=u32::MAX).prop_map(|lo| U256::from(u64::from(lo)) + (U256::from(1u64) << 96)),
+    ]
 }
+
+/// Liquidity strategy reaching both extremes: tiny (1) and near-`i128::MAX`
+/// (`uint128::MAX` is the on-chain width; `i128::MAX` is the writable max
+/// without a sign-cast), alongside the existing mid range.
 fn arb_liquidity() -> impl Strategy<Value = i128> {
-    (0i64..=i64::MAX).prop_map(i128::from)
+    prop_oneof![
+        (0i64..=i64::MAX).prop_map(i128::from),
+        Just(1i128),
+        (i128::from(i64::MAX)..i128::MAX).prop_map(|v| v), // near max
+    ]
 }
+
+/// Amount strategy reaching 1-wei and near-`i128::MAX` magnitudes in both
+/// signs (the `uint256`-MAX phrasing of the task maps onto the largest
+/// int256-writable magnitude; the on-chain path overflows above it just as
+/// the Rust path does — kept inside the writable range for a truthful parity).
 fn arb_amount() -> impl Strategy<Value = I256> {
-    (i64::MIN + 1..=i64::MAX).prop_map(|v| I256::try_from(v).unwrap())
+    prop_oneof![
+        (i64::MIN + 1..=i64::MAX).prop_map(|v| I256::try_from(v).unwrap()),
+        Just(I256::try_from(1i64).unwrap()),
+        Just(I256::try_from(-1i64).unwrap()),
+        Just(I256::try_from(i128::MAX).unwrap()),
+        Just(I256::try_from(i128::MIN + 1).unwrap()),
+        (i128::from(i64::MAX)..i128::MAX).prop_map(|v| I256::try_from(v).unwrap()),
+        (i128::MIN + 1..i128::from(i64::MIN)).prop_map(|v| I256::try_from(v).unwrap()),
+    ]
 }
 fn arb_fee_pips() -> impl Strategy<Value = u32> {
-    0u32..=1_000_000
+    prop_oneof![0u32..=1_000_000, Just(0u32), Just(1_000_000u32),]
 }
 
 proptest! {
@@ -401,4 +434,155 @@ fn v4_compute_swap_step_pinned_fee1_final_partial_step() {
     assert_eq!(rust.amount_in, onchain.amount_in, "amountIn");
     assert_eq!(rust.amount_out, onchain.amount_out, "amountOut");
     assert_eq!(rust.fee_amount, onchain.fee_amount, "feeAmount");
+}
+
+// ── H3 pinned edge corpus (numerical extremes). ────────────────────────
+
+/// Run one step through the given Rust + on-chain harness and assert parity:
+/// both Ok ⇒ byte-equal fields; both Err ⇒ consistent; an Ok on one side and
+/// an Err on the other (a success/revert divergence) fails.
+#[allow(clippy::too_many_arguments)] // a test helper taking one step's worth of inputs
+fn assert_step_parity(
+    which: (&str, &str),
+    addr: Address,
+    rust: Result<SwapStepResult, String>,
+    sqrt_current: U256,
+    sqrt_target: U256,
+    liquidity: i128,
+    amount: I256,
+    fee_pips: u32,
+) {
+    let calldata = compute_swap_step_calldata(
+        sqrt_current,
+        sqrt_target,
+        liquidity.cast_unsigned(),
+        amount,
+        fee_pips,
+    );
+    let db = db_with_contract(addr, load_harness_bytecode(which.0, which.1));
+    let onchain = call_harness(addr, db, calldata);
+    match (rust, onchain) {
+        (Ok(r), Ok(o)) => {
+            assert_eq!(r.sqrt_price_next, o.sqrt_price_next, "sqrtPriceNext");
+            assert_eq!(r.amount_in, o.amount_in, "amountIn");
+            assert_eq!(r.amount_out, o.amount_out, "amountOut");
+            assert_eq!(r.fee_amount, o.fee_amount, "feeAmount");
+        }
+        (Err(_), Err(())) => { /* both reject — consistent */ }
+        (r, o) => panic!(
+            "{} success/revert divergence: rust_ok={} onchain_ok={}",
+            which.1,
+            r.is_ok(),
+            o.is_ok()
+        ),
+    }
+}
+
+/// Pinned deterministic edge corpus (H3): the numerical extremes of the step
+/// oracle — 1-wei and near-max amounts, tiny + near-`uint128::MAX` liquidity,
+/// MIN/MAX sqrtPrice targets, fee 0 and the 1e6 cap — asserted byte-exact for
+/// BOTH the V3 and V4 `compute_swap_step` (the V4 devoc combo of exact-out +
+/// fee-cap is skipped, matching the proptest).
+#[test]
+fn compute_swap_step_edge_corpus_is_byte_exact() {
+    let max_uint160 = (U256::from(1u64) << 160) - U256::from(1u64);
+    let min_sqrt = U256::from(4_295_128_739u64); // sqrt(1.0001^-887272)
+    let near_max_i128 = i128::MAX;
+
+    let cases: &[(U256, U256, i128, I256, u32)] = &[
+        // 1-wei amount, tiny liquidity, ~max uint160 sqrt.
+        (
+            max_uint160,
+            max_uint160 / U256::from(2u64),
+            1i128,
+            I256::try_from(1i64).unwrap(),
+            0,
+        ),
+        // MIN sqrt target (price floor), 1-wei at tiny liquidity, fee cap.
+        (
+            U256::from(3_000_000_000_000u64),
+            min_sqrt,
+            1i128,
+            I256::try_from(1i64).unwrap(),
+            1_000_000,
+        ),
+        // near-max liquidity, 1-wei / small amount.
+        (
+            U256::from(1_000_000_000_000u64),
+            U256::from(1_100_000_000_000u64),
+            near_max_i128,
+            I256::try_from(1i64).unwrap(),
+            3000,
+        ),
+        // near-max amount at near-max liquidity.
+        (
+            U256::from(1_000_000_000_000u64),
+            U256::from(1_100_000_000_000u64),
+            near_max_i128,
+            I256::try_from(near_max_i128).unwrap(),
+            3000,
+        ),
+        // MAX uint160 current + MAX target pole (exact-in with 0 fee).
+        (
+            max_uint160,
+            max_uint160,
+            near_max_i128,
+            I256::try_from(near_max_i128).unwrap(),
+            0,
+        ),
+        // exact-out (negative) crossing toward MIN.
+        (
+            U256::from(2_000_000_000_000u64),
+            min_sqrt,
+            1_000_000_000i128,
+            I256::try_from(-1i64).unwrap(),
+            500,
+        ),
+        // fee-pip edges on a plain mid-band step.
+        (
+            U256::from(1_000_000_000_000u64),
+            U256::from(990_000_000_000u64),
+            10_000_000i128,
+            I256::try_from(1_000i64).unwrap(),
+            1_000_000,
+        ),
+        (
+            U256::from(1_000_000_000_000u64),
+            U256::from(1_010_000_000_000u64),
+            10_000_000i128,
+            I256::try_from(1_000i64).unwrap(),
+            0,
+        ),
+    ];
+
+    for &(spc, spt, liq, amt, fee) in cases {
+        let v3 =
+            compute_swap_step_v3(spc, spt, liq, amt, U256::from(fee)).map_err(|e| e.to_string());
+        assert_step_parity(
+            ("SwapMathV3Harness.sol", "SwapMathV3Harness"),
+            Address::repeat_byte(0x51),
+            v3,
+            spc,
+            spt,
+            liq,
+            amt,
+            fee,
+        );
+
+        // V4 (skip the devoc combo: exact-out + fee cap).
+        if !(amt >= I256::ZERO && fee == 1_000_000) {
+            let v4 = compute_swap_step_v4(spc, spt, liq, amt, U256::from(fee))
+                .map_err(|e| e.to_string());
+            assert_step_parity(
+                ("SwapMathV4Harness.sol", "SwapMathV4Harness"),
+                Address::repeat_byte(0x52),
+                v4,
+                spc,
+                spt,
+                liq,
+                amt,
+                fee,
+            );
+        }
+    }
 }
