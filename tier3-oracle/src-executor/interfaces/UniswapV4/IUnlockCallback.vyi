@@ -1,0 +1,7 @@
+# PoolManager unlock callback — matches Uniswap V4's IUnlockCallback.sol
+# Bytes size set to 32 (tstore_executor), matching the smallest caller need.
+# The implementing contracts (cmd_executor, tstore_executor) define their own sizes.
+
+@nonpayable
+def unlockCallback(data: Bytes[512]) -> Bytes[512]:
+    ...

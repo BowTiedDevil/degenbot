@@ -1,0 +1,25 @@
+{
+  "artifacts": {
+    "executor/cmd_executor.abi.json": {
+      "sha256": "6b79116fff6c97140e2cd207b18be56ad9b476ed079dfef4d35b92b0d32f15b8",
+      "source": "src-executor/cmd_executor.vy"
+    },
+    "executor/cmd_executor.creation.hex": {
+      "sha256": "6b79116fff6c97140e2cd207b18be56ad9b476ed079dfef4d35b92b0d32f15b8",
+      "source": "src-executor/cmd_executor.vy"
+    },
+    "executor/cmd_executor.error_map.json": {
+      "sha256": "6b79116fff6c97140e2cd207b18be56ad9b476ed079dfef4d35b92b0d32f15b8",
+      "source": "src-executor/cmd_executor.vy"
+    },
+    "executor/cmd_executor.immutables.json": {
+      "sha256": "6b79116fff6c97140e2cd207b18be56ad9b476ed079dfef4d35b92b0d32f15b8",
+      "source": "src-executor/cmd_executor.vy"
+    },
+    "executor/cmd_executor.runtime.hex": {
+      "sha256": "6b79116fff6c97140e2cd207b18be56ad9b476ed079dfef4d35b92b0d32f15b8",
+      "source": "src-executor/cmd_executor.vy"
+    }
+  },
+  "vyper_version": "0.5.0a3"
+}

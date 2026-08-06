@@ -1,0 +1,27 @@
+{
+"OWNER_ADDR": {
+"type": "address",
+"length": 32,
+"offset": 0
+},
+"WETH_ADDR": {
+"type": "address",
+"length": 32,
+"offset": 32
+},
+"POOL_MANAGER_ADDR": {
+"type": "address",
+"length": 32,
+"offset": 64
+},
+"WETH_DELTA_SLOT": {
+"type": "bytes32",
+"length": 32,
+"offset": 96
+},
+"NATIVE_DELTA_SLOT": {
+"type": "bytes32",
+"length": 32,
+"offset": 128
+}
+}
