@@ -79,6 +79,15 @@ pub enum TrackedSlotKind {
     V2Reserves,
     /// V3 `slot0` — `uint160 sqrtPriceX96 | int24 tick` (low 184 bits).
     /// `observationIndex`/`feeProtocol`/`unlocked` NOT tracked → zeroed.
+    ///
+    /// NOTE (ergo task `W32CAU`): these V3 tracked slots assume the canonical
+    /// Uniswap V3 layout (one-word slot0, liquidity@4, ticks base@5). A
+    /// **`PancakeSwap` V3** pool has a divergent layout (two-word slot0,
+    /// liquidity@5, ticks base@6); probing/serving one with these Uniswap
+    /// indices (or the `v3_storage_slots` encoders) would misread it. Route
+    /// pancake V3 through event-based state sync (production already does)
+    /// and, for any direct slot probe/serve, use
+    /// `degenbot_pools::v3_pancakeswap_storage_slots`.
     V3Slot0,
     /// V3 `liquidity` slot 4 — `uint128` (low 128 bits).
     V3Liquidity,

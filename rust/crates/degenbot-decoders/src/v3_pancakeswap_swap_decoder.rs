@@ -1,5 +1,14 @@
 //! PancakeSwap V3 Swap event decoder.
 //!
+//! **Storage-layout divergence (ergo task `W32CAU`):** this event decoder
+//! decodes Swap events (which carry the state transition in their data). It
+//! does NOT read raw storage slots. But be aware the fork's on-chain **storage
+//! layout** also diverges from Uniswap V3 — `slot0.feeProtocol` is a `uint32`
+//! so `Slot0` spans two words and `liquidity`/`ticks`/`tickBitmap` shift to
+//! slots 5/6/7 (Uniswap 4/5/6). Any direct slot-based seed/serve of a pancake
+//! pool MUST use `degenbot_pools::v3_pancakeswap_storage_slots`, never the
+//! Uniswap `v3_storage_slots` encoders. Event-driven state sync is unaffected.
+//!
 //! Decodes `Swap(address,address,int256,int256,uint160,uint128,int24,uint128,uint128)`
 //! events from PancakeSwap V3 pool contracts. PancakeSwap V3 forked Uniswap V3
 //! but REPLACED Uniswap's single trailing `uint24 fee` field with two

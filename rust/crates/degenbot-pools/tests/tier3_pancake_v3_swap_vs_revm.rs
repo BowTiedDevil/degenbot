@@ -65,6 +65,9 @@ use degenbot_decoders::v3_pancakeswap_swap_decoder::{
 };
 use degenbot_decoders::v3_swap_decoder::decode_v3_swap_log;
 use degenbot_pools::state_history::{ReorgJournal, V3BlockDelta};
+use degenbot_pools::v3_pancakeswap_storage_slots::{
+    encode_pancake_v3_slot0_word1, pancake_v3_tick_bitmap_word_slot, pancake_v3_tick_mapping_slot,
+};
 use degenbot_pools::v3_state::{
     v3_simulate_swap, PoolTickCoverage, RegistrationLifecycle, SimulateSwapError, TickRangeCache,
     V3PoolState,
@@ -126,11 +129,12 @@ fn harness_constructor_args(fee: u32, tick_spacing: i32) -> Vec<u8> {
 /// slot shifts by one: `liquidity`@5, `ticks`@6, `tickBitmap`@7. The Uniswap
 /// `v3_storage_slots` encoders (liquidity@4, ticks@5, tickBitmap@6) therefore
 /// WOULD misread a PancakeSwap pool; the engine must use these fork-aware slot
-/// indices when syncing/seeding pancake pools directly.
+/// indices when syncing/seeding pancake pools directly (seeded here via the
+/// canonical `v3_pancakeswap_storage_slots` encoders, ergo task `W32CAU`).
 ///
 /// `slot0` word 0 reuses `encode_v3_slot0_fresh` (price/tick/observations are
 /// identical; the bit-240 `unlocked` it sets is unused padding here); word 1 =
-/// `feeProtocol(0) | unlocked << 32`.
+/// `encode_pancake_v3_slot0_word1` (`feeProtocol(0) | unlocked << 32`).
 fn seed_pancake_pool_storage(
     db: &mut CacheDB<EmptyDB>,
     pool: Address,
@@ -145,8 +149,12 @@ fn seed_pancake_pool_storage(
     )
     .expect("seed slot0 word0");
     // slot0 word 1: feeProtocol (32b, =0) | unlocked (bit 32, =true).
-    db.insert_account_storage(pool, U256::from(1u64), U256::from(1u64) << 32u64)
-        .expect("seed slot0 word1 (unlocked)");
+    db.insert_account_storage(
+        pool,
+        U256::from(1u64),
+        encode_pancake_v3_slot0_word1(0, true),
+    )
+    .expect("seed slot0 word1 (unlocked)");
     // liquidity @ slot 5 (after the 2-word slot0 + feeGrowth×2 + protocolFees).
     db.insert_account_storage(
         pool,
@@ -157,7 +165,7 @@ fn seed_pancake_pool_storage(
     for (tick, info) in &state.tick_data {
         db.insert_account_storage(
             pool,
-            pancake_tick_mapping_slot(*tick),
+            pancake_v3_tick_mapping_slot(*tick),
             encode_v3_tick_info_slot(info),
         )
         .expect("seed tick info");
@@ -171,35 +179,9 @@ fn seed_pancake_pool_storage(
     for word_pos in word_positions {
         let word_value =
             compute_v3_tick_bitmap_word_from_raw(&state.tick_data, tick_spacing, word_pos);
-        db.insert_account_storage(pool, pancake_tick_bitmap_word_slot(word_pos), word_value)
+        db.insert_account_storage(pool, pancake_v3_tick_bitmap_word_slot(word_pos), word_value)
             .expect("seed tickBitmap word");
     }
-}
-
-/// 32-byte two's-complement of a signed int (the Solidity `abi.encode(intN)`
-/// key preimage for a signed mapping key).
-fn to_twos_complement(v: i64) -> U256 {
-    if v >= 0 {
-        U256::from(v as u64)
-    } else {
-        U256::MAX - U256::from(((-v) as u64) - 1)
-    }
-}
-
-/// `mapping(int24 => Tick.Info) ticks` storage key, base slot 6 (PancakeSwap).
-fn pancake_tick_mapping_slot(tick: i32) -> U256 {
-    let mut preimage = [0u8; 64];
-    preimage[0..32].copy_from_slice(&to_twos_complement(i64::from(tick)).to_be_bytes::<32>());
-    preimage[32..64].copy_from_slice(&U256::from(6u64).to_be_bytes::<32>());
-    U256::from_be_bytes(keccak256(preimage).0)
-}
-
-/// `mapping(int16 => uint256) tickBitmap` storage key, base slot 7 (PancakeSwap).
-fn pancake_tick_bitmap_word_slot(word_pos: i16) -> U256 {
-    let mut preimage = [0u8; 64];
-    preimage[0..32].copy_from_slice(&to_twos_complement(i64::from(word_pos)).to_be_bytes::<32>());
-    preimage[32..64].copy_from_slice(&U256::from(7u64).to_be_bytes::<32>());
-    U256::from_be_bytes(keccak256(preimage).0)
 }
 
 /// Build a dense multi-position `V3PoolState` at `current_tick` (multiple

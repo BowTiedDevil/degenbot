@@ -90,6 +90,15 @@ pub mod registry;
 pub mod simulate_swap;
 pub mod spec_bounds;
 pub mod state_history;
+/// Re-export the *`PancakeSwap` V3 fork* storage-slot encoders at the crate root
+/// (the fork's layout diverges from Uniswap V3: two-word `slot0`, liquidity@5,
+/// ticks@6, tickBitmap@7). A standalone consumer seeding/serving a pancake pool
+/// directly MUST use these, never the Uniswap `v3_storage_slots` constants.
+pub use v3_pancakeswap_storage_slots::{
+    encode_pancake_v3_slot0_word1, pancake_v3_tick_bitmap_word_slot, pancake_v3_tick_mapping_slot,
+    PANCAKE_V3_LIQUIDITY_SLOT, PANCAKE_V3_SLOT0_WORD0_SLOT, PANCAKE_V3_SLOT0_WORD1_SLOT,
+    PANCAKE_V3_TICKS_MAPPING_SLOT, PANCAKE_V3_TICK_BITMAP_MAPPING_SLOT,
+};
 /// Re-export the V3 storage-slot encoders at the crate root so the Tier-3b
 /// seeding layer + standalone consumers reach them without a long path.
 pub use v3_storage_slots::{
@@ -108,6 +117,7 @@ pub mod tick_bitmap;
 pub mod tick_fetch;
 pub mod tick_map;
 pub mod v2_state;
+pub mod v3_pancakeswap_storage_slots;
 pub mod v3_state;
 pub mod v3_storage_slots;
 pub mod v4_state;

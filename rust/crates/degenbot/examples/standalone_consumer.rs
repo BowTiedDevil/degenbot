@@ -704,4 +704,37 @@ fn in_process_sim_standalone_slice() {
     println!(
         "standalone degenbot consumer OK: PoolBuilder probe+dispatch reachable (family={family:?})"
     );
+    // 8. Reach the PancakeSwap V3 storage-slot encoders (W32CAU): the fork's
+    //    layout diverges from Uniswap V3 (two-word slot0, liquidity@5, ticks@6,
+    //    tickBitmap@7). A `cargo add degenbot` consumer must reach the fork-aware
+    //    constants + encoders via the umbrella with no pyo3, and they must
+    //    actually differ from the Uniswap layout (so a pancake pool is never
+    //    seeded with the wrong slot indices).
+    assert_eq!(
+        degenbot::degenbot_pools::PANCAKE_V3_LIQUIDITY_SLOT,
+        5,
+        "fork liquidity@5 (Uniswap@4)"
+    );
+    assert_eq!(
+        degenbot::degenbot_pools::PANCAKE_V3_TICKS_MAPPING_SLOT,
+        6,
+        "fork ticks base@6 (Uniswap@5)"
+    );
+    assert_eq!(
+        degenbot::degenbot_pools::PANCAKE_V3_TICK_BITMAP_MAPPING_SLOT,
+        7,
+        "fork tickBitmap base@7 (Uniswap@6)"
+    );
+    let fork_tick_slot = degenbot::degenbot_pools::pancake_v3_tick_mapping_slot(0);
+    let uniswap_tick_slot = degenbot::degenbot_pools::v3_tick_mapping_slot(0);
+    assert_ne!(
+        fork_tick_slot, uniswap_tick_slot,
+        "fork + Uniswap tick mapping slots must differ for the same tick"
+    );
+    // slot0 word 1 packs feeProtocol (low 32b) | unlocked (bit 32).
+    assert_eq!(
+        degenbot::degenbot_pools::encode_pancake_v3_slot0_word1(0, true),
+        U256::from(1u64) << 32
+    );
+    println!("standalone degenbot consumer OK: PancakeSwap V3 fork slot encoders reachable");
 }
