@@ -11,10 +11,12 @@
 //! direction.
 //!
 //! The stable path here exercises the canonical `StableMath` V1 invariant
-//! (`INVARIANT_V1`). The engine's `invariant_version == 2` (`INVARIANT_V2`,
-//! the older deployed MetaStable/ComposableStable inline `P_D` revision) is a
-//! follow-on slice tracked in the task body — it is not part of the current
-//! canonical `StableMath` library.
+//! (`INVARIANT_V1`). It ALSO covers `invariant_version == 2` (`INVARIANT_V2`,
+//! the older deployed `MetaStablePool` / `ComposableStablePool` inline `P_D`
+//! revision) via `stableOutGivenIn*V2` harness entry points that embed the
+//! deployed `_calculateInvariant(amp, balances, roundUp)` VERBATIM — a
+//! non-circular on-chain reference for the engine's `calculate_invariant_deployed`
+//! (ergo task `SZHM2Y`).
 //!
 //! ## Harness bytecode (committed)
 //!
@@ -280,6 +282,48 @@ fn assert_stable_parity(case: &StableCase, zfo: bool, amount_in: U256) {
     }
 }
 
+/// The engine's stable output via `simulate_swap` with `invariant_version == 2`
+/// (deployed MetaStable/older-ComposableStable `INVARIANT_V2`), `bpt_idx = None`.
+fn engine_stable_v2_out(case: &StableCase, zfo: bool, amount_in: U256) -> Option<U256> {
+    let (identity, state) = BalancerStablePoolState::from_params(
+        RegisterBalancerStablePoolParams {
+            address: Address::from([0x44u8; 20]),
+            vault: Address::from([0x55u8; 20]),
+            pool_id: [0x44u8; 32],
+            tokens: vec![Address::from([0xAAu8; 20]), Address::from([0xBBu8; 20])],
+            amp: case.amp.to::<u128>(),
+            scaling_factors: case.scaling_factors.to_vec(),
+            swap_fee: case.swap_fee.to::<u128>(),
+            bpt_idx: None,
+            invariant_version: 2,
+            balances: case.balances.to_vec(),
+            update_block: 100,
+            rate_provider: None,
+        },
+        8,
+    );
+    let entry = PoolEntry::BalancerStable(identity, state);
+    simulate_swap(&entry, zfo, amount_in).ok()
+}
+
+/// Assert engine === on-chain for a stable case (`invariant_version` == 2,
+/// deployed `_calculateInvariant(amp, balances, roundUp=true)`).
+fn assert_stable_v2_parity(case: &StableCase, zfo: bool, amount_in: U256) {
+    let engine = engine_stable_v2_out(case, zfo, amount_in);
+    let sig = if zfo {
+        "stableOutGivenIn0to1V2(uint256,uint256,uint256,uint256[5],uint256[5],uint256)"
+    } else {
+        "stableOutGivenIn1to0V2(uint256,uint256,uint256,uint256[5],uint256[5],uint256)"
+    };
+    let onchain = call_onchain(stable_call(sig, case, amount_in, 2));
+    match (engine, onchain) {
+        (Some(e), Some(o)) => assert_eq!(e, o, "engine [V2] vs on-chain byte-exact"),
+        (None, None) => {}
+        (Some(e), None) => panic!("engine [V2] produced {e} but on-chain reverted"),
+        (None, Some(o)) => panic!("engine [V2] rejected but on-chain produced {o}"),
+    }
+}
+
 /// Pinned 50/50 weighted case (equal 1e18 balances, zero fee) — the Tier-2
 /// closed-form fixture (constant-product reduction → out = 999 for a `1_000`
 /// swap into equal `1_000_000` reserves). Asserted byte-exact to the canonical
@@ -324,6 +368,31 @@ fn stable_out_given_in_is_byte_exact_to_onchain_reference() {
     // reserves → symmetric, invariant_version-independent for this fixture).
     assert_eq!(
         engine_stable_out(&case, true, amount_in),
+        Some(U256::from(989u64))
+    );
+}
+
+/// Pinned 2-token stable case (A=100k, equal 1e18 balances, zero fee) driven
+/// at `invariant_version == 2` (deployed `_calculateInvariant(amp, balances,
+/// roundUp=true)`). Asserted byte-exact against the VERBATIM deployed invariant
+/// embedded in the harness. The V1 and V2 invariants agree on equal-balance /
+/// zero-fee pin fixtures (the discriminator's ±1 wei only shows on non-exact
+/// ratios), so this pins the V2 path's identity; the diverging cases are
+/// covered by the V2 proptest below.
+#[test]
+fn stable_v2_out_given_in_is_byte_exact_to_onchain_reference() {
+    let case = StableCase {
+        balances: [U256::from(1_000_000u64), U256::from(1_000_000u64)],
+        scaling_factors: [ONE, ONE],
+        swap_fee: U256::ZERO,
+        amp: U256::from(100_000u64),
+    };
+    let amount_in = U256::from(1_000u64);
+    assert_stable_v2_parity(&case, true, amount_in);
+    assert_stable_v2_parity(&case, false, amount_in);
+    // Same closed-form value as V1 on this fixture (equal reserves).
+    assert_eq!(
+        engine_stable_v2_out(&case, true, amount_in),
         Some(U256::from(989u64))
     );
 }
@@ -384,5 +453,36 @@ proptest! {
             return Ok(());
         }
         assert_stable_parity(&case, zfo, amount_in);
+    }
+
+    /// Proptest the byte-exact stable oracle at `invariant_version == 2`
+    /// (deployed `_calculateInvariant(amp, balances, roundUp=true)`) over the
+    /// same field as the V1 proptest. Non-equal balances / non-unit scaling
+    /// factors select the P_D roundUp path that differs from V1 by ±1 wei, so
+    /// this breaks the Rust==Rust twin for the engine's deployed-invariant path
+    /// byte-exact against the VERBATIM deployed invariant in the harness.
+    #[test]
+    fn stable_v2_out_given_in_matches_onchain_proptest(
+        balance0 in 1_000_000_000_000_000_000u64..5_000_000_000_000_000_000u64,
+        balance1 in 1_000_000_000_000_000_000u64..5_000_000_000_000_000_000u64,
+        sf0 in 1_000_000_000_000_000_000u64..2_000_000_000_000_000_000u64,
+        sf1 in 1_000_000_000_000_000_000u64..2_000_000_000_000_000_000u64,
+        amp in 1000u64..5_000_000u64,
+        swap_fee in 0u64..1_000_000_000_000_000_000u64,
+        amount_in_frac in 5u64..100u64,
+        zfo in any::<bool>(),
+    ) {
+        let case = StableCase {
+            balances: [U256::from(balance0), U256::from(balance1)],
+            scaling_factors: [U256::from(sf0), U256::from(sf1)],
+            swap_fee: U256::from(swap_fee),
+            amp: U256::from(amp),
+        };
+        let in_balance = if zfo { balance0 } else { balance1 };
+        let amount_in = U256::from(in_balance) / U256::from(amount_in_frac);
+        if amount_in.is_zero() {
+            return Ok(());
+        }
+        assert_stable_v2_parity(&case, zfo, amount_in);
     }
 }
