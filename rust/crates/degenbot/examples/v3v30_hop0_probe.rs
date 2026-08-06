@@ -102,11 +102,7 @@ fn build_v3_state(p: &PoolData) -> V3PoolState {
 }
 
 fn unbounded_limit(zero_for_one: bool) -> U256 {
-    if zero_for_one {
-        U256::from(degenbot_cl_math::cl_lib::tick_math::MIN_SQRT_RATIO) + U256::from(1u64)
-    } else {
-        U256::from(degenbot_cl_math::cl_lib::tick_math::MAX_SQRT_RATIO) - U256::from(1u64)
-    }
+    V3PoolState::default_sqrt_price_limit(zero_for_one)
 }
 
 fn solver_output(amount_in: u128, seq: &IntV3TickRangeSequence) -> U256 {

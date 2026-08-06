@@ -52,8 +52,7 @@ use std::collections::HashMap;
 
 use alloy::primitives::{I256, U128, U256};
 
-use degenbot_cl_math::cl_lib::tick_math::{MAX_SQRT_RATIO, MIN_SQRT_RATIO};
-use degenbot_pools::v3_state::{PoolTickCoverage, V3SwapOutcome};
+use degenbot_pools::v3_state::{PoolTickCoverage, V3PoolState, V3SwapOutcome};
 use degenbot_pools::v4_state::{v4_simulate_swap, RegisterV4PoolParams, V4PoolKey, V4PoolState};
 use degenbot_pools::TickInfo;
 
@@ -67,11 +66,7 @@ const LP_FEE: u32 = 3_000;
 const WORD_BOUNDARY_TICK: i32 = TICK_SPACING * 256; // 15360
 
 fn unbounded_limit(zero_for_one: bool) -> U256 {
-    if zero_for_one {
-        U256::from(MIN_SQRT_RATIO)
-    } else {
-        U256::from(MAX_SQRT_RATIO)
-    }
+    V3PoolState::default_sqrt_price_limit(zero_for_one)
 }
 
 /// Build a sparse V4 state at tick 0, liquidity `base_liquidity`, with the

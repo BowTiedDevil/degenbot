@@ -52,8 +52,7 @@ use std::collections::HashMap;
 
 use alloy::primitives::{I256, U128, U256};
 
-use degenbot_cl_math::cl_lib::tick_math::{MAX_SQRT_RATIO, MIN_SQRT_RATIO};
-use degenbot_pools::v3_state::{PoolTickCoverage, V3SwapOutcome};
+use degenbot_pools::v3_state::{PoolTickCoverage, V3PoolState, V3SwapOutcome};
 use degenbot_pools::v4_state::{v4_simulate_swap, RegisterV4PoolParams, V4PoolKey, V4PoolState};
 use degenbot_pools::TickInfo;
 
@@ -62,11 +61,7 @@ use degenbot_solvers::mobius_v3_int::{int_simulate_v3_swap, IntV3TickRangeSequen
 /// Sqrt-price limit that lets the walk cross every tick the input can reach
 /// (V4 Pool.swap's `sqrtPriceLimit` = the MIN/MAX bound for the direction).
 fn unbounded_limit(zero_for_one: bool) -> U256 {
-    if zero_for_one {
-        U256::from(MIN_SQRT_RATIO)
-    } else {
-        U256::from(MAX_SQRT_RATIO)
-    }
+    V3PoolState::default_sqrt_price_limit(zero_for_one)
 }
 
 /// Build a multi-tick V4 pool state at tick 0 (1:1 price), tick_spacing 60,
