@@ -324,8 +324,27 @@ pub async fn verify_v3_pools<S: std::hash::BuildHasher>(
     Ok(())
 }
 
+/// Verify a single V3 pool's tick bookkeeping map against on-chain state
+/// (`tickBitmap` word scan + per-tick `liquidityGross`/`liquidityNet`), the
+/// per-pool entry point of [`verify_v3_pools`]. The scan covers the engine's
+/// own bitmap words plus ±2 around the active tick; a divergence (per-tick
+/// gross/net mismatch, or an on-chain tick the engine does not hold) is a
+/// [`LiquidityVerifyError::Mismatch`]. Reused by the solve-time tripwire's
+/// tick-map fidelity probe ([`crate::bot_core::solver_state_verifier`]).
+///
+/// # Panics
+///
+/// Panics if a tick key in `pool.tick_data()` is absent from the internally-
+/// built `ticks()` batch (logically impossible — the batch is built from
+/// `tick_data` keys plus on-chain-discovered ticks — so a panic indicates a
+/// logic bug, not bad input).
+///
+/// # Errors
+///
+/// Returns [`LiquidityVerifyError::Mismatch`] on a bitmap/tick divergence or
+/// [`LiquidityVerifyError::Rpc`] on a per-call transport/decode failure.
 #[allow(clippy::too_many_lines)]
-async fn verify_v3_pool<T: TickMap + ?Sized>(
+pub async fn verify_v3_pool<T: TickMap + ?Sized>(
     provider: &AlloyProvider,
     pool: &T,
     block_number: Option<u64>,
@@ -634,8 +653,24 @@ pub async fn verify_v4_pools<S: std::hash::BuildHasher>(
     Ok(())
 }
 
+/// Verify a single V4 pool's tick bookkeeping map against on-chain state via
+/// `StateView.getTickBitmap(poolId, word)` + `getTickLiquidity(poolId, tick)`,
+/// the per-pool entry point of [`verify_v4_pools`]. Same scan + divergence
+/// contract as [`verify_v3_pool`]; reused by the solve-time tripwire's tick-map
+/// fidelity probe.
+///
+/// # Panics
+///
+/// Panics if a tick key in `pool.tick_data()` is absent from the internally-
+/// built `getTickLiquidity` batch (logically impossible — see
+/// [`verify_v3_pool`]).
+///
+/// # Errors
+///
+/// Returns [`LiquidityVerifyError::Mismatch`] on a bitmap/tick divergence or
+/// [`LiquidityVerifyError::Rpc`] on a per-call transport/decode failure.
 #[allow(clippy::too_many_lines)]
-async fn verify_v4_pool<T: TickMap + ?Sized>(
+pub async fn verify_v4_pool<T: TickMap + ?Sized>(
     provider: &AlloyProvider,
     state_view: Address,
     pool_id: [u8; 32],

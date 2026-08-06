@@ -30,6 +30,7 @@ use degenbot_rpc::abi::{fetch_v2_reserves, fetch_v3_slot0_liquidity, fetch_v4_sl
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_solvers::mixed::{HopType, MixedPoolRef};
 
+use super::liquidity_verifier::{verify_v3_pool, verify_v4_pool, LiquidityVerifyError};
 use super::BotState;
 
 /// The solver's stored per-hop scalar state, pre-extracted from `BotState`
@@ -65,6 +66,38 @@ pub struct SolverHopScalarState {
     pub v3: Option<(Address, U256, u128, i32)>,
     /// V4: `(pool_manager, pool_id, state_view, sqrt_price_x96, liquidity, tick)`.
     pub v4: Option<(Address, [u8; 32], Address, U256, u128, i32)>,
+    /// The solver's **live CL tick map**, cloned out of `BotState` under the
+    /// short read-guard so the solve-time tick-map fidelity probe
+    /// ([`probe_cl_tick_map_fidelity`] → `verify_v3_pool` / `verify_v4_pool`)
+    /// can run after the guard is dropped. `None` for V2/non-CL hops.
+    ///
+    /// The scalar gate ([`verify_solver_hop_states`] scalar diff) is blind to
+    /// a snapshot whose tick map is missing positions entirely OFF the active
+    /// range: active liquidity (`Σ net ≤ current tick`) is unchanged by a
+    /// missing off-range position, yet a solve that CROSSES into the missing
+    /// region under-counts liquidity and over-predicts output (the UO3JM4
+    /// thin-tick-map class — ADR-021 D3). This map is the surface that makes
+    /// that class observable at solve time.
+    pub cl_tick_map: Option<ClTickMapSnapshot>,
+}
+
+/// A CL hop's solver-stored tick map, cloned under the short read-guard (see
+/// [`SolverHopScalarState::cl_tick_map`]). The probe verifies it against
+/// on-chain at the hop's **tick-data anchor** (`tick_data_block` — NOT the
+/// price clock `update_block`, OB7UNY), because the map reflects the
+/// liquidity clock. Verified against the tick-data anchor the map claims to
+/// reflect, a 1-2 block price lag or a never-advanced liquidity clock does
+/// not false-trip; only a genuinely desynced map (missed Mint/Burn, ghost
+/// tick, decode bug) diverges.
+#[derive(Clone, Debug)]
+pub struct ClTickMapSnapshot {
+    /// Tick spacing (immutable — lets the probe compress ticks into bitmap
+    /// words).
+    pub tick_spacing: i32,
+    /// The solver's current active tick — seeds the ±2-word bitmap scan.
+    pub active_tick: i32,
+    /// The tick bookkeeping map: tick index → `(liquidity_gross, liquidity_net)`.
+    pub tick_data: std::collections::HashMap<i32, degenbot_pools::TickInfo>,
 }
 
 /// Extract the solver's stored per-hop scalar state from `BotState` (the
@@ -143,6 +176,25 @@ pub fn extract_solver_hop_states(
                                         state.tick,
                                     )
                                 })
+                        }),
+                    _ => None,
+                },
+                cl_tick_map: match pool_ref.hop_type {
+                    HopType::V3 => core
+                        .get_v3_pool(pool_ref.pool_key)
+                        .zip(core.get_v3_identity(pool_ref.pool_key))
+                        .map(|(state, identity)| ClTickMapSnapshot {
+                            tick_spacing: identity.tick_spacing,
+                            active_tick: state.tick,
+                            tick_data: state.tick_data.clone(),
+                        }),
+                    HopType::V4 => core
+                        .get_v4_pool(pool_ref.pool_key)
+                        .zip(core.get_v4_identity(pool_ref.pool_key))
+                        .map(|(state, identity)| ClTickMapSnapshot {
+                            tick_spacing: identity.pool_key.tick_spacing,
+                            active_tick: state.tick,
+                            tick_data: state.tick_data.clone(),
                         }),
                     _ => None,
                 },
@@ -394,6 +446,25 @@ pub async fn verify_solver_hop_states(
                         ));
                     }
                 }
+                // Solve-time tick-map fidelity probe (ADR-021 D3): verify the
+                // solver's LIVE tick map against on-chain at the tick-data
+                // anchor. The scalar diff above only catches active-liquidity
+                // divergence (Σ net ≤ current tick); a snapshot missing an
+                // OFF-range position passes it yet under-counts liquidity once
+                // a solve crosses into the missing region — the UO3JM4
+                // over-prediction class.
+                if let Some(cl) = hop.cl_tick_map.as_ref() {
+                    probe_cl_tick_map_fidelity(
+                        provider,
+                        hop,
+                        cl,
+                        pool,
+                        Address::ZERO,
+                        [0u8; 32],
+                        i,
+                    )
+                    .await?;
+                }
             }
             HopType::V4 => {
                 let Some((pm, pool_id, state_view, s_sqrt, s_liq, s_tick)) = hop.v4 else {
@@ -439,6 +510,20 @@ pub async fn verify_solver_hop_states(
                         ));
                     }
                 }
+                // Solve-time tick-map fidelity probe (ADR-021 D3) — see the V3
+                // arm above.
+                if let Some(cl) = hop.cl_tick_map.as_ref() {
+                    probe_cl_tick_map_fidelity(
+                        provider,
+                        hop,
+                        cl,
+                        Address::ZERO,
+                        state_view,
+                        pool_id,
+                        i,
+                    )
+                    .await?;
+                }
             }
             // Solidly / Balancer / Curve — no scalar diff in scope; pass-through.
             _ => {}
@@ -453,10 +538,124 @@ fn mismatch(index: usize, message: &str) -> SolverStateMismatch {
     }
 }
 
+/// A lightweight `TickMap` carrier over a CL hop's extracted snapshot, so the
+/// solve-time tick-map fidelity probe can reuse `verify_v3_pool` /
+/// `verify_v4_pool` (which take `&impl degenbot_pools::tick_map::TickMap`) on
+/// the post-guard snapshot without cloning the tick map a second time.
+struct SolverTickMapCarrier<'a> {
+    address: Address,
+    tick_spacing: i32,
+    active_tick: i32,
+    tick_data: &'a std::collections::HashMap<i32, degenbot_pools::TickInfo>,
+}
+
+impl degenbot_pools::tick_map::TickMap for SolverTickMapCarrier<'_> {
+    fn address(&self) -> Address {
+        self.address
+    }
+
+    fn tick_spacing(&self) -> i32 {
+        self.tick_spacing
+    }
+
+    fn active_tick(&self) -> i32 {
+        self.active_tick
+    }
+
+    fn tick_data(&self) -> &std::collections::HashMap<i32, degenbot_pools::TickInfo> {
+        self.tick_data
+    }
+}
+
+/// The solve-time CL **tick-map fidelity probe** (ADR-021 D3 — one state-
+/// accuracy tripwire converging the solver-state scalar diff with the
+/// liquidity-verifier tick-map machinery).
+///
+/// Verifies the solver's extracted live tick map against on-chain at the
+/// hop's tick-data anchor (`tick_data_block`) via `verify_v3_pool` /
+/// `verify_v4_pool`, which scan the bitmap and fire on "on-chain tick NOT in
+/// engine" — the partial-snapshot class the scalar gate (active-liquidity
+/// diff only) cannot see. A `Mismatch` is a hard trip (a genuine desync → the
+/// gate aborts). An `Rpc` transport failure is NOT a divergence — it is logged
+/// and skipped (the probe must not kill the bot on a transient read hiccup; a
+/// retry/backoff candidate, per the liquidity-verifier `Rpc` contract).
+///
+/// The anchor is the hop's tick-data clock (`tick_data_block`), NOT the price
+/// clock `update_block`: the map reflects the liquidity clock (OB7UNY), so
+/// verifying at the map's own claimed anchor lets a 1-2 block price lag or a
+/// never-advanced liquidity clock pass legitimately and only trips on a truly
+/// desynced map.
+#[allow(clippy::too_many_arguments)]
+async fn probe_cl_tick_map_fidelity(
+    provider: &AlloyProvider,
+    hop: &SolverHopScalarState,
+    cl: &ClTickMapSnapshot,
+    v3_addr: Address,
+    v4_state_view: Address,
+    v4_pool_id: [u8; 32],
+    i: usize,
+) -> Result<(), SolverStateMismatch> {
+    let tick_anchor = if hop.tick_data_block > 0 {
+        hop.tick_data_block
+    } else {
+        hop.update_block
+    };
+    let carrier = SolverTickMapCarrier {
+        address: match hop.hop_type {
+            HopType::V3 => v3_addr,
+            _ => v4_state_view,
+        },
+        tick_spacing: cl.tick_spacing,
+        active_tick: cl.active_tick,
+        tick_data: &cl.tick_data,
+    };
+    let result = match hop.hop_type {
+        HopType::V3 => verify_v3_pool(provider, &carrier, Some(tick_anchor)).await,
+        HopType::V4 => {
+            verify_v4_pool(
+                provider,
+                v4_state_view,
+                v4_pool_id,
+                &carrier,
+                Some(tick_anchor),
+            )
+            .await
+        }
+        _ => return Ok(()),
+    };
+    match result {
+        Ok(()) => Ok(()),
+        Err(LiquidityVerifyError::Mismatch(m)) => Err(mismatch(
+            i,
+            &format!(
+                "tick-map fidelity probe at tick-data anchor {tick_anchor}: {} (the scalar gate \
+                 diffs active liquidity only and can miss off-range missing positions — a thin/\
+                 partial tick map over-predicts output once a solve crosses into the missing \
+                 region; UO3JM4 class, ADR-021)",
+                m.message,
+            ),
+        )),
+        Err(LiquidityVerifyError::Rpc { message }) => {
+            // A transport failure is NOT a divergence — do not abort the bot on
+            // a transient read hiccup; log + continue (the `Mismatch` branch is
+            // the hard trip).
+            tracing::warn!(
+                %message,
+                tick_anchor,
+                hop_index = i,
+                "tick-map fidelity probe RPC skipped (transient, not a divergence)"
+            );
+            Ok(())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy::primitives::{I256, U256};
+    use alloy::transports::mock::Asserter;
+    use std::sync::Arc;
 
     #[test]
     fn anchor_block_uses_update_block_when_set() {
@@ -571,5 +770,222 @@ mod tests {
             U256::from(liq),
             I256::unchecked_from(tick + 1)
         ));
+    }
+
+    // -----------------------------------------------------------------
+    // Solve-time tick-map fidelity probe (ADR-021 D3)
+    //
+    // RED: a CL hop whose in-memory tick map is MISSING an on-chain tick
+    // must trip the gate EVEN WHEN the scalar diff passes. The scalar gate
+    // compares (sqrt, liquidity=ACTIVE γ, tick); a missing OFF-range position
+    // leaves γ unchanged so the scalar passes, yet a solve that crosses into
+    // the missing region under-counts liquidity → over-predicts output (the
+    // UO3JM4 thin-tick-map class).
+    // -----------------------------------------------------------------
+
+    /// Build a mock `AlloyProvider` whose `Asserter` queue is preloaded with
+    /// `responses` (one JSON `result` per expected `eth_call`, FIFO). Mirrors
+    /// the `liquidity_verifier` mock-transport harness.
+    fn mock_provider(responses: Vec<String>) -> AlloyProvider {
+        use alloy::network::Ethereum as NetEth;
+        use alloy::providers::{Provider, ProviderBuilder};
+        use alloy::rpc::client::ClientBuilder;
+        use alloy::transports::mock::MockTransport;
+        let asserter = Asserter::new();
+        for resp in responses {
+            asserter.push_success(&resp);
+        }
+        let client = ClientBuilder::default().transport(MockTransport::new(asserter.clone()), true);
+        let dyn_provider = ProviderBuilder::new().connect_client(client).erased();
+        AlloyProvider::from_provider(
+            Arc::new(dyn_provider) as Arc<dyn alloy::providers::Provider<NetEth>>
+        )
+    }
+
+    /// Encode a Multicall3 `aggregate3` return payload — `(bool,bytes)[]` —
+    /// as a `0x`-prefixed hex string (one `(success, return_data)` tuple per
+    /// sub-call, in batch order).
+    fn encode_mc3_return(results: &[(bool, Vec<u8>)]) -> String {
+        let arr = alloy::dyn_abi::DynSolValue::Array(
+            results
+                .iter()
+                .map(|(ok, data)| {
+                    alloy::dyn_abi::DynSolValue::Tuple(vec![
+                        alloy::dyn_abi::DynSolValue::Bool(*ok),
+                        alloy::dyn_abi::DynSolValue::Bytes(data.clone()),
+                    ])
+                })
+                .collect(),
+        );
+        format!("0x{}", alloy::primitives::hex::encode(arr.abi_encode()))
+    }
+
+    /// 32-byte ABI word for a u256 bitmap value.
+    fn u256_word(val: u64) -> Vec<u8> {
+        U256::from(val).to_be_bytes::<32>().to_vec()
+    }
+
+    /// 64-byte `ticks()` return: `(uint128 liquidityGross, int128 liquidityNet)`.
+    fn ticks_return(gross: u128, net: i128) -> Vec<u8> {
+        let mut buf = vec![0u8; 64];
+        buf[16..32].copy_from_slice(&gross.to_be_bytes());
+        let sign = if net < 0 { 0xff } else { 0x00 };
+        for b in &mut buf[32..48] {
+            *b = sign;
+        }
+        buf[48..64].copy_from_slice(&net.to_be_bytes());
+        buf
+    }
+
+    fn tick_info(gross: u128, net: i128) -> degenbot_pools::TickInfo {
+        degenbot_pools::TickInfo {
+            liquidity_gross: alloy::primitives::U128::from(gross),
+            liquidity_net: I256::unchecked_from(net),
+            block: 0,
+        }
+    }
+
+    /// The RED case: a V3 hop whose in-memory tick map (tick 0 only) is
+    /// missing on-chain tick 60. The scalar reads (slot0 + active liquidity)
+    /// MATCH so the scalar gate would pass; only the tick-map fidelity probe
+    /// catches the missing position → `verify_solver_hop_states` must return
+    /// `Err` with the missing-tick class.
+    #[tokio::test]
+    async fn tickmap_fidelity_probe_catches_missing_onchain_tick() {
+        let sqrt: U256 = U256::from(1u128) << 96;
+        let liq = 1_000_000u128;
+        let tick = 0i32;
+        let mut tick_data = std::collections::HashMap::new();
+        tick_data.insert(0, tick_info(100, 50)); // engine holds ONLY tick 0
+
+        // Scalar + probe responses (FIFO):
+        // 1. slot0 (7 words: sqrt, tick=0, five zero tail fields)
+        let mut slot0 = vec![0u8; 7 * 32];
+        slot0[0..32].copy_from_slice(&sqrt.to_be_bytes::<32>());
+        // word 1 = tick 0, words 2-6 = zero tail
+        // 2. liquidity (1 word = 1_000_000) — matches solver γ
+        let mut liq_word = vec![0u8; 32];
+        liq_word[16..32].copy_from_slice(&liq.to_be_bytes());
+        // 3. bitmap batch over sorted words [-2,-1,0,1,2]; word 0 = bits {0,1}
+        //    (on-chain ticks 0 AND 60 @ spacing 60) → value 3.
+        let bitmap = encode_mc3_return(&[
+            (true, u256_word(0)), // word -2
+            (true, u256_word(0)), // word -1
+            (true, u256_word(3)), // word  0 → ticks 0, 60
+            (true, u256_word(0)), // word  1
+            (true, u256_word(0)), // word  2
+        ]);
+        // 4. ticks batch over sorted [0, 60]: (100,50) for 0, (200,-30) for 60.
+        let ticks = encode_mc3_return(&[
+            (true, ticks_return(100, 50)),
+            (true, ticks_return(200, -30)),
+        ]);
+        let provider = mock_provider(vec![
+            format!("0x{}", alloy::primitives::hex::encode(&slot0)),
+            format!("0x{}", alloy::primitives::hex::encode(&liq_word)),
+            bitmap,
+            ticks,
+        ]);
+
+        let hop = SolverHopScalarState {
+            hop_type: HopType::V3,
+            update_block: 100,
+            tick_data_block: 100,
+            cl_meta: None,
+            v2: None,
+            v3: Some((Address::from([0xaau8; 20]), sqrt, liq, tick)),
+            v4: None,
+            cl_tick_map: Some(ClTickMapSnapshot {
+                tick_spacing: 60,
+                active_tick: 0,
+                tick_data,
+            }),
+        };
+
+        // Scalar reads match on-chain (sqrt/γ/tick all equal at anchor 100),
+        // so a scalar-only gate returns Ok; the tick-map probe must be what
+        // turns this into an Err (the RED assertion).
+        let err = verify_solver_hop_states(&provider, &[hop], 102)
+            .await
+            .expect_err("gate must trip: on-chain tick 60 is missing from the solver's map");
+        assert!(
+            err.message.contains("tick-map fidelity probe")
+                && err.message.contains("NOT in engine"),
+            "expected the missing-tick class in the trip message, got: {}",
+            err.message
+        );
+    }
+
+    /// V4 twin of `tickmap_fidelity_probe_catches_missing_onchain_tick`: a V4
+    /// hop whose in-memory tick map is missing an on-chain tick must trip the
+    /// gate even though its scalar reads (getSlot0 sqrt/tick + getLiquidity γ)
+    /// match on-chain. V4 RPC goes through `StateView.getTickBitmap` /
+    /// `getTickLiquidity` (the `state_view` param), but the mock transport
+    /// returns queued responses FIFO regardless of target/calldata — so the
+    /// bitmap/ticks batch encoding is identical to the V3 case.
+    #[tokio::test]
+    async fn v4_tickmap_fidelity_probe_catches_missing_onchain_tick() {
+        let sqrt: U256 = U256::from(1u128) << 96;
+        let liq = 1_000_000u128;
+        let tick = 0i32;
+        let mut tick_data = std::collections::HashMap::new();
+        tick_data.insert(0, tick_info(100, 50)); // engine holds ONLY tick 0
+
+        let pool_manager = Address::from([0xbbu8; 20]);
+        let state_view = Address::from([0xccu8; 20]);
+        let pool_id = [0x11u8; 32];
+
+        // 1. getSlot0 (4 words: sqrt, tick=0, protocolFee=0, lpFee=0)
+        let mut slot0 = vec![0u8; 4 * 32];
+        slot0[0..32].copy_from_slice(&sqrt.to_be_bytes::<32>());
+        // word 1 = tick 0, words 2-3 = fees 0
+        // 2. getLiquidity (1 word = 1_000_000) — matches solver γ
+        let mut liq_word = vec![0u8; 32];
+        liq_word[16..32].copy_from_slice(&liq.to_be_bytes());
+        // 3. bitmap batch over sorted words [-2,-1,0,1,2]; word 0 = bits {0,1}
+        //    (on-chain ticks 0 AND 60 @ spacing 60) → value 3.
+        let bitmap = encode_mc3_return(&[
+            (true, u256_word(0)), // word -2
+            (true, u256_word(0)), // word -1
+            (true, u256_word(3)), // word  0 → ticks 0, 60
+            (true, u256_word(0)), // word  1
+            (true, u256_word(0)), // word  2
+        ]);
+        // 4. ticks batch over sorted [0, 60]: (100,50) for 0, (200,-30) for 60.
+        let ticks = encode_mc3_return(&[
+            (true, ticks_return(100, 50)),
+            (true, ticks_return(200, -30)),
+        ]);
+        let provider = mock_provider(vec![
+            format!("0x{}", alloy::primitives::hex::encode(&slot0)),
+            format!("0x{}", alloy::primitives::hex::encode(&liq_word)),
+            bitmap,
+            ticks,
+        ]);
+
+        let hop = SolverHopScalarState {
+            hop_type: HopType::V4,
+            update_block: 100,
+            tick_data_block: 100,
+            cl_meta: None,
+            v2: None,
+            v3: None,
+            v4: Some((pool_manager, pool_id, state_view, sqrt, liq, tick)),
+            cl_tick_map: Some(ClTickMapSnapshot {
+                tick_spacing: 60,
+                active_tick: 0,
+                tick_data,
+            }),
+        };
+
+        let err = verify_solver_hop_states(&provider, &[hop], 102)
+            .await
+            .expect_err("gate must trip: V4 on-chain tick 60 missing from the solver's map");
+        assert!(
+            err.message.contains("tick-map fidelity probe")
+                && err.message.contains("NOT in engine"),
+            "expected the missing-tick class in the trip message, got: {}",
+            err.message
+        );
     }
 }
