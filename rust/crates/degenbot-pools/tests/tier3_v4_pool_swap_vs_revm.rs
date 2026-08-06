@@ -1,5 +1,7 @@
 //! Tier-3b V4 `PoolManager.swap` end-to-end oracle (ergo task `2LTKVO`, epic
-//! UP5NH6) — the V4 twin of `tier3_v3_pool_swap_vs_revm.rs`.
+//! UP5NH6) — the V4 twin of `tier3_v3_pool_swap_vs_revm.rs`. Hardened per epic
+//! `CMORFZ` task `5KS2SQ` (H1 rejection-reason airtightness, H3 pinned edge
+//! corpus, H4 widened proptest across fee-1/3000 + protocol-fee on/off).
 //!
 //! Deploys the canonical v4-core `PoolManager` (via the `V4SwapOracleHarness`
 //! unlocker wrapper) as real bytecode in an in-process revm `CacheDB<EmptyDB>`,
@@ -35,6 +37,16 @@
 //! every harness and byte-compares it to the committed artifact. After a
 //! harness-source edit, regenerate + publish via
 //! `tier3-oracle/build-tier3-v4-swap-harness.sh`.
+//!
+//! ## Shared fixture (H5)
+//!
+//! The Tier-2 dual-driver CL-math fixture `v4_swap.json` is a SINGLE shared
+//! file (HRT356) consumed by BOTH consumers — `rust/crates/degenbot/tests/
+//! parity_v4_swap.rs` (Rust) and `tests/standalone_parity/test_v4_swap_
+//! dual_driver.py` (Python) — so the V4 math constant is never independently
+//! redefined on either side. This tier-3 oracle uses its own REAL recorded
+//! scalars (the live fee-1 reproduction) rather than duplicating the
+//! dual-driver fixture, so there is no cross-file constant to drift.
 
 #![allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
 #![allow(clippy::doc_markdown)] // Solidity/V4 identifiers (PoolManager, slot0…)
@@ -53,6 +65,7 @@ use revm::primitives::TxKind;
 use revm::{ExecuteCommitEvm, ExecuteEvm, MainBuilder, MainContext};
 
 use degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal;
+use degenbot_decoders::revert::RevertClass;
 use degenbot_pools::v3_state::{PoolTickCoverage, SimulateSwapError};
 use degenbot_pools::v4_state::{v4_simulate_swap, V4PoolKey, V4PoolState};
 use degenbot_pools::v4_storage_slots::{
@@ -65,6 +78,22 @@ use degenbot_pools::TickInfo;
 /// First 4 bytes of `keccak256(signature)` — the Solidity function selector.
 fn selector(sig: &str) -> [u8; 4] {
     keccak256(sig.as_bytes())[0..4].try_into().unwrap()
+}
+
+/// The verdict of one on-chain V4 swap probe — distinguishes a real EVM
+/// verdict (Accepted vs Reverted) from a broken/aborted pipeline (Halted:
+/// deploy/getter failure or the OOG empty-word-walk gas trap, which emits no
+/// verdict). H1 rejection-parity matches on this shape instead of a blanket
+/// error skip.
+enum ProbeOutcome {
+    /// The swap succeeded; `amount0/amount1` are the ABSOLUTE BalanceDelta.
+    Accepted { amount0: U256, amount1: U256 },
+    /// The swap reverted with the raw revert return-data (a V4 custom error
+    /// selector like `CurrencyNotSettled`, or an `Error(string)`).
+    Reverted { reason: Bytes },
+    /// The pipeline itself broke (deploy/getter failure or the documented
+    /// empty-word-walk OOG halt) — no EVM verdict to compare against.
+    Halted(String),
 }
 
 /// Root of the repo (used to resolve the tier3-oracle artifacts).
@@ -187,12 +216,17 @@ fn seed_v4_pool_storage(
 /// positions `[current_tick - k*spacing, current_tick + k*spacing]`, each
 /// contributing `liq`. Active liquidity at `current_tick` is `k_positions*liq`;
 /// every boundary is a distinct initialized tick so a swap sinks determin-
-/// istically instead of chasing an empty word edge.
+/// istically instead of chasing an empty word edge. `fee`/`protocol_fee` are
+/// threaded into the state (identity + the on-chain `calculateSwapFee`
+/// combination) so the same builder reproduces fee-3000, fee-1, and
+/// protocol-fee-on pools.
 fn dense_v4_state(
     liq: u128,
     tick_spacing: i32,
     k_positions: i32,
     current_tick: i32,
+    fee: u32,
+    protocol_fee: u32,
 ) -> V4PoolState {
     let sp = U256::from(get_sqrt_ratio_at_tick_internal(current_tick).unwrap());
     let mut tick_data: HashMap<i32, TickInfo> = HashMap::new();
@@ -224,12 +258,12 @@ fn dense_v4_state(
         pool_key: V4PoolKey {
             currency0: Address::ZERO,
             currency1: Address::ZERO,
-            fee: 3_000,
+            fee,
             tick_spacing,
             hooks: Address::ZERO,
         },
         hook_flags: 0,
-        protocol_fee: 0,
+        protocol_fee,
         sqrt_price_x96: sp,
         liquidity: u128::try_from(i128::try_from(liq).unwrap() * i128::from(k_positions)).unwrap(),
         tick: current_tick,
@@ -266,17 +300,21 @@ fn encode_v4_swap_call(
     data
 }
 
-/// Drive the on-chain V4 swap for a dense state; return the ABSOLUTE
-/// (amount0, amount1) from the pool's BalanceDelta (the Swap event's
-/// amount0/amount1 = delta.amount0()/amount1(), both int128).
-fn run_v4_onchain_swap(
+/// Probe ONE on-chain V4 swap (deploy PoolManager → seed → unlock → swap →
+/// settle) and classify the verdict. Returns [`ProbeOutcome::Accepted`] with
+/// the ABSOLUTE (amount0, amount1) from the pool's BalanceDelta on success,
+/// [`ProbeOutcome::Reverted`] with the raw revert data on a Solidity/V4-error
+/// revert, or [`ProbeOutcome::Halted`] when the pipeline itself broke (deploy/
+/// getter failure or the OOG gas trap — no EVM verdict).
+#[allow(clippy::too_many_lines)] // one logical deploy → seed → unlock → swap → verdict pipeline
+fn probe_v4(
     state: &V4PoolState,
     fee: u32,
     tick_spacing: i32,
     zero_for_one: bool,
     amount_specified: I256,
     sqrt_price_limit: u128,
-) -> Result<(U256, U256), String> {
+) -> ProbeOutcome {
     let db = CacheDB::new(EmptyDB::default());
     let mut evm = revm::context::Context::mainnet()
         .with_db(db)
@@ -300,7 +338,7 @@ fn run_v4_onchain_swap(
             output: Output::Create(_, Some(addr)),
             ..
         } => *addr,
-        other => return Err(format!("V4 harness deploy failed: {other:?}")),
+        other => return ProbeOutcome::Halted(format!("V4 harness deploy failed: {other:?}")),
     };
     evm.commit(deploy_res.state);
 
@@ -328,9 +366,18 @@ fn run_v4_onchain_swap(
             Err(format!("getter {sig} failed"))
         }
     };
-    let manager = get_addr("manager()")?;
-    let cur0 = get_addr("currency0()")?;
-    let cur1 = get_addr("currency1()")?;
+    let manager = match get_addr("manager()") {
+        Ok(a) => a,
+        Err(e) => return ProbeOutcome::Halted(e),
+    };
+    let cur0 = match get_addr("currency0()") {
+        Ok(a) => a,
+        Err(e) => return ProbeOutcome::Halted(e),
+    };
+    let cur1 = match get_addr("currency1()") {
+        Ok(a) => a,
+        Err(e) => return ProbeOutcome::Halted(e),
+    };
     // The harness's `swap` builds its PoolKey from the CONSTRUCTOR-DEPLOYED
     // token order (`currency0`, `currency1`), so the poolId we seed must use
     // that EXACT order — reordering here would derive a different poolId and
@@ -358,39 +405,136 @@ fn run_v4_onchain_swap(
         )
         .expect("v4 swap transact");
 
-    let out = match &res.result {
+    match &res.result {
         ExecutionResult::Success {
             output: Output::Call(b),
             ..
-        } => b.clone(),
-        other => return Err(format!("on-chain v4 swap reverted/error: {other:?}")),
-    };
+        } => {
+            let out = b.clone();
+            // BalanceDelta is ONE packed word: amount0 in the HIGH 128 bits,
+            // amount1 in the LOW 128 bits (v4-core `types/BalanceDelta.sol`).
+            // Sign-extend each 128-bit field to a proper signed value.
+            let mut w32 = [0u8; 32];
+            w32.copy_from_slice(&out.as_ref()[0..32]);
+            let packed = U256::from_be_bytes(w32);
+            let low_mask = U256::from_limbs([u64::MAX, u64::MAX, 0, 0]);
+            let hi_u128: u128 = ((packed >> 128u32) & low_mask).to::<u128>();
+            let lo_u128: u128 = (packed & low_mask).to::<u128>();
+            // Build a 256-bit two's-complement word from a 128-bit int
+            // (sign-extend the 16-byte representation) for a panic-free I256
+            // read-back.
+            let i128_to_u256 = |v: i128| -> U256 {
+                let be = v.to_be_bytes(); // [u8; 16]
+                let mut arr = [0u8; 32];
+                arr[0..16].fill(if v < 0 { 0xFF } else { 0x00 });
+                arr[16..32].copy_from_slice(&be);
+                U256::from_be_bytes(arr)
+            };
+            let d0 = I256::from_raw(i128_to_u256(hi_u128 as i128));
+            let d1 = I256::from_raw(i128_to_u256(lo_u128 as i128));
+            // Absolute magnitudes match `v4_simulate_swap`'s unsigned amounts.
+            ProbeOutcome::Accepted {
+                amount0: d0.unsigned_abs(),
+                amount1: d1.unsigned_abs(),
+            }
+        }
+        ExecutionResult::Revert { output, .. } => ProbeOutcome::Reverted {
+            reason: output.clone(),
+        },
+        other => ProbeOutcome::Halted(format!("on-chain v4 swap halted: {other:?}")),
+    }
+}
 
-    // BalanceDelta is ONE packed word: amount0 in the HIGH 128 bits, amount1 in
-    // the LOW 128 bits (v4-core `types/BalanceDelta.sol`). Sign-extend each
-    // 128-bit field to a proper signed value.
-    let mut w32 = [0u8; 32];
-    w32.copy_from_slice(&out.as_ref()[0..32]);
-    let packed = U256::from_be_bytes(w32);
-    let low_mask = U256::from_limbs([u64::MAX, u64::MAX, 0, 0]);
-    let hi_u128: u128 = ((packed >> 128u32) & low_mask).to::<u128>();
-    let lo_u128: u128 = (packed & low_mask).to::<u128>();
-    // `u128 as i128` is a wrapping two's-complement cast — correct sign extension
-    // for the 128-bit fields.
-    // Build a 256-bit two's-complement word from a 128-bit int (sign-extend the
-    // 16-byte representation) for a panic-free I256 read-back.
-    let i128_to_u256 = |v: i128| -> U256 {
-        let be = v.to_be_bytes(); // [u8; 16]
-        let mut arr = [0u8; 32];
-        arr[0..16].fill(if v < 0 { 0xFF } else { 0x00 });
-        arr[16..32].copy_from_slice(&be);
-        U256::from_be_bytes(arr)
-    };
-    let d0 = I256::from_raw(i128_to_u256(hi_u128 as i128));
-    let d1 = I256::from_raw(i128_to_u256(lo_u128 as i128));
+/// Unwrap a probe to its absolute BalanceDelta, panicking on any non-accept so
+/// pinned tests can assert known-good swaps fail loudly.
+fn probe_accepted(
+    state: &V4PoolState,
+    fee: u32,
+    tick_spacing: i32,
+    zero_for_one: bool,
+    amount_specified: I256,
+    sqrt_price_limit: u128,
+) -> (U256, U256) {
+    match probe_v4(
+        state,
+        fee,
+        tick_spacing,
+        zero_for_one,
+        amount_specified,
+        sqrt_price_limit,
+    ) {
+        ProbeOutcome::Accepted { amount0, amount1 } => (amount0, amount1),
+        ProbeOutcome::Reverted { reason } => {
+            panic!(
+                "on-chain v4 swap reverted: {}",
+                RevertClass::classify(reason.as_ref()).label()
+            )
+        }
+        ProbeOutcome::Halted(m) => panic!("on-chain v4 swap halted: {m}"),
+    }
+}
 
-    // Absolute magnitudes match `v4_simulate_swap`'s unsigned amount0/amount1.
-    Ok((d0.unsigned_abs(), d1.unsigned_abs()))
+/// The full V4 byte-exact oracle for one case, with H1 rejection-reason
+/// airtightness: on-chain Accepted ⇒ engine Ok (compared byte-for-byte via the
+/// BalanceDelta, the on-chain V4-error label surfaced on divergence); on-chain
+/// Revert (a verdict — e.g. `CurrencyNotSettled`, decoded via
+/// `degenbot_decoders::revert`) ⇒ engine `NotComputable`; only a verbless
+/// Halt (pipeline break / OOG) is a legitimate skip.
+#[allow(clippy::match_same_arms)] // two parity arms legitimately share an empty body
+#[allow(clippy::too_many_lines)]
+fn assert_v4_byte_exact(
+    state: &V4PoolState,
+    fee: u32,
+    tick_spacing: i32,
+    zero_for_one: bool,
+    amount_specified: I256,
+    sqrt_price_limit: u128,
+) {
+    let sim = v4_simulate_swap(
+        state,
+        fee,
+        tick_spacing,
+        zero_for_one,
+        amount_specified,
+        U256::from(sqrt_price_limit),
+    );
+    match (
+        probe_v4(
+            state,
+            fee,
+            tick_spacing,
+            zero_for_one,
+            amount_specified,
+            sqrt_price_limit,
+        ),
+        &sim,
+    ) {
+        (ProbeOutcome::Accepted { amount0, amount1 }, Ok(s)) => {
+            assert_eq!(amount0, s.amount0, "v4 amount0 byte-exact");
+            assert_eq!(amount1, s.amount1, "v4 amount1 byte-exact");
+        }
+        (ProbeOutcome::Accepted { .. }, Err(e)) => {
+            panic!("on-chain ACCEPTED but engine rejected: {e:?}")
+        }
+        (ProbeOutcome::Reverted { .. }, Err(SimulateSwapError::NotComputable)) => {
+            // Parity: both reject — no silent skip; the on-chain verdict was a
+            // real Solidity/V4 revert and the engine agrees.
+        }
+        (ProbeOutcome::Reverted { reason }, _) => {
+            let label = RevertClass::classify(reason.as_ref()).label();
+            match sim {
+                Ok(s) => panic!("on-chain REVERTED ({label}) but engine produced {s:?}"),
+                Err(SimulateSwapError::MissingTickWord(w)) => {
+                    panic!("on-chain REVERTED ({label}) but engine misses word {w}")
+                }
+                Err(SimulateSwapError::NotComputable) => unreachable!(),
+            }
+        }
+        (ProbeOutcome::Halted(_), _) => {
+            // Verbless halt (pipeline break or OOG gas trap) — no EVM verdict
+            // to compare against the engine. The only legitimate skip.
+        }
+    }
 }
 
 /// V4 dense-swap byte-exact oracle: deploy the real PoolManager, seed a dense
@@ -405,7 +549,7 @@ fn v4_pool_dense_swap_matches_sim_byte_exact() {
     let current_tick = 120i32;
     let liq = 1_000_000_000_000_000_000u128;
 
-    let state = dense_v4_state(liq, tick_spacing, k_positions, current_tick);
+    let state = dense_v4_state(liq, tick_spacing, k_positions, current_tick, fee, 0);
 
     for zfo in [true, false] {
         // V4 exact-in: amount must be NEGATIVE. Use the same magnitude in both
@@ -422,15 +566,14 @@ fn v4_pool_dense_swap_matches_sim_byte_exact() {
             .unwrap()
             .to::<u128>();
 
-        let (on_am0, on_am1) = run_v4_onchain_swap(
+        let (on_am0, on_am1) = probe_accepted(
             &state,
             fee,
             tick_spacing,
             zfo,
             amount_specified,
             sqrt_price_limit,
-        )
-        .expect("v4 on-chain swap succeeded");
+        );
 
         let sim = v4_simulate_swap(
             &state,
@@ -451,67 +594,221 @@ fn v4_pool_dense_swap_matches_sim_byte_exact() {
     }
 }
 
-/// Fuzz the V4 dense-swap oracle: state (liquidity × band) × amount-fraction ×
-/// direction. For every case, assert `v4_simulate_swap` amount0/amount1 are
-/// byte-exact to the on-chain `PoolManager.swap` BalanceDelta (via the unlock/
-/// settle dance). Skips the rare on-chain revert (test-fixture limit, e.g. the
-/// exact-output walk past a limit) rather than treating it as a divergence.
+/// H3 — pinned deterministic edge corpus: 1-wei at wei-scale liquidity, tiny +
+/// large liquidity, boundary amounts, fee-3000 + fee-1, protocol-fee on/off,
+/// both directions. Each case runs the full H1 oracle so a byte-exactness or
+/// rejection-parity drift fails loudly.
+#[test]
+fn v4_pool_edge_corpus_is_byte_exact() {
+    let tick_spacing = 60i32;
+    let k_positions = 8i32;
+    let current_tick = 120i32;
+
+    // (liq, amount, fee, zfo, protocol_fee).
+    let cases: &[(u128, u128, u32, bool, u32)] = &[
+        // 1-wei amount at wei-scale liquidity.
+        (2, 1, 3000, true, 0),
+        (2, 1, 3000, false, 0),
+        // Tiny liquidity, wei-scale amounts (floor-division-sensitive region).
+        (1_000, 5, 3000, true, 0),
+        (1_000, 5, 3000, false, 0),
+        // Fee-1 tiny.
+        (100_000, 100, 1, true, 0),
+        (100_000, 100, 1, false, 0),
+        // Boundary amount deep into the band (amount == active liquidity).
+        (
+            1_000_000_000_000_000_000u128,
+            8_000_000_000_000_000_000u128,
+            3000,
+            true,
+            0,
+        ),
+        (
+            1_000_000_000_000_000_000u128,
+            8_000_000_000_000_000_000u128,
+            3000,
+            false,
+            0,
+        ),
+        // Large liquidity, proportionally large amount.
+        (
+            1_000_000_000_000_000_000_000_000_000_000u128,
+            1_000_000_000_000_000_000_000_000u128,
+            3000,
+            true,
+            0,
+        ),
+        // Protocol-fee-on (low-12 = 13 pips 0→1, high-12 = 13 pips 1→0).
+        (
+            1_000_000_000_000_000_000u128,
+            1_000_000_000_000_000_000u128,
+            3000,
+            true,
+            0x0000_d00d,
+        ),
+        (
+            1_000_000_000_000_000_000u128,
+            1_000_000_000_000_000_000u128,
+            3000,
+            false,
+            0x0000_d00d,
+        ),
+    ];
+
+    for &(liq, amount, fee, zfo, protocol_fee) in cases {
+        let state = dense_v4_state(
+            liq,
+            tick_spacing,
+            k_positions,
+            current_tick,
+            fee,
+            protocol_fee,
+        );
+        let amount_specified = I256::ZERO
+            .checked_sub(I256::try_from(U256::from(amount)).unwrap())
+            .unwrap();
+        let dir = if zfo { -1 } else { 1 };
+        let limit_tick = current_tick + dir * 3 * tick_spacing;
+        let sqrt_price_limit: u128 = get_sqrt_ratio_at_tick_internal(limit_tick)
+            .unwrap()
+            .to::<u128>();
+        assert_v4_byte_exact(
+            &state,
+            fee,
+            tick_spacing,
+            zfo,
+            amount_specified,
+            sqrt_price_limit,
+        );
+    }
+}
+
+/// H4 — the widened V4 proptest strategy: `prop_oneof!` self-consistent arms
+/// (nominal wide dynamic range, tiny/floor-division, large, and a
+/// protocol-fee-on arm) producing `(liq, amount, zfo, sink_ticks, fee,
+/// protocol_fee)` tuples where `amount` is coupled to `liq` so each walk
+/// terminates inside the band (no empty-word OOG = no verbless skip).
+fn v4_case_strategy() -> impl Strategy<Value = (u128, U256, i32, i32, u32, u32)> {
+    // Nominal wide dynamic range, fee-3000, protocol fee off.
+    let nominal = (1u32..22u32).prop_flat_map(|liq_exp| {
+        let liq = 10u128.pow(liq_exp);
+        (
+            Just(liq),
+            1u32..200u32,
+            0i32..2,
+            1i32..4,
+            Just(3000u32),
+            Just(0u32),
+        )
+            .prop_map(move |(_, frac, zfo, sink, fee, pf)| {
+                (
+                    liq,
+                    U256::from(liq) / U256::from(1_000_000u64) * U256::from(frac),
+                    zfo,
+                    sink,
+                    fee,
+                    pf,
+                )
+            })
+    });
+    // Tiny liquidity + wei-scale amounts (floor-division region), fee 1 or 3000.
+    let tiny = (0u32..7u32).prop_flat_map(|liq_exp| {
+        let liq = 10u128.pow(liq_exp);
+        let active = liq * 8;
+        (
+            Just(liq),
+            1u128..(active.min(1_000_000u128) + 1),
+            0i32..2,
+            1i32..3,
+            prop_oneof![Just(1u32), Just(3000u32)],
+            Just(0u32),
+        )
+            .prop_map(move |(_, amount, zfo, sink, fee, pf)| {
+                (liq, U256::from(amount), zfo, sink, fee, pf)
+            })
+    });
+    // Large liquidity + proportionally large amounts, fee-3000.
+    let large = (23u32..30u32).prop_flat_map(|liq_exp| {
+        let liq = 10u128.pow(liq_exp);
+        (
+            Just(liq),
+            100u32..2000u32,
+            0i32..2,
+            1i32..4,
+            Just(3000u32),
+            Just(0u32),
+        )
+            .prop_map(move |(_, frac, zfo, sink, fee, pf)| {
+                (
+                    liq,
+                    U256::from(liq) / U256::from(1_000_000u64) * U256::from(frac),
+                    zfo,
+                    sink,
+                    fee,
+                    pf,
+                )
+            })
+    });
+    // Protocol-fee on/off over a mid liquidity band (exercises the on-chain
+    // calculateSwapFee combination + the fee-combination rounding).
+    let proto = (10u32..20u32).prop_flat_map(|liq_exp| {
+        let liq = 10u128.pow(liq_exp);
+        (
+            Just(liq),
+            2u32..50u32,
+            0i32..2,
+            1i32..3,
+            Just(3000u32),
+            prop_oneof![Just(0u32), Just(0x0000_d00du32), Just(0x0001u32)],
+        )
+            .prop_map(move |(_, frac, zfo, sink, fee, pf)| {
+                (
+                    liq,
+                    U256::from(liq) / U256::from(1_000_000u64) * U256::from(frac),
+                    zfo,
+                    sink,
+                    fee,
+                    pf,
+                )
+            })
+    });
+    prop_oneof![nominal, tiny, large, proto]
+}
+
+/// Fuzz the V4 dense-swap oracle across the widened (liq, amount, direction,
+/// band-depth, fee, protocol-fee) domain: assert `v4_simulate_swap`
+/// amount0/amount1 are byte-exact to the on-chain `PoolManager.swap`
+/// BalanceDelta (via unlock/settle), with H1 rejection-reason airtightness.
 #[test]
 fn v4_pool_dense_swap_matches_sim_proptest() {
-    proptest!(|(
-        k in 4i32..=8i32,
-        amount_frac in 1u64..=50u64,
-        zfo in 0u8..=1u8,
-        current_tick in prop::sample::select(&[480i32, 540, 600, -480]),
-    )| {
-        let fee = 3000u32;
-        let tick_spacing = 60i32;
-        let liq = 1_000_000_000_000_000_000u128;
-        let state = dense_v4_state(liq, tick_spacing, k, current_tick);
+    let tick_spacing = 60i32;
+    let k_positions = 8i32;
+    let current_tick = 120i32;
 
-        // Amount as a fraction of active liquidity, kept inside the band.
-        let amount = I256::try_from(
-            U256::from(liq) / U256::from(1_000_000u64)
-                * U256::from(amount_frac),
-        )
-        .unwrap();
-        // V4 exact-in = NEGATIVE (for both directions here — exact-in for zfo
-        // and exact-in for ofz both pass negative).
-        let amount_specified = I256::ZERO.checked_sub(amount).unwrap();
-
+    proptest!(|(case in v4_case_strategy())| {
+        let (liq, amount, zfo, sink_ticks, fee, protocol_fee) = case;
+        if amount > U256::from(i128::MAX) {
+            return Ok(());
+        }
+        let mag = I256::try_from(amount).unwrap();
+        if mag.is_zero() {
+            return Ok(());
+        }
+        // V4 exact-in = NEGATIVE for both directions.
+        let amount_specified = I256::ZERO.checked_sub(mag).unwrap();
+        let state = dense_v4_state(liq, tick_spacing, k_positions, current_tick, fee, protocol_fee);
         let dir = if zfo == 0 { -1 } else { 1 };
-        let limit_tick = current_tick + dir * 4 * tick_spacing;
-        let sqrt_price_limit: u128 =
-            get_sqrt_ratio_at_tick_internal(limit_tick).unwrap().to::<u128>();
+        let limit_tick = current_tick + dir * sink_ticks * tick_spacing;
+        let sqrt_price_limit: u128 = get_sqrt_ratio_at_tick_internal(limit_tick).unwrap().to::<u128>();
 
-        let Ok((on_am0, on_am1)) = run_v4_onchain_swap(
+        assert_v4_byte_exact(
             &state,
             fee,
             tick_spacing,
             zfo == 0,
             amount_specified,
             sqrt_price_limit,
-        ) else {
-            return Ok(()); // on-chain revert = fixture limitation, skip
-        };
-
-        let sim = match v4_simulate_swap(
-            &state,
-            fee,
-            tick_spacing,
-            zfo == 0,
-            amount_specified,
-            U256::from(sqrt_price_limit),
-        ) {
-            Ok(s) => s,
-            Err(SimulateSwapError::NotComputable) => return Ok(()),
-            Err(SimulateSwapError::MissingTickWord(w)) => {
-                panic!("Tracked coverage should not miss word {w}")
-            }
-        };
-
-        prop_assert_eq!(on_am0, sim.amount0, "amount0");
-        prop_assert_eq!(on_am1, sim.amount1, "amount1");
+        );
     });
 }
 
@@ -600,15 +897,14 @@ fn v4_pool_fee1_valid_single_position_matches_sim() {
                 .unwrap()
                 .to::<u128>();
 
-            let (on_am0, on_am1) = run_v4_onchain_swap(
+            let (on_am0, on_am1) = probe_accepted(
                 &state,
                 fee,
                 tick_spacing,
                 zfo,
                 amount_specified,
                 sqrt_price_limit,
-            )
-            .expect("v4 on-chain swap succeeded");
+            );
             let sim = v4_simulate_swap(
                 &state,
                 fee,
@@ -723,15 +1019,14 @@ fn v4_pool_fee1_protocol_fee_override_matches_sim() {
                 .unwrap()
                 .to::<u128>();
 
-            let (on_am0, on_am1) = run_v4_onchain_swap(
+            let (on_am0, on_am1) = probe_accepted(
                 &state,
                 fee,
                 tick_spacing,
                 zfo,
                 amount_specified,
                 sqrt_price_limit,
-            )
-            .expect("v4 on-chain swap succeeded");
+            );
             let sim = v4_simulate_swap(
                 &state,
                 fee,
@@ -751,9 +1046,6 @@ fn v4_pool_fee1_protocol_fee_override_matches_sim() {
     }
 }
 
-/// Multi-tick fee-1 byte-exact check (ergo UO3JM4): a dense VALID overlapping-
-/// position state at current_tick 0 (price 1, matching the fee-1 repro regime)
-/// with the identical scalar, driven at fee=1 with tiny exact-in amounts that
 /// Clean multi-tick fee-1 byte-exact oracle (ergo UO3JM4): mirrors the proven
 /// fee-3000 dense test (`v4_pool_dense_swap_matches_sim_byte_exact`) but with
 /// fee=1 and a smaller per-position liquidity, crossing 4 of 8 tick boundaries
@@ -766,7 +1058,7 @@ fn v4_pool_fee1_dense_matches_sim_byte_exact() {
     let k_positions = 8i32;
     let current_tick = 120i32;
     let liq = 10_000_000_000u128;
-    let state = dense_v4_state(liq, tick_spacing, k_positions, current_tick);
+    let state = dense_v4_state(liq, tick_spacing, k_positions, current_tick, fee, 0);
 
     for zfo in [true, false] {
         // V4 exact-in (negative) — magnitude scaled to the tiny liquidity.
@@ -782,15 +1074,14 @@ fn v4_pool_fee1_dense_matches_sim_byte_exact() {
             .unwrap()
             .to::<u128>();
 
-        let (on_am0, on_am1) = run_v4_onchain_swap(
+        let (on_am0, on_am1) = probe_accepted(
             &state,
             fee,
             tick_spacing,
             zfo,
             amount_specified,
             sqrt_price_limit,
-        )
-        .expect("v4 on-chain swap succeeded");
+        );
         let sim = v4_simulate_swap(
             &state,
             fee,
