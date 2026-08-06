@@ -40,6 +40,7 @@ use revm::database_interface::EmptyDB;
 use revm::primitives::TxKind;
 use revm::{ExecuteCommitEvm, ExecuteEvm, MainBuilder, MainContext};
 
+use degenbot_decoders::revert::RevertClass;
 use degenbot_pools::balancer_stable_state::{
     BalancerStablePoolState, RegisterBalancerStablePoolParams,
 };
@@ -195,10 +196,29 @@ fn stable_call(sig: &str, case: &StableCase, amount_in: U256, token_count: u64) 
     d
 }
 
+/// The verdict of one on-chain Balancer harness call. Distinguishes a
+/// successful output from a GENUINE math rejection (the canonical Balancer
+/// `require(msg)` error — e.g. `ZERO_DIVISION`, `INSUFFICIENT_BALANCE` — or a
+/// `Panic` arithmetic overflow, the domain `simulate_swap`'s `NotComputable`
+/// models) from a spurious/incidental revert (which must never be accepted as
+/// rejection-parity — H1).
+#[derive(Debug)]
+enum BalancerOutcome {
+    /// The harness returned `amount_out` (byte-comparable to the engine).
+    Ok(U256),
+    /// A `require(msg)` Balancer math error or a `Panic` arithmetic
+    /// overflow/zero-division — a genuine rejection of the engine's domain.
+    /// Carries the classified label for diagnostics.
+    GenuineReject(String),
+    /// Any other revert (unrecognised/empty/short return-data) — never
+    /// accepted as parity.
+    Spurious(String),
+}
+
 /// Run a single stateless harness call: deploy fresh, `call` the given calldata,
-/// return the single-`uint256` output or `None` on revert. Fully self-contained
-/// (each call rebuilds evm + harness so storage is pristine).
-fn call_onchain(calldata: Vec<u8>) -> Option<U256> {
+/// and classify the verdict. Fully self-contained (each call rebuilds evm +
+/// harness so storage is pristine).
+fn call_onchain(calldata: Vec<u8>) -> BalancerOutcome {
     let db = CacheDB::new(EmptyDB::default());
     let mut evm = revm::context::Context::mainnet()
         .with_db(db)
@@ -241,14 +261,28 @@ fn call_onchain(calldata: Vec<u8>) -> Option<U256> {
         ExecutionResult::Success {
             output: Output::Call(bytes),
             ..
-        } => Some(U256::from_be_slice(&bytes[..32])),
-        ExecutionResult::Revert { .. } => None,
+        } => BalancerOutcome::Ok(U256::from_be_slice(&bytes[..32])),
+        ExecutionResult::Revert { output, .. } => match RevertClass::classify(output.as_ref()) {
+            // An `Error(string)` (canonical Balancer `require(msg)` math
+            // rejection) or a `Panic` arithmetic overflow/zero-division.
+            RevertClass::ErrorString(msg) => BalancerOutcome::GenuineReject(msg),
+            RevertClass::Panic(code)
+                if code == U256::from(0x11u8) || code == U256::from(0x12u8) =>
+            {
+                BalancerOutcome::GenuineReject(format!(
+                    "Panic({})",
+                    hex::encode(&code.to_be_bytes::<32>()[31..])
+                ))
+            }
+            other => BalancerOutcome::Spurious(other.label()),
+        },
         other => panic!("unexpected result: {other:?}"),
     }
 }
 
-/// Assert engine === on-chain for a weighted case. Both must agree on computable
-/// vs rejected, and equal when computable.
+/// Assert the engine/on-chain parity for a weighted case with H1 rejection
+/// verification: `(Some, Ok)` byte-equal; `(None, GenuineReject)` accepted;
+/// any mismatch or a spurious on-chain revert fails loudly.
 fn assert_weighted_parity(case: &WeightedCase, zfo: bool, amount_in: U256) {
     let engine = engine_weighted_out(case, zfo, amount_in);
     let sig = if zfo {
@@ -258,10 +292,15 @@ fn assert_weighted_parity(case: &WeightedCase, zfo: bool, amount_in: U256) {
     };
     let onchain = call_onchain(weighted_call(sig, case, amount_in));
     match (engine, onchain) {
-        (Some(e), Some(o)) => assert_eq!(e, o, "engine vs on-chain byte-exact"),
-        (None, None) => {}
-        (Some(e), None) => panic!("engine produced {e} but on-chain reverted"),
-        (None, Some(o)) => panic!("engine rejected but on-chain produced {o}"),
+        (Some(e), BalancerOutcome::Ok(o)) => assert_eq!(e, o, "engine vs on-chain byte-exact"),
+        (None, BalancerOutcome::GenuineReject(_)) => {}
+        (Some(e), BalancerOutcome::GenuineReject(l)) => {
+            panic!("engine produced {e} but on-chain rejected: {l}")
+        }
+        (None, BalancerOutcome::Ok(o)) => panic!("engine rejected but on-chain produced {o}"),
+        (_, BalancerOutcome::Spurious(l)) => {
+            panic!("spurious/non-modeled on-chain revert: {l}")
+        }
     }
 }
 
@@ -275,10 +314,15 @@ fn assert_stable_parity(case: &StableCase, zfo: bool, amount_in: U256) {
     };
     let onchain = call_onchain(stable_call(sig, case, amount_in, 2));
     match (engine, onchain) {
-        (Some(e), Some(o)) => assert_eq!(e, o, "engine vs on-chain byte-exact"),
-        (None, None) => {}
-        (Some(e), None) => panic!("engine produced {e} but on-chain reverted"),
-        (None, Some(o)) => panic!("engine rejected but on-chain produced {o}"),
+        (Some(e), BalancerOutcome::Ok(o)) => assert_eq!(e, o, "engine vs on-chain byte-exact"),
+        (None, BalancerOutcome::GenuineReject(_)) => {}
+        (Some(e), BalancerOutcome::GenuineReject(l)) => {
+            panic!("engine produced {e} but on-chain rejected: {l}")
+        }
+        (None, BalancerOutcome::Ok(o)) => panic!("engine rejected but on-chain produced {o}"),
+        (_, BalancerOutcome::Spurious(l)) => {
+            panic!("spurious/non-modeled on-chain revert: {l}")
+        }
     }
 }
 
@@ -317,10 +361,17 @@ fn assert_stable_v2_parity(case: &StableCase, zfo: bool, amount_in: U256) {
     };
     let onchain = call_onchain(stable_call(sig, case, amount_in, 2));
     match (engine, onchain) {
-        (Some(e), Some(o)) => assert_eq!(e, o, "engine [V2] vs on-chain byte-exact"),
-        (None, None) => {}
-        (Some(e), None) => panic!("engine [V2] produced {e} but on-chain reverted"),
-        (None, Some(o)) => panic!("engine [V2] rejected but on-chain produced {o}"),
+        (Some(e), BalancerOutcome::Ok(o)) => assert_eq!(e, o, "engine [V2] vs on-chain byte-exact"),
+        (None, BalancerOutcome::GenuineReject(_)) => {}
+        (Some(e), BalancerOutcome::GenuineReject(l)) => {
+            panic!("engine [V2] produced {e} but on-chain rejected: {l}")
+        }
+        (None, BalancerOutcome::Ok(o)) => {
+            panic!("engine [V2] rejected but on-chain produced {o}")
+        }
+        (_, BalancerOutcome::Spurious(l)) => {
+            panic!("spurious/non-modeled on-chain revert: {l}")
+        }
     }
 }
 
@@ -397,6 +448,87 @@ fn stable_v2_out_given_in_is_byte_exact_to_onchain_reference() {
     );
 }
 
+// ── H4 widened proptest strategies (tiny → nominal → near-max arms). ───
+
+/// A physically-valid balance PAIR: both tokens drawn from the SAME magnitude
+/// arm (nominal / tiny / near-max) so the pool is not one-side-drained (a
+/// 1e30-vs-1e18 stable or weighted pool is degenerate and the canonical
+/// invariant rejects it while the engine's deployed path may not).
+fn arb_balance_pair() -> impl Strategy<Value = (u128, u128)> {
+    prop_oneof![
+        (
+            1_000_000_000_000_000_000u128..5_000_000_000_000_000_000u128,
+            1_000_000_000_000_000_000u128..5_000_000_000_000_000_000u128,
+        ),
+        (
+            1_000_000u128..1_000_000_000u128,
+            1_000_000u128..1_000_000_000u128,
+        ),
+        (
+            10_000_000_000_000_000_000_000_000_000_000u128
+                ..40_000_000_000_000_000_000_000_000_000_000u128,
+            10_000_000_000_000_000_000_000_000_000_000u128
+                ..40_000_000_000_000_000_000_000_000_000_000u128,
+        ),
+    ]
+}
+
+/// Same shape but capped for the STABLE families: 1e30..1e32 near-max,
+/// because the canonical `StableMath` invariant (`Ann`, cross-balance products)
+/// overflows above ~1e32 while the engine's deployed-variant path may not —
+/// the weighted math has no such sensitivity, so it keeps the full near-max.
+fn stable_balance_pair() -> impl Strategy<Value = (u128, u128)> {
+    prop_oneof![
+        (
+            1_000_000_000_000_000_000u128..5_000_000_000_000_000_000u128,
+            1_000_000_000_000_000_000u128..5_000_000_000_000_000_000u128,
+        ),
+        (
+            1_000_000u128..1_000_000_000u128,
+            1_000_000u128..1_000_000_000u128,
+        ),
+        (
+            10_000_000_000_000_000_000_000_000_000_000u128
+                ..100_000_000_000_000_000_000_000_000_000_000u128,
+            10_000_000_000_000_000_000_000_000_000_000u128
+                ..100_000_000_000_000_000_000_000_000_000_000u128,
+        ),
+    ]
+}
+
+/// Scaling-factor magnitude arms. Real stable pools have rate-provider
+/// multipliers near unity (~1e18); a genuinely tiny/huge multiplier is
+/// unphysical and would create a wildly-imbalanced scaled-reserve pair that
+/// the canonical stable invariant can legitimately reject while the engine's
+/// deployed-variant path may not — so this stays near-unit (the original
+/// oracle's realistic domain), and the widening concentrates on balances /
+/// amounts / fee / weights where the drift is physical.
+fn arb_scaling() -> impl Strategy<Value = u128> {
+    1_000_000_000_000_000_000u128..2_000_000_000_000_000_000u128
+}
+
+/// A-coefficient (× `AMP_PRECISION`) arms incl. small + large edges.
+fn arb_amp() -> impl Strategy<Value = u128> {
+    // A realistic Balancer stable range: amp ∈ [1, 5000] × AMP_PRECISION,
+    // plus a low-A edge. Beyond ~A=8000 the canonical invariant can fail to
+    // converge on tiny, equal balances — a corner where the on-chain reference
+    // rejects but the engine's deployed-variant path may not.
+    prop_oneof![(1000u64..5_000_000u64).prop_map(u128::from), Just(1000u128),]
+}
+
+/// A `zfo`-side-coupled amount: reserved-fraction / 1-wei / boundary, all kept
+/// under the pool-level `MAX_IN_RATIO` (30% of the in-balance) so the harness's
+/// direct math-call and the engine agree on the computable region.
+fn compute_in_amount(in_balance: u128, amount_mode: u8, amount_frac: u64) -> U256 {
+    match amount_mode {
+        0 => U256::from(in_balance) / U256::from(amount_frac), // ≤ 25%
+        1 => U256::from(1u64),
+        2 => U256::from(in_balance) / U256::from(4u64), // 25% (MAX_IN_RATIO boundary)
+        3 => U256::from(in_balance) / U256::from(8u64), // 12.5%
+        _ => unreachable!(),
+    }
+}
+
 proptest! {
     /// Proptest the byte-exact weighted oracle over (balances × weights × fee ×
     /// amount × direction). Amounts kept ≤ 30% of the in-balance so the
@@ -405,15 +537,18 @@ proptest! {
     /// LogExpMath pow.
     #[test]
     fn weighted_out_given_in_matches_onchain_proptest(
-        balance0 in 1_000_000_000_000_000_000u64..5_000_000_000_000_000_000u64,
-        balance1 in 1_000_000_000_000_000_000u64..5_000_000_000_000_000_000u64,
-        weight_frac in 10u64..90u64, // weight0 = frac/100, weight1 = 1 - frac/100
-        swap_fee in 0u64..1_000_000_000_000_000_000u64, // fee ∈ [0, 0.1e18=10%]
-        amount_in_frac in 5u64..100u64, // amount_in ≤ balance_in/5 (≤ 30%)
+        (balance0, balance1) in arb_balance_pair(),
+        weight_frac in prop_oneof![10u64..90u64, Just(1u64), Just(50u64), Just(99u64)],
+        swap_fee in prop_oneof![0u64..100_000_000_000_000_000u64, Just(0u64), Just(100_000_000_000_000_000u64)],
+        amount_mode in 0u8..4u8,
+        amount_frac in 4u64..100u64, // ≤ 25% of in-balance (under MAX_IN_RATIO)
         zfo in any::<bool>(),
     ) {
         let weight0 = ONE * U256::from(weight_frac) / U256::from(100u64);
         let weight1 = ONE - weight0;
+        if weight0.is_zero() || weight1.is_zero() {
+            return Ok(()); // a zero weight is degenerate
+        }
         let case = WeightedCase {
             balances: [U256::from(balance0), U256::from(balance1)],
             weights: [weight0, weight1],
@@ -421,7 +556,7 @@ proptest! {
             swap_fee: U256::from(swap_fee),
         };
         let in_balance = if zfo { balance0 } else { balance1 };
-        let amount_in = U256::from(in_balance) / U256::from(amount_in_frac);
+        let amount_in = compute_in_amount(in_balance, amount_mode, amount_frac);
         if amount_in.is_zero() {
             return Ok(());
         }
@@ -432,13 +567,19 @@ proptest! {
     /// (balances × scaling-factors × fee × amp × amount × direction).
     #[test]
     fn stable_out_given_in_matches_onchain_proptest(
-        balance0 in 1_000_000_000_000_000_000u64..5_000_000_000_000_000_000u64,
-        balance1 in 1_000_000_000_000_000_000u64..5_000_000_000_000_000_000u64,
-        sf0 in 1_000_000_000_000_000_000u64..2_000_000_000_000_000_000u64,
-        sf1 in 1_000_000_000_000_000_000u64..2_000_000_000_000_000_000u64,
-        amp in 1000u64..5_000_000u64, // 1..5000 scaled by AMP_PRECISION
-        swap_fee in 0u64..1_000_000_000_000_000_000u64,
-        amount_in_frac in 5u64..100u64,
+        (balance0, balance1) in stable_balance_pair(),
+        sf0 in arb_scaling(),
+        sf1 in arb_scaling(),
+        amp in arb_amp(),
+        swap_fee in prop_oneof![0u64..100_000_000_000_000_000u64, Just(0u64), Just(100_000_000_000_000_000u64)],
+        // Boundary amounts only (0: in_balance/amount_frac, 2: /4, 3: /8).
+        // 1-wei is EXCLUDED for stable: the canonical StableMath y-solve
+        // provably fails to converge (BAL#001 did-not-converge) on 1-wei
+        // exact-in at every amp, while the engine returns 0 - a reference
+        // limitation with no byte to compare (covered by weighted, where
+        // 1-wei computes).
+        amount_mode in prop_oneof![Just(0u8), Just(2u8), Just(3u8)],
+        amount_frac in 4u64..100u64,
         zfo in any::<bool>(),
     ) {
         let case = StableCase {
@@ -448,7 +589,7 @@ proptest! {
             amp: U256::from(amp),
         };
         let in_balance = if zfo { balance0 } else { balance1 };
-        let amount_in = U256::from(in_balance) / U256::from(amount_in_frac);
+        let amount_in = compute_in_amount(in_balance, amount_mode, amount_frac);
         if amount_in.is_zero() {
             return Ok(());
         }
@@ -463,13 +604,19 @@ proptest! {
     /// byte-exact against the VERBATIM deployed invariant in the harness.
     #[test]
     fn stable_v2_out_given_in_matches_onchain_proptest(
-        balance0 in 1_000_000_000_000_000_000u64..5_000_000_000_000_000_000u64,
-        balance1 in 1_000_000_000_000_000_000u64..5_000_000_000_000_000_000u64,
-        sf0 in 1_000_000_000_000_000_000u64..2_000_000_000_000_000_000u64,
-        sf1 in 1_000_000_000_000_000_000u64..2_000_000_000_000_000_000u64,
-        amp in 1000u64..5_000_000u64,
-        swap_fee in 0u64..1_000_000_000_000_000_000u64,
-        amount_in_frac in 5u64..100u64,
+        (balance0, balance1) in stable_balance_pair(),
+        sf0 in arb_scaling(),
+        sf1 in arb_scaling(),
+        amp in arb_amp(),
+        swap_fee in prop_oneof![0u64..100_000_000_000_000_000u64, Just(0u64), Just(100_000_000_000_000_000u64)],
+        // Boundary amounts only (0: in_balance/amount_frac, 2: /4, 3: /8).
+        // 1-wei is EXCLUDED for stable: the canonical StableMath y-solve
+        // provably fails to converge (BAL#001 did-not-converge) on 1-wei
+        // exact-in at every amp, while the engine returns 0 - a reference
+        // limitation with no byte to compare (covered by weighted, where
+        // 1-wei computes).
+        amount_mode in prop_oneof![Just(0u8), Just(2u8), Just(3u8)],
+        amount_frac in 4u64..100u64,
         zfo in any::<bool>(),
     ) {
         let case = StableCase {
@@ -479,10 +626,72 @@ proptest! {
             amp: U256::from(amp),
         };
         let in_balance = if zfo { balance0 } else { balance1 };
-        let amount_in = U256::from(in_balance) / U256::from(amount_in_frac);
+        let amount_in = compute_in_amount(in_balance, amount_mode, amount_frac);
         if amount_in.is_zero() {
             return Ok(());
         }
         assert_stable_v2_parity(&case, zfo, amount_in);
     }
+}
+
+/// H3 — pinned deterministic edge corpus across the three families: minimal +
+/// near-max balances, boundary (25% in-balance) amounts, 1-wei (weighted) and
+/// A/fee edges, invariant-version V1 + V2 corners. Each case runs the H1
+/// parity oracle so a byte-exactness or rejection-classification drift fails
+/// loudly. (Stable skips 1-wei — the canonical `StableMath` y-solve fails to
+/// converge at 1-wei, a documented reference limitation, not a parity target.)
+#[test]
+fn balancer_swap_edge_corpus_is_byte_exact() {
+    // ── Weighted ──
+    let w_min = WeightedCase {
+        balances: [U256::from(1_000_000u64), U256::from(1_000_000u64)],
+        weights: [ONE / U256::from(2u64), ONE / U256::from(2u64)],
+        scaling_factors: [ONE, ONE],
+        swap_fee: U256::from(10_000_000_000_000_000u64), // 1%
+    };
+    // Minimal balances, boundary amount (= in_balance/4), both directions.
+    assert_weighted_parity(&w_min, true, U256::from(250_000u64));
+    assert_weighted_parity(&w_min, false, U256::from(250_000u64));
+    // 1-wei exact-in (weighted: convergible and byte-exact).
+    assert_weighted_parity(&w_min, true, U256::from(1u64));
+    // Near-max balances (weighted has no stable-invariant overflow cliff).
+    let w_max = WeightedCase {
+        balances: [
+            U256::from(30_000_000_000_000_000_000_000_000_000_000u128),
+            U256::from(40_000_000_000_000_000_000_000_000_000_000u128),
+        ],
+        weights: [ONE / U256::from(4u64), ONE - ONE / U256::from(4u64)],
+        scaling_factors: [ONE, ONE],
+        swap_fee: U256::ZERO,
+    };
+    assert_weighted_parity(
+        &w_max,
+        true,
+        U256::from(7_000_000_000_000_000_000_000_000_000_000u128),
+    );
+
+    // ── Stable V1 + V2 (invariant-version corners on identical cases) ──
+    let s_min = StableCase {
+        balances: [U256::from(1_000_000u64), U256::from(1_000_000u64)],
+        scaling_factors: [ONE, ONE],
+        swap_fee: U256::ZERO,
+        amp: U256::from(1000u64),
+    };
+    // Minimal balances, boundary amount (= in_balance/4), both directions.
+    assert_stable_parity(&s_min, true, U256::from(250_000u64));
+    assert_stable_parity(&s_min, false, U256::from(250_000u64));
+    assert_stable_v2_parity(&s_min, true, U256::from(250_000u64));
+    assert_stable_v2_parity(&s_min, false, U256::from(250_000u64));
+
+    // A/fee edges on nominal balances (A=100, 5% fee), V1 + V2.
+    let s_fee = StableCase {
+        balances: [U256::from(1_000_000_000_000_000_000u64); 2],
+        scaling_factors: [ONE, ONE],
+        swap_fee: U256::from(50_000_000_000_000_000u64), // 5%
+        amp: U256::from(100_000u64),
+    };
+    assert_stable_parity(&s_fee, true, U256::from(1_000_000_000_000_000u64));
+    assert_stable_parity(&s_fee, false, U256::from(1_000_000_000_000_000u64));
+    assert_stable_v2_parity(&s_fee, true, U256::from(1_000_000_000_000_000u64));
+    assert_stable_v2_parity(&s_fee, false, U256::from(1_000_000_000_000_000u64));
 }
