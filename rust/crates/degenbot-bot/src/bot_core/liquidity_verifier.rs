@@ -208,7 +208,9 @@ pub async fn verify_v3_liquidity_map<S: std::hash::BuildHasher>(
         }
     }
     if let Some(msg) = first_mismatch {
-        if std::env::var("DEGENBOT_VERIFY_DBG").is_ok() && !all_mismatches.is_empty() {
+        if crate::bot_core::bot_env_flag_default_on("DEGENBOT_VERIFY_DBG")
+            && !all_mismatches.is_empty()
+        {
             tracing::warn!(
                 %pool_address,
                 block_number,

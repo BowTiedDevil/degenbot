@@ -1094,7 +1094,7 @@ where
             // `execute → v3c.swap → callback → v3a.swap → callback →
             // V4_UNLOCK → unlockCallback → swap → …` chain that ends in a
             // depth-8 empty-calldata PoolManager Halt.
-            if std::env::var_os("DEGENBOT_DUMP_CALL_TRACE").is_some() {
+            if flag_default_on("DEGENBOT_DUMP_CALL_TRACE") {
                 eprintln!(
                     "[sim-trace] path={} first_fail_call={} full_call_trace\n{}",
                     path.path_id,
@@ -1392,11 +1392,32 @@ fn decode_balance(data: &alloy::primitives::Bytes) -> U256 {
 // (revm pops the inner swaps from the journal), but the inspector preserves
 // them in `reverted_swaps`. Comparing each reverted swap's ACTUAL output to
 // `hop_outputs[i]` pinpoints which hop diverged — the decisive
-// state-divergence-vs-composer-bug test for `CurrencyNotSettled`. Env-gated,
-// default off (a single atomic load per failed path).
+// state-divergence-vs-composer-bug test for `CurrencyNotSettled`. Conservative
+// default ON (a single atomic load per failed path); set `=0` to disable.
 
-/// The env-var name gating the reverted-swap diagnostic log. Default OFF —
-/// the diagnostic is opt-in (set at launch); zero cost when off.
+/// Parse a flag's env value against the conservative default: `false` only for
+/// an explicit falsey value (`""`, `0`, `false`, `off`, `no`, `n`); `true`
+/// otherwise. Pure so it is unit-testable without process-global env mutation.
+fn parse_flag_value(v: &str) -> bool {
+    !matches!(
+        v.trim().to_ascii_lowercase().as_str(),
+        "" | "0" | "false" | "off" | "no" | "n"
+    )
+}
+
+/// Conservative-default environment flag (Z4KQXF): `true` unless `name` is set
+/// to an explicit falsey value (`""`, `0`, `false`, `off`, `no`). Default-on so
+/// a hand-run or harness never silently drops failure visibility — the HARD/
+/// LOUD diagnostic is the default; disable explicitly with, e.g. `X=0`.
+pub(crate) fn flag_default_on(name: &str) -> bool {
+    match std::env::var(name) {
+        Ok(v) => parse_flag_value(&v),
+        Err(_) => true,
+    }
+}
+
+/// The env-var name gating the reverted-swap diagnostic log. Conservative
+/// default ON (`flag_default_on`): set `=0` to disable.
 const SIM_LOG_REVERTED_SWAPS_ENV: &str = "DEGENBOT_SIM_LOG_REVERTED_SWAPS";
 
 /// The `[sim-revert-swap]` log prefix — verbatim so log greps return here.
@@ -1404,11 +1425,11 @@ const SIM_REVERT_SWAP_LOG_PREFIX: &str = "[sim-revert-swap]";
 
 static LOG_REVERTED_SWAPS_ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
-/// `true` iff `DEGENBOT_SIM_LOG_REVERTED_SWAPS=1` is set at first read;
-/// cached so the per-failed-path cost is a single atomic load.
+/// `true` iff the reverted-swap diagnostic is enabled (conservative default
+/// ON via [`flag_default_on`]); cached so the per-failed-path cost is a single
+/// atomic load.
 fn log_reverted_swaps_enabled() -> bool {
-    *LOG_REVERTED_SWAPS_ENABLED
-        .get_or_init(|| std::env::var_os(SIM_LOG_REVERTED_SWAPS_ENV).is_some_and(|v| v == "1"))
+    *LOG_REVERTED_SWAPS_ENABLED.get_or_init(|| flag_default_on(SIM_LOG_REVERTED_SWAPS_ENV))
 }
 
 /// The positive (output) side of a captured swap's signed amounts — the
@@ -1478,7 +1499,7 @@ fn negative_side_magnitude(
 /// hop 0 (the V4 swap) means the V4 swap diverged (solver calc or engine
 /// state); a match on hop 0 but mismatch on hop 1 means V3 hop B diverged;
 /// all-match-but-still-`CurrencyNotSettled` points at the composer/encoding.
-/// Env-gated (`DEGENBOT_SIM_LOG_REVERTED_SWAPS=1`); default off.
+/// Conservative default ON (`DEGENBOT_SIM_LOG_REVERTED_SWAPS`); `=0` to disable.
 /// One captured reverted swap attributed to its path hop. Built by
 /// [`match_reverted_swaps_to_hops`] so the log layer formats instead of
 /// re-deriving (and so the attribution is unit-tested independently of the
@@ -2414,5 +2435,24 @@ mod tests {
             U256::from(159_369_389_255_773_083_394_993u128)
         );
         assert!(m.matched);
+    }
+
+    #[test]
+    fn conservative_flag_default_on_and_parse() {
+        // Conservative default (Z4KQXF): unset ⇒ enabled (HARD/LOUD). This
+        // var is not set by any test, so the default-on path is deterministic.
+        assert!(flag_default_on("DEGENBOT_SIM_LOG_REVERTED_SWAPS"));
+        // Explicit falsey values opt OUT.
+        assert!(!parse_flag_value("0"));
+        assert!(!parse_flag_value("false"));
+        assert!(!parse_flag_value("off"));
+        assert!(!parse_flag_value("no"));
+        assert!(!parse_flag_value("n"));
+        assert!(!parse_flag_value(""));
+        // Everything else stays enabled.
+        assert!(parse_flag_value("1"));
+        assert!(parse_flag_value("true"));
+        assert!(parse_flag_value("on"));
+        assert!(parse_flag_value("yes"));
     }
 }

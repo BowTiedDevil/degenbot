@@ -398,11 +398,12 @@ impl ArbitrageEngine {
                     };
 
                     // AV42C7-debug: dump V4 solver intermediates for the
-                    // closed-form vs on-chain divergence hunt. Gated by
-                    // `DEGENBOT_DEBUG_V4_SOLVE`; grep the log for the failing
-                    // pool_id (from the [sim-fixture] dump) to localize the
-                    // over-prediction to a drain/coverage/range cause.
-                    if std::env::var_os("DEGENBOT_DEBUG_V4_SOLVE").is_some() {
+                    // closed-form vs on-chain divergence hunt. Conservative
+                    // default ON (`crate::bot_core::bot_env_flag_default_on`);
+                    // set `DEGENBOT_DEBUG_V4_SOLVE=0` to disable. grep the log
+                    // for the failing pool_id (from the [sim-fixture] dump) to
+                    // localize the over-prediction to drain/coverage/range.
+                    if crate::bot_core::bot_env_flag_default_on("DEGENBOT_DEBUG_V4_SOLVE") {
                         let pid_hex = alloy::hex::encode(identity.pool_id);
                         let drain: i128 = if pool_ref.zero_for_one {
                             pool_state

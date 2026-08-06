@@ -174,6 +174,11 @@ pub struct BlockPump {
     /// the sub) so the liveness watchdog is test-observable without depending
     /// on log-capture infrastructure.
     log_silence_alarms: u64,
+    /// Whether the ADR-021 solver-state accuracy gate runs at the publish
+    /// point. Conservative default ON (`DEGENBOT_ASSERT_SOLVER_STATE`, via
+    /// `bot_env_flag_default_on`): set `=0` to disable. Held as a field (not a
+    /// global env read) so tests deterministically opt out per-pump (Z4KQXF).
+    solver_state_verify: bool,
 }
 
 /// State held between `subscribe()` and `resume()` calls.
@@ -244,6 +249,9 @@ impl BlockPump {
             header_staleness: Duration::from_secs(HEADER_STALENESS_SECS),
             log_silence: Duration::from_secs(LOG_SILENCE_SECS),
             log_silence_alarms: 0,
+            solver_state_verify: crate::bot_core::bot_env_flag_default_on(
+                "DEGENBOT_ASSERT_SOLVER_STATE",
+            ),
         };
 
         // MJXP5Z (Alternative B): single-stream handshake - NO resubscribe.
@@ -820,11 +828,13 @@ impl BlockPump {
         let mut log_silence_alarm_armed = false;
         let mut diag_last_stats = tokio::time::Instant::now();
 
-        // Option-A solver-state accuracy gate (AV42C7): when `DEGENBOT_ASSERT_SOLVER_STATE`
-        // is set, diff each solved path's per-hop pool state against the chain
-        // at the solve block after every drain, panicking on any mismatch. Off
-        // by default (adds an RPC read per path per solve on the hot loop).
-        let solver_state_verify_enabled = std::env::var("DEGENBOT_ASSERT_SOLVER_STATE").is_ok();
+        // Option-A solver-state accuracy gate (AV42C7): when enabled, diff each
+        // solved path's per-hop pool state against the chain at the solve block
+        // after every drain, aborting on any mismatch (ADR-021 tripwire).
+        // Conservative default ON (`self.solver_state_verify` from
+        // `DEGENBOT_ASSERT_SOLVER_STATE`); set `=0` to disable. Adds an RPC read
+        // per path per solve on the hot loop (only at the publish point).
+        let solver_state_verify_enabled = self.solver_state_verify;
 
         // JIABO3 Option A — header-staleness watchdog. A `tokio::time::interval`
         // selected against `combined.next()` (below) whose internal `Sleep`
@@ -1801,6 +1811,10 @@ impl BlockPump {
             header_staleness: Duration::from_secs(HEADER_STALENESS_SECS),
             log_silence: Duration::from_secs(LOG_SILENCE_SECS),
             log_silence_alarms: 0,
+            // ADR-021 tripwire OFF in tests (deterministic per-pump opt-out; see
+            // the struct field doc). Tests arm it explicitly when they exercise
+            // the verifier (e.g. the desync-abort tests).
+            solver_state_verify: false,
         }
     }
 
@@ -2054,6 +2068,19 @@ mod tests {
         let sink = Arc::new(FakeDrainSink::new(last_processed));
         let pump = BlockPump::for_test(bot, sink.clone(), reorg, provider, shutdown);
         (pump, sink)
+    }
+
+    #[test]
+    fn test_pump_disables_solver_state_verify_by_default() {
+        // Z4KQXF: the ADR-021 tripwire is conservative-ON in production (via
+        // `bot_env_flag_default_on`) but deterministically OFF in the test
+        // constructor (per-pump opt-out) so TDD tests are immune to the global
+        // env. Tests that exercise the verifier arm it explicitly.
+        let (pump, _sink) = pump_for_test(None);
+        assert!(
+            !pump.solver_state_verify,
+            "test pumps must disable the tripwire"
+        );
     }
 
     /// Same shape as `pump_for_test` but also returns the mock transport's

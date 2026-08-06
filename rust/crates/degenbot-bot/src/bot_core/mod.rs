@@ -540,14 +540,34 @@ pub(crate) fn trace_apply_route_v4(
     );
 }
 
+/// Parse a flag's env value against the conservative default: `false` only for
+/// an explicit falsey value (`""`, `0`, `false`, `off`, `no`); `true`
+/// otherwise. Pure so it is unit-testable without process-global env mutation.
+pub(crate) fn parse_bot_flag_value(v: &str) -> bool {
+    !matches!(
+        v.trim().to_ascii_lowercase().as_str(),
+        "" | "0" | "false" | "off" | "no" | "n"
+    )
+}
+
+/// Conservative-default environment flag (Z4KQXF): `true` unless `name` is set
+/// to an explicit falsey value (`""`, `0`, `false`, `off`, `no`). Default-on so
+/// a hand-run or harness never silently drops failure visibility — the HARD/
+/// LOUD posture is the default; disable explicitly with, e.g. `X=0`.
+pub(crate) fn bot_env_flag_default_on(name: &str) -> bool {
+    match std::env::var(name) {
+        Ok(v) => parse_bot_flag_value(&v),
+        Err(_) => true,
+    }
+}
+
 /// Whether the verify-diagnostics probes are enabled.
 ///
-/// Set `DEGENBOT_VERIFY_DBG` (any value) to opt the bot into the structural
-/// visibility probes that diagnose intermittent liquidity-map
-/// verification misses at startup (the pump / drain / verifier concurrency
-/// window). The probes are pure `log::info!` emission gated on this flag —
-/// zero behavior change, zero runtime cost when unset (a single env-var
-/// `is_ok` check per call site, same posture as `DEGENBOT_DRAIN_DBG`).
+/// Conservative default ON (`DEGENBOT_VERIFY_DBG`, via [`bot_env_flag_default_on`]);
+/// set `=0` to disable the structural visibility probes that diagnose
+/// intermittent liquidity-map verification misses at startup (the pump /
+/// drain / verifier concurrency window). The probes are pure `log::info!`
+/// emission — zero behavior change (a single env-var check per call site).
 ///
 /// Probes gated here:
 /// - `mark_v3/v4_pump_block_complete` logs the count of pump events at or
@@ -568,7 +588,7 @@ pub(crate) fn trace_apply_route_v4(
 /// - `set_v3/v4_pool_live` logs the count + block numbers of the retained
 ///   in-progress-block tail flushed via the unguarded `drain_pump`.
 fn verify_dbg_enabled() -> bool {
-    std::env::var("DEGENBOT_VERIFY_DBG").is_ok()
+    bot_env_flag_default_on("DEGENBOT_VERIFY_DBG")
 }
 
 impl BotState {
@@ -4349,6 +4369,25 @@ mod tests {
     use alloy::primitives::uint;
 
     const FEE_03: (u64, u64) = (997, 1000);
+
+    #[test]
+    fn conservative_bot_flag_default_on() {
+        // Conservative default (Z4KQXF): unset ⇒ enabled (HARD/LOUD). This var
+        // is not set by any test, so the default-on path is deterministic.
+        assert!(bot_env_flag_default_on("DEGENBOT_UNUSED_TEST_FLAG"));
+        // Explicit falsey values opt OUT.
+        assert!(!parse_bot_flag_value("0"));
+        assert!(!parse_bot_flag_value("false"));
+        assert!(!parse_bot_flag_value("off"));
+        assert!(!parse_bot_flag_value("no"));
+        assert!(!parse_bot_flag_value("n"));
+        assert!(!parse_bot_flag_value(""));
+        // Everything else stays enabled.
+        assert!(parse_bot_flag_value("1"));
+        assert!(parse_bot_flag_value("true"));
+        assert!(parse_bot_flag_value("on"));
+        assert!(parse_bot_flag_value("yes"));
+    }
 
     fn make_pool_addr() -> Address {
         Address::from([0xaa; 20])

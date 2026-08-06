@@ -69,7 +69,7 @@ use crate::{
 /// forwards on-chain state. No-op unless `DEGENBOT_V2_CALC_TRACE` is set.
 #[allow(clippy::too_many_lines)]
 fn v2_calc_trace(handle: &mut BlockSimHandle<'_>, sim_path: &SimulatePath) {
-    if std::env::var_os("DEGENBOT_V2_CALC_TRACE").is_none() {
+    if !crate::simulator::flag_default_on("DEGENBOT_V2_CALC_TRACE") {
         return;
     }
     for hop in &sim_path.path_info.hops {

@@ -2411,17 +2411,14 @@ def _render_sim_failures(outcome: DispatchOutcome, *, current_block: int) -> Non
     if os.environ.get("DEGENBOT_SIM_EXIT_ON_FAIL", "1") == "1":
         # Buckets in the ignore-set are KNOWN crash classes under active fix
         # (see W2UWZO + `docs/architecture/sim_v4_swap_step_rounding.md`).
-        # Rather than trap-restart on every occurrence, log+continue past them
-        # so a single run gathers per-block samples (the `[sim-revert-swap]`
-        # diagnostic emits actual-vs-predicted per failure) to characterize
-        # staleness-vs-crossing-math across pools/blocks. Any NEW bucket still
-        # traps. Override with `DEGENBOT_SIM_EXIT_IGNORE_BUCKETS` (comma-sep,
-        # default `CurrencyNotSettled`; set empty to trap on everything).
+        # Conservative default (Z4KQXF): ignore-set is EMPTY = trap on EVERY
+        # bucket (HARD/LOUD). Known crash classes are NOT traded through by
+        # default; set `DEGENBOT_SIM_EXIT_IGNORE_BUCKETS` to a comma-sep list
+        # (e.g. `CurrencyNotSettled`) to log+continue past known classes while
+        # still trapping on any NEW bucket.
         ignore = {
             b.strip()
-            for b in os.environ.get("DEGENBOT_SIM_EXIT_IGNORE_BUCKETS", "CurrencyNotSettled").split(
-                ","
-            )
+            for b in os.environ.get("DEGENBOT_SIM_EXIT_IGNORE_BUCKETS", "").split(",")
             if b.strip()
         }
         trap_failures = [f for f in failures if f.get("bucket") not in ignore]
