@@ -582,8 +582,10 @@ class BackrunSession:
 
         start():  subscribe → stream snapshots → backfill → verify config
                   (``EngineRegistry.start``, stops at Backfilled, pre-resume)
-        run():    attach consumer → ``resume()`` → ``build_paths`` →
-                  ``bot.release_python_state()`` → drop bot → main loop
+        run():    attach consumer → ``resume()`` → [spawn background
+                  registration → trim on completion (production) | await
+                  build_paths → trim (injected)] → main loop; a cross-task
+                  fail-fast channel surfaces a fatal registration error.
 
     Usage (production)::
 
@@ -593,9 +595,13 @@ class BackrunSession:
         async with BackrunSession(cfg) as session:
             await session.run()
 
-    The early release inside ``run()`` (drop the bot before the main loop) is
-    preserved: the hot loop keeps only ``engine_registry`` + ``async_w3`` +
-    dispatcher — the Python pool/token caches are scaffolding once the Rust
+    In production (Sub-B) ``run()`` spawns discovery+registration as a
+    background task and enters the main loop immediately; the state-trim runs
+    on registration completion (in the background task), not on the main-loop
+    entry path, so it cannot clobber the shared registries mid-flight. A fatal
+    verification error still crashes loudly through the cross-task channel.
+    The hot loop keeps only ``engine_registry`` + ``async_w3`` + dispatcher
+    once trimmed — the Python pool/token caches are scaffolding once the Rust
     engine owns canonical state.
 
     Testability seams (mirrors ``EngineRegistry``'s ``engine=`` seam): ``bot``,
@@ -617,8 +623,18 @@ class BackrunSession:
         path_builder: Any = None,
         consumer: Any = None,
         install_sigint: bool = True,
+        background_registration: bool | None = None,
     ) -> None:
-        """Store config + injectable test actors; the real actors are built in ``start()``."""
+        """Store config + injectable test actors; the real actors are built in ``start()``.
+
+        ``background_registration`` (default ``None`` → auto) controls the Sub-B
+        seam: when ``True`` ``run()`` spawns discovery+registration as a
+        background task (decoupled from the main loop, cross-task fail-fast);
+        when ``False`` it awaits the path builder synchronously + trims
+        immediately (legacy orchestration, used by tests). ``None`` auto-selects
+        ``False`` for injected ``path_builder`` (tests) and ``True`` for the real
+        ``build_paths`` (production).
+        """
         self.cfg = cfg
         self._injected_bot = bot
         self._injected_engine_registry = engine_registry
@@ -626,9 +642,13 @@ class BackrunSession:
         self._injected_snapshots = snapshots
         self._path_builder = path_builder
         self._consumer = consumer
+        self._background_registration: bool | None = background_registration
         # Sub-A seam: registration-owned construction context (built in run()
         # for the real build_paths; None for injected builders and until run()).
         self._registration_context: ConstructionContext | None = None
+        # Sub-B seam: the background registration task (production + explicit
+        # ``background_registration=True``), awaited for fail-fast in step 5.
+        self._registration_task: asyncio.Task | None = None
         # Resolved in start():
         self.bot: Bot | None = None
         self.engine_registry: EngineRegistry | None = None
@@ -817,7 +837,7 @@ class BackrunSession:
         path_builder = self._path_builder or build_paths
         # Sub-A seam: for the real `build_paths`, build the construction
         # context ONCE here so the registration task owns it — a separate
-        # identity from run()'s main-loop state that the trim below
+        # identity from run()'s main-loop state that the trim
         # (`release_python_state()` + `self.bot = None`) never severs. Injected
         # builders (tests) skip context construction (fakes lack the builder
         # surface) and receive `context=None`.
@@ -827,25 +847,38 @@ class BackrunSession:
                 self.bot, self.v3_snapshot
             )
             registration_context = self._registration_context
-        await path_builder(
-            bot=self.bot,
-            engine_registry=self.engine_registry,
-            v3_snapshot=self.v3_snapshot,
-            v4_snapshot=self.v4_snapshot,
-            retry_policy=cfg.verification_retry_policy,
-            context=registration_context,
-        )
 
-        # 3b. Release the held snapshot read transaction (epic XEANMB).
-        # `load_snapshot_from_db` opened a deferred read tx so every
-        # `assemble_*_tick_map` Db-arm read during `build_paths` shared one
-        # frozen DB snapshot. Pool registration is done — commit the tx to
-        # release the WAL snapshot so the updater's checkpoint can reclaim
-        # `-wal` space for the hot loop. No-op for the cold-start path (no DB).
-        # `getattr` so test fakes (`_FakeBot`) without a real `_py_bot` skip.
-        py_bot = getattr(self.bot, "_py_bot", None)
-        if py_bot is not None:
-            py_bot.close_snapshot_tx()
+        # Sub-B seam: decouple discovery from the main loop. PRODUCTION (real
+        # `build_paths`): spawn the registration pipeline + its post-completion
+        # trim as a background task and enter the main loop immediately. The
+        # ConstructionContext (Sub-A) keeps the construction resources alive
+        # independent of run()'s loop state after the trim. The cross-task
+        # fail-fast channel (step 5) surfaces a fatal verification error
+        # loudly. INJECTED (tests): await the injected builder synchronously
+        # and trim immediately, so the orchestration tests observe the trim
+        # deterministically (unchanged behavior).
+        background = self._background_registration
+        if background is None:
+            background = self._path_builder is None
+        if background:
+            self._registration_task = asyncio.create_task(
+                self._run_registration_background(
+                    path_builder=path_builder,
+                    registration_context=registration_context,
+                    retry_policy=cfg.verification_retry_policy,
+                ),
+                name="registration-background",
+            )
+        else:
+            await path_builder(
+                bot=self.bot,
+                engine_registry=self.engine_registry,
+                v3_snapshot=self.v3_snapshot,
+                v4_snapshot=self.v4_snapshot,
+                retry_policy=cfg.verification_retry_policy,
+                context=registration_context,
+            )
+            self._trim_python_state()
 
         # 3b. STARTUP batch verify REMOVED — redundant with the per-pool two-step
         # verify and racy at the moving head. Step-1 (seed @ snapshot block) runs
@@ -861,6 +894,112 @@ class BackrunSession:
         # T7 recurring-verify carries in-loop drift detection. The analyzer
         # now keys `verify_basis` on the per-pool `[verify-seed]`/`[verify-drain]`
         # lines (see permutation_analyzer._VERIFY_OK_RE).
+
+        # 5. Main loop — runs until the consumer task ends. A recurring verify
+        # task (T7) runs alongside: every RECURRING_VERIFY_INTERVAL blocks it
+        # re-checks liquidity maps so post-release / in-loop desyncs surface
+        # instead of trading silently. Both complete together.
+        #
+        # In production (Sub-B) the consumer races the background registration
+        # task: a fatal registration error cancels the main loop and re-raises
+        # (fail-fast channel); a clean registration completion is a no-op.
+        assert self._result_consumer_task is not None
+        recurring_verify = asyncio.ensure_future(
+            run_recurring_verify_until_done(
+                registry=self.engine_registry,
+                block_ticker=(b["number"] async for b in verify_branch),
+                interval=RECURRING_VERIFY_INTERVAL,
+                retry_policy=cfg.verification_retry_policy,
+            ),
+        )
+        try:
+            if self._registration_task is not None:
+                await self._await_main_loop_with_registration_fail_fast()
+            else:
+                await self._result_consumer_task
+        finally:
+            recurring_verify.cancel()
+            tee_driver.cancel()
+            registration_task = self._registration_task
+            if (
+                registration_task is not None
+                and not registration_task.done()
+                and not registration_task.cancelled()
+            ):
+                # Main loop ended while registration still climbs (shutdown):
+                # stop the dangling background task.
+                registration_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await registration_task
+            with contextlib.suppress(asyncio.CancelledError):
+                await recurring_verify
+            with contextlib.suppress(asyncio.CancelledError):
+                await tee_driver
+
+    # ── Sub-B: background registration + trim + fail-fast channel ──
+    async def _run_registration_background(
+        self,
+        *,
+        path_builder: Callable[..., Awaitable[None]],
+        registration_context: ConstructionContext | None,
+        retry_policy: VerificationRetryPolicy | None,
+    ) -> None:
+        """Run ``build_paths`` + the post-completion trim as the background task.
+
+        Production decoupling (Sub-B): called via ``asyncio.create_task`` so the
+        main loop starts before discovery completes. ``path_builder`` is the real
+        ``build_paths``; after it returns the state-trim runs HERE — not on the
+        main-loop entry path — so the trim's clearing of the shared
+        tracker/pool/token registries cannot clobber a still-running
+        registration (the ``ConstructionContext`` holds the same mutable
+        objects). A fatal verification error propagates out of ``build_paths``
+        and is surfaced by the step-5 fail-fast channel.
+
+        Cooperative concurrency note: this task runs on the asyncio loop, so it
+        interleaves with the consumer only at `await` points (synchronous
+        ``build_pool`` FFI calls still briefly occupy the loop thread). The pump
+        itself solves on its own tokio thread regardless; the genuine
+        "spawn on the pump tokio runtime" + CPU-level parallelism is the
+        Sub-A2-grade Rust port.
+        """
+        await path_builder(
+            bot=self.bot,
+            engine_registry=self.engine_registry,
+            v3_snapshot=self.v3_snapshot,
+            v4_snapshot=self.v4_snapshot,
+            retry_policy=retry_policy,
+            context=registration_context,
+        )
+        self._trim_python_state()
+
+    def _trim_python_state(self) -> None:
+        """Trim redundant Python state once registration is done.
+
+        Shared by the injected-sync and background-registration paths. Releases
+        the held snapshot read tx (XEANMB), then drops the Python-side
+        pool/token/tracker caches (``release_python_state``) + nulls run()'s bot
+        ref so the hot loop isn't pinning Python pool objects (the Rust engine
+        owns canonical state and keeps its own PyBot ref).
+
+        Sub-B: deferred to registration completion in the background path — the
+        trim clears the SHARED registries that an in-flight registration (via
+        the ConstructionContext) still reads, so it must not run on the
+        main-loop entry path while registration climbs.
+        """
+        # 3b. Release the held snapshot read transaction (epic XEANMB):
+        # `load_snapshot_from_db` opened a deferred read tx so every
+        # `assemble_*_tick_map` Db-arm read during `build_paths` shared one
+        # frozen DB snapshot. Pool registration is done — commit the tx to
+        # release the WAL snapshot so the updater's checkpoint can reclaim
+        # `-wal` space for the hot loop. No-op for the cold-start path (no DB).
+        # `getattr` so test fakes (`_FakeBot`) without a real `_py_bot` skip.
+        if self.bot is not None:
+            py_bot = getattr(self.bot, "_py_bot", None)
+            if py_bot is not None:
+                py_bot.close_snapshot_tx()
+
+        if self.bot is None:
+            return
 
         # 4. Trim redundant Python state — Rust engine owns canonical pool state.
         self.bot.release_python_state()
@@ -879,28 +1018,41 @@ class BackrunSession:
             f"Entering main loop.",
         )
 
-        # 5. Main loop — runs until the consumer task ends. A recurring verify
-        # task (T7) runs alongside: every RECURRING_VERIFY_INTERVAL blocks it
-        # re-checks liquidity maps so post-release / in-loop desyncs surface
-        # instead of trading silently. Both complete together.
-        assert self._result_consumer_task is not None
-        recurring_verify = asyncio.ensure_future(
-            run_recurring_verify_until_done(
-                registry=self.engine_registry,
-                block_ticker=(b["number"] async for b in verify_branch),
-                interval=RECURRING_VERIFY_INTERVAL,
-                retry_policy=cfg.verification_retry_policy,
-            ),
-        )
-        try:
-            await self._result_consumer_task
-        finally:
-            recurring_verify.cancel()
-            tee_driver.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await recurring_verify
-            with contextlib.suppress(asyncio.CancelledError):
-                await tee_driver
+    async def _await_main_loop_with_registration_fail_fast(self) -> None:
+        """Await the consumer (main loop) while watching background registration.
+
+        The registration task (Sub-B) runs discovery+registration concurrently
+        with the hot loop. A fatal registration error — `VerificationMismatchError`
+        / `VerificationRpcError` (and any other uncaught exception escaping
+        ``build_paths``) — must crash loudly: cancel the main-loop consumer and
+        re-raise, so the session cannot keep trading on unverified/torn state.
+        A clean registration completion is a no-op here (the main loop
+        continues; the trim already ran inside the background task).
+
+        If the main loop ends before registration (shutdown), ``run()``'s
+        ``finally`` cancels the still-dangling background task.
+        """
+        main_task = self._result_consumer_task
+        assert main_task is not None
+        registration_task = self._registration_task
+        assert registration_task is not None
+        while registration_task is not None and not main_task.done():
+            done, _pending = await asyncio.wait(
+                {main_task, registration_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if registration_task in done:
+                exc = registration_task.exception()
+                if exc is not None and not isinstance(exc, asyncio.CancelledError):
+                    # Fatal registration error → fail loudly: stop the hot loop.
+                    main_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await main_task
+                    raise exc
+                # Registration finished cleanly; stop watching, block on the
+                # main loop alone.
+                registration_task = None
+        await main_task
 
     # ── Actor builders (production path — only used when not injected) ──
     @staticmethod

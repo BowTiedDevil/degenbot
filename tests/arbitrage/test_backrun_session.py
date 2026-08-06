@@ -871,3 +871,80 @@ class TestConstructionContext:
 async def _drive_run(session: BackrunSession) -> None:
     await session.start()
     await session.run()
+
+
+class TestSubBBackgroundRegistration:
+    """Sub-B: run() decouples discovery from the main loop — production spawns
+    the registration pipeline as a background task with a cross-task fail-fast
+    channel, and the state-trim runs on registration completion (not on the
+    main-loop entry path)."""
+
+    async def test_background_fatal_verification_fail_fast(self) -> None:
+        """A fatal verification error in the background registration cancels the
+        main-loop consumer and re-raises loudly (never silently swallowed)."""
+        from degenbot.exceptions import VerificationMismatchError
+
+        engine_registry = _FakeEngineRegistry()
+
+        async def hanging_consumer(**_kwargs):
+            # Main loop that never completes on its own — only cancellation
+            # (from the fail-fast channel) can end it.
+            await asyncio.Event().wait()
+
+        async def raising_path_builder(**_kwargs):
+            await asyncio.sleep(0)
+            boom = "tick data mismatch"
+            raise VerificationMismatchError(boom)
+
+        session = BackrunSession(
+            _cfg(),
+            bot=_FakeBot(),
+            engine_registry=engine_registry,
+            async_w3=_FakeAsyncW3(),
+            snapshots=(None, None, None, None),
+            path_builder=raising_path_builder,
+            consumer=hanging_consumer,
+            background_registration=True,
+        )
+        await session.start()
+        with pytest.raises(VerificationMismatchError, match="tick data mismatch"):
+            await session.run()
+
+        # Fail-fast cancelled the main-loop consumer so the session can't keep
+        # trading on unverified state.
+        assert session._result_consumer_task is not None
+        assert session._result_consumer_task.cancelled()
+
+    async def test_background_run_trims_after_completion(self) -> None:
+        """The state-trim runs after the background registration completes, not
+        on the main-loop entry path (so it cannot clobber the shared registries
+        the still-running registration reads)."""
+        bot = _FakeBot()
+        engine_registry = _FakeEngineRegistry()
+        session = BackrunSession(
+            _cfg(),
+            bot=bot,
+            engine_registry=engine_registry,
+            async_w3=_FakeAsyncW3(),
+            snapshots=(None, None, None, None),
+            background_registration=True,
+        )
+        session.bot = bot  # start()/run() resolve these; call the seam directly
+        session.engine_registry = engine_registry
+
+        calls: list[object] = []
+
+        async def recording_path_builder(**kwargs):
+            await asyncio.sleep(0)
+            calls.append(kwargs["context"])
+
+        await session._run_registration_background(
+            path_builder=recording_path_builder,
+            registration_context=None,
+            retry_policy=None,
+        )
+
+        # Builder ran, then the trim executed (bot released + dropped).
+        assert calls == [None]
+        assert bot.released is True
+        assert session.bot is None
