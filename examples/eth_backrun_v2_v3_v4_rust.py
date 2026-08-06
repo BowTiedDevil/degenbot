@@ -1388,6 +1388,400 @@ async def _discovery_producer_forever(
         await asyncio.sleep(interval)
 
 
+class PathRegistrationPipeline:
+    """Reusable, pump-concurrent registration pipeline (NWTUM3 / D1c).
+
+    Owns the per-path registration work that ``build_paths`` previously ran
+    inline: construction (through the retained ``ConstructionContext`` — the
+    Rust ``PoolBuilder``), engine registration + verification, direction
+    resolution, registered-path dedup, per-path release, and the summary
+    counters.
+
+    It is LONG-LIVED by design: it keeps the ``ConstructionContext`` AND the
+    ``engine_registry`` for the session's lifetime, so an operator can add a
+    specific path (``enqueue_path``) or trigger a bounded on-demand discovery
+    (``trigger_discovery``) at ANY time — including after ``run()`` trims the
+    main-loop bot. The context survives the trim (Sub-A seam: it holds the bot
+    build entry + the three V3 trackers + a retained DB read handle + chain_id
+    + WETH, and ``release_python_state()`` never severs ``_py_bot``/``_io``),
+    so these methods never need the dropped Python ``bot``. The pipeline never
+    awaits the pump, so adds/discovery cannot block update/solve/dispatch.
+
+    The fail-fast tripwire is preserved: a fatal ``VerificationMismatchError``
+    / ``VerificationRpcError`` is NOT swallowed here — it propagates out of the
+    worker and must abort the pipeline loudly (the caller surfaces it via the
+    Sub-B cross-task channel).
+    """
+
+    def __init__(
+        self,
+        *,
+        context: ConstructionContext,
+        engine_registry: EngineRegistry,
+        retry_policy: VerificationRetryPolicy | None = None,
+    ) -> None:
+        # Construction resources from the retained context (the Rust PoolBuilder
+        # build entry + trackers + DB handle + chain_id + WETH). These survive
+        # run()'s main-loop trim, so a mid-run add never needs the dropped bot.
+        self.constr_ctx = context
+        self.constr_bot = context.bot
+        self.constr_chain_id = context.chain_id
+        self.constr_db = context.db
+        self.uniswap_v3_tracker = context.uniswap_v3_tracker
+        self.sushiswap_v3_tracker = context.sushiswap_v3_tracker
+        self.pancakeswap_v3_tracker = context.pancakeswap_v3_tracker
+        self.weth = context.weth
+        self.engine_registry = engine_registry
+        self.retry_policy_obj = retry_policy or VerificationRetryPolicy()
+
+        # Configured discovery inputs (set by the driver before discovery runs).
+        self.pool_types: list[type] = []
+        self.pool_type_per_depth: dict | None = None
+
+        # Summary counters + registered-path dedup set (moved here from the
+        # build_paths closures so the operator add-path / on-demand-discovery
+        # surface shares them with the discovery workers).
+        self.path_count = 0
+        self.skip_count = 0
+        self.token_filter_count = 0
+        self.engine_reject_count = 0
+        self.dup_count = 0
+        self.direction_fail_count = 0
+        self.register_fail_count = 0
+        self.v4_pool_count = 0
+        self.v4_hook_rejected = 0
+        self.v4_dynamic_fee_rejected = 0
+        self.other_exc_count = 0
+        self.registered_path_sigs: set[tuple[str | bool, ...]] = set()
+
+    async def run_registration(self, *, producer: AsyncIterable[object]) -> None:
+        """Run the bounded producer/consumer pipeline against `producer` (the
+        unbounded forever producer or a finite discovery sweep), draining each
+        item through :meth:`_consume`. A fatal verification error propagates
+        out of the worker and aborts the pipeline loudly (see
+        ``run_registration_pipeline``)."""
+        await run_registration_pipeline(
+            producer=producer,
+            consume=self._consume,
+            queue_size=REG_QUEUE_BOUND,
+            worker_count=REG_WORKERS,
+        )
+
+    async def enqueue_path(
+        self,
+        path_steps: object,
+        directions: list[bool] | None = None,
+    ) -> None:
+        """Add ONE specific path at any time (NWTUM3 / D1c operator surface).
+
+        ``path_steps`` is the discovery-item shape — a list of hop descriptors
+        (``.type`` = a pool table class, ``.address``, and ``.hash`` for V4) —
+        so a specific path is expressed the same way discovery yields one. It is
+        run through the SAME :meth:`_consume` body as discovery: build pools via
+        the Rust ``PoolBuilder``, register + verify with the engine (with the
+        per-path release), resolve directions, dedup, and register the path.
+
+        ``directions`` optionally pins the per-hop direction list ([[bool]] in
+        the ``resolve_directions`` sense); when omitted, directions are resolved
+        from the pools' token ordering against WETH (like discovery).
+
+        This never awaits the pump, so a mid-run add cannot stall or interfere
+        with the current update/solve or dispatch; it works with the trimmed
+        state (no Python ``bot``/builders resident — the retained
+        ``ConstructionContext`` covers construction).
+        """
+        await self._consume(path_steps, directions=directions)
+
+    async def trigger_discovery(self, *, bound: int | None = None) -> int:
+        """Trigger a bounded one-shot discovery sweep (NWTUM3 / D1c on-demand
+        trigger), feeding each found path through the shared :meth:`_consume`
+        body. Distinct from the unbounded forever producer (which keeps
+        re-sweeping); this runs exactly one sweep, optionally stopping after
+        ``bound`` paths. Returns the number of paths processed."""
+        count = 0
+        async for item in self.discovery_sweep():
+            if bound is not None and count >= bound:
+                break
+            await self._consume(item)
+            count += 1
+        return count
+
+    def discovery_sweep(self) -> AsyncIterator[object]:
+        """A FRESH discovery sweep over the DB subgraph (V2/V3/V4 DFS). Re-called
+        on each ongoing-discovery cycle so newly-deployed / newly-added pools
+        are picked up; :meth:`_consume` dedups already-registered paths.
+
+        Runs once per call (each on-demand ``trigger_discovery`` and each
+        forever-producer re-sweep re-invokes it for a fresh DFS).
+        """
+        return find_paths_async(
+            chain_id=self.constr_chain_id,
+            start_tokens=[
+                WETH_ADDRESS,
+                NATIVE_CURRENCY_ADDRESS,  # V4 allows Ether-paired pools
+            ],
+            end_tokens=[
+                WETH_ADDRESS,
+                NATIVE_CURRENCY_ADDRESS,  # V4 allows Ether-paired pools
+            ],
+            max_depth=3,
+            pool_types=self.pool_types,
+            db=self.constr_db,
+            pool_type_per_depth=self.pool_type_per_depth,
+            allowed_intermediate_tokens=ALLOWED_INTERMEDIATE_TOKENS,
+        )
+
+    def _resolve_path_directions(
+        self,
+        pools: list[UniswapV2Pool | UniswapV3Pool | UniswapV4Pool],
+        directions: list[bool] | None,
+    ) -> list[bool] | None:
+        """Return the per-hop directions for `pools`. An operator-supplied
+        explicit `directions` list is validated (length must match) and used
+        as-is; otherwise directions are resolved from the pools' token0/token1
+        ordering against WETH (the discovery behaviour). None means
+        unresolvable (the caller increments `direction_fail_count`)."""
+        if directions is not None:
+            if len(directions) != len(pools):
+                return None
+            return list(directions)
+        return resolve_directions(pools, self.weth.address)
+
+    async def _consume(
+        self,
+        path_steps: object,
+        directions: list[bool] | None = None,
+    ) -> None:
+        """Process a single discovered/operator path: build its pools, register
+        them with the Rust engine (verification → set_live), and register the
+        path.
+
+        This is the per-path body (previously the nested ``_consume_step`` in
+        ``build_paths``), now shared by the discovery workers (via
+        ``run_registration``), the operator add-path surface
+        (:meth:`enqueue_path`), and the on-demand discovery trigger
+        (:meth:`trigger_discovery`). It must never run more than the queue
+        bound ahead of activation, and a flood of new registrations cannot
+        stall the progress of pools already enqueued for verify/activate
+        (FIFO + bounded concurrency). The slow RPC verify is lock-free on the
+        Rust side, so workers overlap it and contend only on the short engine
+        commit points.
+        """
+        await asyncio.sleep(0)
+
+        # Determine pool types for each step
+        steps = list(path_steps)
+        pool_type_strs: list[str] = []
+        for step in steps:
+            if issubclass(step.type, UniswapV2PoolTableBase):
+                pool_type_strs.append("V2")
+            elif issubclass(step.type, UniswapV3PoolTableBase):
+                pool_type_strs.append("V3")
+            elif issubclass(step.type, UniswapV4PoolTableBase):
+                pool_type_strs.append("V4")
+            else:
+                pool_type_strs.append("")
+
+        # Build pools through appropriate constructors
+        pools: list[UniswapV2Pool | UniswapV3Pool | UniswapV4Pool] = []
+        skip = False
+        # V4 admission refusals (hook/dynamic-fee) surface from the builder at
+        # `bot.build_managed_pool` time — the Rust core enforces them in
+        # BotState::register_v4_pool (the builder calls py_bot.register_v4_pool
+        # → shared BotState). They are counted on their OWN dedicated counters
+        # (not skip_count / engine_reject_count), so the summary reflects
+        # admission refusals distinctly from generic build skips. Tracked with
+        # this flag so the `if skip:` guard below skips skip_count for them.
+        v4_admission_rejected = False
+        for step, pt in zip(steps, pool_type_strs, strict=True):  # noqa: PLR1702
+            if pt == "V2":
+                try:
+                    pool = self.constr_bot.build_pool(
+                        step.address,
+                        silent=True,
+                    )
+                except Exception as exc:
+                    bot_logger.debug(f"Skip V2 {step.address}: {exc}")
+                    skip = True
+                    break
+            elif pt == "V3":
+                try:
+                    try:
+                        pool = self.uniswap_v3_tracker.get_pool(
+                            pool_address=step.address,
+                            silent=True,
+                        )
+                    except Exception:
+                        try:
+                            pool = self.sushiswap_v3_tracker.get_pool(
+                                pool_address=step.address,
+                                silent=True,
+                            )
+                        except Exception:
+                            try:
+                                pool = self.pancakeswap_v3_tracker.get_pool(
+                                    pool_address=step.address,
+                                    silent=True,
+                                )
+                            except Exception:
+                                pool = self.constr_bot.build_pool(
+                                    step.address,
+                                    silent=True,
+                                )
+                except Exception as exc:
+                    bot_logger.debug(f"Skip V3 {step.address}: {exc}")
+                    skip = True
+                    break
+            elif pt == "V4":
+                # V4 pools are identified by (PoolManager, pool_id), not address
+                # step.hash contains the pool_id (bytes32 hash of PoolKey)
+                if not step.hash:
+                    skip = True
+                    break
+                try:
+                    pool = self.constr_bot.build_managed_pool(
+                        address=UNISWAP_V4_POOL_MANAGER_ADDRESS,
+                        pool_id=step.hash,
+                        silent=True,
+                    )
+                except HookedPoolRejectedError:
+                    # Amount-modifying hook — admission refusal (correctness
+                    # floor, enforced by the Rust core at build time). Skip this
+                    # path and continue. (Previously mis-handled: this fired at
+                    # the registration block, but admission runs at build time,
+                    # so the registration-site branch was dead and these were
+                    # silently counted as generic skip_count. Now classified by
+                    # type per Plan 102.)
+                    self.v4_hook_rejected += 1
+                    skip = True
+                    v4_admission_rejected = True
+                    break
+                except DynamicFeePoolRejectedError:
+                    # Dynamic fee — admission refusal (correctness floor).
+                    # Same rationale as HookedPoolRejectedError above.
+                    self.v4_dynamic_fee_rejected += 1
+                    skip = True
+                    v4_admission_rejected = True
+                    break
+                except Exception as exc:
+                    bot_logger.debug(f"Skip V4 {step.hash}: {exc}")
+                    skip = True
+                    break
+            else:
+                skip = True
+                break
+            pools.append(cast("UniswapV2Pool | UniswapV3Pool | UniswapV4Pool", pool))
+
+        if skip:
+            # V4 admission refusals have their own dedicated counters; don't
+            # also count them as generic skips (avoids double-counting).
+            if not v4_admission_rejected:
+                self.skip_count += 1
+            return
+
+        # Register with Rust engine
+        try:
+            for pool, pt in zip(pools, pool_type_strs, strict=True):
+                if pt == "V2":
+                    retry_verification_call(
+                        self.retry_policy_obj, self.engine_registry.register_v2_pool, pool
+                    )
+                elif pt == "V3":
+                    await retry_verification_call_async(
+                        self.retry_policy_obj,
+                        self.engine_registry.register_v3_pool,
+                        pool,
+                    )
+                elif pt == "V4":
+                    self.v4_pool_count += 1
+                    await retry_verification_call_async(
+                        self.retry_policy_obj,
+                        self.engine_registry.register_v4_pool,
+                        pool,
+                    )
+        except VerificationMismatchError as exc:
+            # Verification mismatch — on-chain tick state does not match the
+            # engine state. This is fatal: trade on stale data = lose money.
+            # Crash loudly (TODO-53b7453b / 7SSOJX: was previously detected by
+            # string-matching "tick data mismatch"; now classified by type).
+            bot_logger.critical(f"[build_paths] VERIFICATION FAILURE — shutting down: {exc}")
+            raise
+        except VerificationRpcError as exc:
+            # Verification could not be performed (provider construction /
+            # transport failure during verify_on_register) AFTER exhausting the
+            # bounded retry-with-backoff in ``retry_verification_call`` above
+            # (``cfg.verification_retry_policy`` — VP42BP AC item 4). A
+            # persistent transport failure means the node is unreachable; the
+            # bot must not operate on unverified tick data → crash loudly.
+            # (Transient per-call blips are retried before reaching here;
+            # provider-construction failure is not transient, so abort is the
+            # correct default.)
+            bot_logger.critical(f"[build_paths] VERIFICATION RPC FAILURE — shutting down: {exc}")
+            raise
+        except RuntimeError as exc:
+            # Other RuntimeErrors (e.g. phase violations) — NOT a
+            # verification failure category; skip this path and continue.
+            # Narrowed deliberately: `VerificationMismatchError` and
+            # `VerificationRpcError` (both subclass RuntimeError) are caught
+            # above, so this arm only fires for genuinely non-verification
+            # runtime errors.
+            self.engine_reject_count += 1
+            self.other_exc_count += 1
+            bot_logger.info(
+                f"[build_paths] Engine registration failed ({type(exc).__name__}): {exc}",
+            )
+            return
+        except Exception as exc:
+            self.engine_reject_count += 1
+            self.other_exc_count += 1
+            bot_logger.info(
+                f"[build_paths] Engine registration failed ({type(exc).__name__}): {exc}",
+            )
+            return
+
+        # Verification is handled inside the engine at registration time
+        # (see set_verify_on_register). No separate Python-side verification
+        # needed — the engine snapshots tick data while its lock is held, so
+        # the pump cannot race between registration and verification.
+
+        # Resolve directions and register path
+        # V4 pools use the same token0/token1 model as V3 for direction resolution
+        zfo_list = self._resolve_path_directions(pools, directions)
+        if zfo_list is None:
+            self.direction_fail_count += 1
+            return
+
+        # Skip duplicate paths (same pools, same directions)
+        # For V4 pools, use pool_id instead of address
+        pool_sigs: list[str] = []
+        for p in pools:
+            if isinstance(p, UniswapV4Pool):
+                pool_sigs.append(p.pool_id.to_0x_hex())
+            else:
+                pool_sigs.append(p.address)
+        path_sig = tuple(v for pair in zip(pool_sigs, zfo_list, strict=True) for v in pair)
+        if path_sig in self.registered_path_sigs:
+            self.dup_count += 1
+            return
+        self.registered_path_sigs.add(path_sig)
+
+        try:
+            self.engine_registry.register_path(list(zip(pools, zfo_list, strict=True)))
+        except Exception as exc:
+            self.register_fail_count += 1
+            if self.register_fail_count <= 5:
+                bot_logger.warning(f"Path registration failed: {type(exc).__name__}: {exc}")
+            return
+
+        self.path_count += 1
+        if self.path_count % 1000 == 0:
+            bot_logger.info(
+                f"[build_paths] Progress: {self.path_count} paths registered, "
+                f"{self.skip_count} skipped, {self.token_filter_count} token-filtered, "
+                f"{self.engine_reject_count} engine-rejected, {self.dup_count} duplicates",
+            )
+
+
 async def build_paths(
     *,
     bot: Bot,
@@ -1423,8 +1817,13 @@ async def build_paths(
     (genuine on-chain divergence) is never retried and still crashes the bot.
     Admission errors (``HookedPoolRejectedError`` / ``DynamicFeePoolRejectedError``
     / ``ValueError``) are not in the retry set and propagate immediately.
+
+    NWTUM3 refactor: the per-path registration now lives in a reusable
+    :class:`PathRegistrationPipeline`; this function drives it with the
+    configured discovery source (single-pass or the unbounded forever producer
+    from 6VZN7H) and keeps the summary logging + the orphan sweep. The Sub-B
+    background-task + trim contract is unchanged.
     """
-    retry_policy_obj = retry_policy or VerificationRetryPolicy()
     # V3 snapshot provides tick data for Python pool builds via trackers.
     # Event backfill is handled by the Rust engine.
     # Trackers use it for tick data at build time.
@@ -1436,318 +1835,34 @@ async def build_paths(
     # caller's symmetry (snapshots supplied together) and future V4 tick seeding.
     # Reuse a caller-supplied context (out of run()'s trim) or build one here.
     constr_ctx = context if context is not None else ConstructionContext.for_bot(bot, v3_snapshot)
-    uniswap_v3_tracker = constr_ctx.uniswap_v3_tracker
-    sushiswap_v3_tracker = constr_ctx.sushiswap_v3_tracker
-    pancakeswap_v3_tracker = constr_ctx.pancakeswap_v3_tracker
-    weth = constr_ctx.weth
-    constr_bot = constr_ctx.bot
-    constr_db = constr_ctx.db
-    constr_chain_id = constr_ctx.chain_id
-    bot_logger.info("[build_paths] V3 trackers added, WETH built — starting path discovery")
 
-    path_count = 0
-    skip_count = 0
-    token_filter_count = 0
-    engine_reject_count = 0
-    dup_count = 0
-    direction_fail_count = 0
-    register_fail_count = 0
-    v4_pool_count = 0
-    v4_hook_rejected = 0
-    v4_dynamic_fee_rejected = 0
-    other_exc_count = 0
-    registered_path_sigs: set[tuple[str | bool, ...]] = set()
+    pipeline = PathRegistrationPipeline(
+        context=constr_ctx,
+        engine_registry=engine_registry,
+        retry_policy=retry_policy,
+    )
+    pipeline.pool_type_per_depth = _parse_permutation_filter(PATH_PERMUTATION_FILTER)
+    pipeline.pool_types = _pool_types_from_filter(PATH_PERMUTATION_FILTER)
+    if pipeline.pool_type_per_depth is not None:
+        bot_logger.info(
+            "[build_paths] Permutation filter active: "
+            f"{PATH_PERMUTATION_FILTER} → depths={pipeline.pool_type_per_depth}",
+        )
+    bot_logger.info(f"[build_paths] Pool types: {[t.__name__ for t in pipeline.pool_types]}")
 
     start = time.perf_counter()
 
     bot_logger.info("[build_paths] Calling find_paths_async...")
-    pool_type_per_depth = _parse_permutation_filter(PATH_PERMUTATION_FILTER)
-    pool_types = _pool_types_from_filter(PATH_PERMUTATION_FILTER)
-    if pool_type_per_depth is not None:
-        bot_logger.info(
-            "[build_paths] Permutation filter active: "
-            f"{PATH_PERMUTATION_FILTER} → depths={pool_type_per_depth}",
-        )
-    bot_logger.info(f"[build_paths] Pool types: {[t.__name__ for t in pool_types]}")
-
-    async def _consume_step(path_steps: object) -> None:
-        """Process a single discovered path: build its pools, register them
-        with the Rust engine (verification → set_live), and register the path.
-
-        This is the per-path body that previously ran inline in the
-        `async for path_steps in find_paths_async(...)` discovery loop. It is
-        extracted so `run_registration_pipeline` can run several of these
-        concurrently on a bounded queue: discovery (the producer) can never run
-        more than `REG_QUEUE_BOUND` paths ahead of activation, and a flood of
-        new registrations cannot stall the progress of pools already enqueued
-        for verify/activate (FIFO + bounded concurrency). The slow RPC verify
-        is lock-free on the Rust side, so workers overlap it and contend only
-        on the short engine commit points.
-        """
-        # Each worker rebinds the shared build_paths counters; declare them so
-        # the assignments land in the enclosing (build_paths) scope instead of
-        # raising UnboundLocalError / shadowing locals. The set and bot_logger
-        # are mutated, not rebound, so they need no `nonlocal`.
-        nonlocal \
-            path_count, \
-            skip_count, \
-            engine_reject_count, \
-            other_exc_count, \
-            v4_pool_count, \
-            v4_hook_rejected, \
-            v4_dynamic_fee_rejected, \
-            direction_fail_count, \
-            dup_count, \
-            register_fail_count
-
-        await asyncio.sleep(0)
-
-        # Determine pool types for each step
-        steps = list(path_steps)
-        pool_type_strs: list[str] = []
-        for step in steps:
-            if issubclass(step.type, UniswapV2PoolTableBase):
-                pool_type_strs.append("V2")
-            elif issubclass(step.type, UniswapV3PoolTableBase):
-                pool_type_strs.append("V3")
-            elif issubclass(step.type, UniswapV4PoolTableBase):
-                pool_type_strs.append("V4")
-            else:
-                pool_type_strs.append("")
-
-        # Build pools through appropriate constructors
-        pools: list[UniswapV2Pool | UniswapV3Pool | UniswapV4Pool] = []
-        skip = False
-        # V4 admission refusals (hook/dynamic-fee) surface from the builder at
-        # `bot.build_managed_pool` time — the Rust core enforces them in
-        # BotState::register_v4_pool (the builder calls py_bot.register_v4_pool
-        # → shared BotState). They are counted on their OWN dedicated counters
-        # (not skip_count / engine_reject_count), so the summary reflects
-        # admission refusals distinctly from generic build skips. Tracked with
-        # this flag so the `if skip:` guard below skips skip_count for them.
-        v4_admission_rejected = False
-        for step, pt in zip(steps, pool_type_strs, strict=True):  # noqa: PLR1702
-            if pt == "V2":
-                try:
-                    pool = constr_bot.build_pool(
-                        step.address,
-                        silent=True,
-                    )
-                except Exception as exc:
-                    bot_logger.debug(f"Skip V2 {step.address}: {exc}")
-                    skip = True
-                    break
-            elif pt == "V3":
-                try:
-                    try:
-                        pool = uniswap_v3_tracker.get_pool(
-                            pool_address=step.address,
-                            silent=True,
-                        )
-                    except Exception:
-                        try:
-                            pool = sushiswap_v3_tracker.get_pool(
-                                pool_address=step.address,
-                                silent=True,
-                            )
-                        except Exception:
-                            try:
-                                pool = pancakeswap_v3_tracker.get_pool(
-                                    pool_address=step.address,
-                                    silent=True,
-                                )
-                            except Exception:
-                                pool = constr_bot.build_pool(
-                                    step.address,
-                                    silent=True,
-                                )
-                except Exception as exc:
-                    bot_logger.debug(f"Skip V3 {step.address}: {exc}")
-                    skip = True
-                    break
-            elif pt == "V4":
-                # V4 pools are identified by (PoolManager, pool_id), not address
-                # step.hash contains the pool_id (bytes32 hash of PoolKey)
-                if not step.hash:
-                    skip = True
-                    break
-                try:
-                    pool = constr_bot.build_managed_pool(
-                        address=UNISWAP_V4_POOL_MANAGER_ADDRESS,
-                        pool_id=step.hash,
-                        silent=True,
-                    )
-                except HookedPoolRejectedError:
-                    # Amount-modifying hook — admission refusal (correctness
-                    # floor, enforced by the Rust core at build time). Skip this
-                    # path and continue. (Previously mis-handled: this fired at
-                    # the registration block, but admission runs at build time,
-                    # so the registration-site branch was dead and these were
-                    # silently counted as generic skip_count. Now classified by
-                    # type per Plan 102.)
-                    v4_hook_rejected += 1
-                    skip = True
-                    v4_admission_rejected = True
-                    break
-                except DynamicFeePoolRejectedError:
-                    # Dynamic fee — admission refusal (correctness floor).
-                    # Same rationale as HookedPoolRejectedError above.
-                    v4_dynamic_fee_rejected += 1
-                    skip = True
-                    v4_admission_rejected = True
-                    break
-                except Exception as exc:
-                    bot_logger.debug(f"Skip V4 {step.hash}: {exc}")
-                    skip = True
-                    break
-            else:
-                skip = True
-                break
-            pools.append(cast("UniswapV2Pool | UniswapV3Pool | UniswapV4Pool", pool))
-
-        if skip:
-            # V4 admission refusals have their own dedicated counters; don't
-            # also count them as generic skips (avoids double-counting).
-            if not v4_admission_rejected:
-                skip_count += 1
-            return
-
-        # Register with Rust engine
-        try:
-            for pool, pt in zip(pools, pool_type_strs, strict=True):
-                if pt == "V2":
-                    retry_verification_call(
-                        retry_policy_obj, engine_registry.register_v2_pool, pool
-                    )
-                elif pt == "V3":
-                    await retry_verification_call_async(
-                        retry_policy_obj,
-                        engine_registry.register_v3_pool,
-                        pool,
-                    )
-                elif pt == "V4":
-                    v4_pool_count += 1
-                    await retry_verification_call_async(
-                        retry_policy_obj,
-                        engine_registry.register_v4_pool,
-                        pool,
-                    )
-        except VerificationMismatchError as exc:
-            # Verification mismatch — on-chain tick state does not match the
-            # engine state. This is fatal: trade on stale data = lose money.
-            # Crash loudly (TODO-53b7453b / 7SSOJX: was previously detected by
-            # string-matching "tick data mismatch"; now classified by type).
-            bot_logger.critical(f"[build_paths] VERIFICATION FAILURE — shutting down: {exc}")
-            raise
-        except VerificationRpcError as exc:
-            # Verification could not be performed (provider construction /
-            # transport failure during verify_on_register) AFTER exhausting the
-            # bounded retry-with-backoff in ``retry_verification_call`` above
-            # (``cfg.verification_retry_policy`` — VP42BP AC item 4). A
-            # persistent transport failure means the node is unreachable; the
-            # bot must not operate on unverified tick data → crash loudly.
-            # (Transient per-call blips are retried before reaching here;
-            # provider-construction failure is not transient, so abort is the
-            # correct default.)
-            bot_logger.critical(f"[build_paths] VERIFICATION RPC FAILURE — shutting down: {exc}")
-            raise
-        except RuntimeError as exc:
-            # Other RuntimeErrors (e.g. phase violations) — NOT a
-            # verification failure category; skip this path and continue.
-            # Narrowed deliberately: `VerificationMismatchError` and
-            # `VerificationRpcError` (both subclass RuntimeError) are caught
-            # above, so this arm only fires for genuinely non-verification
-            # runtime errors.
-            engine_reject_count += 1
-            other_exc_count += 1
-            bot_logger.info(
-                f"[build_paths] Engine registration failed ({type(exc).__name__}): {exc}",
-            )
-            return
-        except Exception as exc:
-            engine_reject_count += 1
-            other_exc_count += 1
-            bot_logger.info(
-                f"[build_paths] Engine registration failed ({type(exc).__name__}): {exc}",
-            )
-            return
-
-        # Verification is handled inside the engine at registration time
-        # (see set_verify_on_register). No separate Python-side verification
-        # needed — the engine snapshots tick data while its lock is held, so
-        # the pump cannot race between registration and verification.
-
-        # Resolve directions and register path
-        # V4 pools use the same token0/token1 model as V3 for direction resolution
-        zfo_list = resolve_directions(pools, weth.address)
-        if zfo_list is None:
-            direction_fail_count += 1
-            return
-
-        # Skip duplicate paths (same pools, same directions)
-        # For V4 pools, use pool_id instead of address
-        pool_sigs: list[str] = []
-        for p in pools:
-            if isinstance(p, UniswapV4Pool):
-                pool_sigs.append(p.pool_id.to_0x_hex())
-            else:
-                pool_sigs.append(p.address)
-        path_sig = tuple(v for pair in zip(pool_sigs, zfo_list, strict=True) for v in pair)
-        if path_sig in registered_path_sigs:
-            dup_count += 1
-            return
-        registered_path_sigs.add(path_sig)
-
-        try:
-            engine_registry.register_path(list(zip(pools, zfo_list, strict=True)))
-        except Exception as exc:
-            register_fail_count += 1
-            if register_fail_count <= 5:
-                bot_logger.warning(f"Path registration failed: {type(exc).__name__}: {exc}")
-            return
-
-        path_count += 1
-        if path_count % 1000 == 0:
-            bot_logger.info(
-                f"[build_paths] Progress: {path_count} paths registered, "
-                f"{skip_count} skipped, {token_filter_count} token-filtered, "
-                f"{engine_reject_count} engine-rejected, {dup_count} duplicates",
-            )
-
     # Backpressure producer/consumer: discovery (find_paths_async) feeds a
-    # bounded queue drained by REG_WORKERS concurrent `_consume_step` workers.
-    # `await put` in the producer blocks discovery when the queue is full, so a
-    # flood of new registrations cannot outrun activation by more than
-    # REG_QUEUE_BOUND paths — pools already enqueued always progress (FIFO, and
-    # the lock-free RPC-verify latency overlaps across the workers). A fatal
-    # verification error (VerificationMismatchError / VerificationRpcError)
-    # raised by any worker aborts the whole pipeline and re-raises
-    # (crash-loudly preserved).
+    # bounded queue drained by REG_WORKERS concurrent workers on the pipeline.
+    # See `run_registration_pipeline` for the bounds; pools already enqueued
+    # always progress (FIFO + overlapping lock-free RPC-verify). A fatal
+    # verification error raised by any worker aborts the whole pipeline and
+    # re-raises (crash-loudly preserved).
     bot_logger.info(
         f"[build_paths] Starting registration pipeline: {REG_WORKERS} workers, "
         f"queue bound {REG_QUEUE_BOUND}"
     )
-
-    def _discovery_sweep() -> AsyncIterator[object]:
-        # A FRESH discovery sweep over the DB subgraph (V2/V3/V4 DFS). Re-called
-        # on each ongoing-discovery cycle so newly-deployed / newly-added pools
-        # are picked up; `_consume_step` dedups already-registered paths.
-        return find_paths_async(
-            chain_id=constr_chain_id,
-            start_tokens=[
-                WETH_ADDRESS,
-                NATIVE_CURRENCY_ADDRESS,  # V4 allows Ether-paired pools
-            ],
-            end_tokens=[
-                WETH_ADDRESS,
-                NATIVE_CURRENCY_ADDRESS,  # V4 allows Ether-paired pools
-            ],
-            max_depth=3,
-            pool_types=pool_types,
-            db=constr_db,
-            pool_type_per_depth=pool_type_per_depth,
-            allowed_intermediate_tokens=ALLOWED_INTERMEDIATE_TOKENS,
-        )
 
     if ONGOING_DISCOVERY:
         # D3 — unbounded discovery: re-sweep the subgraph forever (cancellable),
@@ -1755,7 +1870,7 @@ async def build_paths(
         # bounded queue keeps discovery from running more than REG_QUEUE_BOUND
         # paths ahead of activation.
         discovery_producer: AsyncIterable[object] = _discovery_producer_forever(
-            _discovery_sweep,
+            pipeline.discovery_sweep,
             interval=max(DISCOVERY_REDISCOVER_INTERVAL, 1.0),
         )
         bot_logger.info(
@@ -1765,35 +1880,31 @@ async def build_paths(
     else:
         # Legacy single-pass behavior (one DFS to completion, then registration
         # done).
-        discovery_producer = _discovery_sweep()
-    await run_registration_pipeline(
-        producer=discovery_producer,
-        consume=_consume_step,
-        queue_size=REG_QUEUE_BOUND,
-        worker_count=REG_WORKERS,
-    )
+        discovery_producer = pipeline.discovery_sweep()
+
+    await pipeline.run_registration(producer=discovery_producer)
 
     bot_logger.info(
-        f"[build_paths] Path discovery complete: {path_count} paths in "
+        f"[build_paths] Path discovery complete: {pipeline.path_count} paths in "
         f"{time.perf_counter() - start:.1f}s — "
-        f"{skip_count} skipped, {token_filter_count} token-filtered, "
-        f"{engine_reject_count} engine-rejected "
-        f"(other_exc={other_exc_count}), "
-        f"{v4_hook_rejected} V4 hook-rejected, "
-        f"{v4_dynamic_fee_rejected} V4 dynamic-fee-rejected, "
-        f"{dup_count} duplicates, "
-        f"{direction_fail_count} direction-failed, "
-        f"{register_fail_count} register-failed",
+        f"{pipeline.skip_count} skipped, {pipeline.token_filter_count} token-filtered, "
+        f"{pipeline.engine_reject_count} engine-rejected "
+        f"(other_exc={pipeline.other_exc_count}), "
+        f"{pipeline.v4_hook_rejected} V4 hook-rejected, "
+        f"{pipeline.v4_dynamic_fee_rejected} V4 dynamic-fee-rejected, "
+        f"{pipeline.dup_count} duplicates, "
+        f"{pipeline.direction_fail_count} direction-failed, "
+        f"{pipeline.register_fail_count} register-failed",
     )
     bot_logger.info(
-        f"[build_paths] Summary: {path_count} paths in "
+        f"[build_paths] Summary: {pipeline.path_count} paths in "
         f"{time.perf_counter() - start:.1f}s — "
         f"{engine_registry.engine.v2_pool_count()} V2, "
         f"{engine_registry.engine.v3_pool_count()} V3, "
-        f"{v4_pool_count} V4 pools, "
-        f"{v4_hook_rejected} V4 hook-rejected, "
-        f"{v4_dynamic_fee_rejected} V4 dynamic-fee-rejected, "
-        f"{other_exc_count} other-Exception, "
+        f"{pipeline.v4_pool_count} V4 pools, "
+        f"{pipeline.v4_hook_rejected} V4 hook-rejected, "
+        f"{pipeline.v4_dynamic_fee_rejected} V4 dynamic-fee-rejected, "
+        f"{pipeline.other_exc_count} other-Exception, "
         f"{engine_registry.engine.path_count()} engine paths",
     )
 

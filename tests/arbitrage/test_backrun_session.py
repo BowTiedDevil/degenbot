@@ -16,6 +16,7 @@ example running (the example IS the integration test).
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 
 import pytest
 
@@ -824,13 +825,11 @@ class TestConstructionContext:
         ctx = ConstructionContext.for_bot(bot, v3_snapshot=None)
 
         # All three V3 factories dispatched to the tracker builder.
-        assert sorted(bot.factory_addresses) == sorted(
-            [
-                UNISWAP_V3_MAINNET_FACTORY,
-                SUSHISWAP_V3_MAINNET_FACTORY,
-                PANCAKESWAP_V3_MAINNET_FACTORY,
-            ]
-        )
+        assert sorted(bot.factory_addresses) == sorted([
+            UNISWAP_V3_MAINNET_FACTORY,
+            SUSHISWAP_V3_MAINNET_FACTORY,
+            PANCAKESWAP_V3_MAINNET_FACTORY,
+        ])
         # Trackers + WETH + DB + chain_id all bundled into the single context.
         assert ctx.chain_id == 1
         assert ctx.db is bot.db
@@ -1219,9 +1218,14 @@ class Test6VZN7HOngoingDiscovery:
         # is re-invoked each time the prior sweep exhausts (unbounded discovery).
         assert calls == 3
         assert got == [
-            (1, 0), (1, 1), (1, 2),
-            (2, 0), (2, 1), (2, 2),
-            (3, 0), (3, 1),
+            (1, 0),
+            (1, 1),
+            (1, 2),
+            (2, 0),
+            (2, 1),
+            (2, 2),
+            (3, 0),
+            (3, 1),
         ]
 
     async def test_discovery_producer_forever_cancellable_on_shutdown(self) -> None:
@@ -1335,3 +1339,134 @@ class Test6VZN7HOngoingDiscovery:
         reg = session._registration_task
         assert reg is not None
         assert reg.cancelled()
+
+
+class TestPathRegistrationPipeline:
+    """NWTUM3 S1: the reusable, pump-concurrent `PathRegistrationPipeline`.
+
+    Covers the operator-facing surface that discovery previously ran inline:
+    enqueue one specific path (`enqueue_path`), bounded on-demand discovery
+    (`trigger_discovery`), registered-path dedup shared with workers, and the
+    preserved fail-fast tripwire. All work is driven through the SAME `_consume`
+    body the discovery workers use, so behavior cannot diverge by input source.
+    """
+
+    # Local fakes — the real construction/engine surfaces are injected so these
+    # tests assert the pipeline's routing/seam, not live RPC/DB/verify.
+    @dataclass
+    class _FakePool:
+        address: str
+
+    class _FakeCtxBot:
+        def __init__(self) -> None:
+            self.chain_id = 1
+            self.db = object()
+
+        def build_pool(self, address: str, **kwargs: object):
+            return TestPathRegistrationPipeline._FakePool(address)
+
+    class _FakeReg:
+        def __init__(self) -> None:
+            self.register_path_calls = 0
+
+        def register_v2_pool(self, pool: object) -> None:
+            pass
+
+        def register_path(self, zipped: object) -> None:
+            self.register_path_calls += 1
+
+    @dataclass
+    class _Step:
+        type: object
+        address: str
+        hash: object | None = None
+
+    @staticmethod
+    def _make_pipeline(fail_on_register: Exception | None = None):
+        from degenbot.database.models.pools import UniswapV2PoolTableBase
+        from examples.eth_backrun_v2_v3_v4_rust import (
+            ConstructionContext,
+            PathRegistrationPipeline,
+        )
+
+        bot = TestPathRegistrationPipeline._FakeCtxBot()
+
+        class _Reg(TestPathRegistrationPipeline._FakeReg):
+            def register_v2_pool(self, pool: object) -> None:
+                if fail_on_register is not None:
+                    raise fail_on_register
+
+        reg = _Reg()
+        weth = type("_Weth", (), {"address": "0x" + "1" * 40})()
+        ctx = ConstructionContext(
+            bot=bot,
+            chain_id=1,
+            db=bot.db,
+            uniswap_v3_tracker=object(),
+            sushiswap_v3_tracker=object(),
+            pancakeswap_v3_tracker=object(),
+            weth=weth,
+        )
+        pipeline = PathRegistrationPipeline(context=ctx, engine_registry=reg)
+        # The pipeline retains its own context (NWTUM3 trimmed-state guarantee):
+        # a call-site that drops run()'s bot (and even the local `ctx` ref)
+        # still has everything construction needs.
+        assert pipeline.constr_bot is bot
+        return pipeline, reg, UniswapV2PoolTableBase
+
+    async def test_enqueue_path_registers_single_path(self) -> None:
+        pipeline, reg, t_base = self._make_pipeline()
+        step = self._Step(t_base, "0x" + "a" * 40)
+        await pipeline.enqueue_path([step], directions=[True])
+
+        # One explicit path registered through the shared consume body.
+        assert pipeline.path_count == 1
+        assert reg.register_path_calls == 1
+        # Dedup set is populated so a repeat add is rejected as a duplicate.
+        assert len(pipeline.registered_path_sigs) == 1
+
+    async def test_enqueue_path_dedups_repeat(self) -> None:
+        pipeline, reg, t_base = self._make_pipeline()
+        step = self._Step(t_base, "0x" + "b" * 40)
+        await pipeline.enqueue_path([step], directions=[True])
+        await pipeline.enqueue_path([step], directions=[True])
+
+        # Second add of the identical (pools, directions) path is a duplicate,
+        # not a second registration.
+        assert pipeline.path_count == 1
+        assert reg.register_path_calls == 1
+        assert pipeline.dup_count == 1
+
+    async def test_trigger_discovery_bounded_feeds_shared_consume(self) -> None:
+        pipeline, _reg, _t_base = self._make_pipeline()
+        consumed: list[object] = []
+
+        async def counting_consume(item, directions=None):
+            await asyncio.sleep(0)
+            consumed.append(item)
+
+        pipeline._consume = counting_consume  # type: ignore[method-assign]
+
+        async def sweep():
+            for item in ["p0", "p1", "p2"]:  # type: ignore[list-item]
+                await asyncio.sleep(0)
+                yield item
+
+        pipeline.discovery_sweep = sweep  # type: ignore[method-assign]
+
+        n = await pipeline.trigger_discovery(bound=2)
+        # Bounded: only 2 of the 3 sweep items consumed; same `_consume` seam.
+        assert n == 2
+        assert consumed == ["p0", "p1"]
+
+    async def test_enqueue_path_preserves_fail_fast_tripwire(self) -> None:
+        from degenbot.exceptions import VerificationMismatchError
+
+        pipeline, _reg, t_base = self._make_pipeline(
+            fail_on_register=VerificationMismatchError("boom")
+        )
+        step = self._Step(t_base, "0x" + "c" * 40)
+        # A fatal verification mismatch is NOT swallowed by enqueue_path — it
+        # propagates so the caller can abort loudly (crash-loudly preserved).
+        with pytest.raises(VerificationMismatchError, match="boom"):
+            await pipeline.enqueue_path([step], directions=[True])
