@@ -135,7 +135,16 @@ fn seed_v4_pool_storage(
         encode_v4_slot0(V4Slot0Parts {
             sqrt_price_x96: state.sqrt_price_x96,
             tick: state.tick,
-            protocol_fee: 0,
+            // Seed the pool's OWN protocol fee from the `V4PoolState` — NOT a
+            // hardcoded 0. A pool with `protocol_fee > 0` exercises the
+            // on-chain `Pool.swap` `calculateSwapFee(direction_fee, lp_fee)`
+            // path; omitting it (the original oracle, protocol_fee=0 everywhere)
+            // would make the revm oracle blind to the protocol-fee fee-combination
+            // rounding — the exact gap the fee-1/tiny over-prediction (UO3JM4)
+            // probes. `state.protocol_fee` uses the same 24-bit packing as
+            // on-chain `slot0.protocolFee` (low 12 bits = 0→1, high 12 = 1→0), so
+            // seeding it verbatim reproduces the on-chain fee the swap charges.
+            protocol_fee: state.protocol_fee,
             lp_fee: fee,
         }),
     )
@@ -611,6 +620,129 @@ fn v4_pool_fee1_valid_single_position_matches_sim() {
             .expect("v4 Rust sim");
             let err = format!(
                 "zfo={zfo} amount={amount} on_am0={on_am0} on_am1={on_am1} sim0={} sim1={}",
+                sim.amount0, sim.amount1
+            );
+            assert_eq!(on_am0, sim.amount0, "v4 amount0 {err}");
+            assert_eq!(on_am1, sim.amount1, "v4 amount1 {err}");
+        }
+    }
+}
+
+/// Build a physically-valid single-position V4 state at the fee-1 repro
+/// scalars, with a caller-chosen protocol fee (the on-chain `slot0.protocolFee`
+/// packing). Constant active liquidity `liq` across the whole walk (lower -100
+/// +liq, upper +100 -liq) at price 1 (tick 0), mirroring
+/// `v4_pool_fee1_valid_single_position_matches_sim` but parameterizing the
+/// static LP fee + protocol fee so the fee-combination path is exercised.
+///
+/// The fixture's divergence pool carries lp_fee **50**/1e6 (0.005% — the
+/// "fee-1" display label is the solver's print rounding artifact, NOT the
+/// on-chain fee; see AGENTS.md‘s V4 Fee-1 section) + protocol override
+/// `protocol_fee`. `fee` is the static lp fee (the `PoolKey.fee`), so the
+/// caller must pass 50 to reproduce the true fee.
+fn fee1_protocol_fee_state(protocol_fee: u32, lp_fee: u32) -> V4PoolState {
+    let liq = FEE1_REPRO_LIQ;
+    let tick_data_fee = lp_fee;
+    let mut tick_data: HashMap<i32, TickInfo> = HashMap::new();
+    tick_data.insert(
+        -100,
+        TickInfo {
+            liquidity_gross: alloy::primitives::U128::from(liq),
+            liquidity_net: I256::try_from(i128::try_from(liq).unwrap()).unwrap(),
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        100,
+        TickInfo {
+            liquidity_gross: alloy::primitives::U128::from(liq),
+            liquidity_net: I256::try_from(-i128::try_from(liq).unwrap()).unwrap(),
+            block: 0,
+        },
+    );
+    let params = degenbot_pools::v4_state::RegisterV4PoolParams {
+        pool_manager: Address::ZERO,
+        pool_id: [0u8; 32],
+        pool_key: V4PoolKey {
+            currency0: Address::ZERO,
+            currency1: Address::ZERO,
+            fee: tick_data_fee,
+            tick_spacing: 1,
+            hooks: Address::ZERO,
+        },
+        hook_flags: 0,
+        protocol_fee,
+        sqrt_price_x96: U256::from(FEE1_REPRO_SQ_X96),
+        liquidity: liq,
+        tick: 0,
+        tick_data,
+        update_block: 0,
+        tick_data_block: None,
+        coverage: PoolTickCoverage::Tracked,
+        fetcher: None,
+    };
+    let (_identity, state) = V4PoolState::from_params(params, 8);
+    state
+}
+
+/// **UO3JM4 protocol-fee discriminator** — the exact gap the fee-1 live record
+/// leaves open. The fixture's divergence pool carried BOTH a tiny static fee
+/// (`lp_fee=50`) AND a non-zero protocol override (`protocol_fee=0xd00d` =
+/// 13 pips each direction). Every pre-existing tier-3b V4 oracle seeded
+/// `protocol_fee: 0`, so the on-chain `calculateSwapFee(proto, lp)` fee-
+/// combination path was NEVER byte-exactly cross-checked — yet that is the
+/// exact path `v4_simulate_swap` charges on the divider state
+/// (`calculate_swap_fee(protocol_fee_dir, fee)`, see `v4_state.rs`).
+///
+/// Seeds the canonical PoolManager with the SAME `V4PoolState` (via the now
+/// `state.protocol_fee`-threaded `seed_v4_pool_storage`) and asserts
+/// `v4_simulate_swap` amounts === on-chain BalanceDelta byte-for-byte. This
+/// isolates "is `v4_simulate_swap`'s protocol-fee math byte-exact?" from any
+/// fixture-state-reconstruction error.
+#[test]
+fn v4_pool_fee1_protocol_fee_override_matches_sim() {
+    // The fixture's protocol override: 0xd00d -> low12 (0->1) = 13 pips,
+    // high12 (1->0) = 13 pips. lp_fee=50 -> combined swap_fee = 63 pips
+    // (13 + 50 - 13*50/1_000_000).
+    let protocol_fee: u32 = 0x0000_d00d;
+    let lp_fee = 50u32; // the fixture's real on-chain fee (not the "fee-1" label)
+    let state = fee1_protocol_fee_state(protocol_fee, lp_fee);
+    let fee = lp_fee;
+    let tick_spacing = 1i32;
+
+    // The exact recorded amounts from the live fee-1 repro (paths 10234/10338),
+    // plus a spread around them, in BOTH directions.
+    for zfo in [false, true] {
+        for amount in [9_000u64, 9_583, 9_585, 9_586, 10_000, 50_000] {
+            let amount_specified = I256::ZERO
+                .checked_sub(I256::try_from(U256::from(amount)).unwrap())
+                .unwrap();
+            let dir = if zfo { -1i32 } else { 1i32 };
+            let limit_tick = dir * 10 * tick_spacing;
+            let sqrt_price_limit: u128 = get_sqrt_ratio_at_tick_internal(limit_tick)
+                .unwrap()
+                .to::<u128>();
+
+            let (on_am0, on_am1) = run_v4_onchain_swap(
+                &state,
+                fee,
+                tick_spacing,
+                zfo,
+                amount_specified,
+                sqrt_price_limit,
+            )
+            .expect("v4 on-chain swap succeeded");
+            let sim = v4_simulate_swap(
+                &state,
+                fee,
+                tick_spacing,
+                zfo,
+                amount_specified,
+                U256::from(sqrt_price_limit),
+            )
+            .expect("v4 Rust sim");
+            let err = format!(
+                "zfo={zfo} amount={amount} proto_fee={protocol_fee} lp_fee={fee} on_am0={on_am0} on_am1={on_am1} sim0={} sim1={}",
                 sim.amount0, sim.amount1
             );
             assert_eq!(on_am0, sim.amount0, "v4 amount0 {err}");
