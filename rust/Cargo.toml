@@ -120,3 +120,4 @@ codegen-units = 16
 [profile.dev]
 # More codegen units for faster incremental dev builds across all crates.
 codegen-units = 16
+opt-level = 1
