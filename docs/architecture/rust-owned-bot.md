@@ -3,12 +3,14 @@
 > Covers the Rust extension, unified engine, pump, executor, and Python orchestration layer for Uniswap V2/V3/V4 same-block arbitrage on Ethereum mainnet.
 >
 > Developed under Plans 079–082 (all complete).
+>
+> **STATUS: HISTORICAL.** This captures the original `ArbitrageEngine`/`V2|V3|V4BlockEngine` design from Plans 079–082. It predates the `bot_core`/`solvers` restructure of `degenbot-bot` (the `optimizers/` paths below no longer exist) and the ports of simulation (`degenbot-simulation`) and submission (`degenbot-submission`) to Rust. Do not use it as the component map — read the crate sources and ADR-003/ADR-005 instead. Kept as a design-history reference.
 
 ## 1. Guiding Principle
 
 **Rust is the engine, Python is the cockpit.**
 
-Every hot-path operation — event decoding, pool state mutation, tick-range construction, solver dispatch, result storage — lives in Rust. Python participates only in construction (pool discovery, engine registration), simulation (`eth_simulateV1`), and transaction submission. During the per-block loop, Python reads results from Rust and encodes swap payloads using Python pool objects; it does **not** receive events, update pool state, or push data to the engine.
+Every hot-path operation — event decoding, pool state mutation, tick-range construction, solver dispatch, result storage — lives in Rust. Python participates in construction (pool discovery, engine registration) and orchestration; simulation (`degenbot-simulation`) and transaction submission (`degenbot-submission`) are now Rust-owned. During the per-block loop, Python reads results from Rust and encodes swap payloads using Python pool objects; it does **not** receive events, update pool state, or push data to the engine.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
