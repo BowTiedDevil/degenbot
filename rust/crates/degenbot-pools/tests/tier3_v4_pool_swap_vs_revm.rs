@@ -51,6 +51,10 @@
 #![allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
 #![allow(clippy::doc_markdown)] // Solidity/V4 identifiers (PoolManager, slot0…)
 
+// Reuse the CL-family shared driver + the arbitrary-topology position type and
+// grid-snapping helpers from the V3/Pancake-V3 oracle's common module.
+mod tier3_v3_common;
+
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
@@ -266,6 +270,89 @@ fn dense_v4_state(
         protocol_fee,
         sqrt_price_x96: sp,
         liquidity: u128::try_from(i128::try_from(liq).unwrap() * i128::from(k_positions)).unwrap(),
+        tick: current_tick,
+        tick_data,
+        update_block: 0,
+        tick_data_block: None,
+        coverage: PoolTickCoverage::Tracked,
+        fetcher: None,
+    };
+    let (_identity, state) = V4PoolState::from_params(params, 8);
+    state
+}
+
+/// Build a fully-tracked V4 state from an **arbitrary** liquidity distribution
+/// — the V4 twin of `tier3_v3_common::build_arbitrary_v3_state`. Folds the
+/// same `ArbV3Position` layout into `tick_data` (each `lower` +liq gross/net,
+/// each `upper` +gross/−net), derives active liquidity as the sum covering
+/// `current_tick`, and snaps every boundary to the `tick_spacing` grid via the
+/// shared helpers (an off-grid boundary floors in the on-chain tickBitmap —
+/// the divergence the V3 fuzz surfaced). `fee`/`protocol_fee` thread through
+/// `from_params` so the same builder reproduces fee-3000, fee-1, and
+/// protocol-fee-on pools.
+fn build_arbitrary_v4_state(
+    current_tick: i32,
+    tick_spacing: i32,
+    fee: u32,
+    protocol_fee: u32,
+    positions: &[tier3_v3_common::ArbV3Position],
+) -> V4PoolState {
+    let sp = U256::from(get_sqrt_ratio_at_tick_internal(current_tick).unwrap());
+    let mut tick_data: HashMap<i32, TickInfo> = HashMap::new();
+    let mut active: u128 = 0;
+    for p in positions {
+        let lower = tier3_v3_common::snap_tick_floor(p.lower, tick_spacing);
+        let upper = tier3_v3_common::snap_tick_ceil(p.upper, tick_spacing);
+        if lower >= upper {
+            // Too thin to survive snapping — drop (contributes no real range).
+            continue;
+        }
+        if lower <= current_tick && current_tick < upper {
+            active = active.saturating_add(p.liquidity);
+        }
+        let lo = tick_data.entry(lower).or_insert_with(|| TickInfo {
+            liquidity_gross: alloy::primitives::U128::ZERO,
+            liquidity_net: I256::ZERO,
+            block: 0,
+        });
+        lo.liquidity_gross = alloy::primitives::U128::from(
+            lo.liquidity_gross.to::<u128>().saturating_add(p.liquidity),
+        );
+        lo.liquidity_net = I256::try_from(
+            i128::try_from(lo.liquidity_net)
+                .unwrap()
+                .saturating_add(i128::try_from(p.liquidity).unwrap()),
+        )
+        .unwrap();
+        let hi = tick_data.entry(upper).or_insert_with(|| TickInfo {
+            liquidity_gross: alloy::primitives::U128::ZERO,
+            liquidity_net: I256::ZERO,
+            block: 0,
+        });
+        hi.liquidity_gross = alloy::primitives::U128::from(
+            hi.liquidity_gross.to::<u128>().saturating_add(p.liquidity),
+        );
+        hi.liquidity_net = I256::try_from(
+            i128::try_from(hi.liquidity_net)
+                .unwrap()
+                .saturating_sub(i128::try_from(p.liquidity).unwrap()),
+        )
+        .unwrap();
+    }
+    let params = degenbot_pools::v4_state::RegisterV4PoolParams {
+        pool_manager: Address::ZERO,
+        pool_id: [0u8; 32],
+        pool_key: V4PoolKey {
+            currency0: Address::ZERO,
+            currency1: Address::ZERO,
+            fee,
+            tick_spacing,
+            hooks: Address::ZERO,
+        },
+        hook_flags: 0,
+        protocol_fee,
+        sqrt_price_x96: sp,
+        liquidity: active,
         tick: current_tick,
         tick_data,
         update_block: 0,
@@ -810,6 +897,211 @@ fn v4_pool_dense_swap_matches_sim_proptest() {
             sqrt_price_limit,
         );
     });
+}
+
+/// H4 — topology fuzz (V4 twin): the byte-exact oracle driven over an
+/// **arbitrary** liquidity distribution through [`build_arbitrary_v4_state`].
+/// Randomizes the whole `tick_data` layout so the PoolManager walk must handle
+/// initialized ticks crossing the current tick, empty bitmap-word regions
+/// between far-apart boundaries, and one-sided ranges that run to a price
+/// limit / the bitmap end — same axes as the V3 topology fuzz, plus the
+/// fee/protocol-fee combination. Reuses the shared H1 verdict protocol via
+/// [`assert_v4_byte_exact`].
+#[allow(clippy::items_after_statements)] // `fn strategy` is local to the test
+#[allow(clippy::too_many_lines)]
+#[test]
+fn v4_pool_arbitrary_liquidity_matches_sim_proptest() {
+    fn strategy() -> impl Strategy<
+        Value = (
+            i32,
+            i32,
+            Vec<tier3_v3_common::ArbV3Position>,
+            u32,
+            u32,
+            i32,
+            u32,
+            i32,
+        ),
+    > {
+        // (spacing, current_tick, positions, fee, protocol_fee, zfo, frac, limit_words)
+        prop_oneof![Just(10i32), Just(60i32)].prop_flat_map(|spacing| {
+            let words = 256 * spacing; // one tick-bitmap word in ticks
+            (-60_000i32..60_000i32).prop_flat_map(move |cur| {
+                // Random position liquidity magnitude: wei-scale to ~1e23.
+                let liq = prop_oneof![
+                    1_000u128..1_000_000u128,
+                    (1u32..24u32).prop_map(|e| 10u128.pow(e)),
+                ];
+                // One position: bounds relative to `cur` in ticks, on the
+                // spacing grid (snapped in the builder). Offsets reach ±4 words
+                // so some boundaries sit in far-apart bitmap words.
+                let pos =
+                    ((-4 * words..-1i32), (1i32..4 * words), liq).prop_map(move |(lo, hi, l)| {
+                        tier3_v3_common::ArbV3Position {
+                            lower: cur + lo,
+                            upper: cur + hi,
+                            liquidity: l,
+                        }
+                    });
+                // Anchor ALWAYS covers `cur` so seed active liquidity > 0 (a
+                // 0-liquidity start is the documented OOG trap, not a target).
+                let anchor = tier3_v3_common::ArbV3Position {
+                    lower: cur - 2 * spacing,
+                    upper: cur + 2 * spacing,
+                    liquidity: 1_000_000_000u128,
+                };
+                prop::collection::vec(pos, 0usize..=3usize).prop_flat_map(move |mut extras| {
+                    extras.insert(0, anchor.clone());
+                    let positions = extras;
+                    let rest = (
+                        prop_oneof![Just(500u32), Just(3000u32)],
+                        prop_oneof![Just(0u32), Just(0x0000_d00du32)],
+                        0i32..2,
+                        1u32..=300,
+                        1i32..=12,
+                    );
+                    rest.prop_map(move |(fee, pf, zfo, frac, limit_words)| {
+                        (
+                            spacing,
+                            cur,
+                            positions.clone(),
+                            fee,
+                            pf,
+                            zfo,
+                            frac,
+                            limit_words,
+                        )
+                    })
+                })
+            })
+        })
+    }
+
+    proptest!(|(case in strategy())| {
+        let (spacing, cur, positions, fee, pf, zfo, frac, limit_words) = case;
+        let state = build_arbitrary_v4_state(cur, spacing, fee, pf, &positions);
+        let active = state.liquidity;
+        // Couple amount to active liquidity so `computeSwapStep` moves price
+        // (the OOG-trap guard) while spanning tiny → deep pushes.
+        let amount = U256::from(active) / U256::from(100u64) * U256::from(frac);
+        if amount.is_zero() || amount > U256::from(i128::MAX) {
+            return Ok(());
+        }
+        let mag = I256::try_from(amount).unwrap();
+        // V4 exact-in is NEGATIVE for both directions.
+        let amount_specified = I256::ZERO.checked_sub(mag).unwrap();
+        let zero_for_one = zfo == 0;
+        let dir = if zero_for_one { -1i32 } else { 1i32 };
+        let limit_tick = (cur + dir * limit_words * spacing * 256).clamp(-887_272, 887_272);
+        let sqrt_price_limit: u128 =
+            get_sqrt_ratio_at_tick_internal(limit_tick).unwrap().to::<u128>();
+
+        assert_v4_byte_exact(
+            &state,
+            fee,
+            spacing,
+            zero_for_one,
+            amount_specified,
+            sqrt_price_limit,
+        );
+    });
+}
+
+/// H3 — pinned deterministic edge corpus (V4 twin of the V3 arbitrary-topology
+/// corpus): explicit topologies that cross initialized ticks, span empty
+/// words, and run to a bitmap end, each driven through the byte-exact oracle.
+#[test]
+#[allow(clippy::too_many_lines)]
+fn v4_pool_arbitrary_topology_edge_corpus() {
+    let fee = 3000u32;
+    let protocol_fee = 0u32;
+    let tick_spacing = 60i32;
+    let cur = 30_000i32;
+    let liq = 1_000_000_000_000_000_000_000u128; // 1e21
+
+    let cases: Vec<(Vec<tier3_v3_common::ArbV3Position>, bool)> = vec![
+        // (1) Crossing: overlapping dense bands around the current tick — the
+        //     upward walk crosses several distinct initialized boundaries.
+        (
+            vec![
+                tier3_v3_common::ArbV3Position {
+                    lower: cur - 4 * tick_spacing,
+                    upper: cur + 4 * tick_spacing,
+                    liquidity: liq,
+                },
+                tier3_v3_common::ArbV3Position {
+                    lower: cur - 2 * tick_spacing,
+                    upper: cur + 6 * tick_spacing,
+                    liquidity: liq,
+                },
+                tier3_v3_common::ArbV3Position {
+                    lower: cur,
+                    upper: cur + 8 * tick_spacing,
+                    liquidity: liq,
+                },
+            ],
+            false, // upward, crosses 4+ boundaries
+        ),
+        // (2) Empty-word crossing downward: a dense band far below (2 words),
+        //     so the downward walk crosses empty bitmap words to reach it.
+        (
+            vec![
+                tier3_v3_common::ArbV3Position {
+                    lower: cur - 2 * tick_spacing,
+                    upper: cur + 2 * tick_spacing,
+                    liquidity: liq,
+                },
+                tier3_v3_common::ArbV3Position {
+                    lower: cur - 2 * 256 * tick_spacing,
+                    upper: cur - 2 * 256 * tick_spacing + 4 * tick_spacing,
+                    liquidity: liq,
+                },
+            ],
+            true, // downward, ~2 empty words then the far band
+        ),
+        // (3) Run to the bitmap end: the current tick sits inside a range whose
+        //     UPWARD exit leaves all liquidity behind, so the upward swap
+        //     crosses out of it and runs (empty) to the far price limit.
+        (
+            vec![
+                tier3_v3_common::ArbV3Position {
+                    lower: cur - 10 * tick_spacing,
+                    upper: cur + 2 * tick_spacing,
+                    liquidity: liq,
+                },
+                tier3_v3_common::ArbV3Position {
+                    lower: cur - 2 * 256 * tick_spacing,
+                    upper: cur + 2 * tick_spacing,
+                    liquidity: liq,
+                },
+            ],
+            false, // upward, out of the range then empty to the limit
+        ),
+    ];
+
+    for (positions, zfo) in cases {
+        let state = build_arbitrary_v4_state(cur, tick_spacing, fee, protocol_fee, &positions);
+        let active = state.liquidity;
+        let amount = U256::from(active) * U256::from(8u64);
+        if amount.is_zero() || amount > U256::from(i128::MAX) {
+            continue;
+        }
+        let mag = I256::try_from(amount).unwrap();
+        let amount_specified = I256::ZERO.checked_sub(mag).unwrap();
+        let dir = if zfo { -1i32 } else { 1i32 };
+        let limit_tick = (cur + dir * 6 * tick_spacing * 256).clamp(-887_272, 887_272);
+        let sqrt_price_limit: u128 = get_sqrt_ratio_at_tick_internal(limit_tick)
+            .unwrap()
+            .to::<u128>();
+        assert_v4_byte_exact(
+            &state,
+            fee,
+            tick_spacing,
+            zfo,
+            amount_specified,
+            sqrt_price_limit,
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -479,6 +479,26 @@ pub struct ArbV3Position {
     pub liquidity: u128,
 }
 
+/// Snap a tick boundary down to the `tick_spacing` grid (toward −inf). A real
+/// CL position's boundaries are always `tickSpacing` multiples — the on-chain
+/// `tickBitmap` compresses via `tick / tickSpacing` (floored), so an off-grid
+/// boundary would floor to a different on-chain tick and the pool would walk
+/// past it without adjusting liquidity. Used by [`build_arbitrary_v3_state`]
+/// and, via this module, the V4 oracle's arbitrary builder (the off-grid
+/// divergence the V3 fuzz surfaced — pinned in the regression file).
+pub fn snap_tick_floor(x: i32, tick_spacing: i32) -> i32 {
+    x.div_euclid(tick_spacing) * tick_spacing
+}
+
+/// Snap a tick boundary up to the `tick_spacing` grid (toward +inf); see
+/// [`snap_tick_floor`]. Together a snapped `[floor(lower), ceil(upper)]` still
+/// contains the original span and keeps `lower < upper` wherever the source
+/// span was ≥ `tick_spacing`.
+pub fn snap_tick_ceil(x: i32, tick_spacing: i32) -> i32 {
+    let bumped = x + (tick_spacing - 1);
+    bumped.div_euclid(tick_spacing) * tick_spacing
+}
+
 /// Build a `V3PoolState` from an **arbitrary** liquidity distribution: any set
 /// of initialized-tick boundaries (clustered, isolated, spanning empty bitmap
 /// words) expressed as overlapping/adjacent positions. This is the general
@@ -507,19 +527,11 @@ pub fn build_arbitrary_v3_state(
     positions: &[ArbV3Position],
 ) -> V3PoolState {
     let sp = U256::from(get_sqrt_ratio_at_tick_internal(current_tick).unwrap());
-    // Snap a boundary to the spacing grid: `lower` floors (toward −inf),
-    // `upper` ceils, so a snapped position still contains its original span
-    // and `lower < upper` is preserved wherever the source span was ≥ spacing.
-    let snap_floor = |x: i32| x.div_euclid(tick_spacing) * tick_spacing;
-    let snap_ceil = |x: i32| {
-        let bumped = x + (tick_spacing - 1);
-        bumped.div_euclid(tick_spacing) * tick_spacing
-    };
     let mut tick_data = HashMap::new();
     let mut active: u128 = 0;
     for p in positions {
-        let lower = snap_floor(p.lower);
-        let upper = snap_ceil(p.upper);
+        let lower = snap_tick_floor(p.lower, tick_spacing);
+        let upper = snap_tick_ceil(p.upper, tick_spacing);
         if lower >= upper {
             // Too thin to survive snapping — drop (contributes no real range).
             continue;
