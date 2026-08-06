@@ -213,10 +213,10 @@ pub fn encode_v4_liquidity_slot(liquidity: u128) -> U256 {
 }
 
 /// Encode the V4 `TickInfo` packed storage word (the `ticks(tick)` slot value):
-/// `uint128 liquidityGross` HIGH 128 | `int128 liquidityNet` LOW 128 (identical
-/// layout to V3 — V4's `Pool.TickInfo` has the same gross/net packing; the
-/// `feeGrowthOutside` tail occupies slot+1/+2 and is zero-filled by the
-/// seeding layer, never read by the swap math).
+/// `uint128 liquidityGross` LOW 128 | `int128 liquidityNet` HIGH 128 (identical
+/// layout to V3 — V4's `Pool.TickInfo` has the same gross/net packing (gross
+/// declared first → low bits); the `feeGrowthOutside` tail occupies slot+1/+2
+/// and is zero-filled by the seeding layer, never read by the swap math).
 #[must_use]
 pub fn encode_v4_tick_info_slot(tick_info: &crate::TickInfo) -> U256 {
     crate::v3_storage_slots::encode_v3_tick_info_slot(tick_info)
@@ -425,7 +425,7 @@ mod tests {
         );
     }
 
-    /// V4 `TickInfo` packing is identical to V3 (gross HIGH 128, net LOW 128).
+    /// V4 `TickInfo` packing is identical to V3 (gross LOW 128, net HIGH 128).
     #[test]
     fn v4_tick_info_slot_delegates_to_v3_layout() {
         use alloy::primitives::{I256, U128};
@@ -435,14 +435,10 @@ mod tests {
             block: 0,
         };
         let word = encode_v4_tick_info_slot(&tick_info);
+        assert_eq!(word & MASK_128, U256::from(7u64), "gross in low 128");
+        // int128 of -1 == 2^128 - 1 (all ones in the high 128).
         assert_eq!(
             (word >> 128) & MASK_128,
-            U256::from(7u64),
-            "gross in high 128"
-        );
-        // int128 of -1 == 2^128 - 1 (all ones in the low 128).
-        assert_eq!(
-            word & MASK_128,
             MASK_128,
             "net = -1 as int128 two's complement"
         );

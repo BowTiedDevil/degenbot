@@ -240,25 +240,34 @@ pub fn encode_v3_liquidity_slot(liquidity: u128) -> U256 {
 }
 
 /// Encode the V3 `TickInfo` packed storage word (the `ticks(tick)` slot+0
-/// value): `uint128 liquidityGross` in the HIGH 128 bits, `int128 liquidityNet`
-/// in the LOW 128 bits. The `feeGrowthOutside0/1` tail slots (slot+1/+2) are
-/// NOT encoded here — they are zero-filled by the seeding layer (the swap
-/// math never reads them into the amounts; see module docs).
+/// value): `uint128 liquidityGross` in the LOW 128 bits, `int128 liquidityNet`
+/// in the HIGH 128 bits. This matches canonical v3-core `Tick.Info`, which
+/// declares `liquidityGross` FIRST (so Solidity packs it at the lowest bits)
+/// and `liquidityNet` SECOND (the high 128 bits). The `feeGrowthOutside0/1`
+/// tail slots (slot+1/+2) are NOT encoded here — they are zero-filled by the
+/// seeding layer (the swap math never reads them into the amounts).
 ///
 /// `liquidity_net` is an `i128`; the `int128` field is the value's 128-bit
-/// two's complement placed in the low 128 bits. A negative net therefore has
-/// the high 128 bits of the word occupied by `liquidity_gross` (unaffected —
-/// the OR with `gross << 128` writes the gross half independently).
+/// two's complement. A negative net therefore lives in the high 128 bits with
+/// the sign-extension masked away, leaving the low-128 `liquidity_gross` half
+/// untouched.
+///
+/// # On-chain ground truth
+///
+/// This is a Tier-3 verified layout: the up-direction (oneForZero) byte-exact
+/// oracle (`tier3_v3_pool_swap_vs_revm.rs`) previously seeded the pool with
+/// gross/net SWAPPED, and a swap crossing an upper boundary read `net = +
+/// gross` (liquidity grew instead of shrinking). Fixing the halves to match the
+/// canonical pool made the up-direction walk byte-exact (epic CMORFZ/6DLK7I).
 #[must_use]
 pub fn encode_v3_tick_info_slot(tick_info: &TickInfo) -> U256 {
     let gross = U256::from(tick_info.liquidity_gross.to::<u128>());
     // `I256::into_raw()` yields the full 256-bit two's-complement bit pattern
     // (negative values have the high 128 bits set). Mask to the LOW 128 bits —
-    // the `int128` field width — so the high-128 `gross` half is not corrupted
-    // by a negative net's sign extension. Matches the proven deleted
-    // `bot_state_db.rs::encode_v3_tick_info_slot` (commit c4d95424).
-    let net_low128 = tick_info.liquidity_net.into_raw() & MASK_128;
-    (gross << 128) | net_low128
+    // the `int128` field width — then shift into the HIGH half so the low-128
+    // `gross` field is not corrupted by a negative net's sign extension.
+    let net_high128 = (tick_info.liquidity_net.into_raw() & MASK_128) << 128;
+    gross | net_high128
 }
 
 /// Compute the storage slot for a single V3 `ticks(tick)` entry:
@@ -566,32 +575,33 @@ mod tests {
         assert_eq!(word1, U256::from(1u64));
     }
 
-    /// `encode_v3_tick_info_slot`: gross in HIGH 128, net as int128 two's
-    /// complement in LOW 128. A NEGATIVE net must NOT corrupt the gross half
-    /// (the historical regression that deleted `sign_extend_128_from_i256`
-    /// guarded).
+    /// `encode_v3_tick_info_slot`: gross in LOW 128 (declaration order of
+    /// canonical `Tick.Info`), net as int128 two's complement in HIGH 128.
+    /// A NEGATIVE net must NOT corrupt the gross half (the on-chain-layout
+    /// regression fixed when the up-direction Tier-3 oracle caught gross/net
+    /// swapped).
     #[test]
-    fn v3_tick_info_slot_packs_gross_high_net_low_negative_preserves_gross() {
+    fn v3_tick_info_slot_packs_gross_low_net_high_negative_preserves_gross() {
         let tick_info = make_tick_info(5_000_000, -3_000_000);
         let word = encode_v3_tick_info_slot(&tick_info);
-        let gross = (word >> 128) & MASK_128;
-        assert_eq!(gross, U256::from(5_000_000u128), "gross in high 128");
-        let net_word = word & MASK_128;
+        let gross = word & MASK_128;
+        assert_eq!(gross, U256::from(5_000_000u128), "gross in low 128");
+        let net_high = (word >> 128) & MASK_128;
         // int128 of -3_000_000 == 2^128 - 3_000_000 (two's complement).
         let expected_net = (U256::from(1u64) << 128) - U256::from(3_000_000u64);
         assert_eq!(
-            net_word, expected_net,
+            net_high, expected_net,
             "net = -3M as int128 two's complement"
         );
     }
 
-    /// `encode_v3_tick_info_slot` positive net round-trips.
+    /// `encode_v3_tick_info_slot` positive net round-trips (gross low, net high).
     #[test]
     fn v3_tick_info_slot_positive_net() {
         let tick_info = make_tick_info(1_000, 2_500);
         let word = encode_v3_tick_info_slot(&tick_info);
-        assert_eq!((word >> 128) & MASK_128, U256::from(1_000u128));
-        assert_eq!(word & MASK_128, U256::from(2_500u128));
+        assert_eq!(word & MASK_128, U256::from(1_000u128));
+        assert_eq!((word >> 128) & MASK_128, U256::from(2_500u128));
     }
 
     fn make_tick_info(liquidity_gross: u128, liquidity_net: i128) -> TickInfo {
