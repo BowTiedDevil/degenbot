@@ -1,39 +1,40 @@
 //! `PyBotIo` — the Rust `#[pyclass]` I/O façade that pool builders receive in
 //! place of the Python `SyncPoolIO` adapter (ADR-005 slice 14a).
 //!
-//! ## Why a Rust pyclass at all?
+//! ## What it is
 //!
-//! Per slice 14, `Bot.build_pool`'s I/O choreography moves into Rust. The
-//! first step is a single `#[pyclass]` `PyBotIo` that the builders receive as
-//! their `io` parameter (replacing `io = SyncPoolIO(self.provider)`). `PyBotIo`
-//! exposes the 7-method [`PoolIO`] surface defined by the Python protocol; for
-//! slice 14a it does so by **delegating** to the held Python `provider` — the
-//! same `ProviderAdapter` the `Bot` was constructed with (so web3-backed,
-//! alloy-backed, and offline-backed providers all work without a Rust rewrite
-//! of each).
+//! Per slice 14, `Bot.build_pool`'s I/O choreography moves into Rust. Builders
+//! receive `PyBotIo` as their `io` parameter; it exposes the 7-method
+//! [`PoolIO`] surface (`get_block_number`, `get_block`, `get_block_timestamp`,
+//! `get_code`, `get_balance`, `call`, `call_raw`) by routing through the core
+//! [`ConstructionIo`] trait (ADR-023 D1/D3), plus ~50 `fetch_*` / `probe_*`
+//! encode→call→decode choreography helpers that compose over the same trait's
+//! `call` + DB primitives.
 //!
-//! ## Why delegation now (and not a pure Rust provider)?
+//! ## Single construction-I/O path (ADR-023 D1/D3)
 //!
-//! `ProviderAdapter` is a Python façade over three backends
-//! (`_Web3Adapter` / `_AlloyAdapter` / `_OfflineAdapter`). Only the alloy
-//! backend is already in Rust (`crate::rpc::provider::PyAlloyProvider`); the
-//! web3 + offline backends aren't. Delegating lets `PyBotIo` serve every
-//! backend today, and positions 14b/14c to move the delegation *into* Rust for
-//! the alloy backend (swap the held `Py<PyAny>` provider for a direct
-//! `AlloyProvider` field + native method bodies, no Python round-trip).
+//! Every RPC method resolves a [`ConstructionIo`] via `required_construction_io`:
+//! the attached handle when a `Bot` attached one, else a transient
+//! `(NoDb, AlloyRpcConstruction)` built over the held alloy provider (bare test
+//! fixtures that construct `PyBotIo(provider=…)`). Non-alloy Python providers
+//! (the retired web3/legacy-double fallback) **error loudly** — D1 removed the
+//! Python `provider` delegation tier and D3 removed the inlined `self.alloy`
+//! RPC duplication, leaving one code path per method. Non-integer block tags
+//! (`"latest"`) likewise error loudly: the core `RpcConstruction` trait only
+//! accepts `u64` blocks (tag support is a follow-on trait change — epic
+//! `VK3YDM`).
 //!
-//! ## `PoolIO` surface mirrored exactly
+//! ## Async bridging
 //!
-//! `get_block_number`, `get_block`, `get_block_timestamp`, `get_code`,
-//! `get_balance`, `call`, `call_raw` — method-by-method mirrors of
-//! `degenbot/builders/pool_io.py::SyncPoolIO`, including its calling
-//! convention. `chain_id` stays a builder `build()` kwarg (mirrors `pool_io.py`'s
-//! deliberate exclusion of `chain_id` as a config value, not an I/O operation).
+//! Each call is `py.detach(|| get_runtime().block_on(...))` over the
+//! process-global tokio runtime (`degenbot_core::runtime`) — detach the GIL,
+//! block the runtime, reacquire. Never `block_on` while holding the GIL.
 //!
 //! [PoolIO]: degenbot/builders/pool_io.py
+//! [ConstructionIo]: degenbot_bot::bot_core::construction_io
 
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
+use pyo3::types::{PyBytes, PyList};
 use std::fmt::Write as _;
 use std::sync::Arc;
 
@@ -154,7 +155,6 @@ pub struct PyBotIo {
     /// round-trip); `get_block_timestamp` derives from `get_block(n).header.timestamp`.
     /// `None` only for non-alloy Python providers (retired by O3).
     alloy: Option<Arc<AlloyProvider>>,
-    provider: Py<PyAny>,
     db: Option<Py<PyAny>>,
     /// The on-disk `SQLite` database path (QVMWQC). Retained for the `getter`
     /// (Python introspection) + the `database_path` is now opened ONCE at
@@ -175,11 +175,15 @@ pub struct PyBotIo {
 
 #[pymethods]
 impl PyBotIo {
-    /// Construct the I/O façade over a Python `ProviderAdapter` (+ optional DB).
+    /// Construct the I/O façade over an alloy-backed `ProviderAdapter`
+    /// (+ optional DB).
     ///
-    /// `provider` is the `ProviderAdapter` the `Bot` was constructed with —
-    /// any backend (web3 / alloy / offline) works, because `PyBotIo` delegates
-    /// to its 7 `PoolIO` methods rather than re-implementing them.
+    /// `provider` is the `ProviderAdapter` the `Bot` was constructed with; the
+    /// held `Arc<AlloyProvider>` is extracted from it (live alloy or the
+    /// offline shell) and powers a transient `(NoDb, AlloyRpcConstruction)`
+    /// handle for the RPC methods. Non-alloy providers (the retired web3 /
+    /// legacy-double fallback) yield `alloy = None` and every RPC + choreography
+    /// method errors loudly (ADR-023 D1).
     ///
     /// `db`, when provided, is the `DatabaseSessionManager` handle; it's stored
     /// so the `PyBotIo` surface mirrors `BuilderContext`, and accessed via the
@@ -191,6 +195,7 @@ impl PyBotIo {
     /// construction-time DB reads/writes through Rust (the `SQLAlchemy`
     /// `session.scalar(select(...))` / `session.commit()` bodies retire).
     #[new]
+    #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (provider, db=None, database_path=None))]
     pub(crate) fn new(
         py: Python<'_>,
@@ -199,8 +204,8 @@ impl PyBotIo {
         database_path: Option<String>,
     ) -> Self {
         // Extract a native Rust `AlloyProvider` when the held Python provider
-        // is `PyAlloyProvider`-backed (live alloy or the offline shell). Non-
-        // alloy providers (legacy test doubles) yield `None` → Python fallback.
+        // is `PyAlloyProvider`-backed (live alloy or the offline shell); non-
+        // alloy providers yield `None` and error loudly on use (ADR-023 D1).
         let alloy = extract_native_alloy(provider.bind(py));
         // Architecture review 2025-07-18: when `database_path` is set + the
         // provider is alloy-backed, eagerly construct a `ConstructionIo` from
@@ -210,8 +215,8 @@ impl PyBotIo {
         // bare `PyBotIo(provider=…, database_path=…)` test fixtures still work
         // standalone: `database_path` constructs a `DegenbotDbConstruction`,
         // the alloy provider constructs an `AlloyRpcConstruction`. Non-alloy +
-        // no DB → `construction_io` stays `None` (the methods degrade to the
-        // `self.alloy` / Python fallback path).
+        // no DB → `construction_io` stays `None` (the RPC methods then build
+        // the transient alloy handle via `required_construction_io`, or error).
         let construction_io = match (&alloy, &database_path) {
             (Some(provider), Some(path)) => {
                 let path_buf = std::path::PathBuf::from(path);
@@ -239,7 +244,6 @@ impl PyBotIo {
         };
         Self {
             alloy,
-            provider,
             db,
             database_path,
             construction_io: parking_lot::Mutex::new(construction_io),
@@ -255,12 +259,6 @@ impl PyBotIo {
     fn attach_construction_io(&self, py_bot: &Bound<'_, crate::bot::PyBot>) -> PyResult<()> {
         *self.construction_io.lock() = py_bot.borrow().bot.construction_io_arc();
         Ok(())
-    }
-
-    /// The held `ProviderAdapter` (round-trips for tests + introspection).
-    #[getter]
-    fn provider(&self, py: Python<'_>) -> Py<PyAny> {
-        self.provider.clone_ref(py)
     }
 
     /// The held `DatabaseSessionManager`, if any (None when the `Bot` has no DB).
@@ -613,28 +611,18 @@ impl PyBotIo {
     /// call (no GIL round-trip). Fallback: delegates to the held Python
     /// provider's `get_block_number()` for non-alloy providers.
     fn get_block_number(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        // Construction-I/O path (architecture review 2025-07-18): delegate
-        // through the core trait when attached (alloy-only — no Python
-        // fallback); else fall back to the inlined `self.alloy` path for the
-        // bare test fixtures that construct `PyBotIo(provider=…)` without a `Bot`.
-        if let Some(io) = self.construction_io() {
-            let n = py
-                .detach(|| get_runtime().block_on(async { io.get_block_number().await }))
-                .map_err(Into::<PyErr>::into)?;
-            return crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(n))
-                .map(pyo3::Bound::into_any)
-                .map(pyo3::Bound::unbind);
-        }
-        if let Some(alloy) = &self.alloy {
-            let alloy = Arc::clone(alloy);
-            let n = py
-                .detach(|| get_runtime().block_on(async { alloy.get_block_number().await }))
-                .map_err(Into::<PyErr>::into)?;
-            return crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(n))
-                .map(pyo3::Bound::into_any)
-                .map(pyo3::Bound::unbind);
-        }
-        self.call_kw(py, "get_block_number", &[])
+        // Single construction-I/O path (ADR-023 D1/D3): route through the core
+        // trait. `required_construction_io` returns the attached handle, else a
+        // transient `(NoDb, AlloyRpcConstruction)` over the held alloy provider,
+        // else errors loudly for non-alloy providers (the retired Python
+        // fallback).
+        let io = self.required_construction_io()?;
+        let n = py
+            .detach(|| get_runtime().block_on(async { io.get_block_number().await }))
+            .map_err(Into::<PyErr>::into)?;
+        crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(n))
+            .map(pyo3::Bound::into_any)
+            .map(pyo3::Bound::unbind)
     }
 
     /// Return block data for the given identifier. Native path: direct
@@ -646,38 +634,25 @@ impl PyBotIo {
         py: Python<'_>,
         block_identifier: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
-        // Construction-I/O path: delegate through the core trait when attached.
-        if let Some(io) = self.construction_io() {
-            if let Ok(n) = block_identifier.extract::<u64>() {
-                let block = py
-                    .detach(|| get_runtime().block_on(async { io.get_block(n).await }))
-                    .map_err(Into::<PyErr>::into)?;
-                return match block {
-                    Some(b) => Ok(block_to_py_dict(py, &b)?.into_any().unbind()),
-                    None => Ok(py.None()),
-                };
-            }
-            // Non-integer identifier — the trait has no tag support; fall
-            // through to the inlined path below (which itself falls back to
-            // Python for tags).
+        // Single construction-I/O path (ADR-023 D1/D3). The trait only supports
+        // integer blocks; tags (e.g. "latest") now ERROR loudly instead of
+        // falling through to the retired Python fallback (tag support is a
+        // follow-on `RpcConstruction` trait change — see epic `VK3YDM`).
+        let n = block_identifier.extract::<u64>().map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "PyBotIo.get_block requires an integer block identifier; tags \
+                 (e.g. \"latest\") are unsupported until the RPC trait gains \
+                 tag support (VK3YDM), got {block_identifier:?}"
+            ))
+        })?;
+        let io = self.required_construction_io()?;
+        let block = py
+            .detach(|| get_runtime().block_on(async { io.get_block(n).await }))
+            .map_err(Into::<PyErr>::into)?;
+        match block {
+            Some(b) => Ok(block_to_py_dict(py, &b)?.into_any().unbind()),
+            None => Ok(py.None()),
         }
-        if let Some(alloy) = &self.alloy {
-            if let Ok(n) = block_identifier.extract::<u64>() {
-                let alloy = Arc::clone(alloy);
-                let block = py
-                    .detach(|| get_runtime().block_on(async { alloy.get_block(n).await }))
-                    .map_err(Into::<PyErr>::into)?;
-                return match block {
-                    Some(b) => Ok(block_to_py_dict(py, &b)?.into_any().unbind()),
-                    None => Ok(py.None()),
-                };
-            }
-            // Non-integer identifier (e.g. "latest") — fall back to Python.
-        }
-        // SyncPoolIO forwards positionally: provider.get_block(block_identifier)
-        let method = self.provider.bind(py).getattr("get_block")?;
-        let args = PyTuple::new(py, [block_identifier])?;
-        Ok(method.call(args, None)?.unbind())
     }
 
     /// Return the timestamp for the given block. Native path: derives from
@@ -689,64 +664,30 @@ impl PyBotIo {
         py: Python<'_>,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        // Construction-I/O path: delegate through the core trait when attached.
-        if let Some(io) = self.construction_io() {
-            let n = match block {
-                None => py
-                    .detach(|| get_runtime().block_on(async { io.get_block_number().await }))
-                    .map_err(Into::<PyErr>::into)?,
-                Some(b) => match b.extract::<u64>() {
-                    Ok(n) => n,
-                    Err(_) => {
-                        // Non-integer tag — the trait has no tag support; fall
-                        // through to the inlined path below (which falls back
-                        // to Python for tags).
-                        return self.call_kw(py, "get_block_timestamp", &[("block", block)]);
-                    }
-                },
-            };
-            let ts = py
-                .detach(|| get_runtime().block_on(async { io.get_block_timestamp(n).await }))
-                .map_err(Into::<PyErr>::into)?
-                .ok_or_else(|| {
-                    pyo3::exceptions::PyValueError::new_err(format!("Block {n} not found"))
-                })?;
-            return crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(ts))
-                .map(pyo3::Bound::into_any)
-                .map(pyo3::Bound::unbind);
-        }
-        if let Some(alloy) = &self.alloy {
-            let n = match block {
-                None => {
-                    let a = Arc::clone(alloy);
-                    py.detach(|| get_runtime().block_on(async { a.get_block_number().await }))
-                        .map_err(Into::<PyErr>::into)?
-                }
-                Some(b) => match b.extract::<u64>() {
-                    Ok(n) => n,
-                    Err(_) => {
-                        // Non-integer block tag (e.g. "latest") — fall back to
-                        // the Python provider which accepts the tag directly.
-                        return self.call_kw(py, "get_block_timestamp", &[("block", block)]);
-                    }
-                },
-            };
-            let alloy = Arc::clone(alloy);
-            let block_opt = py
-                .detach(|| get_runtime().block_on(async { alloy.get_block(n).await }))
-                .map_err(Into::<PyErr>::into)?;
-            let ts = block_opt
-                .ok_or_else(|| {
-                    pyo3::exceptions::PyValueError::new_err(format!("Block {n} not found"))
-                })?
-                .header
-                .inner
-                .timestamp;
-            return crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(ts))
-                .map(pyo3::Bound::into_any)
-                .map(pyo3::Bound::unbind);
-        }
-        self.call_kw(py, "get_block_timestamp", &[("block", block)])
+        // Single construction-I/O path (ADR-023 D1/D3). tags now error loudly;
+        // tag support is a `RpcConstruction` trait change (VK3YDM).
+        let io = self.required_construction_io()?;
+        let n = match block {
+            None => py
+                .detach(|| get_runtime().block_on(async { io.get_block_number().await }))
+                .map_err(Into::<PyErr>::into)?,
+            Some(b) => b.extract::<u64>().map_err(|_| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "PyBotIo.get_block_timestamp requires an integer block; tags \
+                     (e.g. \"latest\") are unsupported until the RPC trait gains \
+                     tag support (VK3YDM), got {b:?}"
+                ))
+            })?,
+        };
+        let ts = py
+            .detach(|| get_runtime().block_on(async { io.get_block_timestamp(n).await }))
+            .map_err(Into::<PyErr>::into)?
+            .ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!("Block {n} not found"))
+            })?;
+        crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(ts))
+            .map(pyo3::Bound::into_any)
+            .map(pyo3::Bound::unbind)
     }
 
     /// Return the code at the given address. Native path: direct
@@ -759,41 +700,20 @@ impl PyBotIo {
         address: &Bound<'_, PyAny>,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        // Construction-I/O path: delegate through the core trait when attached.
-        if let Some(io) = self.construction_io() {
-            if let (Ok(addr_str), Ok(block_num)) =
-                (address.extract::<String>(), extract_block_u64(block))
-            {
-                let addr = alloy::primitives::Address::from(parse_address_for_call(&addr_str)?);
-                let code = py
-                    .detach(|| get_runtime().block_on(async { io.get_code(addr, block_num).await }))
-                    .map_err(Into::<PyErr>::into)?;
-                return crate::conversion::cache::create_hexbytes(py, code.as_ref())
-                    .map(pyo3::Bound::into_any)
-                    .map(pyo3::Bound::unbind);
-            }
-        }
-        if let Some(alloy) = &self.alloy {
-            if let (Ok(addr_str), Ok(block_num)) =
-                (address.extract::<String>(), extract_block_u64(block))
-            {
-                let addr = alloy::primitives::Address::from(parse_address_for_call(&addr_str)?);
-                let alloy = Arc::clone(alloy);
-                let code = py
-                    .detach(|| {
-                        get_runtime().block_on(async { alloy.get_code(&addr, block_num).await })
-                    })
-                    .map_err(Into::<PyErr>::into)?;
-                return crate::conversion::cache::create_hexbytes(py, code.as_ref())
-                    .map(pyo3::Bound::into_any)
-                    .map(pyo3::Bound::unbind);
-            }
-            // Address/block shape not native-compatible — fall back to Python.
-        }
-        let method = self.provider.bind(py).getattr("get_code")?;
-        let kwargs = build_block_kw(py, block)?;
-        let args = PyTuple::new(py, [address])?;
-        Ok(method.call(args, kwargs.as_ref())?.unbind())
+        // Single construction-I/O path (ADR-023 D1/D3): extract address + block,
+        // route through the core trait via `required_construction_io`. No
+        // Python fallback — non-native shapes error loudly.
+        let addr = alloy::primitives::Address::from(parse_address_for_call(
+            &address.extract::<String>()?,
+        )?);
+        let block_num = extract_block_u64(block)?;
+        let io = self.required_construction_io()?;
+        let code = py
+            .detach(|| get_runtime().block_on(async { io.get_code(addr, block_num).await }))
+            .map_err(Into::<PyErr>::into)?;
+        crate::conversion::cache::create_hexbytes(py, code.as_ref())
+            .map(pyo3::Bound::into_any)
+            .map(pyo3::Bound::unbind)
     }
 
     /// Return the ETH balance at the given address. Native path: direct
@@ -806,43 +726,18 @@ impl PyBotIo {
         address: &Bound<'_, PyAny>,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        // Construction-I/O path: delegate through the core trait when attached.
-        if let Some(io) = self.construction_io() {
-            if let (Ok(addr_str), Ok(block_num)) =
-                (address.extract::<String>(), extract_block_u64(block))
-            {
-                let addr = alloy::primitives::Address::from(parse_address_for_call(&addr_str)?);
-                let balance = py
-                    .detach(|| {
-                        get_runtime().block_on(async { io.get_balance(addr, block_num).await })
-                    })
-                    .map_err(Into::<PyErr>::into)?;
-                return crate::conversion::alloy::u256_to_py(py, &balance)
-                    .map(pyo3::Bound::into_any)
-                    .map(pyo3::Bound::unbind);
-            }
-        }
-        if let Some(alloy) = &self.alloy {
-            if let (Ok(addr_str), Ok(block_num)) =
-                (address.extract::<String>(), extract_block_u64(block))
-            {
-                let addr = alloy::primitives::Address::from(parse_address_for_call(&addr_str)?);
-                let alloy = Arc::clone(alloy);
-                let balance = py
-                    .detach(|| {
-                        get_runtime().block_on(async { alloy.get_balance(&addr, block_num).await })
-                    })
-                    .map_err(Into::<PyErr>::into)?;
-                return crate::conversion::alloy::u256_to_py(py, &balance)
-                    .map(pyo3::Bound::into_any)
-                    .map(pyo3::Bound::unbind);
-            }
-            // Address/block shape not native-compatible — fall back to Python.
-        }
-        let method = self.provider.bind(py).getattr("get_balance")?;
-        let kwargs = build_block_kw(py, block)?;
-        let args = PyTuple::new(py, [address])?;
-        Ok(method.call(args, kwargs.as_ref())?.unbind())
+        // Single construction-I/O path (ADR-023 D1/D3).
+        let addr = alloy::primitives::Address::from(parse_address_for_call(
+            &address.extract::<String>()?,
+        )?);
+        let block_num = extract_block_u64(block)?;
+        let io = self.required_construction_io()?;
+        let balance = py
+            .detach(|| get_runtime().block_on(async { io.get_balance(addr, block_num).await }))
+            .map_err(Into::<PyErr>::into)?;
+        crate::conversion::alloy::u256_to_py(py, &balance)
+            .map(pyo3::Bound::into_any)
+            .map(pyo3::Bound::unbind)
     }
 
     /// Perform an `eth_call` and return the result. Native path: direct
@@ -863,59 +758,24 @@ impl PyBotIo {
         data: &Bound<'_, PyAny>,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        // Construction-I/O path: delegate through the core trait when attached.
-        if let Some(io) = self.construction_io() {
-            if let (Ok(to_str), Ok(data_bytes), Ok(block_num)) = (
-                to.extract::<String>(),
-                data.extract::<&[u8]>(),
-                extract_block_u64(block),
-            ) {
-                let addr = alloy::primitives::Address::from(parse_address_for_call(&to_str)?);
-                let data_b = alloy::primitives::Bytes::from(data_bytes.to_vec());
-                let result = py.detach(|| {
-                    get_runtime().block_on(async { io.call(addr, data_b, block_num).await })
-                });
-                return match result {
-                    Ok(bytes) => crate::conversion::cache::create_hexbytes(py, bytes.as_ref())
-                        .map(pyo3::Bound::into_any)
-                        .map(pyo3::Bound::unbind),
-                    Err(ProviderError::ExecutionReverted { message, .. }) => {
-                        Err(revert_to_pyerr(py, &to_str, &message))
-                    }
-                    Err(e) => Err(e.into()),
-                };
+        // Single construction-I/O path (ADR-023 D1/D3). `eth_call` reverts map
+        // to `ContractLogicError`, matching the alloy revert path.
+        let to_str = to.extract::<String>()?;
+        let addr = alloy::primitives::Address::from(parse_address_for_call(&to_str)?);
+        let data_b = alloy::primitives::Bytes::from(data.extract::<&[u8]>()?.to_vec());
+        let block_num = extract_block_u64(block)?;
+        let io = self.required_construction_io()?;
+        let result =
+            py.detach(|| get_runtime().block_on(async { io.call(addr, data_b, block_num).await }));
+        match result {
+            Ok(bytes) => crate::conversion::cache::create_hexbytes(py, bytes.as_ref())
+                .map(pyo3::Bound::into_any)
+                .map(pyo3::Bound::unbind),
+            Err(ProviderError::ExecutionReverted { message, .. }) => {
+                Err(revert_to_pyerr(py, &to_str, &message))
             }
-            // `to`/`data`/`block` shape not native-compatible — fall back.
+            Err(e) => Err(e.into()),
         }
-        if let Some(alloy) = &self.alloy {
-            if let (Ok(to_str), Ok(data_bytes), Ok(block_num)) = (
-                to.extract::<String>(),
-                data.extract::<&[u8]>(),
-                extract_block_u64(block),
-            ) {
-                let addr = alloy::primitives::Address::from(parse_address_for_call(&to_str)?);
-                let data_b = alloy::primitives::Bytes::from(data_bytes.to_vec());
-                let alloy = Arc::clone(alloy);
-                let result = py.detach(|| {
-                    get_runtime().block_on(async { alloy.eth_call(&addr, data_b, block_num).await })
-                });
-                return match result {
-                    Ok(bytes) => crate::conversion::cache::create_hexbytes(py, bytes.as_ref())
-                        .map(pyo3::Bound::into_any)
-                        .map(pyo3::Bound::unbind),
-                    Err(ProviderError::ExecutionReverted { message, .. }) => {
-                        Err(revert_to_pyerr(py, &to_str, &message))
-                    }
-                    Err(e) => Err(e.into()),
-                };
-            }
-            // `to`/`data`/`block` shape not native-compatible — fall back.
-        }
-        self.call_kw(
-            py,
-            "call",
-            &[("to", Some(to)), ("data", Some(data)), ("block", block)],
-        )
     }
 
     /// Perform a raw `eth_call` and return the result. Native path: reuses
@@ -932,24 +792,16 @@ impl PyBotIo {
         tx: &Bound<'_, PyAny>,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        // `call_raw` reuses the `call` body; the construction-I/O branch there
-        // gates both. (`call_raw`'s native path extracts `to`/`data` from the
-        // tx dict + routes through `self.call`, which delegates to
-        // `ConstructionIo.call` when attached.)
-        if let Some(_alloy) = &self.alloy {
-            // The native path needs `to` + `data` from the tx dict; forward
-            // through the native `call` body when extractable. A bare
-            // `PyAlloyProvider` has no `call_raw`, so the native path is
-            // mandatory here (no Python fallback).
-            if let (Ok(to), Ok(data)) = (tx.get_item("to"), tx.get_item("data")) {
-                return self.call(py, &to, &data, block);
-            }
-            // tx dict shape not native-compatible — fall back.
+        // `call_raw` reuses the native `call` body (which routes through
+        // `ConstructionIo.call` via `required_construction_io`). The retired
+        // Python `provider.call_raw` fallback is gone — a tx dict without
+        // extractable `to`/`data` errors loudly instead of degrading.
+        if let (Ok(to), Ok(data)) = (tx.get_item("to"), tx.get_item("data")) {
+            return self.call(py, &to, &data, block);
         }
-        let method = self.provider.bind(py).getattr("call_raw")?;
-        let kwargs = build_block_kw(py, block)?;
-        let args = PyTuple::new(py, [tx])?;
-        Ok(method.call(args, kwargs.as_ref())?.unbind())
+        Err(pyo3::exceptions::PyValueError::new_err(
+            "PyBotIo.call_raw requires a tx dict with 'to' and 'data'",
+        ))
     }
 
     /// Fetch the factory address for a V2-style pool, performing the full
@@ -2273,10 +2125,9 @@ impl PyBotIo {
         })
     }
 
-    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+    fn __repr__(&self) -> String {
         let has_db = self.db.is_some();
-        let provider_repr = self.provider.bind(py).repr()?.to_str()?.to_string();
-        Ok(format!("PyBotIo(provider={provider_repr}, db={has_db})"))
+        format!("PyBotIo(alloy={}, db={has_db})", self.alloy.is_some())
     }
 }
 
@@ -2326,28 +2177,6 @@ impl PyBotIo {
             )),
         }
     }
-
-    /// Call `method_name` on the held provider with the given keyword arguments.
-    ///
-    /// Single delegation seam for the kw-only forward shape (`call`,
-    /// `get_block_timestamp`). Slice 14b/14c's "move delegation into Rust"
-    /// strategy swaps the body per-method without touching the `#[pymethods]`
-    /// signature.
-    fn call_kw(
-        &self,
-        py: Python<'_>,
-        method_name: &str,
-        kwargs: &[(&str, Option<&Bound<'_, PyAny>>)],
-    ) -> PyResult<Py<PyAny>> {
-        let method = self.provider.bind(py).getattr(method_name)?;
-        let kw_dict = PyDict::new(py);
-        for (name, value) in kwargs {
-            if let Some(v) = value {
-                kw_dict.set_item(*name, v)?;
-            }
-        }
-        Ok(method.call((), Some(&kw_dict))?.unbind())
-    }
 }
 
 /// Extract a native Rust `AlloyProvider` from the held Python provider when
@@ -2374,7 +2203,7 @@ pub(crate) fn extract_native_alloy(provider: &Bound<'_, PyAny>) -> Option<Arc<Al
 
 /// Extract an optional block number from the `block` kw-sentinel.
 /// `Ok(None)` when absent; `Ok(Some(n))` when an integer; `Err` when present
-/// but not an integer (caller falls back to the Python provider for tags).
+/// but not an integer.
 fn extract_block_u64(block: Option<&Bound<'_, PyAny>>) -> PyResult<Option<u64>> {
     match block {
         None => Ok(None),
@@ -2390,20 +2219,4 @@ pub(crate) fn parse_address_for_call(address: &str) -> PyResult<[u8; 20]> {
     parse_address(address)
         .map(alloy::primitives::Address::into_array)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid address: {e}")))
-}
-
-/// Build `Some(dict{block: …})` when `block` is present, `None` otherwise —
-/// mirrors `SyncPoolIO`'s conditional kwargs (it omits `block=` when None).
-fn build_block_kw<'py>(
-    py: Python<'py>,
-    block: Option<&Bound<'_, PyAny>>,
-) -> PyResult<Option<Bound<'py, PyDict>>> {
-    match block {
-        Some(b) => {
-            let d = PyDict::new(py);
-            d.set_item("block", b)?;
-            Ok(Some(d))
-        }
-        None => Ok(None),
-    }
 }

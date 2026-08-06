@@ -608,14 +608,15 @@ class Erc20TokenRow:
     def decimals(self) -> int | None: ...
 
 class PyBotIo:
-    """PyO3 wrapper (exposed as `PyBotIo` in Python) holding a provider + optional DB.
+    """PyO3 wrapper (exposed as `PyBotIo` in Python) holding an alloy provider + optional DB.
 
     The Rust I/O facade for pool builders (ADR-005 slice 14a). Builders receive
     this as the single construction-I/O executor (Rust-backed, 65 methods: the
     7 RPC primitives below + ~50 ``fetch_*`` DB/RPC-choreography helpers). It
-    delegates the RPC surface to the held ``ProviderAdapter`` so any backend
-    (web3 / alloy / offline) works unchanged. The calling convention is
-    positional leading args + ``block=`` kwarg.
+    routes the RPC surface through the core ``ConstructionIo`` trait (the
+    attached handle, else a transient ``(NoDb, AlloyRpcConstruction)`` over the
+    held alloy provider); non-alloy providers error loudly (ADR-023 D1). The
+    calling convention is positional leading args + ``block=`` kwarg.
     """
 
     def __init__(
@@ -627,8 +628,6 @@ class PyBotIo:
         After this call the 12 DB + 7 generic RPC methods delegate through
         the core trait objects; the 27 choreography wrappers stay unchanged.
         """
-    @property
-    def provider(self) -> object: ...
     @property
     def db(self) -> object | None: ...
     @property
