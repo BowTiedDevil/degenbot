@@ -948,3 +948,235 @@ class TestSubBBackgroundRegistration:
         assert calls == [None]
         assert bot.released is True
         assert session.bot is None
+
+
+class TestSubCBgRegistrationConcurrency:
+    """Sub-C: the Sub-B background-registration orchestration must never deadlock
+    or starve the main loop / dispatch / recursive verify, and the fail-fast
+    channel must deliver a fatal registration error exactly once.
+
+    Scoping note (consistent with Sub-A/Sub-B): registration runs as an asyncio
+    task cooperatively interleaved with the consumer (the pump itself solves on
+    its own tokio thread, independent of this loop). These tests drive the
+    asyncio-facing orchestration with controllable fakes — forever-discovery,
+    draining RPC-verify awaits, a growing block stream, and a fatal
+    registration error — and assert the hot loop keeps progressing throughout.
+    The genuine tokio-runtime parallel registration + real-pump no-deadlock
+    belongs to the Sub-A2 Rust port / rolling smoke (U6TKNU)."""
+
+    async def test_forever_registration_does_not_stall_main_loop(self) -> None:
+        """Discovery that never exhausts must not stall the main loop / dispatch:
+        the consumer makes full progress while registration still climbs."""
+        engine_registry = _FakeEngineRegistry()
+        dispatch_work: list[int] = []
+        climbed = -1
+
+        async def forever_path_builder(**_kwargs):
+            nonlocal climbed
+            i = 0
+            while True:  # discovery never exhausts, but yields cooperatively
+                climbed = i
+                i += 1
+                await asyncio.sleep(0)
+
+        async def consumer(**_kwargs):
+            # dispatch path — discrete work, then end the main loop
+            for n in range(25):
+                dispatch_work.append(n)
+                await asyncio.sleep(0)
+
+        session = BackrunSession(
+            _cfg(),
+            bot=_FakeBot(),
+            engine_registry=engine_registry,
+            async_w3=_FakeAsyncW3(),
+            snapshots=(None, None, None, None),
+            path_builder=forever_path_builder,
+            consumer=consumer,
+            background_registration=True,
+        )
+        await session.start()
+        await session.run()
+
+        # The hot loop made FULL progress while registration climbed forever —
+        # discovery never blocked main-loop/dispatch work.
+        assert dispatch_work == list(range(25))
+        assert climbed > 0, "registration must have actually climbed"
+        # run()'s finally cancelled the still-climbing registration at teardown.
+        reg = session._registration_task
+        assert reg is not None
+        assert reg.cancelled()
+
+    async def test_background_rpc_verify_drain_completes_without_deadlock(self) -> None:
+        """A registration task draining many RPC-verify awaits and the consumer
+        both complete cleanly — cooperative scheduling never deadlocks."""
+        engine_registry = _FakeEngineRegistry()
+        verify_steps = 0
+        dispatch_work: list[int] = []
+
+        async def draining_path_builder(**_kwargs):
+            nonlocal verify_steps
+            for _ in range(40):  # RPC-verify awaits (each a cooperative yield)
+                verify_steps += 1
+                await asyncio.sleep(0)
+
+        async def consumer(**_kwargs):
+            # hot loop does not depend on a 'final' discovery state: advance
+            # dispatch while registration drains, then finish with it complete.
+            # (``session._registration_task`` is already set by the time this
+            # coroutine runs — run() creates the reg task before the main loop.)
+            for n in range(10):
+                dispatch_work.append(n)
+                await asyncio.sleep(0)
+            registration_task = session._registration_task
+            assert registration_task is not None
+            await registration_task  # returns once the drain is done
+
+        session = BackrunSession(
+            _cfg(),
+            bot=_FakeBot(),
+            engine_registry=engine_registry,
+            async_w3=_FakeAsyncW3(),
+            snapshots=(None, None, None, None),
+            path_builder=draining_path_builder,
+            consumer=consumer,
+            background_registration=True,
+        )
+        await session.start()
+        await session.run()
+
+        assert verify_steps == 40, "registration must have drained all verifies"
+        assert dispatch_work == list(range(10))
+        reg = session._registration_task
+        # Clean, deadlock-free completion: registration finished without error.
+        assert reg is not None
+        assert reg.done()
+        assert reg.exception() is None
+
+    async def test_fail_fast_delivered_exactly_once(self) -> None:
+        """A fatal registration transport error cancels the main loop and is
+        delivered exactly once through the cross-task fail-fast channel — never
+        swallowed, never re-raised twice."""
+        from degenbot.exceptions import VerificationRpcError
+
+        engine_registry = _FakeEngineRegistry()
+
+        async def hanging_consumer(**_kwargs):
+            await asyncio.Event().wait()
+
+        async def raising_path_builder(**_kwargs):
+            await asyncio.sleep(0)
+            boom = "provider transport failure after bounded retry"
+            raise VerificationRpcError(boom)
+
+        session = BackrunSession(
+            _cfg(),
+            bot=_FakeBot(),
+            engine_registry=engine_registry,
+            async_w3=_FakeAsyncW3(),
+            snapshots=(None, None, None, None),
+            path_builder=raising_path_builder,
+            consumer=hanging_consumer,
+            background_registration=True,
+        )
+        await session.start()
+        with pytest.raises(VerificationRpcError, match="provider transport"):
+            await session.run()
+
+        # Fail-fast cancelled the hot loop and the fatal was surfaced exactly
+        # once (retrieved from the task, not re-raised twice).
+        assert session._result_consumer_task is not None
+        assert session._result_consumer_task.cancelled()
+        reg = session._registration_task
+        assert reg is not None
+        assert reg.done()
+        assert isinstance(reg.exception(), VerificationRpcError)
+
+    async def test_recurring_verify_proceeds_while_registration_climbs(self) -> None:
+        """The T7 recursive liquidity-map verify keeps firing on every
+        divisible-by-interval block while a forever-discovery registration is
+        still climbing — discovery never stalls recursive verify."""
+        seen_by_verify: list[int] = []
+        climbed = -1
+
+        class _Engine:
+            """Once-only block_stream + minimal engine surface."""
+
+            def __init__(self) -> None:
+                self.block_stream_calls = 0
+                self.resumed = False
+
+            def resume(self) -> None:
+                self.resumed = True
+
+            def last_processed_block(self) -> int | None:
+                return 12_345
+
+            def v2_pool_count(self) -> int:
+                return 0
+
+            def v3_pool_count(self) -> int:
+                return 0
+
+            def v4_pool_count(self) -> int:
+                return 0
+
+            def path_count(self) -> int:
+                return 0
+
+            def block_stream(self):
+                self.block_stream_calls += 1
+                if self.block_stream_calls > 1:
+                    boom = "block_stream() can only be called once"
+                    raise RuntimeError(boom)
+                # Every block divisible by RECURRING_VERIFY_INTERVAL (50).
+                return _BlocksStream(
+                    [_block_dict(500), _block_dict(550), _block_dict(600)],
+                )
+
+        class _Registry:
+            def __init__(self) -> None:
+                self.engine = _Engine()
+
+            def start(self, *_a, **_kw) -> int:
+                return 0  # no backfill beyond current_block — main-loop entry
+
+            async def verify_liquidity_maps(self, *, block_number=None) -> None:
+                seen_by_verify.append(block_number)
+
+        async def forever_path_builder(**_kwargs):
+            nonlocal climbed
+            i = 0
+            while True:
+                climbed = i
+                i += 1
+                await asyncio.sleep(0)
+
+        async def recording_consumer(*, block_stream=None, **_kw) -> None:
+            async for _b in block_stream:
+                await asyncio.sleep(0)
+
+        registry = _Registry()
+        session = BackrunSession(
+            _cfg(),
+            bot=_FakeBot(),
+            engine_registry=registry,  # type: ignore[arg-type]
+            async_w3=_FakeAsyncW3(),
+            snapshots=(None, None, None, None),
+            path_builder=forever_path_builder,
+            consumer=recording_consumer,
+            background_registration=True,
+        )
+        await session.start()
+        await session.run()
+
+        # T7 fired for every divisible-by-interval block WHILE registration
+        # climbed — recursive verify was never stalled by discovery.
+        assert seen_by_verify == [500, 550, 600]
+        assert registry.engine.block_stream_calls == 1
+        assert registry.engine.resumed is True
+        assert climbed > 0, "registration must have climbed concurrently"
+        # Main loop ended on the finite block stream; finally cancelled the
+        # still-climbing registration.
+        assert session._registration_task is not None
+        assert session._registration_task.cancelled()
