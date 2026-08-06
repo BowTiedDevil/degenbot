@@ -87,6 +87,20 @@ impl ArbitrageEngine {
             .collect()
     }
 
+    /// Consume-and-clear the ADR-021 solver-state change set: return the pool
+    /// refs for ONLY the paths re-solved since the last call and clear it, so
+    /// the verifier diffs just this block's re-solved paths (never the whole
+    /// registered set). `&mut self` is satisfied by the engine's owner holding
+    /// it behind a `Mutex`; the atomic take-then-clear avoids any race between
+    /// a reader and the next solve cycle overwriting the set.
+    pub fn take_solver_path_pool_refs_change_set(&mut self) -> Vec<Vec<MixedPoolRef>> {
+        let ids = std::mem::take(&mut self.last_solved_path_ids);
+        ids.iter()
+            .filter_map(|id| self.path_pools.get(id))
+            .map(|path| path.pools.clone())
+            .collect()
+    }
+
     /// Finalize the current block: if dirty paths accumulated since the last
     /// solve would be left behind by a block advance, solve them and send a
     /// result batch carrying `metadata`. Otherwise, if logs were observed but

@@ -363,6 +363,99 @@ mod tests {
         assert!(!solve_result.profit.is_zero());
     }
 
+    /// ADR-021 change-set scoping (pump-freeze fix): the solver-state verifier
+    /// must diff ONLY the paths re-solved this block, never the whole registered
+    /// set. A path untouched by a solve stays out of the change set; a solve on
+    /// one path does not leak the others in; and `take_solver_path_pool_refs_change_set`
+    /// consumes+clears the set so it cannot accumulate into the whole set over
+    /// time. RED before the change-set plumbing existed (the verifier walked
+    /// `solver_path_pool_refs`, i.e. every registered path, each publish).
+    #[test]
+    fn solver_state_change_set_scopes_to_resolved_paths_and_clears() {
+        let mut engine = ArbitrageEngine::new();
+
+        let a = engine.register_v2_pool(
+            Address::from([0x11u8; 20]),
+            usdc(1_000_000),
+            weth(500),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let b = engine.register_v2_pool(
+            Address::from([0x12u8; 20]),
+            usdc(2_000_000),
+            weth(900),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let _path_a = engine
+            .register_path(vec![PoolHop {
+                pool_id: a,
+                zero_for_one: true,
+            }])
+            .unwrap();
+        let _path_b = engine
+            .register_path(vec![PoolHop {
+                pool_id: b,
+                zero_for_one: true,
+            }])
+            .unwrap();
+
+        // Solve only path A's pool this block — B must stay out of the set.
+        engine.rebuild_and_solve_affected(
+            &HashSet::from([a]),
+            &HashSet::new(),
+            &HashSet::new(),
+            5,
+            &BlockMetadata::default(),
+        );
+
+        let change = engine.take_solver_path_pool_refs_change_set();
+        assert_eq!(
+            change.len(),
+            1,
+            "change set must contain only the re-solved path, got {} paths",
+            change.len()
+        );
+        assert_eq!(change[0].len(), 1);
+        assert_eq!(
+            change[0][0].pool_key, a,
+            "change set must reference path A's pool, not the whole set"
+        );
+        assert!(
+            change
+                .iter()
+                .flat_map(|p| p.iter())
+                .all(|r| r.pool_key == a),
+            "no path referencing pool B may leak into A's change set"
+        );
+
+        // Consumed + cleared: a second take returns nothing (can't accumulate).
+        let again = engine.take_solver_path_pool_refs_change_set();
+        assert!(
+            again.is_empty(),
+            "change set must be consumed+cleared by take"
+        );
+
+        // Re-solving B pushes B into the set — but never the whole set.
+        engine.rebuild_and_solve_affected(
+            &HashSet::from([b]),
+            &HashSet::new(),
+            &HashSet::new(),
+            6,
+            &BlockMetadata::default(),
+        );
+        let change2 = engine.take_solver_path_pool_refs_change_set();
+        assert_eq!(change2.len(), 1);
+        assert!(
+            change2
+                .iter()
+                .flat_map(|p| p.iter())
+                .all(|r| r.pool_key == b),
+            "a fresh solve must carry only the newly-re-solved path"
+        );
+    }
+
     #[test]
     fn register_path_after_start_succeeds() {
         let mut engine = ArbitrageEngine::new();

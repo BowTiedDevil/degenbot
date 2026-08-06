@@ -360,6 +360,15 @@ pub struct ArbitrageEngine {
     /// solved and appended to `results`. Tracked so `rebuild_and_solve_affected`
     /// can merge them instead of discarding them when it replaces `self.results`.
     pending_new_paths: HashSet<u64>,
+    /// The ADR-021 solver-state change set: path IDs re-solved since the last
+    /// `take_solver_path_pool_refs_change_set` call (i.e. since the last
+    /// publish). Accumulated (union) across `rebuild_and_solve_affected` calls
+    /// so a multi-solve-before-publish batch is fully covered, and consumed+
+    /// cleared at the publish so the drift-per-block diff never grows unbounded
+    /// and never walks the whole registered set (the root of the confirmed pump
+    /// freeze). Consumed by the solver-state verifier to scope its per-block
+    /// on-chain diff to ONLY the paths actually re-solved this block.
+    last_solved_path_ids: HashSet<u64>,
     /// Auto-incrementing path ID
     next_path_id: u64,
     /// Delivery policy — the optional publish sink that consumes the solve
@@ -418,6 +427,7 @@ impl ArbitrageEngine {
             last_solved_block: 0,
             has_logs_this_block: false,
             pending_new_paths: HashSet::new(),
+            last_solved_path_ids: HashSet::new(),
             next_path_id: 1, // path IDs start at 1
             delivery: DeliveryPolicy::default(),
             dirty_v2: HashSet::new(),

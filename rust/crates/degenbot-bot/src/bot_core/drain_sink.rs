@@ -80,4 +80,14 @@ pub trait DrainSink: Send + Sync {
     fn solver_path_pool_refs(&self) -> Vec<Vec<MixedPoolRef>> {
         Vec::new()
     }
+
+    /// Consume-and-clear the ADR-021 solver-state change set (paths re-solved
+    /// since the last publish) across all engines, for the solver-state accuracy
+    /// gate. Defaults to empty; the arbitrage `SolveCoordinator` fans this out
+    /// to each engine's accumulated change set and clears it (atomic take-then-
+    /// clear, so the verifier diffs only this block's re-solved paths — never
+    /// the whole registered set).
+    fn take_solver_path_pool_refs_change_set(&self) -> Vec<Vec<MixedPoolRef>> {
+        Vec::new()
+    }
 }

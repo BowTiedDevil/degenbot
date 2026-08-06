@@ -84,6 +84,16 @@ impl ArbitrageEngine {
         affected_path_ids.extend(&self.pending_new_paths);
         self.pending_new_paths.clear();
 
+        // ADR-021 change-set accumulation (pump-freeze fix): record every path
+        // re-solved this solve cycle so the solver-state verifier can scope its
+        // per-block on-chain diff to ONLY the paths actually solved (consumed
+        // + cleared at the publish point via `take_solver_path_pool_refs_change_set`)
+        // instead of the whole registered set — the verified root of the
+        // confirmed O(registered × hops × RPC) pump freeze. Union/accumulate
+        // (not overwrite) so a multi-solve-before-publish batch is fully
+        // covered rather than only its final solve.
+        self.last_solved_path_ids.extend(&affected_path_ids);
+
         // Solve-block anchor: the batch's `solve_block` (= `results_block`)
         // is the block the pool state actually reflects — the pool-state
         // head, NOT the (possibly-lagging) drain `block_number`. Since

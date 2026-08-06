@@ -196,6 +196,13 @@ pub struct SubscribeState {
     pub combined_stream: Option<stream::BoxStream<'static, WsEvent>>,
 }
 
+/// The payload handed from the pump to the solver-state verifier task at each
+/// publish point: the solve block and the pool refs for ONLY the paths re-solved
+/// that block (the ADR-021 change set). Captured atomically at the publish so
+/// the verifier diffs exactly what this block re-solved against the chain — never
+/// the whole registered set (the root of the confirmed pump freeze).
+type SolverVerifyRequest = (u64, Vec<Vec<degenbot_solvers::mixed::MixedPoolRef>>);
+
 impl BlockPump {
     /// Subscribe phase: open WS connections and observe until first complete block.
     ///
@@ -585,28 +592,33 @@ impl BlockPump {
     /// ADR-021 semantics) — the abort kills the bot before any on-chain
     /// submission, regardless of where the pump is in its advance.
     async fn solver_state_verify_loop(
-        mut rx: tokio::sync::watch::Receiver<Option<u64>>,
+        mut rx: tokio::sync::watch::Receiver<Option<SolverVerifyRequest>>,
         bot: Arc<Bot>,
-        sink: Arc<dyn DrainSink>,
         provider: Arc<AlloyProvider>,
     ) {
         while rx.changed().await.is_ok() {
-            let Some(block) = *rx.borrow_and_update() else {
+            let Some((block, path_refs)) = (*rx.borrow_and_update()).clone() else {
                 continue;
             };
-            tracing::debug!(block, "solver-state verifier: verifying published block");
-            Self::verify_solver_state_against_chain(&bot, &sink, &provider, block).await;
+            if path_refs.is_empty() {
+                continue;
+            }
+            tracing::debug!(
+                block,
+                paths = path_refs.len(),
+                "solver-state verifier: verifying published block change set"
+            );
+            Self::verify_solver_state_against_chain(&bot, &provider, &path_refs, block).await;
         }
     }
 
     #[allow(clippy::missing_panics_doc)]
     async fn verify_solver_state_against_chain(
         bot: &Arc<Bot>,
-        sink: &Arc<dyn DrainSink>,
         provider: &Arc<AlloyProvider>,
+        path_refs: &[Vec<degenbot_solvers::mixed::MixedPoolRef>],
         block: u64,
     ) {
-        let path_refs = sink.solver_path_pool_refs();
         if path_refs.is_empty() {
             return;
         }
@@ -623,7 +635,7 @@ impl BlockPump {
         {
             let state_arc = bot.state_arc();
             let core = state_arc.read();
-            for pools in &path_refs {
+            for pools in path_refs {
                 path_hop_states.push(extract_solver_hop_states(&core, pools));
             }
             anchor = block.max(core.pool_state_head());
@@ -856,13 +868,12 @@ impl BlockPump {
         // froze while the inline gate ground through the whole registered set).
         // The verifier abort()s the whole process on desync (unchanged ADR-021
         // fail-stop); only the most recent published block is ever verified.
-        let verify_tx: Option<tokio::sync::watch::Sender<Option<u64>>> =
+        let verify_tx: Option<tokio::sync::watch::Sender<Option<SolverVerifyRequest>>> =
             if solver_state_verify_enabled {
                 let (tx, rx) = tokio::sync::watch::channel(None);
                 tokio::spawn(Self::solver_state_verify_loop(
                     rx,
                     Arc::clone(&self.bot),
-                    Arc::clone(&self.sink),
                     Arc::clone(&self.provider),
                 ));
                 Some(tx)
@@ -1020,10 +1031,18 @@ impl BlockPump {
                                 // only the most recent published block is
                                 // ever verified.
                                 if let Some(ref tx) = verify_tx {
-                                    // Non-blocking latest-wins handoff — the
-                                    // pump never awaits the verifier, so block
-                                    // advancement is decoupled from assertion.
-                                    let _ = tx.send(Some(current_block));
+                                    // Capture this block's change-set path refs
+                                    // (consume-and-clear) and hand them to the
+                                    // verifier atomically with the block number,
+                                    // so it diffs exactly the paths re-solved
+                                    // this block — never the whole registered
+                                    // set. Non-blocking latest-wins handoff;
+                                    // the pump never awaits the verifier, so
+                                    // block advancement stays decoupled from
+                                    // assertion.
+                                    let change_set =
+                                        self.sink.take_solver_path_pool_refs_change_set();
+                                    let _ = tx.send(Some((current_block, change_set)));
                                 }
                             }
                         }
@@ -3565,8 +3584,8 @@ mod tests {
         let hex_resp = format!("0x{}", alloy::primitives::hex::encode(&resp));
         asserter.push_success(&hex_resp);
 
-        BlockPump::verify_solver_state_against_chain(&pump.bot, &pump.sink, &pump.provider, 200)
-            .await;
+        let refs = pump.sink.solver_path_pool_refs();
+        BlockPump::verify_solver_state_against_chain(&pump.bot, &pump.provider, &refs, 200).await;
         unreachable!("the solver-state gate MUST abort the process on a verified desync (UO3JM4)");
     }
 

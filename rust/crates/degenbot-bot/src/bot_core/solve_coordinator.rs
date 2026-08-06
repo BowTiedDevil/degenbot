@@ -200,6 +200,14 @@ impl DrainSink for SolveCoordinator {
             .flat_map(|engine| engine.solver_path_pool_refs())
             .collect()
     }
+
+    fn take_solver_path_pool_refs_change_set(&self) -> Vec<Vec<MixedPoolRef>> {
+        let _guard = self.drain_lock.lock().expect("drain_lock poisoned");
+        self.engines
+            .iter()
+            .flat_map(|engine| engine.take_solver_path_pool_refs_change_set())
+            .collect()
+    }
 }
 
 #[cfg(test)]

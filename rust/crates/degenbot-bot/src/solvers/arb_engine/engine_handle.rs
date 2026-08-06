@@ -149,6 +149,10 @@ impl Engine for EngineHandle {
     fn solver_path_pool_refs(&self) -> Vec<Vec<MixedPoolRef>> {
         self.engine.lock().solver_path_pool_refs()
     }
+
+    fn take_solver_path_pool_refs_change_set(&self) -> Vec<Vec<MixedPoolRef>> {
+        self.engine.lock().take_solver_path_pool_refs_change_set()
+    }
 }
 
 #[cfg(test)]
