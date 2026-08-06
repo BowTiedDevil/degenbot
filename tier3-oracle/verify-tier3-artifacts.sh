@@ -64,7 +64,7 @@ check_one build-tier3-harnesses.sh              SwapMathV3Harness.sol/SwapMathV3
                                                 Echo.sol/Echo.json
 check_one build-tier3-curve-swap-harness.sh     CurveSwapOracleHarness.sol/CurveSwapOracleHarness.json
 check_one build-tier3-balancer-swap-harness.sh  BalancerSwapOracleHarness.sol/BalancerSwapOracleHarness.json
-check_one build-tier3-pancake-swap-harness.sh PancakeV3SwapOracleHarness.sol/PancakeV3SwapOracleHarness.json
+check_one build-tier3-pancake-v3-swap-harness.sh PancakeV3SwapOracleHarness.sol/PancakeV3SwapOracleHarness.json
 check_one build-tier3-pancake2-swap-harness.sh PancakeV2SwapOracleHarness.sol/PancakeV2SwapOracleHarness.json
 
 # The PINNED PancakeSwap V2 pair (artifacts/PancakeV2Pair/): recompile the

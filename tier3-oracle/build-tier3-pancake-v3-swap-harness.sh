@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the Tier-3 PancakeSwap V3 `PancakeV3Pool.swap` oracle harness (task:
 # PancakeSwap V3 variant harness). Compiles
-# `src-pancake/PancakeV3SwapOracleHarness.sol` (which imports the REAL
+# `src-pancake-v3/PancakeV3SwapOracleHarness.sol` (which imports the REAL
 # `PancakeV3Pool` — the Etherscan-verified deployed source, solc 0.7.6,
 # vendored under `lib/pancake-src/`) directly with solc 0.7.6 (same toolchain
 # as the Uniswap V3 harness — the PancakeSwap fork is also `pragma 0.7.6`).
@@ -42,7 +42,7 @@ STD_JSON="$(mktemp)"
 cat > "${STD_JSON}" <<'JSON'
 {
   "language": "Solidity",
-  "sources": { "src-pancake/PancakeV3SwapOracleHarness.sol": { "urls": ["src-pancake/PancakeV3SwapOracleHarness.sol"] } },
+  "sources": { "src-pancake-v3/PancakeV3SwapOracleHarness.sol": { "urls": ["src-pancake-v3/PancakeV3SwapOracleHarness.sol"] } },
   "settings": {
     "optimizer": { "enabled": true, "runs": 1 },
     "outputSelection": { "*": { "*": ["abi", "evm.bytecode.object", "evm.deployedBytecode.object"] } },
@@ -70,7 +70,7 @@ if errs:
 for e in raw.get("errors", []):
     if e.get("severity") == "warning":
         print(f"solc warning: {e.get('formattedMessage','')}", file=sys.stderr)
-inner = raw["contracts"]["src-pancake/PancakeV3SwapOracleHarness.sol"]["PancakeV3SwapOracleHarness"]
+inner = raw["contracts"]["src-pancake-v3/PancakeV3SwapOracleHarness.sol"]["PancakeV3SwapOracleHarness"]
 shaped = {
     "abi": inner["abi"],
     "bytecode": {"object": inner["evm"]["bytecode"]["object"]},

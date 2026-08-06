@@ -17,7 +17,7 @@
   },
   "PancakeV3SwapOracleHarness.sol/PancakeV3SwapOracleHarness.json": {
     "sha256": "4eff20429bc5f8a4c92f4e396d94858b7f85587b0449726cff9bafec126344ea",
-    "source": "src-pancake/PancakeV3SwapOracleHarness.sol"
+    "source": "src-pancake-v3/PancakeV3SwapOracleHarness.sol"
   },
   "SwapMathV3Harness.sol/SwapMathV3Harness.json": {
     "sha256": "15da79c2131f65df1a2796d7aa835f8d467455bd272deb53bece4b06fac5eac4",

@@ -225,7 +225,7 @@ test-tier3-balancer:
     cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_balancer_swap_vs_revm
 
 # Tier-3 PancakeSwap V3 `PancakeV3Pool.swap` oracle (task: PancakeSwap V3
-# variant harness). Builds the src-pancake harness (solc 0.7.6) over the REAL
+# variant harness). Builds the src-pancake-v3 harness (solc 0.7.6) over the REAL
 # `PancakeV3Pool` — the Etherscan-verified deployed source (pool
 # 0x1445F32D1A74872bA41f3D8cF4022E9996120b31) vendored under `lib/pancake-src/`
 # — then drives the engine's `v3_simulate_swap` against the on-chain swap,
@@ -234,7 +234,7 @@ test-tier3-balancer:
 test-tier3-pancake:
     #!/usr/bin/env bash
     set -euo pipefail
-    tier3-oracle/build-tier3-pancake-swap-harness.sh
+    tier3-oracle/build-tier3-pancake-v3-swap-harness.sh
     python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_pancake_v3_swap_vs_revm
@@ -298,7 +298,7 @@ rebuild-tier3-artifacts:
     tier3-oracle/build-tier3-v4-swap-harness.sh
     tier3-oracle/build-tier3-curve-swap-harness.sh
     tier3-oracle/build-tier3-balancer-swap-harness.sh
-    tier3-oracle/build-tier3-pancake-swap-harness.sh
+    tier3-oracle/build-tier3-pancake-v3-swap-harness.sh
     tier3-oracle/build-tier3-pancake2-swap-harness.sh
 
 # Run all tests (Rust + Python)
