@@ -2794,6 +2794,18 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "> config.toml ws[1] > error."
         ),
     )
+    parser.add_argument(
+        "--operator-socket",
+        type=str,
+        default=None,
+        help=(
+            "Optional Unix domain socket path for the operator command channel "
+            "(NWTUM3). When set, the bot hosts an OperatorServer here so the "
+            "`degenbot path add` / `degenbot path discover` CLI can add a path "
+            "or trigger bounded on-demand discovery on the LIVE pump without "
+            "restarting it."
+        ),
+    )
     return parser
 
 
@@ -2851,7 +2863,53 @@ async def main() -> None:
     # coroutine as a cancelled task.
     try:
         async with BackrunSession(cfg) as session:
-            await session.run()
+            # NWTUM3: optional operator command channel. The bot hosts an
+            # OperatorServer on a Unix domain socket so `degenbot path add` /
+            # `degenbot path discover` can steer the LIVE pump (add a path,
+            # trigger bounded on-demand discovery) without restarting it. The
+            # handler routes into the session's programmatic surface
+            # (`enqueue_path` / `trigger_discovery`), which never awaits the
+            # pump, so a mid-run command cannot stall solve/dispatch.
+            operator = None
+            operator_task = None
+            if args.operator_socket:
+                from degenbot.operator.operator_channel import (
+                    OperatorServer,
+                    step_from_wire,
+                )
+
+                async def operator_handler(op: str, payload: dict) -> dict:
+                    if op == "add_path":
+                        steps = [step_from_wire(s) for s in payload["steps"]]
+                        directions = payload.get("directions")
+                        await session.enqueue_path(steps, directions=directions)
+                        return {"detail": f"enqueued {len(steps)}-hop path"}
+                    if op == "discover":
+                        bound = payload.get("bound")
+                        n = await session.trigger_discovery(bound=bound)
+                        return {"detail": f"discovery processed {n} paths"}
+                    return {"error": f"unknown op {op!r}"}
+
+                operator = OperatorServer(
+                    operator_handler, socket_path=args.operator_socket
+                )
+                operator_task = asyncio.create_task(
+                    operator.serve(), name="operator-server"
+                )
+                bot_logger.info(
+                    f"[operator] listening on {args.operator_socket}"
+                )
+            try:
+                await session.run()
+            finally:
+                # Tear down the operator channel whenever session.run() finishes
+                # (including on KeyboardInterrupt/CancelledError) so the socket
+                # file is always cleaned up.
+                if operator_task is not None:
+                    operator_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await operator_task
+                    await operator.close()
     except (KeyboardInterrupt, asyncio.CancelledError):
         bot_logger.info("[shutdown] interrupted — Rust pump stopped, exiting.")
 
