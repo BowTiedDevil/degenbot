@@ -267,6 +267,9 @@ class TestBuildManagedPoolIdentityReturnSurface:
         bot._io = SimpleNamespace(  # type: ignore[assignment]
             get_block_number=lambda: 100,
             fetch_v4_slot0_liquidity=lambda *a, **k: (1 << 96, 0, 0, 5000, 0),
+            # CDJEPJ-2: batched metadata seam — return None per token so the
+            # metadata path falls back to the stubbed `build` below.
+            fetch_erc20_metadata_batch=lambda *a, **k: [None, None],
         )
         bot._erc20_builder.build = lambda *a, **k: SimpleNamespace(  # type: ignore[assignment]
             address="0x" + "cc" * 20
@@ -295,6 +298,8 @@ class TestBuildManagedPoolIdentityReturnSurface:
                 1,
                 0,
                 pool_id_hex,
+                5000,  # protocol_fee (CDJEPJ-1 return surface)
+                0,  # lp_fee
             ),
         )
 

@@ -21,8 +21,8 @@ from degenbot.logging import logger
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from degenbot._ffi import Erc20TokenRow
     from degenbot.bot import PyBot, PyBotIo
+    from degenbot.database import Erc20TokenRow
     from degenbot.database.session_manager import DatabaseSessionManager
     from degenbot.registry import TokenRegistry
     from degenbot.types.aliases import ChainId
