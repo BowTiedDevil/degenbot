@@ -697,43 +697,82 @@ impl V3PoolState {
         let gamma_numer = u64::from(1_000_000 - fee);
         let fee_denom = 1_000_000u64;
 
-        let mut int_ranges = Vec::with_capacity(use_ranges.len());
+        // Net at the current tick (zfo only). For a zfo swap the V3 swap
+        // loop's first `nextInitializedTickWithinOneWord(lte=true)` resolves
+        // the CURRENT tick when it is initialized, so the swap sweeps the
+        // leading segment [current, sqrt(currentTick)] at the PRE-drain stored
+        // liquidity; only upon REACHING sqrt(currentTick) does it cross the
+        // tick and apply `if (zeroForOne) liquidityNet = -liquidityNet;` →
+        // `state.liquidity -= net(currentTick)` (UniswapV3Pool::swap →
+        // Tick.cross → LiquidityMath.addDelta).
+        //
+        // This function models that leading segment as a dedicated hop at the
+        // stored liquidity (below) and applies the net at the crossing into the
+        // below ranges via `base = stored - net(currentTick)`. Prior to this
+        // the net was folded into range 0's liquidity unconditionally — a
+        // compression faithful only for DEEP swaps that reach the boundary. For
+        // a SHALLOW swap that partial-fills ABOVE sqrt(currentTick) (e.g. path
+        // 13827 DAI/USDC: current tick -276324 carries net -4.27e17, inflating
+        // the modeled starting liquidity and over-predicting `v3_simulate_swap`
+        // by 1 wei → the `V3_TAKE` overdraft / "IIA" revert class), that
+        // compression incorrectly governed the output by the post-drain
+        // liquidity. ofz uses `gt` (exclusive) and does NOT re-cross the
+        // current tick, so no net applies there.
+        let current_tick_net: i128 = if zero_for_one {
+            self.tick_data.get(&self.tick).map_or(0, |info| {
+                // liquidity_net is I256; extract the low 128 bits as
+                // i128 (same extraction as `compute_tick_ranges`).
+                let bytes = info.liquidity_net.to_be_bytes::<32>();
+                let low: [u8; 16] = bytes[16..32].try_into().unwrap_or([0u8; 16]);
+                i128::from_be_bytes(low)
+            })
+        } else {
+            0
+        };
+        let base_liquidity: i128 = self.liquidity.cast_signed() - current_tick_net;
+
+        let has_leading_current_segment = zero_for_one && self.tick_data.contains_key(&self.tick);
+
+        let mut int_ranges = Vec::with_capacity(use_ranges.len() + 1);
+
+        // Contract-faithful leading segment (zfo + initialized current tick
+        // only): the swap's first step targets sqrt(currentTick) while
+        // `state.liquidity` is still the stored (pre-drain) value, so model
+        // [current, sqrt(currentTick)] as a leading hop at stored liquidity.
+        // The below computed ranges then apply the net at the crossing.
+        if has_leading_current_segment {
+            let tick_sqrt = U256::from(
+                get_sqrt_ratio_at_tick_internal(self.tick).unwrap_or(alloy::primitives::U160::ZERO),
+            );
+            int_ranges.push(IntV3TickRangeHop {
+                liquidity: self.liquidity,
+                sqrt_price_x96: self.sqrt_price_x96,
+                sqrt_price_lower_x96: tick_sqrt,
+                sqrt_price_upper_x96: tick_sqrt,
+                gamma_numer,
+                fee_denom,
+                zero_for_one,
+                word_boundary_prices: Vec::new(),
+            });
+        }
+
         for (i, r) in use_ranges.iter().enumerate() {
             let sqrt_price_x96 = if i == 0 {
-                self.sqrt_price_x96
+                if has_leading_current_segment {
+                    // leading hop already starts at current; this first computed
+                    // range enters at sqrt(currentTick)
+                    U256::from(
+                        get_sqrt_ratio_at_tick_internal(self.tick)
+                            .unwrap_or(alloy::primitives::U160::ZERO),
+                    )
+                } else {
+                    self.sqrt_price_x96
+                }
             } else if zero_for_one {
                 use_ranges[i - 1].sqrt_price_upper
             } else {
                 use_ranges[i - 1].sqrt_price_lower
             };
-
-            // V3 step-1 current-tick drain (zfo only). When the current tick
-            // is initialized, the V3 swap loop's first step resolves
-            // `tickNext = current tick` (its `_nextInitializedTickWithinOneWord`
-            // uses `lte=true`, inclusive, for zfo) and `sqrtPriceTarget ==
-            // sqrtPriceNext == current sqrtPrice` — a zero-amount step that
-            // still crosses the tick, applying `liquidity -= liquidityNet(
-            // currentTick)`. The closed-form solver MUST mirror this drain or
-            // it models the starting liquidity as constant through a region
-            // the contract has already drained (to zero, or to a far lower
-            // value) → catastrophic no-slippage over-prediction. See the
-            // mainnet fixture logs/fixtures/v2_v3_v3_solver_divergence_25641093.md
-            // (hop[2], DAI/WETH pool 0xD8dE…7aC19: current tick -74028 carries
-            // liq_net +5.407e18 == the current liquidity, so a zfo swap drains
-            // to zero in step 1 and free-falls to -84382). ofz uses `gt`
-            // (exclusive) and does NOT re-cross the current tick, so no drain.
-            let current_tick_drain: i128 = if zero_for_one {
-                self.tick_data.get(&self.tick).map_or(0, |info| {
-                    // liquidity_net is I256; extract the low 128 bits as
-                    // i128 (same extraction as `compute_tick_ranges`).
-                    let bytes = info.liquidity_net.to_be_bytes::<32>();
-                    let low: [u8; 16] = bytes[16..32].try_into().unwrap_or([0u8; 16]);
-                    i128::from_be_bytes(low)
-                })
-            } else {
-                0
-            };
-            let base_liquidity: i128 = self.liquidity.cast_signed() - current_tick_drain;
 
             let range_liquidity = if i == 0 {
                 if base_liquidity < 0 {
@@ -1781,9 +1820,15 @@ mod apply_inherent_tests {
         //   r1 = [-84224, -74240] liq_net=0   (the 10k-tick free-fall gap)
         //   r2 = [-84382, -84224] liq_net=-6.49e16
         //   r3 = [-84401, -84382] liq_net=-2.32e18  ← holds captured post-swap tick -84383
-        // After the current-tick drain the in-range liquidity must be:
-        //   r0,r1,r2 → 0                          (drained at -74028; no net until -84382)
-        //   r3       → 64_914_675_035_050_604     (crossing -84382 recovers liq)
+        // `build_int_v3_sequence` prepends a contract-faithful LEADING hop = the
+        // current segment [current, sqrt(currentTick)] at the stored (pre-drain)
+        // liquidity 5.4e18, then applies the net at the crossing:
+        //   lead = 5.4e18 (stored; the segment the swap sweeps before crossing
+        //                   the current tick -74028, whose net == stored)
+        //   r0   = 0   (drained at -74028)
+        //   r1   = 0   (free-fall gap, no net until -84382)
+        //   r2   = 0
+        //   r3   = 64_914_675_035_050_604 (crossing -84382 recovers liq)
         let seq = state
             .build_int_v3_sequence(1, 100, true, 15)
             .expect("should build a sequence");
@@ -1792,16 +1837,20 @@ mod apply_inherent_tests {
         eprintln!("[drain-test] range liquidities: {liqs:?}");
 
         assert_eq!(
-            liqs[0], 0,
-            "r0 must be drained to 0 (current-tick -74028 zfo drain)"
+            liqs[0], 5_407_362_545_736_161_987,
+            "leading current segment sweeps [current, sqrt(-74028)] at stored liquidity"
         );
-        assert_eq!(liqs[1], 0, "r1 must be 0 (free-fall gap above -84382)");
         assert_eq!(
-            liqs[2], 0,
+            liqs[1], 0,
+            "r0 drained after crossing current tick -74028 (net == stored)"
+        );
+        assert_eq!(liqs[2], 0, "r1 must be 0 (free-fall gap above -84382)");
+        assert_eq!(
+            liqs[3], 0,
             "r2 must be 0 (still above -84382, no net applied)"
         );
         assert_eq!(
-            liqs[3], 64_914_675_035_050_604,
+            liqs[4], 64_914_675_035_050_604,
             "r3 must recover to 6.49e16 after crossing -84382"
         );
 

@@ -31,6 +31,7 @@ use degenbot::RegisterV3PoolParams;
 use degenbot_pools::v3_state::{v3_simulate_swap, PoolTickCoverage, V3PoolState};
 use degenbot_pools::TickInfo;
 use degenbot_solvers::mixed::PoolHop;
+use degenbot_solvers::mobius_v3_int::int_simulate_v3_swap;
 
 const FIXTURE_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -195,6 +196,166 @@ fn main() {
     println!(
         "  != recorded solver predicted ({recorded_predicted})? {}",
         sim_out != recorded_predicted
+    );
+
+    // 1b) The solver-math parity on the IDENTICAL (fixture-current) hop1 state:
+    //     feed the recorded hop1 input through the solver's int crossing
+    //     (`compute_crossing` + `int_simulate_v3_swap`) and compare against the
+    //     oracle. If they now AGREE at 41579706, the live +1 was stale engine
+    //     state (pump ordering), not solver math. If the int crossing still
+    //     yields 41579707, it is a genuine CL-crossing residual (the fix target).
+    let seq = v3_1_state
+        .build_int_v3_sequence(hop1_ts, hop1_fee, hop1_zfo, 30)
+        .expect("hop1 builds an int sequence");
+    let n = seq.ranges.len();
+    let mut chosen_k = 0usize;
+    for k in 0..n {
+        let crossing = seq.compute_crossing(k).expect("crossing k");
+        if crossing.crossing_gross_input <= hop1_input {
+            chosen_k = k;
+        } else {
+            break;
+        }
+    }
+    let crossing = seq.compute_crossing(chosen_k).expect("crossing chosen");
+    let remaining = hop1_input.saturating_sub(crossing.crossing_gross_input);
+    let ending = int_simulate_v3_swap(remaining, &crossing.ending_range);
+    let solver_math_out = crossing.crossing_output.saturating_add(ending.output);
+    eprintln!(
+        "[DIAG] chosen_k={chosen_k} n={n} crossing_gross_input={} crossing_output={} remaining={} ending.output={}",
+        crossing.crossing_gross_input, crossing.crossing_output, remaining, ending.output
+    );
+    // Isolate the residual: re-walk the FULL crossing (ranges 0..chosen_k,
+    // entry->interior boundaries->exit) with the CANONICAL compute_swap_step_v3
+    // (what v3_simulate_swap does) instead of the closed-form
+    // exact_in_step_to_target path used by compute_crossing. If this matches
+    // the sim where the closed-form path over-counts by 1, the residual is in
+    // `full_crossing_of_range`/`exact_in_step_to_target`.
+    {
+        eprintln!(
+            "[DIAG] r0 liquidity={} sp_lower={} sp_upper={} sp_cur={} n_word_boundaries={} sim_post_sqrt={} sim_post_tick={}",
+            seq.ranges[0].liquidity,
+            seq.ranges[0].sqrt_price_lower_x96,
+            seq.ranges[0].sqrt_price_upper_x96,
+            seq.ranges[0].sqrt_price_x96,
+            seq.ranges[0].word_boundary_prices.len(),
+            sim.sqrt_price_x96,
+            sim.tick
+        );
+        eprintln!(
+            "[DIAG] r0 word_boundary_prices (first 6): {:?}",
+            seq.ranges[0]
+                .word_boundary_prices
+                .iter()
+                .take(6)
+                .collect::<Vec<_>>()
+        );
+        eprintln!(
+            "[DIAG] sim amount0={} amount1={} | solver ending.output={} : parity?",
+            sim.amount0, sim.amount1, ending.output
+        );
+        // Direct replication of the solver's single step vs the sim's on the
+        // SAME compute_swap_step_v3 with the same start/liquidity/input/fee.
+        {
+            use degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v3;
+            let liq = i128::try_from(seq.ranges[0].liquidity).unwrap();
+            let fee = U256::from(seq.ranges[0].fee_denom - seq.ranges[0].gamma_numer);
+            let amt = I256::try_from(hop1_input).unwrap();
+            let step1 = compute_swap_step_v3(
+                seq.ranges[0].sqrt_price_x96,
+                seq.ranges[0].sqrt_price_lower_x96,
+                liq,
+                amt,
+                fee,
+            )
+            .unwrap();
+            let step2 = compute_swap_step_v3(
+                v3_1_state.sqrt_price_x96,
+                seq.ranges[0].sqrt_price_lower_x96,
+                liq,
+                amt,
+                fee,
+            )
+            .unwrap();
+            eprintln!(
+                "[DIAG] solver-step amount_out={} sqrt_next={} fee={fee} | sim-state-step amount_out={} sqrt_next={} | state_sqrt={}",
+                step1.amount_out, step1.sqrt_price_next, step2.amount_out, step2.sqrt_price_next, v3_1_state.sqrt_price_x96
+            );
+            // Equality probe: is the coercive price EXACTLY at the current tick's
+            // sqrt boundary (the condition that triggers the step-1 drain)?
+            let tick_sqrt =
+                degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-276_324)
+                    .map(|v| U256::from(v))
+                    .unwrap_or_default();
+            eprintln!(
+                "[DIAG] tick_sqrt(-276324)={tick_sqrt} state_sqrt={} equal={}",
+                v3_1_state.sqrt_price_x96,
+                tick_sqrt == v3_1_state.sqrt_price_x96
+            );
+        }
+    }
+    {
+        use degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v3;
+        let fee_pips = U256::from(seq.ranges[0].fee_denom - seq.ranges[0].gamma_numer);
+        let zfo = seq.ranges[0].zero_for_one;
+        let mut consumed_canon = U256::ZERO;
+        let mut output_canon = U256::ZERO;
+        let mut rem = I256::try_from(hop1_input).expect("input fits i256");
+        for i in 0..chosen_k {
+            let r = &seq.ranges[i];
+            let mut sp = if i == 0 {
+                r.sqrt_price_x96
+            } else if zfo {
+                seq.ranges[i - 1].sqrt_price_lower_x96
+            } else {
+                seq.ranges[i - 1].sqrt_price_upper_x96
+            };
+            let exit = if zfo {
+                r.sqrt_price_lower_x96
+            } else {
+                r.sqrt_price_upper_x96
+            };
+            for &target in r.word_boundary_prices.iter().chain(std::iter::once(&exit)) {
+                if rem <= I256::ZERO {
+                    break;
+                }
+                let step = compute_swap_step_v3(
+                    sp,
+                    target,
+                    i128::try_from(r.liquidity).unwrap(),
+                    rem,
+                    fee_pips,
+                )
+                .expect("step");
+                let consumed = step.amount_in.saturating_add(step.fee_amount);
+                consumed_canon = consumed_canon.saturating_add(consumed);
+                output_canon = output_canon.saturating_add(step.amount_out);
+                rem = rem
+                    .checked_sub(I256::try_from(consumed).unwrap())
+                    .unwrap_or(I256::ZERO);
+                sp = step.sqrt_price_next;
+                if sp != target {
+                    break;
+                }
+            }
+        }
+        let ending_canon = int_simulate_v3_swap(
+            U256::try_from(rem).unwrap_or(U256::ZERO),
+            &crossing.ending_range,
+        );
+        let total_canon = output_canon.saturating_add(ending_canon.output);
+        eprintln!(
+            "[DIAG] canonical cross walk: output_canon={} ending.output={} total={} | sim={sim_out}",
+            output_canon, ending_canon.output, total_canon
+        );
+    }
+    println!("--- solver-math parity on identical state (hop1) ---");
+    println!("solver int crossing output @ recorded input: {solver_math_out}");
+    println!("v3_simulate_swap @ same state+input:          {sim_out}");
+    println!(
+        "  solver-math == sim? {}  | == recorded actual ({recorded_actual})? {}",
+        solver_math_out == sim_out,
+        solver_math_out == recorded_actual
     );
 
     // 2) The production Möbius solver over the reconstructed three V3 pools.

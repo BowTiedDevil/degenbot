@@ -3279,19 +3279,26 @@ mod tests {
             eprintln!("[T47PPB-dbg] r{i}: liq={}", r.liquidity);
         }
         // The two T47PPB invariants, asserted together:
-        //  (1) current-tick drain: leading ranges must be ZERO-liquidity (the
-        //      pre-fix solver carried the full 5.407e18 down the free-fall
-        //      region and predicted 3_032_343_697 wei — the divergence);
+        //  (1) current-tick drain: the leading hop models the contract-faithful
+        //      current segment [current, sqrt(-74028)] at STORED liquidity
+        //      (5.407e18), then the free-fall ranges AFTER it must be
+        //      ZERO-liquidity (the pre-fix solver carried the full 5.407e18
+        //      down the free-fall region and predicted 3_032_343_697 wei — the
+        //      divergence);
         //  (2) collapse reach: the -84382 ACTIVATION (liquidity
         //      64_914_675_035_050_604) must appear — pre-collapse the 15-range
         //      budget starved on ~40 word-boundary ticks (spacing 1) before
         //      reaching it. Depth 24 keeps it visible.
         assert!(
-            seq.ranges.len() >= 4,
-            "T47PPB: need the drain segment + activation (>=4 ranges)"
+            seq.ranges.len() >= 5,
+            "T47PPB: need the leading segment + drain + activation (>=5 ranges)"
         );
         assert!(
-            seq.ranges[..3].iter().all(|r| r.liquidity == 0),
+            seq.ranges[0].liquidity == 5_407_362_545_736_161_987,
+            "T47PPB: leading current segment must run at stored (pre-drain) liquidity"
+        );
+        assert!(
+            seq.ranges[1..4].iter().all(|r| r.liquidity == 0),
             "T47PPB: free-fall ranges must be zero-liquidity (current-tick drain), \
              got {:?}",
             seq.ranges.iter().map(|r| r.liquidity).collect::<Vec<_>>()
@@ -3302,11 +3309,13 @@ mod tests {
             "T47PPB: the -84382 activation ({activation}) must be visible"
         );
 
-        // Whole-hop replay: the input that takes the price from
-        // sqrt(-84382) down to the documented post-swap sqrt at
-        // L = 64914675035050604 (the free-fall region consumes nothing).
-        // Derived from the endpoint arithmetic (EVM floor semantics);
-        // oracle output = L * (sqrt(-84382) - sqrt_post) >> 96.
+        // Whole-hop replay: the input that takes the price from the current
+        // spot down through the contract-faithful leading segment
+        // [current, sqrt(-74028)] (at stored liquidity) and the zero-liquidity
+        // free-fall, to sqrt(-84382), then down to the documented post-swap sqrt
+        // at L = 64914675035050604. Derived from the endpoint arithmetic (EVM
+        // floor semantics); oracle = leading_segment_output + L*(sqrt(-84382)
+        // - sqrt_post) >> 96.
         let pb = U256::from_str("1165841056962215312021074329").expect("sqrt(-84382)");
         let pf = U256::from_str("1165839764733994694326695348").expect("post-swap sqrt");
         let liq = U256::from(activation);
@@ -3318,11 +3327,28 @@ mod tests {
         let net_in = da / U512::from(pb) + U512::from(1u64);
         let net_in = net_in.to::<U256>();
         // fee 100 ppm: gross such that net = gross * 999900 / 1_000_000 >= net_in
-        let gross_in =
+        let last_leg_gross =
             (net_in * U256::from(1_000_000u64)) / U256::from(999_900u64) + U256::from(1u64);
-        let oracle_out = (liq * (pb - pf)) / (U256::from(1u64) << 96usize);
+        let last_leg_out = (liq * (pb - pf)) / (U256::from(1u64) << 96usize);
 
         let crossings = build_crossing_table(&seq);
+        // Leading segment [current, sqrt(-74028)] crossing at STORED liquidity
+        // (k=1: cross range 0; the zero-liquidity free-fall ranges 1..3 consume
+        // /produce nothing, so k=4 has the same values). This is the segment the
+        // pre-fix compression dropped — it is exactly the reconcile term for the
+        // 4.6% gap between the doc's on-chain capture (1_109_518_347) and the
+        // old pure-math last-leg oracle (1_058_772_188).
+        let lead_in = crossings[1].crossing_gross_input;
+        let lead_out = crossings[1].crossing_output;
+        assert_eq!(
+            crossings[4].crossing_gross_input, lead_in,
+            "free-fall consumes nothing"
+        );
+        // Full-path input = leading segment + last leg; full-path oracle =
+        // leading output + last-leg output.
+        let gross_in = lead_in + last_leg_gross;
+        let oracle_out = lead_out + last_leg_out;
+
         let hops = [WalkHop::Cl { crossings }];
         let outcome = simulate_walk_path(gross_in, &hops);
         let got = outcome.hop_outputs[0];
