@@ -32,11 +32,12 @@ use revm::database_interface::EmptyDB;
 use revm::primitives::TxKind;
 use revm::{ExecuteCommitEvm, ExecuteEvm, MainBuilder, MainContext};
 
+use degenbot_decoders::revert::RevertClass;
 use degenbot_pools::curve_state::{CurvePoolState, RegisterCurvePoolParams};
 use degenbot_pools::registry::PoolEntry;
 use degenbot_pools::simulate_swap::simulate_swap;
 
-/// Curve native precision scale (1e18) — mirrors the engine constant.
+/// Curve native precision scale (`1e18`) — mirrors the engine constant.
 const CURVE_PRECISION: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 
 /// First 4 bytes of `keccak256(signature)` — the Solidity function selector.
@@ -78,7 +79,26 @@ struct CurveCase {
     fee: U256,
 }
 
-/// The engine's Curve standard-stableswap output via `simulate_swap`
+/// The verdict of one on-chain Curve `getDy` call. Distinguishes a successful
+/// output from a GENUINE stableswap rejection (the overflow / Newton-convergence
+/// failure the engine's `NotComputable` models) from a spurious/incidental
+/// revert (which must never be accepted as rejection-parity — H1).
+enum GetDyOutcome {
+    /// `getDy` returned `amount_out` (byte-comparable to the engine).
+    Ok(U256),
+    /// The harness reverted with a genuine rejection class — a `Panic(0x11)`
+    /// arithmetic overflow/underflow or a `Panic(0x12)` divide-by-zero (a
+    /// zero-normalized balance makes the invariant degenerate), or the
+    /// `Error("not converged")` Newton failure — the exact classes
+    /// `simulate_swap`'s `NotComputable` models.
+    GenuineReject,
+    /// Any OTHER revert (an input-`require` hit or an unrecognised reason) —
+    /// outside the modeled rejection domain and never accepted as parity.
+    Spurious(String),
+}
+
+/// The engine's Curve standard-stableswap output via
+/// `simulate_swap`
 /// (`simulate_curve_stableswap_swap` standard path). `None` on
 /// `NotComputable` (an overflow the harness would also reject as a revert).
 fn engine_curve_out(case: &CurveCase, zfo: bool, amount_in: U256) -> Option<U256> {
@@ -167,7 +187,7 @@ fn get_dy_call(coin_in: u64, coin_out: u64, amount_in: U256) -> Vec<u8> {
 /// the call reverts (an overflow / divergence the Rust `NotComputable` path
 /// would also reject). Fully self-contained: each call rebuilds evm + harness
 /// so every case runs from pristine storage.
-fn onchain_get_dy(case: &CurveCase, coin_in: u64, coin_out: u64, amount_in: U256) -> Option<U256> {
+fn onchain_get_dy(case: &CurveCase, coin_in: u64, coin_out: u64, amount_in: U256) -> GetDyOutcome {
     let db = CacheDB::new(EmptyDB::default());
     let mut evm = revm::context::Context::mainnet()
         .with_db(db)
@@ -228,9 +248,30 @@ fn onchain_get_dy(case: &CurveCase, coin_in: u64, coin_out: u64, amount_in: U256
             ..
         } => {
             // The return value is a single uint256 (32 bytes).
-            Some(U256::from_be_slice(&bytes[..32]))
+            GetDyOutcome::Ok(U256::from_be_slice(&bytes[..32]))
         }
-        ExecutionResult::Revert { .. } => None,
+        ExecutionResult::Revert { output, .. } => {
+            // H1: decode the revert — only the GENUINE stableswap rejection
+            // (a Solidity-0.8 `Panic(0x11)` arithmetic overflow/underflow, or
+            // the Newton `not converged` failure) matches the engine's
+            // `NotComputable`. Any other revert (an input-`require` hit or an
+            // unrecognised reason) is spurious and must NOT be accepted as
+            // rejection-parity.
+            match RevertClass::classify(output.as_ref()) {
+                // 0x11 = arithmetic overflow/underflow, 0x12 = divide-by-zero
+                // (degenerate zero-normalized balance) — both are genuine
+                // stableswap failures the engine's `NotComputable` models.
+                RevertClass::Panic(code)
+                    if code == U256::from(0x11u8) || code == U256::from(0x12u8) =>
+                {
+                    GetDyOutcome::GenuineReject
+                }
+                RevertClass::ErrorString(msg) if msg == "not converged" => {
+                    GetDyOutcome::GenuineReject
+                }
+                other => GetDyOutcome::Spurious(other.label()),
+            }
+        }
         other => panic!("getDy unexpected result: {other:?}"),
     }
 }
@@ -253,7 +294,13 @@ fn curve_get_dy_output_is_byte_exact_to_onchain_reference() {
     let zfo = true;
 
     let engine = engine_curve_out(&case, zfo, amount_in).expect("engine computable");
-    let onchain = onchain_get_dy(&case, 0, 1, amount_in).expect("onchain computable");
+    let onchain = match onchain_get_dy(&case, 0, 1, amount_in) {
+        GetDyOutcome::Ok(v) => v,
+        GetDyOutcome::GenuineReject => panic!("pinned case must be computable on-chain"),
+        GetDyOutcome::Spurious(l) => {
+            panic!("pinned case spurious on-chain revert: {l}")
+        }
+    };
     assert_eq!(engine, onchain, "engine vs on-chain byte-exact");
     assert_eq!(
         engine,
@@ -262,21 +309,199 @@ fn curve_get_dy_output_is_byte_exact_to_onchain_reference() {
     );
 }
 
+/// A minimal `CurveCase` builder for the pinned corpus.
+fn make_case(
+    b0: u128,
+    b1: u128,
+    r0: u128,
+    r1: u128,
+    a: u128,
+    a_prec: u128,
+    fee: u128,
+) -> CurveCase {
+    CurveCase {
+        balances: [U256::from(b0), U256::from(b1)],
+        rates: [U256::from(r0), U256::from(r1)],
+        a_coefficient: U256::from(a),
+        a_precision: U256::from(a_prec),
+        fee: U256::from(fee),
+    }
+}
+
+/// Run one case through both the engine and the on-chain harness and assert
+/// H3/H1 parity: `(Some, Ok)` byte-equal; `(None, GenuineReject)` accepted;
+/// any mismatch or a spurious on-chain revert fails loudly.
+fn assert_curve_parity(case: &CurveCase, zfo: bool, amount_in: U256) {
+    let (coin_in, coin_out) = if zfo { (0u64, 1u64) } else { (1u64, 0u64) };
+    let engine = engine_curve_out(case, zfo, amount_in);
+    let onchain = onchain_get_dy(case, coin_in, coin_out, amount_in);
+    match (engine, onchain) {
+        (Some(e), GetDyOutcome::Ok(o)) => {
+            assert_eq!(e, o, "engine vs on-chain byte-exact");
+        }
+        (None, GetDyOutcome::GenuineReject) => {
+            // Both rejected with the genuine overflow / non-convergence.
+        }
+        (Some(e), GetDyOutcome::GenuineReject) => {
+            panic!("engine produced {e} but on-chain overflow-rejected")
+        }
+        (None, GetDyOutcome::Ok(o)) => {
+            panic!("engine rejected but on-chain produced {o}")
+        }
+        (_, GetDyOutcome::Spurious(l)) => {
+            panic!("spurious/non-modeled on-chain revert: {l}")
+        }
+    }
+}
+
+/// H3 — pinned deterministic edge corpus: minimal + near-max balances, 1-wei
+/// and boundary amounts, A + fee edges, both directions. Runs the H1 parity
+/// oracle so a byte-exactness or rejection-classification drift fails loudly.
+#[test]
+fn curve_get_dy_edge_corpus_is_byte_exact() {
+    let cases: &[(CurveCase, bool, U256)] = &[
+        // Minimal balances (1e6) with a 1-wei amount.
+        (
+            make_case(
+                1_000_000,
+                1_000_000,
+                1_000_000_000_000_000_000u128,
+                1_000_000_000_000_000_000u128,
+                100,
+                100,
+                0,
+            ),
+            true,
+            U256::from(1u64),
+        ),
+        (
+            make_case(
+                1_000_000,
+                1_000_000,
+                1_000_000_000_000_000_000u128,
+                1_000_000_000_000_000_000u128,
+                100,
+                100,
+                0,
+            ),
+            false,
+            U256::from(1u64),
+        ),
+        // Tiny balances with a boundary amount (half the reserve).
+        (
+            make_case(
+                1_000_000,
+                1_000_000,
+                1_000_000_000_000_000_000u128,
+                1_000_000_000_000_000_000u128,
+                100,
+                100,
+                0,
+            ),
+            true,
+            U256::from(500_000u64),
+        ),
+        // A/fee edges on a nominal balance.
+        (
+            make_case(
+                1_000_000_000_000_000_000u128,
+                1_000_000_000_000_000_000u128,
+                1_000_000_000_000_000_000u128,
+                1_000_000_000_000_000_000u128,
+                1,
+                100,
+                0,
+            ),
+            true,
+            U256::from(1_000_000_000_000_000u64), // 1e15
+        ),
+        (
+            make_case(
+                1_000_000_000_000_000_000u128,
+                1_000_000_000_000_000_000u128,
+                1_000_000_000_000_000_000u128,
+                1_000_000_000_000_000_000u128,
+                100_000,
+                100,
+                9_999_999_999,
+            ),
+            false,
+            U256::from(1_000_000_000_000_000u64),
+        ),
+        // Near-max balances, proportional amount (16-bit-ish magnitudes).
+        (
+            make_case(
+                10_000_000_000_000_000_000_000_000_000_000_000u128,
+                12_000_000_000_000_000_000_000_000_000_000_000u128,
+                1_000_000_000_000_000_000u128,
+                1_000_000_000_000_000_000u128,
+                100,
+                100,
+                0,
+            ),
+            true,
+            U256::from(1_000_000_000_000_000_000_000_000_000_000_000u128), // ~balance0/10
+        ),
+        (
+            make_case(
+                10_000_000_000_000_000_000_000_000_000_000_000u128,
+                12_000_000_000_000_000_000_000_000_000_000_000u128,
+                1_000_000_000_000_000_000u128,
+                1_000_000_000_000_000_000u128,
+                100,
+                100,
+                0,
+            ),
+            false,
+            U256::from(1_000_000_000_000_000_000_000_000_000_000_000u128),
+        ),
+    ];
+
+    for &(ref case, zfo, amount_in) in cases {
+        assert_curve_parity(case, zfo, amount_in);
+    }
+}
+
+/// Widen a balance/rate magnitude to cover tiny, nominal, and near-max arms
+/// (so the invariant arithmetic explores both the well-formed byte-exact
+/// region and the overflow region that both sides must reject identically).
+fn arb_balance() -> impl Strategy<Value = u128> {
+    prop_oneof![
+        1_000_000_000_000_000_000u128..5_000_000_000_000_000_000u128,
+        1_000_000u128..1_000_000_000u128,
+        10_000_000_000_000_000_000_000_000_000_000u128
+            ..40_000_000_000_000_000_000_000_000_000_000u128,
+    ]
+}
+
+/// Rate multiplier magnitude arms (tiny / 1_000_000_000_000_000_000u128-scale / 1e30-scale).
+fn arb_rate() -> impl Strategy<Value = u128> {
+    prop_oneof![
+        1_000_000_000_000_000_000u128..2_000_000_000_000_000_000u128,
+        1_000_000u128..1_000_000_000u128,
+        1_000_000_000_000_000_000_000_000_000_000u128
+            ..5_000_000_000_000_000_000_000_000_000_000u128,
+    ]
+}
+
 proptest! {
-    /// Proptest the byte-exact Curve `get_dy` oracle over (balances × rates ×
-    /// fee × A × amount × direction). Bounds keep the invariant arithmetic in
-    /// the checked-U256 / Solidity-0.8 domain (no overflow — both sides then
-    /// reject identically), and keep `xp[out] > y` so the `-1` is well-formed.
+    /// Proptest the byte-exact Curve `get_dy` oracle over a widened domain:
+    /// balances × rates × A × fee × amount × direction, with balances/rates
+    /// spanning tiny→nominal→near-max, amounts covering 1-wei and boundary
+    /// fractions (well-formed `xp[out] > y`), and A/fee at their edges. H1
+    /// rejection-parity: both-reject is only accepted when the on-chain revert
+    /// decodes as the GENUINE overflow/non-convergence, never a spurious one.
     /// Each assertion runs on a fresh pristine harness.
     #[test]
     fn curve_get_dy_matches_onchain_proptest(
-        balance0 in 1_000_000_000_000_000_000u64..5_000_000_000_000_000_000u64,
-        balance1 in 1_000_000_000_000_000_000u64..5_000_000_000_000_000_000u64,
-        rate0 in 1_000_000_000_000_000_000u64..2_000_000_000_000_000_000u64,
-        rate1 in 1_000_000_000_000_000_000u64..2_000_000_000_000_000_000u64,
-        a_coefficient in 1u64..10_000u64,
-        fee in 0u64..10_000_000_000u64, // fee ∈ [0, FEE_DENOMINATOR)
-        amount_in_frac in 4u64..1_000u64,
+        balance0 in arb_balance(),
+        balance1 in arb_balance(),
+        rate0 in arb_rate(),
+        rate1 in arb_rate(),
+        a_coefficient in prop_oneof![1u64..10_000u64, Just(1u64), Just(100_000u64)],
+        fee in prop_oneof![0u64..10_000_000_000u64, Just(0u64), Just(9_999_999_999u64)],
+        amount_mode in 0u8..4u8, // 0: reserve/frac, 1: 1 wei, 2: reserve/16, 3: reserve/4
+        amount_frac in 4u64..1_000u64,
         zfo in any::<bool>(),
     ) {
         let case = CurveCase {
@@ -288,7 +513,13 @@ proptest! {
         };
         let (coin_in, coin_out) = if zfo { (0u64, 1u64) } else { (1u64, 0u64) };
         let amount_in_reserve = if zfo { balance0 } else { balance1 };
-        let amount_in = U256::from(amount_in_reserve) / U256::from(amount_in_frac);
+        let amount_in = match amount_mode {
+            0 => U256::from(amount_in_reserve) / U256::from(amount_frac),
+            1 => U256::from(1u64),
+            2 => U256::from(amount_in_reserve) / U256::from(16u64),
+            3 => U256::from(amount_in_reserve) / U256::from(4u64),
+            _ => unreachable!(),
+        };
         if amount_in.is_zero() {
             return Ok(()); // degenerate (getDy(0)=0 trivial).
         }
@@ -297,18 +528,20 @@ proptest! {
         let onchain = onchain_get_dy(&case, coin_in, coin_out, amount_in);
 
         match (engine, onchain) {
-            (Some(e), Some(o)) => {
+            (Some(e), GetDyOutcome::Ok(o)) => {
                 prop_assert_eq!(e, o, "engine vs on-chain byte-exact");
             }
-            (None, None) => {
-                // Both rejected (NotComputable / revert) — acceptable parity,
-                // but not interesting; keep the case for coverage.
+            (None, GetDyOutcome::GenuineReject) => {
+                // Both rejected with the genuine overflow / non-convergence.
             }
-            (Some(e), None) => {
-                panic!("engine produced {e} but on-chain rejected (revert)");
+            (Some(e), GetDyOutcome::GenuineReject) => {
+                panic!("engine produced {e} but on-chain overflow-rejected");
             }
-            (None, Some(o)) => {
+            (None, GetDyOutcome::Ok(o)) => {
                 panic!("engine rejected but on-chain produced {o}");
+            }
+            (_, GetDyOutcome::Spurious(l)) => {
+                panic!("spurious/non-modeled on-chain revert: {l}");
             }
         }
     }
