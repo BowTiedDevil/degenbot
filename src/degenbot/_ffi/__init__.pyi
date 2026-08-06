@@ -875,7 +875,9 @@ class PyBot:
         stable_swap: bool = False,
         fee_denominator: int | None = None,
     ) -> int: ...
-    def build_v2_pool(self, address: str, block: int | None = None) -> int: ...
+    def build_v2_pool(
+        self, address: str, block: int | None = None
+    ) -> tuple[int, str, str, str, str]: ...
     def build_aerodrome_v2_pool(self, address: str, block: int | None = None) -> int: ...
     def build_balancer_weighted_pool(
         self, address: str, vault: str, block: int | None = None
@@ -896,7 +898,7 @@ class PyBot:
         block: int | None = None,
         db: bool = True,
         tick_data_fetcher: Callable | None = None,
-    ) -> int: ...
+    ) -> tuple[int, str, str, str, str]: ...
     def build_v4_pool(
         self,
         pool_manager: str,

@@ -175,3 +175,58 @@ class TestMultipleBots:
         # Second bot can add a manager for the same factory without error
         manager2 = bot2.add_tracker(UniswapV2PoolTracker, factory_address=factory)
         assert manager1 is not manager2
+
+
+class TestBuildDelegatedIdentityReturnSurface:
+    """TF7RZB-S1: build_pool's Rust-delegated V2/V3 path returns a typed
+    identity `(pool_id, token0, token1, address, family)` from the builder and
+    asserts parity against the registered handle (a divergence is a genuine
+    core/driver seam bug and must fail loudly, not silently re-derive)."""
+
+    def test_build_delegated_v2_parity_mismatch_raises(self, tmp_path) -> None:
+        """A V2 builder identity that diverges from the registered handle's
+        tokens raises — the return-surface parity guard."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        import pytest
+
+        from degenbot.bot import Bot
+        from degenbot.builders.request import BuildPoolRequest
+        from degenbot.config import DatabaseSettings, DegenbotConfig
+        from degenbot.exceptions.base import DegenbotValueError
+        from degenbot.provider import AlloyProvider
+        from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+        from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
+
+        config = DegenbotConfig(
+            database=DatabaseSettings(path=str(tmp_path / "t.db")),
+            rpc={1: ETHEREUM_ARCHIVE_NODE_HTTP_URI},
+            default_chain_id=1,
+        )
+        provider = MagicMock(spec=AlloyProvider)
+        provider.chain_id = 1
+        bot = Bot(config, provider=provider)
+
+        # Stub the Rust-owned surface: build_v2_pool returns the tuple return
+        # surface (core identity), get_pool returns a handle whose tokens DIFFER
+        # -> the parity guard must raise.
+        handle = SimpleNamespace(
+            token0_address="0x" + "a" * 40, token1_address="0x" + "b" * 40
+        )
+        fake_py = SimpleNamespace(
+            build_v2_pool=lambda address, block=None: (
+                7,
+                "0x" + "C" * 40,
+                "0x" + "D" * 40,
+                "0x" + "E" * 40,
+                "uniswap-v2",
+            ),
+            get_pool=lambda pid: handle,
+        )
+        bot._py_bot = fake_py  # type: ignore[assignment]
+        bot._io = SimpleNamespace(get_block_number=lambda: 100)  # type: ignore[assignment]
+
+        request = BuildPoolRequest()
+        with pytest.raises(DegenbotValueError):
+            bot._build_delegated(UniswapV2Pool, "0x" + "e" * 40, 1, request)

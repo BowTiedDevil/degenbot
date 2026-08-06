@@ -702,7 +702,12 @@ impl PyBot {
     /// CREATE2 / spec / DB failure, or on a registration (already-registered /
     /// spec) failure.
     #[pyo3(signature = (address, block=None))]
-    fn build_v2_pool(&self, py: Python<'_>, address: &str, block: Option<u64>) -> PyResult<u64> {
+    fn build_v2_pool(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        block: Option<u64>,
+    ) -> PyResult<(u64, String, String, String, String)> {
         use degenbot_bot::bot_core::pool_builder::builder;
         use degenbot_core::runtime::get_runtime;
         let addr = parse_address(address)?;
@@ -715,11 +720,24 @@ impl PyBot {
         let params = py
             .detach(|| get_runtime().block_on(builder::build_v2(chain_id, addr, &io, block)))
             .map_err(map_builder_err)?;
-        self.bot
+        // TF7RZB-S1 (builder return surface): return the core-computed identity
+        // alongside the pool_id so a facade-free registration driver can consume
+        // token0/token1/address/family from the Rust builder instead of
+        // re-deriving them from the pool handle. `variant` is the `DexVariant`
+        // the builder resolved (kebab-case, e.g. "uniswap-v2").
+        let identity = (
+            params.token0.to_checksum(None),
+            params.token1.to_checksum(None),
+            params.address.to_checksum(None),
+            params.variant.as_str().to_string(),
+        );
+        let pool_id = self
+            .bot
             .state_arc()
             .write()
             .register_v2_pool(&params)
-            .map_err(map_register_v2_err)
+            .map_err(map_register_v2_err)?;
+        Ok((pool_id, identity.0, identity.1, identity.2, identity.3))
     }
 
     /// Build + register an Aerodrome V2 pool through the Rust `PoolBuilder`
@@ -854,7 +872,7 @@ impl PyBot {
         block: Option<u64>,
         db: bool,
         tick_data_fetcher: Option<Bound<'_, PyAny>>,
-    ) -> PyResult<u64> {
+    ) -> PyResult<(u64, String, String, String, String)> {
         use degenbot_bot::bot_core::pool_builder::builder;
         use degenbot_core::runtime::get_runtime;
         let addr = parse_address(address)?;
@@ -883,11 +901,26 @@ impl PyBot {
         if let Some(fetcher) = tick_data_fetcher.filter(|f| !f.is_none()) {
             params.fetcher = Some(crate::bot::pool::make_tick_fetcher(fetcher.unbind()));
         }
-        self.bot
+        // TF7RZB-S1 (builder return surface): return the core-computed identity
+        // alongside the pool_id. V3 has no per-pool `DexVariant`; the family is
+        // resolved from the builder-verified `factory` via the Rust-owned
+        // `resolve_dex_name` (kebab-case, e.g. "uniswap"), falling back to the
+        // generic "uniswap-v3" when the factory is not a known deployment.
+        let family = degenbot_uniswap::deployments::resolve_dex_name(chain_id, params.factory)
+            .map_or_else(|| "uniswap-v3".to_string(), |d| d.as_str().to_string());
+        let identity = (
+            params.token0.to_checksum(None),
+            params.token1.to_checksum(None),
+            params.address.to_checksum(None),
+            family,
+        );
+        let pool_id = self
+            .bot
             .state_arc()
             .write()
             .register_v3_pool(&params)
-            .map_err(map_register_v3_err)
+            .map_err(map_register_v3_err)?;
+        Ok((pool_id, identity.0, identity.1, identity.2, identity.3))
     }
 
     /// Build a V4 pool via the Rust `PoolBuilder` (T4 / 4GQWZ4), registered

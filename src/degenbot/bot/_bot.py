@@ -766,13 +766,16 @@ class Bot:
         block: int | None = (
             request.state_block if request.state_block is not None else self._io.get_block_number()
         )
+        builder_identity: tuple[int, str, str, str, str] | None = None
         if issubclass(pool_class, UniswapV3Pool):
             # The legacy web3-sync fetcher factory, relocated off the retired
             # V3 builder (4GQWZ4 deletion).
             fetcher = self._make_v3_tick_data_fetcher(address, chain_id)
-            pool_id = self._py_bot.build_v3_pool(
+            b_res = self._py_bot.build_v3_pool(
                 address, block=block, db=True, tick_data_fetcher=fetcher
             )
+            pool_id = b_res[0]
+            builder_identity = b_res
         elif issubclass(pool_class, AerodromeV2Pool):
             # SSSXG6: Aerodrome V2 (shared volatile/stable factory) is a
             # distinct structural family from V2 — the Rust `build_aerodrome_v2`
@@ -797,11 +800,32 @@ class Bot:
                 invariant_version=request.invariant_version,
             )
         else:
-            pool_id = self._py_bot.build_v2_pool(address, block=block)
+            b_res = self._py_bot.build_v2_pool(address, block=block)
+            pool_id = b_res[0]
+            builder_identity = b_res
         py_pool = self._py_bot.get_pool(pool_id)
         if py_pool is None:  # pragma: no cover
             msg = f"build_pool: register returned pool_id {pool_id} with no handle"
             raise DegenbotValueError(message=msg)
+
+        # TF7RZB-S1 return-surface parity: the builder returns the Rust core's
+        # own token0/token1 identity; it must equal what the registered handle
+        # exposes (a divergence is a genuine core/driver seam bug — assert
+        # loudly rather than silently re-deriving).
+        if builder_identity is not None:
+            _b_pid, b_t0, b_t1, _b_addr, _b_fam = builder_identity
+            if (
+                py_pool.token0_address.casefold() != b_t0.casefold()
+                or py_pool.token1_address.casefold() != b_t1.casefold()
+            ):
+                raise DegenbotValueError(
+                    message=(
+                        f"build_pool: builder identity diverged from handle for "
+                        f"{address}: builder token0={b_t0} token1={b_t1}, "
+                        f"handle token0={py_pool.token0_address} "
+                        f"token1={py_pool.token1_address}"
+                    )
+                )
 
         # V3: split-seed the reorg genesis anchor (mirrors the retired builder's
         # `seed_genesis(state_block)`). Without it the Sparse pool journals
