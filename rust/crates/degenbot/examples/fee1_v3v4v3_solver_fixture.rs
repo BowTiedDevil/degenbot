@@ -31,7 +31,7 @@ use degenbot::bot_core::BotState;
 use degenbot::solvers::arb_engine::ArbitrageEngine;
 use degenbot::RegisterV3PoolParams;
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
-use degenbot_pools::v3_state::{PoolTickCoverage, SimulateSwapError, V3SwapOutcome};
+use degenbot_pools::v3_state::{PoolTickCoverage, SimulateSwapError, V3PoolState, V3SwapOutcome};
 use degenbot_pools::v4_state::{v4_simulate_swap, V4PoolKey, V4PoolState};
 use degenbot_pools::TickInfo;
 use degenbot_solvers::mixed::PoolHop;
@@ -196,6 +196,13 @@ fn main() {
     let fee = fx.pools.v4.fee_currency0.unwrap();
     let spacing = fx.pools.v4.tick_spacing.unwrap();
     let zfo = fx.v4_hop.zero_for_one;
+    // Direction-aware price bound for the `v4_simulate_swap` oracle. Passing
+    // `U256::MAX` here breaks zfo=true swaps: the target-selection picks the
+    // (ceiling) limit over `sqrt_price_next`, so the step ascends to a huge
+    // price and returns garbage for cross-decimal fee-1 pools (a latent
+    // zfo=true bug — the original USDC/USDT fixture was zfo=false where MAX
+    // falls through correctly). Mirror the live engine's `default_sqrt_price_limit`.
+    let v4_price_limit = V3PoolState::default_sqrt_price_limit(zfo);
 
     println!(
         "fixture: block={} V4 fee={fee} spacing={spacing} zfo={zfo} v4_hop_input={}",
@@ -225,7 +232,7 @@ fn main() {
             .expect("recorded input fits i256")
             .checked_neg()
             .expect("negate recorded input (V4 exact-in is negative)"),
-        U256::MAX,
+        v4_price_limit,
     ) {
         Ok(s) => s,
         Err(SimulateSwapError::NotComputable) => {
@@ -273,7 +280,7 @@ fn main() {
                 .expect("probe input fits i256")
                 .checked_neg()
                 .expect("negate probe input"),
-            U256::MAX,
+            v4_price_limit,
         ) {
             if v4_exact_in_output(&s, zfo) == recorded_actual {
                 gap = d;
@@ -393,18 +400,24 @@ fn main() {
                 .expect("v4 hop input fits i256")
                 .checked_neg()
                 .expect("negate input (V4 exact-in is negative)");
-            let sim =
-                match v4_simulate_swap(&v4_state, fee, spacing, zfo, amount_specified, U256::MAX) {
-                    Ok(s) => s,
-                    Err(SimulateSwapError::NotComputable) => {
-                        println!("v4_simulate_swap: NotComputable — abort");
-                        std::process::exit(2);
-                    }
-                    Err(SimulateSwapError::MissingTickWord(w)) => {
-                        println!("v4_simulate_swap: MissingTickWord({w})");
-                        std::process::exit(2);
-                    }
-                };
+            let sim = match v4_simulate_swap(
+                &v4_state,
+                fee,
+                spacing,
+                zfo,
+                amount_specified,
+                v4_price_limit,
+            ) {
+                Ok(s) => s,
+                Err(SimulateSwapError::NotComputable) => {
+                    println!("v4_simulate_swap: NotComputable — abort");
+                    std::process::exit(2);
+                }
+                Err(SimulateSwapError::MissingTickWord(w)) => {
+                    println!("v4_simulate_swap: MissingTickWord({w})");
+                    std::process::exit(2);
+                }
+            };
             let sim_out = v4_exact_in_output(&sim, zfo);
 
             println!(

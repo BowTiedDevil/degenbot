@@ -189,7 +189,7 @@ def main():
         "target_block": TARGET,
         "v4_hop": {
             "hop_index": RECORDED_V4_HOP_INDEX,
-            "zero_for_one": False,  # the live repro V4 hop
+            "zero_for_one": HOP1_ZFO,  # match the live repro V4 hop direction
             "input": str(RECORDED_V4_INPUT),
             "predicted_output": str(RECORDED_V4_PREDICTED),
             "onchain_actual": str(RECORDED_V4_ACTUAL),
