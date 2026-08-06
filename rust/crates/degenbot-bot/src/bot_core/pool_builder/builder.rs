@@ -66,6 +66,8 @@ pub enum PoolBuilderError {
     Create2,
     #[error("DB read failed: {0}")]
     Db(#[from] DbError),
+    #[error("V4 identity incomplete: {message}")]
+    MissingIdentity { message: String },
 }
 
 /// Probe a pool contract to identify its family via the canonical read-call
@@ -1067,4 +1069,149 @@ pub async fn build_v4(
         coverage,
         fetcher: None,
     })
+}
+
+/// Caller-supplied V4 identity **overrides** (the DB-resolution fallback, Task
+/// TF7RZB-S3). Every field is optional because the core prefers the DB two-step
+/// (manager → V4 row → per-FK tokens); when that is incomplete these fill the
+/// gaps (all required for a pool not in the database). The word "overrides"
+/// distinguishes this raw caller surface from the fully-resolved
+/// [`V4PoolBuildIdentity`] that [`build_v4`] consumes.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct V4PoolBuildOverrides {
+    /// `pool_key.currency0` (unused when the DB two-step resolves it).
+    pub currency0: Option<Address>,
+    /// `pool_key.currency1` (unused when the DB two-step resolves it).
+    pub currency1: Option<Address>,
+    /// `pool_key.fee` (unused when the DB two-step resolves it).
+    pub fee: Option<u32>,
+    /// `pool_key.tick_spacing` (unused when the DB two-step resolves it).
+    pub tick_spacing: Option<i32>,
+    /// The hook contract address used to derive `hook_flags` (low 16 bits; the
+    /// practical value is `ZERO` for the no-hook pools the solver admits).
+    pub hook_address: Option<Address>,
+    /// The `StateView` contract exposing the V4 getters for `pool_manager`
+    /// (unused when the DB two-step resolves it from the manager row).
+    pub state_view: Option<Address>,
+}
+
+/// Resolve the V4 identity **core-side** (TF7RZB-S3): the DB two-step
+/// (manager → V4 row → per-FK token rows) first, else the caller-supplied
+/// [`V4PoolBuildOverrides`]. Returns the resolved [`V4PoolBuildIdentity`] plus
+/// the V4 row's `liquidity_update_block` (the DB liquidity-snapshot clock seed
+/// for the two-stamp OB7UNY split; `None` on the override path).
+///
+/// DB errors and partial rows are treated as "no DB identity" (matching the
+/// retired Python driver's `contextlib.suppress(Exception)`), falling through
+/// to the overrides path. A [`PoolBuilderError::MissingIdentity`] is returned
+/// when neither the DB two-step nor the overrides yield a complete identity.
+///
+/// # Errors
+///
+/// Returns [`PoolBuilderError::MissingIdentity`] when no DB identity is found
+/// and one or more required overrides are absent.
+///
+/// # Panics
+///
+/// The `expect(\"checked present\")` calls on the override path are
+/// unreachable-by-construction: the `missing` completeness check above returns
+/// [`PoolBuilderError::MissingIdentity`] before any field is read.
+#[allow(clippy::too_many_lines)]
+pub async fn resolve_v4_identity(
+    chain_id: u64,
+    pool_manager: Address,
+    pool_id: [u8; 32],
+    overrides: &V4PoolBuildOverrides,
+    io: &ConstructionIo,
+) -> Result<(V4PoolBuildIdentity, Option<u64>), PoolBuilderError> {
+    // DB two-step: manager → V4 row → per-FK token rows. Any error or partial
+    // row is a skip (fall through to the override path), never a hard failure.
+    let pool_hash_hex = format!("0x{}", alloy::hex::encode(pool_id));
+    let db_identity: Option<(V4PoolBuildIdentity, Option<u64>)> = (async {
+        let manager_row = io
+            .fetch_pool_manager(i64::try_from(chain_id).unwrap_or(0), pool_manager)
+            .await
+            .ok()??;
+        let v4_row = io.fetch_v4_pool_by_pool_hash(&pool_hash_hex).await.ok()??;
+        let token0 = io.fetch_token_by_id(v4_row.currency0_id).await.ok()??;
+        let token1 = io.fetch_token_by_id(v4_row.currency1_id).await.ok()??;
+        let state_view = manager_row.state_view.or(overrides.state_view);
+        Some((
+            V4PoolBuildIdentity {
+                pool_manager,
+                state_view: state_view?,
+                pool_id,
+                currency0: token0.address,
+                currency1: token1.address,
+                fee: u32::try_from(v4_row.fee_currency0).ok()?,
+                tick_spacing: i32::try_from(v4_row.tick_spacing).ok()?,
+                hook_flags: derive_hook_flags(v4_row.hooks),
+            },
+            v4_row
+                .liquidity_update_block
+                .and_then(|b| u64::try_from(b).ok()),
+        ))
+    })
+    .await;
+
+    if let Some(identity) = db_identity {
+        return Ok(identity);
+    }
+
+    // Override (kwargs) path — all required for a pool not in the database.
+    let missing = [
+        ("currency0", overrides.currency0.is_some()),
+        ("currency1", overrides.currency1.is_some()),
+        ("fee", overrides.fee.is_some()),
+        ("tick_spacing", overrides.tick_spacing.is_some()),
+        ("state_view", overrides.state_view.is_some()),
+    ]
+    .into_iter()
+    .filter(|(_, present)| !present)
+    .map(|(name, _)| name)
+    .collect::<Vec<_>>()
+    .join(", ");
+    if !missing.is_empty() {
+        return Err(PoolBuilderError::MissingIdentity {
+            message: format!("pool not in the database; missing required overrides: {missing}"),
+        });
+    }
+
+    let (currency0, currency1) = order_currencies(
+        overrides.currency0.expect("checked present"),
+        overrides.currency1.expect("checked present"),
+    );
+    Ok((
+        V4PoolBuildIdentity {
+            pool_manager,
+            state_view: overrides.state_view.expect("checked present"),
+            pool_id,
+            currency0,
+            currency1,
+            fee: overrides.fee.expect("checked present"),
+            tick_spacing: overrides.tick_spacing.expect("checked present"),
+            hook_flags: derive_hook_flags(overrides.hook_address.unwrap_or_default()),
+        },
+        None,
+    ))
+}
+
+/// Derive the V4 `hook_flags` bitmask from a hook contract address. The
+/// practical value is `0` (no-hook pools are the only ones the solver
+/// admits); a real hook address contributes its low 16 bits, mirroring the
+/// retired Python driver's `int(hook_address, 16)` with no overflow for
+/// 20-byte addresses.
+fn derive_hook_flags(hook_address: Address) -> u16 {
+    u16::from_be_bytes([hook_address[18], hook_address[19]])
+}
+
+/// Order two currency addresses into `(currency0, currency1)` by ascending
+/// byte value (the `sorted(..., key=lambda t: t.lower())` the retired Python
+/// driver applied to the caller-supplied token pair).
+fn order_currencies(a: Address, b: Address) -> (Address, Address) {
+    if a <= b {
+        (a, b)
+    } else {
+        (b, a)
+    }
 }

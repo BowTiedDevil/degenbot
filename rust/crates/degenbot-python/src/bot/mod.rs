@@ -941,6 +941,76 @@ impl PyBot {
     /// As [`Self::register_v4_pool`] (builder RPC/decode errors map via
     /// [`map_builder_err`]; admission/filtering errors via
     /// [`map_register_v4_err`]).
+    #[pyo3(signature = (chain_id, pool_manager, pool_id_hex, currency0=None, currency1=None, fee=None, tick_spacing=None, hook_address=None, state_view_address=None))]
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::type_complexity)]
+    fn resolve_v4_identity(
+        &self,
+        py: Python<'_>,
+        chain_id: u64,
+        pool_manager: &str,
+        pool_id_hex: &str,
+        currency0: Option<&str>,
+        currency1: Option<&str>,
+        fee: Option<u32>,
+        tick_spacing: Option<i32>,
+        hook_address: Option<&str>,
+        state_view_address: Option<&str>,
+    ) -> PyResult<(String, String, u32, i32, u16, String, Option<u64>)> {
+        use degenbot_bot::bot_core::pool_builder::builder;
+        use degenbot_core::runtime::get_runtime;
+        let pm = parse_address(pool_manager).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "resolve_v4_identity: malformed pool_manager {pool_manager:?}: {e}"
+            ))
+        })?;
+        let pool_id = hex_string_to_pool_id(pool_id_hex)?;
+        let parse_opt = |s: Option<&str>, name: &str| -> PyResult<Option<Address>> {
+            s.map(|s| {
+                parse_address(s).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "resolve_v4_identity: malformed {name} {s:?}: {e}"
+                    ))
+                })
+            })
+            .transpose()
+        };
+        // TF7RZB-S3: the V4 identity (currency0/1, fee, tick_spacing, hook,
+        // state_view) is resolved CORE-side — the DB two-step (manager → V4 row
+        // → per-FK tokens) first, else these raw caller overrides. The override
+        // fields are all optional; the resolver raises a typed `MissingIdentity`
+        // (mapped to PyValueError) when neither source is complete.
+        let overrides = builder::V4PoolBuildOverrides {
+            currency0: parse_opt(currency0, "currency0")?,
+            currency1: parse_opt(currency1, "currency1")?,
+            fee,
+            tick_spacing,
+            hook_address: parse_opt(hook_address, "hook_address")?,
+            state_view: parse_opt(state_view_address, "state_view_address")?,
+        };
+        let io = self.bot.construction_io_arc().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "resolve_v4_identity: no ConstructionIo attached (requires an alloy provider)",
+            )
+        })?;
+        let (id, db_liquidity_update_block) = py
+            .detach(|| {
+                get_runtime().block_on(builder::resolve_v4_identity(
+                    chain_id, pm, pool_id, &overrides, &io,
+                ))
+            })
+            .map_err(map_builder_err)?;
+        Ok((
+            id.currency0.to_checksum(None),
+            id.currency1.to_checksum(None),
+            id.fee,
+            id.tick_spacing,
+            id.hook_flags,
+            id.state_view.to_checksum(None),
+            db_liquidity_update_block,
+        ))
+    }
+
     #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_flags, state_view_address, block=None, db=true, tick_data_fetcher=None))]
     #[allow(clippy::too_many_arguments)]
     #[allow(clippy::type_complexity)]
@@ -1007,11 +1077,7 @@ impl PyBot {
             hook_flags,
         };
         // TF7RZB-S2 (builder return surface): capture the normalized identity
-        // tuple before `id` is moved into `build_v4`. V4 identity is
-        // caller-supplied (the core never reads getToken0/getHooks), so this
-        // is the driver-owned surface echoed back — the parity assert in
-        // `_build_v4_managed` verifies the caller-resolved values round-trip
-        // through the seam losslessly.
+        // tuple before `id` is moved into `build_v4`.
         let identity_ret = (
             id.currency0.to_checksum(None),
             id.currency1.to_checksum(None),

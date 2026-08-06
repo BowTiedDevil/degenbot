@@ -47,7 +47,8 @@ use revm::state::AccountInfo;
 use degenbot::bot_core::construction_io::{ConstructionIo, NoDb, RpcConstruction};
 use degenbot::bot_core::pool_builder::builder::{
     build_aerodrome_v2, build_balancer_stable, build_balancer_weighted, build_curve_pool, build_v2,
-    build_v3, build_v4, probe_pool_type, PoolBuilderError, PoolFamily, V4PoolBuildIdentity,
+    build_v3, build_v4, probe_pool_type, resolve_v4_identity, PoolBuilderError, PoolFamily,
+    V4PoolBuildIdentity, V4PoolBuildOverrides,
 };
 use degenbot::degenbot_rpc::provider::EthBlock;
 use degenbot::errors::ProviderError;
@@ -666,6 +667,17 @@ fn in_process_sim_standalone_slice() {
     assert!(
         matches!(err, Err(PoolBuilderError::Rpc(_))),
         "build_v4 over a failing RPC must yield a typed Rpc error, got {err:?}"
+    );
+    // V4 identity resolution (TF7RZB-S3): `resolve_v4_identity` is a Rust-owned
+    // core capability (DB two-step else caller overrides). Over a failing/no-DB
+    // stub with EMPTY overrides it must degrade to the typed `MissingIdentity`
+    // error, never a panic — pinning the standalone reach of the resolver.
+    let overrides = V4PoolBuildOverrides::default();
+    let err = degenbot::runtime::get_runtime()
+        .block_on(resolve_v4_identity(1, POOL_B, [0xBB; 32], &overrides, &io));
+    assert!(
+        matches!(err, Err(PoolBuilderError::MissingIdentity { .. })),
+        "resolve_v4_identity with empty overrides must yield MissingIdentity, got {err:?}"
     );
     // Aerodrome V2: build_aerodrome_v2 (the SSSXG6 follow-up) reads the same
     // failing `FailingConstruction` stub — must surface the typed Rpc error too,

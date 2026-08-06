@@ -899,6 +899,18 @@ class PyBot:
         db: bool = True,
         tick_data_fetcher: Callable | None = None,
     ) -> tuple[int, str, str, str, str]: ...
+    def resolve_v4_identity(
+        self,
+        chain_id: int,
+        pool_manager: str,
+        pool_id_hex: str,
+        currency0: str | None = None,
+        currency1: str | None = None,
+        fee: int | None = None,
+        tick_spacing: int | None = None,
+        hook_address: str | None = None,
+        state_view_address: str | None = None,
+    ) -> tuple[str, str, int, int, int, str, int | None]: ...
     def build_v4_pool(
         self,
         pool_manager: str,

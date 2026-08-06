@@ -1512,3 +1512,48 @@ async fn fetch_erc20_uint_and_string_field() {
         .unwrap();
     assert_eq!(s, "WETH");
 }
+
+#[tokio::test]
+async fn resolve_v4_identity_orders_currencies_and_derives_hook_flags() {
+    // TF7RZB-S3: the override (kwargs) path of the core identity resolver —
+    // over a NoDb io it must order currency0/1 by ascending address, carry
+    // fee/tick_spacing, derive hook_flags from the hook address (low 16 bits),
+    // and report no DB liquidity-update block.
+    let first = alloy::primitives::address!("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    let second = alloy::primitives::address!("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    let io = io_with(FakeRpc::new());
+    let overrides = builder::V4PoolBuildOverrides {
+        // deliberately reversed — resolver must order currency0 < currency1.
+        currency0: Some(second),
+        currency1: Some(first),
+        fee: Some(3000),
+        tick_spacing: Some(60),
+        hook_address: Some(SV),
+        state_view: Some(SV),
+    };
+    let (id, db_block) = builder::resolve_v4_identity(1, TO, POOL_ID, &overrides, &io)
+        .await
+        .unwrap();
+    assert_eq!(id.currency0, first);
+    assert_eq!(id.currency1, second);
+    assert_eq!(id.fee, 3000);
+    assert_eq!(id.tick_spacing, 60);
+    assert_eq!(id.hook_flags, u16::from_be_bytes([SV[18], SV[19]]));
+    assert_eq!(id.state_view, SV);
+    assert_eq!(db_block, None);
+}
+
+#[tokio::test]
+async fn resolve_v4_identity_empty_overrides_is_missing_identity() {
+    // TF7RZB-S3: over a no-DB io with empty overrides the resolver must
+    // degrade to the typed `MissingIdentity` error (never a panic).
+    let io = io_with(FakeRpc::new());
+    let overrides = builder::V4PoolBuildOverrides::default();
+    let err = builder::resolve_v4_identity(1, TO, POOL_ID, &overrides, &io)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, builder::PoolBuilderError::MissingIdentity { .. }),
+        "expected MissingIdentity, got {err:?}"
+    );
+}

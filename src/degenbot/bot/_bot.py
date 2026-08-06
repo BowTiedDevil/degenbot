@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self, cast
 
@@ -25,7 +23,6 @@ from degenbot.builders.context import BuilderContext
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.builders.request import BuildManagedPoolRequest, BuildPoolRequest, BuildRequest
-from degenbot.builders.seed_block_resolver import resolve_seed_block
 from degenbot.builders.tick_data_fetcher import (
     FetchedTickData,
     TickDataTypes,
@@ -39,7 +36,6 @@ from degenbot.builders.type_resolution import (
 )
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DegenbotConfig, _init_config
-from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.database.operations import get_alembic_config, get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
@@ -76,24 +72,6 @@ if TYPE_CHECKING:
     from degenbot.types.rpc_types import BlockIdentifier
 
 from degenbot.types.aliases import ChainId  # ruff:ignore[typing-only-first-party-import]
-
-
-@dataclass(frozen=True)
-class V4DbValues:
-    """Immutable V4 identity resolved from a DB row (T4 / 4GQWZ4).
-
-    Relocated verbatim from the retired `v4_builder_base.py` so the
-    delegating `_build_v4_managed` shell can hydrate the caller-supplied V4
-    identity from the DB two-step lookup when the pool is present in the
-    database.
-    """
-
-    currency0_address: str
-    currency1_address: str
-    hook_address: str
-    tick_spacing: int
-    fee: int
-    state_view_address: str | None
 
 
 def _update_pool(
@@ -983,82 +961,46 @@ class Bot:
         # pins `request.state_block`, price = that same block (no split).
         head_block = state_block
 
-        # Try DB first — two-step V4 lookup (manager → v4 row → per-FK tokens),
-        # routed through the Rust `PyBotIo` seam (QVMWQC). A missing/empty DB
-        # is a skip, not an error.
-        db_values = None
-        db_liquidity_update_block: int | None = None
-        with contextlib.suppress(Exception):
-            manager_row = io.fetch_pool_manager(chain_id=chain_id, address=pool_manager_address)
-            if manager_row is not None:
-                v4_row = io.fetch_v4_pool_by_pool_hash(pool_hash_hex=pool_id_bytes.to_0x_hex())
-                if (
-                    v4_row is not None
-                    and v4_row.currency0_id is not None
-                    and v4_row.currency1_id is not None
-                ):
-                    currency0_row = io.fetch_token_by_id(token_id=v4_row.currency0_id)
-                    currency1_row = io.fetch_token_by_id(token_id=v4_row.currency1_id)
-                    if currency0_row is not None and currency1_row is not None:
-                        db_liquidity_update_block = v4_row.liquidity_update_block
-                        db_values = V4DbValues(
-                            currency0_address=get_checksum_address(currency0_row.address),
-                            currency1_address=get_checksum_address(currency1_row.address),
-                            hook_address=get_checksum_address(v4_row.hooks),
-                            tick_spacing=v4_row.tick_spacing,
-                            fee=v4_row.fee_token0,
-                            state_view_address=manager_row.state_view,
-                        )
-
-        # Seed-anchor policy (V4 twin of the V3 split, two-stamp OB7UNY):
-        # `state_block` is the block the DB liquidity snapshot's assembled tick
-        # map is exact at and becomes `tick_data_block`; the slot0/price is
-        # fetched FRESH at `head_block`, stamping `update_block`.
-        state_block = resolve_seed_block(
-            request_state_block=request.state_block,
-            db_liquidity_update_block=db_liquidity_update_block,
-            head_block=state_block,
-        )
-
-        # Get immutable values
-        if db_values is not None:
-            currency0_address = db_values.currency0_address
-            currency1_address = db_values.currency1_address
-            hook_address = db_values.hook_address
-            tick_spacing_for_pool = db_values.tick_spacing
-            fee_for_pool = db_values.fee
-            state_view_address = db_values.state_view_address
-        else:
-            if request.state_view_address is None:
-                raise DegenbotValueError(
-                    message="A state view contract address must be provided for a pool not in the database.",  # ruff:ignore[line-too-long]
-                )
-            if request.fee is None:
-                raise DegenbotValueError(
-                    message="A fee must be provided for a pool not in the database.",
-                )
-            if request.tick_spacing is None:
-                raise DegenbotValueError(
-                    message="A tick spacing must be provided for a pool not in the database.",
-                )
-            if request.tokens is None:
-                raise DegenbotValueError(
-                    message="Token addresses must be provided for a pool not in the database.",
-                )
-            state_view_address = get_checksum_address(request.state_view_address)
-            currency0_address, currency1_address = sorted(
-                [get_checksum_address(t) for t in request.tokens],
-                key=lambda t: t.lower(),
+        # TF7RZB-S3: V4 identity resolution moves CORE-side. The Rust
+        # `resolve_v4_identity` performs the DB two-step (manager → v4 row →
+        # per-FK tokens) first, else the caller-supplied overrides, and returns
+        # the resolved identity (currency0/1, fee, tick_spacing, hook_flags,
+        # state_view) plus the DB liquidity-update-block. The driver no longer
+        # reads the DB nor assembles the kwargs identity itself.
+        over_tokens = request.tokens
+        over_currency0 = over_tokens[0] if over_tokens else None
+        over_currency1 = over_tokens[1] if over_tokens else None
+        try:
+            (
+                currency0_address,
+                currency1_address,
+                fee_for_pool,
+                tick_spacing_for_pool,
+                hook_flags,
+                state_view_hex,
+                _db_liquidity_update_block,
+            ) = self._py_bot.resolve_v4_identity(
+                chain_id=int(chain_id),
+                pool_manager=pool_manager_address,
+                pool_id_hex=pool_id_bytes.to_0x_hex(),
+                currency0=over_currency0,
+                currency1=over_currency1,
+                fee=int(request.fee) if request.fee is not None else None,
+                tick_spacing=(
+                    int(request.tick_spacing) if request.tick_spacing is not None else None
+                ),
+                hook_address=request.hook_address,
+                state_view_address=request.state_view_address,
             )
-            hook_address = (
-                get_checksum_address(request.hook_address)
-                if request.hook_address is not None
-                else _ZERO_ADDRESS
-            )
-            fee_for_pool = request.fee
-            tick_spacing_for_pool = request.tick_spacing
+        except ValueError as exc:
+            # The core raises a typed `MissingIdentity` (mapped to PyValueError)
+            # when neither the DB two-step nor the overrides are complete.
+            raise DegenbotValueError(
+                message=exc.args[0] if exc.args else "V4 identity resolution failed"
+            ) from exc
+        state_view_address = get_checksum_address(state_view_hex)
 
-        # Build tokens
+        # Build tokens — from the CORE-resolved currency addresses.
         token0 = self._erc20_builder.build(
             currency0_address,
             chain_id=chain_id,
@@ -1076,7 +1018,6 @@ class Bot:
         # — kept for the Python-side companion overrides (`protocol_fee` /
         # `lp_fee`), which the Rust handle does not expose.
         try:
-            assert state_view_address is not None
             _sqrt_price_x96, _tick_raw, protocol_fee_raw, lp_fee, _liquidity_val = (
                 io.fetch_v4_slot0_liquidity(state_view_address, pool_id_bytes, block=head_block)
             )
@@ -1087,18 +1028,15 @@ class Bot:
 
         # Delegate the build to the Rust PoolBuilder: core `build_v4` fetches
         # slot0/liquidity FRESH + assembles the tick map (Db → Chain
-        # precedence) + registers into BotState atomically. Identity is
-        # caller-supplied; the StateView mapping is registered Rust-side
-        # (idempotent) inside the adapter. Returns `(pool_id, coverage)` —
-        # coverage drives the companion's `_sparse_liquidity_map`.
-        assert state_view_address is not None
-        hook_flags = int(hook_address, 16) if hook_address else 0
+        # precedence) + registers into BotState atomically, using the
+        # CORE-resolved identity above. Returns `(pool_id, coverage,
+        # identity...)` — coverage drives the companion's `_sparse_liquidity_map`.
         pool_handle_pool_id, coverage, b_cur0, b_cur1, b_pm, b_fee, b_ts, b_hf, b_pool_id_hex = (
             self._py_bot.build_v4_pool(
                 pool_manager=pool_manager_address,
                 pool_id_hex=pool_id_bytes.to_0x_hex(),
-                currency0=token0.address,
-                currency1=token1.address,
+                currency0=currency0_address,
+                currency1=currency1_address,
                 fee=fee_for_pool,
                 tick_spacing=tick_spacing_for_pool,
                 hook_flags=hook_flags,
@@ -1113,27 +1051,23 @@ class Bot:
                 ),
             )
         )
-        # TF7RZB-S2 return-surface parity: the normalized identity echoed back
-        # through the seam must round-trip the caller-resolved values losslessly
-        # (the V4 builder finalizes currency0/1, manager, pool_id, fee,
-        # tick_spacing, hook_flags). A divergence is a real seam bug and must
-        # fail loudly, not silently re-derive.
-        b_expected_fee = int(fee_for_pool)
-        b_expected_pool_id_hex = pool_id_bytes.to_0x_hex().lower()
+        # TF7RZB-S2/S3 return-surface parity: the identity the builder echoes
+        # back must match what the core resolver produced (a divergence is a
+        # real seam bug), and the pool_id must round-trip the requested hash.
         b_identity_ok = all([
-            b_cur0.lower() == token0.address.lower(),
-            b_cur1.lower() == token1.address.lower(),
+            b_cur0.lower() == currency0_address.lower(),
+            b_cur1.lower() == currency1_address.lower(),
             b_pm.lower() == pool_manager_address.lower(),
-            int(b_fee) == b_expected_fee,
+            int(b_fee) == int(fee_for_pool),
             int(b_ts) == int(tick_spacing_for_pool),
-            int(b_hf) == hook_flags,
-            b_pool_id_hex.lower() == b_expected_pool_id_hex,
+            int(b_hf) == int(hook_flags),
+            b_pool_id_hex.lower() == pool_id_bytes.to_0x_hex().lower(),
         ])
         if not b_identity_ok:
             raise DegenbotValueError(
                 message=(
                     "V4 builder identity `build_v4_pool` diverged from the "
-                    "caller-resolved identity (currency0/1, pool_manager, fee, "
+                    "resolved identity (currency0/1, pool_manager, fee, "
                     "tick_spacing, hook_flags, pool_id)."
                 )
             )
@@ -1143,7 +1077,7 @@ class Bot:
         pool = UniswapV4Pool._from_py_pool(py_pool_handle)  # ruff:ignore[private-member-access]
         # Builder-supplied values the seam defaults; override from RPC.
         pool._state_view_address = (  # ruff:ignore[private-member-access]
-            get_checksum_address(state_view_address) if state_view_address else _ZERO_ADDRESS
+            get_checksum_address(state_view_address)
         )
         pool.protocol_fee = ProtocolFee(
             zero_for_one=protocol_fee_zero_to_one,

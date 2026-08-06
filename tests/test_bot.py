@@ -231,14 +231,13 @@ class TestBuildDelegatedIdentityReturnSurface:
 
 
 class TestBuildManagedPoolIdentityReturnSurface:
-    """TF7RZB-S2: build_v4_pool returns the normalized identity tuple
-    `(pool_id, coverage, currency0, currency1, pool_manager, fee,
-    tick_spacing, hook_flags, pool_id_hex)`; _build_v4_managed verifies it
-    round-trips the caller-resolved identity losslessly."""
+    """TF7RZB-S2/S3: the V4 build path resolves identity core-side via
+    `resolve_v4_identity` (DB two-step else overrides) then echoes it back
+    through `build_v4_pool`; _build_v4_managed verifies the two agree."""
 
     def test_build_v4_parity_mismatch_raises(self, tmp_path) -> None:
-        """A V4 builder identity that diverges from the caller-resolved
-        identity raises — the return-surface parity guard."""
+        """A builder identity that diverges from the resolver identity raises
+        — the return-surface parity guard."""
         from types import SimpleNamespace
         from unittest.mock import MagicMock
 
@@ -263,38 +262,40 @@ class TestBuildManagedPoolIdentityReturnSurface:
         pool_id_hex = "0x" + "11" * 32
         tokens = ["0x" + "cc" * 20, "0x" + "dd" * 20]  # cc<dd -> cc is currency0
 
-        # Stub the io seam: no DB row (suppressed), kwargs identity path.
+        # Stub the io seam: only the companion scalars read + get_block_number
+        # remain (identity resolution moved core-side).
         bot._io = SimpleNamespace(  # type: ignore[assignment]
-            fetch_pool_manager=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no db")),
             get_block_number=lambda: 100,
-            fetch_v4_slot0_liquidity=lambda *a, **k: (
-                1 << 96,
-                0,
-                0,
-                5000,
-                0,
-            ),
+            fetch_v4_slot0_liquidity=lambda *a, **k: (1 << 96, 0, 0, 5000, 0),
         )
-        addr_cycle = iter(["0x" + "cc" * 20, "0x" + "dd" * 20])
         bot._erc20_builder.build = lambda *a, **k: SimpleNamespace(  # type: ignore[assignment]
-            address=next(addr_cycle)
+            address="0x" + "cc" * 20
         )
         bot._make_v4_tick_data_fetcher = lambda *a, **k: None  # type: ignore[assignment]
 
-        # Stub the Rust surface: build_v4_pool returns a currency0 that DIFFERS
-        # from the caller-resolved token0 -> parity guard must raise.
+        # Stub the Rust surface: the resolver returns identity A; build_v4_pool
+        # echoes a DIFFERENT currency0 -> parity guard must raise.
         bot._py_bot = SimpleNamespace(  # type: ignore[assignment]
+            resolve_v4_identity=lambda **k: (
+                "0x" + "cc" * 20,
+                "0x" + "dd" * 20,
+                5000,
+                1,
+                0,
+                "0x" + "bb" * 20,
+                None,
+            ),
             build_v4_pool=lambda **k: (
                 7,
                 "sparse",
-                "0x" + "ee" * 20,  # currency0 mismatch
+                "0x" + "ee" * 20,  # currency0 mismatch vs resolver
                 "0x" + "dd" * 20,
                 pm,
                 5000,
                 1,
                 0,
                 pool_id_hex,
-            )
+            ),
         )
 
         with pytest.raises(DegenbotValueError):
@@ -306,4 +307,52 @@ class TestBuildManagedPoolIdentityReturnSurface:
                 tokens=tokens,
                 fee=5000,
                 tick_spacing=1,
+            )
+
+
+class TestBuildManagedPoolResolveErrorMapping:
+    """TF7RZB-S3: a core-identity-resolution failure (MissingIdentity → mapped
+    to PyValueError at the seam) surfaces as DegenbotValueError."""
+
+    def test_resolve_missing_identity_raises_degenbot(self, tmp_path) -> None:
+        """When resolve_v4_identity raises ValueError (no DB row, no overrides),
+        _build_v4_managed re-raises DegenbotValueError."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        import pytest
+
+        from degenbot.bot import Bot
+        from degenbot.config import DatabaseSettings, DegenbotConfig
+        from degenbot.exceptions.base import DegenbotValueError
+        from degenbot.provider import AlloyProvider
+        from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
+
+        config = DegenbotConfig(
+            database=DatabaseSettings(path=str(tmp_path / "t.db")),
+            rpc={1: ETHEREUM_ARCHIVE_NODE_HTTP_URI},
+            default_chain_id=1,
+        )
+        provider = MagicMock(spec=AlloyProvider)
+        provider.chain_id = 1
+        bot = Bot(config, provider=provider)
+
+        pm = "0x" + "aa" * 20
+        pool_id_hex = "0x" + "11" * 32
+
+        bot._io = SimpleNamespace(  # type: ignore[assignment]
+            get_block_number=lambda: 100,
+        )
+        bot._py_bot = SimpleNamespace(  # type: ignore[assignment]
+            resolve_v4_identity=lambda **k: (_ for _ in ()).throw(
+                ValueError("V4 identity incomplete: pool not in the database")
+            ),
+        )
+
+        with pytest.raises(DegenbotValueError):
+            bot.build_managed_pool(
+                pm,
+                pool_id_hex,
+                state_block=100,
+                # No state_view / fee / tick_spacing / tokens -> core rejects.
             )

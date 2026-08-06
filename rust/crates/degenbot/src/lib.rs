@@ -132,8 +132,8 @@ pub use degenbot_pool_updater;
 // ---------------------------------------------------------------------------
 
 pub use degenbot_bot::bot_core::pool_builder::builder::{
-    build_v2, build_v3, build_v4, probe_pool_type, PoolBuilderError, PoolFamily,
-    V4PoolBuildIdentity,
+    build_v2, build_v3, build_v4, probe_pool_type, resolve_v4_identity, PoolBuilderError,
+    PoolFamily, V4PoolBuildIdentity, V4PoolBuildOverrides,
 };
 pub use degenbot_bot::bot_core::registration_lifecycle::{
     run_cl_v3_lifecycle, run_cl_v4_lifecycle, run_v3_registration_lifecycle,

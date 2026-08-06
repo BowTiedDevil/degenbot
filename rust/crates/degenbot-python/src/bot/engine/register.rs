@@ -378,5 +378,8 @@ pub(crate) fn map_builder_err(
                 "pool build decode failure: {message}"
             ))
         }
+        degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError::MissingIdentity {
+            message,
+        } => pyo3::exceptions::PyValueError::new_err(format!("V4 identity incomplete: {message}")),
     }
 }
