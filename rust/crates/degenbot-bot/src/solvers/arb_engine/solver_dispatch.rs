@@ -34,6 +34,16 @@ const MAX_SOLVE_STALENESS: u64 = 10;
 fn hop_is_too_stale(update_block: u64, solve_block: u64) -> bool {
     update_block > 0 && solve_block.saturating_sub(update_block) > MAX_SOLVE_STALENESS
 }
+
+/// Whether a hop's price clock runs AHEAD of the solve block (U6RNHH T1).
+/// Mirror of the verifier's `is_future_price`; after the B2 re-anchor
+/// (`solve_block = max(block_number, pool_state_head)`) this is impossible for
+/// any pool (head is the max across all pools), so this is a belt-and-suspenders
+/// invariant assertion, not a normal-path rejection.
+#[must_use]
+fn hop_is_future(update_block: u64, solve_block: u64) -> bool {
+    update_block > solve_block
+}
 use ::degenbot_solvers::mixed::{
     BalancerStableHopState, BalancerWeightedHopState, CurveStableswapHopState, HopType,
     MixedPoolRef, ResolvedHop, ResolvedMixedPath, SolidlyHopState, SolvePathResult,
@@ -45,6 +55,7 @@ impl ArbitrageEngine {
     /// Uses the `pool_to_paths` reverse index to identify `affected_path_ids`,
     /// then re-resolves and re-solves only those. Unaffected paths carry
     /// their previous results forward.
+    #[allow(clippy::too_many_lines)]
     pub fn rebuild_and_solve_affected(
         &mut self,
         v2_affected: &HashSet<u64>,
@@ -144,6 +155,30 @@ impl ArbitrageEngine {
                 let Some(path) = self.path_pools.get(&path_id) else {
                     continue;
                 };
+                // U6RNHH T1 solve-stage future-price tripwire (belt + suspenders):
+                // a hop whose PRICE clock runs AHEAD of the solve block is never
+                // legitimate and must be rejected loudly, not solved (a future-price
+                // solve reports a misleading downstream IIA). Note the B2 re-anchor
+                // above sets `solve_block = max(block_number, pool_state_head)`,
+                // so the only way a hop beats it is `update_block > pool_state_head`
+                // — impossible by definition (head is the max across all pools).
+                // This guard therefore normally never fires: it is an explicit
+                // invariant assertion for the truly-future case, and it does NOT
+                // regress B2 (which concerns `update_block > block_number` — a
+                // legitimate live-head path that the re-anchor folds into
+                // `solve_block`).
+                let future = path.pools.iter().any(|pool_ref| {
+                    hop_is_future(core.pool_update_block(pool_ref.pool_key), solve_block)
+                });
+                if future {
+                    deferred_paths.insert(path_id);
+                    tracing::error!(
+                        "[future-price] path_id={path_id} rejected at solve block {solve_block}: \
+                         a hop price clock runs AHEAD of the solve block (update_block > \
+                         solve_block) — never legitimate"
+                    );
+                    continue;
+                }
                 let stale = path.pools.iter().any(|pool_ref| {
                     hop_is_too_stale(core.pool_update_block(pool_ref.pool_key), solve_block)
                 });
@@ -201,11 +236,14 @@ impl ArbitrageEngine {
                 if !resolved.valid {
                     return None;
                 }
-                // No future-price skip here: a path whose `max_update_block`
-                // is AHEAD of the drain `block_number` is LIVE head state (the
-                // pools advanced by backfill), not poison — solving it is valid
-                // and it is correctly re-anchored at `solve_block` above
-                // (B2). Skipping it would DROP a capturable live opportunity.
+                // A path whose `max_update_block` is AHEAD of the drain
+                // `block_number` is LIVE head state (the pools advanced by
+                // backfill), not poison — it is correctly re-anchored at
+                // `solve_block` above (B2); skipping it would DROP a capturable
+                // opportunity. The genuinely-future case (`update_block >
+                // solve_block`) is already rejected by the U6RNHH T1 belt-and-
+                // suspenders guard in the gate loop above, which removes the
+                // path from `solve_path_ids` entirely.
                 Some((pid, resolved.clone()))
             })
             .collect();
@@ -701,5 +739,41 @@ impl ArbitrageEngine {
 impl Default for ArbitrageEngine {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod staleness_gate_tests {
+    use super::{hop_is_future, hop_is_too_stale};
+
+    #[test]
+    fn behind_within_window_is_not_stale() {
+        // 1-2 block lag (normal pump latency / no event that block) is NOT stale.
+        assert!(!hop_is_too_stale(100, 101));
+        assert!(!hop_is_too_stale(100, 102));
+        // Exactly at the window edge (MAX_SOLVE_STALENESS = 10) is NOT stale.
+        assert!(!hop_is_too_stale(100, 110));
+    }
+
+    #[test]
+    fn behind_past_window_is_stale() {
+        // One past the edge IS stale.
+        assert!(hop_is_too_stale(100, 111));
+        // The observed live abort: a 166879-block-behind pool IS stale.
+        assert!(hop_is_too_stale(25_509_665, 25_676_544));
+        // Never-advanced (0) is never assumed stale.
+        assert!(!hop_is_too_stale(0, 100));
+    }
+
+    #[test]
+    fn ahead_is_future_never_legitimate() {
+        // Any magnitude ahead is future (U6RNHH T1 / TVJF6K T2).
+        assert!(hop_is_future(101, 100));
+        assert!(hop_is_future(25_677_789, 25_677_777));
+        // Equal to the solve block is a mid-block capture, NOT future.
+        assert!(!hop_is_future(100, 100));
+        // Behind (normal latency) is NOT future.
+        assert!(!hop_is_future(99, 100));
+        assert!(!hop_is_future(0, 100));
     }
 }
