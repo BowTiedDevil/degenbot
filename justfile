@@ -239,6 +239,21 @@ test-tier3-pancake:
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_pancake_v3_swap_vs_revm
 
+# Tier-3 PancakeSwap V2 pair swap oracle (the fork-fee sub-slice of the V2
+# family — the source of `tier3_v2_pair_swap_vs_revm.rs`'s deferral). Builds
+# the src-pancake2 harness (solc 0.5.16) over the REAL Ethereum-mainnet
+# `PancakePair` — the deployed PancakeSwap V2 fork of UniswapV2Pair, hardcoded
+# 0.25% fee (`mul(25)/10000`, matching the engine `PANCAKESWAP_V2` preset) + 3-tuple
+# timestamped reserves — then drives the engine's `IntHopState::swap` against
+# the on-chain K-invariant boundary, asserting byte-exactness at the fork fee.
+test-tier3-pancake2:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tier3-oracle/build-tier3-pancake2-swap-harness.sh
+    python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+    export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_pancake_v2_swap_vs_revm
+
 # Tier-3 umbrella: rebuild + republish every canonical-reference harness, then
 # run the full on-chain oracle suite. The individual tests ALSO run in the
 # default `just test-rust` (they load the COMMITTED bytecode from
@@ -246,7 +261,7 @@ test-tier3-pancake:
 # publish the artifacts (after a harness-source edit) and re-run each family.
 # Recompiling dozens of revm harnesses makes this slow — run explicitly, or in
 # the CI `tier3-oracle` job.
-test-tier3: test-tier3-smoke test-tier3-step test-tier3-swap test-tier3-v2 test-tier3-v4 test-tier3-curve test-tier3-balancer test-tier3-pancake
+test-tier3: test-tier3-smoke test-tier3-step test-tier3-swap test-tier3-v2 test-tier3-v4 test-tier3-curve test-tier3-balancer test-tier3-pancake test-tier3-pancake2
 
 # Validate the committed tier-3 harness bytecode: recompile EVERY harness with
 # the real solc/forge toolchain (into a throwaway dir, PUBLISH=0 — committed
@@ -284,6 +299,7 @@ rebuild-tier3-artifacts:
     tier3-oracle/build-tier3-curve-swap-harness.sh
     tier3-oracle/build-tier3-balancer-swap-harness.sh
     tier3-oracle/build-tier3-pancake-swap-harness.sh
+    tier3-oracle/build-tier3-pancake2-swap-harness.sh
 
 # Run all tests (Rust + Python)
 test-all: test-rust test-python

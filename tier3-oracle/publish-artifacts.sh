@@ -21,6 +21,7 @@ cp "${OUT_DIR}"/CurveSwapOracleHarness.sol/CurveSwapOracleHarness.json   artifac
 cp "${OUT_DIR}"/BalancerSwapOracleHarness.sol/BalancerSwapOracleHarness.json artifacts/BalancerSwapOracleHarness.sol/BalancerSwapOracleHarness.json
 cp "${OUT_DIR}"/Echo.sol/Echo.json                                 artifacts/Echo.sol/Echo.json
 cp "${OUT_DIR}"/PancakeV3SwapOracleHarness.sol/PancakeV3SwapOracleHarness.json artifacts/PancakeV3SwapOracleHarness.sol/PancakeV3SwapOracleHarness.json
+cp "${OUT_DIR}"/PancakeV2SwapOracleHarness.sol/PancakeV2SwapOracleHarness.json artifacts/PancakeV2SwapOracleHarness.sol/PancakeV2SwapOracleHarness.json
 
 "${TD}/write-harness-manifest.sh"
 echo "published tier-3 harness artifacts + manifest to artifacts/"

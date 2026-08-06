@@ -1,5 +1,6 @@
 v4-core/=lib/v4-core/
 v3-core/=lib/v3-core/
 v2-core/=lib/v2-core/
+pancake2-core/=lib/pancake2-src/
 forge-std/=lib/v4-core/lib/forge-std/src/
 solmate/=lib/v4-core/lib/solmate/

@@ -27,6 +27,52 @@ ensure_lib() {  # ensure_lib <name> <repo-url> <tag> <marker-file>
 ensure_lib v2-core https://github.com/Uniswap/v2-core.git v1.0.0 contracts/UniswapV2Pair.sol
 ensure_lib v3-core https://github.com/Uniswap/v3-core.git v1.0.0 contracts/UniswapV3Pool.sol
 ensure_lib v4-core https://github.com/Uniswap/v4-core.git v4.0.0 src/PoolManager.sol
+# PancakeSwap V2 pair reference source. Unlike the Uniswap forks there is no
+# git ref matching the DEPLOYED `PancakePair` (the stale `pancake-swap-core`
+# GitHub `master` carries a never-deployed 0.2% `mul(2)/1000` build), so we pull
+# the Etherscan-verified source of a real deployed pair on ETHEREUM MAINNET
+# (chainid 1, solc 0.5.16 — the "PancakeSwap V2" DexIdentity degenbot derives
+# CREATE2 addresses for, factory 0x1097053Fd2ea711dad45caCcc45EfF7548fCB362,
+# init hash 0x57224589…), which hardcodes a 0.25% swap fee via
+# `mul(25)/10000` + 3-tuple timestamped reserves.
+# Every PancakeSwap V2 pair shares the same bytecode (tokens are set via
+# `initialize()` after deploy), so any verified pair's source is identical; the
+# flat SourceCode is written whole to `lib/pancake2-src/contracts/PancakePair.sol`
+# (the single flattened compilation unit the `src-pancake2/` harness imports).
+# Requires `ETHERSCAN_API_KEY` (a CI secret for the tier3-oracle job) only when
+# the source is not already vendored.
+PANCAKE2_PAIR="0x2E8135bE71230c6B1B4045696d41C09Db0414226"
+ensure_pancake2() {
+    local marker="lib/pancake2-src/contracts/PancakePair.sol"
+    if [ -f "${marker}" ]; then
+        echo "pancake2-src: present (PancakePair.sol), skipping"
+        return 0
+    fi
+    if [ -z "${ETHERSCAN_API_KEY:-}" ]; then
+        echo "ERROR: ETHERSCAN_API_KEY is required to vendor the PancakeSwap V2 source (not present)." >&2
+        echo "  Set ETHERSCAN_API_KEY (Etherscan V2 API key) to fetch the verified PancakePair source." >&2
+        exit 1
+    fi
+    echo "pancake2-src: fetching verified PancakePair source from Etherscan (Ethereum mainnet, pair ${PANCAKE2_PAIR})…"
+    local tmp
+    tmp="$(mktemp)"
+    curl -fsSL "https://api.etherscan.io/v2/api?chainid=1&module=contract&action=getsourcecode&address=${PANCAKE2_PAIR}&apikey=${ETHERSCAN_API_KEY}" -o "${tmp}"
+    python3 - "${tmp}" <<'PY'
+import json, os, sys
+raw=json.load(open(sys.argv[1]))
+assert raw.get("status")=="1", f"Etherscan getSourceCode failed: {raw.get('result')}"
+src=(raw["result"][0].get("SourceCode") or "")
+assert src, "empty SourceCode"
+# Etherscan returns the FLATTENED PancakeSwap V2 source as plain concatenated
+# Solidity (not the `{{json}}` multi-file form), so write it whole.
+dest="lib/pancake2-src/contracts/PancakePair.sol"
+os.makedirs(os.path.dirname(dest), exist_ok=True)
+open(dest,"w").write(src)
+print(f"wrote flattened verified PancakePair source to {dest}")
+PY
+    rm -f "${tmp}"
+}
+ensure_pancake2
 
 # NOTE: the Curve stableswap oracle (`src-curve/CurveSwapOracleHarness.sol`, task
 # YXMNWB) has NO `ensure_lib` entry: Curve's canonical source is VYPER (not
@@ -112,4 +158,4 @@ PY
 }
 ensure_pancake_v3
 
-echo "tier3-oracle libs ready: v2-core@v1.0.0, v3-core@v1.0.0, v4-core@v4.0.0 (with solmate), balancer-src@${BALANCER_PIN}, pancake-src@${PANCAKE_POOL}"
+echo "tier3-oracle libs ready: v2-core@v1.0.0, v3-core@v1.0.0, v4-core@v4.0.0 (with solmate), balancer-src@${BALANCER_PIN}, pancake-src@${PANCAKE_POOL}, pancake2-src@${PANCAKE2_PAIR}"

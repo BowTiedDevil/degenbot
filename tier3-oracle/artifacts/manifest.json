@@ -11,6 +11,10 @@
     "sha256": "245f590d0cef30581016c0e2b6b878bff831e9b08dd196bb27ad23c867075272",
     "source": "src/Echo.sol"
   },
+  "PancakeV2SwapOracleHarness.sol/PancakeV2SwapOracleHarness.json": {
+    "sha256": "99db6454b24f693ed775c77eeca5ed290c0d16b468cd739cbdcf4808147b9bcd",
+    "source": "src-pancake2/PancakeV2SwapOracleHarness.sol"
+  },
   "PancakeV3SwapOracleHarness.sol/PancakeV3SwapOracleHarness.json": {
     "sha256": "4eff20429bc5f8a4c92f4e396d94858b7f85587b0449726cff9bafec126344ea",
     "source": "src-pancake/PancakeV3SwapOracleHarness.sol"
