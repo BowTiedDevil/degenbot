@@ -59,12 +59,16 @@ one path), but the `alloy_provider()` accessor + the underlying
 `AlloyTickBootstrapRpc` from it, and `required_construction_io()` synthesizes
 the transient handle over it.
 
-### D4 — The `build_curve_pool` umbrella/Tier-1 gap is VK3YDM's work.
+### D4 — The `build_curve_pool` umbrella/Tier-1 gap is VK3YDM's work (closed).
 
-`build_curve_pool`/`build_balancer_*` exist in core but are not re-exported from
-the umbrella and not exposed on `PyBot`; no Rust ERC-20 builder exists. LWKLMP
-does not touch this — it only records the gap so `VK3YDM` closes it
-(`pub use` from the umbrella + `PyBot` seam + a new core erc20 builder).
+`build_curve_pool`/`build_balancer_*` exist in core but were not re-exported from
+the umbrella and not exposed on `PyBot`; no Rust ERC-20 builder existed. LWKLMP
+only records the gap so `VK3YDM` closes it. It is now closed: VK3YDM-S2 added a
+a core Rust ERC-20 builder (`build_erc20_metadata`) + `PyBot.build_erc20_token`,
+and VK3YDM-S3 flat-re-exported `build_aerodrome_v2`/`build_balancer_*`/`build_curve_pool`
+from the umbrella (`degenbot` lib.rs) and exposed `PyBot.build_curve_pool`
+(construction + update already delegated core-side via `build_curve_pool` +
+`fetch_curve_*`).
 
 ### D5 — Delete the vestigial Python surface + fix doc rot.
 
