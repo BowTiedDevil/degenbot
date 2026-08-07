@@ -2278,11 +2278,17 @@ fn three_hop_v2_v2_v3(
 ) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
     let hop_outputs = inputs.hop_outputs;
+    let consumed_inputs = inputs.consumed_inputs;
     let executor_address = inputs.executor_address;
     let weth_address = inputs.weth_address;
 
-    let out_b = hop_outputs[1];
     if hop_outputs.contains(&0) {
+        return None;
+    }
+    // V3 is the CL hop at idx 2; its swap-in is the solver's CL-clamp
+    // executable forward (`consumed_inputs[2]`). Hops 0/1 are V2 (no clamp).
+    let c_swap_in = consumed_inputs.get(2).copied()?;
+    if !fits_int128(c_swap_in) {
         return None;
     }
 
@@ -2302,7 +2308,7 @@ fn three_hop_v2_v2_v3(
     ));
 
     let commands =
-        encoders::enc_v3_swap_compact(v3c_idx, hc.zfo, out_b, executor_idx, &c_fwd).ok()?;
+        encoders::enc_v3_swap_compact(v3c_idx, hc.zfo, c_swap_in, executor_idx, &c_fwd).ok()?;
 
     let mut out = encoders::enc_preamble(&at);
     out.extend_from_slice(&commands);
@@ -2435,12 +2441,19 @@ fn three_hop_v2_v3_v3(
 ) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
     let hop_outputs = inputs.hop_outputs;
+    let consumed_inputs = inputs.consumed_inputs;
     let executor_address = inputs.executor_address;
     let weth_address = inputs.weth_address;
 
     let out_a = hop_outputs[0];
-    let out_b = hop_outputs[1];
     if hop_outputs.contains(&0) {
+        return None;
+    }
+    // Both V3 hops are CL: hop1 swap-in = consumed_inputs[1], hop2 swap-in =
+    // consumed_inputs[2]. `out_a` also feeds the V2 direct output (real).
+    let b_swap_in = consumed_inputs.get(1).copied()?;
+    let c_swap_in = consumed_inputs.get(2).copied()?;
+    if !fits_int128(b_swap_in) || !fits_int128(c_swap_in) {
         return None;
     }
 
@@ -2454,10 +2467,11 @@ fn three_hop_v2_v3_v3(
     let mut v3b_fwd = encoders::enc_erc20_transfer(weth_idx, v2a_idx, optimal_input).ok()?;
     v3b_fwd.extend_from_slice(&encoders::enc_v2_swap_direct(v2a_idx, ha.zfo, out_a, v3b_idx).ok()?);
 
-    let v3c_fwd = encoders::enc_v3_swap_compact(v3b_idx, hb.zfo, out_a, v3c_idx, &v3b_fwd).ok()?;
+    let v3c_fwd =
+        encoders::enc_v3_swap_compact(v3b_idx, hb.zfo, b_swap_in, v3c_idx, &v3b_fwd).ok()?;
 
     let commands =
-        encoders::enc_v3_swap_compact(v3c_idx, hc.zfo, out_b, executor_idx, &v3c_fwd).ok()?;
+        encoders::enc_v3_swap_compact(v3c_idx, hc.zfo, c_swap_in, executor_idx, &v3c_fwd).ok()?;
 
     let mut out = encoders::enc_preamble(&at);
     out.extend_from_slice(&commands);
@@ -2477,17 +2491,25 @@ fn three_hop_v2_v3_v4(
 ) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
     let hop_outputs = inputs.hop_outputs;
+    let consumed_inputs = inputs.consumed_inputs;
     let executor_address = inputs.executor_address;
     let pool_manager_address = inputs.pool_manager_address;
     let weth_address = inputs.weth_address;
 
     let out_a = hop_outputs[0];
-    let out_b = hop_outputs[1];
     let out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
         return None;
     }
     if !fits_int128(optimal_input) {
+        return None;
+    }
+    // Both mid/third hops are CL: hop1 (V3) swap-in = consumed_inputs[1];
+    // hop2 (V4) swap-in = consumed_inputs[2]. `out_a` also feeds the V2 direct
+    // output (real); the exit take stays on `out_c`.
+    let b_swap_in = consumed_inputs.get(1).copied()?;
+    let c_swap_in = consumed_inputs.get(2).copied()?;
+    if !fits_int128(b_swap_in) || !fits_int128(c_swap_in) {
         return None;
     }
 
@@ -2517,7 +2539,7 @@ fn three_hop_v2_v3_v4(
 
     let mut v4_inner = encoders::enc_v4_settle();
     v4_inner.extend_from_slice(
-        &encoders::enc_v4_swap_compact(c0_idx, c1_idx, fee_c, ts_c, zero_idx, hc.zfo, out_b)
+        &encoders::enc_v4_swap_compact(c0_idx, c1_idx, fee_c, ts_c, zero_idx, hc.zfo, c_swap_in)
             .ok()?,
     );
     v4_inner
@@ -2543,7 +2565,7 @@ fn three_hop_v2_v3_v4(
 
     let mut commands = encoders::enc_v4_sync(forward_b_idx);
     commands.extend_from_slice(
-        &encoders::enc_v3_swap_compact(v3b_idx, hb.zfo, out_a, pm_idx, &b_fwd).ok()?,
+        &encoders::enc_v3_swap_compact(v3b_idx, hb.zfo, b_swap_in, pm_idx, &b_fwd).ok()?,
     );
 
     let mut out = encoders::enc_preamble(&at);
@@ -2843,11 +2865,18 @@ fn three_hop_v3_v2_v3(
 ) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
     let hop_outputs = inputs.hop_outputs;
+    let consumed_inputs = inputs.consumed_inputs;
     let executor_address = inputs.executor_address;
     let weth_address = inputs.weth_address;
 
-    let out_b = hop_outputs[1];
     if hop_outputs.contains(&0) {
+        return None;
+    }
+    // V3c is the CL hop at idx 2; its swap-in is the solver's CL-clamp
+    // executable forward (`consumed_inputs[2]`). Hop0 V3a feeds optimal_input;
+    // hop1 is V2 (no clamp)
+    let c_swap_in = consumed_inputs.get(2).copied()?;
+    if !fits_int128(c_swap_in) {
         return None;
     }
 
@@ -2875,7 +2904,7 @@ fn three_hop_v3_v2_v3(
         encoders::enc_v3_swap_compact(v3a_idx, ha.zfo, optimal_input, v2b_idx, &v3a_fwd).ok()?;
 
     let commands =
-        encoders::enc_v3_swap_compact(v3c_idx, hc.zfo, out_b, executor_idx, &v3c_fwd).ok()?;
+        encoders::enc_v3_swap_compact(v3c_idx, hc.zfo, c_swap_in, executor_idx, &v3c_fwd).ok()?;
 
     let mut out = encoders::enc_preamble(&at);
     out.extend_from_slice(&commands);
@@ -2895,6 +2924,7 @@ fn three_hop_v3_v2_v4(
 ) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
     let hop_outputs = inputs.hop_outputs;
+    let consumed_inputs = inputs.consumed_inputs;
     let executor_address = inputs.executor_address;
     let pool_manager_address = inputs.pool_manager_address;
     let weth_address = inputs.weth_address;
@@ -2905,6 +2935,13 @@ fn three_hop_v3_v2_v4(
         return None;
     }
     if !fits_int128(optimal_input) {
+        return None;
+    }
+    // V4c is the CL hop at idx 2; its swap-in is the solver's CL-clamp
+    // executable forward (`consumed_inputs[2]`). Hop0 V3a feeds optimal_input;
+    // hop1 V2 keeps its real output `out_b` (no clamp). Exit take on `out_c`.
+    let c_swap_in = consumed_inputs.get(2).copied()?;
+    if !fits_int128(c_swap_in) {
         return None;
     }
 
@@ -2934,7 +2971,7 @@ fn three_hop_v3_v2_v4(
     let c1_c_idx = at.add(hc.currency1_address).ok()?;
 
     let mut v4_inner =
-        encoders::enc_v4_swap_compact(c0_c_idx, c1_c_idx, fee_c, ts_c, zero_idx, hc.zfo, out_b)
+        encoders::enc_v4_swap_compact(c0_c_idx, c1_c_idx, fee_c, ts_c, zero_idx, hc.zfo, c_swap_in)
             .ok()?;
     v4_inner.extend_from_slice(&encoders::enc_v4_take_compact(weth_idx, executor_idx, out_c).ok()?);
     v4_inner.extend_from_slice(&encoders::enc_v4_settle_delta(forward_b_idx));
@@ -3009,12 +3046,18 @@ fn three_hop_v3_v3_v3(
 ) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
     let hop_outputs = inputs.hop_outputs;
+    let consumed_inputs = inputs.consumed_inputs;
     let executor_address = inputs.executor_address;
     let weth_address = inputs.weth_address;
 
-    let out_a = hop_outputs[0];
-    let out_b = hop_outputs[1];
     if hop_outputs.contains(&0) {
+        return None;
+    }
+    // All three hops are CL. Hop0 V3a feeds optimal_input; hop1 swap-in =
+    // consumed_inputs[1]; hop2 swap-in = consumed_inputs[2].
+    let b_swap_in = consumed_inputs.get(1).copied()?;
+    let c_swap_in = consumed_inputs.get(2).copied()?;
+    if !fits_int128(b_swap_in) || !fits_int128(c_swap_in) {
         return None;
     }
 
@@ -3029,10 +3072,11 @@ fn three_hop_v3_v3_v3(
         encoders::enc_v3_swap_compact(v3a_idx, ha.zfo, optimal_input, v3b_idx, &v3a_callback)
             .ok()?;
     let v3c_callback =
-        encoders::enc_v3_swap_compact(v3b_idx, hb.zfo, out_a, v3c_idx, &v3b_callback).ok()?;
+        encoders::enc_v3_swap_compact(v3b_idx, hb.zfo, b_swap_in, v3c_idx, &v3b_callback).ok()?;
 
     let commands =
-        encoders::enc_v3_swap_compact(v3c_idx, hc.zfo, out_b, executor_idx, &v3c_callback).ok()?;
+        encoders::enc_v3_swap_compact(v3c_idx, hc.zfo, c_swap_in, executor_idx, &v3c_callback)
+            .ok()?;
 
     let mut out = encoders::enc_preamble(&at);
     out.extend_from_slice(&commands);
@@ -3052,15 +3096,22 @@ fn three_hop_v3_v3_v4(
 ) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
     let hop_outputs = inputs.hop_outputs;
+    let consumed_inputs = inputs.consumed_inputs;
     let executor_address = inputs.executor_address;
     let pool_manager_address = inputs.pool_manager_address;
     let weth_address = inputs.weth_address;
 
-    let out_a = hop_outputs[0];
     if hop_outputs.contains(&0) {
         return None;
     }
     if !fits_int128(optimal_input) {
+        return None;
+    }
+    // Hop1 (V3b) is CL — swap-in = consumed_inputs[1]. Hop0 V3a feeds
+    // optimal_input; hop2 V4c uses V4_SWAP_DYNAMIC (delta ledger, no fixed
+    // amount to clamp).
+    let b_swap_in = consumed_inputs.get(1).copied()?;
+    if !fits_int128(b_swap_in) {
         return None;
     }
 
@@ -3112,7 +3163,7 @@ fn three_hop_v3_v3_v4(
 
     let mut commands = encoders::enc_v4_sync(forward_b_idx);
     commands.extend_from_slice(
-        &encoders::enc_v3_swap_compact(v3b_idx, hb.zfo, out_a, pm_idx, &b_fwd).ok()?,
+        &encoders::enc_v3_swap_compact(v3b_idx, hb.zfo, b_swap_in, pm_idx, &b_fwd).ok()?,
     );
 
     let mut out = encoders::enc_preamble(&at);

@@ -130,7 +130,14 @@ fn parity_v2_v2_v3() {
         ]),
         1000000000000000000u128,
         &[2000000000u128, 2001000000000000000u128, 2001000000u128],
-        &[2000000000u128, 2001000000000000000u128, 2001000000u128],
+        // consumed_inputs = [optimal_input, V2 forward, V3 clamped swap-in]. The
+        // V3 (idx2, CL) swap-in feeds the clamp vector, 1 wei below the forward
+        // into it.
+        &[
+            1000000000000000000u128,
+            2000000000u128,
+            2_000_999_999_999_999_999u128,
+        ],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
@@ -158,7 +165,7 @@ fn parity_v2_v2_v3() {
     let commands = encoders::enc_v3_swap_compact(
         v3c_idx,
         true,
-        2_001_000_000_000_000_000u128,
+        2_000_999_999_999_999_999u128, // = consumed_inputs[2] (CL clamp)
         executor_idx,
         &c_fwd,
     )
@@ -331,7 +338,11 @@ fn parity_v2_v3_v3() {
         ]),
         1000000000000000000u128,
         &[2000000000u128, 2001000000000000000u128, 2001000000u128],
-        &[2000000000u128, 2001000000000000000u128, 2001000000u128],
+        &[
+            1000000000000000000u128,
+            1_999_999_999u128,
+            2_000_999_999_999_999_999u128,
+        ],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
@@ -358,11 +369,11 @@ fn parity_v2_v3_v3() {
         &encoders::enc_v2_swap_direct(v2a_idx, true, 2_000_000_000u128, v3b_idx).unwrap(),
     );
     let v3c_fwd =
-        encoders::enc_v3_swap_compact(v3b_idx, true, 2_000_000_000u128, v3c_idx, &v3b_fwd).unwrap();
+        encoders::enc_v3_swap_compact(v3b_idx, true, 1_999_999_999u128, v3c_idx, &v3b_fwd).unwrap();
     let commands = encoders::enc_v3_swap_compact(
         v3c_idx,
         true,
-        2_001_000_000_000_000_000u128,
+        2_000_999_999_999_999_999u128, // = consumed_inputs[2] (CL clamp)
         executor_idx,
         &v3c_fwd,
     )
@@ -409,9 +420,9 @@ fn parity_v2_v3_v4() {
             2001000000000000000u128,
         ],
         &[
-            2000000000u128,
-            2001000000000000000u128,
-            2001000000000000000u128,
+            1000000000000000000u128,
+            1_999_999_999u128,
+            2_000_999_999_999_999_999u128,
         ],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
@@ -444,7 +455,7 @@ fn parity_v2_v3_v4() {
             60,
             zero_idx,
             true,
-            2_001_000_000_000_000_000u128,
+            2_000_999_999_999_999_999u128,
         )
         .unwrap(),
     );
@@ -471,7 +482,7 @@ fn parity_v2_v3_v4() {
     );
     let mut commands = encoders::enc_v4_sync(forward_b_idx);
     commands.extend_from_slice(
-        &encoders::enc_v3_swap_compact(v3b_idx, true, 2_000_000_000u128, pm_idx, &b_fwd).unwrap(),
+        &encoders::enc_v3_swap_compact(v3b_idx, true, 1_999_999_999u128, pm_idx, &b_fwd).unwrap(),
     );
     let mut expected = encoders::enc_preamble(&at);
     expected.extend_from_slice(&commands);
@@ -847,7 +858,11 @@ fn parity_v3_v2_v3() {
         ]),
         1000000000000000000u128,
         &[2000000000u128, 2001000000000000000u128, 2001000000u128],
-        &[2000000000u128, 2001000000000000000u128, 2001000000u128],
+        &[
+            1000000000000000000u128,
+            2000000000u128,
+            2_000_999_999_999_999_999u128,
+        ],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
@@ -883,7 +898,7 @@ fn parity_v3_v2_v3() {
     let commands = encoders::enc_v3_swap_compact(
         v3c_idx,
         true,
-        2_001_000_000_000_000_000u128,
+        2_000_999_999_999_999_999u128, // = consumed_inputs[2] (CL clamp)
         executor_idx,
         &v3c_fwd,
     )
@@ -925,7 +940,11 @@ fn parity_v3_v2_v4() {
         ]),
         1000000000000000000u128,
         &[2000000000u128, 2001000000000000000u128, 2001000000u128],
-        &[2000000000u128, 2001000000000000000u128, 2001000000u128],
+        &[
+            1000000000000000000u128,
+            2000000000u128,
+            2_000_999_999_999_999_999u128,
+        ],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
@@ -955,7 +974,7 @@ fn parity_v3_v2_v4() {
             10,
             zero_idx,
             true,
-            2_001_000_000_000_000_000u128,
+            2_000_999_999_999_999_999u128, // = consumed_inputs[2] (CL clamp)
         )
         .unwrap(),
     );
@@ -1091,7 +1110,11 @@ fn parity_v3_v3_v3() {
         ]),
         1000000000000000000u128,
         &[2000000000u128, 2001000000000000000u128, 2001000000u128],
-        &[2000000000u128, 2001000000000000000u128, 2001000000u128],
+        &[
+            1000000000000000000u128,
+            1_999_999_999u128,
+            2_000_999_999_999_999_999u128,
+        ],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
@@ -1120,12 +1143,12 @@ fn parity_v3_v3_v3() {
     )
     .unwrap();
     let v3c_callback =
-        encoders::enc_v3_swap_compact(v3b_idx, true, 2_000_000_000u128, v3c_idx, &v3b_callback)
+        encoders::enc_v3_swap_compact(v3b_idx, true, 1_999_999_999u128, v3c_idx, &v3b_callback)
             .unwrap();
     let commands = encoders::enc_v3_swap_compact(
         v3c_idx,
         true,
-        2_001_000_000_000_000_000u128,
+        2_000_999_999_999_999_999u128, // = consumed_inputs[2] (CL clamp)
         executor_idx,
         &v3c_callback,
     )
@@ -1167,7 +1190,11 @@ fn parity_v3_v3_v4() {
         ]),
         1000000000000000000u128,
         &[2000000000u128, 2001000000000000000u128, 2001000000u128],
-        &[2000000000u128, 2001000000000000000u128, 2001000000u128],
+        &[
+            1000000000000000000u128,
+            1_999_999_999u128,
+            2_000_999_999_999_999_999u128,
+        ],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
@@ -1212,7 +1239,7 @@ fn parity_v3_v3_v4() {
     .unwrap();
     let mut commands = encoders::enc_v4_sync(forward_b_idx);
     commands.extend_from_slice(
-        &encoders::enc_v3_swap_compact(v3b_idx, true, 2_000_000_000u128, pm_idx, &b_fwd).unwrap(),
+        &encoders::enc_v3_swap_compact(v3b_idx, true, 1_999_999_999u128, pm_idx, &b_fwd).unwrap(),
     );
     let mut expected = encoders::enc_preamble(&at);
     expected.extend_from_slice(&commands);
