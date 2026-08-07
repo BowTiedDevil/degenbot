@@ -2624,15 +2624,21 @@ fn three_hop_v2_v4_v3(
 ) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
     let hop_outputs = inputs.hop_outputs;
+    let consumed_inputs = inputs.consumed_inputs;
     let executor_address = inputs.executor_address;
     let pool_manager_address = inputs.pool_manager_address;
     let weth_address = inputs.weth_address;
 
-    let out_a = hop_outputs[0];
     let out_b = hop_outputs[1];
     if hop_outputs.contains(&0) {
         return None;
     }
+    // The V4 hop's swap-in is the solver's executable forward (`consumed_inputs`),
+    // which the CL-hop clamp caps at `input_consumed - 1` when the solver
+    // over-predicts capacity (path-5000 EMPTY-HALT). The V3 exit take stays on
+    // `hop_outputs[1]` — for an over-feeding CL pool output(capacity) == output
+    // (over-feed), so the exit amount is unchanged.
+    let v4_swap_in = consumed_inputs.get(1).copied()?;
     if !fits_int128(optimal_input) {
         return None;
     }
@@ -2672,8 +2678,10 @@ fn three_hop_v2_v4_v3(
     v4_inner.extend_from_slice(&encoders::enc_v2_swap_calc(v2a_idx, ha.zfo, pm_idx, ha.fee));
     v4_inner.extend_from_slice(&encoders::enc_v4_settle());
     v4_inner.extend_from_slice(
-        &encoders::enc_v4_swap_compact(c0_b_idx, c1_b_idx, fee_b, ts_b, zero_idx, hb.zfo, out_a)
-            .ok()?,
+        &encoders::enc_v4_swap_compact(
+            c0_b_idx, c1_b_idx, fee_b, ts_b, zero_idx, hb.zfo, v4_swap_in,
+        )
+        .ok()?,
     );
     v4_inner.extend_from_slice(&encoders::enc_v4_take_compact(forward_b_idx, v3c_idx, out_b).ok()?);
 
@@ -4329,5 +4337,122 @@ mod tests {
         assert_eq!(inner.len(), 15 + 33);
         assert_eq!(inner[0], 0x52); // CMD_V4_TAKE_COMPACT
         assert_eq!(inner[15], 0x13); // CMD_WETH_WITHDRAW
+    }
+
+    #[test]
+    #[allow(clippy::similar_names)] // canonical a/b/c + c0/c1 V4 currency-index names
+    fn three_hop_v2_v4_v3_feeds_clamped_consumed_input_as_v4_swap_in() {
+        // Proves the CL-hop clamp reaches the executor: with the V4 hop
+        // over-fed (consumed_inputs[1] < hop_outputs[0]), the encoded V4
+        // swap-in amount equals consumed_inputs[1], NOT hop_outputs[0].
+        // (Cannot use `v4_simulate_swap` here — the encoder only needs the
+        // amounts, which the engine clamp already set.)
+        let forward = 2_000_000_000u128;
+        let clamped = 1_999_999_999u128; // 1-wei CL clamp margin
+        let rust = encode_cmd_3_hop(
+            &PathInfo::new(vec![
+                HopInfo::V2(V2HopInfo {
+                    pool_address: address!("1111111111111111111111111111111111111111"),
+                    token0_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+                    token1_address: address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48"),
+                    fee: 30,
+                    zfo: true,
+                }),
+                HopInfo::V4(V4HopInfo {
+                    pool_manager_address: address!("000000000004444c5dc75cB358380D2e3dE08A90"),
+                    pool_id_hex:
+                        "0x1111111111111111111111111111111111111111111111111111111111111111"
+                            .to_string(),
+                    currency0_address: address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48"),
+                    currency1_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+                    fee: 500,
+                    tick_spacing: 10,
+                    hook_address: address!("0000000000000000000000000000000000000000"),
+                    zfo: true,
+                }),
+                HopInfo::V3(V3HopInfo {
+                    pool_address: address!("6666666666666666666666666666666666666666"),
+                    token0_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+                    token1_address: address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48"),
+                    fee: 3000,
+                    zfo: true,
+                }),
+            ]),
+            1_000_000_000_000_000_000u128,
+            &[forward, 2_001_000_000_000_000_000u128, 2_001_000_000u128],
+            // consumed_inputs = [opt_input, clamped V4 swap-in, V3 input]
+            &[1_000_000_000_000_000_000u128, clamped, 2_001_000_000u128],
+            address!("DeAd0000000000000000000000000000000000Be"),
+            address!("000000000004444c5dc75cB358380D2e3dE08A90"),
+            address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+            EncodeOptions::default(),
+        )
+        .expect("V2-V4-V3 encodes");
+        // The V4 swap-in (u96 amount) is the 4th byte after the V4_SWAP_COMPACT
+        // opcode at the offset emitted inside the v4_unlock. Locate the opcode
+        // sequence (CMD_V4_SWAP_COMPACT) and read the following u96 amount.
+        // Simpler: re-derive the expected via the same encoder primitives as
+        // the goldens and assert equality on the full stream using clamped.
+        let mut at = AddressTable::with_sentinels(
+            Some(address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")),
+            Some(address!("DeAd0000000000000000000000000000000000Be")),
+            Some(address!("000000000004444c5dc75cB358380D2e3dE08A90")),
+        );
+        let pm_idx = at
+            .add(address!("000000000004444c5dc75cB358380D2e3dE08A90"))
+            .unwrap();
+        let forward_a_idx = at
+            .add(address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48"))
+            .unwrap();
+        let forward_b_idx = at
+            .add(address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"))
+            .unwrap();
+        let executor_idx = SENTINEL_SELF;
+        let zero_idx = SENTINEL_NATIVE;
+        let v2a_idx = at
+            .add(address!("1111111111111111111111111111111111111111"))
+            .unwrap();
+        let v3c_idx = at
+            .add(address!("6666666666666666666666666666666666666666"))
+            .unwrap();
+        let c0_b_idx = at
+            .add(address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48"))
+            .unwrap();
+        let c1_b_idx = at
+            .add(address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"))
+            .unwrap();
+        let mut v4_inner = Vec::new();
+        v4_inner.extend_from_slice(&encoders::enc_v4_sync(forward_a_idx));
+        v4_inner.extend_from_slice(&encoders::enc_v2_swap_calc(v2a_idx, true, pm_idx, 30));
+        v4_inner.extend_from_slice(&encoders::enc_v4_settle());
+        // V4 swap-in amount = the CL clamp = clamped, NOT forward.
+        v4_inner.extend_from_slice(
+            &encoders::enc_v4_swap_compact(c0_b_idx, c1_b_idx, 500, 10, zero_idx, true, clamped)
+                .unwrap(),
+        );
+        v4_inner.extend_from_slice(
+            &encoders::enc_v4_take_compact(forward_b_idx, v3c_idx, 2_001_000_000_000_000_000)
+                .unwrap(),
+        );
+        let mut c_fwd = Vec::new();
+        c_fwd.extend_from_slice(
+            &encoders::enc_erc20_transfer(SENTINEL_WETH, v2a_idx, 1_000_000_000_000_000_000)
+                .unwrap(),
+        );
+        c_fwd.extend_from_slice(&encoders::enc_v4_unlock(&v4_inner).unwrap());
+        let commands = encoders::enc_v3_swap_compact(
+            v3c_idx,
+            true,
+            2_001_000_000_000_000_000,
+            executor_idx,
+            &c_fwd,
+        )
+        .unwrap();
+        let mut expected = encoders::enc_preamble(&at);
+        expected.extend_from_slice(&commands);
+        assert_eq!(
+            rust, expected,
+            "V4 swap-in must be the clamped consumed_inputs[1], not hop_outputs[0]"
+        );
     }
 }

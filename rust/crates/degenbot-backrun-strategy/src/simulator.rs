@@ -929,8 +929,12 @@ where
         > + InspectEvm<Inspector = SimInspector>,
     <E as ExecuteEvm>::Error: std::fmt::Display,
 {
-    // C3 — int128 check (mirrors the oracle's guard).
-    if path.hop_outputs.len() != path.path_info.hops.len() {
+    // C3 — int128 check (mirrors the oracle's guard). The amount fed into each
+    // V4 hop is `consumed_inputs[i]` (the CL-hop clamp's executable forward),
+    // so the guard checks the clamped input, not hop_outputs[i-1].
+    if path.hop_outputs.len() != path.path_info.hops.len()
+        || path.consumed_inputs.len() != path.path_info.hops.len()
+    {
         return Ok(None);
     }
     for (i, hop) in path.path_info.hops.iter().enumerate() {
@@ -938,7 +942,7 @@ where
             let amount_specified = if i == 0 {
                 path.optimal_input
             } else {
-                path.hop_outputs[i - 1]
+                path.consumed_inputs[i]
             };
             let output_amount = path.hop_outputs[i];
             if !fits_int128(amount_specified) || !fits_int128(output_amount) {

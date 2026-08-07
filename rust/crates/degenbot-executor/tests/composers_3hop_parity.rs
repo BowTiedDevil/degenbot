@@ -598,7 +598,10 @@ fn parity_v2_v4_v3() {
         ]),
         1000000000000000000u128,
         &[2000000000u128, 2001000000000000000u128, 2001000000u128],
-        &[2000000000u128, 2001000000000000000u128, 2001000000u128],
+        // consumed_inputs[1] is the V4 hop's clamped swap-in (1 wei below the
+        // recorded forward 2_000_000_000) — proves the composer feeds the CL
+        // clamp vector, not hop_outputs[0], as the V4 swap-in amount.
+        &[2000000000u128, 1_999_999_999u128, 2001000000u128],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
@@ -631,7 +634,10 @@ fn parity_v2_v4_v3() {
             10,
             zero_idx,
             true,
-            2_000_000_000u128,
+            // V4 swap-in = consumed_inputs[1] (the CL clamp), 1 wei below the
+            // recorded forward 2_000_000_000 — mirrors the parity fixture's
+            // consumed_inputs so the composer emits the clamped amount.
+            1_999_999_999u128,
         )
         .unwrap(),
     );
