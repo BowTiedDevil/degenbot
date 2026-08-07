@@ -38,6 +38,11 @@ The Rust core is the engine; Python is a driver shell, not a co-implementation. 
 - [License](#license)
 - [Donation](#donation)
 
+> **Investigating a failing backrun / building a revm harness?** See
+> **[`INVESTIGATIONS.md`](INVESTIGATIONS.md)** — the reusable
+> `degenbot_simulation::oracle` driver, the per-contract scaffolder, and
+> degenbot's path-fixture toolkit.
+
 ## Overview
 
 Degenbot abstracts the implementation details of Uniswap liquidity pools and their underlying ERC-20 tokens into a set of Rust core crates exposed to Python through a thin PyO3 binding layer. The Rust core owns all performance-critical and stateful logic — pool/token state, swap math, event decoding, solvers, the pump loop, and swap encoding — while the Python companion provides the user-facing API, docstrings, and I/O orchestration.
