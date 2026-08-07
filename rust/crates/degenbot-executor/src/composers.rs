@@ -2656,6 +2656,12 @@ fn three_hop_v2_v4_v2(
         .ok()?,
     );
     v4_inner.extend_from_slice(&encoders::enc_v4_take_compact(forward_b_idx, v2c_idx, out_b).ok()?);
+    // The CL-hop clamp caps the V4 swap-in (`consumed_inputs[1]`) below the full
+    // V2 forward that `V4_SETTLE` credits to the PM, leaving a residual positive
+    // delta on the settled currency (forward_a). Sweep it back to the executor so
+    // the unlock nets to zero — otherwise the PM rejects the unlock exit with
+    // `CurrencyNotSettled` (the clamp previously unmasked this latent gap).
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle_delta(forward_a_idx));
 
     let mut c_fwd = encoders::enc_erc20_transfer(weth_idx, v2a_idx, optimal_input).ok()?;
     c_fwd.extend_from_slice(&encoders::enc_v4_unlock(&v4_inner).ok()?);
@@ -2741,6 +2747,12 @@ fn three_hop_v2_v4_v3(
         .ok()?,
     );
     v4_inner.extend_from_slice(&encoders::enc_v4_take_compact(forward_b_idx, v3c_idx, out_b).ok()?);
+    // The CL-hop clamp caps the V4 swap-in (`consumed_inputs[1]`) below the full
+    // V2 forward that `V4_SETTLE` credits to the PM, leaving a residual positive
+    // delta on the settled currency (forward_a). Sweep it back to the executor so
+    // the unlock nets to zero — otherwise the PM rejects the unlock exit with
+    // `CurrencyNotSettled` (the clamp previously unmasked this latent gap).
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle_delta(forward_a_idx));
 
     let mut c_fwd = encoders::enc_erc20_transfer(weth_idx, v2a_idx, optimal_input).ok()?;
     c_fwd.extend_from_slice(&encoders::enc_v4_unlock(&v4_inner).ok()?);
@@ -4512,6 +4524,7 @@ mod tests {
 
     #[test]
     #[allow(clippy::similar_names)] // canonical a/b/c + c0/c1 V4 currency-index names
+    #[allow(clippy::too_many_lines)] // full-stream hand-built expectation mirrors the parity goldens
     fn three_hop_v2_v4_v3_feeds_clamped_consumed_input_as_v4_swap_in() {
         // Proves the CL-hop clamp reaches the executor: with the V4 hop
         // over-fed (consumed_inputs[1] < hop_outputs[0]), the encoded V4
@@ -4605,6 +4618,10 @@ mod tests {
             &encoders::enc_v4_take_compact(forward_b_idx, v3c_idx, 2_001_000_000_000_000_000)
                 .unwrap(),
         );
+        // The CL clamp caps the V4 swap-in below the settled V2 forward, leaving
+        // a residual on the settled currency (forward_a). Sweep it back so the
+        // unlock nets to zero (else CurrencyNotSettled at unlock exit).
+        v4_inner.extend_from_slice(&encoders::enc_v4_settle_delta(forward_a_idx));
         let mut c_fwd = Vec::new();
         c_fwd.extend_from_slice(
             &encoders::enc_erc20_transfer(SENTINEL_WETH, v2a_idx, 1_000_000_000_000_000_000)

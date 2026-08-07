@@ -571,6 +571,10 @@ fn parity_v2_v4_v2() {
         &encoders::enc_v4_take_compact(forward_b_idx, v2c_idx, 2_001_000_000_000_000_000u128)
             .unwrap(),
     );
+    // The CL clamp caps the V4 swap-in below the settled V2 forward, leaving a
+    // residual on the settled currency (forward_a). Sweep it back to the
+    // executor so the unlock nets to zero (else CurrencyNotSettled at exit).
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle_delta(forward_a_idx));
     let mut c_fwd = Vec::new();
     c_fwd.extend_from_slice(
         &encoders::enc_erc20_transfer(SENTINEL_WETH, v2a_idx, 1_000_000_000_000_000_000u128)
@@ -664,6 +668,10 @@ fn parity_v2_v4_v3() {
         &encoders::enc_v4_take_compact(forward_b_idx, v3c_idx, 2_001_000_000_000_000_000u128)
             .unwrap(),
     );
+    // The CL clamp caps the V4 swap-in below the settled V2 forward, leaving a
+    // residual on the settled currency (forward_a). Sweep it back to the
+    // executor so the unlock nets to zero (else CurrencyNotSettled at exit).
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle_delta(forward_a_idx));
     let mut c_fwd = Vec::new();
     c_fwd.extend_from_slice(
         &encoders::enc_erc20_transfer(SENTINEL_WETH, v2a_idx, 1_000_000_000_000_000_000u128)
