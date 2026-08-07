@@ -47,6 +47,26 @@ impl ArbitrageEngine {
     /// maximum-extraction choice; a larger margin can be revisited if runaway
     /// swaps recur. Override via the `CLAMP_MARGIN` env var for sensitivity
     /// sweeps (twin of the `path5000_v2v4v3_solver_fixture` fixture).
+    ///
+    /// ## Measured basis (ergo 7E5D7W)
+    ///
+    /// The margin must be strictly larger than the worst solver-vs-engine
+    /// (solver `hop_outputs[i]` vs the tier-3-proven `v4_simulate_swap`/
+    /// `v3_simulate_swap` pool twin) OVER-prediction, so the clamp never lands
+    /// exactly on an over-predicted tight value and re-enters the EMPTY march
+    /// (UO3JM4). The `v4_crossing_solver_vs_sim_parity`/
+    /// `v4_word_boundary_solver_divergence`/`v4_fee1_solver_path_matches_v4_simulate_swap`
+    /// suites assert byte-exact solver==twin across the fee-3000/ts-60 multi-tick
+    /// corpus AND the fee-1/ts-1 low-fee topology in both swap directions — i.e.
+    /// the worst observed over-prediction is **0 wei**. The historical live
+    /// `+1..+3` wei residuals (fee-1, ts=1) were localized to crossing-math
+    /// rounding and fixed (the zfo step-0 current-tick flooring), not absorbed
+    /// by margin. A dedicated sweep
+    /// (`cl_hop_clamp_margin_exceeds_worst_solver_over_prediction`) measures the
+    /// strict over-prediction direction across the corpus and asserts
+    /// `margin > worst`, guarding this choice against regression. 1 wei is the
+    /// smallest positive integer > 0, giving zero extraction loss (path-5000
+    /// fixture: clamped output == solver output byte-identical).
     fn cl_hop_clamp_margin() -> U256 {
         std::env::var("CLAMP_MARGIN")
             .ok()

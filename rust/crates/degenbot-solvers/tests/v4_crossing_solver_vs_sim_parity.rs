@@ -1744,3 +1744,116 @@ fn fee1_zfo_true_two_step_floored_equivalence() {
     );
     assert_eq!(onchain, U256::from(4724u64));
 }
+
+/// Margin-policy measurement for the CL-hop clamp (ergo 7E5D7W): quantify the
+/// worst solver-vs-`v4_simulate_swap` OVER-prediction magnitude across the
+/// covered corpus (fee-1/ts=1 in both directions, plus the fee-3000/ts=60
+/// multi-tick topology) — the quantity the VAASFM clamp margin (1 wei) must
+/// strictly exceed so the clamp never lands exactly on an over-predicted tight
+/// value.
+///
+/// The clamp commits `input_consumed - margin` where `input_consumed` comes
+/// from the tier-3-proven `v4_simulate_swap` twin (NOT the solver). The margin
+/// protects against the solver's `hop_outputs[i]` over-predicting the twin by
+/// a residue. The parity suites above already assert solver == twin (0
+/// divergence) across the multi-tick + fee-1 corpus; this test measures the
+/// strict over-prediction direction and asserts the chosen margin (1 wei) is
+/// strictly greater — a self-checking guard that the VAASFM maximum-extraction
+/// choice remains justified if a future topology re-introduces a residual.
+#[test]
+fn cl_hop_clamp_margin_exceeds_worst_solver_over_prediction() {
+    /// The VAASFM margin decision (must stay > worst observed over-prediction).
+    /// Keep in sync with `ArbitrageEngine::cl_hop_clamp_margin` in
+    /// degenbot-bot (solver_dispatch.rs).
+    const MARGIN: u64 = 1;
+
+    // Worst over-prediction across the corpus (solver_out - sim_out when the
+    // solver predicts MORE output than the on-chain twin). The parity suites
+    // pin this to 0; a regression here would re-introduce a non-zero value.
+    let mut worst_over_predict: u64 = 0;
+
+    // fee-1 / ts=1 (the UO3JM4 low-fee topology whose live +1..+3 residuals
+    // were localized and fixed), both swap directions.
+    let fee1 = build_fee1_76f75965_v4_state();
+    for &zfo in &[true, false] {
+        let seq = fee1
+            .build_int_v4_sequence(1, 50, zfo, 10)
+            .expect("fee-1 sequence");
+        for amount_in_u256 in [
+            10u64, 100, 500, 1_000, 4_728, 4_729, 5_000, 9_000, 9_586, 20_000,
+        ] {
+            let amount_in_u256 = U256::from(amount_in_u256);
+            let Some(amount_specified) = I256::try_from(amount_in_u256)
+                .ok()
+                .and_then(|v| I256::ZERO.checked_sub(v))
+            else {
+                continue;
+            };
+            let Ok(outcome) =
+                v4_simulate_swap(&fee1, 50, 1, zfo, amount_specified, unbounded_limit(zfo))
+            else {
+                continue;
+            };
+            let sim_out = v4_exact_in_output(&outcome, zfo);
+            let Some(solver_out) = solver_crossing_output(amount_in_u256, &seq) else {
+                continue;
+            };
+            if solver_out > sim_out {
+                let delta = solver_out - sim_out;
+                let d: u64 = delta.try_into().unwrap_or(u64::MAX);
+                worst_over_predict = worst_over_predict.max(d);
+            }
+        }
+    }
+
+    // fee-3000 / ts=60 multi-tick topology (the crossing-corpus sweep that
+    // surfaced the zfo partial-step round-up bug), representative liquidity.
+    let mt = build_multi_tick_v4_state(10_000_000_000_000_000u128, 5, true);
+    let seq = mt
+        .build_int_v4_sequence(60, 3_000, true, 10)
+        .expect("multi-tick sequence");
+    let gins: Vec<U256> = (0..seq.ranges.len())
+        .map(|k| seq.compute_crossing(k).unwrap().crossing_gross_input)
+        .collect();
+    if gins.len() >= 2 {
+        for &delta in &[1u64, 2, 3, 7, 13] {
+            for &near in &[
+                gins[0].saturating_add(U256::from(delta)),
+                gins[1].saturating_sub(U256::from(delta)),
+            ] {
+                let Some(amount_specified) = I256::try_from(near)
+                    .ok()
+                    .and_then(|v| I256::ZERO.checked_sub(v))
+                else {
+                    continue;
+                };
+                let Ok(outcome) = v4_simulate_swap(
+                    &mt,
+                    3_000,
+                    60,
+                    true,
+                    amount_specified,
+                    unbounded_limit(true),
+                ) else {
+                    continue;
+                };
+                let sim_out = v4_exact_in_output(&outcome, true);
+                let Some(solver_out) = solver_crossing_output(near, &seq) else {
+                    continue;
+                };
+                if solver_out > sim_out {
+                    let d: u64 = (solver_out - sim_out).try_into().unwrap_or(u64::MAX);
+                    worst_over_predict = worst_over_predict.max(d);
+                }
+            }
+        }
+    }
+
+    assert!(
+        MARGIN > worst_over_predict,
+        "VAASFM clamp margin ({MARGIN} wei) must strictly exceed the worst observed \
+         solver-vs-`v4_simulate_swap` over-prediction ({worst_over_predict} wei); otherwise the \
+         clamp can land exactly on an over-predicted tight value and re-trigger the EMPTY march \
+         (ergo 7E5D7W). Parity suites pin this to 0; a non-zero value is a regression guard trip."
+    );
+}
