@@ -87,22 +87,26 @@ pub const MAX_PRIORITY_FEE_PERCENTILE: u64 = 50;
 /// `tx_params["gas"]`.
 pub const GAS_SAFETY_MARGIN: f64 = 1.5;
 
-/// The initial gas cap the Python oracle grants the execute call for the
-/// access-list computation (the `gas=5_000_000` literal at L1993). After the
-/// simulate returns the real `gasUsed`, `tx_params["gas"]` is overwritten with
-/// `gasUsed * 1.5`.
-pub const INITIAL_EXECUTE_GAS: u64 = 5_000_000;
+/// The default gas cap for the `execute()` tx in the in-process revm sim —
+/// pinned to revm's EIP-7825 per-transaction gas-limit cap
+/// ([`revm::primitives::eip7825::TX_GAS_LIMIT_CAP`] = 16_777_216), the
+/// realistic per-tx ceiling, replacing the defunct legacy 5M hard cap that
+/// false-OOG'd gas-hungry V3/V4 tick-crossing / USDT swaps which succeed
+/// on-chain. After the simulate returns the real `gasUsed`, `tx_params["gas"]`
+/// is overwritten with `gasUsed * 1.5` ([`GAS_SAFETY_MARGIN`]).
+pub const INITIAL_EXECUTE_GAS: u64 = revm::primitives::eip7825::TX_GAS_LIMIT_CAP;
 
-/// The env-var name overriding [`INITIAL_EXECUTE_GAS`]. The hard-coded 5M is an
-/// ARTIFICIAL ceiling on the `execute()` tx in the in-process revm sim — the
-/// real mainnet block gas limit is ~30M, and revm's default `BlockEnv` here is
-/// `u64::MAX` (so the block-level validation never binds; the 5M `TxEnv` gas is
-/// the ONLY cap). A V3/V4 path that crosses many tick-word boundaries pays a
-/// cold SLOAD per tick word when liquidity changes, so a genuinely-fillable
-/// swap can OOG at the 5M cap in sim while succeeding on-chain at a realistic
-/// 30M gas budget. Set `DEGENBOT_SIM_EXECUTE_GAS` to raise/eliminate the ceiling
-/// for an investigation (e.g. `30000000` to mirror mainnet, or a huge value to
-/// disable the cap). Defaults to [`INITIAL_EXECUTE_GAS`].
+/// The env-var name overriding [`INITIAL_EXECUTE_GAS`]. The default is now the
+/// realistic EIP-7825 per-tx gas-limit cap (`16_777_216`), not the legacy 5M
+/// artificial ceiling that false-OOG'd gas-hungry swaps in sim while they
+/// succeed on-chain. revm's default `BlockEnv.gas_limit` here is `u64::MAX`
+/// (block-level validation never binds); at the Osaka spec revm's EIP-7825
+/// `tx_gas_limit_cap` is also `16_777_216`, so this value is both the default
+/// AND the effective ceiling — the override can only *lower* it (e.g. to a
+/// tighter submission budget) unless `tx_gas_limit_cap` is also uncapped via
+/// `degenbot_simulation::oracle::set_tx_gas_limit_cap(u64::MAX)` (as the
+/// investigation oracle does), which lifts revm's EIP-7825 validation stop
+/// and lets it be raised toward the ~30M mainnet block ceiling.
 pub const EXECUTE_GAS_ENV: &str = "DEGENBOT_SIM_EXECUTE_GAS";
 
 /// Read the effective `execute()` gas limit: `DEGENBOT_SIM_EXECUTE_GAS` when

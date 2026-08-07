@@ -13,7 +13,9 @@
 //! (what the live executor passes, `exploration-no-profit-crash.md` L308) the
 //! **unclamped** over-feed makes the exact-in loop march empty bitmap words
 //! toward `MAX_SQRT_PRICE` — a 20.7M-gas `EMPTY-HALT` that reverts under the
-//! 5M `INITIAL_EXECUTE_GAS` ceiling.
+//! sim's execute gas ceiling (originally the 5M `INITIAL_EXECUTE_GAS`;
+//! now the EIP-7825 16.7M default). GREEN must fill under the harness's own
+//! `EXECUTOR_5M` gas threshold.
 //!
 //! The production solver clamp (AGENTS.md UO3JM4 / VAASFM; `arb_engine`
 //! `clamp_cl_hop_capacity`) re-reads the live pool state post-solve and caps
@@ -68,8 +70,10 @@ const CLAMP_MARGIN: u64 = 1;
 /// solver `v4_predicted_output` and the `v4_simulate_swap` twin output).
 const RECORDED_V4_OUTPUT: u64 = 460_882_096_151_249;
 
-/// The real executor's per-swap gas ceiling (degenbot-backrun-strategy /
-/// simulator.rs `INITIAL_EXECUTE_GAS`). GREEN must fill under this.
+/// The real executor's per-swap gas ceiling for this regression — the harness
+/// drives the real PoolManager at this gas (5M) and asserts the clamp drops
+/// the march from gas-hungry (RED > 5M/2) to a clean byte-exact fill (GREEN
+/// < 5M). Kept test-local: independent of `INITIAL_EXECUTE_GAS`.
 const EXECUTOR_5M: u64 = 5_000_000;
 
 fn fixture() -> String {
