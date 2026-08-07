@@ -161,15 +161,17 @@ class _PreparedGraph:
         edges: Flat ``(token0, token1, pool_id, pool_kind_u8)`` tuples for Rust.
         v2v3_addresses: Maps V2/V3 pool IDs to their on-chain addresses.
         v4_lookups: Maps V4 pool IDs to ``(manager_address, pool_hash)``.
-        pool_id_to_type: Maps every pool ID to its concrete table class,
-            used to reconstruct ``PathStep.type`` accurately (V2 vs V3).
+        pool_id_to_type: Maps ``(pool_id, pool_kind_u8)`` to the concrete table
+            class, used to reconstruct ``PathStep.type``. Keyed by the pair so
+            a V2 pool and a V4 pool sharing a ``pool_id`` (independent id
+            counters — see `test_pool_id_collision`) do NOT collapse to one.
 
     """
 
     edges: list[tuple[TokenId, TokenId, PoolId, int]]
     v2v3_addresses: dict[PoolId, ChecksumAddress]
     v4_lookups: dict[PoolId, tuple[ChecksumAddress, str]]
-    pool_id_to_type: dict[PoolId, type[LiquidityPoolTable | UniswapV4PoolTable]]
+    pool_id_to_type: dict[tuple[PoolId, int], type[LiquidityPoolTable | UniswapV4PoolTable]]
 
 
 def _prepare_graph(
@@ -298,7 +300,7 @@ def _prepare_graph_rust(
     fallback_class: type | None = None
     kind_str_map: dict = raw["pool_id_to_kind_string"]
     kind_u8_map: dict = raw["pool_id_to_kind"]
-    pool_id_to_type: dict[PoolId, type[LiquidityPoolTable | UniswapV4PoolTable]] = {}
+    pool_id_to_type: dict[tuple[PoolId, int], type[LiquidityPoolTable | UniswapV4PoolTable]] = {}
     for pool_id_u8, kind_u8 in kind_u8_map.items():
         pool_id = int(pool_id_u8)
         kind_str = kind_str_map.get(pool_id_u8)
@@ -309,7 +311,9 @@ def _prepare_graph_rust(
                 fallback_class = _POOL_KIND_TO_BASE.get(int(kind_u8))
             cls = fallback_class
         if cls is not None:
-            pool_id_to_type[pool_id] = cast("type[LiquidityPoolTable | UniswapV4PoolTable]", cls)
+            pool_id_to_type[pool_id, int(kind_u8)] = cast(
+                "type[LiquidityPoolTable | UniswapV4PoolTable]", cls
+            )
 
     logger.debug(
         f"Built graph at +{time.perf_counter() - start:.1f}s: {len(raw['edges'])} edges",
@@ -361,7 +365,7 @@ def _prepare_graph_sqlalchemy(
     edges: list[tuple[TokenId, TokenId, PoolId, int]] = []
     v2v3_addresses: dict[PoolId, ChecksumAddress] = {}
     v4_lookups: dict[PoolId, tuple[ChecksumAddress, str]] = {}
-    pool_id_to_type: dict[PoolId, type[LiquidityPoolTable | UniswapV4PoolTable]] = {}
+    pool_id_to_type: dict[tuple[PoolId, int], type[LiquidityPoolTable | UniswapV4PoolTable]] = {}
 
     for pool_type in pool_types:
         if issubclass(pool_type, UniswapV4PoolTable):
@@ -380,7 +384,7 @@ def _prepare_graph_sqlalchemy(
                 if currency0_id in candidate_tokens and currency1_id in candidate_tokens:
                     edges.append((currency0_id, currency1_id, pool_id, _POOL_KIND_V4))
                     v4_lookups[pool_id] = (manager_address, pool_hash)
-                    pool_id_to_type[pool_id] = pool_type
+                    pool_id_to_type[pool_id, _POOL_KIND_V4] = pool_type
 
         elif issubclass(pool_type, LiquidityPoolTable):
             pool_kind = _pool_kind_for_type(pool_type)
@@ -395,7 +399,7 @@ def _prepare_graph_sqlalchemy(
                 if token0_id in candidate_tokens and token1_id in candidate_tokens:
                     edges.append((token0_id, token1_id, pool_id, pool_kind))
                     v2v3_addresses[pool_id] = address
-                    pool_id_to_type[pool_id] = pool_type
+                    pool_id_to_type[pool_id, pool_kind] = pool_type
 
         logger.debug(f"Added edges for pool type {pool_type.__name__}")
 
@@ -415,7 +419,7 @@ def _build_path_steps(
     path: list[tuple[PoolId, int]],
     v2v3_addresses: dict[PoolId, ChecksumAddress],
     v4_lookups: dict[PoolId, tuple[ChecksumAddress, str]],
-    pool_id_to_type: dict[PoolId, type[LiquidityPoolTable | UniswapV4PoolTable]],
+    pool_id_to_type: dict[tuple[PoolId, int], type[LiquidityPoolTable | UniswapV4PoolTable]],
 ) -> list[PathStep]:
     """Convert a raw Rust path ``(pool_id, pool_kind_u8)`` into ``PathStep`` objects.
 
@@ -431,7 +435,14 @@ def _build_path_steps(
     """
     steps: list[PathStep] = []
     for pool_id, pool_kind_u8 in path:
-        pool_type = pool_id_to_type[pool_id]
+        # Key by ``(pool_id, pool_kind_u8)`` and fall back to the family base
+        # (`_POOL_KIND_TO_BASE`) so a V2/V4 pool-id collision (independent id
+        # counters) never collapses a pool to the wrong family — the Rust
+        # seam's `pool_id_to_kind*` maps can only keep ONE family per id.
+        pool_type = pool_id_to_type.get((pool_id, pool_kind_u8))
+        if pool_type is None:
+            pool_base = _POOL_KIND_TO_BASE.get(pool_kind_u8)
+            pool_type = cast("type[LiquidityPoolTable | UniswapV4PoolTable]", pool_base)
         if pool_kind_u8 == _POOL_KIND_V4:
             manager_address, pool_hash = v4_lookups[pool_id]
             steps.append(PathStep(address=manager_address, hash=pool_hash, type=pool_type))
