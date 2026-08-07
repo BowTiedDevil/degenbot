@@ -53,6 +53,7 @@ class PyDispatchCandidate:
         optimal_input: int,
         engine_profit: int,
         hop_outputs: list[int],
+        consumed_inputs: list[int],
         solve_block: int,
         state_nonces: list[int],
         *,

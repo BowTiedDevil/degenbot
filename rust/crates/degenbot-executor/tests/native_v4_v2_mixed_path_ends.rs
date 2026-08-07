@@ -82,6 +82,7 @@ fn assert_encodes(hops: Vec<HopInfo>, label: &str) {
         &path,
         1_000_000_000_000_000u128,
         &[2_000_000u128, 100_000_000u128, 2_001_000u128],
+        &[2_000_000u128, 100_000_000u128, 2_001_000u128],
         EXECUTOR,
         PM,
         WETH,

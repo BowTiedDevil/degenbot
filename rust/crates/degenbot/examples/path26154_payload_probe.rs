@@ -148,6 +148,7 @@ fn main() {
         &path_info,
         optimal_input,
         &hop_outputs,
+        &hop_outputs,
         EXECUTOR,
         POOL_MANAGER,
         WETH,

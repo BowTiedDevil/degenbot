@@ -292,6 +292,13 @@ pub struct ComposerInputs<'a> {
     pub weth_address: Address,
     pub optimal_input: u128,
     pub hop_outputs: &'a [u128],
+    /// The per-hop executable input fed into each pool, as set by the solver's
+    /// CL-hop clamp (`consumed_inputs[i]`). For a non-over-fed CL hop (and for
+    /// V2/Curve/Balancer/Solidly hops) this equals `hop_outputs[i-1]`; for an
+    /// over-fed CL hop the clamp reduces it to `input_consumed - 1` so the
+    /// on-chain exact-in loop terminates on `amountRemaining == 0` instead of
+    /// marching empty bitmap words (UO3JM4 / path-5000 EMPTY-HALT).
+    pub consumed_inputs: &'a [u128],
     pub opts: EncodeOptions,
 }
 
@@ -310,10 +317,12 @@ pub struct ComposerInputs<'a> {
 ///   the corresponding `encode_cmd_*` two-hop composer
 /// * 3-hop: [`encode_cmd_3_hop`] (all 27 V2/V3/V4 combinations)
 #[must_use]
+#[allow(clippy::too_many_arguments)] // encoder args (path + inputs + executor/pm/weth + opts)
 pub fn encode_cmd_stream(
     path_info: &PathInfo,
     optimal_input: u128,
     hop_outputs: &[u128],
+    consumed_inputs: &[u128],
     executor_address: Address,
     pool_manager_address: Address,
     weth_address: Address,
@@ -329,6 +338,7 @@ pub fn encode_cmd_stream(
         weth_address,
         optimal_input,
         hop_outputs,
+        consumed_inputs,
         opts,
     };
 
@@ -357,6 +367,7 @@ pub fn encode_cmd_stream(
             path_info,
             optimal_input,
             hop_outputs,
+            consumed_inputs,
             executor_address,
             pool_manager_address,
             weth_address,
@@ -2124,10 +2135,12 @@ impl CmdExecutorComposer {
 #[allow(clippy::too_many_lines)]
 #[doc(hidden)]
 #[must_use]
+#[allow(clippy::too_many_arguments)] // encoder args (path + inputs + executor/pm/weth + opts)
 pub fn encode_cmd_3_hop(
     path_info: &PathInfo,
     optimal_input: u128,
     hop_outputs: &[u128],
+    consumed_inputs: &[u128],
     executor_address: Address,
     pool_manager_address: Address,
     weth_address: Address,
@@ -2140,6 +2153,7 @@ pub fn encode_cmd_3_hop(
         weth_address,
         optimal_input,
         hop_outputs,
+        consumed_inputs,
         opts,
     };
     if hops.len() != 3 {

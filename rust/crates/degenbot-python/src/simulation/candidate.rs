@@ -61,6 +61,11 @@ impl PyDispatchCandidate {
     ///         for sorting + the thin-margin filter; NOT the on-chain gross
     ///         (that's `SimResult::gross_profit`).
     ///     `hop_outputs`: the per-hop solver outputs (`list[int]`).
+    ///     `consumed_inputs`: the per-hop executable inputs fed into each pool
+    ///         (`list[int]`) — the solver's CL-hop clamp; the encoder feeds
+    ///         these (not `hop_outputs`) as each CL pool's swap-in. May be
+    ///         shorter than `hop_outputs` only in a degenerate/solver-defect
+    ///         case, surfaced as `ValueError`.
     ///     `solve_block`: the block the solver produced the result on.
     ///     `state_nonces`: per-hop state nonces captured at solve time
     ///         (AV42C7 staleness gate — the dispatch seam skips candidates
@@ -72,9 +77,10 @@ impl PyDispatchCandidate {
     ///
     /// # Errors
     /// `ValueError`: if `path_id` is not registered in `engine`, or a hop
-    ///         has no command-stream encoder arm (Solidly / Balancer / Curve).
+    ///         has no command-stream encoder arm (Solidly / Balancer / Curve),
+    ///         or `hop_outputs`/`consumed_inputs` length ≠ path hops.
     #[new]
-    #[pyo3(signature = (engine, path_id, optimal_input, engine_profit, hop_outputs, solve_block, state_nonces, *, erc6909_profit=false, use_v4_batch=false))]
+    #[pyo3(signature = (engine, path_id, optimal_input, engine_profit, hop_outputs, consumed_inputs, solve_block, state_nonces, *, erc6909_profit=false, use_v4_batch=false))]
     #[allow(clippy::too_many_arguments, clippy::needless_pass_by_value)]
     fn new(
         py: Python<'_>,
@@ -83,6 +89,7 @@ impl PyDispatchCandidate {
         optimal_input: u128,
         engine_profit: u128,
         hop_outputs: Vec<u128>,
+        consumed_inputs: Vec<u128>,
         solve_block: u64,
         state_nonces: Vec<u64>,
         erc6909_profit: bool,
@@ -110,6 +117,13 @@ impl PyDispatchCandidate {
                 rust_path.hops.len()
             )));
         }
+        if consumed_inputs.len() != rust_path.hops.len() {
+            return Err(PyValueError::new_err(format!(
+                "consumed_inputs length ({}) != path {path_id} hops ({})",
+                consumed_inputs.len(),
+                rust_path.hops.len()
+            )));
+        }
         let opts = EncodeOptions {
             erc6909_profit,
             use_v4_batch,
@@ -120,6 +134,7 @@ impl PyDispatchCandidate {
                 optimal_input,
                 engine_profit,
                 hop_outputs,
+                consumed_inputs,
                 solve_block,
                 state_nonces,
                 path_info: rust_path,

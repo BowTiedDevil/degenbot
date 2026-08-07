@@ -131,7 +131,7 @@ async def _dispatch_profitable(
     submit seam.
     """
     candidates: list[DispatchCandidate] = []
-    for pid, inp, prof, ho, _ci, sb, sn in results:
+    for pid, inp, prof, ho, ci, sb, sn in results:
         if not ho:
             bot_logger.debug(f"[sim-none] path={pid}: empty hop_outputs")
             continue
@@ -142,6 +142,7 @@ async def _dispatch_profitable(
                 optimal_input=inp,
                 engine_profit=prof,
                 hop_outputs=list(ho),
+                consumed_inputs=list(ci),
                 solve_block=sb,
                 state_nonces=list(sn),
             ),

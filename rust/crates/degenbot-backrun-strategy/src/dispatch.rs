@@ -206,6 +206,11 @@ pub struct DispatchCandidate {
     pub engine_profit: u128,
     /// `hop_outputs` — the per-hop solver outputs.
     pub hop_outputs: Vec<u128>,
+    /// `consumed_inputs` — the per-hop executable inputs fed into each pool
+    /// (the solver's CL-hop clamp). For V3/V4 hops this may be less than
+    /// `hop_outputs[i-1]` when the range boundary is hit; the encoder must
+    /// feed the clamped forward, not the full prior output.
+    pub consumed_inputs: Vec<u128>,
     /// `solve_block` — the block the solver produced the result on.
     pub solve_block: u64,
     /// Per-hop state nonces captured at solve time (AV42C7 staleness gate).
@@ -227,6 +232,7 @@ impl DispatchCandidate {
             path_id: self.path_id,
             optimal_input: self.optimal_input,
             hop_outputs: self.hop_outputs.clone(),
+            consumed_inputs: self.consumed_inputs.clone(),
             path_info: self.path_info.clone(),
             solve_block: self.solve_block,
             state_nonces: self.state_nonces.clone(),
@@ -955,6 +961,7 @@ mod tests {
             optimal_input: 1_000_000_000_000_000_000u128,
             engine_profit: 1_000,
             hop_outputs: vec![1_100_000_000_000_000_000u128],
+            consumed_inputs: vec![1_100_000_000_000_000_000u128],
             solve_block: 100,
             path_info: single_v2_hop(pool),
             opts: EncodeOptions {
@@ -971,6 +978,7 @@ mod tests {
             optimal_input: opt_input,
             engine_profit: profit,
             hop_outputs: vec![opt_input * 11 / 10, opt_input * 121 / 100],
+            consumed_inputs: vec![opt_input, opt_input * 11 / 10],
             solve_block: 100,
             path_info: two_v2_hops(),
             opts: EncodeOptions {

@@ -576,6 +576,7 @@ fn in_process_sim_standalone_slice() {
         path_id: 42,
         optimal_input: 1_000_000_000_000_000_000u128,
         hop_outputs: vec![1_100_000_000_000_000_000u128, 1_210_000_000_000_000_000u128],
+        consumed_inputs: vec![1_100_000_000_000_000_000u128, 1_210_000_000_000_000_000u128],
         path_info: PathInfo::new(vec![
             HopInfo::V2(V2HopInfo {
                 pool_address: POOL_B,

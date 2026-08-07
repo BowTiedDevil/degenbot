@@ -56,6 +56,7 @@ fn native_v4_v2_v4_path_ends_encodes() {
         &path,
         1_000_000_000_000_000u128,
         &[2_000_000u128, 100_000_000u128, 2_001_000u128],
+        &[2_000_000u128, 100_000_000u128, 2_001_000u128],
         EXECUTOR,
         PM,
         WETH,
@@ -69,6 +70,7 @@ fn native_v4_v2_v4_path_ends_encodes() {
     let out_stream = degenbot_executor::composers::encode_cmd_stream(
         &path,
         1_000_000_000_000_000u128,
+        &[2_000_000u128, 100_000_000u128, 2_001_000u128],
         &[2_000_000u128, 100_000_000u128, 2_001_000u128],
         EXECUTOR,
         PM,

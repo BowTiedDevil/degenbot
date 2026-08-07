@@ -784,6 +784,9 @@ pub struct SimulatePath {
     pub optimal_input: u128,
     /// The per-hop solver outputs (`hop_outputs`).
     pub hop_outputs: Vec<u128>,
+    /// The per-hop executable inputs fed into each pool (the solver's
+    /// CL-hop clamp) — the clamped forward used by `encode_cmd_stream`.
+    pub consumed_inputs: Vec<u128>,
     /// The path info (the ordered hops — consumed by `encode_cmd_stream`).
     pub path_info: PathInfo,
     /// The block the solver produced the result on.
@@ -976,6 +979,7 @@ where
         &path.path_info,
         path.optimal_input,
         &path.hop_outputs,
+        &path.consumed_inputs,
         ctx.executor_address,
         ctx.pool_manager_address,
         ctx.weth_address,
@@ -1912,6 +1916,7 @@ mod tests {
             path_id,
             optimal_input: 1_000_000_000_000_000_000u128,
             hop_outputs: vec![1_100_000_000_000_000_000u128, 1_210_000_000_000_000_000u128],
+            consumed_inputs: vec![1_100_000_000_000_000_000u128, 1_210_000_000_000_000_000u128],
             path_info: PathInfo::new(vec![
                 HopInfo::V2(V2HopInfo {
                     pool_address: address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),

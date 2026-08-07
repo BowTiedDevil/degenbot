@@ -200,6 +200,7 @@ fn evm_sim_success_path_dual_driver_parity() {
         path_id: fx.fixture.path_id,
         optimal_input: SMOKE_OPTIMAL_INPUT,
         hop_outputs: vec![SMOKE_HOP_OUT_0, SMOKE_HOP_OUT_1],
+        consumed_inputs: vec![SMOKE_HOP_OUT_0, SMOKE_HOP_OUT_1],
         path_info: PathInfo::new(vec![
             HopInfo::V2(V2HopInfo {
                 pool_address: SMOKE_POOL_B,

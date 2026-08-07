@@ -194,6 +194,10 @@ fn build_path(fx: &Fixture, path_id: u64) -> SimulatePath {
     let rec = &fx.recorded_solve;
     let optimal_input: u128 = rec.optimal_input.parse().unwrap();
     let hop_outputs: Vec<u128> = rec.hop_outputs.iter().map(|s| s.parse().unwrap()).collect();
+    // Forward-input vector (consumed by the CL-hop clamp): hop0 = optimal_input,
+    // hop i>0 = hop_outputs[i-1].
+    let mut consumed_inputs = vec![optimal_input];
+    consumed_inputs.extend_from_slice(&hop_outputs[..hop_outputs.len().saturating_sub(1)]);
     let path_info = PathInfo::new(vec![
         HopInfo::V2(V2HopInfo {
             pool_address: parse_addr(&p.v2_0.address),
@@ -224,6 +228,7 @@ fn build_path(fx: &Fixture, path_id: u64) -> SimulatePath {
         path_id,
         optimal_input,
         hop_outputs,
+        consumed_inputs,
         path_info,
         solve_block: SOLVE_BLOCK,
         opts: EncodeOptions {
@@ -257,6 +262,7 @@ fn run_executor_call_trace(fx: &Fixture, runtime: &[u8]) {
         &path.path_info,
         path.optimal_input,
         &path.hop_outputs,
+        &path.consumed_inputs,
         EXECUTOR,
         PM,
         WETH,

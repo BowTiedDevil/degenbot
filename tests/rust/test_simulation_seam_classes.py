@@ -64,6 +64,7 @@ class TestPyDispatchCandidate:
             optimal_input=1_000_000_000_000_000_000,
             engine_profit=2_000_000_000_000_000_000,
             hop_outputs=[1_500_000_000_000_000_000, 1_400_000_000_000_000_000],
+            consumed_inputs=[1_000_000_000_000_000_000, 1_500_000_000_000_000_000],
             solve_block=19_000_000,
             state_nonces=[0, 0],
         )
@@ -83,6 +84,7 @@ class TestPyDispatchCandidate:
             optimal_input=1,
             engine_profit=1,
             hop_outputs=[1, 1],
+            consumed_inputs=[1, 1],
             solve_block=0,
             state_nonces=[0, 0],
         )
@@ -98,6 +100,7 @@ class TestPyDispatchCandidate:
             optimal_input=1,
             engine_profit=1,
             hop_outputs=[1, 1],
+            consumed_inputs=[1, 1],
             solve_block=0,
             state_nonces=[0, 0],
             erc6909_profit=True,
@@ -116,6 +119,7 @@ class TestPyDispatchCandidate:
                 optimal_input=1,
                 engine_profit=1,
                 hop_outputs=[1, 1],
+                consumed_inputs=[1, 1],
                 solve_block=0,
                 state_nonces=[0, 0],
             )
@@ -132,6 +136,7 @@ class TestPyDispatchCandidate:
                 optimal_input=1,
                 engine_profit=1,
                 hop_outputs=[1],
+                consumed_inputs=[1],
                 solve_block=0,
                 state_nonces=[0],
             )
