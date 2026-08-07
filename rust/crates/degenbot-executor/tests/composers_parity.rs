@@ -697,7 +697,10 @@ fn parity_v3v4_v4_in_weth() {
         ]),
         1000000000000000000u128,
         &[2000000000u128, 2001000000000000000u128],
-        &[2000000000u128, 2001000000000000000u128],
+        // consumed_inputs = [optimal_input, V4 clamped swap-in] — the V4 swap-in
+        // (1 wei below the recorded forward 2_000_000_000) proves the encoder
+        // feeds the CL clamp vector, not hop_outputs[1].
+        &[1000000000000000000u128, 1_999_999_999u128],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
@@ -729,7 +732,7 @@ fn parity_v3v4_v4_in_weth() {
             10,
             zero_idx,
             true,
-            2_000_000_000u128,
+            1_999_999_999u128, // = consumed_inputs[1] (CL clamp)
         )
         .unwrap(),
     );
@@ -998,7 +1001,10 @@ fn parity_v2v4_v4_out_native() {
         ]),
         1000000000000000000u128,
         &[2000000000u128, 2001000000000000000u128],
-        &[2000000000u128, 2001000000000000000u128],
+        // consumed_inputs = [optimal_input, V4 clamped swap-in] — the V4 swap-in
+        // (1 wei below the recorded forward 2_000_000_000) proves the encoder
+        // feeds the CL clamp vector, not hop_outputs[1].
+        &[1000000000000000000u128, 1_999_999_999u128],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
@@ -1030,7 +1036,7 @@ fn parity_v2v4_v4_out_native() {
             10,
             zero_idx,
             true,
-            2_000_000_000u128,
+            1_999_999_999u128, // = consumed_inputs[1] (CL clamp)
         )
         .unwrap(),
     );
@@ -1089,7 +1095,10 @@ fn parity_v2v4_v4_in_native() {
         ]),
         1000000000000000000u128,
         &[2000000000u128, 2001000000000000000u128],
-        &[2000000000u128, 2001000000000000000u128],
+        // consumed_inputs = [optimal_input, V4 clamped swap-in]. The V4 swap-in
+        // (1 wei below the recorded forward 2_000_000_000) proves the encoder
+        // feeds the CL clamp vector, not hop_outputs[1].
+        &[1000000000000000000u128, 1_999_999_999u128],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
@@ -1114,7 +1123,7 @@ fn parity_v2v4_v4_in_native() {
             10,
             zero_idx,
             true,
-            2_000_000_000u128,
+            1_999_999_999u128, // = consumed_inputs[1] (CL clamp)
         )
         .unwrap(),
     );

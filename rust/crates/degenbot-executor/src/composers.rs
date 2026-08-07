@@ -824,6 +824,7 @@ fn encode_cmd_v3_v4(
 ) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
     let hop_outputs = inputs.hop_outputs;
+    let consumed_inputs = inputs.consumed_inputs;
     let executor_address = inputs.executor_address;
     let pool_manager_address = inputs.pool_manager_address;
     let weth_address = inputs.weth_address;
@@ -834,6 +835,12 @@ fn encode_cmd_v3_v4(
         return None;
     }
     if !fits_int128(forward_out) || !fits_int128(weth_out) {
+        return None;
+    }
+    // The V4 hop's swap-in is the solver's CL-clamp executable forward
+    // (`consumed_inputs[1]`), not the V3 pool's full output.
+    let v4_swap_in = consumed_inputs.get(1).copied()?;
+    if !fits_int128(v4_swap_in) {
         return None;
     }
 
@@ -863,13 +870,7 @@ fn encode_cmd_v3_v4(
     let v3_callback = if v4_in_native {
         // V4 needs native ETH — unwrap WETH→ETH first, then V4 swap + settle + take.
         let mut v4_inner = encoders::enc_v4_swap_compact(
-            c0_v4_idx,
-            c1_v4_idx,
-            v4_fee,
-            v4_ts,
-            zero_idx,
-            hop_v4.zfo,
-            forward_out,
+            c0_v4_idx, c1_v4_idx, v4_fee, v4_ts, zero_idx, hop_v4.zfo, v4_swap_in,
         )
         .ok()?;
         v4_inner.extend_from_slice(&encoders::enc_v4_settle_delta(native_idx));
@@ -923,13 +924,7 @@ fn encode_cmd_v3_v4(
         v4_inner.extend_from_slice(&encoders::enc_v4_settle());
         v4_inner.extend_from_slice(
             &encoders::enc_v4_swap_compact(
-                c0_v4_idx,
-                c1_v4_idx,
-                v4_fee,
-                v4_ts,
-                zero_idx,
-                hop_v4.zfo,
-                forward_out,
+                c0_v4_idx, c1_v4_idx, v4_fee, v4_ts, zero_idx, hop_v4.zfo, v4_swap_in,
             )
             .ok()?,
         );
@@ -1100,6 +1095,7 @@ fn encode_cmd_v2_v4(
 ) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
     let hop_outputs = inputs.hop_outputs;
+    let consumed_inputs = inputs.consumed_inputs;
     let executor_address = inputs.executor_address;
     let pool_manager_address = inputs.pool_manager_address;
     let weth_address = inputs.weth_address;
@@ -1110,6 +1106,13 @@ fn encode_cmd_v2_v4(
         return None;
     }
     if !fits_int128(forward_out) || !fits_int128(weth_out) {
+        return None;
+    }
+    // The V4 hop's swap-in is the solver's CL-clamp executable forward
+    // (`consumed_inputs[1]`), not the V2 pool's full output. Leave the V2-side
+    // WETH-bridge / feed amounts on `forward_out` (the V2 output is real).
+    let v4_swap_in = consumed_inputs.get(1).copied()?;
+    if !fits_int128(v4_swap_in) {
         return None;
     }
 
@@ -1148,13 +1151,7 @@ fn encode_cmd_v2_v4(
     if v4_in_native {
         // V4 needs native ETH — unwrap WETH first, then V4 swap + settle + take.
         let mut v4_inner = encoders::enc_v4_swap_compact(
-            c0_v4_idx,
-            c1_v4_idx,
-            v4_fee,
-            v4_ts,
-            zero_idx,
-            hop_v4.zfo,
-            forward_out,
+            c0_v4_idx, c1_v4_idx, v4_fee, v4_ts, zero_idx, hop_v4.zfo, v4_swap_in,
         )
         .ok()?;
         v4_inner.extend_from_slice(&encoders::enc_v4_settle_delta(native_idx_in));
@@ -1181,13 +1178,7 @@ fn encode_cmd_v2_v4(
         v4_inner.extend_from_slice(&encoders::enc_v4_settle());
         v4_inner.extend_from_slice(
             &encoders::enc_v4_swap_compact(
-                c0_v4_idx,
-                c1_v4_idx,
-                v4_fee,
-                v4_ts,
-                zero_idx,
-                hop_v4.zfo,
-                forward_out,
+                c0_v4_idx, c1_v4_idx, v4_fee, v4_ts, zero_idx, hop_v4.zfo, v4_swap_in,
             )
             .ok()?,
         );
