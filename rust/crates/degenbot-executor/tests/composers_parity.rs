@@ -1239,7 +1239,10 @@ fn parity_v2v3_callback_forward_data() {
         ]),
         1000000000000000000u128,
         &[2000000000u128, 2001000000000000000u128],
-        &[2000000000u128, 2001000000000000000u128],
+        // consumed_inputs = [optimal_input, V3 clamped swap-in] — V3 is the CL
+        // hop (index 1); both the forward_data prefund and swap feed the clamp
+        // vector, not hop_outputs[1].
+        &[1000000000000000000u128, 1_999_999_999u128],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
@@ -1255,13 +1258,13 @@ fn parity_v2v3_callback_forward_data() {
     let weth_idx = SENTINEL_WETH;
     let forward_idx = at.add(USDC).unwrap(); // 2 (V2 forward token = USDC)
     let v3_callback_cmds =
-        encoders::enc_erc20_transfer(forward_idx, v3_idx, 2_000_000_000u128).unwrap();
+        encoders::enc_erc20_transfer(forward_idx, v3_idx, 1_999_999_999u128).unwrap();
     let mut callback = Vec::new();
     callback.extend_from_slice(
         &encoders::enc_v3_swap_compact(
             v3_idx,
             true,
-            2_000_000_000u128,
+            1_999_999_999u128, // = consumed_inputs[1] (CL clamp)
             SENTINEL_SELF,
             &v3_callback_cmds,
         )

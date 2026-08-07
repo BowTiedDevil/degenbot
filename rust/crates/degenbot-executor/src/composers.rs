@@ -1303,12 +1303,20 @@ fn encode_cmd_v2_v3(
 ) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
     let hop_outputs = inputs.hop_outputs;
+    let consumed_inputs = inputs.consumed_inputs;
     let executor_address = inputs.executor_address;
     let weth_address = inputs.weth_address;
 
     let forward_out = *hop_outputs.first()?;
     let weth_out = *hop_outputs.get(1)?;
     if forward_out == 0 || weth_out == 0 {
+        return None;
+    }
+    // The V3 hop's swap-in (and the `forward_data` ERC20_TRANSFER prefunding
+    // it) is the solver's CL-clamp executable forward (`consumed_inputs[1]`),
+    // not the V2 pool's full output. V2 is hop 0 (feeds `optimal_input`).
+    let v3_swap_in = consumed_inputs.get(1).copied()?;
+    if !fits_int128(v3_swap_in) {
         return None;
     }
 
@@ -1326,11 +1334,11 @@ fn encode_cmd_v2_v3(
     let forward_idx = at.add(forward_addr).ok()?;
 
     // V3 callback forward_data: pay USDC to V3 to satisfy IIA during callback.
-    let v3_callback_cmds = encoders::enc_erc20_transfer(forward_idx, v3_idx, forward_out).ok()?;
+    let v3_callback_cmds = encoders::enc_erc20_transfer(forward_idx, v3_idx, v3_swap_in).ok()?;
     let mut callback_cmds = encoders::enc_v3_swap_compact(
         v3_idx,
         hop_b.zfo,
-        forward_out,
+        v3_swap_in,
         SENTINEL_SELF,
         &v3_callback_cmds,
     )
