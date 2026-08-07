@@ -201,24 +201,37 @@ def test_reverting_frame_surfaces_deep_attribution(caplog: pytest.LogCaptureFixt
     assert "fail_idx=" not in line
 
 
-# ── Tripwire bucket-fatal semantics (UO3JM4-follow-up) ────────────────
+# ── Tripwire bucket-fatal semantics (fail hard + loud, no default mask) ──
 
 
-def test_empty_bucket_does_not_trip_the_failfast_trap(
+def test_unconfigured_tripwire_trips_on_empty_bucket(
     caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The `empty` (execution-Halt) bucket is default-ignored by the ADR-021
-    tripwire: a candidate that merely failed to EXECUTE on-chain (OOG/INVALID/
-    assert — `classify_revert(b\"\") == \"empty\"`) is logged + skipped, never a
-    fatal solver-state-accuracy signal (so a V4-leg Halt cannot keep killing
-    the whole bot). The failure is still rendered as `[sim-fail]`.
+    """The tripwire must FAIL HARD AND LOUD on ANY failure bucket by default
+    (ADR-021 / ergo W2UWZO — detect/classify/stop loudly, never mask). With the
+    ignore env UNSET, even the `empty` (execution-Halt) bucket is fatal: it is
+    treated as a real issue to chase, not silently skipped.
     """
     monkeypatch.setenv("DEGENBOT_SIM_EXIT_ON_FAIL", "1")
-    # Default ignore set applies: IGNORE_BUCKETS env unset -> default "empty".
     monkeypatch.delenv("DEGENBOT_SIM_EXIT_IGNORE_BUCKETS", raising=False)
     failures = [{"path_id": 1, "bucket": "empty", "fail_index": 3, "revert_data": "0x"}]
+    with pytest.raises(SystemExit) as ei, caplog.at_level("INFO", logger="degenbot"):
+        _render_sim_failures(_outcome(failures), current_block=100)
+    assert ei.value.code == 3
+    assert any("[sim-trap]" in r.message for r in caplog.records)
+
+
+def test_explicitly_ignoring_a_bucket_opts_out(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Dumbing the tripwire down is an EXPLICIT operator opt-in (the env var),
+    not a default: setting DEGENBOT_SIM_EXIT_IGNORE_BUCKETS=empty makes that
+    bucket non-fatal. There is no implicit mask otherwise.
+    """
+    monkeypatch.setenv("DEGENBOT_SIM_EXIT_ON_FAIL", "1")
+    monkeypatch.setenv("DEGENBOT_SIM_EXIT_IGNORE_BUCKETS", "empty")
+    failures = [{"path_id": 1, "bucket": "empty", "fail_index": 3, "revert_data": "0x"}]
     with caplog.at_level("INFO", logger="degenbot"):
-        # Must NOT raise SystemExit for the empty-bucket-only failure.
         _render_sim_failures(_outcome(failures), current_block=100)
     lines = [r.message for r in caplog.records if r.message.startswith("[sim-fail]")]
     assert len(lines) == 1
@@ -229,9 +242,8 @@ def test_empty_bucket_does_not_trip_the_failfast_trap(
 def test_accuracy_bucket_still_trips_the_failfast_trap(
     caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A solver-accuracy bucket (e.g. the Error(string) overdraw — NOT the
-    default-ignored `empty`) must still trip the ADR-021 fail-fast trap, so
-    the real UO3JM4 class stays catastrophic instead of being masked.
+    """A solver-accuracy bucket (e.g. the Error(string) overdraw) still trips
+    the fail-fast trap by default — not masked.
     """
     monkeypatch.setenv("DEGENBOT_SIM_EXIT_ON_FAIL", "1")
     monkeypatch.delenv("DEGENBOT_SIM_EXIT_IGNORE_BUCKETS", raising=False)

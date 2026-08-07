@@ -407,20 +407,13 @@ def _render_sim_failures(outcome: DispatchOutcome, *, current_block: int) -> Non
             )
         )
     if os.environ.get("DEGENBOT_SIM_EXIT_ON_FAIL", "1") == "1":
-        # Default-ignore the `empty` bucket: `classify_revert(b"")` is a
-        # candidate-EXECUTION Halt (INVALID/OOG/assert — empty revert data),
-        # NOT a solver-state-accuracy failure. The tripwire (ADR-021) exists
-        # to fail fast on solver-STATE divergence (e.g. the matched=false
-        # V4 overdraw, which surfaces as an Error(string) revert — a DIFFERENT
-        # bucket). Killing the whole bot because ONE candidate simply failed
-        # to execute on-chain is over-broad: such a candidate is logged
-        # ([sim-fail]) + skipped, never fatal (always-trip case: a valid
-        # candidate that halts because its V4 leg is genuinely infeasible).
-        # The operator can pin the ignore set with
-        # DEGENBOT_SIM_EXIT_IGNORE_BUCKETS to add/override buckets.
+        # Fail HARD and LOUD: ANY un-ignored failure bucket halts the bot
+        # (ADR-021 / ergo W2UWZO — detect/classify/stop loudly, never mask).
+        # There is NO default ignore set; the operator OPT-IN dumbs the tripwire
+        # down per-bucket via DEGENBOT_SIM_EXIT_IGNORE_BUCKETS.
         ignore = {
             b.strip()
-            for b in os.environ.get("DEGENBOT_SIM_EXIT_IGNORE_BUCKETS", "empty").split(",")
+            for b in os.environ.get("DEGENBOT_SIM_EXIT_IGNORE_BUCKETS", "").split(",")
             if b.strip()
         }
         trap_failures = [f for f in failures if f.get("bucket") not in ignore]
