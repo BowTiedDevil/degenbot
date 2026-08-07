@@ -481,7 +481,10 @@ fn parity_v4v3_native_out_deposit() {
         ]),
         2000000000u128,
         &[1000000000000000000u128, 2001000000000000000u128],
-        &[1000000000000000000u128, 2001000000000000000u128],
+        // consumed_inputs = [optimal_input, V3 clamped swap-in]. The V3 swap-in
+        // (1 wei below the V4 forward 1_000_000_000_000_000_000) proves the
+        // encoder feeds the CL clamp vector, not hop_outputs[1].
+        &[2000000000u128, 999_999_999_999_999_999u128],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
@@ -520,7 +523,7 @@ fn parity_v4v3_native_out_deposit() {
         &encoders::enc_v3_swap_compact(
             v3_idx,
             true,
-            1_000_000_000_000_000_000u128,
+            999_999_999_999_999_999u128, // = consumed_inputs[1] (CL clamp)
             SENTINEL_SELF,
             &[],
         )
@@ -558,7 +561,10 @@ fn parity_v4v3_erc20_out_autopay() {
         ]),
         1000000000000000000u128,
         &[2000000000u128, 2001000000000000000u128],
-        &[2000000000u128, 2001000000000000000u128],
+        // consumed_inputs = [optimal_input, V3 clamped swap-in] — V3 is the CL
+        // hop (index 1); its swap-in feeds the clamp vector, not hop_outputs[1]
+        // nor hop_outputs[0].
+        &[1000000000000000000u128, 1_999_999_999u128],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
@@ -591,7 +597,7 @@ fn parity_v4v3_erc20_out_autopay() {
         &encoders::enc_v4_take_compact(forward_idx, SENTINEL_SELF, 2_000_000_000u128).unwrap(),
     );
     inner.extend_from_slice(
-        &encoders::enc_v3_swap_compact(v3_idx, true, 2_000_000_000u128, SENTINEL_SELF, &[])
+        &encoders::enc_v3_swap_compact(v3_idx, true, 1_999_999_999u128, SENTINEL_SELF, &[])
             .unwrap(),
     );
     inner.extend_from_slice(&encoders::enc_v4_settle_delta(weth_idx));
@@ -625,7 +631,10 @@ fn parity_v4v3_erc20_out_v4_in_native_unwrap() {
         ]),
         1000000000000000000u128,
         &[2000000000u128, 2001000000000000000u128],
-        &[2000000000u128, 2001000000000000000u128],
+        // consumed_inputs = [optimal_input, V3 clamped swap-in] — V3 is the CL
+        // hop (index 1); its swap-in feeds the clamp vector, not hop_outputs[1]
+        // nor hop_outputs[0].
+        &[1000000000000000000u128, 1_999_999_999u128],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
@@ -658,7 +667,7 @@ fn parity_v4v3_erc20_out_v4_in_native_unwrap() {
         &encoders::enc_v4_take_compact(forward_idx, SENTINEL_SELF, 2_000_000_000u128).unwrap(),
     );
     inner.extend_from_slice(
-        &encoders::enc_v3_swap_compact(v3_idx, true, 2_000_000_000u128, SENTINEL_SELF, &[])
+        &encoders::enc_v3_swap_compact(v3_idx, true, 1_999_999_999u128, SENTINEL_SELF, &[])
             .unwrap(),
     );
     // V4 input is native → unwrap WETH then settle the native delta.

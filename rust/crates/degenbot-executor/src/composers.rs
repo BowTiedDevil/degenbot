@@ -717,6 +717,7 @@ fn encode_cmd_v4_v3(
 ) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
     let hop_outputs = inputs.hop_outputs;
+    let consumed_inputs = inputs.consumed_inputs;
     let executor_address = inputs.executor_address;
     let pool_manager_address = inputs.pool_manager_address;
     let weth_address = inputs.weth_address;
@@ -727,6 +728,14 @@ fn encode_cmd_v4_v3(
         return None;
     }
     if !fits_int128(optimal_input) {
+        return None;
+    }
+    // The V3 hop's swap-in is the solver's CL-clamp executable forward
+    // (`consumed_inputs[1]`), not the V4 pool's full output. The V4 take stays
+    // on `forward_out` (the V4 output is real). V4 is hop 0 (feeds
+    // `optimal_input`), which the clamp never changes.
+    let v3_swap_in = consumed_inputs.get(1).copied()?;
+    if !fits_int128(v3_swap_in) {
         return None;
     }
 
@@ -772,7 +781,7 @@ fn encode_cmd_v4_v3(
         inner.extend_from_slice(&encoders::enc_weth_deposit(U256::from(forward_out)));
         // 3. V3 swap with auto-pay (executor has WETH after deposit).
         inner.extend_from_slice(
-            &encoders::enc_v3_swap_compact(v3_idx, hop_v3.zfo, forward_out, SENTINEL_SELF, &[])
+            &encoders::enc_v3_swap_compact(v3_idx, hop_v3.zfo, v3_swap_in, SENTINEL_SELF, &[])
                 .ok()?,
         );
         // 4. Settle V4's input currency debt.
@@ -786,7 +795,7 @@ fn encode_cmd_v4_v3(
             &encoders::enc_v4_take_compact(forward_idx, SENTINEL_SELF, forward_out).ok()?,
         );
         inner.extend_from_slice(
-            &encoders::enc_v3_swap_compact(v3_idx, hop_v3.zfo, forward_out, SENTINEL_SELF, &[])
+            &encoders::enc_v3_swap_compact(v3_idx, hop_v3.zfo, v3_swap_in, SENTINEL_SELF, &[])
                 .ok()?,
         );
         // 4. Settle V4's input currency debt. V3 sent WETH to executor.
