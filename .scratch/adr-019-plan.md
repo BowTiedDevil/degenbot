@@ -148,7 +148,7 @@
 - `degenbot-python/src/simulation/mod.rs` doc updated to reflect the new primitive surface.
 
 ## Validation Gates
-- `just test-rust-python` — PyO3-wrapped tests pass.
+- `just test-python` — PyO3-wrapped tests pass.
 - `just test-rust`.
 - `just lint-rust`.
 - `just check-no-pyo3-in-cores`.
@@ -172,6 +172,6 @@
 
 ## Validation Gates
 - `just test-python` — Python tests pass.
-- `just test-rust-python` — PyO3 integration tests pass.
-- `just test-all` for confidence.
+- `just test-python` — PyO3 integration tests pass.
+- `just test` for confidence.
 - Manual: `examples/eth_backrun_v2_v3_v4_rust.py --help` reflects the new composition (no `dispatch_profitable_py` reference).

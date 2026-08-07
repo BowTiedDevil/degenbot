@@ -294,7 +294,7 @@ carry their own golden gate.
   the gas ceiling.
 - **Tier-2 dual-driver parity (ADR-020):** `cargo test -p degenbot` keeps the parity
   pairs GREEN — a lossy FFI seam (arg ordering, sign, rounding) surfaces here.
-- Deferred to the umbrella: full `just test-all` + `just lint` before merge (the
+- Deferred to the umbrella: full `just test` + `just lint` before merge (the
   pre-push hook enforces this).
 
 ---

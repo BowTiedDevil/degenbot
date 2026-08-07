@@ -327,7 +327,7 @@ From this inventory, the detailed extraction tasks:
    dispatch, Curve/Balancer sims, `SimulateSwapError`, `V3SwapOutcome`) to pools.
 6. *Rewire `degenbot-bot` + `degenbot-python` + umbrella* (§7) — import paths;
    `BotState` methods delegate to `degenbot_pools::simulate_*`. Verify `just
-   test-rust` + `just test-rust-python` + `just check-no-pyo3-in-cores` green.
+   test` + `just check-no-pyo3-in-cores` green.
 
 Sequence 2 → 3 → 4 → 5 → 6 as a dependency chain (each gates the next). Task 1
 independent. The `degenbot-solvers` epic (later) consumes the moved

@@ -60,8 +60,8 @@ GREEN: signature + impl + cascade landing. All `cargo test` green.
   baseline + 3 new MSTAT2 tests).
 - `cargo test -p degenbot_rs` — 1 integration doc-test passes; the
   `degenbot_rs` lib builds.
-- `just test-rust-python` (pytest over `tests/rust/`, 300 tests) — 300
-  passed, 0 failed.
+- `just test-python`: green — the 300 wrapped `tests/rust` tests pass within
+  the full suite.
 - `cargo clippy --workspace --all-targets` — clean.
 - `cargo fmt --all -- --check` — clean.
 - `just check-no-pyo3-in-cores` — OK (no `pyo3` added to a core crate;

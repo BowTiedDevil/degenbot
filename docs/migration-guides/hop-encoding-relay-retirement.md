@@ -273,9 +273,9 @@ on oracle-confidence, not on the relay flatten.
 ## Validation gates (per task)
 
 ```
-just test-rust            # cargo test --workspace
-just test-rust-python     # pytest tests/rust
-just test-python          # full pytest suite
+just test                 # default gate: cargo workspace + full pytest (one entrypoint)
+just test-rust            # Rust track only (cargo workspace)
+just test-python          # Python track only (full pytest; incl. tests/rust)
 just lint-rust            # clippy --deny warnings
 just check-no-pyo3-in-cores
 just lint-python          # ruff + ty

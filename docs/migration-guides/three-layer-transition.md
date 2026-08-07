@@ -265,9 +265,9 @@ delegation seam, not just the numbers.
 ## 5. Validation gates (run after every sub-step)
 
 ```
-just test-rust            # cargo test --workspace (Rust unit + integration)
-just test-rust-python     # pytest tests/rust (PyO3-wrapped Python tests)
-just test-python          # full pytest suite
+just test                 # default gate: cargo workspace + full pytest (one entrypoint)
+just test-rust            # Rust track only (standalone smoke + cargo workspace)
+just test-python          # Python track only (full pytest; incl. tests/rust + golden parity)
 just lint-rust            # clippy --fix --all-targets --deny warnings
 just check-no-pyo3-in-cores  # cores + umbrella pyo3-free under default features
 just lint-python          # ruff + ty

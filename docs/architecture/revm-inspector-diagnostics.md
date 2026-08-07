@@ -378,7 +378,7 @@ amount comparison, no recompute) could NOT hold for V2. Fix (commit `67f4166e`):
 - `just lint-rust` green.
 - `just test-rust` green — the composition-parity test
   (`tests/inspector_composition.rs`) + the spike probe stay green.
-- `just test-rust-python` green once the PyO3 surface + the example rewire
+- `just test-python` green once the PyO3 surface + the example rewire
   land.
 - Tier-2 parity pair: BOTH halves green (the mechanically-enforced
   "one inspector, two consumers" claim).

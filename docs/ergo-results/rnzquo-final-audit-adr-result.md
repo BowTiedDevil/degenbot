@@ -67,7 +67,8 @@ Linked references to ADR-005 + ADR-003 and the per-task ergo result docs.
 - `cargo fmt -p degenbot-bot -p degenbot_rs --check`: clean.
 - `cargo build -p degenbot --example standalone_consumer`: clean.
 - `just check-no-pyo3-in-cores`: green.
-- `just test-rust-python`: 320 passed.
+- `just test-python`: green — the 320 wrapped `tests/rust` tests pass within
+  the full suite.
 
 ## Files touched
 

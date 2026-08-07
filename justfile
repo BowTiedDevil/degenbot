@@ -28,7 +28,23 @@ version:
 test-standalone:
     cargo run --manifest-path rust/Cargo.toml -p degenbot --example standalone_consumer
 
-# Run Rust tests
+# ========== Tests ==========
+#
+# "Run the tests" is no longer a language choice: Python is a driver shell over
+# the Rust core, so the default gate runs BOTH the native Rust suite and the
+# full pytest suite (which itself drives the core through the PyO3 seam, golden
+# on-chain-oracle replay, and the wrapped `tests/rust`) under one entrypoint.
+# CI and the pre-push hook still address the language tracks directly
+# (`test-rust` / `test-python`) so the python-version matrix and job
+# partitioning keep working. Deliberately excluded from `test` (run on demand):
+# toolchain-gated Tier-3 harness rebuilds (`test-tier3` / `verify-tier3-*`) and
+# net-gated suites (`record-golden`, `verify-deployments`).
+
+# Default gate: standalone smoke + cargo workspace + full pytest.
+test: test-rust test-python
+
+# Run only the Rust track (standalone smoke + cargo workspace). CI's rust-test
+# job and the pre-push hook call this subunit directly; humans use `just test`.
 test-rust: test-standalone
     #!/usr/bin/env bash
     python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
@@ -49,10 +65,6 @@ test-rust-nextest: test-standalone
         echo "cargo-nextest not installed; falling back to cargo test" >&2
         cargo test --manifest-path rust/Cargo.toml --workspace
     fi
-
-# Run wrapped Rust Python tests
-test-rust-python:
-    uv run pytest tests/rust -x -q --no-header
 
 # Run Rust linter (clippy)
 lint-rust:
@@ -99,15 +111,13 @@ dev:
 build-wheels:
     uv run maturin build --release
 
-# Run Python tests
+# Run only the Python track (full pytest). CI's python-test matrix job and the
+# pre-push hook call this subunit directly; humans use `just test`. Under the
+# default offline marker filter (`-m "not slow and not base and not online_rpc"`)
+# this covers the PyO3 seam, golden on-chain-oracle replay, AND the wrapped
+# `tests/rust` suite. A focused parity-only run is `uv run pytest -m onchain_oracle`.
 test-python:
     uv run pytest -x -q --no-header
-
-# Run only on-chain-oracle parity tests in REPLAY mode (offline, CI-safe, no RPC/secrets).
-# Replay is read-only (asserts against recorded ints), so xdist parallelism is
-# safe — the shared-golden-file race only affects record mode (see below).
-test-offline-parity:
-    uv run pytest -m onchain_oracle -q --no-header
 
 # Re-populate golden files for on-chain-oracle parity tests. Requires a working
 # fork (tests.env RPC or local node). Pass a nodeid to refresh a single test:
@@ -302,9 +312,6 @@ rebuild-tier3-artifacts:
     tier3-oracle/build-tier3-balancer-swap-harness.sh
     tier3-oracle/build-tier3-pancake-v3-swap-harness.sh
     tier3-oracle/build-tier3-pancake2-swap-harness.sh
-
-# Run all tests (Rust + Python)
-test-all: test-rust test-python
 
 # ========== Code Quality ==========
 

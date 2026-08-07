@@ -191,7 +191,7 @@ both live across the seam correctly.
   parity test builds a dependent + referenced pool in *separate* default bots,
   give it a single shared local `PyBot` (production-faithful: the builder
   shares `self._py_bot`); fresh per call keeps multiblock tests isolated.
-- **`just lint` + `just test-all` green** before commit.
+- **`just lint` + `just test` green** before commit.
 
 ## 7. Layer-3 follow-up epic (TODO — not built here)
 

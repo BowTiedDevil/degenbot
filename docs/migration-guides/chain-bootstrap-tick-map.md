@@ -469,7 +469,7 @@ spike is accepted. The plan is **5 tasks**:
 - Tests: extend `bot::tests` with a Chain-arm end-to-end test — same shape as
   `assemble_v3_tick_map_returns_tracked_after_snapshot_load` but exercising
   the Chain path with a fake RPC.
-- **Validation gates:** `just test-rust-python`, `just lint`,
+- **Validation gates:** `just test`, `just lint`,
   `just check-no-pyo3-in-cores`.
 
 ### Task 5 — Python builder cutover: pass `rpc=io` to `assemble_*_tick_map`, remove inline Branch 3
@@ -482,7 +482,7 @@ spike is accepted. The plan is **5 tasks**:
 - Delete the now-dead Branch 3 code in both builders.
 - **Validation gates:** `just test-python` (snapshot tests still `Tracked`,
   sparse-RPC pools now come back from Rust as `Sparse` — same semantics, no
-  visible behavior change), `just test-rust-python`, `just lint`.
+  visible behavior change), `just lint`.
 
 ### Dependency graph for the 5 tasks
 
