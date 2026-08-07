@@ -272,7 +272,11 @@ fn parity_v2_v3_v2() {
         ]),
         1000000000000000000u128,
         &[2000000000u128, 2001000000000000000u128, 2001000000u128],
-        &[2000000000u128, 2001000000000000000u128, 2001000000u128],
+        &[
+            1000000000000000000u128,
+            1_999_999_999u128,
+            2_001_000_000u128,
+        ],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
@@ -301,7 +305,7 @@ fn parity_v2_v3_v2() {
         &encoders::enc_v2_swap_direct(v2a_idx, true, 2_000_000_000u128, v3b_idx).unwrap(),
     );
     let c_fwd =
-        encoders::enc_v3_swap_compact(v3b_idx, true, 2_000_000_000u128, v2c_idx, &b_fwd).unwrap();
+        encoders::enc_v3_swap_compact(v3b_idx, true, 1_999_999_999u128, v2c_idx, &b_fwd).unwrap();
     let commands =
         encoders::enc_v2_swap_compact(v2c_idx, true, 2_001_000_000u128, executor_idx, 30, &c_fwd)
             .unwrap();
@@ -521,7 +525,11 @@ fn parity_v2_v4_v2() {
         ]),
         1000000000000000000u128,
         &[2000000000u128, 2001000000000000000u128, 2001000000u128],
-        &[2000000000u128, 2001000000000000000u128, 2001000000u128],
+        &[
+            1000000000000000000u128,
+            1_999_999_999u128,
+            2_001_000_000u128,
+        ],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
@@ -555,7 +563,7 @@ fn parity_v2_v4_v2() {
             10,
             zero_idx,
             true,
-            2_000_000_000u128,
+            1_999_999_999u128,
         )
         .unwrap(),
     );
@@ -1040,7 +1048,11 @@ fn parity_v3_v3_v2() {
         ]),
         1000000000000000000u128,
         &[2000000000u128, 2001000000000000000u128, 2001000000u128],
-        &[2000000000u128, 2001000000000000000u128, 2001000000u128],
+        &[
+            1000000000000000000u128,
+            1_999_999_999u128,
+            2_001_000_000u128,
+        ],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
@@ -1076,7 +1088,7 @@ fn parity_v3_v3_v2() {
     )
     .unwrap();
     let commands =
-        encoders::enc_v3_swap_compact(v3b_idx, true, 2_000_000_000u128, v2c_idx, &v3b_fwd).unwrap();
+        encoders::enc_v3_swap_compact(v3b_idx, true, 1_999_999_999u128, v2c_idx, &v3b_fwd).unwrap();
     let mut expected = encoders::enc_preamble(&at);
     expected.extend_from_slice(&commands);
     assert_eq!(rust, Some(expected));
