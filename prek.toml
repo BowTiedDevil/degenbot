@@ -1,10 +1,16 @@
 # prek hook configuration — https://prek.j178.dev/
 #
 # Run `just setup-git-hooks` once after cloning to install these into git's
-# hooks (pre-commit, commit-msg, pre-push). Hooks can also be run on demand
-# with `uv run prek run` / `uv run prek run --all-files`.
+# hooks (pre-commit, pre-push). Hooks can also be run on demand with
+# `uv run prek run` / `uv run prek run --all-files`.
+#
+# Commit MESSAGE lint intentionally runs at pre-push + CI ONLY, not at commit
+# time: a closed commit-msg gate made agents burn turns rewording fine
+# messages instead of committing. Structure (type + non-empty subject) is
+# still enforced at push and in CI, so spam can't land; the per-commit path
+# stays friction-free. See .commitlintrc.yml for the (relaxed) rules.
 
-default_install_hook_types = ["pre-commit", "commit-msg", "pre-push"]
+default_install_hook_types = ["pre-commit", "pre-push"]
 
 [[repos]]
 repo = "local"
@@ -39,18 +45,16 @@ hooks = [
   { id = "rust-clippy",      name = "Rust clippy",        language = "system", entry = "just lint-rust-check",         stages = ["pre-commit"], pass_filenames = false, files = "\\.rs$|(^|/)Cargo\\.(toml|lock)$" },
   { id = "python-lint",      name = "Python lint",         language = "system", entry = "just lint-python-check",       stages = ["pre-commit"], pass_filenames = false, files = "\\.pyi?$|^pyproject\\.toml$" },
 
-  # --- commit-msg -----------------------------------------------------------
-  # Validate the commit message against .commitlintrc.yml. prek appends the
-  # commit-message temp file as the trailing argument to `--edit`.
-  { id = "commitlint", name = "commitlint", language = "system", entry = "npx --yes @commitlint/cli --edit", stages = ["commit-msg"] },
-
   # --- pre-push -------------------------------------------------------------
-  # Gate the push on the slower build + test suite plus a commit-message
-  # re-lint (safety net for `git commit --no-verify`). The faster lints already
-  # ran at commit time, so only the expensive work remains here.
+  # Gate the push on the slower build + test suite plus the commit-message
+  # lint. Commit-MESSAGE linting deliberately lives here (push + CI) rather than
+  # at commit time, so a `git commit` is never blocked on message style; the
+  # outgoing push range is still checked before anything leaves the machine.
+  # The fast code lints (fmt/clippy/no-pyo3/python) ran at commit time and are
+  # not re-run here — only the expensive work remains.
   #
-  # 1. commitlint-push — re-lint every commit message in the outgoing push
-  #    range. prek's pre-push stage consumes git's push-line stdin and does not
+  # 1. commitlint-push — lint every commit message in the outgoing push range.
+  #    prek's pre-push stage consumes git's push-line stdin and does not
   #    forward it to hooks, so the range is computed from the upstream tracking
   #    ref instead (mirrors `just lint-commits`).
   #

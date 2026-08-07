@@ -22,38 +22,12 @@ rules:
     - never
 
   # ── Scope ─────────────────────────────────────────────────
-  scope-enum:
-    - 2
-    - always
-    - - curve
-      - aave
-      - v2
-      - v3
-      - v4
-      - aerodrome
-      - camelot
-      - balancer
-      - arbitrage
-      - decoders
-      - adr
-      - builders
-      - database
-      - plans
-      - rust
-      - python
-      - sdk
-
-  scope-case:
-    - 2
-    - always
-    - lower-case
-
-  # scope-empty: 0 = omit freely (no warning). AGENTS.md documents scope
-  # omission as the convention for cross-cutting changes; the previous
-  # level=1 warning was noise on the common legitimate case.
-  scope-empty:
-    - 0
-    - never
+  # Scope is OPTIONAL and FREE-FORM, per the Conventional Commits spec: no
+  # scope-enum is enforced, so any domain token is accepted and scope may be
+  # omitted entirely for cross-cutting changes. The old closed scope-enum kept
+  # going stale relative to the active domains (backrun, solver, evm, oracle,
+  # ... all postdate it) and caused needless lint churn on correct messages.
+  # scope-case is likewise not enforced; prefer lower-case by convention only.
 
   # ── Subject ───────────────────────────────────────────────
   # subject-case: not enforced — 'lower-case' rejects proper nouns
@@ -70,13 +44,13 @@ rules:
   subject-max-length:
     - 2
     - always
-    - 72
+    - 100
 
   # ── Body ──────────────────────────────────────────────────
   body-max-line-length:
     - 1
     - always
-    - 80
+    - 100
 
   body-min-length:
     - 0
@@ -85,10 +59,10 @@ rules:
   footer-max-line-length:
     - 2
     - always
-    - 72
+    - 100
 
   # ── Overall ───────────────────────────────────────────────
   header-max-length:
     - 2
     - always
-    - 72
+    - 100

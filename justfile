@@ -394,9 +394,10 @@ ci-full: ci-rust lint-markdown test-python
 # ========== Repository Setup ==========
 
 # Install prek git hooks and configure commit template.
-# Run this once after cloning so commit messages are linted locally at
-# commit time AND pre-push (catches `--no-verify` bypasses before they leave
-# the machine, strictly earlier than CI). Hooks are declared in prek.toml.
+# Run this once after cloning. Commit MESSAGE lint runs at pre-push + CI only
+# (not at commit time) so `git commit` is never blocked on message style;
+# pre-push catches a bad message before it leaves the machine, and CI is the
+# final gate. Hooks are declared in prek.toml.
 # For manual range checks: just lint-commits.
 setup-git-hooks:
     #!/usr/bin/env bash
@@ -415,9 +416,9 @@ setup-git-hooks:
     echo "    pre-commit : Markdown lint + PLC0415 noqa guard (staged files)"
     echo "                + fast code lints (Rust fmt/clippy/no-pyo3,"
     echo "                  Python fmt/lint), check-only over the staged tree"
-    echo "    commit-msg : commitlint"
-    echo "    pre-push   : commitlint push-range re-lint + build & test suite"
+    echo "    pre-push   : commitlint push-range + build & test suite"
     echo "                 (rust build/test, python build/test)"
+    echo "    commit messages are NOT linted at commit time (push + CI gate only)"
     echo "    Bypass: git push --no-verify (CI still runs)."
     echo "✓ commit template configured."
 
