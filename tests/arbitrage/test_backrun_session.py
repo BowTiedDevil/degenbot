@@ -483,7 +483,8 @@ class TestBackrunSessionRunBlockStreamAcquiredOnce:
             def block_stream(self):
                 self.block_stream_calls += 1
                 if self.block_stream_calls > 1:
-                    raise RuntimeError("block_stream() can only be called once")
+                    msg = "block_stream() can only be called once"
+                    raise RuntimeError(msg)
                 # Blocks divisible by RECURRING_VERIFY_INTERVAL (50) so the
                 # recurring-verify ticker actually fires at each.
                 return _BlocksStream(
@@ -507,7 +508,7 @@ class TestBackrunSessionRunBlockStreamAcquiredOnce:
 
         async def recording_consumer(*, block_stream=None, **_kw) -> None:
             async for b in block_stream:
-                seen_by_consumer.append(b["number"])
+                seen_by_consumer.append(b["number"])  # ruff: ignore[manual-list-comprehension]  (async iter)
 
         session = BackrunSession(
             _cfg(),
@@ -1428,6 +1429,38 @@ class TestPathRegistrationPipeline:
             reg_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await reg_task
+
+    async def test_periodic_progress_surfaces_skip_reasons_below_1000(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """INN6TK observability: the registration counters + a top skip-reason
+        breakdown must be visible even when ``path_count < 1000``. The legacy
+        ``[build_paths] Progress`` line only fires at ``path_count % 1000 == 0``,
+        so a discovery-heavy crawl that registers few paths (INN6TK: 12M
+        discovered, <1000 registered) never prints it and the skip/dup/reject
+        reasons stay invisible. The new time-based summary must surface them.
+        """
+        import logging
+
+        pipeline, _reg, _t_base = self._make_pipeline()
+        # Simulate a crawl that is skipping almost everything well below the
+        # 1000-registration print threshold.
+        pipeline._record_skip("build-v3:ConnectionError")
+        pipeline._record_skip("build-v3:ConnectionError")
+        pipeline._record_skip("direction-fail")
+        pipeline.path_count = 7
+        pipeline.skip_count = 3
+
+        with caplog.at_level(logging.INFO):
+            pipeline.emit_registration_progress(force=True)
+
+        msg = "\n".join(r.getMessage() for r in caplog.records)
+        assert "[build_paths] Progress" in msg
+        assert "7 paths registered" in msg
+        assert "3 skipped" in msg
+        # Top skip-reason breakdown (rounded down to the most-common) is present.
+        assert "build-v3:ConnectionError=2" in msg
+        assert "direction-fail=1" in msg
 
 
 class TestSessionOperatorSurface:

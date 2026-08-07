@@ -14,7 +14,9 @@ paths with the Rust-owned engine (``EngineRegistry``) but owns no pool state.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
+from collections import Counter
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -381,6 +383,18 @@ class PathRegistrationPipeline:
         self.v4_dynamic_fee_rejected = 0
         self.other_exc_count = 0
         self.registered_path_sigs: set[tuple[str | bool, ...]] = set()
+        # INN6TK observability: reason-tagged skip breakdown + time-throttled
+        # progress emission. The legacy `[build_paths] Progress` line only fires
+        # when `path_count` crosses each 1000-boundary; a discovery-heavy crawl
+        # that registers few paths never prints it, hiding the skip/dup/reject
+        # reasons. We record a reason tag per skip and emit the same summary on
+        # a wall-clock cadence so the cause stays visible mid-crawl.
+        self._skip_reasons: Counter[str] = Counter()
+        self._last_progress_ts = 0.0
+
+    #: Seconds between periodic registration-progress summaries (time-based, so
+    #: they fire even when ``path_count`` never reaches the 1000 print gate).
+    _PROGRESS_INTERVAL_S = float(os.environ.get("DEGENBOT_REG_PROGRESS_SECS", "30"))
 
     def _bounded_build_executor(self) -> ThreadPoolExecutor:
         """Lazily create the bounded pool-build thread pool (35NMBX Guard 2)."""
@@ -392,6 +406,41 @@ class PathRegistrationPipeline:
         """Run a blocking pool-build callable on the bounded worker pool."""
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._bounded_build_executor(), fn)
+
+    def _record_skip(self, reason: str) -> None:
+        """Record a reason-tagged skip so the periodic summary shows WHY.
+
+        `reason` is a short stable tag (e.g. ``"build-v3:ConnectionError"``,
+        ``"dup"``, ``"direction-fail"``) — never an interpolated address, so
+        the aggregate stays compact and greppable.
+        """
+        self._skip_reasons[reason] += 1
+
+    def emit_registration_progress(self, *, force: bool = False) -> None:
+        """Log the registration counters + top skip-reason breakdown.
+
+        The legacy ``[build_paths] Progress`` line only fires when ``path_count``
+        reaches a multiple of 1000. During a discovery-heavy crawl that registers
+        few paths it never fires, so the skip/dup/reject counts (and their
+        reasons) stay invisible. This is the same summary emitted on ``force``
+        (a wall-clock cadence) so the cause is always observable mid-crawl.
+        """
+        if not force:
+            now = time.monotonic()
+            if now - self._last_progress_ts < self._PROGRESS_INTERVAL_S:
+                return
+            self._last_progress_ts = now
+        top = self._skip_reasons.most_common(8)
+        breakdown = ", ".join(f"{reason}={n}" for reason, n in top)
+        bot_logger.info(
+            f"[build_paths] Progress: {self.path_count} paths registered, "
+            f"{self.skip_count} skipped, {self.token_filter_count} token-filtered, "
+            f"{self.engine_reject_count} engine-rejected, "
+            f"{self.direction_fail_count} direction-fail, "
+            f"{self.register_fail_count} register-fail, "
+            f"{self.dup_count} duplicates "
+            f"{{skip_reasons: {breakdown}}}",
+        )
 
     async def run_registration(self, *, producer: AsyncIterable[object]) -> None:
         """Run the bounded producer/consumer pipeline against ``producer``."""
@@ -458,6 +507,9 @@ class PathRegistrationPipeline:
     ) -> None:
         """Process a single discovered/operator path: build, register, verify."""
         await asyncio.sleep(0)
+        # Time-throttled periodic progress summary — fire independently of the
+        # path_count==1000 gate so a discovery-heavy skip-fest stays visible.
+        self.emit_registration_progress()
 
         steps = list(path_steps)
         pool_type_strs: list[str] = []
@@ -482,6 +534,7 @@ class PathRegistrationPipeline:
                     )
                 except Exception as exc:
                     bot_logger.debug(f"Skip V2 {step.address}: {exc}")
+                    self._record_skip(f"build-v2:{type(exc).__name__}")
                     skip = True
                     break
             elif pt == "V3":
@@ -512,10 +565,12 @@ class PathRegistrationPipeline:
                                 )
                 except Exception as exc:
                     bot_logger.debug(f"Skip V3 {step.address}: {exc}")
+                    self._record_skip(f"build-v3:{type(exc).__name__}")
                     skip = True
                     break
             elif pt == "V4":
                 if not step.hash:
+                    self._record_skip("v4-no-hash")
                     skip = True
                     break
                 try:
@@ -528,19 +583,23 @@ class PathRegistrationPipeline:
                     )
                 except HookedPoolRejectedError:
                     self.v4_hook_rejected += 1
+                    self._record_skip("v4-hook-rejected")
                     skip = True
                     v4_admission_rejected = True
                     break
                 except DynamicFeePoolRejectedError:
                     self.v4_dynamic_fee_rejected += 1
+                    self._record_skip("v4-dynamic-fee-rejected")
                     skip = True
                     v4_admission_rejected = True
                     break
                 except Exception as exc:
                     bot_logger.debug(f"Skip V4 {step.hash}: {exc}")
+                    self._record_skip(f"build-v4:{type(exc).__name__}")
                     skip = True
                     break
             else:
+                self._record_skip("unknown-pool-type")
                 skip = True
                 break
             pools.append(cast("UniswapV2Pool | UniswapV3Pool | UniswapV4Pool", pool))
@@ -595,6 +654,7 @@ class PathRegistrationPipeline:
         zfo_list = self._resolve_path_directions(pools, directions)
         if zfo_list is None:
             self.direction_fail_count += 1
+            self._record_skip("direction-fail")
             return
 
         pool_sigs: list[str] = []
@@ -606,6 +666,7 @@ class PathRegistrationPipeline:
         path_sig = tuple(v for pair in zip(pool_sigs, zfo_list, strict=True) for v in pair)
         if path_sig in self.registered_path_sigs:
             self.dup_count += 1
+            self._record_skip("dup")
             return
         self.registered_path_sigs.add(path_sig)
 
@@ -613,6 +674,7 @@ class PathRegistrationPipeline:
             self.engine_registry.register_path(list(zip(pools, zfo_list, strict=True)))
         except Exception as exc:
             self.register_fail_count += 1
+            self._record_skip(f"register-fail:{type(exc).__name__}")
             if self.register_fail_count <= 5:
                 bot_logger.warning(f"Path registration failed: {type(exc).__name__}: {exc}")
             return
@@ -678,6 +740,10 @@ async def build_paths(
     bot_logger.info("[build_paths] Discovery: single pass over the DB subgraph")
 
     await pipeline.run_registration(producer=discovery_producer)
+
+    # INN6TK observability: always emit the skip-reason breakdown at completion,
+    # even if the time-throttled cadence fell on a throttled tick.
+    pipeline.emit_registration_progress(force=True)
 
     bot_logger.info(
         f"[build_paths] Path discovery complete: {pipeline.path_count} paths in "
