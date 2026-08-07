@@ -73,7 +73,7 @@ fn parity_v4v4_same_currency() {
         ]),
         1000000000000000000u128,
         &[2000000000u128, 2001000000000000000u128],
-        &[2000000000u128, 2001000000000000000u128],
+        &[2000000000u128, 1_999_999_999u128],
         EXECUTOR,
         PM,
         WETH,
@@ -100,9 +100,18 @@ fn parity_v4v4_same_currency() {
         )
         .unwrap(),
     );
-    inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
-        usdc_idx, weth_idx, 500, 10, zero_idx, true,
-    ));
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            usdc_idx,
+            weth_idx,
+            500,
+            10,
+            zero_idx,
+            true,
+            1_999_999_999u128,
+        )
+        .unwrap(),
+    );
     inner.extend_from_slice(&encoders::enc_v4_take_delta(weth_idx, executor_idx));
     inner.extend_from_slice(&encoders::enc_v4_settle_all());
     let expected = v4_envelope(&at, &inner);
@@ -288,7 +297,7 @@ fn parity_v4v4_same_currency_batch() {
         ]),
         1000000000000000000u128,
         &[2000000000u128, 2001000000000000000u128],
-        &[2000000000u128, 2001000000000000000u128],
+        &[2000000000u128, 1_999_999_999u128],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
@@ -319,7 +328,7 @@ fn parity_v4v4_same_currency_batch() {
             tick_spacing: 10,
             hooks_idx: native_idx,
             zfo: true,
-            amount_u96: 0u128,
+            amount_u96: 1_999_999_999u128,
         },
     ];
     inner.extend_from_slice(&encoders::enc_v4_batch(&batch).unwrap());
@@ -357,7 +366,7 @@ fn parity_v4v4_same_currency_erc6909() {
         ]),
         1000000000000000000u128,
         &[2000000000u128, 2001000000000000000u128],
-        &[2000000000u128, 2001000000000000000u128],
+        &[2000000000u128, 1_999_999_999u128],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
@@ -384,9 +393,18 @@ fn parity_v4v4_same_currency_erc6909() {
         )
         .unwrap(),
     );
-    inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
-        idx0, weth_idx, 500, 10, native_idx, true,
-    ));
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            idx0,
+            weth_idx,
+            500,
+            10,
+            native_idx,
+            true,
+            1_999_999_999u128,
+        )
+        .unwrap(),
+    );
     inner.extend_from_slice(
         &encoders::enc_v4_mint_compact(weth_idx, executor_idx, 1001000000000000000u128).unwrap(),
     );

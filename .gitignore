@@ -198,6 +198,9 @@ logs/*
 # Local task tracking
 .ergo/*
 
+# Scratch dir
+.scratch/*
+
 # Pi extensions
 .pi/autoresearch
 .pi/mega-compact

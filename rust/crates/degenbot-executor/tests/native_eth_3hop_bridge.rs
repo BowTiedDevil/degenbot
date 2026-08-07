@@ -119,9 +119,9 @@ fn v4_v4_v4_wrap_at_ab_boundary() {
     // 4. V4_SETTLE_DELTA(WETH) — B's input
     inner.extend_from_slice(&encoders::enc_v4_settle_delta(weth_idx));
     // 5. V4_SWAP_DYNAMIC(C) — no gap at B→C
-    inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
-        usdc_idx, weth_idx, 500, 10, zero_idx, true,
-    ));
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(usdc_idx, weth_idx, 500, 10, zero_idx, true, OUT_B).unwrap(),
+    );
     // 6. Profit capture: output=WETH → TAKE_DELTA(WETH, executor)
     inner.extend_from_slice(&encoders::enc_v4_take_delta(weth_idx, executor_idx));
     // 7. V4_SETTLE_ALL
@@ -223,9 +223,10 @@ fn v4_v4_v4_unwrap_at_ab_boundary() {
     // V4_SETTLE_DELTA(native) — B's input
     inner.extend_from_slice(&encoders::enc_v4_settle_delta(native_idx));
     // V4_SWAP_DYNAMIC(C) — USDC→native, no gap
-    inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
-        usdc_idx, native_idx, 500, 10, zero_idx, true,
-    ));
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(usdc_idx, native_idx, 500, 10, zero_idx, true, OUT_B)
+            .unwrap(),
+    );
     // Profit capture: output=native
     inner.extend_from_slice(&encoders::enc_v4_take_delta(native_idx, executor_idx));
     inner.extend_from_slice(&encoders::enc_v4_settle_all());
@@ -424,9 +425,10 @@ fn v4_v4_v4_wrap_at_bc_boundary() {
         &encoders::enc_v4_swap_compact(usdc_idx, weth_idx, 500, 10, zero_idx, true, OPTIMAL_INPUT)
             .unwrap(),
     );
-    inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
-        weth_idx, native_idx, 3000, 60, zero_idx, true,
-    ));
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(weth_idx, native_idx, 3000, 60, zero_idx, true, OUT_A)
+            .unwrap(),
+    );
     // bridge_bc = Wrap: TAKE(native) + WETH_DEPOSIT
     inner.extend_from_slice(
         &encoders::enc_v4_take_compact(native_idx, executor_idx, OUT_B).unwrap(),

@@ -236,9 +236,10 @@ fn parity_v2_v2_v4() {
     inner.extend_from_slice(&encoders::enc_v2_swap_calc(v2a_idx, true, v2b_idx, 30));
     inner.extend_from_slice(&encoders::enc_v2_swap_calc(v2b_idx, true, pm_idx, 30));
     inner.extend_from_slice(&encoders::enc_v4_settle());
-    inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
-        c0_idx, c1_idx, 3000, 60, zero_idx, true,
-    ));
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(c0_idx, c1_idx, 3000, 60, zero_idx, true, 2_001_000_000u128)
+            .unwrap(),
+    );
     inner.extend_from_slice(&encoders::enc_v4_settle_all());
     let expected = v4_envelope(&at, &inner);
     assert_eq!(rust, Some(expected));
@@ -770,9 +771,18 @@ fn parity_v2_v4_v4() {
         )
         .unwrap(),
     );
-    v4_inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
-        c0_c_idx, c1_c_idx, 3000, 60, zero_idx, true,
-    ));
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            c0_c_idx,
+            c1_c_idx,
+            3000,
+            60,
+            zero_idx,
+            true,
+            2_001_000_000u128, // = consumed_inputs[2] (CL clamp)
+        )
+        .unwrap(),
+    );
     v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
     let expected = v4_envelope(&at, &v4_inner);
     assert_eq!(rust, Some(expected));
@@ -1244,9 +1254,18 @@ fn parity_v3_v3_v4() {
     let c1_c_idx = at.add(USDC).unwrap(); // 2
     let mut v4_inner = Vec::new();
     v4_inner.extend_from_slice(&encoders::enc_v4_settle());
-    v4_inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
-        c0_c_idx, c1_c_idx, 3000, 60, zero_idx, true,
-    ));
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            c0_c_idx,
+            c1_c_idx,
+            3000,
+            60,
+            zero_idx,
+            true,
+            2_000_999_999_999_999_999u128, // = consumed_inputs[2] (CL clamp)
+        )
+        .unwrap(),
+    );
     v4_inner.extend_from_slice(
         &encoders::enc_v4_take_compact(SENTINEL_WETH, v3a_idx, 1_000_000_000_000_000_000u128)
             .unwrap(),
@@ -1505,13 +1524,17 @@ fn parity_v3_v4_v4() {
         ]),
         1000000000000000000u128,
         &[2000000000u128, 2001000000000000000u128, 2001000000u128],
-        &[2000000000u128, 2001000000000000000u128, 2001000000u128],
+        &[
+            2000000000u128,
+            1_999_999_999u128,
+            2_000_999_999_999_999_999u128,
+        ],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    // V3a→V4b→V4c, all inside one V4_UNLOCK, driven by dynamic/delta settlement
+    // V3a→V4b→V4c, all inside one V4_UNLOCK, driven by CL-clamp settlement
     // (W2UWZO/CurrencyNotSettled fix) + the V3a-forward-through-PM routing
     // (0xbe8b8507 SwapAmountCannotBeZero fix): V4_SYNC(forward_a) precedes the
     // V3a swap so the generous V3 optimistic output transfer that delivers
@@ -1530,22 +1553,30 @@ fn parity_v3_v4_v4() {
     let c0_c_idx = at.add(WETH).unwrap();
     let c1_c_idx = at.add(USDC).unwrap();
     let mut v4_inner = encoders::enc_v4_settle();
-    v4_inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
-        c0_b_idx,
-        c1_b_idx,
-        500,
-        10,
-        SENTINEL_NATIVE,
-        true,
-    ));
-    v4_inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
-        c0_c_idx,
-        c1_c_idx,
-        3000,
-        60,
-        SENTINEL_NATIVE,
-        true,
-    ));
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            c0_b_idx,
+            c1_b_idx,
+            500,
+            10,
+            SENTINEL_NATIVE,
+            true,
+            1_999_999_999u128, // = consumed_inputs[1] (CL clamp)
+        )
+        .unwrap(),
+    );
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            c0_c_idx,
+            c1_c_idx,
+            3000,
+            60,
+            SENTINEL_NATIVE,
+            true,
+            2_000_999_999_999_999_999u128, // = consumed_inputs[2] (CL clamp)
+        )
+        .unwrap(),
+    );
     v4_inner.extend_from_slice(&encoders::enc_v4_take_delta(SENTINEL_WETH, executor_idx));
     v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
     let mut a_fwd =
@@ -2115,14 +2146,14 @@ fn parity_v4_v4_v2() {
         ]),
         1000000000000000000u128,
         &[2000000000u128, 2001000000000000000u128, 2001000000u128],
-        &[2000000000u128, 2001000000000000000u128, 2001000000u128],
+        &[1000000000000000000u128, 1_999_999_999u128, 2001000000u128],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
     // V4a→V4b→V2c, all inside one V4_UNLOCK. Inner = swap_compact(A) +
-    // swap_dynamic(B) + take_compact(WETH→V2c) + V2_DIRECT(c→executor) + settle_all.
+    // swap_compact(B) + take_compact(WETH→V2c) + V2_DIRECT(c→executor) + settle_all.
     let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
     let executor_idx = SENTINEL_SELF;
     let forward_b_idx = at.add(WETH).unwrap(); // V4b output (zfo→currency1) → SENTINEL_WETH
@@ -2145,14 +2176,18 @@ fn parity_v4_v4_v2() {
         1_000_000_000_000_000_000u128,
     )
     .unwrap();
-    inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
-        c0_b_idx,
-        c1_b_idx,
-        500,
-        10,
-        SENTINEL_NATIVE,
-        true,
-    ));
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            c0_b_idx,
+            c1_b_idx,
+            500,
+            10,
+            SENTINEL_NATIVE,
+            true,
+            1_999_999_999u128, // = consumed_inputs[1] (CL clamp)
+        )
+        .unwrap(),
+    );
     inner.extend_from_slice(
         &encoders::enc_v4_take_compact(forward_b_idx, v2c_idx, 2_001_000_000_000_000_000u128)
             .unwrap(),
@@ -2236,14 +2271,18 @@ fn parity_v4_v4_v3() {
         1_000_000_000_000_000_000u128,
     )
     .unwrap();
-    inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
-        c0_b_idx,
-        c1_b_idx,
-        500,
-        10,
-        SENTINEL_NATIVE,
-        true,
-    ));
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            c0_b_idx,
+            c1_b_idx,
+            500,
+            10,
+            SENTINEL_NATIVE,
+            true,
+            2_000_000_000u128, // = consumed_inputs[1] (CL clamp)
+        )
+        .unwrap(),
+    );
     inner.extend_from_slice(
         &encoders::enc_v3_swap_compact(
             v3c_idx,
@@ -2301,7 +2340,11 @@ fn parity_v4_v4_v4() {
         ]),
         1000000000000000000u128,
         &[2000000000u128, 2001000000000000000u128, 2001000000u128],
-        &[2000000000u128, 2001000000000000000u128, 2001000000u128],
+        &[
+            1000000000000000000u128,
+            1_999_999_999u128,
+            2_000_999_999_999_999_999u128,
+        ],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
@@ -2327,22 +2370,30 @@ fn parity_v4_v4_v4() {
         1_000_000_000_000_000_000u128,
     )
     .unwrap();
-    inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
-        c0_b_idx,
-        c1_b_idx,
-        500,
-        10,
-        SENTINEL_NATIVE,
-        true,
-    ));
-    inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
-        c0_c_idx,
-        c1_c_idx,
-        3000,
-        60,
-        SENTINEL_NATIVE,
-        true,
-    ));
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            c0_b_idx,
+            c1_b_idx,
+            500,
+            10,
+            SENTINEL_NATIVE,
+            true,
+            1_999_999_999u128, // = consumed_inputs[1] (CL clamp)
+        )
+        .unwrap(),
+    );
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            c0_c_idx,
+            c1_c_idx,
+            3000,
+            60,
+            SENTINEL_NATIVE,
+            true,
+            2_000_999_999_999_999_999u128, // = consumed_inputs[2] (CL clamp)
+        )
+        .unwrap(),
+    );
     // Profit: hop C output currency (zfo→currency1) = USDC (ERC-20) → take_delta(USDC, executor).
     let profit_idx = at.add(USDC).unwrap();
     inner.extend_from_slice(&encoders::enc_v4_take_delta(profit_idx, executor_idx));
@@ -2393,7 +2444,11 @@ fn parity_v4_v4_v4_batch() {
         ]),
         1000000000000000000u128,
         &[2000000000u128, 2001000000000000000u128, 2001000000u128],
-        &[2000000000u128, 2001000000000000000u128, 2001000000u128],
+        &[
+            1000000000000000000u128,
+            1_999_999_999u128,
+            2_000_999_999_999_999_999u128,
+        ],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
@@ -2402,8 +2457,8 @@ fn parity_v4_v4_v4_batch() {
             use_v4_batch: true,
         },
     );
-    // V4a→V4b→V4c (use_v4_batch). No gap → single V4_BATCH of 3 swaps (B/C amount=0 =
-    // dynamic) + take_delta(USDC→executor, since profit currency ≠ native/WETH) + settle_all.
+    // V4a→V4b→V4c (use_v4_batch). No gap → single V4_BATCH of 3 swaps
+    // (B/C = clamped amounts) + take_delta(USDC→executor) + settle_all.
     let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
     let executor_idx = SENTINEL_SELF;
     let c0_a_idx = at.add(WETH).unwrap();
@@ -2429,7 +2484,7 @@ fn parity_v4_v4_v4_batch() {
             tick_spacing: 10,
             hooks_idx: SENTINEL_NATIVE,
             zfo: true,
-            amount_u96: 0,
+            amount_u96: 1_999_999_999u128, // = consumed_inputs[1] (CL clamp)
         },
         encoders::V4BatchEntry {
             c0_idx: c0_c_idx,
@@ -2438,7 +2493,7 @@ fn parity_v4_v4_v4_batch() {
             tick_spacing: 60,
             hooks_idx: SENTINEL_NATIVE,
             zfo: true,
-            amount_u96: 0,
+            amount_u96: 2_000_999_999_999_999_999u128, // = consumed_inputs[2] (CL clamp)
         },
     ];
     let mut inner = encoders::enc_v4_batch(&batch).unwrap();
@@ -2497,9 +2552,9 @@ fn parity_v4_v4_v4_erc6909() {
             2001000000000000000u128,
         ],
         &[
-            2000000000u128,
-            2001000000000000000u128,
-            2001000000000000000u128,
+            1000000000000000000u128,
+            1_999_999_999u128,
+            2_000_999_999_999_999_999u128,
         ],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
@@ -2531,22 +2586,30 @@ fn parity_v4_v4_v4_erc6909() {
         1_000_000_000_000_000_000u128,
     )
     .unwrap();
-    inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
-        c0_b_idx,
-        c1_b_idx,
-        500,
-        10,
-        SENTINEL_NATIVE,
-        true,
-    ));
-    inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
-        c0_c_idx,
-        c1_c_idx,
-        3000,
-        60,
-        SENTINEL_NATIVE,
-        true,
-    ));
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            c0_b_idx,
+            c1_b_idx,
+            500,
+            10,
+            SENTINEL_NATIVE,
+            true,
+            1_999_999_999u128, // = consumed_inputs[1] (CL clamp)
+        )
+        .unwrap(),
+    );
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            c0_c_idx,
+            c1_c_idx,
+            3000,
+            60,
+            SENTINEL_NATIVE,
+            true,
+            2_000_999_999_999_999_999u128, // = consumed_inputs[2] (CL clamp)
+        )
+        .unwrap(),
+    );
     let profit_idx = at.add(USDC).unwrap();
     inner.extend_from_slice(&encoders::enc_v4_take_delta(profit_idx, executor_idx));
     inner.extend_from_slice(&encoders::enc_v4_settle_all());
