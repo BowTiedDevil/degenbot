@@ -83,10 +83,10 @@ pub use pool_divergence::{
     POOL_DIVERGENCE_DECAY_BLOCKS,
 };
 pub use simulator::{
-    compute_priority_fee, fits_int128, simulate_in_process_with_db, simulate_path_on_evm,
-    FailBuckets, RevertingFrame, SimFailure, SimResult, SimulateContext, SimulatePath,
-    AGE_DECAY_CONSTANT, BALANCE_CALL_GAS_LIMIT, EXECUTE_CONFIG, GAS_SAFETY_MARGIN,
-    INITIAL_EXECUTE_GAS, INT128_MAX, INT128_MIN, MAX_PRIORITY_FEE_PERCENTILE,
+    compute_priority_fee, execute_gas_limit, fits_int128, simulate_in_process_with_db,
+    simulate_path_on_evm, FailBuckets, RevertingFrame, SimFailure, SimResult, SimulateContext,
+    SimulatePath, AGE_DECAY_CONSTANT, BALANCE_CALL_GAS_LIMIT, EXECUTE_CONFIG, EXECUTE_GAS_ENV,
+    GAS_SAFETY_MARGIN, INITIAL_EXECUTE_GAS, INT128_MAX, INT128_MIN, MAX_PRIORITY_FEE_PERCENTILE,
     MIN_PRIORITY_FEE_PERCENTILE, TARGET_PROFIT_RATIO,
 };
 // The swap-event-capture inspector's decoded per-swap struct (ergo epic

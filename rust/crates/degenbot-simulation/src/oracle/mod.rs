@@ -71,6 +71,26 @@ pub fn set_code_size_limits(evm: &mut FixtureEvm, max: Option<usize>) {
     evm.ctx.cfg.limit_contract_initcode_size = max;
 }
 
+/// Override the block's gas limit. revm's default `BlockEnv::default()` sets
+/// `block.gas_limit` to `u64::MAX` (not a constraint), so this is usually a
+/// no-op — but it is the tx-vs-block ceiling if a caller ever narrows it.
+/// Keep it explicit for gas-limit experiments (e.g. testing a live bot's
+/// hard-coded 5M `execute()` cap against a realistic mainnet block gas limit).
+pub fn set_block_gas_limit(evm: &mut FixtureEvm, gas: u64) {
+    evm.ctx.modify_block(|block| {
+        block.gas_limit = gas;
+    });
+}
+
+/// Override revm's EIP-7825 per-tx gas-limit cap (the `tx_gas_limit_cap` cfg
+/// knob). On modern specs (Osaka+) this defaults to `TX_GAS_LIMIT_CAP`
+/// (16,777,216) and is the *binding* `TxGasLimitGreaterThanCap` ceiling for a
+/// fixture tx — independent of `block.gas_limit`. Set it to `u64::MAX` to
+/// eliminate the artificial per-tx ceiling entirely for a gas experiment.
+pub fn set_tx_gas_limit_cap(evm: &mut FixtureEvm, cap: u64) {
+    evm.ctx.cfg.tx_gas_limit_cap = Some(cap);
+}
+
 /// Execute a raw transaction (`Create` or `Call`) and classify the result.
 ///
 /// The caller matches on [`Verdict`] to distinguish a math-level `Reverted`
@@ -114,6 +134,53 @@ pub fn transact(evm: &mut FixtureEvm, spec: TxSpec) -> Verdict {
             out
         }
         Err(e) => Verdict::Halted(format!("transact error: {e:?}")),
+    }
+}
+
+/// Execute a raw transaction like [`transact`], additionally returning the
+/// gas the transaction consumed (`res.gas_used`). Lets a probe attribute a
+/// `Halt` to out-of-gas (gas_used ≈ gas_limit) vs a genuine infeasible revert
+/// (gas_used ≪ gas_limit).
+///
+/// # Panics
+///
+/// Panics if the revm transaction-environment builder rejects the provided
+/// spec (see [`transact`]).
+pub fn transact_with_gas(evm: &mut FixtureEvm, spec: TxSpec) -> (Verdict, u64) {
+    let tx = match spec {
+        TxSpec::Deploy { init_code, gas } => TxEnv::builder()
+            .kind(TxKind::Create)
+            .gas_limit(gas)
+            .data(init_code)
+            .build()
+            .expect("valid deploy tx env"),
+        TxSpec::Call { to, data, gas } => TxEnv::builder()
+            .kind(TxKind::Call(to))
+            .gas_limit(gas)
+            .data(data)
+            .build()
+            .expect("valid call tx env"),
+    };
+    match evm.transact(tx) {
+        Ok(res) => {
+            let gas_used = res.result.tx_gas_used();
+            let out = match res.result {
+                ExecutionResult::Success { output, logs, .. } => {
+                    evm.commit(res.state);
+                    Verdict::Accepted { output, logs }
+                }
+                ExecutionResult::Revert { output, .. } => {
+                    evm.commit(res.state);
+                    Verdict::Reverted(output)
+                }
+                ExecutionResult::Halt { reason, .. } => {
+                    evm.commit(res.state);
+                    Verdict::Halted(format!("halted: {reason:?}"))
+                }
+            };
+            (out, gas_used)
+        }
+        Err(e) => (Verdict::Halted(format!("transact error: {e:?}")), 0),
     }
 }
 

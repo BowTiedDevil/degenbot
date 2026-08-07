@@ -93,6 +93,38 @@ pub const GAS_SAFETY_MARGIN: f64 = 1.5;
 /// `gasUsed * 1.5`.
 pub const INITIAL_EXECUTE_GAS: u64 = 5_000_000;
 
+/// The env-var name overriding [`INITIAL_EXECUTE_GAS`]. The hard-coded 5M is an
+/// ARTIFICIAL ceiling on the `execute()` tx in the in-process revm sim — the
+/// real mainnet block gas limit is ~30M, and revm's default `BlockEnv` here is
+/// `u64::MAX` (so the block-level validation never binds; the 5M `TxEnv` gas is
+/// the ONLY cap). A V3/V4 path that crosses many tick-word boundaries pays a
+/// cold SLOAD per tick word when liquidity changes, so a genuinely-fillable
+/// swap can OOG at the 5M cap in sim while succeeding on-chain at a realistic
+/// 30M gas budget. Set `DEGENBOT_SIM_EXECUTE_GAS` to raise/eliminate the ceiling
+/// for an investigation (e.g. `30000000` to mirror mainnet, or a huge value to
+/// disable the cap). Defaults to [`INITIAL_EXECUTE_GAS`].
+pub const EXECUTE_GAS_ENV: &str = "DEGENBOT_SIM_EXECUTE_GAS";
+
+/// Read the effective `execute()` gas limit: `DEGENBOT_SIM_EXECUTE_GAS` when
+/// set (parsed as a decimal u64; an unparseable/garbage value logs a warning
+/// and falls back to [`INITIAL_EXECUTE_GAS`]), else [`INITIAL_EXECUTE_GAS`].
+pub fn execute_gas_limit() -> u64 {
+    match std::env::var(EXECUTE_GAS_ENV) {
+        Ok(v) if !v.trim().is_empty() => match v.trim().parse::<u64>() {
+            Ok(g) if g > 0 => g,
+            Ok(_) => {
+                tracing::warn!(%EXECUTE_GAS_ENV, v, "executor gas override must be >0; using default");
+                INITIAL_EXECUTE_GAS
+            }
+            Err(_) => {
+                tracing::warn!(%EXECUTE_GAS_ENV, v, "executor gas override unparseable; using default");
+                INITIAL_EXECUTE_GAS
+            }
+        },
+        _ => INITIAL_EXECUTE_GAS,
+    }
+}
+
 /// The `config=0` (check_mode=0, no bribe) the oracle uses — the operator
 /// verifies profitability off-chain via the pre/post balance reads rather than
 /// an on-chain profit check (L2017–L2020).
@@ -1353,14 +1385,15 @@ fn build_balance_tx(
 }
 
 /// Build the `execute(bytes, uint256)` `TxEnv` (caller = owner, target =
-/// executor, gas = [`INITIAL_EXECUTE_GAS`]).
+/// executor, gas = [`execute_gas_limit()`] — overridable via
+/// [`EXECUTE_GAS_ENV`] to raise the artificial 5M ceiling).
 fn build_execute_tx(ctx: &SimulateContext<'_>, data: &alloy::primitives::Bytes) -> TxEnv {
     TxEnv::builder()
         .caller(ctx.executor_owner)
         .kind(TxKind::Call(ctx.executor_address))
         .data(alloy::primitives::Bytes::copy_from_slice(data))
         .value(U256::ZERO)
-        .gas_limit(INITIAL_EXECUTE_GAS)
+        .gas_limit(execute_gas_limit())
         .gas_price(ctx.base_fee_next.max(1))
         .build()
         .expect("valid execute TxEnv")
@@ -1673,6 +1706,31 @@ mod tests {
 
     use super::*;
     use alloy::primitives::U256;
+
+    // ── C0: execute_gas_limit env override (artificial-ceiling investigation) ──
+
+    #[test]
+    fn execute_gas_limit_defaults_to_initial() {
+        // Unset env → the hard-coded 5M ceiling.
+        unsafe { std::env::remove_var(EXECUTE_GAS_ENV) };
+        assert_eq!(execute_gas_limit(), INITIAL_EXECUTE_GAS);
+    }
+
+    #[test]
+    fn execute_gas_limit_reads_override() {
+        unsafe { std::env::set_var(EXECUTE_GAS_ENV, "30000000") };
+        assert_eq!(execute_gas_limit(), 30_000_000);
+        unsafe { std::env::remove_var(EXECUTE_GAS_ENV) };
+    }
+
+    #[test]
+    fn execute_gas_limit_ignores_garbage_and_zero() {
+        for bad in ["", "0", "abc", "-1", "1.5"] {
+            unsafe { std::env::set_var(EXECUTE_GAS_ENV, bad) };
+            assert_eq!(execute_gas_limit(), INITIAL_EXECUTE_GAS, "{bad:?}");
+        }
+        unsafe { std::env::remove_var(EXECUTE_GAS_ENV) };
+    }
 
     // ── C3: fits_int128 ──────────────────────────────────────────────────
 
