@@ -1,7 +1,10 @@
 //! Path resolution, solver dispatch, and rebuild logic.
 
-use alloy::primitives::U256;
+use alloy::primitives::{I256, U256};
 use rayon::prelude::*;
+
+use ::degenbot_pools::v3_state::{v3_simulate_swap, V3PoolState};
+use ::degenbot_pools::v4_state::v4_simulate_swap;
 
 use super::{ArbitrageEngine, BlockMetadata, HashMap, HashSet};
 
@@ -37,6 +40,123 @@ use ::degenbot_solvers::mixed::{
 };
 
 impl ArbitrageEngine {
+    /// The CL-hop clamp margin (absolute wei, subtracted from `input_consumed`
+    /// before it is committed). VAASFM decision: 1 wei — commit
+    /// `input_consumed - 1` so the exact-in loop converts nearly everything and
+    /// stops on `amountRemaining==0` at the last funded tick. 1 wei is the
+    /// maximum-extraction choice; a larger margin can be revisited if runaway
+    /// swaps recur. Override via the `CLAMP_MARGIN` env var for sensitivity
+    /// sweeps (twin of the `path5000_v2v4v3_solver_fixture` fixture).
+    fn cl_hop_clamp_margin() -> U256 {
+        std::env::var("CLAMP_MARGIN")
+            .ok()
+            .and_then(|s| s.parse::<u128>().ok())
+            .map_or_else(|| U256::from(1u128), U256::from)
+    }
+
+    /// Post-solve, pool-state-aware reconciliation of each CL hop's committed
+    /// input against the pool's true max-convertible capacity — the tier-3-
+    /// validated `v3_simulate_swap`/`v4_simulate_swap` twin (UO3JM4: the pure
+    /// solver's frozen int walk can over-predict the pools twin by a few wei,
+    /// so the authoritative bound comes from pool state, not the solver).
+    ///
+    /// `solve_path` runs lock-free on its `IntV3TickRangeSequence` snapshot
+    /// (ADR-015: the guard drops before the rayon `par_iter`) and reports
+    /// `consumed_inputs[i] = hop_outputs[i-1]` — the FULL forward, which can
+    /// over-feed a CL pool past its on-chain capacity. When that happens the
+    /// exact-in loop cannot exhaust the input and marches empty bitmap words to
+    /// `MAX_SQRT_PRICE` (the path-5000 20.7M-gas / 5M-ceiling EMPTY-HALT class,
+    /// AGENTS.md UO3JM4). This method re-reads the live
+    /// `V3PoolState`/`V4PoolState` from the core at the solve→result merge seam
+    /// and caps each CL hop's committed input to `input_consumed - margin`, so
+    /// the on-chain loop exits on `amountRemaining==0` at the last funded tick.
+    ///
+    /// `hop_outputs[i]` is left untouched: for an over-feeding CL pool,
+    /// `output(capacity) == output(over-feed)`, so the solver's predicted output
+    /// is already correct (verified byte-exact by the path-5000 fixture). Only
+    /// CL hops (V3/V4) have the word-boundary empty-march class; V2 / Curve /
+    /// Balancer / Solidly consume their full input at the boundary and need no
+    /// clamp.
+    pub(crate) fn clamp_cl_hop_capacity(&self, path_id: u64, result: &mut SolvePathResult) {
+        let Some(path) = self.path_pools.get(&path_id) else {
+            return; // Unknown path → nothing to clamp
+        };
+        let pools = &path.pools;
+        if pools.len() != result.consumed_inputs.len() {
+            return; // Index misalignment — never clamp a wrong hop
+        }
+        let margin = Self::cl_hop_clamp_margin();
+        let core = self.core.read();
+        for (i, pool_ref) in pools.iter().enumerate() {
+            let requested = result.consumed_inputs[i];
+            let clamp_bound: Option<U256> = match pool_ref.hop_type {
+                HopType::V3 => {
+                    let (Some(state), Some(identity)) = (
+                        core.get_v3_pool(pool_ref.pool_key),
+                        core.get_v3_identity(pool_ref.pool_key),
+                    ) else {
+                        continue; // Pool state unavailable → can't clamp
+                    };
+                    let Ok(amount) = I256::try_from(requested) else {
+                        continue; // Input too large for i256 → skip
+                    };
+                    let limit = V3PoolState::default_sqrt_price_limit(pool_ref.zero_for_one);
+                    v3_simulate_swap(
+                        state,
+                        identity.fee,
+                        identity.tick_spacing,
+                        pool_ref.zero_for_one,
+                        amount,
+                        limit,
+                    )
+                    .ok()
+                    .and_then(|o| o.exact_input_clamp_bound(requested, margin))
+                }
+                HopType::V4 => {
+                    let (Some(state), Some(identity)) = (
+                        core.get_v4_pool(pool_ref.pool_key),
+                        core.get_v4_identity(pool_ref.pool_key),
+                    ) else {
+                        continue;
+                    };
+                    let Ok(amount) = I256::try_from(requested) else {
+                        continue;
+                    };
+                    // V4 exact-in passes a NEGATIVE amount (opposite sign to V3).
+                    let Some(neg) = amount.checked_neg() else {
+                        continue; // MIN_i256 (no positive twin) → skip
+                    };
+                    let limit = V3PoolState::default_sqrt_price_limit(pool_ref.zero_for_one);
+                    v4_simulate_swap(
+                        state,
+                        identity.pool_key.fee,
+                        identity.pool_key.tick_spacing,
+                        pool_ref.zero_for_one,
+                        neg,
+                        limit,
+                    )
+                    .ok()
+                    .and_then(|o| o.exact_input_clamp_bound(requested, margin))
+                }
+                // V2 / Curve / Balancer / Solidly — no empty-march class; the
+                // solver's `consumed_inputs[i]` (= full forward) is already
+                // correct at the boundary.
+                _ => continue,
+            };
+            if let Some(clamped) = clamp_bound {
+                if clamped < requested {
+                    tracing::info!(
+                        "[clamp-cl] path_id={path_id} hop={i} family={:?} requested={requested} \
+                         clamped={clamped} reduction={}",
+                        pool_ref.hop_type,
+                        requested - clamped
+                    );
+                    result.consumed_inputs[i] = clamped;
+                }
+            }
+        }
+    }
+
     /// Re-resolve and re-solve only paths that contain updated pools.
     ///
     /// Uses the `pool_to_paths` reverse index to identify `affected_path_ids`,
@@ -246,8 +366,13 @@ impl ArbitrageEngine {
             .collect();
 
         // Sequential merge — no lock acquisition; workers above owned their
-        // clones.
-        for (pid, solve_result) in solved {
+        // clones. Apply the pool-state-aware CL-hop capacity clamp per path
+        // (reads `core` to reconcile each CL hop's committed input against the
+        // pools twin) BEFORE inserting, so the stored result carries truthful
+        // `consumed_inputs` (a CL hop fed past its max-convertible capacity
+        // would march empty bitmap words on-chain — UO3JM4).
+        for (pid, mut solve_result) in solved {
+            self.clamp_cl_hop_capacity(pid, &mut solve_result);
             self.results.insert(pid, solve_result);
         }
 
@@ -296,6 +421,14 @@ impl ArbitrageEngine {
                     })
                     .filter(|r| !r.optimal_input.is_zero() && !r.profit.is_zero())
                     .map(|r| (path_id, r))
+            })
+            .map(|(path_id, mut r)| {
+                // Pool-state-aware CL-hop capacity clamp (UO3JM4) — reconcile
+                // each CL hop's committed input against the pools twin before
+                // the result escapes to the caller (cold-start / test path;
+                // `rebuild_and_solve_affected` applies the same clamp).
+                self.clamp_cl_hop_capacity(path_id, &mut r);
+                (path_id, r)
             })
             .collect()
     }

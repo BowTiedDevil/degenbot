@@ -1809,6 +1809,221 @@ mod tests {
         // Ideally the path should not appear in results at all
     }
 
+    /// Register a small V4 pool that can only convert a bounded amount per
+    /// swap (single narrow position, low liquidity), plus a 2-hop V2→V4 path
+    /// whose V4 hop is fed an absurdly large committed input. Then drive
+    /// `clamp_cl_hop_capacity` directly and assert it caps the V4 hop's
+    /// `consumed_inputs[1]` to the pools twin's `input_consumed - 1` (the 1-wei
+    /// VAASFM margin) — the UO3JM4 empty-march clamp, now enforced in
+    /// production at the solve→result merge seam.
+    #[allow(clippy::too_many_lines)]
+    #[test]
+    fn clamp_cl_hop_capacity_caps_overfed_v4_input() {
+        use crate::bot_core::TickInfo;
+        use crate::solvers::arb_engine::PoolTickCoverage;
+        use alloy::primitives::I256;
+        use degenbot_pools::v3_state::V3PoolState;
+        use degenbot_pools::v4_state::v4_simulate_swap;
+
+        let mut engine = ArbitrageEngine::new();
+
+        // V2 pool: reserves sized so its output (fed to V4) is enormous
+        // relative to the V4 pool's capacity.
+        let v2 = engine.register_v2_pool(
+            Address::from([0x11u8; 20]),
+            usdc(1_500_000),
+            weth(800),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+
+        // V4 pool: single narrow position (±60 ticks) with low liquidity so
+        // the exact-in loop converts only a bounded amount.
+        let mut tick_data = HashMap::new();
+        tick_data.insert(
+            60,
+            TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(300),
+                liquidity_net: I256::try_from(150i128).unwrap_or(I256::ZERO),
+                block: 0,
+            },
+        );
+        tick_data.insert(
+            -60,
+            TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(200),
+                liquidity_net: I256::try_from(-100i128).unwrap_or(I256::ZERO),
+                block: 0,
+            },
+        );
+        let v4_id = engine
+            .register_v4_pool(&RegisterV4PoolParams {
+                pool_manager: Address::from([0x44u8; 20]),
+                pool_id: [0xabu8; 32],
+                pool_key: crate::bot_core::V4PoolKey {
+                    currency0: Address::from([0x30u8; 20]),
+                    currency1: Address::from([0x31u8; 20]),
+                    fee: 500,
+                    tick_spacing: 10,
+                    hooks: Address::ZERO,
+                },
+                hook_flags: 0,
+                protocol_fee: 0,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 1_000_000,
+                tick: 0,
+                tick_data,
+                update_block: 0,
+                tick_data_block: None,
+                coverage: PoolTickCoverage::Tracked,
+                fetcher: None,
+            })
+            .expect("V4 registration failed");
+
+        // Register a V2→V4 path (V4 is hop 1, over-fed).
+        let path_id = engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: v2,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v4_id,
+                    zero_for_one: false,
+                },
+            ])
+            .unwrap();
+
+        // Over-feed the V4 hop with an absurdly large committed input far
+        // beyond the pool's capacity.
+        let huge = U256::from(1u128) << 120;
+        let mut result = SolvePathResult {
+            optimal_input: huge,
+            profit: U256::ONE,
+            hop_outputs: vec![huge, U256::ONE],
+            consumed_inputs: vec![huge, huge],
+            state_nonces: vec![0, 0],
+            solver_pool_states: Vec::new(),
+        };
+
+        engine.clamp_cl_hop_capacity(path_id, &mut result);
+
+        // Compute the pools twin's input_consumed at the requested input to
+        // assert the clamped value equals `input_consumed - 1` exactly.
+        let input_consumed = {
+            let core = engine.core.read();
+            let state = core.get_v4_pool(v4_id).unwrap();
+            let identity = core.get_v4_identity(v4_id).unwrap();
+            let neg = I256::try_from(huge).unwrap().checked_neg().unwrap();
+            let limit = V3PoolState::default_sqrt_price_limit(false);
+            let outcome = v4_simulate_swap(
+                state,
+                identity.pool_key.fee,
+                identity.pool_key.tick_spacing,
+                false,
+                neg,
+                limit,
+            )
+            .expect("twin simulates");
+            outcome.input_consumed
+        };
+        let expected = input_consumed.saturating_sub(U256::ONE);
+
+        // The clamp engages: consumed_inputs[1] is capped below the request.
+        assert!(
+            result.consumed_inputs[1] < huge,
+            "V4 hop must be clamped below the over-fed request (got {})",
+            result.consumed_inputs[1]
+        );
+        assert_eq!(
+            result.consumed_inputs[1], expected,
+            "clamped input must equal input_consumed - margin (1 wei)"
+        );
+        // The V2 hop (index 0) is untouched — only CL hops are clamped.
+        assert_eq!(result.consumed_inputs[0], huge);
+        // hop_outputs are NOT modified (output(capacity) == output(over-feed)).
+        assert_eq!(result.hop_outputs[1], U256::ONE);
+    }
+
+    /// The clamp is a strict no-op when a CL hop's committed input is within
+    /// the pool's max-convertible capacity — the exact-in loop already
+    /// terminates on `amountRemaining==0`. Prevents the clamp from corrupting
+    /// `consumed_inputs` for the (common) fully-fed-hop case.
+    #[test]
+    fn clamp_cl_hop_capacity_noop_within_capacity() {
+        use crate::bot_core::TickInfo;
+        use crate::solvers::arb_engine::PoolTickCoverage;
+        use alloy::primitives::I256;
+
+        let mut engine = ArbitrageEngine::new();
+
+        let mut tick_data = HashMap::new();
+        tick_data.insert(
+            60,
+            TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(300),
+                liquidity_net: I256::try_from(150i128).unwrap_or(I256::ZERO),
+                block: 0,
+            },
+        );
+        tick_data.insert(
+            -60,
+            TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(200),
+                liquidity_net: I256::try_from(-100i128).unwrap_or(I256::ZERO),
+                block: 0,
+            },
+        );
+        let v4_id = engine
+            .register_v4_pool(&RegisterV4PoolParams {
+                pool_manager: Address::from([0x44u8; 20]),
+                pool_id: [0xabu8; 32],
+                pool_key: crate::bot_core::V4PoolKey {
+                    currency0: Address::from([0x30u8; 20]),
+                    currency1: Address::from([0x31u8; 20]),
+                    fee: 500,
+                    tick_spacing: 10,
+                    hooks: Address::ZERO,
+                },
+                hook_flags: 0,
+                protocol_fee: 0,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 1_000_000,
+                tick: 0,
+                tick_data,
+                update_block: 0,
+                tick_data_block: None,
+                coverage: PoolTickCoverage::Tracked,
+                fetcher: None,
+            })
+            .expect("V4 registration failed");
+
+        let path_id = engine
+            .register_path(vec![PoolHop {
+                pool_id: v4_id,
+                zero_for_one: false,
+            }])
+            .unwrap();
+
+        // A tiny in-capacity input — the pool fully converts it, no clamp.
+        let small = U256::from(1u128);
+        let mut result = SolvePathResult {
+            optimal_input: small,
+            profit: U256::ONE,
+            hop_outputs: vec![U256::ONE],
+            consumed_inputs: vec![small],
+            state_nonces: vec![0],
+            solver_pool_states: Vec::new(),
+        };
+
+        engine.clamp_cl_hop_capacity(path_id, &mut result);
+
+        assert_eq!(
+            result.consumed_inputs[0], small,
+            "in-capacity input must be left untouched by the clamp"
+        );
+    }
+
     /// Build the minimal V3 tick-data (initialized +60/-60 ticks) used by
     /// `inspect_path_returns_hop_details`.
     fn inspect_test_v3_tick_data() -> HashMap<i32, crate::bot_core::TickInfo> {
