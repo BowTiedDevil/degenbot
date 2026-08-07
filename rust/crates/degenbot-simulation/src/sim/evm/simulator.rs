@@ -198,7 +198,12 @@ impl<'a> BlockSimHandle<'a> {
             );
             return None;
         };
-        let bot_state_db = super::BotStateDb::new(bot_state, wrap_db);
+        let bot_state_db = super::BotStateDb::new_with_code_probe(
+            bot_state,
+            wrap_db,
+            provider.rpc_url(),
+            current_block,
+        );
         let warm_code_cache =
             super::WarmCodeCache::with_owner(Arc::clone(warm_cache), current_block, bot_state_db);
         let mut cache_db = CacheDB::new(warm_code_cache);

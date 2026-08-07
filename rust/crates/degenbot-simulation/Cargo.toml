@@ -57,6 +57,7 @@ tracing = { version = "^0.1" }
 # `CapturedSwap`) — the diagnostic surface crosses the FFI as `#[pyclass]`
 # thin shells (ADR-019 D7).
 serde = { version = "^1.0", features = ["derive"] }
+serde_json = { version = "^1.0" }
 # `parking_lot::RwLock` — backs the cross-block persistent `WarmCodeCacheInner`
 # (the bytecode + account-existence layer) AND the `BotState` lock type
 # (matches `degenbot-bot` so the `Option<Arc<RwLock<BotState>>>` fan-out param
@@ -70,7 +71,6 @@ parking_lot = "^0.12"
 tokio = { version = "^1.53", features = ["rt"] }
 
 [dev-dependencies]
-serde_json = { version = "^1.0" }
 # sha256 for the tier-3 harness bytecode drift guard (`tier3_harness_artifacts.rs`)
 # — the manifest hashes the git-tracked harness sources, so a harness edit
 # without a rebuild fails the default suite. sha2 is already in the lock (via

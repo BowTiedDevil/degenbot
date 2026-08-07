@@ -73,6 +73,18 @@ where
     pub bot_state: &'bot BotState,
     /// The RPC cold-miss fallback (`WrapDatabaseAsync<AlloyDB>` in production).
     pub fallback: ExtDb,
+    /// False-empty provenance probe (DEGENBOT false-empty capture): an
+    /// independent UNCACHED `eth_getCode` at the sim block, fired only when
+    /// the false-empty path trips and only when these fields are set. The
+    /// alloy `with_default_caching()` 100-entry LRU in `AlloyProvider` PERSISTS
+    /// `eth_getCode(address, block)` results (incl. a spurious `0x`), so a
+    /// single transient node empty at a block is served to every later
+    /// `AlloyDB` read in that block → `KECCAK_EMPTY` here. The fresh uncached
+    /// probe attributes the empty to the CACHE layer (fresh read returns real
+    /// code) vs the NODE layer (fresh read also empty). Default `new()` leaves
+    /// these `None` → probe off; `new_with_code_probe` arms it.
+    code_probe_rpc: Option<String>,
+    code_probe_block: Option<u64>,
 }
 
 impl<'bot, ExtDb> BotStateDb<'bot, ExtDb>
@@ -86,6 +98,76 @@ where
         Self {
             bot_state,
             fallback,
+            code_probe_rpc: None,
+            code_probe_block: None,
+        }
+    }
+
+    /// Like [`Self::new`] but arms the false-empty provenance probe: on the
+    /// code-less tripwire it performs an independent UNCACHED `eth_getCode`
+    /// against `rpc_url` at `sim_block` and logs whether the empty is
+    /// cache-served (alloy LRU) or node-origin. Called by `BlockSimHandle::
+    /// build` with the live provider URL + pumped block when hunting
+    /// false-empty reads.
+    #[must_use]
+    pub fn new_with_code_probe(
+        bot_state: &'bot BotState,
+        fallback: ExtDb,
+        rpc_url: &str,
+        sim_block: u64,
+    ) -> Self {
+        Self {
+            bot_state,
+            fallback,
+            code_probe_rpc: Some(rpc_url.to_string()),
+            code_probe_block: Some(sim_block),
+        }
+    }
+
+    /// Provenance of a false-empty, enriched to test the stale/bad-block
+    /// theory: it surfaces (a) the `AccountInfo` the RPC fallback returned
+    /// (balance/nonce/code-hash) so we can see whether the account actually
+    /// EXISTED at the block the fallback queried — `balance=0 nonce=0` is the
+    /// ACCOUNT-ABSENT signature of a stale/wrong block where the contract
+    /// wasn't deployed — and (b) a fresh UNCACHED `eth_getCode` at the same
+    /// sim block (raw HTTP/1.1, bypassing the alloy LRU) to split CACHE-SERVED
+    /// vs NODE/block-origin. Returns a human verdict string.
+    fn code_probe_provenance(&self, address: Address, info: Option<&AccountInfo>) -> String {
+        let acct = match info {
+            Some(a) => format!(
+                "fallback_account: balance={} nonce={} code_hash={}",
+                a.balance, a.nonce, a.code_hash
+            ),
+            None => "fallback_account: None (read as non-existent)".to_string(),
+        };
+        let absent_hint = match info {
+            Some(a) if a.balance.is_zero() && a.nonce == 0 => {
+                " [ACCOUNT-ABSENT: balance=0 nonce=0 — consistent with a STALE/BAD block where \
+                 the contract was not yet deployed or served as an EOA]"
+            }
+            _ => "",
+        };
+        let (Some(rpc), Some(block)) = (&self.code_probe_rpc, self.code_probe_block) else {
+            return format!("{acct};; no-probe (code probe unconfigured)");
+        };
+        let fresh = raw_uncached_eth_get_code(rpc, address, block);
+        match fresh {
+            Some(code) if code.len() > 2 && code != "0x" => format!(
+                "{acct}{absent_hint};; FRESH UNCACHED GET eth_getCode({address},\
+                 0x{block:x}) => {:x}-byte code -> CACHE-SERVED EMPTY (the alloy \
+                 with_default_caching() LRU persisted a spurious 0x; the node HAS the pool\
+                 at THIS block, so the empty is NOT a stale-block issue on the live read)",
+                (code.len() - 2) / 2
+            ),
+            Some(code) => format!(
+                "{acct}{absent_hint};; FRESH UNCACHED GET eth_getCode({address},\
+                 {block}) => ALSO EMPTY ({code:?}) -> NODE/BLOCK-ORIGIN (the live node returns\
+                 empty at this exact block — a stale/bad block WOULD explain this; cross-check\
+                 the block against live head)"
+            ),
+            None => format!(
+                "{acct};; PROBE-FAILED — raw eth_getCode HTTP error (cannot attribute layer)"
+            ),
         }
     }
 }
@@ -125,6 +207,11 @@ where
                 } else {
                     "code-less (KECCAK_EMPTY)"
                 };
+                let provenance = self.code_probe_provenance(address, info.as_ref());
+                tracing::warn!(
+                    "[codeless-probe] tracked pool {address} resolved {state} @ block {:?}; {provenance}",
+                    self.code_probe_block,
+                );
                 panic!(
                     "Sim DB invariant: tracked pool {address} resolved as {state} by the \
                      RPC fallback — refusing to simulate a code-less pool"
@@ -193,6 +280,41 @@ where
     fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
         self.fallback.block_hash_ref(number)
     }
+}
+
+/// Fresh, UNCACHED `eth_getCode` via a raw HTTP/1.1 POST (bypassing the alloy
+/// `with_default_caching()` response cache entirely). Returns `Some(hex)` on
+/// success, `None` on any transport/parse failure. Only `http://` (plaintext)
+/// is supported — the probe is a diagnostic and the bot's RPC is plain HTTP.
+fn raw_uncached_eth_get_code(rpc_url: &str, address: Address, block: u64) -> Option<String> {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::time::Duration;
+
+    // Strip a leading scheme; only plaintext http is supported (a TLS/https
+    // URL needs a real client, not a raw TCP socket).
+    let no_scheme = rpc_url.strip_prefix("http://")?;
+    let (host, port) = match no_scheme.split_once(':') {
+        Some((h, p)) => (h.to_string(), p.parse::<u16>().ok()?),
+        None => (no_scheme.to_string(), 80u16),
+    };
+    let body = format!(
+        r#"{{"jsonrpc":"2.0","id":1,"method":"eth_getCode","params":["{address}","0x{block:x}"]}}"#
+    );
+    let req = format!(
+        "POST / HTTP/1.1\r\nHost: {host}:{port}\r\nContent-Type: application/json\r\n\
+         Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    let mut stream = TcpStream::connect((host.as_str(), port)).ok()?;
+    stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
+    stream.write_all(req.as_bytes()).ok()?;
+    let mut resp = String::new();
+    stream.read_to_string(&mut resp).ok()?;
+    let body_json = resp.split("\r\n\r\n").nth(1)?;
+    let v: serde_json::Value = serde_json::from_str(body_json).ok()?;
+    v.get("result")?.as_str().map(str::to_string)
 }
 
 #[cfg(test)]
@@ -326,5 +448,105 @@ mod tests {
         let bsd = BotStateDb::new(&core, db);
         // EOA is not a pool: `None` is a legitimate EOA read, forwarded no-panic.
         assert!(bsd.basic_ref(EOA).unwrap().is_none());
+    }
+
+    // ── The false-empty provenance probe (alloy LRU vs node) ────────────
+
+    #[test]
+    fn raw_uncached_eth_get_code_reads_fresh_code_past_the_cache() {
+        // A local HTTP server that answers `eth_getCode` with a real (non-empty)
+        // contract-body string. The probe must bypass the alloy provider's
+        // `with_default_caching()` LRU and see the real code — the `CACHE`
+        // provenance path.
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let serve = thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = sock.read(&mut buf);
+            let body = r#"{"jsonrpc":"2.0","id":1,"result":"0x608060405234"}"#;
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            sock.write_all(resp.as_bytes()).unwrap();
+        });
+
+        let got = raw_uncached_eth_get_code(
+            &format!("http://127.0.0.1:{port}"),
+            parse_addr(),
+            1_234_567u64,
+        );
+        serve.join().unwrap();
+        assert_eq!(
+            got.as_deref(),
+            Some("0x608060405234"),
+            "probe reads fresh code straight off the wire, uncached"
+        );
+    }
+
+    fn parse_addr() -> Address {
+        "0x36D2b521d708537B98F01Ab8d5207BD8E42b2806"
+            .parse()
+            .unwrap()
+    }
+
+    #[test]
+    fn stale_block_signature_reports_node_origin_and_account_absent() {
+        // The user's stale/bad-block theory path: the fallback ACCOUNT reads as
+        // zero-balance + zero-nonce (the contract never existed at the queried
+        // block — the ACCOUNT-ABSENT signature) AND the fresh uncached probe at
+        // the SAME block also returns empty (0x). The enriched verdict must say
+        // so, so the operator can cross-check the block against live head.
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let serve = thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = sock.read(&mut buf);
+            let body = r#"{"jsonrpc":"2.0","id":1,"result":"0x"}"#;
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            sock.write_all(resp.as_bytes()).unwrap();
+        });
+
+        let core = bot_state_with_pool();
+        let db = ScriptedDb {
+            result: Some(codeless_info()),
+            calls: Cell::new(0),
+        };
+        let bsd = BotStateDb::new_with_code_probe(
+            &core,
+            db,
+            &format!("http://127.0.0.1:{port}"),
+            1_234_567u64,
+        );
+        // Force balance=0 to exercise the ACCOUNT-ABSENT / stale-block hint.
+        let mut empty_acct = codeless_info();
+        empty_acct.balance = U256::ZERO;
+        let verdict = bsd.code_probe_provenance(POOL, Some(&empty_acct));
+        serve.join().unwrap();
+        assert!(
+            verdict.contains("ACCOUNT-ABSENT"),
+            "hint missing: {verdict}"
+        );
+        assert!(
+            verdict.contains("NODE/BLOCK-ORIGIN"),
+            "node/block verdict missing: {verdict}"
+        );
     }
 }
