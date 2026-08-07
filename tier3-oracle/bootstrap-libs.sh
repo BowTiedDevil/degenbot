@@ -38,7 +38,7 @@ ensure_lib v4-core https://github.com/Uniswap/v4-core.git v4.0.0 src/PoolManager
 # v4-core's ProtocolFees imports solmate's `Owned.sol`; the depth-1 clone above
 # drops submodules, so vendor solmate separately (needed by the V4 swap oracle
 # harness, 2LTKVO).
-ensure_lib v4-core/lib/solmate https://github.com/transmissions11/solmate.git master src/auth/Owned.sol
+ensure_lib v4-core/lib/solmate https://github.com/transmissions11/solmate.git main src/auth/Owned.sol
 
 # Balancer math cores (FixedPoint/LogExpMath/WeightedMath/StableMath + their
 # FixedPoint imports) for the Balancer tier-3 oracle (task EZLECC). The
