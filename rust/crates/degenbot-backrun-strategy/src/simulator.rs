@@ -1714,6 +1714,7 @@ mod tests {
 
     use super::*;
     use alloy::primitives::U256;
+    use degenbot_executor::composers::V3HopInfo;
 
     // ── C0: execute_gas_limit env override (artificial-ceiling investigation) ──
 
@@ -2534,5 +2535,101 @@ mod tests {
         assert!(parse_flag_value("true"));
         assert!(parse_flag_value("on"));
         assert!(parse_flag_value("yes"));
+    }
+
+    /// The end-to-end clamp attestation (epic 6EQWXK / task 6Z6H4U, plan §7):
+    /// the CL-hop clamp (`consumed_inputs`) reaches EXECUTABLE BYTES through
+    /// `encode_cmd_stream` — the exact fn `simulate_path_on_evm` calls to build
+    /// the executor command stream.
+    ///
+    /// Path-5000 shape (`three_hop_v2_v4_v3`): the V4 mid hop is over-fed —
+    /// `hop_outputs[0]` (the V2 output it forwards) is one more than the
+    /// solver's clamped executable swap-in `consumed_inputs[1]`. The emitted
+    /// `V4_SWAP_COMPACT` amount must embed `consumed_inputs[1]` (0x…773593FF =
+    /// 1_999_999_999), NOT `hop_outputs[0]` (0x…77359400 = 2_000_000_000).
+    /// This proves the clamp is not diagnostic-only — it is what actually
+    /// gets encoded for the on-chain fill.
+    #[test]
+    fn clamped_consumed_inputs_reach_encoded_v4_swap_in() {
+        let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+        let usdc = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
+        let pm = address!("000000000004444c5dc75cB358380D2e3dE08A90");
+        let executor = address!("DeAd0000000000000000000000000000000000Be");
+
+        let path = SimulatePath {
+            path_id: 5000,
+            optimal_input: 1_000_000_000_000_000_000u128,
+            // V2 out = 2e9, V4 out = 2_001e15, V3 out = 2_001e6.
+            hop_outputs: vec![
+                2_000_000_000u128,
+                2_001_000_000_000_000_000u128,
+                2_001_000_000u128,
+            ],
+            // The CL clamp: V4 (idx 1) swap-in is ONE BELOW its forward.
+            consumed_inputs: vec![
+                1_000_000_000_000_000_000u128,
+                1_999_999_999u128,
+                2_001_000_000u128,
+            ],
+            path_info: PathInfo::new(vec![
+                HopInfo::V2(V2HopInfo {
+                    pool_address: address!("1111111111111111111111111111111111111111"),
+                    token0_address: weth,
+                    token1_address: usdc,
+                    fee: 30,
+                    zfo: true,
+                }),
+                HopInfo::V4(V4HopInfo {
+                    pool_manager_address: pm,
+                    pool_id_hex: "0x1111".to_string(),
+                    currency0_address: weth,
+                    currency1_address: usdc,
+                    fee: 3000,
+                    tick_spacing: 60,
+                    hook_address: Address::ZERO,
+                    zfo: true,
+                }),
+                HopInfo::V3(V3HopInfo {
+                    pool_address: address!("6666666666666666666666666666666666666666"),
+                    token0_address: weth,
+                    token1_address: usdc,
+                    fee: 500,
+                    zfo: true,
+                }),
+            ]),
+            solve_block: 22_562_100,
+            state_nonces: vec![],
+            opts: EncodeOptions {
+                erc6909_profit: false,
+                use_v4_batch: false,
+            },
+        };
+
+        let cmd = encode_cmd_stream(
+            &path.path_info,
+            path.optimal_input,
+            &path.hop_outputs,
+            &path.consumed_inputs,
+            executor,
+            pm,
+            weth,
+            path.opts,
+        )
+        .expect("expression should encode");
+
+        // The V4 swap-in amount is a big-endian u96. 1_999_999_999 encodes
+        // ending in 0x…773593FF; the un-clamped forward 2_000_000_000 ends in
+        // 0x…77359400. Assert the clamped bytes are present and the forward
+        // bytes are absent.
+        let clamped = [0u8, 0, 0, 0, 0, 0, 0, 0, 0x77, 0x35, 0x93, 0xFF];
+        let forward = [0u8, 0, 0, 0, 0, 0, 0, 0, 0x77, 0x35, 0x94, 0x00];
+        assert!(
+            cmd.windows(clamped.len()).any(|w| w == clamped),
+            "V4 swap-in must embed consumed_inputs[1]=1_999_999_999"
+        );
+        assert!(
+            !cmd.windows(forward.len()).any(|w| w == forward),
+            "V4 swap-in must NOT embed the un-clamped hop_outputs[0]=2_000_000_000"
+        );
     }
 }
