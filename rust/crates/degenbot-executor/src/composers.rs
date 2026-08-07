@@ -2766,15 +2766,22 @@ fn three_hop_v2_v4_v4(
 ) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
     let hop_outputs = inputs.hop_outputs;
+    let consumed_inputs = inputs.consumed_inputs;
     let executor_address = inputs.executor_address;
     let pool_manager_address = inputs.pool_manager_address;
     let weth_address = inputs.weth_address;
 
-    let out_a = hop_outputs[0];
     if hop_outputs.contains(&0) {
         return None;
     }
     if !fits_int128(optimal_input) {
+        return None;
+    }
+    // Hop1 (V4b) is CL and over-fed — its swap-in = consumed_inputs[1]. Hop0
+    // V2a feeds via swap_calc (no amount); hop2 (V4c) uses V4_SWAP_DYNAMIC
+    // (delta ledger, no fixed amount to clamp).
+    let b_swap_in = consumed_inputs.get(1).copied()?;
+    if !fits_int128(b_swap_in) {
         return None;
     }
 
@@ -2812,8 +2819,10 @@ fn three_hop_v2_v4_v4(
     v4_inner.extend_from_slice(&encoders::enc_v2_swap_calc(v2a_idx, ha.zfo, pm_idx, ha.fee));
     v4_inner.extend_from_slice(&encoders::enc_v4_settle());
     v4_inner.extend_from_slice(
-        &encoders::enc_v4_swap_compact(c0_b_idx, c1_b_idx, fee_b, ts_b, zero_idx, hb.zfo, out_a)
-            .ok()?,
+        &encoders::enc_v4_swap_compact(
+            c0_b_idx, c1_b_idx, fee_b, ts_b, zero_idx, hb.zfo, b_swap_in,
+        )
+        .ok()?,
     );
     v4_inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
         c0_c_idx, c1_c_idx, fee_c, ts_c, zero_idx, hc.zfo,
