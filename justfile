@@ -394,11 +394,12 @@ ci-full: ci-rust lint-markdown test-python
 # ========== Repository Setup ==========
 
 # Install prek git hooks and configure commit template.
-# Run this once after cloning. Commit MESSAGE lint runs at pre-push + CI only
-# (not at commit time) so `git commit` is never blocked on message style;
-# pre-push catches a bad message before it leaves the machine, and CI is the
-# final gate. Hooks are declared in prek.toml.
-# For manual range checks: just lint-commits.
+# Run this once after cloning. Commit MESSAGE lint runs at commit time (low
+# friction, since .commitlintrc.yml is relaxed: free-form scope, 100-col) so a
+# bad message is caught the moment it is written — not at push, when amending
+# days-old commits needs a deep rebase. Code linters (clippy/ty) run at pre-push
+# + CI: a code-lint failure is fixable with a follow-up commit. Hooks are
+# declared in prek.toml. For manual message range checks: just lint-commits.
 setup-git-hooks:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -414,11 +415,10 @@ setup-git-hooks:
     prek install
     echo "✓ prek hooks installed:"
     echo "    pre-commit : Markdown lint + PLC0415 noqa guard (staged files)"
-    echo "                + fast code lints (Rust fmt/clippy/no-pyo3,"
-    echo "                  Python fmt/lint), check-only over the staged tree"
-    echo "    pre-push   : commitlint push-range + build & test suite"
-    echo "                 (rust build/test, python build/test)"
-    echo "    commit messages are NOT linted at commit time (push + CI gate only)"
+    echo "                + instant checks (Rust/Python fmt, Rust no-pyo3)"
+    echo "    commit-msg : commitlint against .commitlintrc.yml (relaxed rules)"
+    echo "    pre-push   : commitlint push-range + Rust/Python lint (clippy/ty)"
+    echo "                 + build & test suite (rust build/test, python build/test)"
     echo "    Bypass: git push --no-verify (CI still runs)."
     echo "✓ commit template configured."
 
