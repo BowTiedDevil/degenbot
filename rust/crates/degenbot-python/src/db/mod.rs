@@ -30,10 +30,7 @@ use pyo3::wrap_pyfunction;
 pub use aave::PyDatabasePositionQuery;
 use degenbot_db::ops::{self, UpgradeOutcome};
 pub use liquidity_updater::PyLiquidityUpdateEvent;
-pub use pool_read::{
-    PyExchangeRow, PyInitializationMapRow, PyLiquidityPoolRow, PyLiquidityPositionRow,
-    PyPoolKindRow, PyPoolManagerRow,
-};
+pub use pool_read::{PyExchangeRow, PyLiquidityPoolRow, PyPoolManagerRow};
 pub use snapshot::PyDatabaseSnapshot;
 
 // A dedicated exception for the "DB is stamped at a prior Alembic revision"
@@ -265,10 +262,7 @@ fn register_db_classes(submod: &Bound<'_, PyModule>) -> PyResult<()> {
     submod.add_class::<snapshot::PyDatabaseSnapshot>()?;
     submod.add_class::<aave::PyDatabasePositionQuery>()?;
     submod.add_class::<pool_read::PyLiquidityPoolRow>()?;
-    submod.add_class::<pool_read::PyPoolKindRow>()?;
     submod.add_class::<pool_read::PyExchangeRow>()?;
-    submod.add_class::<pool_read::PyLiquidityPositionRow>()?;
-    submod.add_class::<pool_read::PyInitializationMapRow>()?;
     submod.add_class::<pool_read::PyPoolManagerRow>()?;
 
     // Typed database-schema-stale exception (`DbError::AlembicStale` →

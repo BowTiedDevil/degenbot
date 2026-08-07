@@ -1,7 +1,6 @@
 """Parity + functional tests for the `PyBotIo` pool-builder DB seam (QVMWQC).
 
-`PyBotIo.fetch_pool_row` / `fetch_pool_kind` / `fetch_token_by_id` /
-`fetch_exchange` / `fetch_liquidity_positions` / `fetch_initialization_maps`
+`PyBotIo.fetch_pool_row` / `fetch_exchange`
 route the sync pool builders' construction-time DB reads through
 `degenbot-db`, replacing the `SQLAlchemy` ORM `session.scalar(select(...))`
 + lazy-loaded relationship traversal. These tests seed a temp DB + assert
@@ -9,12 +8,8 @@ that the Rust seam reads the same rows the ORM does (§4.2 parity):
 
 - `fetch_pool_row` returns a `LiquidityPoolRow` whose scalar + FK-id columns
   match the ORM `LiquidityPoolTable` row.
-- `fetch_pool_kind` returns the per-DEX subclass row (V3 `tick_spacing` +
-  fees + liquidity-update marker).
-- `fetch_token_by_id` / `fetch_exchange` hydrate the FK relationships.
-- `fetch_liquidity_positions` / `fetch_initialization_maps` hydrate the V3
-  tick snapshot (tick/liquidity_net/gross + word/bitmap), U256 as `int`.
-- the no-`database_path` skip returns `None` / empty (mirrors the prior
+- `fetch_exchange` hydrates the `pool.exchange` FK relationship.
+- the no-`database_path` skip returns `None` (mirrors the prior
   `contextlib.suppress(Exception)` skip).
 """
 
@@ -150,25 +145,7 @@ def test_fetch_pool_row_parity(tmp_path):
         engine.dispose()
 
 
-def test_fetch_pool_kind_v3(tmp_path):
-    database_path = str(tmp_path / "poolkind_seam.db")
-    db_create_new_database(database_path)
-    pool_id = _seed_v3_pool(database_path)
-
-    io = _io(database_path)
-    row = io.fetch_pool_row(chain_id=CHAIN, address=POOL_ADDR)
-    assert row is not None
-    kind = io.fetch_pool_kind(kind=row.kind, pool_id=pool_id)
-    assert kind is not None
-    assert kind.variant == "v3"
-    assert kind.tick_spacing == 60
-    assert kind.fee_token0 == 3
-    assert kind.fee_token1 == 3
-    assert kind.fee_denominator == 1000
-    assert kind.liquidity_update_block is None  # not set in the fixture
-
-
-def test_fetch_token_by_id_and_exchange(tmp_path):
+def test_fetch_exchange(tmp_path):
     database_path = str(tmp_path / "fk_seam.db")
     db_create_new_database(database_path)
     _seed_v3_pool(database_path)
@@ -177,15 +154,6 @@ def test_fetch_token_by_id_and_exchange(tmp_path):
     pool = io.fetch_pool_row(chain_id=CHAIN, address=POOL_ADDR)
     assert pool is not None
 
-    t0 = io.fetch_token_by_id(pool.token0_id)
-    t1 = io.fetch_token_by_id(pool.token1_id)
-    assert t0 is not None and t1 is not None
-    assert t0.address.lower() == TOK0_ADDR.lower()
-    assert t0.name == "T0"
-    assert t0.symbol == "T0SYM"
-    assert t0.decimals == 6
-    assert t1.decimals == 18
-
     exch = io.fetch_exchange(pool.exchange_id)
     assert exch is not None
     assert exch.factory.lower() == FACTORY.lower()
@@ -193,32 +161,7 @@ def test_fetch_token_by_id_and_exchange(tmp_path):
     assert exch.deployer is None
 
 
-def test_fetch_tick_snapshot(tmp_path):
-    database_path = str(tmp_path / "ticksnap_seam.db")
-    db_create_new_database(database_path)
-    pool_id = _seed_v3_pool(database_path)
-
-    io = _io(database_path)
-    positions = io.fetch_liquidity_positions(pool_id)
-    init_maps = io.fetch_initialization_maps(pool_id)
-    assert len(positions) == 1
-    assert len(init_maps) == 1
-
-    pos = positions[0]
-    assert pos.tick == -100
-    assert int(pos.liquidity_net) == 2**128 - 1
-    assert int(pos.liquidity_gross) == 123456
-
-    im = init_maps[0]
-    assert im.word == -3
-    assert int(im.bitmap) == 2**128 + 7
-
-
 def test_no_database_path_skips_pool_reads():
     io = PyBotIo(provider=_offline_provider(), database_path=None)
     assert io.fetch_pool_row(CHAIN, POOL_ADDR) is None
-    assert io.fetch_pool_kind("uniswap_v3", 1) is None
-    assert io.fetch_token_by_id(1) is None
     assert io.fetch_exchange(1) is None
-    assert io.fetch_liquidity_positions(1) == []
-    assert io.fetch_initialization_maps(1) == []

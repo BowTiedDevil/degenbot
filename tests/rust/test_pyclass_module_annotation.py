@@ -83,11 +83,8 @@ def test_db_classes_on_db_submodule() -> None:
     db = ffi.db
     expected = {
         "LiquidityPoolRow",
-        "PoolKindRow",
         "ExchangeRow",
         "PoolManagerRow",
-        "LiquidityPositionRow",
-        "InitializationMapRow",
         "LiquidityUpdateEvent",
         "V2PoolRowInput",
         "V3PoolRowInput",

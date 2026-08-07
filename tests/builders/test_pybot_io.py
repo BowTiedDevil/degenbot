@@ -1,11 +1,12 @@
 """Tracer-bullet tests for PyBotIo (ADR-005 slice 14a).
 
-`PyBotIo` is the Rust `#[pyclass]` I/O façade that builders will receive in
-place of the Python `SyncPoolIO` adapter. It holds a Python provider (the
+`PyBotIo` is the Rust `#[pyclass]` I/O façade that builders receive in place
+of the Python `SyncPoolIO` adapter. It holds a Python provider (the
 `AlloyProvider` the `Bot` was constructed with) + an optional DB handle, and
-exposes the 7-method `PoolIO` surface (`get_block_number`, `get_block`,
-`get_block_timestamp`, `get_code`, `get_balance`, `call`, `call_raw`) by
-delegating to the held provider.
+exposes the 3-method RPC-primitive surface still on `PyBotIo`
+(`get_block_number`, `get_code`, `get_balance`) by delegating to the held
+provider (the raw `call`/`get_block`/`get_block_timestamp` primitives retired
+with LWKLMP-S5).
 
 These tests pin the *seam* -- that delegating through the Rust pyclass yields
 the same observable result as calling the provider directly. They do NOT yet
@@ -59,19 +60,16 @@ def test_pybot_io_holds_optional_db_handle():
     "method",
     [
         "get_block_number",
-        "get_block",
-        "get_block_timestamp",
         "get_code",
         "get_balance",
-        "call",
-        "call_raw",
     ],
 )
 def test_pybot_io_satisfies_pool_io_protocol(method: str):
-    """PyBotIo exposes the full 7-method PoolIO surface (runtime protocol check).
+    """PyBotIo exposes the surviving 3-method PoolIO surface (runtime check).
 
-    This is the acceptance criterion for 14a: every method a builder may call
-    on its ``io: PoolIO`` parameter is reachable on ``PyBotIo``.
+    The raw `call`/`call_raw`/`get_block`/`get_block_timestamp` primitives were
+    retired with LWKLMP-S5 (no live `src/` caller); the remaining primitives
+    are checked here.
     """
     io = PyBotIo(provider=_min_offline_provider())
     assert hasattr(io, method), f"PyBotIo missing PoolIO method {method!r}"
@@ -545,70 +543,55 @@ def test_pybot_io_native_alloy_fetch_factory_address():
 
 
 def test_pybot_io_native_alloy_poolio_surface():
-    """Native alloy path: the `PoolIO` surface (`get_block_number`,
-    `get_block`, `get_block_timestamp`, `get_code`, `call`) runs against the
-    Rust offline transport and returns the expected shapes."""
+    """Native alloy path: the `PoolIO` surface (`get_block_number`, `get_code`)
+    runs against the Rust offline transport and returns the expected shapes."""
     from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 
     provider = RustAlloyProvider.offline_from_json_string(_recorded_factory_fixture())
     io = PyBotIo(provider=provider)
 
     assert io.get_block_number() == 100
-    block = io.get_block(100)
-    assert block["number"] == 100
-    assert block["timestamp"] == 1_700_000_000
-    assert io.get_block_timestamp() == 1_700_000_000
-    assert io.get_block_timestamp(100) == 1_700_000_000
 
     pool_address = "0x" + "ab" * 20
     code = io.get_code(pool_address)
     assert code == HexBytes(bytes.fromhex("60806040"))
 
-    # `call(factory())` returns the recorded ABI-encoded address word.
-    result = io.call(to=pool_address, data=bytes.fromhex("c45a0155"))
-    assert result == HexBytes(
-        eth_abi.abi.encode(types=["address"], args=["0x66f9664f97f2b50f62d13ea064982f936de76657"])
-    )
-
-
-def test_pybot_io_native_alloy_call_raw_routes_through_native_call():
-    """Native alloy path: `call_raw(tx)` extracts `to`/`data` from the tx dict
-    and routes through the native `call` body."""
-    from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
-
-    provider = RustAlloyProvider.offline_from_json_string(_recorded_factory_fixture())
-    io = PyBotIo(provider=provider)
-    pool_address = "0x" + "ab" * 20
-    result = io.call_raw({"to": pool_address, "data": bytes.fromhex("c45a0155")})
-    assert result == HexBytes(
-        eth_abi.abi.encode(types=["address"], args=["0x66f9664f97f2b50f62d13ea064982f936de76657"])
-    )
-
 
 def test_pybot_io_native_alloy_revert_surfaces_contract_logic_error():
     """Native alloy path: a recorded revert (`null` result) surfaces as
-    `ContractLogicError` (the alloy revert path), not a generic RuntimeError."""
+    `ContractLogicError` (the alloy revert path), not a generic RuntimeError —
+    driven through a live `fetch_token_balance` whose `balanceOf` call reverts."""
     import json
 
     from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
     from degenbot.exceptions import ContractLogicError
 
     factory_raw = "66f9664f97f2b50f62d13ea064982f936de76657"
-    pool_addr = "ab" * 20
+    token_addr = "ab" * 20
     encoded = eth_abi.abi.encode(types=["address"], args=["0x" + factory_raw]).hex()
+    # balanceOf(0xff..ff): the offline provider matches by full calldata, so
+    # the reverting call is keyed by the raw `balanceOf` selector + 32-byte owner.
+    reverting_balance_of = (
+        "0x70a08231" + "0" * 24 + "ff" * 20
+    )
     data = {
         "chain_id": 1,
         "block_number": 100,
         "timestamp": 1_700_000_000,
-        # A *different* selector reverted (null); factory() still succeeds.
-        "calls": {f"0x{pool_addr}:0xffffffff": None, f"0x{pool_addr}:0xc45a0155": encoded},
-        "code": {f"0x{pool_addr}": "60806040"},
+        # balanceOf(address) reverted (null); factory() still succeeds.
+        "calls": {
+            f"0x{token_addr}:{reverting_balance_of}": None,
+            f"0x{token_addr}:0xc45a0155": encoded,
+        },
+        "code": {f"0x{token_addr}": "60806040"},
     }
     provider = RustAlloyProvider.offline_from_json_string(json.dumps(data))
     io = PyBotIo(provider=provider)
-    pool_address = "0x" + "ab" * 20
+    token = "0x" + token_addr
 
     with pytest.raises(ContractLogicError):
-        io.call(to=pool_address, data=bytes.fromhex("ffffffff"))
+        io.fetch_token_balance(token=token, owner="0x" + "ff" * 20)
     # The factory() call still succeeds (not the reverted selector).
-    assert io.fetch_factory_address(pool_address) == "0x66f9664f97F2b50F62D13eA064982f936dE76657"
+    assert (
+        io.fetch_factory_address(token) == "0x66f9664f97F2b50F62D13eA064982f936dE76657"
+    )

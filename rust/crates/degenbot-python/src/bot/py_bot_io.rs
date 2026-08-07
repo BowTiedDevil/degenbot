@@ -38,24 +38,16 @@ use pyo3::types::{PyBytes, PyList};
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use crate::conversion::rpc_types::block_to_py_dict;
 use crate::provider::AlloyProvider;
 use crate::rpc::provider::PyAlloyProvider;
 use crate::rpc::revert_to_pyerr;
 use degenbot_core::errors::ProviderError;
 use degenbot_core::runtime::get_runtime;
 
-/// Immutable data tuple returned by [`PyBotIo::fetch_v2_immutable_data`]:
-/// `(factory, token0, token1, fee, tick_spacing)`.
-type V2ImmutableData = (String, String, String, Py<PyAny>, Py<PyAny>);
-
 /// Slot0 + liquidity state tuple returned by
 /// [`PyBotIo::fetch_v4_slot0_liquidity`]:
 /// `(sqrtPriceX96, tick, protocolFee, lpFee, liquidity)`.
 type Slot0LiquidityState = (Py<PyAny>, Py<PyAny>, Py<PyAny>, Py<PyAny>, Py<PyAny>);
-
-/// Aerodrome stable/fee state tuple: `(stable, fee, token0, token1)`.
-type StableFeeTuple = (bool, Py<PyAny>, Py<PyAny>, Py<PyAny>);
 
 /// Lowercase `0x`-prefixed hex for an address (matches the builder's
 /// lowercase-address convention for Balancer tokens/rate-providers).
@@ -383,57 +375,6 @@ impl PyBotIo {
         }
     }
 
-    /// Fetch the per-DEX subclass row for a pool (QVMWQC). `kind` is the
-    /// `pools.kind` discriminator; `pool_id` the `pools.id`. Returns a
-    /// [`PyPoolKindRow`] (V2 fees / V3 `tick_spacing` + liquidity-update marker /
-    /// V4 pool-hash + hooks + currencies). `None` when absent or no path.
-    #[pyo3(signature = (kind, pool_id))]
-    #[cfg(feature = "db")]
-    fn fetch_pool_kind(
-        &self,
-        py: Python<'_>,
-        kind: &str,
-        pool_id: i64,
-    ) -> PyResult<Option<Py<crate::db::PyPoolKindRow>>> {
-        let Some(io) = self.construction_io() else {
-            return Ok(None);
-        };
-        let kind_owned = kind.to_string();
-        let row = py
-            .detach(|| {
-                get_runtime().block_on(async { io.fetch_pool_kind(&kind_owned, pool_id).await })
-            })
-            .map_err(|e| crate::db::db_err_to_py(&e))?
-            .map(crate::db::PyPoolKindRow::from);
-        match row {
-            Some(r) => Ok(Some(Py::new(py, r)?)),
-            None => Ok(None),
-        }
-    }
-
-    /// Fetch an `erc20_tokens` row by its FK id (QVMWQC) — hydrates the
-    /// `pool.token0` / `pool.token1` relationships. `None` when absent or no
-    /// path.
-    #[pyo3(signature = (token_id))]
-    #[cfg(feature = "db")]
-    fn fetch_token_by_id(
-        &self,
-        py: Python<'_>,
-        token_id: i64,
-    ) -> PyResult<Option<Py<PyErc20TokenRow>>> {
-        let Some(io) = self.construction_io() else {
-            return Ok(None);
-        };
-        let row = py
-            .detach(|| get_runtime().block_on(async { io.fetch_token_by_id(token_id).await }))
-            .map_err(|e| crate::db::db_err_to_py(&e))?
-            .map(PyErc20TokenRow::from);
-        match row {
-            Some(r) => Ok(Some(Py::new(py, r)?)),
-            None => Ok(None),
-        }
-    }
-
     /// Fetch an `exchanges` row by its FK id (QVMWQC) — hydrates the
     /// `pool.exchange` relationship (`factory` / `deployer`). `None` when absent
     /// or no path.
@@ -457,156 +398,6 @@ impl PyBotIo {
         }
     }
 
-    /// Fetch all V3 `liquidity_positions` for a pool (QVMWQC) — hydrates the
-    /// `pool.liquidity_positions` relationship for the tick snapshot. Empty when
-    /// absent or no path.
-    #[pyo3(signature = (pool_id))]
-    #[cfg(feature = "db")]
-    fn fetch_liquidity_positions(
-        &self,
-        py: Python<'_>,
-        pool_id: i64,
-    ) -> PyResult<Vec<Py<crate::db::PyLiquidityPositionRow>>> {
-        let Some(io) = self.construction_io() else {
-            return Ok(Vec::new());
-        };
-        let rows = py
-            .detach(|| {
-                get_runtime().block_on(async { io.fetch_liquidity_positions(pool_id).await })
-            })
-            .map_err(|e| crate::db::db_err_to_py(&e))?;
-        rows.into_iter()
-            .map(|r| Py::new(py, crate::db::PyLiquidityPositionRow::new(py, &r)?))
-            .collect()
-    }
-
-    /// Fetch all V3 `initialization_maps` for a pool (QVMWQC) — hydrates the
-    /// `pool.initialization_maps` relationship for the tick snapshot. Empty when
-    /// absent or no path.
-    #[pyo3(signature = (pool_id))]
-    #[cfg(feature = "db")]
-    fn fetch_initialization_maps(
-        &self,
-        py: Python<'_>,
-        pool_id: i64,
-    ) -> PyResult<Vec<Py<crate::db::PyInitializationMapRow>>> {
-        let Some(io) = self.construction_io() else {
-            return Ok(Vec::new());
-        };
-        let rows = py
-            .detach(|| get_runtime().block_on(async { io.fetch_initialization_map(pool_id).await }))
-            .map_err(|e| crate::db::db_err_to_py(&e))?;
-        rows.into_iter()
-            .map(|r| Py::new(py, crate::db::PyInitializationMapRow::new(py, &r)?))
-            .collect()
-    }
-
-    /// Fetch a `pool_managers` row by `(chain_id, address)` (QVMWQC) — the V4
-    /// builder resolves its pool manager to obtain the `id` (for the V4 pool join)
-    /// + the `state_view` contract address. `None` when absent or no path.
-    #[pyo3(signature = (chain_id, address))]
-    #[cfg(feature = "db")]
-    fn fetch_pool_manager(
-        &self,
-        py: Python<'_>,
-        chain_id: i64,
-        address: &str,
-    ) -> PyResult<Option<Py<crate::db::PyPoolManagerRow>>> {
-        let Some(io) = self.construction_io() else {
-            return Ok(None);
-        };
-        let addr = parse_address_for_call(address)?;
-        let row = py
-            .detach(|| {
-                get_runtime().block_on(async {
-                    io.fetch_pool_manager(chain_id, alloy::primitives::Address::from(addr))
-                        .await
-                })
-            })
-            .map_err(|e| crate::db::db_err_to_py(&e))?
-            .map(crate::db::PyPoolManagerRow::from);
-        match row {
-            Some(r) => Ok(Some(Py::new(py, r)?)),
-            None => Ok(None),
-        }
-    }
-
-    /// Fetch a V4 pool subclass row by its `pool_hash` (0x-prefixed hex)
-    /// (QVMWQC). The V4 builder resolves its pool row by `pool_hash` (the V4
-    /// `bytes32` unique key). Returns a [`PyPoolKindRow`] (variant `"v4"`),
-    /// carrying `managed_pool_id` / `hooks` / `currency0_id` / `currency1_id` /
-    /// fees / `tick_spacing` / liquidity-update marker. `None` when absent or
-    /// no path.
-    #[pyo3(signature = (pool_hash_hex))]
-    #[cfg(feature = "db")]
-    fn fetch_v4_pool_by_pool_hash(
-        &self,
-        py: Python<'_>,
-        pool_hash_hex: &str,
-    ) -> PyResult<Option<Py<crate::db::PyPoolKindRow>>> {
-        let Some(io) = self.construction_io() else {
-            return Ok(None);
-        };
-        let hex = pool_hash_hex.to_string();
-        let row = py
-            .detach(|| get_runtime().block_on(async { io.fetch_v4_pool_by_pool_hash(&hex).await }))
-            .map_err(|e| crate::db::db_err_to_py(&e))?
-            .map(degenbot_db::rows::PoolKindRow::V4)
-            .map(crate::db::PyPoolKindRow::from);
-        match row {
-            Some(r) => Ok(Some(Py::new(py, r)?)),
-            None => Ok(None),
-        }
-    }
-
-    /// Fetch all V4 `managed_pool_liquidity_positions` for a managed pool
-    /// (QVMWQC) — hydrates the V4 `pool.liquidity_positions` relationship for
-    /// the tick snapshot. Empty when absent or no path.
-    #[pyo3(signature = (managed_pool_id))]
-    #[cfg(feature = "db")]
-    fn fetch_managed_liquidity_positions(
-        &self,
-        py: Python<'_>,
-        managed_pool_id: i64,
-    ) -> PyResult<Vec<Py<crate::db::PyLiquidityPositionRow>>> {
-        let Some(io) = self.construction_io() else {
-            return Ok(Vec::new());
-        };
-        let rows = py
-            .detach(|| {
-                get_runtime()
-                    .block_on(async { io.fetch_managed_liquidity_positions(managed_pool_id).await })
-            })
-            .map_err(|e| crate::db::db_err_to_py(&e))?;
-        rows.into_iter()
-            .map(|r| Py::new(py, crate::db::PyLiquidityPositionRow::from_managed(py, &r)?))
-            .collect()
-    }
-
-    /// Fetch all V4 `managed_pool_initialization_maps` for a managed pool
-    /// (QVMWQC) — hydrates the V4 `pool.initialization_maps` relationship for
-    /// the tick snapshot. Empty when absent or no path.
-    #[pyo3(signature = (managed_pool_id))]
-    #[cfg(feature = "db")]
-    fn fetch_managed_initialization_maps(
-        &self,
-        py: Python<'_>,
-        managed_pool_id: i64,
-    ) -> PyResult<Vec<Py<crate::db::PyInitializationMapRow>>> {
-        let Some(io) = self.construction_io() else {
-            return Ok(Vec::new());
-        };
-        let rows = py
-            .detach(|| {
-                get_runtime()
-                    .block_on(async { io.fetch_managed_initialization_map(managed_pool_id).await })
-            })
-            .map_err(|e| crate::db::db_err_to_py(&e))?;
-        rows.into_iter()
-            .map(|r| Py::new(py, crate::db::PyInitializationMapRow::from_managed(py, &r)?))
-            .collect()
-    }
-
     /// Return the current block number. Native path: direct `AlloyProvider`
     /// call (no GIL round-trip). Fallback: delegates to the held Python
     /// provider's `get_block_number()` for non-alloy providers.
@@ -621,71 +412,6 @@ impl PyBotIo {
             .detach(|| get_runtime().block_on(async { io.get_block_number().await }))
             .map_err(Into::<PyErr>::into)?;
         crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(n))
-            .map(pyo3::Bound::into_any)
-            .map(pyo3::Bound::unbind)
-    }
-
-    /// Return block data for the given identifier. Native path: direct
-    /// `AlloyProvider.get_block(n)` for integer ids (returns a full block dict,
-    /// including `number` + `timestamp`). Fallback: delegates to
-    /// `provider.get_block(block_identifier)` (positional, mirrors `SyncPoolIO`).
-    fn get_block(
-        &self,
-        py: Python<'_>,
-        block_identifier: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        // Single construction-I/O path (ADR-023 D1/D3). The trait only supports
-        // integer blocks; tags (e.g. "latest") now ERROR loudly instead of
-        // falling through to the retired Python fallback (tag support is a
-        // follow-on `RpcConstruction` trait change — see epic `VK3YDM`).
-        let n = block_identifier.extract::<u64>().map_err(|_| {
-            pyo3::exceptions::PyValueError::new_err(format!(
-                "PyBotIo.get_block requires an integer block identifier; tags \
-                 (e.g. \"latest\") are unsupported until the RPC trait gains \
-                 tag support (VK3YDM), got {block_identifier:?}"
-            ))
-        })?;
-        let io = self.required_construction_io()?;
-        let block = py
-            .detach(|| get_runtime().block_on(async { io.get_block(n).await }))
-            .map_err(Into::<PyErr>::into)?;
-        match block {
-            Some(b) => Ok(block_to_py_dict(py, &b)?.into_any().unbind()),
-            None => Ok(py.None()),
-        }
-    }
-
-    /// Return the timestamp for the given block. Native path: derives from
-    /// `AlloyProvider.get_block(n).header.timestamp` (no separate RPC). Fallback:
-    /// delegates to `provider.get_block_timestamp(block=block)`.
-    #[pyo3(signature = (block=None))]
-    fn get_block_timestamp(
-        &self,
-        py: Python<'_>,
-        block: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        // Single construction-I/O path (ADR-023 D1/D3). tags now error loudly;
-        // tag support is a `RpcConstruction` trait change (VK3YDM).
-        let io = self.required_construction_io()?;
-        let n = match block {
-            None => py
-                .detach(|| get_runtime().block_on(async { io.get_block_number().await }))
-                .map_err(Into::<PyErr>::into)?,
-            Some(b) => b.extract::<u64>().map_err(|_| {
-                pyo3::exceptions::PyValueError::new_err(format!(
-                    "PyBotIo.get_block_timestamp requires an integer block; tags \
-                     (e.g. \"latest\") are unsupported until the RPC trait gains \
-                     tag support (VK3YDM), got {b:?}"
-                ))
-            })?,
-        };
-        let ts = py
-            .detach(|| get_runtime().block_on(async { io.get_block_timestamp(n).await }))
-            .map_err(Into::<PyErr>::into)?
-            .ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err(format!("Block {n} not found"))
-            })?;
-        crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(ts))
             .map(pyo3::Bound::into_any)
             .map(pyo3::Bound::unbind)
     }
@@ -740,70 +466,6 @@ impl PyBotIo {
             .map(pyo3::Bound::unbind)
     }
 
-    /// Perform an `eth_call` and return the result. Native path: direct
-    /// `AlloyProvider.eth_call(to, data, block)` (reverts map to
-    /// `ContractLogicError`, matching the alloy revert path). Fallback:
-    /// delegates to `provider.call(to=to, data=data, block=block)` (kw-only,
-    /// mirrors `SyncPoolIO` exactly).
-    ///
-    /// `OfflineProvider.call(*, to, data, block_number)` has a keyword-only
-    /// signature, and test doubles (`MagicMock(side_effect=mock_call)` where
-    /// `mock_call(*, to, data, block=None)`) are designed against `SyncPoolIO`'s
-    /// kw-call shape — both work unchanged because the forward is kw-only.
-    #[pyo3(signature = (to, data, block=None))]
-    fn call(
-        &self,
-        py: Python<'_>,
-        to: &Bound<'_, PyAny>,
-        data: &Bound<'_, PyAny>,
-        block: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        // Single construction-I/O path (ADR-023 D1/D3). `eth_call` reverts map
-        // to `ContractLogicError`, matching the alloy revert path.
-        let to_str = to.extract::<String>()?;
-        let addr = alloy::primitives::Address::from(parse_address_for_call(&to_str)?);
-        let data_b = alloy::primitives::Bytes::from(data.extract::<&[u8]>()?.to_vec());
-        let block_num = extract_block_u64(block)?;
-        let io = self.required_construction_io()?;
-        let result =
-            py.detach(|| get_runtime().block_on(async { io.call(addr, data_b, block_num).await }));
-        match result {
-            Ok(bytes) => crate::conversion::cache::create_hexbytes(py, bytes.as_ref())
-                .map(pyo3::Bound::into_any)
-                .map(pyo3::Bound::unbind),
-            Err(ProviderError::ExecutionReverted { message, .. }) => {
-                Err(revert_to_pyerr(py, &to_str, &message))
-            }
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    /// Perform a raw `eth_call` and return the result. Native path: reuses
-    /// the native `call` body above by extracting `to`/`data` from the tx
-    /// dict. Fallback: delegates to `provider.call_raw(tx, block=block)` (tx
-    /// positional, block kw, mirrors `SyncPoolIO`).
-    ///
-    /// `tx` is a web3 `TxParams` dict; `PyBotIo` forwards it verbatim (the
-    /// builder assembles it; this is a pass-through, not a tx-builder).
-    #[pyo3(signature = (tx, block=None))]
-    fn call_raw(
-        &self,
-        py: Python<'_>,
-        tx: &Bound<'_, PyAny>,
-        block: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        // `call_raw` reuses the native `call` body (which routes through
-        // `ConstructionIo.call` via `required_construction_io`). The retired
-        // Python `provider.call_raw` fallback is gone — a tx dict without
-        // extractable `to`/`data` errors loudly instead of degrading.
-        if let (Ok(to), Ok(data)) = (tx.get_item("to"), tx.get_item("data")) {
-            return self.call(py, &to, &data, block);
-        }
-        Err(pyo3::exceptions::PyValueError::new_err(
-            "PyBotIo.call_raw requires a tx dict with 'to' and 'data'",
-        ))
-    }
-
     /// Fetch the factory address for a V2-style pool, performing the full
     /// encode -> call -> decode -> checksum choreography in Rust (ADR-005 slice 14b).
     ///
@@ -845,45 +507,6 @@ impl PyBotIo {
         }
     }
 
-    /// Fetch ERC-20 token name / symbol / decimals via batched RPC calls,
-    /// performing the full encode -> call (x3) -> decode choreography in Rust
-    /// (ADR-005 slice 14c).
-    ///
-    /// Mirrors `degenbot/builders/erc20_builder.py::_fetch_name_symbol_decimals_batched`:
-    /// encode the 4-byte selectors for `name()`, `symbol()`, `decimals()`, fire
-    /// three `eth_call`s at the token address, ABI-decode each as `string`,
-    /// `string`, `uint256` respectively. Returns the `(name, symbol, decimals)`
-    /// tuple on success.
-    ///
-    /// Returns `None` on any provider error or decode failure — mirrors the
-    /// Python batched impl's caller-side `except (Web3Exception, DecodingError)`
-    /// contract, which falls back to per-call `bytes32` alternate prototypes when
-    /// the batched path fails. (The Rust impl surfaces the same `None` signal so
-    /// the caller's fallback kicks in identically.)
-    #[pyo3(signature = (address))]
-    fn fetch_erc20_metadata(&self, py: Python<'_>, address: &str) -> Option<(String, String, u64)> {
-        // Delegate the 3-call encode->call->decode to the core choreography
-        // (14c). The core returns `Ok(None)` on revert/decode failure (the
-        // caller-side fallback contract); we surface `None` to Python.
-        let Ok(io) = self.required_construction_io() else {
-            return None;
-        };
-        let Ok(addr) = parse_address_for_call(address) else {
-            return None;
-        };
-        let addr = alloy::primitives::Address::from(addr);
-        let r = py.detach(|| {
-            get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::choreography::fetch_erc20_metadata(&io, addr)
-                    .await
-            })
-        });
-        match r {
-            Ok(Some((name, symbol, decimals))) => Some((name, symbol, decimals)),
-            _ => None,
-        }
-    }
-
     /// Fetch ERC-20 `name()` / `symbol()` / `decimals()` for MANY tokens in ONE
     /// Multicall3 `aggregate3` `eth_call` (CDJEPJ-2), falling back to the
     /// per-token `fetch_erc20_metadata` path if the multicall itself errors.
@@ -918,51 +541,6 @@ impl PyBotIo {
                 .await
             })
         })
-    }
-
-    /// Fetch a V2-style pool's immutable data — `factory()`, `token0()`, `token1()` —
-    /// performing the 3-call encode -> call -> decode choreography in Rust
-    /// (ADR-005 slice 14e).
-    ///
-    /// Mirrors the immutable-RPC block of `v2_builder_base.py::V2BuilderBase.
-    /// _fetch_v2_common_data` (the fallback path when the DB lookup misses).
-    /// Each of the 3 calls is a no-arg address-returning read, fulfilled by
-    /// [`Self::fetch_address_returning_method`] (shared with `fetch_factory_address`).
-    /// Returns `(factory, token0, token1)` as EIP-55 checksummed strings.
-    ///
-    /// Errors propagate: any provider call revert surfaces as `PyErr`(no
-    /// swallowing) — matches the Python `except Exception: raise
-    /// LiquidityPoolError` contract (the caller wraps in its own exception).
-    #[pyo3(signature = (pool_address, block=None))]
-    fn fetch_v2_immutable_data(
-        &self,
-        py: Python<'_>,
-        pool_address: &str,
-        block: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<(String, String, String)> {
-        let io = self.required_construction_io()?;
-        let addr = alloy::primitives::Address::from(parse_address_for_call(pool_address)?);
-        let block_num = extract_block_u64(block)?;
-        let r = py.detach(|| {
-            get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::choreography::fetch_v2_immutable_data(
-                    &io, addr, block_num,
-                )
-                .await
-            })
-        });
-        let d = match r {
-            Ok(v) => Ok(v),
-            Err(ProviderError::ExecutionReverted { message, .. }) => {
-                Err(revert_to_pyerr(py, pool_address, &message))
-            }
-            Err(e) => Err(e.into()),
-        }?;
-        Ok((
-            d.factory.to_checksum(None),
-            d.token0.to_checksum(None),
-            d.token1.to_checksum(None),
-        ))
     }
 
     /// Fetch a V2-style pool's reserves via `getReserves()`, performing the
@@ -1002,59 +580,6 @@ impl PyBotIo {
         Ok((
             crate::conversion::alloy::u256_to_py(py, &r0)?.unbind(),
             crate::conversion::alloy::u256_to_py(py, &r1)?.unbind(),
-        ))
-    }
-
-    /// Fetch a V3-style pool's immutable data — `factory()`, `token0()`, `token1()`,
-    /// `fee()`, `tickSpacing()` — the 5-call encode -> call -> decode choreography
-    /// in Rust (ADR-005 slice 14f).
-    ///
-    /// Mirrors the immutable-RPC block of `v3_pool_builder.py::V3PoolBuilder.build`'s
-    /// DB-miss fallback path. The first 3 calls are no-arg address-returning reads
-    /// (re-use [`Self::fetch_address_returning_method`]); the last 2 are no-arg
-    /// numeric reads (`fee` as `uint24`, `tickSpacing` as `int24`).
-    ///
-    /// Returns `(factory, token0, token1, fee, tick_spacing)` with addresses
-    /// EIP-55 checksummed; `fee`/`tick_spacing` returned as Python ints (small
-    /// values, safe lossless conversion).
-    ///
-    /// Errors propagate (see [`Self::fetch_v2_immutable_data`]).
-    #[pyo3(signature = (pool_address, block=None))]
-    fn fetch_v3_immutable_data(
-        &self,
-        py: Python<'_>,
-        pool_address: &str,
-        block: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<V2ImmutableData> {
-        let io = self.required_construction_io()?;
-        let addr = alloy::primitives::Address::from(parse_address_for_call(pool_address)?);
-        let block_num = extract_block_u64(block)?;
-        let r = py.detach(|| {
-            get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::choreography::fetch_v3_immutable_data(
-                    &io, addr, block_num,
-                )
-                .await
-            })
-        });
-        let d = match r {
-            Ok(v) => Ok(v),
-            Err(ProviderError::ExecutionReverted { message, .. }) => {
-                Err(revert_to_pyerr(py, pool_address, &message))
-            }
-            Err(e) => Err(e.into()),
-        }?;
-        Ok((
-            d.factory.to_checksum(None),
-            d.token0.to_checksum(None),
-            d.token1.to_checksum(None),
-            crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(d.fee))?
-                .unbind(),
-            // int24 tick spacing is small; build the Python int directly (avoids
-            // the `I256: From<i32>` bound, which alloy does not provide).
-            pyo3::types::PyInt::new(py, i64::from(d.tick_spacing))
-                .into_any()
-                .unbind(),
         ))
     }
 
@@ -1159,100 +684,6 @@ impl PyBotIo {
             crate::conversion::alloy::u256_to_py(py, &lp_fee)?.unbind(),
             crate::conversion::alloy::u256_to_py(py, &liq)?.unbind(),
         ))
-    }
-
-    /// Fetch Camelot pool state via four no-arg RPCs, returning
-    /// (`stable_swap`, `fee_denominator`, `fee_token0`, `fee_token1`) (ADR-005 slice 14q).
-    ///
-    /// Mirrors `v2_pool_builder.py::_fetch_camelot_state`. The four calls run
-    /// sequentially in their original order, though they have no data
-    /// dependencies (independent probes — a batched multicall would be a future
-    /// optimization):
-    /// - `stableSwap()` → `bool`
-    /// - `FEE_DENOMINATOR()` → `uint256`
-    /// - `token0FeePercent()` → `uint16`
-    /// - `token1FeePercent()` → `uint16`
-    ///
-    /// The bool decode extracts the low byte of word 0 (1 = True, 0 = False).
-    /// The uint16/uint256 decodes treat the value as right-aligned in its
-    /// 32-byte word. Errors propagate.
-    #[pyo3(signature = (pool_address, block=None))]
-    fn fetch_camelot_state(
-        &self,
-        py: Python<'_>,
-        pool_address: &str,
-        block: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<StableFeeTuple> {
-        let io = self.required_construction_io()?;
-        let address = alloy::primitives::Address::from(parse_address_for_call(pool_address)?);
-        let block_num = extract_block_u64(block)?;
-        let r = py.detach(|| {
-            get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::choreography::fetch_camelot_state(
-                    &io, address, block_num,
-                )
-                .await
-            })
-        });
-        let state = r?;
-        let denom = crate::conversion::alloy::u256_to_py(py, &state.fee_denominator)?.unbind();
-        let fee0 = crate::conversion::alloy::u256_to_py(
-            py,
-            &alloy::primitives::U256::from(state.token0_fee_percent),
-        )?
-        .unbind();
-        let fee1 = crate::conversion::alloy::u256_to_py(
-            py,
-            &alloy::primitives::U256::from(state.token1_fee_percent),
-        )?
-        .unbind();
-        Ok((state.stable, denom, fee0, fee1))
-    }
-
-    /// Fetch Curve pool params via 3 no-arg `uint256`-returning calls (ADR-005
-    /// slice 14r).
-    ///
-    /// Mirrors `curve_pool_builder.py::_fetch_pool_params` — three required
-    /// no-arg `uint256` reads (`A()`, `fee()`, `admin_fee()`) delegated to the
-    /// core `curve_choreography`.
-    ///
-    /// Returns `(A, fee, admin_fee)`. Each is a `uint256`. Errors propagate.
-    #[pyo3(signature = (pool_address, block=None))]
-    fn fetch_curve_pool_params(
-        &self,
-        py: Python<'_>,
-        pool_address: &str,
-        block: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<(Py<PyAny>, Py<PyAny>, Py<PyAny>)> {
-        let io = self.required_construction_io()?;
-        let pool = alloy::primitives::Address::from(parse_address_for_call(pool_address)?);
-        let block_num = extract_block_u64(block)?;
-        let r = py.detach(|| {
-            get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::curve_choreography::fetch_curve_pool_params(
-                    &io, pool, block_num,
-                )
-                .await
-            })
-        });
-        let p = match r {
-            Ok(v) => Ok(v),
-            Err(ProviderError::ExecutionReverted { message, .. }) => {
-                Err(revert_to_pyerr(py, pool_address, &message))
-            }
-            Err(e) => Err(e.into()),
-        }?;
-        let a = crate::conversion::alloy::u256_to_py(
-            py,
-            &alloy::primitives::U256::from(p.a_coefficient),
-        )?
-        .unbind();
-        let fee = crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(p.fee))?
-            .unbind();
-        let admin_fee =
-            crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(p.admin_fee))?
-                .unbind();
-        Ok((a, fee, admin_fee))
     }
 
     /// Fetch all Curve pool balances via `balances(uint256)` in a loop
@@ -1412,140 +843,6 @@ impl PyBotIo {
             Err(e) => return Err(e.into()),
         };
         crate::conversion::alloy::u256_to_py(py, &n).map(pyo3::Bound::unbind)
-    }
-
-    /// Fetch Aerodrome V2 pool's `stable()` flag and factory `getFee(address,bool)`
-    /// — the 2-call choreography with a data dependency (ADR-005 slice 14g).
-    ///
-    /// Mirrors `aerodrome_v2_builder.py::AerodromeV2PoolBuilder.build`'s
-    /// Aerodrome-specific RPC block. First call: `stable()` on the pool address
-    /// (no-arg, returns `bool`). Second call: `getFee(address,bool)` on the
-    /// factory address, with the pool address and the first call's `stable`
-    /// result as ABI-encoded arguments. Returns `(stable, fee_raw)`.
-    ///
-    /// New pattern introduced: mixed-type ABI encoding (address + bool in a
-    /// single calldata), and a data dependency between the two calls (the `stable`
-    /// result from call 1 is an argument to call 2).
-    ///
-    /// Errors propagate: any provider revert surfaces as `PyErr`.
-    #[pyo3(signature = (pool_address, factory_address, block=None))]
-    fn fetch_aerodrome_v2_stable_and_fee(
-        &self,
-        py: Python<'_>,
-        pool_address: &str,
-        factory_address: &str,
-        block: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<(bool, Py<PyAny>)> {
-        let io = self.required_construction_io()?;
-        let pool = alloy::primitives::Address::from(parse_address_for_call(pool_address)?);
-        let factory = alloy::primitives::Address::from(parse_address_for_call(factory_address)?);
-        let block_num = extract_block_u64(block)?;
-        let r = py.detach(|| {
-            get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::choreography::fetch_aerodrome_stable_and_fee(
-                    &io, pool, factory, block_num,
-                )
-                .await
-            })
-        });
-        let d = match r {
-            Ok(v) => Ok(v),
-            Err(ProviderError::ExecutionReverted { message, .. }) => {
-                Err(revert_to_pyerr(py, pool_address, &message))
-            }
-            Err(e) => Err(e.into()),
-        }?;
-        Ok((
-            d.stable,
-            crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(d.fee_bps))?
-                .unbind(),
-        ))
-    }
-
-    /// Fetch an ERC-20 uint field (`decimals()` / `DECIMALS()`) -- the
-    /// dynamic-signature no-arg uint-returning choreography (ADR-005 slice 14h).
-    ///
-    /// Mirrors `erc20_builder.py::_fetch_decimals`: the caller passes the
-    /// signature dynamically (`"decimals()"` vs `"DECIMALS()"`) and the method
-    /// encodes the selector, calls, and decodes `uint256`. Errors propagate.
-    #[pyo3(signature = (address, signature, block=None))]
-    fn fetch_erc20_uint_field(
-        &self,
-        py: Python<'_>,
-        address: &str,
-        signature: &str,
-        block: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        let io = self.required_construction_io()?;
-        let addr = alloy::primitives::Address::from(parse_address_for_call(address)?);
-        let sig = signature.as_bytes().to_vec();
-        let block_num = extract_block_u64(block)?;
-        let r = py.detach(|| {
-            get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::choreography::fetch_erc20_uint_field(
-                    &io, addr, &sig, block_num,
-                )
-                .await
-            })
-        });
-        let n = match r {
-            Ok(v) => Ok(v),
-            Err(ProviderError::ExecutionReverted { message, .. }) => {
-                Err(revert_to_pyerr(py, address, &message))
-            }
-            Err(ProviderError::DecodingError { .. }) => Err(
-                pyo3::exceptions::PyValueError::new_err("could not decode ERC-20 uint field"),
-            ),
-            Err(e) => Err(e.into()),
-        }?;
-        crate::conversion::alloy::u256_to_py(py, &n).map(pyo3::Bound::unbind)
-    }
-
-    /// Fetch an ERC-20 string field (`name()` / `symbol()` / `NAME()` etc.) --
-    /// performs the encode -> call -> decode choreography in Rust with a
-    /// string-or-bytes32 fallback (ADR-005 slice 14h).
-    ///
-    /// Mirrors `erc20_builder.py::_fetch_name` / `_fetch_symbol`: try `string`
-    /// ABI-decode first; on decode failure, fall back to `bytes32` decode
-    /// (UTF-8 with errors ignored, leading/trailing null bytes stripped).
-    /// The `signature` parameter is dynamic (e.g. `"name()"` vs `"NAME()"`)
-    /// so the caller can try alternate prototypes in a loop.
-    ///
-    /// Errors propagate: provider revert or total decode failure (neither
-    /// `string` nor `bytes32` could decode) surfaces as `PyErr` -- the Python
-    /// caller catches it in its `except (Web3Exception, DecodingError)` loop.
-    #[pyo3(signature = (address, signature, block=None))]
-    fn fetch_erc20_string_field(
-        &self,
-        py: Python<'_>,
-        address: &str,
-        signature: &str,
-        block: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<String> {
-        let io = self.required_construction_io()?;
-        let addr = alloy::primitives::Address::from(parse_address_for_call(address)?);
-        let sig = signature.as_bytes().to_vec();
-        let block_num = extract_block_u64(block)?;
-        let r = py.detach(|| {
-            get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::choreography::fetch_erc20_string_field(
-                    &io, addr, &sig, block_num,
-                )
-                .await
-            })
-        });
-        match r {
-            Ok(s) => Ok(s),
-            Err(ProviderError::ExecutionReverted { message, .. }) => {
-                Err(revert_to_pyerr(py, address, &message))
-            }
-            Err(ProviderError::DecodingError { .. }) => {
-                Err(pyo3::exceptions::PyValueError::new_err(
-                    "could not decode ERC-20 string field as string or bytes32",
-                ))
-            }
-            Err(e) => Err(e.into()),
-        }
     }
 
     /// Probe a pool's type by trying method calls in order (ADR-005 slice 14i).

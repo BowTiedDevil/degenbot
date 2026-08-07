@@ -691,38 +691,6 @@ class LiquidityPoolRow:
     @property
     def exchange_id(self) -> int: ...
 
-class PoolKindRow:
-    """A per-DEX subclass row (V2/V3/V4) (QVMWQC)."""
-
-    @property
-    def variant(self) -> str: ...
-    @property
-    def pool_id(self) -> int: ...
-    @property
-    def fee_token0(self) -> int: ...
-    @property
-    def fee_token1(self) -> int: ...
-    @property
-    def fee_denominator(self) -> int: ...
-    @property
-    def tick_spacing(self) -> int: ...
-    @property
-    def liquidity_update_block(self) -> int | None: ...
-    @property
-    def liquidity_update_log_index(self) -> int | None: ...
-    @property
-    def stable(self) -> bool | None: ...
-    @property
-    def pool_hash(self) -> str | None: ...
-    @property
-    def hooks(self) -> str | None: ...
-    @property
-    def currency0_id(self) -> int | None: ...
-    @property
-    def currency1_id(self) -> int | None: ...
-    @property
-    def managed_pool_id(self) -> int | None: ...
-
 class ExchangeRow:
     """A typed `exchanges` DB row (QVMWQC)."""
 
@@ -756,24 +724,6 @@ class PoolManagerRow:
     def state_view(self) -> str | None: ...
     @property
     def exchange_id(self) -> int: ...
-
-class LiquidityPositionRow:
-    """A `liquidity_positions` row (V3 tick liquidity) (QVMWQC)."""
-
-    @property
-    def tick(self) -> int: ...
-    @property
-    def liquidity_net(self) -> int: ...
-    @property
-    def liquidity_gross(self) -> int: ...
-
-class InitializationMapRow:
-    """An `initialization_maps` row (V3 tick bitmap) (QVMWQC)."""
-
-    @property
-    def word(self) -> int: ...
-    @property
-    def bitmap(self) -> int: ...
 
 class LiquidityUpdateEvent:
     """A decoded liquidity-update event record (QJSCA5 §4.3).
@@ -810,11 +760,8 @@ class DatabaseSchemaStale(ValueError):
 __all__ = [
     "DatabaseSchemaStale",
     "ExchangeRow",
-    "InitializationMapRow",
     "LiquidityPoolRow",
-    "LiquidityPositionRow",
     "LiquidityUpdateEvent",
-    "PoolKindRow",
     "PoolManagerRow",
     "PyCollateralPositionData",
     "PyDatabasePositionQuery",

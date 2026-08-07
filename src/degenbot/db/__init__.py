@@ -28,11 +28,8 @@ untouched until the 0.7 cutover.
 from degenbot._ffi.db import (
     DatabaseSchemaStale,
     ExchangeRow,
-    InitializationMapRow,
     LiquidityPoolRow,
-    LiquidityPositionRow,
     LiquidityUpdateEvent,
-    PoolKindRow,
     PoolManagerRow,
     PyCollateralPositionData,
     PyDatabasePositionQuery,
@@ -83,11 +80,8 @@ from degenbot._ffi.db import (
 __all__ = [
     "DatabaseSchemaStale",
     "ExchangeRow",
-    "InitializationMapRow",
     "LiquidityPoolRow",
-    "LiquidityPositionRow",
     "LiquidityUpdateEvent",
-    "PoolKindRow",
     "PoolManagerRow",
     "PyCollateralPositionData",
     "PyDatabasePositionQuery",
