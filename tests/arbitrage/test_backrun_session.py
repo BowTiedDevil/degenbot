@@ -150,6 +150,30 @@ class _FakeBot:
             self._events.append("release")
 
 
+class _RecordingPyBot:
+    """A stand-in for the Rust ``PyBot._py_bot`` whose ``close_snapshot_tx``
+    records invocation (and optionally trips the XEANMB canary RuntimeError,
+    as the real one does when in-flight build workers hold an ``Arc`` clone)."""
+
+    def __init__(
+        self,
+        events: list[str],
+        *,
+        raise_on_close: bool = False,
+    ) -> None:
+        self._events = events
+        self._raise_on_close = raise_on_close
+
+    def close_snapshot_tx(self) -> None:
+        self._events.append("close_snapshot_tx")
+        if self._raise_on_close:
+            msg = (
+                "close_snapshot_tx: SnapshotDb Arc still held "
+                "(clone leak \u2014 a caller didn't drop its handle)"
+            )
+            raise RuntimeError(msg)
+
+
 class _FakeEth:
     def __init__(self, *, block_number: int = 12_345, nonce: int = 7) -> None:
         self._block_number = block_number
@@ -949,6 +973,87 @@ class TestSubBBackgroundRegistration:
         assert calls == [None]
         assert bot.released is True
         assert session.bot is None
+
+    async def test_background_completion_closes_snapshot_tx(self) -> None:
+        """A *healthy* (non-cancelled) registration must still close the
+        snapshot read-tx after `build_paths` completes — the XEANMB canary stays
+        active in the normal path (WAL reclamation preserved)."""
+        calls: list[str] = []
+        bot = _FakeBot(events=calls)
+        bot._py_bot = _RecordingPyBot(calls)  # records `close_snapshot_tx`
+        session = BackrunSession(
+            _cfg(),
+            bot=bot,
+            engine_registry=_FakeEngineRegistry(),
+            async_w3=_FakeAsyncW3(),
+            snapshots=(None, None, None, None),
+            background_registration=True,
+        )
+        session.bot = bot
+        session.engine_registry = _FakeEngineRegistry()
+
+        async def noop_path_builder(**kwargs):
+            await asyncio.sleep(0)
+
+        await session._run_registration_background(
+            path_builder=noop_path_builder,
+            registration_context=None,
+            retry_policy=None,
+        )
+
+        # The successful run commits the read tx (canary fires) + releases the bot.
+        assert calls.count("close_snapshot_tx") == 1
+        assert bot.released is True
+        assert session.bot is None
+
+    async def test_background_cancel_skips_close_snapshot_tx(self) -> None:
+        """A mid-registration cancel must NOT close the snapshot read-tx.
+
+        Registration offloads `assemble_*_tick_map` (which clone the
+        `Arc<SnapshotDb>`) onto a ThreadPoolExecutor; on cancel those worker
+        threads may still hold their clones, so `close_snapshot_tx`'s
+        `Arc::try_unwrap` canary false-positives and would raise
+        ``RuntimeError: SnapshotDb Arc still held`` during teardown (EZOKDR).
+        The cancel branch must instead drop the Arc naturally and stay quiet —
+        the teardown stays clean and CancelledError propagates unadorned.
+        """
+        calls: list[str] = []
+        bot = _FakeBot(events=calls)
+        # Simulate the in-flight-worker-clone scenario: the held `_py_bot`
+        # would trip the canary if `close_snapshot_tx` were invoked mid-cancel.
+        bot._py_bot = _RecordingPyBot(calls, raise_on_close=True)
+        session = BackrunSession(
+            _cfg(),
+            bot=bot,
+            engine_registry=_FakeEngineRegistry(),
+            async_w3=_FakeAsyncW3(),
+            snapshots=(None, None, None, None),
+            background_registration=True,
+        )
+        session.bot = bot
+        session.engine_registry = _FakeEngineRegistry()
+
+        async def hanging_path_builder(**kwargs):
+            await asyncio.Event().wait()
+
+        task = asyncio.create_task(
+            session._run_registration_background(
+                path_builder=hanging_path_builder,
+                registration_context=None,
+                retry_policy=None,
+            )
+        )
+        await asyncio.sleep(0)  # let the builder start
+        task.cancel()
+        # The cancelled task re-raises CancelledError cleanly — the secondary
+        # `close_snapshot_tx` RuntimeError must NOT surface in its place.
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        # The read-tx canary was deliberately skipped for the teardown path.
+        assert "close_snapshot_tx" not in calls, (
+            "close_snapshot_tx must not run on the mid-registration cancel path"
+        )
 
 
 class TestSubCBgRegistrationConcurrency:

@@ -561,18 +561,38 @@ class BotRunner:
             )
             self._trim_python_state()
         except asyncio.CancelledError:
-            # Registration is already being torn down (cancelled by run()'s
-            # finally), so this is the safe point to release the held snapshot
-            # read-tx + Python registries.
-            self._trim_python_state()
+            # Registration is being torn down mid-flight (cancelled by run()'s
+            # finally / a Ctrl-C / a fatal sim trap) BEFORE `build_paths`
+            # finished. Registration offloads `assemble_*_tick_map` (which
+            # clone the `Arc<SnapshotDb>`) onto a ThreadPoolExecutor;
+            # `path_builder`'s futures are NOT awaited/joined here, so worker
+            # threads may still be mid-`assemble` holding their clones. Running
+            # `close_snapshot_tx()` now would make the `Arc::try_unwrap` canary
+            # false-positive with a secondary ``RuntimeError`` that masks the
+            # real teardown reason (EZOKDR). We're tearing the process down
+            # anyway — the WAL snapshot is a process-lifetime concern that
+            # becomes moot at exit, so skip the read-tx commit/canary and let
+            # the `Arc<SnapshotDb>` drop naturally with `PyBot`. The rest of the
+            # state trim (release Python registries + drop the bot ref) still
+            # runs. The normal-path `_trim_python_state()` directly below keeps
+            # the canary fully active for healthy registrations.
+            self._trim_python_state(close_read_tx=False)
             raise
 
-    def _trim_python_state(self) -> None:
+    def _trim_python_state(self, *, close_read_tx: bool = True) -> None:
         """Trim redundant Python state once registration is done.
 
         Shared by the injected-sync and background-registration paths. Releases
         the held snapshot read tx, then drops the Python-side caches and nulls
         run()'s bot ref so the hot loop isn't pinning Python pool objects.
+
+        ``close_read_tx``: on the healthy path (``build_paths`` completed) the
+        XEANMB canary fires and the read tx is committed to reclaim WAL space.
+        On the mid-registration cancel/teardown branch it is ``False`` — build-
+        worker ``Arc<SnapshotDb>`` clones may still be live, so the canary
+        would false-positive (EZOKDR); the tx is instead dropped with ``PyBot``
+        at process teardown. Callers must keep the canary active whenever
+        registration actually finished.
         """
         assert self.engine_registry is not None
         # 3b. Release the held snapshot read transaction (epic XEANMB):
@@ -582,9 +602,12 @@ class BotRunner:
         # release the WAL snapshot so the updater's checkpoint can reclaim
         # `-wal` space for the hot loop. No-op for the cold-start path (no DB).
         # `getattr` so test fakes (`_FakeBot`) without a real `_py_bot` skip.
+        # Skipped entirely on the cancel/teardown branch (EZOKDR): in-flight
+        # executor `assemble_*` clones would trip the canary, and the WAL is
+        # moot once the process is exiting.
         if self.bot is not None:
             py_bot = getattr(self.bot, "_py_bot", None)
-            if py_bot is not None:
+            if py_bot is not None and close_read_tx:
                 py_bot.close_snapshot_tx()
 
         if self.bot is None:
