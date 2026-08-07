@@ -24,6 +24,8 @@ const OPTIMAL_INPUT: u128 = 1_000_000_000_000_000_000;
 const OUT_A: u128 = 500_000_000_000_000_000;
 const OUT_B: u128 = 1_900_000_000_000_000_000;
 const OUT_C: u128 = 1_000_000_000_000_000_000;
+const OUT_A_CLAMP: u128 = 499_999_999_999_999_999; // OUT_A - 1 (CL gap-branch swap-in)
+const OUT_B_CLAMP: u128 = 1_899_999_999_999_999_999; // OUT_B - 1 (CL gap-branch swap-in)
 
 /// V4-V4-V4 with a native→WETH gap at the A→B boundary (`bridge_ab` = Wrap).
 ///
@@ -73,7 +75,7 @@ fn v4_v4_v4_wrap_at_ab_boundary() {
         ]),
         OPTIMAL_INPUT,
         &[OUT_A, OUT_B, OUT_C],
-        &[OUT_A, OUT_B, OUT_C],
+        &[OPTIMAL_INPUT, OUT_A_CLAMP, OUT_B],
         EXECUTOR,
         PM,
         WETH,
@@ -111,7 +113,7 @@ fn v4_v4_v4_wrap_at_ab_boundary() {
     )));
     // 3. V4_SWAP_COMPACT(B) — input=WETH(c0), output=USDC(c1), zfo=true, amount=OUT_A
     inner.extend_from_slice(
-        &encoders::enc_v4_swap_compact(weth_idx, usdc_idx, 3000, 60, zero_idx, true, OUT_A)
+        &encoders::enc_v4_swap_compact(weth_idx, usdc_idx, 3000, 60, zero_idx, true, OUT_A_CLAMP)
             .unwrap(),
     );
     // 4. V4_SETTLE_DELTA(WETH) — B's input
@@ -180,7 +182,7 @@ fn v4_v4_v4_unwrap_at_ab_boundary() {
         ]),
         OPTIMAL_INPUT,
         &[OUT_A, OUT_B, OUT_C],
-        &[OUT_A, OUT_B, OUT_C],
+        &[OPTIMAL_INPUT, OUT_A_CLAMP, OUT_B],
         EXECUTOR,
         PM,
         WETH,
@@ -215,7 +217,7 @@ fn v4_v4_v4_unwrap_at_ab_boundary() {
     )));
     // V4_SWAP_COMPACT(B) — native→USDC, amount=OUT_A
     inner.extend_from_slice(
-        &encoders::enc_v4_swap_compact(native_idx, usdc_idx, 3000, 60, zero_idx, true, OUT_A)
+        &encoders::enc_v4_swap_compact(native_idx, usdc_idx, 3000, 60, zero_idx, true, OUT_A_CLAMP)
             .unwrap(),
     );
     // V4_SETTLE_DELTA(native) — B's input
@@ -289,7 +291,7 @@ fn v4_v4_v4_double_gap_both_boundaries_bridge() {
         ]),
         OPTIMAL_INPUT,
         &[OUT_A, OUT_B, OUT_C],
-        &[OUT_A, OUT_B, OUT_C],
+        &[OPTIMAL_INPUT, OUT_A_CLAMP, OUT_B_CLAMP],
         EXECUTOR,
         PM,
         WETH,
@@ -326,7 +328,7 @@ fn v4_v4_v4_double_gap_both_boundaries_bridge() {
     )));
     // 3. V4_SWAP_COMPACT(B) — WETH→native, amount=OUT_A
     inner.extend_from_slice(
-        &encoders::enc_v4_swap_compact(weth_idx, native_idx, 3000, 60, zero_idx, true, OUT_A)
+        &encoders::enc_v4_swap_compact(weth_idx, native_idx, 3000, 60, zero_idx, true, OUT_A_CLAMP)
             .unwrap(),
     );
     // 4. V4_SETTLE_DELTA(WETH) — B's input (post-wrap)
@@ -340,7 +342,8 @@ fn v4_v4_v4_double_gap_both_boundaries_bridge() {
     )));
     // 6. V4_SWAP_COMPACT(C) — WETH→USDC, amount=OUT_B
     inner.extend_from_slice(
-        &encoders::enc_v4_swap_compact(weth_idx, usdc_idx, 500, 10, zero_idx, true, OUT_B).unwrap(),
+        &encoders::enc_v4_swap_compact(weth_idx, usdc_idx, 500, 10, zero_idx, true, OUT_B_CLAMP)
+            .unwrap(),
     );
     // 7. V4_SETTLE_DELTA(WETH) — C's input (post-wrap)
     inner.extend_from_slice(&encoders::enc_v4_settle_delta(weth_idx));
@@ -402,7 +405,7 @@ fn v4_v4_v4_wrap_at_bc_boundary() {
         ]),
         OPTIMAL_INPUT,
         &[OUT_A, OUT_B, OUT_C],
-        &[OUT_A, OUT_B, OUT_C],
+        &[OPTIMAL_INPUT, OUT_A, OUT_B_CLAMP],
         EXECUTOR,
         PM,
         WETH,
@@ -432,7 +435,8 @@ fn v4_v4_v4_wrap_at_bc_boundary() {
         OUT_B,
     )));
     inner.extend_from_slice(
-        &encoders::enc_v4_swap_compact(weth_idx, usdc_idx, 500, 10, zero_idx, true, OUT_B).unwrap(),
+        &encoders::enc_v4_swap_compact(weth_idx, usdc_idx, 500, 10, zero_idx, true, OUT_B_CLAMP)
+            .unwrap(),
     );
     inner.extend_from_slice(&encoders::enc_v4_settle_delta(weth_idx));
     inner.extend_from_slice(&encoders::enc_v4_take_delta(usdc_idx, executor_idx));
