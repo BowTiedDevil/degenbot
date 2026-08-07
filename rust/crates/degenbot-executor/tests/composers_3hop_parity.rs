@@ -1302,13 +1302,14 @@ fn parity_v3_v4_v2() {
         ]),
         1000000000000000000u128,
         &[2000000000u128, 2001000000000000000u128, 2001000000u128],
-        &[2000000000u128, 2001000000000000000u128, 2001000000u128],
+        &[2000000000u128, 1_999_999_999u128, 2001000000u128],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    // V3a→V4b→V2c. V4_UNLOCK nests V4b swap_dynamic + take_delta(WETH→V2c) + settle_all.
+    // V3a→V4b→V2c. V4_UNLOCK nests V4b swap_compact(consumed_inputs[1]) +
+    // take_delta(WETH→V2c) + settle_all.
     // V3a callback (a_fwd) wraps V4_UNLOCK + V2c direct + WETH repay to V3a.
     let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
     let pm_idx = at.add(PM).unwrap();
@@ -1324,14 +1325,20 @@ fn parity_v3_v4_v2() {
     let c0_b_idx = at.add(USDC).unwrap();
     let c1_b_idx = at.add(WETH).unwrap(); // SENTINEL_WETH
     let mut v4_inner = encoders::enc_v4_settle();
-    v4_inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
-        c0_b_idx,
-        c1_b_idx,
-        500,
-        10,
-        SENTINEL_NATIVE,
-        true,
-    ));
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            c0_b_idx,
+            c1_b_idx,
+            500,
+            10,
+            SENTINEL_NATIVE,
+            true,
+            // V4 swap-in = consumed_inputs[1] (the CL clamp), not the full
+            // dynamic forward — stops over-fed V4 pools at capacity.
+            1_999_999_999u128,
+        )
+        .unwrap(),
+    );
     v4_inner.extend_from_slice(&encoders::enc_v4_take_delta(forward_b_idx, v2c_idx));
     v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
     let mut a_fwd = encoders::enc_v4_unlock(&v4_inner).unwrap();
@@ -1392,7 +1399,7 @@ fn parity_v3_v4_v3() {
         &[2000000000u128, 2001000000000000000u128, 2001000000u128],
         &[
             1000000000000000000u128,
-            2000000000u128,
+            1_999_999_999u128,
             2_000_999_999_999_999_999u128,
         ],
         address!("DeAd0000000000000000000000000000000000Be"),
@@ -1400,7 +1407,8 @@ fn parity_v3_v4_v3() {
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    // V3a→V4b→V3c. V4_UNLOCK nests V4b swap_dynamic + take_compact(WETH→V3c)
+    // V3a→V4b→V3c. V4_UNLOCK nests V4b swap_compact(consumed_inputs[1]) +
+    // take_compact(WETH→V3c)
     // + settle_all. V3a callback (a_fwd) wraps WETH repay + V4_UNLOCK; V3c
     // callback (c_fwd) wraps V3a. take_compact carries the EXACT out_b (the
     // V3c swap's fixed input) so V3c's IIA is satisfied by construction — the
@@ -1419,14 +1427,20 @@ fn parity_v3_v4_v3() {
     let c0_b_idx = at.add(USDC).unwrap();
     let c1_b_idx = at.add(WETH).unwrap(); // SENTINEL_WETH
     let mut v4_inner = encoders::enc_v4_settle();
-    v4_inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
-        c0_b_idx,
-        c1_b_idx,
-        500,
-        10,
-        SENTINEL_NATIVE,
-        true,
-    ));
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            c0_b_idx,
+            c1_b_idx,
+            500,
+            10,
+            SENTINEL_NATIVE,
+            true,
+            // V4 swap-in = consumed_inputs[1] (the CL clamp), not the full
+            // dynamic forward — stops over-fed V4 pools at capacity.
+            1_999_999_999u128,
+        )
+        .unwrap(),
+    );
     v4_inner.extend_from_slice(
         &encoders::enc_v4_take_compact(forward_b_idx, v3c_idx, 2_001_000_000_000_000_000u128)
             .unwrap(),

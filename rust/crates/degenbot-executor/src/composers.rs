@@ -3229,6 +3229,7 @@ fn three_hop_v3_v4_v2(
 ) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
     let hop_outputs = inputs.hop_outputs;
+    let consumed_inputs = inputs.consumed_inputs;
     let executor_address = inputs.executor_address;
     let pool_manager_address = inputs.pool_manager_address;
     let weth_address = inputs.weth_address;
@@ -3238,6 +3239,15 @@ fn three_hop_v3_v4_v2(
         return None;
     }
     if !fits_int128(optimal_input) {
+        return None;
+    }
+    // Hop1 (V4b) is a CL pool fed by the V3a forward. The solver's CL-hop
+    // clamp caps `consumed_inputs[1]` at the pool's executable capacity; feed
+    // that clamped amount via `swap_compact` so an over-fed V4 pool stops at
+    // capacity instead of marching empty ticks to an EMPTY-OOG halt. (The
+    // trailing `V4_SETTLE_ALL` sweeps any residual forward delta.)
+    let b_swap_in = consumed_inputs.get(1).copied()?;
+    if !fits_int128(b_swap_in) {
         return None;
     }
 
@@ -3274,9 +3284,12 @@ fn three_hop_v3_v4_v2(
     let c1_b_idx = at.add(hb.currency1_address).ok()?;
 
     let mut v4_inner = encoders::enc_v4_settle();
-    v4_inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
-        c0_b_idx, c1_b_idx, fee_b, ts_b, zero_idx, hb.zfo,
-    ));
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            c0_b_idx, c1_b_idx, fee_b, ts_b, zero_idx, hb.zfo, b_swap_in,
+        )
+        .ok()?,
+    );
     v4_inner.extend_from_slice(&encoders::enc_v4_take_delta(forward_b_idx, v2c_idx));
     v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
 
@@ -3321,9 +3334,15 @@ fn three_hop_v3_v4_v3(
     if !fits_int128(optimal_input) {
         return None;
     }
-    // Hop0 V3a feeds optimal_input; hop1 V4b is dynamic (delta read, no fixed
-    // amount). Hop2 (V3c) is the CL exit — swap-in = consumed_inputs[2]; the
-    // V4_TAKE that deposits the forward into v3c stays on `out_b` (real).
+    // Hop0 V3a feeds optimal_input; hop1 V4b is CL, fed by the V3a forward —
+    // its swap-in = consumed_inputs[1] (the CL-hop clamp), so an over-fed V4
+    // pool stops at capacity instead of marching to an EMPTY-OOG halt. Hop2
+    // (V3c) is the CL exit — swap-in = consumed_inputs[2]; the V4_TAKE that
+    // deposits the forward into v3c stays on `out_b` (real).
+    let b_swap_in = consumed_inputs.get(1).copied()?;
+    if !fits_int128(b_swap_in) {
+        return None;
+    }
     let c_swap_in = consumed_inputs.get(2).copied()?;
     if !fits_int128(c_swap_in) {
         return None;
@@ -3362,9 +3381,12 @@ fn three_hop_v3_v4_v3(
     let c1_b_idx = at.add(hb.currency1_address).ok()?;
 
     let mut v4_inner = encoders::enc_v4_settle();
-    v4_inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
-        c0_b_idx, c1_b_idx, fee_b, ts_b, zero_idx, hb.zfo,
-    ));
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(
+            c0_b_idx, c1_b_idx, fee_b, ts_b, zero_idx, hb.zfo, b_swap_in,
+        )
+        .ok()?,
+    );
     // Take EXACTLY `out_b` USDT to v3c, matching v3c.swap(out_b). The take
     // amount must equal the V3 swap's fixed input or v3c's IIA check fails
     // (v3c received more/less USDT than its swap demands). This aligns with
