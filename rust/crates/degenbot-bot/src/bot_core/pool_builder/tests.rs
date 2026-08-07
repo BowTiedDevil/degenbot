@@ -209,10 +209,27 @@ async fn build_erc20_metadata_errors_on_empty_code() {
         .unwrap_err();
     match err {
         builder::PoolBuilderError::Decoding { message } => {
-            assert_eq!(message, "no contract deployed at this address");
+            assert_eq!(message, "No contract deployed at this address");
         }
         other => panic!("expected Decoding, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn build_erc20_metadata_unknown_sentinels_match_python() {
+    // A present contract whose name()/symbol()/decimals() all revert resolves
+    // the per-field UNKNOWN sentinels, matching the Python canonical values
+    // (erc20.py): name="Unknown Token", symbol="UNKNOWN", decimals=18.
+    let mut f = FakeRpc::new();
+    f.set_code(Bytes::from_static(&[0x60, 0x80]));
+    // No name()/symbol()/decimals() responses -> every eth_call reverts.
+    let io = io_with(f);
+    let (name, symbol, decimals) = builder::build_erc20_metadata(&io, 1, TO, None)
+        .await
+        .unwrap();
+    assert_eq!(name, "Unknown Token");
+    assert_eq!(symbol, "UNKNOWN");
+    assert_eq!(decimals, 18);
 }
 
 #[tokio::test]

@@ -72,10 +72,11 @@ pub enum PoolBuilderError {
 }
 
 /// Sentinels returned when an ERC-20 metadata field cannot be resolved,
-/// mirroring `erc20_builder.py::UNKNOWN_NAME/UNKNOWN_SYMBOL/UNKNOWN_DECIMALS`.
-const UNKNOWN_NAME: &str = "UNKNOWN";
+/// mirroring `erc20.py::UNKNOWN_NAME/UNKNOWN_SYMBOL/UNKNOWN_DECIMALS` (the
+/// canonical Python display constants) so the core twin is byte-identical.
+const UNKNOWN_NAME: &str = "Unknown Token";
 const UNKNOWN_SYMBOL: &str = "UNKNOWN";
-const UNKNOWN_DECIMALS: u8 = 16;
+const UNKNOWN_DECIMALS: u8 = 18;
 
 /// Resolve ERC-20 token metadata DB-first, then on-chain, with the
 /// alternate-prototype + UNKNOWN fallbacks — the core twin of
@@ -132,7 +133,7 @@ pub async fn build_erc20_metadata(
     let code = io.get_code(address, block).await?;
     if code.is_empty() {
         return Err(PoolBuilderError::Decoding {
-            message: "no contract deployed at this address".to_owned(),
+            message: "No contract deployed at this address".to_owned(),
         });
     }
     if let Ok(Some((n, s, d))) = choreography::fetch_erc20_metadata(io, address).await {
@@ -149,10 +150,12 @@ pub async fn build_erc20_metadata(
 
     // 3. Per-field alternate-prototype fallback for anything still missing.
     if name.is_none() {
-        name = Some(fetch_field_string(io, address, &[b"name()", b"NAME()"]).await);
+        name = Some(fetch_field_string(io, address, &[b"name()", b"NAME()"], UNKNOWN_NAME).await);
     }
     if symbol.is_none() {
-        symbol = Some(fetch_field_string(io, address, &[b"symbol()", b"SYMBOL()"]).await);
+        symbol = Some(
+            fetch_field_string(io, address, &[b"symbol()", b"SYMBOL()"], UNKNOWN_SYMBOL).await,
+        );
     }
     if decimals.is_none() {
         decimals = Some(fetch_field_decimals(io, address, &[b"decimals()", b"DECIMALS()"]).await);
@@ -180,13 +183,18 @@ pub async fn build_erc20_metadata(
 
 /// Read a string field trying each prototype in order (e.g. `name()` then
 /// `NAME()`), returning the FIRST that decodes, else `UNKNOWN_NAME`.
-async fn fetch_field_string(io: &ConstructionIo, address: Address, prototypes: &[&[u8]]) -> String {
+async fn fetch_field_string(
+    io: &ConstructionIo,
+    address: Address,
+    prototypes: &[&[u8]],
+    fallback: &str,
+) -> String {
     for p in prototypes {
         if let Ok(s) = choreography::fetch_erc20_string_field(io, address, p, None).await {
             return s;
         }
     }
-    UNKNOWN_NAME.to_string()
+    fallback.to_string()
 }
 
 /// Read `decimals()` (or an alternate prototype) as a `uint256`, validated to

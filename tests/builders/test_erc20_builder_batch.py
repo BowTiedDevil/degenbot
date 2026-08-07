@@ -12,6 +12,9 @@ RED: before CDJEPJ-2 there was no `build_many` (and two separate
 
 from __future__ import annotations
 
+import json
+
+from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot.bot import PyBot
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.database.session_manager import DatabaseSessionManager
@@ -81,6 +84,24 @@ def test_build_many_falls_back_per_token_for_none_meta() -> None:
     """A token whose batched metadata is `None` falls back to a per-token build
     (contract-deployed check + alternate-prototype fallback preserved)."""
     py_bot = PyBot(chain_id=1)
+    # The fallback routes through the Rust core (`PyBot.build_erc20_token` /
+    # `build_erc20_metadata`), so the PyBot must hold a ConstructionIo. Attach
+    # an offline provider with non-empty code for TOKEN_B but NO
+    # name()/symbol()/decimals() responses — the core resolves the alternate
+    # prototype fallback -> UNKNOWN (same observable result as the old Python
+    # path's missing-metadata fallback).
+    provider = RustAlloyProvider.offline_from_json_string(
+        json.dumps(
+            {
+                "chain_id": 1,
+                "block_number": 100,
+                "timestamp": 1_700_000_000,
+                "calls": {},
+                "code": {TOKEN_B.lower(): "6080"},
+            }
+        )
+    )
+    py_bot.attach_construction_io(provider, None)
     fake_db = object.__new__(DatabaseSessionManager)
     tokens = TokenRegistry()
     io = _RecFakeIo()
@@ -94,8 +115,8 @@ def test_build_many_falls_back_per_token_for_none_meta() -> None:
     ]
     t_a, t_b = erc20.build_many([TOKEN_A, TOKEN_B], chain_id=1, silent=True, io=io)
 
+    # TOKEN_A comes from the batched fetch; TOKEN_B fell back to the Rust core
+    # per-token build, whose on-chain reads resolve UNKNOWN on a missed
+    # name()/symbol()/decimals() fallback.
     assert t_a.symbol == "ALPHA"
-    # TOKEN_B fell back to the per-token path, which called fetch_erc20_metadata
-    # (returns None here -> the alternate-prototype fallback -> UNKNOWN_*).
-    assert io.single_metadata_calls == 1
     assert t_b.symbol == "UNKNOWN"  # UNKNOWN_SYMBOL const value

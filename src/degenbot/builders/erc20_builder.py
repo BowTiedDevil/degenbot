@@ -5,16 +5,9 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING
 
-from degenbot.abi import AbiDecodeError
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import EtherPlaceholder
-from degenbot.erc20.erc20 import (
-    UNKNOWN_DECIMALS,
-    UNKNOWN_NAME,
-    UNKNOWN_SYMBOL,
-    Erc20Token,
-)
-from degenbot.exceptions import RpcError
+from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.logging import logger
 
@@ -56,15 +49,26 @@ class Erc20Builder:
         *,
         chain_id: ChainId | None = None,
         silent: bool = False,
-        io: PyBotIo | None = None,
+        io: PyBotIo | None = None,  # ruff:ignore[unused-method-argument] - ignored compat shim (S5 strips it)
     ) -> Erc20Token:
-        """Fetch token metadata from DB/RPC and construct an I/O-free Erc20Token.
+        """Construct an ERC-20 token, delegating metadata resolution to the Rust core.
+
+        The DB-first + on-chain resolution, write-back and `BotState`
+        registration are Rust-owned (VK3YDM-S2): `PyBot.build_erc20_token`
+        runs `build_erc20_metadata` over the attached `ConstructionIo`. This
+        Python shell keeps only the *companion* concerns: the `TokenRegistry`
+        idempotent short-circuit (35NMBX Guard 1), the `EtherPlaceholder`
+        special case, and the `Erc20Token._from_py_token` display wrapper.
+        The `io` argument is a retained compat shim (ignored — the PyBot owns
+        the `ConstructionIo`); it is stripped when `PyBotIo` retires
+        (VK3YDM-S5).
 
         Returns:
             The computed value.
 
         Raises:
-            DegenbotValueError: If the operation fails.
+            DegenbotValueError: No contract is deployed at the address, or the
+                token metadata could not be resolved on-chain.
 
         """
         address = get_checksum_address(address)
@@ -105,106 +109,22 @@ class Erc20Builder:
                 logger.info(f"• {token.symbol} ({token.name})")
             return token
 
-        # Try DB first — route the construction-time read through the Rust
-        # `PyBotIo.fetch_erc20_token` seam (QVMWQC), which opens a
-        # `degenbot-db` read handle from `io.database_path`. Falls back to
-        # skipping the DB read when no `io`/`database_path` is configured
-        # (mirrors the prior `contextlib.suppress(Exception)` skip).
-        token_from_db = None
-        if io is not None:
-            with contextlib.suppress(Exception):
-                token_from_db = io.fetch_erc20_token(chain_id=chain_id, address=address)
-
-        name: str | None = None
-        symbol: str | None = None
-        decimals: int | None = None
-
-        if token_from_db is not None:
-            if token_from_db.name is not None:
-                name = token_from_db.name
-            if token_from_db.symbol is not None:
-                symbol = token_from_db.symbol
-            if token_from_db.decimals is not None:
-                decimals = token_from_db.decimals
-
-        # Fetch missing values from chain
-        if name is None or symbol is None or decimals is None:
-            assert io is not None
-
-            if not io.get_code(address):
-                raise DegenbotValueError(message="No contract deployed at this address")
-
-            try:
-                fetched_name, fetched_symbol, fetched_decimals = (
-                    _fetch_name_symbol_decimals_batched(address=address, io=io)
-                )
-            except (RpcError, AbiDecodeError):
-                # Fallback: try individual calls with alternate prototypes
-                for func_prototype in ("name()", "NAME()"):
-                    try:
-                        fetched_name = _fetch_name(
-                            address=address,
-                            io=io,
-                            func_prototype=func_prototype,
-                        )
-                        break
-                    except (RpcError, AbiDecodeError):
-                        continue
-                else:
-                    fetched_name = UNKNOWN_NAME
-
-                for func_prototype in ("symbol()", "SYMBOL()"):
-                    try:
-                        fetched_symbol = _fetch_symbol(
-                            address=address,
-                            io=io,
-                            func_prototype=func_prototype,
-                        )
-                        break
-                    except (RpcError, AbiDecodeError):
-                        continue
-                else:
-                    fetched_symbol = UNKNOWN_SYMBOL
-
-                for func_prototype in ("decimals()", "DECIMALS()"):
-                    try:
-                        fetched_decimals = _fetch_decimals(
-                            address=address,
-                            io=io,
-                            func_prototype=func_prototype,
-                        )
-                        break
-                    except (RpcError, AbiDecodeError):
-                        continue
-                else:
-                    fetched_decimals = UNKNOWN_DECIMALS
-
-            name = name or fetched_name
-            symbol = symbol or fetched_symbol
-            decimals = decimals or fetched_decimals
-
-            # Write back to DB if the record exists but was missing data.
-            # Route the construction-time write-back through the Rust
-            # `PyBotIo.update_erc20_token_metadata` seam (QVMWQC), which opens
-            # a `degenbot-db` write handle + `UPDATE`s the row, replacing the
-            # SQLAlchemy `session.commit()` dirty-tracking path.
-            if (
-                token_from_db is not None
-                and token_from_db.name is None
-                and token_from_db.symbol is None
-                and token_from_db.decimals is None
-                and io is not None
-            ):
-                with contextlib.suppress(Exception):
-                    io.update_erc20_token_metadata(
-                        chain_id=chain_id,
-                        address=address,
-                        name=name,
-                        symbol=symbol,
-                        decimals=decimals,
-                    )
-
-        py_token = self._py_bot.register_token(address, name, symbol, decimals, chain_id)
+        # DB-first + on-chain + write-back + register: Rust-owned (VK3YDM-S2).
+        # `PyBot.build_erc20_token` resolves name/symbol/decimals (DB row -> on-
+        # chain batched read -> alternate-prototype fallback -> UNKNOWN, with a
+        # blank-row write-back) and registers into the shared Rust
+        # `BotState.tokens` (ADR-006) in one core call over the attached
+        # `ConstructionIo`. Returns a thin `PyErc20Token` handle.
+        try:
+            py_token = self._py_bot.build_erc20_token(address, chain_id)
+        except RuntimeError as exc:
+            # Preserve the documented DegenbotValueError contract: the binding
+            # flattens core build failures to RuntimeError (map_builder_err),
+            # so re-raise as DegenbotValueError, stripping the binding's
+            # "pool build decode failure: " prefix.
+            raise DegenbotValueError(
+                message=str(exc).removeprefix("pool build decode failure: ")
+            ) from exc
         token = Erc20Token._from_py_token(py_token)  # ruff:ignore[private-member-access]
 
         # Register idempotently (35NMBX Guard 1): a concurrent worker may have
@@ -479,82 +399,3 @@ def _resolve_block_number(io: PyBotIo, block_identifier: BlockIdentifier | None)
         return block_identifier
     # For string identifiers like 'latest', 'earliest', 'pending'
     return io.get_block_number()
-
-
-def _fetch_name_symbol_decimals_batched(*, address: str, io: PyBotIo) -> tuple[str, str, int]:
-    """Fetch token name/symbol/decimals via Rust batch fetch.
-
-    The 3-call choreography is Rust-owned (``PyBotIo.fetch_erc20_metadata``,
-    ADR-005 slice 14c). PyBotIo is the only executor; the Python parity-gate
-    fallback is retired.
-
-    Returns:
-        The computed value.
-
-    Raises:
-        AbiDecodeError: If the batched fetch failed (provider revert or
-            decode failure).
-
-    """
-    result = io.fetch_erc20_metadata(address)
-    if result is None:
-        msg = "batched fetch failed (provider revert or decode failure)"
-        raise AbiDecodeError(message=msg)
-    return result
-
-
-def _fetch_name(*, address: str, io: PyBotIo, func_prototype: str = "name()") -> str:
-    """Fetch token name via Rust string-field fetch.
-
-    Delegates to ``PyBotIo.fetch_erc20_string_field`` (ADR-005 slice 14h).
-    PyBotIo is the only executor; the Python parity-gate fallback is retired.
-
-    Returns:
-        The computed value.
-
-    Raises:
-        AbiDecodeError: If the field could not be decoded as string or bytes32.
-
-    """
-    try:
-        return io.fetch_erc20_string_field(address, func_prototype)
-    except ValueError as exc:
-        raise AbiDecodeError(message=str(exc)) from exc
-
-
-def _fetch_symbol(*, address: str, io: PyBotIo, func_prototype: str = "symbol()") -> str:
-    """Fetch token symbol via Rust string-field fetch.
-
-    Delegates to ``PyBotIo.fetch_erc20_string_field`` (ADR-005 slice 14h).
-    PyBotIo is the only executor; the Python parity-gate fallback is retired.
-
-    Returns:
-        The computed value.
-
-    Raises:
-        AbiDecodeError: If the field could not be decoded as string or bytes32.
-
-    """
-    try:
-        return io.fetch_erc20_string_field(address, func_prototype)
-    except ValueError as exc:
-        raise AbiDecodeError(message=str(exc)) from exc
-
-
-def _fetch_decimals(*, address: str, io: PyBotIo, func_prototype: str = "decimals()") -> int:
-    """Fetch token decimals via Rust uint-field fetch.
-
-    Delegates to ``PyBotIo.fetch_erc20_uint_field`` (ADR-005 slice 14h).
-    PyBotIo is the only executor; the Python parity-gate fallback is retired.
-
-    Returns:
-        The computed value.
-
-    Raises:
-        AbiDecodeError: If the field could not be decoded as uint256.
-
-    """
-    try:
-        return io.fetch_erc20_uint_field(address, func_prototype)
-    except ValueError as exc:
-        raise AbiDecodeError(message=str(exc)) from exc

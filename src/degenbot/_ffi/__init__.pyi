@@ -1165,6 +1165,12 @@ class PyBot:
         chain_id: int,
     ) -> PyErc20Token: ...
     def get_token(self, address: str) -> PyErc20Token | None: ...
+    def build_erc20_token(
+        self,
+        address: str,
+        chain_id: int,
+        block: int | None = None,
+    ) -> PyErc20Token: ...
     def encode_swap(
         self,
         pool_id: int,
