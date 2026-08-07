@@ -512,6 +512,7 @@ fn encode_cmd_v4_v4(
 ) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
     let hop_outputs = inputs.hop_outputs;
+    let consumed_inputs = inputs.consumed_inputs;
     let executor_address = inputs.executor_address;
     let pool_manager_address = inputs.pool_manager_address;
     let weth_address = inputs.weth_address;
@@ -524,6 +525,14 @@ fn encode_cmd_v4_v4(
     }
     // Int128 overflow guard for every explicitly-amounted swap.
     if !fits_int128(optimal_input) || !fits_int128(forward_out) {
+        return None;
+    }
+    // The hop-1 V4 pool's explicit swap-in is the solver's CL-clamp executable
+    // forward (`consumed_inputs[1]`), not pool A's full output. (Only the
+    // currency-gap branch mounts a fixed-amount B swap; the no-gap branch reads
+    // the delta ledger and needs no amount.)
+    let b_swap_in = consumed_inputs.get(1).copied()?;
+    if !fits_int128(b_swap_in) {
         return None;
     }
 
@@ -607,13 +616,7 @@ fn encode_cmd_v4_v4(
         // 4. V4_SWAP_COMPACT for pool B (explicit amount).
         inner.extend_from_slice(
             &encoders::enc_v4_swap_compact(
-                c0_b_idx,
-                c1_b_idx,
-                b_fee,
-                b_ts,
-                zero_idx,
-                hop_b.zfo,
-                forward_out,
+                c0_b_idx, c1_b_idx, b_fee, b_ts, zero_idx, hop_b.zfo, b_swap_in,
             )
             .ok()?,
         );
@@ -1248,6 +1251,7 @@ fn encode_cmd_v3_v3(
 ) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
     let hop_outputs = inputs.hop_outputs;
+    let consumed_inputs = inputs.consumed_inputs;
     let executor_address = inputs.executor_address;
     let weth_address = inputs.weth_address;
 
@@ -1264,8 +1268,14 @@ fn encode_cmd_v3_v3(
 
     // V3_A callback: pay WETH to V3_A, then V3_B swap (auto-pay).
     let mut v3_a_callback = encoders::enc_erc20_transfer(weth_idx, v3_a_idx, optimal_input).ok()?;
+    // V3_B is the CL hop at index 1; its swap-in is the solver's CL-clamp
+    // executable forward (`consumed_inputs[1]`), not V3_A's full output.
+    let b_swap_in = consumed_inputs.get(1).copied()?;
+    if !fits_int128(b_swap_in) {
+        return None;
+    }
     let v3_b_cmd =
-        encoders::enc_v3_swap_compact(v3_b_idx, hop_b.zfo, forward_out, SENTINEL_SELF, &[]).ok()?;
+        encoders::enc_v3_swap_compact(v3_b_idx, hop_b.zfo, b_swap_in, SENTINEL_SELF, &[]).ok()?;
     v3_a_callback.extend_from_slice(&v3_b_cmd);
 
     // Top-level: V3_A swap (forward-order).

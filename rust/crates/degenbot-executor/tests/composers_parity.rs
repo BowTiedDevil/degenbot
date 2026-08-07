@@ -138,7 +138,9 @@ fn parity_v4v4_native_to_weth_wrap() {
         ]),
         1000000000000000000u128,
         &[2000000000u128, 2001000000000000000u128],
-        &[2000000000u128, 2001000000000000000u128],
+        // consumed_inputs = [optimal_input, pool-B clamped swap-in] — proves the
+        // encoder feeds the CL clamp vector (1 wei below the forward into B).
+        &[1000000000000000000u128, 1_999_999_999u128],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
@@ -167,8 +169,16 @@ fn parity_v4v4_native_to_weth_wrap() {
     );
     inner.extend_from_slice(&encoders::enc_weth_deposit(U256::from(2000000000u128)));
     inner.extend_from_slice(
-        &encoders::enc_v4_swap_compact(weth_idx, idx0, 500, 10, native_idx, false, 2000000000u128)
-            .unwrap(),
+        &encoders::enc_v4_swap_compact(
+            weth_idx,
+            idx0,
+            500,
+            10,
+            native_idx,
+            false,
+            1_999_999_999u128,
+        )
+        .unwrap(),
     );
     inner.extend_from_slice(&encoders::enc_v4_settle_delta(weth_idx));
     inner.extend_from_slice(&encoders::enc_v4_take_delta(weth_idx, executor_idx));
@@ -206,7 +216,9 @@ fn parity_v4v4_weth_to_native_unwrap() {
         ]),
         2000000000u128,
         &[1000000000000000000u128, 2001000000000000000u128],
-        &[1000000000000000000u128, 2001000000000000000u128],
+        // consumed_inputs = [optimal_input, pool-B clamped swap-in] — proves the
+        // encoder feeds the CL clamp vector (1 wei below the forward into B).
+        &[2000000000u128, 999_999_999_999_999_999u128],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
@@ -236,7 +248,7 @@ fn parity_v4v4_weth_to_native_unwrap() {
             10,
             native_idx,
             true,
-            1000000000000000000u128,
+            999_999_999_999_999_999u128, // = consumed_inputs[1] (CL clamp)
         )
         .unwrap(),
     );
@@ -412,7 +424,10 @@ fn parity_v4v4_weth_to_native_unwrap_batch() {
         ]),
         2000000000u128,
         &[1000000000000000000u128, 2001000000000000000u128],
-        &[1000000000000000000u128, 2001000000000000000u128],
+        // consumed_inputs = [optimal_input, pool-B clamped swap-in] — the batch
+        // mode still mounts an explicit B swap on a currency gap; it feeds the
+        // CL clamp vector (1 wei below the forward into B).
+        &[2000000000u128, 999_999_999_999_999_999u128],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
@@ -445,7 +460,7 @@ fn parity_v4v4_weth_to_native_unwrap_batch() {
             10,
             native_idx,
             true,
-            1000000000000000000u128,
+            999_999_999_999_999_999u128, // = consumed_inputs[1] (CL clamp)
         )
         .unwrap(),
     );
@@ -1183,7 +1198,10 @@ fn parity_v3v3_forward_order() {
         ]),
         1000000000000000000u128,
         &[2000000000u128, 2001000000000000000u128],
-        &[2000000000u128, 2001000000000000000u128],
+        // consumed_inputs = [optimal_input, V3b clamped swap-in] — V3b is the CL
+        // hop (index 1); its swap-in feeds the clamp vector, not hop_outputs[1]
+        // nor hop_outputs[0].
+        &[1000000000000000000u128, 1_999_999_999u128],
         address!("DeAd0000000000000000000000000000000000Be"),
         address!("000000000004444c5dc75cB358380D2e3dE08A90"),
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
@@ -1202,7 +1220,7 @@ fn parity_v3v3_forward_order() {
         &encoders::enc_erc20_transfer(weth_idx, v3_a_idx, 1_000_000_000_000_000_000u128).unwrap(),
     );
     v3_a_callback.extend_from_slice(
-        &encoders::enc_v3_swap_compact(v3_b_idx, true, 2_000_000_000u128, SENTINEL_SELF, &[])
+        &encoders::enc_v3_swap_compact(v3_b_idx, true, 1_999_999_999u128, SENTINEL_SELF, &[])
             .unwrap(),
     );
     let commands = encoders::enc_v3_swap_compact(
