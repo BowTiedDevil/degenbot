@@ -923,6 +923,109 @@ pub struct V3SwapOutcome {
     pub liquidity: u128,
     /// Final tick after the swap walk.
     pub tick: i32,
+    /// The gross amount of the *input* token the swap actually consumed, in
+    /// the input token's units.
+    ///
+    /// For an **exact-input** swap this is the pool's max-convertible input: if
+    /// it is `< |amount_specified|` the requested input was NOT fully consumed
+    /// (the walk hit the price limit with input left over — the pool could not
+    /// convert the whole amount). That leftover is the over-swap signal: a
+    /// solver must clamp its CL-hop input to this value (with a rounding margin)
+    /// so the exact-in loop terminates on `amountRemaining == 0` at the last
+    /// funded tick instead of marching empty bitmap words to the price limit
+    /// (the path-5000 20M-gas EMPTY-HALT). For an **exact-output** swap it is
+    /// the input required to produce the requested output (≤ the input that an
+    /// unbounded exact-in would spend). Identical to Solidity's
+    /// `amountSpecified - amountSpecifiedRemaining`.
+    pub input_consumed: U256,
+}
+
+impl V3SwapOutcome {
+    /// For an exact-input swap requested at `gross_input`, return the largest
+    /// input the pool can actually convert — i.e. the solver's clamp bound.
+    ///
+    /// Returns `Some(limit)` when the request exceeds capacity (`input_consumed
+    /// < gross_input`), `None` when the input was fully consumed (no clamp
+    /// needed — the caller may keep the default min/max price limit and the
+    /// exact-in loop exits on `amountRemaining == 0`). Callers should apply a
+    /// `margin` below the returned bound to absorb solver-vs-engine rounding at
+    /// the capacity boundary (`margin` subtracted here, so a 1-wei over-prediction
+    /// cannot re-trigger the EMPTY march). `gross_input` is the absolute value of
+    /// the exact-input `amount_specified` (the input token's side).
+    #[must_use]
+    pub fn exact_input_clamp_bound(&self, gross_input: U256, margin: U256) -> Option<U256> {
+        (self.input_consumed < gross_input).then(|| self.input_consumed.saturating_sub(margin))
+    }
+}
+
+#[cfg(test)]
+mod exact_input_clamp_tests {
+    //! Unit tests for `V3SwapOutcome::exact_input_clamp_bound` — the solver's
+    //! CL-hop input clamp that prevents over-feeding a pool past its capacity
+    //! (the path-5000 20M-gas EMPTY-HALT class, AGENTS.md UO3JM4).
+    use super::V3SwapOutcome;
+    use alloy::primitives::U256;
+
+    fn outcome(input_consumed: u128) -> V3SwapOutcome {
+        V3SwapOutcome {
+            amount0: U256::ZERO,
+            amount1: U256::ZERO,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 0,
+            tick: 0,
+            input_consumed: U256::from(input_consumed),
+        }
+    }
+
+    #[test]
+    fn returns_none_when_input_fully_consumed() {
+        // The pool converted the entire 1000 input — no over-feed, no clamp.
+        let o = outcome(1000);
+        assert_eq!(
+            o.exact_input_clamp_bound(U256::from(1000), U256::from(0)),
+            None
+        );
+    }
+
+    #[test]
+    fn caps_at_consumed_minus_margin() {
+        // Pool could only convert 900 of the 1000 requested — clamp to ~900.
+        let o = outcome(900);
+        assert_eq!(
+            o.exact_input_clamp_bound(U256::from(1000), U256::from(0)),
+            Some(U256::from(900))
+        );
+        // margin absorbs solver-vs-engine rounding at the capacity boundary.
+        assert_eq!(
+            o.exact_input_clamp_bound(U256::from(1000), U256::from(500)),
+            Some(U256::from(400))
+        );
+        // margin >= capacity saturates to 0.
+        assert_eq!(
+            o.exact_input_clamp_bound(U256::from(1000), U256::from(21000)),
+            Some(U256::ZERO)
+        );
+    }
+
+    #[test]
+    fn exact_capacity_is_not_clamped() {
+        // Request == capacity → fully consumed → the loop exits on
+        // amountRemaining == 0 → clamp is a no-op.
+        let o = outcome(1000);
+        assert_eq!(
+            o.exact_input_clamp_bound(U256::from(1000), U256::from(0)),
+            None
+        );
+    }
+
+    #[test]
+    fn nothing_convertible_caps_to_zero() {
+        let o = outcome(0);
+        assert_eq!(
+            o.exact_input_clamp_bound(U256::from(500), U256::from(0)),
+            Some(U256::ZERO)
+        );
+    }
 }
 
 /// Why a [`v3_simulate_swap`] / [`v4_simulate_swap`] call could not produce a
@@ -1190,6 +1293,7 @@ pub fn v3_simulate_swap(
         sqrt_price_x96,
         liquidity: u128::try_from(liquidity.max(0)).unwrap_or(0),
         tick,
+        input_consumed: input_consumed.unsigned_abs(),
     })
 }
 

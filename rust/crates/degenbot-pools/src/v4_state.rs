@@ -1008,6 +1008,7 @@ pub fn v4_simulate_swap(
         sqrt_price_x96,
         liquidity: u128::try_from(liquidity.max(0)).unwrap_or(0),
         tick,
+        input_consumed: input_consumed.unsigned_abs(),
     })
 }
 
