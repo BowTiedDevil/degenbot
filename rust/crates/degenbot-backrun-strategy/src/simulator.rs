@@ -108,20 +108,39 @@ pub const EXECUTE_GAS_ENV: &str = "DEGENBOT_SIM_EXECUTE_GAS";
 /// Read the effective `execute()` gas limit: `DEGENBOT_SIM_EXECUTE_GAS` when
 /// set (parsed as a decimal u64; an unparseable/garbage value logs a warning
 /// and falls back to [`INITIAL_EXECUTE_GAS`]), else [`INITIAL_EXECUTE_GAS`].
+#[must_use]
 pub fn execute_gas_limit() -> u64 {
     match std::env::var(EXECUTE_GAS_ENV) {
-        Ok(v) if !v.trim().is_empty() => match v.trim().parse::<u64>() {
-            Ok(g) if g > 0 => g,
-            Ok(_) => {
-                tracing::warn!(%EXECUTE_GAS_ENV, v, "executor gas override must be >0; using default");
-                INITIAL_EXECUTE_GAS
-            }
-            Err(_) => {
-                tracing::warn!(%EXECUTE_GAS_ENV, v, "executor gas override unparseable; using default");
-                INITIAL_EXECUTE_GAS
-            }
-        },
-        _ => INITIAL_EXECUTE_GAS,
+        Ok(v) => parse_execute_gas_override(&v).unwrap_or(INITIAL_EXECUTE_GAS),
+        Err(_) => INITIAL_EXECUTE_GAS,
+    }
+}
+
+/// Parse a `DEGENBOT_SIM_EXECUTE_GAS` override string into the gas limit.
+/// Returns `None` when the override should not change the default (unset/empty,
+/// `0`, or garbage — the latter two log a warning). **Pure**: it does NOT touch
+/// the process-global env, so it is unit-testable without the project-wide
+/// `std::env::set_var`/`remove_var` race (the env is shared across all parallel
+/// test threads — mutating it in one test perturbs every other test that reads
+/// it, e.g. the sim encode path at line 1404). This mirrors the crate's
+/// `parse_flag_value`/`flag_default_on` split; TEST the pure function, never
+/// the live env.
+#[must_use]
+fn parse_execute_gas_override(v: &str) -> Option<u64> {
+    let t = v.trim();
+    if t.is_empty() {
+        return None;
+    }
+    match t.parse::<u64>() {
+        Ok(g) if g > 0 => Some(g),
+        Ok(_) => {
+            tracing::warn!(%EXECUTE_GAS_ENV, v, "executor gas override must be >0; using default");
+            None
+        }
+        Err(_) => {
+            tracing::warn!(%EXECUTE_GAS_ENV, v, "executor gas override unparseable; using default");
+            None
+        }
     }
 }
 
@@ -1719,26 +1738,19 @@ mod tests {
     // ── C0: execute_gas_limit env override (artificial-ceiling investigation) ──
 
     #[test]
-    fn execute_gas_limit_defaults_to_initial() {
-        // Unset env → the hard-coded 5M ceiling.
-        unsafe { std::env::remove_var(EXECUTE_GAS_ENV) };
-        assert_eq!(execute_gas_limit(), INITIAL_EXECUTE_GAS);
+    fn parse_execute_gas_override_reads_valid_override() {
+        assert_eq!(parse_execute_gas_override("30000000"), Some(30_000_000));
+        assert_eq!(parse_execute_gas_override(" 5000000 "), Some(5_000_000));
     }
 
     #[test]
-    fn execute_gas_limit_reads_override() {
-        unsafe { std::env::set_var(EXECUTE_GAS_ENV, "30000000") };
-        assert_eq!(execute_gas_limit(), 30_000_000);
-        unsafe { std::env::remove_var(EXECUTE_GAS_ENV) };
-    }
-
-    #[test]
-    fn execute_gas_limit_ignores_garbage_and_zero() {
-        for bad in ["", "0", "abc", "-1", "1.5"] {
-            unsafe { std::env::set_var(EXECUTE_GAS_ENV, bad) };
-            assert_eq!(execute_gas_limit(), INITIAL_EXECUTE_GAS, "{bad:?}");
+    fn parse_execute_gas_override_rejects_garbage_and_zero() {
+        // Empty / zero / garbage stay on the default. Testing the PURE parse fn
+        // (not `execute_gas_limit()` + `set_var`) avoids the process-global env
+        // race that made this suite flaky under parallel execution.
+        for bad in ["", " ", "0", "abc", "-1", "1.5"] {
+            assert_eq!(parse_execute_gas_override(bad), None, "{bad:?}");
         }
-        unsafe { std::env::remove_var(EXECUTE_GAS_ENV) };
     }
 
     // ── C3: fits_int128 ──────────────────────────────────────────────────
