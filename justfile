@@ -242,6 +242,20 @@ test-tier3-pancake2:
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_pancake_v2_swap_vs_revm
 
+# Tier-3 path-5000 V4 CL-hop clamp regression (ergo BHTWBZ): prove the
+# CL-hop input clamp turns the 20.7M-gas EMPTY-HALT into a clean byte-exact
+# fill under the executor's 5M ceiling, using the real v4-core PoolManager.
+# The test loads the committed V4SwapOracleHarness bytecode (no toolchain),
+# so it ALSO runs in the default `just test-rust`; this recipe rebuilds +
+# republishes the v4 harness (like the other families) then re-runs the pair.
+test-tier3-path5000:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tier3-oracle/build-tier3-v4-swap-harness.sh
+    python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+    export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    cargo test --manifest-path rust/Cargo.toml -p degenbot --test tier3_path5000_v4_clamp
+
 # Tier-3 umbrella: rebuild + republish every canonical-reference harness, then
 # run the full on-chain oracle suite. The individual tests ALSO run in the
 # default `just test-rust` (they load the COMMITTED bytecode from
@@ -249,7 +263,7 @@ test-tier3-pancake2:
 # publish the artifacts (after a harness-source edit) and re-run each family.
 # Recompiling dozens of revm harnesses makes this slow — run explicitly, or in
 # the CI `tier3-oracle` job.
-test-tier3: test-tier3-step test-tier3-swap test-tier3-v2 test-tier3-v4 test-tier3-curve test-tier3-balancer test-tier3-pancake test-tier3-pancake2
+test-tier3: test-tier3-step test-tier3-swap test-tier3-v2 test-tier3-v4 test-tier3-path5000 test-tier3-curve test-tier3-balancer test-tier3-pancake test-tier3-pancake2
 
 # Validate the committed tier-3 harness bytecode: recompile EVERY harness with
 # the real solc/forge toolchain (into a throwaway dir, PUBLISH=0 — committed

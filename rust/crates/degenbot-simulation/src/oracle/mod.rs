@@ -19,7 +19,8 @@ use std::path::Path;
 
 use alloy::primitives::{keccak256, Address, Bytes, Log, U256};
 use revm::context::TxEnv;
-use revm::context_interface::result::{ExecutionResult, Output};
+use revm::context_interface::result::ExecutionResult;
+pub use revm::context_interface::result::Output;
 use revm::context_interface::ContextTr;
 use revm::database::CacheDB;
 use revm::database_interface::EmptyDB;

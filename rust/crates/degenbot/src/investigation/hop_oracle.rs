@@ -53,6 +53,14 @@ pub enum OracleOutcome {
     MissingTickWord(i32),
 }
 
+impl OracleOutcome {
+    /// Whether the pool could evaluate the swap (`Ok(_)`).
+    #[must_use]
+    pub const fn is_ok(&self) -> bool {
+        matches!(self, Self::Ok(_))
+    }
+}
+
 /// Drive a V3 hop at `amount_in` (exact-in, positive) through `v3_simulate_swap`.
 pub fn v3_hop_output(
     state: &V3PoolState,
@@ -103,6 +111,59 @@ pub fn v4_hop_output(
         Err(SimulateSwapError::NotComputable) => OracleOutcome::NotComputable,
         Err(SimulateSwapError::MissingTickWord(w)) => OracleOutcome::MissingTickWord(w),
     }
+}
+
+/// Drive a V4 hop at `amount_in` (exact-in) through `v4_simulate_swap`. V4
+/// exact-in passes a negative amount, so the input is negated internally.
+///
+/// Returns the pool's max-convertible input (`input_consumed`) alongside the
+/// output, so a caller can derive the CL-hop input clamp (feed
+/// `exact_input_clamp_bound` the returned consumption).
+pub fn v4_hop_output_consumed(
+    state: &V4PoolState,
+    fee: u32,
+    tick_spacing: i32,
+    zero_for_one: bool,
+    amount_in: U256,
+) -> OracleWithConsumed {
+    let amount_specified = I256::try_from(amount_in)
+        .expect("v4 input fits i256")
+        .checked_neg()
+        .expect("negate input (V4 exact-in is negative)");
+    let limit = V3PoolState::default_sqrt_price_limit(zero_for_one);
+    match v4_simulate_swap(
+        state,
+        fee,
+        tick_spacing,
+        zero_for_one,
+        amount_specified,
+        limit,
+    ) {
+        Ok(o) => OracleWithConsumed {
+            outcome: OracleOutcome::Ok(cl_exact_in_output(&o, zero_for_one)),
+            input_consumed: o.input_consumed,
+        },
+        Err(SimulateSwapError::NotComputable) => OracleWithConsumed {
+            outcome: OracleOutcome::NotComputable,
+            input_consumed: U256::ZERO,
+        },
+        Err(SimulateSwapError::MissingTickWord(w)) => OracleWithConsumed {
+            outcome: OracleOutcome::MissingTickWord(w),
+            input_consumed: U256::ZERO,
+        },
+    }
+}
+
+/// An [`OracleOutcome`] plus the pool's max-convertible input for the queried
+/// swap (the `input_consumed` the oracle twin reports), so the caller can
+/// derive the CL-hop input clamp without re-querying.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OracleWithConsumed {
+    /// The output / error classification (see [`OracleOutcome`]).
+    pub outcome: OracleOutcome,
+    /// The gross input-token amount the swap would actually convert (the
+    /// pool's max-convertible input for this `amount_in`, in input units).
+    pub input_consumed: U256,
 }
 
 /// Express a [`OracleOutcome`] as a comparison string for a solver's recorded

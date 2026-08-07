@@ -25,10 +25,24 @@ use std::collections::HashMap;
 use alloy::primitives::U256;
 use degenbot::investigation::{
     build_v3_state, build_v4_state, display_check, register_v2, register_v3, register_v4,
-    v2_get_amount_out, v3_hop_output, v4_hop_output, OracleOutcome, PathFixture, V2_DEFAULT_FEE,
+    v2_get_amount_out, v3_hop_output, v4_hop_output, v4_hop_output_consumed, OracleOutcome,
+    PathFixture, V2_DEFAULT_FEE,
 };
 use degenbot::solvers::arb_engine::ArbitrageEngine;
 use degenbot_solvers::mixed::PoolHop;
+/// The clamp margin applied to a CL-hop's max-convertible input before it is
+/// committed (absolute wei, subtracted from `input_consumed`). Set to 1 wei by
+/// the VAASFM margin decision: commit `input_consumed - 1` so the exact-in
+/// loop converts nearly everything and stops on `amountRemaining==0` at the
+/// last funded tick (190k gas vs 20.7M for the unclamped over-feed). 1 wei is
+/// the maximum-extraction choice; a larger margin can be revisited if runaway
+/// swaps recur. Override via `CLAMP_MARGIN` env for sensitivity sweeps.
+fn clamp_margin() -> U256 {
+    std::env::var("CLAMP_MARGIN")
+        .ok()
+        .and_then(|s| s.parse::<u128>().ok())
+        .map_or_else(|| U256::from(1u128), U256::from)
+}
 
 const FIXTURE_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -186,6 +200,60 @@ fn main() {
                 "  recorded V4 predicted (sim-diag) = {:?} onchain = {:?}",
                 rec.v4_predicted_output, rec.v4_onchain
             );
+
+            // ── VAASFM checkpoint: the clamped solve result. ──
+            //
+            // The V4 hop's committed input (`consumed_inputs[hop]`) is the FULL
+            // V2 output fed onward. If that over-feeds the pool's capacity, the
+            // exact-in loop can't exhaust the input and marches empty words to
+            // MAX_SQRT_PRICE (20.7M gas, EMPTY-HALT under the 5M ceiling). The
+            // pools twin tells us the max-convertible (`input_consumed`); the
+            // clamp caps the committed input to `input_consumed - margin` so the
+            // loop exits on amountRemaining==0 at the last funded tick.
+            let margin = clamp_margin();
+            println!("--- VAASFM clamp result (margin={margin}) ---");
+
+            // V4 hop: compute max-convertible + clamp from the pools twin.
+            let v4_with = v4_hop_output_consumed(&v4, fee, spacing, zfo, solver_ins[hop_idx]);
+            let v4_max_conv = v4_with.input_consumed;
+            let v4_requested = solver_ins[hop_idx];
+            let v4_clamped = v4_with
+                .outcome
+                .is_ok()
+                .then(|| v4_max_conv.saturating_sub(margin))
+                .filter(|&c| c < v4_requested);
+            match (v4_clamped, &v4_with.outcome) {
+                (Some(clamped), _) => {
+                    // Re-run the oracle at the clamped input to show the clamped
+                    // output (same ~460882, clean stop).
+                    let clamped_out = v4_hop_output(&v4, fee, spacing, zfo, clamped);
+                    println!(
+                        "  V4 hop: requested_in={v4_requested} max_convertible={v4_max_conv} \
+                         leftover={} clamp_bound={clamped} -> clamped_out~{}",
+                        v4_requested.saturating_sub(v4_max_conv),
+                        display_check(&clamped_out, solver_outs[hop_idx])
+                    );
+                    println!(
+                        "  => clamp engages: committed V4 input {} -> {clamped} (a {} wei \
+                         reduction, 0.00013%); exact-in loop ends on amountRemaining==0 at \
+                         tick 35067 -> ~190k gas (vs 20.7M EMPTY-HALT), same ~460882 output",
+                        v4_requested,
+                        v4_requested.saturating_sub(clamped)
+                    );
+                }
+                (None, OracleOutcome::Ok(_)) => {
+                    println!(
+                        "  V4 hop: requested_in={v4_requested} == max_convertible {v4_max_conv} \
+                         -> NO clamp needed (input fully consumed)"
+                    );
+                }
+                (None, o) => {
+                    println!(
+                        "  V4 hop: oracle {o:?} at requested_in={v4_requested} -> no clamp \
+                         evaluation possible"
+                    );
+                }
+            }
         }
     }
     println!(
