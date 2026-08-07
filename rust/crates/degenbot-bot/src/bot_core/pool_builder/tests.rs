@@ -56,6 +56,9 @@ struct FakeRpc {
     // calldata, not just the selector; checked first, falls back to the
     // selector-keyed map.
     responses_full: HashMap<Vec<u8>, Vec<u8>>,
+    // Code returned by `get_code` (non-empty for the ERC-20 “contract present”
+    // guard; empty by default so pool-family probes treat it as no-code).
+    code: Bytes,
 }
 
 impl FakeRpc {
@@ -63,6 +66,7 @@ impl FakeRpc {
         Self {
             responses: HashMap::new(),
             responses_full: HashMap::new(),
+            code: Bytes::new(),
         }
     }
     fn set(&mut self, sel: [u8; 4], bytes: Vec<u8>) {
@@ -70,6 +74,9 @@ impl FakeRpc {
     }
     fn set_full(&mut self, data: Vec<u8>, bytes: Vec<u8>) {
         self.responses_full.insert(data, bytes);
+    }
+    fn set_code(&mut self, code: Bytes) {
+        self.code = code;
     }
 }
 
@@ -88,7 +95,7 @@ impl RpcConstruction for FakeRpc {
         Ok(None)
     }
     async fn get_code(&self, _a: Address, _b: Option<u64>) -> Result<Bytes, ProviderError> {
-        Ok(Bytes::new())
+        Ok(self.code.clone())
     }
     async fn get_balance(&self, _a: Address, _b: Option<u64>) -> Result<U256, ProviderError> {
         Ok(U256::ZERO)
@@ -168,6 +175,165 @@ async fn fetch_erc20_metadata_returns_none_on_missing_selector() {
         choreography::fetch_erc20_metadata(&io, TO).await.unwrap(),
         None
     );
+}
+
+#[tokio::test]
+async fn build_erc20_metadata_resolves_on_chain_with_no_db() {
+    // VK3YDM-S2: with NoDb the DB row is absent (all fields missing), so
+    // build_erc20_metadata guards `get_code` then resolves all three on-chain
+    // via the batched read; no write-back (no DB row).
+    let mut f = FakeRpc::new();
+    f.set_code(Bytes::from_static(&[0x60, 0x80]));
+    f.set(choreography::selector(b"name()"), str_ret("Wrapped Ether"));
+    f.set(choreography::selector(b"symbol()"), str_ret("WETH"));
+    f.set(
+        choreography::selector(b"decimals()"),
+        enc(DynSolValue::Uint(U256::from(18), 256)),
+    );
+    let io = io_with(f);
+    let (name, symbol, decimals) = builder::build_erc20_metadata(&io, 1, TO, None)
+        .await
+        .unwrap();
+    assert_eq!(name, "Wrapped Ether");
+    assert_eq!(symbol, "WETH");
+    assert_eq!(decimals, 18);
+}
+
+#[tokio::test]
+async fn build_erc20_metadata_errors_on_empty_code() {
+    // No contract deployed at the address → `get_code` is empty → the guard
+    // raises `Decoding`, mirroring the Python "No contract deployed" error.
+    let io = io_with(FakeRpc::new()); // code defaults to empty
+    let err = builder::build_erc20_metadata(&io, 1, TO, None)
+        .await
+        .unwrap_err();
+    match err {
+        builder::PoolBuilderError::Decoding { message } => {
+            assert_eq!(message, "no contract deployed at this address");
+        }
+        other => panic!("expected Decoding, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn build_erc20_metadata_uses_db_row_and_skips_on_chain() {
+    // A DB-backed ConstructionIo whose row already has all three fields must
+    // return them without any on-chain read. The FakeDb below returns a fully
+    // populated row for the address; no RPC responses are configured, so any
+    // on-chain read would revert.
+    let io = ConstructionIo::new(
+        std::sync::Arc::new(FakeDb { address: TO }),
+        std::sync::Arc::new(FakeRpc::new()),
+    );
+    let (name, symbol, decimals) = builder::build_erc20_metadata(&io, 1, TO, None)
+        .await
+        .unwrap();
+    assert_eq!(name, "Wrapped Ether");
+    assert_eq!(symbol, "WETH");
+    assert_eq!(decimals, 18);
+}
+
+/// A `DbConstruction` double returning a fully-populated `Erc20TokenRow` for a
+/// single address (used to prove `build_erc20_metadata` prefers the DB row).
+struct FakeDb {
+    address: Address,
+}
+
+#[async_trait]
+impl crate::bot_core::construction_io::DbConstruction for FakeDb {
+    async fn fetch_erc20_token(
+        &self,
+        _chain_id: i64,
+        address: Address,
+    ) -> Result<Option<degenbot_db::rows::Erc20TokenRow>, degenbot_db::error::DbError> {
+        if address == self.address {
+            Ok(Some(degenbot_db::rows::Erc20TokenRow {
+                id: 1,
+                chain: 1,
+                address: self.address,
+                name: Some("Wrapped Ether".to_string()),
+                symbol: Some("WETH".to_string()),
+                decimals: Some(18),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+    async fn fetch_pool_row(
+        &self,
+        _chain_id: i64,
+        _address: Address,
+    ) -> Result<Option<degenbot_db::rows::LiquidityPoolRow>, degenbot_db::error::DbError> {
+        Ok(None)
+    }
+    async fn fetch_pool_kind(
+        &self,
+        _kind: &str,
+        _pool_id: i64,
+    ) -> Result<Option<degenbot_db::rows::PoolKindRow>, degenbot_db::error::DbError> {
+        Ok(None)
+    }
+    async fn fetch_token_by_id(
+        &self,
+        _token_id: i64,
+    ) -> Result<Option<degenbot_db::rows::Erc20TokenRow>, degenbot_db::error::DbError> {
+        Ok(None)
+    }
+    async fn fetch_exchange(
+        &self,
+        _exchange_id: i64,
+    ) -> Result<Option<degenbot_db::rows::ExchangeRow>, degenbot_db::error::DbError> {
+        Ok(None)
+    }
+    async fn fetch_liquidity_positions(
+        &self,
+        _pool_id: i64,
+    ) -> Result<Vec<degenbot_db::rows::LiquidityPositionRow>, degenbot_db::error::DbError> {
+        Ok(Vec::new())
+    }
+    async fn fetch_initialization_map(
+        &self,
+        _pool_id: i64,
+    ) -> Result<Vec<degenbot_db::rows::InitializationMapRow>, degenbot_db::error::DbError> {
+        Ok(Vec::new())
+    }
+    async fn fetch_pool_manager(
+        &self,
+        _chain_id: i64,
+        _address: Address,
+    ) -> Result<Option<degenbot_db::rows::PoolManagerRow>, degenbot_db::error::DbError> {
+        Ok(None)
+    }
+    async fn fetch_v4_pool_by_pool_hash(
+        &self,
+        _pool_hash_hex: &str,
+    ) -> Result<Option<degenbot_db::rows::V4PoolRow>, degenbot_db::error::DbError> {
+        Ok(None)
+    }
+    async fn fetch_managed_liquidity_positions(
+        &self,
+        _managed_pool_id: i64,
+    ) -> Result<Vec<degenbot_db::rows::ManagedPoolLiquidityPositionRow>, degenbot_db::error::DbError>
+    {
+        Ok(Vec::new())
+    }
+    async fn fetch_managed_initialization_map(
+        &self,
+        _managed_pool_id: i64,
+    ) -> Result<Vec<degenbot_db::rows::ManagedPoolInitializationMapRow>, degenbot_db::error::DbError>
+    {
+        Ok(Vec::new())
+    }
+    async fn update_erc20_token_metadata(
+        &self,
+        _chain_id: i64,
+        _address: &str,
+        _name: Option<&str>,
+        _symbol: Option<&str>,
+        _decimals: Option<i64>,
+    ) -> Result<(), degenbot_db::error::DbError> {
+        Ok(())
+    }
 }
 
 #[tokio::test]

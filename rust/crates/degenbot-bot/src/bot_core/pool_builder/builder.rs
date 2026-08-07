@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use alloy::primitives::{Address, B256, U256};
+use degenbot_core::address_utils::address_to_checksum_string;
 use degenbot_core::errors::ProviderError;
 use degenbot_db::error::DbError;
 use degenbot_db::snapshot::TickMapDb;
@@ -68,6 +69,137 @@ pub enum PoolBuilderError {
     Db(#[from] DbError),
     #[error("V4 identity incomplete: {message}")]
     MissingIdentity { message: String },
+}
+
+/// Sentinels returned when an ERC-20 metadata field cannot be resolved,
+/// mirroring `erc20_builder.py::UNKNOWN_NAME/UNKNOWN_SYMBOL/UNKNOWN_DECIMALS`.
+const UNKNOWN_NAME: &str = "UNKNOWN";
+const UNKNOWN_SYMBOL: &str = "UNKNOWN";
+const UNKNOWN_DECIMALS: u8 = 16;
+
+/// Resolve ERC-20 token metadata DB-first, then on-chain, with the
+/// alternate-prototype + UNKNOWN fallbacks — the core twin of
+/// `Erc20Builder.build` steps 3–5 (VK3YDM-S2).
+///
+/// Order:
+/// 1. `io.fetch_erc20_token(chain_id, address)` — prefer the persisted row's
+///    `name`/`symbol`/`decimals` when present.
+/// 2. If any field is missing, guard that a contract is deployed
+///    (`get_code` non-empty), then try the batched `fetch_erc20_metadata`
+///    (all-or-nothing) and backfill missing fields.
+/// 3. Any field still missing falls back to the alternate prototype reads
+///    (`name()/NAME()`, `symbol()/SYMBOL()`, `decimals()/DECIMALS()`), else the
+///    UNKNOWN sentinels.
+/// 4. When the DB row existed but was fully blank, write the resolved values
+///    back best-effort.
+///
+/// Returns `(name, symbol, decimals)`. This is a pure choreography fn over
+/// [`ConstructionIo`] (no `BotState`) so a standalone `cargo add degenbot`
+/// consumer can reach it via the umbrella; it does NOT itself register the
+/// token — the `PyBot.build_erc20_token` seam calls this then
+/// `BotState::register_token`.
+///
+/// # Errors
+///
+/// Returns [`PoolBuilderError::Rpc`] on an RPC failure, [`PoolBuilderError::Db`]
+/// on a DB read failure, and [`PoolBuilderError::Decoding`] when no contract is
+/// deployed at `address`. A metadata write-back failure is ignored.
+///
+/// # Panics
+///
+/// Never panics.
+pub async fn build_erc20_metadata(
+    io: &ConstructionIo,
+    chain_id: i64,
+    address: Address,
+    block: Option<u64>,
+) -> Result<(String, String, u8), PoolBuilderError> {
+    // 1. DB-first.
+    let db_row = io.fetch_erc20_token(chain_id, address).await?;
+    let mut name = db_row.as_ref().and_then(|r| r.name.clone());
+    let mut symbol = db_row.as_ref().and_then(|r| r.symbol.clone());
+    let mut decimals = db_row
+        .as_ref()
+        .and_then(|r| r.decimals)
+        .map(|dec| u8::try_from(dec).unwrap_or(UNKNOWN_DECIMALS));
+
+    // All fields present in the DB — nothing more to resolve.
+    if let (Some(n), Some(s), Some(d)) = (&name, &symbol, &decimals) {
+        return Ok((n.clone(), s.clone(), *d));
+    }
+
+    // 2. Contract-present guard, then the batched all-or-nothing read.
+    let code = io.get_code(address, block).await?;
+    if code.is_empty() {
+        return Err(PoolBuilderError::Decoding {
+            message: "no contract deployed at this address".to_owned(),
+        });
+    }
+    if let Ok(Some((n, s, d))) = choreography::fetch_erc20_metadata(io, address).await {
+        if name.is_none() {
+            name = Some(n);
+        }
+        if symbol.is_none() {
+            symbol = Some(s);
+        }
+        if decimals.is_none() {
+            decimals = Some(u8::try_from(d).unwrap_or(UNKNOWN_DECIMALS));
+        }
+    }
+
+    // 3. Per-field alternate-prototype fallback for anything still missing.
+    if name.is_none() {
+        name = Some(fetch_field_string(io, address, &[b"name()", b"NAME()"]).await);
+    }
+    if symbol.is_none() {
+        symbol = Some(fetch_field_string(io, address, &[b"symbol()", b"SYMBOL()"]).await);
+    }
+    if decimals.is_none() {
+        decimals = Some(fetch_field_decimals(io, address, &[b"decimals()", b"DECIMALS()"]).await);
+    }
+    let name = name.unwrap_or_else(|| UNKNOWN_NAME.to_string());
+    let symbol = symbol.unwrap_or_else(|| UNKNOWN_SYMBOL.to_string());
+    let decimals = decimals.unwrap_or(UNKNOWN_DECIMALS);
+
+    // 4. Write back when the DB row existed but was fully blank.
+    if db_row.is_some_and(|r| r.name.is_none() && r.symbol.is_none() && r.decimals.is_none()) {
+        let addr_hex = address_to_checksum_string(&address);
+        let _ = io
+            .update_erc20_token_metadata(
+                chain_id,
+                &addr_hex,
+                Some(&name),
+                Some(&symbol),
+                Some(i64::from(decimals)),
+            )
+            .await;
+    }
+
+    Ok((name, symbol, decimals))
+}
+
+/// Read a string field trying each prototype in order (e.g. `name()` then
+/// `NAME()`), returning the FIRST that decodes, else `UNKNOWN_NAME`.
+async fn fetch_field_string(io: &ConstructionIo, address: Address, prototypes: &[&[u8]]) -> String {
+    for p in prototypes {
+        if let Ok(s) = choreography::fetch_erc20_string_field(io, address, p, None).await {
+            return s;
+        }
+    }
+    UNKNOWN_NAME.to_string()
+}
+
+/// Read `decimals()` (or an alternate prototype) as a `uint256`, validated to
+/// `u8`; else `UNKNOWN_DECIMALS`.
+async fn fetch_field_decimals(io: &ConstructionIo, address: Address, prototypes: &[&[u8]]) -> u8 {
+    for p in prototypes {
+        if let Ok(v) = choreography::fetch_erc20_uint_field(io, address, p, None).await {
+            if let Ok(dec) = u8::try_from(v.to::<u64>()) {
+                return dec;
+            }
+        }
+    }
+    UNKNOWN_DECIMALS
 }
 
 /// Probe a pool contract to identify its family via the canonical read-call

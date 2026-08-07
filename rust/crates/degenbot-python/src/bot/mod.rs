@@ -2478,6 +2478,55 @@ impl PyBot {
         }
     }
 
+    /// Build + register an ERC-20 token, resolving metadata DB-first, then
+    /// on-chain (the core twin of `Erc20Builder.build`, VK3YDM-S2).
+    ///
+    /// `builder::build_erc20_metadata` resolves `name`/`symbol`/`decimals`
+    /// (DB row → on-chain batched read → alternate-prototype fallback →
+    /// UNKNOWN sentinels, with a DB write-back), then this adapter registers
+    /// the token into `BotState.tokens` (ADR-006) exactly like
+    /// [`Self::register_token`], and returns a thin [`PyErc20Token`] handle.
+    ///
+    /// Args:
+    ///     `address`: token contract address (hex string).
+    ///     `chain_id`: chain ID.
+    ///     `block`: optional block to read on-chain at (None = head).
+    #[pyo3(signature = (address, chain_id, block=None))]
+    #[allow(clippy::cast_possible_wrap)] // chain_id u64 -> core i64 (ids are small)
+    fn build_erc20_token(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        chain_id: u64,
+        block: Option<u64>,
+    ) -> PyResult<PyErc20Token> {
+        use degenbot_bot::bot_core::pool_builder::builder;
+        use degenbot_core::runtime::get_runtime;
+        let addr = parse_address(address)?;
+        let io = self.bot.construction_io_arc().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "build_erc20_token: no ConstructionIo attached (requires an alloy provider)",
+            )
+        })?;
+        let (name, symbol, decimals) = py
+            .detach(|| {
+                get_runtime().block_on(builder::build_erc20_metadata(
+                    &io,
+                    chain_id as i64,
+                    addr,
+                    block,
+                ))
+            })
+            .map_err(map_builder_err)?;
+        let state = self.bot.state_arc();
+        py.detach(move || {
+            state
+                .write()
+                .register_token(addr, name, symbol, decimals, chain_id);
+        });
+        Ok(PyErc20Token::new(self.bot.state_arc(), addr))
+    }
+
     /// Encode a V2 swap call, returning `(to_address_hex, calldata_hex, value)`.
     ///
     /// Args:

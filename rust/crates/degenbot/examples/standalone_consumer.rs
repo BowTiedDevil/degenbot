@@ -46,9 +46,9 @@ use revm::state::AccountInfo;
 // to prove the `ConstructionIo` seam + probe/dispatch compile and run.
 use degenbot::bot_core::construction_io::{ConstructionIo, NoDb, RpcConstruction};
 use degenbot::bot_core::pool_builder::builder::{
-    build_aerodrome_v2, build_balancer_stable, build_balancer_weighted, build_curve_pool, build_v2,
-    build_v3, build_v4, probe_pool_type, resolve_v4_identity, PoolBuilderError, PoolFamily,
-    V4PoolBuildIdentity, V4PoolBuildOverrides,
+    build_aerodrome_v2, build_balancer_stable, build_balancer_weighted, build_curve_pool,
+    build_erc20_metadata, build_v2, build_v3, build_v4, probe_pool_type, resolve_v4_identity,
+    PoolBuilderError, PoolFamily, V4PoolBuildIdentity, V4PoolBuildOverrides,
 };
 use degenbot::degenbot_rpc::provider::EthBlock;
 use degenbot::errors::ProviderError;
@@ -641,6 +641,16 @@ fn in_process_sim_standalone_slice() {
     assert!(
         matches!(err, Err(PoolBuilderError::Rpc(_))),
         "build_v2 over a failing RPC must yield a typed Rpc error, got {err:?}"
+    );
+    // ERC-20 (VK3YDM-S2): `build_erc20_metadata` is reachable standalone via
+    // the umbrella with no pyo3. Over the same always-failing stub it must
+    // surface a typed `PoolBuilderError::Rpc` (the `get_code` guard errors)
+    // rather than panic — pinning the umbrella path for the erc20 family (the
+    // on-chain success path is unit-tested in degenbot-bot's FakeRpc suite).
+    let err = degenbot::runtime::get_runtime().block_on(build_erc20_metadata(&io, 1, POOL_B, None));
+    assert!(
+        matches!(err, Err(PoolBuilderError::Rpc(_))),
+        "build_erc20_metadata over a failing RPC must yield a typed Rpc error, got {err:?}"
     );
     // V3: same failing stub — `build_v3` (the T4 Tracked/Sparse DB-arm + Chain
     // sparse path) must surface a typed Rpc error too, pinning the umbrella
