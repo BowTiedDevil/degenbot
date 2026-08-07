@@ -43,3 +43,7 @@ hex = "^0.4"
 # default features excludes dev-deps), so the no-pyo3-in-cores invariant is
 # unaffected.
 revm = { version = "^42.0", default-features = true }
+# The tier-3 on-chain oracle driver (deploy -> seed -> call -> classify) now
+# lives in `degenbot-simulation::oracle` (ADR-020 landing zone), and the
+# tier-3 CL oracles drive the real pool bytecode through it. A dev-dep only.
+degenbot-simulation = { path = "../degenbot-simulation" }

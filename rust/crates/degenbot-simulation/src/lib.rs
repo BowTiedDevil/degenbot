@@ -24,6 +24,18 @@
 /// `degenbot-backrun-strategy` (ADR-019 D4/D7, decision R).
 pub mod sim;
 
+/// Contract-agnostic in-process revm **fixture driver** — deploy a pinned
+/// contract artifact, run staged calls, seed storage slots, drive a call,
+/// classify the verdict (Revert vs Halt), and read back output + logs. The
+/// shared spine of the tier-3 on-chain oracles and any per-contract (user)
+/// investigation harness. See [`oracle`] for the API.
+pub mod oracle;
+
+pub use oracle::{
+    call_bytes, decode_error_string, deploy, load_foundry_creation_bytecode, new_fixture_evm,
+    parse_foundry_creation_bytecode, read_address, seed_slots, selector, set_code_size_limits,
+    set_disable_nonce_check, transact, FixtureEvm, TxSpec, Verdict,
+};
 // Re-export the engine surface at the crate root for ergonomic access + for
 // the strategy crate (`degenbot-backrun-strategy`) + the PyO3 wrapper. The
 // strategy value types (`SimResult`, `SimulateContext`, `FailBuckets`, …)

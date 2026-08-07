@@ -28,6 +28,11 @@
 /// Foundational utilities — errors, hex, EIP-55 addresses, shared runtime.
 pub use degenbot_core::{address_utils, errors, hex_utils, runtime};
 
+/// Path **investigation toolkit** — shared fixture load/reconstruct/per-hop
+/// oracle helpers for reproducing captured failing backrun paths in the
+/// `examples/path*_solver_fixture.rs` investigate-runner dialect.
+pub mod investigation;
+
 /// Per-chain Rust-owned bot state (`BotState`), reorg journal, decoders,
 /// liquidity verifier, block pump, log/solve/reorg coordinators, V2/V3/V4
 /// state, plus the Möbius solvers + the unified `ArbitrageEngine`.

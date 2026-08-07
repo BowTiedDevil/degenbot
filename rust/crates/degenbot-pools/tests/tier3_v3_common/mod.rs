@@ -34,13 +34,10 @@ use std::path::PathBuf;
 
 use alloy::primitives::{aliases::I256, keccak256, Address, Bytes, U128, U256};
 use alloy::rpc::types::Log as RpcLog;
-use revm::context::TxEnv;
-use revm::context_interface::result::{ExecutionResult, Output};
+use revm::context_interface::result::Output;
 use revm::context_interface::ContextTr;
 use revm::database::CacheDB;
 use revm::database_interface::EmptyDB;
-use revm::primitives::TxKind;
-use revm::{ExecuteCommitEvm, ExecuteEvm, MainBuilder, MainContext};
 
 use degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal;
 use degenbot_pools::state_history::{ReorgJournal, V3BlockDelta};
@@ -220,143 +217,90 @@ pub fn run_onchain_swap(
     amount_specified: I256,
     sqrt_price_limit: u128,
 ) -> ProbeOutcome {
+    // Shared, contract-agnostic revm fixture driver (degenbot_simulation::oracle):
+    // deploy the real harness, sequence staged calls, seed storage, drive swap,
+    // and classify Revert-vs-Halt — so the tier-3 oracle and any user harness
+    // share one EVM spine rather than each re-deriving it.
+    use degenbot_simulation::oracle;
+
+    // Assemble init code = harness creation bytecode + constructor args.
     let mut init_code = load_creation_bytecode(fork.harness_sol, fork.harness_contract);
     init_code.extend_from_slice(&harness_constructor_args(fee, tick_spacing));
-    let db = CacheDB::new(EmptyDB::default());
-    let mut evm = revm::context::Context::mainnet()
-        .with_db(db)
-        .build_mainnet();
-    evm.ctx.cfg.disable_nonce_check = true;
+
+    // Fresh EVM per probe so storage is pristine.
+    let mut evm = oracle::new_fixture_evm();
+    oracle::set_disable_nonce_check(&mut evm, true);
     if fork.raise_eip170 {
-        evm.ctx.cfg.limit_contract_code_size = Some(usize::MAX);
-        evm.ctx.cfg.limit_contract_initcode_size = Some(usize::MAX);
+        oracle::set_code_size_limits(&mut evm, None);
     }
 
     // 1. Deploy harness (mock tokens + the deployer/callback roles).
-    let deploy_res = evm
-        .transact(
-            TxEnv::builder()
-                .kind(TxKind::Create)
-                .gas_limit(16_700_000)
-                .data(Bytes::from(init_code))
-                .build()
-                .expect("deploy tx"),
-        )
-        .expect("deploy transact");
-    let harness = match &deploy_res.result {
-        ExecutionResult::Success {
-            output: Output::Create(_, Some(addr)),
-            ..
-        } => *addr,
-        other => return ProbeOutcome::Halted(format!("harness deploy failed: {other:?}")),
+    let harness = match oracle::deploy(&mut evm, Bytes::from(init_code), 16_700_000) {
+        Ok(a) => a,
+        Err(e) => return ProbeOutcome::Halted(format!("harness deploy failed: {e}")),
     };
-    evm.commit(deploy_res.state);
 
     // 2. setupPool -> real pool (a separate CALL so the code-deposit gas isn't
     //    starved by the constructor's 63/64 forwarding).
-    let setup_res = evm
-        .transact(
-            TxEnv::builder()
-                .kind(TxKind::Call(harness))
-                .gas_limit(16_700_000)
-                .data(Bytes::from(selector("setupPool()").to_vec()))
-                .build()
-                .expect("setupPool tx"),
-        )
-        .expect("setupPool transact");
-    match &setup_res.result {
-        ExecutionResult::Success { .. } => {}
-        other => return ProbeOutcome::Halted(format!("setupPool failed: {other:?}")),
+    if oracle::call_bytes(
+        &mut evm,
+        harness,
+        Bytes::from(selector("setupPool()").to_vec()),
+        16_700_000,
+    )
+    .is_err()
+    {
+        return ProbeOutcome::Halted("setupPool failed".to_string());
     }
-    evm.commit(setup_res.state);
 
     // 3. Resolve + seed the pool address.
-    let pool_res = evm
-        .transact(
-            TxEnv::builder()
-                .kind(TxKind::Call(harness))
-                .gas_limit(2_000_000)
-                .data(Bytes::from(selector("pool()").to_vec()))
-                .build()
-                .expect("pool() tx"),
-        )
-        .expect("pool() transact");
-    let pool = match &pool_res.result {
-        ExecutionResult::Success {
-            output: Output::Call(b),
-            ..
-        } => {
-            let mut buf = [0u8; 32];
-            buf.copy_from_slice(&b.as_ref()[0..32]);
-            Address::from_slice(&buf[12..32])
-        }
-        other => return ProbeOutcome::Halted(format!("pool() failed: {other:?}")),
+    let pool = match oracle::read_address(
+        &mut evm,
+        harness,
+        Bytes::from(selector("pool()").to_vec()),
+        2_000_000,
+    ) {
+        Ok(a) => a,
+        Err(e) => return ProbeOutcome::Halted(format!("pool() failed: {e}")),
     };
-    evm.commit(pool_res.state);
     seeder(evm.ctx.db_mut(), pool, state, tick_spacing);
 
-    // 4. Drive the swap.
+    // 4. Drive the swap — classify Revert vs Halt via the shared driver.
     let data = encode_swap_call(zero_for_one, amount_specified, sqrt_price_limit);
-    let res = evm
-        .transact(
-            TxEnv::builder()
-                .kind(TxKind::Call(harness))
-                .gas_limit(16_700_000)
-                .data(Bytes::from(data))
-                .build()
-                .expect("swap tx"),
-        )
-        .expect("swap transact");
-
-    let out = match res.result {
-        ExecutionResult::Success {
+    let (out_bytes, logs) = match oracle::transact(
+        &mut evm,
+        oracle::TxSpec::Call {
+            to: harness,
+            data: Bytes::from(data),
+            gas: 16_700_000,
+        },
+    ) {
+        oracle::Verdict::Accepted {
             output: Output::Call(b),
             logs,
+        } => (b, logs),
+        oracle::Verdict::Reverted(r) => return ProbeOutcome::Reverted { reason: r },
+        oracle::Verdict::Halted(h) => return ProbeOutcome::Halted(h),
+        oracle::Verdict::Accepted {
+            output: Output::Create(..),
             ..
-        } => {
-            evm.commit(res.state);
-            (b, logs)
-        }
-        ExecutionResult::Revert { output, .. } => {
-            evm.commit(res.state);
-            return ProbeOutcome::Reverted { reason: output };
-        }
-        ExecutionResult::Halt { reason, .. } => {
-            evm.commit(res.state);
-            return ProbeOutcome::Halted(format!("swap halted: {reason:?}"));
-        }
-        other => {
-            evm.commit(res.state);
-            return ProbeOutcome::Halted(format!("swap returned unexpected result: {other:?}"));
-        }
+        } => return ProbeOutcome::Halted("swap returned a Create output".to_string()),
     };
 
-    let (out, logs) = out;
     let mut w = [0u8; 32];
-    w.copy_from_slice(&out.as_ref()[0..32]);
+    w.copy_from_slice(&out_bytes.as_ref()[0..32]);
     let amount0 = I256::from_raw(U256::from_be_bytes(w)).unsigned_abs();
-    w.copy_from_slice(&out.as_ref()[32..64]);
+    w.copy_from_slice(&out_bytes.as_ref()[32..64]);
     let amount1 = I256::from_raw(U256::from_be_bytes(w)).unsigned_abs();
 
     // 5. Post-swap slot0 -> sqrtPriceX96 (word0), tick (word1, sign-extended).
-    let s0 = evm
-        .transact(
-            TxEnv::builder()
-                .kind(TxKind::Call(pool))
-                .gas_limit(2_000_000)
-                .data(Bytes::from(selector("slot0()").to_vec()))
-                .build()
-                .expect("slot0 tx"),
-        )
-        .expect("slot0 transact");
-    let s0_out = match &s0.result {
-        ExecutionResult::Success {
-            output: Output::Call(b),
-            ..
-        } => b.clone(),
-        other => return ProbeOutcome::Halted(format!("slot0() reverted: {other:?}")),
-    };
-    evm.commit(s0.state);
+    let s0_out = oracle::call_bytes(
+        &mut evm,
+        pool,
+        Bytes::from(selector("slot0()").to_vec()),
+        2_000_000,
+    )
+    .unwrap_or_else(|e| panic!("slot0() reverted: {e}"));
     let word_at = |i: usize| -> U256 {
         let mut buf = [0u8; 32];
         buf.copy_from_slice(&s0_out.as_ref()[i * 32..(i + 1) * 32]);
@@ -367,24 +311,13 @@ pub fn run_onchain_swap(
     let post_tick = tick_bits as i32;
 
     // 6. Post-swap liquidity() -> uint128.
-    let liq_res = evm
-        .transact(
-            TxEnv::builder()
-                .kind(TxKind::Call(pool))
-                .gas_limit(2_000_000)
-                .data(Bytes::from(selector("liquidity()").to_vec()))
-                .build()
-                .expect("liquidity tx"),
-        )
-        .expect("liquidity transact");
-    let liq_out = match &liq_res.result {
-        ExecutionResult::Success {
-            output: Output::Call(b),
-            ..
-        } => b.clone(),
-        other => return ProbeOutcome::Halted(format!("liquidity() reverted: {other:?}")),
-    };
-    evm.commit(liq_res.state);
+    let liq_out = oracle::call_bytes(
+        &mut evm,
+        pool,
+        Bytes::from(selector("liquidity()").to_vec()),
+        2_000_000,
+    )
+    .unwrap_or_else(|e| panic!("liquidity() reverted: {e}"));
     let mut lb = [0u8; 32];
     lb.copy_from_slice(&liq_out.as_ref()[0..32]);
     let post_liq = (U256::from_be_bytes(lb) & MASK_128).to::<u128>();

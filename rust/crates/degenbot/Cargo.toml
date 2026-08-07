@@ -29,6 +29,9 @@ suspicious = "warn"
 # DOES pull pyo3; the umbrella never depends on it.
 [dependencies]
 parking_lot = { version = "^0.12" }
+alloy = { version = "^2.3", features = ["full"] }
+serde = { version = "^1.0", features = ["derive"] }
+serde_json = { version = "^1.0" }
 degenbot-aave = { path = "../degenbot-aave" }
 degenbot-abi = { path = "../degenbot-abi" }
 degenbot-balancer-math = { path = "../degenbot-balancer-math" }

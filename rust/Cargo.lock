@@ -2243,6 +2243,7 @@ dependencies = [
  "degenbot-cl-math",
  "degenbot-curve-math",
  "degenbot-decoders",
+ "degenbot-simulation",
  "degenbot-solidly-math",
  "degenbot-uniswap",
  "degenbot-v2-math",
