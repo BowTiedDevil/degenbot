@@ -1,0 +1,16 @@
+{
+  "_doc": "Shared canonical ERC-20 metadata fixture for the ADR-005 Tier-2 dual-driver parity tests (VK3YDM-S6). Loaded by BOTH rust/crates/degenbot/tests/parity_erc20.rs (Rust consumer: build_erc20_metadata over a ConstructionIo whose fake Rpc RPC serves name()/symbol()/decimals()+non-empty get_code) AND tests/standalone_parity/test_erc20_dual_driver.py (Python consumer: PyBot.build_erc20_token over an offline alloy provider). The fixture holds the plain canonical metadata (no RPC cassette) - each side ABI-encodes the SAME name()/symbol()/decimals() from `fixture` into its provider double with no DB row (both NoDb and a DB-less offline provider resolve DB-first to None, then on-chain), then asserts the resolved (name, symbol, decimals) equals `expected`. A deliberately-wrong edit to THIS file fails BOTH sides mechanically (the shared-fixture contract, HRT356). Keeps `fixture.metadata == expected` by default so a one-sided edit drifts the RPC payload away from the asserted output and fails one side.",
+  "fixture": {
+    "token": "0x00000000000000000000000000000000000000aa",
+    "name": "Wrapped Ether",
+    "symbol": "WETH",
+    "decimals": 18,
+    "_note": "The plain canonical metadata both sides ABI-encode into their provider doubles (a DB-miss -> full on-chain resolution)."
+  },
+  "expected": {
+    "name": "Wrapped Ether",
+    "symbol": "WETH",
+    "decimals": 18,
+    "_note": "What BOTH consumers must resolve from the SAME plain fixture - proving the DB-first + on-chain resolution is lossless across the FFI seam."
+  }
+}
