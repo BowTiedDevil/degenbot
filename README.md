@@ -154,6 +154,8 @@ print(f"Output: {amount_out}")
 
 Pool classes cannot be constructed from an address alone — all state must be provided as keyword arguments. Use `Bot.build_pool()` instead:
 
+<!-- live-rpc: start "requires live RPC" -->
+
 ```python
 # Do NOT do this — will raise AttributeError:
 # pool = degenbot.UniswapV3Pool("0x...")  ← BROKEN!
@@ -161,6 +163,8 @@ Pool classes cannot be constructed from an address alone — all state must be p
 # Instead, always use Bot to construct pools:
 pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
 ```
+
+<!-- live-rpc: end -->
 
 <!-- clear-namespace -->
 
@@ -204,6 +208,8 @@ bot.provider  # ProviderAdapter for chain 1
 bot.chain_id  # 1
 ```
 
+<!-- live-rpc: start "requires live RPC" -->
+
 ```python
 # All pool/token creation flows through Bot
 pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
@@ -213,6 +219,8 @@ token = bot.build_erc20token("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 balance = bot.get_token_balance(token, "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
 approval = bot.get_token_approval(token, owner="0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", spender="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45")
 ```
+
+<!-- live-rpc: end -->
 
 **Bot properties:**
 - `bot.chain_id` - the configured chain ID for this single-chain session
@@ -345,6 +353,8 @@ bot = degenbot.Bot(
 )
 ```
 
+<!-- live-rpc: start "requires live RPC" -->
+
 ```python
 # Build tokens (fetches from DB/RPC, cached in registry)
 weth = bot.build_erc20token("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
@@ -369,9 +379,13 @@ amount_out = v3_pool.calculate_tokens_out_from_tokens_in(
 )
 ```
 
+<!-- live-rpc: end -->
+
 ### Direct Pool Construction (Advanced)
 
 Pool classes cannot be constructed from an address alone — all state must be provided as keyword arguments. Use `Bot.build_pool()` instead:
+
+<!-- live-rpc: start "requires live RPC" -->
 
 ```python
 # Do NOT do this — will raise AttributeError:
@@ -380,6 +394,8 @@ Pool classes cannot be constructed from an address alone — all state must be p
 # Instead, always use Bot to construct pools:
 pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
 ```
+
+<!-- live-rpc: end -->
 
 ---
 
@@ -1172,6 +1188,8 @@ bot = degenbot.Bot(
 
 ### Universal Pool Builder
 
+<!-- live-rpc: start "requires live RPC" -->
+
 ```python
 # Universal builder — auto-resolves pool type from DB, registry, or on-chain probing
 pool = bot.build_pool(
@@ -1179,6 +1197,8 @@ pool = bot.build_pool(
     state_block=18900000,  # Optional, defaults to current block
 )
 ```
+
+<!-- live-rpc: end -->
 
 <!-- skip: start "requires Base chain RPC node" -->
 
@@ -1193,6 +1213,8 @@ pool = bot.build_managed_pool(
 <!-- skip: end -->
 
 ### Pool Construction by Type
+
+<!-- live-rpc: start "requires live RPC" -->
 
 ```python
 # V2 pool (auto-detected from factory)
@@ -1212,6 +1234,8 @@ pool = bot.build_pool(
 )
 ```
 
+<!-- live-rpc: end -->
+
 <!-- skip: start "requires Base chain RPC node" -->
 
 ```python
@@ -1230,6 +1254,8 @@ pool = bot.build_managed_pool(
 
 ### Token Factory
 
+<!-- live-rpc: start "requires live RPC" -->
+
 ```python
 # ERC-20 token (fetches name, symbol, decimals from DB/RPC)
 token = bot.build_erc20token("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
@@ -1238,7 +1264,11 @@ token = bot.build_erc20token("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 token = bot.get_token("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 ```
 
+<!-- live-rpc: end -->
+
 ### Token Utilities (With Caching)
+
+<!-- live-rpc: start "requires live RPC" -->
 
 ```python
 # Get balance at block (cached per-bot)
@@ -1254,6 +1284,8 @@ total_supply = bot.get_token_total_supply(token)
 # Get native ETH balance
 eth_balance = bot.get_ether_balance(address="0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
 ```
+
+<!-- live-rpc: end -->
 
 ### Accessing Bot Components
 
@@ -1508,6 +1540,8 @@ from degenbot._ffi.provider import AlloyProvider
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI as RPC_URL
 -->
 
+<!-- live-rpc: start "requires live RPC" -->
+
 ```python
 # Create provider with connection pooling
 provider = AlloyProvider(RPC_URL)
@@ -1534,6 +1568,8 @@ result = contract.call(
 
 provider.close()
 ```
+
+<!-- live-rpc: end -->
 
 #### Async Provider
 
