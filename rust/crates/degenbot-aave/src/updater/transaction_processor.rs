@@ -2106,18 +2106,6 @@ mod tests {
         assert_eq!(operation_sort_key(&op_with_pool), 5);
     }
 
-    /// DEFERRED end-to-end synthetic-SUPPLY-tx integration test — the
-    /// fixture must match the parser's exact topic/data decode shape (4
-    /// indexed Supply topics + 2-word data; the aToken Mint's 3 indexed
-    /// topics + 3-word data). Constructing byte-exact RPC-shape logs that the
-    /// parser's `extract_pool_events` + `decode_mint_event` accept is
-    /// HQF5NQ-C2's concern — flagged for the integration-fixture sub-task.
-    #[test]
-    #[ignore = "HQF5NQ-C2: end-to-end synthetic-tx fixture (byte-exact log shapes)"]
-    fn process_transaction_supply_writes_collateral_position() {
-        let _db = fresh_db_with_asset();
-    }
-
     /// `extract_pool_amount_word1` reads data word 1 (bytes 32..64) — the
     /// `liquidatedCollateralAmount` for `LiquidationCall`. This is the
     /// collateral-extraction path of `RawAmountExtractor::extract_liquidation_
