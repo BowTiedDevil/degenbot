@@ -117,7 +117,48 @@ def pytest_addoption(parser: Parser):
     )
 
 
+# Markers that render a fork test a safe no-op in the default offline CI run:
+# the live-RPC tiers (online_rpc/base), slow-only (slow), or permanently skipped.
+_NON_RUNNING_MARKERS = {"online_rpc", "base", "slow", "skip"}
+
+
+# The `fork_*` fixtures chain into `bot_*` and per-file bot/token/pool fixtures,
+# so a test's transitive `_fixtureinfo.names` (not just `fixturenames`) is the
+# reliable signal that it needs a live fork.
+def _check_fork_tier_tags(config: Config, items: list[Item]) -> None:
+    """Fail collection if a test depends on a ``fork_*`` fixture without a tier tag.
+
+    A fork test must carry ``online_rpc``/``base``/``slow`` so it is deselected
+    from the default offline CI (live RPC is unavailable there). The backstop
+    fixture guard already makes such a test skip gracefully; this hard gate
+    forces an explicit classification so no fork test silently drops out of the
+    default run. Any test legitimately needing a live fork must be tagged.
+    """
+    offenders = []
+    for item in items:
+        names = getattr(item, "_fixtureinfo", None)
+        if names is None:
+            continue
+        fork_deps = sorted(n for n in names.names_closure if n.startswith("fork_"))
+        if not fork_deps:
+            continue
+        custom = {m.name for m in item.iter_markers()}
+        if custom & _NON_RUNNING_MARKERS:
+            continue
+        offenders.append(f"{item.nodeid}  (forks: {', '.join(fork_deps)})")
+    if offenders:
+        joined = "\n  ".join(offenders)
+        msg = (
+            "fork-dependent test(s) are not tagged for offline CI; add @pytest.mark."
+            "online_rpc (live) / base / slow so they are deselected from the default "
+            f"python-test run:\n  {joined}"
+        )
+        raise pytest.UsageError(msg)
+
+
 def pytest_collection_modifyitems(config: Config, items: list[Item]):
+    _check_fork_tier_tags(config, items)
+
     skip_fixtures: str = config.getoption("--skip-fixture")
     if not skip_fixtures:
         return  # nothing to skip
