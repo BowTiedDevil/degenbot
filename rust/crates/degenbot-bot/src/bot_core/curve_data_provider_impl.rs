@@ -185,11 +185,17 @@ impl CurveDataProvider for RpcCurveDataProvider {
     }
 
     fn lending_rates(&self, block_number: u64) -> Result<Vec<U256>, CurveDataProviderError> {
-        // Per-block cache (mirrors the Python `_lending_rate_cache`).
-        #[expect(clippy::unwrap_used)] // internal cache mutex; poison = process bug
-        let cache = self.lending_rate_cache.lock().unwrap();
-        if let Some(cached) = cache.get(&block_number).cloned() {
-            return Ok(cached);
+        // Per-block cache (mirrors the Python `_lending_rate_cache`). The read
+        // guard is scoped so it drops before the fetch and the insert below —
+        // holding it across the whole method deadlocks on the second lock
+        // (`std::sync::Mutex` is not re-entrant, and the guard would otherwise
+        // also be held across the blocking RPC fetches below).
+        {
+            #[expect(clippy::unwrap_used)] // internal cache mutex; poison = process bug
+            let cache = self.lending_rate_cache.lock().unwrap();
+            if let Some(cached) = cache.get(&block_number).cloned() {
+                return Ok(cached);
+            }
         }
 
         if self.lending_rate_style == 1 {
