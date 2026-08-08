@@ -16,6 +16,13 @@ pub struct ScanTopK<Id> {
     points: Vec<(Id, U256, U256)>, // (id, gas, gross)
 }
 
+impl<Id> ScanTopK<Id> {
+    #[must_use]
+    pub fn new() -> Self {
+        Self { points: Vec::new() }
+    }
+}
+
 impl<Id: IdKey> OrderIndex<Id> for ScanTopK<Id> {
     fn insert(&mut self, id: Id, gas: U256, gross: U256) {
         if let Some(p) = self.points.iter_mut().find(|(i, ..)| *i == id) {

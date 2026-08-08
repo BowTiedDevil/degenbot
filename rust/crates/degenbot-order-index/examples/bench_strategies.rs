@@ -84,6 +84,22 @@ fn main() {
     }
     let t_interior = t.elapsed() / batch_n as u32;
 
+    // 6. Non-vertex update/remove: O(1) in place (the dynamic win vs the old
+    //    full-rebuild-per-mutation). Only touch non-hull-vertex ids so the rare
+    //    (expensive) hull-vertex rebuild doesn't pollute the average.
+    let non_vertices: Vec<u64> = (0..100_000)
+        .filter(|&id| !idx.is_hull_vertex(&id))
+        .take(5_000)
+        .collect();
+    let t = Instant::now();
+    let mut cnt = 0u64;
+    for (i, &id) in non_vertices.iter().enumerate() {
+        idx.update(id, U256::from(3_000_000u64), U256::from(1_000 + i as u64));
+        idx.remove(&id);
+        cnt += 2;
+    }
+    let t_update_remove = t.elapsed() / cnt as u32;
+
     // 5. Above-hull insert — points far above the frontier (splice).
     let batch_a = 20_000u64;
     let t = Instant::now();
@@ -109,4 +125,5 @@ fn main() {
     println!("hull-only best()        : {t_best:?}  (best idx {best:?})");
     println!("single interior insert  : {t_interior:?}");
     println!("single above-hull insert: {t_above:?}");
+    println!("non-vertex update+remove (avg) : {t_update_remove:?}");
 }

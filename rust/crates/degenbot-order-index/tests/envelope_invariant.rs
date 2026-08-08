@@ -138,3 +138,67 @@ fn envelope_matches_scan_topk() {
     // sanity: brute_top_k is our reference, cross-check directly
     assert_invariant::<EnvelopeIndex<u64>>(&points, x, 3);
 }
+
+// Differential across random insert/update/remove sequences: the same ops drive
+// both `EnvelopeIndex` (incremental) and `ScanTopK` (brute), and they must agree
+// after every mutation. Ids pool into a small range so update/remove actually
+// hit existing points.
+proptest! {
+    #[test]
+    fn update_remove_matches_scan_topk(
+        ops in prop::collection::vec(op_strategy(), 1..150),
+        x in 0u64..2_000_000_000_000,
+        k in 1usize..8,
+    ) {
+        use degenbot_order_index::{EnvelopeIndex, ScanTopK};
+        let x = U256::from(x);
+        let mut env = EnvelopeIndex::<u64>::new();
+        let mut scan = ScanTopK::<u64>::new();
+        for op in ops {
+            match op {
+                Op::Insert(id, gas, gross) => {
+                    env.insert(id, gas, gross);
+                    scan.insert(id, gas, gross);
+                }
+                Op::Update(id, gas, gross) => {
+                    prop_assert_eq!(env.update(id, gas, gross), scan.update(id, gas, gross));
+                }
+                Op::Remove(id) => {
+                    prop_assert_eq!(env.remove(&id), scan.remove(&id));
+                }
+            }
+            prop_assert_eq!(env.len(), scan.len());
+            prop_assert_eq!(env.top_k(x, k), scan.top_k(x, k), "top_k diverged after op {:?}", op);
+            prop_assert_eq!(env.best(x), scan.best(x), "best diverged after op {:?}", op);
+        }
+    }
+}
+
+/// A random mutation: insert (upsert), update (existing), or remove, with ids in
+/// a small pool so the operations frequently hit present points.
+fn op_strategy() -> impl Strategy<Value = Op> {
+    (
+        any::<u8>(),
+        any::<u64>(),
+        21_000u64..12_000_000,
+        0u128..(1u128 << 100),
+    )
+        .prop_map(|(a, id, gas, gross)| {
+            let id = id % 40; // small pool
+            let gas = U256::from(gas);
+            let gross = U256::from(gross);
+            match a % 3 {
+                0 => Op::Insert(id, gas, gross),
+                1 => Op::Update(id, gas, gross),
+                _ => Op::Remove(id),
+            }
+        })
+}
+
+/// A single differential mutation.
+#[derive(Debug, Clone)]
+enum Op {
+    Insert(u64, U256, U256),
+    Update(u64, U256, U256),
+    Remove(u64),
+}
