@@ -27,6 +27,9 @@
 //! All arithmetic uses Alloy types (`U256` for `gross`/`gas`/`X`, `I256` for
 //! `net` and the hull cross product), exact under the seam guard in
 //! `order_index.rs`.
+//!
+//! See **ADR-024** (`docs/adr/ADR-024-net-profit-order-index.md`) for the full
+//! design and the integration finding.
 
 #[cfg(feature = "envelope")]
 pub mod envelope;
