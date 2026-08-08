@@ -2,7 +2,10 @@
 
 from collections.abc import Iterator
 
+import eth_abi
 import pytest
+import web3
+from eth_utils import keccak
 from hexbytes import HexBytes
 
 from degenbot.fork import AnvilFork
@@ -10,7 +13,7 @@ from degenbot.provider import (
     AlloyProvider,
     LogFilter,
 )
-from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
+from tests.standalone_anvil import seed as seed_catalog
 
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 
@@ -23,6 +26,35 @@ def alloy_provider(fork_mainnet_full: AnvilFork) -> Iterator[AlloyProvider]:
         yield provider
     finally:
         provider.close()
+
+
+def _ping_calldata() -> bytes:
+    selector = keccak(text="ping(uint256,bytes32)")[:4]
+    return selector + eth_abi.encode(["uint256", "bytes32"], [42, b"\x00" * 32])
+
+
+@pytest.fixture
+def standalone_provider(standalone_anvil: AnvilFork) -> Iterator[AlloyProvider]:
+    """An AlloyProvider over the seeded standalone anvil (no upstream RPC)."""
+    provider = AlloyProvider(standalone_anvil.http_url)
+    try:
+        yield provider
+    finally:
+        provider.close()
+
+
+@pytest.fixture
+def emitted_block(standalone_anvil: AnvilFork) -> int:
+    """Emit a real ``Ping`` log and return its block number (for get_logs)."""
+    w3 = web3.Web3(web3.HTTPProvider(standalone_anvil.http_url))
+    sender = w3.eth.accounts[0]
+    tx = w3.eth.send_transaction({
+        "from": sender,
+        "to": seed_catalog.EVENT_EMITTER,
+        "data": _ping_calldata(),
+        "chainId": seed_catalog.CHAIN_ID,
+    })
+    return w3.eth.wait_for_transaction_receipt(tx, timeout=10)["blockNumber"]
 
 
 class TestAlloyProviderAdapter:
@@ -62,90 +94,78 @@ class TestAlloyProviderAdapter:
 
 
 class TestAlloyProviderWithLiveConnection:
-    """Test AlloyProvider with live RPC connections."""
+    """Test AlloyProvider against the seeded standalone anvil (no upstream RPC)."""
 
-    def test_get_chain_id(self):
+    def test_get_chain_id(self, standalone_provider: AlloyProvider):
         """Test getting chain ID."""
-        with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as alloy:
-            chain_id = alloy.chain_id
-            assert chain_id == 1
+        assert standalone_provider.chain_id == seed_catalog.CHAIN_ID
 
-    def test_get_block_number(self):
+    def test_get_block_number(self, standalone_provider: AlloyProvider):
         """Test getting block number."""
-        with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as alloy:
-            block_number = alloy.get_block_number()
-            assert isinstance(block_number, int)
-            assert block_number > 0
+        block_number = standalone_provider.get_block_number()
+        assert isinstance(block_number, int)
+        assert block_number > 0
 
-    def test_get_block(self):
+    def test_get_block(self, standalone_provider: AlloyProvider):
         """Test getting block."""
-        with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as alloy:
-            block = alloy.get_block(18_000_000)
-            assert block is not None
-            assert block.get("number") == 18_000_000
+        block = standalone_provider.get_block(1)
+        assert block is not None
+        assert block.get("number") == 1
 
-    def test_get_block_with_string_identifier(self):
+    def test_get_block_with_string_identifier(self, standalone_provider: AlloyProvider):
         """Test getting block with string identifier."""
-        with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as alloy:
-            block = alloy.get_block("latest")
-            assert block is not None
-            assert block.get("number") is not None
+        block = standalone_provider.get_block("latest")
+        assert block is not None
+        assert block.get("number") is not None
 
-        with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as alloy:
-            block = alloy.get_block("earliest")
-            assert block is not None
-            assert block.get("number") == 0
+        block = standalone_provider.get_block("earliest")
+        assert block is not None
+        assert block.get("number") == 0
 
-    def test_get_code(self):
+    def test_get_code(self, standalone_provider: AlloyProvider):
         """Test getting contract code."""
-        with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as alloy:
-            code = alloy.get_code(WETH_ADDRESS, 18_000_000)
-            assert isinstance(code, (bytes, HexBytes))
-            assert len(code) > 0
+        code = standalone_provider.get_code(seed_catalog.TOKEN)
+        assert isinstance(code, (bytes, HexBytes))
+        assert len(code) > 0
 
-    def test_call(self):
+    def test_call(self, standalone_provider: AlloyProvider):
         """Test eth_call."""
-        with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as alloy:
-            # totalSupply() selector
-            calldata = HexBytes("0x18160ddd")
-            result = alloy.call(
-                to=WETH_ADDRESS,
-                data=calldata,
-                block=18_000_000,
-            )
-            assert isinstance(result, (bytes, HexBytes))
-            assert len(result) == 32  # uint256 return
+        # SimpleToken.totalSupply() (ERC20 totalSupply selector 0x18160ddd).
+        result = standalone_provider.call(
+            to=seed_catalog.TOKEN,
+            data=HexBytes("0x18160ddd"),
+        )
+        assert isinstance(result, (bytes, HexBytes))
+        assert len(result) == 32  # uint256 return
 
-    def test_get_logs(self):
+    def test_get_logs(self, standalone_provider: AlloyProvider, emitted_block: int):
         """Test getting logs."""
-        with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as alloy:
-            logs = alloy.get_logs(
-                from_block=18_000_000,
-                to_block=18_000_010,
-            )
-            assert isinstance(logs, list)
+        logs = standalone_provider.get_logs(
+            from_block=0,
+            to_block=emitted_block,
+            addresses=[seed_catalog.EVENT_EMITTER],
+        )
+        assert isinstance(logs, list)
+        assert len(logs) > 0
 
-    def test_get_storage_at(self):
+    def test_get_storage_at(self, standalone_provider: AlloyProvider):
         """Test getting storage."""
-        with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as alloy:
-            storage = alloy.get_storage_at(WETH_ADDRESS, 0, 18_000_000)
-            assert isinstance(storage, (bytes, HexBytes))
-            assert len(storage) == 32
+        storage = standalone_provider.get_storage_at(seed_catalog.TOKEN, 0)
+        assert isinstance(storage, (bytes, HexBytes))
+        assert len(storage) == 32
 
-    def test_get_storage_at_large_position(self):
+    def test_get_storage_at_large_position(self, standalone_provider: AlloyProvider):
         """Test getting storage with large position."""
-        with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as alloy:
-            large_position = 0x6C34D219A4B1E5E2F2E3D4C5B6A7F8E9D0C1B2A3F4E5D6C7B8A9F0E1D2C3B4A5
-            storage = alloy.get_storage_at(WETH_ADDRESS, large_position, 18_000_000)
-            assert isinstance(storage, (bytes, HexBytes))
-            assert len(storage) == 32
+        large_position = 0x6C34D219A4B1E5E2F2E3D4C5B6A7F8E9D0C1B2A3F4E5D6C7B8A9F0E1D2C3B4A5
+        storage = standalone_provider.get_storage_at(seed_catalog.TOKEN, large_position)
+        assert isinstance(storage, (bytes, HexBytes))
+        assert len(storage) == 32
 
-    def test_properties(self):
-        """Test adapter properties with live connection."""
-        with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as alloy:
-            assert alloy.chain_id == 1
-            assert alloy.block_number > 0
-            assert alloy.provider_type == "alloy"
+    def test_properties(self, standalone_provider: AlloyProvider):
+        """Test adapter properties."""
+        assert standalone_provider.chain_id == seed_catalog.CHAIN_ID
+        assert standalone_provider.block_number > 0
+        assert standalone_provider.provider_type == "alloy"
 
 
 class TestAlloyProviderDirect:
@@ -162,15 +182,14 @@ class TestAlloyProviderDirect:
         assert hasattr(AlloyProvider, "get_code")
         assert hasattr(AlloyProvider, "is_connected")
 
-    def test_provider_direct_access(self):
+    def test_provider_direct_access(self, standalone_provider: AlloyProvider):
         """Test accessing methods directly on AlloyProvider."""
-        with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as provider:
-            assert provider.chain_id == 1
-            assert provider.block_number > 0
+        assert standalone_provider.chain_id == seed_catalog.CHAIN_ID
+        assert standalone_provider.block_number > 0
 
-            block = provider.get_block(18_000_000)
-            assert block is not None
-            assert block.get("number") == 18_000_000
+        block = standalone_provider.get_block(1)
+        assert block is not None
+        assert block.get("number") == 1
 
 
 class TestForkProvider:

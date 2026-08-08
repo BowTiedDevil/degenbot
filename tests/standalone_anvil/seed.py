@@ -45,7 +45,10 @@ _CHAINLINK_ANSWER = 372_038_000_000  # 3720.38 * 1e8
 _CHAINLINK_DECIMALS = 8
 
 # SimpleToken slot layout: name=0, symbol=1, decimals=2, totalSupply=3.
+# Only the uint members are seeded (decimals/totalSupply); the string-name
+# getters on the mock aren't worth seeding for the tests that use this token.
 _TOKEN_DECIMALS = 8
+_TOKEN_SUPPLY = 10**8 * 10**8  # 1e16 (8 decimals, like a wrapped asset)
 
 # Standalone chain id (anvil default fresh chain).
 CHAIN_ID = 31337
@@ -65,6 +68,7 @@ def seed(fork: AnvilFork) -> None:
     """Write canonical bytecode + storage onto a standalone (non-forking) anvil."""
     fork.set_code(TOKEN, deployed_bytecode("SimpleToken"))
     fork.set_storage(TOKEN, 2, _TOKEN_DECIMALS)  # decimals
+    fork.set_storage(TOKEN, 3, _TOKEN_SUPPLY)  # totalSupply
 
     fork.set_code(EVENT_EMITTER, deployed_bytecode("EventEmitter"))
 

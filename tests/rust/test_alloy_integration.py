@@ -4,6 +4,11 @@ These tests demonstrate that the Rust-based Alloy integration is functional,
 covering provider operations, contract interactions, and connection management.
 """
 
+import eth_abi
+import pytest
+import web3
+from eth_utils import keccak
+
 from degenbot._ffi.abi import decode_single, encode_single
 from degenbot.contract import (
     Contract,
@@ -11,10 +16,36 @@ from degenbot.contract import (
     encode_function_call,
     get_function_selector,
 )
+from degenbot.fork import AnvilFork
 from degenbot.provider import AlloyProvider, LogFilter
-from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
+from tests.standalone_anvil import seed as seed_catalog
 
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+
+
+def _ping_calldata() -> bytes:
+    selector = keccak(text="ping(uint256,bytes32)")[:4]
+    return selector + eth_abi.encode(["uint256", "bytes32"], [42, b"\x00" * 32])
+
+
+@pytest.fixture
+def standalone_provider(standalone_anvil: AnvilFork) -> AlloyProvider:
+    """An AlloyProvider over the seeded standalone anvil (no upstream RPC)."""
+    return AlloyProvider(standalone_anvil.http_url)
+
+
+@pytest.fixture
+def emitted_block(standalone_anvil: AnvilFork) -> int:
+    """Emit a real ``Ping`` log and return its block number (for get_logs)."""
+    w3 = web3.Web3(web3.HTTPProvider(standalone_anvil.http_url))
+    sender = w3.eth.accounts[0]
+    tx = w3.eth.send_transaction({
+        "from": sender,
+        "to": seed_catalog.EVENT_EMITTER,
+        "data": _ping_calldata(),
+        "chainId": seed_catalog.CHAIN_ID,
+    })
+    return w3.eth.wait_for_transaction_receipt(tx, timeout=10)["blockNumber"]
 
 
 class TestContractUtilities:
@@ -206,75 +237,64 @@ class TestProviderInitialization:
 
 
 class TestProviderWithLiveConnection:
-    """Sync provider tests requiring live RPC.
+    """Provider tests against the seeded standalone anvil (no upstream RPC)."""
 
-    Note: The sync AlloyProvider uses tokio::runtime::Handle::try_current() which
-    requires an existing tokio runtime. For live RPC tests, use AsyncAlloyProvider
-    with @pytest.mark.asyncio instead (see test_alloy_async_integration.py).
-    """
+    def test_get_block_number(self, standalone_provider: AlloyProvider):
+        """Test fetching current block number."""
+        block_number = standalone_provider.get_block_number()
+        assert isinstance(block_number, int)
+        assert block_number > 0
 
-    def test_get_block_number(self):
-        """Test fetching current block number from live RPC."""
-        with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as provider:
-            block_number = provider.get_block_number()
-            assert isinstance(block_number, int)
-            assert block_number > 0
+    def test_get_chain_id(self, standalone_provider: AlloyProvider):
+        """Test fetching chain ID."""
+        assert standalone_provider.get_chain_id() == seed_catalog.CHAIN_ID
 
-    def test_get_chain_id(self):
-        """Test fetching chain ID from live RPC."""
-        with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as provider:
-            chain_id = provider.get_chain_id()
-            assert chain_id == 1  # Ethereum mainnet
-
-    def test_get_logs(self):
-        """Test fetching logs with filter from live RPC."""
-        with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as provider:
-            # WETH contract
-            log_filter = LogFilter(
-                from_block=18000000,
-                to_block=18000010,
-                addresses=["0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"],
-            )
-            logs = provider.get_logs(log_filter)
-            assert isinstance(logs, list)
+    def test_get_logs(
+        self,
+        standalone_provider: AlloyProvider,
+        emitted_block: int,
+    ):
+        """Test fetching logs with filter from a real emitted event."""
+        log_filter = LogFilter(
+            from_block=0,
+            to_block=emitted_block,
+            addresses=[seed_catalog.EVENT_EMITTER],
+        )
+        logs = standalone_provider.get_logs(log_filter)
+        assert isinstance(logs, list)
+        assert len(logs) > 0
 
 
 class TestContractWithLiveConnection:
-    """Contract tests that require a live RPC connection.
+    """Contract tests against the seeded standalone anvil (no upstream RPC)."""
 
-    Note: Contract initialization currently requires provider injection
-    which is not yet fully implemented.
-    """
-
-    def test_contract_call_balance_of(self):
-        """Test calling balanceOf on WETH contract."""
-        weth = Contract(
-            "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-            provider_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+    def test_contract_call_balance_of(self, standalone_anvil: AnvilFork):
+        """Test calling balanceOf on the seeded SimpleToken."""
+        token = Contract(
+            seed_catalog.TOKEN,
+            provider_url=standalone_anvil.http_url,
         )
         # Call balanceOf for a known address with return type specified
-        balance = weth.call(
-            "balanceOf(address) returns (uint256)", ["0x742d35Cc6634C0532925a3b8D4C9db96590d6B75"]
-        )
+        balance = token.call("balanceOf(address) returns (uint256)", [seed_catalog.FUNDED_EOA])
         assert len(balance) == 1
         assert int(balance[0]) >= 0
 
-    def test_contract_batch_call(self):
-        """Test batch calling multiple functions."""
-        weth = Contract(
-            "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-            provider_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+    def test_contract_batch_call(self, standalone_anvil: AnvilFork):
+        """Test batch calling multiple functions (uint returns)."""
+        token = Contract(
+            seed_catalog.TOKEN,
+            provider_url=standalone_anvil.http_url,
         )
-        # Batch call name, symbol, decimals, totalSupply with return types
-        results = weth.batch_call([
-            ("name() returns (string)", []),
-            ("symbol() returns (string)", []),
+        # Batch call decimals, totalSupply, balanceOf (all uint returns) with args.
+        results = token.batch_call([
             ("decimals() returns (uint8)", []),
             ("totalSupply() returns (uint256)", []),
+            ("balanceOf(address) returns (uint256)", [seed_catalog.FUNDED_EOA]),
+            ("balanceOf(address) returns (uint256)", [seed_catalog.TOKEN]),
         ])
         assert len(results) == 4
-        name, symbol, decimals, total_supply = [r[0] for r in results]
-        assert name == "Wrapped Ether"
-        assert symbol == "WETH"
-        assert int(decimals) == 18
+        decimals, total_supply, bal_holder, bal_token = [r[0] for r in results]
+        assert int(decimals) == seed_catalog._TOKEN_DECIMALS
         assert int(total_supply) > 0
+        assert int(bal_holder) >= 0
+        assert int(bal_token) >= 0
