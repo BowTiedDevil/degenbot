@@ -231,7 +231,9 @@ def standalone_anvil() -> Generator[AnvilFork, None, None]:
     """
     if shutil.which("anvil") is None:
         pytest.skip("requires the anvil binary (not present in the no-anvil CI job)")
-    fork = AnvilFork(chain_id=seed_catalog.CHAIN_ID, anvil_opts=["--accounts=0"])
+    # A default funded dev account (anvil account 0) is kept so tests that need
+    # to send a real transaction (e.g. emitting a log) can do so via web3.
+    fork = AnvilFork(chain_id=seed_catalog.CHAIN_ID)
     seed_catalog.seed(fork)
     fork.mine()  # advance past genesis so get_block_number() > 0
     yield fork

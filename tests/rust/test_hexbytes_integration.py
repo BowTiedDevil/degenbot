@@ -1,45 +1,80 @@
-"""Tests for HexBytes and address conversion in AlloyProvider.
+"""Tests for HexBytes and address conversion in AlloyProvider against a standalone anvil.
 
-These tests verify that the provider returns:
-- HexBytes for hash and data fields
-- Checksummed strings for address fields
+These verify the provider returns HexBytes for hash/data fields and checksummed
+strings for address fields, validated against a real transaction + `Ping` log
+emitted on the seeded standalone chain (no upstream RPC).
 """
 
 from collections.abc import Iterator
+from dataclasses import dataclass
 
+import eth_abi
 import pytest
+import web3
+from eth_utils import keccak
 from hexbytes import HexBytes
 
-from degenbot.checksum_cache import get_checksum_address
 from degenbot.fork import AnvilFork
 from degenbot.provider import AlloyProvider
+from tests.standalone_anvil import seed as seed_catalog
 
-WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
-UNISWAP_V3_FACTORY = get_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984")
+
+@dataclass
+class EmittedTx:
+    """A real emitted transaction: its block number + hash (for shape assertions)."""
+
+    block: int
+    tx_hash: str
+
+
+def _ping_calldata() -> bytes:
+    selector = keccak(text="ping(uint256,bytes32)")[:4]
+    return selector + eth_abi.encode(["uint256", "bytes32"], [42, b"\x00" * 32])
 
 
 @pytest.fixture
-def ethereum_mainnet_alloy_provider(fork_mainnet_full: AnvilFork) -> Iterator[AlloyProvider]:
-    """Create an AlloyProvider from the mainnet fork."""
-    provider = AlloyProvider(fork_mainnet_full.http_url)
+def alloy_provider(standalone_anvil: AnvilFork) -> Iterator[AlloyProvider]:
+    """Create an AlloyProvider from the seeded standalone anvil."""
+    provider = AlloyProvider(standalone_anvil.http_url)
     try:
         yield provider
     finally:
         provider.close()
 
 
+@pytest.fixture
+def emitted_tx(standalone_anvil: AnvilFork) -> EmittedTx:
+    """Emit a real ``Ping`` log (a funded anvil tx) and return its block + hash.
+
+    Sets a mixed-case coinbase so the mined block's ``miner`` is a checksummed
+    address (satisfies the Kasto address-shape assertions).
+    """
+    w3 = web3.Web3(web3.HTTPProvider(standalone_anvil.http_url))
+    w3.provider.make_request("anvil_setCoinbase", [seed_catalog.FUNDED_EOA])
+    sender = w3.eth.accounts[0]
+    tx = w3.eth.send_transaction({
+        "from": sender,
+        "to": seed_catalog.EVENT_EMITTER,
+        "data": _ping_calldata(),
+        "chainId": seed_catalog.CHAIN_ID,
+    })
+    receipt = w3.eth.wait_for_transaction_receipt(tx, timeout=10)
+    return EmittedTx(block=receipt["blockNumber"], tx_hash=tx.hex())
+
+
 class TestHexBytesConversion:
     """Test that appropriate fields are converted to HexBytes or checksummed strings."""
 
     def test_get_logs_returns_checksummed_address(
-        self, ethereum_mainnet_alloy_provider: AlloyProvider
+        self,
+        alloy_provider: AlloyProvider,
+        emitted_tx: EmittedTx,
     ):
         """Test that get_logs returns checksummed address strings for the address field."""
-        # Fetch a known log from the Uniswap V3 factory
-        logs = ethereum_mainnet_alloy_provider.get_logs(
-            from_block=12_369_621,
-            to_block=12_369_621,
-            addresses=[UNISWAP_V3_FACTORY],
+        logs = alloy_provider.get_logs(
+            from_block=0,
+            to_block=emitted_tx.block,
+            addresses=[seed_catalog.EVENT_EMITTER],
         )
 
         assert len(logs) > 0
@@ -47,19 +82,21 @@ class TestHexBytesConversion:
 
         # address should be a checksummed string
         assert isinstance(log["address"], str)
-        assert log["address"] == UNISWAP_V3_FACTORY
+        assert log["address"] == seed_catalog.EVENT_EMITTER
         # Verify it's checksummed (has mixed case)
         assert log["address"] != log["address"].lower()
         assert log["address"] != log["address"].upper()
 
     def test_get_logs_returns_hexbytes_for_hash_fields(
-        self, ethereum_mainnet_alloy_provider: AlloyProvider
+        self,
+        alloy_provider: AlloyProvider,
+        emitted_tx: EmittedTx,
     ):
         """Test that get_logs returns HexBytes for topics, blockHash, and transactionHash."""
-        logs = ethereum_mainnet_alloy_provider.get_logs(
-            from_block=12_369_621,
-            to_block=12_369_621,
-            addresses=[UNISWAP_V3_FACTORY],
+        logs = alloy_provider.get_logs(
+            from_block=0,
+            to_block=emitted_tx.block,
+            addresses=[seed_catalog.EVENT_EMITTER],
         )
 
         assert len(logs) > 0
@@ -78,13 +115,15 @@ class TestHexBytesConversion:
             assert isinstance(log["transactionHash"], HexBytes)
 
     def test_get_logs_returns_int_for_numeric_fields(
-        self, ethereum_mainnet_alloy_provider: AlloyProvider
+        self,
+        alloy_provider: AlloyProvider,
+        emitted_tx: EmittedTx,
     ):
         """Test that get_logs returns int for numeric fields."""
-        logs = ethereum_mainnet_alloy_provider.get_logs(
-            from_block=12_369_621,
-            to_block=12_369_621,
-            addresses=[UNISWAP_V3_FACTORY],
+        logs = alloy_provider.get_logs(
+            from_block=0,
+            to_block=emitted_tx.block,
+            addresses=[seed_catalog.EVENT_EMITTER],
         )
 
         assert len(logs) > 0
@@ -96,14 +135,13 @@ class TestHexBytesConversion:
         # Verify logIndex is int
         assert isinstance(log["logIndex"], int)
 
-    def test_eth_call_returns_hexbytes(self, ethereum_mainnet_alloy_provider: AlloyProvider):
+    def test_eth_call_returns_hexbytes(self, alloy_provider: AlloyProvider):
         """Test that call returns HexBytes (for eth_abi compatibility)."""
-        # Call balanceOf for WETH
-        # balanceOf selector: 0x70a08231
-        result = ethereum_mainnet_alloy_provider.call(
-            to=WETH_ADDRESS,
+        # Call balanceOf for the seeded token (uint256 read; same selector as ERC20).
+        result = alloy_provider.call(
+            to=seed_catalog.TOKEN,
             data=bytes.fromhex(
-                "70a08231000000000000000000000000C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+                "70a082310000000000000000000000000000000000000000000000000000000000000000"
             ),
         )
 
@@ -111,10 +149,12 @@ class TestHexBytesConversion:
         assert len(result) == 32  # uint256 return value
 
     def test_get_block_returns_checksummed_address_for_miner(
-        self, ethereum_mainnet_alloy_provider: AlloyProvider
+        self,
+        alloy_provider: AlloyProvider,
+        emitted_tx: EmittedTx,
     ):
         """Test that get_block returns checksummed address string for miner field."""
-        block = ethereum_mainnet_alloy_provider.get_block(12_369_621)
+        block = alloy_provider.get_block(emitted_tx.block)
 
         assert block is not None
 
@@ -125,10 +165,12 @@ class TestHexBytesConversion:
         assert block["miner"] != block["miner"].upper()
 
     def test_get_block_returns_hexbytes_for_hash_fields(
-        self, ethereum_mainnet_alloy_provider: AlloyProvider
+        self,
+        alloy_provider: AlloyProvider,
+        emitted_tx: EmittedTx,
     ):
         """Test that get_block returns HexBytes for hash fields."""
-        block = ethereum_mainnet_alloy_provider.get_block(12_369_621)
+        block = alloy_provider.get_block(emitted_tx.block)
 
         assert block is not None
 
@@ -140,10 +182,12 @@ class TestHexBytesConversion:
         assert isinstance(block["receipts_root"], HexBytes)
 
     def test_get_block_returns_int_for_numeric_fields(
-        self, ethereum_mainnet_alloy_provider: AlloyProvider
+        self,
+        alloy_provider: AlloyProvider,
+        emitted_tx: EmittedTx,
     ):
         """Test that get_block returns int for numeric fields."""
-        block = ethereum_mainnet_alloy_provider.get_block(12_369_621)
+        block = alloy_provider.get_block(emitted_tx.block)
 
         assert block is not None
 
@@ -153,46 +197,49 @@ class TestHexBytesConversion:
         assert isinstance(block["gas_used"], int)
         assert isinstance(block["gas_limit"], int)
 
-    def test_get_code_returns_hexbytes(self, ethereum_mainnet_alloy_provider: AlloyProvider):
+    def test_get_code_returns_hexbytes(self, alloy_provider: AlloyProvider):
         """Test that get_code returns HexBytes (for eth_abi compatibility)."""
-        # Get code for WETH contract
-        code = ethereum_mainnet_alloy_provider.get_code(WETH_ADDRESS)
+        # Get code for the seeded token contract
+        code = alloy_provider.get_code(seed_catalog.TOKEN)
 
         assert isinstance(code, HexBytes)
         assert len(code) > 0
 
     def test_transaction_has_checksummed_addresses(
-        self, ethereum_mainnet_alloy_provider: AlloyProvider
+        self,
+        alloy_provider: AlloyProvider,
+        emitted_tx: EmittedTx,
     ):
         """Test that transactions have checksummed address strings for from/to fields."""
-        block = ethereum_mainnet_alloy_provider.get_block(12_369_621)
+        # get_block lists tx hashes; fetch the full tx via get_transaction.
+        tx = alloy_provider.get_transaction(emitted_tx.tx_hash)
 
-        assert block is not None
-        transactions = block.get("transactions", [])
-        if transactions and isinstance(transactions, list) and len(transactions) > 0:
-            tx = transactions[0]
-            if isinstance(tx, dict):
-                # from should be a checksummed string
-                assert isinstance(tx["from"], str)
-                assert tx["from"] != tx["from"].lower()
-                assert tx["from"] != tx["from"].upper()
+        assert tx is not None
+        # from should be a checksummed string
+        assert isinstance(tx["from"], str)
+        assert tx["from"] != tx["from"].lower()
+        assert tx["from"] != tx["from"].upper()
 
-                # to can be None (contract creation) or checksummed string
-                if tx.get("to") is not None:
-                    assert isinstance(tx["to"], str)
-                    assert tx["to"] != tx["to"].lower()
-                    assert tx["to"] != tx["to"].upper()
+        # to can be None (contract creation) or checksummed string
+        if tx.get("to") is not None:
+            assert isinstance(tx["to"], str)
+            assert tx["to"] != tx["to"].lower()
+            assert tx["to"] != tx["to"].upper()
 
 
 class TestAddressBehavior:
     """Test address string behavior."""
 
-    def test_address_is_checksummed(self, ethereum_mainnet_alloy_provider: AlloyProvider):
+    def test_address_is_checksummed(
+        self,
+        alloy_provider: AlloyProvider,
+        emitted_tx: EmittedTx,
+    ):
         """Test that addresses are returned as checksummed strings."""
-        logs = ethereum_mainnet_alloy_provider.get_logs(
-            from_block=12_369_621,
-            to_block=12_369_621,
-            addresses=[UNISWAP_V3_FACTORY],
+        logs = alloy_provider.get_logs(
+            from_block=0,
+            to_block=emitted_tx.block,
+            addresses=[seed_catalog.EVENT_EMITTER],
         )
 
         assert len(logs) > 0
@@ -202,18 +249,22 @@ class TestAddressBehavior:
         assert isinstance(address, str)
 
         # Should match the expected checksummed address
-        assert address == UNISWAP_V3_FACTORY
+        assert address == seed_catalog.EVENT_EMITTER
 
         # Should be 42 characters (0x + 40 hex chars)
         assert len(address) == 42
         assert address.startswith("0x")
 
-    def test_hexbytes_has_hex_method(self, ethereum_mainnet_alloy_provider: AlloyProvider):
+    def test_hexbytes_has_hex_method(
+        self,
+        alloy_provider: AlloyProvider,
+        emitted_tx: EmittedTx,
+    ):
         """Test that HexBytes has hex() method that returns hex string."""
-        logs = ethereum_mainnet_alloy_provider.get_logs(
-            from_block=12_369_621,
-            to_block=12_369_621,
-            addresses=[UNISWAP_V3_FACTORY],
+        logs = alloy_provider.get_logs(
+            from_block=0,
+            to_block=emitted_tx.block,
+            addresses=[seed_catalog.EVENT_EMITTER],
         )
 
         assert len(logs) > 0

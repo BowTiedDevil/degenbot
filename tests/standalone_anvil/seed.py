@@ -16,19 +16,28 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from eth_utils import to_checksum_address
+
 if TYPE_CHECKING:
     from degenbot.fork import AnvilFork
 
 _ARTIFACTS = Path(__file__).resolve().parent / "out" / "Seed.sol"
 
+
 # Fixed, memorable addresses the seeds land at (deterministic across runs).
-# (0x…Aa = anvil dev account index 10 pre-image pattern; unique + checksum-safe.)
-# S105: an EVM address constant, not a credential (ruff's error misreads "token").
-TOKEN = "0x00000000000000000000000000000000000000Aa"  # ruff: ignore[hardcoded-password-string]  # SimpleToken (WBTC-like)
-EVENT_EMITTER = "0x00000000000000000000000000000000000000Bb"  # EventEmitter
-REVERTER = "0x00000000000000000000000000000000000000Cc"  # Reverter
-CHAINLINK = "0x00000000000000000000000000000000000000Dd"  # MockChainlinkAggregator
-FUNDED_EOA = "0x00000000000000000000000000000000000000Ee"  # dev account with balance
+# Computed via to_checksum_address so they are valid EIP-55 (web3 in the
+# standalone-anvil tests enforces checksums strictly).
+def _seed_addr(suffix: str) -> str:
+    return to_checksum_address(f"0x{'00' * 19}{suffix}")
+
+
+TOKEN = _seed_addr("aa")  # SimpleToken (WBTC-like)
+EVENT_EMITTER = _seed_addr(
+    "bc"
+)  # EventEmitter (mixed-case checksum so get_logs address has both cases)
+REVERTER = _seed_addr("cc")  # Reverter
+CHAINLINK = _seed_addr("dd")  # MockChainlinkAggregator
+FUNDED_EOA = _seed_addr("ee")  # funded EOA with balance
 
 # Chainlink mock: WETH/USD ≈ 3720.38 USD, scaled to 8 decimals (matches the
 # real WETH/USD aggregator's decimals used by the mainnet chainlink test).
