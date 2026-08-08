@@ -76,6 +76,18 @@ impl<Id: IdKey> OrderIndex<Id> for ScanTopK<Id> {
         ranked.into_iter().map(|(_, id)| id).collect()
     }
 
+    fn top_k_floor(&self, x: U256, k: usize, min_net: I256) -> Vec<Id> {
+        let mut ranked: Vec<(I256, Id)> = self
+            .points
+            .iter()
+            .map(|(id, gas, gross)| (net_of(*gross, *gas, x), *id))
+            .filter(|(n, _)| *n >= min_net)
+            .collect();
+        ranked.sort_by(|a, b| rank(a, b));
+        ranked.truncate(k);
+        ranked.into_iter().map(|(_, id)| id).collect()
+    }
+
     fn len(&self) -> usize {
         self.points.len()
     }

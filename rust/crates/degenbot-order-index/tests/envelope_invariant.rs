@@ -2,7 +2,7 @@
 //! which must satisfy the same top-K contract as `ScanTopK`.
 
 #![cfg(feature = "envelope")]
-use alloy_primitives::U256;
+use alloy_primitives::{I256, U256};
 use proptest::prelude::*;
 
 use degenbot_order_index::{EnvelopeIndex, OrderIndex};
@@ -201,4 +201,42 @@ enum Op {
     Insert(u64, U256, U256),
     Update(u64, U256, U256),
     Remove(u64),
+}
+
+// The per-block profit floor: `top_k_floor(X,k,min_net)` returns exactly the
+// floored brute-force reference, on both impls.
+proptest! {
+    #[test]
+    fn topk_floor_matches_brute(
+        points in prop::collection::vec(point(), 1..200),
+        x in 0u64..2_000_000_000_000,
+        k in 1usize..8,
+        floor_frac in 0u64..100,
+    ) {
+        use degenbot_order_index::{EnvelopeIndex, ScanTopK};
+        let unique = common::dedup(&points);
+        let x = U256::from(x);
+        // floor as a fraction of the max net (so the floor is meaningful)
+        let max_net = unique.iter().map(|c| common::net(c, x)).max().unwrap_or(I256::ZERO);
+        let min_net = max_net * I256::unchecked_from(i128::from(floor_frac.min(99))) / I256::unchecked_from(100);
+        let want = brute_top_k_floor(&unique, x, k, min_net);
+
+        let mut env = EnvelopeIndex::<u64>::default();
+        let mut scan = ScanTopK::<u64>::default();
+        for c in &unique { env.insert(c.id, c.gas, c.gross); scan.insert(c.id, c.gas, c.gross); }
+        prop_assert!(env.top_k_floor(x, k, min_net) == want, "envelope floor mismatch");
+        prop_assert!(scan.top_k_floor(x, k, min_net) == want, "scan floor mismatch");
+    }
+}
+
+/// Brute-force reference for the floored top-K.
+fn brute_top_k_floor(points: &[common::Cand], x: U256, k: usize, min_net: I256) -> Vec<u64> {
+    let mut ranked: Vec<(I256, u64)> = points
+        .iter()
+        .map(|c| (common::net(c, x), c.id))
+        .filter(|(n, _)| *n >= min_net)
+        .collect();
+    ranked.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    ranked.truncate(k);
+    ranked.into_iter().map(|(_, id)| id).collect()
 }

@@ -194,6 +194,28 @@ impl<Id: IdKey> OrderIndex<Id> for EnvelopeIndex<Id> {
         ranked.into_iter().map(|(_, id)| id).collect()
     }
 
+    fn top_k_floor(&self, x: U256, k: usize, min_net: I256) -> Vec<Id> {
+        if self.points.is_empty() || k == 0 {
+            return Vec::new();
+        }
+        // Hot set is floor-independent (a below-threshold point can never be in
+        // the floored top-k either); filter the floor inside the hot set.
+        let t = self.kth_hull_net(x, k);
+        let mut ranked: Vec<(I256, Id)> = (0..self.points.len())
+            .filter(|&i| self.upper_bound(i, x) >= t)
+            .map(|i| {
+                (
+                    net_of(self.points[i].gross, self.points[i].gas, x),
+                    self.points[i].id,
+                )
+            })
+            .filter(|(n, _)| *n >= min_net)
+            .collect();
+        ranked.sort_by(|a, b| rank(a, b));
+        ranked.truncate(k);
+        ranked.into_iter().map(|(_, id)| id).collect()
+    }
+
     fn len(&self) -> usize {
         self.points.len()
     }

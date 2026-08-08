@@ -83,6 +83,12 @@ pub trait OrderIndex<Id> {
     /// The exact top-`k` ids by net at `X`, descending (ties by ascending id).
     fn top_k(&self, x: U256, k: usize) -> Vec<Id>;
 
+    /// The exact top-`k` ids by net at `X`, but only among results whose net is
+    /// `>= min_net` — the **per-block profit floor** housekeeping control (a
+    /// `min_net` that depends on the current block's `X`, not a static wei
+    /// floor). Same ordering (net desc, id asc) as `top_k`.
+    fn top_k_floor(&self, x: U256, k: usize, min_net: I256) -> Vec<Id>;
+
     /// Number of stored results.
     fn len(&self) -> usize;
 
