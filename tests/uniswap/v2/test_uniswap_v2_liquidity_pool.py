@@ -1,10 +1,11 @@
 from fractions import Fraction
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 from hexbytes import HexBytes
 
-from degenbot.bot import Bot
+from degenbot.bot import Bot, PyBot
 from degenbot.camelot.abi import CAMELOT_POOL_ABI
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
@@ -23,7 +24,9 @@ from degenbot.uniswap.v2_types import (
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
 )
+from tests.golden.recorded_pool import load_pool
 from tests.helpers.bot_factory import make_bot_with_provider
+from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.w3_contract import make_contract
 
@@ -53,40 +56,37 @@ def _make_bot(fork: AnvilFork) -> Bot:
     return make_bot_with_provider(provider)
 
 
-@pytest.fixture
-def ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block(
-    fork_mainnet_archive: AnvilFork,
-) -> UniswapV2Pool:
-    """Call this fixture passing an indirect parameter to "fork_mainnet_archive" to specify the
-    forking block.
-    """
-    bot = _make_bot(fork_mainnet_archive)
-    pool = bot.build_pool(UNISWAP_V2_WBTC_WETH_POOL)
+_V2_WBTC_WETH_GOLDEN = Path("tests/golden/data/uniswap/v2/wbtc_weth/17600000.json")
+_PY_BOT = PyBot()
+
+
+def _load_wbtc_weth_v2_pool() -> UniswapV2Pool:
+    """Return the I/O-free WBTC/WETH V2 pool recorded at HISTORICAL_BLOCK (no RPC)."""
+    pool = load_pool(_V2_WBTC_WETH_GOLDEN, chain_id=1, block=HISTORICAL_BLOCK)
     assert isinstance(pool, UniswapV2Pool)
     return pool
 
 
 @pytest.fixture
-def ethereum_uniswap_v2_wbtc_weth_liquiditypool(fork_mainnet_full: AnvilFork) -> UniswapV2Pool:
-    bot = _make_bot(fork_mainnet_full)
-    pool = bot.build_pool(UNISWAP_V2_WBTC_WETH_POOL)
-    assert isinstance(pool, UniswapV2Pool)
-    return pool
+def ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block() -> UniswapV2Pool:
+    return _load_wbtc_weth_v2_pool()
 
 
 @pytest.fixture
-def dai(bot_mainnet_full: Bot) -> Erc20Token:
-    return bot_mainnet_full.build_erc20token(DAI_CONTRACT_ADDRESS)
+def ethereum_uniswap_v2_wbtc_weth_liquiditypool() -> UniswapV2Pool:
+    return _load_wbtc_weth_v2_pool()
 
 
 @pytest.fixture
-def wbtc(bot_mainnet_full: Bot) -> Erc20Token:
-    return bot_mainnet_full.build_erc20token(WBTC_CONTRACT_ADDRESS)
-
-
-@pytest.fixture
-def weth(bot_mainnet_full: Bot) -> Erc20Token:
-    return bot_mainnet_full.build_erc20token(WETH_CONTRACT_ADDRESS)
+def dai() -> Erc20Token:
+    return make_erc20(
+        _PY_BOT,
+        DAI_CONTRACT_ADDRESS,
+        name="Dai Stablecoin",
+        symbol="DAI",
+        decimals=18,
+        chain_id=1,
+    )
 
 
 def test_price_is_inverse_of_exchange_rate(
@@ -257,11 +257,6 @@ def test_dunder_methods(
     ) is False
 
 
-@pytest.mark.parametrize(
-    "fork_mainnet_archive",
-    [HISTORICAL_BLOCK],
-    indirect=True,
-)
 def test_calculate_tokens_out_from_tokens_in(
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block: UniswapV2Pool,
     dai: Erc20Token,
@@ -324,11 +319,6 @@ def test_calculate_tokens_out_from_tokens_in_with_override(
     )
 
 
-@pytest.mark.parametrize(
-    "fork_mainnet_archive",
-    [HISTORICAL_BLOCK],
-    indirect=True,
-)
 def test_calculate_tokens_in_from_tokens_out(
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block: UniswapV2Pool,
 ):
@@ -350,11 +340,6 @@ def test_calculate_tokens_in_from_tokens_out(
     )
 
 
-@pytest.mark.parametrize(
-    "fork_mainnet_archive",
-    [HISTORICAL_BLOCK],
-    indirect=True,
-)
 def test_calculate_tokens_in_from_tokens_out_with_override(
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block: UniswapV2Pool,
     dai: Erc20Token,
@@ -387,15 +372,8 @@ def test_calculate_tokens_in_from_tokens_out_with_override(
         )
 
 
-@pytest.mark.parametrize(
-    "fork_mainnet_archive",
-    [HISTORICAL_BLOCK],
-    indirect=True,
-)
-@pytest.mark.online_rpc
 def test_comparisons(
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block: UniswapV2Pool,
-    fork_mainnet_archive: AnvilFork,
 ):
     assert (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block == UNISWAP_V2_WBTC_WETH_POOL
@@ -426,11 +404,6 @@ def test_comparisons(
     _ = {ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block, other_lp}
 
 
-@pytest.mark.parametrize(
-    "fork_mainnet_archive",
-    [HISTORICAL_BLOCK],
-    indirect=True,
-)
 def test_reorg(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block: UniswapV2Pool):
     # The reorg journal is now Rust-owned (ADR-005 slice 4) with a default
     # depth of 32 blocks — ample for the 10 dummy updates below, so the former
@@ -498,11 +471,6 @@ def test_reorg(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block: 
     assert ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.state == starting_state
 
 
-@pytest.mark.parametrize(
-    "fork_mainnet_archive",
-    [HISTORICAL_BLOCK],
-    indirect=True,
-)
 def test_discard_before_finalized(
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block: UniswapV2Pool,
 ):
@@ -553,11 +521,6 @@ def test_discard_before_finalized(
     )
 
 
-@pytest.mark.parametrize(
-    "fork_mainnet_archive",
-    [HISTORICAL_BLOCK],
-    indirect=True,
-)
 def test_discard_earlier_than_created(
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block: UniswapV2Pool,
 ) -> None:
@@ -571,11 +534,6 @@ def test_discard_earlier_than_created(
     assert lp._py_pool.journal_len() == journal_len_before
 
 
-@pytest.mark.parametrize(
-    "fork_mainnet_archive",
-    [17_600_000],
-    indirect=True,
-)
 def test_discard_after_last_update(
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block: UniswapV2Pool,
 ) -> None:
@@ -590,11 +548,6 @@ def test_discard_after_last_update(
         )
 
 
-@pytest.mark.parametrize(
-    "fork_mainnet_archive",
-    [17_600_000],
-    indirect=True,
-)
 def test_simulations(
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block: UniswapV2Pool,
 ):
@@ -682,11 +635,6 @@ def test_simulations(
     )
 
 
-@pytest.mark.parametrize(
-    "fork_mainnet_archive",
-    [17_600_000],
-    indirect=True,
-)
 def test_simulation_input_validation(
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block: UniswapV2Pool,
     dai,
@@ -698,11 +646,6 @@ def test_simulation_input_validation(
         lp.simulate_exact_output_swap(token_out=dai, token_out_quantity=1_000)
 
 
-@pytest.mark.parametrize(
-    "fork_mainnet_archive",
-    [17_600_000],
-    indirect=True,
-)
 def test_simulations_with_override(
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block: UniswapV2Pool,
 ):
@@ -762,11 +705,6 @@ def test_simulations_with_override(
     )
 
 
-@pytest.mark.parametrize(
-    "fork_mainnet_archive",
-    [17_600_000],
-    indirect=True,
-)
 def test_swap_for_all(
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block: UniswapV2Pool,
 ):
@@ -808,11 +746,6 @@ def test_swap_for_all(
         )
 
 
-@pytest.mark.parametrize(
-    "fork_mainnet_archive",
-    [17_600_000],
-    indirect=True,
-)
 def test_zero_swaps(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block: UniswapV2Pool):
     with pytest.raises(InvalidSwapInputAmount):
         assert (
@@ -833,11 +766,6 @@ def test_zero_swaps(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_bl
         )
 
 
-@pytest.mark.parametrize(
-    "fork_mainnet_archive",
-    [17_600_000],
-    indirect=True,
-)
 def test_late_update(
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block: UniswapV2Pool,
 ):
