@@ -1969,6 +1969,123 @@ mod tests {
         );
     }
 
+    /// The solver alignment covers a V4-FIRST path (hop0): `hop_outputs[0]`
+    /// is aligned to the V4 twin output and the forward to hop1
+    /// (`consumed_inputs[1]`) is clamped to it — the V4-first families
+    /// (`v4_v3_*`, `v4_v2_*`, `v4_v4_*`) all derive their V4 take from
+    /// `hop_outputs[0]`, so this sweeps them to exactness with no composer
+    /// change.
+    #[test]
+    fn clamp_cl_hop_capacity_aligns_v4_first_hop0_outputs() {
+        use crate::bot_core::TickInfo;
+        use crate::solvers::arb_engine::PoolTickCoverage;
+        use alloy::primitives::I256;
+        use degenbot_pools::v3_state::V3PoolState;
+        use degenbot_pools::v4_state::v4_simulate_swap;
+
+        let mut engine = ArbitrageEngine::new();
+        // V4 pool (hop0), narrow ±60 band, low liquidity — over-fed later.
+        let mut tick_data = HashMap::new();
+        tick_data.insert(
+            60,
+            TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(300),
+                liquidity_net: I256::try_from(150i128).unwrap_or(I256::ZERO),
+                block: 0,
+            },
+        );
+        tick_data.insert(
+            -60,
+            TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(200),
+                liquidity_net: I256::try_from(-100i128).unwrap_or(I256::ZERO),
+                block: 0,
+            },
+        );
+        let v4_id = engine
+            .register_v4_pool(&RegisterV4PoolParams {
+                pool_manager: Address::from([0x44u8; 20]),
+                pool_id: [0xabu8; 32],
+                pool_key: crate::bot_core::V4PoolKey {
+                    currency0: Address::from([0x30u8; 20]),
+                    currency1: Address::from([0x31u8; 20]),
+                    fee: 500,
+                    tick_spacing: 10,
+                    hooks: Address::ZERO,
+                },
+                hook_flags: 0,
+                protocol_fee: 0,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 1_000_000,
+                tick: 0,
+                tick_data,
+                update_block: 0,
+                tick_data_block: None,
+                coverage: PoolTickCoverage::Tracked,
+                fetcher: None,
+            })
+            .expect("V4 registration failed");
+        let v2 = engine.register_v2_pool(
+            Address::from([0x11u8; 20]),
+            usdc(1_500_000),
+            weth(800),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let path_id = engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: v4_id,
+                    zero_for_one: true, // sell currency0; output = amount1
+                },
+                PoolHop {
+                    pool_id: v2,
+                    zero_for_one: true,
+                },
+            ])
+            .unwrap();
+
+        let huge = U256::from(1u128) << 120;
+        let mut result = SolvePathResult {
+            optimal_input: huge,
+            profit: U256::ONE,
+            hop_outputs: vec![U256::ONE, U256::ONE],
+            consumed_inputs: vec![huge, huge],
+            state_nonces: vec![0, 0],
+            solver_pool_states: Vec::new(),
+        };
+        engine.clamp_cl_hop_capacity(path_id, &mut result);
+
+        // Compute the V4 twin's amount1 (zfo=true → output = amount1) at the
+        // requested input — the byte-exact value hop_outputs[0] must align to.
+        let twin_out = {
+            let core = engine.core.read();
+            let state = core.get_v4_pool(v4_id).unwrap();
+            let identity = core.get_v4_identity(v4_id).unwrap();
+            let neg = I256::try_from(huge).unwrap().checked_neg().unwrap();
+            let limit = V3PoolState::default_sqrt_price_limit(true);
+            v4_simulate_swap(
+                state,
+                identity.pool_key.fee,
+                identity.pool_key.tick_spacing,
+                true,
+                neg,
+                limit,
+            )
+            .expect("twin simulates")
+            .amount1
+        };
+        // hop_outputs[0] is aligned to the byte-exact twin output (V4-first).
+        assert_eq!(result.hop_outputs[0], twin_out);
+        // The forward to hop1 (consumed_inputs[1]) is clamped to the twin output
+        // so the composer's take can never over-take the V4 pool's actual yield.
+        assert_eq!(result.consumed_inputs[1], twin_out);
+        assert!(
+            result.consumed_inputs[1] < huge,
+            "hop1 forward must be clamped"
+        );
+    }
+
     /// The clamp is a strict no-op when a CL hop's committed input is within
     /// the pool's max-convertible capacity — the exact-in loop already
     /// terminates on `amountRemaining==0`. Prevents the clamp from corrupting
