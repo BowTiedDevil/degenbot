@@ -32,7 +32,7 @@ FUNDED_EOA = "0x00000000000000000000000000000000000000Ee"  # dev account with ba
 
 # Chainlink mock: WETH/USD ≈ 3720.38 USD, scaled to 8 decimals (matches the
 # real WETH/USD aggregator's decimals used by the mainnet chainlink test).
-_CHAINLINK_ANSWER = 3_720_380_000_000_00  # 3720.38 * 1e8
+_CHAINLINK_ANSWER = 372_038_000_000  # 3720.38 * 1e8
 _CHAINLINK_DECIMALS = 8
 
 # SimpleToken slot layout: name=0, symbol=1, decimals=2, totalSupply=3.

@@ -204,3 +204,5 @@ logs/*
 # Pi extensions
 .pi/autoresearch
 .pi/mega-compact
+tests/standalone_anvil/cache/
+tests/standalone_anvil/out/build-info/
