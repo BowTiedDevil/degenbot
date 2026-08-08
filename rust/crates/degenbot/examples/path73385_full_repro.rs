@@ -25,7 +25,7 @@
 #![allow(clippy::doc_markdown, clippy::too_many_lines)]
 #![allow(clippy::cast_possible_wrap)] // run-once investigation probe
 
-use alloy::primitives::{utils::keccak256, Address, Bytes, B256};
+use alloy::primitives::{utils::keccak256, Address, Bytes, B256, I256, U256};
 use degenbot::bot_core::BotState;
 use degenbot::degenbot_backrun_strategy::{
     simulate_path_on_evm, FailBuckets, SimulateContext, SimulatePath,
@@ -99,9 +99,13 @@ fn build_path(path_id: u64) -> SimulatePath {
         44_421_383_036_608_956u128,
         vec![85_060_245u128, 85_097_884, 44_421_879_564_949_974],
     );
-    // consumed_inputs = [optimal_input] + hop_outputs[..n-1]; the tiny amounts
-    // are all below pool capacity so the CL-hop clamp does not reduce them.
-    let consumed_inputs = vec![optimal_input, hop_outputs[0], hop_outputs[1]];
+    // consumed_inputs = [optimal_input] + hop_outputs[..n-1], THEN the solver's
+    // pool-state reconciliation (`clamp_cl_hop_capacity` OUTPUT clamp) caps
+    // consumed_inputs[2] (= the V4->v3c forward) at the V4 pool's byte-exact
+    // twin output (85097881), so the composer's take (which now uses
+    // consumed_inputs[2]) can never over-take the pool's actual USDT output.
+    let mut consumed_inputs = vec![optimal_input, hop_outputs[0], hop_outputs[1]];
+    consumed_inputs[2] = 85_097_881; // v4_simulate_swap actual output (twin)
     let path_info = PathInfo::new(vec![
         HopInfo::V3(V3HopInfo {
             pool_address: parse_addr("0xE0554a476A092703abdB3Ef35c80e0D76d32939F"),
@@ -198,6 +202,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         block_timestamp: BLOCK_TS,
         block_priority_fees: None,
     };
+
+    // Solver-side analysis: reconstruct each CL pool and run the simulation
+    // twins to see the ACTUAL convertible amounts vs the solver's predictions.
+    {
+        use degenbot::investigation::build_v4_state;
+        use degenbot::investigation::reconstruct::build_v3_state as bv3;
+        println!("--- solver-side CL analysis ---");
+        let fx2 = degenbot::investigation::PathFixture::load(FIXTURE_PATH)
+            .unwrap_or_else(|e| panic!("{e}"));
+        // V4 (hop1): sell USDC/currency0 (zfo=true), exact-in 85060245.
+        let v4 = build_v4_state(&fx2.pools["v4"]);
+        let v4_amount = I256::ZERO
+            .checked_sub(I256::try_from(85_060_245u128).unwrap())
+            .unwrap();
+        let v4_sim = degenbot::degenbot_pools::v4_state::v4_simulate_swap(
+            &v4,
+            10u32,
+            1i32,
+            true,
+            v4_amount,
+            U256::from(degenbot_cl_math::cl_lib::tick_math::MIN_SQRT_RATIO)
+                .checked_add(U256::from(1u64))
+                .unwrap(),
+        );
+        println!("V4(v)\t sim={v4_sim:?}");
+        // V3c (hop2): sell USDT/token1 (zfo=false), exact-in 85097884 (predicted
+        // forward) — the solver's requested consumed_inputs[2].
+        let v3c = bv3(&fx2.pools["v3_2"]);
+        let req = I256::try_from(85_097_884u128).unwrap();
+        let limit = U256::from(
+            degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(820_000)
+                .expect("limit"),
+        );
+        let v3c_sim = degenbot::degenbot_pools::v3_state::v3_simulate_swap(
+            &v3c, 100u32, 1i32, false, req, limit,
+        );
+        if let Ok(o) = &v3c_sim {
+            let clamp = o.exact_input_clamp_bound(U256::from(85_097_884u128), U256::from(1));
+            println!("V3c\t sim={o:?}\nV3c\t consumed=[req=85097884] clamp={clamp:?} (None = not over-fed)");
+        } else {
+            println!("V3c\t sim Err={v3c_sim:?}");
+        }
+    }
 
     let path = build_path(73385);
     let mut buckets = FailBuckets::new();

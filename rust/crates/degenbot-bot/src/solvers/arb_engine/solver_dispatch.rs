@@ -109,7 +109,16 @@ impl ArbitrageEngine {
         let core = self.core.read();
         for (i, pool_ref) in pools.iter().enumerate() {
             let requested = result.consumed_inputs[i];
-            let clamp_bound: Option<U256> = match pool_ref.hop_type {
+            // Run the tier-3-validated twin once per CL hop so we can (a) clamp
+            // this hop's INPUT (marching empty-word EMPTY-HALT class) AND (b)
+            // clamp this hop's FORWARD (`consumed_inputs[i+1]` = the next hop's
+            // input, which the composer's V4 take/exchange derives from this
+            // hop's OUTPUT) to the byte-exact twin output. (b) closes the
+            // path-73385 class: the solver OVer-predicted the V4 output by 3 wei,
+            // so the take (`consumed_inputs[i+1]`) over-took the pool's actual
+            // output and the trailing V4_SETTLE_ALL repaid the 3-wei residual via
+            // a `USDT.transfer(PM,3)` that halted (0xfe).
+            let twin: Option<degenbot_pools::v3_state::V3SwapOutcome> = match pool_ref.hop_type {
                 HopType::V3 => {
                     let (Some(state), Some(identity)) = (
                         core.get_v3_pool(pool_ref.pool_key),
@@ -130,7 +139,6 @@ impl ArbitrageEngine {
                         limit,
                     )
                     .ok()
-                    .and_then(|o| o.exact_input_clamp_bound(requested, margin))
                 }
                 HopType::V4 => {
                     let (Some(state), Some(identity)) = (
@@ -156,22 +164,46 @@ impl ArbitrageEngine {
                         limit,
                     )
                     .ok()
-                    .and_then(|o| o.exact_input_clamp_bound(requested, margin))
                 }
                 // V2 / Curve / Balancer / Solidly — no empty-march class; the
                 // solver's `consumed_inputs[i]` (= full forward) is already
                 // correct at the boundary.
                 _ => continue,
             };
-            if let Some(clamped) = clamp_bound {
+            let Some(twin) = twin else { continue };
+            // (a) Input clamp: cap this CL hop's committed input at
+            // `input_consumed - margin` when over-fed (the empty-march class).
+            if let Some(clamped) = twin.exact_input_clamp_bound(requested, margin) {
                 if clamped < requested {
                     tracing::info!(
-                        "[clamp-cl] path_id={path_id} hop={i} family={:?} requested={requested} \
+                        "[clamp-cl] path_id={path_id} hop={i} family={:?} input requested={requested} \
                          clamped={clamped} reduction={}",
                         pool_ref.hop_type,
                         requested - clamped
                     );
                     result.consumed_inputs[i] = clamped;
+                }
+            }
+            // (b) Forward/output clamp: the amount this hop actually yields in
+            // the output token (`amount1` when zfo, else `amount0`) becomes the
+            // next hop's executable input (`consumed_inputs[i+1]`) — and hence
+            // the composer's V4 take. Cap it at the byte-exact twin output so a
+            // take can never exceed the pool's actual yield (path-73385 reusidual).
+            if i + 1 < pools.len() {
+                let out = if pool_ref.zero_for_one {
+                    twin.amount1
+                } else {
+                    twin.amount0
+                };
+                let forward = result.consumed_inputs[i + 1];
+                if out < forward {
+                    tracing::info!(
+                        "[clamp-cl-out] path_id={path_id} hop={i} family={:?} forward={forward} \
+                         twin_out={out} reduction={}",
+                        pool_ref.hop_type,
+                        forward - out
+                    );
+                    result.consumed_inputs[i + 1] = out;
                 }
             }
         }

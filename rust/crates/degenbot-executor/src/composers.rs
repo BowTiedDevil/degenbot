@@ -3353,7 +3353,6 @@ fn three_hop_v3_v4_v3(
     let pool_manager_address = inputs.pool_manager_address;
     let weth_address = inputs.weth_address;
 
-    let out_b = hop_outputs[1];
     if hop_outputs.contains(&0) {
         return None;
     }
@@ -3364,7 +3363,10 @@ fn three_hop_v3_v4_v3(
     // its swap-in = consumed_inputs[1] (the CL-hop clamp), so an over-fed V4
     // pool stops at capacity instead of marching to an EMPTY-OOG halt. Hop2
     // (V3c) is the CL exit — swap-in = consumed_inputs[2]; the V4_TAKE that
-    // deposits the forward into v3c stays on `out_b` (real).
+    // deposits the forward into v3c also uses consumed_inputs[2] (NOT the
+    // solver's raw `hop_outputs[1]`), so the take is byte-exact to the V4
+    // pool's actual output — it can never over-take and strand a residual
+    // delta the trailing V4_SETTLE_ALL repays via a failing USDT transfer.
     let b_swap_in = consumed_inputs.get(1).copied()?;
     if !fits_int128(b_swap_in) {
         return None;
@@ -3413,13 +3415,18 @@ fn three_hop_v3_v4_v3(
         )
         .ok()?,
     );
-    // Take EXACTLY `out_b` USDT to v3c, matching v3c.swap(out_b). The take
-    // amount must equal the V3 swap's fixed input or v3c's IIA check fails
-    // (v3c received more/less USDT than its swap demands). This aligns with
-    // the executor's canonical V4→V3 pattern (V2-V4-V3 test: take_compact
-    // with the same b_out as the V3 swap), and avoids the silent no-profit
-    // from a take_delta(actual) that diverges from the predicted out_b.
-    v4_inner.extend_from_slice(&encoders::enc_v4_take_compact(forward_b_idx, v3c_idx, out_b).ok()?);
+    // Take EXACTLY `consumed_inputs[2]` (= the V3c exit swap-in, the same
+    // executable forward v3c.swap below consumes) — the exact-match-on-amount
+    // pattern (UO3JM4 class). The take must not exceed the V4 pool's ACTUAL
+    // USDT output or the unlock leaves a negative residual delta that the
+    // trailing V4_SETTLE_ALL tries to repay via a `USDT.transfer(PM, …)` which
+    // halts (path-73385: solver over-predicted the V4 output by 3 wei, so
+    // taking `out_b=hop_outputs[1]` over-took the pool by 3 and the settle
+    // call failed). Using `consumed_inputs[2]` (the CL-clamp-aligned forward,
+    // bound by the pool-state twin via `clamp_cl_hop_capacity`) keeps take ==
+    // v3c.swap-in AND ≤ the pool's actual output → no residual.
+    v4_inner
+        .extend_from_slice(&encoders::enc_v4_take_compact(forward_b_idx, v3c_idx, c_swap_in).ok()?);
     v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
 
     let mut a_fwd = encoders::enc_erc20_transfer(weth_idx, v3a_idx, optimal_input).ok()?;
@@ -4729,5 +4736,75 @@ mod tests {
             rust, expected,
             "V4 swap-in must be the clamped consumed_inputs[1], not hop_outputs[0]"
         );
+    }
+
+    /// The V4 exit take in `three_hop_v3_v4_v3` must use `consumed_inputs[2]`
+    /// (the byte-exact V4 output, path-73385 twin) — NOT the solver's raw
+    /// `hop_outputs[1]`, which can over-predict the V4 output by a few wei and
+    /// over-take the pool, stranding a residual delta that the trailing
+    /// V4_SETTLE_ALL repays via a failing `USDT.transfer(PM, …)` (0xfe halt).
+    #[test]
+    fn three_hop_v3_v4_v3_take_uses_consumed_inputs2_not_hop_outputs1() {
+        // Path-73385 numbers: solver predicted V4 output 85097884 (hop_outputs[1])
+        // but the pool's byte-exact twin output is 85097881 (consumed_inputs[2]).
+        let optimal_input = 44_421_383_036_608_956u128;
+        let v4_predicted = 85_097_884u128;
+        let v4_actual = 85_097_881u128;
+        let take_from = |consumed2| {
+            let rust = encode_cmd_3_hop(
+                &PathInfo::new(vec![
+                    HopInfo::V3(V3HopInfo {
+                        pool_address: address!("E0554a476A092703abdB3Ef35c80e0D76d32939F"),
+                        token0_address: address!("A0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
+                        token1_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+                        fee: 100,
+                        zfo: false,
+                    }),
+                    HopInfo::V4(V4HopInfo {
+                        pool_manager_address: address!("000000000004444c5dc75cB358380D2e3dE08A90"),
+                        pool_id_hex:
+                            "0x8aa4e11cbdf30eedc92100f4c8a31ff748e201d44712cc8c90d189edaa8e4e47"
+                                .to_string(),
+                        currency0_address: address!("A0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
+                        currency1_address: address!("dAC17F958D2ee523a2206206994597C13D831ec7"),
+                        fee: 10,
+                        tick_spacing: 1,
+                        hook_address: address!("0000000000000000000000000000000000000000"),
+                        zfo: true,
+                    }),
+                    HopInfo::V3(V3HopInfo {
+                        pool_address: address!("c7bBeC68d12a0d1830360F8Ec58fA599bA1b0e9b"),
+                        token0_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+                        token1_address: address!("dAC17F958D2ee523a2206206994597C13D831ec7"),
+                        fee: 100,
+                        zfo: false,
+                    }),
+                ]),
+                optimal_input,
+                &[85_060_245, v4_predicted, 44_421_879_564_949_974],
+                // consumed_inputs = [opt, V4 swap-in, exact V4 output]
+                &[optimal_input, 85_060_245, consumed2],
+                address!("DeAd0000000000000000000000000000000000Be"),
+                address!("000000000004444c5dc75cB358380D2e3dE08A90"),
+                address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+                EncodeOptions::default(),
+            )
+            .expect("V3-V4-V3 encodes");
+            // Locate the single V4_TAKE_COMPACT (0x52) and read the 12-byte amount.
+            let found = rust
+                .windows(15)
+                .find(|w| w[0] == 0x52 && w[3..].iter().any(|b| *b != 0))
+                .map(|w| {
+                    let mut a = [0u8; 16];
+                    a[4..].copy_from_slice(&w[3..15]); // 12 bytes at offset 3
+                    u128::from_be_bytes(a)
+                });
+            found
+        };
+        // With the exact twin amount in consumed_inputs[2], the take = that amount.
+        assert_eq!(take_from(v4_actual), Some(v4_actual));
+        // And it is NOT the solver's over-predicted hop_outputs[1].
+        assert_eq!(take_from(v4_actual), Some(v4_actual));
+        assert_ne!(take_from(v4_actual), Some(v4_predicted));
     }
 }

@@ -1461,7 +1461,7 @@ fn parity_v3_v4_v3() {
         .unwrap(),
     );
     v4_inner.extend_from_slice(
-        &encoders::enc_v4_take_compact(forward_b_idx, v3c_idx, 2_001_000_000_000_000_000u128)
+        &encoders::enc_v4_take_compact(forward_b_idx, v3c_idx, 2_000_999_999_999_999_999u128)
             .unwrap(),
     );
     v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
