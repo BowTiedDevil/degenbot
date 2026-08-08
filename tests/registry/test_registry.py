@@ -1,13 +1,51 @@
+from pathlib import Path
+
 import pytest
 
-from degenbot.bot import Bot
+from degenbot.bot import Bot, PyBot
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.config import DatabaseSettings, DegenbotConfig
+from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
+from degenbot.provider import OfflineProvider
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from tests.fakes.pools import FakeUniswapV4Pool
+from tests.golden.recorded_pool import load_pool
+from tests.helpers.erc20_factory import make_erc20
 
 UNISWAP_V2_WBTC_WETH_POOL = get_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
 WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+
+_V2_WBTC_WETH_GOLDEN = Path("tests/golden/data/uniswap/v2/wbtc_weth/17600000.json")
+_PY_BOT = PyBot()
+
+
+def _offline_bot() -> Bot:
+    """A single-chain Bot with a no-op offline provider (registry tests need no network)."""
+    config = DegenbotConfig(
+        database=DatabaseSettings(path=Path(":memory:")),
+        rpc={},
+        default_chain_id=1,
+    )
+    provider = OfflineProvider(chain_id=1, blocks={"1": {"timestamp": 0, "calls": {}, "code": {}}})
+    return Bot(config, provider=provider)
+
+
+def _recorded_pool() -> UniswapV2Pool:
+    """A real I/O-free WBTC/WETH V2 pool rebuilt from the recorded golden (no RPC)."""
+    return load_pool(_V2_WBTC_WETH_GOLDEN, chain_id=1, block=17_600_000)
+
+
+def _weth_token() -> Erc20Token:
+    return make_erc20(
+        _PY_BOT,
+        WETH_ADDRESS,
+        name="Wrapped Ether",
+        symbol="WETH",
+        decimals=18,
+        chain_id=1,
+    )
 
 
 def test_distinct_registry_instances():
@@ -21,56 +59,43 @@ def test_distinct_registry_instances():
     assert new_token_registry is not token_registry
 
 
-def test_adding_pool(bot_mainnet_full: Bot):
-    pool = bot_mainnet_full.build_pool(UNISWAP_V2_WBTC_WETH_POOL)
-    assert (
-        bot_mainnet_full.pools.get(pool_address=pool.address, chain_id=bot_mainnet_full.chain_id)
-        is pool
-    )
+def test_adding_pool():
+    # Registry semantics are network-independent; seed a real io-free pool object.
+    bot = _offline_bot()
+    pool = _recorded_pool()
+    bot.pools.add(pool_address=pool.address, chain_id=bot.chain_id, pool=pool)
+    assert bot.pools.get(pool_address=pool.address, chain_id=bot.chain_id) is pool
 
     with pytest.raises(DegenbotValueError):
-        bot_mainnet_full.pools.add(
-            pool_address=pool.address, chain_id=bot_mainnet_full.chain_id, pool=pool
-        )
+        bot.pools.add(pool_address=pool.address, chain_id=bot.chain_id, pool=pool)
 
 
-def test_deleting_pool(bot_mainnet_full: Bot):
-    pool = bot_mainnet_full.build_pool(UNISWAP_V2_WBTC_WETH_POOL)
-    assert (
-        bot_mainnet_full.pools.get(pool_address=pool.address, chain_id=bot_mainnet_full.chain_id)
-        is pool
-    )
-    bot_mainnet_full.pools.remove(pool_address=pool.address, chain_id=bot_mainnet_full.chain_id)
-    assert (
-        bot_mainnet_full.pools.get(pool_address=pool.address, chain_id=bot_mainnet_full.chain_id)
-        is None
-    )
+def test_deleting_pool():
+    bot = _offline_bot()
+    pool = _recorded_pool()
+    bot.pools.add(pool_address=pool.address, chain_id=bot.chain_id, pool=pool)
+    assert bot.pools.get(pool_address=pool.address, chain_id=bot.chain_id) is pool
+    bot.pools.remove(pool_address=pool.address, chain_id=bot.chain_id)
+    assert bot.pools.get(pool_address=pool.address, chain_id=bot.chain_id) is None
 
 
-def test_adding_token(bot_mainnet_full: Bot):
-    token = bot_mainnet_full.build_erc20token(WETH_ADDRESS)
-    assert (
-        bot_mainnet_full.tokens.get(token_address=token.address, chain_id=bot_mainnet_full.chain_id)
-        is token
-    )
+def test_adding_token():
+    bot = _offline_bot()
+    token = _weth_token()
+    bot.tokens.add(token_address=token.address, chain_id=bot.chain_id, token=token)
+    assert bot.tokens.get(token_address=token.address, chain_id=bot.chain_id) is token
 
     with pytest.raises(DegenbotValueError):
-        bot_mainnet_full.tokens.add(
-            token_address=token.address, chain_id=bot_mainnet_full.chain_id, token=token
-        )
+        bot.tokens.add(token_address=token.address, chain_id=bot.chain_id, token=token)
 
 
-def test_deleting_token(bot_mainnet_full: Bot):
-    token = bot_mainnet_full.build_erc20token(WETH_ADDRESS)
-    assert (
-        bot_mainnet_full.tokens.get(token_address=token.address, chain_id=bot_mainnet_full.chain_id)
-        is token
-    )
-    bot_mainnet_full.tokens.remove(token_address=token.address, chain_id=bot_mainnet_full.chain_id)
-    assert (
-        bot_mainnet_full.tokens.get(token_address=token.address, chain_id=bot_mainnet_full.chain_id)
-        is None
-    )
+def test_deleting_token():
+    bot = _offline_bot()
+    token = _weth_token()
+    bot.tokens.add(token_address=token.address, chain_id=bot.chain_id, token=token)
+    assert bot.tokens.get(token_address=token.address, chain_id=bot.chain_id) is token
+    bot.tokens.remove(token_address=token.address, chain_id=bot.chain_id)
+    assert bot.tokens.get(token_address=token.address, chain_id=bot.chain_id) is None
 
 
 def test_v4_pool_add_and_removal():
