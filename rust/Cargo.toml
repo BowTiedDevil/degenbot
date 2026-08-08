@@ -64,7 +64,7 @@ await_holding_lock = "deny"
 exit = "deny"
 
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
     "crates/degenbot",
     "crates/degenbot-aave",
