@@ -175,3 +175,44 @@ fn pruning_shrinks_hot_set_for_dominated_data() {
         "x={x}: hot={hot} should be << total={total} (dominance pruning)"
     );
 }
+
+/// Spike S1 validation: at the worst-case realistic magnitudes the `i128`
+/// envelope holds and no `net`/`upper_bound`/hull op panics — a trillion-token
+/// asset (gross ~2^100 wei), an extreme gas use (~2^26), and an extreme gas
+/// price (~2^60 wei/gas). See docs/ergo-results/order-index-integer-repr-spike.md.
+#[test]
+fn s1_extreme_magnitudes_no_panic_and_hold_i128() {
+    let gross = 1i128 << 100; // ~1.3e30 wei (trillion 18-decimal tokens)
+    let gas = 1i128 << 26; // ~6.7e7 gas
+    let x = 1i128 << 60; // ~1.15e18 wei/gas
+    assert!(gross < i128::MAX, "gross must stay under i128::MAX");
+    let mut idx = EnvelopeIndex::new();
+    idx.insert(Candidate { id: 0, gas, gross });
+    // net = gross - gas*X; exact, no panic. Here 2^100 - 2^86 > 0.
+    let net = idx.net(0, x);
+    assert_eq!(net, gross - gas * x, "net must be exact (no i128 overflow)");
+    // A hull op must not panic (cross handled in i256).
+    let top = idx.top_k(x, 1);
+    assert_eq!(top.len(), 1);
+    assert_eq!(idx.best(x), Some(0));
+}
+
+// Spike S2 validation: building the hull by *incremental* `insert` produces the
+// exact same hull as a single full `rebuild`, over a randomized sequence.
+proptest! {
+    #[test]
+    fn incremental_insert_matches_rebuild(points in prop::collection::vec(point(), 1..200)) {
+        let unique = dedup(&points);
+        let mut inc = EnvelopeIndex::new();
+        for p in &unique {
+            inc.insert(*p);
+        }
+        let mut rbd = EnvelopeIndex::new();
+        rbd.extend(unique.iter().copied());
+        prop_assert_eq!(inc.hull_len(), rbd.hull_len(), "incremental hull size must match rebuild");
+        for x in [0i128, 50_000_000_000, 200_000_000_000, 2_000_000_000_000] {
+            prop_assert_eq!(inc.best(x), rbd.best(x), "argmax mismatch at x={}", x);
+            prop_assert_eq!(inc.top_k(x, 3), rbd.top_k(x, 3), "top-3 mismatch at x={}", x);
+        }
+    }
+}

@@ -45,14 +45,110 @@ impl EnvelopeIndex {
         self.points.is_empty()
     }
 
-    /// Push a candidate and rebuild the hull.
-    ///
-    /// NOTE: this is the prototype's O(n log n) rebuild-on-every-mutation.
-    /// Incremental hull maintenance (degenbot-order-index promotion task) will
-    /// replace it with O(log h) insert/remove/update runs.
+    /// Push a candidate, maintaining the hull incrementally (polylog for an
+    /// interior/still-hull point; O(k) to splice a point that pokes above).
     pub fn insert(&mut self, c: Candidate) {
         self.points.push(c);
+        self.insert_incremental(self.points.len() - 1);
+    }
+
+    /// Force a full exact hull rebuild from the current point set. Used after
+    /// batched mutations (`extend`, `update`, `remove`) and as the periodic
+    /// tightening pass in the production design.
+    pub fn rebuild(&mut self) {
         self.rebuild_hull();
+    }
+
+    /// Incrementally splice a newly-pushed point at `idx` into the maintained
+    /// hull. Returns true if it became a hull vertex. Uses the exact `i256`-safe
+    /// cross—see `S2` spike. The hull is kept gas-ascending throughout.
+    fn insert_incremental(&mut self, idx: usize) -> bool {
+        let p = self.points[idx];
+        let n = self.hull.len();
+        if n == 0 {
+            self.hull.push(idx);
+            return true;
+        }
+        let first_gas = self.points[self.hull[0]].gas;
+        let last_gas = self.points[self.hull[n - 1]].gas;
+        // New leftmost / rightmost extreme by gas.
+        if p.gas < first_gas {
+            self.hull.insert(0, idx);
+            self.fix_right_of(0);
+            return true;
+        }
+        if p.gas > last_gas {
+            self.hull.push(idx);
+            let pos = self.hull.len() - 1;
+            self.fix_left_of(pos);
+            return true;
+        }
+        // First hull index with gas >= p.gas.
+        let mut lo = 0usize;
+        let mut hi = self.hull.len();
+        while lo < hi {
+            let mid = usize::midpoint(lo, hi);
+            if self.points[self.hull[mid]].gas < p.gas {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        if lo < self.hull.len() && self.points[self.hull[lo]].gas == p.gas {
+            // Same gas as an existing vertex: keep the higher gross.
+            if p.gross > self.points[self.hull[lo]].gross {
+                self.hull[lo] = idx;
+                let pos = self.fix_left_of(lo);
+                self.fix_right_of(pos);
+                return true;
+            }
+            return false;
+        }
+        // Bracket edge is [hull[lo-1], hull[lo]]; p above it -> new vertex.
+        let a = self.hull[lo - 1];
+        let b = self.hull[lo];
+        if cross_ordering(self.points[a], self.points[b], p) != std::cmp::Ordering::Greater {
+            return false; // on/below segment -> interior, hull unchanged
+        }
+        self.hull.insert(lo, idx);
+        let pos = self.fix_left_of(lo);
+        self.fix_right_of(pos);
+        true
+    }
+
+    /// Remove now-obscured hull vertices immediately left of `pos`, walking
+    /// outward. `pos` must be a hull vertex index; returns the (possibly
+    /// decremented) position of that vertex after left-side cleaning.
+    fn fix_left_of(&mut self, pos: usize) -> usize {
+        let mut pos = pos;
+        while pos >= 2 {
+            let a = self.hull[pos - 2];
+            let b = self.hull[pos - 1];
+            let c = self.hull[pos];
+            if cross_ordering(self.points[a], self.points[b], self.points[c])
+                == std::cmp::Ordering::Less
+            {
+                break; // b is a strict peak: keep
+            }
+            self.hull.remove(pos - 1);
+            pos -= 1;
+        }
+        pos
+    }
+
+    /// Remove now-obscured hull vertices immediately right of `pos`.
+    fn fix_right_of(&mut self, pos: usize) {
+        while pos + 2 < self.hull.len() {
+            let a = self.hull[pos];
+            let b = self.hull[pos + 1];
+            let c = self.hull[pos + 2];
+            if cross_ordering(self.points[a], self.points[b], self.points[c])
+                == std::cmp::Ordering::Less
+            {
+                break;
+            }
+            self.hull.remove(pos + 1);
+        }
     }
 
     /// Push a batch of candidates and rebuild the hull once.
@@ -237,11 +333,14 @@ impl EnvelopeIndex {
             while hull.len() >= 2 {
                 let b = hull[hull.len() - 1];
                 let a = hull[hull.len() - 2];
-                if cross(self.points[a], self.points[b], self.points[i]) >= 0 {
-                    hull.pop();
-                } else {
+                // `cross_ordering(a, b, i) != Less` <=> cross(a,b,i) >= 0
+                // (b at-or-below the chord a-i): b is not an upper-hull vertex.
+                if cross_ordering(self.points[a], self.points[b], self.points[i])
+                    == std::cmp::Ordering::Less
+                {
                     break;
                 }
+                hull.pop();
             }
             hull.push(i);
         }
@@ -249,8 +348,20 @@ impl EnvelopeIndex {
     }
 }
 
-/// Cross product `(b - a) x (c - a)`; positive = counterclockwise (left turn).
-#[allow(clippy::many_single_char_names)]
-fn cross(a: Candidate, b: Candidate, c: Candidate) -> i128 {
-    (b.gas - a.gas) * (c.gross - a.gross) - (b.gross - a.gross) * (c.gas - a.gas)
+/// Sign of `cross(a, b, c) = (b - a) x (c - a)`, exact (`i128` fast path,
+/// `i256` fallback so the hull geometry cannot overflow).
+#[inline]
+fn cross_ordering(a: Candidate, b: Candidate, c: Candidate) -> std::cmp::Ordering {
+    let dx1 = b.gas - a.gas; // i128
+    let dy2 = c.gross - a.gross;
+    let dy1 = b.gross - a.gross;
+    let dx2 = c.gas - a.gas;
+    // Fast path: `dx1*dy2 - dy1*dx2` fits i128.
+    if let (Some(l), Some(r)) = (dx1.checked_mul(dy2), dy1.checked_mul(dx2)) {
+        if let Some(diff) = l.checked_sub(r) {
+            return diff.cmp(&0);
+        }
+    }
+    // Exact path: compute the sign in `i256`.
+    crate::i256::cross_sign(dx1, dy2, dy1, dx2)
 }

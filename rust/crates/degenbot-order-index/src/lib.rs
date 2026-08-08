@@ -53,6 +53,7 @@
 //! This crate is a **zero-dependency, pyo3-free** prototype validating the
 //! invariant against a brute-force reference under randomized inputs.
 
+pub mod i256;
 pub mod index;
 
 pub use index::{Candidate, EnvelopeIndex};
