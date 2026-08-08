@@ -8,16 +8,8 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
-[lints.rust]
-warnings = "deny"
-
-[lints.clippy]
-complexity = "warn"
-correctness = "warn"
-pedantic = "warn"
-perf = "warn"
-style = "warn"
-suspicious = "warn"
+[lints]
+workspace = true
 
 [dependencies]
 # The simulation engine (revm executor, BlockSimHandle, overrides, AL, warm
@@ -58,6 +50,16 @@ alloy = { version = "^2.3" }
 parking_lot = "^0.12"
 thiserror = { version = "^2.0" }
 tracing = { version = "^0.1" }
+# The net-profit order index — used (feature `order-index`) to make the pre-sim
+# top-K selection deterministic by profit instead of trusting the caller's
+# pre-sort (see ADR-024). Optional: off by default, preserving current behavior.
+degenbot-order-index = { path = "../degenbot-order-index", optional = true }
+
+[features]
+# Deterministic profit-descending (+ id tie-break) pre-sim selection via
+# degenbot-order-index, replacing the "candidates arrive pre-sorted" contract.
+# Off by default (parity): the caller's pre-sort is trusted as today.
+order-index = ["dep:degenbot-order-index"]
 
 [dev-dependencies]
 tokio = { version = "^1.53", features = ["macros", "rt"] }

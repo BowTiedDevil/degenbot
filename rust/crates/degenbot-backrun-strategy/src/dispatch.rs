@@ -67,7 +67,7 @@ use crate::{
 /// slot8 that no on-chain block holds (synthetic / cached-intra-block /
 /// polluted) surfaces here even though every DB layer below the `CacheDB`
 /// forwards on-chain state. No-op unless `DEGENBOT_V2_CALC_TRACE` is set.
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 fn v2_calc_trace(handle: &mut BlockSimHandle<'_>, sim_path: &SimulatePath) {
     if !crate::simulator::flag_default_on("DEGENBOT_V2_CALC_TRACE") {
         return;
@@ -385,7 +385,31 @@ impl DispatchOutcome {
 /// spans, no `.await` held under either guard — so a poison indicates a bug in
 /// a sibling task (the arcs are shared with the submission seam's accessors;
 /// never locked across an `.await`).
-#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+#[expect(clippy::too_many_lines, clippy::too_many_arguments)]
+/// Deterministically reorder `candidates` into the order index's net-profit
+/// ranking (profit descending, id ascending) before the `MAX_SIMULATE_CONCURRENT`
+/// cap — the `order-index` feature's substitute for the "candidates arrive
+/// pre-sorted" contract (see ADR-024, 34VCC2). Today the solver emits no
+/// per-path gas, so `gas = 0` and `net == gross == engine_profit`; the seam
+/// becomes net-aware as soon as per-path gas is available.
+#[cfg(feature = "order-index")]
+fn order_index_top_selection(candidates: &mut Vec<DispatchCandidate>) {
+    use degenbot_order_index::{EnvelopeIndex, OrderIndex};
+    let mut idx = EnvelopeIndex::<u64>::new();
+    for c in candidates.iter() {
+        idx.insert(c.path_id, U256::ZERO, U256::from(c.engine_profit));
+    }
+    let ranked = idx.top_k(U256::ZERO, candidates.len());
+    // `ranked` is every id in (net desc, id asc) order. Safe-guard: only enforce
+    // when it covers every candidate (candidate path_ids are expected unique).
+    if ranked.len() != candidates.len() {
+        return;
+    }
+    let pos: HashMap<u64, usize> =
+        ranked.into_iter().enumerate().map(|(i, id)| (id, i)).collect();
+    candidates.sort_by_key(|c| pos.get(&c.path_id).copied().unwrap_or(usize::MAX));
+}
+
 pub fn dispatch_profitable_results(
     mut candidates: Vec<DispatchCandidate>,
     ctx: &SimulateContext<'_>,
@@ -537,8 +561,13 @@ pub fn dispatch_profitable_results(
     }
     outcome.stale_dropped = stale_before - candidates.len();
 
-    // 4. Cap (L2491). The candidates are expected pre-sorted by engine profit
-    //    descending (the caller's responsibility — ports L1684's sort).
+    // 4. Cap (L2491). With the `order-index` feature, the selection is made
+    //    deterministic by profit via the net-profit order index (see ADR-024)
+    //    instead of trusting the caller's pre-sort; otherwise the candidates
+    //    are expected pre-sorted by engine profit descending (the caller's
+    //    responsibility — ports L1684's sort).
+    #[cfg(feature = "order-index")]
+    order_index_top_selection(&mut candidates);
     candidates.truncate(MAX_SIMULATE_CONCURRENT);
     outcome.candidate_count = candidates.len();
 
@@ -1229,5 +1258,32 @@ mod tests {
                 .is_empty(),
             "non-SolverCalc failures must not record divergence"
         );
+    }
+
+    /// `order-index` feature: the pre-sim selection is deterministic (profit
+    /// desc, id-asc tie-break) regardless of the caller's order — parity with a
+    /// brute-force profit sort (ADR-024 / 34VCC2).
+    #[cfg(feature = "order-index")]
+    #[test]
+    fn order_index_top_selection_is_deterministic() {
+        let path = two_v2_hops();
+        let mk = |id: u64, profit: u128| DispatchCandidate {
+            path_id: id,
+            optimal_input: 0,
+            engine_profit: profit,
+            hop_outputs: vec![],
+            consumed_inputs: vec![],
+            solve_block: 100,
+            path_info: path.clone(),
+            opts: EncodeOptions { erc6909_profit: false, use_v4_batch: false },
+            state_nonces: vec![],
+        };
+        // Deliberately passed in a non-sorted order, with a profit tie (100).
+        let mut cands = vec![mk(10, 100), mk(5, 500), mk(9, 100), mk(20, 300)];
+        order_index_top_selection(&mut cands);
+        let order: Vec<(u64, u128)> =
+            cands.iter().map(|c| (c.path_id, c.engine_profit)).collect();
+        // profit descending, then id ascending on the 100-tie.
+        assert_eq!(order, vec![(5, 500), (20, 300), (9, 100), (10, 100)]);
     }
 }
