@@ -53,6 +53,7 @@ members = [
     "crates/degenbot-solvers",
     "crates/degenbot-submission",
     "crates/degenbot-uniswap",
+    "crates/degenbot-order-index",
     "crates/degenbot-v2-math",
 ]
 

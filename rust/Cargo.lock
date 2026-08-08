@@ -2215,6 +2215,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "degenbot-order-index"
+version = "0.6.0-alpha.3"
+dependencies = [
+ "proptest",
+]
+
+[[package]]
 name = "degenbot-pathfinding"
 version = "0.6.0-alpha.3"
 

@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 91f46f208202b7bf80fcb016f9c7fc1fb3d88dc496536f7f06b6501d5435e8a6 # shrinks to points = [Candidate { id: 0, gas: 7306414, gross: 0 }, Candidate { id: 1, gas: 21000, gross: 0 }], x = 0, k = 1
+cc 26e72a7977f8b3d45440ae29e9225cc223dabe8713d65699a5116e0c05243f5e # shrinks to points = [Candidate { id: 0, gas: 5356193, gross: 0 }, Candidate { id: 1, gas: 21000, gross: 0 }], x = 0, k = 1
