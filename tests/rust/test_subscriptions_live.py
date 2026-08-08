@@ -17,6 +17,7 @@ from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI, ETHEREUM_ARCHIVE_NODE
 class TestLiveWSSubscribeBlocks:
     """Test subscribing to new block headers via a live WS node."""
 
+    @pytest.mark.online_rpc
     @pytest.mark.asyncio
     async def test_subscribe_blocks_yields_headers(self) -> None:
         """Subscribe to block headers and verify we get at least one."""
@@ -37,6 +38,7 @@ class TestLiveWSSubscribeBlocks:
         finally:
             subscription._inner.unsubscribe()
 
+    @pytest.mark.online_rpc
     @pytest.mark.asyncio
     async def test_unsubscribe_stops_iteration(self) -> None:
         """Unsubscribe should stop the async iteration."""
@@ -74,6 +76,7 @@ class TestLiveWSHTTPRaises:
 class TestLiveWSLogsSubscription:
     """Test log subscriptions via a live WS node."""
 
+    @pytest.mark.online_rpc
     @pytest.mark.asyncio
     async def test_subscribe_logs_with_no_filter(self) -> None:
         """Subscribe to all logs and verify we get at least one."""
@@ -102,6 +105,7 @@ class TestLiveWSLogsSubscription:
 class TestLiveWSAdapterLogSubscription:
     """Test the AsyncAlloyProvider WS log subscription path."""
 
+    @pytest.mark.online_rpc
     @pytest.mark.asyncio
     async def test_adapter_subscribe_blocks(self) -> None:
         """Subscribe to blocks via live WS and verify the subscription yields headers."""
@@ -119,6 +123,7 @@ class TestLiveWSAdapterLogSubscription:
         finally:
             sub.unsubscribe()
 
+    @pytest.mark.online_rpc
     @pytest.mark.asyncio
     async def test_subscribe_logs_yields_log_dicts(self) -> None:
         """Subscribe to unfiltered logs; verify the WS subscription yields log dicts."""

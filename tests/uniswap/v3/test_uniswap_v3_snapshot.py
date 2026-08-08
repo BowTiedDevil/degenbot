@@ -306,6 +306,7 @@ def test_apply_update_to_snapshot(
     assert pool.tick_bitmap == tick_bitmap
 
 
+@pytest.mark.online_rpc
 def test_liquidity_map_is_none_for_missing_pools(
     empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870: UniswapV3LiquiditySnapshot,  # noqa: E501
     mainnet_snapshot_at_block_12_369_870_from_file: UniswapV3LiquiditySnapshot,
@@ -329,6 +330,7 @@ def test_liquidity_map_is_none_for_missing_pools(
     assert mainnet_snapshot_at_block_12_369_870_from_dir.tick_data(ZERO_ADDRESS) is None
 
 
+@pytest.mark.online_rpc
 def test_snapshot_finds_known_pool(
     empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870: UniswapV3LiquiditySnapshot,  # noqa: E501
     mainnet_snapshot_at_block_12_369_870_from_file: UniswapV3LiquiditySnapshot,

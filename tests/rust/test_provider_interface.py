@@ -28,6 +28,7 @@ def alloy_provider(fork_mainnet_full: AnvilFork) -> Iterator[AlloyProvider]:
 class TestAlloyProviderAdapter:
     """Test AlloyProvider direct interface."""
 
+    @pytest.mark.online_rpc
     def test_adapter_properties(self, alloy_provider: AlloyProvider):
         """Test that the provider exposes the expected interface."""
         adapter = alloy_provider
@@ -44,6 +45,7 @@ class TestAlloyProviderAdapter:
         assert adapter.provider_type == "alloy"
         assert adapter.is_connected() is True
 
+    @pytest.mark.online_rpc
     def test_adapter_has_required_interface(self, alloy_provider: AlloyProvider):
         """Test that adapter satisfies the provider interface."""
         adapter = alloy_provider
