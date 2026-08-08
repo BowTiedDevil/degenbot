@@ -1,5 +1,6 @@
 import logging
 import os
+import shutil
 from collections.abc import Generator
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from tests.golden.oracle import GOLDEN_ROOT, GoldenOracle, _nodeid_to_path
 from tests.golden.recorded_pool import RecordedPool
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.offline import is_offline
+from tests.standalone_anvil import seed as seed_catalog
 
 env_file = dotenv.find_dotenv("tests.env")
 env_values = dotenv.dotenv_values(env_file)
@@ -214,6 +216,25 @@ def recorded_pool_factory(request: pytest.FixtureRequest):
         return RecordedPool(path=path, chain_id=chain_id, block=block_number, mode=mode)
 
     return bind
+
+
+@pytest.fixture
+def standalone_anvil() -> Generator[AnvilFork, None, None]:
+    """A non-forking standalone anvil seeded with canonical contracts (no upstream RPC).
+
+    Uses :class:`degenbot.fork.AnvilFork` with ``fork_url=None`` + a fixed chain id,
+    seeded via :mod:`tests.standalone_anvil.seed` (compiled bytecode at fixed
+    addresses + a funded EOA). Provider/anvil-backed tests that only need to
+    exercise the RPC/contract seams run against it locally AND in the anvil CI
+    job with no external network. See ``tests/standalone_anvil/seed.py`` for the
+    fixed addresses.
+    """
+    if shutil.which("anvil") is None:
+        pytest.skip("requires the anvil binary (not present in the no-anvil CI job)")
+    fork = AnvilFork(chain_id=seed_catalog.CHAIN_ID, anvil_opts=["--accounts=0"])
+    seed_catalog.seed(fork)
+    yield fork
+    fork.close()
 
 
 @pytest.fixture
