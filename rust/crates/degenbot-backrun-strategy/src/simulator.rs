@@ -1197,7 +1197,7 @@ where
                             use degenbot_simulation::FrameOutcome;
                             match o {
                                 FrameOutcome::Revert { gas_used, .. }
-                                | FrameOutcome::Halt { gas_used }
+                                | FrameOutcome::Halt { gas_used, .. }
                                 | FrameOutcome::Success { gas_used, .. } => *gas_used,
                             }
                         })
@@ -1312,7 +1312,7 @@ where
                     .as_ref()
                     .map(|o| match o {
                         FO::Revert { gas_used, .. }
-                        | FO::Halt { gas_used }
+                        | FO::Halt { gas_used, .. }
                         | FO::Success { gas_used, .. } => *gas_used,
                     })
                     .unwrap_or_default();

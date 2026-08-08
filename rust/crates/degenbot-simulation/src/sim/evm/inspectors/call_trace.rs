@@ -42,8 +42,11 @@ pub enum FrameOutcome {
     /// `REVERT` — the frame reverted; `data` is the revert reason (the
     /// thing [`classify_revert`] consumes).
     Revert { gas_used: u64, data: Bytes },
-    /// Any other halt (OOG, invalid opcode, call-too-deep, …).
-    Halt { gas_used: u64 },
+    /// Any other halt (OOG, invalid opcode, call-too-deep, …). `reason` is the
+    /// human-readable `InstructionResult` (e.g. `Halt(HaltReason::OutOfGas)`)
+    /// that distinguishes an OOG-truncated march from a genuine invalid-opcode
+    /// halt at low gas.
+    Halt { gas_used: u64, reason: String },
 }
 
 impl FrameOutcome {
@@ -60,7 +63,10 @@ impl FrameOutcome {
                 gas_used,
                 output: res.output.clone(),
             },
-            _ => Self::Halt { gas_used },
+            _ => Self::Halt {
+                gas_used,
+                reason: format!("{res:?}"),
+            },
         }
     }
 }
@@ -78,10 +84,18 @@ pub struct CallFrame {
     pub caller: Address,
     /// The frame's target (the account whose storage/code runs).
     pub target: Address,
-    /// The first 4 bytes of the calldata (the Solidity selector).
+    /// The first 4 bytes of the calldata (the Solidity selector). For a
+    /// `SharedBuffer` `CallInput` this is zero-padded (revm passes optimized
+    /// calldata through a shared memory buffer) — use [`CallFrame::data`] for
+    /// the full input.
     pub selector: [u8; 4],
     /// The gas limit of the call.
     pub gas_limit: u64,
+    /// The full calldata of the call (extracted from both `Bytes` and
+    /// `SharedBuffer` `CallInput` forms), so a failing frame's exact input is
+    /// attributable.
+    #[serde(default)]
+    pub data: Bytes,
     /// `None` until `call_end`/`create_end` pairs this frame.
     pub outcome: Option<FrameOutcome>,
 }
@@ -146,22 +160,36 @@ impl CallTrace {
                 .as_ref()
                 .map(|o| match o {
                     FO::Revert { gas_used, .. }
-                    | FO::Halt { gas_used }
+                    | FO::Halt { gas_used, .. }
                     | FO::Success { gas_used, .. } => *gas_used,
                 })
                 .unwrap_or_default();
             for _ in 0..f.depth.saturating_sub(1) {
                 out.push_str("  ");
             }
+            let reason = match &f.outcome {
+                Some(FO::Halt { reason, .. }) if !reason.is_empty() => {
+                    format!(" reason={reason}")
+                }
+                _ => String::new(),
+            };
+            let data = if kind != "ok" {
+                format!(" data=0x{}", alloy::primitives::hex::encode(&f.data))
+            } else {
+                String::new()
+            };
             let _ = std::fmt::Write::write_fmt(
                 &mut out,
                 format_args!(
-                    "d{} {}:0x{}:{} g{}\n",
+                    "d{} {}:0x{}:{} gl{} g{}{}{}\n",
                     f.depth,
                     f.target,
                     alloy::primitives::hex::encode(f.selector),
                     kind,
-                    gas
+                    f.gas_limit,
+                    gas,
+                    reason,
+                    data
                 ),
             );
         }
@@ -251,6 +279,7 @@ impl CallTraceHandle {
             target: inputs.target_address,
             selector,
             gas_limit: inputs.gas_limit,
+            data: selector.to_vec().into(),
             outcome: None,
         });
     }
@@ -281,8 +310,15 @@ fn selector_of(input: &revm::interpreter::CallInput) -> [u8; 4] {
     }
 }
 
-impl<CTX, INTR: revm::interpreter::InterpreterTypes> Inspector<CTX, INTR> for CallTraceInspector {
-    fn call(&mut self, _ctx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
+impl<CTX, INTR: revm::interpreter::InterpreterTypes> Inspector<CTX, INTR> for CallTraceInspector
+where
+    CTX: revm::context_interface::ContextTr,
+{
+    fn call(&mut self, ctx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
+        // Extract the FULL calldata (both `Bytes` + `SharedBuffer` forms) so a
+        // failing frame's exact input is attributable — `selector` alone is
+        // zero-padded for `SharedBuffer` calldata (the Vyper-case here).
+        let data: Bytes = inputs.input.as_bytes(ctx).to_vec().into();
         let mut buf = self.buf.borrow_mut();
         buf.depth += 1;
         let depth = buf.depth;
@@ -292,6 +328,7 @@ impl<CTX, INTR: revm::interpreter::InterpreterTypes> Inspector<CTX, INTR> for Ca
             target: inputs.target_address,
             selector: selector_of(&inputs.input),
             gas_limit: inputs.gas_limit,
+            data,
             outcome: None,
         };
         buf.frames.push(frame);
@@ -318,6 +355,7 @@ impl<CTX, INTR: revm::interpreter::InterpreterTypes> Inspector<CTX, INTR> for Ca
             target: Address::ZERO,
             selector: [0u8; 4],
             gas_limit: inputs.gas_limit(),
+            data: Bytes::new(),
             outcome: None,
         };
         buf.frames.push(frame);
@@ -342,6 +380,7 @@ mod tests {
             target: Address::ZERO,
             selector: [0u8; 4],
             gas_limit: 0,
+            data: Bytes::new(),
             outcome: Some(FrameOutcome::Success {
                 gas_used: 0,
                 output: Bytes::new(),
@@ -356,6 +395,7 @@ mod tests {
             target: Address::repeat_byte(0x20),
             selector: [0u8; 4],
             gas_limit: 0,
+            data: Bytes::new(),
             outcome: Some(FrameOutcome::Revert {
                 gas_used: 0,
                 data: Bytes::copy_from_slice(data),
@@ -381,6 +421,7 @@ mod tests {
                     target: Address::repeat_byte(0xaa),
                     selector: [0x12, 0x34, 0x56, 0x78],
                     gas_limit: 0,
+                    data: Bytes::new(),
                     outcome: Some(FrameOutcome::Success {
                         gas_used: 1000,
                         output: Bytes::new(),
@@ -392,6 +433,7 @@ mod tests {
                     target: Address::repeat_byte(0xbb),
                     selector: [0xde, 0xad, 0xbe, 0xef],
                     gas_limit: 0,
+                    data: Bytes::new(),
                     outcome: Some(FrameOutcome::Revert {
                         gas_used: 500,
                         data: Bytes::new(),
@@ -401,9 +443,9 @@ mod tests {
         };
         let rendered = trace.render_debug();
         // Depth-1 line un-indented; depth-2 line indented; selector/kind/gas shown.
-        assert!(rendered.contains(":0x12345678:ok g1000"), "{rendered}");
+        assert!(rendered.contains(":0x12345678:ok gl0 g1000"), "{rendered}");
         assert!(
-            rendered.contains("  d2 ") && rendered.contains(":0xdeadbeef:revert g500"),
+            rendered.contains("  d2 ") && rendered.contains(":0xdeadbeef:revert gl0 g500"),
             "{rendered}"
         );
         assert!(rendered.ends_with('\n'), "{rendered}");
