@@ -7,16 +7,18 @@ interface with correct method signatures and default values.
 import inspect
 
 import pytest
+from eth_utils import keccak
 from hexbytes import HexBytes
 
 from degenbot.fork import AnvilFork
 from degenbot.provider import AlloyProvider
+from tests.standalone_anvil import seed as seed_catalog
 
 
 @pytest.fixture
-def alloy_provider(fork_mainnet_full: AnvilFork) -> AlloyProvider:
-    """Create an AlloyProvider from the mainnet fork."""
-    return AlloyProvider(fork_mainnet_full.http_url)
+def alloy_provider(standalone_anvil: AnvilFork) -> AlloyProvider:
+    """Create an AlloyProvider from the seeded standalone anvil (no upstream RPC)."""
+    return AlloyProvider(standalone_anvil.http_url)
 
 
 class TestAlloyProviderInterface:
@@ -165,8 +167,8 @@ class TestAlloyProviderBalanceAndNonceMethods:
         assert result >= 0
 
     def test_get_balance_with_block_returns_int(self, alloy_provider: AlloyProvider):
-        """Test get_balance with block returns int."""
-        result = alloy_provider.get_balance("0x742d35Cc6634C0532925a3b8D4C9db96590d6B75", 18000000)
+        """Test get_balance with block returns int (block 0 = genesis on the standalone chain)."""
+        result = alloy_provider.get_balance("0x742d35Cc6634C0532925a3b8D4C9db96590d6B75", 0)
         assert isinstance(result, int)
         assert result >= 0
 
@@ -177,10 +179,10 @@ class TestAlloyProviderBalanceAndNonceMethods:
         assert result >= 0
 
     def test_get_transaction_count_with_block_returns_int(self, alloy_provider: AlloyProvider):
-        """Test get_transaction_count with block returns int."""
+        """Test get_transaction_count with block returns int (block 0 on the standalone chain)."""
         result = alloy_provider.get_transaction_count(
             "0x742d35Cc6634C0532925a3b8D4C9db96590d6B75",
-            18000000,
+            0,
         )
         assert isinstance(result, int)
         assert result >= 0
@@ -201,10 +203,9 @@ class TestAlloyProviderConnection:
 class TestAlloyProviderContextManager:
     """Test context manager functionality."""
 
-    @pytest.mark.online_rpc
-    def test_context_manager_enter_exit(self, fork_mainnet_full: AnvilFork):
+    def test_context_manager_enter_exit(self, standalone_anvil: AnvilFork):
         """Test AlloyProvider works as context manager."""
-        with AlloyProvider(fork_mainnet_full.http_url) as provider:
+        with AlloyProvider(standalone_anvil.http_url) as provider:
             assert provider is not None
             assert isinstance(provider, AlloyProvider)
 
@@ -246,33 +247,28 @@ class TestAlloyProviderRevertRaisesContractLogicError:
     catch RpcError (the base class) to mean "method not implemented."
     """
 
-    WETH9 = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
-
     @staticmethod
     def _revert_calldata() -> bytes:
-        """Calldata for WETH9.withdraw(uint256) with an impossibly large amount.
+        """Calldata for the seeded ``Reverter.alwaysRevert()`` (Revert(string)).
 
-        The zero-address caller has no WETH balance, so the call reverts with
-        "execution reverted" — a reliable, portable revert trigger.
+        Always reverts with "boom" — a reliable, portable revert trigger that
+        needs no upstream RPC.
         """
-        import eth_abi
-
-        selector = bytes.fromhex("2e1a7d4d")  # withdraw(uint256)
-        return selector + eth_abi.encode(["uint256"], [2**255])
+        return keccak(text="alwaysRevert()")[:4]
 
     def test_sync_call_revert_raises_contract_logic_error(self, alloy_provider):
         """AlloyProvider.call raises ContractLogicError on an EVM revert."""
         from degenbot.exceptions import ContractLogicError
 
         with pytest.raises(ContractLogicError, match="reverted"):
-            alloy_provider.call(self.WETH9, self._revert_calldata())
+            alloy_provider.call(seed_catalog.REVERTER, self._revert_calldata())
 
     def test_sync_call_revert_is_catchable_as_rpc_error(self, alloy_provider):
         """ContractLogicError is a subclass of RpcError (probe-site contract)."""
         from degenbot.exceptions import RpcError
 
         with pytest.raises(RpcError):
-            alloy_provider.call(self.WETH9, self._revert_calldata())
+            alloy_provider.call(seed_catalog.REVERTER, self._revert_calldata())
 
     @pytest.mark.asyncio
     async def test_async_call_revert_raises_contract_logic_error(self, alloy_provider):
@@ -282,4 +278,4 @@ class TestAlloyProviderRevertRaisesContractLogicError:
 
         async_alloy = await AsyncAlloyProvider.create(alloy_provider.rpc_url)
         with pytest.raises(ContractLogicError, match="reverted"):
-            await async_alloy.call(self.WETH9, self._revert_calldata())
+            await async_alloy.call(seed_catalog.REVERTER, self._revert_calldata())

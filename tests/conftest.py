@@ -233,6 +233,7 @@ def standalone_anvil() -> Generator[AnvilFork, None, None]:
         pytest.skip("requires the anvil binary (not present in the no-anvil CI job)")
     fork = AnvilFork(chain_id=seed_catalog.CHAIN_ID, anvil_opts=["--accounts=0"])
     seed_catalog.seed(fork)
+    fork.mine()  # advance past genesis so get_block_number() > 0
     yield fork
     fork.close()
 
