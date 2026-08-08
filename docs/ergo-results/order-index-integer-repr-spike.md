@@ -1,7 +1,22 @@
 # Spike: integer representation & exact upper-bound arithmetic
 
-**Status:** done — ✓ recommendation, awaiting user approval (task `374FTG`).
-**Crate:** `rust/crates/degenbot-order-index`
+**Status:** done — **REVISED to Alloy types per review** (task `374FTG`). This doc
+supersedes the initial `i128`-only proposal below with the approved Alloy-based design.
+
+> **2026-08-08 revision (user review):** use **Alloy types**, not a hand-rolled
+> integer. Rust has no native `i256`. Adopted:
+> - `gross`, `gas`, `X` are `alloy::primitives::U256`.
+> - `net = gross - gas * X` is `alloy::primitives::I256` (Alloy `Signed`), which is
+>   `Ord` (used for ranking) and exact in practice.
+> - The hull **cross product** is computed in `I256` (Alloy `Signed`), which cannot
+>   overflow as long as the **seam guard** holds: `gross <= 2^127`, `gas <= 2^120`,
+>   `X <= 2^120`. Then every difference (`I256`) and every cross product
+>   (`<= 2^127 * 2^120 = 2^247 < 2^256`) fits `I256` exactly, and the two-product
+>   difference fits too. Realistic magnitudes (gross ~1e30, gas ~1e7, X ~1e13) are
+>   orders of magnitude inside the guard, so it never rejects real data.
+> - No custom wide-math module is needed (Alloy's `I256` replaces the experimental
+>   `i256.rs`). Prod math is integer-exact.
+
 
 ## Decision
 

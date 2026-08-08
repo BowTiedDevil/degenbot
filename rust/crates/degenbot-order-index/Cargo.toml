@@ -19,7 +19,24 @@ perf = "warn"
 style = "warn"
 suspicious = "warn"
 
+[features]
+default = ["envelope"]
+# The convex-hull EnvelopeIndex (production impl). With this off, only the
+# brute-force `ScanTopK` baseline is compiled.
+envelope = []
+
 [dependencies]
+alloy-primitives = { version = "^1.6", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 proptest = "^1.11"
+
+[[example]]
+name = "scale_demo"
+path = "examples/scale_demo.rs"
+required-features = ["envelope"]
+
+[[example]]
+name = "bench_strategies"
+path = "examples/bench_strategies.rs"
+required-features = ["envelope"]

@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 7693751d5b28d8dcfad2f1e18f27db3b8837de9f4c5ad84e9687838895247d0a # shrinks to points = [Cand { id: 0, gas: 21000, gross: 0 }, Cand { id: 1, gas: 21000, gross: 0 }], x = 0, k = 1
